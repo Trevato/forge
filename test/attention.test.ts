@@ -89,6 +89,7 @@ beforeAll(async () => {
     issue: `${r}/issues/${issue.value.number}`, "issues list": `${r}/issues`, "pulls list": `${r}/pulls`,
     runs: `${r}/runs`, run: `${r}/runs/${run.id}`, settings: "/settings",
     search: "/search", "search results": "/search?q=forge", map: "/map", flow: "/flow", system: "/system",
+    explore: "/explore", changelog: "/changelog", boards: "/boards", forges: "/forges", crew: `${r}/settings/crew`,
   };
   for (const [name, path] of Object.entries(paths)) {
     const res = await fetch(`${servers.url}${path}`, { headers: { cookie }, redirect: "follow" });

@@ -182,5 +182,65 @@
       "colours": 0
     },
     "note": "Measured on the test forge's empty state with the machine reading replaced by an empty one and the two cell-cap sentences fixed (the live page's counts depend on the host's cores, disks, processes and cgroups); nothing seeded or waited for."
+  },
+  "explore": {
+    "390": {
+      "words": 44,
+      "blocks": 9,
+      "colours": 0
+    },
+    "1280": {
+      "words": 44,
+      "blocks": 9,
+      "colours": 0
+    }
+  },
+  "changelog": {
+    "390": {
+      "words": 16,
+      "blocks": 5,
+      "colours": 0
+    },
+    "1280": {
+      "words": 16,
+      "blocks": 5,
+      "colours": 0
+    }
+  },
+  "boards": {
+    "390": {
+      "words": 592,
+      "blocks": 108,
+      "colours": 3
+    },
+    "1280": {
+      "words": 592,
+      "blocks": 108,
+      "colours": 3
+    }
+  },
+  "forges": {
+    "390": {
+      "words": 25,
+      "blocks": 5,
+      "colours": 1
+    },
+    "1280": {
+      "words": 25,
+      "blocks": 5,
+      "colours": 1
+    }
+  },
+  "crew": {
+    "390": {
+      "words": 940,
+      "blocks": 87,
+      "colours": 4
+    },
+    "1280": {
+      "words": 940,
+      "blocks": 87,
+      "colours": 4
+    }
   }
 }
