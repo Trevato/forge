@@ -43,6 +43,8 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { loadKey } from "../kernel/secret.ts";
 import {
   buildEnvFromLabel,
+  variantEnvFromLabel,
+  envVariant,
   envBuild,
   envWords,
   previewEnv,
@@ -117,6 +119,10 @@ export function parseAppHost(
   if (build !== undefined) {
     return { slug: parts.at(-2)!, env: build, nested: parts.length > 2 };
   }
+  const variant = parts.length >= 2 ? variantEnvFromLabel(last) : undefined;
+  if (variant !== undefined) {
+    return { slug: parts.at(-2)!, env: variant, nested: parts.length > 2 };
+  }
   if (parts.length >= 2 && /^\d+$/.test(last)) {
     if (!/^[1-9]\d*$/.test(last)) return undefined;
     return {
@@ -152,6 +158,13 @@ export function resolveAppHostname(
 ): AppTarget | "unknown" | undefined {
   const parsed = parseAppHost(host, domain);
   if (parsed === undefined) return ownDomain(app, host);
+  // An app that already holds the slug `v-<label>` (made before that shape was
+  // reserved) keeps its name: the host is it, in its parent's world, not a variant.
+  const variant = envVariant(parsed.env);
+  const held = variant === undefined ? undefined : getAppBySlug(app.db, `v-${variant}`);
+  if (held !== undefined) {
+    return shown(app, held) ? { app: held, env: "production", nested: true } : "unknown";
+  }
   const record = getAppBySlug(app.db, parsed.slug);
   return record && shown(app, record)
     ? { app: record, env: parsed.env, nested: parsed.nested }

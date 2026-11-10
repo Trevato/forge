@@ -47,10 +47,10 @@ const toApp = (r: AppRow): AppRecord => ({
 
 /**
  * A slug that is also an environment's suffix: `<slug>--b<sha7>` is a build
- * preview, so no slug may be `b` and seven hex digits.
+ * preview, so no slug may be `b` and seven hex digits; `<slug>--v-<label>` is a variant (`core/variants.ts`), so none is `v-` and a label.
  */
 const RESERVED_SLUG = /^b[0-9a-f]{7}$/;
-const reserved = (slug: string): boolean => RESERVED_SLUG.test(slug);
+const reserved = (slug: string): boolean => RESERVED_SLUG.test(slug) || /^v-[a-z0-9]{1,16}$/.test(slug);
 
 /**
  * A slug is a DNS label: lowercase letters, digits, single hyphens inside.

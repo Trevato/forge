@@ -6,6 +6,7 @@
  * the repository may look at it and open its environments.
  */
 
+import { getVariant } from "../core/variants.ts";
 import { pullDir } from "../core/pulls.ts";
 import { getIssue } from "../core/issues.ts";
 import { mayView } from "../core/sealed.ts";
@@ -27,6 +28,7 @@ import type { FileWrite } from "../git/write.ts";
 import { TEMPLATE_ERRORS, templateFiles, type TemplateError } from "../apps/template_tip.ts";
 import {
   envBuild,
+  envVariant,
   isEnvName,
   previewEnv,
   type EnvName,
@@ -788,6 +790,11 @@ async function commitFor(
   // serves is the one the runtime holds for it, while it is held.
   if (envBuild(env) !== undefined)
     return appsRuntime(app)?.envStatus(record, env)?.commitOid || undefined;
+  const variant = envVariant(env);
+  if (variant !== undefined) {
+    const row = getVariant(app.db, record.id, variant);
+    return row === undefined ? undefined : resolveOid(dir, `refs/heads/${row.branch}`);
+  }
   const pull = getPull(app.db, repo.id, Number(env.slice(5)));
   if (!pull || pull.state !== "open") return undefined;
   const at = await pullDir(app.db, app.reposRoot, repo, pull);

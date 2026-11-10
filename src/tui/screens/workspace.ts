@@ -150,6 +150,7 @@ import { displayCommands } from "./display.ts";
 import { iterationsCommands } from "./iterations.ts";
 import { labelsCommands } from "./labels.ts";
 import { appEnvCommands } from "./appenv.ts";
+import { variantsCommands } from "./variants.ts";
 import { autonomyCommands } from "./autonomy.ts";
 import { trafficCommands } from "./trafficview.ts";
 import { blockedCommands } from "./blocked.ts";
@@ -1633,6 +1634,7 @@ export function workspaceScreen(
       ...iterationsCommands(f, ctx, repo),
       ...displayCommands(f, ctx, repo),
       ...appEnvCommands(f, ctx, repo),
+      ...variantsCommands(f, ctx, repo),
       ...autonomyCommands(f, ctx, repo),
       ...trafficCommands(f, ctx, repo),
       ...blockedCommands(f, ctx, repo),

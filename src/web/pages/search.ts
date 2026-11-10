@@ -811,6 +811,15 @@ const DESTRUCTIVE: {
     }),
   },
   {
+    pattern: /^\/([^/]+)\/([^/]+)\/variants\/([a-z0-9]{1,16})\/retire$/,
+    describe: (m) => ({
+      verb: "Retire",
+      title: `Retire the ${m[3]} variant?`,
+      detail: "Its environment stops and its data is removed. The branch and its variant.json stay.",
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/settings\/crew\/([^/]+)\/delete$/,
     describe: (m) => ({
       verb: "Retire agent",

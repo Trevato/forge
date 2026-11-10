@@ -451,9 +451,10 @@ export async function studioApp(
   // The rest of the app's environment — its variables, hostname, access and
   // domains — is the admin's, on the app's settings page.
   // Issues, Pulls and the map are the head's own tabs; only what it lacks is here.
-  const more = canAdmin(db, repo, ctx.auth.user)
-    ? html`<p class="muted small"><a href="${base}/settings/app">Environment settings</a></p>`
-    : null;
+  const more = html`<p class="muted small">
+    <a href="${base}/variants">Variants</a>
+    ${when(canAdmin(db, repo, ctx.auth.user), () => html`<a href="${base}/settings/app">Environment settings</a>`)}
+  </p>`;
 
   // An app that follows another says so before anything else: whether it
   // is in step is the first thing its owner wants to know.

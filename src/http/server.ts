@@ -200,6 +200,7 @@ import {
   branchesPage,
 } from "../web/pages/branches.ts";
 import { iterationsPage, noteSubmit } from "../web/pages/iterations.ts";
+import { mainSubmit, registerSubmit, retireSubmit, valuesSubmit, variantBoardPage } from "../web/pages/app_variants.ts";
 import { buildsPage, deletePinSubmit, newBuildPage, pinBuildSubmit, previewBuildSubmit } from "../web/pages/builds.ts";
 import { shotImage, shotsPage } from "../web/pages/build_shots.ts";
 import { cartArt, cartPage } from "../web/pages/build_cart.ts";
@@ -1398,6 +1399,11 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/iterations", iterationsPage);
   router.add("POST", "/:owner/:name/builds", pinBuildSubmit);
   router.add("POST", "/:owner/:name/builds/preview", previewBuildSubmit);
+  router.add("GET", "/:owner/:name/variants", variantBoardPage);
+  router.add("POST", "/:owner/:name/variants", registerSubmit);
+  router.add("POST", "/:owner/:name/variants/:label/values", valuesSubmit);
+  router.add("POST", "/:owner/:name/variants/:label/retire", retireSubmit);
+  router.add("POST", "/:owner/:name/variants/:label/main", mainSubmit);
   router.add("POST", "/:owner/:name/builds/:label/delete", deletePinSubmit);
   router.add("POST", "/:owner/:name/builds/:label/note", noteSubmit);
   router.add("GET", "/:owner/:name/waves.atom", wavesAtom);

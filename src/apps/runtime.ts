@@ -30,6 +30,8 @@ import type { App } from "../app.ts";
 import { getAppByRepo, listApps, type AppRecord } from "../core/apps.ts";
 import { resolveAppEnv } from "../core/app_env.ts";
 import { featureVarsAt } from "./feature_env.ts";
+import { getVariant, listVariants, variantOfBranch } from "../core/variants.ts";
+import { readVariantValues } from "./variant_file.ts";
 import { mintAppToken, renewAppToken, revokeAppToken } from "./token.ts";
 import type { ForgeEvent } from "../core/events.ts";
 import { announceRun } from "../actions/runs.ts";
@@ -39,12 +41,12 @@ import { getPull, listPulls, type Pull } from "../core/pulls.ts";
 import { isContributionFork } from "../core/contribute.ts";
 import { pullMayRun } from "../core/pull_trust.ts";
 import { guestWaits } from "../origins/guest.ts";
-import { canEnterApp, getRepoById, type Repo } from "../core/repos.ts";
+import { canEnterApp, canWrite, getRepoById, type Repo } from "../core/repos.ts";
 import { runningLimitSentence } from "../settings/quotas.ts";
 import { placeFor } from "../core/placement_policy.ts";
 import { recordPlacement } from "../core/decisions.ts";
 import { bodyTarget, CLOUD_BODY_CONFIGURED } from "../spawn/placement.ts";
-import type { User } from "../core/users.ts";
+import { getUserById, type User } from "../core/users.ts";
 import {
   cancelRun,
   getRun,
@@ -87,6 +89,8 @@ import {
   appsRoot,
   buildEnv,
   envBuild,
+  envVariant,
+  variantEnv,
   envHostLabel,
   ensureEnvData,
   envDataDir,
@@ -467,7 +471,7 @@ export function envsFor(
  * pull number — a number, not a string, so `pull-10` follows `pull-9`.
  */
 const envRank = (env: EnvName): number =>
-  env === "production" ? -1 : (envPull(env) ?? 0);
+  env === "production" ? -1 : envVariant(env) !== undefined ? -0.5 : (envPull(env) ?? 0);
 const byEnv = (a: EnvStatus, b: EnvStatus): number => envRank(a.env) - envRank(b.env);
 
 export class AppsRuntime {
@@ -825,6 +829,15 @@ export class AppsRuntime {
     if (tip !== undefined && only !== "preview")
       this.requestDeploy(record, repo, "production", tip, reason);
     const open = new Set<EnvName>(["production"]);
+    // A variant is a branch kept running: it stays while its row does, whatever
+    // pulls are open (`core/variants.ts`).
+    for (const variant of listVariants(this.app.db, record.id)) {
+      const env = variantEnv(variant.label);
+      open.add(env);
+      if (only === "production") continue;
+      const tipOid = await resolveOid(dir, `refs/heads/${variant.branch}`);
+      if (tipOid !== undefined) this.requestDeploy(record, repo, env, tipOid, reason);
+    }
     // A build preview lives only in memory: one this forge is running stays,
     // and one an earlier life left on disk goes (`previewBuild`).
     for (const state of this.envs.values())
@@ -888,6 +901,15 @@ export class AppsRuntime {
 
   // ---- events ----
 
+  private pusherMayRunVariant(repo: Repo, actorId: string | null): boolean {
+    const who = actorId === null ? undefined : getUserById(this.app.db, actorId);
+    if (who === undefined || who.kind === "agent" || !canWrite(this.app.db, repo, who)) {
+      log.info("variant waits for a person who can write", { repo: repo.name });
+      return false;
+    }
+    return true;
+  }
+
   private async onEvent(event: ForgeEvent): Promise<void> {
     if (this.stopped || event.repoId === null) return;
     if (event.kind === "repo.deleted") {
@@ -929,6 +951,19 @@ export class AppsRuntime {
               event.actorId ?? undefined,
             );
           }
+          const variant = deleted ? undefined : variantOfBranch(this.app.db, record.id, branch);
+          // A variant runs with the app's sealed values and a copy of its data:
+          // a push to its branch redeploys only when a person who can write made it.
+          // An agent proposes; the writer's own "set values" deploys directly.
+          if (variant !== undefined && this.pusherMayRunVariant(repo, event.actorId))
+            this.requestDeploy(
+              record,
+              repo,
+              variantEnv(variant.label),
+              update.newOid,
+              "push",
+              event.actorId ?? undefined,
+            );
           // Every open pull whose head is this branch previews the new tip.
           for (const pull of listPulls(this.app.db, repo.id, { sealed: true,
             state: "open",
@@ -1170,6 +1205,20 @@ export class AppsRuntime {
     if (!this.envs.has(k)) return { env, run: undefined };
     const run = this.requestDeploy(record, repo, env, commitOid, "build", actorId);
     return { env, run };
+  }
+
+  /**
+   * Start (or move) a variant's environment at its branch's tip, now: the
+   * ask that registers a variant, or saves its values. Nothing when the
+   * branch has no tip.
+   */
+  async deployVariant(record: AppRecord, repo: Repo, label: string, actorId?: string): Promise<Run | undefined> {
+    const variant = getVariant(this.app.db, record.id, label);
+    if (variant === undefined) return undefined;
+    const dir = repoDir(this.app.reposRoot, repo.ownerName, repo.name);
+    const tip = await resolveOid(dir, `refs/heads/${variant.branch}`);
+    if (tip === undefined) return undefined;
+    return this.requestDeploy(record, repo, variantEnv(label), tip, "variant", actorId);
   }
 
   private pullIssueId(repo: Repo, env: EnvName): string | undefined {
@@ -1524,7 +1573,7 @@ export class AppsRuntime {
       ssh: this.sshFor(state.app, state.env),
       // Read at start, never cached: a change is a redeploy, and the
       // process that comes up is the one that sees it.
-      ...this.secretsFor(repo, state.app.id, state.env, token.token),
+      ...this.secretsFor(repo, state.app.id, state.env, token.token, dir),
       feature: this.featureFor(repo, state.app.id, state.env, dir),
       log: write,
       warm,
@@ -1802,14 +1851,18 @@ export class AppsRuntime {
     appId: string,
     env: EnvName,
     forgeToken: string,
+    dir?: string,
   ): { vars: Record<string, string>; forgeToken: string | undefined } {
     const number = envPull(env);
     const pull =
       number === undefined ? undefined : getPull(this.app.db, repo.id, number);
     if (pull !== undefined && guestWaits(this.app.db, pull))
       return { vars: {}, forgeToken: undefined };
+    // A variant's own values (`variant.json` on its branch) go over the
+    // app's defaults; they are plain settings, never secrets.
+    const own = dir !== undefined && envVariant(env) !== undefined ? readVariantValues(dir) : {};
     return {
-      vars: resolveAppEnv(this.app.db, this.app.config.dataDir, appId, env),
+      vars: { ...resolveAppEnv(this.app.db, this.app.config.dataDir, appId, env), ...own },
       forgeToken,
     };
   }
@@ -1834,7 +1887,7 @@ export class AppsRuntime {
     if (isContributionFork(this.app.db, repo.id)) return false;
     // Production is the default branch and a build preview a commit a writer asked to see
     // (`actions/build_preview.ts`): each is a writer's choice already.
-    if (env === "production" || envBuild(env) !== undefined)
+    if (env === "production" || envBuild(env) !== undefined || envVariant(env) !== undefined)
       return true;
     const number = envPull(env);
     const pull =
@@ -1903,7 +1956,7 @@ export class AppsRuntime {
         forgeUrl: this.options.forgeUrl,
         identityKey: identityKey(this.app.config.dataDir, record.id),
         ssh: this.sshFor(record, env),
-        ...this.secretsFor(repo, record.id, env, token.token),
+        ...this.secretsFor(repo, record.id, env, token.token, asleep.dir),
         feature: this.featureFor(repo, record.id, env, asleep.dir),
         log: write,
         signal: new AbortController().signal,
@@ -2141,7 +2194,7 @@ export class AppsRuntime {
         continue;
       const window = sleepWindow(
         source,
-        state.env === "production",
+        state.env === "production" || envVariant(state.env) !== undefined,
         live.manifest.alwaysOn === true,
       );
       const limit = window.ms;

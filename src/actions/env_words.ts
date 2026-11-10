@@ -4,7 +4,7 @@
  * terminal's deploys screen, from here.
  */
 
-import { envBuild, envPull, type EnvName } from "../apps/data.ts";
+import { envBuild, envPull, envVariant, type EnvName } from "../apps/data.ts";
 import type { Run } from "../core/runs.ts";
 import { VERIFY_FIRST } from "./verify_words.ts";
 
@@ -12,6 +12,8 @@ import { VERIFY_FIRST } from "./verify_words.ts";
 export function envLabel(env: EnvName): string {
   const build = envBuild(env);
   if (build !== undefined) return `build ${build}`;
+  const variant = envVariant(env);
+  if (variant !== undefined) return `the ${variant} variant`;
   const number = envPull(env);
   return number === undefined ? "production" : `preview of #${number}`;
 }
