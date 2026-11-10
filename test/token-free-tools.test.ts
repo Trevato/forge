@@ -51,7 +51,7 @@ describe("token-free MCP tools", () => {
     const card = (await (await fetch(`${base}/.well-known/mcp.json`)).json()) as any;
     expect(card.tokenFreeTools).toEqual([...TOKEN_FREE_TOOLS]);
     const here = (await (await fetch(`${base}/api/v1/here`)).json()) as any;
-    const open = here.actions
+    const open = here.can
       .filter((a: any) => a.mcp !== undefined && a.account === false)
       .map((a: any) => a.mcp);
     expect(open.sort()).toEqual([...TOKEN_FREE_TOOLS].sort());

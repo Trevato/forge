@@ -260,6 +260,21 @@ answers
   (decision card) sends them to `say` with the first ask's `repo`, `number`
   and `text`. Empty words send nothing. `asks` rows carry `repo`
   (`owner/name`) beside `number` for this.
+- **The manifest's shape.** `GET /api/v1/here?path=/owner/name` (or the
+  `here` tool with the page URL) answers `{ here, you, can, mcp, docs }`.
+  `you.as` is `anonymous`, `reader`, `writer`, `owner` or `agent`; `can` is
+  the list of verbs open to that caller, each
+  `{ do, http?, mcp?, noMcp?, ssh? }`, where `mcp` is the tool that does the
+  same in the page button's words (`merge a pull` → `merge`, `approve a pull`
+  → `review`, `change settings` → `repo_settings`, `comment` → `say`); a verb
+  with no tool says why in `noMcp`, never silent. Each line is the answer of
+  the check its route asks, so a verb the caller cannot do is absent, not
+  listed and refused; one that needs an account carries `account: true`. A private
+  repository answers byte for byte as a missing one (404).
+  `test/here-roles.test.ts` pins a stranger, a signed-in non-member, a writer
+  and an owner, and that every verb names a tool or says why not. The 50 ms
+  budget is held by a bounded statement count; the `here` phase is read from
+  Server-Timing and bounded at the flake floor (`WALL_CLOCK_FLOOR_MS`).
 - **Contract.** `GET /contract/openapi.json` is OpenAPI 3.1 for the routes
   the manifest (`here`) names, plus `POST /mcp`. It also describes planning: `GET …/map`, `POST …/plan`,
   `POST …/issues/{number}/dependencies` and

@@ -107,3 +107,35 @@ describe("a forge on an older release", () => {
     expect(page.value.next).toBeNull();
   });
 });
+
+describe("a forge on this release", () => {
+  /** A forge with no OAuth paths, whose `here` names its list `list`; health is a release's. */
+  const forgeWhoseHereSays = (list: string) =>
+    Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const path = new URL(req.url).pathname;
+        if (path === "/api/v1/health")
+          return Response.json({ ok: true, version: "0.9.0", commit: "abc1234", draining: false });
+        if (path === "/api/v1/here")
+          return Response.json({ here: { kind: "forge", name: "/" }, you: null, [list]: [], mcp: {}, docs: "" });
+        return new Response('{"error":"no_route"}', { status: 404 });
+      },
+    });
+
+  test("discover recognises a here that lists what you can do as `can`", async () => {
+    const peer = forgeWhoseHereSays("can");
+    const found = await discover(`http://127.0.0.1:${peer.port}`);
+    peer.stop(true);
+    expect(found.ok).toBe(true);
+    if (found.ok) expect(found.value.software).toBe("forge 0.9.0");
+  });
+
+  test("a here with neither `can` nor `actions` is no forge", async () => {
+    const peer = forgeWhoseHereSays("verbs");
+    const found = await discover(`http://127.0.0.1:${peer.port}`);
+    peer.stop(true);
+    expect(found.ok).toBe(false);
+  });
+});

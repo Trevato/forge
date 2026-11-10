@@ -47,6 +47,8 @@ export interface Action {
   readonly http?: string;
   /** The MCP tool that does the same, when there is one. */
   readonly mcp?: string;
+  /** Why no MCP tool does the same, when none does: say so, never stay silent. */
+  readonly noMcp?: string;
   /** The arguments that tool takes here, plain data (`{ q }` for a filter). */
   readonly mcpArgs?: Readonly<Record<string, string>>;
   /** The shell command that does the same, when the forge's SSH is on. */
@@ -84,12 +86,18 @@ export interface Manifest {
         /** Only when the credential limits it: a read-only token acts on nothing. */
         readonly scope?: "ro";
       };
-  readonly actions: readonly Action[];
+  /** What this caller can do here: the verbs open to them, none they would be refused. */
+  readonly can: readonly Action[];
   readonly mcp: { readonly url: string; readonly oauth: string };
   readonly docs: string;
 }
 
 const SYSTEM = new Set(SYSTEM_NAMES);
+
+// `tell` and `plan` file issues too, but as directing the crew, a different
+// verb with a different check (`mayDirectCrew`).
+const NO_ISSUE_TOOL =
+  "no MCP tool opens a plain issue; tell and plan file one as directing the crew";
 
 /**
  * The manifest for a forge path, for `viewer` holding `scope`. `origin` is
@@ -138,7 +146,7 @@ export function manifestFor(
       return ok({
         here: { kind: "org", org: account.username },
         you,
-        actions: [
+        can: [
           {
             do: "list the organization's teams",
             http: `GET /api/v1/orgs/${account.username}/teams`,
@@ -154,7 +162,7 @@ export function manifestFor(
     return ok({
       here: { kind: "person", username: account.username },
       you,
-      actions: [
+      can: [
         {
           do: "read their public repositories",
           http: `GET /api/v1/users/${account.username}/repos`,
@@ -177,7 +185,7 @@ export function manifestFor(
     return ok({
       here: { kind: page ?? "forge" },
       you: youFor(viewer, scope, undefined, app),
-      actions:
+      can:
         page === undefined
           ? forgeActions(app, viewer, scope)
           : [
@@ -208,7 +216,7 @@ export function manifestFor(
           }),
     },
     you: youFor(viewer, scope, repo, app),
-    actions: repoActions(app, repo, viewer, scope),
+    can: repoActions(app, repo, viewer, scope),
     ...common,
   });
 }
@@ -362,7 +370,7 @@ function repoActions(
   // password act with the account's full authority.
   const acts =
     viewer !== undefined && (scope === undefined || scopeAllows(scope, "rw"));
-  const out: Action[] = [{ do: "read", http: `GET ${r}` }];
+  const out: Action[] = [{ do: "read", http: `GET ${r}`, mcp: "repo" }];
   if (canRead(db, repo, undefined))
     out.push({
       do: "report a problem",
@@ -381,13 +389,15 @@ function repoActions(
   const participant: Action[] = [
     ...(talks
       ? [
-          { do: "open an issue", http: `POST ${r}/issues` },
-          { do: "comment", http: `POST ${r}/issues/{number}/comments` },
+          { do: "open an issue", http: `POST ${r}/issues`, noMcp: NO_ISSUE_TOOL },
+          // `say` writes through the same `addCommentThrough` as the route.
+          { do: "comment", http: `POST ${r}/issues/{number}/comments`, mcp: "say" },
         ]
       : []),
     {
       do: "offer a change",
       http: `POST ${r}/forks, then POST ${r}/pulls {headRepo}`,
+      mcp: "open_pull",
       ...unproven,
     },
   ];
@@ -396,7 +406,11 @@ function repoActions(
   else if (acts) out.push(...participant);
   const record = getAppByRepo(db, repo.id);
   if (record !== undefined && canEnterApp(db, repo, record, viewer))
-    out.push({ do: "open the app", http: `GET ${r}/app/production/open` });
+    out.push({
+      do: "open the app",
+      http: `GET ${r}/app/production/open`,
+      noMcp: "a link to the running app; there is nothing to call",
+    });
   // The copy is for whoever cannot write the app (the web's button, `!canWrite`);
   // its dry run is `ro`, so a read-only token sees it too.
   if (
@@ -436,11 +450,20 @@ function repoActions(
     out.push({
       do: "approve a pull",
       http: `POST ${r}/pulls/{number}/reviews`,
+      mcp: "review",
     });
   if (canWrite(db, repo, viewer) && viewer?.kind === "user")
-    out.push({ do: "merge a pull", http: `POST ${r}/pulls/{number}/merge` });
+    out.push({
+      do: "merge a pull",
+      http: `POST ${r}/pulls/{number}/merge`,
+      mcp: "merge",
+    });
   if (canAdmin(db, repo, viewer))
-    out.push({ do: "change settings", http: `PATCH ${r}` });
+    out.push({
+      do: "change settings",
+      http: `PATCH ${r}`,
+      mcp: "repo_settings",
+    });
   // How a native fork follows its parent: a writer's moves, the same rule
   // `takeOrTell` and `proposeToParentForge` ask (`requireWriter`).
   if (

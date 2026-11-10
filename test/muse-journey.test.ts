@@ -131,7 +131,7 @@ describe("the Muse test: a stranger agent needs no teaching", () => {
 
     // 2. The manifest names the report action, HTTP and MCP, as needing no account.
     const here = (await (await fetch(manifest)).json()) as any;
-    const act = here.actions.find((x: any) => x.do === "report a problem");
+    const act = here.can.find((x: any) => x.do === "report a problem");
     expect(act.http).toBe("POST /api/v1/repos/alice/notes/reports");
     expect(act.mcp).toBe("report");
     expect(act.account).toBe(false);
