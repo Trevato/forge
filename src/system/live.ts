@@ -9,6 +9,7 @@ import type { App } from "../app.ts";
 import { cellRoots } from "../apps/contain.ts";
 import { HOST, readRaw, type Paths, type Raw } from "./proc.ts";
 import { buildSystem, forAgent, type Roots, type SystemView } from "./view.ts";
+import { during } from "../perf/jobs.ts";
 
 const FRESH_MS = 1_000;
 
@@ -32,7 +33,7 @@ export type Live = {
 export type Schedule = (tick: () => void, ms: number) => () => void;
 
 const realSchedule: Schedule = (tick, ms) => {
-  const t = setInterval(tick, ms);
+  const t = setInterval(() => during("system-live", tick), ms);
   t.unref?.();
   return () => clearInterval(t);
 };

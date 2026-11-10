@@ -12,6 +12,7 @@
 
 import type { Database } from "bun:sqlite";
 import { heartbeatRuns } from "../core/runs.ts";
+import { during } from "../perf/jobs.ts";
 
 /** How often a held lease is renewed. */
 export const HEARTBEAT_MS = 15_000;
@@ -46,7 +47,7 @@ export function holdLease(db: Database, runId: string): () => void {
   ids.add(runId);
   heartbeatRuns(db, [runId]);
   if (timer === undefined) {
-    timer = setInterval(renewAll, HEARTBEAT_MS);
+    timer = setInterval(() => during("lease-renew", renewAll), HEARTBEAT_MS);
     timer.unref();
   }
   return () => {

@@ -21,6 +21,7 @@ import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import type { Socket } from "bun";
 import { neverGrantable } from "../core/egress_grants.ts";
+import { during } from "../perf/jobs.ts";
 
 export interface EgressPolicy {
   /** Host names from `forge.json` `egress`: exact, or `*.example.com`. */
@@ -791,7 +792,7 @@ export function startEgress(
   // that stopped sending) is cut, so it cannot hold an upstream open.
   const idleMs = policy.idleMs ?? IDLE_MS;
   const sweep = setInterval(
-    () => {
+    () => during("egress-idle", () => {
       const now = Date.now();
       for (const client of live)
         if (now - client.data.last > idleMs) {
@@ -800,7 +801,7 @@ export function startEgress(
           client.terminate();
           live.delete(client);
         }
-    },
+    }),
     Math.max(50, Math.min(5_000, idleMs / 2)),
   );
   sweep.unref();

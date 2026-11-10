@@ -20,6 +20,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { startWarming } from "../http/health.ts";
 import type { Log } from "../kernel/log.ts";
+import { during } from "../perf/jobs.ts";
 
 export const BEAT_MS = 5_000;
 /** Three beats missed: the forge that wrote it is gone. */
@@ -115,7 +116,7 @@ export function takePresence(dataDir: string, beatMs = BEAT_MS): Presence {
     }
   };
   write();
-  let timer: ReturnType<typeof setInterval> | undefined = setInterval(write, beatMs);
+  let timer: ReturnType<typeof setInterval> | undefined = setInterval(() => during("presence", write), beatMs);
   timer.unref?.();
   return {
     others: (at = Date.now()) => beatsOf(dataDir, self.id).some((b) => alive(b, at, self.host)),

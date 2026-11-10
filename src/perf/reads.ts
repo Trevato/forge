@@ -16,6 +16,7 @@ import type { Database } from "bun:sqlite";
 import { runGit } from "../git/env.ts";
 import { withoutWaiting } from "../kernel/db.ts";
 import { quietly } from "../core/write_clock.ts";
+import { during } from "./jobs.ts";
 
 const HOUR_MS = 3_600_000;
 const MAX_KEYS = 2_000;
@@ -189,7 +190,7 @@ export function createReadWriter(
       log.warn("could not write read history", { error: String(error) });
     }
   };
-  const tick = setInterval(flush, flushMs);
+  const tick = setInterval(() => during("reads", flush), flushMs);
   tick.unref();
   return {
     flush,

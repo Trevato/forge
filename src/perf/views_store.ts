@@ -16,6 +16,7 @@ import { withoutWaiting } from "../kernel/db.ts";
 import { dayOf, saltFor } from "../web/measure.ts";
 import { forgetVisits } from "./views_report.ts";
 import { isScraperAgent, type Origin } from "./sources.ts";
+import { during } from "./jobs.ts";
 
 export const BUFFER_MAX = 5_000;
 export const DAY_MAX = 50_000;
@@ -130,7 +131,7 @@ export function createViewWriter(
       log.warn("could not write page views", { error: String(error) });
     }
   };
-  const tick = setInterval(run, flushMs);
+  const tick = setInterval(() => during("views", run), flushMs);
   tick.unref();
   return {
     stop() {

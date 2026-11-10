@@ -33,6 +33,7 @@ import { awakeRefusal, idleAfterMs, WakeRate } from "./sleep.ts";
 import { wakingResponse } from "../web/pages/waking.ts";
 import { takeDoor } from "../http/strangers.ts";
 import { vouched } from "./vouch.ts";
+import { during } from "../perf/jobs.ts";
 import { readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -233,7 +234,7 @@ const floorWatchers = new WeakMap<App, ReturnType<typeof setInterval>>();
 
 function keepWatchingFloor(parent: App): void {
   if (floorWatchers.has(parent)) return;
-  const timer = setInterval(() => void sleepBelowFloor(parent).catch(() => {}), FLOOR_EVERY_MS);
+  const timer = setInterval(() => void during("spawn-floor", () => sleepBelowFloor(parent)).catch(() => {}), FLOOR_EVERY_MS);
   timer.unref?.();
   floorWatchers.set(parent, timer);
 }
@@ -282,7 +283,7 @@ async function closeOne(parent: App, cache: Map<string, App>, bodyId: string, ch
 function keepSweeping(parent: App): void {
   if (sweepers.has(parent)) return;
   const every = Math.max(1000, Math.min(60_000, Math.floor(idleAfterMs() / 4)));
-  const timer = setInterval(() => void sleepIdleChildren(parent).catch(() => {}), every);
+  const timer = setInterval(() => void during("spawn-idle", () => sleepIdleChildren(parent)).catch(() => {}), every);
   timer.unref?.();
   sweepers.set(parent, timer);
 }

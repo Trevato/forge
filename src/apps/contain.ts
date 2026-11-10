@@ -48,6 +48,7 @@ import {
   type CgroupHost,
   type IoMax,
 } from "./cgroup.ts";
+import { during } from "../perf/jobs.ts";
 
 /** `ceiling`: a declaration was cut to the machine's maximum; `declared`: forge.json's own; `default`: neither. */
 export type CeilingFrom = "env" | "pod" | "default";
@@ -1047,7 +1048,7 @@ export function watchTree(
     cap,
   };
   watched.add(entry);
-  timer ??= setInterval(tick, WATCH.tickMs);
+  timer ??= setInterval(() => during("cell-watch", tick), WATCH.tickMs);
   return () => {
     watched.delete(entry);
     if (watched.size === 0 && timer !== undefined) {

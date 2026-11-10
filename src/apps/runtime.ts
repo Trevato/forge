@@ -121,6 +121,7 @@ import {
   type StartError,
   type StartInput,
 } from "./process.ts";
+import { during } from "../perf/jobs.ts";
 
 const log = createLog("apps");
 
@@ -780,7 +781,7 @@ export class AppsRuntime {
     this.pruneDirs(known);
     await this.sampleStorage();
     this.sweeper = setInterval(
-      () => void this.sweep(),
+      () => void during("apps-sweep", () => this.sweep()),
       this.options.sweepEveryMs ?? SWEEP_EVERY_MS,
     );
   }
