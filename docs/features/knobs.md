@@ -16,8 +16,9 @@ A change applies on the next pump and leaves the event the setting's own page le
 are computed from Speed every time they are read. They show with their value, read-only, on
 the knobs panel and under Settings › Capacity; a POST that tries to set one is refused with
 a plain line, and `FORGE_PACE_FLOOR`, `FORGE_QUEUE_DEPTH` and any stored value are ignored.
-The reserve is not one of them: it is what Weekly budget leaves (100 minus `week.use`), so it
-moves with that dial, not with Speed. The small share and the polish run cap are gone; a
+Reserve shows as a read-only row after Weekly budget: it is what Weekly budget leaves (100
+minus `week.use`), so it moves with that dial, not with Speed. A set is refused with the plain
+line "That dial follows Weekly budget: turn Weekly budget and it moves."; nothing is stored. The small share and the polish run cap are gone; a
 stored old value is ignored.
 
 `week.use` is new; a stored or `FORGE_WEEK_USE` value is read as the budget.

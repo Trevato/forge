@@ -6,7 +6,7 @@
  */
 
 import { setKnob } from "../../actions/knobs.ts";
-import { readKnobs, type KnobRow } from "../../crew/knobs.ts";
+import { derivedLine, readKnobs, type KnobRow } from "../../crew/knobs.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
@@ -16,7 +16,7 @@ import { btn } from "../ui.ts";
 
 function control(r: KnobRow): Html {
   if (r.control === "fixed") return html`<span class="badge">${r.value}</span>`;
-  if (r.control === "derived") return html`<span class="mono" data-derived="${r.id}" title="Read-only: Speed sets it">${r.value}</span>`;
+  if (r.control === "derived") return html`<span class="mono" data-derived="${r.id}" title="Read-only: ${r.follows} sets it">${r.value}${r.unit ?? ""}</span>`;
   const label = `${r.name}${r.repo === undefined ? "" : ` for ${r.repo}`}`;
   const input =
     r.control === "words"
@@ -65,7 +65,7 @@ export async function knobSet(ctx: Ctx): Promise<Response> {
       ? { message: `${knob}: ${set.value.value}, from the next pump on.` }
       : {
           tone: "danger",
-          message: set.error === "derived" ? "That dial follows Speed: turn Speed and it moves." : "That value is outside what this knob takes.",
+          message: set.error === "derived" ? derivedLine(knob) : "That value is outside what this knob takes.",
         },
   );
 }

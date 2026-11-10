@@ -66,6 +66,13 @@ test("an admin turns Speed with e, and the capacity event is left", async () => 
   h.stop();
 });
 
+test("e on Reserve says which dial it follows and changes nothing", async () => {
+  const h = await boot(carol);
+  await h.press("down", "down", "down", "down", "e");
+  expect(h.text()).toContain("Reserve follows Weekly budget.");
+  h.stop();
+});
+
 test("a value out of range changes nothing", async () => {
   const h = await boot(carol);
   await h.press("e");

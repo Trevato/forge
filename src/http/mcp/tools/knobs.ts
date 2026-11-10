@@ -1,5 +1,5 @@
 import { setKnob } from "../../../actions/knobs.ts";
-import { knobLines, readKnobs } from "../../../crew/knobs.ts";
+import { derivedLine, knobLines, readKnobs } from "../../../crew/knobs.ts";
 import { scopeAllows } from "../../../core/tokens.ts";
 import { good, bad, type Tool } from "../shared.ts";
 
@@ -31,6 +31,7 @@ export const tool: Tool = {
       return good({ says: `Would set ${knob}${repo === undefined ? "" : ` for ${repo}`} to ${value}. Send dryRun: false to change it.` });
     if (!scopeAllows(ctx.auth.scope ?? "ro", "admin")) return bad("forbidden", "turning a knob needs an admin-scope token");
     const set = await setKnob(ctx.app, user, knob, value, repo);
+    if (!set.ok && set.error === "derived") return bad("derived", derivedLine(knob));
     if (!set.ok) return bad(set.error, "That knob or value is not one the knobs take.");
     return good({ says: `${knob}: ${set.value.value}, from the next pump on.`, ...set.value });
   },

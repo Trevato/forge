@@ -12,7 +12,7 @@ import { createRepo } from "../src/actions/repos.ts";
 import { setKnob } from "../src/actions/knobs.ts";
 import { createApp, type App } from "../src/app.ts";
 import { listCapacity } from "../src/actions/capacity.ts";
-import { CAPACITY_KEYS, capacityCount, paceFloor, queueDepth, setCapacity, weekUse } from "../src/core/capacity.ts";
+import { CAPACITY_KEYS, capacityCount, capacityValue, paceFloor, queueDepth, setCapacity, weekUse } from "../src/core/capacity.ts";
 import { listEvents } from "../src/core/events.ts";
 import { getRepoById } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
@@ -50,14 +50,14 @@ afterAll(async () => {
 
 test("the panel has Speed, the derived pace floor and queue depth, Weekly budget, Polish share, Autonomy per repository and Feedback first, each with an effect", () => {
   const rows = readKnobs(app);
-  expect(rows.map((r) => r.id)).toEqual(["speed", "floor", "depth", "budget", "polish", "autonomy", "feedback"]);
+  expect(rows.map((r) => r.id)).toEqual(["speed", "floor", "depth", "budget", "reserve", "polish", "autonomy", "feedback"]);
   for (const r of rows) {
     expect(r.does.length).toBeGreaterThan(0);
     expect(r.effect.length).toBeGreaterThan(0);
   }
   expect(rows[0]!.effect).toMatch(/\d+ running · \d+ queued/);
-  expect(rows[6]!.effect).toBe("nothing from a person waiting");
-  expect(knobLines(rows)).toHaveLength(7);
+  expect(rows[7]!.effect).toBe("nothing from a person waiting");
+  expect(knobLines(rows)).toHaveLength(8);
 });
 
 test("Speed 4 → 2 is read by the next pump", async () => {
@@ -88,6 +88,26 @@ test("no knob or capacity POST sets the pace floor or the queue depth: a plain l
     expect(!changed.ok && changed.error).toBe("derived");
     expect(app.db.query("SELECT 1 FROM forge_setting WHERE key = ?1").get(key)).toBeNull();
   }
+});
+
+test("Reserve is a read-only row: 100 minus Weekly budget, and a set is refused with a plain line", async () => {
+  const before = capacityValue(app.db, "week.use");
+  // Weekly budget cannot go below 10, so Reserve tops out at 90 here; 0 is not a value a set can reach.
+  for (const use of ["10", "50", "100"]) {
+    expect((await setKnob(app, admin, "budget", use)).ok).toBe(true);
+    const row = readKnobs(app).find((r) => r.id === "reserve")!;
+    expect(row.control).toBe("derived");
+    expect(row.value).toBe(String(100 - Number(use)));
+    expect(row.does).toContain("What Weekly budget leaves");
+    expect(row.follows).toBe("Weekly budget");
+    expect(knobLines([row])[0]).toContain(`Reserve: ${100 - Number(use)}%`);
+  }
+  const set = await setKnob(app, admin, "reserve", "20");
+  expect(!set.ok && set.error).toBe("derived");
+  const mcp = await tool.run({ app, auth: { scope: "admin" } } as never, admin, { knob: "reserve", value: "20", dryRun: false });
+  expect(JSON.stringify(mcp)).toContain("Weekly budget");
+  expect(weekUse(app.db)).toBe(100);
+  setCapacity(app.db, "week.use", before, admin.id);
 });
 
 test("Weekly budget sets the reserve the pacer holds back", () => {

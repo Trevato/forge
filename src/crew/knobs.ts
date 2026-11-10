@@ -10,7 +10,7 @@
  */
 
 import type { App } from "../app.ts";
-import { capacityValue, paceFloor, queueDepth } from "../core/capacity.ts";
+import { capacityValue, paceFloor, queueDepth, weekUse } from "../core/capacity.ts";
 import { labelsForIssues } from "../core/issues.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import { listActive } from "../core/runs.ts";
@@ -18,9 +18,20 @@ import { waitingOnPeople } from "./people_first.ts";
 import { POLISH_SHARE_DEFAULT, isPolish, polishSpend } from "./polish_share.ts";
 import { budgetEffect } from "./week_read.ts";
 
-export type KnobId = "speed" | "budget" | "polish" | "autonomy" | "feedback" | "floor" | "depth";
+export type KnobId = "speed" | "budget" | "polish" | "autonomy" | "feedback" | "floor" | "depth" | "reserve";
 /** The dials Speed sets: shown on the panel with their value, never turned there. */
-export const DERIVED_KNOBS: readonly string[] = ["floor", "depth", "pace.floor", "queue.depth"];
+const FOLLOWS: Readonly<Record<string, string>> = {
+  floor: "Speed",
+  depth: "Speed",
+  "pace.floor": "Speed",
+  "queue.depth": "Speed",
+  reserve: "Weekly budget",
+};
+export const DERIVED_KNOBS: readonly string[] = Object.keys(FOLLOWS);
+/** The dial that moves a derived one, by its knob id or capacity key; undefined for a dial that is set. */
+export function followsOf(knob: string): string | undefined {
+  return Object.hasOwn(FOLLOWS, knob) ? FOLLOWS[knob] : undefined;
+}
 export type AutonomyWord = "off" | "ask" | "go";
 export const AUTONOMY_WORDS: readonly AutonomyWord[] = ["off", "ask", "go"];
 
@@ -38,6 +49,16 @@ export interface KnobRow {
   readonly effect: string;
   /** For Autonomy: the repository (`owner/name`) this row is for. */
   readonly repo?: string;
+  /** For a derived row: the dial that moves it. */
+  readonly follows?: string;
+  /** A unit printed after the value. */
+  readonly unit?: string;
+}
+
+/** The plain line a refused set of a derived dial answers. */
+export function derivedLine(knob: string): string {
+  const follows = followsOf(knob) ?? knob;
+  return `That dial follows ${follows}: turn ${follows} and it moves.`;
 }
 
 /** A repository's autonomy in the knob's three words. */
@@ -97,6 +118,7 @@ export function readKnobs(app: App, now: Date = new Date()): KnobRow[] {
       does: "The slots the pace always leaves reviews and assigned work. Derived from Speed: half of it, at least 1.",
       value: String(paceFloor(app.db)),
       control: "derived",
+      follows: "Speed",
       effect: `${paceFloor(app.db)} slots`,
     },
     {
@@ -105,6 +127,7 @@ export function readKnobs(app: App, now: Date = new Date()): KnobRow[] {
       does: "How many merge-queue candidates of one repository gate at once. Derived from Speed: half of it rounded up, 1 to 4.",
       value: String(queueDepth(app.db)),
       control: "derived",
+      follows: "Speed",
       effect: `${queueDepth(app.db)} candidates`,
     },
     {
@@ -113,9 +136,20 @@ export function readKnobs(app: App, now: Date = new Date()): KnobRow[] {
       does: "How much of the week's subscription to use, evenly to the reset.",
       value: capacityValue(app.db, "week.use"),
       control: "percent",
+      unit: "%",
       min: 10,
       max: 100,
       effect: budgetEffect(app, now),
+    },
+    {
+      id: "reserve",
+      name: "Reserve",
+      does: "What Weekly budget leaves: it moves with that dial, not with Speed.",
+      value: String(100 - weekUse(app.db)),
+      control: "derived",
+      follows: "Weekly budget",
+      unit: "%",
+      effect: "kept for conversations and a person's own requests",
     },
     {
       id: "polish",
@@ -123,6 +157,7 @@ export function readKnobs(app: App, now: Date = new Date()): KnobRow[] {
       does: "The share of the week's spend polish may take.",
       value: String(share),
       control: "percent",
+      unit: "%",
       min: 0,
       max: 50,
       effect: `polish ${spend === undefined ? 0 : Math.round(spend.percent)}% of this week's spend · ${polishWaiting(app, live)} polish issues waiting`,
@@ -154,5 +189,5 @@ export function readKnobs(app: App, now: Date = new Date()): KnobRow[] {
 
 /** The knobs as the plain lines the terminal and the MCP print. */
 export function knobLines(rows: readonly KnobRow[]): string[] {
-  return rows.map((r) => `${r.name}${r.repo === undefined ? "" : ` (${r.repo})`}: ${r.value}${r.control === "percent" ? "%" : ""} — ${r.effect}`);
+  return rows.map((r) => `${r.name}${r.repo === undefined ? "" : ` (${r.repo})`}: ${r.value}${r.unit ?? ""} — ${r.effect}`);
 }

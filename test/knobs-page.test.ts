@@ -52,6 +52,17 @@ test("the crew page shows the knobs, and a same-origin post turns one", async ()
   expect(capacityValue(app.db, "crew.concurrency")).toBe("3");
 });
 
+test("a post to Reserve is refused with the plain line and stores nothing", async () => {
+  const res = await post(servers.url, { knob: "reserve", value: "20", repo: "" });
+  expect(res.status).toBe(303);
+  const cookie = (res.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+  const page = await fetch(`${servers.url}/settings/crew`, { headers: { authorization: `Bearer ${bearer}`, cookie } });
+  const body = (await page.text()).replaceAll("&#39;", "'");
+  expect(body).toContain("That dial follows Weekly budget: turn Weekly budget and it moves.");
+  expect(body).toContain('data-derived="reserve"');
+  expect(capacityValue(app.db, "week.use")).toBe("90");
+});
+
 test("another origin changes nothing", async () => {
   await post("https://evil.example", { knob: "speed", value: "5", repo: "" });
   expect(capacityValue(app.db, "crew.concurrency")).toBe("3");
