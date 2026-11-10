@@ -67,6 +67,8 @@ export function provenanceRows(p: FeatureView["provenance"]) {
 function featureRow(f: FeatureView) {
   const base = `/settings/features/${encodeURIComponent(f.slug)}`;
   return row({
+    href: base,
+    nav: true,
     title: html`${f.name} <span class="muted small mono">${f.repo}</span>
       ${f.absorbed ? badge("absorbed", { tone: "success" }) : null}
       ${f.pending !== null ? badge("declaration changed: review", { tone: "attn" }) : null}`,
@@ -81,7 +83,7 @@ function featureRow(f: FeatureView) {
       : html`${f.summary ?? ""}${when(f.summary !== null, () => html`<br />`)}${f.settings.length} setting${f.settings.length === 1 ? "" : "s"}${f.absorbed
           ? html` · absorbed by ${f.absorbedBy ?? "someone"}`
           : null}`}<br /><span id="sw-${f.slug}">${switchNote(f)}</span>`,
-    trail: html`${when(f.pending !== null, () => html`<form class="row-fields" method="post" action="${base}/accept">
+    after: html`${when(f.pending !== null, () => html`<form class="row-fields" method="post" action="${base}/accept">
         <input type="hidden" name="name" value="${f.pending?.name ?? ""}" />
         <input type="hidden" name="page" value="${f.pending?.page ?? ""}" />
         ${btn("Accept", { size: "sm", label: `Accept ${f.pending?.name ?? ""} as ${f.name}'s menu entry` })}
