@@ -147,4 +147,34 @@ describe("MCP limits", () => {
     }
     expect(now()).toBe(before);
   });
+
+  const PLANS = [
+    { key: "free", name: "Free", says: "to try it", size: "small", priceUsd: 0, creditUsd: 0, forges: 1 },
+    { key: "pro", name: "Pro", says: "for work", size: "medium", priceUsd: 9, creditUsd: 3, forges: 2 },
+  ];
+
+  test("plans: a dry run validates, applying needs admin scope, a non-admin has no tool", async () => {
+    const dry = await call(adaAdmin, { plans: PLANS });
+    expect(dry.error).toBe(false);
+    expect(JSON.parse(dry.text).plans.map((p: any) => p.key)).toEqual(["free", "pro"]);
+    expect(JSON.parse((await call(adaAdmin, {})).text).plans.map((p: any) => p.key)).toEqual(["free", "small", "medium", "large"]);
+    // A dry run tells the truth: a bad list is refused as the real change would refuse it.
+    const bad = await call(adaAdmin, { plans: PLANS.slice(1) });
+    expect(bad.error).toBe(true);
+    expect(bad.text).toContain("the free plan cannot be removed");
+    expect((await call(adaAdmin, { plans: [{ ...PLANS[0], size: "huge" }] })).error).toBe(true);
+    expect((await call(adaAdmin, { plans: [] })).error).toBe(true);
+    // Below admin scope may plan but not apply.
+    const ro = await call(adaRw, { plans: PLANS, dryRun: false });
+    expect(ro.error).toBe(true);
+    expect(ro.text).toContain("admin-scope");
+    expect(JSON.parse((await call(adaAdmin, {})).text).plans).toHaveLength(4);
+    // A non-admin and an agent are told there is no such tool.
+    expect((await call(cyToken, { plans: PLANS, dryRun: false })).error).toBe(true);
+    expect((await call(botToken, { plans: PLANS, dryRun: false })).error).toBe(true);
+    expect(JSON.parse((await call(adaAdmin, {})).text).plans).toHaveLength(4);
+    const applied = await call(adaAdmin, { plans: PLANS, dryRun: false });
+    expect(applied.error).toBe(false);
+    expect(JSON.parse((await call(adaAdmin, {})).text).plans.map((p: any) => p.key)).toEqual(["free", "pro"]);
+  });
 });

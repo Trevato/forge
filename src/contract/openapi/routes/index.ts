@@ -109,6 +109,7 @@ export { route as getApiV1OrgsOrgTeamsTeamMembers } from "./getApiV1OrgsOrgTeams
 export { route as getApiV1Packs } from "./getApiV1Packs.ts";
 export { route as getApiV1PacksName } from "./getApiV1PacksName.ts";
 export { route as getApiV1PassportHealth } from "./getApiV1PassportHealth.ts";
+export { route as getApiV1Plans } from "./getApiV1Plans.ts";
 export { route as getApiV1Releases } from "./getApiV1Releases.ts";
 export { route as getApiV1Repos } from "./getApiV1Repos.ts";
 export { route as getApiV1ReposOwnerName } from "./getApiV1ReposOwnerName.ts";
@@ -374,6 +375,7 @@ export { route as postMcp } from "./postMcp.ts";
 export { route as putApiV1AdminCapacityKey } from "./putApiV1AdminCapacityKey.ts";
 export { route as putApiV1AdminLimitsKey } from "./putApiV1AdminLimitsKey.ts";
 export { route as putApiV1AdminMachinesMachineDisksDevice } from "./putApiV1AdminMachinesMachineDisksDevice.ts";
+export { route as putApiV1AdminPlans } from "./putApiV1AdminPlans.ts";
 export { route as putApiV1AdminQuotasKey } from "./putApiV1AdminQuotasKey.ts";
 export { route as putApiV1AdminShield } from "./putApiV1AdminShield.ts";
 export { route as putApiV1AdminTeamsSlug } from "./putApiV1AdminTeamsSlug.ts";

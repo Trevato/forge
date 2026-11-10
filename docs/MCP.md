@@ -133,7 +133,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `land_past_gate` | — | Land one pull past a broken gate, with a recorded reason; an owner's only | 321 |
 | `lift` | — | Lift an issue out from behind the Later gate | 214 |
 | `limb` | `defer`, `resume`, `close`, `raise`, `lower`, `replan`, `takeback`, `undo` | Act on a limb by `action` | 532 |
-| `limits` | — | Every limit the owner can hit, value and bounds | 898 |
+| `limits` | — | Every limit the owner can hit, value and bounds | 949 |
 | `maintenance` | `status`, `prepare`, `resume` | Prepare the forge for a power-off, check the drain, or end maintenance (admin) | 256 |
 | `make_it_yours` | — | Fork an app you can see: code and history, following the original | 337 |
 | `map` | — | An app's plan: ready or waiting, critical path, crew, parkedTwice; `done` adds closed; `first: N` ranks N first | 375 |
@@ -197,7 +197,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `signup` | — | Sign-ups: open (default); invite lets in only a person with an open invite link; closed refuses every new account | 291 |
 | `sizes` | — | A child forge's sizes: small, medium and large, each with CPU, memory and disk | 196 |
 | `snapshot_now` | — | Take a snapshot now, as Backups does (admin) | 133 |
-| `spawn` | — | Spawn a child forge | 824 |
+| `spawn` | — | Spawn a child forge | 910 |
 | `spend` | — | Report what your session spent outside forge runs: who, model, tokens or dollars, issue | 470 |
 | `ssh_keys` | `list`, `add`, `remove` | Your SSH keys; add: key, remove: id | 250 |
 | `steer` | — | Say a word to one crew run by its id | 224 |

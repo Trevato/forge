@@ -145,6 +145,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["people", "People", "who is a guest, a member or an admin; promote or demote"],
     ["quotas", "Account quotas", "what one account may own, and who changed it"],
     ["limits", "Limits", "what the forge caps, with default and bounds; change one"],
+    ["plans", "Plans", "free, small, medium and large: size, price, crew credit, forges; change one"],
     ["economics", "Economics", "the profit slider's position, the margin, the owned-node label and the prices; change one"],
     ["flows-all", "Flows across the forge", "every repository's flow lines, by kind and stale"],
     ["teams", "Crew teams", "each team's charter, dial and members"],

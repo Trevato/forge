@@ -17,6 +17,7 @@ import { DERIVED_WORDS, REASON_WORDS, changeCapacity, edgeOffDryRun, listCapacit
 import { changeShield, lastShieldChange, shieldState } from "../../actions/shield.ts";
 import { inviteLink, list as listInviteLinks, mint as mintInviteLink, revoke as revokeInviteLink } from "../../actions/invites.ts";
 import { changeLimit, listLimits } from "../../actions/limits.ts";
+import { changePlans } from "../../actions/plans.ts";
 import { setAccountCeilings, setAccountGrant } from "../../actions/model_grant.ts";
 import { checkPinned, deployPinned, pinnedForges, rollbackPinned, updatePinned } from "../../actions/pinned.ts";
 import { TARGETS } from "../../cloud/targets.ts";
@@ -253,6 +254,17 @@ export function adminRoutes(router: Router<Handler>): void {
         ? "no such limit"
         : changed.error.message,
     );
+  });
+
+  // The plans (`settings/plans.ts`): the whole list is replaced; GET is the public /api/v1/plans.
+  router.add("PUT", "/api/v1/admin/plans", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const changed = changePlans(ctx.app, ctx.auth.user, input["plans"]);
+    if (changed.ok) return json({ items: changed.value });
+    if (changed.error === "not_found") return notFound();
+    return apiError("invalid_plans", 422, changed.error.invalid);
   });
 
   // Per-account quotas (`settings/quotas.ts`), key by key: the REST twin of MCP `quotas`.

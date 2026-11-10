@@ -19,6 +19,8 @@ export interface Credit {
   readonly capUsd: number;
   readonly spentUsd: number;
   readonly tokenHash: string;
+  /** A plan's monthly credit: the UTC month (`YYYY-MM`) the spend is counted in; it starts again at 0 each month. Absent for a cap that does not reset. */
+  readonly period?: string;
 }
 
 export const CREDIT_MAX_USD = 100_000;
@@ -27,12 +29,17 @@ const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
 const path = (app: App, name: string): string => join(app.config.dataDir, "credit", `${name}.json`);
 const cents = (n: number): number => Math.round(n * 100) / 100;
 
-export function readCredit(app: App, name: string): Credit | undefined {
+/** The UTC calendar month a credit period is counted in. */
+export const periodOf = (at: Date = new Date()): string => at.toISOString().slice(0, 7);
+
+export function readCredit(app: App, name: string, now: Date = new Date()): Credit | undefined {
   if (!isChildName(name)) return undefined;
   try {
     const d = JSON.parse(readFileSync(path(app, name), "utf8")) as Record<string, unknown>;
-    const { capUsd, spentUsd, tokenHash } = d;
+    const { capUsd, spentUsd, tokenHash, period } = d;
     if (typeof capUsd !== "number" || typeof spentUsd !== "number" || typeof tokenHash !== "string") return undefined;
+    // A new month starts the spend again, without anything having to run at midnight.
+    if (typeof period === "string") return { name, capUsd, spentUsd: period === periodOf(now) ? spentUsd : 0, tokenHash, period: periodOf(now) };
     return { name, capUsd, spentUsd, tokenHash };
   } catch {
     return undefined;
@@ -59,16 +66,17 @@ export function setCap(
   usd: number,
   childHolds: boolean,
   handOff: (token: string, credit: Credit) => boolean,
+  monthly = false,
 ): Credit | "unreachable" | undefined {
   if (!isChildName(name) || !(Number.isFinite(usd) && usd > 0 && usd <= CREDIT_MAX_USD)) return undefined;
   const before = readCredit(app, name);
   if (before !== undefined && childHolds) {
-    const credit = { ...before, capUsd: cents(usd) };
+    const credit = { ...before, capUsd: cents(usd), ...(monthly ? { period: periodOf() } : {}) };
     keep(app, credit);
     return credit;
   }
   const token = `${name}.${randomBytes(24).toString("base64url")}`;
-  const credit = { name, capUsd: cents(usd), spentUsd: before?.spentUsd ?? 0, tokenHash: sha(token) };
+  const credit = { name, capUsd: cents(usd), spentUsd: before?.spentUsd ?? 0, tokenHash: sha(token), ...(monthly ? { period: periodOf() } : {}) };
   if (!handOff(token, credit)) return "unreachable";
   keep(app, credit);
   return credit;

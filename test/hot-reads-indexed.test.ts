@@ -91,3 +91,12 @@ test("an app's last pull and last good cursor walk the pull_run indexes", () => 
   expect(cursor.join("\n")).toContain("pull_run_app_ok");
   noScan(cursor);
 });
+
+test("a page-view flush counts a visitor's day from the visitor index, not the scope's whole day (#11118)", async () => {
+  const { flushViews, noteView } = await import("../src/perf/views_store.ts");
+  const origin = { refHost: "", source: "", medium: "", campaign: "", out: "" };
+  noteView(app.db, { scope: "s", path: "/", origin, client: "c", agent: "Mozilla/5.0" });
+  const lines = plans(() => void flushViews(app.db));
+  expect(lines.join("\n")).toContain("traffic_view_scope_visitor_at");
+  noScan(lines.filter((l) => l !== "SCAN CONSTANT ROW"));
+});

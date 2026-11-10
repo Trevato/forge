@@ -1371,7 +1371,7 @@ function forgetWorkdir(app: App, repo: Repo, pull: Pull): void {
  * the task again itself when it stops. Runs at boot and on every tick: a
  * forge that fell and was back within the lease sees its runs lapse later.
  */
-function requeueInterrupted(app: App): void {
+export function requeueInterrupted(app: App): void {
   for (const run of listActive(app.db, "agent")) {
     if (run.state === "running" && leaseLapsed(run, STALE_AFTER_MS))
       requeue(app, run, "interrupted by a restart; queued again");
@@ -1551,7 +1551,7 @@ export function startOrder(app: App): ReturnType<typeof gateQueue> {
 }
 
 /** Take queued runs, oldest first, up to the limit — one per issue at a time. */
-function pump(
+export function pump(
   app: App,
   options: CrewOptions,
   inFlight: Map<string, Promise<void>>,

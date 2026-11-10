@@ -16,6 +16,7 @@ export const route: Route = {
     direction: "string",
     keepAccess: "boolean",
     size: "string",
+    plan: "string (a key from GET /api/v1/plans; gives the size and a monthly crew credit; a paid plan is a forge admin's until payment exists)",
     for: "string",
     fresh: "boolean",
     followMode: "string",
