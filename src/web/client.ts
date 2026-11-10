@@ -1618,7 +1618,7 @@ const shellCore = /* js */ `
   // ---- help overlay, generated from the shortcuts actually on the page ----
   var STATIC_KEYS = [
     ['j / k', 'Move between rows'], ['o or Enter', 'Open the focused row'],
-    ['/', 'Focus search'], ['Cmd/Ctrl K', 'Command palette'], [':', 'Go to a page by name'], ['?', 'This help'],
+    ['/', 'Focus search'], ['Cmd/Ctrl K', 'Jump to anywhere'], [':', 'Go to a page by name'], ['?', 'This help'],
     ['Esc', 'Leave a box, close a menu or dialog'],
   ];
   // The rows a page earns by what it carries: a box to type in, a form

@@ -953,7 +953,7 @@ export function forkFailure(error: string): string {
   if (error === "origin_read_only")
     return "This account was connected read-only, so nothing is written through it.";
   if (error === "origin_paused")
-    return "This connection is not verified yet, so writes through it are paused. Check it again under Settings → Origins.";
+    return "This connection is not verified yet, so writes through it are paused. Check it again under Settings → Connected accounts.";
   if (error === "mirror_failed")
     return "The fork was made, but a local copy of it could not be.";
   if (error === "unauthorized") return "Sign in first.";

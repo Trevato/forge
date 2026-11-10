@@ -104,7 +104,7 @@ function hardWrap(text: string, width: number): string[] {
 function secretScreen(ctx: Ctx, secret: string, market: { add: string; install: string } | null): Screen {
   let copied = "";
   return {
-    title: "New access token",
+    title: "New access code",
     keys: [
       binding(["y"], "copy it"),
       ...(market === null ? [] : [binding(["a"], "copy the marketplace line"), binding(["i"], "copy the install line")]),
@@ -166,7 +166,7 @@ export function signInsScreen(f: Session, ctx: Ctx): Screen {
 
   const end = (picked: SignIn): void => {
     if (picked.kind === "terminal") {
-      note = "This terminal cannot be ended from here: disconnect, or remove its key in Settings → SSH keys.";
+      note = "This terminal cannot be ended from here: disconnect, or remove its key in Settings → Computer keys.";
       ctx.invalidate();
       return;
     }
@@ -222,7 +222,7 @@ export function signInsScreen(f: Session, ctx: Ctx): Screen {
   const confirmAdmin = (name: string) =>
     later(ctx, () =>
       confirmScreen(ctx, screen, {
-        title: "Make an admin access token",
+        title: "Make an admin access code",
         body: [`${name} will act as admin: y to make it, n to cancel.`],
         actions: [{ label: "Make it", variant: "danger" }, { label: "Cancel", variant: "ghost" }],
         yesNo: true,
@@ -237,7 +237,7 @@ export function signInsScreen(f: Session, ctx: Ctx): Screen {
   const askScope = (name: string, isAdmin: boolean) =>
     later(ctx, () =>
       promptScreen(ctx, screen, {
-        title: "Make an access token",
+        title: "Make an access code",
         label: isAdmin ? "Scope: ro, rw or admin" : "Scope: ro or rw",
         value: "ro",
         onSubmit: (word) => {
@@ -252,7 +252,7 @@ export function signInsScreen(f: Session, ctx: Ctx): Screen {
 
   const askName = (isAdmin: boolean) =>
     promptScreen(ctx, screen, {
-      title: "Make an access token",
+      title: "Make an access code",
       label: "Name",
       value: "token",
       onSubmit: (name) => {
@@ -323,7 +323,7 @@ export function signInsScreen(f: Session, ctx: Ctx): Screen {
     keys: [
       binding(["j", "k"], "move cursor"),
       binding(["d"], "sign a browser out or revoke a token"),
-      binding(["m"], "make an access token"),
+      binding(["m"], "make an access code"),
       binding(["p"], "change your password"),
     ],
     render(area, s) {
@@ -337,7 +337,7 @@ export function signInsScreen(f: Session, ctx: Ctx): Screen {
             ? "Sign in to see where you are signed in."
             : f.user.kind === "agent"
               ? "Where you are signed in. d signs a browser out or revokes a token."
-              : "Where you are signed in. d signs a browser out or revokes a token, m makes an access token, p changes your password.";
+              : "Where you are signed in. d signs a browser out or revokes a token, m makes an access code, p changes your password.";
       s.text(head!.x, head!.y, truncate(text, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       drawList(s, body!, c, state, rows(all));
     },

@@ -131,7 +131,7 @@ export function editErrorText(error: unknown): string {
     if (error === "origin_read_only")
       return "This account was connected read-only, so nothing is written through it.";
     if (error === "origin_paused")
-      return "This connection is not verified yet, so writes through it are paused. Check it again under Settings → Origins.";
+      return "This connection is not verified yet, so writes through it are paused. Check it again under Settings → Connected accounts.";
     return "That edit could not be saved.";
   }
   const e = error as { kind?: string; branch?: string; message?: string };

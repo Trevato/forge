@@ -34,6 +34,7 @@ const BUILT_IN_MENU_LABELS = [
   "your profile", "repositories", "apps", "notes", "talk", "explore", "packs", "displays", "map", "features",
   "new app", "new repository", "new issue", "new organization", "migrate", "settings", "access tokens", "ssh keys",
   "origins", "boards", "crew", "system memory", "help", "sign out", "log out", "sign in", "admin", "administration",
+  "access codes", "computer keys", "connected accounts", "jump to anywhere",
   "theme", "create", "new forge", "create new", "appearance and help", "features from apps", "keyboard shortcuts",
 ];
 

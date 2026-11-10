@@ -293,7 +293,7 @@ function groupSection(
         icon: "alert",
         title: read.error === "unreachable" ? "The origin could not be reached" : "This group could not be read",
         note: "Nothing was changed. Try again, or reconnect the origin if it needs re-authorizing.",
-        action: btn("Back to origins", { href: "/settings/origins", variant: "primary" }),
+        action: btn("Back to connected accounts", { href: "/settings/origins", variant: "primary" }),
       })
     : found.items.length === 0
       ? empty({

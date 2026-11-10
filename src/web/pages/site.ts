@@ -201,7 +201,7 @@ export function terminalCard(ctx: Ctx): Html {
     ${terminalCommand(
       ssh,
       ctx.app.config.sshHostKey,
-      html`<a class="small" href="/settings/keys">SSH keys</a>`,
+      html`<a class="small" href="/settings/keys">Computer keys</a>`,
     )}
   </section>`;
 }

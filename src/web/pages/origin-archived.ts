@@ -117,7 +117,7 @@ async function render(
   const head = html`<div class="bar mb">
       <h2>Archived on ${host}</h2>
       <span class="spacer"></span>
-      ${btn("Back to origins", {
+      ${btn("Back to connected accounts", {
         href: "/settings/origins",
         size: "sm",
         variant: "ghost",

@@ -255,7 +255,7 @@ export const READ_ONLY =
 
 /** What a write through a paused origin is told, everywhere. */
 export const WRITES_PAUSED =
-  "This forge could not verify this connection against the operator's rules, so writes through it are paused. Reads and sync go on. Check it again under Settings → Origins.";
+  "This forge could not verify this connection against the operator's rules, so writes through it are paused. Reads and sync go on. Check it again under Settings → Connected accounts.";
 
 /**
  * Why writes through this origin are paused, or undefined when they are

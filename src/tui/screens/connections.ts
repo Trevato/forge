@@ -1,6 +1,6 @@
 /**
- * Origins in the terminal: the hosts your mirrors come from, as
- * Settings › Origins lists them. `s` syncs the selected one now, `d` disconnects
+ * Connected accounts in the terminal: the hosts your mirrors come from, as
+ * Settings › Connected accounts lists them. `s` syncs the selected one now, `d` disconnects
  * it after a confirm — through `actions/origins.ts`, in `origin_words.ts`'s words.
  */
 
@@ -27,7 +27,7 @@ export function connectionsScreen(f: Session, ctx: Ctx): Screen {
   const counts = () => (f.user === undefined ? new Map<string, { count: number }>() : mirrorsByOrigin(f.app.db, f.user.id));
 
   const screen: Screen = {
-    title: "Origins",
+    title: "Connected accounts",
     keys: [binding(["j", "k"], "move cursor"), binding(["c"], "connect"), binding(["s"], "sync now"), binding(["v"], "verify again"), binding(["d"], "disconnect"), binding(["esc"], "back")],
     render(area, s) {
       const c = ctx.theme.c;
@@ -68,14 +68,14 @@ export function connectionsScreen(f: Session, ctx: Ctx): Screen {
         const user = f.user;
         ctx.push(
           promptScreen(ctx, screen, {
-            title: "Connect an origin",
+            title: "Connect an account",
             label: "Host or address (a forge, Forgejo, Gitea, GitHub)",
             placeholder: "forge.example.com",
             onSubmit: (hostText) => {
               if (hostText === "") return "Type the address of the forge.";
               return later(ctx, () =>
                 promptScreen(ctx, screen, {
-                  title: "Connect an origin",
+                  title: "Connect an account",
                   label: `Access token for ${hostText}`,
                   hint: "Made in that forge's settings; kept encrypted here.",
                   mask: true,
@@ -83,7 +83,7 @@ export function connectionsScreen(f: Session, ctx: Ctx): Screen {
                     if (token.trim() === "") return "Paste the token.";
                     return later(ctx, () =>
                       promptScreen(ctx, screen, {
-                        title: "Connect an origin",
+                        title: "Connect an account",
                         label: "Read-only? Type yes to never write back to it",
                         hint: "Leave empty to connect the ordinary way.",
                         onSubmit: (answer) => {
@@ -162,7 +162,7 @@ export function connectionsScreen(f: Session, ctx: Ctx): Screen {
 /** Origins: a signed-in person, not an agent. */
 export const entry: PaletteEntry = {
   id: "origins",
-  title: "Origins",
+  title: "Connected accounts",
   hint: "the hosts your mirrors come from",
   offered: (session) => session.user !== undefined && session.user.kind !== "agent",
   run: (session, ctx) => ctx.push(connectionsScreen(session, ctx)),

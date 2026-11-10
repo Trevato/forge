@@ -94,8 +94,8 @@ accounts are `row()`s in `<ul class="list setting-list" id="accounts-list">` und
 (Sign-ins, Verify, Suspend, Remove) in the row's `after` slot; the mail, ownerless-organization, sign-in reach and
 confirm/refusal notices are plain `<section class="settings-block">` blocks with an `<h2>`. `test/accounts-rows.test.ts` holds the shape.
 
-Settings › Origins (`src/web/pages/origins.ts`) adds no component class. As on the home page it is headings over rows: Connected
-origins, Frozen mirrors, Trusted internal hosts (admin) and Connect an origin are each a `<section class="settings-block">`
+Settings › Connected accounts (`src/web/pages/origins.ts`) adds no component class. As on the home page it is headings over rows: Connected
+accounts, Frozen mirrors, Trusted internal hosts (admin) and Connect an account are each a `<section class="settings-block">`
 with an `<h2>`; each origin and each frozen mirror is a `row()` in a `.list`; with no origins, one plain sentence says how to
 connect one. An origin's error, notes (re-authorize, another forge, writes paused) and acts sit in the row's `after`
 slot; the list carries the attribute `data-origins` (not a class), which stacks that slot as a full-width block under

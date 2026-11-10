@@ -3,7 +3,7 @@
  * form's redirect wherever it points; a browser first checks the posting
  * page's `form-action` policy against it, and refuses a redirect off this
  * forge without a word on the page. So this drives headless Chromium
- * (`test/helpers/chrome.ts`): click Authorize on Settings → Origins, then
+ * (`test/helpers/chrome.ts`): click Authorize on Settings → Connected accounts, then
  * Continue on the flow's page, and see the browser actually ask the origin
  * for its consent screen — the URL stored on the flow — with no
  * Content-Security-Policy refusal on the way.
@@ -68,7 +68,7 @@ describe.skipIf(chromium === undefined)("connecting an origin in a real browser"
     await rm(dir, { recursive: true, force: true });
   });
 
-  test("Settings → Origins: Authorize, then Continue, reaches the consent screen", async () => {
+  test("Settings → Connected accounts: Authorize, then Continue, reaches the consent screen", async () => {
     const made = await createUser(app.db, {
       username: "bea",
       email: "bea@forge.test",

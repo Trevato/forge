@@ -429,7 +429,7 @@ function profileView(ctx: Ctx, values: ProfileForm): Html {
         ],
       })}
       <div class="form-actions">
-        ${btn("Save profile", { variant: "primary" })}
+        ${btn("Save", { variant: "primary" })}
       </div>
       ${refusal(values.errors?.form)}
     </form>`,
@@ -751,7 +751,7 @@ function tokensView(ctx: Ctx): Html {
     listSessions(ctx.app.db, ctx.auth.user!.id, cookieValue(ctx.request, "forge_session")),
   );
   const list = tokens.length === 0
-    ? html`<p class="muted">No access tokens yet. Mint one when a script, a CI job, or another machine needs to act as you.</p>`
+    ? html`<p class="muted">No access codes yet. Mint one when a script, a CI job, or another machine needs to act as you.</p>`
     : html`<ul class="list setting-list">
         ${tokens.map((t) =>
           row({
@@ -766,18 +766,18 @@ function tokensView(ctx: Ctx): Html {
       </ul>`;
   return html`${help([
       [
-        "Access tokens",
-        "Use a token as the password when pushing over HTTPS, or as a Bearer token for the API. Your account password works for git too — tokens are for scoped or automated access.",
+        "Access codes",
+        "Use an access code as the password when pushing over HTTPS, or to call the API (sent as a Bearer header). Your account password works for git too — access codes are for scoped or automated access.",
       ],
-      ["Access token name", "Name it after where it lives — laptop, CI, deploy box."],
-      ["Scope", "A token can never mint another token, whatever its scope."],
+      ["Access code name", "Name it after where it lives — laptop, CI, deploy box."],
+      ["Scope", "An access code can never make another access code, whatever its scope."],
     ])}${connectCard(ctx, readFlash(ctx.request)?.code)}
-    ${block("Access tokens", list)}
+    ${block("Access codes", list)}
     ${block(
-      "New access token",
+      "New access code",
       html`<form method="post" action="/settings/tokens">
         ${uiField({
-          label: "Access token name",
+          label: "Access code name",
           name: "name",
           required: true,
         })}
@@ -797,14 +797,14 @@ function tokensView(ctx: Ctx): Html {
               <label class="check">
                 <input type="checkbox" name="aiAdmin" required />
                 <span
-                  >I mean to give this token admin: you are the forge's admin,
+                  >I mean to give this access code admin: you are the forge's admin,
                   so whatever holds it — an AI included — acts as admin.</span
                 >
               </label>
             </div>`
           : null}
         <div class="form-actions">
-          ${btn("Generate access token", { variant: "primary" })}
+          ${btn("Generate access code", { variant: "primary" })}
         </div>
       </form>`,
     )}
@@ -816,7 +816,7 @@ export function tokensPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const body = tokensView(ctx);
-  return timePhase(ctx.request, "render", () => accountShell(ctx, "tokens", "Access tokens", body));
+  return timePhase(ctx.request, "render", () => accountShell(ctx, "tokens", "Access codes", body));
 }
 
 // POST /settings/tokens
@@ -826,7 +826,7 @@ export async function tokenCreate(ctx: Ctx): Promise<Response> {
   // the platform edge's sign-in, or the password — never from another token
   // (no privilege bootstrapping). readForm below refuses a cross-site post.
   if (!isAccountItself(ctx.auth)) {
-    return forbiddenPage(ctx, "A token is made from your own signed-in account, never by another token.");
+    return forbiddenPage(ctx, "An access code is made from your own signed-in account, never by another access code.");
   }
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
@@ -835,7 +835,7 @@ export async function tokenCreate(ctx: Ctx): Promise<Response> {
   if (ctx.auth.user.isAdmin && field(form, "aiAdmin") !== "on")
     return flashTo(ctx, "/settings/tokens", {
       tone: "danger",
-      message: "You are the forge's admin: tick that you mean to give this token admin, or make it from your everyday account.",
+      message: "You are the forge's admin: tick that you mean to give this access code admin, or make it from your everyday account.",
     });
   const scope = field(form, "scope");
   const chosen: TokenScope = scope === "ro" || scope === "admin" ? scope : "rw";
@@ -907,9 +907,9 @@ function keysView(
       >) — ed25519, ecdsa, or rsa (2048 bits or more).
     </p>
     ${block(
-      "SSH keys",
+      "Computer keys",
       keys.length === 0
-        ? html`<p class="muted">No SSH keys yet. Add one and git over SSH stops asking for a password.</p>`
+        ? html`<p class="muted">No computer keys yet. Add one and git over SSH stops asking for a password.</p>`
         : html`<ul class="list setting-list">
             ${keys.map((k) =>
               row({
@@ -940,7 +940,7 @@ function keysView(
           placeholder: "ssh-ed25519 AAAA…",
         })}
         <div class="form-actions">
-          ${btn("Add SSH key", { variant: "primary" })}
+          ${btn("Add computer key", { variant: "primary" })}
         </div>
         ${refusal(values.error)}
       </form>`,
@@ -952,7 +952,7 @@ export function keysPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const body = keysView(ctx, { name: "", key: "" });
-  return timePhase(ctx.request, "render", () => accountShell(ctx, "keys", "SSH keys", body));
+  return timePhase(ctx.request, "render", () => accountShell(ctx, "keys", "Computer keys", body));
 }
 
 // POST /settings/keys
@@ -971,7 +971,7 @@ export async function keyCreate(ctx: Ctx): Promise<Response> {
     return accountShell(
       ctx,
       "keys",
-      "SSH keys",
+      "Computer keys",
       keysView(ctx, {
         name,
         key,

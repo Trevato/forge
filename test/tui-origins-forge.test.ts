@@ -73,7 +73,7 @@ test("c connects another forge by address and token, and the list says what did 
   };
   try {
     await key("k");
-    await type("Origins");
+    await type("Connected accounts");
     await key("enter");
     expect(app.screen.toText()).toContain("Press c to connect one.");
     // A forge has no device sign-in: the terminal says so and points at the page.
@@ -123,7 +123,7 @@ test("a token the forge refuses connects nothing and says so", async () => {
   };
   try {
     await press("k", true);
-    await type("Origins");
+    await type("Connected accounts");
     await press("enter");
     await press("c");
     await type(friendServers.url);

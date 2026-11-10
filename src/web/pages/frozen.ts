@@ -70,7 +70,7 @@ export function frozenBlock(ctx: Ctx, repo: Repo): Html | null {
   // Only the viewer's own working origins on the same site — scheme, host
   // and port: reconnecting lends the mirror a credential, nobody can lend
   // one that is not theirs, and one that needs re-authorizing has nothing
-  // to lend until it is (which, done under Settings → Origins, reconnects
+  // to lend until it is (which, done under Settings → Connected accounts, reconnects
   // this mirror by itself).
   const origins =
     admin && user !== undefined
@@ -87,7 +87,7 @@ export function frozenBlock(ctx: Ctx, repo: Repo): Html | null {
     : origins.length === 0
       ? html`Connect an
         account${host === "" ? null : html` at ${hostLabel(d.htmlUrl)}`} under
-          <a href="${connect}">Settings → Origins</a>: connecting one
+          <a href="${connect}">Settings → Connected accounts</a>: connecting one
           reconnects this mirror by itself.`
       : html`<form
           method="post"

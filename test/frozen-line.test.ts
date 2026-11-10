@@ -62,9 +62,9 @@ for (const path of ["/alice/frozen", "/alice/frozen/branches"]) {
   });
 }
 
-test("an admin without an origin is pointed at Settings → Origins", async () => {
+test("an admin without an origin is pointed at Settings → Connected accounts", async () => {
   const m = await get("/alice/frozen", admin);
-  expect(m).toContain("Settings → Origins");
+  expect(m).toContain("Settings → Connected accounts");
   expect(m).not.toContain("/settings/origin/reconnect");
 });
 

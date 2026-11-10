@@ -1,5 +1,5 @@
 /**
- * SSH keys in the terminal (#7242): your own keys listed, one added, a bad
+ * Computer keys in the terminal (#7242): your own keys listed, one added, a bad
  * line refused in MCP's words, one removed after a confirm.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -27,7 +27,7 @@ const line = (fill: number, comment = "") => {
   return `ssh-ed25519 ${blob.toString("base64")} ${comment}`.trim();
 };
 
-describe("SSH keys in the terminal", () => {
+describe("Computer keys in the terminal", () => {
   let dataDir: string;
   let app: App;
 
@@ -62,7 +62,7 @@ describe("SSH keys in the terminal", () => {
       open: async function () {
         key("k", true);
         await settleApp(tui);
-        await this.type("SSH keys");
+        await this.type("Computer keys");
         await this.press("enter");
       },
       stop: () => tui.stop(),

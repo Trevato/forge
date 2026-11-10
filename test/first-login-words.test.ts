@@ -24,13 +24,13 @@ describe("the first-login page of a spawned forge, in plain words", () => {
 
   afterAll(() => forge.stop());
 
-  /** The page itself: what sits in `<main>`; the menus around it are their own issue. */
+  /** The page itself, to check the first-login content is what was read. */
   const mainOf = (html: string) => /<main\b[\s\S]*?<\/main>/.exec(html)?.[0] ?? "";
 
   test("the owner's first page has no jargon", async () => {
-    const main = mainOf(await (await fetch(url("/"), { headers: { cookie: owner } })).text());
-    expect(main).toContain("Your next steps");
-    expect(jargonIn(main)).toEqual([]);
+    const html = await (await fetch(url("/"), { headers: { cookie: owner } })).text();
+    expect(mainOf(html)).toContain("Your next steps");
+    expect(jargonIn(html)).toEqual([]);
   });
 
   test("the everyday account's first page has no jargon", async () => {
@@ -41,9 +41,9 @@ describe("the first-login page of a spawned forge, in plain words", () => {
     });
     expect(res.status).toBe(303);
     const daily = (res.headers.get("set-cookie") ?? "").split(";")[0]!;
-    const main = mainOf(await (await fetch(url("/"), { headers: { cookie: daily } })).text());
-    expect(main).toContain("Your next steps");
-    expect(jargonIn(main)).toEqual([]);
+    const html = await (await fetch(url("/"), { headers: { cookie: daily } })).text();
+    expect(mainOf(html)).toContain("Your next steps");
+    expect(jargonIn(html)).toEqual([]);
   });
 
   test("the word list sees the words it is for", () => {

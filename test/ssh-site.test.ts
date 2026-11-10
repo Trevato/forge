@@ -95,7 +95,7 @@ describe("the terminal on the website", () => {
       r.text(),
     );
     expect(page).not.toContain("terminal-line");
-    expect(page).toContain('<a class="small" href="/settings/keys">SSH keys</a>');
+    expect(page).toContain('<a class="small" href="/settings/keys">Computer keys</a>');
     expect(page).toContain("host key SHA256:");
   });
 

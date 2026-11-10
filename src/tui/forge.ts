@@ -403,7 +403,7 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
     if (session.signedIn)
       commands.push({
         id: "ssh-keys",
-        title: "SSH keys",
+        title: "Computer keys",
         hint: "list, add and remove the keys that sign in as you",
         run: () => ctx.push(sshKeysScreen(session, ctx)),
       });
@@ -429,11 +429,11 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
           hint: "your browsers and tokens; d signs a browser out",
           run: () => ctx.push(signInsScreen(session, ctx)),
         },
-        // Settings → Origins' OAuth apps and MCP `origin_apps` (#7291).
+        // Settings → Connected accounts' OAuth apps and MCP `origin_apps` (#7291).
         {
           id: "origin-apps",
-          title: "Origin apps",
-          hint: "your OAuth apps for connecting origins; a adds, d removes",
+          title: "Connection apps",
+          hint: "your OAuth apps for connecting accounts; a adds, d removes",
           run: () => ctx.push(originAppsScreen(session, ctx)),
         },
       );
@@ -538,7 +538,7 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "declared flags and their live values",
         run: () => ctx.push(flagsScreen(session, ctx)),
       });
-    // Settings → Origins' trusted internal hosts: the same admin gate as the page.
+    // Settings → Connected accounts' trusted internal hosts: the same admin gate as the page.
     if (mayEditTrustedHosts(session.user))
       commands.push({
         id: "trusted-hosts",

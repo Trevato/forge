@@ -59,7 +59,7 @@ test("the password and token explanations live inside the help toggle, before th
   expect(pw.replace(helpOf(pw), "")).not.toContain("A passphrase beats a puzzle");
   expect(pw.indexOf("data-page-help")).toBeLessThan(pw.indexOf("Change password</h2>"));
   const tk = await get("/settings/tokens");
-  expect(helpOf(tk)).toContain("can never mint another token");
+  expect(helpOf(tk)).toContain("can never make another access code");
   expect(helpOf(tk)).toContain("laptop, CI, deploy box");
   expect(tk.replace(helpOf(tk), "")).not.toContain("laptop, CI, deploy box");
 });

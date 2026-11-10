@@ -95,7 +95,7 @@ export function originError(error: string): string | undefined {
     origin_protected:
       "The operator protects this repository at its origin, so nothing is pushed to it from here. Propose the change from your fork.",
     origin_paused:
-      "This connection is not verified yet, so writes through it are paused. Nothing was changed. Check it again under Settings → Origins.",
+      "This connection is not verified yet, so writes through it are paused. Nothing was changed. Check it again under Settings → Connected accounts.",
     origin_unreachable: "The origin could not be reached. Nothing was changed.",
   };
   return words[error];

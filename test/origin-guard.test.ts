@@ -677,7 +677,7 @@ describe("the guard against an operator's Forgejo", () => {
         const synced = await syncOriginNow(local.app, local.alice, id);
         expect(synced.ok && synced.value.error).toBe("");
 
-        // Settings → Origins says so, with the way out.
+        // Settings → Connected accounts says so, with the way out.
         const page = await (await browse(local, "/settings/origins")).text();
         expect(page).toContain("Couldn't verify this connection; writes paused");
         expect(page).toContain(`action="/settings/origins/${id}/check"`);
@@ -717,7 +717,7 @@ describe("the guard against an operator's Forgejo", () => {
       reset();
     });
 
-    test("Check again on Settings → Origins runs the guard and says what it found", async () => {
+    test("Check again on Settings → Connected accounts runs the guard and says what it found", async () => {
       reset();
       const local = await boot();
       // Connected before the guard: never checked, so paused once guarded.

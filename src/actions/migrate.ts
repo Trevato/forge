@@ -269,7 +269,7 @@ export function migrateMessage(error: MigrateError, limit = AT_REPOSITORY_LIMIT)
     case "no_such_origin":
       return "That origin is not one you have connected, or it has no such repository.";
     case "unreachable":
-      return "The origin could not be reached. Try again, or reconnect it under Settings → Origins.";
+      return "The origin could not be reached. Try again, or reconnect it under Settings → Connected accounts.";
     case "no_such_agent":
       return NO_SUCH_AGENT;
     case "not_a_builder":

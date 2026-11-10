@@ -37,9 +37,9 @@ afterAll(async () => {
 });
 
 const PAGES: { name: string; path: string; empty: string }[] = [
-  { name: "SSH keys", path: "/settings/keys", empty: "No SSH keys yet" },
-  { name: "Access tokens", path: "/settings/tokens", empty: "No access tokens yet" },
-  { name: "Origins", path: "/settings/origins", empty: "No origins yet" },
+  { name: "Computer keys", path: "/settings/keys", empty: "No computer keys yet" },
+  { name: "Access codes", path: "/settings/tokens", empty: "No access codes yet" },
+  { name: "Connected accounts", path: "/settings/origins", empty: "No connected accounts yet" },
 ];
 
 for (const { name, path, empty } of PAGES) {
@@ -57,16 +57,16 @@ for (const { name, path, empty } of PAGES) {
   });
 }
 
-test("access tokens: help term, field label and button say access token", async () => {
+test("access codes: help term, field label and button say access code", async () => {
   const body = await (await fetch(`${base}/settings/tokens`, { headers: { cookie } })).text();
-  expect(body).toContain("Access token name");
+  expect(body).toContain("Access code name");
   expect(body).not.toContain("Token name");
-  expect(body).toContain("Generate access token");
+  expect(body).toContain("Generate access code");
 });
 
-test("origins: the section heading reads Origins, not Connected origins", async () => {
+test("origins: the section heading reads Connected accounts, not Origins", async () => {
   const body = await (await fetch(`${base}/settings/origins`, { headers: { cookie } })).text();
-  expect(body).toContain("<h2>Origins</h2>");
+  expect(body).toContain("<h2>Connected accounts</h2>");
   expect(body).not.toContain("Connected origins");
 });
 
@@ -93,28 +93,28 @@ function boot() {
   };
 }
 
-test("terminal: Signed in makes an access token on screens titled access token", async () => {
+test("terminal: Signed in makes an access code on screens titled access code", async () => {
   const h = boot();
   try {
     await h.palette("Signed in");
-    expect(h.text()).toContain("m makes an access token");
+    expect(h.text()).toContain("m makes an access code");
     await h.keys("m");
-    expect(h.text()).toContain(" Make an access token ");
+    expect(h.text()).toContain(" Make an access code ");
     await h.keys("enter"); // the name: "token"
-    expect(h.text()).toContain(" Make an access token ");
+    expect(h.text()).toContain(" Make an access code ");
     await h.keys("enter"); // the scope: ro
-    expect(h.text()).toMatch(/^ada › Signed in › New access token$/m);
+    expect(h.text()).toMatch(/^ada › Signed in › New access code$/m);
     expect(h.text()).not.toMatch(/ (New|Make a) token /);
   } finally {
     h.stop();
   }
 });
 
-test("terminal: the origins screen is titled Origins, as the page is", async () => {
+test("terminal: the origins screen is titled Connected accounts, as the page is", async () => {
   const h = boot();
   try {
-    await h.palette("Origins");
-    expect(h.text()).toMatch(/^ada › Origins$/m);
+    await h.palette("Connected accounts");
+    expect(h.text()).toMatch(/^ada › Connected accounts$/m);
     expect(h.text()).not.toContain("Connected origins");
   } finally {
     h.stop();

@@ -85,10 +85,10 @@ export function originFlowPage(ctx: Ctx): Response {
           ${authorize === undefined
             ? html`<p>
                   This connect cannot be continued from here — the authorization
-                  link was lost. Start it again from Origins.
+                  link was lost. Start it again from Connected accounts.
                 </p>
                 <div class="bar mt">
-                  ${btn("Back to origins", {
+                  ${btn("Back to connected accounts", {
                     href: "/settings/origins",
                     variant: "primary",
                   })}

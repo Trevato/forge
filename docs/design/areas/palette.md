@@ -1,4 +1,4 @@
-# Command palette
+# Jump to anywhere
 
 The command palette is the keyboard-first fuzzy-find overlay (`⌘K` / `Ctrl K`, or the topbar's search button): the §5 `.palette` dialog, with its input, list and foot drawn by `layout.ts` and its results drawn by `openPalette()` in `src/web/client.ts`. Without script it degrades to `/search`. The file finder (`openFinder()`, `.dialog.palette.finder`) draws its rows and its empty note with the same classes. The rules live in `style/components.ts`.
 

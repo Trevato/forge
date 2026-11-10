@@ -347,9 +347,9 @@ function userMenu(
     ...forgeDoor(ctx),
     { separator: true, label: "" },
     { label: "Settings", href: "/settings", icon: "settings" },
-    { label: "Access tokens", href: "/settings/tokens", icon: "key" },
-    { label: "SSH keys", href: "/settings/keys", icon: "lock" },
-    { label: "Origins", href: "/settings/origins", icon: "globe" },
+    { label: "Access codes", href: "/settings/tokens", icon: "key" },
+    { label: "Computer keys", href: "/settings/keys", icon: "lock" },
+    { label: "Connected accounts", href: "/settings/origins", icon: "globe" },
     ...(!user.isAdmin && administersAny(ctx.app.db, user)
       ? [{ label: "Boards", href: "/boards", icon: "activity" as const }]
       : []),
@@ -410,9 +410,9 @@ const STATIC_PALETTE: PaletteItem[] = [
   { t: "Migrate a repository", h: "/migrate", c: "Create" },
   { t: "New organization", h: "/organizations/new", c: "Create" },
   { t: "Account settings", h: "/settings", c: "Settings" },
-  { t: "Access tokens", h: "/settings/tokens", c: "Settings" },
-  { t: "SSH keys", h: "/settings/keys", c: "Settings" },
-  { t: "Origins", h: "/settings/origins", c: "Settings" },
+  { t: "Access codes", h: "/settings/tokens", c: "Settings" },
+  { t: "Computer keys", h: "/settings/keys", c: "Settings" },
+  { t: "Connected accounts", h: "/settings/origins", c: "Settings" },
   { t: "Your shells", h: "/settings/shells", c: "Settings" },
 ];
 
@@ -576,33 +576,10 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
  * one that should close the dialog.
  */
 function overlays(): Html {
-  return html`<dialog
-      class="dialog palette"
-      id="palette"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Command palette"
-    >
-      <input
-        class="input palette-input"
-        type="text"
-        role="combobox"
-        aria-expanded="true"
-        aria-haspopup="listbox"
-        aria-controls="palette-list"
-        aria-autocomplete="list"
-        placeholder="Jump to a repository, page or action…"
-        aria-label="Command palette"
-        autocomplete="off"
-        autocapitalize="off"
-        spellcheck="false"
-      />
-      <div
-        class="palette-list"
-        id="palette-list"
-        role="listbox"
-        aria-label="Results"
-      ></div>
+  // One line per element: this markup ships on every page, so its indentation is bytes too.
+  return html`<dialog class="dialog palette" id="palette" role="dialog" aria-modal="true" aria-label="Jump to anywhere">
+      <input class="input palette-input" type="text" role="combobox" aria-expanded="true" aria-haspopup="listbox" aria-controls="palette-list" aria-autocomplete="list" placeholder="Jump to a repository, page or action…" aria-label="Jump to anywhere" autocomplete="off" autocapitalize="off" spellcheck="false" />
+      <div class="palette-list" id="palette-list" role="listbox" aria-label="Results"></div>
       <div class="palette-foot">
         ${kbd(["↑", "↓"])} navigate ${kbd(["↵"])} open ${kbd(["⌘", "↵"])} its app ${kbd(["esc"])} close
       </div>
@@ -736,15 +713,7 @@ function footer(ctx: Ctx, own?: Html): Html {
     ${ctx.auth.user !== undefined && ctx.auth.user.kind !== "org"
       ? html`<a class="btn" data-variant="link" data-size="sm" href="/#composer">Tell the crew</a>`
       : ""}
-    <button
-      class="btn js-only"
-      data-variant="link"
-      data-size="sm"
-      type="button"
-      data-palette
-    >
-      Command palette
-    </button>
+    <button class="btn js-only" data-variant="link" data-size="sm" type="button" data-palette>Jump to anywhere</button>
   </footer>`;
 }
 

@@ -30,7 +30,7 @@ export function sshKeysScreen(f: Session, ctx: Ctx): Screen {
     }));
 
   const screen: Screen = {
-    title: "SSH keys",
+    title: "Computer keys",
     keys: [binding(["j", "k"], "move cursor"), binding(["a"], "add"), binding(["e"], "rename"), binding(["d"], "remove")],
     render(area, s) {
       const c = ctx.theme.c;

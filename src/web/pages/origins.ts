@@ -144,14 +144,14 @@ const SECTION_ROWS: readonly (readonly [
   ["Account", "Profile", "/settings", "user", (c) => c === "profile", false],
   ["Account", "Password", "/settings/password", "lock", (c) => c === "password", false],
   ["Account", "Passkeys", "/settings/passkeys", "key", (c) => c === "passkeys", false],
-  ["Account", "SSH keys", "/settings/keys", "lock", (c) => c === "keys", false],
-  ["Account", "Access tokens", "/settings/tokens", "key", (c) => c === "tokens", false],
+  ["Account", "Computer keys", "/settings/keys", "lock", (c) => c === "keys", false],
+  ["Account", "Access codes", "/settings/tokens", "key", (c) => c === "tokens", false],
   ["Account", "Confirms", "/settings/confirms", "check", (c) => c === "confirms", false],
   ["Crew and AI", "Model", "/settings/model", "key", (c) => c === "model", false],
   ["Crew and AI", "Crew", "/settings/crew", "bot", (c) => c === "crew", true],
   ["Crew and AI", "Subscriptions", "/settings/subscriptions", "key", (c) => c === "subscriptions", true],
   ["Crew and AI", "Usage", "/settings/spend", "activity", (c) => USAGE.has(c), true],
-  ["Connections", "Origins", "/settings/origins", "globe", (c) => c === "origins", false],
+  ["Connections", "Connected accounts", "/settings/origins", "globe", (c) => c === "origins", false],
   ["Connections", "Cloud accounts", "/settings/cloud", "key", (c) => c === "cloud", true],
   ["Connections", "Secrets", "/settings/secrets", "lock", (c) => c === "secrets", true],
   ["Connections", "Devices", "/settings/devices", "globe", (c) => c === "devices", true],
@@ -689,7 +689,7 @@ function forgeSection(ctx: Ctx, values: ConnectValues): Html {
         hint: "Read is enough to bring an app; private repositories come with it.",
       })}
       ${readOnlyField()}
-      <p class="muted small">Make the token there: ${tokens} (Settings → Access tokens).</p>
+      <p class="muted small">Make the token there: ${tokens} (Settings → Access codes).</p>
       <div class="form-actions">
         ${btn("Connect that forge", { variant: "primary", icon: "globe" })}
       </div>
@@ -794,14 +794,14 @@ function originsView(
     </p>
     ${origins.length === 0
       ? html`<section class="settings-block">
-          <h2>Origins</h2>
+          <h2>Connected accounts</h2>
           <p class="small">
-            No origins yet: connect another forge, GitHub, a Forgejo
+            No connected accounts yet: connect another forge, GitHub, a Forgejo
             instance or a Gitea instance below.
           </p>
         </section>`
       : html`<section class="settings-block">
-          <h2>Origins</h2>
+          <h2>Connected accounts</h2>
           <ul class="list setting-list" data-origins>
             ${origins.map((o) =>
               originCard(
@@ -820,7 +820,7 @@ function originsView(
         )
       : null}
     <section class="settings-block" id="connect">
-      <h2>Connect an origin</h2>
+      <h2>Connect an account</h2>
       <ul class="list">
         ${connectPath(
           "connect-forge",
@@ -925,9 +925,9 @@ export function shell(
   return page(
     {
       ctx,
-      title: "Origins",
+      title: "Connected accounts",
       ...(scriptJs === undefined ? {} : { scriptJs }),
-      body: html`<div class="page-head"><h1>Origins</h1></div>
+      body: html`<div class="page-head"><h1>Connected accounts</h1></div>
         ${settingsLayout(
           accountSections("origins", {
             admin: ctx.auth.user?.isAdmin === true,
@@ -1218,8 +1218,8 @@ export function notFoundNote(): Html {
   return empty({
     icon: "search",
     title: "No such connect",
-    note: "It finished, expired, or was never yours. Start again from Origins.",
-    action: btn("Back to origins", {
+    note: "It finished, expired, or was never yours. Start again from Connected accounts.",
+    action: btn("Back to connected accounts", {
       href: "/settings/origins",
       variant: "primary",
     }),
