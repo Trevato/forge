@@ -2,6 +2,7 @@ import { noteRead, telemetryReader } from "../../../actions/telemetry.ts";
 import { getIssue } from "../../../core/issues.ts";
 import { getPull, pullDir, pullMergeState } from "../../../core/pulls.ts";
 import { canWrite } from "../../../core/repos.ts";
+import { bringUpToDate } from "../../../crew/autonomy.ts";
 import { mayView } from "../../../core/sealed.ts";
 import { whyIssue, whyPull, liveHead, whyRepo, type Why } from "../../../flow/why.ts";
 import { countRead } from "../../../system/telemetry_reads.ts";
@@ -28,7 +29,7 @@ const said = (subject: string, why: Why) =>
 
 export const tool: Tool = {
   name: "flow",
-  doc: "with no arguments, the forge's pipeline (a forge admin's, or an agent the owner granted `telemetry:read`; private repositories cut out): per stage counts, `oldestWaiting`, `capacity`, the bottleneck, the merge `queue` and what each reviewer has `reviewing`, and `declines` (crew runs declined in 24 h, by reason) (the `ui://forge/flow` card); with `{ q, sort? }`, the rows a fleet query line selects: `{ kind, columns, items }`, only rows you may read, `sort` a column key led by `-` to reverse, a bad line answers its reason; with `{ q, action: { verb, value }, apply? }`, a fleet operation over those rows as `POST /api/v1/fleet/ops` answers it: the dry-run plan `{ dryRun: true, query, kind, verb, value, reversible, rows, counts }` and nothing changed, or with `apply: true` (an admin token, a person) the receipt `{ dryRun: false, id, rows, … }` whose id `limb` undoes; with `{ kind: drift }`, `{ drifting: [{ repo, number, landings, hours }] }` the open pulls over 25 landings or 6 h behind main, furthest first; each is brought up to date by `POST /{repo}/pulls/{number}/update`; with `{ kind: bugs }`, `{ open, overdue, bugs: [{ repo, number, priority, dueAt }] }` soonest due first, at most 100 (an admin sees all, anyone else public repositories); with `{ repo, issue? or pull? }` (a repository writer), why it is not moving: `{ subject, moving, state?, cause, says, clears, next? }`, the first of wall (a person decides access), ceiling, hot_file, blocked_by, later_gate, no_builder, no_headroom, red_check, waiting_review that holds it (`flow/why.ts`); `repo` alone asks about the repository's builders",
+  doc: "with no arguments, the forge's pipeline (a forge admin's, or an agent the owner granted `telemetry:read`; private repositories cut out): per stage counts, `oldestWaiting`, `capacity`, the bottleneck, the merge `queue` and what each reviewer has `reviewing`, and `declines` (crew runs declined in 24 h, by reason) (the `ui://forge/flow` card); with `{ q, sort? }`, the rows a fleet query line selects: `{ kind, columns, items }`, only rows you may read, `sort` a column key led by `-` to reverse, a bad line answers its reason; with `{ q, action: { verb, value }, apply? }`, a fleet operation over those rows as `POST /api/v1/fleet/ops` answers it: the dry-run plan `{ dryRun: true, query, kind, verb, value, reversible, rows, counts }` and nothing changed, or with `apply: true` (an admin token, a person) the receipt `{ dryRun: false, id, rows, … }` whose id `limb` undoes; with `{ kind: drift }`, `{ drifting: [{ repo, number, landings, hours }] }` the open pulls over 25 landings or 6 h behind main, furthest first; each is brought up to date by `POST /{repo}/pulls/{number}/update`, or with `{ kind: drift, repo, pull, action: update }` (a repository writer) the same: `{ updating, by }` names the agent, or a refusal in the route's words; with `{ kind: bugs }`, `{ open, overdue, bugs: [{ repo, number, priority, dueAt }] }` soonest due first, at most 100 (an admin sees all, anyone else public repositories); with `{ repo, issue? or pull? }` (a repository writer), why it is not moving: `{ subject, moving, state?, cause, says, clears, next? }`, the first of wall (a person decides access), ceiling, hot_file, blocked_by, later_gate, no_builder, no_headroom, red_check, waiting_review that holds it (`flow/why.ts`); `repo` alone asks about the repository's builders",
   description:
     "Pipeline (admin); `q`: `/fleet` rows, `action` plans an op, `apply` does it; `kind:bugs`; `repo`: why stuck.",
   inputSchema: {
@@ -37,18 +38,32 @@ export const tool: Tool = {
       kind: { type: "string", enum: ["bugs", "drift"] },
       q: { type: "string", maxLength: 500 },
       sort: { type: "string" },
-      action: { type: "object" },
+      action: {},
       apply: { type: "boolean" },
       repo: REPO_ARG,
       issue: { type: "integer", minimum: 1 },
       pull: { type: "integer", minimum: 1 },
     },
   },
-  // Only `apply: true` changes anything; without `apply`, or with `apply: false`, a call reads or plans.
+  // Only `apply: true` or the drift `update` changes anything; any other call reads or plans.
   writes: true,
-  readsWithout: "apply",
-  readsWhen: (args) => args["apply"] === false,
+  readsWhen: (args) => args["apply"] !== true && args["action"] !== "update",
   async run(ctx, user, args) {
+    if (args["action"] === "update") {
+      // As `POST /{repo}/pulls/{number}/update`: a writer asks the pull's agent to bring its branch up to date.
+      if (args["kind"] !== "drift") return bad("invalid", "action: update goes with kind: drift, repo and pull");
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const n = number(args["pull"]);
+      if (n === undefined) return bad("invalid", "pull is the number of the drifting pull");
+      const pull = getPull(ctx.app.db, repo.id, n);
+      if (pull === undefined || !mayView(ctx.app.db, repo, pull, user)) return bad("no_such_pull", `no pull #${n}`);
+      if (!canWrite(ctx.app.db, repo, user)) return bad("forbidden", "Only someone who can write here brings a pull up to date.");
+      const who = pull.state === "open" && pull.mergedAt === null ? bringUpToDate(ctx.app, repo, pull, []) : undefined;
+      if (who === undefined)
+        return bad("refused", "The crew could not take it now (closed, no agent, or it has already tried its limit); say what to do on the pull.");
+      return good({ updating: `${repo.ownerName}/${repo.name}!${n}`, by: who });
+    }
     if (args["action"] !== undefined || args["apply"] !== undefined) {
       if (typeof args["q"] !== "string") return bad("invalid", "an action needs q, the fleet query line it acts on");
       if (args["apply"] !== undefined && typeof args["apply"] !== "boolean") return bad("invalid", "apply is true or false");
