@@ -154,7 +154,9 @@ curate, never implement.
   `GIT_CONFIG_SYSTEM=/dev/null`, `GIT_TERMINAL_PROMPT=0`, explicit
   `GIT_PROTOCOL` only); every ref/path argument validated (no `-` prefix, no
   `..`, no absolute paths); wall-clock timeouts with process kill on every
-  spawn; `--` separators everywhere git accepts them.
+  spawn; `--` separators everywhere git accepts them. Every file under `src/`
+  that starts a process is listed in `test/spawn-sites.test.ts` with why its
+  arguments are fixed or validated; a new or vanished site fails that test.
 
 ## Data & state model
 
