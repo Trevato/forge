@@ -19,6 +19,7 @@ import { parentUrlProblem } from "./core/parent_releases.ts";
 import { releaseEnv } from "./release/env.ts";
 import { createApp } from "./app.ts";
 import { readOnlyFrom } from "./http/read_only.ts";
+import { warmDisplays } from "./display/known.ts";
 import { warmFlow } from "./system/flow_cache.ts";
 import { backfillCarried } from "./core/carried.ts";
 import { refreshCatalogQuietly } from "./packs/catalog.ts";
@@ -574,6 +575,8 @@ if (crew !== undefined) {
 void bootHostedChildren(app);
 // The pipeline answer is filled in slices behind the listener, so no read computes it (#8978).
 void warmFlow(app);
+// Every repository's display read behind the listener, so /displays never pays the cold read (#11007).
+void warmDisplays(app).catch(() => undefined);
 // A spawned child's first boot: its direction, opened once for its planner
 // (spawn/first-boot.ts). A forge that was not spawned is untouched.
 await firstBoot(app);

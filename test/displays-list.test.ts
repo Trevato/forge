@@ -19,6 +19,7 @@ import { pinBuild, type Demo } from "../src/git/builds.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
+import { DISPLAYS_SENTENCE } from "../src/display/known.ts";
 import { entry as displaysEntry, displaysScreen } from "../src/tui/screens/displays.ts";
 import { ENTRIES } from "../src/tui/screens/entries.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -129,6 +130,7 @@ describe("the displays list, page and terminal screen", () => {
       const mine = await text("/displays", alice);
       expect(listed(mine)).toEqual({ "alice/arcade": "3", "alice/shelf": "2", "alice/hidden": "2", "alice/broken": "None" });
       expect(mine).toContain('href="/alice/arcade"');
+      expect(mine).toContain(DISPLAYS_SENTENCE.slice(0, 60));
       expect(mine).toContain("Arcade night");
       expect(mine).toContain("display.json is invalid");
       // A private source's showcased demo is published: it counts for another reader too.
@@ -166,7 +168,7 @@ describe("the displays list, page and terminal screen", () => {
         const r = await fetch(`${bareServers.url}/displays`, { headers: { cookie: `forge_session=${createSession(bare.db, made.value.id).token}` } });
         const page = await r.text();
         expect(page).toContain("No displays");
-        expect(page).toContain("A display shows a repository&#39;s showcased demos.");
+        expect(page).toContain("A display is a showcase screen");
         expect(page).toContain("Add a display.json to a repository&#39;s default branch");
       } finally {
         bareServers.stop();
@@ -191,6 +193,7 @@ describe("the displays list, page and terminal screen", () => {
       };
       const mine = await screenText(alice);
       for (const name of Object.keys(listed(await text("/displays", alice)))) expect(mine).toContain(name);
+      expect(mine).toContain(DISPLAYS_SENTENCE.slice(0, 60));
       expect(mine).toContain("Arcade night");
       expect(mine).toContain("display.json is invalid");
       expect(mine).toContain("alice/hidden");

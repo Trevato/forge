@@ -41,6 +41,10 @@ class Kept<T> {
     this.epoch.set(key, (this.epoch.get(key) ?? 0) + 1);
   }
 
+  has(key: string): boolean {
+    return this.kept.has(key);
+  }
+
   keys(): IterableIterator<string> {
     return this.kept.keys();
   }
@@ -246,13 +250,73 @@ export async function listedDisplays(app: App, viewer: User | undefined): Promis
   return shown.map((d, i) => ({ ...d, demos: counts[i] }));
 }
 
+/**
+ * The same list from what is kept alone: no git, no wait. A repository not
+ * yet read is left out, and `complete` says whether any was.
+ */
+export function knownDisplays(app: App, viewer: User | undefined): { rows: ListedDisplay[]; complete: boolean } {
+  const k = knownFor(app);
+  const all = listEveryRepo(app.db);
+  let complete = true;
+  const having = all.flatMap((repo) => {
+    if (!k.displays.has(repo.id)) {
+      complete = false;
+      return [];
+    }
+    const config = k.displays.peek(repo.id);
+    return config === undefined ? [] : [{ repo, config }];
+  });
+  const readable = readableRepoIds(app.db, viewer, having.map((d) => d.repo.id));
+  const rows = having
+    .filter((d) => readable.has(d.repo.id))
+    .map((d) => ({ ...d, demos: d.config.ok ? k.counts.peek(d.repo.id)?.n : undefined }));
+  return { rows, complete };
+}
+
+/**
+ * `listedDisplays`, but never later than `ms`: a cold cache reads git for
+ * every repository on the forge (two processes each, #11007), so a slow
+ * read answers with what is kept and finishes behind the page.
+ */
+export async function listedDisplaysWithin(app: App, viewer: User | undefined, ms: number): Promise<{ rows: ListedDisplay[]; complete: boolean }> {
+  const full = listedDisplays(app, viewer).then((rows) => ({ rows, complete: true }));
+  full.catch(() => undefined);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), ms);
+  });
+  const first = await Promise.race([full, late]);
+  clearTimeout(timer);
+  return first ?? knownDisplays(app, viewer);
+}
+
+/** The longest the list waits on git before it answers with what is kept (#11007). */
+export const LIST_WAIT_MS = 150;
+/** The wait in force, for the page and the terminal screen; a test sets it to 0 to see the cold answer without a race. */
+export const listWait = { ms: LIST_WAIT_MS };
+
+/** Read every repository's display and count behind the listener, so no visit pays the cold read (#11007). */
+export async function warmDisplays(app: App): Promise<void> {
+  // One pass over every repository, private ones too: whoever may see a display, its row is kept.
+  // An event (push, merge, repo.*, build.*) drops one entry, so the next visit reads only that
+  // repository again; a ref that moves with no event is caught by FRESH_MS.
+  await inTurn(listEveryRepo(app.db), async (repo) => {
+    const config = await displayOf(app, repo);
+    if (config?.ok === true) await demoCount(app, repo, config.value);
+  });
+}
+
 /** Of `repos`, those with no `display.json` on their default branch. */
 export async function withoutDisplay(app: App, repos: readonly Repo[]): Promise<Repo[]> {
   const read = await inTurn(repos, (repo) => displayOf(app, repo));
   return repos.filter((_, i) => read[i] === undefined);
 }
 
-/** What a display is and where one comes from; the page and the terminal screen share it. */
-export const DISPLAYS_NOTE = "A display shows a repository's showcased demos. Add a display.json to a repository's default branch to make one.";
+/** What a display is; the page and the terminal screen say it once, above the list. */
+export const DISPLAYS_SENTENCE = "A display is a showcase screen for a repository: its pinned demos, laid out as a shelf, grid or graph, to open full screen.";
+/** How to make one; the empty state of the page and of the terminal screen. */
+export const DISPLAYS_NOTE = "Add a display.json to a repository's default branch to make one.";
 /** The link text for a display whose file does not parse. */
 export const INVALID_TITLE = "display.json is invalid";
+/** Said while a cold list is still reading; an empty cold answer says only this, never "No displays". */
+export const DISPLAYS_READING = "Still reading some repositories, so this list may be short.";
