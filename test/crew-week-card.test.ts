@@ -15,7 +15,7 @@ import { createRepo } from "../src/actions/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
-import { weekCard } from "../src/crew/week_card.ts";
+import { weekCard, weekReturns, RETURNED_CAP } from "../src/crew/week_card.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { statements } from "./helpers/statements.ts";
@@ -117,13 +117,75 @@ test("the crew page: a dense row for the busy one, the word idle for the rest", 
   expect(res.status).toBe(200);
   const page = await res.text();
   const table = page.slice(page.indexOf('id="crew-week"'), page.indexOf("</table>", page.indexOf('id="crew-week"')));
-  const rows = table.match(/<tr[^>]*>[\s\S]*?<\/tr>/g)!.slice(1);
+  const rows = table.match(/<tr[^>]*>[\s\S]*?<\/tr>/g)!.slice(1).filter((r) => !r.startsWith("<tr data-returned"));
   expect(rows).toHaveLength(4);
   expect(rows[3]).toMatch(/smith[\s\S]*>2<[\s\S]*>1<[\s\S]*\$1\.25/);
   expect(rows[3]).not.toContain("idle");
   expect(rows[2]).toContain("idle");
   expect(rows[2]).not.toContain("$0");
   expect(rows[1]).toContain("idle");
+});
+
+test("a Returned count opens onto the pulls and why; zero stays a bare 0", async () => {
+  const smith = app.db.query<{ id: string }, []>(`SELECT id FROM user WHERE username = 'smith'`).get()!;
+  const i = createIssue(app.db, { repoId, authorId: smith.id, title: "Second <b>pull</b>", kind: "pull" });
+  if (!i.ok) throw new Error(String(i.error));
+  app.db.query(`INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid) VALUES (?1, 'main', 'h2', 'a', 'b')`).run(i.value.id);
+  app.db.query(`INSERT INTO review (id, issue_id, author_id, state, body, created_at) VALUES (?1, ?2, ?3, 'changes_requested', ?4, ?5)`)
+    .run(crypto.randomUUID(), i.value.id, reviewer.id, "Needs <script>x</script>\nsecond line", daysAgo(0.5));
+  const map = weekReturns(app.db);
+  expect(map.get("smith")!.length).toBe(2);
+  expect(map.has("quiet")).toBe(false);
+  const page = await (await fetch(`${servers.url}/settings/crew`, { headers: { cookie } })).text();
+  const table = page.slice(page.indexOf('id="crew-week"'), page.indexOf("</table>", page.indexOf('id="crew-week"')));
+  const rows = table.match(/<tr[^>]*>[\s\S]*?<\/tr>/g)!.slice(1);
+  const rowOf = (name: string) => rows.find((r) => r.includes(`>${name}<`))!;
+  const countRow = rowOf("smith");
+  const cell = countRow.match(/<td class="num">[\s\S]*?<\/td>/g)![1]!;
+  expect(cell).toMatch(/^<td class="num"><a href="#returned-smith">\d+<\/a><\/td>$/);
+  expect(countRow).not.toContain("<details");
+  const smithRow = rows.find((r) => r.includes('data-returned="smith"'))!;
+  expect(smithRow).toContain('<td colspan="4">');
+  expect(smithRow).toContain('<details id="returned-smith"');
+  expect(smithRow).not.toContain('class="num"');
+  expect(smithRow).not.toContain('href="/ada/hello/pulls"');
+  expect(rows.some((r) => r.includes('data-returned="quiet"'))).toBe(false);
+  expect(smithRow).toContain("ada/hello");
+  expect(smithRow).toContain("Second &lt;b&gt;pull&lt;/b&gt;");
+  expect(smithRow).toContain("Needs &lt;script&gt;x&lt;/script&gt;");
+  expect(smithRow).not.toContain("second line");
+  expect(smithRow.match(/\/ada\/hello\/pulls\/\d+/g)!.length).toBe(2);
+  expect(rowOf("quiet")).not.toContain("<details");
+  expect(smithRow).not.toContain("more</li>");
+  app.db.query("DELETE FROM review WHERE issue_id = ?1").run(i.value.id);
+  app.db.query("DELETE FROM pull WHERE issue_id = ?1").run(i.value.id);
+});
+
+test("past the cap the list stops at RETURNED_CAP and says and N more, on the page and in the terminal", async () => {
+  const smith = app.db.query<{ id: string }, []>(`SELECT id FROM user WHERE username = 'smith'`).get()!;
+  const made: string[] = [];
+  for (let k = 0; k < RETURNED_CAP + 2; k++) {
+    const i = createIssue(app.db, { repoId, authorId: smith.id, title: `bulk ${k}`, kind: "pull" });
+    if (!i.ok) throw new Error(String(i.error));
+    made.push(i.value.id);
+    app.db.query(`INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid) VALUES (?1, 'main', 'hb', 'a', 'b')`).run(i.value.id);
+    app.db.query(`INSERT INTO review (id, issue_id, author_id, state, created_at) VALUES (?1, ?2, ?3, 'changes_requested', ?4)`)
+      .run(crypto.randomUUID(), i.value.id, reviewer.id, daysAgo(0.1));
+  }
+  const line = weekCard(app.db).find((l) => l.username === "smith")!;
+  expect(weekReturns(app.db).get("smith")!.length).toBe(RETURNED_CAP);
+  const more = line.returned - RETURNED_CAP;
+  expect(more).toBeGreaterThan(0);
+  const page = await (await fetch(`${servers.url}/settings/crew`, { headers: { cookie } })).text();
+  expect(page).toContain(`and ${more} more</li>`);
+  const { weekRows } = await import("../src/tui/screens/weekcard.ts");
+  const row = weekRows(weekCard(app.db), weekReturns(app.db)).find((r) => r.title === "smith")!;
+  expect(row.below!.length).toBe(RETURNED_CAP + 1);
+  expect(row.below!.at(-1)).toBe(`and ${more} more`);
+  for (const id of made) {
+    app.db.query("DELETE FROM review WHERE issue_id = ?1").run(id);
+    app.db.query("DELETE FROM pull WHERE issue_id = ?1").run(id);
+  }
 });
 
 test("the API and the MCP crew tool answer the same numbers", async () => {

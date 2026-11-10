@@ -5,7 +5,7 @@
  * admin; anyone else sees one sentence and no figures.
  */
 
-import { weekCard, WEEK_DAYS, type WeekLine } from "../../crew/week_card.ts";
+import { weekCard, weekReturns, WEEK_DAYS, type ReturnedPull, type WeekLine } from "../../crew/week_card.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
@@ -16,17 +16,27 @@ import { ListState, drawList, type ListRow } from "./common.ts";
 import type { PaletteEntry } from "./entries.ts";
 
 /** One row per member; one with nothing in the week reads "idle", not zeros. */
-export function weekRows(lines: readonly WeekLine[]): ListRow[] {
-  return lines.map((l) => ({
-    title: l.username,
-    secondary: l.idle ? "idle" : `merged ${l.merged} · returned ${l.returned} · spent $${l.spentUsd.toFixed(2)}`,
-  }));
+export function weekRows(
+  lines: readonly WeekLine[],
+  returns: ReadonlyMap<string, readonly ReturnedPull[]> = new Map(),
+): ListRow[] {
+  return lines.map((l) => {
+    const row = {
+      title: l.username,
+      secondary: l.idle ? "idle" : `merged ${l.merged} · returned ${l.returned} · spent $${l.spentUsd.toFixed(2)}`,
+    };
+    const pulls = returns.get(l.username) ?? [];
+    if (l.returned === 0 || pulls.length === 0) return row;
+    const more = l.returned - pulls.length;
+    const below = pulls.map((p) => `${p.repo}#${p.number} ${p.title}${p.why ? ` — ${p.why}` : ""}`);
+    return { ...row, below: more > 0 ? [...below, `and ${more} more`] : below };
+  });
 }
 
 export function weekCardScreen(f: Session, ctx: Ctx): Screen {
   const state = new ListState();
   const allowed = f.user?.isAdmin === true;
-  const rows = allowed ? weekRows(weekCard(f.db)) : [];
+  const rows = allowed ? weekRows(weekCard(f.db), weekReturns(f.db)) : [];
   return {
     title: "Crew this week",
     keys: [binding(["j", "k"], "move cursor")],

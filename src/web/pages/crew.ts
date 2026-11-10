@@ -37,7 +37,7 @@ import {
   type SplitScorecard,
 } from "../../core/scorecard.ts";
 import { keeperDays, type KeeperDay } from "../../flow/keeper_rate.ts";
-import { weekCard, WEEK_DAYS, type WeekLine } from "../../crew/week_card.ts";
+import { weekCard, weekReturns, WEEK_DAYS, type ReturnedPull, type WeekLine } from "../../crew/week_card.ts";
 import { knobsCard } from "./knobs.ts";
 import { decideChange, readReview } from "../../actions/model_review.ts";
 import { wastedDays, type WastedDay } from "../../core/wasted_days.ts";
@@ -58,6 +58,7 @@ import { flashTo, page } from "../layout.ts";
 import {
   btn,
   confirmAction,
+  disclosure,
   icon,
   time,
   field as uiField,
@@ -391,8 +392,35 @@ function scorecardCard(
   );
 }
 
+/** A Returned count above zero links to its fold below; zero stays a bare 0. Only the count sits in the numeric cell. */
+function returnedCount(l: WeekLine, pulls: readonly ReturnedPull[]): Html | number {
+  if (l.returned === 0 || pulls.length === 0) return l.returned;
+  return html`<a href="#returned-${l.username}">${l.returned}</a>`;
+}
+
+/** The pulls that came back and why, folded in a full-width row under the member's: one link per pull. */
+function returnedRow(l: WeekLine, pulls: readonly ReturnedPull[]): Html | null {
+  if (l.returned === 0 || pulls.length === 0) return null;
+  const more = l.returned - pulls.length;
+  return html`<tr data-returned="${l.username}">
+    <td colspan="4">${disclosure(
+      `${l.returned} returned to ${l.username}`,
+      html`<ul class="list">
+        ${pulls.map(
+          (p) => html`<li>
+            <span class="muted">${p.repo}</span>
+            <a href="/${p.repo}/pulls/${p.number}">#${p.number}</a> ${p.title}${p.why ? html` <span class="muted">— ${p.why}</span>` : null}
+          </li>`,
+        )}
+        ${more > 0 ? html`<li class="muted">and ${more} more</li>` : null}
+      </ul>`,
+      { id: `returned-${l.username}`, small: true },
+    )}</td>
+  </tr>`;
+}
+
 /** The week at a glance: one dense row per member; a member with nothing reads "idle". */
-function weekCardPanel(lines: readonly WeekLine[]): Html {
+function weekCardPanel(lines: readonly WeekLine[], returns: ReadonlyMap<string, readonly ReturnedPull[]>): Html {
   return panel(
     html`<div class="table-scroll">
       <table class="table" id="crew-week" data-sticky-lead>
@@ -409,9 +437,10 @@ function weekCardPanel(lines: readonly WeekLine[]): Html {
               : html`<tr>
                   <td>${userLink(l.username, { avatar: false })}</td>
                   <td class="num">${l.merged}</td>
-                  <td class="num">${l.returned}</td>
+                  <td class="num">${returnedCount(l, returns.get(l.username) ?? [])}</td>
                   <td class="num">$${l.spentUsd.toFixed(2)}</td>
-                </tr>`,
+                </tr>
+                ${returnedRow(l, returns.get(l.username) ?? [])}`,
           )}
         </tbody>
       </table>
@@ -720,7 +749,7 @@ function crewView(
         </div>`,
         { title: "Agents", id: "crew-agents" },
       )}
-  ${when(agents.length > 0 && ctx.auth.user?.isAdmin === true, () => weekCardPanel(weekCard(ctx.app.db)))}
+  ${when(agents.length > 0 && ctx.auth.user?.isAdmin === true, () => weekCardPanel(weekCard(ctx.app.db), weekReturns(ctx.app.db)))}
   ${when(agents.length > 0, () =>
     scorecardCard(
       agents,

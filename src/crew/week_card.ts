@@ -59,3 +59,49 @@ export function weekCard(db: Database, now: Date = new Date()): WeekLine[] {
       return { username: u.username, merged: m, returned: r, spentUsd: s, idle: m === 0 && r === 0 && s === 0 };
     });
 }
+
+export interface ReturnedPull {
+  readonly repo: string;
+  readonly number: number;
+  readonly title: string;
+  /** The first line of the change request, clipped; empty when the review had no words. */
+  readonly why: string;
+}
+
+/** Most pulls listed per member; the rest are counted, not listed. */
+export const RETURNED_CAP = 10;
+
+/**
+ * The pulls behind each member's Returned count, newest first, at most
+ * RETURNED_CAP per member (by username). One read for the whole page; it
+ * counts the same reviews as `weekCard`, one entry per change request.
+ */
+export function weekReturns(db: Database, now: Date = new Date()): Map<string, ReturnedPull[]> {
+  const since = new Date(now.getTime() - WEEK_DAYS * 86_400_000).toISOString();
+  const rows = db
+    .query<{ username: string; repo: string; number: number; title: string; body: string }, [string, number]>(
+      `SELECT username, repo, number, title, body FROM (
+         SELECT author.username AS username, owner.username || '/' || repo.name AS repo,
+                issue.number AS number, issue.title AS title, review.body AS body,
+                ROW_NUMBER() OVER (PARTITION BY issue.author_id ORDER BY review.created_at DESC, review.id) AS rn
+           FROM review
+           JOIN issue ON issue.id = review.issue_id
+           JOIN pull ON pull.issue_id = issue.id
+           JOIN repo ON repo.id = issue.repo_id
+           JOIN user AS owner ON owner.id = repo.owner_id
+           JOIN user AS author ON author.id = issue.author_id
+          WHERE review.state = 'changes_requested' AND review.author_id <> issue.author_id
+            AND review.created_at >= ?1 AND author.is_agent = 1
+       ) WHERE rn <= ?2 ORDER BY username, rn`,
+    )
+    .all(since, RETURNED_CAP);
+  const out = new Map<string, ReturnedPull[]>();
+  for (const r of rows) {
+    const first = (r.body.split("\n").find((l) => l.trim() !== "") ?? "").trim();
+    const why = first.length > 140 ? `${first.slice(0, 139)}…` : first;
+    const list = out.get(r.username) ?? [];
+    list.push({ repo: r.repo, number: r.number, title: r.title, why });
+    out.set(r.username, list);
+  }
+  return out;
+}

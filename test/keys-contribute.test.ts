@@ -52,8 +52,8 @@ test("each welcomed issue is a row: j/k focus it, Enter opens it, Esc on the iss
   }
   const html = await page();
   const hrefs = await navHrefs(html);
-  expect(hrefs.sort()).toEqual(["/alice/garden/issues/1", "/alice/garden/issues/2"]);
-  await expectListKeys({ path: "/contribute", html, hrefs: await navHrefs(html), opened: { path: hrefs[0]!, body: "<main>issue</main>" } });
+  expect([...hrefs].sort()).toEqual(["/alice/garden/issues/1", "/alice/garden/issues/2"]);
+  await expectListKeys({ path: "/contribute", html, hrefs, opened: { path: hrefs[0]!, body: "<main>issue</main>" } });
   const p = await shellPage("/contribute", html);
   p.key("j");
   expect(p.doc.activeElement.getAttribute("tabindex")).toBe("-1");
