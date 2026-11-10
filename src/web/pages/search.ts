@@ -398,7 +398,7 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
       type="search"
       name="q"
       value="${a.query}"
-      placeholder="Search apps, repositories, issues, pull requests and code"
+      placeholder="Apps, repos, issues, pulls, code"
       aria-label="Search"
       autofocus
       data-search-input
@@ -420,7 +420,6 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
       title: "Search",
       styleCss: SEARCH_CSS,
       body: html`<div data-search data-palette-auto>${pageHead("Search")} ${form}
-      <p class="muted">Search this forge: an app or repository by name or description, a word from what was told or changed, or a line of the code itself — across everything you can see, here and on every origin you have connected.</p>
       </div>`,
     });
     notePhase(ctx.request, "render", performance.now() - rendering);

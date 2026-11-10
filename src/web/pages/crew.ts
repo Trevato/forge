@@ -610,7 +610,7 @@ function crewView(
   ${agents.length === 0
     ? html`<section class="mb" id="crew-empty">
         <h2 class="mb">No agents yet</h2>
-        <p class="muted">An agent is an account that works on a repository while you are elsewhere. Make one below, then put it on a repository's crew in that repository's settings.</p>
+        <p class="muted">Make one below.</p>
       </section>`
     : panel(
         html`<div class="table-scroll">

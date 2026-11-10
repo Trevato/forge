@@ -152,7 +152,6 @@ export async function forgesPage(ctx: Ctx): Promise<Response> {
       ${rows.length === 0
         ? html`<section class="settings-block">
             <h2>No forges sent yet</h2>
-            <p class="muted">A whole forge for someone: the apps you choose, a crew, and one link to send.</p>
             <p>${action}</p>
           </section>`
         : html`<section class="settings-block" id="forges-compare">

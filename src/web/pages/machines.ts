@@ -86,7 +86,6 @@ export function machineRows(repo: Repo, list: readonly Machine[], states: Readon
 function render(ctx: Ctx, repo: Repo, list: readonly Machine[], sessions: readonly SessionRecord[], states: ReadonlyMap<string, MachineState>): Response {
   const machines = html`<section class="settings-block">
     <h2>Machines</h2>
-    <p class="muted">A machine is where the crew shell runs; each writer gets a directory and home of their own on it.</p>
     <ul class="list setting-list" id="machines">
       ${machineRows(repo, list, states)}
     </ul>

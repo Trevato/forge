@@ -59,6 +59,6 @@ function forge(p: PinnedView, f: PinnedFacts): Html {
 
 export function pinnedListPage(forges: PinnedView[], f: PinnedFacts): Html {
   return html`<div class="page-head"><h1>Pinned forges</h1></div>
-    <p class="muted">Forges you put on your own cloud, each on one version that changes only when you update it. <a href="/deploy-to">Deploy a pinned forge</a>.</p>
+    <p><a href="/deploy-to">Deploy a pinned forge</a></p>
     ${forges.length === 0 ? html`<p role="status">No pinned forge yet. Deploy one to a cloud account that allows writes.</p>` : forges.map((p) => forge(p, f))}`;
 }
