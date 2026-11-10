@@ -92,7 +92,7 @@ test("each return of the public door and of `answered` is floored", () => {
   // `response` is only ever what `answered` gave back.
   for (const m of region.matchAll(/\bresponse\s*=\s*([^\n;]+)/g)) expect(m[1]!.trim()).toMatch(/^await answered\(/);
   // `answered` floors what the work returns, and its failure path floors too.
-  expect(region).toContain("const done = await compress(request, response).then(securityFloor)");
+  expect(region).toMatch(/const done = await compress\(request, response\)\.then\(\(r\) => securityFloor\(/);
   expect(server).toMatch(/function failure\([^]*?\n}\n/);
   const failure = server.match(/function failure\([^]*?\n}\n/)![0];
   for (const r of failure.matchAll(/\breturn\s+([^\n]+)/g)) expect(r[1]!.trim()).toMatch(/^securityFloor\(/);

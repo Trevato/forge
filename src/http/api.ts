@@ -132,6 +132,7 @@ import {
 import { OFFSET_LIMIT_MAX, offsetPage, offsetQuery } from "./offset_page.ts";
 import { EVENTS_LIMIT_MAX, eventsLimit, eventsPage, validEventsCursor, validEventsKind } from "../core/events_page.ts";
 import { audienceFor } from "../core/audience.ts";
+import { creditFacts } from "../actions/credit_facts.ts";
 import {
   forkParentFor,
   getReposByIds,
@@ -1605,15 +1606,18 @@ export function apiRoutes(router: Router<Handler>): void {
     return json(created.value, 201);
   });
 
-  router.add("GET", "/api/v1/repos/:owner/:name", (ctx) => {
+  router.add("GET", "/api/v1/repos/:owner/:name", async (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
     if (!repo) return notFound();
     const facts = timePhase(ctx.request, "counts", () => repoJson(ctx, repo));
     const audience = timePhase(ctx.request, "audience", () => audienceFor(ctx.app.db, repo, ctx.auth.user));
+    const credited = performance.now();
+    const credit = await creditFacts(ctx.app, repo, ctx.auth.user);
+    notePhase(ctx.request, "credit", performance.now() - credited);
     const rendering = performance.now();
     const upstream = upstreamFacts(ctx.app.db, repo, ctx.auth.user);
-    const res = json({ ...facts, audience, upstream });
+    const res = json({ ...facts, audience, upstream, credit });
     notePhase(ctx.request, "render", performance.now() - rendering);
     return res;
   });

@@ -12,6 +12,7 @@ import { AUTHOR_WINDOW, clearCreditCache, creditOf, creditText, licenceName, top
 import { runGit } from "../src/git/env.ts";
 import { createOrigin, linkRepoToOrigin } from "../src/core/origins.ts";
 import { createRepo, forkRepo, getRepoById, type Repo } from "../src/core/repos.ts";
+import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { commitFiles } from "../src/git/write.ts";
@@ -32,6 +33,7 @@ describe("the credit line of a mirror", () => {
   let plain: Repo;
   let frozen: Repo;
   let orphan: Repo;
+  let token = "";
 
   const put = async (repo: Repo, who: string, files: { path: string; content: string }[]) => {
     const r = await commitFiles(repoDir(app.reposRoot, repo.ownerName, repo.name), {
@@ -52,6 +54,7 @@ describe("the credit line of a mirror", () => {
     const made0 = await createUser(app.db, { origin: "seed", trusted: true, username: "ada", email: "ada@forge.test", adminIfFirst: true });
     if (!made0.ok) throw new Error(String(made0.error));
     const u = made0.value;
+    token = createToken(app.db, u.id, "credit", "rw").token;
     const mk = async (name: string) => {
       const r = await createRepo(app.db, app.reposRoot, { ownerId: u.id, name, visibility: "public", description: "", defaultBranch: "main" });
       if (!r.ok) throw new Error(r.error);
@@ -162,5 +165,29 @@ describe("the credit line of a mirror", () => {
     // A miss (no such directory) is empty, fast, and not kept: the real answer still comes.
     expect(await topAuthors(join(dataDir, "nowhere"), "main")).toEqual([]);
     expect((await topAuthors(dir, "main"))[0]).toBe("Zed & Zeta");
+  });
+
+  const rest = async (repo: Repo) =>
+    (await (await fetch(`${servers.url}/api/v1/repos/${repo.ownerName}/${repo.name}`)).json()) as { credit: unknown };
+  const mcp = async (repo: Repo) => {
+    const res = await fetch(`${servers.url}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "repo", arguments: { repo: `${repo.ownerName}/${repo.name}` } } }),
+    });
+    const body = (await res.json()) as any;
+    return JSON.parse(body.result.content[0].text) as { credit: unknown };
+  };
+
+  test("REST and MCP carry the credit a page prints, and null for a native repository", async () => {
+    const want = { upstream: { fullName: "up/lib", htmlUrl: "https://up.example/up/lib", viaFork: false }, licence: "MIT", authors: ["Zed & Zeta", "Quinn"] };
+    expect((await rest(mirror)).credit).toEqual(want);
+    expect((await mcp(mirror)).credit).toEqual(want);
+    const viaFork = { ...want, upstream: { ...want.upstream, viaFork: true } };
+    expect((await rest(fork)).credit).toEqual(viaFork);
+    expect((await mcp(fork)).credit).toEqual(viaFork);
+    expect((await rest(plain)).credit).toBeNull();
+    expect((await mcp(plain)).credit).toBeNull();
+    expect(((await rest(bare)).credit as { licence: string }).licence).toBe("no licence file");
   });
 });
