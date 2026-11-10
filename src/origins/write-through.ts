@@ -24,6 +24,8 @@ export type WriteThroughError =
   | "origin_refused"
   /** The account behind the origin is not verified against the operator's rules yet. */
   | "origin_paused"
+  /** The origin was connected read-only: nothing is written through it. */
+  | "origin_read_only"
   /** The operator protects the origin repository: propose from a fork. */
   | "origin_protected";
 
@@ -53,6 +55,7 @@ export function writeThroughFor(
   const link = originForRepo(app.db, repo.id);
   if (!link) return ok(undefined);
   if (link.origin.userId !== actor.id) return err("origin_owner_only");
+  if (link.origin.readOnly) return err("origin_read_only");
   if (writesPaused(app, link.origin.id) !== undefined)
     return err("origin_paused");
   const provider = providerForOrigin(app, link.origin);

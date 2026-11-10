@@ -680,6 +680,12 @@ export function originAware(error: string, status = 422): Response {
       409,
       "the operator protects this repository at its origin: nothing is pushed to it from here; propose the change from your fork",
     );
+  if (error === "origin_read_only")
+    return apiError(
+      "origin_read_only",
+      409,
+      "this account was connected read-only, so nothing is written through it; nothing was changed",
+    );
   if (error === "origin_paused")
     return apiError(
       "origin_paused",

@@ -37,7 +37,7 @@ import { FORWARDED_GIT_ENV, type RefUpdate } from "../git/hook-protocol.ts";
 import { fetchInto, resolveOid, writeRef } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { providerForOrigin, writesPaused } from "./credential.ts";
+import { providerForOrigin, READ_ONLY, writesPaused } from "./credential.ts";
 import { redact, secretsIn } from "./credentials.ts";
 import { pushToOrigin, snapshotRefs } from "./git-mirror.ts";
 import { denied } from "./operator.ts";
@@ -199,6 +199,8 @@ async function wayThrough(
       message: "this mirror has no upstream clone URL; re-mirror it",
     });
 
+  if (link.origin.readOnly)
+    return err({ message: `${link.origin.webUrl}: ${READ_ONLY}` });
   const paused = writesPaused(app, link.origin.id);
   if (paused !== undefined)
     return err({ message: `${link.origin.webUrl}: ${paused}` });
@@ -258,6 +260,7 @@ export async function pushToMirrorTarget(
   };
   const origin = getOriginById(app.db, target.originId);
   if (!origin) return fail("the origin was disconnected; reconnect it");
+  if (origin.readOnly) return fail(READ_ONLY);
   const provider = providerForOrigin(app, origin);
   if (!provider.ok) return fail("the origin needs to be reconnected");
   const authEnv = await provider.value.gitAuthEnv(target.cloneUrl);

@@ -54,6 +54,7 @@ const remoteOf = (src: RepoSource): RepoSource => ({
       authKind: "pat",
       expiresAt: null,
       needsReauth: false,
+      readOnly: false,
       software: "",
     },
     fullName: "someone/else",

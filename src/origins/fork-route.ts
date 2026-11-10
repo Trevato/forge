@@ -33,7 +33,7 @@ import type { Repo } from "../core/repos.ts";
 import { denied } from "./operator.ts";
 import { resolveOid } from "../git/merge.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { writesPaused } from "./credential.ts";
+import { READ_ONLY, writesPaused } from "./credential.ts";
 import { redact, secretsIn } from "./credentials.ts";
 import { pushToOrigin } from "./git-mirror.ts";
 import type { Provider, RemoteRepo } from "./types.ts";
@@ -243,6 +243,7 @@ export async function pushToFork(
 ): Promise<Result<string, string>> {
   // Its callers ask too; this is the push itself asking, so no path that
   // forgets cannot write through an origin whose account is not verified.
+  if (origin.readOnly) return err(READ_ONLY);
   const paused = writesPaused(app, origin.id);
   if (paused !== undefined) return err(paused);
   const tip = await resolveOid(dir, `refs/heads/${branch}`);

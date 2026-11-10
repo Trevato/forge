@@ -55,7 +55,7 @@ export function connectionsScreen(f: Session, ctx: Ctx): Screen {
           return {
             title: `${host(o.webUrl)} · ${o.login}`,
             ...(o.lastError !== "" || writesPaused(f.app, o.id) !== undefined ? { tone: "danger" as const } : {}),
-            secondary: `${o.software === "forge" ? "another forge · " : ""}${k} repositor${k === 1 ? "y" : "ies"} · ${day(o.lastSyncAt)}`,
+            secondary: `${o.software === "forge" ? "another forge · " : ""}${o.readOnly ? "read-only · " : ""}${k} repositor${k === 1 ? "y" : "ies"} · ${day(o.lastSyncAt)}`,
             meta: o.lastError !== "" ? o.lastError : writesPaused(f.app, o.id) !== undefined ? "writes paused" : o.authKind === "oauth" ? "OAuth" : "token",
           };
         }),
@@ -81,11 +81,21 @@ export function connectionsScreen(f: Session, ctx: Ctx): Screen {
                   mask: true,
                   onSubmit: (token) => {
                     if (token.trim() === "") return "Paste the token.";
-                    ctx.toast(`Connecting ${hostText}…`);
-                    return connectOrigin(f.app, user, { host: hostText, token }).then((r) => {
-                      ctx.toast(r.ok ? `Connected ${r.value.login} at ${host(r.value.webUrl)}.` : connectRefusal(r.error).message ?? connectWords(connectRefusal(r.error).code), r.ok ? "success" : "danger");
-                      ctx.invalidate();
-                    });
+                    return later(ctx, () =>
+                      promptScreen(ctx, screen, {
+                        title: "Connect an origin",
+                        label: "Read-only? Type yes to never write back to it",
+                        hint: "Leave empty to connect the ordinary way.",
+                        onSubmit: (answer) => {
+                          const readOnly = /^y(es)?$/i.test(answer.trim());
+                          ctx.toast(`Connecting ${hostText}…`);
+                          return connectOrigin(f.app, user, { host: hostText, token, readOnly }).then((r) => {
+                            ctx.toast(r.ok ? `Connected ${r.value.login} at ${host(r.value.webUrl)}${readOnly ? ", read-only" : ""}.` : connectRefusal(r.error).message ?? connectWords(connectRefusal(r.error).code), r.ok ? "success" : "danger");
+                            ctx.invalidate();
+                          });
+                        },
+                      }),
+                    );
                   },
                 }),
               );

@@ -180,6 +180,7 @@ export async function originPush(
   if (!link) return ok(undefined);
   if (link.origin.userId !== actor.id) return err("origin_owner_only");
   if (link.cloneUrl === "") return err("origin_unreachable");
+  if (link.origin.readOnly) return err("origin_read_only");
   if (writesPaused(app, link.origin.id) !== undefined)
     return err("origin_paused");
   if (denied(link.origin, link.fullName)) return err("origin_protected");

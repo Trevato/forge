@@ -128,6 +128,8 @@ export function editErrorText(error: unknown): string {
       return "The origin refused this change, so nothing landed here either.";
     if (error === "origin_protected")
       return "The operator protects this repository at its origin, so nothing is pushed to it from here. Propose the change from your fork.";
+    if (error === "origin_read_only")
+      return "This account was connected read-only, so nothing is written through it.";
     if (error === "origin_paused")
       return "This connection is not verified yet, so writes through it are paused. Check it again under Settings → Origins.";
     return "That edit could not be saved.";

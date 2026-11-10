@@ -86,6 +86,8 @@ test("c connects another forge by address and token, and the list says what did 
     await type(friendToken);
     expect(app.screen.toText()).not.toContain(friendToken);
     await key("enter");
+    expect(app.screen.toText()).toContain("Read-only?");
+    await key("enter");
     for (let i = 0; i < 50 && listOrigins(mine.db, getUserByName(mine.db, "alice")!.id).length === 0; i++) await Bun.sleep(100);
     if (listOrigins(mine.db, getUserByName(mine.db, "alice")!.id).length === 0) throw new Error(`never came: still waiting while listOrigins(mine.db, getUserByName(mine.db, "alice")!.id).length === 0`);
     await settleApp(app);
@@ -127,6 +129,7 @@ test("a token the forge refuses connects nothing and says so", async () => {
     await type(friendServers.url);
     await press("enter");
     await type("forge_not_a_token");
+    await press("enter");
     await press("enter");
     for (let i = 0; i < 30 && !app.screen.toText().includes("refused"); i++) {
       await Bun.sleep(100);

@@ -269,6 +269,7 @@ export function userRoutes(router: Router<Handler>): void {
         ? { kind }
         : {}),
       token: str(input.token),
+      readOnly: input.readOnly === true,
     });
     if (!connected.ok) {
       // A refusal that names its own reason (a missing scope) keeps it;

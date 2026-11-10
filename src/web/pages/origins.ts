@@ -282,6 +282,7 @@ function originCard(origin: Origin, mirrors: number, paused = false): Html {
       origin.webUrl,
     )}`,
     meta: html`${origin.authKind === "oauth" ? "OAuth" : "personal access token"}
+      ${when(origin.readOnly, () => html` · read-only: nothing is written back`)}
       ·
       ${origin.lastSyncAt === null
         ? html`never synced`
@@ -592,9 +593,21 @@ function tokenSection(values: ConnectValues): Html {
         autocomplete: "off",
         hint: "It is never displayed after this.",
       })}
+      ${readOnlyField()}
       ${tokenNeeds(values.tokenHost)}
       <div class="form-actions">${btn("Connect")}</div>
     </form>`;
+}
+
+/** The one Read-only checkbox, on every way to connect by token. */
+function readOnlyField(): Html {
+  return uiField({
+    label: "Read-only",
+    name: "readOnly",
+    type: "checkbox",
+    value: "1",
+    hint: "Nothing is ever written back to that account: no comments, pulls, pushes or merges.",
+  });
 }
 
 const OLDER_FORGE_DOC = "/trevato/forge/blob/main/docs/features/forge-origin-older.md#connecting-from-an-older-forge";
@@ -669,6 +682,7 @@ function forgeSection(ctx: Ctx, values: ConnectValues): Html {
         autocomplete: "off",
         hint: "Read is enough to bring an app; private repositories come with it.",
       })}
+      ${readOnlyField()}
       <p class="muted small">Make the token there: ${tokens} (Settings → Access tokens).</p>
       <div class="form-actions">
         ${btn("Connect that forge", { variant: "primary", icon: "globe" })}
@@ -973,6 +987,7 @@ export async function originConnectToken(ctx: Ctx): Promise<Response> {
   const connected = await connectOrigin(ctx.app, ctx.auth.user, {
     host,
     token,
+    readOnly: field(form, "readOnly") === "1",
   });
   if (!connected.ok) {
     // The host comes back; the token deliberately does not. Re-typing a

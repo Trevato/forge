@@ -950,6 +950,8 @@ export function forkFailure(error: string): string {
     return "The origin could not be reached. Nothing was created.";
   if (error === "origin_refused")
     return "The origin refused to fork that repository.";
+  if (error === "origin_read_only")
+    return "This account was connected read-only, so nothing is written through it.";
   if (error === "origin_paused")
     return "This connection is not verified yet, so writes through it are paused. Check it again under Settings → Origins.";
   if (error === "mirror_failed")

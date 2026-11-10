@@ -47,6 +47,8 @@ export interface Origin {
    * forge (stored as a Gitea origin, which is the dialect it speaks), else "".
    */
   readonly software: string;
+  /** Connected read-only: nothing is ever written through it (`origin_read_only`). */
+  readonly readOnly: boolean;
 }
 
 /** A repository as the origin describes it — the import picker's rows. */

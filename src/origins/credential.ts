@@ -72,6 +72,8 @@ export function credentialFor(
     software: origin.software,
     token: () => resolveToken(app, origin.id),
     writable: () => {
+      if (origin.readOnly)
+        return { ok: false, error: { error: "forbidden", message: READ_ONLY } };
       const paused = writesPaused(app, origin.id);
       return paused === undefined
         ? { ok: true, value: true }
@@ -246,6 +248,10 @@ const GUARD_RETRY_MS = 15 * 60_000;
 const GUARD_GIVE_UP_MS = 24 * 60 * 60_000;
 /** The sweep's pause between requests: one origin at a time, gently. */
 const SWEEP_PAUSE_MS = 500;
+
+/** What a write through a read-only origin is told (`origin_read_only`), everywhere. */
+export const READ_ONLY =
+  "This account was connected read-only, so nothing is written through it. Reading and syncing go on.";
 
 /** What a write through a paused origin is told, everywhere. */
 export const WRITES_PAUSED =

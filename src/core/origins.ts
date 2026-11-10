@@ -36,6 +36,7 @@ interface OriginRow {
   expires_at: string | null;
   needs_reauth: number;
   software: string;
+  read_only: number;
 }
 
 function toOrigin(row: OriginRow): Origin {
@@ -53,6 +54,7 @@ function toOrigin(row: OriginRow): Origin {
     expiresAt: row.expires_at,
     needsReauth: row.needs_reauth === 1,
     software: row.software,
+    readOnly: row.read_only === 1,
   };
 }
 
@@ -72,6 +74,8 @@ export interface CreateOriginInput {
   expiresAt?: string | null;
   /** `forge` for another forge; see `Origin.software`. */
   software?: string;
+  /** Connect read-only; set once here and never cleared silently. @default false */
+  readOnly?: boolean;
 }
 
 export type CreateOriginError = "already_connected";
@@ -97,8 +101,8 @@ export function createOrigin(
   const originId = id();
   db.query(
     `INSERT INTO origin (id, user_id, kind, api_url, web_url, login, token_enc,
-                         auth_kind, refresh_token_enc, expires_at, software)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`,
+                         auth_kind, refresh_token_enc, expires_at, software, read_only)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`,
   ).run(
     originId,
     input.userId,
@@ -113,6 +117,7 @@ export function createOrigin(
       : seal(dataDir, input.refreshToken, originId),
     input.expiresAt ?? null,
     input.software ?? "",
+    input.readOnly === true ? 1 : 0,
   );
   return ok(getOriginById(db, originId)!);
 }
