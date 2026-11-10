@@ -11,6 +11,7 @@
  * id, so the redirect itself says nothing about what exists.
  */
 
+import { crewFace } from "../pixel.ts";
 import { steerRefusedWords } from "../../actions/steer_words.ts";
 import { readLooks } from "../../checks/looks.ts";
 import type { Database } from "bun:sqlite";
@@ -247,6 +248,13 @@ const kindIcon = (kind: RunKind) =>
 
 // ---- rows ----
 
+/** A crew member's face for their run, working only while it runs; the kind's icon otherwise. */
+function runLead(run: Run, actors: ReadonlyMap<string, User>): Html {
+  const who = run.actorId === null ? undefined : actors.get(run.actorId)?.username;
+  const face = run.kind === "agent" && who !== undefined ? crewFace(who, run.state === "running" ? "working" : "still", 16, true) : null;
+  return face ?? kindIcon(run.kind);
+}
+
 /** One run in a list: what it was, why, how it went, and when. */
 export function runRow(
   base: string,
@@ -259,7 +267,7 @@ export function runRow(
   return row({
     href: `${base}/runs/${run.id}`,
     nav: true,
-    lead: kindIcon(run.kind),
+    lead: runLead(run, actors),
     title,
     titleAttr: title,
     meta: html`<span title="${meta}">${meta}</span>`,
@@ -287,7 +295,7 @@ export function crewActivityCard(ctx: Ctx, repo: Repo, issue: Issue): Html {
           ?.username ?? "an agent";
       return row({
         href: `${base}/runs/${run.id}`,
-        lead: icon("bot"),
+        lead: crewFace(who, run.state === "running" ? "working" : "still", 16, true) ?? icon("bot"),
         title: html`${who}
           <span class="muted">${reasonWords(run.reason)}</span>`,
         meta: html`<span title="${run.summary}"

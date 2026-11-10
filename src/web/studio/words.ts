@@ -8,6 +8,7 @@
  * thing about the same commit. Nothing here knows about a page.
  */
 
+import { crewFace } from "../pixel.ts";
 import { shownState } from "../../runs/state.ts";
 import type { Database } from "bun:sqlite";
 import { ancestries, type AncestryCache } from "./ancestry.ts";
@@ -564,13 +565,13 @@ export const wordVariant = (word: Word): WordVariant => WORD_VARIANT[word];
 
 /** One of the five (or six) studio words, as a badge. An id names the one a
  * live script repaints as a run finishes (`studioRunJs`). */
-export function wordBadge(word: Word, id?: string): Html {
+export function wordBadge(word: Word, id?: string, who?: string): Html {
   return html`<span
     class="badge"
     data-variant="${wordVariant(word)}"
     data-word="${word}"
     ${id === undefined ? null : html`id="${id}"`}
-    >${word === "working" ? icon("loader") : null}${word === "told"
+    >${word === "working" ? ((who !== undefined && crewFace(who, "working", 16, true)) || icon("loader")) : null}${word === "told"
       ? "open"
       : word}</span
   >`;

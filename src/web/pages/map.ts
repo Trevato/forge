@@ -19,6 +19,7 @@
  * can see, one lane each.
  */
 
+import { faceAt } from "../pixel.ts";
 import type { MapHold } from "../../crew/held.ts";
 import { sealedScope } from "../../core/sealed.ts";
 import type { Database } from "bun:sqlite";
@@ -712,6 +713,7 @@ function node(
   const number = `#${n.issue.number}`;
   const who = n.issue.assigneeName;
   const whoX = left + 9 + number.length * 6.4;
+  const face = who ? faceAt(who, whoX, bottom - 11, 14) : null;
   return html`<a
     class="map-node"
     data-state="${word}"
@@ -745,7 +747,14 @@ function node(
         : html`<tspan x="${left}" dy="16">${second}</tspan>`}
     </text>
     <text class="map-meta" x="${left}" y="${bottom}">${number}</text>
-    ${who
+    ${face !== null
+      ? html`<g class="map-who">
+          ${face}
+          <text class="map-who-n" x="${whoX + 19}" y="${bottom}"
+            >${trim(who ?? "", 11)}</text
+          >
+        </g>`
+      : who !== null
       ? html`<g class="map-who">
           <circle cx="${whoX + 7}" cy="${bottom - 4}" r="7" />
           <text class="map-who-i" x="${whoX + 7}" y="${bottom - 1}"

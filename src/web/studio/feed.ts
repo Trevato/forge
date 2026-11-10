@@ -237,7 +237,7 @@ export function composer(ctx: Ctx, user: User): Html {
   const { repos } = writableAppsOf(ctx, user);
   const slug = (r: { ownerName: string; name: string }) => `${r.ownerName}/${r.name}`;
   const noApps = html`${empty({
-    icon: "rocket",
+    scene: "anvil",
     title: "No apps yet",
     note: "Make one, tell the crew what it is, and watch it come up here.",
     action: html`${btn("New app", { href: "/apps/new", variant: "primary" })}

@@ -23,6 +23,7 @@ import {
 } from "../kernel/tokens-format.ts";
 import { drawChart, type Cell, type Chart } from "../boards/chart.ts";
 import { icon, type IconName } from "./icons.ts";
+import { crewFace, scene, type SceneName } from "./pixel.ts";
 import { Html, html, raw, when } from "./html.ts";
 
 export { icon, type IconName };
@@ -822,6 +823,10 @@ function initials(name: string): string {
 }
 
 export function avatar(name: string, size?: "md" | "lg"): Html {
+  // The crew wear their own face wherever they appear (src/web/pixel.ts).
+  const face = crewFace(name, "still", size === "lg" ? 48 : size ? 24 : 16, true);
+  if (face !== null)
+    return html`<span class="avatar avatar-px" ${size ? html`data-size="${size}"` : null} aria-hidden="true">${face}</span>`;
   return html`<span
     class="avatar"
     data-h="${hueOf(name)}"
@@ -1348,12 +1353,14 @@ export function confirmAction(o: {
 
 export function empty(o: {
   icon?: IconName;
+  /** A small drawn scene instead of the icon: one picture, then the line. */
+  scene?: SceneName;
   title: string;
   note?: string;
   action?: Html;
 }): Html {
   return html`<div class="empty">
-    ${o.icon ? icon(o.icon, 20) : null}
+    ${o.scene ? scene(o.scene) : o.icon ? icon(o.icon, 20) : null}
     <p class="empty-title">${o.title}</p>
     ${o.note ? html`<p>${o.note}</p>` : null} ${o.action ?? null}
   </div>`;

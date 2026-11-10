@@ -27,6 +27,7 @@
  */
 
 import { raw, type Html } from "./html.ts";
+import { pixelInline, pixelSymbols } from "./pixel.ts";
 
 /** What the drawing needs, on the symbol rather than on every slot. */
 const DRAW = `viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"`;
@@ -128,7 +129,7 @@ export function spriteSvg(): string {
   const symbols = (Object.keys(PATHS) as IconName[])
     .map((name) => `<symbol id="i-${name}" ${DRAW}>${PATHS[name]}</symbol>`)
     .join("");
-  return `<svg xmlns="http://www.w3.org/2000/svg">${symbols}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg">${symbols}${pixelSymbols()}</svg>`;
 }
 
 /**
@@ -149,7 +150,7 @@ export function pointAtSprite(markup: string, spritePath: string): string {
  */
 export function inlineIcons(markup: string): string {
   return markup.replace(REFERENCE, (whole, name: string) =>
-    name in PATHS ? `<svg ${DRAW}>${PATHS[name as IconName]}</svg>` : whole,
+    name in PATHS ? `<svg ${DRAW}>${PATHS[name as IconName]}</svg>` : (pixelInline(name) ?? whole),
   );
 }
 

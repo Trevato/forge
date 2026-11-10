@@ -201,6 +201,24 @@ a.stat:hover { border-color: var(--border-strong); }
 .btn[aria-busy="true"] .ico-loader { animation-play-state: running; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ---- pixel art (#10570, src/web/pixel.ts) ----
+   A crew face works by swapping two frames on the shared --beat; it never
+   moves unless a run is going (data-state="working"), lands with one hop,
+   and under reduced motion shows its first frame and stays. A hidden tab
+   does not paint, so nothing runs there. */
+.px { flex: none; shape-rendering: crispEdges; }
+.px-scene { color: var(--faint); margin-bottom: 4px; }
+.avatar.avatar-px { background: none; border: 0; }
+.px[data-state="working"] .px-b { visibility: hidden; }
+@media (prefers-reduced-motion: no-preference) {
+  .px[data-state="working"] .px-a { animation: px-a calc(var(--beat) * 2) steps(1) infinite; }
+  .px[data-state="working"] .px-b { animation: px-b calc(var(--beat) * 2) steps(1) infinite; }
+  .px[data-state="landed"] { animation: px-hop calc(var(--dur-3) * 2) steps(4) 1; }
+  @keyframes px-a { 50% { visibility: hidden; } }
+  @keyframes px-b { 50% { visibility: visible; } }
+  @keyframes px-hop { 40% { transform: translateY(-4px); } }
+}
+
 /* One stored hex, derived three ways, so a chip reads correctly in all six
    themes. --label is set by a per-page nonce'd rule; the hex is validated
    before it is ever embedded. */

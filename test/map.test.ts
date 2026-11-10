@@ -471,7 +471,7 @@ describe("the map, per app and across the forge", () => {
     expect(page).toContain('href="/alice/engine/map"');
     expect(page).toContain("Extract renderer");
     expect(page).toMatch(
-      /title="Working: s[^"]*"[^>]*>[\s\S]*?class="avatar"[^>]*>s</,
+      /title="Working: s[^"]*"[^>]*>[\s\S]*?class="avatar avatar-px"\s+aria-hidden="true">\s*<svg class="px" data-state="still" width="16" height="16"\s+aria-hidden="true" focusable="false"\s*>\s*<use href="[^"]*#i-pixscout"\/><\/svg\s*>/,
     );
     expect(page).toContain('data-autonomy="off"');
     // dormant has nothing ready and nobody working: it folds to its header.

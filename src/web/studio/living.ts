@@ -22,6 +22,7 @@ import { writableAppsOf } from "./asks.ts";
 import { FORGE_TARGET } from "./feed.ts";
 import { COMPOSER_FIELDS, TELL_MAX, sharedDraft, shareToken } from "../share_target.ts";
 import { repoBase } from "../chrome.ts";
+import { crewFace, type FaceState } from "../pixel.ts";
 
 /** The events that move a build or a shipment. */
 const MOVING_LIVE = "run.started,run.finished,pull.merged,pull.opened,pull.closed,app.serving";
@@ -54,11 +55,11 @@ export function nowLine(now: Now, boards = true): Html {
   </section>`;
 }
 
-function listOf(label: string, rows: readonly MovingRow[], empty: string, heading = true): Html {
+function listOf(label: string, rows: readonly MovingRow[], empty: string, heading = true, face?: FaceState): Html {
   const shown = rows.map((r) =>
     row({
       href: r.href,
-      ...(r.who === "" ? {} : { lead: html`<span class="muted small">${r.who}</span>` }),
+      ...(r.who === "" ? {} : { lead: html`${(face && crewFace(r.who, face, 16, true)) ?? null}<span class="muted small">${r.who}</span>` }),
       title: html`<span class="truncate" title="${r.repo}: ${r.full}">${r.title}</span>`,
       trail: html`<span class="muted small">${timeAgo(r.at)}</span>`,
     }),
@@ -85,7 +86,7 @@ export function movingRegion(db: Database, viewer: User): Html {
   const shipped = readShipped(db, viewer);
   return html`<div id="live-moving" class="stack" data-live="${MOVING_LIVE}" data-live-src="/live/moving">
     ${viewer.isAdmin ? nowLine(pipelineNow(db), viewer.kind !== "agent") : null}
-    ${listOf("Being built", building, "Nothing is being built right now")}
+    ${listOf("Being built", building, "Nothing is being built right now", true, "working")}
     ${disclosure("Just shipped", listOf("Just shipped", shipped, "Nothing has shipped yet", false), { small: true })}
   </div>`;
 }

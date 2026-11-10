@@ -36,6 +36,7 @@ import { costText, durationText, RUN_PAGE_CSS, runTitle, runTokens } from "../pa
 import { placementLine, sandboxLine } from "./sandbox.ts";
 import { logBox, runVoice, RUN_TRANSCRIPT_CAP } from "./log.ts";
 import { changeHref, tellHref } from "./nouns.ts";
+import { crewFace } from "../pixel.ts";
 import { unnamedRun, voiceFor, type Actor } from "./voice.ts";
 import { runWord, servingHistory, wordBadge, type WordCtx } from "./words.ts";
 
@@ -153,7 +154,8 @@ export async function runView(
   >
     <h1>${title}</h1>
     <div class="page-head-sub bar muted small">
-      ${wordBadge(word, "run-word")}
+      ${wordBadge(word, "run-word", actor?.username)}
+      ${actor?.kind === "agent" && run.state === "ok" ? crewFace(actor.username, "landed") : null}
       ${when(
         issue,
         (i) =>

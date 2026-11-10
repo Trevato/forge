@@ -31,6 +31,13 @@ export const base = /* css */ `
   --page: 1120px;
   --measure: 72ch;
   --ease: cubic-bezier(.2, 0, 0, 1);
+  /* One motion vocabulary: the code viewer's timings, named. A hover or a
+     focus is --dur-1 to --dur-2, a thing arriving --dur-3, and a pixel
+     figure changes frame every --beat (#10570). */
+  --dur-1: 100ms;
+  --dur-2: 140ms;
+  --dur-3: 200ms;
+  --beat: 450ms;
   --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Code", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
