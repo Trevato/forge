@@ -161,7 +161,9 @@ one `POST /api/v1/asks/bulk` (`action`, `items`, `reason`, `preview: false`);
 `items` are ask ids (`assigned:<id>` for something assigned to you; `issue:<id>`
 still names one). The list swaps in place and the top bar's count follows. One undo link
 (`POST /api/v1/asks/bulk/<id>/undo`) is kept for a day. The MCP's `asks_act`
-takes the same set, verb and reason.
+takes the same set, verb and reason; it also undoes, with `action: undo` and
+`operation` (a dry run refuses an operation that is not yours with `not_found`),
+and returns the same receipt sentence.
 
 ## The composer keeps your draft
 

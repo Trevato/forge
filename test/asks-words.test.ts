@@ -16,7 +16,7 @@ describe("asks words", () => {
     test(`${file} imports the sentence and types no copy of it`, () => {
       const source = text(file);
       expect(source).not.toContain(SIGN_IN_TO_ACT);
-      expect(source).toContain('import { SIGN_IN_TO_ACT } from "./asks_words.ts";');
+      expect(source).toMatch(/import \{[^}]*\bSIGN_IN_TO_ACT\b[^}]*\} from "\.\/asks_words\.ts";/);
     });
   }
 });

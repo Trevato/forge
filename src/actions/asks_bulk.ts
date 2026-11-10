@@ -12,7 +12,6 @@ import type { App } from "../app.ts";
 import { listOperations, type Operation } from "../core/fleet_ops.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { NO_SUCH_OPERATION } from "./asks_words.ts";
 import { askTargetsFor } from "../web/studio/asks.ts";
 import {
   applyFleetIds,
@@ -24,7 +23,7 @@ import {
   type FleetError,
   type Plan,
 } from "./fleet.ts";
-import { SIGN_IN_TO_ACT } from "./asks_words.ts";
+import { NO_SUCH_OPERATION, receiptSentence, SIGN_IN_TO_ACT } from "./asks_words.ts";
 
 /**
  * What a bulk action on asks may be: the fleet verb each one is. Decline is
@@ -195,3 +194,11 @@ export async function undoAsksBulk(
     return err({ code: "not_found", message: NO_SUCH_OPERATION });
   return undoFleetOp(app, actor, op.id);
 }
+
+/** The one sentence that says what a bulk action on asks, or its undo, did. */
+export const receiptOf = (op: Operation): string =>
+  receiptSentence(
+    op.verb,
+    op.rows.filter((r) => r.outcome === "ok").length,
+    op.undoOf !== null,
+  );

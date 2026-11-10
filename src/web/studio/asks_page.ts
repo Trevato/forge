@@ -7,6 +7,7 @@
  * (`actions/asks_bulk.ts`). `/asks` was its own screen; it lands here now.
  */
 
+import { VERB_WORDS } from "../../actions/asks_words.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { WaitingFor } from "../../core/waiting_for.ts";
 import {
@@ -15,6 +16,7 @@ import {
   latestUndoable,
   ownAsksOperation,
   undoAsksBulk,
+  receiptOf,
   previewAsksBulk,
   type Skipped,
 } from "../../actions/asks_bulk.ts";
@@ -475,7 +477,7 @@ export function needsYouSection(
     last === undefined
       ? null
       : html`<form class="bar" method="post" action="/asks/bulk/${last.id}/undo" role="status">
-          <span class="small">${VERB_WORDS[last.verb] ?? last.verb}: ${last.rows.filter((r) => r.outcome === "ok").length} done</span>
+          <span class="small">${receiptOf(last)}</span>
           ${btn("Undo", { size: "sm" })}
           <span class="muted small">kept for a day</span>
         </form>`;
@@ -545,15 +547,6 @@ async function asksScreen(ctx: Ctx, top: AsksTop): Promise<Response> {
 }
 
 // ---- many at once: select, preview, do it, undo — all on this screen ----
-
-const VERB_WORDS: Readonly<Record<string, string>> = {
-  dismiss: "Dismiss",
-  decline: "Decline",
-  mute: "Mute repository",
-  ship: "Ship",
-  close: "Close",
-  replan: "Hand back to the planner",
-};
 
 /** What the asks below can be given in one move. */
 const ASK_VERBS = ["decline", "ship", "close", "replan", "mute"] as const;
@@ -644,9 +637,8 @@ const nothingDone = (message: string): AsksTop => ({
 function receiptTop(ctx: Ctx, opId: string): AsksTop | undefined {
   const op = ownAsksOperation(ctx.app, ctx.auth.user, opId);
   if (op === undefined) return undefined;
-  const verb = VERB_WORDS[op.verb] ?? op.verb;
   const done = op.rows.filter((r) => r.outcome === "ok").length;
-  const head = op.undoOf === null ? `${verb}: ${done} done` : `${verb} undone: ${done}`;
+  const head = receiptOf(op);
   const undoable = op.reversible && op.undoOf === null && op.undoneBy === null && done > 0;
   return {
     banner: bulkCard(

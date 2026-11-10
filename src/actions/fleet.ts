@@ -58,7 +58,7 @@ import {
 } from "../fleet/selection.ts";
 import { digestOf } from "../fleet/digest.ts";
 import { VERBS, type Target, type Verb } from "../fleet/verbs.ts";
-import { NO_SUCH_OPERATION } from "./asks_words.ts";
+import { ALREADY_UNDONE, NO_SUCH_OPERATION } from "./asks_words.ts";
 
 export interface FleetError {
   readonly code:
@@ -648,7 +648,7 @@ export async function undoFleetOp(
   if (keepsADay(op) && Date.now() - Date.parse(op.createdAt) > UNDO_WINDOW_MS)
     return fail("expired", "an undo is kept for a day, and this one's day is over");
   if (!claimUndo(app.db, op.id))
-    return fail("already_undone", "this operation was undone already");
+    return fail("already_undone", ALREADY_UNDONE);
   let undone: Operation | undefined;
   try {
     const changed = op.rows.filter((r) => r.outcome === "ok");
