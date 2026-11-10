@@ -1,6 +1,6 @@
 /**
  * Bringing the packs' upstreams in (#10530): each https `source` named in
- * packs/*\/pack.json becomes one public repository `packs/<app>` that follows
+ * a marked pack repo's pack.json becomes one public repository `packs/<app>` that follows
  * its upstream through the follow the forge already has
  * (`actions/upstream_follow.ts`). The request only creates the repository and
  * its follow row; the scheduled follow makes the first sync. The follow moves a mirror's default branch

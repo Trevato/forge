@@ -9,6 +9,7 @@ import { createIssue } from "../src/core/issues.ts";
 import { createApp as createAppRecord } from "../src/core/apps.ts";
 import { createUser } from "../src/core/users.ts";
 import { catalog } from "../src/packs/catalog.ts";
+import { seedPacks } from "./helpers/packs.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 /** The content of the first tag matching, or undefined when there is none. */
@@ -90,6 +91,7 @@ describe("every public page names itself", () => {
     }
     const rec = createAppRecord(app.db, { repoId: getRepo(app.db, "alice", "widget")!.id, slug: "widget", access: "public" });
     if (!rec.ok) throw new Error(rec.error);
+    await seedPacks(app);
     const pack = catalog().packs[0];
     if (!pack) throw new Error("the catalog ships no pack to walk");
     // Walked as a stranger. Left out, on purpose: redirects to sign in (/map,

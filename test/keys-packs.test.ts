@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { catalog } from "../src/packs/catalog.ts";
+import { seedPacks } from "./helpers/packs.ts";
 import { packsList } from "../src/web/pages/packs.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
@@ -15,6 +16,7 @@ let servers: Servers;
 beforeAll(async () => {
   dataDir = await mkdtemp(join(tmpdir(), "forge-keys-packs-"));
   app = createApp({ dataDir, port: 0 });
+  await seedPacks(app);
   servers = await serve(app);
 });
 

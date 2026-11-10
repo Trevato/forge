@@ -9,7 +9,7 @@ import { getAgentByName } from "../src/core/agents.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { getFollow } from "../src/core/upstream_follow.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { catalog } from "../src/packs/catalog.ts";
+import { fixturePacks } from "./helpers/packs.ts";
 import { deployPack } from "../src/packs/deploy.ts";
 import { addSubscription } from "../src/core/subscriptions.ts";
 import { checkUpstream } from "../src/actions/upstream_follow.ts";
@@ -55,7 +55,7 @@ beforeAll(async () => {
   passphrase = prepared.passphrase;
   // A fake source for every app of both packs: three commits and a tag, on a branch that is not "main" for one of them.
   let n = 0;
-  for (const pack of catalog().packs)
+  for (const pack of fixturePacks())
     for (const a of pack.apps) {
       const dir = join(root, `src-${n++}`);
       git(root, "init", "-q", "-b", n === 1 ? "master" : "main", dir);
@@ -78,7 +78,7 @@ afterAll(async () => {
 
 describe("the one command, against a fake source", () => {
   test("the command is one line to run after clone and install, and asks for no token", () => {
-    for (const p of catalog().packs) {
+    for (const p of fixturePacks()) {
       const lines = deployCommands(p, "https://f.example");
       expect(lines.some((l) => l.startsWith(`bun scripts/pack.ts up ${p.name}`))).toBe(true);
       expect(lines[0]).toContain("bun install");
@@ -103,7 +103,7 @@ describe("the one command, against a fake source", () => {
 
   for (const name of ["games", "business"]) {
     test(`${name}: every app arrives with history, followed; the crew is configured; no secret or variable travels`, async () => {
-      const pack = catalog().packs.find((p) => p.name === name)!;
+      const pack = fixturePacks().find((p) => p.name === name)!;
       const steps = await deployPack(pack, realHands(servers.url, token, { cloneFrom: (s) => fake.get(s)! }));
       expect(steps.filter((s) => s.state !== "done")).toEqual([]);
       for (const a of pack.apps) {
@@ -130,7 +130,7 @@ describe("the one command, against a fake source", () => {
   }
 
   test("running it again keeps what exists", async () => {
-    const pack = catalog().packs[0]!;
+    const pack = fixturePacks()[0]!;
     const steps = await deployPack(pack, realHands(servers.url, token, { cloneFrom: (s) => fake.get(s)! }));
     expect(steps.map((s) => `${s.what} ${s.state} ${s.note}`)).toEqual(steps.map((s) => `${s.what} kept already here`));
   });
@@ -159,7 +159,7 @@ describe("the one command, against a fake source", () => {
   });
 
   test("a partial deploy is finished by running it again: a kept app that was never followed is followed", async () => {
-    const pack = catalog().packs[0]!;
+    const pack = fixturePacks()[0]!;
     const hands = realHands(servers.url, token, { cloneFrom: (s) => fake.get(s)! });
     // First run: the follow of the first app fails after the app and its history are in.
     const one = { ...pack, apps: [{ ...pack.apps[0]!, name: "partial-app" }], crew: [] };
@@ -184,7 +184,7 @@ describe("the one command, against a fake source", () => {
   });
 
   test("a new upstream commit shows as drift at the next check", async () => {
-    const pack = catalog().packs[0]!;
+    const pack = fixturePacks()[0]!;
     const a = pack.apps[0]!;
     const repo = getRepo(app.db, OWNER, a.name)!;
     const src = fake.get(a.source)!;
@@ -234,7 +234,7 @@ describe("up() itself", () => {
     const env: Record<string, string | undefined> = { ...process.env, FORGE_SSH_PORT: "0" };
     for (const n of ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "FORGE_CLAUDE_CONFIG_DIR"]) delete env[n];
     try {
-      const pack = catalog().packs[0]!;
+      const pack = fixturePacks()[0]!;
       const running = up(pack, { port, dataDir: d, cloneFrom: (s) => fake.get(s)!, say: (l) => lines.push(l), signal: stop.signal, env });
       let ended: number | undefined;
       void running.then((c) => (ended = c));

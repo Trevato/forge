@@ -17,7 +17,7 @@ import {
   type FrontPage,
   type FrontPicksJson,
 } from "../../actions/front.ts";
-import { catalog } from "../../packs/catalog.ts";
+import { catalog, refreshCatalogQuietly } from "../../packs/catalog.ts";
 import { appsRuntime, type EnvState } from "../../apps/runtime.ts";
 import { signupClosed } from "../../actions/users.ts";
 import { getSignup } from "../../settings/signup.ts";
@@ -737,6 +737,8 @@ function agentPrompt(origin: string): string {
  * controls that decide it.
  */
 export function studioDoor(ctx: Ctx): Response {
+  // The door draws what is in memory; a pack pushed since is picked up for the next visit.
+  void refreshCatalogQuietly(ctx.app, 5_000);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   let tiles: Html[] = [];
   const front = timePhase(ctx.request, "shelf", () => frontPage(ctx.app, Date.now(), ctx.request));

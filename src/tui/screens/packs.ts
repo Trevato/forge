@@ -5,7 +5,8 @@
  * prints. Anyone may open it; it reads the catalog, nothing of the forge's.
  */
 
-import { catalog } from "../../packs/catalog.ts";
+import { catalog, refreshCatalogQuietly } from "../../packs/catalog.ts";
+import type { App } from "../../app.ts";
 import type { Pack } from "../../packs/pack.ts";
 import { BRINGS_WORDS, deployCommands, STRANGER_WORDS } from "../../packs/words.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -61,8 +62,8 @@ function packScreen(ctx: Ctx, p: Pack, origin: string | undefined): Screen {
   };
 }
 
-export function packsScreen(ctx: Ctx, origin: string | undefined): Screen {
-  const { packs } = catalog();
+export function packsScreen(ctx: Ctx, origin: string | undefined, app?: App): Screen {
+  if (app !== undefined) void refreshCatalogQuietly(app, 2_000).then(() => ctx.invalidate());
   let at = 0;
   return {
     title: "Forge packs",
@@ -70,7 +71,7 @@ export function packsScreen(ctx: Ctx, origin: string | undefined): Screen {
     render(area, s) {
       const c = ctx.theme.c;
       s.text(area.x + 1, area.y, "Forge packs: a whole forge to start from", style(c.mutedFg, c.bg), area.x + area.w);
-      packs.forEach((p, i) => {
+      catalog().packs.forEach((p, i) => {
         const on = i === at;
         const row = `${on ? "> " : "  "}${p.title}  v${p.version}  ${p.apps.length} apps, ${p.crew.length} crew  ${p.description}`;
         if (2 + i < area.h) s.text(area.x + 1, area.y + 2 + i, truncate(row, area.w - 2), on ? style(c.accent, c.bg) : style(c.fg, c.bg), area.x + area.w);
@@ -79,10 +80,10 @@ export function packsScreen(ctx: Ctx, origin: string | undefined): Screen {
     key(e) {
       if (e.ctrl || e.alt) return false;
       if (e.key === "esc" || e.key === "q") ctx.pop();
-      else if (e.key === "j" || e.key === "down") at = Math.min(packs.length - 1, at + 1);
+      else if (e.key === "j" || e.key === "down") at = Math.min(catalog().packs.length - 1, at + 1);
       else if (e.key === "k" || e.key === "up") at = Math.max(0, at - 1);
       else if (e.key === "enter") {
-        const p = packs[at];
+        const p = catalog().packs[at];
         if (p !== undefined) ctx.push(packScreen(ctx, p, origin));
       } else return false;
       return true;
@@ -94,5 +95,5 @@ export const packsCommand = (session: Session, ctx: Ctx) => ({
   id: "packs",
   title: "Forge packs",
   hint: "premade forges to deploy, and how to help build their apps",
-  run: () => ctx.push(packsScreen(ctx, session.app.config.url)),
+  run: () => ctx.push(packsScreen(ctx, session.app.config.url, session.app)),
 });

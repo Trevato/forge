@@ -37,9 +37,8 @@ describe("what the Dockerfile copies reaches the build", () => {
       expect(ignored(lines(".dockerignore"), path)).toBe(false);
     });
 
-  // /packs rendered blank in production: the catalog reads packs/ beside src/, and the
-  // image carried only src/. Each folder a page reads from outside src/ is copied.
-  test("the packs /packs lists are in the image", () => {
-    expect(copied).toContain("packs");
+  // The packs are forge repos read from git (#10532): no folder of them rides in the image.
+  test("no packs folder is copied: /packs reads the marked repos", () => {
+    expect(copied).not.toContain("packs");
   });
 });

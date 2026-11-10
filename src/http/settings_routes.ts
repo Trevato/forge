@@ -34,6 +34,7 @@ import {
   signInAct,
 } from "../web/pages/accounts.ts";
 import { confirmsList, confirmYes } from "../web/pages/confirms.ts";
+import { packsSettingsPage, packsSettingsSave } from "../web/pages/packs-settings.ts";
 import { featureAccept, featurePage, featureRun, featureSave, featuresPage, featureSwitch } from "../web/pages/features.ts";
 import { passkeyAdd, passkeyDelete, passkeyOptions, passkeysPage } from "../web/pages/passkeys.ts";
 import { secretDelete, secretSet, secretsPage } from "../web/pages/secrets.ts";
@@ -193,6 +194,8 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("POST", "/settings/economics", economicsSet);
   router.add("GET", "/settings/flags", flagsPage);
   // Apps absorbed as the forge's own features, and their settings.
+  router.add("GET", "/settings/packs", packsSettingsPage);
+  router.add("POST", "/settings/packs", packsSettingsSave);
   router.add("GET", "/settings/features", featuresPage);
   router.add("GET", "/settings/features/:slug", featurePage);
   router.add("POST", "/settings/features/:slug", featureSave);

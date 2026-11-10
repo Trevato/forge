@@ -22,6 +22,7 @@ import { serveGitCommand } from "../src/tui/ssh.ts";
 import { createForgeApp, forgeCommands } from "../src/tui/forge.ts";
 import { mirrorPacksScreen } from "../src/tui/screens/mirrorpacks.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
+import { seedPacks } from "./helpers/packs.ts";
 import { settleApp } from "./helpers/tui.ts";
 import { tool } from "../src/http/mcp/tools/repo_settings.ts";
 import { mirrorPacks, packSources, reportWords } from "../src/packs/mirror.ts";
@@ -115,9 +116,15 @@ describe("packs mirrors", () => {
   ];
   let first = "";
 
-  test("the packs' own https sources are what it would bring in", () => {
+  test("the packs' own https sources are what it would bring in", async () => {
+    const other = createApp({ dataDir: join(dataDir, "catalog"), port: 0 });
+    try {
+      await seedPacks(other);
+    } finally {
+      other.close();
+    }
     const names = packSources().map((s) => s.name);
-    expect(names).toContain("memos");
+    expect(names).toContain("hextris");
     expect(names).toContain("2048");
     expect(packSources().every((s) => s.source.startsWith("https://"))).toBe(true);
   });

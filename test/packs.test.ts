@@ -5,7 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { catalog } from "../src/packs/catalog.ts";
+import { catalog, refreshCatalog } from "../src/packs/catalog.ts";
+import { getUserByName } from "../src/core/users.ts";
+import { markedRepos, parseMarked, saveMarkedRepos, updateMarkedRepos } from "../src/packs/marked.ts";
+import { fixtureText, seedPackRepo, seedPacks } from "./helpers/packs.ts";
 import { deployPack, type Hands } from "../src/packs/deploy.ts";
 import { parsePack, sourceOf } from "../src/packs/pack.ts";
 
@@ -104,12 +107,40 @@ describe("pack absorb", () => {
   });
 });
 
-describe("shipped packs", () => {
-  test("Games and Business ship and parse", () => {
-    const c = catalog();
+describe("the catalog reads marked repos from git", () => {
+  let dir: string;
+  let app: App;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "forge-packs-cat-"));
+    app = createApp({ dataDir: dir, port: 0 });
+  });
+  afterAll(async () => {
+    app.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+  test("nothing is marked, nothing is listed; a marked repo with a pack.json is, an unmarked one is not", async () => {
+    expect((await refreshCatalog(app)).packs).toEqual([]);
+    await seedPackRepo(app, "games", fixtureText("games"));
+    await seedPackRepo(app, "business", fixtureText("business"), false);
+    const c = await refreshCatalog(app);
     expect(c.problems).toEqual([]);
-    expect(c.packs.map((p) => p.name)).toEqual(["business", "games"]);
-    for (const p of c.packs) expect(p.apps.length).toBeGreaterThan(0);
+    expect(c.packs.map((p) => p.name)).toEqual(["games"]);
+    expect(catalog().packs.length).toBe(1);
+    expect(c.packs[0]!.apps.length).toBeGreaterThan(0);
+  });
+  test("a marked repo that is missing, has no pack.json or a bad one is named, not listed", async () => {
+    await seedPackRepo(app, "empty", "{}", false);
+    await seedPackRepo(app, "wrong", fixtureText("games").replace('"name": "games"', '"name": "other"'), false);
+    saveMarkedRepos(app.db, ["packs/games", "packs/gone", "packs/empty", "packs/wrong"], getUserByName(app.db, "packs")!.id);
+    const c = await refreshCatalog(app);
+    expect(c.packs.map((p) => p.name)).toEqual(["games"]);
+    expect(c.problems.map((p) => p.split(":")[0])).toEqual(["packs/gone", "packs/empty", "packs/wrong"]);
+  });
+  test("the setting accepts owner/name words and only an admin changes it", () => {
+    expect(parseMarked("packs/games, Packs/Games a/b/c ../x nothing")).toEqual({ repos: ["packs/games"], rejected: ["a/b/c", "../x", "nothing"] });
+    expect(updateMarkedRepos(app.db, { id: "u", isAdmin: false, kind: "human" }, "packs/games")).toEqual({ ok: false, error: "forbidden" });
+    expect(updateMarkedRepos(app.db, { id: "u", isAdmin: true, kind: "agent" }, "packs/games")).toEqual({ ok: false, error: "forbidden" });
+    expect(markedRepos(app.db)).toContain("packs/gone");
   });
 });
 
@@ -158,6 +189,7 @@ describe("pages", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-packs-"));
     app = createApp({ dataDir, port: 0 });
+    await seedPacks(app);
     servers = await serve(app);
   });
   afterAll(async () => {

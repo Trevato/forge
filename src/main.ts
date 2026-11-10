@@ -20,6 +20,7 @@ import { createApp } from "./app.ts";
 import { readOnlyFrom } from "./http/read_only.ts";
 import { warmFlow } from "./system/flow_cache.ts";
 import { backfillCarried } from "./core/carried.ts";
+import { refreshCatalogQuietly } from "./packs/catalog.ts";
 import { loadTrustedHosts } from "./origins/trusted-hosts.ts";
 import { flushFlagUses, loadFlags } from "./core/flags.ts";
 import { reconcile } from "./core/reconcile.ts";
@@ -330,6 +331,7 @@ const app = createApp({
 timeStatements(app.db, createLog("sql"));
 loadFlags(app.db);
 loadTrustedHosts(app.db);
+await refreshCatalogQuietly(app);
 if (readOnly) {
   const servers = await serve(app);
   // Only the listener runs: no reconcile, perf watcher, timers, apps, crew,

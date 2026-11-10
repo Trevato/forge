@@ -115,6 +115,7 @@ export type AccountSection =
   | "economics"
   | "flags"
   | "features"
+  | "packs"
   | "cloud";
 
 /**
@@ -162,6 +163,7 @@ const SECTION_ROWS: readonly (readonly [
   ["This forge", "Flows", "/admin/flows", "activity", (c) => c === "adminflows", true],
   ["This forge", "Flags", "/settings/flags", "activity", (c) => c === "flags", true],
   ["This forge", "Features", "/settings/features", "rocket", (c) => c === "features", true],
+  ["This forge", "Packs", "/settings/packs", "rocket", (c) => c === "packs", true],
   ["This forge", "Backups", "/settings/backups", "download", (c) => c === "backups", true],
 ];
 

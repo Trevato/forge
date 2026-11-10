@@ -9,6 +9,7 @@ import { serve } from "../src/http/server.ts";
 import { deployPack } from "../src/packs/deploy.ts";
 import { parsePack } from "../src/packs/pack.ts";
 import { packNamed } from "../src/packs/catalog.ts";
+import { fixturePacks, seedPacks } from "./helpers/packs.ts";
 import { deployCommands } from "../src/packs/words.ts";
 import { createForgeApp, forgeCommands } from "../src/tui/forge.ts";
 import { packLines, packsScreen } from "../src/tui/screens/packs.ts";
@@ -68,7 +69,7 @@ describe("makeAgent", () => {
 });
 
 describe("deploy words", () => {
-  const games = packNamed("games")!;
+  const games = fixturePacks().find((p) => p.name === "games")!;
   test("the clone source is the configured address, never a request's Host", () => {
     expect(deployCommands(games, "https://f.example/")[0]).toContain("git clone https://f.example/trevato/forge.git");
     expect(deployCommands(games, undefined)[0]).not.toContain("http");
@@ -76,6 +77,7 @@ describe("deploy words", () => {
   test("the web page does not echo a forged Host", async () => {
     const dir = await mkdtemp(join(tmpdir(), "packs-host-"));
     const a = createApp({ dataDir: dir, port: 0 });
+    await seedPacks(a);
     const servers = await serve(a);
     try {
       const res = await fetch(`${servers.url}/packs/games`, { headers: { host: "evil.example" } });
@@ -97,6 +99,7 @@ describe("terminal screen", () => {
     app = createApp({ dataDir: dir, port: 0 });
     const r = await createUser(app.db, { origin: "seed", trusted: true, username: "carol", email: "c@forge.local", password: "a-good-passphrase", adminIfFirst: true });
     if (!r.ok) throw new Error(r.error);
+    await seedPacks(app);
   });
   afterAll(async () => {
     app.close();

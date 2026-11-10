@@ -6,7 +6,7 @@
 
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { Pack } from "../../packs/pack.ts";
-import { catalog, packNamed } from "../../packs/catalog.ts";
+import { refreshCatalogQuietly } from "../../packs/catalog.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { deployCommands } from "../../packs/words.ts";
@@ -29,11 +29,14 @@ export const packsList = (packs: readonly Pack[]) =>
       }),
     )}</ul>`;
 
+/** A pack pushed to its repo shows within this long. */
+const CATALOG_FRESH_MS = 2_000;
+
 // GET /packs
-export function packsPage(ctx: Ctx): Response {
+export async function packsPage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const started = performance.now();
-  const { packs } = catalog();
+  const { packs } = await refreshCatalogQuietly(ctx.app, CATALOG_FRESH_MS);
   const body = html`${pageHead("Forge packs", {
       sub: "A whole forge to start from: real apps with their history, and a crew set up to work on them.",
     })}
@@ -50,10 +53,10 @@ export function packsPage(ctx: Ctx): Response {
 }
 
 // GET /packs/:name
-export function packPage(ctx: Ctx): Response {
+export async function packPage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const started = performance.now();
-  const pack = packNamed(ctx.params.name ?? "");
+  const pack = (await refreshCatalogQuietly(ctx.app, CATALOG_FRESH_MS)).packs.find((p) => p.name === (ctx.params.name ?? ""));
   if (pack === undefined) return notFoundPage(ctx);
   const commands = deployCommands(pack, ctx.app.config.url);
   const body = html`${pageHead(`${pack.title} pack`, { sub: pack.description })}
