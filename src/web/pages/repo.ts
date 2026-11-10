@@ -1318,7 +1318,7 @@ function movedLine(ctx: Ctx, repo: Repo): Html | null {
 }
 
 /**
- * "Archived on <date>" with, for an admin, the Wake button. A repository put
+ * "Archived on <date>" with, for an admin, the Restore button. A repository put
  * away still clones, pushes and links as before; this only says so.
  */
 function archivedLine(ctx: Ctx, repo: Repo): Html | null {
@@ -1333,7 +1333,7 @@ function archivedLine(ctx: Ctx, repo: Repo): Html | null {
       () => html`<form method="post" action="${repoBase(repo)}/settings/archive">
         <input type="hidden" name="archived" value="0" />
         <input type="hidden" name="to" value="repo" />
-        ${btn("Wake", { size: "sm" })}
+        ${btn("Restore", { size: "sm" })}
       </form>`,
     )}
   </div>`;

@@ -393,6 +393,7 @@ import {
   settingsUpdate,
   waveCut,
   archiveSubmit,
+  archiveConfirmed,
   transferSubmit,
   provenanceSubmit,
   mirrorStop,
@@ -1473,6 +1474,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/settings", settingsUpdate);
   router.add("POST", "/:owner/:name/settings/wave", waveCut);
   router.add("POST", "/:owner/:name/settings/archive", archiveSubmit);
+  router.add("POST", "/:owner/:name/archive", archiveConfirmed);
   router.add("POST", "/:owner/:name/settings/transfer", transferSubmit);
   router.add("POST", "/:owner/:name/settings/provenance", provenanceSubmit);
   router.add("POST", "/:owner/:name/settings/mirror/stop", mirrorStop);

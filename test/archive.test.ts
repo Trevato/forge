@@ -149,7 +149,7 @@ describe("archive and wake", () => {
     ).text();
     expect(asOwner).toContain(`Archived on`);
     expect(asOwner).toContain(day);
-    expect(asOwner).toContain("Wake");
+    expect(asOwner).toContain("Restore");
 
     const asStranger = await (
       await fetch(`${base}/ada/old`, { headers: { cookie: stranger } })

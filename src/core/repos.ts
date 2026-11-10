@@ -1325,7 +1325,7 @@ export const withoutArchived = (repos: readonly Repo[]): Repo[] =>
   repos.filter((repo) => repo.archivedAt === null);
 
 /** The one line said wherever the crew declines to start a run here. */
-export const ARCHIVED_WHY = "This repository is archived; wake it to start a run.";
+export const ARCHIVED_WHY = "This repository is archived; restore it to start a run.";
 
 /**
  * Update the mutable repo fields, leaving unspecified ones untouched.

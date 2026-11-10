@@ -95,10 +95,10 @@ describe("archived repositories in the terminal", () => {
     await h.palette();
     // Newest archived first: bob/theirs was archived last.
     await h.press("j");
-    expect(h.text()).toContain("a wakes it");
+    expect(h.text()).toContain("a restores it");
     await h.press("a");
     expect(getRepo(forge.db, "carol", "shelved")!.archivedAt).toBeNull();
-    expect(h.text()).toContain("awake again");
+    expect(h.text()).toContain("restored");
     expect(h.text()).not.toContain("carol/shelved");
     h.stop();
   });
@@ -107,7 +107,7 @@ describe("archived repositories in the terminal", () => {
     const h = boot("carol");
     await h.palette();
     expect(h.text()).toContain("bob/theirs");
-    expect(h.text()).not.toContain("a wakes it");
+    expect(h.text()).not.toContain("a restores it");
     await h.press("a");
     expect(getRepo(forge.db, "bob", "theirs")!.archivedAt).not.toBeNull();
     h.stop();

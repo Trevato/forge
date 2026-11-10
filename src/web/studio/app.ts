@@ -454,6 +454,7 @@ export async function studioApp(
   const more = html`<p class="muted small">
     <a href="${base}/variants">Variants</a>
     ${when(canAdmin(db, repo, ctx.auth.user), () => html`<a href="${base}/settings/app">Environment settings</a>`)}
+    ${when(canAdmin(db, repo, ctx.auth.user), () => html`<a href="/-/confirm?to=${encodeURIComponent(`${base}/archive`)}">Archive</a>`)}
   </p>`;
 
   // An app that follows another says so before anything else: whether it

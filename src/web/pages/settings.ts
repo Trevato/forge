@@ -410,10 +410,10 @@ export async function settingsPage(
       <p class="muted">
         ${repo.archivedAt === null
           ? "Put a finished repository away without deleting it. Its page says when it was archived; links, clone and push keep working."
-          : html`Archived on ${repo.archivedAt.slice(0, 10)}. Wake it to take the label off.`}
+          : html`Archived on ${repo.archivedAt.slice(0, 10)}. Restore it to take the label off.`}
       </p>
       <div class="form-actions">
-        ${btn(repo.archivedAt === null ? "Archive" : "Wake", {
+        ${btn(repo.archivedAt === null ? "Archive" : "Restore", {
           variant: "primary",
         })}
       </div>
@@ -546,14 +546,26 @@ function samePath(ctx: Ctx, to: string | undefined): string | undefined {
 }
 
 /**
- * POST /:owner/:name/settings/archive — archive or wake. The state asked
+ * POST /:owner/:name/settings/archive — archive or restore. The state asked
  * for travels in the form, so a double submit is idempotent.
  */
 export async function archiveSubmit(ctx: Ctx): Promise<Response> {
+  return archiveWith(ctx, undefined);
+}
+
+/**
+ * POST /:owner/:name/archive — the one-tap Archive, reached only through
+ * `/-/confirm`: the form there carries no field, so the answer is fixed here.
+ */
+export async function archiveConfirmed(ctx: Ctx): Promise<Response> {
+  return archiveWith(ctx, "1");
+}
+
+async function archiveWith(ctx: Ctx, fixed: "1" | undefined): Promise<Response> {
   const gate = await adminForm(ctx);
   if (gate instanceof Response) return gate;
   const { repo, form } = gate;
-  const asked = field(form, "archived");
+  const asked = fixed ?? field(form, "archived");
   if (asked !== "0" && asked !== "1")
     return flashTo(ctx, `${repoBase(repo)}/settings`, {
       tone: "danger",
@@ -572,7 +584,7 @@ export async function archiveSubmit(ctx: Ctx): Promise<Response> {
     ctx,
     back,
     updated.ok
-      ? { message: archived ? "Archived." : "Awake again." }
+      ? { message: archived ? "Archived." : "Restored." }
       : { tone: "danger", message: NOT_CHANGED },
   );
 }

@@ -565,6 +565,16 @@ const DESTRUCTIVE: {
   describe: (m: RegExpMatchArray, ctx: Ctx) => Destructive;
 }[] = [
   {
+    pattern: /^\/([^/]+)\/([^/]+)\/archive$/,
+    describe: (m) => ({
+      verb: "Archive",
+      title: `Archive ${m[1]}/${m[2]}?`,
+      detail:
+        "Its process stops and it leaves home and the apps list. Its data and git stay, its address still answers, and Restore on the Archived list starts it again.",
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/delete$/,
     describe: (m) => ({
       verb: DELETE_REPO,

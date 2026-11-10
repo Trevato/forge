@@ -201,7 +201,7 @@ export function aboutScreen(
           ? [
               binding(
                 ["a"],
-                repo?.archivedAt === null ? "archive" : "wake",
+                repo?.archivedAt === null ? "archive" : "restore",
               ),
             ]
           : []),
@@ -485,7 +485,7 @@ export function aboutScreen(
           if (done.ok) {
             repo = getRepoById(f.db, done.value.id) ?? done.value;
             rows = factRows();
-            ctx.toast(waking ? "awake again" : "archived", "success");
+            ctx.toast(waking ? "restored" : "archived", "success");
           } else ctx.toast("that could not be changed", "danger");
           ctx.invalidate();
         });

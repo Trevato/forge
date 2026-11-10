@@ -147,8 +147,8 @@ export function archivedAppCount(ctx: Ctx): number {
   ).size;
 }
 
-/** The archived list's Wake: a small form under each row the viewer administers. */
-function wakeForms(ctx: Ctx, repos: readonly Repo[]): Map<string, Html> {
+/** The archived list's Restore: a small form under each row the viewer administers. */
+function restoreForms(ctx: Ctx, repos: readonly Repo[]): Map<string, Html> {
   const out = new Map<string, Html>();
   for (const repo of repos) {
     if (!canAdmin(ctx.app.db, repo, ctx.auth.user)) continue;
@@ -158,7 +158,7 @@ function wakeForms(ctx: Ctx, repos: readonly Repo[]): Map<string, Html> {
         <form method="post" action="${repoBase(repo)}/settings/archive">
           <input type="hidden" name="archived" value="0" />
           <input type="hidden" name="to" value="/apps?archived=1" />
-          ${btn(html`Wake<span class="sr-only"> ${repo.ownerName}/${repo.name}</span>`)}
+          ${btn(html`Restore<span class="sr-only"> ${repo.ownerName}/${repo.name}</span>`)}
         </form>
       </li>`,
     );
@@ -225,7 +225,7 @@ export async function appsList(ctx: Ctx): Promise<Response> {
             },
           ])}
         </div>`;
-  const wake = archivedView ? wakeForms(ctx, shown.map((e) => e.repo)) : undefined;
+  const wake = archivedView ? restoreForms(ctx, shown.map((e) => e.repo)) : undefined;
   const rows = await timePhaseAsync(ctx.request, "shelf", () =>
     shelfRows(
       ctx,

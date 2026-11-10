@@ -43,7 +43,7 @@ export const tool: Tool = {
         ? `This is the plan; nothing changed. It is ${set.value.was ? "archived" : "awake"} now; send dryRun: false to ${set.value.archived ? "archive" : "wake"} it.`
         : set.value.archived
           ? "Archived: put away, not deleted."
-          : "Awake again.",
+          : "Restored.",
     });
   },
 };
