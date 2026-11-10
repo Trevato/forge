@@ -12,7 +12,8 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createAgentRow, type Agent } from "../src/core/agents.ts";
-import { createUser } from "../src/core/users.ts";
+import { createUser, getUserByName } from "../src/core/users.ts";
+import { setTelemetryGrant } from "../src/actions/telemetry.ts";
 import { createIssue } from "../src/core/issues.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { repoDir } from "../src/git/repos.ts";
@@ -170,6 +171,10 @@ describe("a mirror of a read-only origin is private to its owner", () => {
     "/api/v1/family",
     "/api/v1/fleet/rows",
     "/api/v1/telemetry/home",
+    "/api/v1/telemetry/system",
+    "/api/v1/telemetry/flow",
+    "/api/v1/telemetry/sources",
+    "/api/v1/telemetry/history",
     "/apps",
     "/crew",
     "/map",
@@ -283,6 +288,80 @@ describe("a mirror of a read-only origin is private to its owner", () => {
     expect(await found(`/alice/${NAME}/commits`)).toContain(commit.slice(0, 7));
     expect(await found(`/api/v1/repos/alice/${NAME}/commits`)).toContain(commit);
     expect(await found(`/api/v1/repos/alice/${NAME}/issues`)).toContain("zephyrissue");
+  });
+
+  // The streaming routes: /events replays what a viewer may see and then goes
+  // live; the telemetry reads are the owner's, or a granted agent's with
+  // private repositories cut out.
+  const telemetry = ["home", "system", "flow", "sources", "history"].map((p) => `/api/v1/telemetry/${p}`);
+  /**
+   * Read an event stream until `marker` has arrived, then hang up. Events are
+   * ordered, so anything the stream would leak from before the marker is in
+   * what comes back. `during` runs once the stream is open and registered.
+   */
+  const listen = async (who: string, path: string, marker: string, during?: () => void): Promise<string> => {
+    const stop = new AbortController();
+    const res = await fetch(`${servers.url}${path}`, {
+      headers: cookies[who] === undefined ? {} : { cookie: cookies[who]! },
+      signal: stop.signal,
+    });
+    const reader = res.body!.getReader();
+    during?.();
+    let text = "";
+    // Only a failure timeout: a healthy read ends the moment the marker shows.
+    const timer = setTimeout(() => stop.abort(), 20_000);
+    try {
+      while (!text.includes(marker)) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        text += new TextDecoder().decode(value);
+      }
+    } finally {
+      clearTimeout(timer);
+      stop.abort();
+    }
+    return text;
+  };
+  const traces = (text: string) => [NAME, "zephyrmarker", "zephyrissue", commit].filter((t) => text.includes(t));
+
+  for (const who of ["anonymous", "stranger", "agent"]) {
+    test(`${who} reads the telemetry routes and finds no trace of the mirror`, async () => {
+      for (const path of telemetry) expect(traces(await (await as(who, path)).text()), `${who} ${path}`).toEqual([]);
+    });
+
+    test(`${who} replays and follows /events and finds no trace of the mirror`, async () => {
+      const repo = getRepo(app.db, "alice", NAME)!;
+      const open = getRepo(app.db, "alice", "openbox")!;
+      const marker = `eventmarker-${who}`;
+      const text = await listen(who, "/events?since=0", marker, () => {
+        // Events of the mirror (naming it, as the stream does) and then a public one.
+        app.bus.append({ kind: "issue.opened", repoId: repo.id, actorId: repo.ownerId, payload: { number: 1 } });
+        app.bus.append({ kind: "issue.opened", repoId: open.id, actorId: open.ownerId, payload: { number: 1, marker } });
+      });
+      // The marker is a public event: the read is real, and ends past the mirror's.
+      expect(text).toContain(marker);
+      expect(traces(text)).toEqual([]);
+    });
+  }
+
+  test("an agent granted telemetry:read still finds no trace of the mirror", async () => {
+    const alice = getUserByName(app.db, "alice")!;
+    expect(setTelemetryGrant(app, alice, "crewmate", true).ok).toBe(true);
+    for (const path of telemetry) {
+      const res = await as("agent", path);
+      expect(res.status, path).toBe(200);
+      expect(traces(await res.text()), path).toEqual([]);
+    }
+  });
+
+  test("the owner's /events replay carries the mirror's own events", async () => {
+    expect(await listen("owner", "/events?since=0", NAME)).toContain(NAME);
+    // And live: the stream names the mirror the moment an event of it happens.
+    const repo = getRepo(app.db, "alice", NAME)!;
+    const live = await listen("owner", "/events", NAME, () =>
+      app.bus.append({ kind: "issue.opened", repoId: repo.id, actorId: repo.ownerId, payload: { number: 2 } }),
+    );
+    expect(live).toContain(`"repo":"alice/${NAME}"`);
   });
 
   test("the owner finds it", async () => {
