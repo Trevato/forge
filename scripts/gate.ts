@@ -39,45 +39,57 @@ export const EXCLUDED: readonly Exclusion[] = [
     reason: "not yet admitted",
     issue: 261,
   },
-  { file: "test/apps-sleep.test.ts", reason: "not yet admitted", issue: 261 },
+  {
+    file: "test/apps-sleep.test.ts",
+    reason: "red alone under --randomize (2026-11-10): an environment nobody asks for sleeps, and the next request wakes it — times out at 30s",
+    issue: 11049,
+  },
   {
     file: "test/board-windows.test.ts",
-    reason:
-      "red: an app with spend and nothing shipped is missing from the board",
-    issue: 555,
+    reason: "red alone under --randomize (2026-11-10): the batch agrees with each account read alone — order-dependent",
+    issue: 11049,
   },
   {
     file: "test/crew-interrupted.test.ts",
     reason: "not yet admitted",
     issue: 261,
   },
-  { file: "test/parity.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/probe.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/probes.test.ts", reason: "not yet admitted", issue: 261 },
+  {
+    file: "test/parity.test.ts",
+    reason: "red alone under --randomize (2026-11-10): a pull reopened, team listings and profile edits depend on earlier tests' state",
+    issue: 11049,
+  },
+  {
+    file: "test/probe.test.ts",
+    reason: "red alone under --randomize (2026-11-10): a scaffolded app obeys every cell: verdict mismatch, not ok",
+    issue: 11049,
+  },
+  {
+    file: "test/probes.test.ts",
+    reason: "red alone under --randomize (2026-11-10): the first clean probe after closes the issue: verdict down, not ok",
+    issue: 11049,
+  },
   { file: "test/prompts.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/public-url.test.ts", reason: "not yet admitted", issue: 261 },
+  {
+    file: "test/public-url.test.ts",
+    reason: "red alone under --randomize (2026-11-10): clone URLs name the public address: create answers 401 when run before signup",
+    issue: 11049,
+  },
   {
     file: "test/rehearsal-real.test.ts",
     reason: "red on main@accaa65 under the gate: the second real roll's old forge does not come up",
     issue: 7632,
   },
-  {
-    file: "test/reviews.test.ts",
-    reason: "red in random order: a posted review comment appears inline, anchored to its line",
-    issue: 2106,
-  },
-  { file: "test/runs-lease.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/scaffold.test.ts", reason: "not yet admitted", issue: 261 },
   {
     file: "test/snapshot-destination.test.ts",
     reason: "not yet admitted",
     issue: 261,
   },
-  { file: "test/snapshot.test.ts", reason: "not yet admitted", issue: 261 },
   {
-    file: "test/spawn-placement.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
+    file: "test/snapshot.test.ts",
+    reason: "red alone under --randomize (2026-11-10): retention, restore and upload tests share one store and depend on order",
+    issue: 11049,
   },
   { file: "test/ssh-app.test.ts", reason: "not yet admitted", issue: 261 },
   {
@@ -86,9 +98,11 @@ export const EXCLUDED: readonly Exclusion[] = [
     issue: 261,
   },
   { file: "test/ssh.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/studio-phone.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/tui-asked.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/tui-boards.test.ts", reason: "not yet admitted", issue: 261 },
+  {
+    file: "test/tui-asked.test.ts",
+    reason: "red alone under --randomize (2026-11-10): the asked screen lists asks other tests filed — order-dependent",
+    issue: 11049,
+  },
 ];
 
 /**
