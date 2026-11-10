@@ -18,6 +18,7 @@ import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { cancelRepoRun } from "../src/actions/runs.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
 import { getRun, listRuns } from "../src/core/runs.ts";
+import { readRunLog } from "../src/runs/log.ts";
 import { createUser } from "../src/core/users.ts";
 import { runningRun } from "../src/runs/stoppable.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -148,5 +149,9 @@ describe.skipIf(process.platform !== "linux")("a cancelled check", () => {
     const after = getRun(app.db, run.id);
     expect(after?.state).toBe("cancelled");
     expect(after?.summary).toBe("cancelled by alice");
+    // The run's log says, in one line, how many processes the cancel ended (#10826).
+    const ended = readRunLog(dataDir, run.id).lines.filter((l) => l.startsWith("cancel ended "));
+    expect(ended).toHaveLength(1);
+    expect(Number(/^cancel ended (\d+) process/.exec(ended[0]!)?.[1])).toBeGreaterThanOrEqual(pids.length);
   }, 45_000);
 });

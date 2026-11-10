@@ -18,6 +18,7 @@ import { backgroundArgv } from "./background.ts";
 import { isReservedAppEnvName } from "../core/app_env.ts";
 import { isFeatureVarName } from "./feature_env.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { endedLine, liveTree } from "../runs/ended.ts";
 import { spellings, stripForgeDirs } from "../runs/paths.ts";
 import { seconds } from "./timing.ts";
 import { toolchainUse, type ToolchainUse } from "./toolchain.ts";
@@ -382,6 +383,7 @@ export async function runStep(
   }, timeoutMs);
   const onAbort = (): void => {
     why = `${name} cancelled`;
+    options.log(endedLine(liveTree(proc.pid).length));
     kill();
     stopReading.abort();
   };

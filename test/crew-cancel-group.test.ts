@@ -89,6 +89,7 @@ sleep 300
     chmodSync(binary, 0o755);
 
     const abort = new AbortController();
+    const lines: string[] = [];
     const run = runClaude({
       binary,
       cwd: dir,
@@ -98,7 +99,7 @@ sleep 300
       env: {},
       sandbox: sandboxPolicy({ dataDir: dir, agentName: "bot", urls: [] }),
       timeoutMs: 60_000,
-      log: () => {},
+      log: (line) => lines.push(line),
       signal: abort.signal,
       settleMs: 1_000,
     });
@@ -116,6 +117,10 @@ sleep 300
     const outcome = await run;
     expect(outcome.ok).toBe(false);
     expect(outcome.reason).toBe("cancelled");
+    // One line says how many it ended: at least the three named here (#10826).
+    const ended = lines.filter((l) => l.startsWith("cancel ended "));
+    expect(ended).toHaveLength(1);
+    expect(Number(/^cancel ended (\d+) process/.exec(ended[0]!)?.[1])).toBeGreaterThanOrEqual(pids.length);
     // Reaped too, not left as zombies: no pid answers signal 0.
     const deadline = Date.now() + 2_000;
     const answers = (): number[] =>
