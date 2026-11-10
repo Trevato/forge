@@ -5,6 +5,7 @@
  * repo. Deletion inverts the order — row first, directory second.
  */
 
+import { isPacksMirror } from "../packs/owner.ts";
 import { contributionForksSince, isContributionFork } from "./contribute.ts";
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
@@ -1130,6 +1131,8 @@ export function canWrite(
   repo: Repo,
   user: User | undefined,
 ): boolean {
+  // A packs mirror is a copy of an upstream: only the follow, acting as its owner, moves it (#10530).
+  if (isPacksMirror(repo)) return user !== undefined && user.id === repo.ownerId;
   if (personalOrDirect(repo, user)) return true;
   return accessAllows(orgAccessFor(db, repo, user), "write");
 }

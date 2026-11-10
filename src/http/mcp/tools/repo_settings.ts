@@ -1,13 +1,14 @@
 import { updateRepoSettings } from "../../../actions/repos.ts";
 import { TRANSFER_SAID, transferRepository } from "../../../actions/transfer.ts";
+import { mirrorPacks, reportWords } from "../../../packs/mirror.ts";
 import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 import { VISIBILITY_WORDS } from "../../../core/arg_words.ts";
 
 export const tool: Tool = {
   name: "repo_settings",
-  doc: "`{ repo, description?, visibility?, newOwner? }` (admin): `newOwner` moves the repository to that account or org as `POST /api/v1/repos/:owner/:name/transfer` does, with its codes and sentences (`name_taken`, `same_owner`, `move_failed`, `forbidden_owner`, `unknown_owner`) and answers `{ repo, description, visibility }` at the new path, and cannot be combined with the others; otherwise change a repository's description and visibility as `PATCH /api/v1/repos/:owner/:name` does, for the same callers (a repository admin); answers `{ repo, description, visibility }` (with none to change it only reads); a visibility other than public or private is `invalid`",
+  doc: "`{ mirrorPacks: true }` (admin) brings each https source in packs/*/pack.json in once as a read-only `packs/<app>` that follows its upstream, and answers `{ made, kept, failed, says }`; running it again makes nothing new. `{ repo, description?, visibility?, newOwner? }` (admin): `newOwner` moves the repository to that account or org as `POST /api/v1/repos/:owner/:name/transfer` does, with its codes and sentences (`name_taken`, `same_owner`, `move_failed`, `forbidden_owner`, `unknown_owner`) and answers `{ repo, description, visibility }` at the new path, and cannot be combined with the others; otherwise change a repository's description and visibility as `PATCH /api/v1/repos/:owner/:name` does, for the same callers (a repository admin); answers `{ repo, description, visibility }` (with none to change it only reads); a visibility other than public or private is `invalid`",
   description:
-    "Read, change or move (newOwner) a repo: PATCH /api/v1/repos/:owner/:name (admin).",
+    "Read, change or move (newOwner) a repo: PATCH /api/v1/repos/:owner/:name (admin); mirrorPacks mirrors the packs' upstreams.",
   inputSchema: {
     type: "object",
     properties: {
@@ -15,12 +16,16 @@ export const tool: Tool = {
       description: { type: "string", maxLength: 2000 },
       visibility: { type: "string", enum: ["public", "private"] },
       newOwner: { type: "string", maxLength: 64 },
+      mirrorPacks: { type: "boolean" },
     },
-    required: ["repo"],
   },
   writes: true,
   needsAdminScope: true,
   async run(ctx, user, args) {
+    if (args["mirrorPacks"] === true) {
+      const done = await mirrorPacks(ctx.app, user);
+      return done.ok ? good({ ...done.value, says: reportWords(done.value) }) : bad("not_found", "no such tool here");
+    }
     const repo = repoArg(ctx, user, args);
     if (isAnswer(repo)) return repo;
     const { description, visibility, newOwner } = args;

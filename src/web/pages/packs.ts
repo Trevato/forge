@@ -11,8 +11,10 @@ import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { deployCommands } from "../../packs/words.ts";
 import { html } from "../html.ts";
-import { page } from "../layout.ts";
-import { copyField, row } from "../ui.ts";
+import { flashTo, page } from "../layout.ts";
+import { readForm } from "../form.ts";
+import { mirrorPacks, reportWords } from "../../packs/mirror.ts";
+import { btn, copyField, row } from "../ui.ts";
 
 const plural = (n: number, one: string): string => `${n} ${one}${n === 1 ? "" : "s"}`;
 
@@ -35,7 +37,13 @@ export function packsPage(ctx: Ctx): Response {
   const body = html`${pageHead("Forge packs", {
       sub: "A whole forge to start from: real apps with their history, and a crew set up to work on them.",
     })}
-    ${packsList(packs)}`;
+    ${packsList(packs)}
+    ${ctx.auth.user?.isAdmin === true && ctx.auth.user.kind !== "agent"
+      ? html`<form class="stack" method="post" action="/packs/mirror">
+          <p class="muted small">Copy each pack's upstream projects here as read-only repositories that keep up with the original.</p>
+          ${btn("Mirror the upstreams", { size: "sm", variant: "primary", label: "Mirror the packs' upstreams" })}
+        </form>`
+      : null}`;
   const response = page({ ctx, title: "Forge packs", body });
   notePhase(ctx.request, "render", performance.now() - started);
   return response;
@@ -73,4 +81,14 @@ export function packPage(ctx: Ctx): Response {
   const response = page({ ctx, title: `${pack.title} pack`, body });
   notePhase(ctx.request, "render", performance.now() - started);
   return response;
+}
+
+// POST /packs/mirror (admin)
+export async function packsMirror(ctx: Ctx): Promise<Response> {
+  if (ctx.auth.user?.isAdmin !== true || ctx.auth.user.kind === "agent") return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const done = await mirrorPacks(ctx.app, ctx.auth.user);
+  if (!done.ok) return notFoundPage(ctx);
+  return flashTo(ctx, "/packs", { tone: done.value.failed.length > 0 ? "danger" : "success", message: reportWords(done.value) });
 }

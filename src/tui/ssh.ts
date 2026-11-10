@@ -20,6 +20,7 @@ import { redirectFor } from "../core/transfer.ts";
 import { sshCloneUrl } from "../ssh/command.ts";
 import { getUserById, isActive, type User } from "../core/users.ts";
 import { createRepo, repositoryLimitMessage, resolveOwner } from "../actions/repos.ts";
+import { isPacksMirror, MIRROR_PUSH_REFUSED } from "../packs/owner.ts";
 import { hookEnv } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
 import { pushCap, storageChanged, storageRefusal, storageRefusedText, storageSentence } from "../core/storage.ts";
@@ -332,6 +333,12 @@ export async function serveGitCommand(
       session.exit(1);
       return;
     }
+  }
+
+  if (write && repo !== undefined && isPacksMirror(repo) && canRead(forge.db, repo, user)) {
+    session.writeStderr(`forge: ${MIRROR_PUSH_REFUSED}${CRLF}`);
+    session.exit(1);
+    return;
   }
 
   const allowed =

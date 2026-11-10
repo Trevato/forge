@@ -283,7 +283,8 @@ import { liveChipsFragment, liveMovingFragment } from "../web/studio/living.ts";
 import { HOME_REGIONS } from "../web/studio/home_last.ts";
 import { serviceWorker } from "../web/sw.ts";
 import { explorePage } from "../web/studio/explore.ts";
-import { packPage, packsPage } from "../web/pages/packs.ts";
+import { isPacksMirror, MIRROR_PUSH_REFUSED } from "../packs/owner.ts";
+import { packPage, packsMirror, packsPage } from "../web/pages/packs.ts";
 import {
   makeItYoursPage,
   makeItYoursSubmit,
@@ -821,6 +822,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/explore", explorePage);
   // Forge packs: premade forges to deploy, and the way to help build their apps.
   router.add("GET", "/packs", packsPage);
+  router.add("POST", "/packs/mirror", packsMirror);
   router.add("GET", "/packs/:name", packPage);
   router.add("POST", "/front", frontUpdate);
   router.add("POST", "/home/archive", homeArchive);
@@ -1659,6 +1661,7 @@ async function withGitAccess(
   if (!repo) return ctx.auth.user ? notFound() : gitChallenge();
   if (write) {
     if (!ctx.auth.user) return gitChallenge();
+    if (isPacksMirror(repo) && canRead(ctx.app.db, repo, ctx.auth.user)) return gitRefused(ctx, MIRROR_PUSH_REFUSED);
     if (
       !canWrite(ctx.app.db, repo, ctx.auth.user) ||
       !scopeAllows(ctx.auth.scope ?? "ro", "rw")

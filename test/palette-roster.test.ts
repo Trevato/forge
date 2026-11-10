@@ -48,6 +48,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["home", "Home", "your repositories"],
     ["explore", "Explore", "on the web"],
     ["packs", "Forge packs", "premade forges to deploy, and how to help build their apps"],
+    ["mirror-packs", "Mirror the packs' upstreams", "bring each pack's upstream projects in as read-only repositories"],
     ["data", "Data", "the SQLite files you may read as a tree; / filters, : asks in SQL, y yanks a row"],
     ["fleet", "Fleet rows", "the rows a fleet query line selects"],
     ["profile", "Open a profile", "username or org"],

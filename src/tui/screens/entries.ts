@@ -40,6 +40,7 @@ import { entry as economics } from "./economics.ts";
 import { entry as loopStalls } from "./loopstalls.ts";
 import { entry as slowPagesEntry } from "./slowpages.ts";
 import { entry as maintenance } from "./maintenance.ts";
+import { entry as mirrorPacksEntry } from "./mirrorpacks.ts";
 import { modelCeilingEntry, modelGrantEntry } from "./model.ts";
 import { entry as orgGrants } from "./orggrants.ts";
 import { entry as orgTeams } from "./orgteams.ts";
@@ -93,6 +94,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   telemetry,
   resilience,
   maintenance,
+  mirrorPacksEntry,
   valves,
   access,
   edgeOnly,
