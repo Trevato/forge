@@ -14,8 +14,39 @@ import { repoVisibility } from "./repos.ts";
 /** The endpoint and the protected-resource metadata that names how to sign in. */
 export function mcpPointers(origin: string): { url: string; oauth: string } {
   return {
-    url: `${origin}/mcp`,
+    url: `${origin}${DISCOVERY.mcp}`,
     oauth: `${origin}/.well-known/oauth-protected-resource`,
+  };
+}
+
+/** The paths the discovery documents name each other by; the card, the API catalog and /llms.txt read them, so they cannot drift. */
+export const DISCOVERY = {
+  openapi: "/contract/openapi.json",
+  docs: "/llms.txt",
+  card: "/.well-known/mcp.json",
+  catalog: "/.well-known/api-catalog",
+  mcp: "/mcp",
+  api: "/api/v1",
+} as const;
+
+/** The `Link` header value that points at the catalog (RFC 9727 §3). */
+export const API_CATALOG_LINK = `<${DISCOVERY.catalog}>; rel="api-catalog"`;
+
+/** RFC 9727 API catalog: an RFC 9264 linkset, one anchor per API. */
+export function apiCatalog(origin: string) {
+  return {
+    linkset: [
+      {
+        anchor: `${origin}${DISCOVERY.api}`,
+        "service-desc": [{ href: `${origin}${DISCOVERY.openapi}`, type: "application/json" }],
+        "service-doc": [{ href: `${origin}${DISCOVERY.docs}`, type: "text/plain" }],
+      },
+      {
+        anchor: mcpPointers(origin).url,
+        "service-desc": [{ href: `${origin}${DISCOVERY.card}`, type: "application/json" }],
+        "service-doc": [{ href: `${origin}${DISCOVERY.docs}`, type: "text/plain" }],
+      },
+    ],
   };
 }
 
@@ -102,8 +133,8 @@ export function mcpCard(origin: string, repo: string | undefined, now: Running =
     endpoint: url,
     transport: "streamable-http",
     protectedResourceMetadata: oauth,
-    documentation: `${origin}/llms.txt`,
-    openapi: `${origin}/contract/openapi.json`,
+    documentation: `${origin}${DISCOVERY.docs}`,
+    openapi: `${origin}${DISCOVERY.openapi}`,
     tokenFreeTools: [...TOKEN_FREE_TOOLS],
     plugins: (repo === undefined ? [] : HARNESS_PLUGINS).map((p) => ({
       harness: p.harness,

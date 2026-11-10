@@ -26,6 +26,7 @@ import { createSession } from "../../core/sessions.ts";
 import { hasAnyUser, verifyPasswordThrottled, type User } from "../../core/users.ts";
 import { isThemeName } from "../../design/themes.ts";
 import { cookieValue, crossOrigin, type Ctx } from "../../http/context.ts";
+import { API_CATALOG_LINK } from "../../core/mcp_card.ts";
 import { studioDoor, studioHome } from "../studio/home.ts";
 import { parentIssuerOf } from "../../core/federation.ts";
 import { activeEdgeToken, edgeIdentity, edgeLoginUrl, edgeStrangerLogin } from "../../http/edge.ts";
@@ -210,8 +211,10 @@ export function terminalCard(ctx: Ctx): Html {
 // the feed (`studioHome`, #599), whatever the mode (#625).
 export async function home(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
-  if (user === undefined) return studioDoor(ctx);
-  return await studioHome(ctx, user);
+  const res = user === undefined ? await studioDoor(ctx) : await studioHome(ctx, user);
+  // RFC 9727 §3: where an agent that knows only the origin finds the API catalog.
+  res.headers.append("link", API_CATALOG_LINK);
+  return res;
 }
 
 // ---- authentication ----

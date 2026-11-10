@@ -6,6 +6,8 @@
  *   /.well-known/mcp.json         the MCP server card: endpoint, sign-in, the
  *                                 tool that needs no token (a draft format:
  *                                 only fields we keep true)
+ *   /.well-known/api-catalog      the API catalog (RFC 9727): a linkset naming the
+ *                                 OpenAPI description, the MCP card and the docs
  *   /.well-known/forge            the standards this forge implements, with versions
  *   /.well-known/change-password  where a password manager sends someone
  *   /robots.txt                   what a crawler may index, and the sitemap
@@ -42,7 +44,7 @@ import { notFound } from "../http/respond.ts";
 import { SHARE_TARGET } from "./share_target.ts";
 import { SITE_LINE } from "./site_line.ts";
 import { mcpToolsSection } from "./llms_tools.ts";
-import { HARNESS_PLUGINS, mcpCard, mcpPointers, offeredPluginRepo, pluginSource } from "../core/mcp_card.ts";
+import { apiCatalog, DISCOVERY, HARNESS_PLUGINS, mcpCard, mcpPointers, offeredPluginRepo, pluginSource } from "../core/mcp_card.ts";
 import { forgeDocument } from "../core/standards_index.ts";
 import { running } from "../kernel/version.ts";
 import { timePhase, timePhaseAsync } from "../core/route_timing.ts";
@@ -112,6 +114,18 @@ export function securityTxt(ctx: Ctx): Response {
 export function mcpJson(ctx: Ctx): Response {
   const res = text(JSON.stringify(mcpCard(ctx.url.origin, offeredPluginRepo(ctx.app.db, ctx.app.config.forgeRepo, UPSTREAM_REPO)), null, 2), "application/json");
   res.headers.set("access-control-allow-origin", "*");
+  return res;
+}
+
+/** GET /.well-known/api-catalog — RFC 9727: one linkset naming each API's description and docs. Anonymous. */
+export function apiCatalogJson(ctx: Ctx): Response {
+  const res = new Response(JSON.stringify(apiCatalog(ctx.url.origin)), {
+    headers: {
+      "content-type": 'application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"',
+      "cache-control": "public, max-age=300",
+      "access-control-allow-origin": "*",
+    },
+  });
   return res;
 }
 
@@ -420,7 +434,7 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
       "",
       `- Page: ${o}/{owner}/{name}/report`,
       `- API: POST ${o}/api/v1/repos/{owner}/{name}/reports with JSON {"title": "...", "body": "...", "page": "https://..."} -> 202 {"id", "state": "pending"}`,
-      `- MCP: POST ${o}/mcp, method tools/call, name "report", arguments {"repo": "owner/name", "title", "body", "page"}; this one tool needs no token`,
+      `- MCP: POST ${mcp.url}, method tools/call, name "report", arguments {"repo": "owner/name", "title", "body", "page"}; this one tool needs no token`,
       `- Plain text: a title of 1-${TITLE_MAX} characters, a body of at most ${BODY_MAX}; a few a minute from one source. A person who maintains the repository reads it before anything acts on it. A private repository answers not_found.`,
       "",
       "## Offer a change",
@@ -456,9 +470,10 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
       "",
       "## For agents with an account",
       "",
-      `- MCP: ${mcp.url} (OAuth discovery: ${mcp.oauth}; server card, a draft format: ${o}/.well-known/mcp.json)`,
-      `- API: ${o}/api/v1 (the root lists the other URLs), Authorization: Bearer <token>`,
-      `- OpenAPI: GET ${o}/api/v1/openapi.json (redirects to ${o}/contract/openapi.json)`,
+      `- MCP: ${mcp.url} (OAuth discovery: ${mcp.oauth}; server card, a draft format: ${o}${DISCOVERY.card})`,
+      `- API: ${o}${DISCOVERY.api} (the root lists the other URLs), Authorization: Bearer <token>`,
+      `- API catalog (RFC 9727, one linkset of the above): ${o}${DISCOVERY.catalog}`,
+      `- OpenAPI: GET ${o}${DISCOVERY.api}/openapi.json (redirects to ${o}${DISCOVERY.openapi})`,
       "",
       ...mcpToolsSection(o, signedIn),
       "## Public repositories",

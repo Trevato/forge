@@ -380,6 +380,10 @@ and the build that answers: `commit`, the full commit the forge runs
 says. `version` is `dev` on a preview, so `commit` is how an agent tells two
 previews apart.
 
+`/.well-known/api-catalog` (RFC 9727, `application/linkset+json`) is the one
+request that lists the OpenAPI description, this card and the docs; the home
+page's `Link` header points at it. It adds no tool.
+
 ## Attaching with OAuth
 
 Clients that cannot paste a header — the Claude apps, Grok's connectors —
