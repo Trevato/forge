@@ -131,6 +131,25 @@ select.input {
   display: block; font-size: 13px; font-weight: 550; margin: 0 0 6px; color: var(--fg);
 }
 .field .hint { display: block; font-size: 12.5px; color: var(--muted-fg); margin-top: 6px; overflow-wrap: anywhere; }
+/* A setting as one line (#10999): name, control, and the mark that opens its
+   reason. The mark is a small bordered button; open, the reason takes a line
+   of its own under the row. */
+.setting-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.setting-line > label:not(.check) { margin: 0; }
+.setting-line > select.input { width: auto; max-width: 100%; flex: 0 1 14rem; }
+.setting-line > .check { flex: 0 1 auto; }
+.setting-line > details.why { margin: 0; }
+.setting-line > details.why[open] { flex-basis: 100%; }
+.why > summary {
+  list-style: none; cursor: pointer; display: inline-grid; place-items: center;
+  width: 28px; height: 28px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--card); color: var(--muted-fg);
+}
+.why > summary::-webkit-details-marker { display: none; }
+.why > summary:hover, .why[open] > summary { border-color: var(--border-strong); color: var(--fg); }
+.why > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.why > p { margin: 6px 0 0; font-size: 12.5px; color: var(--muted-fg); overflow-wrap: anywhere; }
+@media (pointer: coarse) { .why > summary { width: 44px; height: 44px; } }
 .field .error { display: block; font-size: 12.5px; color: var(--danger); margin-top: 6px; font-weight: 500; overflow-wrap: anywhere; }
 .field[data-invalid] > label { color: var(--danger); }
 /* A group of checks is one field: the legend reads as a label, no frame. */

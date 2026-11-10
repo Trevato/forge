@@ -91,7 +91,8 @@ import { settingsLead, teamJs } from "../studio/crew.ts";
 import { pageTitle } from "../studio/nouns.ts";
 import { appHref } from "./apps.ts";
 import { field, readForm, type Form } from "../form.ts";
-import { html, when, type Html } from "../html.ts";
+import { html, raw, when, type Html } from "../html.ts";
+import { settingLine, toggleLine } from "../setting_line.ts";
 import { NOT_CHANGED } from "../edit_words.ts";
 import { STOP_APP } from "../danger_words.ts";
 import { icon } from "../icons.ts";
@@ -279,101 +280,38 @@ export async function settingsPage(
   // sends them back unchanged, as that one does the gates below.
   const body = html`<section class="settings-block">
     <h2>Branch and gates</h2>
-    <p class="muted">
-      Where the repository opens, and what must hold before a change lands on it.
-    </p>
     <form method="post" action="${base}/settings">
       <input type="hidden" name="card" value="gates" />
-      ${selectField({
-        label: "Default branch",
-        name: "defaultBranch",
-        hint: "Where the repository opens, and what a bare clone checks out.",
-        options: branches.map((b) => ({
-          value: b,
-          label: b,
-          selected: b === repo.defaultBranch,
-        })),
-      })}
-      <div class="field">
-        <label class="check">
-          <input
-            type="checkbox"
-            name="protect"
-            ${repo.protectDefault ? html`checked` : null}
-          />
-          <span
-            >Protect the default branch — no force-push, no deletion, and only
-            its admins push it; everyone else lands through a pull. Enforced
-            by the pre-receive hook, so it holds for every client.</span
-          >
-        </label>
-      </div>
-      <div class="field">
-        <label class="check">
-          <input
-            type="checkbox"
-            name="requireReview"
-            ${repo.requireReview ? html`checked` : null}
-          />
-          <span
-            >Require an approving review before merging — of the commit that is
-            head <em>now</em>, so a push after an approval dismisses it. Refused
-            in the merge itself, not just hidden on the button.</span
-          >
-        </label>
-      </div>
-      <div class="field">
-        <label class="check">
-          <input
-            type="checkbox"
-            name="requireChecks"
-            ${repo.requireChecks ? html`checked` : null}
-          />
-          <span
-            >Require a passing deploy before merging — the check is the pull
-            request's preview coming up at the commit that is head <em>now</em>.
-            Read live inside the merge, like the review.</span
-          >
-        </label>
-      </div>
-      <div class="field">
-        <input type="hidden" name="crewOutsidersShown" value="1" />
-        <label class="check">
-          <input
-            type="checkbox"
-            name="crewOutsiders"
-            ${repo.crewOutsiders ? html`checked` : null}
-          />
-          <span
-            >Outsiders may trigger the crew — anyone signed in who can read
-            this repository starts and steers runs by commenting, on your
-            budget. Off, only people who can write here direct the crew;
-            anyone else's words stay on the thread. Turning it on or off is
-            recorded in the activity.</span
-          >
-        </label>
-      </div>
-      <div class="field">
-        <input type="hidden" name="polishShareShown" value="1" />
-        <label for="polish-share">Polish share</label>
+      ${settingLine("defaultBranch", html`<label for="f-defaultBranch">Default branch</label>
+        <select class="input" id="f-defaultBranch" name="defaultBranch" aria-describedby="why-defaultBranch">
+          ${branches.map(
+            (b) =>
+              html`<option value="${b}" ${b === repo.defaultBranch ? raw("selected") : null}>${b}</option>`,
+          )}
+        </select>`, "Where the repository opens, and what a bare clone checks out.")}
+      ${toggleLine("protect", "Protect the default branch", repo.protectDefault,
+        "No force-push, no deletion, and only its admins push it; everyone else lands through a pull. Enforced by the pre-receive hook, so it holds for every client.")}
+      ${toggleLine("requireReview", "Require an approving review", repo.requireReview,
+        html`Of the commit that is head <em>now</em>, so a push after an approval dismisses it. Refused in the merge itself, not just hidden on the button.`)}
+      ${toggleLine("requireChecks", "Require a passing deploy", repo.requireChecks,
+        html`The check is the pull request's preview coming up at the commit that is head <em>now</em>. Read live inside the merge, like the review.`)}
+      ${toggleLine("crewOutsiders", "Outsiders may trigger the crew", repo.crewOutsiders,
+        "Anyone signed in who can read this repository starts and steers runs by commenting, on your budget. Off, only people who can write here direct the crew; anyone else's words stay on the thread. Turning it on or off is recorded in the activity.",
+        "crewOutsidersShown")}
+      ${settingLine("polishShare", html`<input type="hidden" name="polishShareShown" value="1" />
+        <label for="polish-share">Polish share, percent (0 to ${String(POLISH_SHARE_MAX)})</label>
         <input
-          class="input mono"
+          class="input input-num mono"
           id="polish-share"
-          type="number"
           name="polishShare"
+          type="number"
           min="0"
           max="${String(POLISH_SHARE_MAX)}"
           step="1"
           value="${String(repo.polishShare)}"
           inputmode="numeric"
-        />
-        <p class="hint">
-          Percent of the week's agent spend that polish may take, 0 to ${String(POLISH_SHARE_MAX)}
-          (starts at ${String(POLISH_SHARE_DEFAULT)}) — so small fixes get steady attention without crowding out the plan.
-          Over it, the crew stops picking issues labelled polish or in the small-fixes lane until the week catches up; the
-          <a href="${base}/week">week</a> shows where it stands.
-        </p>
-      </div>
+          aria-describedby="why-polishShare"
+        />`, html`Percent of the week's agent spend that polish may take, 0 to ${String(POLISH_SHARE_MAX)} (starts at ${String(POLISH_SHARE_DEFAULT)}). Over it, the crew stops picking issues labelled polish or in the small-fixes lane until the week catches up; the <a href="${base}/week">week</a> shows where it stands.`)}
       ${cellMemory === undefined
         ? null
         : html`<div class="field"><p class="hint" data-check-memory>${
