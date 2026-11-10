@@ -45,11 +45,6 @@ export const EXCLUDED: readonly Exclusion[] = [
     issue: 11049,
   },
   {
-    file: "test/board-windows.test.ts",
-    reason: "red alone under --randomize (2026-11-10): the batch agrees with each account read alone — order-dependent",
-    issue: 11049,
-  },
-  {
     file: "test/crew-interrupted.test.ts",
     reason: "not yet admitted",
     issue: 261,
@@ -76,11 +71,6 @@ export const EXCLUDED: readonly Exclusion[] = [
     reason: "not yet admitted",
     issue: 261,
   },
-  {
-    file: "test/snapshot.test.ts",
-    reason: "red alone under --randomize (2026-11-10): retention, restore and upload tests share one store and depend on order",
-    issue: 11049,
-  },
   { file: "test/ssh-app.test.ts", reason: "not yet admitted", issue: 261 },
   {
     file: "test/ssh-port-taken.test.ts",
@@ -88,11 +78,6 @@ export const EXCLUDED: readonly Exclusion[] = [
     issue: 261,
   },
   { file: "test/ssh.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/tui-asked.test.ts",
-    reason: "red alone under --randomize (2026-11-10): the asked screen lists asks other tests filed — order-dependent",
-    issue: 11049,
-  },
 ];
 
 /**
