@@ -104,3 +104,50 @@ test("2,000 rows: the number lands first and the list stays capped", () => {
   expect(hits.flatMap((g) => g.rows).length).toBeLessThanOrEqual(20);
   expect(rankPalette(rows, "roof 17", [], 20).flatMap((g) => g.rows).length).toBeLessThanOrEqual(20);
 });
+
+const median = (xs: number[]) => xs.slice().sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
+const timeMs = (run: () => void) => {
+  const runs: number[] = [];
+  for (let n = 0; n < 5; n++) {
+    const t0 = performance.now();
+    run();
+    runs.push(performance.now() - t0);
+  }
+  return median(runs);
+};
+
+test("2,000 rows: a number, a word and two words each rank in under 50 ms (median of 5)", () => {
+  const rows: PaletteRow[] = Array.from({ length: 2000 }, (_, i) => ({
+    t: `Issue title number ${i} about the roof`,
+    h: `/o/n/issues/${i + 1}`,
+    g: "Issues",
+    d: `#${i + 1} opened by someone`,
+    k: i + 1,
+  }));
+  rankPalette(rows, "roof", [], 20); // warm the JIT: the ceiling is for the steady state
+  const slowest = Math.max(
+    timeMs(() => rankPalette(rows, "#1234", [], 20)),
+    timeMs(() => rankPalette(rows, "roof", [], 20)),
+    timeMs(() => rankPalette(rows, "title roof", [], 20)),
+  );
+  expect(slowest).toBeLessThan(50);
+});
+
+test("every row kind is found by its own words", () => {
+  const rows: PaletteRow[] = [
+    { t: "Leaky gutter on the barn", h: "/o/n/issues/7", g: "Issues", d: "#7", k: 7 },
+    { t: "Repaint the fence", h: "/o/n/pulls/8", g: "Pull requests", d: "#8", k: 8 },
+    { t: "pablo", h: "/pablo", g: "People" },
+    { t: "Change password", h: "/settings/password", g: "Settings" },
+    { t: "Tell the crew", h: "/o/n/tell", g: "Actions", a: 1 },
+    { t: "Unrelated", h: "/x", g: "Pages" },
+  ];
+  const top = (q: string) => rankPalette(rows, q, [], 5)[0]?.rows[0]?.h;
+  expect(top("gutter barn")).toBe("/o/n/issues/7");
+  expect(top("#7")).toBe("/o/n/issues/7");
+  expect(top("repaint fence")).toBe("/o/n/pulls/8");
+  expect(top("#8")).toBe("/o/n/pulls/8");
+  expect(top("pablo")).toBe("/pablo");
+  expect(top("password")).toBe("/settings/password");
+  expect(top("tell crew")).toBe("/o/n/tell");
+});
