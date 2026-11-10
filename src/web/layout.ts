@@ -7,6 +7,7 @@
  * `/search`), and every dialog (a link to a real page).
  */
 
+import { waitingCount } from "../actions/conversation_confirms.ts";
 import { goLevel, goPaletteRows } from "./go_pages.ts";
 import { NEW_ISSUE_KEY } from "./script_keys.ts";
 import { newIssueHref } from "./issue_from.ts";
@@ -622,6 +623,15 @@ export function signInHref(ctx: Ctx): string {
   return token === undefined ? "/signin" : edgeLoginUrl(ctx.url.pathname + ctx.url.search);
 }
 
+/** The Talk button; the count of confirms waiting on the viewer's yes is asked only here, where the button renders. */
+function talkButton(ctx: Ctx, user: User, about?: string): Html {
+  const waiting = waitingCount(ctx, user);
+  const label = waiting > 0 ? `Talk to the forge, ${waiting} waiting` : "Talk to the forge";
+  return html`<a class="btn btn-icon talk-btn" href="${talkHref(about)}" aria-label="${label}" data-shortcut="g t" ${hintAttr("g t", "Talk to the forge")}
+    >${icon("comment")}${waiting > 0 ? html`<span class="talk-count" aria-hidden="true">${waiting > 9 ? "9+" : String(waiting)}</span>` : null}</a
+  >`;
+}
+
 /** The skip link and the topbar: the wordmark, the crumbs, the tools. */
 function topbar(
   ctx: Ctx,
@@ -653,9 +663,7 @@ function topbar(
       <span class="topbar-tools">
         ${tools ?? html`${searchBar()}
         ${user
-          ? html`<a class="btn btn-icon" href="${talkHref(about)}" aria-label="Talk to the forge" data-shortcut="g t" ${hintAttr("g t", "Talk to the forge")}
-                >${icon("comment")}</a
-              ><a class="small" href="/asks" data-shortcut="g q" ${hintAttr("g q")}>Asks</a
+          ? html`${talkButton(ctx, user, about)}<a class="small" href="/asks" data-shortcut="g q" ${hintAttr("g q")}>Asks</a
               >${newMenu(ctx)}${userMenu(
                 ctx,
                 user,

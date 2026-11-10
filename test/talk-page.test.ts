@@ -11,14 +11,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { sayNo } from "../src/actions/conversation_confirms.ts";
+import { sayNo, sayYes } from "../src/actions/conversation_confirms.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { clock, STREAMS_MAX } from "../src/web/pages/talk.ts";
 import { serveTalk } from "../src/tui/ssh-talk.ts";
 import { aboutLine, parseAbout } from "../src/core/talk_about.ts";
 import { appendTurn, listTurns, openConversation } from "../src/core/conversations.ts";
-import { hold, waitingFor } from "../src/core/fence.ts";
+import { HELD_TTL_MS, hold, waitingFor } from "../src/core/fence.ts";
 import { getRepoById } from "../src/core/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
@@ -801,5 +801,60 @@ describe("the header's Talk link carries the subject the page rendered", () => {
     const [ta, tb] = [talkLinks(await a.text()), talkLinks(await b.text())];
     expect(ta).toEqual(tb);
     expect(ta).toEqual(["/talk", "/talk"]);
+  });
+});
+
+describe("the header's Talk button counts confirms waiting", () => {
+  const talk = async (u?: User) => /<a class="btn btn-icon talk-btn"[^>]*>.*?<\/a>/s.exec(await (await get("/", u)).text())?.[0] ?? "";
+
+  test("a waiting confirm counts for its person only, and a confirm answered clears it", async () => {
+    const fay = (await createUser(app.db, { origin: "seed", trusted: true, username: "fay", email: "fay@forge.local", password: "a-good-passphrase" }) as { value: User }).value;
+    expect(await talk(fay)).not.toContain("talk-count");
+    expect(await talk(fay)).toContain('aria-label="Talk to the forge"');
+    const id = hold(app.db, "conversation:talk", fay.id, "mint_invite", {})!;
+    hold(app.db, "conversation:talk", fay.id, "mint_invite", {});
+    const mine = await talk(fay);
+    expect(mine).toContain('aria-label="Talk to the forge, 2 waiting"');
+    expect(mine).toContain('<span class="talk-count" aria-hidden="true">2</span>');
+    expect(await talk(bob)).not.toContain("2 waiting");
+    expect(sayNo({ app }, fay, id).ok).toBe(true);
+    expect(await talk(fay)).toContain("Talk to the forge, 1 waiting");
+    expect(await (await get("/")).text()).not.toContain("talk-count");
+  });
+  test("a confirm said yes to clears it, and the box says it was done", async () => {
+    const gil = (await createUser(app.db, { origin: "seed", trusted: true, username: "gil", email: "gil@forge.local", password: "a-good-passphrase" }) as { value: User }).value;
+    promote(app.db, gil);
+    const made = await createRepo(app, gil, { name: "yes-count" });
+    if (!made.ok) throw new Error(String(made.error));
+    const issue = openIssue(app, gil, made.value, { title: "close me", body: "x" });
+    if (!issue.ok) throw new Error(JSON.stringify(issue.error));
+    const id = hold(app.db, "conversation:talk", gil.id, "close", { repo: "gil/yes-count", number: issue.value.number })!;
+    expect(await talk(gil)).toContain("Talk to the forge, 1 waiting");
+    const yes = await sayYes({ app } as never, gil, id);
+    expect(yes.ok && yes.done).toBe(true);
+    const after = await talk(gil);
+    expect(after).not.toContain("talk-count");
+    expect(after).toContain('aria-label="Talk to the forge"');
+  });
+
+  test("a confirm past its time does not count, swept or not", async () => {
+    const hal = (await createUser(app.db, { origin: "seed", trusted: true, username: "hal", email: "hal@forge.local", password: "a-good-passphrase" }) as { value: User }).value;
+    hold(app.db, "conversation:talk", hal.id, "mint_invite", {}, Date.now() - HELD_TTL_MS - 1000);
+    const left = app.db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM conversation_held WHERE user_id = ?1 AND answered_at IS NULL").get(hal.id)!.n;
+    expect(left).toBe(1); // still unswept: the count's own filter is what hides it
+    expect(await talk(hal)).not.toContain("talk-count");
+    hold(app.db, "conversation:talk", hal.id, "mint_invite", {});
+    expect(await talk(hal)).toContain("Talk to the forge, 1 waiting");
+  });
+
+  test("more than nine waiting shows 9+, and the label says the exact number", async () => {
+    const ida = (await createUser(app.db, { origin: "seed", trusted: true, username: "ida", email: "ida@forge.local", password: "a-good-passphrase" }) as { value: User }).value;
+    for (let i = 0; i < 9; i++) hold(app.db, "conversation:talk", ida.id, "mint_invite", {});
+    expect(await talk(ida)).toContain('<span class="talk-count" aria-hidden="true">9</span>');
+    hold(app.db, "conversation:talk", ida.id, "mint_invite", {});
+    hold(app.db, "conversation:talk", ida.id, "mint_invite", {});
+    const many = await talk(ida);
+    expect(many).toContain('<span class="talk-count" aria-hidden="true">9+</span>');
+    expect(many).toContain('aria-label="Talk to the forge, 11 waiting"');
   });
 });

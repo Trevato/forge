@@ -65,6 +65,8 @@ export const components = /* css */ `
 .btn-icon { padding: 0; width: 36px; min-width: 36px; }
 .btn-icon[data-size="sm"] { width: 28px; min-width: 28px; }
 .btn-icon[data-size="lg"] { width: 44px; min-width: 44px; }
+.talk-btn { position: relative; }
+.talk-count { position: absolute; top: 0; right: 2px; font-size: 12.5px; line-height: 1; font-weight: 600; color: var(--fg); pointer-events: none; }
 /* Touch targets stay thumb-sized on a phone; padding does it, so text stays centered. */
 @media (pointer: coarse) {
   .btn { min-height: 44px; }

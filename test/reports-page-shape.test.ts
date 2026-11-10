@@ -36,7 +36,7 @@ afterAll(async () => {
 });
 
 /** Statements the warm reports page ran as cards (902f53c7), measured with one report waiting. */
-const BUDGET = 34;
+const BUDGET = 35; // +1: the header Talk count (#10327)
 const main = (page: string) => page.slice(page.indexOf("<main"), page.indexOf("</main>"));
 
 test("the queue is a heading over rows, escaped, with its forms and no card", async () => {
