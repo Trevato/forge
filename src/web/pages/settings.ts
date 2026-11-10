@@ -58,6 +58,7 @@ import { updateRepoSettings } from "../../actions/repos.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { nameFrame, notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { appVitals, shiftText, speedText as ms, type AppVitals } from "../../apps/vitals.ts";
+import { relayWaitWords } from "../../apps/relay_wait.ts";
 import type { PreviewData } from "../../apps/data.ts";
 import {
   getAppByRepo,
@@ -872,6 +873,7 @@ export function appVisitorsView(v: AppVitals): Html {
         <div><dt>p75 LCP</dt><dd>${ms(v.lcpP75)}</dd></div>
         <div><dt>p75 INP</dt><dd>${ms(v.inpP75)}</dd></div>
         <div><dt>p75 CLS</dt><dd>${shiftText(v.clsP75)}</dd></div>
+        ${v.wait === undefined ? "" : html`<div><dt>Slowest wait, 10 min</dt><dd>${relayWaitWords(v.wait)}</dd></div>`}
       </dl>
       ${spark ? html`<div class="bar muted">${spark}</div>` : html`<p class="muted small mt">No load reports in the last 30 days</p>`}
   </section>`;

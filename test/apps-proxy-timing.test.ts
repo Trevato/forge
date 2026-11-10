@@ -8,7 +8,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { AppsRuntime, type EnvStatus } from "../src/apps/runtime.ts";
-import { newApp } from "../src/actions/apps.ts";
+import { appVisitors, newApp } from "../src/actions/apps.ts";
+import { clearRelayWaits } from "../src/apps/relay_wait.ts";
+import { visitorsLine } from "../src/apps/vitals.ts";
 import { commitToBranch } from "../src/actions/repos.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
@@ -155,10 +157,15 @@ describe("a proxied answer's Server-Timing", () => {
       const until = performance.now() + 250;
       while (performance.now() < until) {}
       await Bun.sleep(30);
+      clearRelayWaits();
       const header = (await viaHost("/ttfb")).headers.get("server-timing")!;
       expect(dur(header, "forge-lag")!).toBeGreaterThanOrEqual(200);
       // /ttfb answers in ~30 ms: the lag is more than half of it, so the wait was the forge's.
       expect(forgeWaited(dur(header, "forge-lag")!, dur(header, "forge-ttfb")!)).toBe(true);
+      // The app's speed card and terminal line say so: the forge was busy, not the app (#10858).
+      const vitals = appVisitors(app, alice, repo)!;
+      expect(vitals.wait?.forge).toBe(true);
+      expect(visitorsLine(vitals)).toContain("the forge was busy: ");
     } finally {
       stopLoopWorst();
       startLoopWorst();

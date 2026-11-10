@@ -66,6 +66,7 @@ import { appMeasure } from "./measure.ts";
 import { holdPortRequest, holdPortSocket } from "./handoff.ts";
 import { secureFor } from "../http/cookie_secure.ts";
 import { currentLoopLag } from "../perf/loop_worst.ts";
+import { noteRelayWait } from "./relay_wait.ts";
 import { cspNonce, htmlAnswer, readPage, rewritable, TOOLBAR_ASSET_PATH, TOOLBAR_ASSET_PREFIX, toolbarResponse, withToolbar, type PillWhere } from "./toolbar.ts";
 
 const proxySecure = (request: Request, url: URL, forgeUrl: string): boolean =>
@@ -459,10 +460,13 @@ function relayPhase(request: Request, name: RelayPhase, ms: number): void {
  * so a loop blocked by something else lands in it while the app sat idle;
  * `forgeWaited` (the one place the rule lives) says when the wait was the forge's.
  */
-function relayUpstream(request: Request, headersMs: number): void {
+function relayUpstream(request: Request, target: AppTarget, headersMs: number): void {
+  const lag = currentLoopLag();
   relayPhase(request, "ttfb", headersMs);
-  relayPhase(request, "lag", currentLoopLag());
+  relayPhase(request, "lag", lag);
   relayPhase(request, "upstream", headersMs);
+  // Production's slowest wait, for the app's speed card (`apps/relay_wait.ts`).
+  if (target.env === "production") noteRelayWait(target.app.id, headersMs, lag);
 }
 
 /**
@@ -1219,10 +1223,10 @@ export async function proxyApp(
     } as RequestInit);
   } catch {
     answered();
-    relayUpstream(request, performance.now() - sent);
+    relayUpstream(request, target, performance.now() - sent);
     return withPhases(request, unavailable(runtime, target, status, "the app stopped answering"));
   }
-  relayUpstream(request, performance.now() - sent);
+  relayUpstream(request, target, performance.now() - sent);
   const out = new Headers(response.headers);
   for (const name of HOP_BY_HOP) out.delete(name);
   // Which app answered: a probe from outside (`spawn/reach.ts`) tells this
