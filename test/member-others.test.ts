@@ -87,7 +87,7 @@ describe("a member and another account", () => {
       const res = await call(path, bobToken, method, body);
       const gated = path.startsWith("/api/v1/admin/");
       expect([method, path, res.status]).toEqual([method, path, gated ? 403 : 404]);
-      if (gated) expect(await res.json()).toEqual({ error: "not_admin", message: NOT_AN_ADMIN });
+      if (gated) expect(await res.json()).toMatchObject({ error: "not_admin", message: NOT_AN_ADMIN });
     }
     expect(listSessions(app.db, carol.id).some((s) => s.id === sid)).toBe(true);
     // Carol's token: not listed, not revoked through bob's own token routes.

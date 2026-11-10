@@ -116,7 +116,7 @@ describe("POST /api/v1/admin/releases/:sha/rollback", () => {
   test("applying a release the live schema forbids is 409 with the page's words", async () => {
     const res = await roll(BEHIND, admin, { dryRun: false });
     expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ error: "not_rollable", message: NOT_ROLLABLE });
+    expect(await res.json()).toMatchObject({ error: "not_rollable", message: NOT_ROLLABLE });
   });
 
   test("applying goes through rollBackTo: with self-swap off it refuses and nothing moves", async () => {

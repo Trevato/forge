@@ -122,7 +122,7 @@ describe("verified email", () => {
     ];
     for (const res of await Promise.all(refusals)) {
       expect(res.status).toBe(403);
-      expect(await res.json()).toEqual({
+      expect(await res.json()).toMatchObject({
         error: "unverified",
         message: "verify your email first",
       });

@@ -118,7 +118,7 @@ describe("the admin gate", () => {
       const res = await api("GET", "/api/v1/admin/settings", u);
       expect(res.status).toBe(403);
       expect(res.headers.get("content-type")).toContain("application/json");
-      expect(await res.json()).toEqual({ error: "not_admin", message: NOT_AN_ADMIN });
+      expect(await res.json()).toMatchObject({ error: "not_admin", message: NOT_AN_ADMIN });
     }
   });
 

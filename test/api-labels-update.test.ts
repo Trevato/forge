@@ -95,10 +95,10 @@ describe("PATCH …/labels/:id", () => {
     expect(none.status).toBe(422);
     const taken = await patch(admin, other.id, { name: "BUG" });
     expect(taken.status).toBe(422);
-    expect(await taken.json()).toEqual({ error: "taken", message: LABEL_WORDS.taken });
+    expect(await taken.json()).toMatchObject({ error: "taken", message: LABEL_WORDS.taken });
     const bad = await patch(admin, other.id, { color: "red" });
     expect(bad.status).toBe(422);
-    expect(await bad.json()).toEqual({ error: "invalid", message: LABEL_WORDS.shape });
+    expect(await bad.json()).toMatchObject({ error: "invalid", message: LABEL_WORDS.shape });
     expect((await patch(admin, other.id, { name: 5 })).status).toBe(422);
   });
 });

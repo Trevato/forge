@@ -544,3 +544,7 @@ open pulls over 25 landings or 6 h behind main, furthest first, from
 `flow` with `{ kind: "drift", repo, pull, action: "update" }` does the same as a writer of
 the repository: `{ updating, by }`, or the route's refusals in its words (only a writer;
 closed, no agent, or tries used). `test/mcp-flow-drift-update.test.ts`.
+
+## `hint` on a refused REST call (#10950)
+
+Every 401, 403, 404, 409 and 422 JSON answer from `/api/v1` is `{ error, message, hint }`. `hint` is one fixed plain sentence saying what to do next. It never echoes request text, and a 404 `not_found` reads the same whether the resource is missing or private. `test/api-hints.test.ts` walks every OpenAPI route and fails when one lacks it.

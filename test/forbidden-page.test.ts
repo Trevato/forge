@@ -98,7 +98,7 @@ describe("the 403 page", () => {
       body: "username=kim&password=x",
     });
     expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: "forbidden", message: CAME_FROM_ELSEWHERE });
+    expect(await res.json()).toMatchObject({ error: "forbidden", message: CAME_FROM_ELSEWHERE });
   });
 
   test("asked for JSON, it is the API's shape; the reason is escaped on the page", async () => {
@@ -112,7 +112,7 @@ describe("the 403 page", () => {
     });
     const asJson = forbiddenPage(ctx("application/json"), "Sign in to do this.");
     expect(asJson.status).toBe(403);
-    expect(await asJson.json()).toEqual({ error: "forbidden", message: "Sign in to do this." });
+    expect(await asJson.json()).toMatchObject({ error: "forbidden", message: "Sign in to do this." });
     const html = await forbiddenPage(ctx("text/html"), "<b>no</b>").text();
     expect(html).toContain("&lt;b&gt;no&lt;/b&gt;");
     expect(html).not.toContain("<b>no</b>");

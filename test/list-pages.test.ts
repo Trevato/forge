@@ -146,7 +146,7 @@ describe("forks, labels and webhooks are pages", () => {
       for (const bad of ["abc", "0", "-1", "1.5", "201", ""]) {
         const res = await fetch(`${base}${path}?limit=${bad}`, { headers });
         expect(res.status).toBe(422);
-        expect(await res.json()).toEqual({
+        expect(await res.json()).toMatchObject({
           error: "invalid_limit",
           message: "limit is a whole number from 1 to 200",
         });

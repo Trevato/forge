@@ -403,6 +403,7 @@ export function mcpRoutes(router: Router<Handler>): void {
     return new Response(
       JSON.stringify({
         error: "unauthorized",
+        hint: "Send `Authorization: Bearer <token>` with a token you hold, then repeat the call; without one, only the `report` tool answers.",
         message:
           "send a forge token: Authorization: Bearer <token>. Without one, the tool `report` (tools/call, name \"report\", arguments {repo, title, body?, page?, agent?}) files a problem report on a public repository; see /llms.txt",
         report: {
