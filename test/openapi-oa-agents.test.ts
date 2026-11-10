@@ -29,5 +29,5 @@ test("each agent and crew door is in the served document", () => {
   const doc = openapi("https://f.test", "1") as any;
   for (const [method, path] of want) expect(doc.paths[path]?.[method], `${method} ${path}`).toBeDefined();
   expect(doc.paths["/api/v1/thoughts"].post.security).toBeDefined();
-  expect(doc.paths["/api/v1/here"].get.security).toBeUndefined();
+  expect(doc.paths["/api/v1/here"].get.security).toEqual([]);
 });

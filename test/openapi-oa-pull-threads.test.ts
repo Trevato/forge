@@ -7,7 +7,7 @@ const T = "/api/v1/repos/{owner}/{name}/pulls/{number}/threads";
 test("list, resolve and reopen are described", () => {
   const paths = openapi("http://x", "1").paths as Record<string, Record<string, any>>;
   expect(paths[T]?.get).toBeDefined();
-  expect(paths[T]?.get.security).toBeUndefined();
+  expect(paths[T]?.get.security).toEqual([]);
   expect(paths[`${T}/{anchor}/resolve`]?.post).toBeDefined();
   expect(paths[`${T}/{anchor}/resolve`]?.delete).toBeDefined();
   expect(paths[`${T}/{anchor}/resolve`]?.post.security).toBeDefined();

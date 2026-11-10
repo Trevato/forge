@@ -21,5 +21,5 @@ test("each crew-area path and method is served", () => {
   for (const [path, methods] of Object.entries(WANT))
     for (const m of methods) expect(doc.paths[path]?.[m], `${m} ${path}`).toBeDefined();
   expect(doc.paths[`${R}/hooks`].post.security).toBeDefined();
-  expect(doc.paths[`${R}/decisions`].get.security).toBeUndefined();
+  expect(doc.paths[`${R}/decisions`].get.security).toEqual([]);
 });

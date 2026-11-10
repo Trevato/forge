@@ -91,7 +91,8 @@ export function openapi(origin: string, version: string): Record<string, unknown
               },
             },
           }),
-      ...(r.auth ? { security: [{ token: [] }, { oauth2: [oauthScopeFor(r.method)] }] } : {}),
+      // Routes that need no credential opt out of the document's default with `security: []`.
+      security: r.auth ? [{ token: [] }, { oauth2: [oauthScopeFor(r.method)] }] : [],
       responses: {
         [String(r.status ?? 200)]: {
           description: "Done",
@@ -129,6 +130,8 @@ export function openapi(origin: string, version: string): Record<string, unknown
         "The routes the forge names to an agent. `not_found` means missing or not yours to see.",
     },
     servers: [{ url: origin }],
+    // The default: a bearer token. Open routes say `security: []`.
+    security: [{ token: [] }],
     paths,
     components: {
       securitySchemes: {

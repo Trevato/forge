@@ -10,8 +10,8 @@ test("the waves list and one wave are in the served document with their 404", ()
   const one = doc.paths[`${R}/waves/{version}`]?.get;
   expect(list).toBeDefined();
   expect(one).toBeDefined();
-  expect(list.security).toBeUndefined();
-  expect(one.security).toBeUndefined();
+  expect(list.security).toEqual([]);
+  expect(one.security).toEqual([]);
   expect(list.responses.default.description).toContain("`not_found`");
   expect(one.responses.default.description).toContain("no such wave");
 });

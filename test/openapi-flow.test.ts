@@ -28,7 +28,7 @@ test("GET /contract/openapi.json has the flow and the scorecard", async () => {
   const doc = (await res.json()) as any;
 
   const flow = doc.paths["/api/v1/repos/{owner}/{name}/flow"].get;
-  expect(flow.security).toBeUndefined();
+  expect(flow.security).toEqual([]);
   expect(flow.summary).toContain("{ open, live }");
   expect(flow.responses.default.description).toContain("`not_found`");
 
@@ -50,7 +50,7 @@ test("the document describes OAuth: authorization code, refresh, and OpenID disc
   expect(schemes.openid.openIdConnectUrl.endsWith("/.well-known/openid-configuration")).toBe(true);
   const card = doc.paths["/api/v1/admin/invites"].post;
   expect(card.security).toEqual([{ token: [] }, { oauth2: ["rw"] }]);
-  const read = Object.values(doc.paths).map((p: any) => p.get).find((op: any) => op?.security);
+  const read = Object.values(doc.paths).map((p: any) => p.get).find((op: any) => op?.security?.length);
   expect(read.security).toEqual([{ token: [] }, { oauth2: ["ro"] }]);
 });
 
@@ -60,4 +60,12 @@ test("the served document says the telemetry flow read can be revalidated with a
   expect(op.responses["304"]).toBeDefined();
   expect(op.summary).toContain("cacheable by ETag");
   expect(op.summary).toContain("If-None-Match");
+});
+
+test("the description declares its origin, a bearer default, and marks open routes", async () => {
+  const doc = (await (await fetch(`${servers.url}/contract/openapi.json`)).json()) as any;
+  expect(doc.servers).toEqual([{ url: servers.url }]);
+  expect(doc.components.securitySchemes.token).toEqual({ type: "http", scheme: "bearer" });
+  expect(doc.security).toEqual([{ token: [] }]);
+  expect(doc.paths["/api/v1/repos/{owner}/{name}/flow"].get.security).toEqual([]);
 });

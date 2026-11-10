@@ -29,7 +29,7 @@ test("the claim link is shown once and the heartbeat and drills say who calls th
   const doc = openapi("https://f.test", "1") as any;
   expect(doc.paths["/api/v1/forges/{name}/claim-link"].post.summary).toContain("shown once");
   expect(doc.paths["/api/v1/heartbeat"].post.summary).toContain("child");
-  expect(doc.paths["/api/v1/heartbeat"].post.security).toBeUndefined();
+  expect(doc.paths["/api/v1/heartbeat"].post.security).toEqual([]);
   expect(doc.paths["/api/v1/drills"].post.summary).toContain("site admin");
   expect(doc.paths["/api/v1/drills"].post.security).toBeDefined();
 });

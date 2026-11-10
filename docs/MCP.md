@@ -476,7 +476,7 @@ answers
   and an owner, and that every verb names a tool or says why not. The 50 ms
   budget is held by a bounded statement count; the `here` phase is read from
   Server-Timing and bounded at the flake floor (`WALL_CLOCK_FLOOR_MS`).
-- **Contract.** `GET /contract/openapi.json` is OpenAPI 3.1 for the routes
+- **Contract.** `GET /contract/openapi.json` (also `/openapi.json`, `/api/v1/openapi.json`; `servers` is the request's origin, bearer `token` is the default `security`, open routes say `security: []`) is OpenAPI 3.1 for the routes
   the manifest (`here`) names, plus `POST /mcp`. It also describes planning: `GET …/map`, `POST …/plan`,
   `POST …/issues/{number}/dependencies` and
   `DELETE …/issues/{number}/dependencies/{blocker}`. `test/openapi.test.ts` fails

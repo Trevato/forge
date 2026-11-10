@@ -17,5 +17,5 @@ test("runs, log, cancel, usage and spend are in the served document", () => {
   for (const [method, path] of want) expect(doc.paths[path]?.[method], `${method} ${path}`).toBeDefined();
   expect(doc.paths[`${R}/runs/{id}/cancel`].post.security).toBeDefined();
   expect(doc.paths[`${R}/spend`].post.security).toBeDefined();
-  expect(doc.paths[`${R}/runs`].get.security).toBeUndefined();
+  expect(doc.paths[`${R}/runs`].get.security).toEqual([]);
 });

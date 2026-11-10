@@ -59,7 +59,7 @@ test("every described route is registered in the router", () => {
 test("the map, plan and dependency routes are described", () => {
   const doc = openapi("https://f.test", "1") as any;
   const R = "/api/v1/repos/{owner}/{name}";
-  expect(doc.paths[`${R}/map`].get.security).toBeUndefined();
+  expect(doc.paths[`${R}/map`].get.security).toEqual([]);
   expect(doc.paths[`${R}/plan`].post.requestBody.content["application/json"].schema.properties.issues.type).toBe("array");
   expect(doc.paths[`${R}/issues/{number}/dependencies`].post.security).toBeDefined();
   const del = doc.paths[`${R}/issues/{number}/dependencies/{blocker}`].delete;
@@ -83,7 +83,7 @@ test("listing issues and pulls is described with the query the handlers read", (
   const R = "/api/v1/repos/{owner}/{name}";
   for (const kind of ["issues", "pulls"]) {
     const get = doc.paths[`${R}/${kind}`].get;
-    expect(get.security).toBeUndefined();
+    expect(get.security).toEqual([]);
     const q = get.parameters.filter((p: any) => p.in === "query");
     const base = ["state", "limit", "cursor", "label", "author"];
     expect(q.map((p: any) => p.name)).toEqual(kind === "issues" ? [...base, "fields"] : base);
@@ -106,18 +106,18 @@ test("reading and closing one issue and reading one pull are described", () => {
   const doc = openapi("https://f.test", "1") as any;
   const R = "/api/v1/repos/{owner}/{name}";
   const issue = doc.paths[`${R}/issues/{number}`];
-  expect(issue.get.security).toBeUndefined();
+  expect(issue.get.security).toEqual([]);
   expect(issue.patch.security).toBeDefined();
   const props = issue.patch.requestBody.content["application/json"].schema.properties;
   expect(Object.keys(props).sort()).toEqual(["into", "reason", "state"]);
   expect(props.into.type).toBe("integer");
   expect(issue.patch.parameters.find((p: any) => p.name === "number").in).toBe("path");
-  expect(doc.paths[`${R}/pulls/{number}`].get.security).toBeUndefined();
+  expect(doc.paths[`${R}/pulls/{number}`].get.security).toEqual([]);
 });
 
 test("making and listing apps is described with every field the route reads", () => {
   const doc = openapi("https://f.test", "1") as any;
-  expect(doc.paths["/api/v1/apps"].get.security).toBeUndefined();
+  expect(doc.paths["/api/v1/apps"].get.security).toEqual([]);
   const post = doc.paths["/api/v1/apps"].post;
   expect(post.security).toBeDefined();
   expect(post.responses["201"]).toBeDefined();
@@ -210,7 +210,7 @@ test("an issue's teams and labels, a pull's labels and an issue's private reposi
   ] as const) expect(doc.paths[path]?.[method], `${method} ${path}`).toBeDefined();
   expect(doc.paths[`${R}/issues/{number}/teams`].put.requestBody.content["application/json"].schema.properties.teams.type).toBe("array");
   expect(doc.paths[`${R}/issues/{number}/private`].post.responses["201"]).toBeDefined();
-  expect(doc.paths[`${R}/issues/{number}/teams`].get.security).toBeUndefined();
+  expect(doc.paths[`${R}/issues/{number}/teams`].get.security).toEqual([]);
   expect(doc.paths[`${R}/pulls/{number}/labels`].put.security).toBeDefined();
 });
 
@@ -245,7 +245,7 @@ test("signing up, signing in and the first admin are described", () => {
     const op = doc.paths[path]?.[method];
     expect(op, `${method} ${path}`).toBeDefined();
     expect(op.responses[String(status)], `${method} ${path} ${status}`).toBeDefined();
-    expect(op.security, `${method} ${path}`).toBeUndefined();
+    expect(op.security, `${method} ${path}`).toEqual([]);
   }
   const props = (p: string) => doc.paths[p].post.requestBody.content["application/json"].schema.properties;
   expect(props("/api/v1/users").password.type).toBe("string");
@@ -483,10 +483,10 @@ test("labels made and removed, a commit's check and a file read by path are desc
   expect(del.security).toBeDefined();
   expect(del.responses["204"]).toBeDefined();
   const check = doc.paths[`${R}/commits/{oid}/check`].get;
-  expect(check.security).toBeUndefined();
+  expect(check.security).toEqual([]);
   expect(check.parameters.find((p: any) => p.name === "oid").in).toBe("path");
   const read = doc.paths[`${R}/contents/{path}`].get;
-  expect(read.security).toBeUndefined();
+  expect(read.security).toEqual([]);
   expect(read.parameters.map((p: any) => p.name)).toEqual(["owner", "name", "path", "ref"]);
 });
 
