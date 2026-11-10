@@ -88,6 +88,7 @@ import { previewVision } from "../../crew/vision.ts";
 import { visionPreviewCard } from "./direction.ts";
 import { holdCard } from "./hold.ts";
 import { pullMayRun } from "../../core/pull_trust.ts";
+import { landingLine } from "../../flow/landing_line.ts";
 import { nextOfPull } from "../../flow/next_actor.ts";
 import { STEP_MEANS, STEPS, stepOfPull, stepWord, type PathStep } from "../../flow/path.ts";
 import { changeHref } from "./nouns.ts";
@@ -267,7 +268,10 @@ export function changeHead(
           >`,
       )}
     </div>
-    ${when(step, (st) => pathLine(st, next === null ? undefined : `${next.who}, ${next.why}`))}
+    ${when(step, (st) => pathLine(st, next === null ? undefined : `${next.who}, ${next.why}`))}${when(
+      live === null ? null : landingLine(ctx.app.db, pull, repo.id),
+      (eta) => html`<p class="muted small" data-landing-eta>${eta.says}</p>`,
+    )}
   </div>`;
 }
 

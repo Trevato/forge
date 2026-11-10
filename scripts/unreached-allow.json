@@ -8,7 +8,6 @@
   "src/flow/clog_words.ts",
   "src/flow/conflict_pairs.ts",
   "src/flow/handovers.ts",
-  "src/flow/landing_eta.ts",
   "src/flow/rebase_first.ts",
   "src/flow/review_rounds.ts",
   "src/flow/shared_red.ts",

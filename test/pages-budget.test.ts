@@ -34,7 +34,7 @@ const DEFAULT = { statements: 60, git: 8 };
 const HEAVIER: Record<string, { statements?: number; git?: number }> = {
   "/:owner/:name/issues/:number": { statements: 70 },
   "/:owner/:name/next": { statements: 64 },
-  "/:owner/:name/pulls/:number": { statements: 109 }, // +1: the header Talk count (#10327)
+  "/:owner/:name/pulls/:number": { statements: 110 }, // +1: the header Talk count (#10327); +1: the landing line (#10860)
   "/board": { statements: 64 },
   "/settings/capacity": { statements: 71 },
 };
