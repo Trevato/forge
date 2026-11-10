@@ -36,6 +36,7 @@ const NOT_A_PAGE: Record<string, string> = {
   "/releases.json": "JSON feed of /releases",
   "/docs": "a redirect to the forge's documentation",
   "/changelog.atom": "Atom feed of /changelog",
+  "/explore.atom": "Atom feed of /explore",
   "/sitemap.xml": "XML for crawlers",
   "/manifest.webmanifest": "the install manifest, JSON",
   "/opensearch.xml": "the browser search description, XML",

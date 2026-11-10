@@ -231,7 +231,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
           pad: false,
           extra: "bare",
         })}</div>`;
-  const drawn = page({ ctx, title: "Explore", body });
+  const drawn = page({ ctx, title: "Explore", body, feed: { href: "/explore.atom", title: "Explore" } });
   // An unknown filter is a 422 here as on the API and the MCP; the page still draws the note and the results.
   const response = unknown.length === 0 ? drawn : new Response(drawn.body, { status: 422, headers: drawn.headers });
   notePhase(ctx.request, "render", performance.now() - rendering);

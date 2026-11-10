@@ -231,6 +231,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "on the web",
         run: () => openOnWeb(session, ctx, "/explore", "The explorer"),
       },
+      {
+        // The same list as an Atom feed (#10967): the terminal hands over
+        // the feed's address, to copy into a reader.
+        id: "explore-feed",
+        title: "Explore feed",
+        hint: "Atom address",
+        run: () => openOnWeb(session, ctx, "/explore.atom", "The explore feed"),
+      },
       packsCommand(session, ctx),
       ...dataCommand(session, ctx),
       fleetCommand(session, ctx),

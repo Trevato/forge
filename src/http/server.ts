@@ -161,7 +161,7 @@ import { confirmPage, searchPage } from "../web/pages/search.ts";
 import { chainPage, checkSubmit, modeSubmit, proposeParentSubmit, severSubmit, takeSubmit } from "../web/pages/chain.ts";
 import { followingSubmit } from "../web/pages/following.ts";
 import { reconnectSubmit } from "../web/pages/frozen.ts";
-import { activityAtom, changelogAtom } from "../web/feeds.ts";
+import { activityAtom, changelogAtom, exploreAtom } from "../web/feeds.ts";
 import { auditCsv, auditPage, auditProbeSubmit } from "../web/pages/audit.ts";
 import { apiPage, appApiPage } from "../web/pages/api.ts";
 import { flowsCheck, flowsPage, flowsProbe, flowsUpdate } from "../web/pages/flows.ts";
@@ -850,6 +850,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/front", studioDoor);
   // Apps and people ranked by real numbers, narrowed in one line (#607).
   router.add("GET", "/explore", explorePage);
+  router.add("GET", "/explore.atom", exploreAtom);
   // Forge packs: premade forges to deploy, and the way to help build their apps.
   router.add("GET", "/packs", packsPage);
   router.add("POST", "/packs/mirror", packsMirror);

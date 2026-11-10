@@ -48,3 +48,9 @@ An unknown filter word is refused the same way everywhere: `422` from the API (`
 ## Make it yours on an app row
 An app's row carries `action: { do: "make_it_yours", label: "Make it yours" }` exactly when `copyable` is true (`MAKE_IT_YOURS` in `actions/explore.ts`).
 `label` is the page button's text and `do` is the name of the MCP tool that forks; it plans unless called with `dryRun: false`.
+
+## As a feed (#10967)
+
+`GET /explore.atom` is `/explore` as an Atom feed, public, for a feed reader. It holds the apps `/explore` ranks first for a stranger (default ranking, apps only, read through the page's own `explore`), at most 30 (`EXPLORE_ENTRIES` in `web/feeds.ts`), shown newest-made first, one entry each titled with the app's name, linked to its page (`rel="alternate"`) with its description as the summary. Private and archived apps are never in it. It is cached for five minutes (`cache-control: public, max-age=300`) and carries a weak `ETag`, so a reader that sends `If-None-Match` gets a 304. `/explore` links it with `<link rel="alternate" type="application/atom+xml">`. Server-Timing names `read` and `render`.
+
+The terminal's palette has `Explore feed`, which opens or shows the feed's address (copy it into a reader).

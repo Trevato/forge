@@ -47,6 +47,7 @@ test("a site-admin person is offered the whole roster", () => {
   expect(roster(admin)).toEqual([
     ["home", "Home", "your repositories"],
     ["explore", "Explore", "on the web"],
+    ["explore-feed", "Explore feed", "Atom address"],
     ["packs", "Forge packs", "premade forges to deploy, and how to help build their apps"],
     ["mirror-packs", "Mirror the packs' upstreams", "bring each pack's upstream projects in as read-only repositories"],
     ["pack-repos", "Pack repositories", "which repositories /packs lists"],
@@ -186,6 +187,7 @@ test("a site-admin agent is offered the roster without the person-only entries",
   expect(roster({ ...admin, kind: "agent" })).toEqual([
     ["home", "Home", "your repositories"],
     ["explore", "Explore", "on the web"],
+    ["explore-feed", "Explore feed", "Atom address"],
     ["packs", "Forge packs", "premade forges to deploy, and how to help build their apps"],
     ["data", "Data", "the SQLite files you may read as a tree; / filters, : asks in SQL, y yanks a row"],
     ["fleet", "Fleet rows", "the rows a fleet query line selects"],
@@ -266,6 +268,7 @@ test("a member person is offered the signed-in roster without the admin entries"
   expect(roster(member)).toEqual([
     ["home", "Home", "your repositories"],
     ["explore", "Explore", "on the web"],
+    ["explore-feed", "Explore feed", "Atom address"],
     ["packs", "Forge packs", "premade forges to deploy, and how to help build their apps"],
     ["fleet", "Fleet rows", "the rows a fleet query line selects"],
     ["profile", "Open a profile", "username or org"],
@@ -344,6 +347,7 @@ test("signed out, the palette offers sign-in and the public entries", () => {
   expect(roster()).toEqual([
     ["home", "Home", "your repositories"],
     ["explore", "Explore", "on the web"],
+    ["explore-feed", "Explore feed", "Atom address"],
     ["packs", "Forge packs", "premade forges to deploy, and how to help build their apps"],
     ["fleet", "Fleet rows", "the rows a fleet query line selects"],
     ["profile", "Open a profile", "username or org"],
