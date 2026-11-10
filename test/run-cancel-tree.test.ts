@@ -7,6 +7,11 @@
  *
  * Before this, the cancel marked the row and nothing else: an agent run was
  * aborted, but a check ran on to its end, its tree with it.
+ *
+ * A cancel asks before it kills (#10919): SIGTERM to the group, then SIGKILL
+ * once `CANCEL_GRACE_MS` has run out. A step that honours SIGTERM has its
+ * last words logged. A step that ignores it is still alive halfway through
+ * the grace and gone soon after the grace ends.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
@@ -20,6 +25,8 @@ import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
 import { getRun, listRuns } from "../src/core/runs.ts";
 import { readRunLog } from "../src/runs/log.ts";
 import { createUser } from "../src/core/users.ts";
+import { childEnv, runStep } from "../src/apps/process.ts";
+import { CANCEL_GRACE_MS, graceKillLine } from "../src/runs/grace.ts";
 import { runningRun } from "../src/runs/stoppable.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
@@ -85,6 +92,13 @@ async function pidIn(file: string, ms: number): Promise<number> {
     await Bun.sleep(20);
   }
   throw new Error(`${file} never named a pid`);
+}
+
+/** Polls: true once the file exists, false at the deadline. */
+async function pathWithin(file: string, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (!existsSync(file) && Date.now() < deadline) await Bun.sleep(20);
+  return existsSync(file);
 }
 
 describe.skipIf(process.platform !== "linux")("a cancelled check", () => {
@@ -154,4 +168,62 @@ describe.skipIf(process.platform !== "linux")("a cancelled check", () => {
     expect(ended).toHaveLength(1);
     expect(Number(/^cancel ended (\d+) process/.exec(ended[0]!)?.[1])).toBeGreaterThanOrEqual(pids.length);
   }, 45_000);
+});
+
+describe.skipIf(process.platform !== "linux")("a cancelled step's grace", () => {
+  test("is short enough to keep the 2 s promise", () => {
+    expect(CANCEL_GRACE_MS).toBeGreaterThan(0);
+    expect(CANCEL_GRACE_MS).toBeLessThan(2_000);
+  });
+
+  test("a step that honours SIGTERM ends on it, its last words logged, with no kill", async () => {
+    const lines: string[] = [];
+    const ready = join(pidDir, "honour.ready");
+    const controller = new AbortController();
+    const step = runStep(
+      "check",
+      `trap 'echo got term; exit 0' TERM; sleep 300 & echo ok > ${ready}; wait`,
+      { cwd: pidDir, env: childEnv({}), log: (l) => lines.push(l), signal: controller.signal },
+    );
+    // The trap is set before the ready file is written: only then is a
+    // SIGTERM the step's to honour.
+    expect(await pathWithin(ready, 10_000)).toBe(true);
+    controller.abort();
+    const result = await step;
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe("check cancelled");
+    // It ended on SIGTERM: its trap spoke, and the grace never ran out.
+    // (No wall-clock bound: a loaded check machine makes one a flake.)
+    expect(lines).toContain("got term");
+    expect(lines).not.toContain(graceKillLine());
+  }, 20_000);
+
+  test("a step and the sleeper it forked that both ignore SIGTERM are killed once the grace runs out", async () => {
+    const lines: string[] = [];
+    const shell = join(pidDir, "deaf-shell.pid");
+    const grand = join(pidDir, "deaf-grand.pid");
+    const controller = new AbortController();
+    // `trap '' TERM` is inherited: the sleeper ignores SIGTERM too.
+    const step = runStep(
+      "check",
+      `trap '' TERM; echo $$ > ${shell}; sleep 300 & echo $! > ${grand}.tmp; mv ${grand}.tmp ${grand}; wait`,
+      { cwd: pidDir, env: childEnv({}), log: (l) => lines.push(l), signal: controller.signal },
+    );
+    const pids = [await pidIn(grand, 10_000), await pidIn(shell, 5_000)];
+    started.push(...pids);
+    expect(pids.every(alive)).toBe(true);
+
+    const at = Date.now();
+    controller.abort();
+    // SIGTERM came first and was ignored: a third into the grace, both still run.
+    await Bun.sleep(CANCEL_GRACE_MS / 3);
+    expect(pids.every(alive)).toBe(true);
+    // Then the grace runs out and the group is killed.
+    expect(await allGoneWithin(pids, CANCEL_GRACE_MS + 5_000)).toBe(true);
+    const result = await step;
+    expect(Date.now() - at).toBeGreaterThanOrEqual(CANCEL_GRACE_MS - 50);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe("check cancelled");
+    expect(lines.filter((l) => l === graceKillLine())).toHaveLength(1);
+  }, 30_000);
 });
