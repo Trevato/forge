@@ -21,3 +21,9 @@ Each host is named exactly, on port 443 alone, with no wildcards. It is enforced
 ## Cells inside a child
 
 A child forge opens cells of its own for its checks, apps and install steps. Those cells' proxy cannot dial out, since the child's cell has no route but its own proxy, so it tunnels through that proxy with `CONNECT` (`upstream` in `src/apps/egress.ts`). A host opens only when both policies allow it: the step's own egress, and the child cell's list above. Names are resolved and checked by the child cell's proxy.
+
+## Payment providers
+
+`children.paymentEgress` (`FORGE_CHILDREN_PAYMENT_EGRESS`) is `stripe` by default: a child's cell may reach `api.stripe.com` on 443, so an app a customer builds can take a payment. It is only the cell's ceiling: a cell the child opens for an app passes the host only when that app's `forge.json` `egress` declares it, and the crew's sandbox declares none. `off` closes it. Applies from the next child cell started.
+
+Payment hosts are enforce-only in every cell's own proxy (`decide` in `src/apps/egress.ts`): even when the child forge's `cells.egress` is `report`, an app that does not declare `api.stripe.com` is refused it.

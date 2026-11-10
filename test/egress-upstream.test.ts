@@ -109,3 +109,31 @@ test("the upstream is the cell's own loopback proxy, or nothing", () => {
   expect(upstreamProxy({ HTTPS_PROXY: "https://127.0.0.1:3128" })).toBeUndefined();
   expect(upstreamProxy({ HTTPS_PROXY: "http://u:p@127.0.0.1:3128" })).toBeUndefined();
 });
+
+test("a payment host passes a child's inner proxy only when the app declares it, in enforce and in report mode", async () => {
+  const connect = "CONNECT api.stripe.com:443 HTTP/1.1\r\nHost: api.stripe.com:443\r\n\r\n";
+  for (const report of [false, true]) {
+    const outerPort = freeish();
+    const innerPort = outerPort + 1;
+    // The outer cell allows nothing, so a request that gets past the inner policy is named by the outer's refusal.
+    const outer = startEgress({ tcp: outerPort }, { hosts: [], origins: [] });
+    const upstream = { host: "127.0.0.1", port: outerPort };
+    const seen: string[] = [];
+    const policy = (hosts: string[]) => ({ hosts, origins: [], upstream, ...(report ? { report: (h: string) => void seen.push(h) } : {}) });
+    const declared = startEgress({ tcp: innerPort }, policy(["api.stripe.com"]));
+    const undeclared = startEgress({ tcp: innerPort + 1 }, policy([]));
+    try {
+      expect(await through(innerPort, connect)).toContain("not reachable from this forge's cell");
+      const refused = await through(innerPort + 1, connect);
+      expect(refused).toStartWith("HTTP/1.1 403");
+      expect(refused).toContain("not in this repository's egress");
+      expect(seen).toEqual([]);
+      // Report mode still lets another undeclared public host reach the outer proxy.
+      if (report) expect(await through(innerPort + 1, "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n")).toContain("not reachable from this forge's cell");
+    } finally {
+      declared.close();
+      undeclared.close();
+      outer.close();
+    }
+  }
+});

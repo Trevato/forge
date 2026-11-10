@@ -7,7 +7,7 @@ import { answerFromCell, closeHostedChildren, resolveHostedChild } from "../src/
 import { createApp } from "../src/app.ts";
 import { childEnv } from "../src/apps/process.ts";
 import { watchedLimits } from "../src/apps/contain.ts";
-import { childLog, plainLine, cellChildren, crewAtWork, stopCellChildren, stopGently, cellEnv, cellLimits, cellPlacement, cellSpecFor, forward, ownsBody } from "../src/spawn/cell.ts";
+import { childLog, plainLine, cellChildren, crewAtWork, stopCellChildren, stopGently, cellEnv, cellLimits, cellPlacement, cellSpecFor, forward, launchSpecFor, ownsBody } from "../src/spawn/cell.ts";
 import { fallbackPlacement, hostedPlacement, memoryBodies } from "../src/spawn/placement.ts";
 import type { SpawnPlan } from "../src/spawn/plan.ts";
 import { SIZES } from "../src/spawn/sizes.ts";
@@ -17,7 +17,7 @@ import { portInsteadOfSocket } from "../src/git/hook-address.ts";
 import { missing } from "./helpers/tools.ts";
 import { resultLine } from "./helpers/result-line.ts";
 import { hostAllowed } from "../src/apps/egress.ts";
-import { childModelHosts, childRegistryHosts, setCapacity } from "../src/core/capacity.ts";
+import { childModelHosts, childPaymentHosts, childRegistryHosts, setCapacity } from "../src/core/capacity.ts";
 import { openBeatDoor, parentLocal } from "../src/spawn/beat-door.ts";
 import { lastHeard, sendBeat } from "../src/spawn/heartbeat.ts";
 import { failedWith } from "./helpers/machine-note.ts";
@@ -536,5 +536,37 @@ describe("a child forge told to go", () => {
     await stopGently({ pid: proc.pid, exited: proc.exited }, 400);
     expect(Date.now() - started).toBeGreaterThanOrEqual(400);
     expect(proc.signalCode).toBe("SIGKILL");
+  });
+});
+
+describe("a child forge's apps reaching a payment provider", () => {
+  test("api.stripe.com on 443 alone by default, enforced even in report mode, closed by off", () => {
+    const app = createApp({ dataDir: join(tmp, "payment-egress"), url: "https://f.test" });
+    try {
+      expect(childPaymentHosts(app.db)).toEqual(["api.stripe.com:443"]);
+      setCapacity(app.db, "cells.egress", "report", "system");
+      const spec = cellSpecFor({ dir: "/d/c", parentDataDir: "/d", parentUrl: "https://f.test", size: "small", port: 4100, label: "forge:kid", paymentHosts: childPaymentHosts(app.db) });
+      expect(spec.egressMode).toBe("enforce");
+      expect(hostAllowed(spec.egress, "api.stripe.com", 443)).toBe(true);
+      expect(hostAllowed(spec.egress, "api.stripe.com", 80)).toBe(false);
+      expect(hostAllowed(spec.egress, "evil.api.stripe.com", 443)).toBe(false);
+      expect(hostAllowed(spec.egress, "example.com", 443)).toBe(false);
+      setCapacity(app.db, "children.paymentEgress", "off", "system");
+      expect(childPaymentHosts(app.db)).toEqual([]);
+    } finally {
+      app.close();
+    }
+  });
+  test("the launch path carries the setting: Stripe in the child's egress by default, gone once off", () => {
+    const app = createApp({ dataDir: join(tmp, "payment-launch"), url: "https://f.test" });
+    try {
+      const input = { bodyId: "cell-pay1", name: "kid", size: "small" } as const;
+      const at = { port: 4100, parentPort: 4101 };
+      expect(launchSpecFor(app, input, at, "").egress).toContain("api.stripe.com:443");
+      setCapacity(app.db, "children.paymentEgress", "off", "system");
+      expect(launchSpecFor(app, input, at, "").egress).not.toContain("api.stripe.com:443");
+    } finally {
+      app.close();
+    }
   });
 });

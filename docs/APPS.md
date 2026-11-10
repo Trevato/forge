@@ -588,7 +588,11 @@ Two more fields say what the app's code may use (rule 9):
 names, or `*.` for every name below one, at most 32, each reachable on 80
 and 443 — `db.example.com:5432` names one other port instead. Without it an app
 reaches the forge and nothing else; install, test and check steps also
-reach `registry.npmjs.org`. `limits` (MiB, cores, MiB) default to 512 MiB,
+reach `registry.npmjs.org`. In a child forge the cell is held to a ceiling
+(parent's model, registry and payment settings): `api.stripe.com` on 443
+(`children.paymentEgress`, on by default) is reachable there only by an app
+whose `forge.json` `egress` names it; an app that does not, and the child's
+crew sandbox, cannot reach it. `limits` (MiB, cores, MiB) default to 512 MiB,
 1 core and 1 GiB for an app and 2 GiB, 2 cores and 4 GiB for a step, and
 are capped by the machine (`FORGE_CELL_MEMORY_MAX_MIB`, default 4096; the
 number of cores; `FORGE_CELL_DISK_MAX_MIB`, default 16384). A cell's `/tmp`
