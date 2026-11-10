@@ -285,7 +285,7 @@ if (root) {
       const res = await fetch("/api/v1/conversation/messages", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text, conversation: cid, files: attached.map((f) => f.id), during: steer && answering ? "steer" : "queue" }),
+        body: JSON.stringify({ text, conversation: cid, files: attached.map((f) => f.id), during: steer && answering ? "steer" : "queue", about: form.about?.value || undefined }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));

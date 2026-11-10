@@ -19,6 +19,7 @@ import { chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { dailyLeft } from "../core/account_ceiling.ts";
+import { aboutContext } from "../core/talk_about.ts";
 import { appendTurn, getConversation, lastExchange, listTurns, openConversation, removeTurn, restoreTurns, setAsideFrom, setClaudeSession, type Conversation } from "../core/conversations.ts";
 import { attach, deliver, fileOwnedBy, NOTHING, release, type ConversationFile, type Delivery } from "../core/conversation_files.ts";
 import { carryWrites, forgetWrites, unended } from "../core/conversation_writes.ts";
@@ -288,6 +289,7 @@ export function say(
   files: readonly ConversationFile[] = [],
   during: During = "inject",
   conversationId?: string,
+  about?: string | null,
 ): Result<Said, SayRefusal> {
   const user = getUserById(app.db, userId);
   if (user === undefined) return err("unauthorized");
@@ -310,6 +312,9 @@ export function say(
     cancelHeld(app.db, `conversation:${conversation.id}`);
     return ok({ how: "interrupted" });
   }
+  // The subject rides with a new conversation's first message only (#10496), as fenced data the agent reads before the words.
+  const first = listTurns(app.db, userId, conversation.id, { limit: 1 });
+  const lead = about === undefined || about === null || !first.ok || first.value.length > 0 ? "" : aboutContext(app.db, about, user);
   const stored = appendTurn(app.db, userId, conversation.id, { role: "person", text });
   if (!stored.ok) return err("too_long");
   attach(app.db, files, stored.value.id);
@@ -327,7 +332,7 @@ export function say(
     if (steerRun(app, running, text + delivery.text)) return ok({ how: "steered" });
   }
   if (live.size >= (options.liveMax ?? TURNS_LIVE_MAX)) return refuse("busy");
-  const started = begin(app, options, conversation, text, 0, conversation.claudeSessionId || undefined, delivery);
+  const started = begin(app, options, conversation, text, 0, conversation.claudeSessionId || undefined, delivery, lead);
   if (!started.ok) return refuse(started.error);
   return ok({ how: "started", done: started.value });
 }
@@ -439,6 +444,7 @@ function begin(
   resumes: number,
   resumeSession: string | undefined,
   attached: Delivery = NOTHING,
+  lead = "",
 ): Result<Promise<void>, "no_account" | "resting" | "unauthorized"> {
   const userId = conversation.userId;
   const runId = id();
@@ -500,7 +506,7 @@ function begin(
           binary: options.binary,
           cwd,
           // Attachments go with the message itself, never with a resume.
-          prompt: resumes > 0 && session !== undefined ? RESUME_PROMPT : fresh + attached.text,
+          prompt: resumes > 0 && session !== undefined ? RESUME_PROMPT : lead + fresh + attached.text,
           images: resumes > 0 && session !== undefined ? [] : attached.images,
           appendSystemPrompt: CONVERSATION_BRIEF,
           model: options.model,

@@ -81,7 +81,7 @@ export function conversationTalkRoutes(router: Router<Handler>): void {
     // What to do when a turn runs: absent hands the words to it; `queue` waits for it; `steer` stops it and sends these at once.
     const during = input["during"];
     if (during !== undefined && during !== "queue" && during !== "steer") return apiError("invalid_during", 422, "during is queue or steer");
-    const said = talk(ctx.app, user, text, files.value, during === "queue" ? "queue" : during === "steer" ? "interrupt" : "inject", named);
+    const said = talk(ctx.app, user, text, files.value, during === "queue" ? "queue" : during === "steer" ? "interrupt" : "inject", named, typeof input["about"] === "string" ? input["about"] : null);
     if (!said.ok) {
       const [status, words] = TALK_WORDS[said.error];
       return json({ error: said.error, message: words }, status, said.error === "rate_limited" || said.error === "busy" ? { "retry-after": "60" } : {});

@@ -6,6 +6,7 @@
  * a stream is capped per person; a once-result is never confirmed here.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,9 +16,12 @@ import { sayNo, sayYes } from "../src/actions/conversation_confirms.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { clock, STREAMS_MAX } from "../src/web/pages/talk.ts";
+import { addSubscription, setGrants } from "../src/core/subscriptions.ts";
 import { serveTalk } from "../src/tui/ssh-talk.ts";
-import { aboutLine, parseAbout } from "../src/core/talk_about.ts";
-import { appendTurn, listTurns, openConversation } from "../src/core/conversations.ts";
+import { aboutContext, aboutLine, parseAbout } from "../src/core/talk_about.ts";
+import { talk as talkTo } from "../src/actions/talk.ts";
+import { configureConversation } from "../src/crew/conversation.ts";
+import { appendTurn, createConversation, listTurns, openConversation } from "../src/core/conversations.ts";
 import { HELD_TTL_MS, hold, waitingFor } from "../src/core/fence.ts";
 import { getRepoById } from "../src/core/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
@@ -215,7 +219,7 @@ describe("the page", () => {
   test("the page's own bytes are held: stylesheet and script stay small", async () => {
     const { talkCss, talkJs } = await import("../src/web/pages/talk_client.ts");
     expect(Buffer.byteLength(talkCss)).toBeLessThan(3_750);
-    expect(Buffer.byteLength(talkJs)).toBeLessThan(13_500);
+    expect(Buffer.byteLength(talkJs)).toBeLessThan(13_550);
     say(alice, "agent", "```ts\nlet x = 1;\n```");
     const page = await get("/talk", alice);
     const size = (await page.arrayBuffer()).byteLength;
@@ -801,6 +805,102 @@ describe("the header's Talk link carries the subject the page rendered", () => {
     const [ta, tb] = [talkLinks(await a.text()), talkLinks(await b.text())];
     expect(ta).toEqual(tb);
     expect(ta).toEqual(["/talk", "/talk"]);
+  });
+});
+
+describe("the first message carries ?about= as fenced context (#10496)", () => {
+  const input = () => readFileSync(join(dir, "first.json"), "utf8");
+  const send = async (text: string, about: string | null, conversationId?: string, sender: User = alice) => {
+    rmSync(join(dir, "first.json"), { force: true });
+    const said = talkTo(app, sender, text, [], "queue", conversationId, about);
+    if (!said.ok) throw new Error(said.error);
+    await said.value.done;
+  };
+  const fresh = (u: User) => {
+    const made = createConversation(app.db, u.id);
+    if (!made.ok) throw new Error("conversation");
+    return made.value.id;
+  };
+
+  beforeAll(() => {
+    const bin = join(dir, "claude");
+    writeFileSync(
+      bin,
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
+IFS= read -r first
+printf '%s' "$first" > "${dir}/first.json"
+echo '{"type":"result","subtype":"success","is_error":false,"result":"Heard.","total_cost_usd":0.01,"num_turns":1,"session_id":"s1","terminal_reason":"completed","usage":{"input_tokens":1,"output_tokens":1}}'
+`,
+    );
+    chmodSync(bin, 0o755);
+    configureConversation(app, { binary: bin, localUrl: servers.url, budgetUsd: 1, timeoutMs: 30_000, signal: new AbortController().signal });
+  });
+
+  test("a readable issue's kind, name, title and body reach the agent fenced, on the first message only", async () => {
+    const made = await createRepo(app, alice, { name: "ctx-pub", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const issue = openIssue(app, alice, made.value, { title: "Crash on start", body: "Steps to reproduce" });
+    if (!issue.ok) throw new Error(String(issue.error));
+    const about = `alice/ctx-pub#${issue.value.number}`;
+    const c = fresh(alice);
+    await send("what is wrong?", about, c);
+    const first = input();
+    expect(first).toMatch(/\[\[data ([0-9a-f]+)\]\]/);
+    expect(first).toContain("kind: issue");
+    expect(first).toContain(`name: ${about}`);
+    expect(first).toContain("title: Crash on start");
+    expect(first).toContain("body: Steps to reproduce");
+    expect(first).toContain("what is wrong?");
+    // The stored turn is the person's words alone.
+    const turns = listTurns(app.db, alice.id, c);
+    if (!turns.ok) throw new Error("turns");
+    expect(turns.value.find((t) => t.role === "person")?.text).toBe("what is wrong?");
+    await send("and then?", about, c);
+    expect(input()).not.toContain("Crash on start");
+    expect(input()).toContain("and then?");
+  });
+
+  test("a forged about naming a private repository the sender cannot read adds nothing", async () => {
+    const made = await createRepo(app, alice, { name: "ctx-priv", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    const issue = openIssue(app, alice, made.value, { title: "Hidden plans", body: "Hidden body" });
+    if (!issue.ok) throw new Error(String(issue.error));
+    const forged = `alice/ctx-priv#${issue.value.number}`;
+    // Admins read everything, so the end-to-end send uses a name that resolves to nothing for its sender;
+    // the private case is held at the lookup every send goes through, for a sender who is not the owner.
+    expect(aboutContext(app.db, forged, alice)).toContain("Hidden plans");
+    const carol = await createUser(app.db, { origin: "seed", trusted: true, username: "ctxreader", email: "ctxreader@forge.local", password: "a-good-passphrase" });
+    if (!carol.ok) throw new Error(carol.error);
+    for (const who of [carol.value, undefined]) {
+      expect(aboutContext(app.db, forged, who)).toBe("");
+      expect(aboutContext(app.db, "alice/ctx-priv", who)).toBe("");
+    }
+    await send("hello", "bob/no-such-repo#1", fresh(alice));
+    expect(input()).toContain("hello");
+    expect(input()).not.toContain("[[data");
+    // End to end: a sender with no grant names the private issue and the agent hears only the words.
+    const plan = addSubscription(app.db, dir, { name: "ctx-plan", token: "sk-ant-api-test-token" });
+    if (!plan.ok) throw new Error(plan.error);
+    setGrants(app.db, carol.value.id, "", [plan.value.id]);
+    await send("peek", forged, fresh(carol.value), carol.value);
+    expect(input()).toContain("peek");
+    expect(input()).not.toContain("[[data");
+    expect(input()).not.toContain("Hidden plans");
+  });
+
+  test("the terminal's `talk --about` sends the same fenced context", async () => {
+    const made = await createRepo(app, alice, { name: "ctx-tty", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const issue = openIssue(app, alice, made.value, { title: "Tty subject", body: "Tty body" });
+    if (!issue.ok) throw new Error(String(issue.error));
+    rmSync(join(dir, "first.json"), { force: true });
+    const session = { write() {}, writeStderr() {}, exit() {}, onData() {}, onEof() {}, onClose() {} };
+    fresh(alice); // the latest conversation is the one the terminal speaks in
+    serveTalk(app, session as never, alice, `--about alice/ctx-tty#${issue.value.number} why?`);
+    for (let i = 0; i < 100 && !existsSync(join(dir, "first.json")); i++) await Bun.sleep(50);
+    expect(input()).toContain("title: Tty subject");
+    expect(input()).toContain("why?");
   });
 });
 

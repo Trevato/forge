@@ -22,6 +22,8 @@ When the agent asks first (`needs_confirm`), the turn draws **Confirm** (the exi
 
 `/talk?about=owner/repo` or `/talk?about=owner/repo#N` (an issue or pull) puts one plain line above the composer: "About owner/repo" or "About owner/repo#N: <title>". The terminal twin is `ssh <forge> talk --about owner/repo[#N] [words]`: it prints the same line first, and with no words prints only that line. Both read one lookup, `aboutLine()` in `src/core/talk_about.ts`. A value that is malformed, names something unknown, or names something you cannot read (a private repository, a sealed issue, signed out) shows nothing and the page is byte-identical to plain `/talk`, so a private repository's existence is not revealed.
 
+The first message of a conversation opened this way also carries the subject to the agent as fenced context: the kind, name, title and body (the body capped at 4000 characters), fenced as data written by others, never as instructions. Only the first message carries it, the stored turn stays the person's own words, and the value is re-resolved against the sender's read access, so a forged `about` adds nothing. The page and the terminal send it the same way.
+
 ## Many conversations (#8814)
 
 A person has any number. `/talk` is their latest, with the list above it (newest activity first), **New**, and **Archived (n)** as the one filter (`/talk?archived=1`). Each opens at `/talk/<id>`, stable across reloads; Rename and Archive/Restore are plain forms (`POST /talk/:id/rename`, `/talk/:id/archive`, `POST /talk/new`), so they work without the script. Another person's id is 404 everywhere. A message with no conversation named goes to the latest one that is not archived.

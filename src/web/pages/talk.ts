@@ -328,6 +328,7 @@ function talkPage(ctx: Ctx, conversation: Conversation, before0: string | undefi
         ${conversation.archivedAt === null ? null : html`<p class="small muted" data-archived-note>Archived: sending here keeps it archived; Restore puts it back in the list.</p>`}
         <p class="talk-status small muted" role="status" aria-live="polite">${running ? "The forge is answering…" : ""}</p>
         <div class="talk-chips" data-chips role="group" aria-label="Attached files"></div>
+        ${editing === undefined && aboutText(ctx.app.db, ctx.url.searchParams.get("about"), ctx.auth.user) !== null ? html`<input type="hidden" name="about" value="${ctx.url.searchParams.get("about")}" />` : null}
         <textarea class="input" name="text" rows="1" maxlength="${WORDS_MAX}" required placeholder="Talk to the forge" aria-label="Talk to the forge">${editing === undefined ? prefill : editing.text}</textarea>
         <div class="bar">
           <span class="muted small" data-compose-hint></span>
@@ -375,7 +376,8 @@ export async function talkSend(ctx: Ctx): Promise<Response> {
   const text = form.get("text");
   if (typeof text !== "string" || text.trim() === "" || text.length > WORDS_MAX)
     return flashTo(ctx, `${here}#end`, { tone: "danger", message: `Say something, up to ${WORDS_MAX} characters.` });
-  const said = talk(ctx.app, user, text, [], "queue", conversation.id);
+  const about = form.get("about");
+  const said = talk(ctx.app, user, text, [], "queue", conversation.id, typeof about === "string" ? about : null);
   if (!said.ok) return flashTo(ctx, `${here}#end`, { tone: "danger", message: TALK_WORDS[said.error][1] });
   return flashTo(ctx, `${here}#end`, { tone: "success", message: "Sent. Reload to see the answer." });
 }

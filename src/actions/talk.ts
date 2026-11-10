@@ -52,13 +52,13 @@ const watch = (app: App, said: Said): void => {
   said.done?.catch((error: unknown) => app.log.error("conversation turn crashed", { error: String(error) }));
 };
 
-export function talk(app: App, user: User | undefined, text: string, files: readonly ConversationFile[] = [], during: During = "inject", conversationId?: string): Result<Said, TalkRefusal> {
+export function talk(app: App, user: User | undefined, text: string, files: readonly ConversationFile[] = [], during: During = "inject", conversationId?: string, about?: string | null): Result<Said, TalkRefusal> {
   if (user === undefined) return err("unauthorized");
   if (conversationId !== undefined && getConversation(app.db, user.id, conversationId) === undefined) return err("not_found");
   const options = conversationOptions(app);
   if (options === undefined) return err("off");
   if (!take(app, user)) return err("rate_limited");
-  const said = say(app, options, user.id, text, files, during, conversationId);
+  const said = say(app, options, user.id, text, files, during, conversationId, about);
   if (said.ok) watch(app, said.value);
   return said;
 }

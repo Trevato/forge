@@ -111,6 +111,7 @@ export function serveTalk(app: App, session: SshSession, user: User | undefined,
     return session.exit(0);
   }
   const subject = parseAbout(words);
+  const about = subject?.about ?? null;
   if (subject !== undefined) {
     const line = aboutLine(app.db, subject.about, user);
     if (line !== null) session.write(`${line.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]/g, " ")}${CRLF}`);
@@ -144,14 +145,14 @@ export function serveTalk(app: App, session: SshSession, user: User | undefined,
     session.exit(0);
   };
   const attach = parseAttach(words);
-  if (attach === undefined) return finish(talk(app, user, words, [], during?.during ?? "inject"));
+  if (attach === undefined) return finish(talk(app, user, words, [], during?.during ?? "inject", undefined, about));
   if (user === undefined) return refuse(TALK_WORDS.unauthorized[1]);
   void readStdin(session, IMAGE_MAX).then((bytes) => {
     if (bytes === "too_large") return refuse(FILE_WORDS.too_large[1]);
     const stored = storeFile(app.db, app.config.dataDir, user.id, attach.name, bytes);
     if (!stored.ok) return refuse(FILE_WORDS[stored.error][1]);
     const files = pendingAmong(app.db, user.id, [stored.value.id]);
-    const said = talk(app, user, attach.words, files.ok ? files.value : [], during?.during ?? "inject");
+    const said = talk(app, user, attach.words, files.ok ? files.value : [], during?.during ?? "inject", undefined, about);
     // A message that was not taken leaves no file waiting behind it.
     if (!said.ok) removePending(app.db, app.config.dataDir, user.id, stored.value.id);
     finish(said);
