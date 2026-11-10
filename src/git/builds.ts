@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { runGit, runGitCapture, runGitRaw } from "./env.ts";
 import { isSafeOid, isSafeRef } from "./guard.ts";
+import { keptPins, pinsMoved } from "./pins_kept.ts";
 
 export const BUILDS_PREFIX = "refs/builds/";
 
@@ -173,6 +174,7 @@ export async function pinBuild(
     ["update-ref", `${BUILDS_PREFIX}${input.label}`, made.value.trim(), ""],
     { cwd: dir },
   );
+  pinsMoved(dir);
   if (created.code !== 0)
     return err(/already exists|reference already/i.test(created.stderr) ? "exists" : "git_failed");
   return ok({
@@ -305,6 +307,7 @@ async function rewritePin(
   const made = await runGit(["mktag"], { cwd: dir, stdin: tag });
   if (!made.ok) return err("git_failed");
   const moved = await runGitCapture(["update-ref", ref, made.value.trim(), oldTag], { cwd: dir });
+  pinsMoved(dir);
   if (moved.code !== 0) return err("moved");
   return ok({
     label,
@@ -561,6 +564,7 @@ export async function appendNote(
     if (!commit.ok) return err("git_failed");
     const oid = commit.value.trim();
     const moved = await runGitCapture(["update-ref", NOTES_REF, oid, tip ?? ""], { cwd: dir });
+    pinsMoved(dir);
     if (moved.code === 0) return ok(oid);
   }
   return err("moved");
@@ -624,6 +628,7 @@ export async function deletePin(dir: string, label: string): Promise<Result<{ re
     if (at !== undefined) lines.push(`delete ${other} ${at}`);
   }
   const done = await runGitCapture(["update-ref", "--stdin"], { cwd: dir, stdin: `start\n${lines.join("\n")}\nprepare\ncommit\n` });
+  pinsMoved(dir);
   if (done.code !== 0) return err(/cannot lock|is at|expected/i.test(done.stderr) ? "moved" : "git_failed");
   return ok({ oid: commit.stdout.trim(), tag });
 }
@@ -662,6 +667,12 @@ export async function readCover(dir: string, oid: string): Promise<Uint8Array | 
  * else its tag message's.
  */
 export async function listBuildPins(dir: string, label?: string): Promise<BuildPin[]> {
+  // The whole listing is kept per repository (`pins_kept.ts`); one label is read fresh.
+  if (label === undefined) return [...(await keptPins(dir, () => readBuildPins(dir)))];
+  return readBuildPins(dir, label);
+}
+
+async function readBuildPins(dir: string, label?: string): Promise<BuildPin[]> {
   const pins = await listTagPins(dir, label);
   const notes = await readBuildNotes(dir, pins.map((p) => p.label));
   if (notes.size === 0) return pins;
