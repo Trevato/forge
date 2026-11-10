@@ -621,6 +621,7 @@ async function studioTell(
     ctx,
     title: `${issue.title} · ${repo.name}`,
     ogImage: cardPath("issue", repo, issue),
+    about: `${repo.ownerName}/${repo.name}#${issue.number}`,
     description: threadLine({
       private: repo.visibility === "private" || issue.sealed,
       word: wordInfo?.word ?? (issue.state === "open" ? "open" : "closed"),

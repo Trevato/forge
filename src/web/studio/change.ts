@@ -763,6 +763,7 @@ async function changeConversation(
     ctx,
     title: `${pull.title} · ${repo.name}`,
     ogImage: cardPath("pull", repo, pull),
+    about: `${repo.ownerName}/${repo.name}#${pull.number}`,
     description: threadLine({
       private: repo.visibility === "private",
       word,

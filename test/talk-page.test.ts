@@ -10,9 +10,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { createRepo } from "../src/actions/repos.ts";
+import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { sayNo } from "../src/actions/conversation_confirms.ts";
 import { openIssue } from "../src/actions/issues.ts";
+import { openPull } from "../src/actions/pulls.ts";
 import { clock, STREAMS_MAX } from "../src/web/pages/talk.ts";
 import { serveTalk } from "../src/tui/ssh-talk.ts";
 import { aboutLine, parseAbout } from "../src/core/talk_about.ts";
@@ -750,5 +751,55 @@ describe("?about= names the subject", () => {
     expect(run(undefined, "--about alice/about-priv")).toEqual({ out: "", code: 0 });
     expect(run(bob, "--about alice/about-pub").out).toBe("About alice/about-pub\r\n");
     expect(run(bob, "--about ../x")).toEqual({ out: "", code: 0 });
+  });
+});
+
+describe("the header's Talk link carries the subject the page rendered", () => {
+  const header = (page: string) => /<header class="topbar"[\s\S]*?<\/header>/.exec(page)?.[0] ?? "";
+  const talkLinks = (page: string) => [...header(page).matchAll(/href="(\/talk[^"]*)"/g)].map((m) => m[1]);
+
+  test("an issue page and a repository page link /talk?about=…", async () => {
+    const made = await createRepo(app, alice, { name: "hdr-pub", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const issue = openIssue(app, alice, made.value, { title: "Hello", body: "x" });
+    if (!issue.ok) throw new Error(String(issue.error));
+    const n = issue.value.number;
+    const links = talkLinks(await (await get(`/alice/hdr-pub/issues/${n}`, bob)).text());
+    expect(links).toContain(`/talk?about=alice/hdr-pub%23${n}`);
+    expect(links.length).toBeGreaterThanOrEqual(1);
+    expect(new Set(links).size).toBe(1);
+    expect(talkLinks(await (await get("/alice/hdr-pub", bob)).text())).toContain("/talk?about=alice/hdr-pub");
+    expect(talkLinks(await (await get("/explore", bob)).text())).toEqual(["/talk", "/talk"]);
+  });
+
+  test("a pull page links /talk?about=owner/repo%23N", async () => {
+    const made = await createRepo(app, alice, { name: "hdr-pull", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    for (const [branch, file] of [[undefined, "a.txt"], ["topic", "t.txt"]] as const) {
+      const done = await commitToBranch(app, alice, made.value, {
+        ...(branch === undefined ? {} : { branch }),
+        message: "change",
+        files: [{ path: file, content: "x" }],
+      });
+      if (!done.ok) throw new Error(JSON.stringify(done.error));
+    }
+    const pull = await openPull(app, alice, made.value, { title: "P", body: "", baseBranch: "main", headBranch: "topic" });
+    if (!pull.ok) throw new Error(JSON.stringify(pull.error));
+    const res = await get(`/alice/hdr-pull/pulls/${pull.value.number}`, bob);
+    expect(res.status).toBe(200);
+    expect(talkLinks(await res.text())).toContain(`/talk?about=alice/hdr-pull%23${pull.value.number}`);
+  });
+
+  test("a 404 under a private and under a missing repository render the same header", async () => {
+    const made = await createRepo(app, alice, { name: "hdr-priv", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    const a = await get("/alice/hdr-priv/issues/1", bob);
+    const b = await get("/alice/hdr-nowhere/issues/1", bob);
+    expect(a.status).toBe(404);
+    expect(b.status).toBe(404);
+    // The rest of the chrome echoes the asked path (the "new issue" link), so compare the Talk entries.
+    const [ta, tb] = [talkLinks(await a.text()), talkLinks(await b.text())];
+    expect(ta).toEqual(tb);
+    expect(ta).toEqual(["/talk", "/talk"]);
   });
 });

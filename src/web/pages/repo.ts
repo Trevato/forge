@@ -1370,6 +1370,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
       title: repo.name,
       description: repoLine({ private: repo.visibility === "private", name: repo.name, description: repo.description }),
       ogImage: `/og/repo/${repo.ownerName}~${repo.name}.png`,
+      about: `${repo.ownerName}/${repo.name}`,
       feed: {
         href: `${repoBase(repo)}/activity.atom`,
         title: `${repo.ownerName}/${repo.name} activity`,
@@ -1445,6 +1446,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
     title: repo.name,
     description: repoLine({ private: repo.visibility === "private", name: repo.name, description: repo.description }),
     ogImage: `/og/repo/${repo.ownerName}~${repo.name}.png`,
+    about: `${repo.ownerName}/${repo.name}`,
     feed: {
       href: `${repoBase(repo)}/activity.atom`,
       title: `${repo.ownerName}/${repo.name} activity`,

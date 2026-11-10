@@ -112,6 +112,14 @@ export interface PageOptions {
   jsonLd?: string;
   /** Breadcrumb segments rendered in the topbar, e.g. owner / repo. */
   crumbs?: { label: string; href: string }[];
+  /**
+   * What the viewer is looking at, for the header's Talk link: `owner/repo`
+   * or `owner/repo#N`. Only a page that rendered that subject for this viewer
+   * passes it (repository home, issue, pull); it is never derived from the
+   * path, so a 404 and a refusal keep the bare /talk and cannot tell a
+   * private repository from a missing one.
+   */
+  about?: string;
   body: Html;
   /**
    * CSS this request computed: label colors mixed from the labels actually
@@ -296,18 +304,24 @@ function featureItems(ctx: Ctx, user: User): MenuItem[] {
     : [{ separator: true, label: "" }, { label: "Features from apps", heading: true }, ...entries];
 }
 
+/** `/talk`, or `/talk?about=…` when the page rendered a subject. */
+function talkHref(about: string | undefined): string {
+  return about === undefined ? "/talk" : `/talk?about=${encodeURIComponent(about).replace(/%2F/g, "/")}`;
+}
+
 function userMenu(
   ctx: Ctx,
   user: User,
   theme: ThemeName | undefined,
   signOut: MenuItem,
+  about?: string,
 ): Html {
   const items: (MenuItem | Html)[] = [
     { label: "Your profile", href: `/${user.username}`, icon: "user" },
     { label: "Repositories", href: "/repos", icon: "repo" },
     { label: "Apps", href: "/apps", icon: "rocket" },
     { label: "Notes", href: "/notes", icon: "comment" },
-    { label: "Talk", href: "/talk", icon: "comment" },
+    { label: "Talk", href: talkHref(about), icon: "comment" },
     { label: "Explore", href: "/explore", icon: "search" },
     { label: "Packs", href: "/packs", icon: "rocket" },
     { label: "Displays", href: "/displays", icon: "monitor" },
@@ -623,6 +637,7 @@ function topbar(
   theme: ThemeName | undefined,
   crumbs: PageOptions["crumbs"],
   tools?: Html,
+  about?: string,
 ): Html {
   const user = ctx.auth.user;
   return html`<a class="skip" href="#main">Skip to content</a>
@@ -647,7 +662,7 @@ function topbar(
       <span class="topbar-tools">
         ${tools ?? html`${searchBar()}
         ${user
-          ? html`<a class="btn btn-icon" href="/talk" aria-label="Talk to the forge" data-shortcut="g t" ${hintAttr("g t", "Talk to the forge")}
+          ? html`<a class="btn btn-icon" href="${talkHref(about)}" aria-label="Talk to the forge" data-shortcut="g t" ${hintAttr("g t", "Talk to the forge")}
                 >${icon("comment")}</a
               ><a class="small" href="/asks" data-shortcut="g q" ${hintAttr("g q")}>Asks</a
               >${newMenu(ctx)}${userMenu(
@@ -661,6 +676,7 @@ function topbar(
                       icon: "signOut",
                     }
                   : { label: "Sign out", post: "/logout", icon: "signOut" },
+                about,
               )}`
           : html`${guestMenu(ctx, theme)}${btn("Sign in", {
               href: signInHref(ctx),
@@ -740,7 +756,7 @@ export function page(options: PageOptions, status = 200): Response {
 
   // The body's markup. Every `icon()` left a `<use>` behind; they are aimed
   // at the one hashed sprite file below, so no page carries a drawing.
-  const shell = html`${options.bare ? null : topbar(ctx, theme, options.crumbs, options.tools)}
+  const shell = html`${options.bare ? null : topbar(ctx, theme, options.crumbs, options.tools, options.about)}
     <main
       class="${options.bare
         ? "bare"
