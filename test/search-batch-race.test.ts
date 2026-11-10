@@ -237,3 +237,25 @@ test("a search with no budget never takes the first batch's ceiling", async () =
   expect((await search).hits.length).toBe(2);
   expect(first.asked()).toBe(0);
 });
+
+test("a grep left behind at the budget is told to stop (#10730)", async () => {
+  const signals: AbortSignal[] = [];
+  const first = handTimer();
+  // Hangs until told to stop, as a git that the answer no longer needs.
+  const grep = ((_d: string, _a: string, _q: string, _n: number, _t: number, signal?: AbortSignal) => {
+    signals.push(signal!);
+    return new Promise<Raw>((done) => signal!.addEventListener("abort", () => done(null)));
+  }) as never;
+  const search = grepRepos("/nowhere", [0, 1, 2, 3, 4, 5].map(repo), "q", 200, 10, {
+    slots: createGrepSlots(),
+    grep,
+    now: () => 0,
+    firstTimer: first.timer,
+  });
+  while (signals.length < 4) await new Promise((r) => setTimeout(r, 1));
+  expect(signals.some((s) => s.aborted)).toBe(false);
+  first.fire();
+  const out = await search;
+  expect(out.more).toBe(true);
+  expect(signals.every((s) => s.aborted)).toBe(true);
+});

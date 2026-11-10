@@ -444,6 +444,7 @@ async function grepRun(
   query: string,
   maxCount: number,
   timeoutMs = GREP_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<RawHit[] | null | "timeout"> {
   const pattern = cleanQuery(query);
   if (pattern === "" || !isSafeRef(ref)) return [];
@@ -467,7 +468,7 @@ async function grepRun(
     // `--max-count` is per file: `a` in a repository of thousands of files
     // is megabytes of matches. Only the first `maxCount` are kept, so git is
     // stopped once they are read rather than left to write the rest (#10395).
-    { cwd: dir, timeoutMs, stopAfterLines: maxCount },
+    { cwd: dir, timeoutMs, stopAfterLines: maxCount, ...(signal === undefined ? {} : { signal }) },
   );
   // Exit 1 is "no match" — data, not failure. Anything else (a repo with no
   // commits, a killed process) is simply no results from this repo.
@@ -541,13 +542,14 @@ async function grepCached(
   query: string,
   who: GrepWho,
   timeoutMs = GREP_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<RawHit[] | "skipped" | "timeout"> {
   const ref = repo.defaultBranch;
   const oid = await branchOid(dir, ref);
   const slotted = async (at: string): Promise<RawHit[] | null | "skipped" | "timeout"> => {
     const got = await (who.slots ?? grepSlots).run(who.memberId, () => {
       grepsRun++;
-      return (who.grep ?? grepRun)(dir, at, query, MAX_HITS_PER_REPO, timeoutMs);
+      return (who.grep ?? grepRun)(dir, at, query, MAX_HITS_PER_REPO, timeoutMs, signal);
     });
     return got.ran ? got.value : "skipped";
   };
@@ -612,9 +614,8 @@ function budgetTimer(ms: number): BudgetTimer {
  * a busy forge holding the page; what answered by then is kept, the rest is
  * `more` (#9402). Each later batch races the time
  * left: when the budget runs out first the answer goes back with `more`, and
- * the batch's greps are left to finish on their own. They keep the slot
- * `search/grep_slots.ts` gave them until git exits — that is the only cap on
- * abandoned greps, and it is charged to the caller who started them.
+ * the batch's greps are killed, so no abandoned git outlives the answer
+ * (#10730); the slot `search/grep_slots.ts` gave them is freed as git exits.
  */
 export async function grepRepos(
   reposRoot: string,
@@ -639,8 +640,12 @@ export async function grepRepos(
   // Set when this search answers at its budget: the batch it left behind
   // starts no further pair. Local to this call, never shared between callers.
   let answered = false;
+  // Fired when this search answers at its budget: the greps it leaves behind
+  // are killed (and not cached), so they stop holding git's gate and a slot.
+  const abandon = new AbortController();
   const more = () => {
     answered = true;
+    abandon.abort();
     return { hits, truncated: repos.length > MAX_SEARCH_REPOS, more: true, skipped };
   };
   // Each grep writes its answer into its own place as it settles, so a batch
@@ -655,6 +660,7 @@ export async function grepRepos(
             query,
             who,
             timeoutMs,
+            abandon.signal,
           ).then((got) => {
             found[k + j] = got;
           }),
@@ -685,6 +691,7 @@ export async function grepRepos(
       timer.clear();
       if (raced === "cut") {
         answered = true;
+        abandon.abort();
         cut = true;
       }
     }

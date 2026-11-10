@@ -322,6 +322,8 @@ export interface CaptureOptions extends RunOptions {
    * answers of a command whose whole output can be megabytes (`git grep a`).
    */
   stopAfterLines?: number;
+  /** Kill the process when this fires (reported as `timedOut`); one already fired never starts it. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -375,6 +377,7 @@ export async function runGitCapture(
 ): Promise<GitCapture> {
   const start = performance.now();
   return gitGate.run(async () => {
+    if (options.signal?.aborted === true) return { code: 1, stdout: "", stderr: "", timedOut: true };
     const proc = Bun.spawn(["git", ...args], {
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
       env: gitEnv(options.env),
@@ -390,6 +393,11 @@ export async function runGitCapture(
       },
       options.timeoutMs ?? 30_000,
     );
+    const abort = () => {
+      timedOut = true;
+      proc.kill("SIGKILL");
+    };
+    options.signal?.addEventListener("abort", abort, { once: true });
     try {
       const [out, stderr, code] = await Promise.all([
         readLines(proc.stdout, options.stopAfterLines, () => proc.kill("SIGKILL")),
@@ -405,6 +413,7 @@ export async function runGitCapture(
       };
     } finally {
       clearTimeout(timer);
+      options.signal?.removeEventListener("abort", abort);
       noteGit(gitRecord, args, start);
     }
   });
