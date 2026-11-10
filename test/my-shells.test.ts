@@ -12,7 +12,10 @@ import { createRepo, type Repo } from "../src/core/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { liveShells, myShells, recordEnd, recordStart, setShellOptions, stopShells } from "../src/machines/shell.ts";
+import { liveShells, myShells, recordEnd, recordStart, setShellOptions, stopIdleShells, stopShells } from "../src/machines/shell.ts";
+import { createForgeApp } from "../src/tui/forge.ts";
+import { headlessTerminal } from "../src/tui/term/terminal.ts";
+import { settleApp } from "./helpers/tui.ts";
 import { tokenFor } from "./helpers/tokens.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
@@ -113,5 +116,151 @@ test("a live shell is read with its real times; ended ones follow, escaped, on t
   expect(html).toContain("Your shells");
   expect(html).toContain("/settings/shells");
 
+  ws.close();
+});
+
+// ---- stopping (#10545) ----
+
+const openShell = async (c: string) => {
+  const ws = new WebSocket(`${servers.url.replace(/^http/, "ws")}/alice/lab/machines/standard/shell`, {
+    headers: { cookie: c, origin: new URL(servers.url).origin },
+  } as unknown as string[]);
+  await new Promise((ok, no) => {
+    ws.addEventListener("open", ok);
+    ws.addEventListener("error", () => no(new Error("refused")));
+  });
+  return ws;
+};
+const post = (path: string, c: string, origin = new URL(servers.url).origin) =>
+  fetch(`${servers.url}${path}`, { method: "POST", redirect: "manual", headers: { cookie: c, origin }, body: new URLSearchParams() });
+const mcp = async (args: object): Promise<any> => {
+  const res = await fetch(`${servers.url}/mcp`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      authorization: `Bearer ${tokenFor(app, "alice", "admin")}`,
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "sessions", arguments: args } }),
+  });
+  const body = (await res.json()) as any;
+  return body.result;
+};
+
+test("stop ends the session and records 'stopped'; a stranger's id is refused; cross-origin is refused", async () => {
+  const ws = await openShell(cookie);
+  await Bun.sleep(100);
+  const id = liveShells(app, aliceId)[0]!.id;
+  expect(await page()).toContain(`/settings/shells/${id}/stop`);
+
+  const bob = await createUser(app.db, { username: "bob", email: "bob@x.test", password: "correct horse battery", origin: "seed", trusted: true });
+  if (!bob.ok) throw new Error("bob");
+  const bobCookie = `forge_session=${createSession(app.db, bob.value.id).token}`;
+  expect((await post(`/settings/shells/${id}/stop`, bobCookie)).status).toBe(404);
+  expect(liveShells(app, aliceId)).toHaveLength(1);
+  expect((await post(`/settings/shells/${id}/stop`, cookie, "https://evil.test")).status).toBe(403);
+  expect(liveShells(app, aliceId)).toHaveLength(1);
+
+  const res = await post(`/settings/shells/${id}/stop`, cookie);
+  expect(res.status).toBe(303);
+  expect(res.headers.get("location")).toContain("/settings/shells");
+  expect(liveShells(app, aliceId)).toHaveLength(0);
+  expect(myShells(app, aliceId).find((r) => r.id === id)?.endReason).toBe("stopped");
+  expect((await post(`/settings/shells/${id}/stop`, cookie)).status).toBe(404);
+  ws.close();
+});
+
+test("stop all idle leaves a shell with a peer attached alone; MCP says the same words", async () => {
+  const ws = await openShell(cookie);
+  await Bun.sleep(100);
+  // Limit 60s, half is 30s: nothing is that idle yet, and a peer is attached anyway.
+  expect(stopIdleShells(app, aliceId, 60_000)).toBe(0);
+  expect(stopIdleShells(app, aliceId, 0)).toBe(0);
+  expect(liveShells(app, aliceId)).toHaveLength(1);
+
+  ws.close();
+  await Bun.sleep(200);
+  expect(liveShells(app, aliceId)[0]!.peers).toBe(0);
+  expect(stopIdleShells(app, aliceId, 60_000)).toBe(0);
+  expect(stopIdleShells(app, aliceId, 0)).toBe(1);
+  expect(liveShells(app, aliceId)).toHaveLength(0);
+
+  const again = await openShell(cookie);
+  await Bun.sleep(100);
+  const id = liveShells(app, aliceId)[0]!.id;
+  const r = await mcp({ kind: "shells", action: "end", id });
+  expect(JSON.parse(r.content[0].text).says).toBe("Shell stopped.");
+  const gone = await mcp({ kind: "shells", action: "end", id });
+  expect(gone.isError).toBe(true);
+  const idle = await mcp({ kind: "shells", action: "end_idle" });
+  expect(JSON.parse(idle.content[0].text).says).toBe("No idle shell to stop.");
+  again.close();
+});
+
+test("POST /settings/shells/stop-idle: 303 with a receipt, 403 cross-origin, a peer-attached shell left alone; the button shows with a live shell", async () => {
+  const ws = await openShell(cookie);
+  await Bun.sleep(100);
+  expect(await page()).toContain('action="/settings/shells/stop-idle"');
+  expect(await page()).toContain("Stop all idle");
+
+  expect((await post("/settings/shells/stop-idle", cookie, "https://evil.test")).status).toBe(403);
+  // A peer is attached: the post succeeds and stops nothing.
+  const none = await post("/settings/shells/stop-idle", cookie);
+  expect(none.status).toBe(303);
+  expect(none.headers.get("location")).toContain("/settings/shells");
+  expect(liveShells(app, aliceId)).toHaveLength(1);
+
+  // The receipt rides the flash cookie to the page.
+  const flash = (none.headers.get("set-cookie") ?? "").split(";")[0]!;
+  const follow = await fetch(`${servers.url}/settings/shells`, { headers: { cookie: `${cookie}; ${flash}` } });
+  expect(await follow.text()).toContain("No idle shell to stop.");
+  ws.close();
+  await Bun.sleep(200);
+});
+
+test("MCP: another person cannot end your shell id", async () => {
+  const ws = await openShell(cookie);
+  await Bun.sleep(100);
+  const id = liveShells(app, aliceId)[0]!.id;
+  const res = await fetch(`${servers.url}/mcp`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      authorization: `Bearer ${tokenFor(app, "bob", "admin")}`,
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "sessions", arguments: { kind: "shells", action: "end", id } } }),
+  });
+  const out = ((await res.json()) as any).result;
+  expect(out.isError).toBe(true);
+  expect(out.content[0].text).toContain("not_found");
+  expect(liveShells(app, aliceId)).toHaveLength(1);
+  ws.close();
+});
+
+test("terminal: s stops the picked live shell with the page's receipt", async () => {
+  const ws = await openShell(cookie);
+  await Bun.sleep(100);
+  const { getUserByName } = await import("../src/core/users.ts");
+  const { app: tui } = createForgeApp(
+    app,
+    { sshUsername: "t", remoteAddress: "127.0.0.1", user: getUserByName(app.db, "alice")! },
+    { terminal: headlessTerminal(140, 32), exitHooks: false },
+  );
+  tui.start();
+  const key = async (k: string, ctrl = false) => {
+    tui.dispatch({ type: "key", key: k, ctrl, alt: false, shift: false });
+    await settleApp(tui);
+  };
+  await key("k", true);
+  for (const ch of "Your shells") await key(ch);
+  await key("enter");
+  await key("i");
+  expect(tui.screen.toText()).toContain("No idle shell to stop.");
+  expect(liveShells(app, aliceId)).toHaveLength(1);
+  await key("s");
+  expect(tui.screen.toText()).toContain("Shell stopped.");
+  expect(liveShells(app, aliceId)).toHaveLength(0);
+  tui.stop();
   ws.close();
 });

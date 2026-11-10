@@ -56,6 +56,7 @@ import {
   signInFirst,
   type SettingsSection,
   forbiddenPage,
+  notFoundPage,
 } from "../chrome.ts";
 import { accountSections } from "./origins.ts";
 import { field, readForm } from "../form.ts";
@@ -74,7 +75,7 @@ import {
   field as uiField,
   icon,
 } from "../ui.ts";
-import { myShells } from "../../machines/shell.ts";
+import { STOPPED_ONE, myShells, stopIdleShells, stopShell, stoppedIdleSays } from "../../machines/shell.ts";
 import { everydayLine } from "./everyday.ts";
 import { passkeyJs } from "../passkey-client.ts";
 
@@ -401,13 +402,17 @@ const reading = (n: number | null, unit: string): string => (n === null ? "–" 
 export function shellsView(ctx: Ctx, user: User): Html {
   const shells = myShells(ctx.app, user.id);
   if (shells.length === 0) return html`<p class="muted" id="shells">You have opened no shell on a machine yet.</p>`;
-  return html`<ul class="list setting-list" id="shells">
+  const anyLive = shells.some((s) => s.endedAt === null);
+  return html`${anyLive
+      ? html`<form method="post" action="/settings/shells/stop-idle">${btn("Stop all idle", { type: "submit" })}</form>`
+      : null}<ul class="list setting-list" id="shells">
     ${shells.map((s) =>
       s.endedAt === null
         ? row({
             title: html`${s.repository} · ${s.machine}`,
             meta: html`Started ${time(s.startedAt)}`,
-            trail: badge("running", { tone: "success" }),
+            trail: html`${badge("running", { tone: "success" })}
+              <form method="post" action="/settings/shells/${s.id}/stop">${btn("Stop", { type: "submit", size: "sm", label: `Stop ${s.repository} · ${s.machine}` })}</form>`,
             facts: [
               { label: "Last input", value: s.lastInputAt ? time(s.lastInputAt) : "–" },
               { label: "Last output", value: s.lastOutputAt ? time(s.lastOutputAt) : "–" },
@@ -432,6 +437,24 @@ export function shellsPage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const body = shellsView(ctx, ctx.auth.user);
   return timePhase(ctx.request, "render", () => accountShell(ctx, "shells", "Shells", body));
+}
+
+// POST /settings/shells/:id/stop
+export async function shellStop(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const id = ctx.params.id ?? "";
+  if (!stopShell(ctx.app, ctx.auth.user.id, id)) return notFoundPage(ctx);
+  return flashTo(ctx, "/settings/shells", { message: STOPPED_ONE });
+}
+
+// POST /settings/shells/stop-idle
+export async function shellsStopIdle(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  return flashTo(ctx, "/settings/shells", { message: stoppedIdleSays(stopIdleShells(ctx.app, ctx.auth.user.id)) });
 }
 
 // GET /settings

@@ -6,11 +6,16 @@ own account only; another person's shells are never listed.
 
 Try it:
 - Web: open `/settings/shells`, or press the palette and choose **Your shells**. With none, it says so in one line.
-- Terminal: open the palette (`/`) and choose **Your shells**; `r` reads again, `esc` closes.
+- Terminal: open the palette (`/`) and choose **Your shells**; `j`/`k` pick a line, `s` stops the picked live shell, `i` stops all idle ones, `r` reads again, `esc` closes.
 - MCP: `sessions` with `kind: "shells"` returns the same rows.
 
 Both doors read `myShells` in `src/machines/shell.ts`. The terminal screen is `src/tui/screens/shells.ts`; the page is
-`shellsPage` in `src/web/pages/account.ts`. Left out: ending a shell from the list, and a Settings sidebar row (the
+`shellsPage` in `src/web/pages/account.ts`. Left out: a Settings sidebar row (the
 settings page's first-view budget has no word to spare).
 
-Pinned by `test/my-shells.test.ts`.
+Stopping (#10545), on all three doors with the same receipts: on the page each live line has **Stop**, and **Stop all idle** stops every shell of yours that nobody is
+attached to and that is past half the idle limit. Both are same-origin form posts (`/settings/shells/:id/stop`,
+`/settings/shells/stop-idle`); another person's id is a 404; each answers on the page with a one-line receipt and
+records `end_reason = 'stopped'`. MCP: `sessions` with `kind: "shells"` and `action: "end"` + `id`, or `"end_idle"`. Terminal: `s` and `i` as above, answering in a toast.
+
+Pinned by `test/my-shells.test.ts` and `test/tui-my-shells.test.ts`.

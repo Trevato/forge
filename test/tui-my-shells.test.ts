@@ -62,3 +62,26 @@ test("the owner sees the ended shell and why; another person is told they have n
   expect(theirs).toContain("You have opened no shell on a machine yet.");
   expect(theirs).not.toContain("alice/lab");
 });
+
+test("s stops the picked live shell and i stops idle ones, with the page's receipts", async () => {
+  const alice = getUserByName(app.db, "alice")!;
+  const { app: tui } = createForgeApp(
+    app,
+    { sshUsername: "t", remoteAddress: "127.0.0.1", user: alice },
+    { terminal: headlessTerminal(140, 32), exitHooks: false },
+  );
+  tui.start();
+  const key = async (k: string, ctrl = false) => {
+    tui.dispatch({ type: "key", key: k, ctrl, alt: false, shift: false });
+    await settleApp(tui);
+  };
+  await key("k", true);
+  for (const ch of "Your shells") await key(ch);
+  await key("enter");
+  // The first line is an ended shell: stop refuses it in the page's words.
+  await key("s");
+  expect(tui.screen.toText()).toContain("No such shell.");
+  await key("i");
+  expect(tui.screen.toText()).toContain("No idle shell to stop.");
+  tui.stop();
+});

@@ -631,6 +631,33 @@ export function myShells(app: App, userId: string, ended = RECENT_ENDED): ShellR
   return [...liveShells(app, userId), ...gone];
 }
 
+/** Stop one shell a person holds, by its row id: false when they hold no such live shell (another person's is the same answer). */
+export function stopShell(app: App, userId: string, id: string): boolean {
+  for (const s of sessionsOf(app).values()) {
+    if (s.userId !== userId || s.row !== id) continue;
+    end(app, s, "stopped");
+    return true;
+  }
+  return false;
+}
+
+/** Stop every shell of a person's that is detached and past half its idle limit; returns how many. */
+export function stopIdleShells(app: App, userId: string, idleMs = shellIdleMs(app.db)): number {
+  let n = 0;
+  for (const s of [...sessionsOf(app).values()]) {
+    if (s.userId !== userId || s.peers.size > 0 || !idle(s, idleMs / 2)) continue;
+    end(app, s, "stopped");
+    n++;
+  }
+  return n;
+}
+
+/** The receipts, one line each; the page and the `sessions` tool say them in the same words. */
+export const STOPPED_ONE = "Shell stopped.";
+export const NO_SUCH_SHELL = "No such shell.";
+export const stoppedIdleSays = (n: number): string =>
+  n === 0 ? "No idle shell to stop." : `Stopped ${n} idle shell${n === 1 ? "" : "s"}.`;
+
 /** End every session (the forge is stopping). */
 export function stopShells(app: App): void {
   for (const session of [...sessionsOf(app).values()]) end(app, session, "stopped");

@@ -89,6 +89,8 @@ import {
 import {
   accountPage,
   shellsPage,
+  shellStop,
+  shellsStopIdle,
   notifyUpdate,
   edgeLink,
   edgeUnlink,
@@ -148,6 +150,8 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("POST", "/settings/everyday/switch", everydaySwitch);
   router.add("POST", "/settings/everyday/keep", everydayKeep);
   router.add("GET", "/settings/shells", shellsPage);
+  router.add("POST", "/settings/shells/stop-idle", shellsStopIdle);
+  router.add("POST", "/settings/shells/:id/stop", shellStop);
   router.add("GET", "/settings/tokens", tokensPage);
   router.add("POST", "/settings/tokens", tokenCreate);
   router.add("POST", "/settings/tokens/:id/delete", tokenDelete);
