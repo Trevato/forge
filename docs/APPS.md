@@ -548,6 +548,14 @@ Only `text/html` responses the app sends uncompressed with a `Content-Length`
 (up to 4 MiB) are rewritten; JSON, images, compressed or chunked HTML and
 `HEAD` requests pass through byte for byte. `"toolbar": false` keeps it out.
 
+`toolchain`, at the top level, pins a toolchain: `{ "toolchain": { "rust":
+"1.82" } }`. The forge knows `rust` and provides the versions listed in
+`src/apps/toolchain.ts`. An unknown toolchain, a version that is not
+`major.minor`, or one this forge does not provide fails the deploy in one
+line ("rust 1.70 is not provided here; this forge has rust 1.82"). Without the
+field nothing changes. For now the field is only read and checked; nothing is
+installed from it yet.
+
 `adapter`, at the top level, says the app is an adapter the forge pulls
 from on a schedule (#437): `{ "adapter": { "schedule": { "every": 900 } } }`.
 `every` is whole seconds, 60 to 86400. `source` (the system's name and the

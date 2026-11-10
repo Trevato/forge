@@ -17,6 +17,7 @@ import type { DeclaredLimits } from "./contain.ts";
 import { isPublicAddress } from "./egress.ts";
 import { isLaunch, LAUNCHES, type Launch } from "../git/builds.ts";
 import { parseAdapter, type AdapterSpec } from "./adapter.ts";
+import { parseToolchain, type ToolchainPin } from "./toolchain.ts";
 
 export interface AppManifest {
   /** The command that serves on `$PORT`. Run through `sh -c`, `exec`-ed. */
@@ -82,6 +83,8 @@ export interface AppManifest {
    * schedule (`apps/adapter.ts`). Unset is not an adapter.
    */
   readonly adapter?: AdapterSpec | undefined;
+  /** `toolchain` (top level of `forge.json`): pinned toolchain versions. Unset is none. */
+  readonly toolchain?: ToolchainPin | undefined;
 }
 
 export type ManifestError =
@@ -185,6 +188,8 @@ export function parseManifest(
     return invalid("forge.json: toolbar must be true or false");
   const adapter = parseAdapter(parsed.value["adapter"]);
   if (!adapter.ok) return invalid(adapter.error);
+  const toolchain = parseToolchain(parsed.value["toolchain"]);
+  if (!toolchain.ok) return invalid(toolchain.error);
   // Only `egress` opens a host (docs/ADAPTERS.md): a source host it does
   // not list would be refused by the proxy, so the block is invalid.
   const unopened = adapter.value?.source?.hosts.find(
@@ -226,6 +231,7 @@ export function parseManifest(
     limits: limits.value,
     toolbar: toolbar ?? true,
     ...(adapter.value === undefined ? {} : { adapter: adapter.value }),
+    ...(toolchain.value === undefined ? {} : { toolchain: toolchain.value }),
   });
 }
 
