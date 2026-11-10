@@ -6,6 +6,7 @@
  *   /.well-known/mcp.json         the MCP server card: endpoint, sign-in, the
  *                                 tool that needs no token (a draft format:
  *                                 only fields we keep true)
+ *   /.well-known/forge            the standards this forge implements, with versions
  *   /.well-known/change-password  where a password manager sends someone
  *   /robots.txt                   what a crawler may index, and the sitemap
  *   /sitemap.xml                  every public repository
@@ -41,6 +42,7 @@ import { SHARE_TARGET } from "./share_target.ts";
 import { SITE_LINE } from "./site_line.ts";
 import { mcpToolsSection } from "./llms_tools.ts";
 import { HARNESS_PLUGINS, mcpCard, mcpPointers, offeredPluginRepo, pluginSource } from "../core/mcp_card.ts";
+import { forgeDocument } from "../core/standards_index.ts";
 import { running } from "../kernel/version.ts";
 import { timePhase, timePhaseAsync } from "../core/route_timing.ts";
 import { shippedReleases, type Shipped } from "../release/shipped.ts";
@@ -108,6 +110,13 @@ export function securityTxt(ctx: Ctx): Response {
 /** GET /.well-known/mcp.json — the MCP server card (a draft format; see docs/MCP.md). */
 export function mcpJson(ctx: Ctx): Response {
   const res = text(JSON.stringify(mcpCard(ctx.url.origin, offeredPluginRepo(ctx.app.db, ctx.app.config.forgeRepo)), null, 2), "application/json");
+  res.headers.set("access-control-allow-origin", "*");
+  return res;
+}
+
+/** GET /.well-known/forge — the standards this forge implements, by id and version (docs/standards/). */
+export function forgeJson(): Response {
+  const res = text(JSON.stringify(forgeDocument(running().version)), "application/json");
   res.headers.set("access-control-allow-origin", "*");
   return res;
 }

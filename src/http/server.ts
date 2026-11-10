@@ -175,6 +175,7 @@ import {
   robotsTxt,
   securityTxt,
   mcpJson,
+  forgeJson,
   sitemapXml,
   webManifest,
 } from "../web/standards.ts";
@@ -738,6 +739,7 @@ export function buildRouter(): Router<Handler> {
   // What the open web expects of a site, from the forge's own facts.
   router.add("GET", "/.well-known/security.txt", securityTxt);
   router.add("GET", "/.well-known/mcp.json", mcpJson);
+  router.add("GET", "/.well-known/forge", forgeJson);
   router.add("GET", "/llms.txt", llmsTxt);
   // The same words as a page, for an assistant whose reader takes only HTML.
   router.add("GET", "/agents", agentsPage);

@@ -8,6 +8,7 @@ its own mark. Nothing here is configured, and nothing here is optional.
 | path                           | what it is                                                        | from                                                                         |
 | ------------------------------ | ----------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | `/.well-known/security.txt`    | who to tell about a vulnerability (RFC 9116), with a fixed expiry | the sealed new-issue form of `FORGE_REPO` when it is public, else the first account's page here; an address only from `FORGE_SECURITY_CONTACT` |
+| `/.well-known/forge`           | the standards this forge implements, by id and version ([`docs/standards/`](standards/README.md)) | `src/core/standards_index.ts` |
 | `/.well-known/change-password` | where a password manager sends a person                           | `/settings/password`                                                         |
 | `/robots.txt`                  | crawlers stay out of accounts, search and the API; the sitemap    | —                                                                            |
 | `/sitemap.xml`                 | the front page and every public repository, never a private one   | `listReposVisibleTo(db, nobody)`                                             |
@@ -15,6 +16,9 @@ its own mark. Nothing here is configured, and nothing here is optional.
 | `/llms.txt`                    | the forge for an agent (llmstxt.org): how to report, how to offer a change, the API and MCP, the public repositories | `listReposVisibleTo(db, nobody)`, the report limits                          |
 | `/icons/forge-<size>.png`      | the mark at 192, 512, 512-maskable and 180 (iOS), painted at boot | `design/mark.ts`, the favicon's two colours                                  |
 | `/:owner/:name/activity.atom`  | a repository's activity as Atom: pushes, issues, pulls, forks     | a fixed list of kinds, as sentences; never a raw payload                     |
+
+`/.well-known/forge` is deliberately machine-only: it has no page, terminal
+screen or feature doc, because its reader is a program checking conformance.
 
 Every page carries a description, Open Graph and Twitter card metadata, the
 manifest link, the touch icon and `viewport-fit=cover`, so a link to a
