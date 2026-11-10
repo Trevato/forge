@@ -225,8 +225,86 @@ export function recordUse(
 }
 
 /**
+ * The visited pages after one more at `href`: newest first, the page moved
+ * to the front when seen before (so a page is listed once), cut to `max`.
+ * Only same-origin paths are kept, and only the path: no title is stored,
+ * so a shared machine learns no private name. Self-contained.
+ */
+export function recordVisit(visits: readonly string[], href: string, max: number): string[] {
+  if (typeof href !== "string" || href.charAt(0) !== "/" || href.charAt(1) === "/") return visits.slice(0, max);
+  return [href].concat(visits.filter((v) => v !== href)).slice(0, max);
+}
+
+/**
+ * The "Recent" rows for an empty box: the stored visits, newest first, each
+ * titled from the row the palette already has for that href (a visit with no
+ * row is skipped), never the page `here`, at most `limit`. Self-contained.
+ */
+export function visitRows(
+  visits: readonly unknown[],
+  rows: readonly PaletteRow[],
+  here: string,
+  limit: number,
+): PaletteRow[] {
+  const out: PaletteRow[] = [];
+  const seen = new Set<string>();
+  for (const v of visits) {
+    if (out.length >= limit) break;
+    if (typeof v !== "string" || v === here || seen.has(v)) continue;
+    const r = rows.find((x) => x.h === v);
+    if (r === undefined) continue;
+    seen.add(v);
+    out.push({ t: r.t, h: r.h, g: "Recent", d: r.g });
+  }
+  return out;
+}
+
+/**
+ * What a page load stores: the visit list with `href` added, but only when the
+ * palette has a row for that page (error pages, login and the like are not
+ * visits worth listing). Self-contained apart from `recordVisit`.
+ */
+export function visitLoad(
+  visits: readonly string[],
+  href: string,
+  rows: readonly { h: string }[],
+  max: number,
+): string[] {
+  return rows.some((r) => r.h === href) ? recordVisit(visits, href, max) : visits.slice(0, max);
+}
+
+/**
+ * The rows `rankPalette` is given. With nothing typed: one "Recent" group of
+ * at most `shown` rows, the visited pages first (newest first), then the rows
+ * picked before (by frecency) to fill it, each href once and never the page
+ * `here`; then the rest. Typed: no Recent rows, the rest and, from two
+ * letters, what the server `served`. Self-contained apart from `visitRows`
+ * and `frecencyOrder`.
+ */
+export function palettePool(
+  query: string,
+  rows: readonly PaletteRow[],
+  served: readonly PaletteRow[],
+  visits: readonly unknown[],
+  uses: readonly PaletteUse[],
+  here: string,
+  now: number,
+  shown: number,
+): PaletteRow[] {
+  const q = query.trim();
+  if (q !== "") return rows.concat(q.length >= 2 ? served : []);
+  const head = visitRows(visits, rows, here, shown);
+  for (const u of frecencyOrder(uses, now)) {
+    if (head.length >= shown) break;
+    if (u.h === here || head.some((r) => r.h === u.h)) continue;
+    head.push({ t: u.t, h: u.h, g: "Recent", d: u.g });
+  }
+  return head.concat(rows);
+}
+
+/**
  * The functions above as the JavaScript the page runs: Bun transpiles
  * this module before it ever parses it, so `toString` is already the
  * browser's dialect. A test proves the string and the module agree.
  */
-export const paletteHelpersJs = `${fuzzyScore.toString()}\n${rankPalette.toString()}\n${opensAsSheet.toString()}\n${frecencyOrder.toString()}\n${readUses.toString()}\n${recordUse.toString()}`;
+export const paletteHelpersJs = `${fuzzyScore.toString()}\n${rankPalette.toString()}\n${opensAsSheet.toString()}\n${frecencyOrder.toString()}\n${readUses.toString()}\n${recordUse.toString()}\n${recordVisit.toString()}\n${visitRows.toString()}\n${visitLoad.toString()}\n${palettePool.toString()}`;

@@ -1714,6 +1714,16 @@ const shellCore = /* js */ `
   var RECENT_KEY = 'forge.palette.recent';
   var RECENT_MAX = 50;  // entries kept
   var RECENT_SHOWN = 8; // entries listed while the box is empty
+  var VISITS_KEY = 'forge.palette.visits';
+  var VISITS_MAX = 5;   // rows in the Recent group while the box is empty (visits, then picked)
+  // Pages visited: paths only, never titles; each load records its page once.
+  function readVisits() {
+    try { var v = JSON.parse(window.localStorage.getItem(VISITS_KEY) || '[]'); return Array.isArray(v) ? v : []; } catch (_) { return []; }
+  }
+  try {
+    var seenRows = (function () { try { return JSON.parse(doc.getElementById('palette-index').textContent).items || []; } catch (_) { return []; } })();
+    window.localStorage.setItem(VISITS_KEY, JSON.stringify(visitLoad(readVisits(), window.location.pathname, seenRows, VISITS_MAX + 1)));
+  } catch (_) {}
   var index = null;
   function loadIndex() {
     if (index) return index;
@@ -1960,8 +1970,11 @@ const shellCore = /* js */ `
       return r;
     });
     var tellApp = (loadIndex().tell || {}).app;
-    var recent = frecencyOrder(readRecent(), Date.now()).slice(0, RECENT_SHOWN).map(function (r) { return { t: r.t, h: r.h, g: 'Recent', d: r.g }; });
-    var recentHrefs = recent.map(function (r) { return r.h; });
+    // Storage is read once per opening, not per keystroke.
+    var openedAt = Date.now();
+    var visits = readVisits();
+    var uses = readRecent();
+    var recentHrefs = frecencyOrder(uses, openedAt).slice(0, RECENT_SHOWN).map(function (r) { return r.h; });
     var served = [];       // rows the server found, for the query servedFor
     var servedFor = '';
     var pending = false;   // a server answer is on its way
@@ -2028,7 +2041,7 @@ const shellCore = /* js */ `
     function render(keep) {
       armed = null;
       var q = input.value.trim();
-      var pool = (q === '' ? recent : []).concat(items, q.length >= 2 ? served : []);
+      var pool = palettePool(q, items, served, visits, uses, window.location.pathname, openedAt, VISITS_MAX);
       // "#123" on a repository's page: that number, built here from the page's own path (the server read no issue for it).
       var hereBase = loadIndex().here;
       var num = /^#(\\d+)$/.exec(q);
