@@ -12,6 +12,7 @@ import {
   type SignupChange,
   type SignupMode,
 } from "../settings/signup.ts";
+import { getAgentStart, parseAgentStart, setAgentStart, type AgentStartMode } from "../settings/agent_start.ts";
 import { forgeSource, parseForgeSource, setForgeSource, storedForgeSource } from "../settings/forge_source.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -68,4 +69,23 @@ export function changeForgeSource(
   if (!name.ok) return name;
   setForgeSource(app.db, name.value, who.value.id);
   return ok(name.value);
+}
+
+/** The agent-start setting (`settings/agent_start.ts`), for a forge admin who is a person. */
+export function readAgentStart(app: App, actor: User | undefined): Result<AgentStartMode, "not_found"> {
+  const who = admin(actor);
+  return who.ok ? ok(getAgentStart(app.db)) : who;
+}
+
+export function changeAgentStart(
+  app: App,
+  actor: User | undefined,
+  raw: unknown,
+): Result<AgentStartMode, "not_found" | "invalid_agent_start"> {
+  const who = admin(actor);
+  if (!who.ok) return who;
+  const mode = parseAgentStart(raw);
+  if (!mode.ok) return mode;
+  setAgentStart(app.db, mode.value, who.value.id);
+  return ok(mode.value);
 }

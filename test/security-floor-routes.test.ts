@@ -60,6 +60,7 @@ const SHOT = "needs a pin with a picture kept by refs/shots; the seed pins nothi
 const CART = "the seed pins no build with a cart (test/build-cart.test.ts covers its headers)";
 const UNSEEDED: Record<string, string> = {
   "/:owner/-/teams/:team": ORG,
+  "/claim/start/:token": "needs a one-time start claim token, which the seed does not mint (test/start.test.ts covers it)",
   "/talk/:id": TALK,
   "/bring/:id/:job": "needs a bring job of the signed-in person; the seed brings nothing",
   "/fleet/ops/:id": FLEET,

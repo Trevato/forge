@@ -309,6 +309,7 @@ const NOT_WALKED: Record<string, string> = {
   "/boards/:slug": "needs a board",
   "/boards/:slug/live": "needs a board; a stream, not a page",
   "/bring/:id/:job": "needs a bring job",
+  "/claim/start/:token": "needs the one-time token an anonymous start returned",
   "/fleet/ops/:id": "needs a fleet operation",
   "/go/:code": "needs a short code minted by a share",
   "/home/archived/:op": "needs an archived-home operation",

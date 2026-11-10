@@ -9,6 +9,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { isUnclaimed } from "./starts.ts";
 
 export const ROLES = ["guest", "member", "admin"] as const;
 export type Role = (typeof ROLES)[number];
@@ -86,7 +87,10 @@ export function lacks(
   ability: Ability,
 ): boolean {
   if (user.kind !== "user") return false;
-  return !can(roleOf(db, user), ability);
+  // An account an agent started may make its first app and nothing a member
+  // may spend on: it stays a guest, so no crew runs for it (#10912).
+  if (can(roleOf(db, user), ability)) return false;
+  return !(ability === "make_it_yours" && isUnclaimed(db, user.id));
 }
 
 /**

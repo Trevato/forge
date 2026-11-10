@@ -19,6 +19,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createIssue } from "../src/core/issues.ts";
 import { pin } from "../src/core/pins.ts";
 import { getRepo } from "../src/core/repos.ts";
+import { recordStart } from "../src/core/starts.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { buildApiRouter, buildRouter, serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -54,6 +55,7 @@ const FIXTURE: Record<string, string> = {
   "/:owner/:name/pulls/:number": "/alice/forge/pulls/2",
   "/:owner/:name/display": "/alice/forge/display",
   "/api/v1/admin/machines/:machine/disks": "/api/v1/admin/machines/rack1/disks",
+  "/claim/start/:token": "/claim/start/claim_fixture",
 };
 
 function registeredGets(): Set<string> {
@@ -130,6 +132,8 @@ beforeAll(async () => {
   const pull = createIssue(app.db, { repoId: forge.id, authorId: bob.id, title: "A pull", body: "body", kind: "pull" });
   if (!pull.ok) throw new Error(pull.error);
   app.db.run("INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid) VALUES (?1, 'main', 'topic', '', 'h')", [pull.value.id]);
+  // An agent's start the claim page can show (`/claim/start/:token`): bob's, so no extra account joins the walk.
+  recordStart(app.db, bob.id, "claim_fixture", "127.0.0.1");
   servers = await serve(app);
   const signin = await fetch(`${servers.url}/signin`, {
     method: "POST",

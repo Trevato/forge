@@ -89,5 +89,5 @@ test("the bytes are those of an admin's real tools/list response", async () => {
 }, 30_000);
 
 test("the entry builder is the one tools/list uses", () => {
-  expect(toolEntries(TOOLS).length).toBe(TOOLS.length + 1);
+  expect(toolEntries(TOOLS).length).toBe(TOOLS.length + 2);
 });

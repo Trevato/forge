@@ -113,6 +113,7 @@ test("every caller of createUser says where its account comes from", async () =>
     "src/actions/crew.ts": ["agent"],
     "src/actions/first_admin.ts": ["first-admin"],
     "src/actions/spawn.ts": ["spawn", "spawn"],
+    "src/actions/start.ts": ["start", "start"],
     "src/actions/users.ts": ["signup", "passkey"],
     "src/chaos/world.ts": ["seed"],
     "src/packs/mirror.ts": ["seed"],
@@ -120,5 +121,6 @@ test("every caller of createUser says where its account comes from", async () =>
     "src/spawn/preview-seed.ts": ["seed", "seed"],
     "src/web/pages/claim.ts": ["claim"],
     "src/web/pages/everyday.ts": ["everyday"],
+    "src/web/pages/start_claim.ts": ["claimer"],
   });
 });

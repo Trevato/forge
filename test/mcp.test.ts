@@ -37,8 +37,9 @@ import { listVia } from "./mcp-list.ts";
 
 /** tools/list's order: the tools by name, then `report`. */
 const sortedThenReport = (names: string[]): string[] => [
-  ...names.filter((n) => n !== "report").sort((a, b) => a.localeCompare(b)),
+  ...names.filter((n) => n !== "report" && n !== "start").sort((a, b) => a.localeCompare(b)),
   "report",
+  "start",
 ];
 
 describe("the forge over MCP", () => {
@@ -384,6 +385,7 @@ describe("the forge over MCP", () => {
       "pins",
       "board_delete",
       "report",
+      "start",
     ]));
     const byName = new Map<string, any>(
       listed.body.result.tools.map((t: any) => [t.name, t]),

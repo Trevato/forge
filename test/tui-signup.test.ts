@@ -112,3 +112,23 @@ test("a non-admin and an admin agent are never offered s", async () => {
   const own = invitesScreen(admin, { push() {}, invalidate() {} } as never);
   expect(JSON.stringify(own.keys)).toContain('"s"');
 });
+
+test("an admin sets who may start an agent with a, after a confirm; others are not offered it", async () => {
+  const { getAgentStart } = await import("../src/settings/agent_start.ts");
+  const h = boot("alice");
+  await h.open();
+  expect(getAgentStart(forge.db)).toBe("open");
+  await h.press("a", "j", "j", "enter");
+  expect(h.text()).toContain("from open to off");
+  await h.press("esc");
+  expect(getAgentStart(forge.db)).toBe("open");
+  await h.press("a", "j", "j", "enter", "enter");
+  expect(getAgentStart(forge.db)).toBe("off");
+  h.stop();
+  const bob = boot("bob");
+  await bob.open();
+  await bob.press("a", "j", "enter", "enter");
+  expect(getAgentStart(forge.db)).toBe("off");
+  bob.stop();
+  (await import("../src/settings/agent_start.ts")).setAgentStart(forge.db, "open", getUserByName(forge.db, "alice")!.id);
+});

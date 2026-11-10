@@ -11,7 +11,8 @@ import { changeQuotas, readQuotas } from "../../actions/quotas.ts";
 import { inviteLink, list as listInviteLinks, mint as mintInviteLink, revoke as revokeInviteLink } from "../../actions/invites.ts";
 import { INVITE_NOT_OPEN } from "../../actions/sever_invite_words.ts";
 import { DEFAULT_DAYS, MAX_DAYS } from "../../core/invites.ts";
-import { changeSignup, readSignup } from "../../actions/signup.ts";
+import { changeAgentStart, changeSignup, readAgentStart, readSignup } from "../../actions/signup.ts";
+import { AGENT_START_MODES } from "../../settings/agent_start.ts";
 import { SIGNUP_MEANS, SIGNUP_MODES } from "../../settings/signup.ts";
 import { QUOTA_KEYS } from "../../settings/quotas.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -30,6 +31,7 @@ export function limitsPage(ctx: Ctx): Response {
   if (!listed.ok) return notFoundPage(ctx);
   const quotas = timePhase(ctx.request, "quotas", () => readQuotas(ctx.app, ctx.auth.user));
   const signup = timePhase(ctx.request, "signup", () => readSignup(ctx.app, ctx.auth.user));
+  const agentStart = readAgentStart(ctx.app, ctx.auth.user);
   const invites = timePhase(ctx.request, "invites", () => listInviteLinks(ctx.app, ctx.auth.user));
   const rendering = performance.now();
   const { limits, changes } = listed.value;
@@ -138,6 +140,20 @@ export function limitsPage(ctx: Ctx): Response {
     </dd>
     <dd class="status-act"></dd>
   </div>`;
+  const agentStartRow = html`<div class="status-row">
+    <dt>Agents can start here</dt>
+    <dd>
+      <form class="row-fields" method="post" action="/admin/agent-start">
+        <select class="input mono" name="agent_start" aria-label="Agents can start here">
+          ${AGENT_START_MODES.map(
+            (m) => html`<option value="${m}" ${agentStart.ok && agentStart.value === m ? "selected" : ""}>${m === "code" ? "invite code" : m}</option>`,
+          )}
+        </select>
+        ${btn("Save", { size: "sm", variant: "primary", label: "Save agent start" })}
+      </form>
+    </dd>
+    <dd class="status-act"></dd>
+  </div>`;
   const inviteRows = (invites.ok ? invites.value : []).map((i) =>
     row({
       lead: icon("activity"),
@@ -180,7 +196,7 @@ export function limitsPage(ctx: Ctx): Response {
   const body = html`<p class="small muted mb">
       Every limit you can hit, and why. A change applies to the next request that meets it; nothing needs a restart.
     </p>
-    <dl class="status-rows">${signupRow}${inviteRow}${quotaRow}</dl>
+    <dl class="status-rows">${signupRow}${agentStartRow}${inviteRow}${quotaRow}</dl>
     ${historyBlock("Invite links made", inviteRows)}
     <section class="settings-block mt">
       <h2>Limits</h2>
@@ -284,6 +300,22 @@ export async function signupSet(ctx: Ctx): Promise<Response> {
     changed.ok
       ? { message: "Signup saved." }
       : { tone: "danger", message: "New accounts are open, request, invite or closed." },
+  );
+}
+
+// POST /admin/agent-start
+export async function agentStartSet(ctx: Ctx): Promise<Response> {
+  if (ctx.auth.user?.isAdmin !== true || ctx.auth.user.kind === "agent") return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const changed = changeAgentStart(ctx.app, ctx.auth.user, field(form, "agent_start"));
+  if (!changed.ok && changed.error === "not_found") return notFoundPage(ctx);
+  return flashTo(
+    ctx,
+    "/admin/limits",
+    changed.ok
+      ? { message: "Agent start saved." }
+      : { tone: "danger", message: "Agents can start here: open, invite code or off." },
   );
 }
 

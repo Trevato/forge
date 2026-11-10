@@ -35,7 +35,7 @@ describe("the MCP server card", () => {
     expect(card.version).toBe(running().version);
     expect(card.transport).toBe("streamable-http");
     expect(card.endpoint).toBe(`${base}/mcp`);
-    expect(card.tokenFreeTools).toEqual(["report"]);
+    expect(card.tokenFreeTools).toEqual(["report", "start"]);
 
     // Without a token the endpoint refuses everything but `report`.
     const report = await fetch(card.endpoint, {

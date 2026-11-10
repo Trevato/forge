@@ -46,6 +46,7 @@ const UNREACHED: Record<string, { sites: number; why: string }> = {
   "src/apps/feedback.ts": { sites: 2, why: "the visitor cookie is set on a deployed app's own host from its feedback widget; covered by the feedback tests" },
   "src/web/pages/claim.ts": { sites: 1, why: "claiming the first admin seat needs a fresh forge with a claim link; same sessionCookie() as the walked doors" },
   "src/web/pages/first-admin.ts": { sites: 1, why: "first-admin recovery needs a forge with no admin; same sessionCookie() as the walked doors" },
+  "src/web/pages/start_claim.ts": { sites: 1, why: "the claim of an agent's start needs a one-time token; same sessionCookie() as the walked doors; covered by test/start.test.ts" },
   "src/web/pages/signup-passkey.ts": { sites: 2, why: "sign-up by passkey needs an invite; same sessionCookie() as the walked doors" },
   "src/web/pages/map.ts": { sites: 1, why: "the map's last-looked cookie holds two timestamps, HttpOnly and Lax, and grants nothing; covered by test/roadmap.test.ts (name, HttpOnly, SameSite, no Secure over http)" },
   "src/web/pages/everyday.ts": { sites: 2, why: "the admin/everyday switch needs a paired account; same sessionCookie() as the walked doors" },

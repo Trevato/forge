@@ -55,7 +55,7 @@ export function apiCatalog(origin: string) {
  * `http/mcp.ts` answers these and refuses the rest with 401. The card and
  * `/api/v1/here` both read this list, so they cannot drift.
  */
-export const TOKEN_FREE_TOOLS: readonly string[] = ["report"];
+export const TOKEN_FREE_TOOLS: readonly string[] = ["report", "start"];
 
 /** A thin plugin the forge ships for a harness: where its source is and its one install line. */
 export interface HarnessPlugin {

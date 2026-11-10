@@ -179,6 +179,10 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "traffic.capture_started",
   "traffic.networks_imported",
   "crew.governed",
+  // Starts by an agent with only the URL (#10912): the forge owner hears them.
+  "start.made",
+  "start.claimed",
+  "start.swept",
 ]);
 
 /**

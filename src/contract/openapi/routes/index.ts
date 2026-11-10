@@ -349,6 +349,7 @@ export { route as postApiV1ReposOwnerNameTransfer } from "./postApiV1ReposOwnerN
 export { route as postApiV1ReposOwnerNameUpstreamCheck } from "./postApiV1ReposOwnerNameUpstreamCheck.ts";
 export { route as postApiV1Sessions } from "./postApiV1Sessions.ts";
 export { route as postApiV1Share } from "./postApiV1Share.ts";
+export { route as postApiV1Start } from "./postApiV1Start.ts";
 export { route as postApiV1Thoughts } from "./postApiV1Thoughts.ts";
 export { route as postApiV1Tokens } from "./postApiV1Tokens.ts";
 export { route as postApiV1UserEmailVerify } from "./postApiV1UserEmailVerify.ts";

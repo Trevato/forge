@@ -17,6 +17,7 @@ import {
 import { secureFor } from "./cookie_secure.ts";
 import { refusedByDatabase, shownRefusal } from "./refusal.ts";
 import { NOT_A_MEMBER } from "../core/roles.ts";
+import { startClaimAccountSubmit, startClaimPage, startClaimSubmit } from "../web/pages/start_claim.ts";
 import { signupOptions, signupPasskey } from "../web/pages/signup-passkey.ts";
 import { toolbarComment, toolbarPage } from "../web/studio/toolbar.ts";
 import { TOOLBAR_NAME, toolbarResponse } from "../apps/toolbar.ts";
@@ -31,7 +32,7 @@ import { adminDataPage, appDataPage, dataPage } from "../web/pages/data.ts";
 import { fleetAct, fleetReceipt, fleetUndo } from "../web/pages/fleet-ops.ts";
 import { maintenancePage, maintenancePrepare, maintenanceResume } from "../web/pages/maintenance.ts";
 import { nightlyOutputPage, resiliencePage } from "../web/pages/resilience.ts";
-import { limitsPage, limitsSet, quotasSet, signupSet, inviteMint, inviteRevoke } from "../web/pages/admin-limits.ts";
+import { agentStartSet, limitsPage, limitsSet, quotasSet, signupSet, inviteMint, inviteRevoke } from "../web/pages/admin-limits.ts";
 import { allFlowsPage } from "../web/pages/flows-all.ts";
 import { measureSubmit } from "./measure.ts";
 import { cspReportSubmit } from "./csp_report.ts";
@@ -480,7 +481,7 @@ import { viaGate } from "./via_gate.ts";
 import { checksRecheckRoutes } from "./checks_recheck.ts";
 import { feedRoutes } from "./feed.ts";
 import type { Database } from "bun:sqlite";
-import { mcpRoutes, REPORT_TOOL } from "./mcp.ts";
+import { mcpRoutes, REPORT_TOOL, START_TOOL } from "./mcp.ts";
 import { TOOLS } from "./mcp/tools.ts";
 import { setMcpTools } from "../web/llms_tools.ts";
 import { resourcePolicy } from "./corp.ts";
@@ -866,6 +867,9 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/signin/parent", parentStart);
   router.add("GET", "/signin/parent/callback", parentCallback);
   router.add("GET", "/signup", signupPage);
+  router.add("GET", "/claim/start/:token", startClaimPage);
+  router.add("POST", "/claim/start/:token", startClaimSubmit);
+  router.add("POST", "/claim/start/:token/account", startClaimAccountSubmit);
   router.add("GET", "/signup/requested", requestedPage);
   router.add("GET", "/verify", verifyPage);
   router.add("POST", "/signup", signupSubmit);
@@ -1036,6 +1040,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/admin/limits", limitsSet);
   router.add("POST", "/admin/quotas", quotasSet);
   router.add("POST", "/admin/signup", signupSet);
+  router.add("POST", "/admin/agent-start", agentStartSet);
   router.add("POST", "/admin/invites", inviteMint);
   router.add("POST", "/admin/invites/:id/revoke", inviteRevoke);
 
@@ -1150,7 +1155,7 @@ export function buildRouter(): Router<Handler> {
   // reclaim a path under `/api/`.
   // The forge as an MCP server: the studio's verbs for an assistant.
   mcpRoutes(router);
-  setMcpTools(TOOLS, [REPORT_TOOL]);
+  setMcpTools(TOOLS, [REPORT_TOOL, START_TOOL]);
   // The public API as OpenAPI, for any client that reads it.
   openapiRoute(router);
   oauthRoutes(router);

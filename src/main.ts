@@ -4,6 +4,7 @@
  * environment-only — a handful of variables, all with sane defaults.
  */
 
+import { sweepStarts } from "./actions/start_sweep.ts";
 import { scanNightly } from "./checks/scan.ts";
 import { nightlyDue } from "./checks/scan_store.ts";
 import { runModelReview } from "./actions/model_review.ts";
@@ -671,6 +672,10 @@ const followTimer = setInterval(
   60_000,
 );
 const staleTimer = setInterval(() => void during("asks", tickAsks), 120_000);
+// Accounts an agent started and nobody claimed sleep after a week and are
+// archived after a month (`actions/start_sweep.ts`, #10912): hourly, and on boot.
+const startsTimer = setInterval(() => during("starts", () => void sweepStarts(app)), 3_600_000);
+during("starts", () => void sweepStarts(app));
 void during("asks", tickAsks);
 
 // Every start is counted, and one that follows a process that never said
@@ -898,6 +903,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
   clearInterval(reachTimer);
   clearInterval(syncTimer);
   clearInterval(staleTimer);
+  clearInterval(startsTimer);
   clearInterval(followTimer);
   stopClogTick();
   stopKeeper();

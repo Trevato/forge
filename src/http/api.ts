@@ -382,6 +382,7 @@ import { buildCartRoutes } from "./api/build_cart.ts";
 import { iterationRoutes } from "./api/iterations.ts";
 import { appNoteRoutes } from "./api/app_notes.ts";
 import { reportRoutes } from "./api/reports.ts";
+import { startRoutes } from "./api/start.ts";
 import { rollbackRoutes } from "./api/rollback.ts";
 import { takeBackRoutes } from "./api/take_back.ts";
 import { conversationConfirmRoutes } from "./api/conversation_confirms.ts";
@@ -2140,6 +2141,7 @@ export function apiRoutes(router: Router<Handler>): void {
   issueRoutes(router);
 
   reportRoutes(router);
+  startRoutes(router);
   appNoteRoutes(router);
   rollbackRoutes(router);
   takeBackRoutes(router);

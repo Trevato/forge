@@ -32,6 +32,7 @@ import { clientBucket } from "./peer.ts";
 import { TOKEN_FREE_TOOLS } from "../core/mcp_card.ts";
 import { proofOf } from "./report_filer.ts";
 import { fileReport } from "../actions/reports.ts";
+import { START_HINT, START_WORDS, startBuilding } from "../actions/start.ts";
 import { REPORT_RECEIVED } from "../actions/report_words.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 import { everydayOf } from "../core/everyday.ts";
@@ -55,7 +56,7 @@ export function toolEntries(tools: readonly (typeof TOOLS)[number][]) {
         ? {}
         : { _meta: { ui: { resourceUri: CARD_URI(CARD_OF_TOOL[t.name]!) } } }),
     })),
-    { name: REPORT_TOOL.name, description: REPORT_TOOL.description, inputSchema: REPORT_TOOL.inputSchema },
+    ...[REPORT_TOOL, START_TOOL].map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
   ];
 }
 
@@ -277,11 +278,34 @@ export const REPORT_TOOL = {
   },
 } as const;
 
+/**
+ * `start`, the other tool open without a token (#10912): an agent with only
+ * the forge's URL gets an account, a repository, its app and a token; the
+ * same call as `POST /api/v1/start` (`actions/start.ts`).
+ */
+export const START_TOOL = {
+  name: "start",
+  /** Its line in /llms.txt's `## MCP tools`; never sent to a client. */
+  doc: "`{ name, description? }`: an account, repo, live app and token; push to main to deploy; `claim` is for a person",
+  writes: true,
+  description: "Start building with no account: an account, a repo, a live app and a token in one call.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      name: { type: "string", maxLength: 40 },
+      description: { type: "string", maxLength: 2000 },
+      agent: { type: "string", maxLength: 64 },
+      code: { type: "string", maxLength: 100 },
+    },
+    required: ["name"],
+  },
+} as const;
+
 /** What a token-free tool does with its call: the JSON-RPC answer. One entry per name in TOKEN_FREE_TOOLS. */
 type FreeHandler = (ctx: Ctx, id: unknown, args: Args) => unknown;
 
 /** The gate picks its handler here, so a name listed in TOKEN_FREE_TOOLS without one is caught by a test. */
-export const TOKEN_FREE_HANDLERS: Readonly<Record<string, FreeHandler>> = { report: reportAnswer };
+export const TOKEN_FREE_HANDLERS: Readonly<Record<string, FreeHandler>> = { report: reportAnswer, start: startAnswer };
 
 /** The JSON-RPC answer to a token-free tool call, or undefined for any other message. */
 function reportCall(ctx: Ctx, message: unknown): unknown | undefined {
@@ -357,11 +381,26 @@ function reportAnswer(ctx: Ctx, id: unknown, args: Args): unknown {
   );
 }
 
+async function startAnswer(ctx: Ctx, id: unknown, args: Args): Promise<unknown> {
+  const text = (t: string, isError = false) => ({
+    jsonrpc: "2.0",
+    id,
+    result: { content: [{ type: "text", text: t }], ...(isError ? { isError } : {}) },
+  });
+  const started = await startBuilding(ctx.app, args, clientBucket(ctx.request), ctx.url.origin);
+  if (started.ok) return text(JSON.stringify(started.value));
+  const e = started.error;
+  return text(
+    `${e.error}: ${START_WORDS[e.error]}${e.retryAfter === undefined ? "" : ` (try again in ${e.retryAfter} seconds)`} ${START_HINT}`,
+    true,
+  );
+}
+
 const NOT_HERE = (allow: string): Response =>
   new Response(null, { status: 405, headers: { allow } });
 
 /** Every tool name the forge lists, admin-only ones included. */
-export const toolNames = (): string[] => [...TOOLS.map((t) => t.name), REPORT_TOOL.name];
+export const toolNames = (): string[] => [...TOOLS.map((t) => t.name), REPORT_TOOL.name, START_TOOL.name];
 
 /** What each tool declares about itself, for the test that walks them all. */
 export const toolRegistry = () =>
@@ -383,7 +422,7 @@ export function mcpRoutes(router: Router<Handler>): void {
     ) {
       const message: unknown = await body(ctx.request);
       const reported = reportCall(ctx, message);
-      if (reported !== undefined) return json(reported);
+      if (reported !== undefined) return json(await reported);
       const answer = await rpcOne(ctx, user, message);
       if (answer === undefined) return new Response(null, { status: 202 });
       return json(answer);
@@ -397,7 +436,7 @@ export function mcpRoutes(router: Router<Handler>): void {
         413,
       );
     const reported = reportCall(ctx, message);
-    if (reported !== undefined) return json(reported);
+    if (reported !== undefined) return json(await reported);
     // The refusal keeps the OAuth challenge a client starts from, and names
     // the one thing a stranger can do without signing in.
     return new Response(
@@ -405,7 +444,7 @@ export function mcpRoutes(router: Router<Handler>): void {
         error: "unauthorized",
         hint: "Send `Authorization: Bearer <token>` with a token you hold, then repeat the call; without one, only the `report` tool answers.",
         message:
-          "send a forge token: Authorization: Bearer <token>. Without one, the tool `report` (tools/call, name \"report\", arguments {repo, title, body?, page?, agent?}) files a problem report on a public repository; see /llms.txt",
+          "send a forge token: Authorization: Bearer <token>. Without one, the tool `start` (tools/call, name \"start\", arguments {name, description?, agent?}) makes you an account, a repo and a live app with a token; and the tool `report` (tools/call, name \"report\", arguments {repo, title, body?, page?, agent?}) files a problem report on a public repository; see /llms.txt",
         report: {
           method: "tools/call",
           name: "report",

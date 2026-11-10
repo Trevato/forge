@@ -104,6 +104,7 @@ import {
   type EnvName,
 } from "./data.ts";
 import { parseManifest, type AppManifest } from "./manifest.ts";
+import { heldManifest } from "../core/starts.ts";
 import { identityKey } from "./proxy.ts";
 import { noteReached } from "./egress_report.ts";
 import { cellHooks } from "./egress_refused.ts";
@@ -1509,7 +1510,9 @@ export class AppsRuntime {
       readFileAt(bare, run.commitOid, "forge.json"),
       readFileAt(bare, run.commitOid, "package.json"),
     ]);
-    const manifest = parseManifest(forgeJson, packageJson);
+    const parsed = parseManifest(forgeJson, packageJson);
+    // An agent's unclaimed account runs small, with no host but the registries (#10912).
+    const manifest = parsed.ok ? { ...parsed, value: heldManifest(this.app.db, repo.ownerId, parsed.value) } : parsed;
     clock.lap("manifest");
     if (!manifest.ok) {
       return {
@@ -2026,6 +2029,7 @@ export class AppsRuntime {
     };
     const manifest = parseManifest(read("forge.json"), read("package.json"));
     if (!manifest.ok) return false;
+    const owner = getRepoById(this.app.db, record.repoId)?.ownerId;
     const state = this.envFor(record, env);
     if (state.live !== undefined || state.deploying !== undefined) return true;
     // The deploy that built this checkout, in an earlier life: its log is
@@ -2039,7 +2043,7 @@ export class AppsRuntime {
     state.asleep = {
       commitOid,
       dir,
-      manifest: manifest.value,
+      manifest: owner === undefined ? manifest.value : heldManifest(this.app.db, owner, manifest.value),
       runId: built?.id ?? "",
       since: new Date().toISOString(),
     };
