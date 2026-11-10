@@ -5,6 +5,7 @@ export const route: Route = {
   path: `${REPO}/egress-grants`,
   summary: "Grant the app one egress destination (admin scope); answers 201 with the grant",
   auth: true,
+  role: "member",
   status: 201,
   body: { destination: "string" },
   refusals: { invalid: "`destination` is not acceptable (422)" },

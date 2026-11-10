@@ -6,6 +6,7 @@ export const route: Route = {
   path: `${REPO}/upstream`,
   summary: "Follow an outside upstream, or stop (admin scope, repository admin); answers { following }",
   auth: true,
+  role: "member",
   body: { url: "string", branch: "string", enabled: "boolean" },
   refusals: {
     bad_enabled: `422: ${ENABLED_WORDS}`,

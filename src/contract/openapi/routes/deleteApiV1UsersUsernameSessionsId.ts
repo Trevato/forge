@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/users/{username}/sessions/{id}",
   summary: "End one browser session of a person, as when a device is lost; the person themself or the forge's owner, with a browser session, a password or an admin-scope token; answers 204 and never a session secret",
   auth: true,
+  role: "member",
   status: 204,
   refusals: {
     unauthorized: "no credentials were sent",

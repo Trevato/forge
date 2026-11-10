@@ -6,6 +6,7 @@ export const route: Route = {
   summary:
     "Delete a branch (rw scope); the name may hold slashes; answers 204 with no body",
   auth: true,
+  role: "member",
   status: 204,
   refusals: {
     invalid_name: "not a branch name",

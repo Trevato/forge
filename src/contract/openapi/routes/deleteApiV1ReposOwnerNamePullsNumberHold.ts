@@ -6,5 +6,6 @@ export const route: Route = {
   summary:
     "Let a held pull go; a person who writes the repository releases, never an agent (rw scope); answers `{ held: false, released }`, where `released` is false when nothing held it",
   auth: true,
+  role: "member",
   refusals: { forbidden: "you are an agent, or you cannot write the repository (403)" },
 };

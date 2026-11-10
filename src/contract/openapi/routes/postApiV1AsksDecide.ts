@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/asks/decide",
   summary: "Let the decider answer a hand-over ask (rw scope); answers 201 with a receipt naming an operation, to undo at /api/v1/asks/decide/{id}/undo",
   auth: true,
+  role: "member",
   status: 201,
   body: { item: "string" },
   refusals: {

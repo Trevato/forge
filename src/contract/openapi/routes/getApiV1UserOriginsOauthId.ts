@@ -8,5 +8,6 @@ export const route: Route = {
   path: "/api/v1/user/origins/oauth/{id}",
   summary: "Poll an OAuth connect by its flowId until it is no longer pending (obey intervalSecs); answers the flow's status, and once connected the origin's id; the account only",
   auth: true,
+  role: "member",
   refusals: { unauthorized: U, forbidden: F, not_found: "no such flow among the caller's" },
 };

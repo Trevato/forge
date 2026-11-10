@@ -5,4 +5,5 @@ export const route: Route = {
   path: `${REPO}/issues/{number}/dependencies`,
   summary: "What the issue waits for and what waits for it: { blockedBy, blocks }, each a list of { number, title, state, closeReason? }; issues the caller cannot see are left out",
   auth: false,
+  role: "anonymous",
 };

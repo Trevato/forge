@@ -5,4 +5,5 @@ export const route: Route = {
   path: "/api/v1/user",
   summary: "Read your own profile: the public fields plus emailVerified",
   auth: true,
+  role: "member",
 };

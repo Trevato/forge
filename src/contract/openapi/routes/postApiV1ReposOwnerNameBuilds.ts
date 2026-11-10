@@ -5,6 +5,7 @@ export const route: Route = {
   path: `${REPO}/builds`,
   summary: "Pin a commit as a build (rw scope, a person who writes) at refs/builds/<label>; answers 201 with the pin: { label, oid, note, parent, source, pinnedBy, pinnedAt }",
   auth: true,
+  role: "member",
   body: { label: "string", sha: "string", note: "string", parent: "string", source: "string" },
   status: 201,
   reply: { label: "string", oid: "string", note: "string", parent: "string", source: "string", pinnedBy: "string", pinnedAt: "string" },

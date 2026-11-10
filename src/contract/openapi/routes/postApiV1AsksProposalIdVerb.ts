@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/asks/proposal/{id}/{verb}",
   summary: "Act on a wave proposal (rw scope); `verb` is approve, redirect (with `words` to say what to do instead), later or again; answers 201",
   auth: true,
+  role: "member",
   status: 201,
   body: { words: "string" },
   refusals: {

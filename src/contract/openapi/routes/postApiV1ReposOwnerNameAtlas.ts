@@ -5,5 +5,6 @@ export const route: Route = {
   path: `${REPO}/atlas`,
   summary: "Check a business plan of apps, adapters and edges; with confirm, open its issues once",
   auth: true,
+  role: "member",
   body: { plan: "object" },
 };

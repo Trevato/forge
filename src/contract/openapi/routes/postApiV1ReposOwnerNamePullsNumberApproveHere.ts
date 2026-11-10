@@ -5,6 +5,7 @@ export const route: Route = {
   path: `${REPO}/pulls/{number}/approve-here`,
   summary: "Let an origin fork's pull run here: a writer approves its current head (rw scope); answers 201",
   auth: true,
+  role: "member",
   status: 201,
   refusals: {
     not_foreign: "the pull needs no approval to run (422)",

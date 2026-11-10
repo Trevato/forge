@@ -5,6 +5,7 @@ export const route: Route = {
   path: `${REPO}/builds/{label}`,
   summary: "Delete a pin: refs/builds/{label} with its cover and screenshots; the commit stays (rw scope, a person who writes); answers 204",
   auth: true,
+  role: "member",
   status: 204,
   refusals: {
     forbidden: "403: not a person who writes the repository (an agent is refused)",

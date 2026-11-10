@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/user/origin-apps/{id}",
   summary: "Remove a registered OAuth application of yours, with its stored client secret; answers 204",
   auth: true,
+  role: "member",
   status: 204,
   refusals: {
     unauthorized: "401: no signed-in account",

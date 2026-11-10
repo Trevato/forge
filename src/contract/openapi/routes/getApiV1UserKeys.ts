@@ -6,5 +6,6 @@ export const route: Route = {
   path: "/api/v1/user/keys",
   summary: "List your SSH public keys; answers { items: [keys], next_cursor }; limit and cursor page it",
   auth: true,
+  role: "member",
   query: { limit: limitTo(LIST_LIMIT_MAX), cursor: "string" },
 };

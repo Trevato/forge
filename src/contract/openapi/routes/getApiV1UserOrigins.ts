@@ -8,5 +8,6 @@ export const route: Route = {
   path: "/api/v1/user/origins",
   summary: "List the forges (GitHub, Forgejo, Gitea) the caller has connected, never with a token; the caller's account only: a session, the password or an admin-scope token, any other token is a 403",
   auth: true,
+  role: "member",
   refusals: { unauthorized: U, forbidden: F },
 };

@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/admin/pinned",
   summary: "Put a pinned forge on the owner's cloud: no crew, no automatic release; needs an admin-scope token and a cloud account with writes allowed",
   auth: true,
+  role: "admin",
   status: 201,
   body: { name: "string", target: "string", account: "string", app: "string", source: "string", version: "string", config: "object" },
   refusals: {

@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/boards/{slug}",
   summary: "Write a board, making it or replacing it; answers the board as saved. Every panel's query is run first",
   auth: true,
+  role: "admin",
   body: { title: "string", range: "string", refresh: "string", panels: "array" },
   refusals: {
     bad_json: "the body is not JSON (400)",

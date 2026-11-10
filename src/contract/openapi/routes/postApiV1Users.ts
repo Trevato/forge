@@ -6,6 +6,7 @@ export const route: Route = {
   summary:
     "Sign up: answers 201 with the new account { id, username, displayName, isAdmin, commitEmail }, never the admin; `email` is optional; `invite` is an invite link's token, `turnstile_token` the human check when the forge asks for one; refused from another origin with 403 forbidden",
   auth: false,
+  role: "anonymous",
   status: 201,
   body: { username: "string", email: "string", password: "string", invite: "string", turnstile_token: "string" },
   refusals: {

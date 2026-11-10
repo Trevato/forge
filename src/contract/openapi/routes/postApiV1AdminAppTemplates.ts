@@ -6,6 +6,7 @@ export const route: Route = {
   summary:
     "Mark or unmark a repository as an app template (site admin, admin scope); send { repo: \"owner/name\", marked: true|false }; the default template cannot be unmarked",
   auth: true,
+  role: "admin",
   refusals: {
     forbidden: "the caller is not a site admin",
     invalid_body: "repo and marked are required",

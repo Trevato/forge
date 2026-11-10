@@ -7,6 +7,7 @@ export const route: Route = {
   summary:
     "Change a repository's settings (an admin's); `showProvenance` shows or hides where a migrated one came from (a person's, never an agent's)",
   auth: true,
+  role: "member",
   body: {
     description: "string",
     visibility: "string",

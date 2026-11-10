@@ -6,5 +6,6 @@ export const route: Route = {
   summary:
     "The crew's Claude accounts, as MCP `subscriptions` says it, never a token (a forge admin); answers { items: [{ id, name, kind, apiBase, scopes, budgetUsd, spentUsd, restingUntil, restingSaid, lastUsedAt }] }",
   auth: true,
+  role: "admin",
   refusals: { not_admin: "the caller is not a forge admin (403)" },
 };

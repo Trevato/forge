@@ -6,6 +6,7 @@ export const route: Route = {
   path: "/api/v1/admin/capacity/{key}",
   summary: `Change one capacity setting live, or send value null to take it back to its default (a person admin's token, admin scope); {key} is one of ${CAPACITY_KEYS.join(", ")}; answers the changed setting`,
   auth: true,
+  role: "admin",
   body: { value: "string or null" },
   refusals: {
     not_found: "the token is not a person who administers the forge (404)",

@@ -7,6 +7,7 @@ export const route: Route = {
   summary:
     "List the repository's webhooks (admin scope), each without its secret; answers { items: [...], next_cursor }; limit 1 to 200, cursor from next_cursor",
   auth: true,
+  role: "member",
   query: { limit: limitTo(LIST_LIMIT_MAX), cursor: "string" },
   refusals: {
     invalid_limit: "limit is not a whole number from 1 to 200 (422)",

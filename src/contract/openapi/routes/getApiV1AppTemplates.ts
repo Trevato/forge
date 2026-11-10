@@ -6,5 +6,6 @@ export const route: Route = {
   summary:
     "The repositories New app offers as templates that you can read, `trevato/app-template` first; answers { templates: [\"owner/name\"] }",
   auth: true,
+  role: "member",
   refusals: {},
 };

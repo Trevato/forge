@@ -5,6 +5,7 @@ export const route: Route = {
   path: `${REPO}/transfer`,
   summary: "Move a repository to another owner, an account or an organisation the caller may create repositories under (rw scope, a repository admin's); its old web and API paths answer 308 to the new ones; answers the repository",
   auth: true,
+  role: "member",
   body: { newOwner: "string" },
   refusals: {
     not_found: "404: no such repository, or the caller is not its admin",

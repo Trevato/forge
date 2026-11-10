@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/forge/economics",
   summary: "Set the profit slider's position, the margin on crew spend, the label that selects owned nodes and/or the operator's prices (ownedMonthUsd, ownedSlots, cloudHourUsd, storageGbMonthUsd; and the list prices awakePriceHourUsd, storagePriceGbMonthUsd: US dollars, at most two decimals, non-negative); a field left out keeps its value, each change is kept (a person admin's token, admin scope)",
   auth: true,
+  role: "admin",
   body: {
     position: "whole number 0-100",
     marginPct: "whole number 0-500",

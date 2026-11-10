@@ -6,5 +6,6 @@ export const route: Route = {
   summary:
     "Read the forge's signup mode, account quotas and own source repository (a person admin's token, any scope); answers { quotas, signup, forgeRepo, forgeRepoInForce, signupChanges, changes }",
   auth: true,
+  role: "admin",
   refusals: { not_found: "the token is not a person who administers the forge" },
 };

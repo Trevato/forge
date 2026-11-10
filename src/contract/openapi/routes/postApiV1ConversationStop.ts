@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/conversation/stop",
   summary: "Stop the forge's agent mid-answer, as the signed-in person: its run and every process it started end, what it said so far stays and is marked stopped, and a write waiting for a Confirm is cancelled, never applied; answers 202",
   auth: true,
+  role: "member",
   status: 202,
   reply: { stopped: "boolean" },
   refusals: {

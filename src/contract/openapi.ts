@@ -73,6 +73,7 @@ export function openapi(origin: string, version: string): Record<string, unknown
     (paths[r.path] ??= {})[r.method] = {
       operationId: operationId(r),
       summary: r.summary,
+      "x-role": r.role,
       parameters: [...params, ...query],
       ...(r.body === undefined
         ? {}

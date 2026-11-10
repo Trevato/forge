@@ -7,6 +7,7 @@ export const route: Route = {
   summary:
     "An adapter's recorded pull runs, newest first (default 20): each { id, at, durationMs, state, error, written, skipped, failed, cursor, repeat }, `error` the sentence when failed and `cursor` where the next pull starts",
   auth: false,
+  role: "anonymous",
   query: { limit: limitTo(PULL_RUNS_MAX) },
   reply: { items: "array" },
   refusals: {

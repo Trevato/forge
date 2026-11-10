@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/admin/pinned/{name}/update",
   summary: "The only way a pinned forge changes version or config; recorded with who and when",
   auth: true,
+  role: "admin",
   body: { version: "string", config: "object" },
   refusals: {
     not_found: "only a forge administrator sees this route",

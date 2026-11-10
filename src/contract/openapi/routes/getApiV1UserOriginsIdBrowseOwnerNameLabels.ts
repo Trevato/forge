@@ -5,5 +5,6 @@ export const route: Route = {
   path: `${BROWSE}/labels`,
   summary: "List the labels of a repository the origin holds, live (the connecting user only); answers an array of { id, name, color }",
   auth: true,
+  role: "member",
   refusals: BROWSE_CODE_REFUSALS,
 };

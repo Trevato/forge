@@ -7,6 +7,7 @@ export const route: Route = {
   summary:
     "Take the parent's updates: a fork merges (the same answer as sync); the repository carrying this forge's code takes as a pull",
   auth: true,
+  role: "member",
   refusals: {
     not_a_fork: "404: this repository follows nothing",
     not_following: `404: ${FAMILY_WORDS.not_following}`,

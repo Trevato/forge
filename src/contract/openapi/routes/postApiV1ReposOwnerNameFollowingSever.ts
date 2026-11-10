@@ -6,5 +6,6 @@ export const route: Route = {
   path: `${REPO}/following/sever`,
   summary: "Stop following the parent forge; answers { severedAt }",
   auth: true,
+  role: "member",
   refusals: { not_following: `404: ${FAMILY_WORDS.not_following}` },
 };

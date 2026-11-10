@@ -6,6 +6,7 @@ export const route: Route = {
   summary:
     "Make a forge, as a link: `dryRun` is true unless it is false and then answers 200 with { dryRun: true, plan, firstAdmin } and makes nothing; made, it answers 201 (200 when it already exists) with { dryRun: false, name, url, claimUrl, ... }. A signed-in caller needs rw scope; a stranger may call it, same-origin, rate-limited, with no crew, model key or `for`",
   auth: true,
+  role: "member",
   status: 201,
   body: {
     name: "string",

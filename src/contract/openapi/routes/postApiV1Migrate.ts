@@ -6,6 +6,7 @@ export const route: Route = {
   summary:
     "Migrate a repository here: source is { url } (needs rw scope) or { originId, fullName } (needs admin scope); after is leave, archive or mirror; branch defaults to the one with the newest commits; crew is { agent, autonomous }; answers 202 with { repo, job }, the clone job watched at /api/v1/migrate/{job}",
   auth: true,
+  role: "member",
   status: 202,
   body: { source: "object", owner: "string", name: "string", visibility: "string", branch: "string", after: "string", crew: "object" },
   refusals: {

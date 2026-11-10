@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/boards/pins",
   summary: "Pin, unpin or move a board's panel on home; answers the new pins",
   auth: true,
+  role: "admin",
   body: { op: "string", slug: "string", title: "string", by: "integer" },
   refusals: {
     bad_json: "the body is not a JSON object (400)",

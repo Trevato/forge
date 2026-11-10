@@ -5,5 +5,6 @@ export const route: Route = {
   path: `${REPO}/origin/reconnect`,
   summary: "Reconnect a frozen mirror through one of your origins (admin scope, repository admin); answers the repository",
   auth: true,
+  role: "member",
   body: { originId: "string" },
 };
