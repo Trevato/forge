@@ -41,13 +41,30 @@ import { CONVERSATION_BRIEF } from "../crew/conversation_brief.ts";
 import { TOOLS } from "./mcp/tools.ts";
 
 const PROTOCOLS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
-/** Who answers: the forge, at the version its build stamped. */
+/** The tools/list entries for these tools, then `report`: what is served, and what docs/MCP.md measures. */
+export function toolEntries(tools: readonly (typeof TOOLS)[number][]) {
+  return [
+    ...tools.map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: lean(t.inputSchema),
+      // readOnlyHint defaults to false (MCP tool annotations), so only a
+      // read says so: 57 copies of the default were 2 KB of the 40 KB.
+      ...(t.writes ? {} : { annotations: { readOnlyHint: true } }),
+      ...(CARD_OF_TOOL[t.name] === undefined
+        ? {}
+        : { _meta: { ui: { resourceUri: CARD_URI(CARD_OF_TOOL[t.name]!) } } }),
+    })),
+    { name: REPORT_TOOL.name, description: REPORT_TOOL.description, inputSchema: REPORT_TOOL.inputSchema },
+  ];
+}
+
 // One page of tools/list stays within this many bytes of tools; `nextCursor`
 // names the rest, so adding a tool never busts one response.
 export const TOOLS_PAGE_BYTES = 20_000;
 
+/** Who answers: the forge, at the version its build stamped. */
 const server = () => ({ name: "forge", version: running().version });
-
 
 /**
  * Said to an MCP client whose token belongs to a site admin (#596): it acts
@@ -126,24 +143,7 @@ function rpcOne(
     case "ping":
       return reply({});
     case "tools/list": {
-      const all = [
-        ...TOOLS.filter((t) => visible(t, ctx, user)).map((t) => ({
-          name: t.name,
-          description: t.description,
-          inputSchema: lean(t.inputSchema),
-          // readOnlyHint defaults to false (MCP tool annotations), so only a
-          // read says so: 57 copies of the default were 2 KB of the 40 KB.
-          ...(t.writes ? {} : { annotations: { readOnlyHint: true } }),
-          ...(CARD_OF_TOOL[t.name] === undefined
-            ? {}
-            : {
-                _meta: {
-                  ui: { resourceUri: CARD_URI(CARD_OF_TOOL[t.name]!) },
-                },
-              }),
-        })),
-        { name: REPORT_TOOL.name, description: REPORT_TOOL.description, inputSchema: REPORT_TOOL.inputSchema },
-      ];
+      const all = toolEntries(TOOLS.filter((t) => visible(t, ctx, user)));
       // The cursor is the name of the last tool of the page before, so a tool
       // added between two requests moves nothing.
       const cursor = params["cursor"];
