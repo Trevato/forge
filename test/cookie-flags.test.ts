@@ -2,8 +2,10 @@
  * Every cookie the forge sets (#5898): sign in by each door and read every
  * Set-Cookie. HttpOnly and SameSite=Lax|Strict on each, and Secure whenever
  * the public origin is https. Run for a forge on http and one declared https.
+ * The walk at the end checks every cookie spelled in src/, reached or not (#10968).
  */
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -195,5 +197,111 @@ describe("cookie-setting sites", () => {
     for (const [file, { sites }] of Object.entries(UNREACHED)) expected[file] = sites;
     expect(found).toEqual(expected);
     for (const { why } of Object.values(UNREACHED)) expect(why.length).toBeGreaterThan(10);
+  });
+});
+
+/**
+ * The doors above prove the cookies a request can reach; this walk proves the
+ * rest (#10968). Every cookie spelled in src/ (`name=value; Attribute`, outside
+ * comments) says HttpOnly, SameSite=Lax|Strict and Secure (literal, or
+ * conditioned on `secureFor`'s https rule), unless its name is on EXEMPT.
+ */
+
+/**
+ * Cookies allowed to go without a flag, by name as the source spells it, one
+ * line of reason each. Empty today: every cookie has every flag. A cookie a
+ * first-party script must read (a theme painted before the server answers,
+ * say) would go here; the session and any credential cookie never do.
+ */
+const EXEMPT: Record<string, string> = {};
+
+/** Names that carry a credential: never exempt, whatever the list says. */
+const NEVER_EXEMPT = /session|token|grant|state|visitor/i;
+
+/**
+ * What a `set-cookie` writer may pass when it is not an inline literal: a
+ * builder whose own literal the walk checks, or a variable holding one.
+ */
+const BUILDERS: Record<string, string> = {
+  "sessionCookie(": "src/web/pages/site.ts",
+  "flashCookie(": "src/web/flash.ts",
+  "clearFlashCookie(": "src/web/flash.ts",
+  "cookieHeader(": "src/http/rp.ts",
+  "visitorCookie(": "src/apps/feedback.ts",
+  "cookie(": "src/apps/scaffold.ts, the scaffolded app's own `cookie`",
+  clear: "src/http/rp.ts, `cookieHeader` with Max-Age 0",
+  value: "src/apps/scaffold.ts, `redirectTo`'s cookies, each from `cookie`",
+  "o.cookie": "src/web/layout.ts, a page's cookie (the theme literal in src/web/pages/site.ts)",
+};
+
+/** `name=value; Attribute`: a cookie spelled out, its name literal or `${…}`. */
+const SPELLED = /(\$\{[^}]+\}|[A-Za-z_][\w-]*)=[^;\n]*?;\s*(?:Path|Max-Age|Expires|Domain|HttpOnly|SameSite|Secure)\b/;
+
+/** The flags a cookie line lacks; empty when it has them all. */
+function lacking(line: string): string[] {
+  const lacks: string[] = [];
+  if (!/\bHttpOnly\b/.test(line)) lacks.push("HttpOnly");
+  if (!/\bSameSite=(?:Lax|Strict)\b/.test(line)) lacks.push("SameSite=Lax|Strict");
+  // Literal, conditional (`? "; Secure" : ""`), or the `${secure}` a builder took from secureFor.
+  if (!/\bSecure\b|\$\{secure\}/.test(line)) lacks.push("Secure");
+  return lacks;
+}
+
+describe("cookie flags, walked in the source", () => {
+  const files = [...new Bun.Glob("src/**/*.ts").scanSync(".")].sort().map((file) => ({ file, text: readFileSync(file, "utf8") }));
+  const spelled = files.flatMap(({ file, text }) =>
+    text.split("\n").flatMap((line, i) => {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("//") || trimmed.startsWith("*")) return [];
+      const match = SPELLED.exec(line);
+      return match ? [{ where: `${file}:${i + 1}`, name: match[1]!, line: trimmed }] : [];
+    }),
+  );
+
+  test("the walk finds the forge's cookies, including those no door above reaches", () => {
+    const where = new Set(spelled.map((s) => s.where.replace(/:\d+$/, "")));
+    for (const file of ["src/web/pages/site.ts", "src/web/flash.ts", "src/http/rp.ts", "src/http/server.ts", "src/apps/proxy.ts", "src/apps/feedback.ts", "src/apps/scaffold.ts", "src/web/pages/map.ts"])
+      expect([file, where.has(file)]).toEqual([file, true]);
+  });
+
+  test("every cookie spelled in src/ is HttpOnly, SameSite and Secure, or exempt with a reason", () => {
+    const short = spelled
+      .filter((s) => EXEMPT[s.name] === undefined)
+      .map((s) => ({ ...s, lacks: lacking(s.line) }))
+      .filter((s) => s.lacks.length > 0)
+      .map((s) => `${s.where} ${s.name} lacks ${s.lacks.join(", ")}`);
+    expect(short).toEqual([]);
+  });
+
+  test("every set-cookie writer passes a checked literal or a known builder", () => {
+    const writer = /(?:\.(?:append|set)\(\s*["']set-cookie["']\s*,|["']set-cookie["']\s*:)\s*([^\n]+)/gi;
+    const unknown: string[] = [];
+    let writers = 0;
+    for (const { file, text } of files) {
+      for (const match of text.matchAll(writer)) {
+        writers++;
+        const value = match[1]!.trim();
+        const at = `${file}:${text.slice(0, match.index).split("\n").length}`;
+        if (value.startsWith("`")) {
+          const lacks = SPELLED.test(value) ? lacking(value) : ["every flag"];
+          if (lacks.length > 0) unknown.push(`${at} inline cookie lacks ${lacks.join(", ")}`);
+          continue;
+        }
+        const known = Object.keys(BUILDERS).some((b) =>
+          b.endsWith("(") ? value.startsWith(b) : new RegExp(`^${b.replace(".", "\\.")}\\b`).test(value),
+        );
+        if (!known) unknown.push(`${at} passes \`${value}\`: build it with a checked builder or spell it inline`);
+      }
+    }
+    expect(writers).toBeGreaterThan(10);
+    expect(unknown).toEqual([]);
+  });
+
+  test("the exempt list holds no credential cookie and nothing stale", () => {
+    for (const [name, reason] of Object.entries(EXEMPT)) {
+      expect([name, NEVER_EXEMPT.test(name)]).toEqual([name, false]);
+      expect(reason.trim().length).toBeGreaterThan(10);
+      expect([name, spelled.some((s) => s.name === name)]).toEqual([name, true]);
+    }
   });
 });
