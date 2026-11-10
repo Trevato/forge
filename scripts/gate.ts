@@ -305,10 +305,25 @@ export async function bothDoorsRefusal(cwd: string = process.cwd()): Promise<str
   return bothDoorsProblems(parseNameStatus(diff.out), log.out.split("\0").map((m) => m.trim()).filter(Boolean));
 }
 
+/** A pull that adds a feature without touching the pipeline says why (#11036). */
+export async function directionRefusal(cwd: string = process.cwd()): Promise<string[]> {
+  const { parseNameStatus } = await import("../src/kernel/pin_edits.ts");
+  const { directionProblems } = await import("../src/kernel/direction.ts");
+  const base =
+    process.env.FORGE_CHECK_BASE ||
+    git(["merge-base", "origin/main", "HEAD"], cwd).out ||
+    git(["merge-base", "main", "HEAD"], cwd).out;
+  if (!base) return [];
+  const diff = git(["diff", "--name-status", "-M", `${base}..HEAD`], cwd);
+  const log = git(["log", "--format=%B%x00", `${base}..HEAD`], cwd);
+  if (!diff.ok || !log.ok) return [];
+  return directionProblems(parseNameStatus(diff.out), log.out.split("\0").map((m) => m.trim()).filter(Boolean));
+}
+
 // `bun scripts/gate.ts`: the audit alone, first in `forge.json`'s check, so
 // a stale exclusion fails in under a second — not after install and tsc.
 if (import.meta.main) {
-  const refusal = [...gateRefusal(presentTests()), ...(await pinRefusal()), ...(await tryItRefusal()), ...(await bothDoorsRefusal()), ...reviewRefusal()];
+  const refusal = [...gateRefusal(presentTests()), ...(await pinRefusal()), ...(await tryItRefusal()), ...(await bothDoorsRefusal()), ...(await directionRefusal()), ...reviewRefusal()];
   for (const line of refusal) console.error(`gate: ${line}`);
   process.exit(refusal.length === 0 ? 0 : 2);
 }
