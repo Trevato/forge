@@ -471,6 +471,10 @@ export const toolbarJs = `(function () {
   }
   pill.addEventListener("pointerup", drop);
   pill.addEventListener("pointercancel", drop);
+  var sr = document.createElement("div");
+  sr.setAttribute("role", "status");
+  sr.style.cssText = "position:absolute;opacity:0";
+  box.appendChild(sr);
   pill.addEventListener("keydown", function (e) {
     var t = corner.charAt(0), l = corner.charAt(1);
     if (e.key === "ArrowLeft") l = "l";
@@ -479,8 +483,10 @@ export const toolbarJs = `(function () {
     else if (e.key === "ArrowDown") t = "b";
     else return;
     e.preventDefault();
+    if (t + l === corner) return;
     place(t + l);
     store(KEY, corner);
+    sr.textContent = "Moved to the " + (t > "b" ? "top " : "bottom ") + (l > "m" ? "right" : "left");
   });
   // An inline display beats the UA [hidden] rule, so display carries the state.
   function ring(b) {
