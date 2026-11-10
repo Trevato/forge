@@ -7,6 +7,7 @@
  * `/search`), and every dialog (a link to a real page).
  */
 
+import { goLevel, goPaletteRows } from "./go_pages.ts";
 import { NEW_ISSUE_KEY } from "./script_keys.ts";
 import { newIssueHref } from "./issue_from.ts";
 import { OPENSEARCH_PATH, OPENSEARCH_TITLE, OPENSEARCH_TYPE } from "./opensearch.ts";
@@ -393,21 +394,11 @@ function searchBar(): Html {
 
 /** The palette's own verbs: where to go, what to make, what to set. */
 const STATIC_PALETTE: PaletteItem[] = [
-  { t: "Home", h: "/", c: "Go to" },
-  { t: "Apps", h: "/apps", c: "Go to" },
-  { t: "Explore", h: "/explore", c: "Go to" },
-  { t: "Forge packs", h: "/packs", c: "Go to" },
-  { t: "Displays", h: "/displays", c: "Go to" },
-  { t: "Map", h: "/map", c: "Go to" },
-  { t: "What you asked for", h: "/asked", c: "Go to" },
-  { t: "Front page", h: "/front", c: "Go to" },
+  ...goPaletteRows().map((r) => ({ t: r.t, h: r.h, c: "Go to" })),
   { t: "New app", h: "/apps/new", c: "Create" },
   { t: "New repository", h: "/new", c: "Create" },
   { t: "Migrate a repository", h: "/migrate", c: "Create" },
   { t: "New organization", h: "/organizations/new", c: "Create" },
-  { t: "Notes", h: "/notes", c: "Go to" },
-  { t: "Talk to the forge", h: "/talk", c: "Go to" },
-  { t: "Search", h: "/search", c: "Go to" },
   { t: "Account settings", h: "/settings", c: "Settings" },
   { t: "Access tokens", h: "/settings/tokens", c: "Settings" },
   { t: "SSH keys", h: "/settings/keys", c: "Settings" },
@@ -416,7 +407,7 @@ const STATIC_PALETTE: PaletteItem[] = [
 ];
 
 /** What a signed-out visitor can reach: places to go, not Create and Settings rows that end at a sign-in wall. */
-const VISITOR_PALETTE = new Set(["Home", "Apps", "Explore", "Forge packs", "Front page", "Search"]);
+const VISITOR_PALETTE = new Set(goPaletteRows().filter((r) => r.visitor).map((r) => r.t));
 
 /** First path segments that are the forge's own pages, never an owner: no repository read for them. */
 const NOT_AN_OWNER = new Set([
@@ -882,7 +873,7 @@ export function page(options: PageOptions, status = 200): Response {
           ? raw(`<style>${options.styleCss}</style>`)
           : null}
       </head>
-      <body>
+      <body data-go="${goLevel({ signedIn: ctx.auth.user !== undefined, admin: ctx.auth.user?.isAdmin === true })}">
         ${shell}
         <script src="${shellAsset().path}" defer></script>
         <script src="${beaconAsset().path}" defer></script>

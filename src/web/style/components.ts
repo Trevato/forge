@@ -792,6 +792,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
   background: none; color: var(--fg); font-size: 14px; text-align: left;
   text-decoration: none; cursor: pointer;
 }
+.palette-item[hidden] { display: none; }
 .palette-item .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .palette-item .ico { color: var(--faint); }
 .palette-item .cat {

@@ -16,3 +16,13 @@ Every action with a key shows it without taking room. Hints are never a box in t
 - Test: `test/hotkey-hints.test.ts`. It checks the stylesheet's rules and the rendered markup. It does not measure a rendered layout, because the test run has no layout engine.
 
 **Terminal:** none. Terminal screens already print their keys in their footer line, which is always visible, so there is nothing to reveal.
+
+**`:` go to a page (#10434)**
+- `:` outside a field opens one line; typing narrows the forge's top-level pages (`src/web/go_pages.ts`, the one list; the Cmd/Ctrl K palette's "Go to" rows are built from the same list), Enter opens the leading match (a name that starts with what you typed beats one that contains it, ties in list order), Esc closes. With no match the line under the box says "No page called that" and Enter does nothing. It reuses the palette's dialog classes: no new component, and the list has a fixed height so nothing shifts.
+- Screen readers: the input is a combobox over a listbox; `aria-activedescendant` names the leading match.
+- `?` help lists the same pages: it reads `gotoPages()` in the keys script (the list the script carries, cut to the viewer's level), not the prompt's markup, which is drawn only when `:` is first pressed.
+- Inside a field `:` types a colon; inside the open prompt the dialog owns the keys.
+- Touch: `:` needs a keyboard. On a phone the way in is the command palette button in the top bar, whose "Go to" rows are the same pages; no second touch control was added.
+- **Terminal:** none. The terminal screens print their keys in their footer line and have no `:` prompt; their pages are reached by their own menus.
+- Left out: pages that belong to a repository (waves live at `/:owner/:name/waves`), so they are not top-level names.
+- Test: `test/keys-palette.test.ts`.

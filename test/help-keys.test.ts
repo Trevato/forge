@@ -52,5 +52,5 @@ test('every key STATIC_KEYS names is answered by the handler', () => {
 
 test(': opens the palette and is listed', () => {
   expect(handler).toContain("e.key === ':'");
-  expect(src).toContain("[':', 'Command palette']");
+  expect(src).toContain("[':', 'Go to a page by name']");
 });

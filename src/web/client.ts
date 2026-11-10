@@ -10,6 +10,7 @@
  * behaviour that a page depends on to be usable.
  */
 
+import { GO_MATCH_JS, goPagesData } from "./go_pages.ts";
 import { actNowJs } from "./act_now.ts";
 import { pickJs } from "./pick.ts";
 import { imageViewJs } from "./render/image.ts";
@@ -1567,13 +1568,13 @@ const shellCore = /* js */ `
       // First press lays the keys over the page; the second clears them and opens the help.
       if (doc.documentElement.hasAttribute('data-hints')) { hints(false); openHelp(); } else hints(true);
     }
-    else if (e.key === ':') { seq.length = 0; e.preventDefault(); openPalette(); }
+    else if (e.key === ':') { seq.length = 0; e.preventDefault(); openGoto(); }
   });
 
   // ---- help overlay, generated from the shortcuts actually on the page ----
   var STATIC_KEYS = [
     ['j / k', 'Move between rows'], ['o or Enter', 'Open the focused row'],
-    ['/', 'Focus search'], ['Cmd/Ctrl K', 'Command palette'], [':', 'Command palette'], ['?', 'This help'],
+    ['/', 'Focus search'], ['Cmd/Ctrl K', 'Command palette'], [':', 'Go to a page by name'], ['?', 'This help'],
     ['Esc', 'Leave a box, close a menu or dialog'],
   ];
   // The rows a page earns by what it carries: a box to type in, a form
@@ -1622,6 +1623,14 @@ const shellCore = /* js */ `
       tbody.appendChild(keyRow(k, label));
     });
     pageKeys().concat(STATIC_KEYS).forEach(function (p) { tbody.appendChild(keyRow(p[0], p[1])); });
+    // The pages \`:\` reaches, read from the prompt's own list so the two cannot differ.
+    var names = gotoPages().map(function (p) { return p[0]; });
+    if (names.length) {
+      var pr = doc.createElement('tr');
+      var pk = doc.createElement('td'); var pkb = doc.createElement('kbd'); pkb.textContent = ':'; pk.appendChild(pkb);
+      var pl = doc.createElement('td'); pl.textContent = 'Pages: ' + names.join(', ');
+      pr.appendChild(pk); pr.appendChild(pl); tbody.appendChild(pr);
+    }
     table.appendChild(tbody);
     if (body) { body.textContent = ''; body.appendChild(table); }
     openModal(dlg);
@@ -1814,6 +1823,78 @@ const shellCore = /* js */ `
       if (d.ok) say('success', d.flash, d.href);
       else say('danger', d.error || '${NOT_TOLD_WORDS}');
     }).catch(function () { say('danger', '${NOT_TOLD_WORDS}'); });
+  }
+
+  // ---- go to a page: one line, the server's own list filtered in place ----
+  var closeGoto = null;
+  // The pages ride in this script (cached once); the page wears only the viewer's level in data-go.
+  var GO_PAGES = ${JSON.stringify(goPagesData())};
+  function gotoPages() {
+    var lv = +(doc.body.getAttribute('data-go') || 0);
+    return GO_PAGES.filter(function (p) { return p[2] <= lv; });
+  }
+  ${GO_MATCH_JS}
+  var GOTO_HINT = 'Enter opens the first, Esc closes';
+  function gotoDialog() {
+    var dlg = doc.getElementById('goto');
+    if (dlg) return dlg;
+    dlg = doc.createElement('dialog');
+    dlg.id = 'goto'; dlg.className = 'dialog palette'; dlg.setAttribute('aria-label', 'Go to a page');
+    var input = doc.createElement('input');
+    input.className = 'input palette-input'; input.type = 'text'; input.placeholder = 'Page name';
+    input.setAttribute('role', 'combobox'); input.setAttribute('aria-label', 'Go to a page');
+    input.setAttribute('aria-controls', 'goto-list'); input.setAttribute('aria-expanded', 'true');
+    input.setAttribute('aria-autocomplete', 'list'); input.setAttribute('autocomplete', 'off');
+    input.setAttribute('autocapitalize', 'off'); input.spellcheck = false;
+    var box = doc.createElement('div'); box.className = 'palette-list'; box.id = 'goto-list';
+    box.setAttribute('role', 'listbox'); box.setAttribute('aria-label', 'Pages');
+    gotoPages().forEach(function (p, i) {
+      var a = doc.createElement('div'); a.className = 'palette-item'; a.setAttribute('role', 'option');
+      a.id = 'goto-' + i; a.setAttribute('aria-selected', 'false'); a.setAttribute('data-href', p[1]);
+      var sp = doc.createElement('span'); sp.className = 'grow'; sp.textContent = p[0]; a.appendChild(sp); box.appendChild(a);
+    });
+    var foot = doc.createElement('div'); foot.className = 'palette-foot'; foot.id = 'goto-foot';
+    foot.setAttribute('role', 'status'); foot.textContent = GOTO_HINT;
+    dlg.appendChild(input); dlg.appendChild(box); dlg.appendChild(foot);
+    doc.body.appendChild(dlg);
+    return dlg;
+  }
+  function openGoto() {
+    var dlg = gotoDialog();
+    if (!dlg.showModal) { location.href = '/search'; return; }
+    if (closeGoto) { closeGoto(); return; }
+    var input = dlg.querySelector('input');
+    var foot = dlg.querySelector('#goto-foot');
+    var pages = gotoPages();
+    var opts = Array.prototype.slice.call(dlg.querySelectorAll('[role=option]'));
+    var lead = null;
+    function paint() {
+      var hits = goMatch(pages, input.value);
+      lead = hits.length ? opts[pages.indexOf(hits[0])] : null;
+      opts.forEach(function (o, i) {
+        o.hidden = hits.indexOf(pages[i]) < 0;
+        o.setAttribute('aria-selected', o === lead ? 'true' : 'false');
+      });
+      if (lead) input.setAttribute('aria-activedescendant', lead.id); else input.removeAttribute('aria-activedescendant');
+      foot.textContent = hits.length ? GOTO_HINT : 'No page called that';
+    }
+    function go(o) { location.assign(o.getAttribute('data-href')); }
+    function onKey(e) {
+      if (e.key !== 'Enter' || e.isComposing) return;
+      e.preventDefault();
+      if (lead) go(lead);
+    }
+    function onClick(e) { var o = e.target.closest && e.target.closest('[role=option]'); if (o) go(o); }
+    input.value = '';
+    paint();
+    closeGoto = openModal(dlg, function () {
+      closeGoto = null; dlg.removeEventListener('keydown', onKey);
+      dlg.removeEventListener('click', onClick); input.removeEventListener('input', paint);
+    });
+    dlg.addEventListener('keydown', onKey);
+    dlg.addEventListener('click', onClick);
+    input.addEventListener('input', paint);
+    input.focus();
   }
 
   var closePalette = null;
