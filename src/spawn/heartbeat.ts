@@ -26,6 +26,7 @@ import { upstreamState } from "./upstream.ts";
 import { progress } from "../core/next-steps.ts";
 import { running } from "../kernel/version.ts";
 import { forgeCeiling } from "../flow/ceiling.ts";
+import { during } from "../perf/jobs.ts";
 
 export const SIGNATURE_HEADER = "x-forge-signature";
 /** A child reports this often; one silent for three beats reads as quiet. */
@@ -323,7 +324,7 @@ export async function sendBeat(
 /** Report now and then every BEAT_MS; returns the timer to clear. */
 export function startHeartbeat(app: App): ReturnType<typeof setInterval> {
   void sendBeat(app);
-  return setInterval(() => void sendBeat(app), BEAT_MS);
+  return setInterval(() => void during("heartbeat", () => sendBeat(app)), BEAT_MS);
 }
 
 export type Standing = "reporting" | "quiet" | "unheard";

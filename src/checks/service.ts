@@ -127,6 +127,7 @@ import { checkStage, type GateStage } from "./gate_reason.ts";
 import { extraGates, GATE_DEADLINE_MS, gateQueued, gateRunId, gatesInFlight, watchGates } from "./queue.ts";
 import type { JobOptions } from "../cluster/jobs.ts";
 import type { CheckDetail } from "../core/runs.ts";
+import { during } from "../perf/jobs.ts";
 
 const log = createLog("checks");
 
@@ -1660,7 +1661,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   }
 
   const timer = setInterval(() => {
-    if (!stopped) schedule();
+    if (!stopped) during("lane", schedule);
   }, TICK_MS);
   // Main is verified after landing on a schedule, when the forge says how often.
   const sweeper =
@@ -1668,12 +1669,14 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       ? undefined
       : setInterval(() => {
           if (!stopped)
-            askVerifications().catch((error) => log.error("verification not asked", { error: String(error) }));
+            during("verify-sweep", askVerifications).catch((error) =>
+              log.error("verification not asked", { error: String(error) }),
+            );
         }, Math.min(VERIFY_SWEEP_MS, options.verifyEveryMs));
   // A gate's slot frees: the pull check held for it starts now, not at the tick.
   const unwatch = watchGates(schedule);
-  schedule();
-  void catchUp();
+  during("lane", schedule);
+  void during("lane-catch-up", catchUp);
 
   /** One gate's run on the lane: the full tier on `commitOid`, traced, cut off by `controller`. */
   async function gateOnce(

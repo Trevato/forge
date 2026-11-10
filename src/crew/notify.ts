@@ -48,6 +48,7 @@ import { loadClog } from "../flow/clog_tick.ts";
 import { redactSecrets } from "../kernel/log.ts";
 import { forgeCeiling } from "../flow/ceiling.ts";
 import { askLinesFor } from "../web/studio/asks.ts";
+import { during } from "../perf/jobs.ts";
 
 const KEY = "notify_url";
 export const MAX_URL = 200;
@@ -585,13 +586,13 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
 
   // Eight days of silence is no event: the clock wakes the notifier too.
   const clock = setInterval(() => {
-    queue = queue.then(async () => {
+    queue = queue.then(() => during("notify", async () => {
       try {
         for (const id of people()) await tell(id, false);
       } catch (error) {
         app.log.error("notify failed", { error: String(error) });
       }
-    });
+    }));
   }, options.clockMs ?? CLOCK_MS);
   clock.unref();
 
@@ -607,7 +608,10 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
     });
     return queue;
   };
-  const pager = setInterval(() => void pageAll(), Math.min(options.clockMs ?? CLOCK_MS, PAGE_MS));
+  const pager = setInterval(
+    () => void during("notify-page", pageAll),
+    Math.min(options.clockMs ?? CLOCK_MS, PAGE_MS),
+  );
   pager.unref();
 
   return {

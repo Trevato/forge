@@ -496,6 +496,7 @@ import {
   type RouteTiming,
 } from "../core/route_timing.ts";
 import { captureStore, loopWatch, perfRecord, readLedger } from "../perf/live.ts";
+import { during } from "../perf/jobs.ts";
 import { classOf, countryOf, repoOf, signatureOf } from "../perf/traffic.ts";
 import { createTrafficWriter } from "../perf/traffic_store.ts";
 import { startFeatureSchedule } from "../apps/feature_schedule.ts";
@@ -2354,8 +2355,10 @@ export async function serve(app: App): Promise<Servers> {
   // suspension or sign-out another process wrote reaches it too (#846).
   const sweep = setInterval(
     () =>
-      sweepStanding(app.db, (error) =>
-        app.log.warn("standing sweep did not finish", { error: String(error) }),
+      during("standing-sweep", () =>
+        sweepStanding(app.db, (error) =>
+          app.log.warn("standing sweep did not finish", { error: String(error) }),
+        ),
       ),
     app.config.standingSweepMs ?? 5_000,
   );

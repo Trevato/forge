@@ -35,6 +35,7 @@ import { vettedEnv } from "./git-mirror.ts";
 import { hookSecret, hookUrl } from "./hook-secret.ts";
 import { verifySignature } from "../core/webhooks.ts";
 import type { Provider, RemoteIssue } from "./types.ts";
+import { during } from "../perf/jobs.ts";
 
 const log = createLog("mirror-pulls");
 
@@ -335,7 +336,7 @@ export function startMirrorPulls(app: App): () => void {
       busy = false;
     });
   };
-  const timer = setInterval(tick, MIRROR_PULLS_EVERY_MS);
-  tick();
+  const timer = setInterval(() => during("mirror-pulls", tick), MIRROR_PULLS_EVERY_MS);
+  during("mirror-pulls", tick);
   return () => clearInterval(timer);
 }

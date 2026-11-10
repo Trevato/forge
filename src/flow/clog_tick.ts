@@ -17,6 +17,7 @@ import { clogStep, type ClogEvent, type ClogState } from "./clog_watch.ts";
 import { readOldestApproved } from "./oldest_approved.ts";
 import { readStranded } from "./stranded.ts";
 import { readVitals } from "./vitals.ts";
+import { during } from "../perf/jobs.ts";
 
 const HOUR_MS = 3_600_000;
 const log = createLog("clog");
@@ -90,7 +91,7 @@ export function startClogTick(
 ): () => void {
   const timer = setInterval(() => {
     try {
-      tickClog(db, bus);
+      during("clog", () => tickClog(db, bus));
     } catch (error) {
       onError(error);
     }

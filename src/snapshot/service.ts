@@ -35,6 +35,7 @@ import { lastMirror, mirrorPass, mirrorTarget, MIRROR_EVERY_MS, recordMirror, ty
 import { isOffBox } from "./off_box.ts";
 import { noteOffBox, recordSnapshotOutcome } from "./outcome.ts";
 import { s3FromEnv, type Store } from "./store.ts";
+import { during } from "../perf/jobs.ts";
 
 const log = createLog("snapshots");
 
@@ -379,7 +380,7 @@ export function startSnapshots(
     if (timer !== undefined) clearTimeout(timer);
     timer = undefined;
     if (options.nightly === false || stopped) return;
-    timer = setTimeout(() => void take().catch(() => {}), ms);
+    timer = setTimeout(() => void during("snapshot", take).catch(() => {}), ms);
   }
   arm(untilNightly());
 
@@ -398,7 +399,7 @@ export function startSnapshots(
   const scheduleDrill = (): void => {
     if (options.nightly === false || stopped) return;
     drillTimer = setTimeout(() => {
-      runIfDue().finally(scheduleDrill);
+      during("drill", () => runIfDue()).finally(scheduleDrill);
     }, untilDrill());
   };
   // While the newest drill is red, look again when it is owed again.
@@ -409,7 +410,7 @@ export function startSnapshots(
     const newest = lastDrill(app.db);
     if (newest?.verdict !== "red") return;
     const wait = Math.max(catchUpMs, Date.parse(newest.at) + redRetryMs - Date.now());
-    redRetry = setTimeout(() => void runIfDue().finally(armRedRetry), wait);
+    redRetry = setTimeout(() => void during("drill", () => runIfDue()).finally(armRedRetry), wait);
   };
   // Owed and not yet kept: run it once. A restart after a green drill finds it
   // kept; one after a red drill runs it again, once it is past the boot floor.
@@ -423,7 +424,9 @@ export function startSnapshots(
   // shortly after boot; a red one is looked at again until one passes.
   if (options.nightly !== false) {
     catchUp = setTimeout(
-      () => void runIfDue(options.bootRedFloorMs ?? BOOT_RED_FLOOR_MS).finally(armRedRetry),
+      () =>
+        void during("drill", () => runIfDue(options.bootRedFloorMs ?? BOOT_RED_FLOOR_MS))
+          .finally(armRedRetry),
       catchUpMs,
     );
   }
@@ -434,7 +437,7 @@ export function startSnapshots(
   const scheduleMirror = (first: boolean): void => {
     if (options.nightly === false || stopped) return;
     mirrorTimer = setTimeout(() => {
-      mirrorNow()
+      during("snapshot-mirror", mirrorNow)
         .catch(() => {})
         .finally(() => scheduleMirror(false));
     }, first ? Math.min(30_000, everyMs) : everyMs);
@@ -447,7 +450,7 @@ export function startSnapshots(
   const scheduleCatchUp = (ms: number): void => {
     if (options.nightly === false || stopped) return;
     catchUpSnapshot = setTimeout(() => {
-      takeIfDue()
+      during("snapshot", takeIfDue)
         .catch(() => {})
         .finally(() => {
           bootLookAt = undefined;

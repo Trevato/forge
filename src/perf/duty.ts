@@ -16,6 +16,7 @@ import { addLabels, kindLabels } from "../hunt/label.ts";
 import { createGitRecord } from "./git.ts";
 import type { PerfRecord } from "./record.ts";
 import { evaluate, evaluateGit, fresh } from "./watch.ts";
+import { during } from "./jobs.ts";
 
 export const TICK_MS = 60_000;
 
@@ -46,7 +47,7 @@ export function startPerfWatcher(
       app.log.warn("performance watcher failed", { error: String(error) });
     }
   };
-  const timer = setInterval(tick, everyMs);
+  const timer = setInterval(() => during("perf-watcher", tick), everyMs);
   timer.unref();
   return () => clearInterval(timer);
 }

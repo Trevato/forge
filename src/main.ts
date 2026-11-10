@@ -101,6 +101,7 @@ import { crewRoot } from "./crew/workdir.ts";
 import { createLog } from "./kernel/log.ts";
 import { watchStalls } from "./kernel/loop_lag.ts";
 import { startPerfWatcher, TICK_MS } from "./perf/duty.ts";
+import { during } from "./perf/jobs.ts";
 import { stallLine } from "./perf/loop.ts";
 import { bootStall, gitRecord, loopWatch, perfRecord } from "./perf/live.ts";
 import { timeStatements } from "./kernel/slow_sql.ts";
@@ -350,7 +351,10 @@ const bootSignup = signupFromEnv(process.env.FORGE_SIGNUP);
 if (bootSignup.ok && bootSignup.value !== null)
   setSignup(app.db, bootSignup.value, BOOT_ACTOR);
 startPerfWatcher(app, perfRecord, Date.now, TICK_MS, gitRecord);
-const flagTimer = setInterval(() => flushFlagUses(app.db), 10_000);
+const flagTimer = setInterval(
+  () => during("flag-uses", () => flushFlagUses(app.db)),
+  10_000,
+);
 await reconcile(app);
 // Issues linked under a pillar's umbrella before pillars had labels.
 const labelled = syncAllPillars(app);
@@ -589,14 +593,17 @@ const notifier = startNotifier(app, { forgeUrl });
 // loses it. runDelivery never throws into the timer.
 // Expired sessions and run tokens ride the same tick: cheap DELETEs, never
 // worth a worker.
-const deliveryTimer = setInterval(() => {
+const deliveryTimer = setInterval(() => during("delivery", () => {
   runDelivery(app.db, app.log, app.bus);
   pruneSessions(app.db);
   pruneTokens(app.db);
-}, 5_000);
-runDelivery(app.db, app.log, app.bus); // sweep anything queued while we were down
-pruneSessions(app.db);
-pruneTokens(app.db);
+}), 5_000);
+// Sweep anything queued while we were down.
+during("delivery", () => {
+  runDelivery(app.db, app.log, app.bus);
+  pruneSessions(app.db);
+  pruneTokens(app.db);
+});
 
 function positive(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
@@ -612,12 +619,13 @@ function positive(value: string | undefined, fallback: number): number {
 // the sweep. The operator guard's sweep of stored origins rides it too: one
 // origin a tick, the never-checked first (so on boot), every other daily.
 const syncTimer = setInterval(() => {
-  runSync(app);
-  void runAheadReads(app);
-  void runGuardSweep(app);
+  during("sync", () => runSync(app));
+  void during("ahead", () => runAheadReads(app));
+  void during("guard-sweep", () => runGuardSweep(app));
 }, 60_000);
-runSync(app); // one pass on boot: a forge that was down has fetching to do
-void runGuardSweep(app);
+// One pass on boot: a forge that was down has fetching to do.
+during("sync", () => runSync(app));
+void during("guard-sweep", () => runGuardSweep(app));
 
 // Which green pulls no longer merge as they stand, so the asks can leave
 // them out (`crew/stale_asks.ts`): git answers, off the request path, and an
@@ -658,9 +666,12 @@ const tickAsks = async (): Promise<void> => {
 };
 // Followed upstreams are read on a slow tick (`actions/upstream_follow.ts`):
 // the tip and how far behind land on the follow row; nothing is opened.
-const followTimer = setInterval(() => void checkDue(app), 60_000);
-const staleTimer = setInterval(() => void tickAsks(), 120_000);
-void tickAsks();
+const followTimer = setInterval(
+  () => void during("follow", () => checkDue(app)),
+  60_000,
+);
+const staleTimer = setInterval(() => void during("asks", tickAsks), 120_000);
+void during("asks", tickAsks);
 
 // Every start is counted, and one that follows a process that never said
 // goodbye is a crash the log could not record (kernel/boots.ts, #3708).
@@ -701,23 +712,23 @@ void resumeAtBoot(app, undefined, { forgeUrl, runner: checks?.lane }).catch((err
   app.log.warn("resume at boot failed", { error: String(error) }),
 );
 // An agent's hold that has stood 24 h is released each minute (#6918).
-const holdTimer = setInterval(() => {
+const holdTimer = setInterval(() => during("holds", () => {
   try {
     expireCrewHolds(app);
   } catch (error) {
     app.log.warn("hold expiry failed", { error: String(error) });
   }
-}, 60_000);
+}), 60_000);
 // The weekly model review (#7815): settles last week's changes, then proposes this week's; it runs once a week whatever the tick.
-const modelReviewTimer = setInterval(() => {
+const modelReviewTimer = setInterval(() => during("model-review", () => {
   try {
     runModelReview(app);
   } catch (error) {
     app.log.warn("model review failed", { error: String(error) });
   }
-}, 3_600_000);
+}), 3_600_000);
 // The week is the sprint (#8704): at each weekly reset the forge writes its retrospective, unasked.
-const weekTimer = setInterval(() => {
+const weekTimer = setInterval(() => during("week", () => {
   try {
     const repos = plannedRepoIds(app.db).flatMap((id) => getRepoById(app.db, id) ?? []);
     for (const repo of tickWeeks(app.db, repos, new Date()))
@@ -725,18 +736,18 @@ const weekTimer = setInterval(() => {
   } catch (error) {
     app.log.warn("week retrospective failed", { error: String(error) });
   }
-}, 3_600_000);
+}), 3_600_000);
 // Code scanning's nightly pass (#9593): each hour, the repositories whose last pass is a day old get secrets, advisories and static analysis over their default branch.
 const nightlyScanTimer = setInterval(() => {
-  void (async () => {
+  void during("nightly-scan", async () => {
     for (const id of nightlyDue(app.db, new Date(Date.now() - 24 * 3_600_000).toISOString(), 25)) {
       const repo = getRepoById(app.db, id);
       if (repo !== undefined) await scanNightly(app, repo);
     }
-  })().catch((error) => app.log.warn("nightly scan failed", { error: String(error) }));
+  }).catch((error) => app.log.warn("nightly scan failed", { error: String(error) }));
 }, 3_600_000);
-const processTimer = setInterval(processTick, 60_000);
-processTick();
+const processTimer = setInterval(() => during("processes", processTick), 60_000);
+during("processes", processTick);
 // A new version proves itself against the public URL; a failed one again, 5 min after and backing off to hourly (release/prove.ts).
 proveRunning({
   dataDir: app.config.dataDir,
@@ -760,11 +771,14 @@ if (app.config.forgeRepo) {
     read: ownTagsReader(app, app.config.forgeRepo),
   });
   setBehind(watch);
-  void watch.tick();
-  setInterval(() => void watch.tick(), CHECK_EVERY_MS);
+  void during("release-behind", () => watch.tick());
+  setInterval(
+    () => void during("release-behind", () => watch.tick()),
+    CHECK_EVERY_MS,
+  );
   // The no-release alarm reads what this keeps of the running commit (#7638).
-  void readLandings(app);
-  setInterval(() => void readLandings(app), 60_000);
+  void during("landings", () => readLandings(app));
+  setInterval(() => void during("landings", () => readLandings(app)), 60_000);
 }
 // The release keeper (#7557): cut on cadence, promote, verify under page load, roll back to the named
 // known-good image and hold. Off unless FORGE_RELEASE_KEEPER=on in a cluster (keeper/wire.ts).
@@ -786,9 +800,12 @@ if (keeperOn.on) {
           said = line;
         })
         .catch((error) => app.log.warn("release keeper step failed", { error: String(error) }));
-    step();
-    setInterval(step, 60_000);
-    setInterval(() => void rollProbe(ports).catch(() => {}), 1000);
+    during("release-keeper", step);
+    setInterval(() => during("release-keeper", step), 60_000);
+    setInterval(
+      () => void during("roll-probe", () => rollProbe(ports)).catch(() => {}),
+      1000,
+    );
   }
 } else app.log.info("the release keeper is off", { why: keeperOn.why });
 // Only an agent is on a crew (the `repo_crew_agents_only` trigger refuses anyone else). A person
@@ -825,7 +842,7 @@ if (ssh)
 // failed; checks are queued again while their commit heads an open pull;
 // agent runs are the crew's to queue again, unless there is no crew here to
 // do it.
-const leaseTimer = setInterval(() => {
+const leaseTimer = setInterval(() => during("lease", () => {
   failAbandonedRuns(
     app.db,
     STALE_AFTER_MS,
@@ -834,7 +851,7 @@ const leaseTimer = setInterval(() => {
   requeueAbandonedChecks(app, STALE_AFTER_MS);
   // A grant whose run is no longer running is a crash's leftover: close it.
   releaseOrphans(app.db);
-}, 30_000);
+}), 30_000);
 
 // A release that read healthy beside this process takes over (#1663),
 // and this one lets go of the port before it drains (#2040).

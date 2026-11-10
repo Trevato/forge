@@ -132,6 +132,7 @@ import {
 } from "./runner.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { abortAgentRun } from "./running.ts";
+import { during } from "../perf/jobs.ts";
 
 const log = createLog("crew");
 
@@ -275,18 +276,20 @@ export async function startCrew(
     // A tick that throws is logged and the next one tries again: thrown
     // from a timer it is an uncaught error that takes the process down.
     try {
-      requeueInterrupted(app);
-      recheckForDisk(app);
-      if (Date.now() - lastAutonomy >= AUTONOMY_TICK_MS) {
-        lastAutonomy = Date.now();
-        track(settleAll(app).catch((error) =>
-          log.error("converge sweep failed", { error: String(error) }),
-        ));
-        track(autonomyTick(app).catch((error) =>
-          log.error("autonomy tick failed", { error: String(error) }),
-        ));
-      }
-      pump(app, ready, inFlight);
+      during("crew", () => {
+        requeueInterrupted(app);
+        recheckForDisk(app);
+        if (Date.now() - lastAutonomy >= AUTONOMY_TICK_MS) {
+          lastAutonomy = Date.now();
+          track(settleAll(app).catch((error) =>
+            log.error("converge sweep failed", { error: String(error) }),
+          ));
+          track(autonomyTick(app).catch((error) =>
+            log.error("autonomy tick failed", { error: String(error) }),
+          ));
+        }
+        pump(app, ready, inFlight);
+      });
     } catch (error) {
       log.error("crew tick failed", { error: String(error) });
     }
@@ -301,11 +304,13 @@ export async function startCrew(
     const pruned = pruneRunFiles(app.config.dataDir);
     if (pruned > 0) log.info("removed old run logs", { count: pruned });
   };
-  sweepClones();
-  const cloneTimer = setInterval(() => !stopped && sweepClones(), 60 * 60_000);
-  requeueInterrupted(app);
-  sweepAssigned(app);
-  pump(app, ready, inFlight);
+  during("clone-sweep", sweepClones);
+  const cloneTimer = setInterval(() => !stopped && during("clone-sweep", sweepClones), 60 * 60_000);
+  during("crew", () => {
+    requeueInterrupted(app);
+    sweepAssigned(app);
+    pump(app, ready, inFlight);
+  });
 
   const handle: CrewHandle = {
     ready: detected.ok,

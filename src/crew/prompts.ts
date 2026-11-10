@@ -35,6 +35,7 @@ import {
   type InstagramClient,
   type Reel,
 } from "./instagram.ts";
+import { during } from "../perf/jobs.ts";
 
 const log = createLog("prompts");
 
@@ -101,7 +102,7 @@ export function startPromptRoutine(
 
   const timer = setInterval(() => {
     if (stopped) return;
-    runDue().catch((error) =>
+    during("prompts", runDue).catch((error) =>
       log.error("prompt sweep failed", { error: String(error) }),
     );
   }, options.everyMs ?? TICK_MS);

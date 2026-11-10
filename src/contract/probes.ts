@@ -22,6 +22,7 @@ import { id as newId } from "../kernel/id.ts";
 import { createLog } from "../kernel/log.ts";
 import { audit } from "./audit.ts";
 import { probe, type Knock, type Probed } from "./probe.ts";
+import { during } from "../perf/jobs.ts";
 
 const log = createLog("probes");
 
@@ -229,7 +230,7 @@ export function startProbes(
     if (!record) return;
     const timer = setTimeout(() => {
       timers.delete(timer);
-      if (!stopped) void one(record);
+      if (!stopped) void during("probes", () => one(record));
     }, AFTER_DEPLOY_MS);
     timers.add(timer);
   });
@@ -238,7 +239,7 @@ export function startProbes(
   const scheduleNightly = (): void => {
     if (options.nightly === false) return;
     nightly = setTimeout(() => {
-      void track(round()).finally(scheduleNightly);
+      void track(during("probes", round)).finally(scheduleNightly);
     }, untilNightly());
   };
   scheduleNightly();

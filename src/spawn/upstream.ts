@@ -23,6 +23,7 @@ import { basicHeader, gitAuthEnv, redact, secretsIn } from "../origins/credentia
 import { forgeLinkOf, originOf } from "./chain.ts";
 import { parentCredential } from "./parent_credential.ts";
 import { newestCommits, takeFromParent, type Taken } from "./take.ts";
+import { during } from "../perf/jobs.ts";
 
 export const CHECK_MS = 60 * 60_000;
 export const FETCH_TIMEOUT_MS = 60_000;
@@ -211,7 +212,7 @@ function tellOwner(app: App, repo: Repo, fork: string, behind: number, commits =
 /** Check at boot and every hour; returns the timer to clear. */
 export function startUpstreamWatch(app: App): ReturnType<typeof setInterval> {
   void checkUpstream(app);
-  return setInterval(() => void checkUpstream(app), CHECK_MS);
+  return setInterval(() => void during("upstream", () => checkUpstream(app)), CHECK_MS);
 }
 
 /** The state in one plain sentence, escaped by whoever renders it. */

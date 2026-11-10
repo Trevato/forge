@@ -16,6 +16,7 @@ import { getRepoById } from "../core/repos.ts";
 import { callTool } from "./feature_tools.ts";
 import { SCHEDULE_EVERY, type ScheduleEntry } from "./feature.ts";
 import { appsRuntime } from "./runtime.ts";
+import { during } from "../perf/jobs.ts";
 
 /** The entries whose interval has passed since they last fired (never fired: due). `lastFired` is ms by tool. */
 export function due(schedule: readonly ScheduleEntry[], lastFired: ReadonlyMap<string, number>, now: number): ScheduleEntry[] {
@@ -148,7 +149,7 @@ export function startFeatureSchedule(app: App, tickMs: number = TICK_MS): { stop
   const tick = setInterval(() => {
     if (running) return;
     running = true;
-    void fireDue(app).finally(() => (running = false));
+    void during("feature-schedule", () => fireDue(app)).finally(() => (running = false));
   }, tickMs);
   tick.unref();
   return { stop: () => clearInterval(tick) };

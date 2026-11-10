@@ -28,6 +28,7 @@ import { cellCounters, type CellCounter } from "../apps/contain.ts";
 import { startLoopLag, type LoopLag } from "../kernel/loop_lag.ts";
 import { FINE_MS, record, type Point } from "./ring.ts";
 import { readHwmon, readTopology, temperatures } from "./thermal.ts";
+import { during } from "../perf/jobs.ts";
 
 export type Paths = { cgroup: string; proc: string; sys: string };
 export const SYSTEM: Paths = { cgroup: "/sys/fs/cgroup", proc: "/proc", sys: "/sys" };
@@ -240,8 +241,8 @@ export function startSampler(
       app.log.warn("machine sample failed", { error: String(error) });
     }
   };
-  tick();
-  const timer = setInterval(tick, options.everyMs ?? FINE_MS);
+  during("sampler", tick);
+  const timer = setInterval(() => during("sampler", tick), options.everyMs ?? FINE_MS);
   timer.unref?.();
   return {
     tick,

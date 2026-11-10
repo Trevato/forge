@@ -25,6 +25,7 @@ import type { App } from "../app.ts";
 import { isSlug, slugFor } from "../core/apps.ts";
 import type { FiredAlarm } from "../flow/alarms.ts";
 import { childPublicUrl, parentOrigin } from "./placement.ts";
+import { during } from "../perf/jobs.ts";
 
 export const APP_HEADER = "x-forge-app";
 
@@ -283,8 +284,8 @@ export function startReachWatch(
   everyMs = REACH_EVERY_MS,
   asleep: (name: string) => boolean = () => false,
 ): ReturnType<typeof setInterval> {
-  const first = setTimeout(() => void sweepReach(app, asleep), 30_000);
-  const timer = setInterval(() => void sweepReach(app, asleep), everyMs);
+  const first = setTimeout(() => void during("reach", () => sweepReach(app, asleep)), 30_000);
+  const timer = setInterval(() => void during("reach", () => sweepReach(app, asleep)), everyMs);
   app.closing.signal.addEventListener("abort", () => clearTimeout(first), { once: true });
   return timer;
 }

@@ -10,6 +10,10 @@
  * full against every route that ran across it — the same reading as the log
  * lines, so the sum over routes can exceed the wall time — and against
  * `NO_REQUEST` when none did.
+ *
+ * A stall no request ran across is counted against the background jobs that
+ * did (#10834, `jobs.ts`), each as `job:<name>`; `NO_REQUEST` is left for a
+ * stall nothing named ran across.
  */
 
 export const LIMIT_MS = 250;
@@ -20,6 +24,10 @@ export const HOUR_MS = 3_600_000;
 const HOUR_KEPT = 14_400;
 /** The route a stall is counted against when no request ran across it. */
 export const NO_REQUEST = "none";
+/** The prefix a background job's name is tallied under, apart from routes. */
+export const JOB_PREFIX = "job:";
+/** The jobs that ran across `[from, to]` (`JobWatch.across`). */
+export type JobsAcross = (from: number, to: number) => readonly string[];
 
 export interface RouteStall {
   readonly route: string;
@@ -38,6 +46,8 @@ export interface Stall {
   readonly at: number;
   readonly lateMs: number;
   readonly routes: readonly string[];
+  /** The background jobs running across it; read only when no request was. */
+  readonly jobs: readonly string[];
 }
 
 export interface LoopWatch {
@@ -49,10 +59,14 @@ export interface LoopWatch {
   tally(now: number): StallTally;
 }
 
+/** What a stall is counted against: its routes, else its jobs, else `NO_REQUEST`. */
+const blamed = (s: Stall): readonly string[] =>
+  s.routes.length > 0 ? s.routes : s.jobs.length > 0 ? s.jobs.map((j) => JOB_PREFIX + j) : [NO_REQUEST];
+
 function byRoute(stalls: Iterable<Stall>): RouteStall[] {
   const sums = new Map<string, { ms: number; count: number }>();
   for (const s of stalls)
-    for (const route of s.routes.length === 0 ? [NO_REQUEST] : s.routes) {
+    for (const route of blamed(s)) {
       const t = sums.get(route) ?? { ms: 0, count: 0 };
       t.ms += s.lateMs;
       t.count += 1;
@@ -61,7 +75,7 @@ function byRoute(stalls: Iterable<Stall>): RouteStall[] {
   return [...sums].map(([route, t]) => ({ route, ms: t.ms, count: t.count }));
 }
 
-export function createLoopWatch(limitMs = LIMIT_MS): LoopWatch {
+export function createLoopWatch(limitMs = LIMIT_MS, jobsAcross: JobsAcross = () => []): LoopWatch {
   const recent: { pattern: string; start: number; end: number }[] = [];
   const totals = new Map<string, { ms: number; count: number }>();
   const hour: Stall[] = [];
@@ -81,7 +95,8 @@ export function createLoopWatch(limitMs = LIMIT_MS): LoopWatch {
             .map((r) => r.pattern),
         ),
       ];
-      const stall = { at, lateMs, routes };
+      const jobs = routes.length === 0 ? jobsAcross(from, at) : [];
+      const stall = { at, lateMs, routes, jobs };
       for (const r of byRoute([stall])) {
         const t = totals.get(r.route) ?? { ms: 0, count: 0 };
         t.ms += r.ms;
@@ -104,4 +119,6 @@ export function createLoopWatch(limitMs = LIMIT_MS): LoopWatch {
 
 /** The stall as a finding line. */
 export const stallLine = (s: Stall): string =>
-  `event loop blocked ${Math.round(s.lateMs)} ms; running then: ${s.routes.length === 0 ? "no request" : s.routes.join(", ")}`;
+  `event loop blocked ${Math.round(s.lateMs)} ms; running then: ${
+    s.routes.length > 0 ? s.routes.join(", ") : s.jobs.length > 0 ? `no request; jobs ${s.jobs.join(", ")}` : "no request"
+  }`;

@@ -28,6 +28,7 @@ import { readFileAt } from "./checkout.ts";
 import { identityHeaders, type GrantWho } from "./proxy.ts";
 import { parsePullAnswer, PULL_BODY_MAX, recordPull, type PullAnswer } from "./pull.ts";
 import { appsRuntime } from "./runtime.ts";
+import { during } from "../perf/jobs.ts";
 
 /** How long the forge waits for one `/pull` answer, as for a scheduled tool. */
 export const PULL_WAIT_MS = 10_000;
@@ -246,7 +247,7 @@ export function startPullSchedule(app: App, tickMs: number = TICK_MS): { stop():
   const tick = setInterval(() => {
     if (running) return;
     running = true;
-    void pullDue(app).finally(() => (running = false));
+    void during("pull-schedule", () => pullDue(app)).finally(() => (running = false));
   }, tickMs);
   tick.unref();
   return { stop: () => clearInterval(tick) };

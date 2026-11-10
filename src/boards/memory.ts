@@ -9,6 +9,7 @@ import type { Database } from "bun:sqlite";
 import { heapStats } from "bun:jsc";
 import type { App } from "../app.ts";
 import { quietly } from "../core/write_clock.ts";
+import { during } from "../perf/jobs.ts";
 
 export const MEMORY_EVERY_MS = 60_000;
 export const HOUR_MS = 3_600_000;
@@ -68,8 +69,8 @@ export function startMemorySampler(app: App, everyMs = MEMORY_EVERY_MS): MemoryS
       app.log.warn("memory sample failed", { error: String(error) });
     }
   };
-  tick();
-  const timer = setInterval(tick, everyMs);
+  during("memory-sampler", () => tick());
+  const timer = setInterval(() => during("memory-sampler", () => tick()), everyMs);
   timer.unref?.();
   return { tick, stop: () => clearInterval(timer) };
 }

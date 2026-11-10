@@ -71,6 +71,7 @@ import { addCommitLook } from "../checks/looks.ts";
 import type { LookVitals } from "../checks/summary.ts";
 import { keepAsMain } from "./main_looks.ts";
 import { findChromium, isNoBrowser, takeLook, type Capture } from "./capture.ts";
+import { during } from "../perf/jobs.ts";
 
 const log = createLog("looks");
 
@@ -225,8 +226,8 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
   // Production missing a picture at its head — one never taken, or a
   // thumb from before thumbs were the page — gets one while it is up.
   // A woken app says nothing on the bus, so this is how it is pictured.
-  const firstSweep = setTimeout(sweep, FIRST_SWEEP_MS);
-  const sweeping = setInterval(sweep, SWEEP_MS);
+  const firstSweep = setTimeout(() => during("looks", sweep), FIRST_SWEEP_MS);
+  const sweeping = setInterval(() => during("looks", sweep), SWEEP_MS);
   firstSweep.unref?.();
   sweeping.unref?.();
 
