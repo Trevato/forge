@@ -35,10 +35,9 @@ afterAll(async () => {
 });
 
 test("a stall under a named job is read through system, at most 10, most ms first", async () => {
-  // A stall is blamed on any request that finished inside it, before a job:
-  // wait out the requests an earlier file in this process ended, then stall
-  // just past the limit so the window holds the job alone.
-  await Bun.sleep(LIMIT_MS + 50);
+  // The watch is the process's one: stalls and requests an earlier file left
+  // would crowd the top 10 or be blamed ahead of the job. Start from nothing.
+  loopWatch.clear();
   during("test-job-10907", () => 1);
   loopWatch.stalled(LIMIT_MS + 10, performance.now());
   const res = await fetch(`${servers.url}/mcp`, {

@@ -57,6 +57,8 @@ export interface LoopWatch {
   stalled(lateMs: number, at: number): Stall | null;
   /** The stalls so far by route, the hour ending at `now` (same clock as `at`). */
   tally(now: number): StallTally;
+  /** Forget every request and stall noted so far; a test sharing the process's watch starts from nothing. */
+  clear(): void;
 }
 
 /** What a stall is counted against: its routes, else its jobs, else `NO_REQUEST`. */
@@ -106,6 +108,11 @@ export function createLoopWatch(limitMs = LIMIT_MS, jobsAcross: JobsAcross = () 
       hour.push(stall);
       if (hour.length > HOUR_KEPT) hour.shift();
       return stall;
+    },
+    clear() {
+      recent.length = 0;
+      totals.clear();
+      hour.length = 0;
     },
     tally(now) {
       while (hour.length > 0 && hour[0]!.at <= now - HOUR_MS) hour.shift();
