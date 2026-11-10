@@ -35,6 +35,8 @@ export const AGENTS: Record<string, string> = {
 export const WATCH_MS = 60_000;
 export const WATCH_POLL_MS = 1_000;
 export const SLOW_MS = 1_000;
+/** The pause before a slow or lost first load is asked again: a boot's stall is seconds, a slow release stays slow (#10993). */
+export const SETTLE_MS = 3_000;
 /** One repository's home, for the heavy-page load. */
 export const REPO_HOME = "/trevato/forge";
 /** The heaviest pages; `/boards` is fetched with the token. */
@@ -67,6 +69,8 @@ export interface Heavy {
   watchMs?: number;
   pollMs?: number;
   slowMs?: number;
+  /** How long a slow first load waits before it is asked again, so a stall that follows the boot has passed (#10993). @default SETTLE_MS */
+  settleMs?: number;
   /** The repository whose home is loaded; unset, `REPO_HOME` is tried and a 404 there is skipped. */
   repo?: string;
   /** Every `/healthz` answer in the watch must carry this `X-Forge-Version`. */
@@ -233,6 +237,7 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
     const first = await once(path);
     if (!first.slow && !first.empty && !first.hung) return first.failure;
     console.warn(`smoke: ${first.failure?.why}; asking again`);
+    await Bun.sleep(heavy.settleMs ?? SETTLE_MS);
     return (await once(path)).failure;
   };
   for (const path of pages) {

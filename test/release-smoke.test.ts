@@ -27,7 +27,7 @@ function forge(boardsMs: number, seen: string[] = [], over: (path: string) => Re
   return `http://127.0.0.1:${server.port}`;
 }
 
-const heavy = { watchMs: 300, pollMs: 50, slowMs: 200 };
+const heavy = { watchMs: 300, pollMs: 50, slowMs: 200, settleMs: 0 };
 
 test("a healthy forge passes the heavy pages and the /healthz watch", async () => {
   const seen: string[] = [];
@@ -241,4 +241,16 @@ test("an empty body under a content-encoding that is empty unencoded too still f
   const failures = await smoke(`http://127.0.0.1:${edge.port}`, "t", { heavy });
   await edge.stop(true);
   expect(failures.some((f) => f.url.endsWith("/explore") && f.why.includes("empty body"))).toBe(true);
+});
+
+test("a first load slow for a moment, then quick after the settle pause, passes (#10993)", async () => {
+  // A stall right after the boot: every /explore answer within the first 500 ms is slow, so an immediate retry is slow too.
+  const born = performance.now();
+  const stall = (p: string) => (p === "/explore" && performance.now() - born < 500 ? 300 : 0);
+  const impatient = await smoke(forge(0, [], () => undefined, stall), "t", { heavy });
+  expect(impatient.some((f) => f.url.endsWith("/explore") && f.why.includes("took"))).toBe(true);
+  const born2 = performance.now();
+  const stall2 = (p: string) => (p === "/explore" && performance.now() - born2 < 500 ? 300 : 0);
+  const settled = await smoke(forge(0, [], () => undefined, stall2), "t", { heavy: { ...heavy, settleMs: 300 } });
+  expect(settled).toEqual([]);
 });
