@@ -15,6 +15,7 @@ import { createApp } from "../../src/app.ts";
 import { cellCounters, cellsAvailable } from "../../src/apps/contain.ts";
 import { cellChildren, stopCellChildren } from "../../src/spawn/cell.ts";
 import { answerFromCell } from "../../src/spawn/host.ts";
+import "./roomy-disk.ts";
 
 const cells = await cellsAvailable();
 if (!cells.ok) {

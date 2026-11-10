@@ -24,6 +24,7 @@ import { listRuns, type Run } from "../../src/core/runs.ts";
 import { createUser, type User } from "../../src/core/users.ts";
 import type { InstallRunner } from "../../src/crew/workdir.ts";
 import { serve, type Servers } from "../../src/http/server.ts";
+import "./roomy-disk.ts";
 
 export interface StandInCrew {
   readonly dataDir: string;

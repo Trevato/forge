@@ -237,6 +237,8 @@ describe("what the forge launches and boots", () => {
     const own = launchSpecFor(parent, input, at, `${ROOT}\n731 22 7:3 / ${real} rw - ext4 /dev/loop3 rw\n`);
     expect(own.writable).toEqual([real]);
     expect(launchSpecFor(parent, input, at, `${ROOT}\n`).writable).toEqual([]);
+    // The launch path names the cell after the child, not the parent's pod (#10850).
+    expect(own.hostname).toBe("kid");
   });
 
   test("the boot does not open a child on the shared disk when one of its own is required, and opens it when not", async () => {

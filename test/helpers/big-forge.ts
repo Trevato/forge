@@ -8,6 +8,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../../src/app.ts";
+import "./roomy-disk.ts";
 
 export interface BigForgeSize {
   readonly issues: number;

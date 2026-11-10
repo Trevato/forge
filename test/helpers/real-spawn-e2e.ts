@@ -22,6 +22,7 @@ import { serve } from "../../src/http/server.ts";
 import { cellPlacement, stopCellChildren } from "../../src/spawn/cell.ts";
 import { bootHostedChild } from "../../src/spawn/host.ts";
 import { memoryBodies } from "../../src/spawn/placement.ts";
+import "./roomy-disk.ts";
 
 // Two budgets, each its own: spawn+boot may take SPAWN_MS, then the poll gets
 // POLL_MS counted from when boot ended. A slow spawn never shortens the poll,

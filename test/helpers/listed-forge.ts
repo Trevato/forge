@@ -9,6 +9,7 @@ import { createApp, type App } from "../../src/app.ts";
 import { createSession } from "../../src/core/sessions.ts";
 import { forgeHttp, type ForgeHttp } from "../../src/http/server.ts";
 import { seedAdmin } from "./admin.ts";
+import "./roomy-disk.ts";
 
 export interface ListedForge {
   app: App;

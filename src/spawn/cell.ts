@@ -21,6 +21,7 @@ import { childDirOf } from "../actions/spawn.ts";
 import { openBeatDoor, parentLocal, type BeatDoor } from "./beat-door.ts";
 import { hostedPlacement, parentOrigin, childPublicUrl, type BodyStore, type Placement } from "./placement.ts";
 import { SIZE_IO, SIZES, type Size } from "./sizes.ts";
+import { floorRefusal } from "./disk_floor.ts";
 import { CGROUP_DIR_ENV, SIZE_ENV } from "./usage.ts";
 import { childModelHosts, childRegistryHosts } from "../core/capacity.ts";
 import { liveChildDisk, type ChildDisk } from "./disk_mount.ts";
@@ -113,6 +114,8 @@ export function cellSpecFor(input: {
   size: Size;
   port: number;
   label: string;
+  /** The child's name: its cell's hostname. */
+  name?: string;
   /** The model provider hosts an admin let children reach (`children.modelEgress`); none by default. */
   modelHosts?: readonly string[];
   /** The package registry an admin let children reach (`children.registryEgress`); none by default. */
@@ -155,6 +158,8 @@ export function cellSpecFor(input: {
     io: SIZE_IO[input.size],
     listen: input.port,
     label: input.label,
+    // Its shell's prompt names the child, never the parent's pod (#10850).
+    hostname: input.name,
   };
 }
 
@@ -254,6 +259,7 @@ export function launchSpecFor(
     size: input.size,
     port: at.port,
     label: `forge:${input.name}`,
+    name: input.name,
     modelHosts: childModelHosts(parent.db),
     registryHosts: childRegistryHosts(parent.db),
     disk: liveChildDisk(parent.config.dataDir, input.bodyId, mountinfo),
@@ -272,6 +278,13 @@ function makeRegistry(parent: App): CellChildren {
   const busy = new Map<string, number>();
 
   const launch = async (input: { bodyId: string; name: string; size: Size }): Promise<CellChild | undefined> => {
+    // Below the disk floor no child cell starts, a sleeping one included (#10850).
+    const floor = floorRefusal(parent.config.dataDir);
+    if (floor !== undefined) {
+      parent.log.warn("child cell not started", { name: input.name, reason: floor });
+      failed.set(input.bodyId, { at: Date.now(), why: floor });
+      return undefined;
+    }
     const cells = await cellsAvailable();
     if (!cells.ok) {
       parent.log.warn("child cell not started", { name: input.name, reason: cells.reason });

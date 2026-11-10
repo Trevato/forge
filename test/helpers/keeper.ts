@@ -9,6 +9,7 @@ import { id } from "../../src/kernel/id.ts";
 import type { Deployer } from "../../src/keeper/deploy.ts";
 import type { KeeperPorts } from "../../src/keeper/keeper.ts";
 import { verifyUnderLoad, type Probe } from "../../src/keeper/verify.ts";
+import "./roomy-disk.ts";
 
 export const A = "a".repeat(40);
 export const B = "b".repeat(40);

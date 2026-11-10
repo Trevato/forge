@@ -425,6 +425,8 @@ export function shellCell(
     },
     terminal: true,
     label,
+    // The prompt names the machine, never the pod it runs on (#10850).
+    hostname: machine.name,
   };
 }
 

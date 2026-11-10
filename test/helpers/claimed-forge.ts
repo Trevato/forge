@@ -19,6 +19,7 @@ import { firstBoot } from "../../src/spawn/first-boot.ts";
 import { hostedPlacement } from "../../src/spawn/placement.ts";
 import { passkeyFields } from "./passkey.ts";
 import { seatAs } from "./seat.ts";
+import "./roomy-disk.ts";
 
 export const PASSWORD = "a-long-next-steps-card-passphrase";
 const FORGE_JSON = JSON.stringify({

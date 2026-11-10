@@ -9,7 +9,9 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { statfsSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
+import { readDisk, type DiskReading } from "./disk_reading.ts";
+import { DISK_FLOOR } from "../spawn/disk_floor.ts";
 import { dirname } from "node:path";
 import { freemem, totalmem } from "node:os";
 import { refusedInternal, type RefusedLedger } from "./internal_refused.ts";
@@ -120,20 +122,7 @@ export interface Vitals {
   readonly at: string;
 }
 
-/** What a volume holds and has free. */
-export interface DiskReading {
-  readonly freeBytes: number;
-  readonly totalBytes: number;
-}
-
-/** The volume under `dir`, as the operating system reports it. */
-export function statDisk(dir: string): DiskReading {
-  const fs = statfsSync(dir);
-  return {
-    freeBytes: Number(fs.bavail) * Number(fs.bsize),
-    totalBytes: Number(fs.blocks) * Number(fs.bsize),
-  };
-}
+export { statDisk, readDisk, type DiskReading } from "./disk_reading.ts";
 
 export interface VitalsInput {
   readonly db: Database;
@@ -343,11 +332,18 @@ export function vitals(input: VitalsInput): Vitals {
     degraded.push({ cause, sentence, since, href });
   };
 
-  const disk = (input.disk ?? statDisk)(input.dataDir);
+  const disk = (input.disk ?? readDisk)(input.dataDir);
   if (disk.totalBytes > 0 && disk.freeBytes / disk.totalBytes < (input.diskFreeMin ?? DISK_FREE_MIN))
     need(
       "disk",
       `Disk is nearly full: ${Math.round((disk.freeBytes / disk.totalBytes) * 100)}% free.`,
+      undefined,
+      "/settings/capacity",
+    );
+  else if (disk.totalBytes > 0 && disk.freeBytes / disk.totalBytes < DISK_FLOOR)
+    need(
+      "disk-floor",
+      `Disk is under the ${DISK_FLOOR * 100}% the forge keeps for itself: ${Math.round((disk.freeBytes / disk.totalBytes) * 100)}% free. No child forge is made or started until room is made.`,
       undefined,
       "/settings/capacity",
     );

@@ -238,6 +238,8 @@ export interface CellSpec {
   readonly limits: Limits;
   /** Read-only paths to keep visible when they sit under a hidden directory (a forge's own code). */
   readonly reveal?: readonly string[] | undefined;
+  /** The name the cell's processes see as the host's (`cellHostname`); "cell" when unset. */
+  readonly hostname?: string | undefined;
   /** The port an app listens on; the forge relays `127.0.0.1:<port>` in. */
   readonly listen?: number | undefined;
   /** Keep the controlling terminal (an app's `tty`). */
@@ -332,7 +334,24 @@ async function probe(): Promise<{ ok: true } | { ok: false; reason: string }> {
   for (const tool of ["bwrap", "socat"])
     if (Bun.which(tool) === null)
       return { ok: false, reason: `${tool} is not installed` };
-  return askUntilBelieved(tryOnce);
+  const verdict = await askUntilBelieved(() => tryOnce());
+  // Some hosts hold a cell but refuse its sethostname (EPERM from bwrap's
+  // `--hostname`, seen on the check machine): asked once, after the cell is
+  // believed, so a refused name costs the cell nothing (#10850).
+  if (verdict.ok) hostnameAllowed = (await tryOnce(["--hostname", "cell"])).ok;
+  return verdict;
+}
+
+/** Whether this host lets a cell set its own hostname; false until `cellsAvailable` has asked. */
+let hostnameAllowed = false;
+
+/**
+ * The `--hostname` bwrap gets: the cell's own name (`cellHostname`) where
+ * the host allows it, nothing where it does not — the cell then keeps the
+ * name it was born with, the pod's, rather than not starting at all.
+ */
+export function hostnameArgs(name: string | undefined, allowed: boolean = hostnameAllowed): string[] {
+  return allowed ? ["--hostname", cellHostname(name)] : [];
 }
 
 type Verdict = { ok: true } | { ok: false; reason: string };
@@ -359,13 +378,14 @@ const PROBE_TRIES = 3;
 const PROBE_PAUSE_MS = 500;
 const PROBE_TIMEOUT_MS = 10_000;
 
-async function tryOnce(): Promise<Verdict> {
+async function tryOnce(extra: readonly string[] = []): Promise<Verdict> {
   let timedOut = false;
   try {
     const proc = Bun.spawn(
       [
         "bwrap",
         ...NAMESPACES,
+        ...extra,
         "--ro-bind",
         "/",
         "/",
@@ -422,6 +442,61 @@ const NAMESPACES = [
 /** The size of a cell's own `/tmp`, MiB. */
 export const TMP_MIB = 256;
 
+/** Open files a process in a cell may hold (`RLIMIT_NOFILE`): sockets count. */
+export const FILES_MAX = 8192;
+/**
+ * Tasks the cell's user may run (`RLIMIT_NPROC`), threads included: the
+ * kernel counts them per user namespace (since 5.14, ucounts), so this is
+ * the cell's own count. Above `PROCESSES_MAX`, which counts processes, since
+ * a Bun process runs a dozen threads; where pids is delegated `pids.max` is
+ * the tighter one.
+ */
+export const TASKS_MAX = 4096;
+
+/**
+ * The kernel's limits every process in a cell starts under, set by the
+ * cell's first shell with `ulimit` (both soft and hard, so nothing inside
+ * raises them; a hard limit already lower stays lower):
+ *
+ * - `fileBlocks`, `RLIMIT_FSIZE` in 512-byte blocks (dash's `ulimit -f`
+ *   unit): no file grows past the cell's disk, so one `fallocate -l 50G`
+ *   or `dd` on a small cell fails with SIGXFSZ / EFBIG at once, not at the
+ *   watch's next disk walk. It caps a file, not the sum of them: the total
+ *   is still the watch's (#10850).
+ * - `files`, `RLIMIT_NOFILE`, and `tasks`, `RLIMIT_NPROC`.
+ */
+export function cellRlimits(limits: Pick<Limits, "diskMiB">): { fileBlocks: number; files: number; tasks: number } {
+  const blocks = Number.isFinite(limits.diskMiB) && limits.diskMiB > 0 ? Math.ceil(limits.diskMiB * 2048) : undefined;
+  return { fileBlocks: blocks ?? Number.MAX_SAFE_INTEGER, files: FILES_MAX, tasks: TASKS_MAX };
+}
+
+/**
+ * The name a cell answers `uname -n` and a prompt's `\h` with: its own,
+ * never the pod's (the UTS namespace is unshared). Lowercased to a DNS
+ * label (RFC 1123: letters, digits, hyphens, at most 63); "cell" when
+ * nothing usable is left.
+ */
+export function cellHostname(name: string | undefined): string {
+  const label = (name ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 63)
+    .replace(/-+$/, "");
+  return label === "" ? "cell" : label;
+}
+
+/**
+ * The line the cell's first shell runs with `cellRlimits`' three figures
+ * as `$1 $2 $3`, then drops them. Arguments, never text spliced in.
+ * Processes are dash's `-p` and bash's `-u` (bash's `-p` is the pipe size,
+ * read-only, so its refusal is silent); `-f` counts 512-byte blocks in dash,
+ * the image's `/bin/sh`, and 1024-byte ones in bash, where a file's cap is
+ * then twice the disk: still finite.
+ */
+export const RLIMIT_LINE =
+  "ulimit -f $1 2>/dev/null; ulimit -n $2 2>/dev/null; ulimit -u $3 2>/dev/null || ulimit -p $3 2>/dev/null; shift 3";
+
 /** The proxy's port inside every cell. */
 const PROXY_PORT = 3128;
 const INSIDE = "/run/forge";
@@ -435,6 +510,7 @@ const INSIDE = "/run/forge";
  * forge tells a busy app from an idle one (`apps/busy.ts`).
  */
 const WRAPPER = `s=${INSIDE}; listen=$1; shift; loops=$1; shift
+${RLIMIT_LINE}
 (socat TCP-LISTEN:${PROXY_PORT},bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:$s/out.sock >/dev/null 2>&1 &)
 for p in $loops; do (socat TCP-LISTEN:$p,bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:$s/loop-$p.sock >/dev/null 2>&1 &); done
 [ "$listen" = - ] || (socat UNIX-LISTEN:$s/in.sock,fork,unlink-early TCP:127.0.0.1:$listen >/dev/null 2>&1 &)
@@ -567,9 +643,11 @@ export function openCell(
     const inner = bwrapArgv(command);
     return cgroup === undefined ? inner : enterArgv(join(cgroup.dir, "cgroup.procs"), inner);
   };
+  const rlimits = cellRlimits(spec.limits);
   const bwrapArgv = (command: string): string[] => [
     "bwrap",
     ...NAMESPACES,
+    ...hostnameArgs(spec.hostname),
     ...(spec.terminal === true ? [] : ["--new-session"]),
     "--ro-bind", "/", "/",
     "--size", String(TMP_MIB * 1024 * 1024), "--tmpfs", "/tmp",
@@ -594,6 +672,9 @@ export function openCell(
     "cell",
     spec.listen === undefined ? "-" : String(spec.listen),
     [...new Set(loops)].join(" "),
+    String(rlimits.fileBlocks),
+    String(rlimits.files),
+    String(rlimits.tasks),
     "/bin/sh",
     "-c",
     command,

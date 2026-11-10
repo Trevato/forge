@@ -16,6 +16,7 @@ import type { Repo } from "../../src/core/repos.ts";
 import { listRuns, type Run } from "../../src/core/runs.ts";
 import { createUser, type User } from "../../src/core/users.ts";
 import { serve, type Servers } from "../../src/http/server.ts";
+import "./roomy-disk.ts";
 
 export const APPS_DOMAIN = "apps.test";
 

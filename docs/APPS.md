@@ -623,6 +623,24 @@ never exhausted (#10518). Crew runs get no process cap, as before.
 /system says beside the memory line who holds the process count, and why
 when it is the watch alone.
 
+Every cell also starts under kernel rlimits, with or without a cgroup: its
+first shell sets, soft and hard, `RLIMIT_FSIZE` to the cell's disk (a small
+child forge: 2048 MiB, so `fallocate -l 50G` or a runaway `dd` fails at
+once with SIGXFSZ), `RLIMIT_NOFILE` 8192 and `RLIMIT_NPROC` 4096 tasks,
+counted per user namespace (`cellRlimits`, `RLIMIT_LINE` in
+`apps/contain.ts`). The file cap bounds one file, not their sum: the total
+is the watch's disk walk until a child's writable space is a filesystem of
+its own (#10850). A cell's hostname is its own: a child forge's cell
+answers `uname -n` with the child's name, a machine shell with the
+machine's, anything else with `cell`, never the pod's — where the host
+lets bwrap set it: the cell probe asks once (`hostnameArgs`), and a host
+that refuses `sethostname` runs its cells under the pod's name rather
+than not at all.
+
+The parent keeps 15% of its own volume (`spawn/disk_floor.ts`): below it
+no child forge is made or started (a sleeping one stays asleep), the New
+forge page and menu say why, and vitals carries the `disk-floor` line.
+
 On a Kubernetes pod the forge is usually not at a cgroup namespace root
 (`/proc/self/cgroup` is not `0::/`) and `/sys/fs/cgroup` is read-only, so
 cells are watched only. The operator delegates one: run the container in
