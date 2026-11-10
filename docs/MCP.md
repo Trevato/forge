@@ -186,7 +186,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `rollback` | — | Plan, then apply, a rollback to a kept release (admin) | 209 |
 | `run_log` | — | A run's log, or its last `tail` lines, as GET /api/v1/repos/:owner/:name/runs/:id/log | 332 |
 | `runs` | `agent`, `deploy`, `check` | A repository's runs, newest first: id, kind, state, number, start, end | 482 |
-| `say` | `list`, `new`, `rename`, `archive`, `restore` | Say something on an issue or pull; with no repo, to the forge's own agent, and manage its conversations (action) | 448 |
+| `say` | `list`, `new`, `rename`, `archive`, `restore`, `build`, `build_state`, `build_diff`, `build_restore`, `build_publish` | Say something on an issue or pull; with no repo, to the forge's own agent, and manage its conversations (action) | 585 |
 | `scorecard` | — | Crew scorecard (forge admin): per agent, all time and 30 days | 232 |
 | `seal` | `private` | Seal or unseal an issue or pull: a sealed one is seen only by writers and crew | 297 |
 | `search` | `all`, `issues`, `repos`, `code` | Find issues, pulls, repositories and code you can read; `kind` and `repo` narrow | 378 |
