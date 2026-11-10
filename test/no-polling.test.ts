@@ -9,9 +9,19 @@ import { Glob } from "bun";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createApp } from "../src/app.ts";
-import { serve } from "../src/http/server.ts";
-import { adminCookie } from "./helpers/admin.ts";
+import { afterAll, beforeAll } from "bun:test";
+import { createApp, type App } from "../src/app.ts";
+import { commitToBranch } from "../src/actions/repos.ts";
+import { createIssue } from "../src/core/issues.ts";
+import { createRepo } from "../src/core/repos.ts";
+import { createSession } from "../src/core/sessions.ts";
+import { buildRouter, serve, type Servers } from "../src/http/server.ts";
+import { pollJs } from "../src/web/client.ts";
+import { adminCookie, seedAdmin } from "./helpers/admin.ts";
+import { quietLogs } from "./helpers/globals.ts";
+import { pool } from "./helpers/sweep-clock.ts";
+
+quietLogs();
 
 /**
  * The owner's main pages. /crew is not here: it answers 404 for the owner (the
@@ -210,5 +220,230 @@ describe("no rendered page polls", () => {
       app.close();
       await rm(dataDir, { recursive: true, force: true });
     }
+  });
+});
+
+/**
+ * Every page the router lists (#10947). The owner's pages above are held to
+ * more; this walks the whole GET table, signed out and signed in as admin, and
+ * reads each page's markup and the scripts it loads.
+ */
+
+/** A script that legitimately waits on something outside the page: marker in its text → why. */
+const POLL_ALLOWED: Record<string, string> = {
+  "form[data-poll]":
+    "the device-code connect page (pollJs, src/web/client.ts) waits on a provider that sets the cadence (its `interval`), so there is no event of ours to stream; it posts the form the page already offers, stops after 200 tries, and reloads only once the flow leaves pending",
+};
+
+/** The text of the balanced `(…)` or `{…}` whose opener is at `open`. Strings and comments are not understood: a bracket inside one skews it. */
+function balanced(src: string, open: number): string {
+  const pairs: Record<string, string> = { "(": ")", "{": "}" };
+  const o = src[open]!, c = pairs[o]!;
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === o) depth++;
+    else if (src[i] === c && --depth === 0) return src.slice(open + 1, i);
+  }
+  return src.slice(open + 1);
+}
+
+/** The body of a function a script names: `function name(…) {…}` or `name = (…) => {…}` / `name = function (…) {…}`. */
+function bodyOf(src: string, name: string): string | undefined {
+  const m = new RegExp(`(?:function\\s+${name}\\s*\\(|\\b${name}\\s*=\\s*(?:async\\s*)?(?:function\\s*\\(|\\([^)]*\\)\\s*=>|\\w+\\s*=>))`).exec(src);
+  if (!m) return undefined;
+  const brace = src.indexOf("{", m.index + m[0].length - 1);
+  return brace < 0 ? undefined : balanced(src, brace);
+}
+
+/**
+ * What a script or page does that polls. Each timer's callback is read whole
+ * (balanced to its closing bracket); a named callback is resolved to its body
+ * in the same text. A callback built elsewhere (an imported or computed one)
+ * cannot be read: that is the detector's limit, pinned in a test below.
+ */
+export function findPolling(source: string): string[] {
+  const found: string[] = [];
+  if (/<meta[^>]+http-equiv=["']?refresh/i.test(source)) found.push("meta refresh");
+  if (/data-live-every/.test(source)) found.push("data-live-every");
+  const re = /\b(setInterval|setTimeout)\s*\(/g;
+  for (let m = re.exec(source); m; m = re.exec(source)) {
+    const args = balanced(source, m.index + m[0].length - 1);
+    const first = /^\s*([A-Za-z_$][\w$]*)\s*(?:,|$)/.exec(args);
+    const callback = first ? (bodyOf(source, first[1]!) ?? "") : args;
+    if (/location\.reload|location\.replace\(\s*location|history\.go\(\s*0/.test(callback)) found.push(`${m[1]} reloads the page`);
+    else if (m[1] === "setInterval" && /\bfetch\s*\(|XMLHttpRequest/.test(callback)) found.push("setInterval fetches");
+    // A timeout that asks again is an interval by another name.
+    else if (first && /\bfetch\s*\(/.test(callback) && new RegExp(`setTimeout\\(\\s*${first[1]}\\b`).test(callback)) found.push("a fetch re-arms itself on a timeout");
+  }
+  for (const m of source.matchAll(/function\s+([A-Za-z_$][\w$]*)\s*\(/g)) {
+    const body = bodyOf(source, m[1]!) ?? "";
+    if (/\bfetch\s*\(/.test(body) && new RegExp(`setTimeout\\(\\s*${m[1]}\\b`).test(body)) found.push("a fetch re-arms itself on a timeout");
+  }
+  return [...new Set(found)];
+}
+
+const pollReason = (source: string): string | undefined =>
+  Object.entries(POLL_ALLOWED).find(([marker]) => source.includes(marker))?.[1];
+
+/**
+ * GET patterns the walk cannot fill from its seed, each with why: the walk is
+ * every pattern minus these, and the list is checked both ways, so a new page
+ * is walked unless someone names it here.
+ */
+const ORIGIN = "needs a connected origin account; the seed connects none";
+const NOT_WALKED: Record<string, string> = {
+  "/:owner/-/teams/:team": "needs an organization and a team",
+  "/:owner/:name/app/:env/open": "needs a running app environment to open",
+  "/:owner/:name/bets/:id": "needs a proposed bet",
+  "/:owner/:name/builds/:label/cart": "needs a pinned build with a cart",
+  "/:owner/:name/builds/:label/cart.png": "needs a pinned build with a cart",
+  "/:owner/:name/builds/:label/shots": "needs a pinned build with pictures",
+  "/:owner/:name/builds/:label/shots/:file": "needs a pinned build with pictures",
+  "/:owner/:name/commit/:oid": "the seed does not keep the commit id; the commit page is a plain diff with the shell script only",
+  "/:owner/:name/looks/:env/:commit/:kind.png": "an image of a captured look, not a page",
+  "/:owner/:name/machines/:machine/shell": "needs a running machine to attach a terminal to",
+  "/:owner/:name/milestones/:number/limb/:op": "needs a milestone with a limb",
+  "/:owner/:name/runs/:id": "the seed creates no run",
+  "/:owner/:name/variants/:group": "needs a variant group of agent tries",
+  "/:owner/:name/waves/:version": "needs a wave of a milestone",
+  "/boards/:slug": "needs a board",
+  "/boards/:slug/live": "needs a board; a stream, not a page",
+  "/bring/:id/:job": "needs a bring job",
+  "/fleet/ops/:id": "needs a fleet operation",
+  "/go/:code": "needs a short code minted by a share",
+  "/home/archived/:op": "needs an archived-home operation",
+  "/icons/:spec.png": "an image, not a page",
+  "/migrate/jobs/:job": "needs a migration job",
+  "/now/:stage": "the stage word is one the seed cannot guess",
+  "/resilience/nightly/:job": "needs a nightly job name",
+  "/runs/:id": "the seed creates no run",
+  "/settings/features/:slug": "needs a feature slug",
+  "/settings/origins/:id/archived": ORIGIN,
+  "/settings/origins/:id/mirror/:job": ORIGIN,
+  "/settings/origins/:id/repos": ORIGIN,
+  "/settings/origins/flows/:id": ORIGIN,
+  "/settings/teams/:slug": "needs a team",
+  "/talk/:id": "needs a conversation of the signed-in person",
+};
+/** The whole browse-an-origin family is one reason. */
+const whyNot = (p: string): string | undefined => (p.startsWith("/origins/:id/r/") ? ORIGIN : NOT_WALKED[p]);
+
+describe("every page the router lists", () => {
+  let dataDir = "";
+  let app: App, servers: Servers;
+  let cookie = "";
+  const fill: Record<string, string> = {};
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-nopoll-walk-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    const admin = await seedAdmin(app, { username: "ada", email: "ada@forge.local", password: "correct-horse-battery" });
+    if (!admin.ok) throw new Error(admin.error);
+    const made = await createRepo(app.db, app.reposRoot, { ownerId: admin.value.id, name: "notes", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const seed = await commitToBranch(app, admin.value, made.value, { message: "seed", files: [{ path: "a.txt", content: "a\n" }] });
+    if (!seed.ok) throw new Error(String(seed.error));
+    const issue = createIssue(app.db, { repoId: made.value.id, title: "an issue", body: "b", authorId: admin.value.id });
+    if (!issue.ok) throw new Error(String(issue.error));
+    Object.assign(fill, { owner: "ada", name: "notes", username: "ada", ref: "main", path: "a.txt", number: String(issue.value.number) });
+    cookie = `forge_session=${createSession(app.db, admin.value.id).token}`;
+  }, 30_000);
+
+  afterAll(async () => {
+    servers?.stop();
+    app?.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const patterns = (): string[] => [...new Set(buildRouter().routes().filter((r) => r.method === "GET").map((r) => r.pattern))];
+  const keysOf = (p: string): string[] => [...p.matchAll(/[:*]([a-z_]+)/g)].map((m) => m[1]!);
+  const fillable = (p: string): boolean => keysOf(p).every((k) => k in fill);
+  const pathOf = (p: string): string => p.replace(/[:*]([a-z_]+)/g, (_, k: string) => fill[k]!);
+
+  async function walk(headers: Record<string, string>) {
+    const scripts = new Map<string, string>();
+    const offenders: string[] = [];
+    const allowed: string[] = [];
+    const htmlPages: string[] = [];
+    await pool(patterns().filter(fillable).map(pathOf), async (path) => {
+      const res = await fetch(`${servers.url}${path}`, { headers: { "accept-encoding": "identity", ...headers }, redirect: "manual", signal: AbortSignal.timeout(8_000) });
+      if (res.headers.get("refresh")) offenders.push(`${path}: Refresh header`);
+      if (res.status !== 200 || !(res.headers.get("content-type") ?? "").includes("text/html")) { await res.body?.cancel(); return; }
+      htmlPages.push(path);
+      const html = await res.text();
+      for (const found of findPolling(html.replace(/<script\b[^>]*>[^]*?<\/script\s*>/gi, ""))) offenders.push(`${path}: ${found}`);
+      const { srcs, inline } = scriptTags(html);
+      inline.forEach((code, i) => scripts.set(`${path} inline#${i}`, code));
+      for (const src of srcs) if (src.startsWith("/") && !src.startsWith("//") && !scripts.has(src)) scripts.set(src, await (await fetch(`${servers.url}${src}`)).text());
+    });
+    for (const [name, source] of scripts) {
+      const found = findPolling(source);
+      if (!found.length) continue;
+      if (pollReason(source)) allowed.push(name);
+      else offenders.push(`${name}: ${found.join("; ")}`);
+    }
+    return { htmlPages: htmlPages.sort(), offenders, allowed };
+  }
+
+  test("signed out, no page the walk reaches refreshes itself on a timer", async () => {
+    const out = await walk({});
+    expect(out.offenders).toEqual([]);
+    expect(out.htmlPages.length).toBeGreaterThanOrEqual(ANON_FLOOR);
+    expect(out.htmlPages).toContain("/");
+  }, 30_000);
+
+  test("signed in as admin, no page the walk reaches refreshes itself on a timer", async () => {
+    const out = await walk({ cookie });
+    expect(out.offenders).toEqual([]);
+    expect(out.htmlPages).toContain("/system");
+    expect(out.htmlPages).toContain("/flow");
+    expect(out.htmlPages.length).toBeGreaterThanOrEqual(WALKED_FLOOR);
+  }, 30_000);
+
+  test("the patterns the walk skips are exactly the ones named, each with a reason", () => {
+    const skipped = patterns().filter((p) => !fillable(p)).sort();
+    expect(skipped.filter((p) => !whyNot(p))).toEqual([]);
+    // Every named entry is still skipped: a pattern the seed can now fill must leave the list.
+    expect(Object.keys(NOT_WALKED).filter((p) => !skipped.includes(p))).toEqual([]);
+    for (const p of skipped) expect(whyNot(p)!.length).toBeGreaterThan(10);
+  });
+});
+
+/** Fewest HTML pages the admin walk reaches; observed when written. A page lost from the walk drops under it. */
+const WALKED_FLOOR = 130;
+/** The same, signed out (observed 44). */
+const ANON_FLOOR = 40;
+
+describe("the polling detector", () => {
+  test("names each kind, including a named callback and a re-arming fetch", () => {
+    expect(findPolling(`setInterval(function(){ location.reload(); }, 1000)`)).toContain("setInterval reloads the page");
+    expect(findPolling(`setTimeout(function(){ location.reload() }, 5000)`)).toContain("setTimeout reloads the page");
+    expect(findPolling(`setInterval(() => fetch("/x").then(r => r.text()), 2000)`)).toContain("setInterval fetches");
+    expect(findPolling(`<meta http-equiv="refresh" content="5">`)).toContain("meta refresh");
+    expect(findPolling(`<p data-live-every="5">`)).toContain("data-live-every");
+    expect(findPolling(`function poll(){ fetch("/x").then(draw); }\nsetInterval(poll, 1000)`)).toContain("setInterval fetches");
+    expect(findPolling(`const poll = async () => { await fetch("/x"); };\nsetInterval(poll, 1000)`)).toContain("setInterval fetches");
+    expect(findPolling(`function reloadSoon(){ location.reload(); }\nsetTimeout(reloadSoon, 10)`)).toContain("setTimeout reloads the page");
+    expect(findPolling(`function ask(){ fetch("/x").then(function(){ setTimeout(ask, 1000); }); }`)).toContain("a fetch re-arms itself on a timeout");
+  });
+
+  test("a clean script passes, and a long unrelated callback does not leak into the next timer", () => {
+    expect(findPolling(`setInterval(tick, 100); setTimeout(function(){ s.textContent = ''; }, 4000)`)).toEqual([]);
+    const filler = "x();".repeat(400);
+    expect(findPolling(`setTimeout(function(){ ${filler} }, 1); function later(){ location.reload(); }`)).toEqual([]);
+    // a named clock that only redraws text is no poll, even beside a fetch elsewhere
+    expect(findPolling(`function tick(){ el.textContent = now(); } setInterval(tick, 1000); function go(){ fetch("/x"); }`)).toEqual([]);
+  });
+
+  test("its limit: a callback it cannot read (imported or computed) is not seen", () => {
+    expect(findPolling(`import { poll } from "./poll.js"; setInterval(poll, 1000)`)).toEqual([]);
+    expect(findPolling(`setInterval(pick("fast"), 1000)`)).toEqual([]);
+  });
+
+  test("the device-code poll is flagged, and the one allowlist entry matches it and says why", () => {
+    expect(findPolling(pollJs).length).toBeGreaterThan(0);
+    expect(pollReason(pollJs)).toBeDefined();
+    for (const why of Object.values(POLL_ALLOWED)) expect(why.length).toBeGreaterThan(30);
   });
 });
