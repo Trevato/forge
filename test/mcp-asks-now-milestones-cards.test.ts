@@ -99,7 +99,7 @@ describe("MCP asks, now and milestones cards", () => {
     const body = await call("now");
     const text = JSON.parse(body.result.content[0].text);
     const card = body.result.structuredContent.card;
-    expect(CARD_URI(card.kind)).toBe("ui://forge/run");
+    expect(CARD_URI(card.kind)).toBe("ui://forge/crew");
     expect(card.title).toBe("Working now");
     expect(card.rows.length).toBe(text.length);
     expect(card.rows[0].label).toBe("the crew on alice/game");

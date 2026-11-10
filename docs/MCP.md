@@ -149,7 +149,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `next_steps` | — | On a spawned forge, its owner's first three steps, each done or not | 207 |
 | `next_up` | — | The ranked list the crew builds from; `issue` + `to` (top, not-now, after:N) moves one | 349 |
 | `notify` | — | Read, set or clear your phone notify URL | 146 |
-| `now` | — | What the crew does across your apps: who, on what, since when, cost; what awaits review | 251 |
+| `now` | — | What the crew does across your apps: who, on what, since when, cost; what awaits review | 252 |
 | `open_pull` | — | Open a pull request, from a branch or from your fork | 327 |
 | `org_create` | — | Make an organization | 151 |
 | `org_teams` | `create`, `add_member`, `members`, `metrics`, `remove_member`, `remove` | An org's teams: create, add member with a role, list members, remove | 669 |
@@ -187,7 +187,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `run_log` | — | A run's log, or its last `tail` lines, as GET /api/v1/repos/:owner/:name/runs/:id/log | 332 |
 | `runs` | `agent`, `deploy`, `check` | A repository's runs, newest first: id, kind, state, number, start, end | 482 |
 | `say` | `list`, `new`, `rename`, `archive`, `restore`, `build`, `build_state`, `build_diff`, `build_restore`, `build_publish` | Say something on an issue or pull; with no repo, to the forge's own agent, and manage its conversations (action) | 585 |
-| `scorecard` | — | Crew scorecard (forge admin): per agent, all time and 30 days | 232 |
+| `scorecard` | — | Crew scorecard (forge admin): per agent, all time and 30 days | 237 |
 | `seal` | `private` | Seal or unseal an issue or pull: a sealed one is seen only by writers and crew | 297 |
 | `search` | `all`, `issues`, `repos`, `code` | Find issues, pulls, repositories and code you can read; `kind` and `repo` narrow | 378 |
 | `secrets` | — | Admin: list\|set\|remove sealed secrets | 248 |

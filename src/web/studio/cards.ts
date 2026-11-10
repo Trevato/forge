@@ -11,7 +11,7 @@ import { html, raw } from "../html.ts";
 import { timeAgo } from "../ui.ts";
 import { span, STAGE_LABEL, verdict, type PipelineKey, type PipelineStage } from "../../flow/pipeline.ts";
 
-export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed" | "pull" | "pulls" | "asked" | "explore" | "issue" | "flow" | "crew" | "board" | "forks" | "milestones";
+export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed" | "pull" | "pulls" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones";
 
 export interface CardRow {
   readonly label: string;
@@ -42,12 +42,12 @@ const here = (origin: string, path: string): boolean => origin !== "" && /^\/(?!
 
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed", "pull", "pulls", "asked", "explore", "issue", "flow", "crew", "board", "forks", "milestones"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed", "pull", "pulls", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   apps: "app",
-  now: "run",
+  now: "crew",
   runs: "run",
   asks: "decision",
   milestones: "milestones",
@@ -62,7 +62,7 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   asked: "asked",
   issue: "issue",
   flow: "flow",
-  scorecard: "crew",
+  scorecard: "scorecard",
   boards: "board",
   fork_tree: "forks",
 };
@@ -80,7 +80,8 @@ const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   asked: "Asked",
   issue: "Issue",
   flow: "Flow",
-  crew: "Crew",
+  scorecard: "Crew",
+  crew: "Working now",
   board: "Board",
   forks: "Forks",
   milestones: "Milestones",
@@ -97,6 +98,8 @@ const FEED_LIMIT = 10;
 const PULLS_LIMIT = 20;
 const ASKED_WORDS = 80;
 const ASKED_LIMIT = 20;
+/** A waiting row's words are cut to this many characters. */
+const SAYS_WORDS = 160;
 /** A board card shows this many panels, then counts the rest. */
 const BOARD_PANELS = 8;
 /** A forks card shows this many nodes, then counts the rest. */
@@ -221,6 +224,29 @@ export function cardFor(
     return { kind, title: "Asks decided", status: text(v["receipt"]), rows, actions };
   }
   if (kind === "crew") {
+    // `now` answers crewNow's rows; a waiting row has `run: null` and its words in `says`.
+    const crew = list(value).map(obj);
+    status = crew.length === 0 ? "nothing running" : `${crew.length} going`;
+    for (const r of crew.slice(0, LIMIT)) {
+      const cost = Number(r["costUsd"]) > 0 ? ` · $${Number(r["costUsd"]).toFixed(2)}` : "";
+      const since = text(r["since"]) === "" ? "" : ` · ${timeAgo(text(r["since"]))}`;
+      const says = r["run"] === null ? text(r["says"]).replace(/\s+/g, " ").trim() : "";
+      const words = says === "" ? "" : ` — ${says.length > SAYS_WORDS ? `${says.slice(0, SAYS_WORDS - 1)}…` : says}`;
+      rows.push({
+        label: `${text(r["who"])} on ${text(r["app"])}`,
+        value: `${text(r["on"]) === "" ? "" : `${text(r["on"])} — `}${text(r["state"])}${since}${cost}${words}`,
+        ...(web(origin) && slugOf(text(r["app"])) && RUN_ID.test(text(r["run"]))
+          ? { link: `${origin}/${text(r["app"])}/runs/${text(r["run"])}` }
+          : {}),
+      });
+      if (r["run"] && actions.length < 3)
+        actions.push({ label: `Stop ${text(r["who"])}`, tool: "stop", args: { repo: text(r["app"]), run: text(r["run"]) } });
+    }
+    // The card shows LIMIT rows; the rest are counted, never dropped silently.
+    if (crew.length > LIMIT) rows.push({ label: "More", value: `+${crew.length - LIMIT} more` });
+    return { kind, title: CARD_TITLE[kind], status, rows, actions };
+  }
+  if (kind === "scorecard") {
     // `scorecard` answers `{ agents: [{ username, all, recent }], keeperDays: [{ landed }] }`.
     const v = obj(value);
     if (!Array.isArray(v["agents"])) return undefined;

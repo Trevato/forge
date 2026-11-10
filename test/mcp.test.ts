@@ -1300,6 +1300,7 @@ describe("the forge over MCP", () => {
       "ui://forge/pull",
       "ui://forge/pulls",
       "ui://forge/run",
+      "ui://forge/scorecard",
       "ui://forge/wave",
     ]);
     const read = await call(rw, "resources/read", { uri: "ui://forge/app" });
@@ -1313,7 +1314,7 @@ describe("the forge over MCP", () => {
     const meta = (n: string) => tools.find((t: any) => t.name === n)._meta?.ui?.resourceUri;
     expect(meta("apps")).toBe("ui://forge/app");
     expect(meta("new_app")).toBe("ui://forge/app");
-    expect(meta("now")).toBe("ui://forge/run");
+    expect(meta("now")).toBe("ui://forge/crew");
     expect(meta("asks")).toBe("ui://forge/decision");
     expect(meta("milestones")).toBe("ui://forge/milestones");
     expect(meta("asks_act")).toBe("ui://forge/decision");
@@ -1326,7 +1327,7 @@ describe("the forge over MCP", () => {
     expect(meta("pulls")).toBe("ui://forge/pulls");
     expect(meta("asked")).toBe("ui://forge/asked");
     expect(meta("flow")).toBe("ui://forge/flow");
-    expect(meta("scorecard")).toBe("ui://forge/crew");
+    expect(meta("scorecard")).toBe("ui://forge/scorecard");
   });
 
   test("tools/call pull carries the card beside an unchanged text answer", async () => {
