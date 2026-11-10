@@ -21,6 +21,7 @@ import { childDirOf } from "../actions/spawn.ts";
 import { openBeatDoor, parentLocal, type BeatDoor } from "./beat-door.ts";
 import { hostedPlacement, parentOrigin, childPublicUrl, type BodyStore, type Placement } from "./placement.ts";
 import { SIZE_IO, SIZES, type Size } from "./sizes.ts";
+import { CGROUP_DIR_ENV, SIZE_ENV } from "./usage.ts";
 import { childModelHosts, childRegistryHosts } from "../core/capacity.ts";
 
 export const CELL_PREFIX = "cell-";
@@ -148,14 +149,20 @@ export function cellSpecFor(input: {
   };
 }
 
-/** The child forge's environment: short, explicit, and its own. */
-export function cellEnv(input: { port: number; dataDir: string; url: string; parentPort?: number }): Record<string, string> {
+/**
+ * The child forge's environment: short, explicit, and its own. Its size and
+ * its cgroup's directory (when the kernel holds the caps) let it read its own
+ * use against its size (`selfUse`, `spawn/usage.ts`; #10853).
+ */
+export function cellEnv(input: { port: number; dataDir: string; url: string; parentPort?: number; size?: Size; cgroupDir?: string }): Record<string, string> {
   const env = childEnv({
     PORT: String(input.port),
     FORGE_HOST: "127.0.0.1",
     FORGE_APP_URL: input.url,
     FORGE_APP_DATA: input.dataDir,
     NODE_ENV: "production",
+    ...(input.size === undefined ? {} : { [SIZE_ENV]: input.size }),
+    ...(input.cgroupDir === undefined ? {} : { [CGROUP_DIR_ENV]: input.cgroupDir }),
     ...(input.parentPort === undefined ? {} : { FORGE_PARENT_LOCAL: parentLocal(input.parentPort) }),
   });
   delete env["USER"];
@@ -270,7 +277,7 @@ function makeRegistry(parent: App): CellChildren {
     const command = `exec ${JSON.stringify(process.execPath)} ${JSON.stringify(MAIN)}`;
     const proc = Bun.spawn(cell.argv(command), {
       cwd: dirname(MAIN),
-      env: cell.env(cellEnv({ port, dataDir: dir, url, parentPort })),
+      env: cell.env(cellEnv({ port, dataDir: dir, url, parentPort, size: input.size, ...(cell.cgroupDir === undefined ? {} : { cgroupDir: cell.cgroupDir }) })),
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",

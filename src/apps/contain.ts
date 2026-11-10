@@ -300,6 +300,8 @@ export interface Cell {
   readonly breach: () => string | undefined;
   /** Stop watching and close the cell's sockets. */
   readonly close: () => void;
+  /** The cell's own cgroup directory, where the kernel holds its caps; absent when only the watch does. */
+  readonly cgroupDir?: string;
 }
 
 // ---- can this host hold a cell? ----
@@ -635,6 +637,7 @@ export function openCell(
     argv,
     env,
     watch,
+    ...(cgroup === undefined ? {} : { cgroupDir: cgroup.dir }),
     breach: () => breach ?? killed(),
     close: () => {
       const kernel = breach === undefined ? killed() : undefined;

@@ -15,6 +15,10 @@
  * its JS heap, an hour a row for the last 24 h, read through `memoryHours`
  * like the page. The gate is the page's (`canSeeMemory`): anyone but a forge
  * admin who is a person gets no rows. Read-only.
+ *
+ * Under the forge line, as /system says it (#10853): a child forge in a cell
+ * its own size and use against it (`selfLines`), and a parent each child's
+ * use against its size (`childLines`), both read through `spawn/usage.ts`.
  */
 
 import type { Ctx, Screen } from "../app/app.ts";
@@ -38,6 +42,8 @@ import { egressReportedLine } from "../../system/egress_line.ts";
 import { featureHealth } from "../../system/feature_health.ts";
 import { readerPaces } from "../../system/telemetry_reads.ts";
 import { live as liveMachine } from "../../system/live.ts";
+import { childDirOf, listChildrenNow } from "../../actions/spawn.ts";
+import { childrenUse, realSelf, selfUse, sizeWords, useWords, type ChildUseRow, type SelfUse } from "../../spawn/usage.ts";
 
 const WIDTH = 72;
 const GROUPS = 6;
@@ -309,6 +315,39 @@ export function memoryScreen(session: Session, ctx: Ctx): Screen {
   };
 }
 
+/** This forge's size and its use against it, a line each, as /system's "This forge's size" says it; none on a forge that is no cell child. */
+export function selfLines(self: SelfUse | null): string[] {
+  if (self === null) return [];
+  const w = useWords(self.use);
+  return [
+    `size ${sizeWords(self.size)}`,
+    `  memory ${w.memory}${self.from === "process" ? " (this process alone)" : ""}`,
+    `  cpu    ${self.use.cores === null ? `measuring · ${w.cpu}` : w.cpu}`,
+    `  disk   ${w.disk}`,
+  ];
+}
+
+/** Each child forge's use against its size, a line each, as /system's "Child forges" says it. */
+export function childLines(rows: readonly ChildUseRow[], inner = WIDTH - 6): string[] {
+  if (rows.length === 0) return [];
+  return [
+    "Child forges",
+    ...rows.flatMap((r) => {
+      if (r.use.kind === "shared") return [truncate(`${pad(r.name, 16)} ${r.size} · shared with this forge`, inner)];
+      const w = useWords(r.use);
+      const parts = r.use.kind === "idle" ? ["not running"] : [`memory ${w.memory}`, `cpu ${w.cpu}`, `disk ${w.disk}`];
+      // Figures go on whole, never split across lines: a part that does not fit starts the next line.
+      const lines: string[] = [];
+      for (const part of parts) {
+        const last = lines.length - 1;
+        if (last >= 0 && lines[last]!.length + 3 + part.length <= inner - 2) lines[last] += ` · ${part}`;
+        else lines.push(part);
+      }
+      return [truncate(`${pad(r.name, 16)} ${sizeWords(r.size)}`, inner), ...lines.map((l) => truncate(`  ${l}`, inner))];
+    }),
+  ];
+}
+
 /** The egress fault, one line, as /system says it; nothing when egress is enforced. */
 export function egressLines(session: Session): string[] {
   const said = egressReportedLine(session.db);
@@ -322,10 +361,16 @@ export const entry: PaletteEntry = {
   hint: "the machine now: CPU, memory, disks, processes",
   after: ["flow", "system-memory", "boards"],
   offered: (session) => session.user?.isAdmin === true && session.user.kind !== "agent",
-  run: (session, ctx) => ctx.push(systemScreen(ctx, [
-    ...forgeLines(readHealth(session.app, session.user)),
-    ...egressLines(session),
-    "",
-    ...systemLines(liveMachine().read()),
-  ], session)),
+  run: (session, ctx) => {
+    const self = selfLines(selfUse(realSelf(session.app.config.dataDir)));
+    const kids = childLines(childrenUse(listChildrenNow(session.app), (bodyId) => childDirOf(session.app, bodyId)));
+    ctx.push(systemScreen(ctx, [
+      ...forgeLines(readHealth(session.app, session.user)),
+      ...egressLines(session),
+      ...(self.length === 0 ? [] : ["", ...self]),
+      ...(kids.length === 0 ? [] : ["", ...kids]),
+      "",
+      ...systemLines(liveMachine().read()),
+    ], session));
+  },
 };

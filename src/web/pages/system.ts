@@ -15,6 +15,9 @@
  * Then the in-process caches that answer strangers' code pages (#9514), each
  * with its entries, bytes held beside its cap, and hits and misses: together
  * they may hold ~128 MB, so what they hold is shown where memory is.
+ * A child forge in a cell shows its own size and its use against it, one
+ * line each for memory, CPU and disk; a parent lists each child's use
+ * against its size (#10853, `spawn/usage.ts`).
  */
 import { canSeeMemory, memoryHours } from "../../boards/memory.ts";
 import { telemetryReader } from "../../actions/telemetry.ts";
@@ -40,6 +43,8 @@ import { COLUMN_BYTES, PARTS_BYTES, keptPartsStats, treeCacheStats } from "./tre
 import { featureHealth, type FeatureHealth } from "../../system/feature_health.ts";
 import { egressReportedLine } from "../../system/egress_line.ts";
 import { badge, chartBox, meter, pill, row } from "../ui.ts";
+import { childDirOf, listChildren } from "../../actions/spawn.ts";
+import { childrenUse, realSelf, selfUse, shareOf, sizeWords, useWords, type ChildUseRow, type SelfUse } from "../../spawn/usage.ts";
 
 /** A group's memory, and a cell's beside its cap and who holds the cap. */
 const memoryOf = (g: { rssBytes: number; capBytes: number | null; capBy: "kernel" | "watch" | null }): Html =>
@@ -66,6 +71,45 @@ const meterRow = (name: string, value: number | null, max: number, figure: strin
 /** A name and one figure, no bar: load, a disk's I/O, a link's rates. */
 const figureRow = (name: string, figure: string, data: Record<string, string> = {}): Html =>
   row({ title: name, trail: html`<span class="mono">${figure}</span>`, data });
+
+/** This forge's own size and use when it is a child in a cell (#10853); nothing on any other forge. */
+export function selfSection(self: SelfUse | null): Html {
+  if (self === null) return html``;
+  const { use, size } = self;
+  const w = useWords(use);
+  return html`<section class="settings-block" id="sys-self" data-size="${size}" data-from="${self.from}"><h2>This forge's size: ${size}</h2>
+    <ul class="list" aria-label="This forge's use against its size">
+      ${meterRow("memory", use.memoryMiB, use.limits.memoryMiB, w.memory)}
+      ${meterRow("cpu", use.cores, use.limits.cpu, use.cores === null ? `measuring · ${w.cpu}` : w.cpu)}
+      ${meterRow("disk", use.diskMiB, use.limits.diskMiB, w.disk)}
+    </ul>
+    <p class="small muted">Set by the forge that made this one. ${self.from === "process" ? "Memory and CPU count this process alone. " : ""}Disk is measured every 30 seconds.</p></section>`;
+}
+
+/** What a child row says beside its meter: a cell's three figures, or why there are none. */
+const childSaid = (r: ChildUseRow): string => {
+  if (r.use.kind === "shared") return "shared with this forge";
+  if (r.use.kind === "idle") return "not running";
+  const w = useWords(r.use);
+  return `memory ${w.memory} · cpu ${w.cpu} · disk ${w.disk}`;
+};
+
+/** Each child this forge made, its use against its size (#10853); nothing when it made none. */
+export function childrenSection(rows: readonly ChildUseRow[]): Html {
+  if (rows.length === 0) return html``;
+  return html`<section class="settings-block" id="sys-children"><h2>Child forges</h2>
+    <ul class="list" aria-label="Each child forge's use against its size">${rows.map((r) => {
+      const said = childSaid(r);
+      const share = r.use.kind === "cell" ? shareOf(r.use.memoryMiB, r.use.limits.memoryMiB) : null;
+      return row({
+        title: /^https?:\/\//.test(r.url) ? html`<a href="${r.url}">${r.name}</a>` : r.name,
+        titleAttr: r.name,
+        meta: html`${share === null ? null : html`${meter(share, `${r.name} memory`, share >= 85 ? "attn" : undefined)} `}<span class="mono small">${said}</span>`,
+        trail: html`<span class="mono small">${sizeWords(r.size)}</span>`,
+        data: { child: r.name, use: r.use.kind },
+      });
+    })}</ul></section>`;
+}
 
 /** Processes grouped forge, crew, check, app, host; the client re-sorts them by CPU or memory (`system-live.ts`). */
 const KIND_ORDER = ["forge", "crew", "check", "app", "host"] as const;
@@ -252,7 +296,7 @@ export function systemStream(ctx: Ctx): Response {
 }
 
 // GET /system
-export function systemPage(ctx: Ctx): Response {
+export async function systemPage(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const reader = timePhase(ctx.request, "reader", () => telemetryReader(ctx.app, ctx.auth.user!));
@@ -271,6 +315,10 @@ export function systemPage(ctx: Ctx): Response {
   const egressLine: Html | null =
     egressSaid === null ? null : html`<p class="small" id="egress-reported">${egressSaid} <a href="/settings/capacity">Capacity</a></p>`;
   const memory = memorySection(ctx);
+  // Size and children are the owner's to see, as the terminal's System command is (`canSeeMemory`).
+  const owner = canSeeMemory(ctx.auth.user);
+  const self = owner ? timePhase(ctx.request, "self", () => selfUse(realSelf(ctx.app.config.dataDir))) : null;
+  const children = owner ? childrenUse(await listChildren(ctx.app), (bodyId) => childDirOf(ctx.app, bodyId)) : [];
   const stalls = timePhase(ctx.request, "stalls", () => stallHour(loopWatch.tally(performance.now())));
   const rendering = performance.now();
   const r = regions(v);
@@ -293,6 +341,8 @@ export function systemPage(ctx: Ctx): Response {
         ${processCaps}
         ${egressLine}
         <p class="small mono" id="temps">${at("temps")}</p></section>
+    ${selfSection(self)}
+    ${childrenSection(children)}
     <section class="settings-block"><h2>Disks and network</h2>
       <ul class="list" id="sys-disks">${at("sys-disks")}</ul></section>
     <section class="settings-block"><h2>Processes</h2>

@@ -12,6 +12,7 @@
  * idempotent — and a finished one is answered, not made twice.
  */
 
+import { readdirSync, readFileSync } from "node:fs";
 import { mkdir, readdir, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { createApp, type App } from "../app.ts";
@@ -159,11 +160,25 @@ const ledgerPath = (app: App, name: string): string =>
 export const liveChildUrl = (app: App, name: string): string =>
   childPublicUrl(name, parentOrigin(app.config));
 
+/** A ledger file's text as a `Ledger`, or undefined when it is not JSON or lacks name, bodyId and done: the one check every reader shares. */
+export function parseLedger(text: string): Ledger | undefined {
+  let v: unknown;
+  try {
+    v = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (typeof v !== "object" || v === null) return undefined;
+  const o = v as Record<string, unknown>;
+  if (typeof o.name !== "string" || typeof o.bodyId !== "string" || typeof o.done !== "boolean") return undefined;
+  return v as Ledger;
+}
+
 async function readLedger(app: App, name: string): Promise<Ledger | undefined> {
   const file = Bun.file(ledgerPath(app, name));
   if (!(await file.exists())) return undefined;
   try {
-    return (await file.json()) as Ledger;
+    return parseLedger(await file.text());
   } catch {
     return undefined;
   }
@@ -710,6 +725,21 @@ export interface Child {
   readonly placementNote: string | null;
 }
 
+/** One ledger as a `Child`. */
+const childOf = (app: App, ledger: Ledger): Child => ({
+  name: ledger.name,
+  url: liveChildUrl(app, ledger.name),
+  bodyId: ledger.bodyId,
+  done: ledger.done,
+  for: ledger.forWhom ?? null,
+  apps: ledger.apps ?? [],
+  createdAt: ledger.createdAt ?? null,
+  size: isSize(ledger.size) ? ledger.size : DEFAULT_SIZE,
+  ...(typeof ledger.template === "string" ? { template: ledger.template } : {}),
+  placement: ledger.placement ?? "hosted",
+  placementNote: ledger.placementNote ?? null,
+});
+
 /** The children this forge has made or begun, from its ledger, by name. */
 export async function listChildren(app: App): Promise<Child[]> {
   const dir = join(app.config.dataDir, "spawn");
@@ -717,20 +747,29 @@ export async function listChildren(app: App): Promise<Child[]> {
   const out: Child[] = [];
   for (const f of files.filter((f) => f.endsWith(".json")).sort()) {
     const ledger = await readLedger(app, f.slice(0, -".json".length));
-    if (ledger)
-      out.push({
-        name: ledger.name,
-        url: liveChildUrl(app, ledger.name),
-        bodyId: ledger.bodyId,
-        done: ledger.done,
-        for: ledger.forWhom ?? null,
-        apps: ledger.apps ?? [],
-        createdAt: ledger.createdAt ?? null,
-        size: isSize(ledger.size) ? ledger.size : DEFAULT_SIZE,
-        ...(typeof ledger.template === "string" ? { template: ledger.template } : {}),
-        placement: ledger.placement ?? "hosted",
-        placementNote: ledger.placementNote ?? null,
-      });
+    if (ledger) out.push(childOf(app, ledger));
+  }
+  return out;
+}
+
+/** `listChildren`, read at once: for a terminal command that draws in the same turn (one small file per child). */
+export function listChildrenNow(app: App): Child[] {
+  const dir = join(app.config.dataDir, "spawn");
+  let files: string[];
+  try {
+    files = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const out: Child[] = [];
+  for (const f of files.filter((f) => f.endsWith(".json")).sort()) {
+    let ledger: Ledger | undefined;
+    try {
+      ledger = parseLedger(readFileSync(join(dir, f), "utf8"));
+    } catch {
+      ledger = undefined; // unreadable: skipped, as listChildren skips it
+    }
+    if (ledger) out.push(childOf(app, ledger));
   }
   return out;
 }
