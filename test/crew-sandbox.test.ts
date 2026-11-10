@@ -314,7 +314,9 @@ describe("the shell sandbox denies the whole data directory but the agent's own 
     const { denyRead, tmpDir } = policy();
     expect(denied(join(dataDir, "crew/scout/01repo/7"), denyRead)).toBe(false);
     expect(tmpDir).toBeDefined();
-    expect(tmpDir!.startsWith(join(dataDir, "crew/scout/.t/"))).toBe(true);
+    // Under the agent, unless the machine's temp is long enough (a check's)
+    // that Claude Code's sockets would not fit there (`runTmpDir`, #10541).
+    expect(tmpDir).toBe(runTmpDir(dataDir, "scout", runId));
     expect(denied(tmpDir!, denyRead)).toBe(false);
   });
 
@@ -609,4 +611,32 @@ test.skipIf(process.platform !== "linux")("a child forge's run reads and writes 
   expect(p.denyRead).not.toContain(p.tmpDir);
   expect(p.denyRead).toContain(neighbour);
   expect(p.denyRead).toContain(join(data, "forge.db"));
+});
+
+test.skipIf(process.platform !== "linux")("in a long temp directory holding the data directory, the agent keeps its own crew directory and run temp (#10541)", () => {
+  // A check's temp is /data/checks/<id>.home/shard-<x>/tmp: long enough that
+  // the run's temp moves beside the data directory, which then must not be denied whole.
+  const saved = process.env["TMPDIR"];
+  const temp = join(tmpdir(), `forge-long-temp-${Date.now()}`, "a-check-home-of-some-length.home", "shard-AbCdEf", "tmp");
+  mkdirSync(temp, { recursive: true });
+  process.env["TMPDIR"] = temp;
+  try {
+    const data = join(temp, "forge-sandbox-allow-RY4WTr");
+    for (const dir of ["crew/scout/01repo/7", "crew/mason", "repos"]) mkdirSync(join(data, dir), { recursive: true });
+    mkdirSync(join(temp, "fr-otherrun0001"), { recursive: true });
+    mkdirSync(join(temp, "fc-somecell"), { recursive: true });
+    const p = sandboxPolicy({ dataDir: data, agentName: "scout", urls: [], runId: "01m46abcdefghjkmnpqrstvwxy" });
+    const denied = (path: string) => p.denyRead.some((d) => path === d || path.startsWith(`${d}/`));
+    expect(p.tmpDir).toBe(join(temp, "fr-kmnpqrstvwxy"));
+    expect(denied(join(data, "crew/scout/01repo/7"))).toBe(false);
+    expect(denied(p.tmpDir!)).toBe(false);
+    expect(denied(join(data, "crew/mason"))).toBe(true);
+    expect(denied(join(data, "repos"))).toBe(true);
+    expect(denied(join(temp, "fr-otherrun0001"))).toBe(true);
+    expect(denied(join(temp, "fc-somecell"))).toBe(true);
+    expect(p.denyRead).toContain(join(temp, `claude-${process.getuid?.() ?? 0}`));
+  } finally {
+    if (saved === undefined) delete process.env["TMPDIR"];
+    else process.env["TMPDIR"] = saved;
+  }
 });

@@ -10,7 +10,8 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { quotaRefusal } from "../src/spawn/quota.ts";
+import { heldByChildren, quotaRefusal } from "../src/spawn/quota.ts";
+import { SIZES } from "../src/spawn/sizes.ts";
 import { usePlacement, useProbe } from "../src/spawn/door.ts";
 import { hostedPlacement, memoryBodies } from "../src/spawn/placement.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -101,7 +102,11 @@ describe("child quota", () => {
 
   test("room for small but not large is refused only for large", async () => {
     clear();
-    process.env["FORGE_CHILD_MEMORY_MIB"] = "2000";
+    // Room for exactly one more small beside what the ledger already holds, read
+    // from the sizes rather than typed, so a resized small keeps the test true.
+    const room = heldByChildren(dir).memoryMiB + SIZES.small.memoryMiB;
+    expect(SIZES.large.memoryMiB).toBeGreaterThan(SIZES.small.memoryMiB);
+    process.env["FORGE_CHILD_MEMORY_MIB"] = String(room);
     expect(quotaRefusal(dir, "small")).toBeUndefined();
     expect(quotaRefusal(dir, "large")).toContain("memory limit");
   });

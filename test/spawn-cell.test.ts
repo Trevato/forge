@@ -15,10 +15,12 @@ import { notePeer } from "../src/http/peer.ts";
 import type { App } from "../src/app.ts";
 import { portInsteadOfSocket } from "../src/git/hook-address.ts";
 import { missing } from "./helpers/tools.ts";
+import { resultLine } from "./helpers/result-line.ts";
 import { hostAllowed } from "../src/apps/egress.ts";
 import { childModelHosts, childRegistryHosts, setCapacity } from "../src/core/capacity.ts";
 import { openBeatDoor, parentLocal } from "../src/spawn/beat-door.ts";
 import { lastHeard, sendBeat } from "../src/spawn/heartbeat.ts";
+import { failedWith } from "./helpers/machine-note.ts";
 
 const plan = (name: string): SpawnPlan => ({ name, org: "o", apps: [], briefs: [], subscriptions: [], direction: "", keepAccess: false, budgetUsd: null });
 const tmp = mkdtempSync(join(tmpdir(), "spawn-cell-"));
@@ -420,18 +422,19 @@ describe("a real child forge", () => {
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== "FORGE_CELLS") env[k] = v;
     const proc = Bun.spawn([process.execPath, join(import.meta.dir, "helpers", "real-child-forge.ts")], { env, stdout: "pipe", stderr: "pipe" });
     const [out, errText] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
-    const line = out.trim().split("\n").pop() ?? "";
+    const line = resultLine(out);
     let seen: Record<string, unknown>;
     try {
       seen = JSON.parse(line) as Record<string, unknown>;
     } catch {
-      throw new Error(`the child forge run printed no result: ${out.slice(-800)} ${errText.slice(-800)}`);
+      throw new Error(failedWith("the child forge run printed no result", out.slice(-800), errText));
     }
     if (typeof seen["skipped"] === "string") {
       console.log(`SKIPPING: this host refuses a cell inside the test (${seen["skipped"]}), so no child forge was booted in one`);
       return;
     }
-    expect(seen["failure"]).toBeNull();
+    // The child's own reason and the machine's disk and load, not a bare mismatch.
+    if (seen["failure"] !== null || seen["health"] !== 200) throw new Error(failedWith("the child forge did not come up in its cell", { seen, out: out.slice(-1500) }, errText));
     expect(seen["first"]).toBe(503);
     expect(seen["firstMs"] as number).toBeLessThan(1_000);
     expect(seen["limits"]).toEqual({ memoryMiB: 2048, cpus: 1, diskMiB: 2048 });
