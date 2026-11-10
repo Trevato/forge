@@ -10,7 +10,7 @@
 
 import type { App as Forge } from "../app.ts";
 import { search } from "../actions/search.ts";
-import { cleanQuery } from "../core/search.ts";
+import { greppable } from "../core/search.ts";
 import { guestCodeSearch } from "../http/strangers.ts";
 import { canRead, getRepo, type Repo } from "../core/repos.ts";
 import { nearRepos } from "../core/near_repos.ts";
@@ -666,7 +666,8 @@ export function forgeSearch(session: Session): (ctx: Ctx) => PaletteSearch {
     // A guest is a stranger with a key: its search greps code under the same
     // limits as the page's and the API's (`http/strangers.ts`), counted
     // under its peer address. Refused, everything but the code is searched.
-    const greps = session.user === undefined && cleanQuery(query) !== "";
+    // A one-letter query greps nothing (#11120), so it takes no slot either.
+    const greps = session.user === undefined && greppable(query);
     const held = greps
       ? guestCodeSearch(session.app, session.identity.remoteAddress)
       : undefined;

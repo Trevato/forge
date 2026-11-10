@@ -66,5 +66,17 @@ test("every listed kind still answers 200", async () => {
 test("a good request carries no note", async () => {
   expect((await get("?q=forge&kind=repos")).note).toBeUndefined();
   expect((await get("?q=forge&kind=all")).note).toBeUndefined();
-  expect(searchNote("x")).toBeUndefined();
+  expect(searchNote("xy")).toBeUndefined();
+});
+
+test("one letter is told why no code came back (#11120)", () => {
+  expect(searchNote("x")).toContain("Code is searched for 2 or more characters");
+  expect(searchNote("x", "code")).toContain("Code is searched for 2 or more characters");
+});
+
+test("one letter with no code asked for carries no note (#11120)", async () => {
+  expect(searchNote("x", "repos")).toBeUndefined();
+  expect(searchNote("x", "issues")).toBeUndefined();
+  expect((await get("?q=x&kind=repos")).note).toBeUndefined();
+  expect((await get("?q=x&kind=all")).note).toContain("Code is searched for 2 or more characters");
 });

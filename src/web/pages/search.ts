@@ -24,6 +24,8 @@ import { getMirrorTarget } from "../../core/migrate_mirror.ts";
 import {
   cleanQuery,
   CODE_BUDGET_MS,
+  CODE_TOO_SHORT,
+  greppable,
   searchKind,
   type CodeHit,
   type IssueHit,
@@ -341,11 +343,11 @@ async function find(
 ): Promise<{ found: SearchResults; busy?: number }> {
   // A stranger's code search takes a slot of its own (`http/strangers.ts`);
   // refused, the page still answers with everything but the code, and says so.
-  // The same test as the API's: a blank or stop-word query greps nothing.
+  // The same test as the API's: a blank or one-letter query greps nothing.
   const greps =
     ctx.auth.user === undefined &&
     (a.kind === "code" || a.kind === "all") &&
-    cleanQuery(a.query) !== "";
+    greppable(a.query);
   const held = greps
     ? timePhase(ctx.request, "gate", () => strangerCodeSearch(ctx.app, ctx.request))
     : undefined;
@@ -516,6 +518,10 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
         signed in. <a href="/signin">Sign in</a>, or try again in
         ${String(busy)} s.
       </p>`,
+  )}
+  ${when(
+    (a.kind === "code" || a.kind === "all") && !greppable(a.query),
+    () => html`<p class="muted small" role="status" data-code-short>${CODE_TOO_SHORT}</p>`,
   )}
   ${when(
     found.codeSkipped,

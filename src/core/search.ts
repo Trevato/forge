@@ -50,6 +50,21 @@ export const CODE_BUDGET_MS = 30;
 /** A grep in a budgeted search is given up after this long and reported as `more`: a cold clone must not hold the page (#7198). */
 export const BUDGETED_GREP_MS = 400;
 
+/**
+ * The fewest characters a code search greps for. One letter matches nearly
+ * every line of every repository, so its grep is all cost and no answer
+ * (#11120); repositories and issues still answer it.
+ */
+export const MIN_CODE_QUERY = 2;
+
+/** Whether `raw`, cleaned, is long enough to grep the code for. */
+export function greppable(raw: string): boolean {
+  return [...cleanQuery(raw)].length >= MIN_CODE_QUERY;
+}
+
+/** What a reader is told when the query was too short to grep, in plain words. */
+export const CODE_TOO_SHORT = `Code is searched for ${MIN_CODE_QUERY} or more characters; this found apps, repositories, issues and pulls only.`;
+
 /** Longest line of code echoed back; the rest is off-screen anyway. */
 const MAX_LINE_CHARS = 400;
 
@@ -63,9 +78,11 @@ export function searchKind(raw: string | null): SearchKind {
  * What a caller who asked wrongly is told, in one sentence, or undefined when
  * the request was fine (an unknown kind or limit is `searchRefusal`'s 422, not a note). Plain text: the caller escapes it where it draws it.
  */
-export function searchNote(rawQ: string | null): string | undefined {
+export function searchNote(rawQ: string | null, kind: SearchKind = "all"): string | undefined {
   if (cleanQuery(rawQ ?? "") === "")
     return "q is empty — send what to find, e.g. q=parser&kind=code (kind=all|repos|issues|code)";
+  // Only a search that asked for code is told the code was not grepped.
+  if ((kind === "all" || kind === "code") && !greppable(rawQ ?? "")) return CODE_TOO_SHORT;
   return undefined;
 }
 

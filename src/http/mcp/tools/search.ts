@@ -36,7 +36,7 @@ export const tool: Tool = {
       if (isAnswer(repo)) return repo;
       only = repo;
     }
-    const note = searchNote(q);
+    const note = searchNote(q, searchKind(kind ?? null));
     const found = await search(ctx.app, user, {
       q,
       ...(kind ? { kind: searchKind(kind) } : {}),

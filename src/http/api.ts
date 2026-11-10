@@ -172,7 +172,7 @@ import {
   canWrite,
   getRepoById,
 } from "../core/repos.ts";
-import { cleanQuery, CODE_BUDGET_MS, searchKind, searchNote } from "../core/search.ts";
+import { CODE_BUDGET_MS, greppable, searchKind, searchNote } from "../core/search.ts";
 import { strangerCodeSearch } from "./strangers.ts";
 import {
   isReviewState,
@@ -1534,7 +1534,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const greps =
       ctx.auth.user === undefined &&
       (kind === "code" || kind === "all") &&
-      cleanQuery(query) !== "";
+      greppable(query);
     const held = greps ? strangerCodeSearch(ctx.app, ctx.request) : undefined;
     if (held !== undefined && !held.allowed) {
       return tryAgain("rate_limited", 429, `${held.why}; sign in, or retry in ${retryAfterOf(held.retryAfter)}s`, held.retryAfter);
@@ -1555,7 +1555,7 @@ export function apiRoutes(router: Router<Handler>): void {
       const found = await (mine === undefined
         ? search(ctx.app, ctx.auth.user, timed)
         : searchWithin(ctx.app, ctx.auth.user, mine, timed));
-      const note = searchNote(q.get("q"));
+      const note = searchNote(q.get("q"), kind);
       return timePhase(ctx.request, "render", () => json(note === undefined ? found : { ...found, note }));
     } finally {
       held?.release();
