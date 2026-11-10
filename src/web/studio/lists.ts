@@ -126,6 +126,19 @@ function emptyNote(
   return `${subject} is ${filter} yet.`;
 }
 
+/** The one link under an empty list. A set filter points back at the whole
+ * list; none set points at what fills it: for issues, telling the crew (or
+ * signing in to), for pulls and runs, the issues that start them. */
+function nextStep(
+  list: string,
+  filter: WordFilter | undefined,
+  start: { label: string; href: string },
+): Html {
+  return filter === undefined
+    ? btn(start.label, { href: start.href, variant: "primary" })
+    : btn("Show all", { href: list, variant: "ghost" });
+}
+
 /** A filter bar of five words, each a link carrying `?word=` — never a
  * form, so the filter lives in the address and can be shared. No filter
  * reads as "Open": what is open and moving. `trail` sits at the bar's far
@@ -450,10 +463,11 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
           title: emptyNote(
             f.word,
             "No issue",
-            record === undefined
-              ? "Nothing open."
-              : "Nothing open. Tell the crew what you want.",
+            "Nothing open.",
           ),
+          action: nextStep(`${base}/issues`, f.word, ctx.auth.user === undefined
+            ? { label: "Sign in", href: `/signin?next=${encodeURIComponent(`${base}/issues`)}` }
+            : { label: "Tell the crew", href: `${base}/issues/new` }),
         })
       : listCard(
           rows.map(({ issue, info }) =>
@@ -620,8 +634,9 @@ export async function changesList(ctx: Ctx): Promise<Response> {
           title: emptyNote(
             f.word,
             "No pull request",
-            "Nothing open.",
+            "No pull request is open.",
           ),
+          action: nextStep(`${base}/pulls`, f.word, { label: "See open issues", href: `${base}/issues` }),
         })
       : listCard(
           rows.map(({ pull, info }) =>
@@ -808,8 +823,9 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
           title: emptyNote(
             filter,
             "No run",
-            "Nothing open.",
+            "No run is open.",
           ),
+          action: nextStep(`${base}/runs`, filter, { label: "Start with an issue", href: `${base}/issues` }),
         })
       : listCard(
           rows.map(({ run, info }) => {

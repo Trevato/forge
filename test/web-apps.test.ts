@@ -483,7 +483,7 @@ describe("apps, runs and the crew on the web", () => {
     expect(list).toContain("Deploy production");
     expect(list).toContain(`href="/alice/hello/runs/${run!.id}"`);
     expect(await bodyOf(alice, "/alice/hello/runs?kind=agent")).toContain(
-      "Nothing open.",
+      "No run is open.",
     );
 
     const page = await bodyOf(alice, `/alice/hello/runs/${run!.id}`);

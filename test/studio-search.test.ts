@@ -1247,9 +1247,9 @@ describe("the studio's empty lists", () => {
   test("a repository with nothing in it says what to do, and blames no filter", async () => {
     await setup("blank");
     for (const [path, words] of [
-      ["issues", "Tell the crew what you want"],
-      ["pulls", "Nothing open."],
-      ["runs", "Nothing open."],
+      ["issues", "Nothing open."],
+      ["pulls", "No pull request is open."],
+      ["runs", "No run is open."],
     ] as const) {
       const page = await get(`/alice/blank/${path}`);
       expect(page).toContain(words);
@@ -1263,7 +1263,7 @@ describe("the studio's empty lists", () => {
     if (!told.ok) throw new Error(String(told.error));
     const issues = await get("/alice/busy/issues?word=shipped");
     expect(issues).toContain("No issue is shipped yet.");
-    expect(issues).not.toContain("Tell the crew what you want");
+    expect(issues).not.toContain("Nothing open.");
     const pulls = await get("/alice/busy/pulls?word=look");
     expect(pulls).toContain("No pull request is look yet.");
     const runs = await get("/alice/busy/runs?word=stopped");

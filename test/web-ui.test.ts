@@ -239,7 +239,7 @@ describe("web ui", () => {
       "Closed without merging.",
     );
     expect(await (await fetch(`${base}/mel/proj/pulls`)).text()).toContain(
-      "Nothing open.",
+      "No pull request is open.",
     );
 
     await fetch(`${at}/state`, {
