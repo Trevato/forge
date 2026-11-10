@@ -34,21 +34,6 @@ export type Exclusion = {
 
 export const EXCLUDED: readonly Exclusion[] = [
   {
-    file: "test/apps-sleep.test.ts",
-    reason: "red alone under --randomize (2026-11-10): an environment nobody asks for sleeps, and the next request wakes it — times out at 30s",
-    issue: 11084,
-  },
-  {
-    file: "test/probe.test.ts",
-    reason: "red alone under --randomize (2026-11-10): a scaffolded app obeys every cell: verdict mismatch, not ok",
-    issue: 11084,
-  },
-  {
-    file: "test/probes.test.ts",
-    reason: "red alone under --randomize (2026-11-10): the first clean probe after closes the issue: verdict down, not ok",
-    issue: 11084,
-  },
-  {
     file: "test/rehearsal-real.test.ts",
     reason: "green alone (3 of 3, 2026-11-10) but unproven under the gate's load, where on main@accaa65 the second real roll's old forge did not come up",
     issue: 11098,

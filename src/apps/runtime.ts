@@ -1389,7 +1389,7 @@ export class AppsRuntime {
     state.live = live;
     this.awake(state, servingAt);
     state.asleep = undefined;
-    state.lastRequestAt = Date.now();
+    state.lastRequestAt = this.now();
     state.lastError = undefined;
     if (rested !== undefined && rested.dir !== live.dir)
       rmSync(rested.dir, { recursive: true, force: true });
@@ -1785,7 +1785,7 @@ export class AppsRuntime {
   touch(record: AppRecord, env: EnvName): void {
     const state = this.envs.get(key(record.id, env));
     if (state === undefined) return;
-    state.lastRequestAt = Date.now();
+    state.lastRequestAt = this.now();
     state.keptAwake = undefined;
   }
 
@@ -1802,7 +1802,7 @@ export class AppsRuntime {
       if (!held) return;
       held = false;
       state.openStreams--;
-      state.lastRequestAt = Date.now();
+      state.lastRequestAt = this.now();
     };
   }
 
@@ -1820,7 +1820,7 @@ export class AppsRuntime {
       if (!held) return;
       held = false;
       state.openRequests--;
-      state.lastRequestAt = Date.now();
+      state.lastRequestAt = this.now();
     };
   }
 
@@ -1996,7 +1996,7 @@ export class AppsRuntime {
       state.asleep = undefined;
       state.live = live;
       this.awake(state, now);
-      state.lastRequestAt = Date.now();
+      state.lastRequestAt = this.now();
       this.watch(state, repo, live);
       write("awake");
     })().finally(() => {
@@ -2174,13 +2174,21 @@ export class AppsRuntime {
       : { kind: "slider", position: getEconomics(this.app.db).position };
   }
 
+  /**
+   * The sweep's clock. Requests stamp `lastRequestAt` with it too, so a
+   * window measured by the sweep starts again at a request on the same clock.
+   */
+  private now(): number {
+    return this.options.clock?.() ?? Date.now();
+  }
+
   /** Stop what nobody has asked for lately, and keep it ready to wake. */
   private async sweep(): Promise<void> {
     if (this.stopped) return;
     await this.hibernate();
     const source = this.windowSource();
     const grace = this.options.busyGraceMs ?? BUSY_GRACE_MS;
-    const now = this.options.clock?.() ?? Date.now();
+    const now = this.now();
     this.metered(() => beatAwake(this.app.db, new Date(now).toISOString()));
     for (const state of this.envs.values()) {
       const live = state.live;
