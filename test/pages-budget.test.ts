@@ -36,7 +36,7 @@ const HEAVIER: Record<string, { statements?: number; git?: number }> = {
   "/:owner/:name/issues/:number": { statements: 70 },
   "/:owner/:name/next": { statements: 64 },
   "/:owner/:name/pulls/:number": { statements: 110 }, // +1: the header Talk count (#10327); +1: the landing line (#10860)
-  "/board": { statements: 64 },
+  "/board": { statements: 70 }, // +6: the money line (#510) — one settings read, then the month's and the 30 days' meter, storage and ledger reads; constant in the number of apps
   "/settings/capacity": { statements: 71 },
 };
 

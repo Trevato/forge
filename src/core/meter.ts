@@ -162,15 +162,30 @@ export function usageBetween(
   to: string,
   now: string = new Date().toISOString(),
 ): AppUsage[] {
-  const lo = instant(from);
-  const hi = instant(to);
+  return usageBins(db, [from, to], now)[0] ?? [];
+}
+
+/**
+ * What each app used in each of the consecutive ranges [edges[i],
+ * edges[i+1]) — the board's thirty days (#510) in one pass over the two
+ * ledgers, with the same arithmetic as `usageBetween`, which is the one-bin
+ * case: so a day's seconds and GB-hours are exactly what `usageBetween`
+ * would say for that day. Edges must ascend; fewer than two is no bins.
+ */
+export function usageBins(
+  db: Database,
+  edges: readonly string[],
+  now: string = new Date().toISOString(),
+): AppUsage[][] {
+  const at = edges.map(instant);
   const clock = instant(now);
-  if (!(hi > lo)) return [];
-  const apps = new Map<
-    string,
-    { owned: number; cloud: number; gbHours: number }
-  >();
-  const entry = (repoId: string) => {
+  const bins = Math.max(0, at.length - 1);
+  if (bins === 0) return [];
+  const lo = at[0]!;
+  const hi = at[bins]!;
+  const tallies = Array.from({ length: bins }, () => new Map<string, { owned: number; cloud: number; gbHours: number }>());
+  const entry = (bin: number, repoId: string) => {
+    const apps = tallies[bin]!;
     let e = apps.get(repoId);
     if (e === undefined) {
       e = { owned: 0, cloud: 0, gbHours: 0 };
@@ -178,52 +193,56 @@ export function usageBetween(
     }
     return e;
   };
+  /** Each bin's share of [start, end), in milliseconds, handed to `add`. */
+  const spread = (start: number, end: number, add: (bin: number, ms: number) => void) => {
+    for (let b = 0; b < bins; b++) {
+      const s = Math.max(start, at[b]!);
+      const e = Math.min(end, at[b + 1]!);
+      if (e > s) add(b, e - s);
+    }
+  };
+  if (hi > lo) {
+    const intervals = db
+      .query<IntervalRow, [string, string]>(
+        `SELECT repo_id, placement, started_at, ended_at FROM meter
+         WHERE started_at < ?2 AND (ended_at IS NULL OR ended_at > ?1)`,
+      )
+      .all(iso(lo), iso(hi));
+    for (const row of intervals) {
+      const end = row.ended_at === null ? clock : instant(row.ended_at);
+      spread(instant(row.started_at), end, (b, ms) => {
+        entry(b, row.repo_id)[row.placement] += ms / 1000;
+      });
+    }
 
-  const intervals = db
-    .query<IntervalRow, [string, string]>(
-      `SELECT repo_id, placement, started_at, ended_at FROM meter
-       WHERE started_at < ?2 AND (ended_at IS NULL OR ended_at > ?1)`,
-    )
-    .all(iso(lo), iso(hi));
-  for (const row of intervals) {
-    const start = Math.max(lo, instant(row.started_at));
-    const end = Math.min(
-      hi,
-      row.ended_at === null ? clock : instant(row.ended_at),
-    );
-    if (end > start) entry(row.repo_id)[row.placement] += (end - start) / 1000;
+    // A sample before `from` may still stand for part of the range.
+    const samples = db
+      .query<SampleRow, [string, string]>(
+        `SELECT repo_id, data_bytes, repo_bytes, at FROM storage
+         WHERE at >= ?1 AND at < ?2 ORDER BY repo_id, at`,
+      )
+      .all(iso(lo - SAMPLE_SPAN_MS), iso(hi));
+    samples.forEach((row, i) => {
+      const taken = instant(row.at);
+      const next = samples[i + 1];
+      const until = Math.min(
+        taken + SAMPLE_SPAN_MS,
+        next !== undefined && next.repo_id === row.repo_id ? instant(next.at) : Infinity,
+      );
+      spread(taken, until, (b, ms) => {
+        entry(b, row.repo_id).gbHours += ((row.data_bytes + row.repo_bytes) * (ms / SAMPLE_SPAN_MS)) / 1e9;
+      });
+    });
   }
 
-  // A sample before `from` may still stand for part of the range.
-  const samples = db
-    .query<SampleRow, [string, string]>(
-      `SELECT repo_id, data_bytes, repo_bytes, at FROM storage
-       WHERE at >= ?1 AND at < ?2 ORDER BY repo_id, at`,
-    )
-    .all(iso(lo - SAMPLE_SPAN_MS), iso(hi));
-  samples.forEach((row, i) => {
-    const at = instant(row.at);
-    const next = samples[i + 1];
-    const until = Math.min(
-      at + SAMPLE_SPAN_MS,
-      next !== undefined && next.repo_id === row.repo_id
-        ? instant(next.at)
-        : Infinity,
-    );
-    const start = Math.max(lo, at);
-    const end = Math.min(hi, until);
-    if (end <= start) return;
-    const hours = (end - start) / SAMPLE_SPAN_MS;
-    entry(row.repo_id).gbHours +=
-      ((row.data_bytes + row.repo_bytes) * hours) / 1e9;
-  });
-
-  return [...apps.entries()]
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([repoId, e]) => ({
-      repoId,
-      awakeSeconds: e.owned + e.cloud,
-      awakeByPlacement: { owned: e.owned, cloud: e.cloud },
-      gbHours: e.gbHours,
-    }));
+  return tallies.map((apps) =>
+    [...apps.entries()]
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([repoId, e]) => ({
+        repoId,
+        awakeSeconds: e.owned + e.cloud,
+        awakeByPlacement: { owned: e.owned, cloud: e.cloud },
+        gbHours: e.gbHours,
+      })),
+  );
 }

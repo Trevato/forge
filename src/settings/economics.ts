@@ -50,14 +50,45 @@ const STORE: Record<EconomicsKey, { key: string; min: number; max: number; fallb
 
 const KEYS = Object.keys(STORE) as EconomicsKey[];
 
-function stored(db: Database, name: EconomicsKey): number {
+/** A stored text as the number it stands for, or the default when it does not parse or is out of range. */
+function parsed(name: EconomicsKey, value: string | undefined): number {
   const def = STORE[name];
+  if (value === undefined || !/^\d{1,9}$/.test(value)) return def.fallback;
+  const n = Number(value);
+  return n >= def.min && n <= def.max ? n : def.fallback;
+}
+
+function stored(db: Database, name: EconomicsKey): number {
   const row = db
     .query<{ value: string }, [string]>("SELECT value FROM forge_setting WHERE key = ?1")
-    .get(def.key);
-  if (row === null || !/^\d{1,9}$/.test(row.value)) return def.fallback;
-  const n = Number(row.value);
-  return n >= def.min && n <= def.max ? n : def.fallback;
+    .get(STORE[name].key);
+  return parsed(name, row?.value);
+}
+
+/**
+ * Every economics number in one read — for a page that needs both the
+ * slider and the prices (the board's money line, #510) and would otherwise
+ * pay eight point reads per use. Each value is read exactly as `stored` reads it.
+ */
+export function getEconomicsAll(db: Database): { economics: Economics; prices: Prices } {
+  const rows = db
+    .query<{ key: string; value: string }, string[]>(
+      `SELECT key, value FROM forge_setting WHERE key IN (${KEYS.map((_, i) => `?${i + 1}`).join(",")})`,
+    )
+    .all(...KEYS.map((k) => STORE[k].key));
+  const byKey = new Map(rows.map((r) => [r.key, r.value]));
+  const n = (name: EconomicsKey) => parsed(name, byKey.get(STORE[name].key));
+  return {
+    economics: { position: n("position"), marginPct: n("marginPct") },
+    prices: {
+      ownedMonthCents: n("ownedMonthCents"),
+      ownedSlots: n("ownedSlots"),
+      cloudHourCents: n("cloudHourCents"),
+      storageGbMonthCents: n("storageGbMonthCents"),
+      awakePriceHourCents: n("awakePriceHourCents"),
+      storagePriceGbMonthCents: n("storagePriceGbMonthCents"),
+    },
+  };
 }
 
 /** Both numbers as they stand now: two point reads, on every use. */

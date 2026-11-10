@@ -9,3 +9,11 @@
   - `.fg-s5` — series 5.
   - `.fg-s6` — series 6.
   - `.fg-s7` — series 7, the folded "others" series (grey).
+
+## The money line (#510)
+
+Drawn by `src/web/studio/money_line.ts`; styled in `src/web/style/content.ts`.
+
+- `.money-line` — the board's line: this month's cost, revenue and gap on one row, today's gap and the economics slider (the one link, in the accent) on a second, and the chart beside them. Two 24px rows are reserved, three at 480px and under where the first wraps once; the chart is a fixed size, zeros included, so nothing shifts.
+- `.money-gap` — the gap, signed with + or −, in the text colour; `data-sign="down"` (a loss) alone takes `--attn`. The accent is never a gap's: it is for the link. The app page's month card wears it too.
+- `.money-chart` — the thirty-day SVG, 240 × 48, server-rendered, no library. `.money-cost` (muted) and `.money-revenue` (text colour) are its two polylines; `.money-band` holds one polygon per pair of days, `data-sign` tinting the gap between them: a faint text-colour wash for a profit, `--attn` for a loss.

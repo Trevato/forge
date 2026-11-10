@@ -73,7 +73,9 @@ beforeAll(async () => {
     if (!repo.ok) throw new Error(String(repo.error));
     const put = await commitToBranch(app, alice, getRepo(app.db, "alice", name)!, { message: "Start", files: [{ path: "a.txt", content: "hi\n" }] });
     if (!put.ok) throw new Error(String(put.error));
-    const oid = Bun.spawnSync(["git", "--git-dir", join(dataDir, "repos", "alice", `${name}.git`), "rev-parse", "HEAD"]).stdout.toString().trim();
+    // The commit's own id, from the write that made it: no second git process to fail quietly under load.
+    const oid = put.value.commitOid;
+    if (!/^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(oid)) throw new Error(`no full id for ${name}: ${oid}`);
     if (name === "open") sha = oid;
     else shutSha = oid;
   }

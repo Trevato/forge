@@ -45,6 +45,7 @@ import { entry as claimStart } from "./claim_start.ts";
 import { entry as invites } from "./invites.ts";
 import { entry as limits } from "./limits.ts";
 import { entry as economics } from "./economics.ts";
+import { entry as money } from "./money.ts";
 import { entry as loopStalls } from "./loopstalls.ts";
 import { entry as slowPagesEntry } from "./slowpages.ts";
 import { entry as maintenance } from "./maintenance.ts";
@@ -126,6 +127,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   quotas,
   limits,
   economics,
+  money,
   appTemplates,
   devices,
   flowsAll,

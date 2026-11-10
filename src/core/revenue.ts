@@ -104,8 +104,25 @@ const amount = (n: number): number => (Number.isFinite(n) && n > 0 ? n : 0);
 const six = (n: number): number => Math.round(n * 1e6) / 1e6;
 const dollars = (cents: number): number => Math.round(cents) / 100;
 
-export function statementFor(use: AppMonthUse, month: string, rates: Rates): Statement {
-  const range = monthRange(month);
+/** What one app's use charges, each line in cents, unrounded. */
+export interface Charge {
+  readonly hours: number;
+  readonly gbMonths: number;
+  readonly crew: number;
+  readonly margin: number;
+  readonly awakeCents: number;
+  readonly storageCents: number;
+  readonly crewCents: number;
+  readonly marginCents: number;
+  readonly totalCents: number;
+}
+
+/**
+ * The statement's arithmetic for any range, unrounded: `statementFor` is
+ * this for one month, and the board's daily line (#510) is this for one
+ * day — one formula, never a second sum.
+ */
+export function chargeOf(use: Omit<AppMonthUse, "app">, rates: Rates): Charge {
   const hours = amount(use.awakeSeconds) / 3600;
   const gbMonths = amount(use.gbHours) / HOURS_PER_GB_MONTH;
   const crew = amount(use.crewUsd);
@@ -114,20 +131,36 @@ export function statementFor(use: AppMonthUse, month: string, rates: Rates): Sta
   const storageCents = gbMonths * rates.storagePriceGbMonthCents;
   const crewCents = crew * 100;
   const marginCents = (crew * 100 * margin) / 100;
+  return {
+    hours,
+    gbMonths,
+    crew,
+    margin,
+    awakeCents,
+    storageCents,
+    crewCents,
+    marginCents,
+    totalCents: awakeCents + storageCents + crewCents + marginCents,
+  };
+}
+
+export function statementFor(use: AppMonthUse, month: string, rates: Rates): Statement {
+  const range = monthRange(month);
+  const c = chargeOf(use, rates);
   const lines: StatementLine[] = [
-    { what: "Awake time", quantity: six(hours), unit: "awake-hour", price: rates.awakePriceHourCents / 100, amount: dollars(awakeCents) },
-    { what: "Storage", quantity: six(gbMonths), unit: "GB-month", price: rates.storagePriceGbMonthCents / 100, amount: dollars(storageCents) },
-    { what: "Crew spend at cost", quantity: six(crew), unit: "USD of crew spend", price: 1, amount: dollars(crewCents) },
-    { what: `Margin on crew spend (${margin}%)`, quantity: six(crew), unit: "USD of crew spend", price: margin / 100, amount: dollars(marginCents) },
+    { what: "Awake time", quantity: six(c.hours), unit: "awake-hour", price: rates.awakePriceHourCents / 100, amount: dollars(c.awakeCents) },
+    { what: "Storage", quantity: six(c.gbMonths), unit: "GB-month", price: rates.storagePriceGbMonthCents / 100, amount: dollars(c.storageCents) },
+    { what: "Crew spend at cost", quantity: six(c.crew), unit: "USD of crew spend", price: 1, amount: dollars(c.crewCents) },
+    { what: `Margin on crew spend (${c.margin}%)`, quantity: six(c.crew), unit: "USD of crew spend", price: c.margin / 100, amount: dollars(c.marginCents) },
   ];
   return {
     app: use.app,
     month,
     ...range,
     currency: "USD",
-    marginPct: margin,
+    marginPct: c.margin,
     lines,
-    total: dollars(awakeCents + storageCents + crewCents + marginCents),
+    total: dollars(c.totalCents),
   };
 }
 

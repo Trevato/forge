@@ -5,7 +5,9 @@
  * change cost over the week — each a live region that swaps itself when a
  * matching event lands. A site admin also gets two strips above them: the
  * forge's health, and each subscription's windows; whoever owns an app gets
- * a line for each thing its crew waits on them for. Nothing on it
+ * a line for each thing its crew waits on them for. A site admin's board
+ * opens on the money line: this month's cost, revenue and gap, and thirty
+ * days of them drawn (`studio/money_line.ts`). Nothing on it
  * needs a click, and everything on it links somewhere. It reads the same
  * tables as the studio and adds no state of its own — nor words: every
  * run, change and decision on it is worded by `runWord`/`pullWord`/
@@ -105,6 +107,8 @@ import {
   tokenCount,
 } from "../ui.ts";
 import { noteLine } from "../studio/note.ts";
+import { readForgeMoney } from "../../actions/money.ts";
+import { forgeMoneyLine } from "../studio/money_line.ts";
 import { tellWord } from "../studio/tell.ts";
 import { voiceFor } from "../studio/voice.ts";
 import { repoDir } from "../../git/repos.ts";
@@ -265,6 +269,7 @@ export async function boardPage(ctx: Ctx): Promise<Response> {
   const repos = scope.repos;
   const wall = ctx.url.searchParams.has("wall");
   const forge = timePhase(rq, "forge", () => forgeNotes(ctx));
+  const money = timePhase(rq, "money", () => moneyStrip(ctx));
   const declined = timePhase(rq, "declined", () => declinedNotes(ctx, scope));
   const review = timePhase(rq, "review", () => reviewNotes(ctx, scope));
   const asks = timePhase(rq, "asks", () => asksStrip(ctx));
@@ -301,6 +306,7 @@ export async function boardPage(ctx: Ctx): Promise<Response> {
       >
       <time class="num small muted" id="board-clock"></time>
     </header>
+    ${money}
     ${boardNotes(forge, declined, review)}
     <div class="board-grid">
       ${workingNow} ${landedNow} ${decidedNow}
@@ -401,6 +407,16 @@ export function bigRedirect(ctx: Ctx): Response {
 }
 
 // ---- the forge ----
+
+/**
+ * The money line (#510): this month's cost, revenue and gap with thirty
+ * days drawn beside it, for whoever may read Settings → Economics. Nobody
+ * else pays for the reads.
+ */
+function moneyStrip(ctx: Ctx): Html | null {
+  const money = readForgeMoney(ctx.app, ctx.auth.user);
+  return money.ok ? forgeMoneyLine(money.value) : null;
+}
 
 /**
  * The forge's health as notes, for a site admin only: each thing that needs

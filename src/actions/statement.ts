@@ -10,12 +10,22 @@
 
 import type { App } from "../app.ts";
 import { canAdmin, type Repo } from "../core/repos.ts";
-import { usageBetween } from "../core/meter.ts";
-import { monthOf, monthRange, parseMonth, statementFor, type Statement } from "../core/revenue.ts";
-import { usageTotals } from "../core/usage.ts";
+import { usageBetween, type AppUsage } from "../core/meter.ts";
+import type { Range } from "../core/cost.ts";
+import {
+  monthOf,
+  monthRange,
+  parseMonth,
+  statementFor,
+  type AppMonthUse,
+  type Rates,
+  type Statement,
+} from "../core/revenue.ts";
+import { usageTotals, type UsageTotals } from "../core/usage.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { getEconomics, getPrices } from "../settings/economics.ts";
+import type { Prices } from "../core/slider.ts";
+import { getEconomicsAll, type Economics } from "../settings/economics.ts";
 
 export type StatementError = "not_found" | "bad_month";
 
@@ -40,26 +50,54 @@ export function readStatement(
   if (!mayReadStatement(app, repo, actor)) return err("not_found");
   const m = month === undefined ? monthOf(now) : parseMonth(month);
   if (m === undefined) return err("bad_month");
-  const range = monthRange(m);
-  const meter = usageBetween(app.db, range.from, range.to, now).find((u) => u.repoId === repo.id);
+  const use = monthUse(app, m, now);
+  return ok(statementFor({ app: `${repo.ownerName}/${repo.name}`, ...appUse(use, repo.id) }, m, ratesOf(app)));
+}
+
+/** What every app used in one month: the meter's sums and the crew ledger's, by repository. */
+export interface MonthUse {
+  readonly month: string;
+  readonly range: Range;
+  readonly meter: readonly AppUsage[];
+  /** Crew spend summed by repository; the forge's own (no repository) has key null. */
+  readonly crew: readonly UsageTotals[];
+}
+
+/**
+ * The two reads behind every statement of a month, for all apps at once:
+ * one app's statement and the board's sum of them (#510) both start here,
+ * so the board cannot count a second way.
+ */
+export function monthUse(app: App, month: string, now: string): MonthUse {
+  const range = monthRange(month);
+  const meter = usageBetween(app.db, range.from, range.to, now);
   // The ledger's `until` is inclusive; the month is half-open, so stop a millisecond short.
   const until = new Date(Date.parse(range.to) - 1).toISOString();
-  const crew = usageTotals(app.db, "repo", { since: range.from, until, repoId: repo.id });
-  const prices = getPrices(app.db);
-  return ok(
-    statementFor(
-      {
-        app: `${repo.ownerName}/${repo.name}`,
-        awakeSeconds: meter?.awakeSeconds ?? 0,
-        gbHours: meter?.gbHours ?? 0,
-        crewUsd: crew.reduce((sum, t) => sum + t.costUsd, 0),
-      },
-      m,
-      {
-        awakePriceHourCents: prices.awakePriceHourCents,
-        storagePriceGbMonthCents: prices.storagePriceGbMonthCents,
-        marginPct: getEconomics(app.db).marginPct,
-      },
-    ),
-  );
+  const crew = usageTotals(app.db, "repo", { since: range.from, until });
+  return { month, range, meter, crew };
+}
+
+/** One repository's share of a month's use, as `statementFor` reads it. */
+export function appUse(use: MonthUse, repoId: string): Omit<AppMonthUse, "app"> {
+  const meter = use.meter.find((u) => u.repoId === repoId);
+  return {
+    awakeSeconds: meter?.awakeSeconds ?? 0,
+    gbHours: meter?.gbHours ?? 0,
+    crewUsd: use.crew.filter((t) => t.key === repoId).reduce((sum, t) => sum + t.costUsd, 0),
+  };
+}
+
+/** The forge's list prices and margin, as `core/revenue.ts` reads them. */
+export function ratesOf(app: App): Rates {
+  const { prices, economics } = getEconomicsAll(app.db);
+  return ratesFrom(prices, economics);
+}
+
+/** The rates out of numbers already read (`getEconomicsAll`), for a caller that also needs the prices. */
+export function ratesFrom(prices: Prices, economics: Economics): Rates {
+  return {
+    awakePriceHourCents: prices.awakePriceHourCents,
+    storagePriceGbMonthCents: prices.storagePriceGbMonthCents,
+    marginPct: economics.marginPct,
+  };
 }

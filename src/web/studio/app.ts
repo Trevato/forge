@@ -68,6 +68,8 @@ import {
   timePhaseAsync,
 } from "../../core/route_timing.ts";
 import { noteAppOpened } from "../../core/next-steps.ts";
+import { readAppMoney } from "../../actions/money.ts";
+import { moneyRows } from "./money_line.ts";
 
 /**
  * What asks the viewer in this repository, muted or not: a mute quiets the
@@ -454,6 +456,17 @@ export async function studioApp(
           extra: "about",
         },
       );
+  // This month's money (#510): the statement's total against what the app
+  // cost, for whoever may read its statement — the same numbers, one door.
+  const money = fresh ? null : timePhase(req, "money", () => readAppMoney(ctx.app, ctx.auth.user, repo));
+  const moneyCard =
+    money === null || !money.ok
+      ? null
+      : card(moneyRows(money.value, `${base}/settings/app/statement`), {
+          head: html`${icon("activity")}
+            <h2>This month</h2>`,
+          extra: "about",
+        });
   // The rest of the app's environment — its variables, hostname, access and
   // domains — is the admin's, on the app's settings page.
   // Issues, Pulls and the map are the head's own tabs; only what it lacks is here.
@@ -523,7 +536,7 @@ export async function studioApp(
         ${notesCard(ctx, repo, record)}
       </div>
       <aside class="stack">
-        ${adapter} ${crewCard} ${weekCard} ${ownCard} ${more}
+        ${adapter} ${crewCard} ${weekCard} ${moneyCard} ${ownCard} ${more}
       </aside>
     </div>
     ${liveMount({ repo: base, app: true })}`;

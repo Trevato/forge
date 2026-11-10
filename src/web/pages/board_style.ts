@@ -11,6 +11,7 @@ export const boardCss = /* css */ `
 .board { --pad: clamp(16px, 2.2vw, 32px); display: flex; flex-direction: column; min-height: 100dvh; }
 .board > header, .board > .stack { padding: 12px var(--pad) 0; }
 .board > #notes { padding: 8px var(--pad) 0; }
+.board > .money-line { padding: 8px var(--pad) 0; }
 #notes ul { list-style: none; margin: 4px 0 0; padding: 0; max-height: 30dvh; overflow: auto; }
 #notes li > * { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-height: 44px; overflow-wrap: anywhere; }
 #notes li > a { display: block; padding-block: 12px; min-height: 0; }

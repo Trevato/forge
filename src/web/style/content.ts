@@ -225,6 +225,22 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .fg-s5 { fill: var(--series-5); color: var(--series-5); }
 .fg-s6 { fill: var(--series-6); color: var(--series-6); }
 .fg-s7 { fill: var(--series-7); color: var(--series-7); }
+/* The money line (studio/money_line.ts, #510): the gap in the text colour,
+   its sign the +/- it carries, and the warning tint for a loss alone — the
+   accent stays for the slider's link. Two rows of 24px, the first wrapping
+   once on a phone, so the reserved height is the real one; the chart a
+   fixed box, so nothing shifts when the figures arrive. */
+.money-gap[data-sign="down"] { color: var(--attn); }
+.money-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
+.money-line > p { margin: 0; line-height: 24px; min-height: 48px; }
+.money-line > p > span { display: block; }
+@media (max-width: 480px) { .money-line > p { min-height: 72px; } }
+.money-chart { display: block; width: 240px; height: 48px; flex: none; }
+.money-chart polyline { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.money-cost { stroke: var(--muted-fg); }
+.money-revenue { stroke: var(--fg); }
+.money-band [data-sign="up"] { fill: color-mix(in srgb, var(--fg) 10%, transparent); }
+.money-band [data-sign="down"] { fill: color-mix(in srgb, var(--attn) 22%, transparent); }
 .restore-command { margin: 8px 0 0; padding: 8px 10px; font-size: 12.5px; white-space: pre-wrap; word-break: break-all; background: var(--muted); border-radius: var(--radius); }
 form.inline { display: inline; margin-left: auto; }
 

@@ -334,6 +334,32 @@ export function usageBuckets(
   return out;
 }
 
+/** One repository's crew spend on one UTC day. */
+export interface UsageDay {
+  readonly repoId: string | null;
+  /** `YYYY-MM-DD`, UTC. */
+  readonly day: string;
+  readonly costUsd: number;
+}
+
+/**
+ * The ledger summed per repository per UTC day in [since, until] — the
+ * board's thirty-day money line (#510), every repository in one read
+ * walking `usage_at`. The day is the instant's ISO
+ * prefix, as `usageBuckets` names it.
+ */
+export function usageDays(db: Database, since: string, until: string): UsageDay[] {
+  return db
+    .query<{ repo_id: string | null; day: string; cost_usd: number }, [string, string]>(
+      `SELECT repo_id, substr(at, 1, 10) AS day, SUM(cost_usd) AS cost_usd
+         FROM usage
+        WHERE at >= ?1 AND at <= ?2
+        GROUP BY repo_id, day`,
+    )
+    .all(since, until)
+    .map((r) => ({ repoId: r.repo_id, day: r.day, costUsd: r.cost_usd }));
+}
+
 /** Every repository with a line in the ledger since an instant, by id. */
 export function reposWithUsage(db: Database, since: string): string[] {
   return db

@@ -77,6 +77,15 @@ $67.85. Read it at `GET /api/v1/repos/:owner/:name/statement?month=YYYY-MM`
 (JSON, or `format=csv`) or print it from the app's settings
 (`/:owner/:name/settings/app/statement`); see `docs/features/statement.md`.
 
+`src/actions/money.ts` is the gap (#510): revenue is the sum of the apps'
+statements — both start from `monthUse` and `chargeOf`, so there is no second
+sum — and cost is `costOf` over the month so far. A day's cost is `costOf`
+over that day, and its revenue the sum of each app's `chargeOf`, rounded to
+the cent per app; one meter pass (`usageBins`) and one ledger read
+(`usageDays`) give all thirty days. One app's cost carries the owned box in
+proportion to its share of the forge's owned awake time this month, so the
+forge's cost is the apps' costs plus the box's unowned share. How to read it: `docs/features/money.md`.
+
 ## The order (what waits for what)
 
 | issue | what                                                         | waits for  |

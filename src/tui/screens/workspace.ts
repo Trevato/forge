@@ -158,6 +158,7 @@ import { autonomyCommands } from "./autonomy.ts";
 import { trafficCommands } from "./trafficview.ts";
 import { blockedCommands } from "./blocked.ts";
 import { statementCommands } from "./statement.ts";
+import { moneyCommands } from "./money.ts";
 import { adapterCommands } from "./adapter.ts";
 import { atlasCommands } from "./atlas.ts";
 import { externalEditor, editorHint, hasExternalEditor } from "./external.ts";
@@ -1694,6 +1695,7 @@ export function workspaceScreen(
       ...trafficCommands(f, ctx, repo),
       ...blockedCommands(f, ctx, repo),
       ...statementCommands(f, ctx, repo),
+      ...moneyCommands(f, ctx, repo),
       ...adapterCommands(f, ctx, repo),
       ...atlasCommands(f, ctx, repo),
     ],
