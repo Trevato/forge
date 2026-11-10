@@ -55,11 +55,6 @@ export const EXCLUDED: readonly Exclusion[] = [
     issue: 261,
   },
   {
-    file: "test/parity.test.ts",
-    reason: "red alone under --randomize (2026-11-10): a pull reopened, team listings and profile edits depend on earlier tests' state",
-    issue: 11049,
-  },
-  {
     file: "test/probe.test.ts",
     reason: "red alone under --randomize (2026-11-10): a scaffolded app obeys every cell: verdict mismatch, not ok",
     issue: 11049,
@@ -70,11 +65,6 @@ export const EXCLUDED: readonly Exclusion[] = [
     issue: 11049,
   },
   { file: "test/prompts.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/public-url.test.ts",
-    reason: "red alone under --randomize (2026-11-10): clone URLs name the public address: create answers 401 when run before signup",
-    issue: 11049,
-  },
   {
     file: "test/rehearsal-real.test.ts",
     reason: "red on main@accaa65 under the gate: the second real roll's old forge does not come up",
