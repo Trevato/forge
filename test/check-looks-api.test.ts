@@ -93,7 +93,7 @@ test("the commit's check carries screens and sideways; [] without a file", async
   const body = await get(`/api/v1/repos/alice/r/commits/${OID}/check`);
   expect(body.runId).toBe(run.id);
   expect(body.looks).toEqual([
-    { look: "phone /x", screens: "2.5", sideways: true },
+    { look: "phone /x", screens: "2.5", sideways: true, size: { scrollWidth: 500, scrollHeight: 2000, innerWidth: 390, innerHeight: 800 } },
     { look: "desktop", screens: "", sideways: false },
   ]);
 });
@@ -107,7 +107,7 @@ test("the pull's checks carry the same looks beside run", async () => {
   const body = await get(`/api/v1/repos/alice/r/pulls/${number}/checks`);
   expect(body.run.id).toBe(run.id);
   expect(body.looks).toEqual([
-    { look: "phone /x", screens: "1.3", sideways: false },
+    { look: "phone /x", screens: "1.3", sideways: false, size: { scrollWidth: 390, scrollHeight: 1000, innerWidth: 390, innerHeight: 800 } },
     { look: "desktop", screens: "", sideways: false },
   ]);
 });

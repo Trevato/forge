@@ -67,7 +67,7 @@ import { thumbnail } from "../design/image/image.ts";
 import { decodePng, encodePng, pngHeader } from "../design/image/png.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { writeCommitLooks } from "../checks/looks.ts";
+import { addCommitLook } from "../checks/looks.ts";
 import type { LookVitals } from "../checks/summary.ts";
 import { keepAsMain } from "./main_looks.ts";
 import { findChromium, isNoBrowser, takeLook, type Capture } from "./capture.ts";
@@ -408,8 +408,6 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         : { id: owner.id, name: owner.username, role: "admin" };
     const host = runtime.hostFor(record.slug, item.env);
     let allOk = true;
-    // What each look's page recorded, for the check summary's vitals table.
-    const vitals: LookVitals[] = [];
     for (const { page, kind, theme } of wanted) {
       if (stopped) return;
       const token = signGrant(
@@ -439,13 +437,22 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         timeoutMs: CAPTURE_TIMEOUT_MS,
       });
       // The thumb is the desktop page again, as a stranger: it adds no row.
+      // What the page recorded is filed under the commit at once, for the
+      // check summary's vitals table: a round that ends early keeps it.
       if (kind !== "thumb" && theme === "light") {
         const look = page === "/" ? kind : `${kind} ${page}`;
-        if (shot.ok) {
-          const size = shot.value.size === undefined ? {} : { size: shot.value.size };
-          vitals.push({ look, entries: shot.value.entries, ...size });
-        } else if (isNoBrowser(shot.error))
-          vitals.push({ look, skipped: "no browser" });
+        const filed: LookVitals | undefined = shot.ok
+          ? { look, entries: shot.value.entries, ...(shot.value.size === undefined ? {} : { size: shot.value.size }) }
+          : isNoBrowser(shot.error)
+            ? { look, skipped: "no browser" }
+            : undefined;
+        if (filed !== undefined) {
+          try {
+            addCommitLook(dataDir, record.repoId, item.commitOid, filed);
+          } catch (error) {
+            log.warn("vitals not recorded", { commit: item.commitOid, error: String(error) });
+          }
+        }
       }
       const taken =
         shot.ok && kind === "thumb" ? reduceToThumb(staged) : shot;
@@ -489,14 +496,6 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
           error: taken.error,
         });
         recordLook(app.db, { ...row, kind, path: "", error: taken.error });
-      }
-    }
-    // Filed under the commit: the check of it shows them whenever it exists.
-    if (vitals.length > 0) {
-      try {
-        writeCommitLooks(dataDir, record.repoId, item.commitOid, vitals);
-      } catch (error) {
-        log.warn("vitals not recorded", { commit: item.commitOid, error: String(error) });
       }
     }
     // A full set at this head is the environment's look now; the pictures

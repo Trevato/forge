@@ -31,3 +31,17 @@ they may enter, and not those of a sealed pull. A look that failed (no
 picture) is never listed. Only the pull's own preview environment is read, so
 another pull's or app's looks never appear. A pull with no app or no looks
 answers `items: []`.
+
+## The check summary's looks
+
+`GET …/pulls/:number/checks` (and `…/commits/:oid/check`) answers `looks`:
+one `{ look, screens, sideways, size? }` per look the looks service recorded
+for that commit, `size` being the measured `{ scrollWidth, scrollHeight,
+innerWidth, innerHeight }` — so `phone /preview-admin/sample/settings#move`
+can be quoted as scrollWidth vs innerWidth. They are taken only for a preview of the forge's own repository
+(`ownerLooksFor`), at the pull's head once its preview serves. Each look is
+filed under the commit the moment it is taken (`addCommitLook`), not when the
+round of about fifty ends: a round cut short by a newer head or a restart
+used to file nothing, and the next round filed only what it still lacked, so
+the check's list stayed `[]` or partial. The list now fills as the round goes,
+and is complete when `…/looks` lists every page.

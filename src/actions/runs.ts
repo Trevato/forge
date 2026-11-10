@@ -10,7 +10,7 @@
 
 import { commitVerdicts, isCommitId, releaseCheck, type CommitCheck } from "../checks/commit_check.ts";
 import { readLooks } from "../checks/looks.ts";
-import { vitalsRows } from "../checks/summary.ts";
+import { vitalsRows, type PageSize } from "../checks/summary.ts";
 import { hasCommit, isAncestor } from "../git/local.ts";
 import { repoDir } from "../git/repos.ts";
 import { mayViewId } from "../core/sealed.ts";
@@ -248,6 +248,8 @@ export interface LookFigures {
   readonly look: string;
   readonly screens: string;
   readonly sideways: boolean;
+  /** The window and page as measured (`scrollWidth` vs `innerWidth` says whether it fits); absent when none was recorded. */
+  readonly size?: PageSize;
 }
 
 /**
@@ -262,7 +264,12 @@ export function looksOfCheck(
 ): LookFigures[] {
   if (!mayReadRuns(app, actor, repo)) return [];
   const looks = readLooks(app.config.dataDir, { id: run.id, repoId: repo.id, commitOid: run.commitOid });
-  return vitalsRows(looks).map((g) => ({ look: g.look, screens: g.screens, sideways: g.sideways }));
+  return vitalsRows(looks).map((g) => ({
+    look: g.look,
+    screens: g.screens,
+    sideways: g.sideways,
+    ...(g.size === undefined ? {} : { size: g.size }),
+  }));
 }
 
 /** The own green or red verdicts of a page of commits, for whoever may read the runs; empty otherwise. */
