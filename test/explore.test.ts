@@ -241,7 +241,7 @@ describe("explore", () => {
         headers: { authorization: `Bearer ${bobToken}` },
       })
     ).text();
-    expect(signedIn).toContain('href="/alice/loved/make-it-yours"');
+    expect(signedIn).toContain('action="/alice/loved/make-it-yours"');
     const res = await fetch(`${base}/mcp`, {
       method: "POST",
       headers: {
@@ -303,9 +303,9 @@ describe("explore", () => {
     const asBob = await (
       await fetch(`${base}/explore`, { headers: { authorization: `Bearer ${bobToken}` } })
     ).text();
-    expect(asBob).toContain('href="/alice/loved/make-it-yours"');
+    expect(asBob).toContain('action="/alice/loved/make-it-yours"');
     // alice/gated is a public repository whose app only its writers enter.
-    expect(asBob).not.toContain('href="/alice/gated/make-it-yours"');
+    expect(asBob).not.toContain('action="/alice/gated/make-it-yours"');
     const rows = (await api("kind:app", bobToken)).items;
     expect(rows.find((r) => r.name === "alice/gated").copyable).toBe(false);
     expect(rows.find((r) => r.name === "alice/loved").copyable).toBe(true);
@@ -313,7 +313,7 @@ describe("explore", () => {
     const asAlice = await (
       await fetch(`${base}/explore`, { headers: { authorization: `Bearer ${aliceToken}` } })
     ).text();
-    expect(asAlice).not.toContain('href="/alice/loved/make-it-yours"');
+    expect(asAlice).not.toContain('action="/alice/loved/make-it-yours"');
   });
 
   test("Make it yours is offered to a signed-out visitor on public apps only, linking to the make-it-yours path", async () => {
@@ -324,7 +324,7 @@ describe("explore", () => {
     expect(rows.find((r) => r.name === "alice/gated").copyable).toBe(false);
     expect(rows.find((r) => r.name === "alice/secret")).toBeUndefined();
     const page = await (await fetch(`${base}/explore`)).text();
-    expect(page).toContain('href="/alice/loved/make-it-yours"');
+    expect(page).toContain('href="/alice/loved/make-it-yours?receipt=1"');
     expect(page).not.toContain('href="/alice/gated/make-it-yours"');
     expect(page).not.toContain("alice/secret");
   });

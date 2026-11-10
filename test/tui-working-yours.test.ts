@@ -7,9 +7,11 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createRepo } from "../src/actions/repos.ts";
+import { newApp } from "../src/actions/apps.ts";
+import { makeItYours } from "../src/actions/make_it_yours.ts";
+import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
-import type { Repo } from "../src/core/repos.ts";
+import { getRepo, type Repo } from "../src/core/repos.ts";
 import { createIssue } from "../src/core/issues.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
@@ -19,6 +21,7 @@ import { local } from "../src/tui/screens/where.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
+import { promote } from "./helpers/members.ts";
 import { proveAll } from "./helpers/verified.ts";
 
 quietLogs();
@@ -38,7 +41,7 @@ const SHOW_MS = 2000;
  * caller expects a row (`shows`) that row is on screen. A negative assertion
  * made on the result therefore reads a drawn list, not an empty frame.
  */
-async function palette(user: User, keys: string[], shows?: string): Promise<string> {
+async function palette(user: User, keys: string[], shows?: string, on: Repo = repo): Promise<string> {
   const terminal = headlessTerminal(120, 40);
   const { app: tui, session } = createForgeApp(
     app,
@@ -46,7 +49,7 @@ async function palette(user: User, keys: string[], shows?: string): Promise<stri
     { terminal, exitHooks: false },
   );
   tui.start();
-  tui.ctx.push(repoScreen(session, tui.ctx, local(session, repo)));
+  tui.ctx.push(repoScreen(session, tui.ctx, local(session, on)));
   await settleApp(tui);
   for (const k of keys) {
     terminal.feed(k);
@@ -129,5 +132,49 @@ describe("make it yours in the terminal", () => {
   test("it opens the make-it-yours screen", async () => {
     const text = await palette(bob, [":", "make it", "\r"], "your own");
     expect(text).toContain("Make alice/lobby your own");
+  });
+});
+
+describe("undo make it yours in the terminal", () => {
+  let garden: Repo;
+  beforeAll(async () => {
+    promote(app.db, bob);
+    const made = await newApp(app, alice, { name: "garden", description: "garden", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    garden = getRepo(app.db, "alice", "garden")!;
+  }, 60_000);
+
+  const copy = async (): Promise<Repo> => {
+    const made = await makeItYours(app, bob, garden, { dryRun: false });
+    if (!made.ok) throw new Error(made.error.kind);
+    return getRepo(app.db, "bob", "garden")!;
+  };
+  const undo = (shows: string) => palette(bob, [":", "Undo make", "\r", "\r"], shows, garden);
+
+  test("offered only once a copy exists", async () => {
+    expect(getRepo(app.db, "bob", "garden")).toBeUndefined();
+    expect(await palette(bob, [":", "Undo make"], undefined, garden)).not.toContain("Undo make it yours");
+    await copy();
+    expect(await palette(bob, [":", "Undo make"], "Undo make it yours", garden)).toContain(
+      "alice/garden — Undo make it yours",
+    );
+  });
+
+  test("confirming removes the copy and leaves the original", async () => {
+    if (getRepo(app.db, "bob", "garden") === undefined) await copy();
+    expect(await undo("is removed")).toContain("bob/garden is removed. The original was not touched.");
+    expect(getRepo(app.db, "bob", "garden")).toBeUndefined();
+    expect(getRepo(app.db, "alice", "garden")).toBeDefined();
+  });
+
+  test("a copy with commits of its own is kept, and the toast says why", async () => {
+    const mine = await copy();
+    const c = await commitToBranch(app, bob, mine, {
+      message: "mine",
+      files: [{ path: "mine.txt", content: "x\n" }],
+    });
+    expect(c.ok).toBe(true);
+    expect(await undo("so it is kept")).toContain("bob/garden has changes of your own, so it is kept.");
+    expect(getRepo(app.db, "bob", "garden")).toBeDefined();
   });
 });

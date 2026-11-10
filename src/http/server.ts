@@ -290,6 +290,8 @@ import { isPacksMirror, MIRROR_PUSH_REFUSED } from "../packs/owner.ts";
 import { packPage, packsMirror, packsPage } from "../web/pages/packs.ts";
 import {
   makeItYoursPage,
+  makeItYoursReceipt,
+  makeItYoursUndo,
   makeItYoursSubmit,
 } from "../web/studio/make_it_yours.ts";
 import {
@@ -1437,6 +1439,8 @@ export function buildRouter(): Router<Handler> {
   // Make it yours (#606): a fork with its app, planned, then made.
   router.add("GET", "/:owner/:name/make-it-yours", makeItYoursPage);
   router.add("POST", "/:owner/:name/make-it-yours", makeItYoursSubmit);
+  router.add("GET", "/:owner/:name/make-it-yours/receipt", makeItYoursReceipt);
+  router.add("POST", "/:owner/:name/make-it-yours/undo", makeItYoursUndo);
   // The toolbar's actions (#810): the bar links here, the forms post here.
   router.add("GET", "/:owner/:name/toolbar", toolbarPage);
   router.add("POST", "/:owner/:name/toolbar/comment", toolbarComment);

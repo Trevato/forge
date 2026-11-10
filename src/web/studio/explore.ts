@@ -48,7 +48,7 @@ function numbers(row: ExploreRow): { apps: string; rest: string } {
   };
 }
 
-function rowHtml(row: ExploreRow): Html {
+function rowHtml(row: ExploreRow, signedIn: boolean): Html {
   const { apps, rest } = numbers(row);
   // One tap from a person to their apps; with none, the count is plain text.
   const theirs = href({ kind: "app", sort: "score", text: "", archived: false, updated: "all", owner: row.name });
@@ -64,11 +64,16 @@ function rowHtml(row: ExploreRow): Html {
     ...(parts.length === 0 ? {} : { meta: metaHtml }),
     ...(row.copyable === true && row.repo !== undefined
       ? {
-          trail: btn("Make it yours", {
-            href: `/${row.repo.owner}/${row.repo.name}/make-it-yours`,
-            size: "sm",
-            icon: "fork",
-          }),
+          trail: signedIn
+            ? html`<form method="post" action="/${row.repo.owner}/${row.repo.name}/make-it-yours" data-make-it-yours>
+                <input type="hidden" name="receipt" value="1" />
+                ${btn("Make it yours", { size: "sm", icon: "fork" })}
+              </form>`
+            : btn("Make it yours", {
+                href: `/${row.repo.owner}/${row.repo.name}/make-it-yours?receipt=1`,
+                size: "sm",
+                icon: "fork",
+              }),
         }
       : {}),
   });
@@ -217,7 +222,10 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
     </div>
     ${rows.length === 0
       ? emptyState(ctx, query)
-      : card(html`<ul class="list">${rows.map(rowHtml)}</ul>`, { pad: false, extra: "bare" })}</div>`;
+      : card(html`<ul class="list">${rows.map((r) => rowHtml(r, ctx.auth.user !== undefined))}</ul>`, {
+          pad: false,
+          extra: "bare",
+        })}</div>`;
   const drawn = page({ ctx, title: "Explore", body });
   // An unknown filter is a 422 here as on the API and the MCP; the page still draws the note and the results.
   const response = unknown.length === 0 ? drawn : new Response(drawn.body, { status: 422, headers: drawn.headers });

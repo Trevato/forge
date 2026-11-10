@@ -41,6 +41,7 @@ const REDIRECTS = new Set([
   "/alice/forge/changes",
   "/alice/forge/files",
   "/alice/forge/following",
+  "/alice/forge/make-it-yours/receipt",
   "/alice/forge/settings/autonomy",
   "/alice/forge/settings/crew",
   "/alice/forge/tells",
