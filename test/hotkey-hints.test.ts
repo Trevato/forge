@@ -121,10 +121,10 @@ test("an element does not carry the key twice: no title beside its data-hint", a
   }
 });
 
-test("? lays the hints over the page and a second press clears them and opens the help; Escape clears", () => {
+test("? opens the help at once, Alt lays the hints; Escape clears them", () => {
   const client = readFileSync("src/web/client.ts", "utf8");
-  expect(client).toContain("hasAttribute('data-hints')) { hints(false); openHelp(); } else hints(true)");
-  expect(client).toContain("e.key === 'Escape') hints(false)");
+  expect(client).toContain("hints(false); openHelp();");
+  expect(client).toContain("escClosedHints = doc.documentElement.hasAttribute('data-hints');");
 });
 
 test("holding Option reveals hints; releasing or leaving hides them", () => {

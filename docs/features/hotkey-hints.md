@@ -5,7 +5,7 @@ Every action with a key shows it without taking room. Hints are never a box in t
 **See them**
 - **Hover or keyboard focus** on a control: its key appears as a small tooltip. This is CSS alone and works with JavaScript off.
 - **Hold Option (Alt)**: every hinted control shows its key at once; release to hide.
-- **`?`**: the same overlay, kept until you press Escape or `?` again (the second `?` clears them and opens the full help).
+- **`?`**: opens the one help sheet on the first press (#10710). Escape clears hints first and does nothing else.
 - Touch screens never draw hints. Menu and palette rows keep their key in a column of their own.
 
 **For builders**

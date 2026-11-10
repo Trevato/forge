@@ -211,9 +211,9 @@ function proposalBody(ctx: Ctx, d: Decision): Html | null {
 function decisionCard(ctx: Ctx, d: Decision, picked: ReadonlySet<string>): Html {
   const base = repoBase(d.repo);
   const title = d.pull
-    ? html`<a href="${changeHref(base, d.pull.number)}">${d.pull.title}</a>`
+    ? html`<a href="${changeHref(base, d.pull.number)}" data-nav>${d.pull.title}</a>`
     : d.issue
-      ? html`<a href="${base}/issues/${d.issue.number}">${d.issue.title}</a>`
+      ? html`<a href="${base}/issues/${d.issue.number}" data-nav>${d.issue.title}</a>`
       : d.proposal
         ? html`${d.proposal.title}`
         : html`<a href="${base}/settings/autonomy">Paused</a>`;
@@ -320,7 +320,7 @@ function rowCard(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Ht
       const box = pick(d, picked);
       return row({
         ...(box === null ? {} : { lead: box }),
-        title: html`<a href="${href}">${d.pull?.title ?? d.issue?.title ?? ""}</a>`,
+        title: html`<a href="${href}" data-nav>${d.pull?.title ?? d.issue?.title ?? ""}</a>`,
         meta: acts(ctx, d),
       });
   });

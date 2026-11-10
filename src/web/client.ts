@@ -1483,6 +1483,40 @@ const shellCore = /* js */ `
     next.focus();
     next.scrollIntoView({ block: 'nearest' });
   }
+  // Esc returns to the list a row was opened from, and the list focuses that
+  // row again: the place is kept in sessionStorage for this tab only.
+  function place(k, v) { try { if (v == null) sessionStorage.removeItem(k); else sessionStorage.setItem(k, v); } catch (_) {} }
+  function placed(k) { try { return sessionStorage.getItem(k); } catch (_) { return null; } }
+  doc.addEventListener('click', function (e) {
+    var a = e.target.closest ? e.target.closest('[data-nav]') : null;
+    if (a && !a.matches('a')) a = a.querySelector('a');
+    if (a && a.pathname) place('nav-from', JSON.stringify({ list: location.pathname + location.search, to: a.pathname, href: a.getAttribute('href') }));
+  });
+  // A stored place is only ever read back through this: a malformed or
+  // foreign value is no place, and never throws inside a key handler.
+  function fromPlace() {
+    try {
+      var v = JSON.parse(placed('nav-from') || 'null');
+      return v && typeof v.list === 'string' && typeof v.to === 'string' && v.list.charAt(0) === '/' && v.list.charAt(1) !== '/' ? v : null;
+    } catch (_) { return null; }
+  }
+  (function () {
+    var from = fromPlace();
+    if (!from) return;
+    if (location.pathname + location.search === from.list) {
+      place('nav-from', null);
+      var back = rows().filter(function (r) { var a = r.matches('a') ? r : r.querySelector('a'); return a && a.getAttribute('href') === from.href; })[0];
+      if (back) { back.focus(); back.scrollIntoView({ block: 'nearest' }); }
+    }
+  })();
+  function leaveToList() {
+    var from = fromPlace();
+    // The thing on top closes first: an open dialog or menu keeps its Escape.
+    if (doc.querySelector('dialog[open], details.menu[open]')) return false;
+    if (!from || location.pathname !== from.to || doc.querySelector('[data-nav]')) return false;
+    location.assign(from.list);
+    return true;
+  }
   function openFocused() {
     var el = doc.activeElement.closest ? doc.activeElement.closest('[data-nav]') : null;
     var link = el && (el.matches('a') ? el : el.querySelector('a'));
@@ -1517,7 +1551,13 @@ const shellCore = /* js */ `
   function hints(on) { if (on) doc.documentElement.setAttribute('data-hints', ''); else doc.documentElement.removeAttribute('data-hints'); }
   doc.addEventListener('keydown', function (e) { if (e.key === 'Alt') hints(true); });
   doc.addEventListener('keyup', function (e) { if (e.key === 'Alt') hints(false); });
-  doc.addEventListener('keydown', function (e) { if (e.key === 'Escape') hints(false); });
+  // Escape clears the hints and is then spent: it leaves nothing else.
+  var escClosedHints = false;
+  doc.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    escClosedHints = doc.documentElement.hasAttribute('data-hints');
+    hints(false);
+  });
   window.addEventListener('blur', function () { hints(false); });
   doc.addEventListener('keydown', function (e) {
     var t = e.target;
@@ -1541,6 +1581,9 @@ const shellCore = /* js */ `
       return;
     }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === 'Escape' && e.defaultPrevented) return;
+    if (e.key === 'Escape' && escClosedHints) { escClosedHints = false; e.preventDefault(); return; }
+    if (e.key === 'Escape' && leaveToList()) { e.preventDefault(); return; }
     if (Date.now() - last > 1200) seq.length = 0;
     last = Date.now();
     seq.push(e.key);
@@ -1566,8 +1609,8 @@ const shellCore = /* js */ `
       if (box) { seq.length = 0; e.preventDefault(); box.focus(); box.select(); }
     } else if (e.key === '?') {
       seq.length = 0; e.preventDefault();
-      // First press lays the keys over the page; the second clears them and opens the help.
-      if (doc.documentElement.hasAttribute('data-hints')) { hints(false); openHelp(); } else hints(true);
+      // One press, one sheet: the help opens at once (Option still lays the keys over the page).
+      hints(false); openHelp();
     }
     else if (e.key === ':') { seq.length = 0; e.preventDefault(); openGoto(); }
   });
