@@ -166,9 +166,9 @@ export function cardFor(
     const week = list(v["keeperDays"]).reduce<number>((n, d) => n + (Number(obj(d)["landed"]) || 0), 0);
     const crewStatus = `${week} landed this week`;
     for (const a of agents.slice(0, LIMIT)) {
-      const r = obj(a["recent"]);
-      const red = typeof r["redCheckRate"] === "number" ? `${Math.round(r["redCheckRate"] * 100)}% red` : "no checks";
-      rows.push({ label: text(a["username"]), value: `${Number(r["landed"]) || 0} landed this month · ${red}` });
+      const w = obj(a["week"]);
+      const wk = `${Number(w["merged"]) || 0} merged · ${Number(w["returned"]) || 0} returned · $${(Number(w["cost"]) || 0).toFixed(2)} this week`;
+      rows.push({ label: text(a["username"]), value: wk });
     }
     // The card shows LIMIT agents; the rest are counted, never dropped silently.
     if (agents.length > LIMIT) rows.push({ label: "More", value: `+${agents.length - LIMIT} more` });
