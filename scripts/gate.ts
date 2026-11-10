@@ -32,13 +32,7 @@ export type Exclusion = {
   issue: number;
 };
 
-export const EXCLUDED: readonly Exclusion[] = [
-  {
-    file: "test/rehearsal-real.test.ts",
-    reason: "green alone (3 of 3, 2026-11-10) but unproven under the gate's load, where on main@accaa65 the second real roll's old forge did not come up",
-    issue: 11098,
-  },
-];
+export const EXCLUDED: readonly Exclusion[] = [];
 
 /**
  * Everything wrong with the quarantine, against the test files that exist:
@@ -120,8 +114,8 @@ export async function treeGate(tree: string, key: string): Promise<string[]> {
  * What the check prints when the quarantine is wrong: every problem, then
  * one last line naming the files to fix. Empty when it is right.
  */
-export function gateRefusal(present: readonly string[]): string[] {
-  const problems = auditGate(present, EXCLUDED);
+export function gateRefusal(present: readonly string[], excluded: readonly Exclusion[] = EXCLUDED): string[] {
+  const problems = auditGate(present, excluded);
   if (problems.length === 0) return [];
   const named = [
     ...new Set(problems.map((p) => p.match(/^(test\/\S+\.test\.ts) /)?.[1])),

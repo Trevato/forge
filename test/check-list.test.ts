@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { auditGate, EXCLUDED, gateFiles, gateRefusal, treeGate } from "../scripts/gate.ts";
@@ -94,6 +94,17 @@ describe("auditGate", () => {
   });
 });
 
+describe("gateRefusal", () => {
+  test("a stale exclusion is named, and the last line names the file to fix", () => {
+    const stale = [{ file: "test/gone.test.ts", reason: "slow", issue: 3 }];
+    expect(gateRefusal(["test/a.test.ts"], stale)).toEqual([
+      "test/gone.test.ts is in EXCLUDED but does not exist",
+      "test/gone.test.ts: fix its EXCLUDED entry in scripts/gate.ts",
+    ]);
+    expect(gateRefusal(["test/a.test.ts"], [])).toEqual([]);
+  });
+});
+
 describe("treeGate: the gate an older commit's tree names", () => {
   const tree = (gate: string, tests: string[]): string => {
     const dir = mkdtempSync(join(tmpdir(), "forge-tree-gate-"));
@@ -117,8 +128,10 @@ describe("treeGate: the gate an older commit's tree names", () => {
   });
 
   test("a later tree derives it from its own test files minus EXCLUDED", async () => {
-    const dir = tree("", ["test/a.test.ts", "test/zz-new.test.ts", EXCLUDED[0]!.file]);
-    copyFileSync(`${root}scripts/gate.ts`, join(dir, "scripts/gate.ts"));
+    const dir = tree("", ["test/a.test.ts", "test/zz-new.test.ts", "test/zz-out.test.ts"]);
+    const real = readFileSync(`${root}scripts/gate.ts`, "utf8");
+    const out = '[{ file: "test/zz-out.test.ts", reason: "r", issue: 1 }]';
+    writeFileSync(join(dir, "scripts/gate.ts"), real.replace(/(export const EXCLUDED[^=\n]*= )\[[^\]]*\];/, `$1${out};`));
     try {
       expect(await treeGate(dir, "new")).toEqual(["test/a.test.ts", "test/zz-new.test.ts"]);
     } finally {
