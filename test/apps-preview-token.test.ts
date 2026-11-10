@@ -14,6 +14,8 @@ import { NOT_ENTITLED_WORDS } from "../src/apps/proxy.ts";
 import type { AppRecord } from "../src/core/apps.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { mintRunToken } from "../src/core/run_token.ts";
+import { mintProposalToken } from "../src/core/proposal_token.ts";
+import { mintViaToken } from "../src/core/via_token.ts";
 import { createIssue } from "../src/core/issues.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
@@ -166,6 +168,20 @@ describe("a bearer token on an app's host", () => {
       new Date(Date.now() + 3_600_000).toISOString(),
     ).token;
     expect((await get(host(), elsewhere)).status).toBe(404);
+  });
+
+  test("a proposal token and a conversation's token never enter an app as the writer who minted them", async () => {
+    // A proposal token is a writer's rw token held by a child forge; a via
+    // token is for /mcp alone. Neither is a person at an app's door.
+    const proposal = mintProposalToken(app.db, alice.id, repo.id, { child: "kid", origin: "https://kid.test" });
+    if (!proposal.ok) throw new Error(proposal.error);
+    const via = mintViaToken(app.db, alice.id, "conversation:c1", "hi", new Date(Date.now() + 600_000).toISOString());
+    if (!via.ok) throw new Error(via.error);
+    for (const token of [proposal.value.token, via.value.token]) {
+      const res = await get(host(), token);
+      expect(res.status).toBe(404);
+      expect(await res.text()).toBe("not found");
+    }
   });
 
   test("a reader who may not enter is told what to do; a stranger is not", async () => {
