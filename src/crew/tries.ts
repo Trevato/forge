@@ -14,9 +14,9 @@ import { listRuns } from "../core/runs.ts";
 import { runGitCapture } from "../git/env.ts";
 
 const OID = /^[0-9a-f]{40,64}$/;
-/** Tries told, newest kept: the reason is three lines with its first. */
-const TRIES_TOLD = 2;
-const FILES_PER_TRY = 4;
+/** Tries told, newest kept. */
+const TRIES_TOLD = 5;
+const FILES_PER_TRY = 10;
 const LINE_MAX = 160;
 
 /** `try 2: src/a.ts, src/b.ts (+3 more)`, one per line, oldest first; empty when none can be read. */
@@ -27,17 +27,23 @@ export async function triesChanged(
   since: string,
 ): Promise<string[]> {
   const heads: string[] = [];
+  let earlier: string | undefined;
   for (const run of listRuns(app.db, repo.id, { issueId: pull.id, limit: 50 })
     .reverse()) {
     if (run.kind !== "check" && run.kind !== "deploy") continue;
-    if (run.state !== "failed" || run.createdAt <= since) continue;
+    if (run.state !== "failed") continue;
     if (!OID.test(run.commitOid) || heads.includes(run.commitOid)) continue;
+    // A try a person has answered is not told, but the first told one changed only what came after it.
+    if (run.createdAt <= since) {
+      earlier = run.commitOid;
+      continue;
+    }
     heads.push(run.commitOid);
   }
   if (heads.length === 0) return [];
   const dir = await pullDir(app.db, app.reposRoot, repo, pull);
   const lines: string[] = [];
-  let before = pull.baseOid;
+  let before = earlier ?? pull.baseOid;
   for (const [n, head] of heads.entries()) {
     const out = OID.test(before)
       ? await runGitCapture(

@@ -103,7 +103,7 @@ import {
   autonomyTick,
   landIfGreen,
   parkForBreaker,
-  parkPull,
+  parkPullTold,
   settleAgentRun,
   spentToday,
 } from "./autonomy.ts";
@@ -940,19 +940,27 @@ function answerRed(
   const since = lastHumanWord(app, issue, agent);
   if (automaticRunsSince(app.db, issue.id, since) >= CHECK_FAILED_LIMIT) {
     const pull = getPull(app.db, repo.id, issue.number);
-    if (
-      pull &&
-      parkPull(
-        app,
-        repo,
-        pull,
-        `the check stayed red through ${CHECK_FAILED_LIMIT} automatic tries`,
-      )
+    const waiting = () =>
+      log.info("check failed again; waiting for a person", {
+        issue: issue.number,
+      });
+    if (pull === undefined) return waiting();
+    parkPullTold(
+      app,
+      repo,
+      pull,
+      `the check stayed red through ${CHECK_FAILED_LIMIT} automatic tries`,
+      since,
     )
-      return;
-    log.info("check failed again; waiting for a person", {
-      issue: issue.number,
-    });
+      .then((parked) => {
+        if (!parked) waiting();
+      })
+      .catch((error) =>
+        log.error("parking a red pull failed", {
+          issue: issue.number,
+          error: String(error),
+        }),
+      );
     return;
   }
   const runId = payload["runId"];

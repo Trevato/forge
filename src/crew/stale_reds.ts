@@ -34,7 +34,7 @@ import { createLog } from "../kernel/log.ts";
 import { authorsInRepoPull } from "./authors_pull.ts";
 import { agentFor, CHECK_FAILED_LIMIT, lastHumanWord, queueAgentRun } from "./dispatch.ts";
 import { approvedOnHead } from "./finishing.ts";
-import { parkPull } from "./park_pull.ts";
+import { parkPullTold } from "./park_pull.ts";
 import { failingLine } from "./red_approved.ts";
 
 const log = createLog("stale-reds");
@@ -161,7 +161,7 @@ export async function sweepStaleReds(
     const since = lastHumanWord(app, issue, agent);
     if (automaticRunsSince(app.db, issue.id, since) >= CHECK_FAILED_LIMIT) {
       const why = `the check stayed red through ${CHECK_FAILED_LIMIT} automatic tries: ${failingLine(red.run)}`;
-      if (parkPull(app, repo, pull, why)) moves.push({ pull: pull.number, did: "parked" });
+      if (await parkPullTold(app, repo, pull, why, since)) moves.push({ pull: pull.number, did: "parked" });
       continue;
     }
 

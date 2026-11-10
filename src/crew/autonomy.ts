@@ -142,7 +142,7 @@ import { approvedOnHead, finishApproved, finishFields } from "./finishing.ts";
 import { recheckRedApproved } from "./red_approved.ts";
 import { sweepStaleReds } from "./stale_reds.ts";
 import { sweepStranded } from "./stranded.ts";
-import { parkPull, strikeNote } from "./park_pull.ts";
+import { parkPull, parkPullTold, strikeNote } from "./park_pull.ts";
 import { keepVerdict } from "../flow/culprits.ts";
 import { sweepRepeats } from "./repeat_checks.ts";
 import { breathe } from "../kernel/breathe.ts";
@@ -157,7 +157,7 @@ import { bootCounts } from "../kernel/boots.ts";
 
 const log = createLog("autonomy");
 
-export { parkPull };
+export { parkPull, parkPullTold };
 
 export const AUTONOMY_TICK_MS = 60_000;
 /**

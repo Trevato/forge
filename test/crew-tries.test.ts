@@ -16,6 +16,9 @@ import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { resolveOid } from "../src/git/merge.ts";
 import { repoDir } from "../src/git/repos.ts";
+import { openIssue } from "../src/actions/issues.ts";
+import { listComments } from "../src/core/issues.ts";
+import { parkPullTold } from "../src/crew/park_pull.ts";
 import { triesChanged } from "../src/crew/tries.ts";
 
 const at = (n: number) => `2026-01-01T00:00:${String(n).padStart(2, "0")}.000Z`;
@@ -141,8 +144,7 @@ describe("triesChanged", () => {
     run(p, h2, "failed", 2, "deploy");
     run(p, h3, "failed", 3);
     const all = await triesChanged(app, fresh(), p, EPOCH);
-    // Only the last TRIES_TOLD (2) lines come back, numbered by their place.
-    expect(all).toEqual(["try 2: src/b.ts", "try 3: src/a.ts, src/c.ts"]);
+    expect(all).toEqual(["try 1: first-" + branchN + ".txt, src/a.ts", "try 2: src/b.ts", "try 3: src/a.ts, src/c.ts"]);
 
     // With one try the first line says the files since the base.
     const { pull: q, branch: qb } = await newPull();
@@ -164,7 +166,7 @@ describe("triesChanged", () => {
     run(p, red, "failed", 7);
     run(p, "not-an-oid", "failed", 8);
     run(p, "", "failed", 9);
-    expect(await triesChanged(app, fresh(), p, at(2))).toEqual([`try 1: first-${branchN}.txt, green.ts, old.ts, red.ts`]);
+    expect(await triesChanged(app, fresh(), p, at(2))).toEqual(["try 1: green.ts, red.ts"]);
     expect(await triesChanged(app, fresh(), p, at(9))).toEqual([]);
   });
 
@@ -186,11 +188,11 @@ describe("triesChanged", () => {
     const { pull: p, branch } = await newPull();
     const many = await commit(
       branch,
-      ["a", "b", "c", "d", "e", "f"].map((n) => ({ path: `m/${n}.ts`, content: `${n}\n` })),
+      ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"].map((n) => ({ path: `m/${n}.ts`, content: `${n}\n` })),
     );
     run(p, many, "failed", 1);
     expect(await triesChanged(app, fresh(), p, EPOCH)).toEqual([
-      `try 1: first-${branchN}.txt, m/a.ts, m/b.ts, m/c.ts (+3 more)`,
+      `try 1: first-${branchN}.txt, m/a.ts, m/b.ts, m/c.ts, m/d.ts, m/e.ts, m/f.ts, m/g.ts, m/h.ts, m/i.ts (+2 more)`,
     ]);
 
     const long = "d".repeat(100);
@@ -215,5 +217,97 @@ describe("triesChanged", () => {
     expect(lines).toEqual([`try 1: first-${branchN}.txt, ${odd}`]);
     expect(lines[0]).toContain("<img src=x onerror=alert(1)>");
     expect(lines[0]).not.toContain("&lt;");
+  });
+
+  test("a park note on the issue tells each failed try's files when the pull went red twice", async () => {
+    app.db
+      .query("UPDATE repo SET autonomy = 'autonomous', autonomy_by = ?2 WHERE id = ?1")
+      .run(repo.id, alice.id);
+    const issue = openIssue(app, alice, fresh(), { title: "Do it" });
+    if (!issue.ok) throw new Error(String(issue.error));
+    const branch = `feature/park-${++branchN}`;
+    const c = await commitToBranch(app, alice, fresh(), {
+      branch,
+      base: "main",
+      message: "First",
+      files: [{ path: "first.txt", content: "1\n" }],
+    });
+    if (!c.ok) throw new Error(JSON.stringify(c.error));
+    const opened = await openPull(app, alice, fresh(), {
+      title: "Park",
+      body: `Closes #${issue.value.number}`,
+      baseBranch: "main",
+      headBranch: branch,
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const p = opened.value;
+    const h1 = await commit(branch, [{ path: "src/a.ts", content: "a\n" }]);
+    const h2 = await commit(branch, [{ path: "src/b.ts", content: "b\n" }]);
+    run(p, h1, "failed", 1);
+    run(p, h2, "failed", 2);
+    // An agent's pull, so the crew may park it.
+    expect(await parkPullTold(app, fresh(), { ...p, authorIsAgent: true }, "the check stayed red", "")).toBe(true);
+    const note = listComments(app.db, issue.value.id).at(-1)!.body;
+    expect(note).toContain("try 1: first.txt, src/a.ts");
+    expect(note).toContain("try 2: src/b.ts");
+  });
+
+  test("tries from before the last human word are left out of the note", async () => {
+    app.db
+      .query("UPDATE repo SET autonomy = 'autonomous', autonomy_by = ?2 WHERE id = ?1")
+      .run(repo.id, alice.id);
+    const issue = openIssue(app, alice, fresh(), { title: "Again" });
+    if (!issue.ok) throw new Error(String(issue.error));
+    const branch = `feature/since-${++branchN}`;
+    const c = await commitToBranch(app, alice, fresh(), {
+      branch, base: "main", message: "First", files: [{ path: "first.txt", content: "1\n" }],
+    });
+    if (!c.ok) throw new Error(JSON.stringify(c.error));
+    const opened = await openPull(app, alice, fresh(), {
+      title: "Since", body: `Closes #${issue.value.number}`, baseBranch: "main", headBranch: branch,
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const p = opened.value;
+    const old = await commit(branch, [{ path: "src/old.ts", content: "o\n" }]);
+    const h1 = await commit(branch, [{ path: "src/new1.ts", content: "a\n" }]);
+    const h2 = await commit(branch, [{ path: "src/new2.ts", content: "b\n" }]);
+    run(p, old, "failed", 1);
+    run(p, h1, "failed", 20);
+    run(p, h2, "failed", 21);
+    const told = await parkPullTold(app, fresh(), { ...p, authorIsAgent: true }, "red", at(10));
+    expect(told).toBe(true);
+    const note = listComments(app.db, issue.value.id).at(-1)!.body;
+    expect(note).toContain("src/new1.ts");
+    expect(note).toContain("src/new2.ts");
+    expect(note).not.toContain("src/old.ts");
+  });
+
+  test("two parks racing write one note", async () => {
+    app.db
+      .query("UPDATE repo SET autonomy = 'autonomous', autonomy_by = ?2 WHERE id = ?1")
+      .run(repo.id, alice.id);
+    const issue = openIssue(app, alice, fresh(), { title: "Race" });
+    if (!issue.ok) throw new Error(String(issue.error));
+    const branch = `feature/race-${++branchN}`;
+    const c = await commitToBranch(app, alice, fresh(), {
+      branch, base: "main", message: "First", files: [{ path: "first.txt", content: "1\n" }],
+    });
+    if (!c.ok) throw new Error(JSON.stringify(c.error));
+    const opened = await openPull(app, alice, fresh(), {
+      title: "Race", body: `Closes #${issue.value.number}`, baseBranch: "main", headBranch: branch,
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const p = { ...opened.value, authorIsAgent: true };
+    const h1 = await commit(branch, [{ path: "src/a.ts", content: "a\n" }]);
+    const h2 = await commit(branch, [{ path: "src/b.ts", content: "b\n" }]);
+    run(p, h1, "failed", 1);
+    run(p, h2, "failed", 2);
+    const results = await Promise.all([
+      parkPullTold(app, fresh(), p, "red", ""),
+      parkPullTold(app, fresh(), p, "red", ""),
+    ]);
+    expect(results.filter(Boolean)).toHaveLength(1);
+    const notes = listComments(app.db, issue.value.id).filter((x) => x.body.includes("try 1:"));
+    expect(notes).toHaveLength(1);
   });
 });
