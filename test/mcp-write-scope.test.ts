@@ -42,6 +42,11 @@ const ADMIN_ARGS: Record<string, Record<string, unknown>> = {
   rollback: { sha: "a".repeat(40), dryRun: false },
 };
 
+/** Valid arguments for a tool whose write is one call among reads and plans (`readsWhen`): the generic arguments would only read. */
+const WRITE_ARGS: Record<string, Record<string, unknown>> = {
+  flow: { kind: "drift", action: "update", repo: "alice/game", pull: 1 },
+};
+
 /** What `visible()` answers for a tool the token's scope does not open. */
 const notListed = (body: any): boolean =>
   body.error?.code === -32602 && String(body.error.message).startsWith("no tool named");
@@ -99,8 +104,7 @@ describe("a token that may only read cannot write through any tool", () => {
   /** Minimal arguments that make the call a real write, not a plan or a list. */
   const writing = (t: ReturnType<typeof toolRegistry>[number]) => {
     if (t.name in ADMIN_ARGS) return ADMIN_ARGS[t.name]!;
-    // `flow` reads unless it is asked to update a drifting pull (#10959).
-    if (t.name === "flow") return { action: "update", kind: "drift", repo: "alice/game", pull: 1 };
+    if (t.name in WRITE_ARGS) return WRITE_ARGS[t.name]!;
     const args: Record<string, unknown> = { dryRun: false, action: "x" };
     if (t.readsWithout !== undefined) args[[t.readsWithout].flat()[0]!] = "x";
     return args;

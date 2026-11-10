@@ -34,8 +34,8 @@ afterAll(async () => {
 });
 
 test("a stall under a named job is read through system, at most 10, most ms first", async () => {
-  // Let every request other tests in this process finished fall outside the 300 ms window, so only the job ran across it.
-  await Bun.sleep(320);
+  // A stall is blamed on a request first: let any request an earlier file in this process ran fall out of the stall's window.
+  await Bun.sleep(400);
   during("test-job-10907", () => 1);
   loopWatch.stalled(300, performance.now());
   const res = await fetch(`${servers.url}/mcp`, {

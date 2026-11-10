@@ -146,7 +146,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
   const suggestion = exploreSuggestion(line);
   const ranking = performance.now();
   const rows = await explore(ctx.app, ctx.auth.user, query);
-  notePhase(ctx.request, "rank", performance.now() - ranking);
+  notePhase(ctx.request, "read", performance.now() - ranking);
   const rendering = performance.now();
   const kinds = [
     { label: "All", kind: "all" as const },
