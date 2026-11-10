@@ -42,6 +42,7 @@ import { createBranch } from "../../actions/branches.ts";
 import { NAME_THE_BRANCH } from "../../actions/branch_words.ts";
 import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
 import { isPinned } from "../../core/pins.ts";
+import { creditOf, creditText } from "../../core/credit.ts";
 import { setDecisionsBy } from "../../actions/repos.ts";
 import { stopMirroring } from "../../actions/mirror_target.ts";
 import { getMirrorTarget, mirrorLine } from "../../core/migrate_mirror.ts";
@@ -965,6 +966,18 @@ export function workspaceScreen(
     await loadTab(made);
   };
 
+  /** A mirror's credit line (#10531), the same sentence the web page prints; empty until read. */
+  let creditWords = "";
+  const askCredit = async (mine: number): Promise<void> => {
+    if (repo === undefined || ref === "") return;
+    const credit = await creditOf(f.db, f.app.reposRoot, repo, f.user, src, ref);
+    if (stale(mine)) return;
+    const words = credit === undefined ? "" : creditText(credit);
+    if (words === creditWords) return;
+    creditWords = words;
+    ctx.invalidate();
+  };
+
   const reload = async (arriving = false): Promise<void> => {
     const mine = ++gen;
     readPin();
@@ -979,6 +992,7 @@ export function workspaceScreen(
       return;
     }
     void askUpstream(mine);
+    void askCredit(mine);
     // Coming back to a workspace we remember: the tree and every buffer are
     // already here, edits included. Re-reading them would be slower *and*
     // would throw away uncommitted work, so the only thing worth asking git
@@ -2605,6 +2619,7 @@ export function workspaceScreen(
     const parts = [
       ref === "" ? "no ref" : ref,
       held === undefined ? "" : mirrorLine(held),
+      creditWords,
       dirty === 0 ? "" : `${dirty} modified`,
       pending.size === 0 ? "" : `${plural(pending.size, "deletion")} pending`,
       // Said on every frame, not only in the dialog: somebody typing into a

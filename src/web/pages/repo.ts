@@ -80,6 +80,7 @@ import { declaresFeature } from "../../actions/features.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
+import { creditLine } from "../credit_line.ts";
 import { type CodeRows, rowsMarkup } from "../code_rows.ts";
 import { rowsOffThread } from "../code_rows_pool.ts";
 import { flashTo, fragment, page, redirect } from "../layout.ts";
@@ -1418,10 +1419,13 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
       ? null
       : upstreamOffer(ctx.app, ctx.auth.user, repo, parent, drift?.ahead);
   const declares = isApp && (await timePhaseAsync(ctx.request, "feature", () => declaresFeature(ctx.app, ctx.auth.user, repo)));
+  const credit = await timePhaseAsync(ctx.request, "credit", () =>
+    creditLine(ctx, repo, scope.source, ref),
+  );
   const rendering = performance.now();
   const body = html`${scopeHeader(ctx, scope, "code", {
     branchCount: refs.branches.length,
-  })}${timePhase(ctx.request, "behind", () => behindLine(ctx, repo))}${originAheadLine(ctx, repo)}${archivedLine(ctx, repo)}${movedLine(ctx, repo)}${noApp}
+  })}${credit}${timePhase(ctx.request, "behind", () => behindLine(ctx, repo))}${originAheadLine(ctx, repo)}${archivedLine(ctx, repo)}${movedLine(ctx, repo)}${noApp}
   ${offerUpstream(repo, parent, offer)}
   ${latest === null
     ? ""
