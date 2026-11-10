@@ -44,6 +44,7 @@ import { readFileAt } from "../apps/checkout.ts";
 import { parseManifest } from "../apps/manifest.ts";
 import { resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
+import { loadDotfiles, type DotfileSet } from "./dotfiles.ts";
 import { ensureCheckout, prepareHome, shellPlan, CHECKOUT_DIR, type ShellPlan } from "./rc.ts";
 
 // ---- the route ----
@@ -86,6 +87,8 @@ export interface ShellGrant {
   readonly sessionId: string | undefined;
   /** The app's own `tty` command at the default branch's tip, for the greeting. */
   readonly tty?: string | null;
+  /** The person's dotfiles repository, read as them when the shell opened (#10548). */
+  readonly dotfiles?: DotfileSet;
 }
 
 /**
@@ -112,7 +115,7 @@ export async function mayOpenShell(
   const config = await repoMachines(app, repo);
   const machine = config.machines.find((m) => m.name === target.machine);
   if (machine === undefined) return { ok: false, refusal: "not_found" };
-  const grant = { repo, machine, user, sessionId: auth.sessionId, tty: await appTty(app, repo) };
+  const grant = { repo, machine, user, sessionId: auth.sessionId, tty: await appTty(app, repo), dotfiles: await loadDotfiles(app, user) };
   if (!roomFor(app, grant)) return { ok: false, refusal: "busy" };
   // The first connection clones; async, so no other request waits on it.
   await ensureCheckout(
@@ -497,7 +500,8 @@ function start(app: App, grant: ShellGrant, opts: ShellOptions, cols: number, ro
       detaches: opts.detaches === true,
       checkout: existsSync(join(dir, CHECKOUT_DIR, ".git")),
       tty: grant.tty ?? null,
-    });
+      dotfilesUnreadable: grant.dotfiles?.unreadable ?? null,
+    }, grant.dotfiles);
     row = recordStart(app.db, grant.repo.id, grant.machine.name, grant.user.id);
     terminal = new Bun.Terminal({
       cols,

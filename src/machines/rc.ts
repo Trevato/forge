@@ -14,9 +14,10 @@
  * repository and machine, and written after every command so a tab closed
  * mid-session loses nothing.
  */
-import { mkdirSync, writeFileSync, existsSync, renameSync, rmSync } from "node:fs";
+import { mkdirSync, lstatSync, existsSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { gitEnv } from "../git/env.ts";
+import { applyDotfiles, writeFresh, NO_DOTFILES, type DotfileSet } from "./dotfiles.ts";
 
 export const RC_FILE = ".forge_rc";
 export const GREETING_FILE = ".forge_greeting";
@@ -24,7 +25,11 @@ export const HISTORY_FILE = ".forge_history";
 /** The checkout's directory under the person's workspace. */
 export const CHECKOUT_DIR = "checkout";
 
-/** The rc file: constant. Reads FORGE_REPO, FORGE_MACHINE and the greeting file. */
+/**
+ * The rc file: constant. Reads FORGE_REPO, FORGE_MACHINE and the greeting file.
+ * It sources the person's own `.bashrc` (from their dotfiles repository,
+ * #10548) after the forge's defaults, so theirs win.
+ */
 export const RC = `# The forge's machine shell rc. Written by the forge; edits are replaced.
 case $- in *i*) ;; *) return ;; esac
 export HISTFILE="$HOME/${HISTORY_FILE}"
@@ -41,6 +46,7 @@ forge_branch() {
   git symbolic-ref --short -q HEAD 2>/dev/null || git rev-parse --short HEAD 2>/dev/null
 }
 PS1='\\[\\e[1;36m\\]$FORGE_REPO\\[\\e[0m\\]:\\[\\e[1;33m\\]$(forge_branch)\\[\\e[0m\\] \\w \\$ '
+if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi
 if [ -d "$FORGE_CHECKOUT" ]; then cd "$FORGE_CHECKOUT"; fi
 if [ -f "$HOME/${GREETING_FILE}" ]; then cat "$HOME/${GREETING_FILE}"; fi
 `;
@@ -59,6 +65,8 @@ export interface GreetingFacts {
   readonly checkout: boolean;
   /** The app's own `tty` command from forge.json, when it has one. */
   readonly tty: string | null;
+  /** A dotfiles repository the person named that could not be read; the greeting says so once. */
+  readonly dotfilesUnreadable?: string | null;
 }
 
 /** The greeting, in plain words: where you are and how to leave. */
@@ -72,6 +80,8 @@ export function greeting(facts: GreetingFacts): string {
   ];
   if (facts.tty !== null && plain(facts.tty) !== "")
     lines.push(`The app's own terminal command: ${plain(facts.tty)}`);
+  if (facts.dotfilesUnreadable != null)
+    lines.push(`Your dotfiles repository ${plain(facts.dotfilesUnreadable)} is missing or you cannot read it, so none were copied.`);
   return `${lines.join("\n")}\n\n`;
 }
 
@@ -81,11 +91,12 @@ export function historyPath(home: string): string {
 }
 
 /** Write the rc and greeting into `home`, and make the history file exist. */
-export function prepareHome(home: string, facts: GreetingFacts): void {
+export function prepareHome(home: string, facts: GreetingFacts, dotfiles: DotfileSet = NO_DOTFILES): void {
   mkdirSync(home, { recursive: true });
-  writeFileSync(join(home, RC_FILE), RC);
-  writeFileSync(join(home, GREETING_FILE), greeting(facts));
-  if (!existsSync(historyPath(home))) writeFileSync(historyPath(home), "");
+  writeFresh(join(home, RC_FILE), RC);
+  applyDotfiles(home, dotfiles);
+  writeFresh(join(home, GREETING_FILE), greeting(facts));
+  if (lstatSync(historyPath(home), { throwIfNoEntry: false }) === undefined) writeFresh(historyPath(home), "");
 }
 
 /** How long a first clone may take before git is killed and the shell starts in home. */

@@ -99,6 +99,7 @@ import {
   edgeUnlink,
   parentUnlink,
   accountUpdate,
+  dotfilesUpdate,
   keyCreate,
   keyDelete,
   keysPage,
@@ -140,6 +141,7 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("GET", "/settings", accountPage);
   router.add("POST", "/settings", accountUpdate);
   router.add("POST", "/settings/notify", notifyUpdate);
+  router.add("POST", "/settings/dotfiles", dotfilesUpdate);
   router.add("POST", "/settings/edge/link", edgeLink);
   router.add("POST", "/settings/edge/unlink", edgeUnlink);
   router.add("POST", "/settings/parent/link", parentLinkStart);

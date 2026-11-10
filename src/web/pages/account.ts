@@ -76,6 +76,7 @@ import {
   icon,
 } from "../ui.ts";
 import { STOPPED_ONE, myShells, stopIdleShells, stopShell, stoppedIdleSays } from "../../machines/shell.ts";
+import { DOTFILES_ERRORS, dotfilesRepoOf, setDotfilesRepo } from "../../machines/dotfiles.ts";
 import { everydayLine } from "./everyday.ts";
 import { passkeyJs } from "../passkey-client.ts";
 
@@ -176,6 +177,46 @@ function notifyView(ctx: Ctx, error?: string): Html {
       ${refusal(error)}
     </form>`,
   );
+}
+
+function dotfilesView(ctx: Ctx, error?: string): Html {
+  const named = dotfilesRepoOf(ctx.app.db, ctx.auth.user!.id);
+  return block(
+    "Dotfiles",
+    html`<form method="post" action="/settings/dotfiles">
+      ${uiField({
+        label: "Dotfiles repository",
+        name: "repo",
+        value: named ?? "",
+        placeholder: "owner/name",
+        autocomplete: "off",
+        hint: "A repository on this forge that you can read; empty for none.",
+      })}
+      <div class="form-actions">
+        ${btn("Save dotfiles repository", { variant: "primary" })}
+      </div>
+      ${refusal(error)}
+    </form>`,
+  );
+}
+
+// POST /settings/dotfiles
+export async function dotfilesUpdate(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const saved = setDotfilesRepo(ctx.app.db, ctx.auth.user, field(form, "repo"));
+  if (!saved.ok)
+    return accountShell(
+      ctx,
+      "shells",
+      "Shells",
+      html`${dotfilesView(ctx, DOTFILES_ERRORS[saved.error])}${shellsView(ctx, ctx.auth.user)}`,
+      422,
+    );
+  return flashTo(ctx, "/settings/shells", {
+    message: saved.value === "set" ? "Dotfiles repository saved." : "Dotfiles repository cleared.",
+  });
 }
 
 /** open-platform.sh: linked as <login>, or not, with Link and Unlink. */
@@ -439,7 +480,7 @@ export function shellsView(ctx: Ctx, user: User): Html {
 export function shellsPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-  const body = shellsView(ctx, ctx.auth.user);
+  const body = html`${dotfilesView(ctx)}${shellsView(ctx, ctx.auth.user)}`;
   return timePhase(ctx.request, "render", () => accountShell(ctx, "shells", "Shells", body));
 }
 
