@@ -40,6 +40,7 @@ import { IDLE_LIMIT, type IdlePull } from "../../flow/idle_pulls.ts";
 import { panelFigures } from "../../flow/panel_cache.ts";
 import { hoursWords } from "../../flow/lead_time.ts";
 import { buildYieldSays } from "../../flow/build_yield.ts";
+import { DECLINE_LABELS, DECLINE_REASONS } from "../../flow/declines.ts";
 import { reviewLatencySays } from "../../flow/review_latency.ts";
 import { openerCounts } from "../../flow/openers.ts";
 import { readRepeats, type Repeats } from "../../flow/repeats.ts";
@@ -157,6 +158,13 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
         : html`median <span data-median-hours>${hoursWords(lead.medianHours)}</span>, slowest <span data-max-hours>${hoursWords(lead.maxHours ?? 0)}</span>`}
     </p>
     <p id="build-yield" class="muted">${buildYieldSays(yielded)}</p>
+    ${fig.declined.says === ""
+      ? ""
+      : html`<p id="declines" class="muted">Declined in 24 h: ${DECLINE_REASONS.filter((r) => fig.declined.groups[r].count > 0).map(
+          (r, i) => html`${i === 0 ? "" : ", "}<span data-reason="${r}">${String(fig.declined.groups[r].count)} ${DECLINE_LABELS[r]}</span> (${fig.declined.runs[r].map(
+            (x, j) => html`${j === 0 ? "" : ", "}<a href="/${x.repo}/runs/${x.runId}">#${String(x.issue)}</a>`,
+          )}${fig.declined.groups[r].distinct > fig.declined.runs[r].length ? ", …" : ""})`,
+        )}</p>`}
     <p id="review-latency" class="muted">${reviewLatencySays(latency)}</p>
     <p id="openers" class="muted small">
       opened in the last hour:

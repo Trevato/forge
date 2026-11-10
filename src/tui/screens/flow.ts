@@ -110,6 +110,7 @@ export function flowLines(
     ...wrap(leadTimeSays(fig.lead), inner),
     ...wrap(buildYieldSays(fig.yielded), inner),
     ...wrap(reviewLatencySays(fig.latency), inner),
+    ...(fig.declined.says === "" ? [] : wrap(fig.declined.says, inner)),
     ...openerLines(fig.openers, inner),
     "",
     `${pad("Out", 12)} ${pad("last hour", 9, "right")} ${pad("24 h", 5, "right")}`,

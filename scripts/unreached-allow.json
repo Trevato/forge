@@ -8,7 +8,6 @@
   "src/flow/approved_wait.ts",
   "src/flow/clog_words.ts",
   "src/flow/conflict_pairs.ts",
-  "src/flow/declines.ts",
   "src/flow/handovers.ts",
   "src/flow/landing_eta.ts",
   "src/flow/rebase_first.ts",

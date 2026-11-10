@@ -17,6 +17,7 @@ import { readParked, type Parked } from "./parked.ts";
 import { readLeadTime, type LeadTime } from "./lead_time.ts";
 import { readBuildYield, type BuildYield } from "./build_yield.ts";
 import { readReviewLatency, type ReviewLatency } from "./review_latency.ts";
+import { readDeclines, type DeclineReading } from "./declines.ts";
 import { readOpeners, type Opener } from "./openers.ts";
 
 export const PANEL_TTL_MS = 30_000;
@@ -36,6 +37,7 @@ export interface PanelFigures {
   readonly yielded: BuildYield;
   readonly latency: ReviewLatency | null;
   readonly openers: Opener[];
+  readonly declined: DeclineReading;
 }
 
 /** Every reader the panel's figures come from, run once. */
@@ -53,6 +55,7 @@ export function readPanelFigures(db: Database, now: Date, publicOnly: boolean): 
     yielded: readBuildYield(db, now, publicOnly),
     latency: readReviewLatency(db, now, publicOnly),
     openers: readOpeners(db, now, publicOnly),
+    declined: readDeclines(db, now, publicOnly),
   };
 }
 
