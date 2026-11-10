@@ -59,6 +59,7 @@ import { MAX_COLUMNS, parseCsv, type Table } from "../../text/csv.ts";
 import { parseGeoJson, propertyRows } from "../../web/render/geojson.ts";
 import { gcodeFacts, parseGcode } from "../../web/render/gcode.ts";
 import { gpxFacts, parseGpx } from "../../web/render/gpx.ts";
+import { RESULT_CAP, parseSarif } from "../../web/render/sarif.ts";
 import { EVENT_CAP, parseIcs } from "../../web/render/ics.ts";
 import { fileSize } from "../../web/ui.ts";
 import { parseEml } from "../../web/render/eml-parse.ts";
@@ -400,6 +401,22 @@ function gpxTable(source: string, path: string): Table | null {
   return { header: ["Fact", "Value"], rows, more: 0, delimiter: ",", columns: 2 };
 }
 
+/** `.sarif`: a scanner's findings, drawn as a table of level, rule, location and message. */
+function isSarifPath(path: string): boolean {
+  return /\.sarif$/i.test(path);
+}
+
+/** The findings of a SARIF file as a table, tool by tool; the reason, as the page words it, when it is not SARIF. Shares the web's parser. */
+function sarifTable(source: string): Table | string {
+  const parsed = parseSarif(source);
+  if ("error" in parsed) return `not drawn as findings: ${parsed.error}`;
+  const all = parsed.runs.flatMap((r) =>
+    r.results.map((f) => [f.level, f.rule, f.file === "" ? "-" : f.line > 0 ? `${f.file}:${f.line}` : f.file, f.message.replace(/\s+/g, " "), r.tool]),
+  );
+  const rows = all.slice(0, RESULT_CAP);
+  return { header: ["Level", "Rule", "Location", "Message", "Tool"], rows, more: all.length - rows.length, delimiter: ",", columns: 5 };
+}
+
 /** `.gcode`: a sliced print, drawn as a table of its facts (layers, box, filament, time). Shares the web's parser. */
 function isGcodePath(path: string): boolean {
   return /\.(gcode|gco)$/i.test(path);
@@ -486,6 +503,8 @@ class Tab {
   grid: Grid = { header: "", rows: [] };
   /** Cues of a subtitle file that could not be read. */
   unread = 0;
+  /** Why a file whose name promises a view is shown as source instead; "" when nothing failed. */
+  fault = "";
   /** The .ipynb / .log view, and the source it replaces while `s` has it up. */
   kindLines: KindLines | null = null;
   sourceLines: KindLines | null = null;
@@ -586,6 +605,7 @@ class Tab {
     this.plain = built.plain;
     this.lines = built.lines;
     this.unread = 0;
+    this.fault = "";
     this.kindLines = null;
     this.sourceLines = built;
     const kind = kindView(this.path, text, c);
@@ -615,6 +635,11 @@ class Tab {
       if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isGpxPath(this.path)) {
       this.table = gpxTable(new TextDecoder().decode(source), this.path);
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isSarifPath(this.path)) {
+      const findings = sarifTable(new TextDecoder().decode(source));
+      this.table = typeof findings === "string" ? null : findings;
+      this.fault = typeof findings === "string" ? findings : "";
       if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isGcodePath(this.path)) {
       this.table = gcodeTable(new TextDecoder().decode(source));
@@ -2730,7 +2755,7 @@ export function workspaceScreen(
               ? ""
               : `${t.path} · ${
                   t.tabular && t.table !== null
-                    ? tableStatus(t.table, t.unread, isSubtitlePath(t.path), isIcsPath(t.path), isGpxPath(t.path), isVcfPath(t.path), isGeoJsonPath(t.path), isJsonlPath(t.path))
+                    ? tableStatus(t.table, t.unread, isSubtitlePath(t.path), isIcsPath(t.path), isGpxPath(t.path), isVcfPath(t.path), isGeoJsonPath(t.path), isJsonlPath(t.path), isSarifPath(t.path))
                     : `${plural(
                         t.reading ? t.doc.length : t.plain.length,
                         "line",
@@ -2738,7 +2763,7 @@ export function workspaceScreen(
                         t.table?.error === undefined || t.mode === "edit"
                           ? ""
                           : ` · ${tableProblem(t.table)}`
-                      }`
+                      }${t.fault === "" || t.mode === "edit" ? "" : ` · ${t.fault}`}`
                 }${
                   writable() || target !== undefined ? "" : forkable() ? " · proposes from your fork" : " · read only"
                 }`;
@@ -3064,9 +3089,9 @@ function drawCode(s: Surface, r: Rect, c: Tokens, t: Tab): void {
 }
 
 /** `80 rows, first 50 shown · 3 more columns`: what the table leaves out. */
-function tableStatus(table: Table, unread = 0, subs = false, events = false, facts = false, people = false, features = false, jsonl = false): string {
+function tableStatus(table: Table, unread = 0, subs = false, events = false, facts = false, people = false, features = false, jsonl = false, findings = false): string {
   const rows = table.rows.length + table.more;
-  return `${plural(rows, subs ? "cue" : events ? "event" : people ? "contact" : facts ? "fact" : features ? "feature" : "row")}${
+  return `${plural(rows, subs ? "cue" : events ? "event" : people ? "contact" : facts ? "fact" : features ? "feature" : findings ? "finding" : "row")}${
     unread > 0 ? ` · ${unread} unreadable, check their arrow lines` : ""
   }${
     table.more > 0

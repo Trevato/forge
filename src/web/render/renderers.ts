@@ -27,6 +27,7 @@ import { model3d } from "./model3d.ts";
 import { notebook } from "./notebook.ts";
 import { patch } from "./patch.ts";
 import { pdf } from "./pdf.ts";
+import { sarif } from "./sarif.ts";
 import { sqlite } from "./sqlite.ts";
 import { subtitles } from "./subtitles.ts";
 import { video } from "./video.ts";
@@ -48,6 +49,8 @@ export interface RenderInput {
   readonly pathHref?: string;
   /** The repository base and ref (as written in a URL), so a relative address resolves. */
   readonly repo?: { readonly base: string; readonly ref: string };
+  /** Whether a repository-relative path is a file at the ref; a renderer that links paths links only these. */
+  readonly exists?: (path: string) => boolean;
   /** `?all=1`: draw past the default window, up to the renderer's cap. */
   readonly all?: boolean;
   /** `?table=<name>`: unchecked text; a renderer matches it against its own list. */
@@ -89,6 +92,7 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
   geojson,
   calendar: ics,
   contacts: vcf,
+  sarif,
   mail: eml,
   archive,
   font,

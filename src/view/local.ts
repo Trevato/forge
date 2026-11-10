@@ -30,6 +30,7 @@ import { listReviews } from "../core/reviews.ts";
 import type { User } from "../core/users.ts";
 import { diffCommit, type Diff } from "../git/diff.ts";
 import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
+import { pathsAtTree } from "../git/path_listing.ts";
 import {
   blobForRender,
   blobHead,
@@ -37,7 +38,6 @@ import {
   listRefs,
   listTree,
   type TreeEntry,
-  listPaths,
   type PathListing,
 } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
@@ -197,7 +197,7 @@ export function localSource(
 
     async paths(ref: string): Promise<Result<PathListing, SourceError>> {
       if (!isSafeRef(ref)) return err("not_found");
-      const listed = await listPaths(dir, ref);
+      const listed = await pathsAtTree(dir, ref);
       return listed.ok ? ok(listed.value) : err("not_found");
     },
 

@@ -19,6 +19,7 @@ import { geojson } from "../src/web/render/geojson.ts";
 import { subtitles } from "../src/web/render/subtitles.ts";
 import { patch } from "../src/web/render/patch.ts";
 import { notebook } from "../src/web/render/notebook.ts";
+import { sarif } from "../src/web/render/sarif.ts";
 import { gcode } from "../src/web/render/gcode.ts";
 import { config } from "../src/web/render/config.ts";
 import { markdown } from "../src/web/render/markdown.ts";
@@ -108,6 +109,11 @@ const SAMPLES: Record<string, { path: string; render: Renderer; files: readonly 
     files: [
       '{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"name":"A","url":"javascript:alert(1)"},"geometry":{"type":"Point","coordinates":[0.1,51.5]}},{"type":"Feature","properties":{"k":"v"},"geometry":{"type":"LineString","coordinates":[[0,0],[1,1]]}}]}',
     ],
+  },
+  sarif: {
+    path: "scan.sarif",
+    render: sarif,
+    files: ['{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"T"}},"results":[{"ruleId":"R","level":"error","message":{"text":"m"},"locations":[{"physicalLocation":{"artifactLocation":{"uri":"src/a.ts"},"region":{"startLine":3}}}]}]}]}'],
   },
   srt: {
     path: "talk.srt",

@@ -528,6 +528,45 @@ describe("the terminal workspace", () => {
     }
   });
 
+  test("a .sarif opens as its findings, sharing the web parser, and s flips to the source", async () => {
+    const made = await createRepo(forge, alice, { name: "scans", visibility: "public", description: "findings" });
+    if (!made.ok) throw new Error("repo failed");
+    const sarif = JSON.stringify({
+      version: "2.1.0",
+      runs: [{ tool: { driver: { name: "CodeQL" } }, results: [{ ruleId: "js/xss", level: "error", message: { text: "tainted value" }, locations: [{ physicalLocation: { artifactLocation: { uri: "src/a.ts" }, region: { startLine: 12 } } }] }] }],
+    });
+    await commitToBranch(forge, alice, made.value, { message: "seed", files: [{ path: "scan.sarif", content: sarif }] });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "scans");
+      await openFile(h, "scan.sarif");
+      expect(h.text()).toContain("js/xss");
+      expect(h.text()).toContain("src/a.ts:12");
+      expect(h.text()).toContain("1 finding");
+      await h.press("s");
+      expect(h.text()).toContain("runs");
+    } finally {
+      h.stop();
+    }
+  });
+
+  test("a .sarif that is not SARIF opens as source and the status line says why", async () => {
+    const made = await createRepo(forge, alice, { name: "badscans", visibility: "public", description: "findings" });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, { message: "seed", files: [{ path: "scan.sarif", content: '{"version":"2.1.0"}' }] });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "badscans");
+      await openFile(h, "scan.sarif");
+      expect(h.text()).toContain('"version"');
+      expect(h.text()).toContain("not drawn as findings: it has no `runs` array");
+    } finally {
+      h.stop();
+    }
+  });
+
   test("a .gcode opens as its facts, sharing the web parser, and s flips to the source", async () => {
     const made = await createRepo(forge, alice, { name: "prints3d", visibility: "public", description: "slices" });
     if (!made.ok) throw new Error("repo failed");

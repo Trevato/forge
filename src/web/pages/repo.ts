@@ -1156,6 +1156,14 @@ export function drawsFont(scope: RepoScope, path: string, blob: Blob, view: Blob
   );
 }
 
+/** The files at a ref as a lookup; undefined when the listing is unavailable or cut short (then nothing is linked). */
+export async function pathsAt(scope: RepoScope, ref: string): Promise<((path: string) => boolean) | undefined> {
+  const listed = await scope.source.paths(ref);
+  if (!listed.ok || listed.value.truncated) return undefined;
+  const set = new Set(listed.value.paths);
+  return (path) => set.has(path);
+}
+
 /**
  * One file, framed by the same path header the tree uses. The header is
  * sticky and the whole pane is one element, because a script swapping a
@@ -1179,6 +1187,8 @@ export function renderBlob(
     layer?: number;
     /** Rows a worker already built for this file. */
     rows?: CodeRows;
+    /** The files at the ref, for a renderer that links paths. */
+    exists?: (path: string) => boolean;
   },
 ): Html {
   const base = scope.base;
@@ -1196,6 +1206,7 @@ export function renderBlob(
           download: downloadHref(base, o.ref, o.path),
           pathHref: `${base}/blob/${encoded}/${o.path}`,
           repo: { base, ref: encoded },
+          ...(o.exists !== undefined ? { exists: o.exists } : {}),
           all: o.all === true,
           ...(o.table !== undefined ? { table: o.table } : {}),
           ...(o.layer !== undefined ? { layer: o.layer } : {}),
@@ -1762,8 +1773,10 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     rows = await rowsOffThread(shown.body, path, all ? MAX_RENDER_LINES : FIRST_LINES);
     if (rows !== undefined) notePhase(ctx.request, "highlight", performance.now() - began);
   }
+  const exists = kindByName(path) === "sarif" ? await pathsAt(scope, ref) : undefined;
   const pane = renderBlob(scope, {
     ...(rows !== undefined ? { rows } : {}),
+    ...(exists !== undefined ? { exists } : {}),
     refs,
     ref,
     path,

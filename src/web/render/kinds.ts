@@ -37,6 +37,7 @@ export type FileKind =
   | "contacts"
   | "mail"
   | "gcode"
+  | "sarif"
   | "text"
   | "binary";
 
@@ -72,6 +73,7 @@ export const RENDER_CAP: Readonly<Record<FileKind, number>> = {
   contacts: 5 * MB,
   mail: 5 * MB,
   gcode: 50 * MB,
+  sarif: 5 * MB,
   text: 1 * MB,
   binary: 0,
 };
@@ -193,6 +195,7 @@ const TEXTUAL: Readonly<Record<string, FileKind>> = {
   eml: "mail",
   gcode: "gcode",
   gco: "gcode",
+  sarif: "sarif",
 };
 
 /**

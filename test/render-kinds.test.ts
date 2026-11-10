@@ -81,6 +81,7 @@ const SAMPLES: Record<string, [Uint8Array, FileKind, string]> = {
   ics: [enc("BEGIN:VCALENDAR\nEND:VCALENDAR\n"), "calendar", "application/octet-stream"],
   gcode: [enc("G28\nG1 X1 E1\n"), "gcode", "application/octet-stream"],
   gco: [enc("G28\n"), "gcode", "application/octet-stream"],
+  sarif: [enc('{"runs":[]}'), "sarif", "application/octet-stream"],
 };
 
 describe("the registry of file kinds", () => {

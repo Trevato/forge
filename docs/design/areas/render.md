@@ -31,3 +31,7 @@ A .zip, .tar or .tar.gz is drawn by `src/web/render/archive-view.ts` as the exis
 `src/web/render/gpx.ts` draws the route as one inline SVG in `.gpx-view`: no fixed width or height, `max-width: 100%` and `height: auto` (tokens only, `currentColor` stroke, no accent), so it fits a 360px phone. Its facts (track, distance, climb, points) are the existing `.status-rows` / `.status-row`, with no box. How it works: `docs/features/gpx.md`.
 
 `src/web/render/geojson.ts` draws a GeoJSON file as one inline SVG in `.gj-view` (same rules as `.gpx-view`: no fixed size, `max-width: 100%`, `currentColor`), and the first 100 features' properties as a plain table in `.gj-table`, which scrolls sideways inside its own box on a phone.
+
+## SARIF findings (.sarif)
+
+`src/web/render/sarif.ts` draws one existing `.table` (`data-dense`) per run under an `h3` with the tool's name, with the level counts as a plain line above. `.sarif-view` is only a hook on the wrapper and has no rule. How it works: `docs/features/file-sarif.md`.
