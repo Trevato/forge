@@ -99,7 +99,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `flag_set` | — | Set or clear a flag (admin) | 209 |
 | `flag_winner` | — | An A/B flag winner becomes default | 206 |
 | `flags` | — | Declared flags: why, default, owner issue, live value | 171 |
-| `flow` | `bugs` | Pipeline (admin); `q`: `/fleet` rows; `kind:bugs`: bugs; `repo`+`issue`/`pull`: why stuck | 395 |
+| `flow` | `bugs` | Pipeline (admin); `q`: `/fleet` rows, `action` plans an op, `apply` does it; `kind:bugs`; `repo`: why stuck | 431 |
 | `follow_mode` | — | How a spawned forge follows its parent: `tell-me` or `take-updates` | 265 |
 | `following` | — | Where a fork stands against what it follows: in step, behind, ahead, diverged | 243 |
 | `forge_proposals` | — | What this forge proposed to its parent; `reachable` false if it is silent | 245 |
@@ -266,6 +266,13 @@ a failure names the bytes over and the longest descriptions.
 each bug `{ repo, number, priority, dueAt }`, soonest due first, at most 100,
 from `src/flow/bugs.ts`. An admin sees every repository; anyone else only
 public ones, as the terminal's bugs screen does.
+
+`flow` with `{ q, action }` is the fleet's write door (#450): the plan
+`POST /api/v1/fleet/ops` answers for a dry run, `{ dryRun: true, query, kind,
+verb, value, reversible, rows, counts }`, with nothing changed and only a read
+token needed. Only `apply: true` acts, and it takes an admin token and a
+person, as the API does; the receipt is `{ dryRun: false, id, rows, … }`, and
+`limb` with `action: undo` and `operation: id` reverts it for 24 hours.
 
 `crew` with `{ kind: "week" }` is another (#10722), a forge admin's: `{ days, members }`,
 each member `{ username, merged, returned, spentUsd, idle }` over the last 7

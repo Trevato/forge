@@ -9,6 +9,8 @@ import { COLUMNS, readSort, sortRows } from "../../../fleet/columns.ts";
 import { viewFleet } from "../../../fleet/rows.ts";
 import { openBugs } from "../../../flow/bugs.ts";
 import { flowCached } from "../../../system/flow_cache.ts";
+import { scopeAllows } from "../../../core/tokens.ts";
+import { applyFleetOp, previewFleetOp } from "../../../actions/fleet.ts";
 import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
 const number = (v: unknown): number | undefined =>
@@ -25,26 +27,47 @@ const said = (subject: string, why: Why) =>
 
 export const tool: Tool = {
   name: "flow",
-  doc: "with no arguments, the forge's pipeline (a forge admin's, or an agent the owner granted `telemetry:read`; private repositories cut out): per stage counts, `oldestWaiting`, `capacity`, the bottleneck, the merge `queue` and what each reviewer has `reviewing`; with `{ q, sort? }`, the rows a fleet query line selects, as `/fleet` shows them: `{ kind, columns, items }`, only rows you may read, `sort` a column key led by `-` to reverse, a bad line answers its reason; with `{ kind: bugs }`, `{ open, overdue, bugs: [{ repo, number, priority, dueAt }] }` soonest due first, at most 100 (an admin sees all, anyone else public repositories); with `{ repo, issue? or pull? }` (a writer of the repository), why it is not moving: `{ subject, moving, state?, cause, says, clears, next? }`, the first of wall (a person decides new access), ceiling, hot_file, blocked_by, later_gate, no_builder, no_headroom, red_check, waiting_review that holds it (`flow/why.ts`); `repo` alone asks about the repository's builders",
+  doc: "with no arguments, the forge's pipeline (a forge admin's, or an agent the owner granted `telemetry:read`; private repositories cut out): per stage counts, `oldestWaiting`, `capacity`, the bottleneck, the merge `queue` and what each reviewer has `reviewing`; with `{ q, sort? }`, the rows a fleet query line selects, as `/fleet` shows them: `{ kind, columns, items }`, only rows you may read, `sort` a column key led by `-` to reverse, a bad line answers its reason; with `{ q, action: { verb, value }, apply? }`, a fleet operation over those rows as `POST /api/v1/fleet/ops` answers it: the dry-run plan `{ dryRun: true, query, kind, verb, value, reversible, rows, counts }` and nothing changed, or with `apply: true` (an admin token, a person) the receipt `{ dryRun: false, id, rows, … }` whose id `limb` undoes; with `{ kind: bugs }`, `{ open, overdue, bugs: [{ repo, number, priority, dueAt }] }` soonest due first, at most 100 (an admin sees all, anyone else public repositories); with `{ repo, issue? or pull? }` (a writer of the repository), why it is not moving: `{ subject, moving, state?, cause, says, clears, next? }`, the first of wall (a person decides new access), ceiling, hot_file, blocked_by, later_gate, no_builder, no_headroom, red_check, waiting_review that holds it (`flow/why.ts`); `repo` alone asks about the repository's builders",
   description:
-    "Pipeline (admin); `q`: `/fleet` rows; `kind:bugs`: bugs; `repo`+`issue`/`pull`: why stuck.",
+    "Pipeline (admin); `q`: `/fleet` rows, `action` plans an op, `apply` does it; `kind:bugs`; `repo`: why stuck.",
   inputSchema: {
     type: "object",
     properties: {
       kind: { type: "string", enum: ["bugs"] },
       q: { type: "string", maxLength: 500 },
       sort: { type: "string" },
+      action: { type: "object" },
+      apply: { type: "boolean" },
       repo: REPO_ARG,
       issue: { type: "integer", minimum: 1 },
       pull: { type: "integer", minimum: 1 },
     },
   },
-  writes: false,
+  // Only `apply: true` changes anything; without `apply`, or with `apply: false`, a call reads or plans.
+  writes: true,
+  readsWithout: "apply",
+  readsWhen: (args) => args["apply"] === false,
   async run(ctx, user, args) {
+    if (args["action"] !== undefined || args["apply"] !== undefined) {
+      if (typeof args["q"] !== "string") return bad("invalid", "an action needs q, the fleet query line it acts on");
+      if (args["apply"] !== undefined && typeof args["apply"] !== "boolean") return bad("invalid", "apply is true or false");
+      if (args["action"] === undefined) return bad("invalid", "apply needs an action: { verb, value }");
+    }
     if (args["q"] !== undefined) {
       const q = args["q"];
       if (typeof q !== "string" || q.trim() === "" || q.length > 500)
         return bad("invalid", "q is a fleet query line of at most 500 characters, like: repo autonomy:autonomous");
+      if (args["action"] !== undefined) {
+        // As `POST /api/v1/fleet/ops`: a plan by default; applying takes an explicit `apply: true` and an admin token.
+        if (args["apply"] !== true) {
+          const plan = previewFleetOp(ctx.app, user, q, args["action"]);
+          return plan.ok ? good({ dryRun: true, ...plan.value }) : bad(plan.error.code, plan.error.message);
+        }
+        if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+          return bad("forbidden", "applying a fleet operation takes an admin token");
+        const op = await applyFleetOp(ctx.app, user, q, args["action"]);
+        return op.ok ? good({ dryRun: false, ...op.value }) : bad(op.error.code, op.error.message);
+      }
       if (args["sort"] !== undefined && typeof args["sort"] !== "string") return bad("invalid", "sort is a column key");
       // As `/fleet`: the same `viewFleet`, so the same rows for the same viewer.
       const view = viewFleet(ctx.app.db, user, q);

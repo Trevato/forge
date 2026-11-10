@@ -48,6 +48,11 @@ export const ASKING: Readonly<Record<string, Asking>> = {
     undo: (a) => `\`archive\` with \`archived: ${a["archived"] === false}\` turns it back`,
   },
   board_delete: { does: "delete a board" },
+  // One action over every row a fleet query selects (#450); only `apply: true` writes.
+  flow: {
+    does: "apply a fleet operation to every row its query selects",
+    undo: () => "`limb` with `action: undo` and the receipt's id reverts it for 24 hours",
+  },
   subscription_delete: { does: "remove a Claude subscription and its grants" },
   // Money: subscriptions, budgets, grants and limits.
   subscription_add: { does: "add a Claude login to the crew's pool", undo: () => "`subscription_delete` with its id removes it" },
