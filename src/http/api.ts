@@ -360,6 +360,7 @@ import { businessPlanRoutes } from "./api/business_plan.ts";
 import { tokenRoutes } from "./api/tokens.ts";
 import { accountAdmin, adminRoutes } from "./api/admin.ts";
 import { maintenanceRoutes } from "./api/maintenance.ts";
+import { diskReadingRoutes } from "./api/disk_readings.ts";
 import { TEMPLATE_ERRORS } from "../apps/template_tip.ts";
 import { flagsRoutes } from "./api/flags.ts";
 import { appTemplateRoutes } from "./api/app_templates.ts";
@@ -1247,6 +1248,7 @@ export function apiRoutes(router: Router<Handler>): void {
   forgeOriginRoutes(router);
   adminRoutes(router);
   maintenanceRoutes(router);
+  diskReadingRoutes(router);
   flagsRoutes(router);
   appTemplateRoutes(router);
 

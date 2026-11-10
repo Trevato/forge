@@ -53,6 +53,7 @@ const FIXTURE: Record<string, string> = {
   "/:owner/:name/issues/:number": "/alice/forge/issues/1",
   "/:owner/:name/pulls/:number": "/alice/forge/pulls/2",
   "/:owner/:name/display": "/alice/forge/display",
+  "/api/v1/admin/machines/:machine/disks": "/api/v1/admin/machines/rack1/disks",
 };
 
 function registeredGets(): Set<string> {

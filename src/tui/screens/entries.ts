@@ -25,6 +25,7 @@ import { entry as crewHandover } from "./crewhandover.ts";
 import { entry as crewSplits } from "./crewsplits.ts";
 import { entry as knobs } from "./knobs.ts";
 import { entry as displays } from "./displays.ts";
+import { entry as disks } from "./disks.ts";
 import { entry as domains } from "./domains.ts";
 import { entry as edgeOnly } from "./edgeonly.ts";
 import { entry as traffic } from "./trafficview.ts";
@@ -148,6 +149,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   forgeView,
   repos,
   displays,
+  disks,
   newIssue,
 ];
 
