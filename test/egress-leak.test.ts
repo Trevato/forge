@@ -171,8 +171,8 @@ describe("egress leaves nothing open", () => {
     sock.terminate();
   });
 
-  test("a client that stops reading is cut once its backlog passes the limit", async () => {
-    const { cam, stream } = await setup({ queueMax: 64 * 1024 }, 32 * 1024);
+  test("a client that stops reading pauses its upstream, then is cut at the idle timeout", async () => {
+    const { cam, stream } = await setup({ queueMax: 64 * 1024, idleMs: 300 }, 32 * 1024);
     const sock = await stream(true, true);
     expect(await until(() => cam.count() === 0, 5_000)).toBe(true);
     sock.terminate();
