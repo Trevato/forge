@@ -138,6 +138,7 @@ export function returnsPage(ctx: Ctx): Response {
           const slug = repo ? `${repo.ownerName}/${repo.name}` : "";
           return row({
             href: `/${slug}/issues/${c.number}`,
+            nav: true,
             title: html`#${c.number} ${c.title}`,
             meta: html`${slug} · ${runs(c)} ·
             ${c.outcome === "landed"
