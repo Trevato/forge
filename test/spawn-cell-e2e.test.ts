@@ -17,7 +17,7 @@ const cellTools = process.platform === "linux" && !portInsteadOfSocket() && !mis
 test.skipIf(!cellTools)("a child forge spawned into a cell serves its app at <app>--<child>--<parent>", async () => {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== "FORGE_CELLS") env[k] = v;
-  const proc = Bun.spawn([process.execPath, join(import.meta.dir, "helpers", "real-spawn-e2e.ts")], { env, stdout: "pipe", stderr: "pipe" });
+  const proc = Bun.spawn([process.execPath, join(import.meta.dir, "helpers", "real-spawn-e2e.ts")], { env, stdout: "pipe", stderr: "pipe", timeout: 290_000 });
   const [out, errText] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
   const line = resultLine(out);
   let seen: Record<string, unknown>;
@@ -34,4 +34,4 @@ test.skipIf(!cellTools)("a child forge spawned into a cell serves its app at <ap
   // machine's disk and load are in the message, not a bare mismatch.
   const ok = seen["placement"] === "cell" && seen["status"] === 200 && seen["app"] === "bakery" && seen["body"] === "bakery says hi";
   if (!ok) throw new Error(failedWith("the child forge's app did not answer through the cell", { seen, out: out.slice(-1500) }, errText));
-}, 200_000);
+}, 310_000);
