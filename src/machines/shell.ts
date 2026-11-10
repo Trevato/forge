@@ -26,7 +26,7 @@ import { cellHides } from "../spawn/hosted-mark.ts";
 import { join } from "node:path";
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
-import { openCell, resolveLimits, type Cell, type CellSpec } from "../apps/contain.ts";
+import { cellCounters, openCell, resolveLimits, type Cell, type CellSpec } from "../apps/contain.ts";
 import { startTerminal, type TerminalProgram } from "../apps/tty.ts";
 import { holdOpen } from "../http/caller.ts";
 import { canWrite, getRepo, getRepoById, type Repo } from "../core/repos.ts";
@@ -440,7 +440,7 @@ function start(app: App, grant: ShellGrant, opts: ShellOptions, cols: number, ro
           app,
           dir,
           grant.machine,
-          `machine:${grant.repo.id}/${grant.machine.name}`,
+          cellLabel(grant.repo.id, grant.machine.name, grant.user.id),
           ownAppUrls(ownApp(app, grant.repo)),
         ),
       );
@@ -499,6 +499,97 @@ function start(app: App, grant: ShellGrant, opts: ShellOptions, cols: number, ro
     app.log.warn("machine shell did not start", { machine: grant.machine.name, error: String(error) });
     return undefined;
   }
+}
+
+/** The label a shell's cell is watched under: one per person, so its counters are theirs alone. */
+export const cellLabel = (repoId: string, machine: string, userId: string): string =>
+  `machine:${repoId}/${machine}/${userId}`;
+
+/** One shell a person holds or held: plain data for the account page and the `sessions` tool. */
+export interface ShellRow {
+  readonly id: string;
+  /** `owner/name`. */
+  readonly repository: string;
+  readonly machine: string;
+  readonly startedAt: string;
+  /** Null when the shell has ended: its last keystroke is not kept. */
+  readonly lastInputAt: string | null;
+  readonly lastOutputAt: string | null;
+  /** Connections attached now; 0 is detached. */
+  readonly peers: number;
+  /** Cores in use and resident MiB, null where the cell does not report them. */
+  readonly cpuCores: number | null;
+  readonly memoryMiB: number | null;
+  readonly endedAt: string | null;
+  readonly endReason: EndReason | null;
+  /** The end in words, null while live. */
+  readonly endedBecause: string | null;
+}
+
+const iso = (ms: number): string => new Date(ms).toISOString();
+
+/** The shells running now for one person, newest first. */
+export function liveShells(app: App, userId: string): ShellRow[] {
+  const counters = new Map(cellCounters().map((c) => [c.label, c]));
+  const rows: ShellRow[] = [];
+  for (const s of sessionsOf(app).values()) {
+    if (s.userId !== userId) continue;
+    const repo = getRepoById(app.db, s.repoId);
+    const started = app.db
+      .query<{ machine: string; started_at: string }, [string]>("SELECT machine, started_at FROM machine_sessions WHERE id = ?")
+      .get(s.row);
+    if (repo === undefined || started === null) continue;
+    const counter = counters.get(cellLabel(s.repoId, started.machine, userId));
+    rows.push({
+      id: s.row,
+      repository: `${repo.ownerName}/${repo.name}`,
+      machine: started.machine,
+      startedAt: started.started_at,
+      lastInputAt: iso(s.lastInput),
+      lastOutputAt: iso(s.lastOutput),
+      peers: s.peers.size,
+      cpuCores: counter?.cores ?? null,
+      memoryMiB: counter === undefined ? null : Math.round(counter.memoryBytes / 1048576),
+      endedAt: null,
+      endReason: null,
+      endedBecause: null,
+    });
+  }
+  return rows.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+}
+
+/** How many ended shells `myShells` adds after the live ones. */
+export const RECENT_ENDED = 10;
+
+/** A person's shells: the live ones, newest first, then the last ended ones, newest first. */
+export function myShells(app: App, userId: string, ended = RECENT_ENDED): ShellRow[] {
+  const gone = app.db
+    .query<
+      { id: string; machine: string; started_at: string; ended_at: string; end_reason: EndReason; owner_name: string; name: string },
+      [string, number]
+    >(
+      `SELECT s.id, s.machine, s.started_at, s.ended_at, s.end_reason, o.username AS owner_name, r.name
+         FROM machine_sessions s JOIN repo r ON r.id = s.repo_id JOIN user o ON o.id = r.owner_id
+        WHERE s.owner_id = ? AND s.ended_at IS NOT NULL ORDER BY s.started_at DESC LIMIT ?`,
+    )
+    .all(userId, ended)
+    .map(
+      (r): ShellRow => ({
+        id: r.id,
+        repository: `${r.owner_name}/${r.name}`,
+        machine: r.machine,
+        startedAt: r.started_at,
+        lastInputAt: null,
+        lastOutputAt: null,
+        peers: 0,
+        cpuCores: null,
+        memoryMiB: null,
+        endedAt: r.ended_at,
+        endReason: r.end_reason,
+        endedBecause: ENDED[r.end_reason] ?? r.end_reason,
+      }),
+    );
+  return [...liveShells(app, userId), ...gone];
 }
 
 /** End every session (the forge is stopping). */

@@ -398,6 +398,7 @@ const STATIC_PALETTE: PaletteItem[] = [
   { t: "Access tokens", h: "/settings/tokens", c: "Settings" },
   { t: "SSH keys", h: "/settings/keys", c: "Settings" },
   { t: "Origins", h: "/settings/origins", c: "Settings" },
+  { t: "Your shells", h: "/settings/shells", c: "Settings" },
 ];
 
 /** What a signed-out visitor can reach: places to go, not Create and Settings rows that end at a sign-in wall. */

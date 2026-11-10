@@ -88,6 +88,7 @@ import {
 } from "../web/pages/crew.ts";
 import {
   accountPage,
+  shellsPage,
   notifyUpdate,
   edgeLink,
   edgeUnlink,
@@ -146,6 +147,7 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("POST", "/settings/everyday/options", everydayOptions);
   router.add("POST", "/settings/everyday/switch", everydaySwitch);
   router.add("POST", "/settings/everyday/keep", everydayKeep);
+  router.add("GET", "/settings/shells", shellsPage);
   router.add("GET", "/settings/tokens", tokensPage);
   router.add("POST", "/settings/tokens", tokenCreate);
   router.add("POST", "/settings/tokens/:id/delete", tokenDelete);

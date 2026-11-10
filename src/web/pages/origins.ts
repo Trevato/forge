@@ -93,6 +93,7 @@ export type AccountSection =
   | "confirms"
   | "password"
   | "tokens"
+  | "shells"
   | "keys"
   | "model"
   | "passkeys"

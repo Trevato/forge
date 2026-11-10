@@ -74,6 +74,7 @@ import {
   field as uiField,
   icon,
 } from "../ui.ts";
+import { myShells } from "../../machines/shell.ts";
 import { everydayLine } from "./everyday.ts";
 import { passkeyJs } from "../passkey-client.ts";
 
@@ -97,7 +98,7 @@ const help = (notes: readonly (readonly [string, string | Html])[]): Html =>
     </dl>
   </details>`;
 
-type Section = "profile" | "password" | "tokens" | "keys" | "passkeys";
+type Section = "profile" | "password" | "tokens" | "keys" | "passkeys" | "shells";
 
 // The section list lives beside the newest page that joins it, so adding one
 // cannot leave the others pointing at a nav that has forgotten it.
@@ -391,6 +392,46 @@ function profileView(ctx: Ctx, values: ProfileForm): Html {
       ${refusal(values.errors?.form)}
     </form>`,
   )}`;
+}
+
+/** A reading the cell may not give: a dash, never a zero that says "idle". */
+const reading = (n: number | null, unit: string): string => (n === null ? "–" : `${n}${unit}`);
+
+/** The machine shells this person holds and last held (#10544). Read only; the live row says its few facts in a `dl`. */
+export function shellsView(ctx: Ctx, user: User): Html {
+  const shells = myShells(ctx.app, user.id);
+  if (shells.length === 0) return html`<p class="muted" id="shells">You have opened no shell on a machine yet.</p>`;
+  return html`<ul class="list setting-list" id="shells">
+    ${shells.map((s) =>
+      s.endedAt === null
+        ? row({
+            title: html`${s.repository} · ${s.machine}`,
+            meta: html`Started ${time(s.startedAt)}`,
+            trail: badge("running", { tone: "success" }),
+            facts: [
+              { label: "Last input", value: s.lastInputAt ? time(s.lastInputAt) : "–" },
+              { label: "Last output", value: s.lastOutputAt ? time(s.lastOutputAt) : "–" },
+              { label: "Attached", value: s.peers === 0 ? "nobody" : String(s.peers) },
+              { label: "CPU", value: reading(s.cpuCores === null ? null : Math.round(s.cpuCores * 100), "%") },
+              { label: "Memory", value: reading(s.memoryMiB, " MiB") },
+            ],
+            data: { session: s.id },
+          })
+        : row({
+            title: html`${s.repository} · ${s.machine}`,
+            meta: html`Ended ${time(s.endedAt)} · ${s.endedBecause}`,
+            data: { session: s.id },
+          }),
+    )}
+  </ul>`;
+}
+
+// GET /settings/shells
+export function shellsPage(ctx: Ctx): Response {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const body = shellsView(ctx, ctx.auth.user);
+  return timePhase(ctx.request, "render", () => accountShell(ctx, "shells", "Shells", body));
 }
 
 // GET /settings

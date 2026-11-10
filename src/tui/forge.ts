@@ -17,6 +17,7 @@ import { sourceFor } from "../view/source.ts";
 import { fleetCommand } from "./screens/fleet.ts";
 import { dataCommand } from "./screens/data.ts";
 import { packsCommand } from "./screens/packs.ts";
+import { shellsScreen } from "./screens/shells.ts";
 import { forkTreeScreen } from "./screens/fork_tree.ts";
 import { roadmapScreen } from "./screens/roadmap.ts";
 import { App, type Ctx, type Screen } from "./app/app.ts";
@@ -349,6 +350,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Decider",
         hint: "what it closed, deferred and asked you about today",
         run: () => ctx.push(deciderScreen(session, ctx)),
+      });
+    // The machine shells this person holds (#10544); an agent holds none.
+    if (session.signedIn && session.user?.kind !== "agent")
+      commands.push({
+        id: "shells",
+        title: "Your shells",
+        hint: "the machine shells you hold, live then ended",
+        run: () => ctx.push(shellsScreen(session, ctx)),
       });
     // Where a decision finds the owner; an agent is never offered it.
     if (session.signedIn && session.user?.kind !== "agent")

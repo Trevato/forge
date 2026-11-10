@@ -133,6 +133,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/settings` — `pages/account.ts` · my account · the rest of settings · colour 1.
 - `/settings/password` — `pages/account.ts` · change password · `/settings/passkeys` · colour 1.
 - `/settings/tokens` — `pages/account.ts` · my API tokens · `/settings/keys` (credentials of two kinds on two pages) · colour 1.
+- `/settings/shells` — `pages/account.ts` · the machine shells I hold, live then ended · `/settings/keys` · colour 1.
 - `/settings/keys` — `pages/account.ts` · my SSH keys · `/settings/tokens` · colour 1.
 - `/settings/passkeys` — `pages/passkeys.ts` · my passkeys · `/settings/password` · none seen.
 - `/settings/confirms` — `pages/confirms.ts` · what the forge's agent asked to do and waits for my yes · the terminal's Confirms (y) · none seen.
