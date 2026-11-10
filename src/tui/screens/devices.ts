@@ -3,11 +3,14 @@
  * Devices lists, each with its model, state and supplies on one line. `d`
  * declares one (a name, then its address, in one line); `x` removes the one
  * under the cursor after a confirm. Both go through `actions/devices.ts`, so
- * the refusals and the `device.*` events are the page's. Anyone who is not an
+ * the refusals and the `device.*` events are the page's. `a` allows the one
+ * under the cursor to an app (its slug, in one line) and `r` revokes one
+ * (likewise): who may print there. Anyone who is not an
  * admin (or is an agent) is offered no entry and changes nothing.
  */
 
-import { DEVICE_ERRORS, declare, devicesWithStatus, mayManageDevices, remove, statusLine } from "../../actions/devices.ts";
+import { DEVICE_ERRORS, declare, devicesWithStatus, grant, mayManageDevices, remove, revoke, statusLine } from "../../actions/devices.ts";
+import { allAppSlugs, grantedSlugs } from "../../core/device_grants.ts";
 import { listDevices, type Device } from "../../core/devices.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import type { PaletteEntry } from "./entries.ts";
@@ -54,6 +57,20 @@ export function devicesScreen(f: Session, ctx: Ctx): Screen {
       placeholder: "Hall printer ipp://192.168.1.161:631/ipp/print",
       onSubmit: declareOne,
     });
+  const change = (d: Device, act: typeof grant, done: string) => (line: string): string | undefined => {
+    const slug = line.trim();
+    const made = act(f.app, f.user, d.id, slug);
+    note = made.ok ? `${made.value} ${done} ${d.name}.` : DEVICE_ERRORS[made.error];
+    if (made.ok) reload();
+    return made.ok ? undefined : note;
+  };
+  const askApp = (d: Device, act: typeof grant, title: string, done: string): Screen =>
+    promptScreen(ctx, screen, {
+      title,
+      label: `App slug for ${d.name}`,
+      placeholder: allAppSlugs(f.db).join(" ") || "no apps yet",
+      onSubmit: change(d, act, done),
+    });
   const confirmRemove = (d: Device): Screen =>
     confirmScreen(ctx, screen, {
       title: "Remove this device",
@@ -67,10 +84,14 @@ export function devicesScreen(f: Session, ctx: Ctx): Screen {
       },
     });
 
+  const apps = (d: Device): string => {
+    const slugs = grantedSlugs(f.db, d.id);
+    return slugs.length === 0 ? "" : ` · apps: ${slugs.join(", ")}`;
+  };
   const lines = (): ListRow[] =>
     rows.map((d) => ({
       title: d.name,
-      meta: d.probedAt === null ? d.url : `${statusLine(d.probe)} · ${d.url}`,
+      meta: `${d.probedAt === null ? d.url : `${statusLine(d.probe)} · ${d.url}`}${apps(d)}`,
       ...(d.probe?.supplies.length
         ? { below: [d.probe.supplies.map((s) => `${s.name} ${s.percent === null ? "?" : `${s.percent}%`}`).join(" · ")] }
         : {}),
@@ -78,7 +99,7 @@ export function devicesScreen(f: Session, ctx: Ctx): Screen {
 
   const screen: Screen = {
     title: "Devices",
-    keys: [binding(["d"], "declare"), binding(["x"], "remove"), binding(["j", "k"], "move cursor")],
+    keys: [binding(["d"], "declare"), binding(["x"], "remove"), binding(["a"], "allow an app"), binding(["r"], "revoke an app"), binding(["j", "k"], "move cursor")],
     render(area, s) {
       const c = ctx.theme.c;
       const text = note !== "" ? note : mayUse(f) ? `${rows.length} declared.` : DEVICE_ERRORS.forbidden;
@@ -96,6 +117,11 @@ export function devicesScreen(f: Session, ctx: Ctx): Screen {
         return true;
       }
       const d = rows[state.index];
+      if ((e.key === "a" || e.key === "r") && d !== undefined) {
+        note = "";
+        ctx.push(e.key === "a" ? askApp(d, grant, "Let an app print here", "may print on") : askApp(d, revoke, "Stop an app printing here", "may no longer print on"));
+        return true;
+      }
       if (e.key === "x" && d !== undefined) {
         note = "";
         ctx.push(confirmRemove(d));

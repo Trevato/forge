@@ -5,6 +5,7 @@
  * touches the network, to the one validated URL it is given.
  */
 
+const OP_PRINT_JOB = 0x0002; // RFC 8011 §4.2.1
 const OP_GET_PRINTER_ATTRIBUTES = 0x000b; // RFC 8011 §5.2 operation-id registry
 const TAG = {
   operation: 0x01,
@@ -13,6 +14,8 @@ const TAG = {
   boolean: 0x22,
   enum: 0x23,
   keyword: 0x44,
+  mimeType: 0x49,
+  nameWithoutLanguage: 0x42,
   uri: 0x45,
   charset: 0x47,
   language: 0x48,
@@ -158,6 +161,17 @@ export type ProbeResult =
  * the wait bounded.
  */
 export async function probePrinter(url: string, timeoutMs = 2500): Promise<ProbeResult> {
+  const answer = await exchange(url, encodeGetPrinterAttributes(url), timeoutMs);
+  if (!answer.ok) return answer;
+  return { ok: true, report: reportOf(answer.response.attributes) };
+}
+
+type Exchange =
+  | { readonly ok: true; readonly response: IppResponse }
+  | { readonly ok: false; readonly error: "unreachable" | "refused" | "bad_answer" };
+
+/** One IPP request to `url` and its decoded, successful answer. */
+async function exchange(url: string, body: Uint8Array, timeoutMs: number): Promise<Exchange> {
   const parsed = URL.parse(url);
   if (parsed === null) return { ok: false, error: "bad_answer" };
   const secure = parsed.protocol === "ipps:" || parsed.protocol === "https:";
@@ -169,7 +183,7 @@ export async function probePrinter(url: string, timeoutMs = 2500): Promise<Probe
     const res = await fetch(wire, {
       method: "POST",
       headers: { "content-type": "application/ipp" },
-      body: encodeGetPrinterAttributes(url),
+      body,
       redirect: "error",
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -179,10 +193,69 @@ export async function probePrinter(url: string, timeoutMs = 2500): Promise<Probe
     const decoded = decodeResponse(bytes);
     // 0x0000–0x00ff: successful (RFC 8011 §5.4.1).
     if (decoded === undefined || decoded.status > 0xff) return { ok: false, error: "bad_answer" };
-    return { ok: true, report: reportOf(decoded.attributes) };
+    return { ok: true, response: decoded };
   } catch {
     return { ok: false, error: "unreachable" };
   }
+}
+
+/** The request body for Print-Job: the document follows the attributes. */
+export function encodePrintJob(printerUri: string, pdf: Uint8Array, jobName: string, requestId = 1): Uint8Array {
+  const head: number[] = [
+    1, 1,
+    OP_PRINT_JOB >> 8, OP_PRINT_JOB & 255,
+    (requestId >>> 24) & 255, (requestId >>> 16) & 255, (requestId >>> 8) & 255, requestId & 255,
+    TAG.operation,
+    ...attr(TAG.charset, "attributes-charset", "utf-8"),
+    ...attr(TAG.language, "attributes-natural-language", "en"),
+    ...attr(TAG.uri, "printer-uri", printerUri),
+    ...attr(TAG.nameWithoutLanguage, "requesting-user-name", "forge"),
+    ...attr(TAG.nameWithoutLanguage, "job-name", jobName),
+    ...attr(TAG.mimeType, "document-format", "application/pdf"),
+    TAG.end,
+  ];
+  const out = new Uint8Array(head.length + pdf.length);
+  out.set(head);
+  out.set(pdf, head.length);
+  return out;
+}
+
+export type JobState = "pending" | "held" | "processing" | "stopped" | "canceled" | "aborted" | "completed" | "unknown";
+
+/** job-state enum (RFC 8011 §5.3.7). */
+const JOB_STATES: Record<number, JobState> = {
+  3: "pending", 4: "held", 5: "processing", 6: "stopped", 7: "canceled", 8: "aborted", 9: "completed",
+};
+
+export interface PrintJob {
+  readonly id: number | null;
+  readonly state: JobState;
+  readonly reasons: readonly string[];
+}
+
+export type PrintResult =
+  | { readonly ok: true; readonly job: PrintJob }
+  | { readonly ok: false; readonly error: "unreachable" | "refused" | "bad_answer" };
+
+/**
+ * Send `pdf` to the printer at `url` (already validated and granted) as an
+ * IPP Print-Job and return the job state the printer reports. A printer that
+ * takes a long document needs longer than a probe does.
+ */
+export async function printPdf(url: string, pdf: Uint8Array, jobName: string, timeoutMs = 30_000): Promise<PrintResult> {
+  const answer = await exchange(url, encodePrintJob(url, pdf, jobName), timeoutMs);
+  if (!answer.ok) return answer;
+  const a = answer.response.attributes;
+  const id = a.get("job-id")?.[0];
+  const state = a.get("job-state")?.[0];
+  return {
+    ok: true,
+    job: {
+      id: typeof id === "number" ? id : null,
+      state: typeof state === "number" ? (JOB_STATES[state] ?? "unknown") : "unknown",
+      reasons: str(a, "job-state-reasons").filter((r) => r !== "none"),
+    },
+  };
 }
 
 async function readCapped(res: Response): Promise<Uint8Array | undefined> {

@@ -255,6 +255,7 @@ export { route as postApiV1ConversationMessages } from "./postApiV1ConversationM
 export { route as postApiV1ConversationStop } from "./postApiV1ConversationStop.ts";
 export { route as postApiV1ConversationTokens } from "./postApiV1ConversationTokens.ts";
 export { route as postApiV1Conversations } from "./postApiV1Conversations.ts";
+export { route as postApiV1DevicesIdPrint } from "./postApiV1DevicesIdPrint.ts";
 export { route as postApiV1Drills } from "./postApiV1Drills.ts";
 export { route as postApiV1FeedChips } from "./postApiV1FeedChips.ts";
 export { route as postApiV1FeedInteractions } from "./postApiV1FeedInteractions.ts";

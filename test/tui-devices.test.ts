@@ -7,7 +7,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { listDevices } from "../src/core/devices.ts";
+import { declareDevice, listDevices } from "../src/core/devices.ts";
+import { grantedSlugs } from "../src/core/device_grants.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp, forgeCommands, Session } from "../src/tui/forge.ts";
 import { devicesScreen } from "../src/tui/screens/devices.ts";
@@ -97,4 +98,29 @@ describe("the devices screen", () => {
       expect(listDevices(app.db)).toEqual([]);
       expect(kinds.includes("device.removed")).toBe(true);
     }));
+
+  test("a allows the device under the cursor to an app and r revokes it, with the page's events", () =>
+    (async () => {
+      const d = declareDevice(app.db, { name: "Den", kind: "printer", url: "ipp://192.168.1.162/ipp/print" });
+      if (!d.ok) throw new Error(d.error);
+      app.db.run("PRAGMA foreign_keys = OFF");
+      app.db.run("INSERT INTO app (id, repo_id, slug, access) VALUES ('t1', 'repo-t1', 'labels', 'private')");
+      app.db.run("PRAGMA foreign_keys = ON");
+      await withScreen(admin, async ({ text, feed }) => {
+      const mine = () => grantedSlugs(app.db, d.value.id);
+      await feed("a");
+      await feed("nope\r");
+      expect(text()).toContain("No such app");
+      expect(mine()).toEqual([]);
+      for (let n = 0; n < 4; n++) await feed("\x7f");
+      await feed("labels\r");
+      expect(mine()).toEqual(["labels"]);
+      expect(kinds.includes("device.granted")).toBe(true);
+      expect(text()).toContain("apps: labels");
+      await feed("r");
+      await feed("labels\r");
+      expect(mine()).toEqual([]);
+      expect(kinds.includes("device.revoked")).toBe(true);
+      });
+    })());
 });

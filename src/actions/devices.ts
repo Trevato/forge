@@ -7,6 +7,7 @@
 import type { App } from "../app.ts";
 import {
   declareDevice,
+  getDevice,
   isFresh,
   keepProbe,
   listDevices,
@@ -14,11 +15,12 @@ import {
   type Device,
   type DeviceError,
 } from "../core/devices.ts";
+import { grantDevice, revokeDevice } from "../core/device_grants.ts";
 import type { User } from "../core/users.ts";
 import { probePrinter, type PrinterReport } from "../devices/ipp.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
-export type DeviceActionError = DeviceError | "forbidden";
+export type DeviceActionError = DeviceError | "forbidden" | "no_such_app";
 
 export const DEVICE_ERRORS: Record<DeviceActionError, string> = {
   invalid_name: "A name is letters, digits, spaces, dots, dashes or underscores, up to 60.",
@@ -27,6 +29,7 @@ export const DEVICE_ERRORS: Record<DeviceActionError, string> = {
   public_address: "The address must be a number on your own network (like 192.168.1.161). The forge does not ask public hosts or look up names.",
   name_taken: "A device already has that name.",
   not_found: "No such device.",
+  no_such_app: "No such app, or nothing to change for it.",
   forbidden: "Only a site admin manages devices.",
 };
 
@@ -56,6 +59,27 @@ export function remove(app: App, actor: User | undefined, id: number): Result<tr
   if (!gone.ok) return gone;
   app.bus.append({ kind: "device.removed", actorId: actor.id, payload: { id } });
   return gone;
+}
+
+/** The owner lets one app print on one device; the app is named by slug. */
+export function grant(app: App, actor: User | undefined, id: number, slug: string): Result<string, DeviceActionError> {
+  if (!mayManageDevices(actor)) return err("forbidden");
+  const device = Number.isSafeInteger(id) ? getDevice(app.db, id) : undefined;
+  if (!device) return err("not_found");
+  const made = grantDevice(app.db, id, slug, actor.id);
+  if (!made.ok) return err("no_such_app");
+  app.bus.append({ kind: "device.granted", actorId: actor.id, payload: { device: device.name, app: made.value.slug } });
+  return ok(made.value.slug);
+}
+
+export function revoke(app: App, actor: User | undefined, id: number, slug: string): Result<string, DeviceActionError> {
+  if (!mayManageDevices(actor)) return err("forbidden");
+  const device = Number.isSafeInteger(id) ? getDevice(app.db, id) : undefined;
+  if (!device) return err("not_found");
+  const gone = revokeDevice(app.db, id, slug);
+  if (!gone.ok) return err("no_such_app");
+  app.bus.append({ kind: "device.revoked", actorId: actor.id, payload: { device: device.name, app: gone.value.slug } });
+  return ok(gone.value.slug);
 }
 
 /** The devices, each stale printer asked at once within the probe's own bound; a fresh one is not asked. */

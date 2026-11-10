@@ -7,7 +7,7 @@
  * (#7673).
  */
 
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -42,6 +42,12 @@ beforeAll(async () => {
   repoId = made.value.id;
 });
 afterAll(() => rmSync(dataDir, { recursive: true, force: true }));
+
+// A sweep an earlier test started (the timer starts one) may still be in flight, and sweepSoon answers it
+// rather than a new one: let it end before each test.
+beforeEach(async () => {
+  await sweepSoon(app);
+});
 
 const home = (id: string): string => join(dataDir, "checks", `${id}.home`);
 const populate = (id: string, readOnly = false): void => {
