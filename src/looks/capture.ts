@@ -458,6 +458,18 @@ async function shoot(
         flatten: true,
       })) as { sessionId: string };
       await dt.send("Page.enable", {}, sessionId);
+      // Loopback-only machines read as offline; say the page is online (the host mapping still limits reach).
+      await dt.send("Network.enable", {}, sessionId);
+      await dt.send(
+        "Network.emulateNetworkConditions",
+        {
+          offline: false,
+          latency: 0,
+          downloadThroughput: -1,
+          uploadThroughput: -1,
+        },
+        sessionId,
+      );
       await dt.send(
         "Emulation.setDeviceMetricsOverride",
         {
