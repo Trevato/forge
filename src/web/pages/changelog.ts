@@ -14,6 +14,7 @@ import { canRead, getRepo, type Repo } from "../../core/repos.ts";
 import { newestLive, secondsWords } from "../../keeper/landed.ts";
 import { dayHeading, dayOf, daysJs, shippedToday } from "../../release/days.ts";
 import { chosenRepo, readLandings, type Landing, type Landings } from "../../release/landings.ts";
+import { gather, plainTitle, type Gathered } from "../../story/gather.ts";
 import { liveRegionsJs } from "../client.ts";
 import { pageHead } from "../chrome.ts";
 import { changelogTag, holds } from "../feeds.ts";
@@ -32,10 +33,24 @@ function landingRow(l: Landing, own: string | undefined, showRepo: boolean): Htm
   return row({
     href: `/${l.repo}/pulls/${l.number}`,
     nav: true,
-    title: l.title,
+    title: plainTitle(l.title),
     meta: html`${showRepo || l.repo !== own ? html`${l.repo} · ` : null}#${l.number}${l.bet === undefined ? null : html` · ${badge(l.bet, { variant: "outline" })}`}${l.from === undefined ? null : html` · folded in from ${l.from}`}`,
     facts: [...(l.by === undefined ? [] : [{ label: "By", value: l.by }]), ...(l.with === undefined ? [] : [{ label: "With", value: l.with.join(", ") }])],
     trail: time(l.at),
+  });
+}
+
+/** Several landings of one shape as one line, opening in place to each pull; who built them is said once. */
+function gatheredRow(g: Gathered<Landing>, own: string | undefined, showRepo: boolean, day: string): Html {
+  const first = g.landings[0]!;
+  const credit = [...(g.by.length === 0 ? [] : [g.by.join(", ")]), ...(g.with.length === 0 ? [] : [`with ${g.with.join(", ")}`])].join(" · ");
+  const quiet = g.landings.map(({ by: _by, with: _with, ...l }): Landing => l);
+  return row({
+    title: g.shape,
+    meta: html`${g.landings.length} pulls${credit === "" ? null : html` · ${credit}`}`,
+    trail: time(first.at),
+    data: { count: String(g.landings.length) },
+    fold: { open: false, id: `gathered-${day}-${first.repo.replace(/[^a-z0-9]+/gi, "-")}-${first.number}`, body: html`<ul class="row-children list setting-list">${quiet.map((l) => landingRow(l, own, showRepo))}</ul>` },
   });
 }
 
@@ -44,7 +59,7 @@ function byDay(list: readonly Landing[], own: string | undefined, showRepo: bool
   const days = new Map<string, Landing[]>();
   for (const l of list) days.set(dayOf(l.at, zone), [...(days.get(dayOf(l.at, zone)) ?? []), l]);
   return [...days].map(([day, items]) =>
-    html`<section class="mt" data-day="${day}"><h2><time datetime="${day}">${dayHeading(day, today)}</time>${zone === "UTC" ? html` <span data-zone>${badge("UTC", { variant: "outline" })}</span>` : null} ${badge(String(items.length))}</h2><ul class="list setting-list">${items.map((l) => landingRow(l, own, showRepo))}</ul></section>`,
+    html`<section class="mt" data-day="${day}"><h2><time datetime="${day}">${dayHeading(day, today)}</time>${zone === "UTC" ? html` <span data-zone>${badge("UTC", { variant: "outline" })}</span>` : null} ${badge(String(items.length))}</h2><ul class="list setting-list">${gather(items).map((g) => (g.landings.length === 1 ? landingRow(g.landings[0]!, own, showRepo) : gatheredRow(g, own, showRepo, day)))}</ul></section>`,
   );
 }
 
@@ -64,7 +79,7 @@ export const localDaysJs = /* js */ `
     if (!cards.length && !top) return;
     var today = dayOf(new Date().toISOString());
     var rows = [];
-    cards.forEach(function (c) { c.querySelectorAll('li').forEach(function (li) { rows.push(li); }); });
+    cards.forEach(function (c) { c.querySelectorAll(':scope > ul > li').forEach(function (li) { rows.push(li); }); });
     var seen = {}, order = [];
     rows.forEach(function (li) {
       var t = li.querySelector('time[datetime]');
@@ -73,6 +88,7 @@ export const localDaysJs = /* js */ `
       if (!seen[d]) { seen[d] = []; order.push(d); }
       seen[d].push(li);
     });
+    function count(list) { return list.reduce(function (n, li) { return n + (Number(li.getAttribute('data-count')) || 1); }, 0); }
     if (cards.length) {
       var proto = cards[0];
       var after = proto.previousSibling;
@@ -89,7 +105,7 @@ export const localDaysJs = /* js */ `
         while (ul.firstChild) ul.removeChild(ul.firstChild);
         seen[d].forEach(function (li) { ul.appendChild(li); });
         var n = c.querySelector('.badge');
-        if (n) n.textContent = String(seen[d].length);
+        if (n) n.textContent = String(count(seen[d]));
         return c;
       });
       cards.forEach(function (c) { parent.removeChild(c); });
@@ -99,7 +115,7 @@ export const localDaysJs = /* js */ `
     // An empty #shipped-today with no cards is the server saying nothing has ever shipped:
     // writing the count here would bring back the second empty state.
     if (top && (cards.length || top.textContent)) {
-      var n = (seen[today] || []).length;
+      var n = count(seen[today] || []);
       top.textContent = shippedToday(n, false);
     }
   }

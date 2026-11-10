@@ -5,6 +5,7 @@
  * pull title; Enter lists a release's pulls, and Enter on a pull opens it.
  */
 
+import { gather, plainTitle } from "../../story/gather.ts";
 import { forgeChangelog, type ReleaseEntry } from "../../release/changelog.ts";
 import { readLandings } from "../../release/landings.ts";
 import { sourceFor } from "../../view/source.ts";
@@ -20,7 +21,7 @@ import { Filter, ListState, ago, drawList, metaOf, type ListRow } from "./common
 
 /** Whether a release's version or any pull it carried names the word. */
 export function releaseMatches(filter: Filter, e: ReleaseEntry): boolean {
-  return filter.matches([e.version, ...e.pulls.map((p) => p.title)].join("\n"));
+  return filter.matches([e.version, ...e.pulls.map((p) => plainTitle(p.title))].join("\n"));
 }
 
 export function changelogRows(entries: readonly ReleaseEntry[]): ListRow[] {
@@ -29,7 +30,7 @@ export function changelogRows(entries: readonly ReleaseEntry[]): ListRow[] {
     meta: metaOf(
       ago(e.date),
       `${e.pulls.length} ${e.pulls.length === 1 ? "pull" : "pulls"}`,
-      e.pulls.map((p) => `#${p.number} ${p.title}`.trim()).join("; "),
+      e.pulls.map((p) => `#${p.number} ${plainTitle(p.title)}`.trim()).join("; "),
     ),
   }));
 }
@@ -42,14 +43,26 @@ export function creditWords(by: string | undefined, withNames: readonly string[]
   return parts.filter((p) => p !== "").join(", ");
 }
 
-/** One release's pulls, `#N title`; Enter opens the pull as the changelog's Enter once did. */
-function releasePulls(f: Session, ctx: Ctx, repoRef: Repo, entry: ReleaseEntry, credits: ReadonlyMap<number, string>): Screen {
+type Pull = ReleaseEntry["pulls"][number];
+
+/** A release's pulls as lines: pulls of one shape gathered ("Keys on … · 9 pulls"), the rest `#N title`. */
+export function pullLines(pulls: readonly Pull[], credits: ReadonlyMap<number, string>): { row: ListRow; pulls: readonly Pull[] }[] {
+  return gather(pulls).map((g) =>
+    g.landings.length === 1
+      ? { row: { title: `#${g.landings[0]!.number} ${plainTitle(g.landings[0]!.title)}`.trim(), meta: credits.get(g.landings[0]!.number) ?? "" }, pulls: g.landings }
+      : { row: { title: g.shape, meta: metaOf(`${g.landings.length} pulls`, g.landings.map((p) => `#${p.number}`).join(" ")) }, pulls: g.landings },
+  );
+}
+
+/** One release's pulls; Enter opens a pull as the changelog's Enter once did, and a gathered line lists its own pulls. */
+function releasePulls(f: Session, ctx: Ctx, repoRef: Repo, entry: ReleaseEntry, credits: ReadonlyMap<number, string>, title = entry.version): Screen {
   const state = new ListState();
+  const lines = pullLines(entry.pulls, credits);
   return {
-    title: entry.version,
+    title,
     keys: [binding(["j", "k"], "move"), binding(["enter"], "open pull"), binding(["esc", "q"], "back")],
     render(area, s) {
-      const rows = entry.pulls.map((p) => ({ title: `#${p.number} ${p.title}`.trim(), meta: credits.get(p.number) ?? "" }));
+      const rows = lines.map((l) => l.row);
       if (rows.length === 0) {
         emptyState(s, area, ctx.theme.c, { title: "No pulls", body: "This release carried none." });
         return;
@@ -59,10 +72,11 @@ function releasePulls(f: Session, ctx: Ctx, repoRef: Repo, entry: ReleaseEntry, 
     key(e) {
       if (e.key === "esc" || e.key === "q") ctx.pop();
       else if (e.key === "enter") {
-        const pull = entry.pulls[state.index];
-        const opened = pull === undefined ? undefined : sourceFor(f.app, f.user, repoRef);
-        if (pull !== undefined && opened?.ok) ctx.push(pullScreen(f, ctx, opened.value, pull.number));
-      } else state.key(e, entry.pulls.length);
+        const line = lines[state.index];
+        const opened = line === undefined ? undefined : sourceFor(f.app, f.user, repoRef);
+        if (line !== undefined && line.pulls.length > 1) ctx.push(releasePulls(f, ctx, repoRef, { ...entry, pulls: line.pulls }, credits, line.row.title));
+        else if (line !== undefined && opened?.ok) ctx.push(pullScreen(f, ctx, opened.value, line.pulls[0]!.number));
+      } else state.key(e, lines.length);
       return true;
     },
   };

@@ -14,6 +14,7 @@
  * private repository's feed is for its readers, like its pages.
  */
 
+import { plainTitle } from "../story/gather.ts";
 import { eventActor, eventVerb } from "../design/activity.ts";
 import { audienceFilter } from "../core/event_audience.ts";
 import { listEvents, type ForgeEvent } from "../core/events.ts";
@@ -225,7 +226,7 @@ export async function changelogAtom(ctx: Ctx): Promise<Response> {
     const link = `${origin}/${l.repo}/pulls/${l.number}`;
     return `  <entry>
     <id>urn:forge:landing:${xml(l.repo)}#${l.number}</id>
-    <title>${xml(`Went live: ${l.title}`)}</title>
+    <title>${xml(`Went live: ${plainTitle(l.title)}`)}</title>
     <updated>${xml(stamp(l.at))}</updated>
     <link rel="alternate" type="text/html" href="${xml(link)}"/>
   </entry>`;

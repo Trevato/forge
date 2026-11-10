@@ -9,7 +9,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createUser } from "../src/core/users.ts";
 import { createForgeApp, forgeCommands, Session } from "../src/tui/forge.ts";
 import type { Ctx } from "../src/tui/app/app.ts";
-import { changelogScreen } from "../src/tui/screens/changelog.ts";
+import { changelogScreen, creditWords, pullLines } from "../src/tui/screens/changelog.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
@@ -102,10 +102,16 @@ test("a private forge repository leaves the terminal's screen empty", async () =
   }
 });
 
-import { creditWords } from "../src/tui/screens/changelog.ts";
-
 test("creditWords says who built a pull in plain words, and nothing when the commit says nothing", () => {
     expect(creditWords("Scout", ["Claude Sonnet 5.5", "Jay"])).toBe("by Scout, with Claude Sonnet 5.5, Jay");
     expect(creditWords("Scout", [])).toBe("by Scout");
     expect(creditWords(undefined, undefined)).toBe("");
+});
+
+test("a release's pulls read plain, and pulls of one shape gather into one line", () => {
+  const pulls = ["issues", "pulls", "apps"].map((page, i) => ({ number: i + 1, title: `small: j/k, enter, esc and ? on ${page}, with test/keys-${page}.test.ts` }));
+  const lines = pullLines([...pulls, { number: 9, title: "small: Fix the clock" }], new Map());
+  expect(lines.map((l) => l.row.title)).toEqual(["j/k, enter, esc and ? on …", "#9 Fix the clock"]);
+  expect(lines[0]!.pulls).toHaveLength(3);
+  expect(lines[0]!.row.meta).toContain("3 pulls");
 });

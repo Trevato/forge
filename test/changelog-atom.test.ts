@@ -37,7 +37,9 @@ describe("GET /changelog.atom", () => {
     insertPull.run("i1", made.value.defaultBranch, "2026-10-01T10:00:00.000Z", "oid-live");
     insertIssue.run("i2", made.value.id, 2, "Not shipped yet", u.value.id);
     insertPull.run("i2", made.value.defaultBranch, "2026-10-02T10:00:00.000Z", "oid-new");
-    keepLive("alice/forge", ["oid-live"], 0);
+    insertIssue.run("i3", made.value.id, 3, "small: j/k, enter, esc and ? on pulls, with test/keys-pulls.test.ts", u.value.id);
+    insertPull.run("i3", made.value.defaultBranch, "2026-09-30T10:00:00.000Z", "oid-live3");
+    keepLive("alice/forge", ["oid-live", "oid-live3"], 0);
   }, 30_000);
 
   afterAll(async () => {
@@ -56,7 +58,9 @@ describe("GET /changelog.atom", () => {
     expect(res.headers.get("cache-control")).toBe("public, max-age=300");
     const text = await res.text();
     const { titles } = checkAtom(text, `${servers.url}/changelog.atom`);
-    expect(titles).toEqual(["Went live: Fix <&> escaping"]);
+    expect(titles).toEqual(["Went live: Fix <&> escaping", "Went live: j/k, enter, esc and ? on pulls"]);
+    expect(text).not.toContain("small:");
+    expect(text).not.toContain("test/keys");
     expect(text).toContain(`href="${servers.url}/alice/forge/pulls/1"`);
     expect(text).toContain("Fix &lt;&amp;&gt; escaping");
     expect(text).not.toContain("Not shipped yet");

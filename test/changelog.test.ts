@@ -351,6 +351,28 @@ describe("the browser regroups the changelog into the reader's days", () => {
     await window.happyDOM.close();
   });
 
+  test("a gathered row counts every landing it holds, and its own pulls stay inside it", async () => {
+    const { Window } = await import("happy-dom");
+    const { localDaysJs, shippedRegion } = await import("../src/web/pages/changelog.ts");
+    zone = process.env["TZ"];
+    process.env["TZ"] = "America/Chicago";
+    setSystemTime(new Date("2026-11-03T03:00:00.000Z")); // 9 pm on 2 Nov in Chicago
+    const same = ["issues", "pulls", "apps"].map((page, i) => ({ repo: "a/forge", number: 10 + i, title: `Keys on the ${page} page`, at: `2026-11-03T0${i}:10:00.000Z`, commit: "" }));
+    const gathered = { ...read, live: [...same, rows[1]] };
+    const window = new Window();
+    const doc = window.document as any;
+    doc.body.innerHTML = `<div id="shipped">${String(shippedRegion(gathered, "all", new Date("2026-11-03T03:00:00.000Z")))}</div>`;
+    expect(doc.querySelectorAll("[data-count]").length).toBe(1);
+    new Function("document", localDaysJs)(doc);
+    const cards = [...doc.querySelectorAll("[data-day]")];
+    expect(cards.map((c) => c.getAttribute("data-day"))).toEqual(["2026-11-02"]);
+    expect(cards[0].querySelector(".badge")!.textContent).toBe("4");
+    expect(doc.getElementById("shipped-today")!.textContent).toBe("4 shipped today.");
+    expect(cards[0].querySelectorAll(":scope > ul > li").length).toBe(2);
+    expect(doc.querySelector("[data-count]").querySelectorAll("li").length).toBe(3);
+    await window.happyDOM.close();
+  });
+
   test("with no cards and an empty #shipped-today the script leaves the span empty; with text or cards it writes the count", async () => {
     const { Window } = await import("happy-dom");
     const { localDaysJs } = await import("../src/web/pages/changelog.ts");
