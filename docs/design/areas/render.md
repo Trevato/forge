@@ -18,6 +18,10 @@ The header shows the size (`1.2 MB · PDF`) through `Rendered.summary`. Both the
 
 Backgrounds, 256-colour above 15 and truecolour are dropped; so are cursor moves and OSC. A log with no escape code keeps the plain source view.
 
+## Notebook (.ipynb)
+
+`src/web/render/notebook.ts` draws cells as rows inside `.nb.prose`, with space between them and no box. Classes: `.nb-cell` (one row), `.nb-img` (an output picture, `max-width: 100%; height: auto` so a wide plot fits a phone), `.nb-cap` (a plain caption, muted, before HTML or script output shown as text). A long `pre` scrolls inside its cell, never the page.
+
 ## Archive listing
 
 A .zip, .tar or .tar.gz is drawn by `src/web/render/archive-view.ts` as the existing `.table` alone, with no `.card` around it (path, size, modified; `data-dense`), and a `tfoot` for the count and unpacked size. No new class: `.archive-view` is only a hook on the table and has no rule. How it works: `docs/features/archive-listing.md`. A list that cannot be read falls back to the Download card with the reason as its one sentence.

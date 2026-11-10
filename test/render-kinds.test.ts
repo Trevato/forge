@@ -60,6 +60,7 @@ const SAMPLES: Record<string, [Uint8Array, FileKind, string]> = {
   zip: [of(0x50, 0x4b, 3, 4, 0), "archive", "application/octet-stream"],
   tar: [enc("x".repeat(257) + "ustar\0"), "archive", "application/octet-stream"],
   tgz: [of(0x1f, 0x8b, 8), "archive", "application/octet-stream"],
+  ipynb: [enc("{}"), "notebook", "application/octet-stream"],
   md: [enc("# a\n"), "markdown", "application/octet-stream"],
   markdown: [enc("# a\n"), "markdown", "application/octet-stream"],
   mdx: [enc("# a\n"), "markdown", "application/octet-stream"],

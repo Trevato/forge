@@ -25,6 +25,7 @@ export type FileKind =
   | "font"
   | "config"
   | "markdown"
+  | "notebook"
   | "patch"
   | "log"
   | "subtitles"
@@ -54,6 +55,7 @@ export const RENDER_CAP: Readonly<Record<FileKind, number>> = {
   font: 20 * MB,
   config: 1 * MB,
   markdown: 1 * MB,
+  notebook: 1 * MB,
   patch: 1 * MB,
   log: 1 * MB,
   subtitles: 5 * MB,
@@ -159,6 +161,7 @@ const TEXTUAL: Readonly<Record<string, FileKind>> = {
   md: "markdown",
   markdown: "markdown",
   mdx: "markdown",
+  ipynb: "notebook",
   patch: "patch",
   diff: "patch",
   log: "log",

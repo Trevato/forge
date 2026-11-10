@@ -19,6 +19,7 @@ import { fileKind, HEAD_BYTES, kindByName, NO_BYTES, RENDER_CAP, type FileKind }
 import { log, hasEscape } from "./log.ts";
 import { markdown } from "./markdown.ts";
 import { model3d } from "./model3d.ts";
+import { notebook } from "./notebook.ts";
 import { patch } from "./patch.ts";
 import { pdf } from "./pdf.ts";
 import { sqlite } from "./sqlite.ts";
@@ -62,6 +63,7 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
   image,
   svg: image,
   markdown,
+  notebook,
   pdf,
   csv,
   sqlite,

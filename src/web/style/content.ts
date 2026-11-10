@@ -414,6 +414,12 @@ form.inline { display: inline; margin-left: auto; }
 .csv-view .num { text-align: right; }
 .csv-more { padding: 10px 12px; margin: 0; }
 
+/* A notebook (render/notebook.ts): cells are rows with space between, never boxes. */
+.nb-cell { margin: 0 0 28px; min-width: 0; }
+.nb pre { max-width: 100%; overflow-x: auto; margin: 8px 0; }
+.nb-img { display: block; max-width: 100%; height: auto; margin: 8px 0; }
+.nb-cap { color: var(--muted-fg); font-size: 12.5px; margin-top: 8px; }
+
 /* A terminal log (render/log.ts): SGR colours as fixed classes, theme tokens only. */
 .ansi-red { color: var(--danger); }
 .ansi-green { color: var(--success); }

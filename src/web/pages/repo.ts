@@ -88,7 +88,7 @@ import { overSize } from "../render/archive.ts";
 import { csvJs, isCsvPath } from "../render/csv.ts";
 import { fontJs } from "../render/font.ts";
 import { hasTable } from "../render/sqlite.ts";
-import { fileKind, HEAD_BYTES, RENDER_CAP } from "../render/kinds.ts";
+import { fileKind, HEAD_BYTES, kindByName, RENDER_CAP } from "../render/kinds.ts";
 import { RENDERERS, rendererFor } from "../render/renderers.ts";
 import { downloadHref, mediaHref } from "./media.ts";
 import { browseBase, localScope, type RepoScope } from "../scope.ts";
@@ -722,7 +722,7 @@ export function blobBody(
       content: empty({
         icon: "alert",
         title: "Too large to render",
-        note: `${fileSize(blob.size)} — over the render cap. Download it instead.`,
+        note: why !== undefined ? `${fileSize(blob.size)} — ${why}` : `${fileSize(blob.size)} — over the render cap. Download it instead.`,
         action: btn("Download", {
           href: downloadHref(base, ref, path),
           variant: "primary",
@@ -751,7 +751,7 @@ export function blobBody(
   const fileHref = `${base}/blob/${encoded}/${path}`;
   return {
     lines: total,
-    content: html`<div class="card code">
+    content: html`${why !== undefined ? html`<p class="nb-cap">${why}</p>` : html``}<div class="card code">
         <table>
           ${raw(rows)}
         </table>
@@ -1097,6 +1097,8 @@ function blobRenderer(scope: RepoScope, path: string, blob: Blob): ReturnType<ty
 
 /** Why an archive too big to list is not listed, as one sentence. */
 function overCap(path: string, blob: Blob): string | undefined {
+  if (kindByName(path) === "notebook" && blob.size > RENDER_CAP.notebook)
+    return `This notebook is over ${RENDER_CAP.notebook / 1_000_000} MB, so it is not drawn as cells${blob.kind === "too_large" ? ". Download it to read it" : " and is shown as plain text"}.`;
   if (blob.kind !== "binary" || fileKind(path, blob.body.subarray(0, HEAD_BYTES)) !== "archive") return undefined;
   return blob.size > RENDER_CAP.archive ? overSize(RENDER_CAP.archive) : undefined;
 }
