@@ -926,7 +926,7 @@ export function workspaceScreen(
             note =
               archiveNote(t.path, read.value.body, read.value.size, formatSize) ??
               `Binary file, ${formatSize(read.value.size)}.`;
-        } else raw = read.value.body;
+        } else raw = read.value.body; // .html included: source here, the page preview is web-only
       }
       entry = { note, noteTitle, noteDetail, raw, picture };
       remember(key, entry);

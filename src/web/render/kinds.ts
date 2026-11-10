@@ -7,7 +7,8 @@
  * gets one only from the allowlist below, decided by extension and confirmed
  * by the file's own first bytes where its format has a signature; anything
  * else, or a file whose bytes say it is not what its name says, goes out as
- * `application/octet-stream`. Never HTML, never script. `renderBlob` asks
+ * `application/octet-stream`. HTML is the one page type, and only under the
+ * sandbox policy in `pages/media.ts`; never script on this origin. `renderBlob` asks
  * `renderers.ts` what draws a kind, and a kind with nothing there keeps the
  * source view it always had.
  */
@@ -16,6 +17,7 @@ export type FileKind =
   | "image"
   | "svg"
   | "pdf"
+  | "html"
   | "audio"
   | "video"
   | "csv"
@@ -48,6 +50,7 @@ export const RENDER_CAP: Readonly<Record<FileKind, number>> = {
   image: 50 * MB,
   svg: 5 * MB,
   pdf: 100 * MB,
+  html: 2 * MB,
   audio: 500 * MB,
   video: 4_000 * MB,
   csv: 10 * MB,
@@ -106,6 +109,9 @@ const adts: Magic = (head) => head[0] === 0xff && ((head[1] ?? 0) & 0xf6) === 0x
 const svgRoot: Magic = (head) =>
   !head.includes(0) && /<svg[\s>]/i.test(new TextDecoder().decode(head));
 
+/** HTML is text: a NUL in the head means it is something else. */
+const textHead: Magic = (head) => !head.includes(0);
+
 interface Media {
   readonly kind: FileKind;
   /** The format as a person says it, for a header: `WebM`, `QuickTime`. */
@@ -126,6 +132,8 @@ const MEDIA: Readonly<Record<string, Media>> = {
   bmp: { kind: "image", name: "BMP", type: "image/bmp", magic: ascii("BM") },
   ico: { kind: "image", name: "ICO", type: "image/x-icon", magic: bytes(0x00, 0x00, 0x01, 0x00) },
   svg: { kind: "svg", name: "SVG", type: "image/svg+xml", magic: svgRoot },
+  html: { kind: "html", name: "HTML", type: "text/html; charset=utf-8", magic: textHead },
+  htm: { kind: "html", name: "HTML", type: "text/html; charset=utf-8", magic: textHead },
   pdf: { kind: "pdf", name: "PDF", type: "application/pdf", magic: ascii("%PDF-") },
   mp3: { kind: "audio", name: "MP3", type: "audio/mpeg", magic: mpegAudio },
   ogg: { kind: "audio", name: "Ogg", type: "audio/ogg", magic: ascii("OggS") },

@@ -24,6 +24,8 @@ const SAMPLES: Record<string, [Uint8Array, FileKind, string]> = {
   ico: [of(0, 0, 1, 0, 1), "image", "image/x-icon"],
   svg: [enc('<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg"/>'), "svg", "image/svg+xml"],
   pdf: [enc("%PDF-1.7\n"), "pdf", "application/pdf"],
+  html: [enc("<!doctype html><p>"), "html", "text/html; charset=utf-8"],
+  htm: [enc("<p>"), "html", "text/html; charset=utf-8"],
   mp3: [enc("ID3\x04\0"), "audio", "audio/mpeg"],
   ogg: [enc("OggS\0"), "audio", "audio/ogg"],
   oga: [enc("OggS\0"), "audio", "audio/ogg"],
@@ -106,14 +108,16 @@ describe("the registry of file kinds", () => {
     );
   });
 
-  test("nothing it can answer is HTML or script", () => {
-    for (const ext of [...KNOWN_EXTENSIONS, "html", "htm", "js", "mjs", "xhtml", "xml"]) {
+  test("nothing it can answer is script, and HTML only as .html or .htm (sandboxed by the media route)", () => {
+    for (const ext of [...KNOWN_EXTENSIONS, "js", "mjs", "xhtml", "xml"]) {
+      if (ext === "html" || ext === "htm") continue;
       const head = SAMPLES[ext]?.[0] ?? enc("<script>alert(1)</script>");
       const type = mediaType(`a.${ext}`, head);
       expect(type).not.toMatch(/html|javascript|ecmascript|xml(?!$)/);
       expect(type).not.toBe("text/html");
     }
-    expect(mediaType("index.html", enc("<html>"))).toBe("application/octet-stream");
+    expect(mediaType("index.html", enc("<html>"))).toBe("text/html; charset=utf-8");
+    expect(mediaType("index.html", new Uint8Array([60, 0]))).toBe("application/octet-stream");
   });
 
   test("a file with no known extension is text or binary by its bytes", () => {

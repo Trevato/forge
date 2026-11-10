@@ -17,6 +17,7 @@ import { gpx } from "./gpx.ts";
 import { font } from "./font.ts";
 import { ics } from "./ics.ts";
 import { vcf } from "./vcf.ts";
+import { htmlPreview } from "./html_preview.ts";
 import { image } from "./image.ts";
 import { fileKind, HEAD_BYTES, kindByName, NO_BYTES, RENDER_CAP, type FileKind } from "./kinds.ts";
 import { log, hasEscape } from "./log.ts";
@@ -70,6 +71,7 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
   markdown,
   notebook,
   pdf,
+  html: htmlPreview,
   csv,
   sqlite,
   audio,
@@ -99,6 +101,7 @@ const MEDIA_KINDS: ReadonlySet<FileKind> = new Set<FileKind>([
   "image",
   "svg",
   "pdf",
+  "html",
   "audio",
   "video",
   "model3d",

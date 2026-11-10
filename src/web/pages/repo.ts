@@ -1116,6 +1116,15 @@ export function drawsPdf(scope: RepoScope, path: string, blob: Blob, view: BlobV
   );
 }
 
+/** Whether the blob page of this file frames an HTML preview, and so needs `frame-src 'self'`. */
+export function drawsHtml(scope: RepoScope, path: string, blob: Blob, view: BlobView): boolean {
+  return (
+    view !== "source" &&
+    RENDERERS.html !== undefined &&
+    blobRenderer(scope, path, blob)?.render === RENDERERS.html
+  );
+}
+
 /** Whether the blob page of this file sets a font in itself, and so needs `font-src`. */
 export function drawsFont(scope: RepoScope, path: string, blob: Blob, view: BlobView): boolean {
   return (
@@ -1520,6 +1529,8 @@ export function codePage(
     before?: Html;
     /** The page draws a PDF in an `<object>` (`PageOptions.objectSrc`). */
     objectSrc?: boolean;
+    /** The page frames an HTML preview (`PageOptions.frameSelf`). */
+    frameSelf?: boolean;
     /** The page sets a font in itself (`PageOptions.fontSrc`). */
     fontSrc?: boolean;
     /** Script only some files need (the CSV table's sort and filter). */
@@ -1530,6 +1541,7 @@ export function codePage(
     ctx,
     title: o.title,
     ...(o.objectSrc ? { objectSrc: true } : {}),
+    ...(o.frameSelf ? { frameSelf: true } : {}),
     ...(o.fontSrc ? { fontSrc: true } : {}),
     crumbs: scope.crumbs,
     palette: scope.palette,
@@ -1695,6 +1707,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
           explorer: hit.explorer,
           content: hit.content,
           objectSrc: hit.objectSrc,
+          frameSelf: hit.frame,
           ...(hit.font ? { fontSrc: true, extraJs: fontJs } : hit.csv ? { extraJs: csvJs } : {}),
         })),
       );
@@ -1764,6 +1777,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     ),
   });
   const objectSrc = drawsPdf(scope, path, shown, view);
+  const frame = drawsHtml(scope, path, shown, view);
   const font = drawsFont(scope, path, shown, view);
   if (kept && keepable)
     keepBlobPage(repo.id, ref, path, `${view}\0${table ?? ""}\0${layer ?? ""}`, all, {
@@ -1771,6 +1785,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
       explorer: explorerHtml,
       content: pane,
       objectSrc,
+      frame,
       font,
       csv: isCsvPath(path),
     });
@@ -1780,6 +1795,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     explorer: explorerHtml,
     content: pane,
     objectSrc,
+    frameSelf: frame,
     ...(font ? { fontSrc: true, extraJs: fontJs } : isCsvPath(path) ? { extraJs: csvJs } : {}),
   }));
   notePhase(ctx.request, "render", paneMs + performance.now() - pageStart);

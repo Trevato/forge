@@ -170,6 +170,11 @@ export interface PageOptions {
    */
   objectSrc?: boolean;
   /**
+   * The page frames an HTML file from the media route in a sandboxed
+   * `<iframe>` (`frame-src 'self'`). Only the blob page of an HTML file asks.
+   */
+  frameSelf?: boolean;
+  /**
    * The page sets a font file in the font itself (`render/font.ts`): the
    * browser may load a font from this origin (`font-src 'self'`). Only the
    * blob page of a font asks; no other page's policy changes.
@@ -939,8 +944,9 @@ const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
 const BARE_ORIGIN = /^https?:\/\/[a-z0-9.-]+(?::\d{1,5})?$/i;
 
 /** The `frame-src` directive (with its trailing space), or nothing when the page frames nothing. */
-export function frameSources(options: Pick<PageOptions, "turnstile" | "frameSrc">): string {
+export function frameSources(options: Pick<PageOptions, "turnstile" | "frameSrc" | "frameSelf">): string {
   const origins = [
+    ...(options.frameSelf ? ["'self'"] : []),
     ...(options.turnstile ? [TURNSTILE_ORIGIN] : []),
     ...(options.frameSrc !== undefined && BARE_ORIGIN.test(options.frameSrc) ? [options.frameSrc] : []),
   ];

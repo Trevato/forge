@@ -309,6 +309,24 @@ describe("the terminal workspace", () => {
     }
   });
 
+  test("a .html file opens as its source: the page preview is a web-only door", async () => {
+    const made = await createRepo(forge, alice, { name: "pages", visibility: "public", description: "pages" });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, {
+      message: "seed",
+      files: [{ path: "index.html", content: "<h1>hello page</h1>\n" }],
+    });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "pages");
+      await openFile(h, "index.html");
+      expect(h.text()).toContain("<h1>hello page</h1>");
+    } finally {
+      h.stop();
+    }
+  });
+
   test("a .patch opens as the diff a pull shows, v flips to the source, a non-diff stays text", async () => {
     const made = await createRepo(forge, alice, {
       name: "patches",

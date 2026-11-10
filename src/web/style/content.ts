@@ -474,6 +474,9 @@ form.inline { display: inline; margin-left: auto; }
 .media-pane .media-player { display: block; width: 100%; max-width: 100%; }
 .media-pane video.media-player { height: auto; max-height: 80vh; background: var(--muted); border-radius: var(--radius-sm); }
 
+/* An HTML file's page in a sandboxed frame: one hairline, a fixed height, so nothing shifts. */
+.html-frame { display: block; width: 100%; height: 80vh; min-height: 480px; border: 1px solid var(--border); border-radius: var(--radius-sm); color-scheme: light; }
+@media (max-width: 600px) { .html-frame { height: 60vh; min-height: 360px; } }
 /* A PDF in the browser's own viewer: a fixed frame, so nothing shifts. */
 .pdf-view { overflow: hidden; }
 .pdf-frame { display: block; width: 100%; height: 80vh; min-height: 480px; border: 0; }
