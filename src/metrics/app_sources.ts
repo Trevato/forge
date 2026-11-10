@@ -4,9 +4,9 @@
  * watch has already read. It starts nothing and reads no process.
  */
 import type { App } from "../app.ts";
-import { cellCounters } from "../apps/contain.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { listApps } from "../core/apps.ts";
+import { cellCountersFor } from "../spawn/process_counters.ts";
 import type { AppSources } from "./forge.ts";
 
 export function appSources(app: App): AppSources {
@@ -19,6 +19,6 @@ export function appSources(app: App): AppSources {
       private: a.access === "private",
       envs: runtime.status(a).map((e) => ({ env: e.env, state: e.state })),
     })),
-    cells: cellCounters(),
+    cells: cellCountersFor(app),
   };
 }

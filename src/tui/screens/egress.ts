@@ -12,7 +12,7 @@ import {
   type EgressRow,
 } from "../../actions/egress_grants.ts";
 import { egressHour } from "../../actions/capacity.ts";
-import { egressSnapshot } from "../../apps/egress.ts";
+import { egressRowsFor, liveCounters, type ProcessCounters } from "../../spawn/process_counters.ts";
 import { bytes } from "../../system/format.ts";
 import type { Repo } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -120,14 +120,15 @@ export function egressScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
  * Capacity page's card, for a site admin, under the bytes the npm registry
  * sent over the last hour (#7546) and the repository it sent most to (#8382),
  * both from `egressHour`, as the page and MCP read them. Read again on every draw, so it moves as
- * connections do; anyone else is offered nothing.
+ * connections do; anyone else is offered nothing. `read` is where the
+ * counters come from, the live ones but in a test.
  */
-export function connectionsScreen(f: Session, ctx: Ctx): Screen {
+export function connectionsScreen(f: Session, ctx: Ctx, read: ProcessCounters = liveCounters): Screen {
   const state = new ListState();
   const lines = (): ListRow[] =>
     f.user?.isAdmin !== true
       ? []
-      : egressSnapshot().map((r) => ({
+      : egressRowsFor(f.app, read).map((r) => ({
           title: r.label === "" ? "(unlabelled)" : r.label,
           meta: `${r.destination} · ${r.open} open · ${bytes(r.bytesIn)} in · ${bytes(r.bytesOut)} out`,
         }));
@@ -140,7 +141,7 @@ export function connectionsScreen(f: Session, ctx: Ctx): Screen {
       state.clamp(rows.length);
       const [npm, head, list] = split(area, "v", [len(1), len(1), fill(1)]);
       if (f.user?.isAdmin === true) {
-        const hour = egressHour(f.app.db);
+        const hour = egressHour(f.app, Date.now(), read);
         const top = hour.npmTopRepoLastHour;
         const most = top === null ? "." : `, most to ${top.repo} (${bytes(top.bytes)}).`;
         const sent = `The npm registry sent ${bytes(hour.npmBytesLastHour)} over the last hour${most}`;
