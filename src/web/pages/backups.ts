@@ -388,6 +388,7 @@ async function movingPart(
               ${snapshots.map((m) =>
                 row({
                   lead: icon("download"),
+                  nav: true,
                   title: m.name,
                   meta: html`${time(m.finishedAt)} · forge ${m.version} ·
                     ${m.repos === 1 ? "one repository" : `${m.repos} repositories`},
