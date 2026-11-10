@@ -6,12 +6,12 @@ import { scopeAllows } from "../../../core/tokens.ts";
 import { good, bad, type Tool } from "../shared.ts";
 
 /** Every field the tool can set, as `PUT /api/v1/forge/economics` takes them. */
-const FIELDS = ["position", "marginPct", "ownedNodeLabel", "ownedMonthUsd", "ownedSlots", "cloudHourUsd", "storageGbMonthUsd"] as const;
+const FIELDS = ["position", "marginPct", "ownedNodeLabel", "ownedMonthUsd", "ownedSlots", "cloudHourUsd", "storageGbMonthUsd", "awakePriceHourUsd", "storagePriceGbMonthUsd"] as const;
 type Field = (typeof FIELDS)[number];
 
 export const tool: Tool = {
   name: "economics",
-  doc: "`{ position?, marginPct?, ownedNodeLabel?, ownedMonthUsd?, ownedSlots?, cloudHourUsd?, storageGbMonthUsd?, dryRun? }`: with nothing, the profit slider's `position` (0 to 100), `marginPct` (0 to 500), the `policy` and its `words`, `placement` (whether a cloud body takes bursts, the `ownedNodeLabel` that selects owned nodes), the operator's `prices` (US dollars) and this UTC `month`'s cost, as `GET /api/v1/forge/economics` answers; with any field, set it (prices in US dollars with at most two decimals, non-negative; `ownedSlots` a whole number of app-slots; a label as `key=value`, blank for the default `plat.sh/site=vxrail`) with an admin token, a forge admin who is a person, never an agent, planned first (`dryRun` is true unless `false`); anyone else is told `not_found`",
+  doc: "`{ position?, marginPct?, ownedNodeLabel?, ownedMonthUsd?, ownedSlots?, cloudHourUsd?, storageGbMonthUsd?, awakePriceHourUsd?, storagePriceGbMonthUsd?, dryRun? }`: with nothing, the profit slider's `position` (0 to 100), `marginPct` (0 to 500), the `policy` and its `words`, `placement` (whether a cloud body takes bursts, the `ownedNodeLabel` that selects owned nodes), the operator's `prices` and the list prices a customer pays (`awakePriceHourUsd`, `storagePriceGbMonthUsd`; US dollars) and this UTC `month`'s cost, as `GET /api/v1/forge/economics` answers; with any field, set it (prices in US dollars with at most two decimals, non-negative; `ownedSlots` a whole number of app-slots; a label as `key=value`, blank for the default `plat.sh/site=vxrail`) with an admin token, a forge admin who is a person, never an agent, planned first (`dryRun` is true unless `false`); anyone else is told `not_found`",
   description: "Read the profit slider, its policy, placement, the prices and the month's cost, or set them (admin).",
   inputSchema: {
     type: "object",
@@ -23,6 +23,8 @@ export const tool: Tool = {
       ownedSlots: { type: "integer", minimum: 0 },
       cloudHourUsd: { type: "number", minimum: 0 },
       storageGbMonthUsd: { type: "number", minimum: 0 },
+      awakePriceHourUsd: { type: "number", minimum: 0 },
+      storagePriceGbMonthUsd: { type: "number", minimum: 0 },
       dryRun: { type: "boolean" },
     },
   },
@@ -66,7 +68,7 @@ function checkOnly(given: Partial<Record<Field, unknown>>): Exclude<EconomicsErr
   if (given.position !== undefined && parsePosition(given.position) === undefined) return "bad_position";
   if (given.marginPct !== undefined && parseMarginPct(given.marginPct) === undefined) return "bad_margin";
   if (given.ownedNodeLabel !== undefined && labelInput(given.ownedNodeLabel) === undefined) return "bad_label";
-  for (const f of ["ownedMonthUsd", "cloudHourUsd", "storageGbMonthUsd"] as const)
+  for (const f of ["ownedMonthUsd", "cloudHourUsd", "storageGbMonthUsd", "awakePriceHourUsd", "storagePriceGbMonthUsd"] as const)
     if (given[f] !== undefined && parseUsdCents(given[f]) === undefined) return "bad_price";
   if (given.ownedSlots !== undefined && parseSlots(given.ownedSlots) === undefined) return "bad_slots";
   return undefined;

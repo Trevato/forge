@@ -170,12 +170,20 @@ export function policyWords(policy: Policy): string {
  * - `ownedSlots`: how many apps the box holds awake at once (app-slots);
  * - `cloudHourCents`: US cents per awake-hour on a cloud;
  * - `storageGbMonthCents`: US cents per GB-month (decimal GB) kept.
+ *
+ * Beside them, the list prices a customer pays (#508, `core/revenue.ts`):
+ * - `awakePriceHourCents`: US cents per awake-hour, wherever it ran;
+ * - `storagePriceGbMonthCents`: US cents per GB-month kept.
+ * Crew spend is billed at cost × (1 + margin%), the margin set beside the
+ * slider, so it has no list price of its own.
  */
 export interface Prices {
   readonly ownedMonthCents: number;
   readonly ownedSlots: number;
   readonly cloudHourCents: number;
   readonly storageGbMonthCents: number;
+  readonly awakePriceHourCents: number;
+  readonly storagePriceGbMonthCents: number;
 }
 
 export type PriceKey = keyof Prices;
@@ -184,6 +192,8 @@ export const PRICE_KEYS: readonly PriceKey[] = [
   "ownedSlots",
   "cloudHourCents",
   "storageGbMonthCents",
+  "awakePriceHourCents",
+  "storagePriceGbMonthCents",
 ];
 
 /** Nothing priced until the operator says: an unpriced forge costs $0. */
@@ -192,6 +202,8 @@ export const PRICES_DEFAULT: Prices = {
   ownedSlots: 0,
   cloudHourCents: 0,
   storageGbMonthCents: 0,
+  awakePriceHourCents: 0,
+  storagePriceGbMonthCents: 0,
 };
 
 /** $1,000,000.00: far above any one box, low enough to stay a safe integer. */

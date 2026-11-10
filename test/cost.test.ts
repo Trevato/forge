@@ -12,6 +12,8 @@ const prices: Prices = {
   ownedSlots: 40,
   cloudHourCents: 5, // $0.05 an awake-hour
   storageGbMonthCents: 2, // $0.02 a GB-month
+  awakePriceHourCents: 0, // list prices do not enter cost
+  storagePriceGbMonthCents: 0,
 };
 const november = { from: "2026-11-01T00:00:00.000Z", to: "2026-12-01T00:00:00.000Z" };
 

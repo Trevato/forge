@@ -28,6 +28,9 @@ export function wire(e: EconomicsView) {
       ownedSlots: e.prices.ownedSlots,
       cloudHourUsd: e.prices.cloudHourCents / 100,
       storageGbMonthUsd: e.prices.storageGbMonthCents / 100,
+      // List prices a customer pays (#508); crew is cost × (1 + marginPct%).
+      awakePriceHourUsd: e.prices.awakePriceHourCents / 100,
+      storagePriceGbMonthUsd: e.prices.storagePriceGbMonthCents / 100,
     },
     month: e.month,
   };
@@ -54,6 +57,8 @@ export function economicsRoutes(router: Router<Handler>): void {
       ownedSlots: input.ownedSlots,
       cloudHourUsd: input.cloudHourUsd,
       storageGbMonthUsd: input.storageGbMonthUsd,
+      awakePriceHourUsd: input.awakePriceHourUsd,
+      storagePriceGbMonthUsd: input.storagePriceGbMonthUsd,
     });
     if (changed.ok) return json(wire(changed.value));
     if (changed.error === "not_found") return notFound();

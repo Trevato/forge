@@ -44,6 +44,8 @@ const STORE: Record<EconomicsKey, { key: string; min: number; max: number; fallb
   ownedSlots: { key: "economics.owned_slots", min: 0, max: SLOTS_MAX, fallback: PRICES_DEFAULT.ownedSlots },
   cloudHourCents: { key: "economics.cloud_hour_cents", min: 0, max: PRICE_MAX_CENTS, fallback: PRICES_DEFAULT.cloudHourCents },
   storageGbMonthCents: { key: "economics.storage_gb_month_cents", min: 0, max: PRICE_MAX_CENTS, fallback: PRICES_DEFAULT.storageGbMonthCents },
+  awakePriceHourCents: { key: "economics.awake_price_hour_cents", min: 0, max: PRICE_MAX_CENTS, fallback: PRICES_DEFAULT.awakePriceHourCents },
+  storagePriceGbMonthCents: { key: "economics.storage_price_gb_month_cents", min: 0, max: PRICE_MAX_CENTS, fallback: PRICES_DEFAULT.storagePriceGbMonthCents },
 };
 
 const KEYS = Object.keys(STORE) as EconomicsKey[];
@@ -77,13 +79,15 @@ export function setEconomics(db: Database, next: Economics, actorId: string): vo
   }
 }
 
-/** The operator's prices as they stand now: four point reads. */
+/** The operator's prices and list prices as they stand now: six point reads. */
 export function getPrices(db: Database): Prices {
   return {
     ownedMonthCents: stored(db, "ownedMonthCents"),
     ownedSlots: stored(db, "ownedSlots"),
     cloudHourCents: stored(db, "cloudHourCents"),
     storageGbMonthCents: stored(db, "storageGbMonthCents"),
+    awakePriceHourCents: stored(db, "awakePriceHourCents"),
+    storagePriceGbMonthCents: stored(db, "storagePriceGbMonthCents"),
   };
 }
 

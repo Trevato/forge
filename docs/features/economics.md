@@ -48,6 +48,12 @@ cents, and every change is kept in the same history as the position.
 | `cloudHourUsd`      | US dollars per awake-hour on cloud        | 0–1,000,000.00     |
 | `storageGbMonthUsd` | US dollars per GB-month kept (decimal GB) | 0–1,000,000.00     |
 
+Beside them, two list prices a customer pays (#508), same rules, set by the
+same form row, terminal rows, API and MCP fields: `awakePriceHourUsd` (US
+dollars per awake-hour, wherever it ran) and `storagePriceGbMonthUsd` (US
+dollars per GB-month). Crew spend is charged at cost plus the margin. They
+price each app's statement: `docs/features/statement.md`.
+
 Prices take at most two decimals and cannot be negative. Anything else is
 refused as `bad_price` (or `bad_slots`) and nothing changes.
 

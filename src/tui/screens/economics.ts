@@ -107,6 +107,8 @@ const LEVERS: readonly Lever[] = [
   },
   price("cloudHourUsd", (e) => e.prices.cloudHourCents, "$/awake-hour on cloud"),
   price("storageGbMonthUsd", (e) => e.prices.storageGbMonthCents, "$/GB-month kept"),
+  price("awakePriceHourUsd", (e) => e.prices.awakePriceHourCents, "list $/awake-hour a customer pays"),
+  price("storagePriceGbMonthUsd", (e) => e.prices.storagePriceGbMonthCents, "list $/GB-month a customer pays"),
 ];
 
 /** "This month so far: owned $60.00 · cloud $0.00 · … · total $61.50". */

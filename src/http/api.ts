@@ -353,6 +353,7 @@ import { displayRoutes } from "./api/displays.ts";
 import { followingRoutes } from "./api/following.ts";
 import { labelsRoutes } from "./api/labels.ts";
 import { dataRoutes } from "./api/data.ts";
+import { statementRoutes } from "./api/statement.ts";
 import { visionRoutes } from "./api/vision.ts";
 import { businessPlanRoutes } from "./api/business_plan.ts";
 import { tokenRoutes } from "./api/tokens.ts";
@@ -2095,6 +2096,7 @@ export function apiRoutes(router: Router<Handler>): void {
   labelsRoutes(router);
   visionRoutes(router);
   dataRoutes(router);
+  statementRoutes(router);
   businessPlanRoutes(router);
   router.add(
     "PUT",

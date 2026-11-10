@@ -177,7 +177,7 @@ describe("economics", () => {
 
   test("prices: the form and the API set them in dollars, refuse a third decimal or a sign, and the page costs the month", async () => {
     const cookie = await login("alice");
-    expect(getPrices(app.db)).toEqual({ ownedMonthCents: 0, ownedSlots: 0, cloudHourCents: 0, storageGbMonthCents: 0 });
+    expect(getPrices(app.db)).toEqual({ ownedMonthCents: 0, ownedSlots: 0, cloudHourCents: 0, storageGbMonthCents: 0, awakePriceHourCents: 0, storagePriceGbMonthCents: 0 });
     const prices = { ownedMonthUsd: "300", ownedSlots: "40", cloudHourUsd: "0.05", storageGbMonthUsd: "0.02" };
     expect((await post(cookie, prices, "https://evil.example")).status).toBe(403);
     expect(getPrices(app.db).ownedMonthCents).toBe(0);
@@ -185,7 +185,7 @@ describe("economics", () => {
     // The prices form carries no position: it keeps what stands.
     const before = getEconomics(app.db);
     expect((await post(cookie, prices)).status).toBe(303);
-    expect(getPrices(app.db)).toEqual({ ownedMonthCents: 30_000, ownedSlots: 40, cloudHourCents: 5, storageGbMonthCents: 2 });
+    expect(getPrices(app.db)).toEqual({ ownedMonthCents: 30_000, ownedSlots: 40, cloudHourCents: 5, storageGbMonthCents: 2, awakePriceHourCents: 0, storagePriceGbMonthCents: 0 });
     expect(getEconomics(app.db)).toEqual(before);
     expect(economicsChanges(app.db).filter((c) => c.key === "ownedMonthCents").map((c) => [c.from, c.to])).toEqual([["0", "30000"]]);
 
@@ -212,7 +212,7 @@ describe("economics", () => {
       prices: Record<string, number>;
       month: { from: string; to: string; cost: { owned: number; cloud: number; total: number } };
     };
-    expect(got.prices).toEqual({ ownedMonthUsd: 300, ownedSlots: 40, cloudHourUsd: 0.05, storageGbMonthUsd: 0.02 });
+    expect(got.prices).toEqual({ ownedMonthUsd: 300, ownedSlots: 40, cloudHourUsd: 0.05, storageGbMonthUsd: 0.02, awakePriceHourUsd: 0, storagePriceGbMonthUsd: 0 });
     expect(got.month.cost.cloud).toBe(0);
     expect(got.month.cost.owned).toBeGreaterThan(0);
     expect(got.month.cost.owned).toBeLessThanOrEqual(300);
@@ -224,6 +224,14 @@ describe("economics", () => {
     expect(((await (await api(token, "PUT", { ownedSlots: -1 })).json()) as { error: string }).error).toBe("bad_slots");
     expect((await api(token, "PUT", { cloudHourUsd: 0.1 })).status).toBe(200);
     expect(getPrices(app.db).cloudHourCents).toBe(10);
+
+    // The list prices a customer pays (#508) sit beside the costs, same rules.
+    expect((await api(token, "PUT", { awakePriceHourUsd: "0.12", storagePriceGbMonthUsd: 0.3 })).status).toBe(200);
+    expect(getPrices(app.db)).toMatchObject({ awakePriceHourCents: 12, storagePriceGbMonthCents: 30, cloudHourCents: 10 });
+    expect(((await (await api(token, "PUT", { awakePriceHourUsd: -1 })).json()) as { error: string }).error).toBe("bad_price");
+    const listed = await (await fetch(`${servers.url}/settings/economics`, { headers: { cookie: await login("alice") } })).text();
+    expect(listed).toContain('name="awakePriceHourUsd"');
+    expect(listed).toContain('value="0.30"');
   });
 
   test("the owned-node label is a setting: shown with the queue line, set by API and form, validated (#509)", async () => {

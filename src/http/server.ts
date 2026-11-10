@@ -493,6 +493,7 @@ import { startFeatureSchedule } from "../apps/feature_schedule.ts";
 import { startPullSchedule } from "../apps/pull_schedule.ts";
 import { startGithubPull } from "../perf/github_traffic.ts";
 import { appSourcesPage } from "../web/pages/sources.ts";
+import { statementPage } from "../web/pages/statement.ts";
 import { createViewWriter } from "../perf/views_store.ts";
 import { createReadWriter, readOf } from "../perf/reads.ts";
 import { parseServerTiming } from "../perf/record.ts";
@@ -1457,6 +1458,7 @@ export function buildRouter(): Router<Handler> {
   );
   router.add("GET", "/:owner/:name/settings/app", appSettingsPage);
   router.add("GET", "/:owner/:name/settings/app/traffic", appSourcesPage);
+  router.add("GET", "/:owner/:name/settings/app/statement", statementPage);
   router.add("GET", "/:owner/:name/settings/machines", machinesSettingsPage);
   // The shell page; an upgrade at the same path is the socket (`machines/shell.ts`).
   router.add("GET", "/:owner/:name/machines/:machine/shell", machineShellPage);

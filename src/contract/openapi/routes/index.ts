@@ -159,6 +159,7 @@ export { route as getApiV1ReposOwnerNameRoadmap } from "./getApiV1ReposOwnerName
 export { route as getApiV1ReposOwnerNameRuns } from "./getApiV1ReposOwnerNameRuns.ts";
 export { route as getApiV1ReposOwnerNameRunsId } from "./getApiV1ReposOwnerNameRunsId.ts";
 export { route as getApiV1ReposOwnerNameRunsIdLog } from "./getApiV1ReposOwnerNameRunsIdLog.ts";
+export { route as getApiV1ReposOwnerNameStatement } from "./getApiV1ReposOwnerNameStatement.ts";
 export { route as getApiV1ReposOwnerNameTags } from "./getApiV1ReposOwnerNameTags.ts";
 export { route as getApiV1ReposOwnerNameUpstream } from "./getApiV1ReposOwnerNameUpstream.ts";
 export { route as getApiV1ReposOwnerNameUsage } from "./getApiV1ReposOwnerNameUsage.ts";

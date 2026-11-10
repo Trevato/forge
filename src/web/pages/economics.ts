@@ -6,7 +6,8 @@
  * label set here, and whether a cloud body takes bursts — without one the
  * page says "no cloud body: bursts queue" (#509).
  * The operator's prices, each with its unit, and what this UTC month has
- * cost so far at them, line by line (`core/cost.ts`).
+ * cost so far at them, line by line (`core/cost.ts`); beside them the list
+ * prices a customer pays (`core/revenue.ts`).
  * Server-rendered; the forms are same-origin POSTs (`readForm`); a field a
  * form does not carry keeps its value. 50 is today's behaviour.
  * Anyone else gets the not-found page.
@@ -127,6 +128,11 @@ export function economicsPage(ctx: Ctx): Response {
         ${priceField("storageGbMonthUsd", "Storage ($/GB-month)", p.storageGbMonthCents)}
         ${btn("Save", { size: "sm", variant: "primary", label: "Save prices" })}
       </form>
+      <form class="row-fields" method="post" action="${PATH}">
+        ${priceField("awakePriceHourUsd", "List: awake ($/hour)", p.awakePriceHourCents)}
+        ${priceField("storagePriceGbMonthUsd", "List: storage ($/GB-month)", p.storagePriceGbMonthCents)}
+        ${btn("Save", { size: "sm", variant: "primary", label: "Save list prices" })}
+      </form>
       ${perSlot === undefined
         ? null
         : html`<dl class="stats" data-prices>
@@ -176,6 +182,8 @@ export async function economicsSet(ctx: Ctx): Promise<Response> {
     ownedSlots: given("ownedSlots"),
     cloudHourUsd: given("cloudHourUsd"),
     storageGbMonthUsd: given("storageGbMonthUsd"),
+    awakePriceHourUsd: given("awakePriceHourUsd"),
+    storagePriceGbMonthUsd: given("storagePriceGbMonthUsd"),
   });
   if (!changed.ok && changed.error === "not_found") return notFoundPage(ctx);
   return flashTo(
