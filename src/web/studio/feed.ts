@@ -362,6 +362,9 @@ function readRegion(user: User, ctx: Ctx) {
   return { items, next: page.next_cursor, cursor, timeline, asked, lastDayOnPage, thoughts, placed, marks, pictures: picturesFor(ctx, items), quiet: quiet.count, quietLink };
 }
 
+/** The one line an empty timeline says; the tell box above it is the action. */
+export const EMPTY_FEED = "Nothing yet. Tell the crew what to build.";
+
 /** The region: cards, or one line saying there is nothing to do. */
 export function feedRegion(user: User, ctx: Ctx): Html {
   return drawRegion(user, ctx, readRegion(user, ctx));
@@ -426,11 +429,7 @@ function drawRegion(user: User, ctx: Ctx, read: ReturnType<typeof readRegion>): 
     ${chipsBar(user, ctx, items)}
     ${thoughts.map((t) => thoughtCard(t, user.username, placed.get(t.id)))}
     ${items.length === 0 && thoughts.length === 0
-      ? empty({
-          icon: "activity",
-          title: "Nothing new",
-          note: "When something happens in your apps, it lands here.",
-        })
+      ? empty({ title: EMPTY_FEED })
       : posts}
     ${quiet === 0
       ? ""

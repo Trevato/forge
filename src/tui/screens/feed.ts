@@ -27,6 +27,7 @@ import { truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { stepLine } from "../../flow/path.ts";
 import { emptyState } from "../ui/widgets.ts";
+import { EMPTY_FEED } from "../../web/studio/feed.ts";
 import { ListState, ago, drawList, errorText, runAsync, type ListRow } from "./common.ts";
 import type { PaletteEntry } from "./entries.ts";
 import { Composer } from "./thread.ts";
@@ -140,7 +141,7 @@ export function feedScreen(f: Session, ctx: Ctx): Screen {
     render(area, s) {
       const c = ctx.theme.c;
       if (items.length === 0) {
-        emptyState(s, area, c, { title: "Nothing in the feed yet", body: "Posts about the apps you can see land here." });
+        emptyState(s, area, c, { title: EMPTY_FEED });
         return;
       }
       if (history !== null) {
