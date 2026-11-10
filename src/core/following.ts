@@ -109,7 +109,9 @@ export function follow(forge: Following): () => void {
       }),
     );
     if (moved.some((m) => m.ref === `refs/heads/${repo.defaultBranch}`))
-      for (const fork of listForks(forge.db, repo.id))
+      for (const fork of listForks(forge.db, repo.id)) {
+        // A fork that chose not to follow (#608) is neither moved nor told.
+        if (forkFollowMode(forge.db, fork.id) === "dont-follow") continue;
         fastForwardFork(forge, fork, repo, actor)
           .then(async (followed) => {
             // A fork with work of its own cannot be moved; it is told the
@@ -140,6 +142,7 @@ export function follow(forge: Following): () => void {
               error: String(error),
             }),
           );
+      }
   });
 }
 

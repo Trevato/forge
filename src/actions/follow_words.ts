@@ -1,4 +1,4 @@
-import type { FollowMode } from "../spawn/chain.ts";
+import { FORK_FOLLOW_MODES, type ForkFollowMode } from "../core/fork_follow.ts";
 
 /**
  * Following's refusals in words (#5589): said by the chain page and the
@@ -26,27 +26,43 @@ export function proposeRefusalWords(
   return `${parentName} did not take the proposal: ${e.reason}.`;
 }
 
+/** The words of a button that switches a fork to `mode`. */
+export const FOLLOW_SWITCH_LABELS: Record<ForkFollowMode, string> = {
+  "take-updates": "Follow automatically",
+  "tell-me": "Only propose updates",
+  "dont-follow": "Stop following",
+};
+
 /** How a fork follows its upstream, in one line and the reason beside it: the page and the MCP say these words. */
 export function followModeWords(
-  mode: FollowMode,
+  mode: ForkFollowMode,
   upstream: string,
-): { readonly line: string; readonly reason: string; readonly other: FollowMode } {
-  return mode === "take-updates"
-    ? {
-        line: `Follows ${upstream} automatically`,
-        reason: `New code from ${upstream} is merged in as it lands; a conflict goes to the crew.`,
-        other: "tell-me",
-      }
-    : {
-        line: `Proposes updates from ${upstream}`,
-        reason: `You are told when ${upstream} has something new and take it when you choose.`,
-        other: "take-updates",
-      };
+): { readonly line: string; readonly reason: string; readonly others: readonly ForkFollowMode[] } {
+  const others = FORK_FOLLOW_MODES.filter((m) => m !== mode);
+  if (mode === "take-updates")
+    return {
+      line: `Follows ${upstream} automatically`,
+      reason: `New code from ${upstream} is merged in as it lands; a conflict goes to the crew.`,
+      others,
+    };
+  if (mode === "dont-follow")
+    return {
+      line: `Does not follow ${upstream}`,
+      reason: `Nothing from ${upstream} is merged or announced here; it can still offer its changes up.`,
+      others,
+    };
+  return {
+    line: `Proposes updates from ${upstream}`,
+    reason: `You are told when ${upstream} has something new and take it when you choose.`,
+    others,
+  };
 }
 
 /** What switching to `mode` changes, for the confirm step. */
-export function followSwitchPreview(mode: FollowMode, upstream: string): string {
-  return mode === "take-updates"
-    ? `From now on new code from ${upstream} is merged into this fork as it lands, without asking. When both sides changed the same files, nothing is merged and the crew is told to converge them. You can switch back at any time.`
-    : `From now on ${upstream} only proposes: you are told when it has something new and nothing is merged until you take it. You can switch back at any time.`;
+export function followSwitchPreview(mode: ForkFollowMode, upstream: string): string {
+  if (mode === "take-updates")
+    return `From now on new code from ${upstream} is merged into this fork as it lands, without asking. When both sides changed the same files, nothing is merged and the crew is told to converge them. You can switch back at any time.`;
+  if (mode === "dont-follow")
+    return `From now on this fork goes its own way: nothing from ${upstream} is merged or announced here, and the crew is never asked to converge. You can still offer your changes up, and follow again at any time.`;
+  return `From now on ${upstream} only proposes: you are told when it has something new and nothing is merged until you take it. You can switch back at any time.`;
 }

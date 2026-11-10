@@ -40,6 +40,7 @@ import {
   archivedParentLine,
   followingCard,
   followingOf,
+  type Following,
   lineageCard,
 } from "./following.ts";
 import { nothingNew } from "../../actions/follow.ts";
@@ -172,8 +173,17 @@ export async function forksPage(ctx: Ctx): Promise<Response> {
   t = performance.now();
   const ranked = await rankedForksOf(ctx.app, repo, forks);
   notePhase(ctx.request, "drift", performance.now() - t);
+  // On a fork its admin may steer, the Following card: how this fork
+  // follows, and its change offered up when ahead (#608).
+  let following: Following | undefined;
+  if (repo.forkParentId !== null && canAdmin(ctx.app.db, repo, ctx.auth.user)) {
+    t = performance.now();
+    following = await followingOf(ctx, repo);
+    notePhase(ctx.request, "following", performance.now() - t);
+  }
   t = performance.now();
   const body = html`${repoHeader(ctx, repo, "forks")}
+    ${following === undefined ? "" : followingCard(ctx, repo, following, { family: false })}
     <div class="page-head mt">
       <h2>${forks.length} fork${forks.length === 1 ? "" : "s"}</h2>
     </div>

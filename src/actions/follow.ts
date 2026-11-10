@@ -12,10 +12,10 @@ import { convergeFork, type Converge } from "../crew/converge.ts";
 import { ARCHIVED_WHY, canAdmin, canWrite, forkParentFor, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { chainOfRepo, forgeLinkOf, FOLLOW_MODES, isFollowMode, setChainMode, severChain, type FollowMode } from "../spawn/chain.ts";
+import { chainOfRepo, forgeLinkOf, FOLLOW_MODES, isFollowMode, setChainMode, severChain } from "../spawn/chain.ts";
 import { FAMILY_WORDS } from "./family_words.ts";
 import { FOLLOWS_NOTHING, followModeWords } from "./follow_words.ts";
-import { forkFollowMode, setForkFollowMode } from "../core/fork_follow.ts";
+import { FORK_FOLLOW_MODES, forkFollowMode, isForkFollowMode, setForkFollowMode, type ForkFollowMode } from "../core/fork_follow.ts";
 import { requireUser } from "./access.ts";
 import { takeFromParent, type Taken } from "../spawn/take.ts";
 import { takeUpdates, type ForkSync, type TakeUpdatesError } from "./forks.ts";
@@ -100,7 +100,7 @@ export function takeForgeWords(r: TakeForgeResult): { tone?: "danger"; message: 
 }
 
 /** How a repository follows its parent now: the forge chain's record when it carries one, else the fork's own choice. */
-export async function followModeOf(app: App, repo: Repo): Promise<FollowMode> {
+export async function followModeOf(app: App, repo: Repo): Promise<ForkFollowMode> {
   const link = await forgeLinkOf(app);
   return link !== undefined && link.repo === `${repo.ownerName}/${repo.name}`
     ? link.mode
@@ -114,24 +114,30 @@ export const FOLLOW_MODE_REFUSALS: Record<FollowModeError, { status: number; mes
   unauthorized: { status: 401, message: "sign in to change how this forge follows its parent" },
   forbidden: { status: 403, message: "only this forge's owner can change how it follows" },
   not_following: { status: 404, message: FAMILY_WORDS.not_following },
-  invalid_mode: { status: 422, message: `mode is one of: ${FOLLOW_MODES.join(", ")}` },
+  invalid_mode: { status: 422, message: `mode is one of: ${FORK_FOLLOW_MODES.join(", ")}; a spawned forge takes ${FOLLOW_MODES.join(" or ")} and severs instead of not following` },
   severed: { status: 409, message: "this forge is severed and follows nothing; there is no mode to change" },
 };
 
-/** Choose how a forge follows its parent: the repository's admin only; the record changes atomically. */
+/**
+ * Choose how a fork follows its parent: the repository's admin only; the
+ * record changes atomically. A plain fork takes any of `FORK_FOLLOW_MODES`;
+ * a spawned forge's chain takes `tell-me` or `take-updates` and severs to
+ * follow nothing.
+ */
 export async function setFollowMode(
   app: App,
   actor: User | undefined,
   repo: Repo,
   mode: unknown,
-): Promise<Result<FollowMode, FollowModeError>> {
+): Promise<Result<ForkFollowMode, FollowModeError>> {
   const who = requireUser(actor);
   if (!who.ok) return err("unauthorized");
   const carries = (await chainOfRepo(app, repo)) !== undefined;
   if (!carries && repo.forkParentId === null) return err("not_following");
   if (!canAdmin(app.db, repo, who.value) || !canWrite(app.db, repo, who.value)) return err("forbidden");
-  if (!isFollowMode(mode)) return err("invalid_mode");
+  if (!isForkFollowMode(mode)) return err("invalid_mode");
   if (carries) {
+    if (!isFollowMode(mode)) return err("invalid_mode");
     const set = await setChainMode(app, mode);
     if (!set.ok) return err(set.error);
   } else {
@@ -147,7 +153,7 @@ export async function setFollowMode(
 }
 
 /** The sentence every door answers a mode change with. */
-export function followModeSaid(parent: Repo | undefined, mode: FollowMode): string {
+export function followModeSaid(parent: Repo | undefined, mode: ForkFollowMode): string {
   const upstream = parent === undefined ? "its parent" : `${parent.ownerName}/${parent.name}`;
   const words = followModeWords(mode, upstream);
   return `${words.line}. ${words.reason}`;

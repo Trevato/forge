@@ -112,6 +112,9 @@ describe("choosing how a forge follows its parent", () => {
     expect((await form(cookie, "yolo")).status).toBe(303);
     expect((await tool(readerTok, { repo: "kid/forge", mode: "take-updates" })).error).toBe(true);
     expect((await tool(ownerTok, { repo: "kid/forge", mode: "yolo" })).error).toBe(true);
+    // Not following is a plain fork's mode; a spawned forge severs instead (#608).
+    expect((await patch(ownerTok, { mode: "dont-follow" })).status).toBe(422);
+    expect((await tool(ownerTok, { repo: "kid/forge", mode: "dont-follow" })).error).toBe(true);
     const cross = await fetch(`${servers.url}/kid/forge/following/mode`, {
       method: "POST",
       headers: { cookie, origin: "https://evil.test" },

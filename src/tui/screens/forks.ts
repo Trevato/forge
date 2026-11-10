@@ -24,7 +24,7 @@ import { FOLLOWS_NOTHING, proposeRefusalWords } from "../../actions/follow_words
 import { openProposal, proposeUpstream } from "../../actions/upstream.ts";
 import type { Pull } from "../../core/pulls.ts";
 import { convergeState, type Converge } from "../../crew/converge.ts";
-import type { FollowMode } from "../../spawn/chain.ts";
+import { FORK_FOLLOW_MODES, type ForkFollowMode } from "../../core/fork_follow.ts";
 import { canAdmin, canRead, canWrite, forkTree, listForks, type ForkNode, type Repo } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -83,7 +83,7 @@ export function forkRows(
 export function followingRows(
   relation: ForkRelation | undefined,
   converge: Converge | undefined,
-  mode?: FollowMode,
+  mode?: ForkFollowMode,
 ): ForkRow[] {
   if (relation === undefined) return [];
   const { parent } = relation;
@@ -145,7 +145,7 @@ export function forksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let relation: ForkRelation | undefined;
   let offer: string | undefined;
   let open: Pull | undefined;
-  let mode: FollowMode | undefined;
+  let mode: ForkFollowMode | undefined;
   const state = new ListState();
   /** Only a person who writes to a fork may propose its work upstream. */
   const mayPropose = () => f.user !== undefined && f.user.kind !== "agent" && canWrite(f.db, repo, f.user);
@@ -301,7 +301,8 @@ export function forksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       }
       if (e.key === "m" && canSetMode()) {
         runAsync(ctx, async () => {
-          const next: FollowMode = mode === "take-updates" ? "tell-me" : "take-updates";
+          // `m` steps through the three modes in turn.
+          const next = FORK_FOLLOW_MODES[(FORK_FOLLOW_MODES.indexOf(mode ?? "tell-me") + 1) % FORK_FOLLOW_MODES.length]!;
           const set = await setFollowMode(f.app, f.user, repo, next);
           if (!set.ok) return ctx.toast(FOLLOW_MODE_REFUSALS[set.error].message, "danger");
           await read();

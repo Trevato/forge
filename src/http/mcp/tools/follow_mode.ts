@@ -1,18 +1,18 @@
 import { FOLLOW_MODE_REFUSALS, followModeSaid, setFollowMode } from "../../../actions/follow.ts";
 import { forkParentFor } from "../../../core/repos.ts";
-import { FOLLOW_MODES } from "../../../spawn/chain.ts";
+import { FORK_FOLLOW_MODES } from "../../../core/fork_follow.ts";
 import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
 export const tool: Tool = {
   name: "follow_mode",
-  doc: "`{ repo, mode }`: choose how a spawned forge follows its parent, `mode` being `tell-me` or `take-updates`; its `forge` repository's admin only; answers `{ says, mode }`; refused `unauthorized`, `forbidden`, `not_following`, `invalid_mode` or `severed`",
+  doc: "`{ repo, mode }`: choose how a fork follows its parent: `take-updates`, `tell-me` or `dont-follow` (a spawned forge: the first two; it severs instead); the admin only; answers `{ says, mode }`; refused `unauthorized`, `forbidden`, `not_following`, `invalid_mode` or `severed`",
   description:
-    "How a spawned forge follows its parent: `tell-me` or `take-updates`.",
+    "How a fork follows its parent: take updates, tell me, or don't follow.",
   inputSchema: {
     type: "object",
     properties: {
       repo: REPO_ARG,
-      mode: { type: "string", enum: [...FOLLOW_MODES] },
+      mode: { type: "string", enum: [...FORK_FOLLOW_MODES] },
     },
     required: ["repo", "mode"],
   },

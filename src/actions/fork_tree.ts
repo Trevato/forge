@@ -24,8 +24,11 @@ export const MAX_DEPTH = 8;
 /** The most nodes any call returns; past it `truncated` is true. A page of a tree, not a crawl. */
 export const MAX_NODES = 200;
 
-/** How a node follows its parent: `offers` is the stored `tell-me`; the root of what is visible follows nothing. */
-export type TreeFollow = "take-updates" | "offers" | "autonomous";
+/**
+ * How a node follows its parent: `offers` is the stored `tell-me`, `dont-follow` a fork
+ * that chose to follow nothing; the root of what is visible follows nothing.
+ */
+export type TreeFollow = "take-updates" | "offers" | "dont-follow" | "autonomous";
 
 export interface TreeNode {
   readonly repo: string;
@@ -101,7 +104,11 @@ export function forkTree(
     repo: nameOf(r.repo),
     parent: r.parent === null ? null : nameOf(r.parent),
     depth: r.depth,
-    follow: r.parent === null ? "autonomous" : modes.get(r.repo.id) === "take-updates" ? "take-updates" : "offers",
+    follow: r.parent === null ? "autonomous" : treeFollow(modes.get(r.repo.id)),
   }));
   return { root: nameOf(root), nodes, truncated };
 }
+
+/** A stored mode as the tree names it: `tell-me`, stored or by default, is `offers`. */
+const treeFollow = (mode: string | undefined): TreeFollow =>
+  mode === "take-updates" || mode === "dont-follow" ? mode : "offers";

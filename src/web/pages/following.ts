@@ -37,8 +37,8 @@ import {
   type ParentReleases,
 } from "../../core/parent_releases.ts";
 import { running } from "../../kernel/version.ts";
-import { followModeWords } from "../../actions/follow_words.ts";
-import type { FollowMode } from "../../spawn/chain.ts";
+import { FOLLOW_SWITCH_LABELS, followModeWords } from "../../actions/follow_words.ts";
+import type { ForkFollowMode } from "../../core/fork_follow.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { convergeWords, followModeOf, takeOrTell, takeWords } from "../../actions/follow.ts";
 import { FOLLOWS_NOTHING, proposeRefusalWords } from "../../actions/follow_words.ts";
@@ -95,7 +95,7 @@ export interface Following {
   /** The parent forge's releases, when this forge names a parent forge. */
   readonly releases: { url: string; view: ParentReleases } | undefined;
   /** How this repository follows its parent (`followModeOf`). */
-  readonly mode: FollowMode;
+  readonly mode: ForkFollowMode;
 }
 
 /** Everything the card needs, for a repo that follows something. */
@@ -187,8 +187,8 @@ export function relationBadge(relation: ForkRelation): Html {
         : relation.state === "ahead"
           ? [`${relation.ahead} ahead`, "default"]
           : relation.clean
-            ? ["diverged · merges cleanly", "attn"]
-            : ["diverged", "attn"];
+            ? [`diverged · ${relation.ahead} ahead · ${relation.behind} behind · merges cleanly`, "attn"]
+            : [`diverged · ${relation.ahead} ahead · ${relation.behind} behind`, "attn"];
   return badge(text, { tone });
 }
 
@@ -228,7 +228,8 @@ export function followingCard(
   ctx: Ctx,
   repo: Repo,
   following: Following,
-  o: { bare?: boolean } = {},
+  /** `bare` drops the card's margin; `family: false` drops the link to the forks page, for the forks page itself. */
+  o: { bare?: boolean; family?: boolean } = {},
 ): Html {
   const { relation, converge } = following;
   const parent = relation.parent;
@@ -292,7 +293,7 @@ export function followingCard(
                   icon: "fork",
                   title: `Your account can only read ${parent.ownerName}/${parent.name}'s origin, or its operator protects it: the change goes to your own fork there, and the pull opens from it`,
                 })
-              : btn("Propose upstream", {
+              : btn("Offer this change", {
                   size: "sm",
                   type: "submit",
                   icon: "merge",
@@ -376,14 +377,16 @@ export function followingCard(
     html`<p data-follow-mode="${following.mode}">
       <strong>${words.line}</strong>.
       ${canAdmin(ctx.app.db, repo, ctx.auth.user) && writer
-        ? btn(following.mode === "take-updates" ? "Only propose updates" : "Follow automatically", {
-            href: `/-/confirm?to=${encodeURIComponent(`${base}/following/mode/${words.other}`)}`,
-            size: "sm",
-          })
+        ? words.others.map((m) =>
+            btn(FOLLOW_SWITCH_LABELS[m], {
+              href: `/-/confirm?to=${encodeURIComponent(`${base}/following/mode/${m}`)}`,
+              size: "sm",
+            }),
+          )
         : null}
     </p>`,
   );
-  if (followers > 0)
+  if (followers > 0 && o.family !== false)
     rows.push(
       row({
         href: `${base}/forks`,

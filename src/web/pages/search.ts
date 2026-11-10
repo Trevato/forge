@@ -19,7 +19,7 @@ import { openLabelCounts } from "../../core/issues.ts";
 import { getPull } from "../../core/pulls.ts";
 import { canAdmin, canWrite, enterableApps, forkParentFor, getRepo } from "../../core/repos.ts";
 import { followModeWords, followSwitchPreview } from "../../actions/follow_words.ts";
-import type { FollowMode } from "../../spawn/chain.ts";
+import type { ForkFollowMode } from "../../core/fork_follow.ts";
 import { getMirrorTarget } from "../../core/migrate_mirror.ts";
 import {
   cleanQuery,
@@ -914,9 +914,9 @@ const DESTRUCTIVE: {
     },
   },
   {
-    pattern: /^\/([^/]+)\/([^/]+)\/following\/mode\/(tell-me|take-updates)$/,
+    pattern: /^\/([^/]+)\/([^/]+)\/following\/mode\/(tell-me|take-updates|dont-follow)$/,
     describe: (m, ctx) => {
-      const mode = m[3] as FollowMode;
+      const mode = m[3] as ForkFollowMode;
       const repo = getRepo(ctx.app.db, m[1]!, m[2]!);
       const parent = repo && canWrite(ctx.app.db, repo, ctx.auth.user) ? forkParentFor(ctx.app.db, repo, ctx.auth.user) : undefined;
       const upstream = parent === undefined ? "its parent" : `${parent.ownerName}/${parent.name}`;
