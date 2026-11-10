@@ -58,7 +58,10 @@ import { loadOrCreateHostKey } from "../ssh/keys.ts";
 import { claimLink, hasAdmin, mintClaim, spawnedOrg } from "../spawn/claim.ts";
 import { childPublicUrl, parentOrigin, type Placement, type PlacementKind } from "../spawn/placement.ts";
 import { quotaRefusal } from "../spawn/quota.ts";
-import { personRefusal } from "../spawn/sleep.ts";
+import { personRefusal, planRefusal } from "../spawn/sleep.ts";
+import { FREE, getPlan, PAID_PLAN_ADMIN_ONLY } from "../settings/plans.ts";
+import { setCap } from "../spawn/credit.ts";
+import { fundingOf, keepFunding } from "../spawn/funding.ts";
 import { planSpawn, type SpawnInput, type SpawnPlan, type SpawnSource } from "../spawn/plan.ts";
 import { DEFAULT_SIZE, isSize, type Size } from "../spawn/sizes.ts";
 import { DEFAULT_MODE } from "../spawn/chain.ts";
@@ -123,6 +126,8 @@ interface Ledger {
   readonly size?: Size;
   /** The template chosen (`spawn/templates.ts`); absent means `blank`. */
   readonly template?: string;
+  /** The plan chosen (`settings/plans.ts`); absent means the free plan. */
+  readonly plan?: string;
   /** Absent on a ledger written before cells; reads as hosted. */
   readonly placement?: PlacementKind;
   /** Why a child that wanted a cell is hosted instead (`spawn/host.ts`). */
@@ -274,7 +279,16 @@ async function make(
     // A retry of an unfinished child is a new attempt: its failure has a start.
     app.bus.append({ kind: "forge.spawn.started", payload: { ...(deps.drill === true ? { drill: 1 } : {}) } });
   } else {
-    if (owner !== undefined) {
+    // A paid plan is held to its own count, never the free one; the free plan keeps today's per-person limits.
+    const chosen = plan.plan === undefined ? undefined : getPlan(app.db, plan.plan);
+    if (plan.plan !== undefined && chosen === undefined)
+      return err({ kind: "invalid", field: "plan", reason: `${plan.plan} is not a plan this forge offers` });
+    if (chosen !== undefined && chosen.key !== FREE) {
+      if (owner === undefined) return err({ kind: "refused", reason: "plan", message: `the ${chosen.name} plan is for a signed-in person; sign in first` });
+      if (!owner.isAdmin) return err({ kind: "refused", reason: "plan", message: PAID_PLAN_ADMIN_ONLY(chosen.name) });
+      const many = planRefusal(app.config.dataDir, owner, chosen, FREE);
+      if (many !== undefined) return err({ kind: "refused", reason: "quota", message: many });
+    } else if (owner !== undefined) {
       const many = personRefusal(app.db, app.config.dataDir, owner);
       if (many !== undefined) return err({ kind: "refused", reason: "quota", message: many });
     }
@@ -298,6 +312,7 @@ async function make(
       ...(owner === undefined ? {} : { ownerId: owner.id }),
       size: plan.size ?? DEFAULT_SIZE,
       ...(plan.template === undefined ? {} : { template: plan.template }),
+      ...(plan.plan === undefined ? {} : { plan: plan.plan }),
       placement: placed.value.kind ?? "hosted",
       statusToken: secret(),
       beatKey: secret(),
@@ -310,6 +325,7 @@ async function make(
   if (!copied.ok) return failed(app, deps, "copy", copied.error);
   const claimUrl = claimLink(liveChildUrl(app, plan.name), copied.value);
 
+  grantPlanCredit(app, plan, ledger.bodyId);
   ledger.done = true;
   await writeLedger(app, ledger);
   app.bus.append({
@@ -326,6 +342,25 @@ async function make(
     existed: false,
     claimUrl,
   });
+}
+
+/**
+ * The crew credit the child's plan carries, read now (so an edit on the plans
+ * page is what the next spawn gets): lent as a monthly cap, the spend counted
+ * again each calendar month (`spawn/credit.ts`). A plan with no credit lends
+ * none. A hand-off that cannot reach the child leaves it unfunded, and an
+ * admin can lend by hand (`PUT /api/v1/forges/:name/credit`).
+ */
+export function grantPlanCredit(app: App, plan: SpawnPlan, bodyId: string): void {
+  const chosen = plan.plan === undefined ? undefined : getPlan(app.db, plan.plan);
+  if (chosen === undefined || !(chosen.creditUsd > 0)) return;
+  const dir = childDirOf(app, bodyId);
+  const set = setCap(app, plan.name, chosen.creditUsd, fundingOf(dir) !== undefined, (token, credit) =>
+    keepFunding(dir, { token, capUsd: credit.capUsd, spentUsd: credit.spentUsd }),
+    true,
+  );
+  if (set === undefined || set === "unreachable") app.log.warn(`plan credit not lent to ${plan.name}`);
+  else app.bus.append({ kind: "forge.credit_set", payload: { name: plan.name, usd: set.capUsd, plan: chosen.key } });
 }
 
 /**

@@ -36,6 +36,7 @@ import { ANON_SPAWNS_PER_DAY, checkAnonSpawn, noteAnonSpawn } from "./rate.ts";
 import { readdirSync, readFileSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { FREE, getPlan, getPlans, PAID_PLAN_ADMIN_ONLY } from "../settings/plans.ts";
 
 export interface Door {
   readonly status: number;
@@ -256,6 +257,19 @@ export async function spawnDoor(
     }
   }
   const source: SpawnSource = { catalog, briefs, subscriptions: [] };
+  // A plan (`settings/plans.ts`) gives the child its size; read now, so an edit governs this spawn.
+  let planKey: string | undefined;
+  let size = raw["size"];
+  if (raw["plan"] !== undefined && raw["plan"] !== null && raw["plan"] !== "") {
+    const chosen = typeof raw["plan"] === "string" ? getPlan(db, raw["plan"]) : undefined;
+    if (chosen === undefined) return invalid("plan", `must be one of ${getPlans(db).map((p) => p.key).join(", ")}`);
+    if (anon && chosen.key !== FREE) return invalid("plan", `the ${chosen.name} plan is for a signed-in person; sign in first`);
+    if (chosen.key !== FREE && user?.isAdmin !== true) return invalid("plan", PAID_PLAN_ADMIN_ONLY(chosen.name));
+    if (size !== undefined && size !== null && size !== "" && size !== chosen.size)
+      return invalid("size", `the ${chosen.name} plan is a ${chosen.size} forge; leave size out or send ${chosen.size}`);
+    planKey = chosen.key;
+    size = chosen.size;
+  }
   const input = {
     name: raw["name"],
     org: raw["name"],
@@ -269,8 +283,9 @@ export async function spawnDoor(
     budgetUsd: raw["budgetUsd"],
     fresh: raw["fresh"],
     followMode: raw["followMode"],
-    size: raw["size"],
+    size,
     template: raw["template"],
+    ...(planKey === undefined ? {} : { plan: planKey }),
     ...(anon ? {} : { for: raw["for"] }),
   };
 

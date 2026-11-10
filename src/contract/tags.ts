@@ -59,6 +59,7 @@ const ALIAS: Readonly<Record<string, string>> = {
   front: "feed",
   search: "feed",
   family: "forges",
+  plans: "forges",
   start: "forges",
   cloud: "forges",
   migrate: "forges",

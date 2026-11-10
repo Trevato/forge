@@ -33,6 +33,7 @@ import { fleetAct, fleetReceipt, fleetUndo } from "../web/pages/fleet-ops.ts";
 import { maintenancePage, maintenancePrepare, maintenanceResume } from "../web/pages/maintenance.ts";
 import { nightlyOutputPage, resiliencePage } from "../web/pages/resilience.ts";
 import { agentStartSet, limitsPage, limitsSet, quotasSet, signupSet, inviteMint, inviteRevoke } from "../web/pages/admin-limits.ts";
+import { plansSet } from "../web/settings/plans.ts";
 import { allFlowsPage } from "../web/pages/flows-all.ts";
 import { measureSubmit } from "./measure.ts";
 import { cspReportSubmit } from "./csp_report.ts";
@@ -1056,6 +1057,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/admin/flows", allFlowsPage);
   router.add("POST", "/admin/limits", limitsSet);
   router.add("POST", "/admin/quotas", quotasSet);
+  router.add("POST", "/admin/plans", plansSet);
   router.add("POST", "/admin/signup", signupSet);
   router.add("POST", "/admin/agent-start", agentStartSet);
   router.add("POST", "/admin/invites", inviteMint);

@@ -22,6 +22,7 @@ import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { btn, confirmAction, icon, row, time } from "../ui.ts";
+import { plansRow } from "../settings/plans.ts";
 import { accountSections } from "./origins.ts";
 
 // GET /admin/limits
@@ -196,7 +197,7 @@ export function limitsPage(ctx: Ctx): Response {
   const body = html`<p class="small muted mb">
       Every limit you can hit, and why. A change applies to the next request that meets it; nothing needs a restart.
     </p>
-    <dl class="status-rows">${signupRow}${agentStartRow}${inviteRow}${quotaRow}</dl>
+    <dl class="status-rows">${signupRow}${agentStartRow}${inviteRow}${quotaRow}${plansRow(ctx)}</dl>
     ${historyBlock("Invite links made", inviteRows)}
     <section class="settings-block mt">
       <h2>Limits</h2>

@@ -5,6 +5,7 @@
  */
 
 import { lendCredit } from "../../actions/child_credit.ts";
+import { readPlans } from "../../actions/plans.ts";
 import { listChildren } from "../../actions/spawn.ts";
 import { usdWords } from "../../spawn/credit.ts";
 import { fundingOf, fundingWords, refreshFunding } from "../../spawn/funding.ts";
@@ -30,7 +31,18 @@ function publicTable(ctx: Ctx, phase: string, view: () => unknown): Response {
   });
 }
 
+/** The plans (`settings/plans.ts`), public. Revalidated on every read, so an edit shows at once. */
+function plansAnswer(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const text = timePhase(ctx.request, "plans", () => JSON.stringify({ items: readPlans(ctx.app) }));
+  const etag = weakEtag(text);
+  const headers = { etag, "cache-control": "public, no-cache" };
+  if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+  return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+}
+
 export function forgeRoutes(router: Router<Handler>): void {
+  router.add("GET", "/api/v1/plans", plansAnswer);
   // What small, medium and large mean, and which templates a child may
   // start from: public, and cacheable by ETag.
   router.add("GET", "/api/v1/forges/sizes", (ctx) => publicTable(ctx, "sizes", sizesView));
