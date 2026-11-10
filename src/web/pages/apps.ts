@@ -15,7 +15,7 @@
 import { storageLimitMessage } from "../../core/storage.ts";
 import { repositoryLimitMessage } from "../../actions/repos.ts";
 import { appLimitWords } from "../../actions/app_limit.ts";
-import { offeredTemplates } from "../../core/app_templates.ts";
+import { templateChoices, type TemplateChoice } from "../../apps/template_folders.ts";
 import { getUserByName } from "../../core/users.ts";
 import {
   NEW_APP_ERRORS,
@@ -302,6 +302,7 @@ function newAppForm(
   ctx: Ctx,
   values: NewAppValues,
   canPlan: boolean,
+  offered: TemplateChoice[],
   error?: string,
 ): Html {
   const user = ctx.auth.user!;
@@ -316,9 +317,6 @@ function newAppForm(
   );
   const crew = agents.ok ? agents.value : [];
   const domain = appsRuntime(ctx.app)?.options.domain;
-  // The marked templates this person can read; a picker only when there is a choice.
-  const offered = timePhase(ctx.request, "templates", () => offeredTemplates(ctx.app.db, user));
-
   // An org's form stays the org's: carry the owner only when it is one the
   // select offers, and only when it is not the viewer's own default.
   const carried =
@@ -337,7 +335,10 @@ function newAppForm(
             ? selectField({
                 label: "Start from",
                 name: "template",
-                options: offered.map((t) => ({ value: t, label: t })),
+                options: offered.map((t) => ({
+                  value: t.value,
+                  label: t.line === "" ? t.title : `${t.title} — ${t.line}`,
+                })),
               })
             : html``}
         ${formField({
@@ -449,10 +450,11 @@ function newAppForm(
 }
 
 // GET /apps/new
-export function newAppPage(ctx: Ctx): Response {
+export async function newAppPage(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const picks = plannerOffered(ctx);
+  const offered = await timePhaseAsync(ctx.request, "templates", () => templateChoices(ctx.app, ctx.auth.user));
   const rendering = performance.now();
   const response = page({
     ctx,
@@ -464,7 +466,7 @@ export function newAppPage(ctx: Ctx): Response {
       visibility: "private",
       agent: picks ? PICK_AGENT : "",
       template: ctx.url.searchParams.get("template") ?? "",
-    }, picks),
+    }, picks, offered),
     scriptJs: appNameJs,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
@@ -520,7 +522,7 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
       {
         ctx,
         title: "New app",
-        body: newAppForm(ctx, values, plannerOffered(ctx), NO_NAME_ERROR),
+        body: newAppForm(ctx, values, plannerOffered(ctx), await timePhaseAsync(ctx.request, "templates", () => templateChoices(ctx.app, ctx.auth.user)), NO_NAME_ERROR),
         scriptJs: appNameJs,
       },
       422,
@@ -541,6 +543,7 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
           ctx,
           values,
           plannerOffered(ctx),
+          await timePhaseAsync(ctx.request, "templates", () => templateChoices(ctx.app, ctx.auth.user)),
           made.error === "repository_limit"
             ? `Not made: ${repositoryLimitMessage(ctx.app, ctx.auth.user!)}.`
             : made.error === "storage_limit"

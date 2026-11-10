@@ -6,17 +6,18 @@
  */
 
 import { MARK_TEMPLATE_ERRORS, markTemplate } from "../../actions/app_templates.ts";
-import { offeredTemplates } from "../../core/app_templates.ts";
+import { templateChoices } from "../../apps/template_folders.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { Handler } from "../context.ts";
 import { apiError, body, json, notFound, requireScope, unauthorized } from "../respond.ts";
 import type { Router } from "../router.ts";
 
 export function appTemplateRoutes(router: Router<Handler>): void {
-  router.add("GET", "/api/v1/app-templates", (ctx) => {
+  router.add("GET", "/api/v1/app-templates", async (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     if (!ctx.auth.user) return unauthorized();
-    return json({ templates: offeredTemplates(ctx.app.db, ctx.auth.user) });
+    const choices = await templateChoices(ctx.app, ctx.auth.user);
+    return json({ templates: choices.map((c) => c.value) });
   });
 
   router.add("POST", "/api/v1/admin/app-templates", async (ctx) => {

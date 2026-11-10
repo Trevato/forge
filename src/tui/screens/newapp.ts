@@ -11,6 +11,7 @@ import { appLimitWords } from "../../actions/app_limit.ts";
 import { NEW_APP_ERRORS, NO_NAME_ERROR, newAppFromSentence } from "../../actions/apps.ts";
 import { repositoryLimitMessage } from "../../actions/repos.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
+import { templateChoices } from "../../apps/template_folders.ts";
 import { offeredTemplates } from "../../core/app_templates.ts";
 import { listOrgsForUser } from "../../core/orgs.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
@@ -34,10 +35,16 @@ function refusal(f: Session, code: string, ownerId: string): string {
  * `template` (`owner/name`) makes the app a copy of that repository's tip,
  * as `/apps/new?template=` does; the action refuses one the person cannot read.
  */
-export function newAppScreen(f: Session, ctx: Ctx, parent: Screen, template?: string): Screen {
+export function newAppScreen(
+  f: Session,
+  ctx: Ctx,
+  parent: Screen,
+  template?: string,
+  choices?: string[],
+): Screen {
   // With no template named and more than one offered, ask which first.
   if (template === undefined && f.user !== undefined) {
-    const offered = offeredTemplates(f.db, f.user);
+    const offered = choices ?? offeredTemplates(f.db, f.user);
     if (offered.length > 1)
       return promptScreen(ctx, parent, {
         title: "New app",
@@ -101,6 +108,17 @@ export function newAppScreen(f: Session, ctx: Ctx, parent: Screen, template?: st
         }),
       );
     },
+  });
+}
+
+/**
+ * Opens "New app" with the choices (repositories, and the folders of those
+ * that hold templates) read first, since the screen itself is synchronous.
+ */
+export function openNewApp(f: Session, ctx: Ctx, parent: Screen): void {
+  runAsync(ctx, async () => {
+    const choices = (await templateChoices(f.app, f.user)).map((c) => c.value);
+    ctx.push(newAppScreen(f, ctx, parent, undefined, choices));
   });
 }
 

@@ -338,7 +338,10 @@ export async function newApp(
   // Read the template before a repository exists to take back.
   let starter: FileWrite[] | undefined;
   if (input.template !== undefined && input.template !== "") {
-    const copied = await templateFiles(app, user.value, input.template);
+    const copied = await templateFiles(app, user.value, input.template, {
+      name: input.name,
+      description: input.description ?? "",
+    });
     if (!copied.ok) return copied;
     starter = copied.value;
   }
