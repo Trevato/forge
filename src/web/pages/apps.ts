@@ -15,6 +15,7 @@
 import { storageLimitMessage } from "../../core/storage.ts";
 import { repositoryLimitMessage } from "../../actions/repos.ts";
 import { appLimitWords } from "../../actions/app_limit.ts";
+import { offeredTemplates } from "../../core/app_templates.ts";
 import { getUserByName } from "../../core/users.ts";
 import {
   NEW_APP_ERRORS,
@@ -315,6 +316,8 @@ function newAppForm(
   );
   const crew = agents.ok ? agents.value : [];
   const domain = appsRuntime(ctx.app)?.options.domain;
+  // The marked templates this person can read; a picker only when there is a choice.
+  const offered = timePhase(ctx.request, "templates", () => offeredTemplates(ctx.app.db, user));
 
   // An org's form stays the org's: carry the owner only when it is one the
   // select offers, and only when it is not the viewer's own default.
@@ -330,7 +333,13 @@ function newAppForm(
     ${html`<form method="post" action="/apps/new">
         ${values.template
           ? formField({ label: "Copy of", name: "template", value: values.template, readonly: true, mono: true })
-          : html``}
+          : offered.length > 1
+            ? selectField({
+                label: "Start from",
+                name: "template",
+                options: offered.map((t) => ({ value: t, label: t })),
+              })
+            : html``}
         ${formField({
           label: "What should it do?",
           name: "description",
@@ -542,7 +551,8 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
         ),
         scriptJs: appNameJs,
       },
-      422,
+      // A template the person cannot read answers as one that does not exist, as the API does.
+      made.error === "no_such_template" ? 404 : 422,
     );
   }
   const { repo, app: record, issue, plan } = made.value;

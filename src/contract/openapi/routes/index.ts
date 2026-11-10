@@ -53,6 +53,7 @@ export { route as getApiV1AdminTeams } from "./getApiV1AdminTeams.ts";
 export { route as getApiV1AdminTrafficProbe } from "./getApiV1AdminTrafficProbe.ts";
 export { route as getApiV1Agents } from "./getApiV1Agents.ts";
 export { route as getApiV1AgentsUsername } from "./getApiV1AgentsUsername.ts";
+export { route as getApiV1AppTemplates } from "./getApiV1AppTemplates.ts";
 export { route as getApiV1Apps } from "./getApiV1Apps.ts";
 export { route as getApiV1Asked } from "./getApiV1Asked.ts";
 export { route as getApiV1Asks } from "./getApiV1Asks.ts";
@@ -229,6 +230,7 @@ export { route as postApiV1AdminAccountsUsernameRole } from "./postApiV1AdminAcc
 export { route as postApiV1AdminAccountsUsernameSuspend } from "./postApiV1AdminAccountsUsernameSuspend.ts";
 export { route as postApiV1AdminAccountsUsernameUnsuspend } from "./postApiV1AdminAccountsUsernameUnsuspend.ts";
 export { route as postApiV1AdminAccountsUsernameVerify } from "./postApiV1AdminAccountsUsernameVerify.ts";
+export { route as postApiV1AdminAppTemplates } from "./postApiV1AdminAppTemplates.ts";
 export { route as postApiV1AdminInvites } from "./postApiV1AdminInvites.ts";
 export { route as postApiV1AdminMaintenancePrepare } from "./postApiV1AdminMaintenancePrepare.ts";
 export { route as postApiV1AdminMaintenanceResume } from "./postApiV1AdminMaintenanceResume.ts";

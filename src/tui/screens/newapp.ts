@@ -11,6 +11,7 @@ import { appLimitWords } from "../../actions/app_limit.ts";
 import { NEW_APP_ERRORS, NO_NAME_ERROR, newAppFromSentence } from "../../actions/apps.ts";
 import { repositoryLimitMessage } from "../../actions/repos.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
+import { offeredTemplates } from "../../core/app_templates.ts";
 import { listOrgsForUser } from "../../core/orgs.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
 import { parseTemplateName } from "../../apps/template_tip.ts";
@@ -34,6 +35,21 @@ function refusal(f: Session, code: string, ownerId: string): string {
  * as `/apps/new?template=` does; the action refuses one the person cannot read.
  */
 export function newAppScreen(f: Session, ctx: Ctx, parent: Screen, template?: string): Screen {
+  // With no template named and more than one offered, ask which first.
+  if (template === undefined && f.user !== undefined) {
+    const offered = offeredTemplates(f.db, f.user);
+    if (offered.length > 1)
+      return promptScreen(ctx, parent, {
+        title: "New app",
+        label: `Start from which template? ${offered.join(", ")}`,
+        value: offered[0]!,
+        onSubmit: (named) => {
+          const pick = named.trim();
+          if (!offered.includes(pick)) return `Pick one of: ${offered.join(", ")}.`;
+          return later(ctx, () => newAppScreen(f, ctx, parent, pick));
+        },
+      });
+  }
   const owners = f.user
     ? [f.user.username, ...listOrgsForUser(f.db, f.user.id).map((o) => o.username)]
     : [];

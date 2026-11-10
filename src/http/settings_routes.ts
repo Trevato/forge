@@ -16,6 +16,7 @@ import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import { teamPage, teamSet, teamsPage, teamsStream } from "../web/pages/teams.ts";
 import { telemetryPage, telemetrySet } from "../web/pages/telemetry.ts";
 import { flagsPage, flagsSet } from "../web/pages/flags.ts";
+import { appTemplatesPage, appTemplatesSet } from "../web/pages/app_templates.ts";
 import { economicsPage, economicsSet } from "../web/pages/economics.ts";
 import { trustedAdd, trustedPage, trustedRemove, trustedRevert, trustedStop } from "../web/pages/trusted.ts";
 import { usagePage } from "../web/pages/usage.ts";
@@ -204,6 +205,8 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("POST", "/settings/features/:slug/unabsorb", featureSwitch(false));
   router.add("POST", "/settings/features/:slug/accept", featureAccept);
   router.add("POST", "/settings/flags", flagsSet);
+  router.add("GET", "/settings/app-templates", appTemplatesPage);
+  router.add("POST", "/settings/app-templates", appTemplatesSet);
   router.add("GET", "/settings/usage", (ctx) => usagePage(ctx, knownPatterns));
   router.add("GET", "/settings/spend", spendPage);
   router.add("GET", "/settings/traffic", trafficPage);

@@ -244,7 +244,9 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind.startsWith("release.") ||
     // A file held against new work is its admins' book-keeping (#6522).
     kind === "repo.file_held" ||
-    kind === "repo.file_released"
+    kind === "repo.file_released" ||
+    // Which repositories New app offers is the admins' choice (`actions/app_templates.ts`).
+    kind.startsWith("app_template.")
   )
     return "admins";
   // A broken adapter sync is for those who may write the repository (`apps/pull.ts`).

@@ -114,6 +114,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/settings/resilience` — `pages/domains.ts` · failure domains and their last drill · `/resilience` · none seen.
 - `/settings/backups` — `pages/backups.ts` (621 lines) · backups and restore · `/settings/resilience`, `/releases` · none seen.
 - `/settings/flags` — `pages/flags.ts` · the forge's switches · none · none seen.
+- `/settings/app-templates` — `pages/app_templates.ts` · which repositories New app offers as templates · `/apps/new` · none seen.
 - `/settings/features` — `pages/features.ts` · apps absorbed as the forge's features, and their settings · `/apps` (the same apps, as apps) · none seen.
 - `/settings/packs` — `pages/packs-settings.ts` · the repositories /packs lists, one textarea and Save · `/packs`, `/settings/features` · none seen.
 - `/settings/model` — `pages/model.ts` · which model the crew runs on · `/settings/crew` · none seen.

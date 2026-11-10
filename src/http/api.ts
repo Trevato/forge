@@ -359,7 +359,9 @@ import { businessPlanRoutes } from "./api/business_plan.ts";
 import { tokenRoutes } from "./api/tokens.ts";
 import { accountAdmin, adminRoutes } from "./api/admin.ts";
 import { maintenanceRoutes } from "./api/maintenance.ts";
+import { TEMPLATE_ERRORS } from "../apps/template_tip.ts";
 import { flagsRoutes } from "./api/flags.ts";
+import { appTemplateRoutes } from "./api/app_templates.ts";
 import { issueRoutes, labelsHandler } from "./api/issues.ts";
 import { FORGE_NOT_CARRIED } from "../origins/words.ts";
 import { forgeOriginRoutes } from "./api/forge_origin.ts";
@@ -1245,6 +1247,7 @@ export function apiRoutes(router: Router<Handler>): void {
   adminRoutes(router);
   maintenanceRoutes(router);
   flagsRoutes(router);
+  appTemplateRoutes(router);
 
   // Open read hooks (#1789): the owner, or an agent holding `telemetry:read`.
   // Anyone else is refused; every agent read is logged.
@@ -3632,6 +3635,8 @@ export function apiRoutes(router: Router<Handler>): void {
             ctx.auth.user?.username ||
             "",
         );
+      // A template the caller cannot read answers as one that does not exist.
+      if (made.error === "no_such_template") return apiError("no_such_template", 404, TEMPLATE_ERRORS.no_such_template);
       return respondAccess(made.error, 422);
     }
     return json(
