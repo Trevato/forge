@@ -2414,8 +2414,6 @@ export const liveRegionsJs = /* js */ `
       mine.innerHTML = theirs.innerHTML;
       opened.forEach(function (i) { var d = document.getElementById(i); if (d) d.open = true; });
       Array.prototype.forEach.call(theirs.attributes, function (a) { if (a.name !== 'id') mine.setAttribute(a.name, a.value); });
-      if (!theirs.hasAttribute('data-live-every')) mine.removeAttribute('data-live-every');
-      arm(mine);
       mine.dispatchEvent(new CustomEvent('forge:swapped', { bubbles: true }));
     });
   }
@@ -2528,23 +2526,6 @@ export const liveRegionsJs = /* js */ `
     if (hit && timer === null)
       timer = setTimeout(refresh, Math.max(600, last + MIN_GAP - Date.now()));
   }
-  // A region with data-live-every="<seconds>" is also due on that beat, for
-  // what no event announces; it rides the same fetch, etag and swap.
-  // The beat lasts as long as the region asks for it: a swap that drops the
-  // attribute ends it, and one that brings it (a check starting) begins it.
-  var beats = {};
-  function arm(r) {
-    var s = parseInt(r.getAttribute('data-live-every'), 10);
-    if (!r.id) return;
-    if (!(s > 0)) {
-      if (beats[r.id]) { window.clearInterval(beats[r.id]); delete beats[r.id]; }
-      return;
-    }
-    if (beats[r.id]) return;
-    var id = r.id;
-    beats[id] = window.setInterval(function () { due[id] = true; if (timer === null) timer = setTimeout(refresh, 0); }, s * 1000);
-  }
-  Array.prototype.forEach.call(document.querySelectorAll('[data-live-every]'), arm);
   connect();
   // Back online: reconnect from the last id and look at every region once,
   // in case the replay window no longer reaches back that far.

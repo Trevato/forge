@@ -11,7 +11,7 @@ import { Glob } from "bun";
 const ALLOWED: Record<string, { allow: string[]; why: string }> = {
   "src/web/sw.ts": { allow: ['http-equiv="refresh"'], why: "the restart page: the forge is down, so there is no /events to hear" },
   "src/web/pages/talk.ts": { allow: ["setInterval"], why: "server side: the stream of one turn watches the run's row, which has no event to hear" },
-  "src/web/client.ts": { allow: ["data-live-every", "setInterval"], why: "the data-live-every mechanism itself, and clocks that only redraw text" },
+  "src/web/client.ts": { allow: ["setInterval"], why: "clocks that only redraw text" },
   "src/web/space_client.ts": { allow: ["setInterval"], why: "the map clock label only redraws text; it fetches and reloads nothing" },
 };
 
