@@ -130,6 +130,14 @@ describe("the devices screen", () => {
       expect(text()).toContain("labels 0/3 today");
       await feed("r");
       await feed("labels\r");
+      expect(text()).toContain("The app can no longer print there.");
+      expect(mine()).toEqual(["labels"]);
+      await feed("n");
+      expect(mine()).toEqual(["labels"]);
+      expect(kinds.includes("device.revoked")).toBe(false);
+      await feed("r");
+      await feed("labels\r");
+      await feed("y");
       expect(mine()).toEqual([]);
       expect(kinds.includes("device.revoked")).toBe(true);
       });

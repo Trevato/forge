@@ -48,11 +48,11 @@ export function createLive(options: { paths?: Paths; roots?: () => Roots; self?:
   const listeners = new Set<(view: SystemView) => void>();
   const schedule = options.schedule ?? realSchedule;
   let timer: (() => void) | undefined;
-  const self_: Live = {
+  const handle: Live = {
     subscribe(listener) {
       listeners.add(listener);
       if (timer === undefined) {
-        timer = schedule(() => self_.publish(self_.read()), options.pushMs ?? PUSH_MS);
+        timer = schedule(() => handle.publish(handle.read()), options.pushMs ?? PUSH_MS);
       }
       return () => {
         listeners.delete(listener);
@@ -84,7 +84,7 @@ export function createLive(options: { paths?: Paths; roots?: () => Roots; self?:
       return view;
     },
   };
-  return self_;
+  return handle;
 }
 
 let shared = createLive();

@@ -260,11 +260,18 @@ export function reviewRefusal(root = "."): string[] {
   // Loaded by `require` so `treeGate`, which loads this file alone, never needs it.
   const { reviewProblems } = require("../src/kernel/review_rules.ts") as typeof import("../src/kernel/review_rules.ts");
   const dir = join(root, "test");
-  if (!existsSync(dir)) return [];
-  const sources = readdirSync(dir)
-    .filter((f) => f.endsWith(".test.ts"))
-    .map((f) => ({ path: `test/${f}`, text: readFileSync(join(dir, f), "utf8") }));
-  return reviewProblems(sources);
+  const tests = existsSync(dir)
+    ? readdirSync(dir)
+        .filter((f) => f.endsWith(".test.ts"))
+        .map((f) => ({ path: `test/${f}`, text: readFileSync(join(dir, f), "utf8") }))
+    : [];
+  const src = join(root, "src");
+  const code = existsSync(src)
+    ? (readdirSync(src, { recursive: true }) as string[])
+        .filter((f) => f.endsWith(".ts") && !f.includes("vendor/"))
+        .map((f) => ({ path: `src/${f}`, text: readFileSync(join(src, f), "utf8") }))
+    : [];
+  return reviewProblems([...tests, ...code]);
 }
 
 /**

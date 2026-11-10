@@ -752,7 +752,7 @@ export function workspaceScreen(
    * The arrays are the live ones, so this is a pointer plus a clock rather
    * than a copy — the cost of remembering is one `Map.set` a paint.
    */
-  const remember_ = (): void => {
+  const rememberView = (): void => {
     f.scratch.set(key, {
       tabs,
       roots,
@@ -1841,7 +1841,7 @@ export function workspaceScreen(
         });
       }
       drawStatus(s, status!, c);
-      remember_();
+      rememberView();
     },
     paste(text) {
       const t = tab();

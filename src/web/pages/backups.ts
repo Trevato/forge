@@ -490,7 +490,7 @@ function mirrorCard(ctx: Ctx): Html {
   const configured = svc?.mirror !== undefined;
   const need = mirrorNeed(state, Date.now());
   const set = mirrorSealedSet(ctx.app.db);
-  const field_ = (name: string, label: string, sealed: string, type = "text"): Html =>
+  const sealedField = (name: string, label: string, sealed: string, type = "text"): Html =>
     html`<label class="field"
       ><span>${label}</span
       ><input
@@ -520,11 +520,11 @@ function mirrorCard(ctx: Ctx): Html {
       <h2>Off-box mirror</h2>
       ${status}
       <form method="post" action="/settings/backups/mirror" class="stack">
-        ${field_("endpoint", "Endpoint", MIRROR_SEALED.endpoint)}
-        ${field_("bucket", "Bucket", MIRROR_SEALED.bucket)}
-        ${field_("region", "Region (optional)", MIRROR_SEALED.region)}
-        ${field_("access_key", "Access key", MIRROR_SEALED.accessKey)}
-        ${field_("secret_key", "Secret key", MIRROR_SEALED.secretKey, "password")}
+        ${sealedField("endpoint", "Endpoint", MIRROR_SEALED.endpoint)}
+        ${sealedField("bucket", "Bucket", MIRROR_SEALED.bucket)}
+        ${sealedField("region", "Region (optional)", MIRROR_SEALED.region)}
+        ${sealedField("access_key", "Access key", MIRROR_SEALED.accessKey)}
+        ${sealedField("secret_key", "Secret key", MIRROR_SEALED.secretKey, "password")}
         <div class="row-actions">
           ${btn("Seal mirror", { type: "submit", variant: "primary", icon: "lock" })}
           <button class="btn" type="submit" formaction="/settings/backups/mirror/now" formnovalidate>

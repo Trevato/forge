@@ -102,16 +102,16 @@ export function redirectProposal(
   if (!direction) return fail("invalid", "this app has no direction issue to plan from");
   if (!moveProposal(app.db, proposal.id, ["pending", "later"], "redirected"))
     return fail("conflict", "it was already decided");
-  const said_ = addComment(
+  const wrote = addComment(
     app,
     found.value.actor,
     repo,
     direction,
     `Redirect: not the wave "${proposal.title}" as proposed.\n\n${said}`,
   );
-  if (!said_.ok) {
+  if (!wrote.ok) {
     moveProposal(app.db, proposal.id, ["redirected"], proposal.state);
-    return fail("invalid", `could not write to the direction issue: ${errorWords(said_.error)}`);
+    return fail("invalid", `could not write to the direction issue: ${errorWords(wrote.error)}`);
   }
   if (direction.assigneeId === planner.user.id) {
     queueAgentRun(app, repo, direction, planner, "feedback", found.value.actor.id);

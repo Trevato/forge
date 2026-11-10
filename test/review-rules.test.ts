@@ -29,6 +29,16 @@ test("a helper import, a source import and a non-test file pass", () => {
   ).toEqual([]);
 });
 
+test("a declared name ending in an underscore is refused in src, naming the rule", () => {
+  const [p, ...rest] = reviewProblems([
+    { path: "src/a.ts", text: "const ok = 1;\nconst split_ = 2;\nlet _x = 3;\nfunction f_() {}" },
+  ]);
+  expect(p).toContain('rule "a name does not end in an underscore"');
+  expect(p).toContain("src/a.ts:2");
+  expect(rest).toHaveLength(1);
+  expect(reviewProblems([{ path: "src/web/render/vendor/y.ts", text: "const v_ = 1;" }])).toEqual([]);
+});
+
 test("the repository's own tests pass the rules", () => {
   expect(reviewRefusal()).toEqual([]);
   expect(readdirSync("test").length).toBeGreaterThan(0);

@@ -22,7 +22,7 @@ import { style } from "../term/style.ts";
 import { wrap } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import type { Session } from "../session.ts";
-import { ListState, confirmScreen, drawList, promptScreen, type ListRow } from "./common.ts";
+import { ListState, confirmScreen, drawList, later, promptScreen, type ListRow } from "./common.ts";
 
 const mayUse = (f: Session): boolean => mayManageDevices(f.user);
 
@@ -60,19 +60,35 @@ export function devicesScreen(f: Session, ctx: Ctx): Screen {
       placeholder: "Hall printer ipp://192.168.1.161:631/ipp/print",
       onSubmit: declareOne,
     });
-  const change = (d: Device, act: typeof grant, done: string) => (line: string): string | undefined => {
-    const slug = line.trim();
-    const made = act(f.app, f.user, d.id, slug);
+  const said = (made: { ok: true; value: string } | { ok: false; error: keyof typeof DEVICE_ERRORS }, d: Device, done: string): string | undefined => {
     note = made.ok ? `${made.value} ${done} ${d.name}.` : DEVICE_ERRORS[made.error];
     if (made.ok) reload();
     return made.ok ? undefined : note;
   };
-  const askApp = (d: Device, act: typeof grant, title: string, done: string): Screen =>
+  const allow = (d: Device) => (line: string): string | undefined =>
+    said(grant(f.app, f.user, d.id, line.trim()), d, "may print on");
+  // Revoking asks first: the slug is typed, then a yes/no names the app and the printer.
+  const stopOne = (d: Device) => (line: string): Promise<void> => {
+    const slug = line.trim();
+    return later(ctx, () =>
+      confirmScreen(ctx, screen, {
+        title: "Stop an app printing here",
+        body: [`${slug} on ${d.name}`, "The app can no longer print there."],
+        actions: [{ label: "Revoke", variant: "danger" }, { label: "Keep" }],
+        yesNo: true,
+        onChoose: (i) => {
+          if (i !== 0) return;
+          said(revoke(f.app, f.user, d.id, slug), d, "may no longer print on");
+        },
+      }),
+    );
+  };
+  const askApp = (d: Device, title: string, onSubmit: (line: string) => string | undefined | Promise<void>): Screen =>
     promptScreen(ctx, screen, {
       title,
       label: `App slug for ${d.name}`,
       placeholder: allAppSlugs(f.db).join(" ") || "no apps yet",
-      onSubmit: change(d, act, done),
+      onSubmit,
     });
   const confirmRemove = (d: Device): Screen =>
     confirmScreen(ctx, screen, {
@@ -140,7 +156,7 @@ export function devicesScreen(f: Session, ctx: Ctx): Screen {
       const d = rows[state.index];
       if ((e.key === "a" || e.key === "r") && d !== undefined) {
         note = "";
-        ctx.push(e.key === "a" ? askApp(d, grant, "Let an app print here", "may print on") : askApp(d, revoke, "Stop an app printing here", "may no longer print on"));
+        ctx.push(e.key === "a" ? askApp(d, "Let an app print here", allow(d)) : askApp(d, "Stop an app printing here", stopOne(d)));
         return true;
       }
       if (e.key === "l" && d !== undefined) {
