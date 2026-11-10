@@ -144,6 +144,7 @@ const MEDIA: Readonly<Record<string, Media>> = {
   otf: { kind: "font", name: "OpenType", type: "font/otf", magic: ascii("OTTO") },
   woff: { kind: "font", name: "WOFF", type: "font/woff", magic: ascii("wOFF") },
   woff2: { kind: "font", name: "WOFF2", type: "font/woff2", magic: ascii("wOF2") },
+  "3mf": { kind: "model3d", name: "3MF", type: "model/3mf", magic: bytes(0x50, 0x4b, 0x03, 0x04) },
   glb: { kind: "model3d", name: "glTF binary", type: "model/gltf-binary", magic: ascii("glTF") },
 };
 

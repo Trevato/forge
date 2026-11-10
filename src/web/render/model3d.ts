@@ -30,7 +30,7 @@ const ENTRY = Bun.fileURLToPath(new URL("./model3d-client.ts", import.meta.url))
 const VENDOR = join(import.meta.dir, "vendor", "three");
 
 /** What the viewer reads each extension as. */
-const FORMATS: Readonly<Record<string, string>> = { stl: "stl", obj: "obj", glb: "glb", gltf: "gltf" };
+const FORMATS: Readonly<Record<string, string>> = { stl: "stl", obj: "obj", glb: "glb", gltf: "gltf", "3mf": "3mf" };
 
 const formatOf = (path: string): string =>
   FORMATS[path.slice(path.lastIndexOf(".") + 1).toLowerCase()] ?? "stl";

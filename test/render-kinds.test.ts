@@ -37,6 +37,7 @@ const SAMPLES: Record<string, [Uint8Array, FileKind, string]> = {
   mov: [box("qt  "), "video", "video/quicktime"],
   stl: [enc("solid cube\n"), "model3d", "model/stl"],
   glb: [enc("glTF\x02\0\0\0"), "model3d", "model/gltf-binary"],
+  "3mf": [enc("PK\x03\x04"), "model3d", "model/3mf"],
   db: [enc("SQLite format 3\0"), "sqlite", "application/vnd.sqlite3"],
   sqlite: [enc("SQLite format 3\0"), "sqlite", "application/vnd.sqlite3"],
   sqlite3: [enc("SQLite format 3\0"), "sqlite", "application/vnd.sqlite3"],
