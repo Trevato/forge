@@ -267,6 +267,11 @@ each bug `{ repo, number, priority, dueAt }`, soonest due first, at most 100,
 from `src/flow/bugs.ts`. An admin sees every repository; anyone else only
 public ones, as the terminal's bugs screen does.
 
+`crew` with `{ kind: "week" }` is another (#10722), a forge admin's: `{ days, members }`,
+each member `{ username, merged, returned, spentUsd, idle }` over the last 7
+days, from `src/crew/week_card.ts` (spend from the usage ledger). The same
+answer is `GET /api/v1/crew/week` and the "This week" block on Settings › Crew.
+
 Answers are JSON in a text block; most carry a `says` sentence short enough
 to relay as it is.
 

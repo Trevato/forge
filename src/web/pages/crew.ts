@@ -37,6 +37,7 @@ import {
   type SplitScorecard,
 } from "../../core/scorecard.ts";
 import { keeperDays, type KeeperDay } from "../../flow/keeper_rate.ts";
+import { weekCard, WEEK_DAYS, type WeekLine } from "../../crew/week_card.ts";
 import { knobsCard } from "./knobs.ts";
 import { decideChange, readReview } from "../../actions/model_review.ts";
 import { wastedDays, type WastedDay } from "../../core/wasted_days.ts";
@@ -390,6 +391,35 @@ function scorecardCard(
   );
 }
 
+/** The week at a glance: one dense row per member; a member with nothing reads "idle". */
+function weekCardPanel(lines: readonly WeekLine[]): Html {
+  return panel(
+    html`<div class="table-scroll">
+      <table class="table" id="crew-week" data-sticky-lead>
+        <thead>
+          <tr><th>Member</th><th class="num">Merged</th><th class="num">Returned</th><th class="num">Spent</th></tr>
+        </thead>
+        <tbody>
+          ${lines.map((l) =>
+            l.idle
+              ? html`<tr data-idle>
+                  <td>${userLink(l.username, { avatar: false })}</td>
+                  <td colspan="3" class="muted">idle</td>
+                </tr>`
+              : html`<tr>
+                  <td>${userLink(l.username, { avatar: false })}</td>
+                  <td class="num">${l.merged}</td>
+                  <td class="num">${l.returned}</td>
+                  <td class="num">$${l.spentUsd.toFixed(2)}</td>
+                </tr>`,
+          )}
+        </tbody>
+      </table>
+    </div>`,
+    { title: `This week · ${WEEK_DAYS} days`, id: "crew-week-card" },
+  );
+}
+
 /** Today's spend against each ceiling: the drain, and the knob for it. */
 function spendingCard(
   spending: readonly { repo: Repo; status: AutonomyStatus }[],
@@ -690,6 +720,7 @@ function crewView(
         </div>`,
         { title: "Agents", id: "crew-agents" },
       )}
+  ${when(agents.length > 0 && ctx.auth.user?.isAdmin === true, () => weekCardPanel(weekCard(ctx.app.db)))}
   ${when(agents.length > 0, () =>
     scorecardCard(
       agents,

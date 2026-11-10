@@ -61,6 +61,7 @@ import { entry as profile } from "./profile.ts";
 import { entry as quotas } from "./quotas.ts";
 import { entry as resilience } from "./resilience.ts";
 import { entry as scorecard } from "./scorecard.ts";
+import { entry as weekcard } from "./weekcard.ts";
 import { entry as scrapes } from "./scrapes.ts";
 import { entry as trafficScreenEntry } from "./traffic.ts";
 import { entry as securityControls } from "./controls.ts";
@@ -113,6 +114,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   knobs,
   crewHandover,
   scorecard,
+  weekcard,
   modelGrantEntry,
   modelCeilingEntry,
   people,

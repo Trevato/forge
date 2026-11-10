@@ -65,6 +65,7 @@ import { noteRead, telemetryReader, type Reader } from "../actions/telemetry.ts"
 import { flowCopy, flowEtag, flowMaxAge } from "../system/flow_cache.ts";
 import { countRead } from "../system/telemetry_reads.ts";
 import { historyFor, sourcesOut, systemWithReaders, welcome } from "../system/telemetry.ts";
+import { weekCard, WEEK_DAYS } from "../crew/week_card.ts";
 import { markReaders } from "../crew/direct.ts";
 import {
   addCommentThrough,
@@ -1336,6 +1337,16 @@ export function apiRoutes(router: Router<Handler>): void {
     const card = timePhase(ctx.request, "scorecard", () => readScorecards(ctx.app, ctx.auth.user));
     if (!card) return apiError("forbidden", 403, ADMIN_WORDS.scorecard);
     return timePhase(ctx.request, "render", () => json(card));
+  });
+
+  // The week's line per crew member (`crew/week_card.ts`); as MCP `crew` with kind "week".
+  router.add("GET", "/api/v1/crew/week", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const denied = requireScope(ctx, "ro");
+    if (denied) return denied;
+    if (ctx.auth.user?.isAdmin !== true) return apiError("forbidden", 403, ADMIN_WORDS.scorecard);
+    const members = timePhase(ctx.request, "week", () => weekCard(ctx.app.db));
+    return timePhase(ctx.request, "render", () => json({ days: WEEK_DAYS, members }));
   });
 
   // What the crew is doing right now, as MCP `now` answers it: a read, so

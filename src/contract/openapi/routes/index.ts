@@ -71,6 +71,7 @@ export { route as getApiV1ConversationTurns } from "./getApiV1ConversationTurns.
 export { route as getApiV1Conversations } from "./getApiV1Conversations.ts";
 export { route as getApiV1CrewNow } from "./getApiV1CrewNow.ts";
 export { route as getApiV1CrewScorecard } from "./getApiV1CrewScorecard.ts";
+export { route as getApiV1CrewWeek } from "./getApiV1CrewWeek.ts";
 export { route as getApiV1Explore } from "./getApiV1Explore.ts";
 export { route as getApiV1Family } from "./getApiV1Family.ts";
 export { route as getApiV1Features } from "./getApiV1Features.ts";
