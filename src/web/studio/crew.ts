@@ -424,7 +424,7 @@ export function settingsLead(ctx: Ctx, repo: Repo): Html {
 export function crewKeyNote(ctx: Ctx): Html | null {
   if (crewHasCredential(ctx.app.db)) return null;
   return html`<p class="small muted" id="crew-key-note" role="status">
-    ${icon("alert")} The crew has no model key yet, so it cannot start work.
+    ${icon("alert")} The crew cannot start work yet: it needs a subscription.
     ${ctx.auth.user?.isAdmin
       ? html`<a href="/settings/subscriptions">Add one in Subscriptions</a>.`
       : "Ask this forge's admin to add one."}

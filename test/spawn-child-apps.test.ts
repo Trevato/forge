@@ -169,24 +169,24 @@ describe("a spawned child's apps", () => {
     expect(listApps(child.db).length).toBe(before);
   });
 
-  test("after claiming, the home shows the app, and says the crew has no model key and where to add one", async () => {
+  test("after claiming, the home shows the app, and says the crew cannot start yet and where to add one", async () => {
     const home = (
       await (await fetch(`${servers.url}/`, { headers: { cookie } })).text()
     ).replace(/\s+/g, " ");
     expect(home).toContain("bakery");
     expect(home).not.toContain("No apps yet");
-    expect(home).toContain("The crew has no model key yet");
+    expect(home).toContain("The crew cannot start work yet");
     expect(home).toContain('href="/settings/subscriptions"');
     const appPage = await (
       await fetch(`${servers.url}/marias/bakery`, { headers: { cookie } })
     ).text();
-    expect(appPage).toContain("The crew has no model key yet");
+    expect(appPage).toContain("The crew cannot start work yet");
   });
 
   test("on the app page the key note is an owner fact: not for a stranger or a plain reader", async () => {
     const anonymous = await (await fetch(`${servers.url}/marias/bakery`)).text();
     expect(anonymous).toContain("bakery");
-    expect(anonymous).not.toContain("The crew has no model key yet");
+    expect(anonymous).not.toContain("The crew cannot start work yet");
     const reader = await createUser(child.db, { origin: "seed", trusted: true,
       username: "reader",
       email: "reader@x.test",
@@ -201,14 +201,14 @@ describe("a spawned child's apps", () => {
       })
     ).text();
     expect(asReader).toContain("bakery");
-    expect(asReader).not.toContain("The crew has no model key yet");
+    expect(asReader).not.toContain("The crew cannot start work yet");
     // Nor on the home: there the note is for an admin or a writer of an app.
     const readerHome = await (
       await fetch(`${servers.url}/`, {
         headers: { cookie: `forge_session=${session.token}` },
       })
     ).text();
-    expect(readerHome).not.toContain("The crew has no model key yet");
+    expect(readerHome).not.toContain("The crew cannot start work yet");
   });
 
   test("first boot registers apps as the founder, an account with no verified email", () => {
@@ -262,6 +262,6 @@ describe("a spawned child's apps", () => {
     const home = await (
       await fetch(`${servers.url}/`, { headers: { cookie } })
     ).text();
-    expect(home).not.toContain("The crew has no model key yet");
+    expect(home).not.toContain("The crew cannot start work yet");
   });
 });

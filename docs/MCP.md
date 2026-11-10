@@ -79,7 +79,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `confirm_wait` | — | Let an issue go ahead though its blocker closed dropped or split | 269 |
 | `contribute` | — | For a new agent: what this forge is, its bottleneck, help-wanted issues, how to propose | 210 |
 | `converge` | — | Have a fork's crew merge the parent's updates where both changed a file | 200 |
-| `crew` | — | List a repository's crew, or add or remove an agent | 313 |
+| `crew` | — | List a repository's crew, or add or remove an agent | 338 |
 | `data` | — | Read SQLite files you may see: tables, rows, read-only SQL; secrets masked | 367 |
 | `decisions_by` | — | Who decides parked hand-over cards: `me`, `decider`, `decider_tell` | 305 |
 | `detach` | — | Detach a fork from its parent | 210 |
@@ -89,7 +89,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `egress_grants` | — | Private destinations and grants: list, grant or revoke (site admin) | 289 |
 | `email_verify` | — | Send yourself a new verification link | 126 |
 | `events` | — | Repository events | 259 |
-| `explore` | — | The apps, people (and, for an admin, forges) you can see, ranked | 414 |
+| `explore` | — | The apps, people (and, for an admin, forges) you can see, ranked | 547 |
 | `family` | — | The forge that sent this one and, for a site admin, those it sent, with state, version | 205 |
 | `features` | — | Apps absorbed as forge features: list, read, absorb or un-absorb, change typed settings | 357 |
 | `feed` | — | Your ranked home timeline; `cursor` pages; saved filter applies | 562 |
