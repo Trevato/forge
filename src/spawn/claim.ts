@@ -249,6 +249,8 @@ export type LinkState = "open" | "used" | "ended";
 export interface LinkInfo {
   readonly state: LinkState;
   readonly revokedAt: string | null;
+  /** When the link was spent (someone opened it and made an account), ISO; absent while unspent. */
+  readonly usedAt?: string | null;
 }
 
 /** True while an ended link can still be brought back: revoked in the last minute, in date, unspent. */
@@ -276,7 +278,7 @@ const stateOf = (s: Stored, now: number): LinkState =>
 /** The claim link in this forge's own database; null when it has none. */
 export function linkOf(db: Database, now = Date.now()): LinkInfo | null {
   const found = readStored(db);
-  return found === undefined ? null : { state: stateOf(found.stored, now), revokedAt: found.stored.r ?? null };
+  return found === undefined ? null : { state: stateOf(found.stored, now), revokedAt: found.stored.r ?? null, usedAt: found.stored.u };
 }
 
 /** Replace the stored link only if nobody changed it since it was read. */

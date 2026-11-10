@@ -52,6 +52,8 @@ export interface ClientRow {
   readonly link: LinkInfo | null;
   /** Why this forge needs its owner now; null when it does not. */
   readonly attention: Attention | null;
+  /** Where the sent link stands, in four plain states; null while it is being made or the child did not answer. */
+  readonly stage: Stage | null;
   /** Dollars the child's crew spent today, from its last heartbeat; null when it has not said. */
   readonly spendTodayUsd: number | null;
   /** The child's forge cap in dollars; null when none or unsaid. */
@@ -144,7 +146,8 @@ function linkOfBody(v: unknown): LinkInfo | null {
   if (typeof v !== "object" || v === null) return null;
   const { state, revokedAt } = v as Record<string, unknown>;
   if (!LINK_STATES.includes(state as LinkState)) return null;
-  return { state: state as LinkState, revokedAt: typeof revokedAt === "string" && !Number.isNaN(Date.parse(revokedAt)) ? revokedAt : null };
+  const iso = (x: unknown): string | null => (typeof x === "string" && !Number.isNaN(Date.parse(x)) ? x : null);
+  return { state: state as LinkState, revokedAt: iso(revokedAt), usedAt: iso((v as Record<string, unknown>)["usedAt"]) };
 }
 
 async function probe(app: App, child: Child): Promise<ForgeState | undefined> {
@@ -281,11 +284,57 @@ export function attentionOf(r: ClientRow, now: number): Attention | null {
   return null;
 }
 
+export type StageKey = "sent" | "opened" | "signedin" | "tell";
+
+/** Where a sent link stands, the time that changed, and whether it is time to send it again. */
+export interface Stage {
+  readonly key: StageKey;
+  /** The plain words, the same on the page, the terminal and the MCP answer. */
+  readonly words: string;
+  /** When it changed, ISO; null when the child did not say. */
+  readonly at: string | null;
+  /** True when the link has gone unopened for three days: the one action is to resend it. */
+  readonly resend: boolean;
+}
+
+export const STAGE_WORDS: Record<StageKey, string> = {
+  sent: "Sent",
+  opened: "Opened",
+  signedin: "Signed in",
+  tell: "Last tell",
+};
+
+export const STALE_WORDS = "Not opened in 3 days";
+
+/**
+ * Sent, opened, signed in, told: read from what is already kept (the
+ * ledger's send time, the link's spent time, the claim, the last tell in the
+ * child's heartbeat). The heartbeat carries only the latest tell, so the last stage says "Last tell", never "First".
+ */
+export function stageOf(r: Omit<ClientRow, "attention" | "stage">, now: number): Stage | null {
+  if (!r.made || r.claimed === null) return null;
+  const at = (...xs: (string | null | undefined)[]): string | null => xs.find((x) => typeof x === "string") ?? null;
+  const make = (key: StageKey, when: string | null, resend = false): Stage => ({
+    key,
+    words: resend ? STALE_WORDS : STAGE_WORDS[key],
+    at: when,
+    resend,
+  });
+  if (r.claimed) {
+    return r.nextStep.lastTellAt !== null
+      ? make("tell", r.nextStep.lastTellAt)
+      : make("signedin", at(r.link?.usedAt));
+  }
+  if (r.link?.state === "used") return make("opened", at(r.link.usedAt));
+  const sent = r.sentAt === null ? NaN : Date.parse(r.sentAt);
+  return make("sent", r.sentAt, !Number.isNaN(sent) && now - sent > UNCLAIMED_MS);
+}
+
 /** Rows that need the owner first, by reason; then by last activity, newest first. */
-export function orderRows(rows: readonly Omit<ClientRow, "attention">[], now: number): ClientRow[] {
+export function orderRows(rows: readonly Omit<ClientRow, "attention" | "stage">[], now: number): ClientRow[] {
   const tier = (a: Attention | null) => (a === null ? ATTENTION_ORDER.length : ATTENTION_ORDER.indexOf(a));
   return rows
-    .map((r) => ({ ...r, attention: attentionOf(r as ClientRow, now) }))
+    .map((r) => ({ ...r, attention: attentionOf(r as ClientRow, now), stage: stageOf(r as ClientRow, now) }))
     .sort(
       (a, b) =>
         tier(a.attention) - tier(b.attention) ||

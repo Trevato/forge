@@ -166,6 +166,7 @@ describe("the child's line", () => {
     url: "https://kid--forge.test",
     for: null,
     apps: [],
+    stage: null,
     sentAt: null,
     made: true,
     claimed: true,

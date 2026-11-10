@@ -55,7 +55,9 @@ export function forgeRow(r: ClientRow, now: number): Html {
     runningNote(r),
     spendNote(r),
     creditWords(r) === null ? null : html`<span data-credit>${creditWords(r)}</span>`,
-    r.sentAt === null ? null : html`sent ${time(r.sentAt)}`,
+    r.stage === null
+      ? null
+      : html`<span data-stage="${r.stage.key}"${r.stage.resend ? html` data-resend` : null}>${r.stage.words}${r.stage.at === null ? null : html` ${time(r.stage.at)}`}</span>`,
     r.lastActivityAt === null
       ? null
       : html`last activity ${time(r.lastActivityAt)}`,
@@ -88,7 +90,7 @@ export function forgeRow(r: ClientRow, now: number): Html {
         ...(state === "yes" ? { tone: "success" as const } : { variant: "outline" as const }),
       })}${state === "no"
         ? html`<form method="post" action="/forges/${r.name}/claim-link">
-            ${btn("Send a fresh link", { size: "sm", title: "A new claim link; the old one stops working" })}
+            ${btn(r.stage?.resend === true ? "Resend" : "Send a fresh link", { size: "sm", title: "A new claim link; the old one stops working" })}
           </form>`
         : null}${r.link === null
         ? null

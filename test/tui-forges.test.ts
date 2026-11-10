@@ -20,6 +20,7 @@ const row = (over: Partial<ClientRow>): ClientRow => ({
   url: "https://maria.test",
   for: "Maria's bakery",
   apps: [],
+  stage: null,
   sentAt: null,
   made: true,
   claimed: false,
