@@ -587,12 +587,10 @@ import {
   withShells,
   type ForgeSocket,
   type ShellSocket,
+  shellIdleMs,
 } from "../machines/shell.ts";
 
 // ---- auth ----
-
-/** A machine's shell with no keystroke for this long ends (`machines/shell.ts`). */
-const SHELL_IDLE_MS = 30 * 60_000;
 
 const NO_AUTH: Auth = { user: undefined, scope: undefined, via: "none" };
 
@@ -2613,7 +2611,7 @@ export async function serve(app: App): Promise<Servers> {
             const cells = await cellsAvailable();
             if (shellOptions(app) === undefined)
               setShellOptions(app, {
-                idleMs: SHELL_IDLE_MS,
+                idleMs: () => shellIdleMs(app.db),
                 contain: cells.ok ? "cell" : "refuse",
                 command: defaultCommand(),
               });

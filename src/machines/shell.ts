@@ -13,8 +13,8 @@
  * second tab, a reload) joins the session that is running and sees the same
  * screen. Binary frames are keystrokes in and screen bytes out; a text frame
  * is JSON and says only `{"type":"resize","cols":n,"rows":n}`. The session
- * ends when its program exits or after `idleMs` with no keystroke, and each
- * one is a row in `machine_sessions`: machine, owner, start, end and why.
+ * ends when its program exits or after the idle limit with no keystroke and
+ * no output, and each one is a row in `machine_sessions`: machine, owner, start, end and why.
  *
  * No text a person sends ever reaches a command line: the command is a
  * constant, and the names in the path only pick a row and a directory after
@@ -36,6 +36,7 @@ import type { User } from "../core/users.ts";
 import { repoMachines } from "../crew/machines_read.ts";
 import { reachableApps, type Machine } from "../crew/machines.ts";
 import { ownApp, ownAppUrls } from "../crew/app_hosts.ts";
+import { limitValue } from "../settings/limits.ts";
 import { id as newId } from "../kernel/id.ts";
 
 // ---- the route ----
@@ -246,13 +247,18 @@ interface Session {
   /** The pty's size, as last set. */
   size: PtySize;
   lastInput: number;
+  /** When the program last printed: a running build is not idle. */
+  lastOutput: number;
   ended: boolean;
   readonly timer: ReturnType<typeof setInterval>;
 }
 
 export interface ShellOptions {
-  /** No keystroke for this long ends the session. */
-  readonly idleMs: number;
+  /**
+   * No keystroke and no output for this long ends the session. A function is
+   * asked at every check, so a changed setting governs the next one.
+   */
+  readonly idleMs: number | (() => number);
   /**
    * Whether this forge can hold a cell. Without one the shell is refused —
    * except where a test says `uncontained`, on purpose, to run the bridge.
@@ -377,6 +383,16 @@ export function shellCell(
   };
 }
 
+/** The idle limit an admin set at `/admin/limits`, in ms; read at every check. */
+export const shellIdleMs = (db: Database): number => limitValue(db, "shell_idle_minutes") * 60_000;
+
+const idleLimit = (opts: ShellOptions): number => (typeof opts.idleMs === "function" ? opts.idleMs() : opts.idleMs);
+
+/** Idle only when both the last keystroke and the last output are older than the limit. */
+export function idle(session: { lastInput: number; lastOutput: number }, limitMs: number, now = Date.now()): boolean {
+  return now - session.lastInput >= limitMs && now - session.lastOutput >= limitMs;
+}
+
 function end(app: App, session: Session, reason: EndReason): void {
   if (session.ended) return;
   session.ended = true;
@@ -401,6 +417,7 @@ function start(app: App, grant: ShellGrant, opts: ShellOptions, cols: number, ro
   let terminal: Bun.Terminal | undefined;
   let cell: Cell | undefined;
   let row: string | undefined;
+  let live: Session | undefined;
   try {
     mkdirSync(join(dir, "home"), { recursive: true });
     row = recordStart(app.db, grant.repo.id, grant.machine.name, grant.user.id);
@@ -408,6 +425,7 @@ function start(app: App, grant: ShellGrant, opts: ShellOptions, cols: number, ro
       cols,
       rows,
       data: (_t, chunk) => {
+        if (live !== undefined) live.lastOutput = Date.now();
         for (const peer of peers) {
           if (peer.readyState !== WebSocket.OPEN) continue;
           // A peer that is not reading is closed, never buffered without end.
@@ -447,19 +465,21 @@ function start(app: App, grant: ShellGrant, opts: ShellOptions, cols: number, ro
       peers,
       size: { cols, rows },
       lastInput: Date.now(),
+      lastOutput: Date.now(),
       ended: false,
       timer: setInterval(
         () => {
-          if (Date.now() - session.lastInput >= opts.idleMs) end(app, session, "idle");
+          if (idle(session, idleLimit(opts))) end(app, session, "idle");
           else if (!stillMay(app, session)) end(app, session, "revoked");
         },
-        Math.max(10, Math.min(opts.idleMs, opts.checkMs ?? CHECK_MS)),
+        Math.max(10, Math.min(idleLimit(opts), opts.checkMs ?? CHECK_MS)),
       ),
     };
     void program.exited.then(() => {
       term.close();
       end(app, session, "exit");
     });
+    live = session;
     sessionsOf(app).set(session.key, session);
     app.log.info("machine shell started", {
       repo: `${grant.repo.ownerName}/${grant.repo.name}`,

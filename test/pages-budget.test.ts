@@ -35,7 +35,6 @@ const HEAVIER: Record<string, { statements?: number; git?: number }> = {
   "/:owner/:name/issues/:number": { statements: 70 },
   "/:owner/:name/next": { statements: 64 },
   "/:owner/:name/pulls/:number": { statements: 106 },
-  "/admin/limits": { statements: 80 },
   "/board": { statements: 64 },
   "/settings/capacity": { statements: 65 },
 };

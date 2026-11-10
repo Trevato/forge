@@ -87,6 +87,9 @@ repository's machines:
   output. The session ends when the shell exits, after 30 minutes with no
   keystroke, or — checked every 5 seconds and when its last connection
   closes — once its owner is suspended or can no longer write here.
+- **Idle.** A shell with no keystroke and no output for the admin limit
+  `shell_idle_minutes` (default 30, 5 to 1440, set at `/admin/limits`, read at
+  every check) ends as `idle`; one that prints, like a build, is never idle.
 - **Records.** Each session is a row in `machine_sessions` (machine, owner,
   start, end and why: `exit`, `idle`, `stopped`, `revoked`, `failed`). No
   shell outlives its forge, so a row a stop or crash left open is closed as

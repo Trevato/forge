@@ -13,9 +13,7 @@ import {
   LIMIT_KEYS,
   isLimitKey,
   limitChanges,
-  limitDefault,
-  limitIsSet,
-  limitValue,
+  limitState,
   setLimit,
   type LimitChange,
   type LimitDef,
@@ -45,9 +43,7 @@ export function listLimits(
     limits: LIMIT_KEYS.map((key) => ({
       ...LIMITS[key],
       key,
-      value: limitValue(app.db, key),
-      isSet: limitIsSet(app.db, key),
-      defaultValue: limitDefault(app.db, key),
+      ...limitState(app.db, key),
     })),
     changes: limitChanges(app.db),
   });

@@ -50,7 +50,8 @@ export type LimitKey =
   | "api.anonymous_per_source"
   | "model_review.auto"
   | "model_review.min_landed"
-  | "model_review.slack_pct";
+  | "model_review.slack_pct"
+  | "shell_idle_minutes";
 
 export interface LimitDef {
   readonly label: string;
@@ -294,6 +295,14 @@ export const LIMITS: Record<LimitKey, LimitDef> = {
     max: 100,
     reason: "Past this the weekly review undoes its own change, so quality is the bar the saving is held to.",
   },
+  shell_idle_minutes: {
+    label: "Minutes a machine shell may be silent before it stops",
+    unit: "minutes",
+    default: 30,
+    min: 5,
+    max: 1440,
+    reason: "A shell nobody types in and that prints nothing holds a process and memory for no reason; one that prints, like a build, is never stopped.",
+  },
 };
 
 export const LIMIT_KEYS = Object.keys(LIMITS) as LimitKey[];
@@ -366,6 +375,20 @@ export function limitIsSet(db: Database, key: LimitKey): boolean {
         .get(cap) !== null
     );
   return stored(db, key) !== undefined;
+}
+
+/**
+ * Value, whether it is set and the default in one go: a stored limit is read
+ * once, not once for the value and again for "is it set".
+ */
+export function limitState(
+  db: Database,
+  key: LimitKey,
+): { value: number; isSet: boolean; defaultValue: number } {
+  if (capacityKey(key) !== undefined)
+    return { value: limitValue(db, key), isSet: limitIsSet(db, key), defaultValue: limitDefault(db, key) };
+  const set = stored(db, key);
+  return { value: set ?? LIMITS[key].default, isSet: set !== undefined, defaultValue: LIMITS[key].default };
 }
 
 export type LimitError = {

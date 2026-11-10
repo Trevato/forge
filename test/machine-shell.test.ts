@@ -18,7 +18,8 @@ import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { tokenFor } from "./helpers/tokens.ts";
 import { existsSync } from "node:fs";
-import { closeStaleSessions, recordStart, shellCell, workspace, MAX_SESSIONS } from "../src/machines/shell.ts";
+import { setLimit } from "../src/settings/limits.ts";
+import { idle, shellIdleMs, closeStaleSessions, recordStart, shellCell, workspace, MAX_SESSIONS } from "../src/machines/shell.ts";
 import { BUILT_IN } from "../src/crew/machines.ts";
 import {
   lastSessions,
@@ -214,6 +215,45 @@ test("a session with no keystroke past the idle limit ends, and says so", async 
   expect(lastSessions(app.db, repo.id)[0]?.endReason).toBe("idle");
   setShellOptions(app, { idleMs: 60_000, contain: "uncontained", command: "exec /bin/sh", handshakesPerMinute: 1000 });
 });
+
+test("output with no input keeps a session alive past the idle limit", async () => {
+  stopShells(app);
+  setShellOptions(app, { idleMs: 300, contain: "uncontained", command: "while :; do echo tick; sleep 0.05; done", checkMs: 30, handshakesPerMinute: 1000 });
+  const { ws } = await open("alice");
+  await Bun.sleep(1_000);
+  expect(liveSessions(app)).toBe(1);
+  expect(ws.readyState).toBe(WebSocket.OPEN);
+  stopShells(app);
+  setShellOptions(app, { idleMs: 60_000, contain: "uncontained", command: "exec /bin/sh", handshakesPerMinute: 1000 });
+}, 10_000);
+
+test("idle needs both the last input and the last output older than the limit", () => {
+  expect(idle({ lastInput: 0, lastOutput: 0 }, 100, 100)).toBe(true);
+  expect(idle({ lastInput: 0, lastOutput: 50 }, 100, 100)).toBe(false);
+  expect(idle({ lastInput: 50, lastOutput: 0 }, 100, 100)).toBe(false);
+});
+
+test("the idle limit the server installs is the shell_idle_minutes setting, in minutes", () => {
+  expect(shellIdleMs(app.db)).toBe(30 * 60_000);
+  expect(setLimit(app.db, "shell_idle_minutes", 7, "test").ok).toBe(true);
+  expect(shellIdleMs(app.db)).toBe(7 * 60_000);
+  expect(setLimit(app.db, "shell_idle_minutes", null, "test").ok).toBe(true);
+  expect(shellIdleMs(app.db)).toBe(30 * 60_000);
+});
+
+test("changing the setting changes the next check", async () => {
+  stopShells(app);
+  let ms = 60_000;
+  setShellOptions(app, { idleMs: () => ms, contain: "uncontained", command: "exec /bin/sh", checkMs: 30, handshakesPerMinute: 1000 });
+  const { ws } = await open("alice");
+  await Bun.sleep(300);
+  expect(liveSessions(app)).toBe(1);
+  ms = 100;
+  await new Promise((r) => ws.addEventListener("close", r));
+  await until(() => lastSessions(app.db, repo.id)[0]?.endReason !== undefined);
+  expect(lastSessions(app.db, repo.id)[0]?.endReason).toBe("idle");
+  setShellOptions(app, { idleMs: 60_000, contain: "uncontained", command: "exec /bin/sh", handshakesPerMinute: 1000 });
+}, 10_000);
 
 test("a forge that cannot hold a cell refuses the shell", async () => {
   setShellOptions(app, { idleMs: 60_000, contain: "refuse", command: "exec /bin/sh", handshakesPerMinute: 1000 });
