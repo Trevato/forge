@@ -33,6 +33,7 @@ import {
 } from "../core/runs.ts";
 import { getUsersByIds, type User } from "../core/users.ts";
 import { abortAgentRun } from "../crew/running.ts";
+import { stopRun } from "../runs/stoppable.ts";
 import { queueAgentRun, taskOf } from "../crew/dispatch.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { readRunLog, readRunLogTail, runLogPath } from "../runs/log.ts";
@@ -332,8 +333,9 @@ export function runLog(
 
 /**
  * Cancel a run that has not finished. A queued run never starts; a running
- * agent run is stopped; a running deploy is abandoned by its environment
- * when its step ends.
+ * agent run or check worked here is stopped, every process it started with
+ * it (#10776); a running deploy is abandoned by its environment when its
+ * step ends.
  */
 export function cancelRepoRun(
   app: App,
@@ -351,7 +353,10 @@ export function cancelRepoRun(
     `cancelled by ${writer.value.username}`,
   );
   if (!cancelled) return err("finished");
+  // The row says cancelled first, so the run's own end leaves it so; the
+  // abort then ends the process group it started.
   if (run.kind === "agent") abortAgentRun(runId);
+  else stopRun(runId);
   announceRun(app, cancelled, writer.value.id);
   return ok(cancelled);
 }

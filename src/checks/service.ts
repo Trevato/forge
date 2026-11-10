@@ -88,6 +88,7 @@ import { transact } from "../kernel/db.ts";
 import { createLog } from "../kernel/log.ts";
 import { holdLease, STALE_AFTER_MS } from "../runs/lease.ts";
 import { appendRunLog } from "../runs/log.ts";
+import { trackRun, untrackRun } from "../runs/stoppable.ts";
 import { runningLimitSentence, runningRuns } from "../settings/quotas.ts";
 import { exportTree, readFileAt } from "../apps/checkout.ts";
 import { CHECK_TIMEOUT_MAX, parseCheck } from "../apps/manifest.ts";
@@ -561,6 +562,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     const abort = new AbortController();
     const low = inVerifyLane(run.env);
     if (low) verifying = run.id;
+    // A person's cancel (`cancelRepoRun`) reaches it through this.
+    trackRun(run.id, abort);
     const promise = execute(run, repo, abort.signal, !low)
       .catch((error) =>
         log.error("check failed to execute", {
@@ -569,6 +572,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         }),
       )
       .finally(() => {
+        untrackRun(run.id, abort);
         inFlight.delete(run.id);
         if (verifying === run.id) verifying = undefined;
         // The slot this run held is free again: give it to whichever queued
