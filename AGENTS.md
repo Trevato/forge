@@ -19,6 +19,8 @@ State shared between modules through process memory, not the database, is named 
 
 `src/perf/loop_worst.ts`: `loopWorst`, the worst event-loop lag of the last 10 s in ten one-second slots, fed by one unref'd 50 ms timer that the first `serve` starts (`startLoopWorst`), and read by every response's `lag;dur` and by `/healthz` asked for JSON (`loopLagMs`). Tests listing a request's phases read `requestTiming` (`test/helpers/request-timing.ts`), which leaves `lag` out.
 
+`src/perf/stall_blame.ts` (`stallBlame` in `src/perf/live.ts`): each loop stall over 200 ms as `{ what, ms, at }` in a fixed ring of 256, fed by `main.ts`'s stall watcher after `loopWatch` names it, read by /system's worst-five card and `/healthz`'s `loopWorstWhat`.
+
 `src/apps/relay_wait.ts`: each app's slowest production wait relayed in the last 10 minutes, with the forge's loop lag beside it, noted by the proxy (`relayUpstream`) and read by `appVitals`; `forgeWaited` decides whose wait it was, and the speed card and terminal line say "the forge was busy" when it was the forge's (#10858). At most 2,000 apps, gone on restart.
 
 `src/core/transfer.ts`: the old owner/name pairs a transfer left behind (`repo_redirect`), held per database after the first request reads them and dropped by `transferRepo`, so a request under a path nothing moved from costs no statement (#569).

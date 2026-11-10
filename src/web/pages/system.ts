@@ -30,8 +30,9 @@ import { live } from "../../system/live.ts";
 import { readerPaces, type ReaderPace } from "../../system/telemetry_reads.ts";
 import { slowPageLine, slowPages, type SlowPage } from "../../perf/watch.ts";
 import { stallHour } from "../../metrics/stalls.ts";
-import type { RouteStall } from "../../perf/loop.ts";
-import { loopWatch } from "../../perf/live.ts";
+import { HOUR_MS, type RouteStall } from "../../perf/loop.ts";
+import { loopWatch, stallBlame } from "../../perf/live.ts";
+import { WORST_STALLS, type BlamedStall } from "../../perf/stall_blame.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html, raw, type Html } from "../html.ts";
@@ -42,7 +43,7 @@ import { KEPT_PAGE_BYTES, keptPageStats } from "./kept_page.ts";
 import { COLUMN_BYTES, PARTS_BYTES, keptPartsStats, treeCacheStats } from "./tree_cache.ts";
 import { featureHealth, type FeatureHealth } from "../../system/feature_health.ts";
 import { egressReportedLine } from "../../system/egress_line.ts";
-import { badge, chartBox, meter, pill, row } from "../ui.ts";
+import { badge, chartBox, meter, pill, row, time } from "../ui.ts";
 import { childDirOf, listChildren } from "../../actions/spawn.ts";
 import { childrenUse, realSelf, selfUse, shareOf, sizeWords, useWords, type ChildUseRow, type SelfUse } from "../../spawn/usage.ts";
 
@@ -197,15 +198,32 @@ export function featuresSection(rows: readonly FeatureHealth[]): Html {
 }
 
 /** The last hour's stalls by route, most milliseconds first; the rows are `stallHour`'s. */
-export function stallSection(rows: readonly RouteStall[]): Html {
+export function stallSection(rows: readonly RouteStall[], worst: Html = html``): Html {
   return html`<section class="settings-block"><h2>Main-thread stalls, last hour</h2>
-    <p class="small muted">Past 250 ms, as of this page's load; <code>/metrics</code> has the series.</p>${
+    <p class="small muted">Past 200 ms, as of this page's load; <code>/metrics</code> has the series.</p>${
     rows.length === 0
       ? html`<p class="muted">No stalls in the last hour.</p>`
       : html`<div class="table-scroll"><table class="table" aria-label="Main-thread stalls by route, last hour">
         <thead><tr><th scope="col">Route</th><th scope="col" class="num">Stall ms</th><th scope="col" class="num">Stalls</th></tr></thead>
         <tbody>${rows.map((r) => html`<tr data-route="${r.route}"><td class="mono">${r.route}</td><td class="num mono">${String(Math.round(r.ms))}</td><td class="num mono">${String(r.count)}</td></tr>`)}</tbody>
-      </table></div>`}</section>`;
+      </table></div>`}${worst}</section>`;
+}
+
+/** How many of the last hour's worst stalls the page lists (#11069); the terminal lists as many. */
+export { WORST_STALLS };
+
+/**
+ * The last hour's worst single stalls, each with what ran (#11069), drawn inside
+ * the stalls section and only when there is one, so a quiet /system reads as before.
+ * `at` is on the watcher's clock (`performance.now`); `nowMono`/`nowWall` are one
+ * instant on it and on the wall clock, so a stall's wall time is `nowWall − (nowMono − at)`.
+ */
+export function worstStallsTable(rows: readonly BlamedStall[], nowMono: number, nowWall: number): Html {
+  if (rows.length === 0) return html``;
+  return html`<h3 id="sys-worst-stalls">Worst single stalls</h3><div class="table-scroll"><table class="table" aria-label="Worst single stalls, last hour">
+        <thead><tr><th scope="col">What ran</th><th scope="col" class="num">ms</th><th scope="col">When</th></tr></thead>
+        <tbody>${rows.map((r) => html`<tr data-what="${r.what}"><td class="mono">${r.what}</td><td class="num mono">${String(Math.round(r.ms))}</td><td>${time(new Date(nowWall - (nowMono - r.at)).toISOString())}</td></tr>`)}</tbody>
+      </table></div>`;
 }
 
 const SLOW_TTL_MS = 5000;
@@ -320,6 +338,8 @@ export async function systemPage(ctx: Ctx): Promise<Response> {
   const self = owner ? timePhase(ctx.request, "self", () => selfUse(realSelf(ctx.app.config.dataDir))) : null;
   const children = owner ? childrenUse(await listChildren(ctx.app), (bodyId) => childDirOf(ctx.app, bodyId)) : [];
   const stalls = timePhase(ctx.request, "stalls", () => stallHour(loopWatch.tally(performance.now())));
+  const nowMono = performance.now();
+  const worst = stallBlame.worst(nowMono, HOUR_MS, WORST_STALLS);
   const rendering = performance.now();
   const r = regions(v);
   const at = (id: string): Html => raw(r[id]!);
@@ -350,7 +370,7 @@ export async function systemPage(ctx: Ctx): Promise<Response> {
         <button class="btn" data-size="sm" type="button" data-sort="mem" aria-pressed="false"><kbd>m</kbd> memory</button></div>
       <div id="sys-procs">${at("sys-procs")}</div></section>
     ${featuresSection(timePhase(ctx.request, "features", () => featureHealth(ctx.app, reader)))}
-    <div id="sys-stalls">${stallSection(stalls)}</div>
+    <div id="sys-stalls">${stallSection(stalls, worstStallsTable(worst, nowMono, Date.now()))}</div>
     <div id="sys-slow-pages">${slowPagesSection(timePhase(ctx.request, "slowpages", () => slowPagesCached(ctx.app.db)))}</div>
     <div id="sys-readers">${readersSection(readerPaces())}</div>
     <div id="sys-caches">${cachesSection(pageCaches())}</div>

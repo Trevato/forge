@@ -507,7 +507,7 @@ import {
   takeDbTime,
   type RouteTiming,
 } from "../core/route_timing.ts";
-import { captureStore, loopWatch, perfRecord, readLedger } from "../perf/live.ts";
+import { captureStore, loopWatch, perfRecord, readLedger, stallBlame } from "../perf/live.ts";
 import { during } from "../perf/jobs.ts";
 import { classOf, countryOf, repoOf, signatureOf } from "../perf/traffic.ts";
 import { createTrafficWriter } from "../perf/traffic_store.ts";
@@ -519,7 +519,7 @@ import { statementPage } from "../web/pages/statement.ts";
 import { createViewWriter } from "../perf/views_store.ts";
 import { createReadWriter, readOf } from "../perf/reads.ts";
 import { parseServerTiming } from "../perf/record.ts";
-import { currentLoopLag, startLoopWorst } from "../perf/loop_worst.ts";
+import { currentLoopLag, LAG_WINDOW_MS, startLoopWorst } from "../perf/loop_worst.ts";
 import { methodOf, noteUsage, roleOf, surfaceOf, takeUsage } from "./usage_tag.ts";
 import { bearerChallenge, oauthRoutes } from "./oauth.ts";
 import { flushAccess, recordAccess } from "./access_log.ts";
@@ -2829,6 +2829,7 @@ async function answerGet(
       () => app.db.query("select 1").get(),
       app.log,
       wantsJson ? currentLoopLag() : undefined,
+      wantsJson ? (stallBlame.worst(performance.now(), LAG_WINDOW_MS, 1)[0]?.what ?? null) : null,
     );
     noteDbTime(request, performance.now() - dbStart);
     // The release proof learns which release answered, old pod or new; a

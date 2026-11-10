@@ -4,6 +4,10 @@ import { expect, test } from "bun:test";
 import { createJobWatch, during } from "../src/perf/jobs.ts";
 import { loopWatch } from "../src/perf/live.ts";
 import { createLoopWatch, NO_REQUEST, stallLine } from "../src/perf/loop.ts";
+import { freshStallState } from "./helpers/stall-state.ts";
+
+// The wired test notes a stall on the process's watch, which every file in this process shares.
+freshStallState();
 
 const block = (ms: number): void => {
   const until = performance.now() + ms;
