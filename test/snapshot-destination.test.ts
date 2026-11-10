@@ -5,7 +5,7 @@
  * for admins and the keys are never shown again.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -62,6 +62,11 @@ describe("the snapshot destination", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  // Every test starts with nothing sealed and makes the destination it reads.
+  beforeEach(() => {
+    forgetDestination(app, admin);
+  });
+
   const sources = () => ({
     db: app.db,
     dataDir: root,
@@ -93,6 +98,7 @@ describe("the snapshot destination", () => {
   });
 
   test("the service follows a saved or cleared destination without a restart", async () => {
+    expect(saveDestination(app, admin, input).ok).toBe(true);
     const svc = startSnapshots(
       app,
       () => resolveDestination({ ...sources(), env })?.store,

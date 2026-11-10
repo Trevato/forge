@@ -49,19 +49,9 @@ export const EXCLUDED: readonly Exclusion[] = [
     issue: 11084,
   },
   {
-    file: "test/prompts.test.ts",
-    reason: "red alone under --randomize (2026-11-10): 11 of 23 fail, tests read the prompts and Reels earlier tests made",
-    issue: 11097,
-  },
-  {
     file: "test/rehearsal-real.test.ts",
     reason: "green alone (3 of 3, 2026-11-10) but unproven under the gate's load, where on main@accaa65 the second real roll's old forge did not come up",
     issue: 11098,
-  },
-  {
-    file: "test/snapshot-destination.test.ts",
-    reason: "red alone under --randomize (2026-11-10): precedence and follow-the-saved-destination read a destination an earlier test saved",
-    issue: 11097,
   },
 ];
 
