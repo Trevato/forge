@@ -12,7 +12,7 @@ import { inviteLink, list as listInviteLinks, mint as mintInviteLink, revoke as 
 import { INVITE_NOT_OPEN } from "../../actions/sever_invite_words.ts";
 import { DEFAULT_DAYS, MAX_DAYS } from "../../core/invites.ts";
 import { changeSignup, readSignup } from "../../actions/signup.ts";
-import { SIGNUP_MODES } from "../../settings/signup.ts";
+import { SIGNUP_MEANS, SIGNUP_MODES } from "../../settings/signup.ts";
 import { QUOTA_KEYS } from "../../settings/quotas.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
@@ -122,16 +122,19 @@ export function limitsPage(ctx: Ctx): Response {
     }),
   );
   const signupRow = html`<div class="status-row">
-    <dt>Signup</dt>
+    <dt>New accounts</dt>
     <dd>
       <form class="row-fields" method="post" action="/admin/signup">
-        <select class="input mono" name="signup" aria-label="Who may sign up">
+        <select class="input mono" name="signup" aria-label="New accounts">
           ${SIGNUP_MODES.map(
             (m) => html`<option value="${m}" ${signup.ok && signup.value.signup === m ? "selected" : ""}>${m}</option>`,
           )}
         </select>
         ${btn("Save", { size: "sm", variant: "primary", label: "Save signup" })}
       </form>
+      <ul class="muted small" id="signup-means">
+        ${SIGNUP_MODES.map((m) => html`<li><strong>${m}</strong>: ${SIGNUP_MEANS[m]}</li>`)}
+      </ul>
     </dd>
     <dd class="status-act"></dd>
   </div>`;
@@ -280,7 +283,7 @@ export async function signupSet(ctx: Ctx): Promise<Response> {
     "/admin/limits",
     changed.ok
       ? { message: "Signup saved." }
-      : { tone: "danger", message: "Signup is open, invite or closed." },
+      : { tone: "danger", message: "New accounts are open, request, invite or closed." },
   );
 }
 

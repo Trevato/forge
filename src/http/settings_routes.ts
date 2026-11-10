@@ -25,6 +25,7 @@ import { securityControlsPage } from "../web/pages/security_controls.ts";
 import { securityPage, securityShieldSet } from "../web/pages/security.ts";
 import { trafficPage } from "../web/pages/traffic.ts";
 import { sourcesPage } from "../web/pages/sources.ts";
+import { requestAct } from "../web/requests_card.ts";
 import { captureStart, captureStop, networksImport, scrapesExport, scrapesPage } from "../web/pages/scrapes.ts";
 import {
   accountAct,
@@ -239,6 +240,8 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("POST", "/settings/backups/mirror/clear", backupsMirrorClear);
   router.add("POST", "/settings/backups/mirror/now", backupsMirrorNow);
   router.add("GET", "/settings/accounts", accountsPage);
+  router.add("POST", "/settings/accounts/:username/allow", requestAct("allow"));
+  router.add("POST", "/settings/accounts/:username/decline", requestAct("decline"));
   router.add("GET", "/settings/people", peoplePage);
   router.add("POST", "/settings/people/:username/role", roleAct);
   router.add("GET", "/settings/model", modelPage);

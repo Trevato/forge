@@ -130,6 +130,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/login` — `http/server.ts` (`signinAlias`) · the address people type to sign in · it is `/signin`, keeping a same-origin `next` · none (308, no page of its own).
 - `/sign-in` — `http/server.ts` (`signinAlias`) · the same, hyphenated · it is `/signin` · none (308, no page of its own).
 - `/signup` — `pages/site.ts` · make an account · `/signup` passkey flow (`signup-passkey.ts`) · colours 3 (file).
+- `/signup/requested` — `pages/site.ts` · what a stranger whose request waits is told · `/signin` · colours 3 (file).
 - `/verify` — `pages/site.ts` · confirm an email address · none · colours 3 (file).
 - `/recover` — `pages/passkeys.ts` · get back in without a password · `/settings/passkeys` · none seen.
 - `/settings` — `pages/account.ts` · my account · the rest of settings · colour 1.

@@ -21,6 +21,7 @@ import { setAccountCeilings, setAccountGrant } from "../../actions/model_grant.t
 import { checkPinned, deployPinned, pinnedForges, rollbackPinned, updatePinned } from "../../actions/pinned.ts";
 import { TARGETS } from "../../cloud/targets.ts";
 import { changeQuotas, readQuotas } from "../../actions/quotas.ts";
+import { allowRequest, declineRequest, listRequests } from "../../actions/requests.ts";
 import { setRole } from "../../actions/roles.ts";
 import { SETTING_WORDS } from "../../actions/setting_words.ts";
 import { changeForgeSource, changeSignup, readForgeSource, readSignup } from "../../actions/signup.ts";
@@ -434,6 +435,24 @@ export function adminRoutes(router: Router<Handler>): void {
         ? apiError("not_allowed", 422, "a grant is for a person who is not an admin")
         : notFound();
   });
+
+  // Strangers waiting for an account (#10928), and the answer to each.
+  router.add("GET", "/api/v1/admin/requests", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    const listed = listRequests(ctx.app, ctx.auth.user);
+    return listed.ok ? json({ items: listed.value, next_cursor: null }) : notFound();
+  });
+  const answerRequest = (act: "allow" | "decline"): Handler => (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const done = (act === "allow" ? allowRequest : declineRequest)(ctx.app, ctx.auth.user, ctx.params.username!);
+    if (done.ok) return json(done.value);
+    return done.error === "not_waiting" ? apiError("not_waiting", 409, "that request is not waiting") : notFound();
+  };
+  router.add("POST", "/api/v1/admin/requests/:username/allow", answerRequest("allow"));
+  router.add("POST", "/api/v1/admin/requests/:username/decline", answerRequest("decline"));
 
   // Every person and their role.
   router.add("GET", "/api/v1/admin/people", (ctx) => {

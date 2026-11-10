@@ -73,15 +73,15 @@ test("reads open, esc changes nothing, a confirm closes the door", async () => {
   const h = boot("alice");
   await h.open();
   expect(h.text()).toContain("signup: open");
-  // picker, closed, then esc on the plan
-  await h.press("s", "j", "j", "enter");
+  // picker (open, request, invite, closed), closed, then esc on the plan
+  await h.press("s", "j", "j", "j", "enter");
   expect(h.text()).toContain("from open to closed");
   await h.press("esc");
   expect(getSignup(forge.db)).toBe("open");
   // esc on the picker too
   await h.press("s", "esc");
   expect(getSignup(forge.db)).toBe("open");
-  await h.press("s", "j", "j", "enter", "enter");
+  await h.press("s", "j", "j", "j", "enter", "enter");
   expect(getSignup(forge.db)).toBe("closed");
   expect(signupClosed({ db: forge.db } as never)).toBe(true);
   expect(h.text()).toContain("signup: closed");

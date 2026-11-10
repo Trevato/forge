@@ -133,6 +133,8 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "issue.teams",
   "account.role_set",
   "account.email_verified",
+  "account.allowed",
+  "account.declined",
   "account.recovered",
   "limb.replan",
   "limb.replan_taken_back",

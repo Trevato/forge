@@ -38,7 +38,7 @@ describe("an argument's allowed-values refusals", () => {
       "hidden is true or false",
       "op must be pin, unpin or move",
       "order is oldest or newest",
-      "signup is open, invite or closed",
+      "signup is open, request, invite or closed",
       "visibility is public or private",
     ]);
   });

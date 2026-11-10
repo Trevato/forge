@@ -11,6 +11,7 @@ import { reservedName } from "./reserved.ts";
 import { id } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { admitSignin } from "./signin-window.ts";
+import { waitingCount, WAITING_CAP } from "./requests.ts";
 import { getSignup } from "../settings/signup.ts";
 import { inviteOpen, redeemInvite, reopenInvite } from "./invites.ts";
 import type { SignupSlot } from "../actions/signup-window.ts";
@@ -38,6 +39,12 @@ export interface User {
   readonly suspendedAt: string | null;
   /** When the owner removed it. The row stays so the name stays taken. */
   readonly removedAt: string | null;
+  /**
+   * Set while a stranger's request for this account is unanswered, and kept
+   * once it is declined; cleared by Allow (`core/requests.ts`). Such an
+   * account can do nothing: every credential asks `isActive`.
+   */
+  readonly waitingAt: string | null;
 }
 
 export type CommitEmail = "noreply" | "account";
@@ -55,6 +62,7 @@ interface UserRow {
   created_at: string;
   suspended_at: string | null;
   removed_at: string | null;
+  waiting_at: string | null;
 }
 
 function toUser(row: UserRow): User {
@@ -71,6 +79,7 @@ function toUser(row: UserRow): User {
     createdAt: row.created_at,
     suspendedAt: row.suspended_at,
     removedAt: row.removed_at,
+    waitingAt: row.waiting_at ?? null,
   };
 }
 
@@ -79,7 +88,7 @@ function toUser(row: UserRow): User {
  * password, edge sign-in, SSH key — asks this before it names a person.
  */
 export const isActive = (user: User): boolean =>
-  user.suspendedAt === null && user.removedAt === null;
+  user.suspendedAt === null && user.removedAt === null && user.waitingAt === null;
 
 /**
  * Whether `viewer` finds no account at `user`'s name: a suspended or removed
@@ -136,7 +145,13 @@ export type AccountOrigin =
    * `invite` is the token of an invite link (`core/invites.ts`): while
    * signup is `invite` it opens the door once, spent with the account.
    */
-  | { origin: "signup" | "passkey"; slot: SignupSlot; invite?: string | undefined }
+  | {
+      origin: "signup" | "passkey";
+      slot: SignupSlot;
+      invite?: string | undefined;
+      /** What they say they want to build, and where the ask came from (`core/requests.ts`). */
+      ask?: { note: string; source: string } | undefined;
+    }
   | { origin: "edge" }
   | { origin: Exclude<ExemptOrigin, AdminOrigin> }
   | ({ origin: AdminOrigin } & AdminFields);
@@ -162,13 +177,19 @@ export type CreateUserInput = CreateUserFields & AccountOrigin;
  * (`inviteNeeded` says when it must be spent).
  */
 export function newAccountsClosed(db: Database, invite?: string): boolean {
+  // In `request` the door shuts once the Waiting list is full, for anyone an open invite does not vouch for.
+  if (getSignup(db) === "request") return waitingCount(db) >= WAITING_CAP && !(invite !== undefined && inviteOpen(db, invite));
   if (!inviteNeeded(db)) return false;
   return !(getSignup(db) === "invite" && invite !== undefined && inviteOpen(db, invite));
 }
 
-/** Whether a stranger needs an invite (or cannot come in at all) now. */
+/**
+ * Whether a stranger needs an invite (or cannot come in at all) now. In
+ * `request` anyone may ask, and waits unless an open invite vouches for them.
+ */
 function inviteNeeded(db: Database): boolean {
-  return getSignup(db) !== "open";
+  const mode = getSignup(db);
+  return mode === "invite" || mode === "closed";
 }
 
 interface CreateUserFields {
@@ -230,9 +251,9 @@ export function discardFreshUser(db: Database, userId: string): void {
  */
 type Admission =
   | { readonly admitted: false }
-  | { readonly admitted: true; readonly spend: string | undefined };
+  | { readonly admitted: true; readonly spend: string | undefined; readonly request: "waiting" | "none" };
 
-const ADMITTED: Admission = { admitted: true, spend: undefined };
+const ADMITTED: Admission = { admitted: true, spend: undefined, request: "none" };
 const REFUSED: Admission = { admitted: false };
 
 function admission(db: Database, input: AccountOrigin): Admission {
@@ -240,10 +261,16 @@ function admission(db: Database, input: AccountOrigin): Admission {
     case "signup":
     case "passkey":
       if (input.slot.spent) throw new Error("a sign-up slot makes one account");
+      if (getSignup(db) === "request") {
+        // An open invite vouches for its holder; anyone else waits to be allowed.
+        if (input.invite !== undefined && inviteOpen(db, input.invite))
+          return { admitted: true, spend: input.invite, request: "none" };
+        return waitingCount(db) >= WAITING_CAP ? REFUSED : { admitted: true, spend: undefined, request: "waiting" };
+      }
       if (!inviteNeeded(db)) return ADMITTED;
       return newAccountsClosed(db, input.invite) || input.invite === undefined
         ? REFUSED
-        : { admitted: true, spend: input.invite };
+        : { admitted: true, spend: input.invite, request: "none" };
     case "edge":
       return newAccountsClosed(db) ? REFUSED : ADMITTED;
     case "claim":
@@ -343,6 +370,15 @@ export async function createUser(
       admin.adminIfFirst ? 1 : 0,
       agent ? 1 : 0,
     );
+    // A stranger's account keeps its ask, in the same write, waiting until allowed.
+    if (admitted.request === "waiting") {
+      const at = new Date().toISOString();
+      const ask = "ask" in input ? input.ask : undefined;
+      db.query("UPDATE user SET waiting_at = ?1 WHERE id = ?2").run(at, userId);
+      db.query(
+        "INSERT INTO account_request (user_id, note, source, state, asked_at) VALUES (?1, ?2, ?3, 'waiting', ?4)",
+      ).run(userId, ask?.note ?? "", ask?.source ?? "", at);
+    }
     return true;
   });
   try {
@@ -480,7 +516,9 @@ export function ensureEdgeUser(db: Database, login: string): User | undefined {
 /** Why a password was not accepted: wrong, or tried too often to check. */
 export type PasswordRefusal =
   | { readonly reason: "bad_credentials" }
-  | { readonly reason: "throttled"; readonly retryAfter: number };
+  | { readonly reason: "throttled"; readonly retryAfter: number }
+  /** The password is right, and a request for the account still has no yes (\`core/requests.ts\`): no credential. */
+  | { readonly reason: "waiting"; readonly username: string };
 
 /** One password attempt: who it names, the secret, and the peer that sent it. */
 export interface PasswordAttempt {
@@ -515,6 +553,10 @@ export async function verifyPasswordThrottled(
     admission.succeeded();
     return err({ reason: "throttled", retryAfter: GATE_RETRY_AFTER });
   }
+  if (!checked.ok && checked.error === "waiting") {
+    admission.succeeded();
+    return err({ reason: "waiting", username: attempt.username });
+  }
   if (!checked.ok) return err({ reason: "bad_credentials" });
   admission.succeeded();
   return checked;
@@ -538,7 +580,7 @@ async function checkPassword(
   db: Database,
   username: string,
   password: string,
-): Promise<Result<User, "bad_credentials">> {
+): Promise<Result<User, "bad_credentials" | "waiting">> {
   const row = db
     .query<
       UserRow,
@@ -555,6 +597,8 @@ async function checkPassword(
   if (!valid || !row || row.kind === "org" || row.is_agent === 1)
     return err("bad_credentials");
   const user = toUser(row);
+  // Only the one who knows the password is told their request waits; no credential comes of it.
+  if (user.waitingAt !== null && user.suspendedAt === null && user.removedAt === null) return err("waiting");
   return isActive(user) ? ok(user) : err("bad_credentials");
 }
 

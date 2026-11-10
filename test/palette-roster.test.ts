@@ -145,6 +145,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["teams", "Crew teams", "each team's charter, dial and members"],
     ["agents", "Crew agents", "each agent's model, budget and brief"],
     ["invites", "Invite links", "make a single-use link, see which are open, revoke one"],
+    ["requests", "Waiting", "strangers who asked for an account: allow or decline"],
     ["bulk", "Bulk actions", "your last bulk actions; u undoes one inside its day"],
     ["subscriptions", "Crew subscriptions", "each account's budget and rest; wake one, set its budget, add or remove one"],
     ["app-templates", "App templates", "the repositories New app offers; mark or unmark one"],

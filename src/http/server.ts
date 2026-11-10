@@ -140,6 +140,7 @@ import {
   signinPage,
   signinSubmit,
   signupPage,
+  requestedPage,
   signupSubmit,
   verifyPage,
   themeSubmit,
@@ -865,6 +866,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/signin/parent", parentStart);
   router.add("GET", "/signin/parent/callback", parentCallback);
   router.add("GET", "/signup", signupPage);
+  router.add("GET", "/signup/requested", requestedPage);
   router.add("GET", "/verify", verifyPage);
   router.add("POST", "/signup", signupSubmit);
   router.add("POST", "/logout", logoutSubmit);

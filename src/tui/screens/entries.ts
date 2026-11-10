@@ -61,6 +61,7 @@ import { entry as people } from "./people.ts";
 import { entry as pinned } from "./pinned.ts";
 import { entry as profile } from "./profile.ts";
 import { entry as quotas } from "./quotas.ts";
+import { entry as requests } from "./requests.ts";
 import { entry as resilience } from "./resilience.ts";
 import { entry as scorecard } from "./scorecard.ts";
 import { entry as weekcard } from "./weekcard.ts";
@@ -135,6 +136,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   agents,
   archived,
   invites,
+  requests,
   bulk,
   subscriptions,
   cloud,

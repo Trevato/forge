@@ -20,7 +20,7 @@ export const PIN_OP_WORDS = "op must be pin, unpin or move";
 export const ORDER_WORDS = "order is oldest or newest";
 
 /** The forge's `signup` setting: `open`, `invite` or `closed`. */
-export const SIGNUP_WORDS = "signup is open, invite or closed";
+export const SIGNUP_WORDS = "signup is open, request, invite or closed";
 
 /** A repository's `visibility`: `public` or `private`. */
 export const VISIBILITY_WORDS = "visibility is public or private";

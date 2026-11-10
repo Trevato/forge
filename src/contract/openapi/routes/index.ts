@@ -47,6 +47,7 @@ export { route as getApiV1AdminPeople } from "./getApiV1AdminPeople.ts";
 export { route as getApiV1AdminPinned } from "./getApiV1AdminPinned.ts";
 export { route as getApiV1AdminProfile } from "./getApiV1AdminProfile.ts";
 export { route as getApiV1AdminQuotas } from "./getApiV1AdminQuotas.ts";
+export { route as getApiV1AdminRequests } from "./getApiV1AdminRequests.ts";
 export { route as getApiV1AdminSettings } from "./getApiV1AdminSettings.ts";
 export { route as getApiV1AdminShield } from "./getApiV1AdminShield.ts";
 export { route as getApiV1AdminSubscriptions } from "./getApiV1AdminSubscriptions.ts";
@@ -242,6 +243,8 @@ export { route as postApiV1AdminPinnedNameCheck } from "./postApiV1AdminPinnedNa
 export { route as postApiV1AdminPinnedNameRollback } from "./postApiV1AdminPinnedNameRollback.ts";
 export { route as postApiV1AdminPinnedNameUpdate } from "./postApiV1AdminPinnedNameUpdate.ts";
 export { route as postApiV1AdminReleasesShaRollback } from "./postApiV1AdminReleasesShaRollback.ts";
+export { route as postApiV1AdminRequestsUsernameAllow } from "./postApiV1AdminRequestsUsernameAllow.ts";
+export { route as postApiV1AdminRequestsUsernameDecline } from "./postApiV1AdminRequestsUsernameDecline.ts";
 export { route as postApiV1Agents } from "./postApiV1Agents.ts";
 export { route as postApiV1Apps } from "./postApiV1Apps.ts";
 export { route as postApiV1AsksBulk } from "./postApiV1AsksBulk.ts";

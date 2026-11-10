@@ -127,6 +127,7 @@ import {
   PASSKEY_REQUIRED_MESSAGE,
   signUp,
   SIGNUP_CLOSED_MESSAGE,
+  REQUEST_IN_MESSAGE,
 } from "../actions/users.ts";
 import { OFFSET_LIMIT_MAX, offsetPage, offsetQuery } from "./offset_page.ts";
 import { EVENTS_LIMIT_MAX, eventsLimit, eventsPage, validEventsCursor, validEventsKind } from "../core/events_page.ts";
@@ -193,7 +194,7 @@ import { isPinned } from "../core/pins.ts";
 import { diffCommit } from "../git/diff.ts";
 import { runGit } from "../git/env.ts";
 import { appLimitWords, appsOwnedBy } from "../actions/app_limit.ts";
-import { getQuota } from "../settings/quotas.ts";
+import { getQuota, quotaOf } from "../settings/quotas.ts";
 import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
 import { compareBranches, listBranchRows } from "../git/branches.ts";
 import {
@@ -1099,7 +1100,7 @@ export function positiveInt(raw: string | undefined): number | undefined {
 /** 403 naming the limit and the count, for an account at its app limit. */
 export function appLimitResponse(ctx: Ctx, ownerName: string): Response {
   const owner = getUserByName(ctx.app.db, ownerName);
-  const limit = getQuota(ctx.app.db, "apps");
+  const limit = owner ? quotaOf(ctx.app.db, "apps", owner.id) : getQuota(ctx.app.db, "apps");
   return json(
     {
       error: "app_limit",
@@ -1192,6 +1193,9 @@ export function apiRoutes(router: Router<Handler>): void {
         email: str(input.email),
         password: str(input.password),
         humanToken: str(input.turnstile_token),
+        // Where the ask comes from (a forge or an agent) and what they want to build.
+        note: str(input.note),
+        source: str(input.from),
       },
       {
         slot,
@@ -1206,6 +1210,8 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!created.ok && created.error === "human_check")
       return apiError("human_check", 422, HUMAN_CHECK_MESSAGE);
     if (!created.ok) return json({ error: created.error }, 422);
+    // Signup is `request`: the account waits for an admin, and acts as nothing yet.
+    if (created.value.waitingAt !== null) return json({ state: "waiting", username: created.value.username, message: REQUEST_IN_MESSAGE }, 202);
     return json(publicUser(created.value), 201);
   });
 

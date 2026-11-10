@@ -45,6 +45,7 @@ import { sessionsCard } from "./account.ts";
 import { ceilingCard, grantCard } from "./model.ts";
 import { accountSections } from "./origins.ts";
 import { markOf } from "../../core/marks.ts";
+import { requestsCard } from "../requests_card.ts";
 
 function shell(ctx: Ctx, body: Html, status = 200): Response {
   return page(
@@ -65,6 +66,7 @@ function shell(ctx: Ctx, body: Html, status = 200): Response {
 function standing(a: AccountRow): Html {
   if (a.removedAt !== null) return badge("Removed", { variant: "outline" });
   if (a.suspendedAt !== null) return badge("Suspended", { tone: "danger" });
+  if (a.waiting) return badge("Waiting", { variant: "outline" });
   if (!a.verified) return badge("Email not verified", { variant: "outline" });
   return html``;
 }
@@ -198,7 +200,7 @@ function accountsView(ctx: Ctx, notice?: Html, status = 200): Response {
   const rendering = performance.now();
   const response = shell(
     ctx,
-    html`${notice ?? null}${ownerless}${edgeOnly}${noMail}<section class="settings-block" id="accounts">
+    html`${notice ?? null}${requestsCard(ctx)}${ownerless}${edgeOnly}${noMail}<section class="settings-block" id="accounts">
       <h2>Who is on this forge</h2>
       <p class="muted">Newest first.</p>
       <ul class="list setting-list" id="accounts-list">

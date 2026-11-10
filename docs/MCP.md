@@ -42,6 +42,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | Tool | Actions / kinds | Purpose | Bytes |
 | --- | --- | --- | ---: |
 | `access` | — | Non-browser public-path requests, redacted, newest first (max 500) | 235 |
+| `account_requests` | — | List who asked for an account and wait; `answer: allow\|decline` answers one | 250 |
 | `account_role` | — | Make a person a member or a guest; promoting may grant `usdPerMonth` | 374 |
 | `account_suspend` | — | Suspend an account; `suspended: false` lifts | 231 |
 | `account_verify` | — | Mark a person's email verified (admin) | 181 |
@@ -193,7 +194,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `sessions` | `list`, `end`, `end_idle`, `signins`, `shells` | Where you are signed in: your tokens and browsers, never a secret; `username` for a person as owner; action end + id signs a browser out | 385 |
 | `sever` | — | Unlink a spawned forge from its parent (owner of its `forge` repo only) | 214 |
 | `share` | — | Share a feed item: no `to` tells the app's crew and owners, else followers; budgeted | 258 |
-| `signup` | — | Sign-ups: open (default); invite lets in only a person with an open invite link; closed refuses every new account | 281 |
+| `signup` | — | Sign-ups: open (default); invite lets in only a person with an open invite link; closed refuses every new account | 291 |
 | `sizes` | — | A child forge's sizes: small, medium and large, each with CPU, memory and disk | 196 |
 | `snapshot_now` | — | Take a snapshot now, as Backups does (admin) | 133 |
 | `spawn` | — | Spawn a child forge | 824 |

@@ -9,7 +9,7 @@
  */
 
 import { activeEdgeToken } from "../../http/edge.ts";
-import { INVITE_SPENT_MESSAGE, SIGNUP_CLOSED_MESSAGE, signUp, signupClosed } from "../../actions/users.ts";
+import { INVITE_SPENT_MESSAGE, REQUEST_IN_MESSAGE, SIGNUP_CLOSED_MESSAGE, signUp, signupClosed } from "../../actions/users.ts";
 import { SignupSlot, waitText } from "../../actions/signup-window.ts";
 import { hasAnyUser } from "../../core/users.ts";
 import { getSignup } from "../../settings/signup.ts";
@@ -115,6 +115,12 @@ export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
             if (needsInvite && created.error === "signup_closed") error = INVITE_SPENT_MESSAGE;
             else if (created.error === "weak_password") error = SIGNUP_WEAK_MESSAGE;
             else error = errorText(created.error);
+            return;
+          }
+          // A request that waits has no session: the screen says so and stays a sign-in.
+          if (created.value.waitingAt !== null) {
+            mode = "signin";
+            error = REQUEST_IN_MESSAGE;
             return;
           }
           const adopted = f.adopt(created.value);

@@ -20,7 +20,9 @@ import {
 } from "../../actions/front.ts";
 import { catalog, refreshCatalogQuietly } from "../../packs/catalog.ts";
 import { appsRuntime, type EnvState } from "../../apps/runtime.ts";
-import { signupClosed } from "../../actions/users.ts";
+import { signupClosed, YOURE_IN_MESSAGE } from "../../actions/users.ts";
+import { markTold, untoldAnswer } from "../../core/requests.ts";
+import { requestsCard } from "../requests_card.ts";
 import { getSignup } from "../../settings/signup.ts";
 import { appsForRepos } from "../../core/apps.ts";
 import { WEIGHT_MAX, WEIGHT_NAMES } from "../../core/front.ts";
@@ -351,8 +353,14 @@ export async function studioHome(
     isNavigation(ctx.request) ? noteVisit(ctx.app.db, user.id, visitedAt) : lastVisit(ctx.app.db, user.id),
   );
   const since = timePhase(ctx.request, "since", () => sinceYouWere(ctx.app.db, user, before, visitedAt));
-  const needsYou = html`${waiting}${held}${alarms}`;
+  // A stranger's request for an account is the first thing that needs an admin (#10928).
+  const requests = requestsCard(ctx, "home");
+  // The first page after Allow says so, once.
+  const allowed = untoldAnswer(ctx.app.db, user.id) === "allowed";
+  if (allowed) markTold(ctx.app.db, user.id, new Date().toISOString());
+  const needsYou = html`${requests}${waiting}${held}${alarms}`;
   const body = html`<h1 class="sr-only">Home</h1>
+    ${allowed ? html`<div class="toast" data-tone="success" role="status" id="youre-in"><strong>${YOURE_IN_MESSAGE}</strong> Your account is open: tell the crew what you want to build.</div>` : null}
     ${tellBox(ctx, user)}
     ${ask} ${address}
     ${when(String(needsYou).trim() !== "", () => html`<section class="stack stack-tight" id="needs-you" aria-label="Needs you"><h2 class="small muted">Needs you</h2>${needsYou}</section>`)}

@@ -131,6 +131,7 @@ export const passkeyJs = /* js */ `
         return post('/signup/passkey' + location.search, {
           username: who.username,
           email: who.email,
+          note: val('note'),
           humanToken: val('cf-turnstile-response'),
           challenge: o.challenge,
           clientDataJSON: text(cred.response.clientDataJSON),

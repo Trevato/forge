@@ -22,6 +22,7 @@
 
 import { blockedLines } from "../actions/egress_refused.ts";
 import { newAccountLines } from "../actions/accounts.ts";
+import { requestLines } from "../actions/requests.ts";
 import { mailCeilingLines } from "../actions/mail.ts";
 import { forgetOnboarding, onboardedLines } from "../apps/onboarding.ts";
 import type { Database } from "bun:sqlite";
@@ -501,6 +502,7 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
     // to itself.
     const asks: { line: string; items: readonly string[]; link?: string }[] = [
       ...askLinesFor(app.db, user).map((a) => ({ line: a.line, items: a.items })),
+      ...requestLines(app.db, user),
       ...newAccountLines(app.db, user, now()),
       ...landedLines(app.db, user, now()),
       ...mailCeilingLines(app, user, now()),
