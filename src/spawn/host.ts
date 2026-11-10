@@ -27,6 +27,7 @@ import { cellChildren, forward, forwardSocket, type CellChild } from "./cell.ts"
 import { cellsAvailable } from "../apps/contain.ts";
 import { childNeedsOwnFilesystem } from "../core/capacity.ts";
 import { liveChildDisk, startRefusal } from "./disk_mount.ts";
+import { floorRefusal } from "./disk_floor.ts";
 import { limitValue } from "../settings/limits.ts";
 import { awakeRefusal, idleAfterMs, WakeRate } from "./sleep.ts";
 import { wakingResponse } from "../web/pages/waking.ts";
@@ -201,6 +202,42 @@ export async function sleepIdleChildren(parent: App, idleMs = idleAfterMs(), now
   return asleep;
 }
 
+/**
+ * Below the disk floor (`spawn/disk_floor.ts`) no child forge stays awake:
+ * every hosted child closes and every cell stops, busy or not, so nothing
+ * they write takes the parent's last room. Their data stays on disk; the
+ * wake gate keeps them asleep, answering the floor's one line, until room
+ * is made (#10873). Answers the names put to sleep; none when above it.
+ */
+export async function sleepBelowFloor(parent: App): Promise<string[]> {
+  const floor = floorRefusal(parent.config.dataDir);
+  if (floor === undefined) return [];
+  const asleep: string[] = [];
+  const cache = caches.get(parent);
+  for (const [bodyId, child] of [...(cache ?? [])])
+    asleep.push(await closeOne(parent, cache!, bodyId, child, touched.get(parent)?.get(bodyId)?.name ?? bodyId));
+  const cells = cellChildren(parent);
+  for (const child of [...cells.list()]) {
+    touched.get(parent)?.delete(child.bodyId);
+    waking.get(parent)?.delete(child.bodyId);
+    await cells.stop(child.bodyId);
+    asleep.push(child.name);
+  }
+  for (const name of asleep) parent.log.warn("child forge asleep", { name, why: floor });
+  return asleep;
+}
+
+/** How often the floor is looked at while children may be awake, ms. */
+export const FLOOR_EVERY_MS = 30_000;
+const floorWatchers = new WeakMap<App, ReturnType<typeof setInterval>>();
+
+function keepWatchingFloor(parent: App): void {
+  if (floorWatchers.has(parent)) return;
+  const timer = setInterval(() => void sleepBelowFloor(parent).catch(() => {}), FLOOR_EVERY_MS);
+  timer.unref?.();
+  floorWatchers.set(parent, timer);
+}
+
 /** Put one named child to sleep now (its owner stopped it); true when it was awake. */
 export async function sleepChild(parent: App, name: string): Promise<boolean> {
   const ledger = readLedgerSync(parent, name);
@@ -261,6 +298,12 @@ const carriesCredentials = (parent: App, bodyId: string, request: Request): bool
  * off a start costs no mountinfo read.
  */
 export function startRefused(parent: App, ledger: { readonly name: string; readonly bodyId: string }): string | undefined {
+  // Below the disk floor nothing wakes, whatever its filesystem (#10873).
+  const floor = floorRefusal(parent.config.dataDir);
+  if (floor !== undefined) {
+    parent.log.warn("child forge not started", { name: ledger.name, why: floor });
+    return floor;
+  }
   if (!childNeedsOwnFilesystem(parent.db)) return undefined;
   const why = startRefusal(ledger.name, liveChildDisk(parent.config.dataDir, ledger.bodyId), true);
   if (why !== undefined) parent.log.warn("child forge not started", { name: ledger.name, why });
@@ -288,6 +331,14 @@ export function wakeGate(parent: App, request: Request): Response | undefined {
   const ledger = readLedgerSync(parent, name);
   if (ledger === undefined || !ledger.done) return undefined;
   keepSweeping(parent);
+  keepWatchingFloor(parent);
+  // Below the disk floor an awake child is put to sleep now, not at the next look,
+  // and this request is answered with why: it writes nothing (#10873).
+  const floor = floorRefusal(parent.config.dataDir);
+  if (floor !== undefined) {
+    if (isAwakeBody(parent, ledger.bodyId)) void sleepChild(parent, name).catch(() => {});
+    return refusedResponse(floor);
+  }
   const known = carriesCredentials(parent, ledger.bodyId, request);
   if (isAwakeBody(parent, ledger.bodyId)) {
     if (known) {
@@ -327,6 +378,9 @@ export function closeHostedChildren(parent: App): void {
   const sweeper = sweepers.get(parent);
   if (sweeper !== undefined) clearInterval(sweeper);
   sweepers.delete(parent);
+  const watcher = floorWatchers.get(parent);
+  if (watcher !== undefined) clearInterval(watcher);
+  floorWatchers.delete(parent);
   touched.delete(parent);
   bootOpened.delete(parent);
   waking.delete(parent);
@@ -484,6 +538,7 @@ export async function bootHostedChild(parent: App, name: string): Promise<void> 
 
 /** Open every finished child, on boot: their apps come back with the parent's. */
 export async function bootHostedChildren(parent: App): Promise<void> {
+  keepWatchingFloor(parent);
   let files: string[] = [];
   try {
     files = readdirSync(join(parent.config.dataDir, "spawn"));

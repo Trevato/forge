@@ -24,6 +24,7 @@ import { spellings, stripForgeDirs } from "../runs/paths.ts";
 import { seconds } from "./timing.ts";
 import { toolchainUse, type ToolchainUse } from "./toolchain.ts";
 import { notFoundHint, shellCommand } from "./run_command.ts";
+import { floorRefusal } from "../spawn/disk_floor.ts";
 import { cellInstall, meteredInstall, prefillInstallCache, withLock } from "../checks/install.ts";
 import {
   commandPid,
@@ -333,6 +334,14 @@ export async function runStep(
     build?: Limits | undefined;
   },
 ): Promise<Result<void, string>> {
+  // Below the parent's disk floor no step's cell starts: it would write into the last room (#10873).
+  if (options.cell !== undefined) {
+    const floor = floorRefusal(options.cwd);
+    if (floor !== undefined) {
+      options.log(`${name} not started: ${floor}`);
+      return err(floor);
+    }
+  }
   options.log(`$ ${command}`);
   // A step is background work: the forge's own pages outrank it (#3319).
   const cell: Cell | undefined =
@@ -550,6 +559,12 @@ export async function startProcess(
   input: StartInput,
 ): Promise<Result<StartedProcess, StartError>> {
   const { manifest, log } = input;
+  // Below the parent's disk floor no app starts, contained or not (#10873).
+  const floor = floorRefusal(input.dataDir);
+  if (floor !== undefined) {
+    log(`not started: ${floor}`);
+    return err({ stage: "start", message: floor });
+  }
   const scratch = input.cell?.home ?? input.dir;
   const used = toolchainUse(manifest.toolchain, scratch);
   if (!used.ok) return err({ stage: "install", message: used.error });

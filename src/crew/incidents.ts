@@ -48,7 +48,7 @@ export const HOLD_MS = 5 * 60_000;
 
 /** The vitals causes this pager owns; the rest are paged elsewhere or are settings. */
 export function owned(cause: string): boolean {
-  return cause === "errors" || cause === "internal" || cause === "disk" || cause === "release" || cause.startsWith("queue:");
+  return cause === "errors" || cause === "internal" || cause === "disk" || cause === "disk-floor" || cause === "release" || cause.startsWith("queue:");
 }
 
 /** One owned cause being watched. */
@@ -78,6 +78,12 @@ export function observe(
   for (const p of present) {
     if (!owned(p.cause)) continue;
     here.add(p.cause);
+    // A disk nearly full is still under the floor (`kernel/vitals.ts` names only the
+    // worse): a floor already watched holds, unpaged anew and not recovered (#10873).
+    if (p.cause === "disk" && watch.has("disk-floor")) {
+      here.add("disk-floor");
+      delete watch.get("disk-floor")!.absentSince;
+    }
     const w = watch.get(p.cause);
     if (w === undefined) watch.set(p.cause, { since: now, sentence: p.sentence, paged: seed });
     else delete w.absentSince;

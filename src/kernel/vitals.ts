@@ -343,7 +343,7 @@ export function vitals(input: VitalsInput): Vitals {
   else if (disk.totalBytes > 0 && disk.freeBytes / disk.totalBytes < DISK_FLOOR)
     need(
       "disk-floor",
-      `Disk is under the ${DISK_FLOOR * 100}% the forge keeps for itself: ${Math.round((disk.freeBytes / disk.totalBytes) * 100)}% free. No child forge is made or started until room is made.`,
+      `Disk is under the ${DISK_FLOOR * 100}% the forge keeps for itself: ${Math.round((disk.freeBytes / disk.totalBytes) * 100)}% free. Child forges sleep, and no child forge, app or check starts, until room is made.`,
       undefined,
       "/settings/capacity",
     );

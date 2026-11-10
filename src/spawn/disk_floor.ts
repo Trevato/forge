@@ -4,8 +4,12 @@
  * data; below the floor no new child forge is made (`spawn/quota.ts`
  * `quotaRefusal`, which the New forge page and menu also show) and no child
  * cell starts (`spawn/cell.ts`; a sleeping one stays asleep), so what room
- * is left is the parent's to recover with. The owner's line is the vitals
- * need `disk-floor` (`kernel/vitals.ts`).
+ * is left is the parent's to recover with. Below it, too (#10873), a child
+ * already awake is put to sleep and kept asleep with this module's one line
+ * (`spawn/host.ts` `sleepBelowFloor`, `wakeGate`), and no app or check cell
+ * starts (`apps/process.ts` `startProcess`, `runStep`). The owner's line is
+ * the vitals need `disk-floor` (`kernel/vitals.ts`), which the pager owns
+ * (`crew/incidents.ts`): paged once per crossing, Recovered once.
  */
 
 import { readDisk, type DiskReading } from "../kernel/disk_reading.ts";
