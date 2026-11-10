@@ -250,10 +250,12 @@ function makeRegistry(parent: App): CellChildren {
       modelHosts: childModelHosts(parent.db),
       registryHosts: childRegistryHosts(parent.db),
     });
-    const log = (line: string): void => {
+    const heard = childLog((line) => parent.log.info("child forge", { name: input.name, line }));
+    const log = (raw: string): void => {
+      const line = plainLine(raw);
       recent.push(line);
       if (recent.length > 5) recent.shift();
-      parent.log.info("child forge", { name: input.name, line });
+      heard(line);
     };
     let cell: Cell;
     try {
@@ -353,6 +355,36 @@ function makeRegistry(parent: App): CellChildren {
       }
       return asleep;
     },
+  };
+}
+
+/** Lines a child forge may write to its parent's log in a minute; past it they are counted, not kept. */
+export const CHILD_LOG_PER_MINUTE = 600;
+
+/** A child's line with no control characters: it cannot move a terminal's cursor or paint over the parent's lines. */
+export const plainLine = (line: string): string => line.replace(/[\u0000-\u0008\u000a-\u001f\u007f-\u009f]/g, "?");
+
+/**
+ * The child's lines into the parent's log, at most `perMinute` a minute: a
+ * child is not trusted with the parent's log, so a flood of it costs the
+ * parent one line a minute saying how many were dropped.
+ */
+export function childLog(sink: (line: string) => void, perMinute = CHILD_LOG_PER_MINUTE, now: () => number = Date.now): (line: string) => void {
+  let window = Math.floor(now() / 60_000);
+  let kept = 0;
+  let dropped = 0;
+  return (line) => {
+    const minute = Math.floor(now() / 60_000);
+    if (minute !== window) {
+      if (dropped > 0) sink(`(${dropped} more lines in the last minute were dropped: past ${perMinute} a minute)`);
+      window = minute;
+      kept = 0;
+      dropped = 0;
+    }
+    if (kept < perMinute) {
+      kept++;
+      sink(line);
+    } else dropped++;
   };
 }
 

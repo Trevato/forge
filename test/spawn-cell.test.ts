@@ -7,7 +7,7 @@ import { answerFromCell, closeHostedChildren, resolveHostedChild } from "../src/
 import { createApp } from "../src/app.ts";
 import { childEnv } from "../src/apps/process.ts";
 import { watchedLimits } from "../src/apps/contain.ts";
-import { cellChildren, crewAtWork, stopCellChildren, stopGently, cellEnv, cellLimits, cellPlacement, cellSpecFor, forward, ownsBody } from "../src/spawn/cell.ts";
+import { childLog, plainLine, cellChildren, crewAtWork, stopCellChildren, stopGently, cellEnv, cellLimits, cellPlacement, cellSpecFor, forward, ownsBody } from "../src/spawn/cell.ts";
 import { fallbackPlacement, hostedPlacement, memoryBodies } from "../src/spawn/placement.ts";
 import type { SpawnPlan } from "../src/spawn/plan.ts";
 import { SIZES } from "../src/spawn/sizes.ts";
@@ -34,6 +34,18 @@ describe("a child forge's cell", () => {
     expect(spec.hide).toEqual(["/d", "/home/f", tmpdir()]);
     expect(spec.listen).toBe(4100);
     expect(spec.dir).toBe("/d/children/c1");
+  });
+
+  test("a child's lines reach the parent's log bounded and plain", () => {
+    let at = 0;
+    const out: string[] = [];
+    const log = childLog((line) => out.push(line), 3, () => at);
+    for (let i = 0; i < 10; i++) log(`l${i}`);
+    expect(out).toEqual(["l0", "l1", "l2"]);
+    at = 60_000;
+    log("next");
+    expect(out.slice(3)).toEqual(["(7 more lines in the last minute were dropped: past 3 a minute)", "next"]);
+    expect(plainLine("ok\x1b[2J\rlevel=error\ttab")).toBe("ok?[2J?level=error\ttab");
   });
 
   test("hides the parent's home, where its crew sessions and model login live", () => {
