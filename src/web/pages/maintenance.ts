@@ -5,6 +5,7 @@
  */
 
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
+import { duties } from "../../maintenance/duties.ts";
 import { statusWithStandby } from "../../maintenance/standby.ts";
 import { ABOUT_TO_STOP_ROWS, prepare, resumeNow, status } from "../../maintenance/service.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -31,6 +32,9 @@ export async function maintenancePage(ctx: Ctx): Promise<Response> {
   const s = await statusWithStandby(status(ctx.app));
   const body = html`<div class="page-head"><h1>Maintenance</h1></div>
     <p id="maintenance-says">${s.says}</p>
+    <dl id="maintenance-duties" class="status-rows">
+      ${duties(ctx.app.config.dataDir).map((d) => fact(d.name, html`${d.detail}${d.overdue ? html` ${badge("overdue", { tone: "danger" })}` : null}`))}
+    </dl>
     ${s.phase === "idle" ? html`<p id="maintenance-standby" class="muted">${s.standby.says}</p>` : null}
     ${s.phase === "idle"
       ? html`<p class="muted">Get the forge ready for a planned power-off. What stops:</p>

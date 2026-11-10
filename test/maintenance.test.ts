@@ -158,13 +158,17 @@ describe("prepare and come back", () => {
       const html = await (await fetch(`${servers.url}/maintenance`, { headers: { cookie } })).text();
       expect(html).toContain('id="maintenance-standby"');
       expect(html).toContain("Standby answering");
+      expect(html).toContain('id="maintenance-duties"');
+      expect(html).toMatch(/<dt>radar<\/dt>\s*<dd>never run/);
       const api = (await (await fetch(`${servers.url}/api/v1/admin/maintenance`, { headers: { authorization: `Bearer ${adminRo}` } })).json()) as { standby: { state: string } };
       expect(api.standby.state).toBe("answering");
       const mcp = await (await post("/mcp", { authorization: `Bearer ${adminAdmin}`, accept: "application/json, text/event-stream" },
         JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "maintenance", arguments: { action: "status" } } }))).text();
       expect(mcp).toContain("answering");
+      expect(mcp).toContain("radar: never run");
       const lines = maintenanceLines({ user: admin, app, db: app.db } as never, api.standby as never).join("\n");
       expect(lines).toContain("Standby answering");
+      expect(lines).toContain("radar: never run");
     } finally {
       if (before === undefined) delete process.env["MAINTENANCE_STANDBY_URL"];
       else process.env["MAINTENANCE_STANDBY_URL"] = before;

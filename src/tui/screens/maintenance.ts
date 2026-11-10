@@ -7,6 +7,7 @@
  * refused by the service. Enter, Esc or q closes it.
  */
 
+import { duties } from "../../maintenance/duties.ts";
 import { ABOUT_TO_STOP_ROWS, prepare, resumeNow, status } from "../../maintenance/service.ts";
 import { probeStandby, withStandby, type Standby } from "../../maintenance/standby.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -42,7 +43,8 @@ export function maintenanceLines(f: Session, standby?: Standby): string[] {
         ...[...last.checks].sort((a, b) => Number(a.ok) - Number(b.ok)).flatMap((c) => wrap(`${c.ok ? "ok    " : "FAILED"} ${c.name}: ${c.says}`, INNER)),
       ]
     : [];
-  return [...wrap(s.says, INNER), "", ...facts, ...checks];
+  const dutyLines = duties(f.app.config.dataDir).flatMap((d) => wrap(d.says, INNER));
+  return [...wrap(s.says, INNER), "", ...facts, ...checks, "", ...dutyLines];
 }
 
 export function maintenanceScreen(f: Session, ctx: Ctx): Screen {
