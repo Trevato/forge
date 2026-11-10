@@ -58,3 +58,6 @@ export const grantedSlugs = (db: Database, deviceId: number): string[] =>
 
 export const allAppSlugs = (db: Database): string[] =>
   db.query<{ slug: string }, []>("SELECT slug FROM app ORDER BY slug").all().map((r) => r.slug);
+
+export const appIdOfSlug = (db: Database, slug: string): string | undefined =>
+  db.query<{ id: string }, [string]>("SELECT id FROM app WHERE slug = ?1").get(slug)?.id;

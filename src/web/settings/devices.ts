@@ -7,8 +7,9 @@
  */
 
 import type { Ctx } from "../../http/context.ts";
-import { DEVICE_ERRORS, declare, grant, revoke, devicesWithStatus, remove, statusLine } from "../../actions/devices.ts";
-import { allAppSlugs, grantedSlugs } from "../../core/device_grants.ts";
+import { DEVICE_ERRORS, declare, setCap, grant, revoke, devicesWithStatus, remove, statusLine } from "../../actions/devices.ts";
+import { allAppSlugs } from "../../core/device_grants.ts";
+import { CAP_MAX, OUTCOME_WORDS, grantLimits, recentJobs } from "../../core/print_log.ts";
 import { NAME_MAX, URL_MAX, type Device } from "../../core/devices.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { PrinterReport } from "../../devices/ipp.ts";
@@ -38,19 +39,23 @@ function supplies(report: PrinterReport): Html | null {
   </details>`;
 }
 
-/** Who may print here, as one fact: each granted app is a row with its revoke button, then a picker for one more. */
+/** Who may print here, as facts: the granted apps (revoke), one picker to grant more, the daily limit, the last prints. */
 function access(ctx: Ctx, d: Device): Html {
-  const granted = grantedSlugs(ctx.app.db, d.id);
+  const limits = grantLimits(ctx.app.db, d.id);
+  const granted = limits.map((l) => l.slug);
   const rest = allAppSlugs(ctx.app.db).filter((s) => !granted.includes(s));
-  if (granted.length === 0 && rest.length === 0) return html``;
-  return html`<dl class="status-rows"><div class="status-row"><dt>Allowed apps</dt><dd>
-    <ul class="list">${granted.map(
-      (slug) => html`<li>${row({
-        title: html`<span class="mono">${slug}</span>`,
+  const jobs = recentJobs(ctx.app.db, d.id);
+  if (limits.length === 0 && rest.length === 0) return html``;
+  return html`<dl class="status-rows">
+    <div class="status-row"><dt>Allowed apps</dt><dd>
+    <ul class="list">${limits.map(
+      (l) => html`<li>${row({
+        title: html`<span class="mono">${l.slug}</span>`,
+        meta: html`<span class="small muted">${String(l.today)} of ${String(l.cap)} printed today</span>`,
         trail: html`<form class="row-actions" method="post" action="/settings/devices/revoke">
           <input type="hidden" name="id" value="${String(d.id)}" />
-          <input type="hidden" name="app" value="${slug}" />
-          ${btn("Revoke", { size: "sm", icon: "x", label: `Revoke ${slug} from ${d.name}` })}
+          <input type="hidden" name="app" value="${l.slug}" />
+          ${btn("Revoke", { size: "sm", icon: "x", label: `Revoke ${l.slug} from ${d.name}` })}
         </form>`,
       })}</li>`,
     )}</ul>
@@ -61,7 +66,23 @@ function access(ctx: Ctx, d: Device): Html {
       </select>
       ${btn("Grant", { size: "sm", icon: "plus", label: `Grant an app ${d.name}` })}
     </form>`)}
-  </dd></div></dl>`;
+    </dd></div>
+    ${when(limits.length > 0, () => html`<div class="status-row"><dt>Daily limit</dt><dd>
+      <form class="edit-row" method="post" action="/settings/devices/cap">
+        <input type="hidden" name="id" value="${String(d.id)}" />
+        <select class="input" name="app" aria-label="App to limit on ${d.name}">
+          ${limits.map((l) => html`<option value="${l.slug}">${l.slug} (${String(l.cap)})</option>`)}
+        </select>
+        <input class="input mono" type="number" name="cap" min="0" max="${String(CAP_MAX)}" value="${String(limits[0]!.cap)}" aria-label="Prints a day" />
+        ${btn("Set limit", { size: "sm", label: `Set the daily limit on ${d.name}` })}
+      </form>
+    </dd></div>`)}
+    ${when(jobs.length > 0, () => html`<div class="status-row"><dt>Recent prints</dt><dd>
+      <ul class="list">${jobs.map(
+        (j) => html`<li class="small"><span class="mono">${j.app}</span> · ${String(j.pages)} ${j.pages === 1 ? "page" : "pages"} · ${OUTCOME_WORDS[j.outcome]} · <span class="mono">${j.at.slice(0, 16).replace("T", " ")}</span></li>`,
+      )}</ul>
+    </dd></div>`)}
+  </dl>`;
 }
 
 function card(ctx: Ctx, d: Device): Html {
@@ -158,3 +179,18 @@ async function grantChange(ctx: Ctx, change: typeof grant, done: string): Promis
 
 export const deviceGrant = (ctx: Ctx): Promise<Response> => grantChange(ctx, grant, "may print here now");
 export const deviceRevoke = (ctx: Ctx): Promise<Response> => grantChange(ctx, revoke, "may no longer print here");
+
+// POST /settings/devices/cap
+export async function deviceCap(ctx: Ctx): Promise<Response> {
+  const denied = guard(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const raw = field(form, "cap").trim();
+  const result = setCap(ctx.app, ctx.auth.user, Number(field(form, "id")), field(form, "app"), /^\d{1,4}$/.test(raw) ? Number(raw) : Number.NaN);
+  return flashTo(
+    ctx,
+    "/settings/devices",
+    result.ok ? { message: `${result.value} has a new daily limit.` } : { tone: "danger", message: DEVICE_ERRORS[result.error] },
+  );
+}

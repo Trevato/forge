@@ -116,7 +116,18 @@ describe("the devices screen", () => {
       await feed("labels\r");
       expect(mine()).toEqual(["labels"]);
       expect(kinds.includes("device.granted")).toBe(true);
-      expect(text()).toContain("apps: labels");
+      expect(text()).toContain("apps: labels 0/10 today");
+      // l sets the daily limit through the page's action and event; a bad number changes nothing.
+      const cap = () => app.db.query<{ daily_cap: number }, []>("SELECT daily_cap FROM device_grant WHERE app_id = 't1'").get()!.daily_cap;
+      await feed("l");
+      await feed("labels many\r");
+      expect(cap()).toBe(10);
+      expect(text()).toContain("A daily limit is a whole number");
+      for (let n = 0; n < "labels many".length; n++) await feed("\x7f");
+      await feed("labels 3\r");
+      expect(cap()).toBe(3);
+      expect(kinds.includes("device.cap_set")).toBe(true);
+      expect(text()).toContain("labels 0/3 today");
       await feed("r");
       await feed("labels\r");
       expect(mine()).toEqual([]);

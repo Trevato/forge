@@ -19,3 +19,9 @@
 - The app and grant are checked before the body is read, so a caller without a grant costs a lookup, not 10 MB. An app may start 10 prints a minute and have 2 in flight; past that, 429 `rate_limited`.
 - A PDF containing an object stream (`/ObjStm`) answers 422 `pages_unknown`: the page tree could hide there behind a plain decoy.
 - A token minted before this feature has no `app_token` row, so a running app gets 403 until it restarts and mints a fresh one.
+
+## Daily limit and the print log
+
+- Each grant has a daily cap on jobs, default 10, set by the owner from 0 (no prints) to 1000. Jobs that reached the printer (printed or failed there) count, per UTC day; a refusal never uses up the day. Past the cap the app gets 429 `daily_cap` and can print again after midnight UTC. In-flight jobs count, and a place is reserved before the body is read, so parallel requests cannot slip past the last one.
+- Every job is a row in `print_job` (app, device, pages, outcome, time). A cap refusal is written once per app, device and day; refusals are pruned to the last 100 per device and counted rows are dropped after 30 days, so a caller cannot grow the log.
+- The device page shows "n of cap printed today" per app, a "Daily limit" row to set it and a "Recent prints" row (last 10). In the terminal's Devices screen `l` sets the limit (slug, then number) and each row lists the last 5 prints; both doors use `setCap`, admin only, and append `device.cap_set` (device, app, cap).

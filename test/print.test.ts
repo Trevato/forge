@@ -1,5 +1,5 @@
 /** An app granted a printer prints a PDF through the forge, and reaches nothing else. */
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, setSystemTime, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,7 @@ import { mintAppToken, revokeAppToken } from "../src/apps/token.ts";
 import { grantDevice, isGranted } from "../src/core/device_grants.ts";
 import { declareDevice } from "../src/core/devices.ts";
 import { createToken } from "../src/core/tokens.ts";
+import { createSession } from "../src/core/sessions.ts";
 import { getUserByName } from "../src/core/users.ts";
 import { PDF_MAX_BYTES, PRINTS_PER_MINUTE, checkPdf, pageCount } from "../src/devices/print.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -202,7 +203,7 @@ test("the owner grants and revokes on the device page", async () => {
 
 test("a non-admin is refused on grant and revoke, and changes nothing", async () => {
   const { createUser } = await import("../src/core/users.ts");
-  const made = await createUser(app.db, { origin: "seed", trusted: true, username: "bob", email: "b@forge.local", password: "a-good-passphrase" });
+  const made = await createUser(app.db, { origin: "seed", trusted: true, username: "zed", email: "zed@forge.local", password: "a-good-passphrase" });
   if (!made.ok) throw new Error(made.error);
   const { createSession } = await import("../src/core/sessions.ts");
   const bob = `forge_session=${createSession(app.db, made.value.id).token}`;
@@ -225,4 +226,116 @@ test("an object stream cannot hide the page tree behind a plain decoy", () => {
 test("the page count is read from the plain page tree", () => {
   expect(pageCount(pdf(3))).toBe(3);
   expect(checkPdf(enc.encode("%PDF-1.5\n<< /Type /ObjStm >>\n%%EOF"))).toEqual({ ok: false, error: "pages_unknown" });
+});
+
+test("the daily cap refuses past the limit, says why, and resets the next day", async () => {
+  const { dailyCap, printedToday, setDailyCap, DEFAULT_DAILY_CAP } = await import("../src/core/print_log.ts");
+  const owner = getUserByName(app.db, "alice")!;
+  addApp("a4", "capped");
+  grantDevice(app.db, otherId, "capped", owner.id);
+  expect(dailyCap(app.db, otherId, "a4")).toBe(DEFAULT_DAILY_CAP);
+  expect(DEFAULT_DAILY_CAP).toBe(10);
+  expect(setDailyCap(app.db, otherId, "capped", 2).ok).toBe(true);
+  expect(setDailyCap(app.db, otherId, "capped", -1).ok).toBe(false);
+  const t = mintAppToken(app.db, owner.id, "capped", "production").token;
+  const path = `/api/v1/devices/${otherId}/print`;
+  expect((await print(path, t, pdf(1))).status).toBe(200);
+  expect((await print(path, t, pdf(3))).status).toBe(200);
+  const res = await print(path, t, pdf(1));
+  expect(res.status).toBe(429);
+  expect(((await res.json()) as { error: string }).error).toBe("daily_cap");
+  expect(printedToday(app.db, otherId, "a4")).toBe(2);
+  // Tomorrow the day's count starts again, through the print path.
+  setSystemTime(new Date(Date.now() + 86_400_000));
+  try {
+    expect((await print(path, t, pdf(1))).status).toBe(200);
+  } finally {
+    setSystemTime();
+  }
+  // One row per job: two printed, one refused by the cap.
+  const rows = app.db.query<{ pages: number; outcome: string }, []>("SELECT pages, outcome FROM print_job WHERE app_id = 'a4' ORDER BY id").all();
+  expect(rows).toEqual([{ pages: 1, outcome: "printed" }, { pages: 3, outcome: "printed" }, { pages: 0, outcome: "refused_cap" }, { pages: 1, outcome: "printed" }]);
+});
+
+test("the owner sets the limit on the device page, which lists the last jobs", async () => {
+  const body = (b: Record<string, string>) => ({
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", origin: servers.url, cookie },
+    body: new URLSearchParams(b),
+    redirect: "manual" as const,
+  });
+  expect((await fetch(`${servers.url}/settings/devices/cap`, body({ id: String(otherId), app: "capped", cap: "5" }))).status).toBe(303);
+  expect(app.db.query<{ daily_cap: number }, []>("SELECT daily_cap FROM device_grant WHERE app_id = 'a4'").get()!.daily_cap).toBe(5);
+  await fetch(`${servers.url}/settings/devices/cap`, body({ id: String(otherId), app: "capped", cap: "abc" }));
+  expect(app.db.query<{ daily_cap: number }, []>("SELECT daily_cap FROM device_grant WHERE app_id = 'a4'").get()!.daily_cap).toBe(5);
+  const page = await (await fetch(`${servers.url}/settings/devices`, { headers: { cookie } })).text();
+  expect(page).toContain("Recent prints");
+  expect(page).toContain("refused: daily limit");
+  expect(page).toContain("printed today");
+});
+
+const countRows = (appId: string, outcome: string): number =>
+  app.db.query<{ n: number }, [string, string]>("SELECT COUNT(*) AS n FROM print_job WHERE app_id = ?1 AND outcome = ?2").get(appId, outcome)!.n;
+
+test("by default the eleventh job of the day is refused, and hammering does not grow the log", async () => {
+  const owner = getUserByName(app.db, "alice")!;
+  addApp("a5", "dflt");
+  grantDevice(app.db, deviceId, "dflt", owner.id);
+  const t = mintAppToken(app.db, owner.id, "dflt", "production").token;
+  const path = `/api/v1/devices/${deviceId}/print`;
+  // Six jobs are already in the log; the per-minute bound is not what this test is about.
+  const { logJob } = await import("../src/core/print_log.ts");
+  for (let i = 0; i < 6; i++) logJob(app.db, { deviceId, appId: "a5", pages: 1, outcome: "printed" });
+  for (let i = 0; i < 4; i++) expect((await print(path, t, pdf(1))).status).toBe(200);
+  for (let i = 0; i < 3; i++) expect((await print(path, t, pdf(1))).status).toBe(429);
+  expect(countRows("a5", "printed")).toBe(10);
+  expect(countRows("a5", "refused_cap")).toBe(1);
+});
+
+test("parallel requests cannot pass the cap together", async () => {
+  const owner = getUserByName(app.db, "alice")!;
+  addApp("a6", "racer");
+  grantDevice(app.db, deviceId, "racer", owner.id);
+  const { setDailyCap } = await import("../src/core/print_log.ts");
+  setDailyCap(app.db, deviceId, "racer", 1);
+  const t = mintAppToken(app.db, owner.id, "racer", "production").token;
+  const path = `/api/v1/devices/${deviceId}/print`;
+  const statuses = (await Promise.all([print(path, t, pdf(1)), print(path, t, pdf(1)), print(path, t, pdf(1))])).map((r) => r.status);
+  expect(statuses.filter((s) => s === 200).length).toBe(1);
+  expect(countRows("a6", "printed")).toBe(1);
+  // The places are given back: once the day turns, it prints again.
+  setSystemTime(new Date(Date.now() + 86_400_000));
+  try {
+    expect((await print(path, t, pdf(1))).status).toBe(200);
+  } finally {
+    setSystemTime();
+  }
+});
+
+test("a refused log is pruned to the last hundred", async () => {
+  const { logJob, KEEP_REFUSALS } = await import("../src/core/print_log.ts");
+  for (let i = 0; i < KEEP_REFUSALS + 20; i++) logJob(app.db, { deviceId: otherId, appId: "a2", pages: 0, outcome: "refused_document" });
+  expect(countRows("a2", "refused_document")).toBe(KEEP_REFUSALS);
+});
+
+test("only an admin sets the cap, and setting it appends device.cap_set", async () => {
+  const { setCap } = await import("../src/actions/devices.ts");
+  const owner = getUserByName(app.db, "alice")!;
+  const cap = () => app.db.query<{ daily_cap: number }, []>("SELECT daily_cap FROM device_grant WHERE app_id = 'a6'").get()!.daily_cap;
+  const bob = getUserByName(app.db, "zed")!;
+  expect(setCap(app, bob, deviceId, "racer", 7)).toEqual({ ok: false, error: "forbidden" });
+  expect(setCap(app, undefined, deviceId, "racer", 7)).toEqual({ ok: false, error: "forbidden" });
+  const bobCookie = `forge_session=${createSession(app.db, bob.id).token}`;
+  const res = await fetch(`${servers.url}/settings/devices/cap`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", origin: servers.url, cookie: bobCookie },
+    body: new URLSearchParams({ id: String(deviceId), app: "racer", cap: "7" }),
+    redirect: "manual",
+  });
+  expect(res.status).toBe(404);
+  expect(cap()).toBe(1);
+  const before = app.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM event WHERE kind = 'device.cap_set'").get()!.n;
+  expect(setCap(app, owner, deviceId, "racer", 7).ok).toBe(true);
+  expect(cap()).toBe(7);
+  expect(app.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM event WHERE kind = 'device.cap_set'").get()!.n).toBe(before + 1);
 });

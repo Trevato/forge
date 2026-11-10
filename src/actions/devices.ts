@@ -16,11 +16,12 @@ import {
   type DeviceError,
 } from "../core/devices.ts";
 import { grantDevice, revokeDevice } from "../core/device_grants.ts";
+import { setDailyCap } from "../core/print_log.ts";
 import type { User } from "../core/users.ts";
 import { probePrinter, type PrinterReport } from "../devices/ipp.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
-export type DeviceActionError = DeviceError | "forbidden" | "no_such_app";
+export type DeviceActionError = DeviceError | "invalid_cap" | "forbidden" | "no_such_app";
 
 export const DEVICE_ERRORS: Record<DeviceActionError, string> = {
   invalid_name: "A name is letters, digits, spaces, dots, dashes or underscores, up to 60.",
@@ -30,6 +31,7 @@ export const DEVICE_ERRORS: Record<DeviceActionError, string> = {
   name_taken: "A device already has that name.",
   not_found: "No such device.",
   no_such_app: "No such app, or nothing to change for it.",
+  invalid_cap: "A daily limit is a whole number from 0 to 1000.",
   forbidden: "Only a site admin manages devices.",
 };
 
@@ -80,6 +82,17 @@ export function revoke(app: App, actor: User | undefined, id: number, slug: stri
   if (!gone.ok) return err("no_such_app");
   app.bus.append({ kind: "device.revoked", actorId: actor.id, payload: { device: device.name, app: gone.value.slug } });
   return ok(gone.value.slug);
+}
+
+/** The owner sets how many jobs one app may print on one device each day. */
+export function setCap(app: App, actor: User | undefined, id: number, slug: string, cap: number): Result<string, DeviceActionError> {
+  if (!mayManageDevices(actor)) return err("forbidden");
+  const device = Number.isSafeInteger(id) ? getDevice(app.db, id) : undefined;
+  if (!device) return err("not_found");
+  const set = setDailyCap(app.db, id, slug, cap);
+  if (!set.ok) return err(set.error === "invalid_cap" ? "invalid_cap" : "no_such_app");
+  app.bus.append({ kind: "device.cap_set", actorId: actor.id, payload: { device: device.name, app: slug, cap } });
+  return ok(slug);
 }
 
 /** The devices, each stale printer asked at once within the probe's own bound; a fresh one is not asked. */
