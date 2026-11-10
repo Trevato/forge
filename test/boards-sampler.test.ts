@@ -266,7 +266,7 @@ describe("startSampler", () => {
   test("ticks write the forge, its cells and the node into the ring", () => {
     const db = fresh();
     const warnings: string[] = [];
-    const app = { db, log: { warn: (m: string) => warnings.push(m) } } as unknown as App;
+    const app = { db, log: { warn: (m: string) => warnings.push(m), info: () => {} } } as unknown as App;
     let usec = 0;
     const s = startSampler(app, { paths, everyMs: 3_600_000, cells: () => [{ key: 9, label: "app:x/production", cpuUsec: (usec += 3_000_000), memoryBytes: 5 }] });
     try {
@@ -299,7 +299,7 @@ describe("startSampler", () => {
       ["a", "check", "running"], ["b", "check", "running"], ["c", "check", "ok"], ["d", "check", "queued"],
       ["e", "agent", "running"], ["f", "deploy", "running"],
     ]) run.run(id!, kind!, state!);
-    const app = { db, log: { warn: () => {} } } as unknown as App;
+    const app = { db, log: { warn: () => {}, info: () => {} } } as unknown as App;
     let stopped = false;
     const lags = [7.5, null];
     const s = startSampler(app, {
@@ -320,5 +320,49 @@ describe("startSampler", () => {
     expect(runQuery(db, {
       source: "machine", aggregate: "max", column: "lag_ms_max", filter: [{ column: "target", op: "eq", value: "forge" }],
     }, { repoIds: "all" })).toEqual({ ok: true, rows: [{ group: null, value: 7.5 }] });
+  });
+
+  test("an unreadable cgroup is said once, at start, and the board stays up", () => {
+    const db = fresh();
+    const said: unknown[] = [];
+    const app = { db, log: { warn: () => {}, info: (_m: string, f: unknown) => said.push(f) } } as unknown as App;
+    const none: Paths = { cgroup: "/nonexistent/cg", proc: "/nonexistent/proc", sys: "/nonexistent/sys" };
+    const s = startSampler(app, { paths: none, everyMs: 3_600_000, cells: () => [] });
+    s.tick(T0 + 15_000);
+    s.tick(T0 + 30_000);
+    s.stop();
+    expect(said.length).toBe(1);
+    expect(JSON.stringify(said[0])).toContain("/nonexistent/cg/cpu.stat");
+    expect(runQuery(db, { source: "machine", aggregate: "count" }, { repoIds: "all" }).ok).toBe(true);
+  });
+
+  test("a partly readable root logs only the files that are missing", () => {
+    machine({ usage: 1_000, memory: 1, stat: "cpu  1 0 0 0 0 0 0 0\ncpu0 1 0 0 0 0 0 0 0", avail: 1, load: "0" });
+    rmSync(join(paths.proc, "loadavg"));
+    rmSync(join(paths.cgroup, "memory.current"));
+    const said: unknown[] = [];
+    const app = { db: fresh(), log: { warn: () => {}, info: (_m: string, f: unknown) => said.push(f) } } as unknown as App;
+    const s = startSampler(app, { paths: { ...paths, sys: join(root, "nowhere/sys") }, everyMs: 3_600_000, cells: () => [] });
+    s.stop();
+    expect(s.gaps.filter((g) => !g.startsWith("celsius"))).toEqual([
+      `forge memory_bytes: ${join(paths.cgroup, "memory.current")} is not readable here`,
+      `node load: ${join(paths.proc, "loadavg")} is not readable here`,
+    ]);
+    const logged = JSON.stringify(said[0]);
+    expect(logged).toContain("memory.current");
+    expect(logged).toContain("loadavg");
+    expect(logged).not.toContain("cpu.stat");
+    expect(logged).not.toContain("meminfo");
+  });
+
+  test("a point read from a fixture root is found through the machine source", () => {
+    const db = fresh();
+    const app = { db, log: { warn: () => {}, info: () => {} } } as unknown as App;
+    machine({ usage: 0, memory: 4096, stat: "cpu  0 0 0 0 0 0 0 0", avail: 7_000_000, load: "0.25", cpu0: "0 0 0 0 0 0 0 0" });
+    const s = startSampler(app, { paths, everyMs: 3_600_000, cells: () => [] });
+    s.stop();
+    expect(runQuery(db, {
+      source: "machine", aggregate: "max", column: "memory_bytes", filter: [{ column: "target", op: "eq", value: "forge" }],
+    }, { repoIds: "all" })).toEqual({ ok: true, rows: [{ group: null, value: 4096 }] });
   });
 });

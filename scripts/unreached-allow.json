@@ -1,6 +1,5 @@
 [
   "src/apps/cloud.ts",
-  "src/boards/machine.ts",
   "src/crew/governor_log.ts",
   "src/crew/tries.ts",
   "src/flow/alarm_drift.ts",
