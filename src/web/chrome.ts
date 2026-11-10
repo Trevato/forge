@@ -16,6 +16,7 @@ import {
   forkParentFor,
   getRepo,
 } from "../core/repos.ts";
+import { nearRepos as nearTo } from "../core/near_repos.ts";
 import { type Repo } from "../core/repos.ts";
 import { parentUrl, shownTrail, sourceLabel } from "../core/provenance.ts";
 import type { Database } from "bun:sqlite";
@@ -73,6 +74,13 @@ export function notFoundPage(ctx: Ctx, opts: { plain?: boolean } = {}): Response
   const search = asked
     ? btn(`Search for ‘${asked}’`, { href: `/search?q=${encodeURIComponent(asked)}` })
     : html``;
+  const near = get ? nearTo(ctx.app.db, ctx.auth.user, ctx.params.owner ?? "", ctx.params.name ?? "") : [];
+  const didYouMean =
+    near.length === 0
+      ? html``
+      : html`<p class="muted">Did you mean ${near.map(
+          (r, i) => html`${i > 0 ? ", " : ""}<a href="${repoBase(r)}">${r.ownerName}/${r.name}</a>`,
+        )}?</p>`;
   return page(
     {
       ctx,
@@ -90,7 +98,7 @@ export function notFoundPage(ctx: Ctx, opts: { plain?: boolean } = {}): Response
                 ${btn("Go home", { href: "/" })} ${btn("Explore", { href: "/explore" })}`
               : html`${btn("Go home", { href: "/", variant: "primary" })} ${search}
                 ${btn("Explore", { href: "/explore" })}`,
-        })}`,
+        })}${didYouMean}`,
     },
     404,
   );

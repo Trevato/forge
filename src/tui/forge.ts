@@ -13,6 +13,7 @@ import { search } from "../actions/search.ts";
 import { cleanQuery } from "../core/search.ts";
 import { guestCodeSearch } from "../http/strangers.ts";
 import { canRead, getRepo, type Repo } from "../core/repos.ts";
+import { nearRepos } from "../core/near_repos.ts";
 import { sourceFor } from "../view/source.ts";
 import { fleetCommand } from "./screens/fleet.ts";
 import { dataCommand } from "./screens/data.ts";
@@ -262,8 +263,12 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               // The palette is a client like any other: a repo you cannot
               // read is "not found", indistinguishable from a typo. Without
               // this check the palette would be a way around `canRead`.
-              if (!repo || !canRead(session.db, repo, session.user))
-                return "not found";
+              if (!repo || !canRead(session.db, repo, session.user)) {
+                const near = owner && name ? nearRepos(session.db, session.user, owner, name) : [];
+                return near.length === 0
+                  ? "not found"
+                  : `not found — did you mean ${near.map((r) => `${r.ownerName}/${r.name}`).join(", ")}?`;
+              }
               // After the prompt has popped itself, or the pop takes the
               // screen just pushed instead (`later` in screens/common.ts).
               return Promise.resolve().then(() => {
