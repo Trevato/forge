@@ -540,9 +540,7 @@ async function studioTell(
             })}
             has it</span
           >`
-        : !direction && wordInfo?.word === "told"
-          ? html`<span class="muted">nobody has it yet</span>`
-          : null}
+        : null}
     </div>
   </div>`;
 

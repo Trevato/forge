@@ -1248,11 +1248,10 @@ describe("the studio's empty lists", () => {
     await setup("blank");
     for (const [path, words] of [
       ["issues", "Tell the crew what you want"],
-      ["pulls", "A pull request is the crew"],
-      ["runs", "A run is one go"],
+      ["pulls", "Nothing open."],
+      ["runs", "Nothing open."],
     ] as const) {
       const page = await get(`/alice/blank/${path}`);
-      expect(page).toContain("Nothing here");
       expect(page).toContain(words);
       expect(page).not.toContain("this filter");
     }

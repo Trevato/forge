@@ -24,3 +24,12 @@ The side column of an issue (`labelsCard`, `assigneeCard`, `issueTeamsCard`, `de
 `src/web/pages/thread.ts`) reads like the pull page's side: a small heading over its rows, `.card.bare`, no box and
 no hairline. Chips, forms and empty lines are unchanged; titles stay escaped. The pull page draws the same label and
 assignee cards, so it follows. No new class. `test/issue-side-bare.test.ts` holds the shape.
+
+## Calm: a row is a title, a state word and a time (#10415)
+
+On the Issues, Pulls and Runs lists (`src/web/studio/lists.ts`) a row carries its title, its state word and one time.
+Gone from the row, still on the page it opens: the Flow-first button (still on the issue page, in its header), a pull's pipeline
+step and the tell it answers, a run's sha, wait reason and duration, who has an issue. A stopped pull, a failed run and a run paused on a limit keep one
+clamped reason line; an imported issue keeps its origin tag. The issue page drops "nobody has it yet" (the state word says it). Empty states are one line
+(`Nothing open.`; a set filter is named). First-view budgets fell: issue 76→72 words, issues list 32→30,
+pulls list 31→24, runs 46→38. No new class.

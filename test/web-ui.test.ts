@@ -743,7 +743,7 @@ describe("web ui", () => {
       await fetch(`${base}/mel/proj/issues?q=nothing-matches-this&state=all`)
     ).text();
     expect(miss).not.toContain("needs a label");
-    expect(miss).toContain("Nothing here");
+    expect(miss).toContain("Nothing open.");
     expect(miss).toContain("nothing-matches-this in the title ✕");
 
     // A LIKE wildcard typed into the box is a literal character, not a glob.

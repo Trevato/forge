@@ -1,7 +1,7 @@
 /**
  * The Runs page's Working tab lists only runs doing something now, and its
  * count is the flow report's building + review + checking on the same data;
- * queued runs say what they wait on, finished ones are not under Working (#7719).
+ * queued runs are listed by state, finished ones are not under Working (#7719).
  */
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
@@ -89,14 +89,10 @@ test("Working counts what the flow report counts as active, and nothing finished
   expect(body).not.toContain("waiting for");
 });
 
-test("a queued run says what it waits on", async () => {
-  const body = await page("");
-  expect(body).toContain("waiting for a builder");
-  expect(body).toContain("waiting for a check slot");
-});
-
-test("a paused run and a queued deploy say what they wait on", async () => {
+test("a queued run is listed by its state word; only a paused one says why", async () => {
   const body = await page("?state=queued");
+  expect(rowCount(body)).toBeGreaterThan(0);
+  expect(body).toContain("queued");
   expect(body).toContain("paused on a limit, resumes soon");
-  expect(body).toContain("waiting for the deploy lane");
+  expect(body).not.toContain("waiting for");
 });

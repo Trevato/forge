@@ -93,8 +93,9 @@ test("the feed's post for a pull says its step, linked to /pipeline", async () =
   expect(await get("/feed")).toContain(expected());
 });
 
-test("the repository's pulls list says each pull's step", async () => {
-  expect(await get("/alice/site/pulls")).toContain(expected());
+test("the repository's pulls list leaves the step to the pull (#10415)", async () => {
+  expect(await get("/alice/site/pulls")).not.toContain(expected());
+  expect(await get(`/alice/site/pulls/${pull.number}`)).toContain('data-path="review"');
 });
 
 const openMore = async (r: Repo, by: User, name: string): Promise<Pull> => {
@@ -109,12 +110,14 @@ const openMore = async (r: Repo, by: User, name: string): Promise<Pull> => {
   return opened.value;
 };
 
-test("a long list says every pull's step and stays quick", async () => {
+test("a long list is scannable rows with no step beside them, and stays quick", async () => {
   for (let i = 0; i < 24; i++) await openMore(repo, alice, `long${i}`);
   const started = performance.now();
   const html = await get("/alice/site/pulls");
   const took = performance.now() - started;
-  expect(html.match(/data-step="review"/g)?.length).toBeGreaterThanOrEqual(25);
+  // The calm pass (#10415): a row is a title, a state word and a time; the step is on the pull.
+  expect(html.match(/class="row-title"/g)?.length).toBeGreaterThanOrEqual(25);
+  expect(html).not.toContain('data-step=');
   expect(took).toBeLessThan(500);
 });
 
