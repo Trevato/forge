@@ -578,6 +578,7 @@ import {
   hostedChildOpen,
   resolveHostedChild,
   resolveHostedChildApp,
+  refusedResponse,
   socketToCell,
   wakeGate,
   watchHostedChildClose,
@@ -2571,6 +2572,7 @@ export async function serve(app: App): Promise<Servers> {
       if (hit === "unknown")
         return securityFloor(new Response("not found", { status: 404 }));
       if (hit !== undefined) {
+        if ("refused" in hit) return securityFloor(refusedResponse(hit.refused));
         if ("cell" in hit) return fromCell(hit.cell);
         notePeer(request, server.requestIP(request)?.address, trust);
         return proxyApp(hit.runtime, request, hit.target, server);

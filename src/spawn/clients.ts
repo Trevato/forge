@@ -9,6 +9,7 @@
  * list never waits on, or fails for, one forge that is down.
  */
 
+import { liveChildDisk, readMountinfo, type ChildDisk } from "./disk_mount.ts";
 import type { App } from "../app.ts";
 import { childDirOf, listChildren, statusTokenOf, type Child } from "../actions/spawn.ts";
 import { timingSafeEqual } from "node:crypto";
@@ -62,6 +63,8 @@ export interface ClientRow {
   readonly size: Size;
   /** What it uses against that size: its cell's reading, or "shared" when it is hosted here. */
   readonly use: ForgeUse;
+  /** Whether its data is a filesystem of its own, and that filesystem's size (`spawn/disk_mount.ts`). */
+  readonly disk: ChildDisk;
   /** When its last heartbeat reached this forge, ISO; null when none has. */
   readonly lastHeartbeatAt: string | null;
   /** The first step its person has not taken, read from the child's heartbeat. */
@@ -220,6 +223,8 @@ export async function clientRows(app: App): Promise<ClientRow[]> {
     }),
   );
   const beats = await Promise.all(children.map((c) => lastHeard(app, c.name)));
+  // One read of the mount table for every row.
+  const mountinfo = children.length === 0 ? "" : readMountinfo();
   return orderRows(
     children.map((c, i) => ({
       name: c.name,
@@ -238,6 +243,7 @@ export async function clientRows(app: App): Promise<ClientRow[]> {
       ...creditView(app, c.name),
       size: c.size,
       use: forgeUse(c, childDirOf(app, c.bodyId)),
+      disk: liveChildDisk(app.config.dataDir, c.bodyId, mountinfo),
       lastHeartbeatAt: beats[i] === undefined ? null : new Date(beats[i]!.receivedAt).toISOString(),
       link: states[i]?.link ?? null,
       nextStep: nextStepOf(states[i]?.claimed ?? null, beats[i]?.beat),

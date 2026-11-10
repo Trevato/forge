@@ -26,6 +26,7 @@ export type CapacityKey =
   | "cells.egress"
   | "children.modelEgress"
   | "children.registryEgress"
+  | "children.ownFilesystem"
   | "guard_new_accounts"
   | "signin.edge"
   | "pace.floor";
@@ -120,6 +121,14 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     kind: { type: "choice", values: ["off", "npm", "build"] },
     fallback: "off",
     help: "off keeps a child forge's cell from the package registries, so its checks cannot fill their install cache; npm also lets it reach registry.npmjs.org on 443; build opens the hosts ordinary app builds fetch from, on 443 alone: npm and yarn, PyPI, GitHub (git dependencies and release tarballs), crates.io and the Go module proxy. Nothing else opens, and the cell enforces this even when cells.egress is report. Takes effect on the next child cell started.",
+  },
+  "children.ownFilesystem": {
+    label: "Child forges need a filesystem of their own",
+    // No environment default: refusing children is an admin's decision.
+    env: "",
+    kind: { type: "choice", values: ["off", "on"] },
+    fallback: "off",
+    help: "on refuses to start a child forge whose data directory (<data>/children/<id>) is not a filesystem of its own, so no child can fill the disk this forge and its other children share; the refusal names the child and says why. off starts it on the shared disk, held only by its cell's disk watch. Off by default, because a forge mounts nothing itself: turn it on once the platform mounts one per child. A child already running is not stopped. Read on every start.",
   },
   "guard_new_accounts": {
     label: "New-account repository guard",
@@ -433,6 +442,11 @@ const MODEL_HOSTS: Readonly<Record<string, readonly string[]>> = {
   anthropic: ["api.anthropic.com:443"],
   both: ["openrouter.ai:443", "api.anthropic.com:443"],
 };
+
+/** Whether a child forge must have a filesystem of its own to start (`children.ownFilesystem`); off by default. */
+export function childNeedsOwnFilesystem(db: Database): boolean {
+  return capacityValue(db, "children.ownFilesystem") === "on";
+}
 
 /** The package registry a child forge cell may reach (`children.registryEgress`); none by default. */
 export function childRegistryHosts(db: Database): readonly string[] {

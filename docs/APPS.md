@@ -1240,6 +1240,31 @@ memory only: a process is not state, and a restart rebuilds every
 environment from the default branch and the open pulls, exactly as
 `core/reconcile.ts` rebuilds the index from git.
 
+### A child forge's own filesystem
+
+How to read the line and turn the guard on: [docs/features/child-filesystem.md](features/child-filesystem.md).
+
+A child forge (`/forges`) keeps everything it writes under
+`<data>/children/<body id>`. The forge reads `/proc/self/mountinfo` to tell
+whether that directory is a filesystem of its own, a mount whose mount point
+is exactly that path, and reads its size with `statfs`: blocks × block size
+in bytes, and its inodes (`src/spawn/disk_mount.ts`). The forge mounts
+nothing itself. Making the filesystem is the platform's job (#10851).
+
+- **On its own filesystem**, writing past its size fails with ENOSPC inside
+  the child, and the parent's free space does not change. Its cell binds that
+  filesystem by its real path (`cellSpecFor`). On the shared disk, only the
+  cell's disk watch stops a child, and only after it has written too much.
+- **The child's line** on `/forges` and on the terminal's forges screen says
+  `own filesystem, N GiB` (GiB = 2^30 bytes, to one place) or `shared disk`.
+- **`children.ownFilesystem`** (Settings → Capacity, or the `capacity` MCP
+  tool with `key: "children.ownFilesystem"`) is `off` by default. When it is
+  `on`, the forge refuses to start a child with no filesystem of its own,
+  whether that child runs in a cell or in this forge's process. The refusal is
+  a 503 with one plain line naming the child and saying why. Its pages and its
+  apps answer with that line, and the boot skips the child and logs the same
+  line. A child that is already running is not stopped.
+
 ## Runs
 
 A run row is created `queued`, claimed with a compare-and-swap into

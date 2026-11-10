@@ -18,6 +18,7 @@ import { readForm } from "../form.ts";
 import { badge, btn, row, time } from "../ui.ts";
 import { noRoom } from "../../spawn/door.ts";
 import { sizeWords, useWords } from "../../spawn/usage.ts";
+import { diskWords } from "../../spawn/disk_mount.ts";
 import { listChildren } from "../../actions/spawn.ts";
 import { removeForge, stopForge, type Managed } from "../../spawn/manage.ts";
 import { claimLinkBody } from "./new-forge.ts";
@@ -42,7 +43,7 @@ function spendNote(r: ClientRow): Html | null {
     : html`<span data-spend="ok">${s.words}</span>`;
 }
 
-function forgeRow(r: ClientRow, now: number): Html {
+export function forgeRow(r: ClientRow, now: number): Html {
   const state = claimState(r);
   const meta = [
     r.for === null ? null : html`for ${r.for}`,
@@ -50,6 +51,7 @@ function forgeRow(r: ClientRow, now: number): Html {
     state === "unknown" ? html`it did not answer just now` : null,
     r.made ? badge(r.awake === true ? "awake" : "asleep", r.awake === true ? { tone: "success" } : { variant: "outline" }) : null,
     r.made ? html`${sizeWords(r.size)}` : null,
+    r.made ? html`<span data-disk="${r.disk.own ? "own" : "shared"}">${diskWords(r.disk)}</span>` : null,
     runningNote(r),
     spendNote(r),
     creditWords(r) === null ? null : html`<span data-credit>${creditWords(r)}</span>`,

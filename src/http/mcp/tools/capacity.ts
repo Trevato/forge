@@ -5,7 +5,7 @@ import { good, bad, type Tool } from "../shared.ts";
 
 export const tool: Tool = {
   name: "capacity",
-  doc: "`{ key?, value?, reason?, dryRun? }` (forge admin): the forge's capacity and guards, live (crew and checks concurrency, check shards, cell egress, the new-account guard, the sign-in edge, queue depth, child forges, `egress.npmBytesLastHour` and `npmTopRepoLastHour`, and `selfSwap: { enabled, migrateReq, blocked }`: whether `FORGE_SELF_SWAP=1`, the kernel's `tcp_migrate_req` (`1`, `0`, `unreadable`), and why this forge cannot swap itself, null when it can; only the first six are settable by `key`); with `key` and `value` (`\"\"` restores the default) and `reason` (kept with who; required for `cells.egress`), planned first (`dryRun` is true unless `false`); applying needs an admin-scope token",
+  doc: "`{ key?, value?, reason?, dryRun? }` (forge admin): the forge's capacity and guards, live (crew and checks concurrency, check shards, cell egress, the new-account guard, the sign-in edge, whether a child forge needs its own filesystem, queue depth, child forges, `egress.npmBytesLastHour` and `npmTopRepoLastHour`, and `selfSwap: { enabled, migrateReq, blocked }`: whether `FORGE_SELF_SWAP=1`, the kernel's `tcp_migrate_req` (`1`, `0`, `unreadable`), and why this forge cannot swap itself, null when it can; only the first seven are settable by `key`); with `key` and `value` (`\"\"` restores the default) and `reason` (kept with who; required for `cells.egress`), planned first (`dryRun` is true unless `false`); applying needs an admin-scope token",
   description:
     "Forge capacity and guards, live. With `key` and `value` (\"\" restores default), plans.",
   inputSchema: {

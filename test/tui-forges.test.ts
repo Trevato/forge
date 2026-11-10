@@ -32,6 +32,7 @@ const row = (over: Partial<ClientRow>): ClientRow => ({
   ceilingUsd: null,
   size: "small",
   use: { kind: "shared" },
+  disk: { own: false, path: "/d/children/c" },
   lastHeartbeatAt: null,
   nextStep: { key: "unreported", words: "has not reported yet", lastTellAt: null },
   ...over,
@@ -172,15 +173,15 @@ describe("forges you sent in the terminal", () => {
     const up = { total: 3, running: 3, notRunning: [] };
     const down = { total: 2, running: 1, notRunning: [{ slug: "notes", why: "build failed" }] };
     expect(forgeLines([row({ running: up })])).toEqual([
-      ["maria", "asleep · for Maria's bakery · Not claimed yet · 3 apps running · has not reported yet · small · shared · no heartbeat yet"],
+      ["maria", "asleep · for Maria's bakery · Not claimed yet · 3 apps running · has not reported yet · small · shared · shared disk · no heartbeat yet"],
     ]);
     expect(forgeLines([row({ claimed: true, running: down, for: null })])).toEqual([
-      ["maria", "asleep · Claimed · 1 app running · notes: build failed · has not reported yet · small · shared · no heartbeat yet"],
+      ["maria", "asleep · Claimed · 1 app running · notes: build failed · has not reported yet · small · shared · shared disk · no heartbeat yet"],
     ]);
     expect(forgeLines([row({ claimed: null })])[0]![1]).toContain("Unknown");
     expect(forgeLines([row({ made: false })])[0]![1]).toContain("Still being made");
     expect(forgeLines([row({ attention: "down", claimed: true, for: null })])).toEqual([
-      ["maria", "asleep · App down · Claimed · has not reported yet · small · shared · no heartbeat yet"],
+      ["maria", "asleep · App down · Claimed · has not reported yet · small · shared · shared disk · no heartbeat yet"],
     ]);
     expect(forgeLines([row({})])[0]![1]).not.toMatch(/Not reporting|App down|Unclaimed/);
     expect(forgeLines([row({ nextStep: { key: "tell", words: "no tell yet", lastTellAt: null } })])[0]![1]).toContain("no tell yet");

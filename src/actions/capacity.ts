@@ -42,7 +42,7 @@ import { err, ok, type Result } from "../kernel/result.ts";
 /** What a refused change to a dial that follows Speed says, on every door. */
 export const DERIVED_WORDS = "The pace floor and the queue depth follow Speed: change Speed (crew.concurrency) and they move with it.";
 
-/** The six guards a caller may set by `key`: the MCP tool's enum and the terminal's `e`. */
+/** The guards a caller may set by `key`: the MCP tool's enum and the terminal's `e`. */
 export const SETTABLE_CAPACITY = [
   "crew.concurrency",
   "checks.concurrency",
@@ -50,6 +50,7 @@ export const SETTABLE_CAPACITY = [
   "cells.egress",
   "guard_new_accounts",
   "signin.edge",
+  "children.ownFilesystem",
 ] as const satisfies readonly CapacityKey[];
 
 export interface CapacityRow {

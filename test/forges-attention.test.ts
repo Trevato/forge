@@ -24,6 +24,7 @@ const row = (name: string, o: Partial<ClientRow> = {}): Omit<ClientRow, "attenti
   link: null,
   size: "small",
   use: { kind: "shared" },
+  disk: { own: false, path: "/d/children/c" },
   lastHeartbeatAt: null,
   nextStep: { key: "unreported", words: "has not reported yet", lastTellAt: null },
   spendTodayUsd: null,

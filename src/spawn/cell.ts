@@ -23,6 +23,7 @@ import { hostedPlacement, parentOrigin, childPublicUrl, type BodyStore, type Pla
 import { SIZE_IO, SIZES, type Size } from "./sizes.ts";
 import { CGROUP_DIR_ENV, SIZE_ENV } from "./usage.ts";
 import { childModelHosts, childRegistryHosts } from "../core/capacity.ts";
+import { liveChildDisk, type ChildDisk } from "./disk_mount.ts";
 
 export const CELL_PREFIX = "cell-";
 export const ownsBody = (bodyId: string): boolean => bodyId.startsWith(CELL_PREFIX);
@@ -116,10 +117,18 @@ export function cellSpecFor(input: {
   modelHosts?: readonly string[];
   /** The package registry an admin let children reach (`children.registryEgress`); none by default. */
   registryHosts?: readonly string[];
+  /**
+   * The child's writable space as found (`spawn/disk_mount.ts`). A filesystem
+   * of its own is named among the binds by its real path (bwrap binds
+   * recursively, and `openCell` binds a path once), so a data directory
+   * reached through a symlink still writes to it; with none, the cell is
+   * what it always was.
+   */
+  disk?: ChildDisk;
 }): CellSpec {
   return {
     dir: input.dir,
-    writable: [],
+    writable: input.disk?.own === true ? [input.disk.path] : [],
     home: join(input.dir, ".home"),
     // The parent's data and home are what a child must not see: the home holds
     // the parent crew's sessions and model login, and the child runs as the
@@ -224,6 +233,33 @@ async function answers(port: number, gone: Promise<unknown>): Promise<boolean> {
   return false;
 }
 
+/**
+ * The cell a child forge is launched in, from what the parent holds now: its
+ * egress settings and its data directory as found (`liveChildDisk`), so a
+ * child with a filesystem of its own has it bound. `mountinfo` is this
+ * process's unless a test passes its own.
+ */
+export function launchSpecFor(
+  parent: App,
+  input: { readonly bodyId: string; readonly name: string; readonly size: Size },
+  at: { readonly port: number; readonly parentPort: number },
+  mountinfo?: string,
+): CellSpec {
+  return cellSpecFor({
+    dir: childDirOf(parent, input.bodyId),
+    parentDataDir: parent.config.dataDir,
+    parentUrl: parentOrigin(parent.config),
+    url: childPublicUrl(input.name, parentOrigin(parent.config)),
+    parentPort: at.parentPort,
+    size: input.size,
+    port: at.port,
+    label: `forge:${input.name}`,
+    modelHosts: childModelHosts(parent.db),
+    registryHosts: childRegistryHosts(parent.db),
+    disk: liveChildDisk(parent.config.dataDir, input.bodyId, mountinfo),
+  });
+}
+
 function makeRegistry(parent: App): CellChildren {
   const held = new Map<string, Held>();
   const starting = new Map<string, Promise<CellChild | undefined>>();
@@ -248,18 +284,7 @@ function makeRegistry(parent: App): CellChildren {
     const url = childPublicUrl(input.name, parentOrigin(parent.config));
     const door = openBeatDoor(parent);
     const parentPort = door.port;
-    const spec = cellSpecFor({
-      dir,
-      parentDataDir: parent.config.dataDir,
-      parentUrl: parentOrigin(parent.config),
-      url,
-      parentPort,
-      size: input.size,
-      port,
-      label: `forge:${input.name}`,
-      modelHosts: childModelHosts(parent.db),
-      registryHosts: childRegistryHosts(parent.db),
-    });
+    const spec = launchSpecFor(parent, input, { port, parentPort });
     const heard = childLog((line) => parent.log.info("child forge", { name: input.name, line }));
     const log = (raw: string): void => {
       const line = plainLine(raw);

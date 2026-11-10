@@ -25,6 +25,8 @@ import {
 import { DEFAULT_SIZE, isSize, type Size } from "./sizes.ts";
 import { cellChildren, forward, forwardSocket, type CellChild } from "./cell.ts";
 import { cellsAvailable } from "../apps/contain.ts";
+import { childNeedsOwnFilesystem } from "../core/capacity.ts";
+import { liveChildDisk, startRefusal } from "./disk_mount.ts";
 import { limitValue } from "../settings/limits.ts";
 import { awakeRefusal, idleAfterMs, WakeRate } from "./sleep.ts";
 import { wakingResponse } from "../web/pages/waking.ts";
@@ -253,6 +255,27 @@ const carriesCredentials = (parent: App, bodyId: string, request: Request): bool
   vouched(childDirOf(parent, bodyId), request, caches.get(parent)?.get(bodyId)?.db);
 
 /**
+ * Why the child `ledger` names may not start now, in one plain line;
+ * undefined when it may. Only `children.ownFilesystem` refuses: a child whose
+ * data is not a filesystem of its own. The setting is read first, so with it
+ * off a start costs no mountinfo read.
+ */
+export function startRefused(parent: App, ledger: { readonly name: string; readonly bodyId: string }): string | undefined {
+  if (!childNeedsOwnFilesystem(parent.db)) return undefined;
+  const why = startRefusal(ledger.name, liveChildDisk(parent.config.dataDir, ledger.bodyId), true);
+  if (why !== undefined) parent.log.warn("child forge not started", { name: ledger.name, why });
+  return why;
+}
+
+/** The answer to a request for a child that may not start: the line, as text, 503. */
+export function refusedResponse(why: string): Response {
+  return new Response(`${why}\n`, {
+    status: 503,
+    headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+  });
+}
+
+/**
  * Before a child's Host is answered: a child already awake is marked busy (by a
  * request whose session or token the child verifies, so a stranger cannot keep it awake); one
  * asleep is woken within the limits (a stranger's address first, then this host's
@@ -274,6 +297,9 @@ export function wakeGate(parent: App, request: Request): Response | undefined {
     }
     return undefined;
   }
+  // Asleep, so answering would start it: not where it has no filesystem of its own and one is required.
+  const refused = startRefused(parent, ledger);
+  if (refused !== undefined) return refusedResponse(refused);
   // A wake already granted (a cell takes a moment to answer) is one wake, not one per request.
   let reserved = waking.get(parent);
   if (!reserved) waking.set(parent, (reserved = new Map()));
@@ -444,6 +470,7 @@ function openOnce(parent: App, ledger: ChildLedger): Promise<App> | App {
 export async function bootHostedChild(parent: App, name: string): Promise<void> {
   let ledger = readLedgerSync(parent, name);
   if (ledger === undefined || !ledger.done) return;
+  if (!isAwakeBody(parent, ledger.bodyId) && startRefused(parent, ledger) !== undefined) return;
   if (ledger.placement === "cell") {
     if ((await settleCell(parent, ledger)) !== undefined) return;
     ledger = { ...ledger, placement: "hosted" };
@@ -484,6 +511,11 @@ export interface ChildAppHit {
   readonly target: AppTarget;
 }
 
+/** A child app whose forge may not start (`startRefused`): the line it is answered with. */
+export interface RefusedHit {
+  readonly refused: string;
+}
+
 /** A child app in a child's own cell: its runtime is in that process, so the request is carried there. */
 export interface CellAppHit {
   readonly cell: string;
@@ -497,7 +529,7 @@ export interface CellAppHit {
 export async function resolveHostedChildApp(
   parent: App,
   request: Request,
-): Promise<ChildAppHit | CellAppHit | "unknown" | undefined> {
+): Promise<ChildAppHit | CellAppHit | RefusedHit | "unknown" | undefined> {
   const host = request.headers.get("host");
   if (host === null) return undefined;
   const label = parseHostedChildAppLabel(host, childHost(parent));
@@ -513,6 +545,10 @@ export async function resolveHostedChildApp(
     if (!CHILD_NAME.test(name)) continue;
     const ledger = readLedgerSync(parent, name);
     if (ledger === undefined || !ledger.done) continue;
+    if (!isAwakeBody(parent, ledger.bodyId)) {
+      const refused = startRefused(parent, ledger);
+      if (refused !== undefined) return { refused };
+    }
     if (ledger.placement === "cell") return { cell: name };
     const child = await openOnce(parent, ledger);
     const runtime = appsRuntime(child);
