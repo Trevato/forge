@@ -62,6 +62,7 @@ import { gpxFacts, parseGpx } from "../../web/render/gpx.ts";
 import { EVENT_CAP, parseIcs } from "../../web/render/ics.ts";
 import { CARD_CAP, parseVcf } from "../../web/render/vcf-parse.ts";
 import { CUE_CAP, parseSubtitles } from "../../web/render/subtitles.ts";
+import { isJsonlPath, kindView, type KindLines } from "./workspace_kinds.ts";
 import { layoutTable, type Grid } from "../ui/grid.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { stripAnsi } from "../term/ansi.ts";
@@ -462,6 +463,9 @@ class Tab {
   grid: Grid = { header: "", rows: [] };
   /** Cues of a subtitle file that could not be read. */
   unread = 0;
+  /** The .ipynb / .log view, and the source it replaces while `s` has it up. */
+  kindLines: KindLines | null = null;
+  sourceLines: KindLines | null = null;
 
   constructor(readonly path: string) {}
 
@@ -511,6 +515,14 @@ class Tab {
     );
   }
 
+  /** Put up the notebook/log view or its source, whichever `asTable` says. */
+  showKind(): void {
+    if (this.kindLines === null || this.sourceLines === null) return;
+    const shown = this.asTable ? this.kindLines : this.sourceLines;
+    this.plain = shown.plain;
+    this.lines = shown.lines;
+  }
+
   get modified(): boolean {
     return this.creating || (this.editor !== null && this.editor.modified);
   }
@@ -551,6 +563,19 @@ class Tab {
     this.plain = built.plain;
     this.lines = built.lines;
     this.unread = 0;
+    this.kindLines = null;
+    this.sourceLines = built;
+    const kind = kindView(this.path, text, c);
+    if (kind?.table !== undefined) {
+      this.table = kind.table;
+      this.grid = layoutTable(kind.table);
+    } else if (kind !== null) {
+      this.kindLines = kind;
+      if (this.asTable && this.mode === "view") {
+        this.plain = kind.plain;
+        this.lines = kind.lines;
+      }
+    }
     if (isSubtitlePath(this.path)) {
       const subs = subtitleTable(new TextDecoder().decode(source));
       this.table = subs.table;
@@ -576,7 +601,7 @@ class Tab {
       const delimiter = /\.tsv$/i.test(this.path) ? "\t" : undefined;
       this.table = parseCsv(new TextDecoder().decode(source), { delimiter });
       this.grid = layoutTable(this.table);
-    } else this.table = null;
+    } else if (kind?.table === undefined) this.table = null;
     // The rendered document is derived from the same text, so an edit, a
     // theme switch or a re-read has to throw it away with everything else.
     this.doc = [];
@@ -1550,6 +1575,7 @@ export function workspaceScreen(
     // set would put the document back on `esc` with the edits invisible.
     t.rendered = false;
     t.asTable = false;
+    t.showKind();
     t.mode = "edit";
     focus = "file";
     ctx.invalidate();
@@ -1618,11 +1644,11 @@ export function workspaceScreen(
       t !== undefined &&
       (t.image !== null || isMarkdownPath(t.path) || t.patch !== null);
     return [
-      ...(t?.table == null
+      ...(t?.table == null && t?.kindLines == null
         ? []
         : [
             binding(["s"], t.asTable ? "show the source" : "show the table", {
-              disabled: t.table.error !== undefined || t.table.header.length === 0,
+              disabled: t.table != null && (t.table.error !== undefined || t.table.header.length === 0),
             }),
           ]),
       binding(["tab"], "focus explorer"),
@@ -2432,7 +2458,16 @@ export function workspaceScreen(
   /** `s` — a table file's two views: aligned columns, or the text itself. */
   function toggleTable(t: Tab): void {
     // A stray `s` on anything else is not worth a toast.
-    if (t.table === null || t.mode === "edit") return;
+    if (t.mode === "edit") return;
+    if (t.kindLines !== null && t.sourceLines !== null) {
+      t.asTable = !t.asTable;
+      t.showKind();
+      t.scroll.top = 0;
+      t.left = 0;
+      t.findHits();
+      return;
+    }
+    if (t.table === null) return;
     if (t.table.error !== undefined) {
       ctx.toast(tableProblem(t.table), "attn");
       return;
@@ -2668,7 +2703,7 @@ export function workspaceScreen(
               ? ""
               : `${t.path} · ${
                   t.tabular && t.table !== null
-                    ? tableStatus(t.table, t.unread, isSubtitlePath(t.path), isIcsPath(t.path), isGpxPath(t.path), isVcfPath(t.path), isGeoJsonPath(t.path))
+                    ? tableStatus(t.table, t.unread, isSubtitlePath(t.path), isIcsPath(t.path), isGpxPath(t.path), isVcfPath(t.path), isGeoJsonPath(t.path), isJsonlPath(t.path))
                     : `${plural(
                         t.reading ? t.doc.length : t.plain.length,
                         "line",
@@ -3002,12 +3037,16 @@ function drawCode(s: Surface, r: Rect, c: Tokens, t: Tab): void {
 }
 
 /** `80 rows, first 50 shown · 3 more columns`: what the table leaves out. */
-function tableStatus(table: Table, unread = 0, subs = false, events = false, facts = false, people = false, features = false): string {
+function tableStatus(table: Table, unread = 0, subs = false, events = false, facts = false, people = false, features = false, jsonl = false): string {
   const rows = table.rows.length + table.more;
   return `${plural(rows, subs ? "cue" : events ? "event" : people ? "contact" : facts ? "fact" : features ? "feature" : "row")}${
     unread > 0 ? ` · ${unread} unreadable, check their arrow lines` : ""
   }${
-    table.more > 0 ? `, first ${table.rows.length} shown` : ""
+    table.more > 0
+      ? jsonl
+        ? `, ${plural(table.more, "more row")} not shown`
+        : `, first ${table.rows.length} shown`
+      : ""
   }${
     table.columns > MAX_COLUMNS
       ? ` · ${table.columns - MAX_COLUMNS} more columns`

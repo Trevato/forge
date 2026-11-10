@@ -29,60 +29,90 @@ const MAX_CELLS = 2_000;
 
 const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
 
-function image(mime: string, data: unknown): Html | undefined {
-  const b64 = text(data).replace(/\s+/g, "");
-  if (!BASE64.test(b64)) return undefined;
-  return html`<img class="nb-img" alt="Notebook output" src="data:${mime};base64,${b64}" />`;
+/** One saved output, as data: the HTML page and the terminal both draw from this. */
+export type NbOutput =
+  | { readonly kind: "text" | "error" | "caption"; readonly text: string }
+  | { readonly kind: "image"; readonly mime: string; readonly data: string };
+
+/** One cell: its source, the count a code cell ran with, and its outputs. */
+export interface NbCell {
+  readonly kind: "markdown" | "code" | "raw";
+  readonly source: string;
+  readonly count: string;
+  readonly outputs: readonly NbOutput[];
 }
 
-function output(out: unknown): Html {
-  if (!isObj(out)) return html``;
-  if (out.output_type === "stream")
-    return html`<pre class="nb-out">${text(out.text)}</pre>`;
+function image(mime: string, data: unknown): NbOutput | undefined {
+  const b64 = text(data).replace(/\s+/g, "");
+  return BASE64.test(b64) ? { kind: "image", mime, data: b64 } : undefined;
+}
+
+function outputs(out: unknown): NbOutput[] {
+  if (!isObj(out)) return [];
+  if (out.output_type === "stream") return [{ kind: "text", text: text(out.text) }];
   if (out.output_type === "error") {
     const trace = Array.isArray(out.traceback) ? text(out.traceback) : `${text(out.ename)}: ${text(out.evalue)}`;
-    return html`<pre class="nb-out nb-err">${stripAnsi(trace)}</pre>`;
+    return [{ kind: "error", text: stripAnsi(trace) }];
   }
   const data = isObj(out.data) ? out.data : {};
-  const parts: Html[] = [];
+  const parts: NbOutput[] = [];
   for (const mime of IMAGES) {
     if (data[mime] === undefined) continue;
     const img = image(mime, data[mime]);
     if (img !== undefined) parts.push(img);
   }
-  if (data["text/plain"] !== undefined) parts.push(html`<pre class="nb-out">${text(data["text/plain"])}</pre>`);
+  if (data["text/plain"] !== undefined) parts.push({ kind: "text", text: text(data["text/plain"]) });
   for (const [mime, label] of SOURCES)
-    if (data[mime] !== undefined)
-      parts.push(html`<div class="nb-cap">${label}</div><pre class="nb-out">${text(data[mime])}</pre>`);
-  return html`${parts}`;
+    if (data[mime] !== undefined) parts.push({ kind: "caption", text: label }, { kind: "text", text: text(data[mime]) });
+  return parts;
 }
 
-function cell(c: unknown): Html {
-  if (!isObj(c)) return html``;
+function parseCell(c: unknown): NbCell | undefined {
+  if (!isObj(c)) return undefined;
   const source = text(c.source);
-  if (c.cell_type === "markdown") return html`<div class="nb-cell">${renderMarkdown(source)}</div>`;
+  if (c.cell_type === "markdown") return { kind: "markdown", source, count: "", outputs: [] };
   if (c.cell_type === "code") {
-    const n = typeof c.execution_count === "number" && Number.isFinite(c.execution_count) ? String(c.execution_count) : " ";
-    const outs = Array.isArray(c.outputs) ? c.outputs.slice(0, MAX_CELLS).map(output) : [];
-    return html`<div class="nb-cell"><pre class="nb-in"><span class="muted">In [${n}]:</span> ${source}</pre>${outs}</div>`;
+    const count = typeof c.execution_count === "number" && Number.isFinite(c.execution_count) ? String(c.execution_count) : " ";
+    const outs = Array.isArray(c.outputs) ? c.outputs.slice(0, MAX_CELLS).flatMap(outputs) : [];
+    return { kind: "code", source, count, outputs: outs };
   }
-  return html`<div class="nb-cell"><pre>${source}</pre></div>`;
+  return { kind: "raw", source, count: "", outputs: [] };
+}
+
+/** The notebook's cells (at most MAX_CELLS) and how many it has, or why it cannot be read. */
+export function parseNotebook(body: Uint8Array | string): { cells: NbCell[]; total: number } | { error: string } {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(typeof body === "string" ? body : new TextDecoder().decode(body));
+  } catch {
+    return { error: "This notebook is not valid JSON, so it is shown as plain text." };
+  }
+  if (!isObj(doc) || !Array.isArray(doc.cells))
+    return { error: "This notebook has no cells list, so it is shown as plain text." };
+  const cells = doc.cells.slice(0, MAX_CELLS).flatMap((c) => parseCell(c) ?? []);
+  return { cells, total: doc.cells.length };
+}
+
+function outputHtml(o: NbOutput): Html {
+  if (o.kind === "image")
+    return html`<img class="nb-img" alt="Notebook output" src="data:${o.mime};base64,${o.data}" />`;
+  if (o.kind === "caption") return html`<div class="nb-cap">${o.text}</div>`;
+  return html`<pre class="${o.kind === "error" ? "nb-out nb-err" : "nb-out"}">${o.text}</pre>`;
+}
+
+function cellHtml(c: NbCell): Html {
+  if (c.kind === "markdown") return html`<div class="nb-cell">${renderMarkdown(c.source)}</div>`;
+  if (c.kind === "code")
+    return html`<div class="nb-cell"><pre class="nb-in"><span class="muted">In [${c.count}]:</span> ${c.source}</pre>${c.outputs.map(outputHtml)}</div>`;
+  return html`<div class="nb-cell"><pre>${c.source}</pre></div>`;
 }
 
 export function notebook(input: RenderInput): Rendered {
-  const fail = (why: string): Rendered => ({ content: html``, lines: 0, fallback: why });
-  let doc: unknown;
-  try {
-    doc = JSON.parse(new TextDecoder().decode(input.body));
-  } catch {
-    return fail("This notebook is not valid JSON, so it is shown as plain text.");
-  }
-  if (!isObj(doc) || !Array.isArray(doc.cells))
-    return fail("This notebook has no cells list, so it is shown as plain text.");
-  const cells = doc.cells.slice(0, MAX_CELLS);
+  const parsed = parseNotebook(input.body);
+  if ("error" in parsed) return { content: html``, lines: 0, fallback: parsed.error };
   return {
     lines: 0,
-    summary: `${doc.cells.length} cells`,
-    content: html`<div class="nb prose">${cells.map(cell)}</div>`,
+    summary: `${parsed.total} cells`,
+    content: html`<div class="nb prose">${parsed.cells.map(cellHtml)}</div>`,
   };
 }
