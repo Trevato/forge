@@ -579,7 +579,7 @@ import { cellsAvailable } from "../apps/contain.ts";
 import { machineShellPage, machinesSettingsPage } from "../web/pages/machines.ts";
 import { machineTermAsset, wasmResponse, ghosttyWasmAsset } from "../web/machine-term-asset.ts";
 import {
-  defaultCommand,
+  defaultShell,
   mayOpenShell,
   setShellOptions,
   shellOptions,
@@ -2612,12 +2612,15 @@ export async function serve(app: App): Promise<Servers> {
           // first shell rather than at boot; a test that set its own keeps them.
           if (shellOptions(app) === undefined) {
             const cells = await cellsAvailable();
-            if (shellOptions(app) === undefined)
+            if (shellOptions(app) === undefined) {
+              const plan = defaultShell();
               setShellOptions(app, {
                 idleMs: () => shellIdleMs(app.db),
                 contain: cells.ok ? "cell" : "refuse",
-                command: defaultCommand(),
+                command: plan.command,
+                detaches: plan.detaches,
               });
+            }
           }
           const data: ShellSocket = { shell: { ...may.grant, app } };
           if (server.upgrade(request, { data })) return undefined;

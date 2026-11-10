@@ -21,9 +21,9 @@
  * they have been validated.
  */
 
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { cellHides } from "../spawn/hosted-mark.ts";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { cellCounters, openCell, resolveLimits, type Cell, type CellSpec } from "../apps/contain.ts";
@@ -38,6 +38,11 @@ import { reachableApps, type Machine } from "../crew/machines.ts";
 import { ownApp, ownAppUrls } from "../crew/app_hosts.ts";
 import { limitValue } from "../settings/limits.ts";
 import { id as newId } from "../kernel/id.ts";
+import { readFileAt } from "../apps/checkout.ts";
+import { parseManifest } from "../apps/manifest.ts";
+import { resolveOid } from "../git/merge.ts";
+import { repoDir } from "../git/repos.ts";
+import { ensureCheckout, prepareHome, shellPlan, CHECKOUT_DIR, type ShellPlan } from "./rc.ts";
 
 // ---- the route ----
 
@@ -77,6 +82,8 @@ export interface ShellGrant {
   readonly machine: Machine;
   readonly user: User;
   readonly sessionId: string | undefined;
+  /** The app's own `tty` command at the default branch's tip, for the greeting. */
+  readonly tty?: string | null;
 }
 
 /**
@@ -103,9 +110,23 @@ export async function mayOpenShell(
   const config = await repoMachines(app, repo);
   const machine = config.machines.find((m) => m.name === target.machine);
   if (machine === undefined) return { ok: false, refusal: "not_found" };
-  const grant = { repo, machine, user, sessionId: auth.sessionId };
+  const grant = { repo, machine, user, sessionId: auth.sessionId, tty: await appTty(app, repo) };
   if (!roomFor(app, grant)) return { ok: false, refusal: "busy" };
+  // The first connection clones; async, so no other request waits on it.
+  await ensureCheckout(
+    repoDir(app.reposRoot, repo.ownerName, repo.name),
+    workspace(app, repo, machine, user.id),
+  );
   return { ok: true, grant };
+}
+
+/** The `tty` command forge.json declares at the default branch's tip, or null. */
+export async function appTty(app: App, repo: Repo): Promise<string | null> {
+  const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+  const tip = await resolveOid(dir, `refs/heads/${repo.defaultBranch}`);
+  if (tip === undefined) return null;
+  const parsed = parseManifest(await readFileAt(dir, tip, "forge.json"), undefined);
+  return parsed.ok ? parsed.value.tty : null;
 }
 
 // ---- frames ----
@@ -266,6 +287,8 @@ export interface ShellOptions {
   readonly contain: "cell" | "uncontained" | "refuse";
   /** The command the pty runs: constant, never built from a request. */
   readonly command: string;
+  /** Whether leaving the command keeps the session (tmux holds it); said in the greeting. Defaults to no. */
+  readonly detaches?: boolean;
   /** How often a session asks again whether its owner may still write; defaults to `CHECK_MS`. */
   readonly checkMs?: number;
   /** Handshakes one person may make in a minute; defaults to `HANDSHAKES_PER_MINUTE`. */
@@ -283,10 +306,27 @@ export const MAX_BUFFERED_BYTES = 1024 * 1024;
 export const CHECK_MS = 5_000;
 
 /** tmux where the machine has it, so a person's windows survive a closed tab; else a login shell. */
-export function defaultCommand(): string {
-  return Bun.which("tmux") !== null
-    ? "exec tmux -L forge new-session -A -s shell"
-    : "exec /bin/sh -i";
+export function defaultShell(): ShellPlan {
+  return shellPlan(Bun.which("tmux") !== null, Bun.which("bash") !== null);
+}
+
+/**
+ * The environment a machine shell starts with: the forge's own bun first on
+ * PATH (the cell binds `/` read-only and reveals bun's directory even under a
+ * hidden home, see `cellMounts`), then the forge's PATH, where git is.
+ */
+export function shellEnv(grant: ShellGrant, dir: string): Record<string, string> {
+  return {
+    PATH: `${dirname(process.execPath)}:${process.env["PATH"] ?? "/usr/bin:/bin"}`,
+    FORGE_REPO: `${grant.repo.ownerName}/${grant.repo.name}`,
+    FORGE_CHECKOUT: join(dir, CHECKOUT_DIR),
+    HOME: join(dir, "home"),
+    TERM: "xterm-256color",
+    COLORTERM: "truecolor",
+    LANG: "C.UTF-8",
+    FORGE_MACHINE: grant.machine.name,
+    FORGE_MACHINE_TOOLS: grant.machine.tools.join(" "),
+  };
 }
 
 const sessions = new WeakMap<App, Map<string, Session>>();
@@ -420,6 +460,13 @@ function start(app: App, grant: ShellGrant, opts: ShellOptions, cols: number, ro
   let live: Session | undefined;
   try {
     mkdirSync(join(dir, "home"), { recursive: true });
+    prepareHome(join(dir, "home"), {
+      repo: `${grant.repo.ownerName}/${grant.repo.name}`,
+      machine: grant.machine.name,
+      detaches: opts.detaches === true,
+      checkout: existsSync(join(dir, CHECKOUT_DIR, ".git")),
+      tty: grant.tty ?? null,
+    });
     row = recordStart(app.db, grant.repo.id, grant.machine.name, grant.user.id);
     terminal = new Bun.Terminal({
       cols,
@@ -444,15 +491,7 @@ function start(app: App, grant: ShellGrant, opts: ShellOptions, cols: number, ro
           ownAppUrls(ownApp(app, grant.repo)),
         ),
       );
-    const env: Record<string, string> = {
-      PATH: process.env["PATH"] ?? "/usr/bin:/bin",
-      HOME: join(dir, "home"),
-      TERM: "xterm-256color",
-      COLORTERM: "truecolor",
-      LANG: "C.UTF-8",
-      FORGE_MACHINE: grant.machine.name,
-      FORGE_MACHINE_TOOLS: grant.machine.tools.join(" "),
-    };
+    const env = shellEnv(grant, dir);
     const program = startTerminal(opts.command, { terminal, env, cwd: dir, cell });
     const term = terminal;
     const session: Session = {
