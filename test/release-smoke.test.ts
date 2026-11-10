@@ -202,3 +202,43 @@ test("an empty 200 with no forge or edge headers says so, pointing past the forg
   expect(emptyEvidence(new Response(""))).toBe(" (no forge or edge headers)");
   expect(emptyEvidence(new Response("", { headers: { "x-forge-version": "v1" } }))).toBe(" (x-forge-version: v1)");
 });
+
+test("an empty body under a content-encoding that is whole unencoded passes: the edge's encoding lost it (#10889)", async () => {
+  const asked: string[] = [];
+  const edge = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      const path = new URL(req.url).pathname;
+      const enc = req.headers.get("accept-encoding") ?? "";
+      asked.push(`${path}:${enc}`);
+      if (path === "/") return new Response('<link rel="stylesheet" href="/a.css">', { headers: { "content-type": "text/html" } });
+      if (path === "/a.css") return new Response("body{margin:0}", { headers: { "content-type": "text/css" } });
+      if (path === "/sw.js") return new Response("if (r.mode === 'navigate') { e.respondWith(fetch(r)); return; }", { headers: { "content-type": "text/javascript" } });
+      if (path === "/explore" && enc !== "identity") return new Response("", { headers: { "content-encoding": "zstd" } });
+      return new Response("page " + path, { headers: { "x-forge-version": "v1" } });
+    },
+  });
+  const failures = await smoke(`http://127.0.0.1:${edge.port}`, "t", { heavy });
+  expect(failures.filter((f) => f.why.includes("empty body"))).toEqual([]);
+  await edge.stop(true);
+  expect(asked.some((a) => a === "/explore:identity")).toBe(true);
+});
+
+test("an empty body under a content-encoding that is empty unencoded too still fails (#10889)", async () => {
+  const edge = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      const path = new URL(req.url).pathname;
+      if (path === "/") return new Response('<link rel="stylesheet" href="/a.css">', { headers: { "content-type": "text/html" } });
+      if (path === "/a.css") return new Response("body{margin:0}", { headers: { "content-type": "text/css" } });
+      if (path === "/sw.js") return new Response("if (r.mode === 'navigate') { e.respondWith(fetch(r)); return; }", { headers: { "content-type": "text/javascript" } });
+      if (path === "/explore") return new Response(req.headers.get("accept-encoding") === "identity" ? "  " : "", { headers: { "content-encoding": "zstd" } });
+      return new Response("page " + path, { headers: { "x-forge-version": "v1" } });
+    },
+  });
+  const failures = await smoke(`http://127.0.0.1:${edge.port}`, "t", { heavy });
+  await edge.stop(true);
+  expect(failures.some((f) => f.url.endsWith("/explore") && f.why.includes("empty body"))).toBe(true);
+});

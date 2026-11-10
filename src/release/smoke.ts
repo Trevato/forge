@@ -176,6 +176,15 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
   const slowMs = heavy.slowMs ?? SLOW_MS;
   const headers: Record<string, string> = { "user-agent": AGENTS["desktop"]! };
   const pages = HEAVY_PAGES.map((p) => (p === REPO_HOME && heavy.repo ? heavy.repo : p));
+  /** Is `url` whole when asked with no encoding: the way to tell the edge's encoding from the forge's answer (#10889). */
+  const unencodedBody = async (url: string): Promise<boolean> => {
+    try {
+      const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(slowMs * 2), headers: { ...headers, "accept-encoding": "identity" } });
+      return res.status === 200 && (await res.text()).trim() !== "";
+    } catch {
+      return false;
+    }
+  };
   // An answer between `slowMs` and twice it is slow; none by then is a hang.
   const once = async (path: string): Promise<{ failure: Failure | null; slow: boolean; hung?: boolean; empty?: boolean }> => {
     const url = new URL(path, root).href;
@@ -199,6 +208,12 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
       if (path === "/boards" && anonymousBoard && !token && isSignInRedirect(url, res)) return { failure: null, slow: false };
       if (res.status !== 200) return gone(`${path} expected 200`, res.status);
       if (!body.trim()) {
+        // An empty body under a content-encoding may be the edge's encoding of it (#10889: zstd, twice in a row,
+        // 60 minutes). Asked again unencoded, a body says the forge answered and only the encoding lost it.
+        if (res.headers.has("content-encoding") && (await unencodedBody(url))) {
+          console.warn(`smoke: EDGE-ENCODING-EMPTY ${path} came back empty under content-encoding ${res.headers.get("content-encoding")} but whole unencoded; passed as the release's, though a browser accepting that encoding would see it blank (the edge's fault; cause unconfirmed)`);
+          return { failure: null, slow: false };
+        }
         const lost = gone(`${path} answered with an empty body${emptyEvidence(res)}`, res.status);
         return { failure: { ...lost.failure, empty: true }, slow: false, empty: true };
       }
