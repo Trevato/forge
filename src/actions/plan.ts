@@ -12,7 +12,7 @@
 
 import { sealedScope } from "../core/sealed.ts";
 import type { App } from "../app.ts";
-import { isCrew } from "../core/agents.ts";
+import { crewRole, isCrew } from "../core/agents.ts";
 import { mapHeldFor, type HoldName } from "../crew/held.ts";
 import { addDependency, repoGraph, readyNow } from "../core/dependencies.ts";
 import { findPillar, pillarsOf, type Pillar } from "../core/pillars.ts";
@@ -23,6 +23,7 @@ import {
   MAX_TITLE,
   type Issue,
 } from "../core/issues.ts";
+import { unansweredFromApp } from "../core/from_app.ts";
 import { canRead, canWrite, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { transact } from "../kernel/db.ts";
@@ -226,6 +227,17 @@ function vet(
       "mirrored",
       "this repository is mirrored; plan at its origin",
     );
+
+  // A person's note from an app is owed an answer before the planner adds to the pile (#10563).
+  // Only the repo's planner is held; it lifts when a crew member comments, or the issue is closed or hidden.
+  if (actor.kind === "agent" && crewRole(app.db, repo.id, actor.id) === "planner") {
+    const waiting = unansweredFromApp(app.db, repo.id);
+    if (waiting !== undefined)
+      return refuse(
+        "from_app_waiting",
+        `#${waiting.number} was sent by a person from the app and no crew member has answered it: the planner opens no new issues until one does`,
+      );
+  }
 
   const keys = new Set(items.map((i) => i.key));
   const existing = new Map<number, Issue>();

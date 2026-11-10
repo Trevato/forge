@@ -12,6 +12,7 @@ import { redHref, redMain } from "../checks/red_main.ts";
 import { getRepo } from "../core/repos.ts";
 import { ownRepoPath } from "../kernel/own_repo.ts";
 import { bugClockAlarm } from "./bugs.ts";
+import { alarmFromApp } from "./alarm_from_app.ts";
 import { alarmIdleCrew } from "./alarm_idle_crew.ts";
 import { noReleaseAlarm } from "./alarm_no_release.ts";
 import { redMainAlarm } from "./alarm_red_main.ts";
@@ -20,7 +21,7 @@ import { alarmSilent } from "./alarm_silent.ts";
 import { alarmStuck } from "./alarm_stuck.ts";
 
 export interface FiredAlarm {
-  readonly key: "landing_stopped" | "red_main" | "stuck" | "idle_crew" | "no_release" | "bug_clock" | "silent" | "repeat" | "unreachable";
+  readonly key: "landing_stopped" | "red_main" | "stuck" | "idle_crew" | "no_release" | "bug_clock" | "silent" | "repeat" | "from_app" | "unreachable";
   readonly says: string;
   readonly since: string;
   /** A same-origin path to the item the alarm names. */
@@ -55,6 +56,8 @@ export function firedAlarms(
     if (silent.fired) out.push({ key: "silent", says: silent.says, since: silent.since!, href: `/${silent.repo}/runs/${silent.runId}` });
     const repeat = alarmRepeat(db);
     if (repeat.fired) out.push({ key: "repeat", says: repeat.says, since: repeat.since!, href: `/${repeat.repo}/issues/${repeat.number}` });
+    const fromApp = alarmFromApp(db, now);
+    if (fromApp.fired) out.push({ key: "from_app", says: fromApp.says, since: fromApp.since!, href: `/${fromApp.repo}/issues/${fromApp.number}` });
     const idle = alarmIdleCrew(db, now, { ceilingUsd: opts.ceilingUsd ?? null });
     if (idle.fired) out.push({ key: "idle_crew", says: idle.says, since: idle.since!, href: "/boards" });
   }

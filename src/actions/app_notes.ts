@@ -9,18 +9,19 @@ import { dropHiddenPictures } from "../core/note_pictures.ts";
 import type { App } from "../app.ts";
 import { banVisitor, bannedNotes, unbanVisitor, markSender, getNote, hideNote, insertNote, isBanned, notesOf, notesOfApp, type AppNote } from "../core/app_notes.ts";
 import type { AppRecord } from "../core/apps.ts";
-import { createLabel, getIssue, getLabel } from "../core/issues.ts";
+import { createLabel, getIssue, getLabel, type Issue } from "../core/issues.ts";
 import { mergedPullClosing } from "../core/pulls.ts";
 import { releaseName, releaseOfPull } from "../release/record.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
 import { canAdmin, type Repo } from "../core/repos.ts";
 import { plainText } from "../core/reports.ts";
-import { workingAgentRuns } from "../core/runs.ts";
+import { listActiveRuns, workingAgentRuns } from "../core/runs.ts";
 import { getUserById, isActive, type User } from "../core/users.ts";
+import { crewWithRole } from "../core/agents.ts";
 import { unadoptedAmong } from "../crew/direct.ts";
 import { NOTE_EMPTY } from "../apps/note_words.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { openIssueThrough, setIssueLabelsThrough, setIssueStateThrough } from "./issues.ts";
+import { assignIssue, openIssueThrough, setIssueLabelsThrough, setIssueStateThrough } from "./issues.ts";
 
 export { FROM_APP_LABEL } from "../core/from_app.ts";
 import { FROM_APP_LABEL } from "../core/from_app.ts";
@@ -241,7 +242,23 @@ export async function sendNote(
     visitor: sender.key,
     name: sender.name,
   });
+  if (sender.person) assignOnArrival(app, owner, repo, opened.value);
   return ok(view(app, record, repo, forgeUrl, note)!);
+}
+
+/**
+ * A person's note goes to a builder when it is filed (#10563): the first of
+ * the repo's builders with no run going, in name order, so it does not wait
+ * for the planner. With every builder busy, or a refusal (an unverified owner,
+ * an archived repo), it stays unassigned and the flow alarm names it at 15
+ * minutes.
+ */
+function assignOnArrival(app: App, owner: User, repo: Repo, issue: Issue): void {
+  const busy = new Set(listActiveRuns(app.db, [repo.id]).flatMap((r) => (r.actorId === null ? [] : [r.actorId])));
+  const free = (crewWithRole(app.db, [repo.id], "builder").get(repo.id) ?? []).find((a) => !busy.has(a.user.id));
+  if (free === undefined) return;
+  const done = assignIssue(app, owner, repo, issue, free.user);
+  if (!done.ok) console.error(`app note: issue #${issue.number} could not be assigned to ${free.user.username}: ${done.error}`);
 }
 
 /** The owner's: hide a note (closing its issue), or ban its sender too. */
