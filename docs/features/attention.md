@@ -30,7 +30,14 @@ reader sees on first view at 390 px and 1280 px: **words**, **text blocks** and 
 | pulls list | 24 / 6 / 1 | 24 / 6 / 1 |
 | runs | 38 / 8 / 1 | 38 / 8 / 1 |
 | run | 34 / 11 / 3 | 34 / 11 / 3 |
-| settings | 137 / 32 / 1 | 137 / 32 / 1 |
+| settings | 140 / 32 / 1 | 140 / 32 / 1 |
+| search | 42 / 3 / 1 | 42 / 3 / 1 |
+| search results (`/search?q=forge`) | 58 / 5 / 1 | 58 / 5 / 1 |
+| map | 68 / 6 / 6 | 68 / 6 / 6 |
+| flow | 102 / 9 / 1 | 102 / 9 / 1 |
+| system | 212 / 65 / 0 | 212 / 65 / 0 |
+
+`/flow` and `/system` are sampled pages; their entries are the empty state the test forge has (nothing seeded, nothing waited for), and say so in the entry's `note`. `/system` draws the host it runs on, so the test hands it an empty machine reading (`useLive`) and fixed cap sentences; a live `/system` is larger.
 
 ## App page, calmed (#10299)
 

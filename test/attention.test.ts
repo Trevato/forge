@@ -19,12 +19,16 @@ import { createRun } from "../src/core/runs.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { firstView, WIDTHS, type Attention } from "../src/measure/attention.ts";
 import { proveAll } from "./helpers/verified.ts";
+import { useLive, type Live } from "../src/system/live.ts";
+import type { SystemView } from "../src/system/view.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
 
 const BUDGET = "docs/design/attention-budget.json";
 type Budget = Record<string, Record<string, Attention>>;
+// An entry may carry a "note" string beside its widths; it is read by people only.
+const widthsOf = (entry: object): string[] => Object.keys(entry).filter((k) => k !== "note");
 
 let root = "";
 let app: App;
@@ -32,6 +36,19 @@ let servers: Servers;
 let cookie = "";
 let pages: Record<string, string> = {};
 const seen: Budget = {};
+
+// /system draws the machine it runs on (cores, disks, processes, whether the
+// kernel caps cells), so the same code counts differently on every host. The
+// test hands it an empty reading and one fixed sentence for each cap line.
+const emptyView: SystemView = {
+  at: "", seconds: 0, cpu: { busyPct: null, cores: [], history: [] }, temps: [], hottestC: null, load: null,
+  memory: null, disks: [], net: [], io: [], processes: 0, groups: [], duplicates: [],
+};
+const fixedLive: Live = {
+  read: () => emptyView, subscribe: () => () => {}, running: () => false, publish: () => {},
+};
+const fixedCaps = (html: string): string =>
+  html.replace(/<p class="small" id="(cell-caps|cell-pids)"[^>]*>[\s\S]*?<\/p>/g, '<p class="small" id="$1">Each cell is capped.</p>');
 
 beforeAll(async () => {
   root = mkdtempSync(join(tmpdir(), "forge-attention-"));
@@ -59,6 +76,7 @@ beforeAll(async () => {
   const pull = await openPull(app, u.value, repo, { title: "Add x", baseBranch: "main", headBranch: "feature/x" });
   if (!pull.ok) throw new Error(String(pull.error));
   const run = createRun(app.db, { repoId: repo.id, kind: "check", env: "main", commitOid: "0".repeat(40), reason: "push" });
+  useLive(fixedLive);
   servers = await serve(app);
   const signin = await fetch(`${servers.url}/signin`, {
     method: "POST", headers: { origin: servers.url },
@@ -70,11 +88,13 @@ beforeAll(async () => {
     home: "/", repository: r, app: `${r}/app`, pull: `${r}/pulls/${pull.value.number}`,
     issue: `${r}/issues/${issue.value.number}`, "issues list": `${r}/issues`, "pulls list": `${r}/pulls`,
     runs: `${r}/runs`, run: `${r}/runs/${run.id}`, settings: "/settings",
+    search: "/search", "search results": "/search?q=forge", map: "/map", flow: "/flow", system: "/system",
   };
   for (const [name, path] of Object.entries(paths)) {
     const res = await fetch(`${servers.url}${path}`, { headers: { cookie }, redirect: "follow" });
     if (res.status !== 200) throw new Error(`${name} ${path} answered ${res.status}`);
-    pages[name] = await res.text();
+    const text = await res.text();
+    pages[name] = name === "system" ? fixedCaps(text) : text;
   }
 });
 afterAll(() => {
@@ -88,7 +108,12 @@ test("each page stays inside its first-view budget", () => {
     seen[name] = {};
     for (const w of WIDTHS) seen[name]![String(w)] = firstView(html, w);
   }
-  if (process.env.FORGE_ATTENTION_WRITE === "1") writeFileSync(BUDGET, `${JSON.stringify(seen, null, 2)}\n`);
+  if (process.env.FORGE_ATTENTION_WRITE === "1") {
+    const old = JSON.parse(readFileSync(BUDGET, "utf8")) as Record<string, { note?: string }>;
+    const out: Record<string, unknown> = {};
+    for (const [n, v] of Object.entries(seen)) out[n] = old[n]?.note ? { ...v, note: old[n]!.note } : v;
+    writeFileSync(BUDGET, `${JSON.stringify(out, null, 2)}\n`);
+  }
   const budget = JSON.parse(readFileSync(BUDGET, "utf8")) as Budget;
   const rows: string[] = ["page".padEnd(13) + "width  words   blocks  colours"];
   const over: string[] = [];
@@ -110,5 +135,5 @@ test("the budget file names every page at both widths and no other", () => {
   // A budget for every page at both widths, and no stale page in the file.
   const budget = JSON.parse(readFileSync(BUDGET, "utf8")) as Budget;
   expect(Object.keys(budget).sort()).toEqual(Object.keys(pages).sort());
-  for (const name of Object.keys(budget)) expect(Object.keys(budget[name]!)).toEqual(WIDTHS.map(String));
+  for (const name of Object.keys(budget)) expect(widthsOf(budget[name]!)).toEqual(WIDTHS.map(String));
 });

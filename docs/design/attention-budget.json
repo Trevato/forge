@@ -118,5 +118,69 @@
       "blocks": 32,
       "colours": 1
     }
+  },
+  "search": {
+    "390": {
+      "words": 42,
+      "blocks": 3,
+      "colours": 1
+    },
+    "1280": {
+      "words": 42,
+      "blocks": 3,
+      "colours": 1
+    },
+    "note": "Bare /search, signed in as an admin."
+  },
+  "search results": {
+    "390": {
+      "words": 58,
+      "blocks": 5,
+      "colours": 1
+    },
+    "1280": {
+      "words": 58,
+      "blocks": 5,
+      "colours": 1
+    },
+    "note": "/search?q=forge, signed in as an admin."
+  },
+  "map": {
+    "390": {
+      "words": 68,
+      "blocks": 6,
+      "colours": 6
+    },
+    "1280": {
+      "words": 68,
+      "blocks": 6,
+      "colours": 6
+    }
+  },
+  "flow": {
+    "390": {
+      "words": 102,
+      "blocks": 9,
+      "colours": 1
+    },
+    "1280": {
+      "words": 102,
+      "blocks": 9,
+      "colours": 1
+    },
+    "note": "Measured on the test forge's empty state (no samples seeded, nothing waited for)."
+  },
+  "system": {
+    "390": {
+      "words": 212,
+      "blocks": 65,
+      "colours": 0
+    },
+    "1280": {
+      "words": 212,
+      "blocks": 65,
+      "colours": 0
+    },
+    "note": "Measured on the test forge's empty state with the machine reading replaced by an empty one and the two cell-cap sentences fixed (the live page's counts depend on the host's cores, disks, processes and cgroups); nothing seeded or waited for."
   }
 }
