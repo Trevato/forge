@@ -134,8 +134,18 @@ export function rankPalette(
 }
 
 /**
- * The two functions above as the JavaScript the page runs: Bun transpiles
+ * Whether the bare search page opens the palette sheet by itself: the page
+ * asked for it (`marked`) and the viewport is phone width, below the 720px
+ * at which `.palette` stops being a bottom sheet (style/components.ts).
+ * Self-contained, like the others; shipped in the script.
+ */
+export function opensAsSheet(marked: boolean, width: number): boolean {
+  return marked && width > 0 && width < 720;
+}
+
+/**
+ * The functions above as the JavaScript the page runs: Bun transpiles
  * this module before it ever parses it, so `toString` is already the
  * browser's dialect. A test proves the string and the module agree.
  */
-export const paletteHelpersJs = `${fuzzyScore.toString()}\n${rankPalette.toString()}`;
+export const paletteHelpersJs = `${fuzzyScore.toString()}\n${rankPalette.toString()}\n${opensAsSheet.toString()}`;

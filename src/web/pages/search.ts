@@ -419,7 +419,7 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
       ctx,
       title: "Search",
       styleCss: SEARCH_CSS,
-      body: html`<div data-search>${pageHead("Search")} ${form}
+      body: html`<div data-search data-palette-auto>${pageHead("Search")} ${form}
       <p class="muted">Search this forge: an app or repository by name or description, a word from what was told or changed, or a line of the code itself — across everything you can see, here and on every origin you have connected.</p>
       </div>`,
     });

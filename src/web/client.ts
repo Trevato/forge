@@ -2170,6 +2170,10 @@ const shellCore = /* js */ `
   doc.querySelectorAll('[data-palette]').forEach(function (b) {
     b.addEventListener('click', function (e) { e.preventDefault(); openPalette(); });
   });
+  // /search at phone width IS the palette: the bare search page opens the
+  // same sheet, same rows, same ranking. The page's own form stays beneath
+  // it for a closed sheet and for no script at all.
+  if (opensAsSheet(!!doc.querySelector('[data-palette-auto]'), window.innerWidth)) openPalette();
   doc.querySelectorAll('[data-help]').forEach(function (b) {
     b.addEventListener('click', function (e) { e.preventDefault(); openHelp(); });
   });
