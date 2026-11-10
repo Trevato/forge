@@ -295,6 +295,7 @@ describe("the forge over MCP", () => {
       "follow_mode",
       "fork",
       "forks",
+      "fork_tree",
       "upstream",
       "propose_to_parent_forge",
       "forge_proposals",

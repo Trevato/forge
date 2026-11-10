@@ -714,14 +714,28 @@ const forksOfMany = (db: Database, ids: readonly string[]): Repo[] =>
         .map(toRepo);
 
 /** The visible forks of these parents, grouped by parent id: one query. */
-function visibleForksByParent(
+export function visibleForksByParent(
   db: Database,
   parents: readonly Repo[],
   viewer: User | undefined,
 ): Map<string, Repo[]> {
   const byParent = new Map<string, Repo[]>();
-  for (const fork of forksOfMany(db, parents.map((p) => p.id))) {
-    if (fork.forkParentId === null || !canRead(db, fork, viewer)) continue;
+  const forks = forksOfMany(db, parents.map((p) => p.id));
+  // One query says which owners stand; a public repo of one is readable by
+  // everyone (the first two rules of `canRead`), so only the rest ask again.
+  const standing = new Set(
+    forks.length === 0
+      ? []
+      : db
+          .query<{ id: string }, string[]>(
+            `SELECT repo.id AS id FROM repo WHERE repo.id IN (${forks.map(() => "?").join(",")}) AND ${OWNER_STANDING}`,
+          )
+          .all(...forks.map((f) => f.id))
+          .map((r) => r.id),
+  );
+  for (const fork of forks) {
+    const open = fork.visibility === "public" && standing.has(fork.id);
+    if (fork.forkParentId === null || !(open || canRead(db, fork, viewer))) continue;
     const siblings = byParent.get(fork.forkParentId) ?? [];
     siblings.push(fork);
     byParent.set(fork.forkParentId, siblings);

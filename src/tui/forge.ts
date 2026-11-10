@@ -17,6 +17,7 @@ import { sourceFor } from "../view/source.ts";
 import { fleetCommand } from "./screens/fleet.ts";
 import { dataCommand } from "./screens/data.ts";
 import { packsCommand } from "./screens/packs.ts";
+import { forkTreeScreen } from "./screens/fork_tree.ts";
 import { roadmapScreen } from "./screens/roadmap.ts";
 import { App, type Ctx, type Screen } from "./app/app.ts";
 import type { Command, PaletteItem, PaletteSearch } from "./app/palette.ts";
@@ -127,6 +128,12 @@ const REPO_VERBS: readonly {
     id: "held",
     title: "Held by the Later gate",
     open: (f, ctx, repo) => heldScreen(f, ctx, repo),
+  },
+  {
+    // The ancestors, siblings and descendants of a repository the person may read.
+    id: "fork-tree",
+    title: "Fork tree of a repository",
+    open: (f, ctx, repo) => forkTreeScreen(f, ctx, repo),
   },
   {
     id: "roadmap",

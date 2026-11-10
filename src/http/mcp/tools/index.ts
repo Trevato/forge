@@ -72,6 +72,7 @@ export { tool as forge_proposals } from "./forge_proposals.ts";
 export { tool as forge_view } from "./forge_view.ts";
 export { tool as forges } from "./forges.ts";
 export { tool as fork } from "./fork.ts";
+export { tool as fork_tree } from "./fork_tree.ts";
 export { tool as forks } from "./forks.ts";
 export { tool as front_page } from "./front_page.ts";
 export { tool as health } from "./health.ts";
