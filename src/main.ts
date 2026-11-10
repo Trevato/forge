@@ -29,6 +29,7 @@ import { offerStartingBoards } from "./actions/boards.ts";
 import { syncAllPillars } from "./actions/pillars.ts";
 import { bootHostedChildren, childAwake } from "./spawn/host.ts";
 import { stopCellChildren } from "./spawn/cell.ts";
+import { backfillChildren } from "./spawn/forge_code_backfill.ts";
 import { firstBoot } from "./spawn/first-boot.ts";
 import { previewIdentityKey } from "./spawn/preview-owner.ts";
 import { PREVIEW_ADMIN, seedPreview } from "./spawn/preview-seed.ts";
@@ -441,6 +442,12 @@ if (apps && presence) warmBehind(app.log, presence, () => apps.startingCount());
 void backfillCarried(app.db, app.reposRoot).catch((error) =>
   app.log.error("could not backfill what deploys carried", { error: String(error) }),
 );
+// Children born before each came with its own source get it (#10989).
+void backfillChildren(app)
+  .then((done) => {
+    if (Object.keys(done).length > 0) app.log.info("forge-code backfill", { done: JSON.stringify(done) });
+  })
+  .catch((error) => app.log.error("could not backfill children's forge code", { error: String(error) }));
 // A forge still draining on this database keeps writing for its gates and
 // runs; starting ours beside it stalls the listener behind its write lock
 // (#6957). The listener answers meanwhile; a signal now stops what is up.

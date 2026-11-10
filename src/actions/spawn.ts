@@ -38,6 +38,7 @@ import { createUser, getUserByName, type User } from "../core/users.ts";
 import { runGit } from "../git/env.ts";
 import { repoDir } from "../git/repos.ts";
 import { commitFiles } from "../git/write.ts";
+import { adoptForgeCode, forkForgeCode } from "../spawn/forge_code.ts";
 import { birthFromTemplate, type TemplateMark } from "../spawn/template_birth.ts";
 import { sha256 } from "../kernel/hash.ts";
 import { secret } from "../kernel/id.ts";
@@ -60,7 +61,7 @@ import { quotaRefusal } from "../spawn/quota.ts";
 import { personRefusal } from "../spawn/sleep.ts";
 import { planSpawn, type SpawnInput, type SpawnPlan, type SpawnSource } from "../spawn/plan.ts";
 import { DEFAULT_SIZE, isSize, type Size } from "../spawn/sizes.ts";
-import { chainForChild, DEFAULT_MODE, forgeLinkOf, type FollowMode, type Hop } from "../spawn/chain.ts";
+import { DEFAULT_MODE } from "../spawn/chain.ts";
 import { requireUser } from "./access.ts";
 
 export interface Spawned {
@@ -467,6 +468,9 @@ async function copyInto(
         setCrewRole(child.db, repo.id, theirs.user.id, role);
       }
 
+    // The fork is the child's own source: its `forgeRepo`, and the crew seated on it.
+    adoptForgeCode(child, org.username, founder.id);
+
     // The child's own keys, made in its own directory now, so they exist
     // before its first boot and are provably not the parent's: the key that
     // seals its secrets, and its SSH host key.
@@ -585,60 +589,6 @@ async function startFresh(
   if (direction !== "" && repo.autonomyDirection !== direction)
     updateRepoSettings(child.db, repo, { autonomyDirection: direction });
   return ok(true);
-}
-
-/**
- * The parent's own code, forked into the child's organisation with its full
- * history. Returns the parent's `owner/name` when forked, undefined when the
- * forge does not name its code (`forgeRepo`) or the repo is not there —
- * a child is still spawned, just without the fork.
- *
- * A cross-forge fork: git carries the history, and the upstream stays
- * reachable through the parent's address in `parent.json`. The in-database
- * follow (`fork_parent_id`) is for forks on one forge; across two, the
- * child pulls the parent's default branch when its owner asks.
- */
-async function forkForgeCode(
-  app: App,
-  child: App,
-  orgName: string,
-  mode: FollowMode,
-): Promise<Result<{ upstream: string; mode: FollowMode; tip: string; chain: readonly Hop[] } | undefined, string>> {
-  // A spawned forge names no `forgeRepo` of its own: its code is the fork
-  // it was born with, so a grandchild forks that.
-  const ref = app.config.forgeRepo ?? (await forgeLinkOf(app))?.repo;
-  if (ref === undefined) return ok(undefined);
-  const parts = ref.split("/");
-  if (parts.length !== 2 || !parts[0] || !parts[1]) return ok(undefined);
-  const [o, n] = parts as [string, string];
-  const parent = getRepo(app.db, o, n);
-  if (!parent) return ok(undefined);
-  const name = "forge";
-  let repo = getRepo(child.db, orgName, name);
-  if (!repo) {
-    const made = await createRepo(child.db, child.reposRoot, {
-      ownerId: getOrg(child.db, orgName)!.id,
-      name,
-      visibility: "public",
-      description: `A fork of ${o}/${n}: the forge's own code, following its parent.`,
-      defaultBranch: parent.defaultBranch,
-    });
-    if (!made.ok) return err(`could not make the child's forge repo: ${made.error}`);
-    repo = made.value;
-  }
-  const fetched = await runGit(
-    [
-      "fetch",
-      "--no-write-fetch-head",
-      repoDir(app.reposRoot, o, n),
-      "+refs/heads/*:refs/heads/*",
-      "+refs/tags/*:refs/tags/*",
-    ],
-    { cwd: repoDir(child.reposRoot, orgName, name), timeoutMs: 600_000 },
-  );
-  if (!fetched.ok) return err(`could not copy the forge's code: ${fetched.error.stderr}`);
-  const born = await chainForChild(app, `${o}/${n}`);
-  return ok({ upstream: `${o}/${n}`, mode, tip: born?.tip ?? "", chain: born?.chain ?? [] });
 }
 
 /**
