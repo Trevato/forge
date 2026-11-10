@@ -19,7 +19,8 @@ import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.t
 import type { NowStage } from "../../flow/now_rows.ts";
 import { nowHref } from "../pages/now.ts";
 import { writableAppsOf } from "./asks.ts";
-import { FORGE_TARGET, sharedDraft } from "./feed.ts";
+import { FORGE_TARGET } from "./feed.ts";
+import { COMPOSER_FIELDS, TELL_MAX, sharedDraft, shareToken } from "../share_target.ts";
 import { repoBase } from "../chrome.ts";
 
 /** The events that move a build or a shipment. */
@@ -106,11 +107,13 @@ export function liveMovingFragment(ctx: Ctx): Response {
 export function tellBox(ctx: Ctx, user: User): Html {
   const { repos } = writableAppsOf(ctx, user);
   const slug = (r: { ownerName: string; name: string }) => `${r.ownerName}/${r.name}`;
+  const shared = sharedDraft(ctx.url.searchParams);
   return html`<form id="tell-box" class="bar tell-box" method="post" action="/tell">
-    <input class="input" name="text" maxlength="2000" required placeholder="Tell the crew…" aria-label="Tell the crew" data-draft="${user.id}" value="${sharedDraft(ctx.url.searchParams).replace(/\s+/g, " ")}" />
+    ${shared === "" ? "" : html`<input type="hidden" name="${COMPOSER_FIELDS.once}" value="${shareToken(user.id, shared)}" />`}
+    <input class="input" name="${COMPOSER_FIELDS.text}" maxlength="${String(TELL_MAX)}" required placeholder="Tell the crew…" aria-label="Tell the crew" data-draft="${user.id}" value="${shared.replace(/\s+/g, " ")}" />
     ${repos.length === 0
-      ? html`<input type="hidden" name="app" value="${FORGE_TARGET}" />`
-      : html`<select name="app" class="input" aria-label="Send to">
+      ? html`<input type="hidden" name="${COMPOSER_FIELDS.app}" value="${FORGE_TARGET}" />`
+      : html`<select name="${COMPOSER_FIELDS.app}" class="input" aria-label="Send to">
           ${repos.map((r) => html`<option value="${slug(r)}">${slug(r)}</option>`)}
           <option value="${FORGE_TARGET}">the forge</option>
         </select>`}

@@ -8,6 +8,7 @@
  * Every string on a card is plain text and is escaped here, once.
  */
 
+import { COMPOSER_FIELDS, TELL_MAX, sharedDraft, shareToken } from "../share_target.ts";
 import { chipCounts } from "../../feed/chips.ts";
 import { chipsOf, KIND_CHIPS, type KindChip } from "../../core/feed_chips.ts";
 import { marksByName, type Mark } from "../../core/marks.ts";
@@ -223,24 +224,6 @@ export function replyUnder(placement: Placement): Html {
   return html`<p class="small break" data-placement="${placement.kind}"><span class="muted">Planner · ${placement.kind}</span> ${parts}</p>`;
 }
 
-/** The longest tell the composer takes (its textarea's `maxlength`). */
-const TELL_MAX = 2000;
-
-/**
- * What a phone's share sheet handed the composer (`share_target` in the web
- * manifest, standards.ts): the title, text and link it sent as query
- * parameters, as one draft. A page's title often repeats in the text, and
- * some apps put the link in the text as well, so nothing is said twice. It
- * is only ever a draft — nothing is sent until the person taps Post.
- */
-export function sharedDraft(params: URLSearchParams): string {
-  const parts: string[] = [];
-  for (const key of ["title", "text", "url"]) {
-    const part = (params.get(key) ?? "").trim();
-    if (part !== "" && !parts.some((p) => p.includes(part))) parts.push(part);
-  }
-  return parts.join("\n").slice(0, TELL_MAX);
-}
 
 /**
  * The composer: say something to an app's crew, which opens a tell — the
@@ -259,13 +242,15 @@ export function composer(ctx: Ctx, user: User): Html {
     action: html`${btn("New app", { href: "/apps/new", variant: "primary" })}
       ${btn("Repositories", { href: `/${user.username}` })}`,
   })}`;
+  const shared = sharedDraft(ctx.url.searchParams);
   const form = html`<form id="composer" class="stack" method="post" action="/tell">
-    <input type="hidden" name="back" value="/feed" />
-    <textarea class="input" name="text" rows="2" maxlength="2000" required placeholder="Tell the crew what should change" aria-label="Tell the crew" data-draft="${user.id}">${sharedDraft(ctx.url.searchParams)}</textarea>
+    <input type="hidden" name="${COMPOSER_FIELDS.back}" value="/feed" />
+    ${shared === "" ? "" : html`<input type="hidden" name="${COMPOSER_FIELDS.once}" value="${shareToken(user.id, shared)}" />`}
+    <textarea class="input" name="${COMPOSER_FIELDS.text}" rows="2" maxlength="${String(TELL_MAX)}" required placeholder="Tell the crew what should change" aria-label="Tell the crew" data-draft="${user.id}">${shared}</textarea>
     <div class="bar">
       ${repos.length === 0
-        ? html`<input type="hidden" name="app" value="${FORGE_TARGET}" /><span class="muted small">the forge</span>`
-        : html`<select name="app" class="input" aria-label="Send to">
+        ? html`<input type="hidden" name="${COMPOSER_FIELDS.app}" value="${FORGE_TARGET}" /><span class="muted small">the forge</span>`
+        : html`<select name="${COMPOSER_FIELDS.app}" class="input" aria-label="Send to">
         ${repos.map((r) => html`<option value="${slug(r)}">${slug(r)}</option>`)}
         <option value="${FORGE_TARGET}">the forge</option>
       </select>`}

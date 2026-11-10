@@ -37,6 +37,7 @@ import { canRead, getRepo, type Repo } from "../core/repos.ts";
 import { publicForgeRepo } from "../core/forge_repo.ts";
 import type { Ctx } from "../http/context.ts";
 import { notFound } from "../http/respond.ts";
+import { SHARE_TARGET } from "./share_target.ts";
 import { SITE_LINE } from "./site_line.ts";
 import { mcpToolsSection } from "./llms_tools.ts";
 import { HARNESS_PLUGINS, mcpCard, mcpPointers, offeredPluginRepo, pluginSource } from "../core/mcp_card.ts";
@@ -254,12 +255,8 @@ export function webManifest(ctx: Ctx): Response {
         id: "/",
         display: "standalone",
         // Sharing a link or text to the installed forge opens the home's
-        // composer with it filled in (`sharedDraft`, studio/feed.ts).
-        share_target: {
-          action: "/",
-          method: "GET",
-          params: { title: "title", text: "text", url: "url" },
-        },
+        // composer with it filled in (`sharedDraft`, share_target.ts).
+        share_target: SHARE_TARGET,
         // A long-press on the installed icon: what is on the owner, or a
         // word with the forge's agents, one tap from the home screen.
         shortcuts: [
