@@ -22,7 +22,7 @@ import { mergePull } from "../../actions/pulls.ts";
 import { revertPull } from "../../actions/revert.ts";
 import { takeBackWords } from "../../actions/revert_words.ts";
 import { getPull } from "../../core/pulls.ts";
-import { canRead, getRepo, type Repo } from "../../core/repos.ts";
+import { canRead, canWrite, getRepo, type Repo } from "../../core/repos.ts";
 import { bringUpToDate } from "../../crew/autonomy.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, loadRepo, notFoundPage, pageHead, repoBase, signInFirst } from "../chrome.ts";
@@ -275,6 +275,28 @@ export async function shipSubmit(ctx: Ctx): Promise<Response> {
           tone: "danger" as const,
           message: `That could not ship: ${mergeWords(merged.error)}.`,
         }),
+  });
+}
+
+/** POST /:owner/:name/pulls/:number/update — ask the pull's agent to bring its branch up to date with main; nothing lands. A writer's. */
+export async function updateSubmit(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const base = repoBase(repo);
+  const number = Number(ctx.params.number);
+  const pull = Number.isInteger(number) ? getPull(ctx.app.db, repo.id, number) : undefined;
+  if (!pull || !mayView(ctx.app.db, repo, pull, ctx.auth.user)) return notFoundPage(ctx);
+  const back = backTo(form, changeHref(base, pull.number));
+  if (!canWrite(ctx.app.db, repo, ctx.auth.user))
+    return flashOrJson(ctx, back, { tone: "danger", message: "Only someone who can write here brings a pull up to date." });
+  const who = pull.state === "open" && pull.mergedAt === null ? bringUpToDate(ctx.app, repo, pull, []) : undefined;
+  return flashOrJson(ctx, back, {
+    ...(who === undefined
+      ? { tone: "danger" as const, message: "The crew could not take it now (closed, no agent, or it has already tried its limit); say what to do on the pull." }
+      : { message: `${who} is bringing #${pull.number} up to date with ${pull.baseBranch}.` }),
   });
 }
 

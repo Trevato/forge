@@ -106,7 +106,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `flag_set` | — | Set or clear a flag (admin) | 209 |
 | `flag_winner` | — | An A/B flag winner becomes default | 206 |
 | `flags` | — | Declared flags: why, default, owner issue, live value | 171 |
-| `flow` | `bugs` | Pipeline (admin); `q`: `/fleet` rows, `action` plans an op, `apply` does it; `kind:bugs`; `repo`: why stuck | 480 |
+| `flow` | `bugs`, `drift` | Pipeline (admin); `q`: `/fleet` rows, `action` plans an op, `apply` does it; `kind:bugs`; `repo`: why stuck | 488 |
 | `follow_mode` | — | How a spawned forge follows its parent: `tell-me` or `take-updates` | 265 |
 | `following` | — | Where a fork stands against what it follows: in step, behind, ahead, diverged | 243 |
 | `forge_proposals` | — | What this forge proposed to its parent; `reachable` false if it is silent | 245 |
@@ -536,3 +536,8 @@ answers
   (the clone URL as the forge prints it), then `/plugin install forge@forge`
   (the root `.claude-plugin/marketplace.json` names the marketplace `forge`).
   From a clone, `claude --plugin-dir plugins/claude-code` is the local way.
+
+`flow` with `{ kind: "drift" }` (#10861) is another: `{ drifting: [{ repo, number, landings, hours }] }`,
+open pulls over 25 landings or 6 h behind main, furthest first, from
+`src/flow/alarm_drift.ts`. Each is brought up to date by
+`POST /{repo}/pulls/{number}/update`, the button beside it on /boards.

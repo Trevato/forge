@@ -252,6 +252,7 @@ import {
 import {
   saySubmit,
   shipSubmit,
+  updateSubmit,
   takeBackSubmit,
   holdSubmit,
   releaseSubmit,
@@ -1196,6 +1197,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/feed/like", likeSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/checks", pullChecksSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/ship", shipSubmit);
+  router.add("POST", "/:owner/:name/pulls/:number/update", updateSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/say", saySubmit);
   router.add("POST", "/:owner/:name/pulls/:number/take-back", takeBackSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/hold", holdSubmit);

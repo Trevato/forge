@@ -13,6 +13,8 @@ import { CHART_NAMES } from "../../boards/chart.ts";
 import { MAX_H, MAX_PANELS, MAX_TITLE, MAX_W, RANGES, type Board, type Panel } from "../../boards/store.ts";
 import type { App } from "../../app.ts";
 import type { Ctx } from "../../http/context.ts";
+import { driftingPulls, readDrifts } from "../../flow/alarm_drift.ts";
+import { driftSection } from "./boards-drift.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { liveRegionsJs } from "../client.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
@@ -113,6 +115,7 @@ export async function boardsList(ctx: Ctx): Promise<Response> {
         </ul>`
   }</section>`;
   const flow = timePhase(ctx.request, "flow", () => flowPanel(ctx.app, { kind: "owner" }, ctx.url, "/boards"));
+  const drift = driftSection(await timePhaseAsync(ctx.request, "drift", async () => driftingPulls(await readDrifts(ctx.app), Date.now())));
   const rendering = performance.now();
   const response = page({
     ctx,
@@ -121,7 +124,7 @@ export async function boardsList(ctx: Ctx): Promise<Response> {
         ${btn("Flow", { href: "/flow", variant: "ghost" })}
         ${btn("Explore the data", { href: "/boards/data", variant: "ghost" })}</div>
       ${alarmLines(cachedAlarms(ctx.app.db, new Date(), forgeCeiling(ctx.app.config)))}
-      ${body} ${make} ${flow} ${boardsHoldsCard(ctx.app.db, ctx.auth.user, true)}`,
+      ${body} ${make} ${drift} ${flow} ${boardsHoldsCard(ctx.app.db, ctx.auth.user, true)}`,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;

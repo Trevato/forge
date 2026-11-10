@@ -1,7 +1,6 @@
 [
   "src/apps/cloud.ts",
   "src/crew/governor_log.ts",
-  "src/flow/alarm_drift.ts",
   "src/flow/alarm_unproposed.ts",
   "src/flow/approved_wait.ts",
   "src/flow/clog_words.ts",

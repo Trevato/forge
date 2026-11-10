@@ -6,6 +6,8 @@
  * so a rebased pull would stay named); the hours run from the first of them. Merged and closed pulls never count.
  */
 
+import { existsSync } from "node:fs";
+
 import type { App } from "../app.ts";
 import { runGit } from "../git/env.ts";
 import { isSafeOid, isSafeRef } from "../git/guard.ts";
@@ -40,7 +42,7 @@ interface Row {
 /** Landings on `branch` past where `headOid` forked from it and when the first happened, read from git; zero when unreadable. */
 export async function readDrift(dir: string, branch: string, headOid: string): Promise<Omit<Drift, "number">> {
   const none = { landings: 0, since: null };
-  if (!isSafeOid(headOid) || !isSafeRef(branch)) return none;
+  if (!isSafeOid(headOid) || !isSafeRef(branch) || !existsSync(dir)) return none;
   const tip = `refs/heads/${branch}`;
   const fork = await runGit(["merge-base", headOid, tip], { cwd: dir });
   const base = fork.ok ? fork.value.trim() : "";
@@ -64,7 +66,7 @@ export function clearDriftCache(): void {
 
 /** The tip of `branch`, one cheap git call; null when unreadable. */
 export async function branchTip(dir: string, branch: string): Promise<string | null> {
-  if (!isSafeRef(branch)) return null;
+  if (!isSafeRef(branch) || !existsSync(dir)) return null;
   const out = await runGit(["rev-parse", "--verify", "-q", `refs/heads/${branch}`], { cwd: dir });
   const oid = out.ok ? out.value.trim() : "";
   return isSafeOid(oid) ? oid : null;
@@ -107,21 +109,25 @@ export function driftAlarm(drifts: readonly Drift[], now: number): DriftAlarm {
   return { fired: true, since: new Date(since).toISOString(), says: `${named.join("; ")}${more}.` };
 }
 
-/** Reads every open pull's drift from its repository's main and answers the alarm. */
-export async function alarmDrift(
+/** One open pull's drift and where it lives. */
+export interface RepoDrift extends Drift {
+  readonly repo: string;
+}
+
+/** Every open pull's drift from its repository's main; `publicOnly` leaves private repositories out. Git reads are cached per head and tip. */
+export async function readDrifts(
   app: App,
-  now: Date | number = Date.now(),
-  { read = readDrift, readTip = branchTip }: { read?: DriftReader; readTip?: typeof branchTip } = {},
-): Promise<DriftAlarm> {
-  const at = typeof now === "number" ? now : now.getTime();
+  { read = readDrift, readTip = branchTip, publicOnly = false }: { read?: DriftReader; readTip?: typeof branchTip; publicOnly?: boolean } = {},
+): Promise<RepoDrift[]> {
   const rows = app.db
-    .query<Row, []>(
+    .query<Row, [number]>(
       `SELECT i.number, p.base_branch, p.head_oid, o.username AS owner, r.name
          FROM issue i JOIN pull p ON p.issue_id = i.id
          JOIN repo r ON r.id = i.repo_id JOIN user o ON o.id = r.owner_id
-        WHERE i.kind = 'pull' AND i.state = 'open' AND p.merged_at IS NULL`,
+        WHERE i.kind = 'pull' AND i.state = 'open' AND p.merged_at IS NULL
+          AND (?1 = 0 OR r.visibility = 'public')`,
     )
-    .all();
+    .all(publicOnly ? 1 : 0);
   const tips = new Map<string, Promise<string | null>>();
   const tipOf = (dir: string, branch: string) => {
     const k = `${dir}\0${branch}`;
@@ -129,11 +135,36 @@ export async function alarmDrift(
     if (!t) tips.set(k, (t = readTip(dir, branch)));
     return t;
   };
-  const drifts = await Promise.all(
+  return Promise.all(
     rows.map(async (r) => {
       const dir = repoDir(app.reposRoot, r.owner, r.name);
-      return { number: r.number, ...(await cachedDrift(read, dir, r.base_branch, r.head_oid, await tipOf(dir, r.base_branch))) };
+      return { repo: `${r.owner}/${r.name}`, number: r.number, ...(await cachedDrift(read, dir, r.base_branch, r.head_oid, await tipOf(dir, r.base_branch))) };
     }),
   );
-  return driftAlarm(drifts, at);
+}
+
+export interface DriftingPull {
+  readonly repo: string;
+  readonly number: number;
+  readonly landings: number;
+  /** Hours since main first moved past the pull's base, one decimal; 0 when it has not. */
+  readonly hours: number;
+}
+
+/** The pulls past either limit, the furthest behind first: what /boards and the MCP `flow` tool list beside the one action that brings each up to date. */
+export function driftingPulls(drifts: readonly RepoDrift[], now: number): DriftingPull[] {
+  return drifts
+    .filter((d) => drifting(d, now))
+    .sort((a, b) => b.landings - a.landings || behind(b, now) - behind(a, now) || a.repo.localeCompare(b.repo) || a.number - b.number)
+    .map((d) => ({ repo: d.repo, number: d.number, landings: d.landings, hours: Math.round(behind(d, now) / 360_000) / 10 }));
+}
+
+/** Reads every open pull's drift from its repository's main and answers the alarm. */
+export async function alarmDrift(
+  app: App,
+  now: Date | number = Date.now(),
+  opts: { read?: DriftReader; readTip?: typeof branchTip } = {},
+): Promise<DriftAlarm> {
+  const at = typeof now === "number" ? now : now.getTime();
+  return driftAlarm(await readDrifts(app, opts), at);
 }
