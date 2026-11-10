@@ -1,6 +1,8 @@
 /**
- * A proxied answer keeps the app's Server-Timing and appends the forge's own
- * phases, `forge-` named: where a slow request spent its time.
+ * A proxied answer keeps the app's Server-Timing and, for a reader who may
+ * write the app's repository, appends the forge's own phases, `forge-`
+ * named: where a slow request spent its time. Anyone else gets the app's
+ * own entries untouched (#11112).
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -9,6 +11,8 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { AppsRuntime, type EnvStatus } from "../src/apps/runtime.ts";
 import { appVisitors, newApp } from "../src/actions/apps.ts";
+import { signGrant } from "../src/apps/proxy.ts";
+import { getAppByRepo } from "../src/core/apps.ts";
 import { clearRelayWaits } from "../src/apps/relay_wait.ts";
 import { visitorsLine } from "../src/apps/vitals.ts";
 import { commitToBranch } from "../src/actions/repos.ts";
@@ -59,10 +63,25 @@ describe("a proxied answer's Server-Timing", () => {
   let servers: Servers;
   let runtime: AppsRuntime;
   let alice: User;
+  let bob: User;
   let repo: Repo;
 
-  const viaHost = (path = "/") =>
-    fetch(`${servers.url}${path}`, { headers: { host: `hello.${DOMAIN}`, accept: "text/html" }, redirect: "manual" });
+  /** A request to the app as `who` (a grant cookie), or as a visitor with none. */
+  const asViewer = (who: User | undefined, path = "/") => {
+    const headers: Record<string, string> = { host: `hello.${DOMAIN}`, accept: "text/html" };
+    if (who !== undefined) {
+      const record = getAppByRepo(app.db, repo.id)!;
+      const grant = signGrant(app.config.dataDir, { app: record, env: "production" }, 60_000, Date.now(), {
+        id: who.id,
+        name: who.username,
+        role: who.isAdmin ? "admin" : "user",
+      });
+      headers.cookie = `forge_grant_${record.id.slice(-8)}=${grant}`;
+    }
+    return fetch(`${servers.url}${path}`, { headers, redirect: "manual" });
+  };
+  /** The app's owner reading it: the one who is told the forge's phases. */
+  const viaHost = (path = "/") => asViewer(alice, path);
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-ptiming-"));
@@ -83,6 +102,13 @@ describe("a proxied answer's Server-Timing", () => {
     });
     if (!created.ok) throw new Error(created.error);
     alice = created.value;
+    const other = await createUser(app.db, { origin: "seed", trusted: true,
+      username: "bob",
+      email: "bob@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!other.ok) throw new Error(other.error);
+    bob = other.value;
     const made = await newApp(app, alice, { name: "hello", description: "d", visibility: "public" });
     if (!made.ok) throw new Error(String(made.error));
     repo = made.value.repo;
@@ -123,6 +149,27 @@ describe("a proxied answer's Server-Timing", () => {
     // Durations only: nothing of the host or the app's name.
     expect(header).toMatch(/^[a-z0-9.;=, -]+$/);
     expect(header).not.toContain("hello");
+  });
+
+  test("a visitor and a signed-in reader who may not write get the app's entries untouched", async () => {
+    for (const who of [undefined, bob]) {
+      for (const path of ["/healthz", "/"]) {
+        const res = await asViewer(who, path);
+        expect(res.status).toBe(200);
+        await res.text();
+        const header = res.headers.get("server-timing");
+        // Exactly what the app wrote: no forge- entry, and none of the forge's unnamed ones.
+        expect(header).toBe(path === "/healthz" ? "db;dur=0.1, app;dur=1.1" : null);
+      }
+    }
+  });
+
+  test("the writer's copy keeps the app's entries first, as the app wrote them", async () => {
+    const header = (await viaHost("/healthz")).headers.get("server-timing")!;
+    expect(header.split(", ").slice(0, 2)).toEqual(["db;dur=0.1", "app;dur=1.1"]);
+    expect(header.split(", ").slice(2).every((e) => e.startsWith("forge-"))).toBe(true);
+    for (const name of ["forge-route", "forge-lookup", "forge-session", "forge-lag", "forge-ttfb"])
+      expect(dur(header, name)).toBeDefined();
   });
 
   test("an app slow to its headers shows in forge-ttfb, which is forge-upstream", async () => {

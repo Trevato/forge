@@ -2456,8 +2456,10 @@ export async function serve(app: App): Promise<Servers> {
     finishedStrangerDeep(owner, request);
     try {
       const header = serverTiming(ms, takeDbTime(request), takePhases(request));
-      // `lag` is the loop's, not this request's: kept out of the record's phases.
-      response.headers.set("server-timing", withLag(header, currentLoopLag()));
+      // `lag` is the loop's, not this request's: kept out of the record's
+      // phases, and told only to an admin (#11112): how loaded the forge is
+      // is not a stranger's to read. /system reads it server-side.
+      response.headers.set("server-timing", tag.role === "admin" ? withLag(header, currentLoopLag()) : header);
       const end = performance.now();
       const family = familyOf(request.headers.get("user-agent") ?? "");
       perfRecord.add(

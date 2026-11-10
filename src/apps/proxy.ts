@@ -424,8 +424,8 @@ function sealedPull(runtime: AppsRuntime, target: AppTarget): Issue | undefined 
 
 /**
  * The response with the phases the request named, as `Server-Timing`: the
- * one writer for the proxy, on the forge's own `/__forge/*` pages and on a
- * relayed app answer alike. It appends, so an app's own entries stay first;
+ * one writer for the proxy, on the forge's own `/__forge/*` pages and, for
+ * a reader who may see them (`relayAnswer`), on a relayed app answer. It appends, so an app's own entries stay first;
  * on an app answer the forge's phases are `forge-` named (`relayPhase`) so
  * none can collide with the app's or with the server's `route`.
  */
@@ -445,6 +445,40 @@ function withPhases(request: Request, res: Response): Response {
   const theirs = res.headers.get("server-timing");
   res.headers.set("server-timing", theirs === null || theirs === "" ? mine : `${theirs}, ${mine}`);
   return res;
+}
+
+/**
+ * A relayed app answer, with the forge's phases only for a reader who may
+ * see them (#11112): someone who may write the app's repository, or a forge
+ * admin. Everyone else gets the app's own Server-Timing exactly as it came;
+ * how loaded the forge is and how long its lookups take are not a
+ * stranger's to read. The app's speed card and /system read the same
+ * numbers on the server side (`noteRelayWait`, the loop watch), never here.
+ */
+function relayAnswer(request: Request, res: Response): Response {
+  if (forgeReaders.has(request)) return withPhases(request, res);
+  takePhases(request);
+  stallFor.delete(request);
+  return res;
+}
+
+/** The requests whose reader is told the forge's phases (`relayAnswer`). */
+const forgeReaders = new WeakSet<Request>();
+
+/**
+ * Whether the grant names someone told the forge's phases on this app: an
+ * active person or agent who may write its repository, or a forge admin.
+ * A visitor with no grant is never asked about, so a stranger costs no read.
+ */
+function readsForgeTiming(runtime: AppsRuntime, target: AppTarget, who: GrantWho | undefined): boolean {
+  if (who === undefined) return false;
+  const db = runtime.app.db;
+  const viewer = getUserById(db, who.id);
+  if (viewer === undefined || !isActive(viewer)) return false;
+  // A forge admin, as `forgeAdmin` reads one: an agent never is.
+  if (viewer.isAdmin && viewer.kind !== "agent") return true;
+  const repo = getRepoById(db, target.app.repoId);
+  return repo !== undefined && canWrite(db, repo, viewer);
 }
 
 /**
@@ -1179,6 +1213,7 @@ export async function proxyApp(
       : admitted.error;
   const { status, port, grant: vouched } = admitted.value;
   runtime.touch(target.app, target.env);
+  if (readsForgeTiming(runtime, target, vouched?.who)) forgeReaders.add(request);
   const began = performance.now();
   // `route` split where it goes: the server finding the app (`lookup`), the
   // doors and the environment's state (`state`), the grant read (`session`).
@@ -1259,7 +1294,7 @@ export async function proxyApp(
   } catch {
     answered();
     relayUpstream(runtime, request, target, performance.now() - sent, vouched?.who);
-    return withPhases(request, unavailable(runtime, target, status, "the app stopped answering"));
+    return relayAnswer(request, unavailable(runtime, target, status, "the app stopped answering"));
   }
   relayUpstream(runtime, request, target, performance.now() - sent, vouched?.who);
   const out = new Headers(response.headers);
@@ -1302,7 +1337,7 @@ export async function proxyApp(
         // past that it goes on as it came, what was read first.
         const read = await readPage(response.body);
         if (!read.whole)
-          return withPhases(
+          return relayAnswer(
             request,
             new Response(read.rest, {
               status: response.status,
@@ -1314,7 +1349,7 @@ export async function proxyApp(
       }
       relayPhase(request, "body", performance.now() - rewriting);
     } catch {
-      return withPhases(request, unavailable(runtime, target, status, "the app stopped answering"));
+      return relayAnswer(request, unavailable(runtime, target, status, "the app stopped answering"));
     }
     // A signed-in person's page load gets the panel's one-use proof, and so
     // is theirs alone: never stored or shared. A page the app's own script
@@ -1369,11 +1404,11 @@ export async function proxyApp(
         out.delete("content-length");
         out.delete("content-encoding");
         relayPhase(request, "rewrite", performance.now() - rewriting);
-        return withPhases(request, new Response(null, { status: 304, headers: out }));
+        return relayAnswer(request, new Response(null, { status: 304, headers: out }));
       }
     }
     relayPhase(request, "rewrite", performance.now() - rewriting);
-    return withPhases(
+    return relayAnswer(
       request,
       new Response(sent, {
         status: response.status,
@@ -1382,7 +1417,7 @@ export async function proxyApp(
       }),
     );
   }
-  return withPhases(
+  return relayAnswer(
     request,
     new Response(body, {
       status: response.status,
