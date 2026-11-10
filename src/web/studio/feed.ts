@@ -119,6 +119,7 @@ function likeBar(item: FeedItem): Html {
     <input type="hidden" name="item" value="${item.id}" />
     <input type="hidden" name="app" value="${item.app}" />
     <input type="hidden" name="back" value="/feed" />
+    <input type="hidden" name="act" value="${liked ? "unlike" : "like"}" />
     <button type="submit" class="btn" data-variant="ghost" data-size="sm" aria-pressed="${liked ? "true" : "false"}">Like <span data-likes>${likes}</span></button>
   </form>`;
 }
@@ -598,10 +599,11 @@ ${dayKeepJs}
     e.preventDefault();
     var was = btn.getAttribute('aria-pressed') === 'true';
     var n = Number(count.textContent) || 0;
-    var show = function (on, total) { btn.setAttribute('aria-pressed', on ? 'true' : 'false'); count.textContent = String(total); };
+    var show = function (on, total) { var a = form.querySelector('[name=act]'); if (a) a.value = on ? 'unlike' : 'like'; btn.setAttribute('aria-pressed', on ? 'true' : 'false'); count.textContent = String(total); };
+    var body = new URLSearchParams(new FormData(form)).toString();
     show(!was, Math.max(0, n + (was ? -1 : 1)));
     fetch(form.getAttribute('action'), { method: 'POST', credentials: 'same-origin', headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams(new FormData(form)).toString() })
+      body: body })
       .then(function (r) { if (!r.ok) throw r; return r.json(); })
       .then(function (a) { show(a.liked, a.likes); })
       .catch(function () { show(was, n); problem = 'The like was not saved. Check your connection and press Like again.'; paint(); });

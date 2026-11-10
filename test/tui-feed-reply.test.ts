@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openIssue } from "../src/actions/issues.ts";
 import { openPull } from "../src/actions/pulls.ts";
+import { readInteraction } from "../src/feed/interact.ts";
 import { readFeed } from "../src/feed/feed.ts";
 import { replyTarget } from "../src/feed/reply.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
@@ -172,6 +173,24 @@ test("l on a post the person cannot read likes nothing", async () => {
   const secret = forge.db.query<{ id: string }, []>("SELECT id FROM repo WHERE name = 'secret'").get()!.id;
   expect(forge.db.query("SELECT 1 FROM feed_like WHERE repo_id = ?1").get(secret)).toBeNull();
   t.stop();
+});
+
+test("h on a post lists who liked it and when, newest first, and shows nothing for a post the person cannot read", async () => {
+  const t = boot("alice");
+  await t.open();
+  await t.press(...downTo("alice", `/alice/open/pulls/${pullNumber}`));
+  await t.press("h");
+  expect(t.text()).toContain("nobody has liked it yet");
+  await t.press("esc");
+  await t.press("l");
+  await t.press("h");
+  expect(t.text()).toContain("alice  like");
+  
+  t.stop();
+  // The ledger read is gated by the same check: a post bob cannot read is refused.
+  const post = readFeed(forge.db, getUserByName(forge.db, "alice")!, { limit: 20 }).items.find((i) => i.app === "alice/secret")!;
+  const refused = readInteraction(forge.db, getUserByName(forge.db, "bob")!, { item: post.id, kind: "liked", app: post.app }, ["liked"]);
+  expect(refused.ok).toBe(false);
 });
 
 test("t switches the feed to every post, newest first, and back", async () => {

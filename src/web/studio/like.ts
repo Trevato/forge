@@ -5,7 +5,7 @@
  */
 
 import { readInteraction } from "../../feed/interact.ts";
-import { toggleLike } from "../../feed/likes.ts";
+import { setLike } from "../../feed/likes.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { backTo, field, readForm } from "../form.ts";
@@ -23,6 +23,8 @@ export async function likeSubmit(ctx: Ctx): Promise<Response> {
     ["liked"],
   );
   if (!act.ok) return notFoundPage(ctx);
-  const now = toggleLike(ctx.app.db, viewer.id, act.value.itemId, act.value.target.repoId);
+  // `act` names the wish ("like" unless it says "unlike"), so a repeat press is a no-op.
+  const wish = field(form, "act") === "unlike" ? "unlike" : "like";
+  const now = setLike(ctx.app.db, viewer.id, act.value.itemId, act.value.target.repoId, wish);
   return flashOrJson(ctx, backTo(form, "/feed"), { message: now.liked ? "Liked." : "Like taken back." }, { ...now });
 }

@@ -6,7 +6,8 @@
  * `addCommentThrough` the issue and pull screens call, offered on the same
  * posts to the same people as the page's Reply (`feed/reply.ts`). `l` likes
  * the post under the cursor and a second press takes it back: the page's
- * Like, behind the same `readInteraction` check (`feed/likes.ts`). Twenty
+ * Like, behind the same `readInteraction` check (`feed/likes.ts`); `h` lists
+ * who liked or unliked it and when, newest first, behind that check too. Twenty
  * posts at a time; `t` switches to every post, newest first (`readTimeline`); `n` reads the next page from the cursor the last returned.
  */
 
@@ -16,11 +17,13 @@ import { parseCursor, readFeed } from "../../feed/feed.ts";
 import { parseBefore, readTimeline, TIMELINE_START } from "../../feed/timeline.ts";
 import type { FeedItem } from "../../feed/rank.ts";
 import { readInteraction } from "../../feed/interact.ts";
-import { toggleLike } from "../../feed/likes.ts";
+import { likeLedger, toggleLike } from "../../feed/likes.ts";
 import { replyTarget } from "../../feed/reply.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
+import { style } from "../term/style.ts";
+import { truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { stepLine } from "../../flow/path.ts";
 import { emptyState } from "../ui/widgets.ts";
@@ -86,6 +89,24 @@ export function feedScreen(f: Session, ctx: Ctx): Screen {
     ctx.invalidate();
   };
 
+  /** `h`: the like ledger of the post under the cursor (who, act, when), newest first, `m` for older rows. */
+  let history: { item: string; lines: string[]; oldest: number; more: boolean } | null = null;
+  const showHistory = (more = false): void => {
+    const item = items[state.index];
+    if (item === undefined || f.user === undefined) return;
+    const act = readInteraction(f.db, f.user, { item: item.id, kind: "liked", app: item.app }, ["liked"]);
+    if (!act.ok) {
+      ctx.toast(act.error.message, "danger");
+      return;
+    }
+    const itemId = act.value.itemId;
+    const keep = more && history !== null && history.item === itemId ? history : null;
+    const page = likeLedger(f.db, itemId, keep?.oldest);
+    const lines = [...(keep?.lines ?? []), ...page.rows.map((r) => oneLine(`${r.who}  ${r.act}  ${r.at}`))];
+    history = { item: itemId, lines, oldest: page.rows.at(-1)?.seq ?? keep?.oldest ?? 0, more: page.more };
+    ctx.invalidate();
+  };
+
   const submit = (): void => {
     const at = selected();
     if (at === undefined) return;
@@ -110,6 +131,7 @@ export function feedScreen(f: Session, ctx: Ctx): Screen {
         binding(["j", "k"], "move"),
         ...(selected() === undefined ? [] : [binding(["r"], "reply")]),
         ...(items.length === 0 ? [] : [binding(["l"], "like")]),
+        ...(items.length === 0 ? [] : [binding(["h"], "who liked")]),
         ...(next === null ? [] : [binding(["n"], "next page")]),
         binding(["t"], timeline ? "ranked" : "newest first"),
         binding(["esc", "q"], "back"),
@@ -119,6 +141,14 @@ export function feedScreen(f: Session, ctx: Ctx): Screen {
       const c = ctx.theme.c;
       if (items.length === 0) {
         emptyState(s, area, c, { title: "Nothing in the feed yet", body: "Posts about the apps you can see land here." });
+        return;
+      }
+      if (history !== null) {
+        s.text(area.x, area.y, truncate("Likes on this post, newest first", area.w), style(c.fg, c.bg), area.x + area.w);
+        const body = history.lines.length === 0 ? ["nobody has liked it yet"] : history.lines;
+        body.slice(0, Math.max(0, area.h - 3)).forEach((line, i) =>
+          s.text(area.x + 1, area.y + 2 + i, truncate(line, area.w - 1), style(c.mutedFg, c.bg), area.x + area.w));
+        s.text(area.x, area.y + area.h - 1, truncate(history.more ? "m older · esc back" : "esc back", area.w), style(c.mutedFg, c.bg), area.x + area.w);
         return;
       }
       const [list, box] = split(area, "v", [fill(1), len(composer.height())]);
@@ -139,11 +169,18 @@ export function feedScreen(f: Session, ctx: Ctx): Screen {
         else if (out === "cancel") composer.close();
         return true;
       }
+      if (history !== null) {
+        if (e.key === "esc" || e.key === "q") history = null;
+        else if (e.key === "m" && history.more) showHistory(true);
+        ctx.invalidate();
+        return true;
+      }
       if (e.key === "esc" || e.key === "q") ctx.pop();
       else if (e.key === "r") {
         const at = selected();
         if (at !== undefined) composer.start(`Reply on ${at.thread.owner}/${at.thread.name} #${at.thread.number}`);
       } else if (e.key === "l") like();
+      else if (e.key === "h") showHistory();
       else if (e.key === "t") {
         timeline = !timeline;
         items.length = 0;
@@ -162,7 +199,7 @@ export function feedScreen(f: Session, ctx: Ctx): Screen {
 export const entry: PaletteEntry = {
   id: "feed",
   title: "Feed",
-  hint: "what happened, ranked; r replies on a post about an issue or pull, l likes",
+  hint: "what happened, ranked; r replies on a post about an issue or pull, l likes, h who liked",
   offered: (session) => session.user !== undefined,
   run: (session, ctx) => ctx.push(feedScreen(session, ctx)),
 };
