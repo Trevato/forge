@@ -50,7 +50,7 @@ import { canAdmin, canWrite, DECISIONS_BY, getRepoById, type Repo } from "../../
 import type { TreeEntry } from "../../git/read.ts";
 import { parseUnifiedDiff, type Diff } from "../../git/diff.ts";
 import { renderDiff as renderPatch } from "../ui/diff.ts";
-import { fileKind, kindByName, NO_BYTES } from "../../web/render/kinds.ts";
+import { fileKind, isEnvExample, kindByName, NO_BYTES } from "../../web/render/kinds.ts";
 import { downloadHref } from "../../web/pages/media.ts";
 import { isModelPath, modelFacts } from "../../web/render/model-facts.ts";
 import type { RepoFacts, RepoSource } from "../../view/source.ts";
@@ -66,6 +66,7 @@ import { RECORD_CAP, parseLcov, worstFirst, type Ratio } from "../../web/render/
 import { EVENT_CAP, parseIcs } from "../../web/render/ics.ts";
 import { fileSize } from "../../web/ui.ts";
 import { parseEml } from "../../web/render/eml-parse.ts";
+import { parseEnv, ROW_CAP as ENV_ROW_CAP } from "../../web/render/env.ts";
 import { CARD_CAP, parseVcf } from "../../web/render/vcf-parse.ts";
 import { CUE_CAP, parseSubtitles } from "../../web/render/subtitles.ts";
 import { isJsonlPath, kindView, type KindLines } from "./workspace_kinds.ts";
@@ -369,6 +370,21 @@ function vcfTable(source: string): Table | null {
     delimiter: ",",
     columns: 4,
   };
+}
+
+/** The variables of a `.env.example` as a table; null when it holds none. Shares the web's parser. */
+function envTable(source: string): Table | null {
+  const doc = parseEnv(source);
+  if (doc.total === 0) return null;
+  const dash = (v: string): string => (v === "" ? "—" : v);
+  const rows: string[][] = [];
+  let last = "";
+  for (const r of doc.rows.slice(0, ENV_ROW_CAP)) {
+    if (r.group !== "" && r.group !== last) rows.push([`# ${r.group}`, "", ""]);
+    last = r.group;
+    rows.push([r.name, dash(r.value), dash(r.comment)]);
+  }
+  return { header: ["Name", "Example", "Comment"], rows, more: doc.total - doc.rows.length, delimiter: ",", columns: 3 };
 }
 
 /** `.eml`: a message, drawn as rows of its headers, body and attachments. */
@@ -682,6 +698,9 @@ class Tab {
       if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isVcfPath(this.path)) {
       this.table = vcfTable(new TextDecoder().decode(source));
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isEnvExample(this.path)) {
+      this.table = envTable(new TextDecoder().decode(source));
       if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isEmlPath(this.path)) {
       this.table = emlTable(source);

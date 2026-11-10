@@ -635,6 +635,25 @@ describe("the terminal workspace", () => {
     }
   });
 
+  test("a .env.example opens as a table with secrets masked, and s flips to the source", async () => {
+    const made = await createRepo(forge, alice, { name: "envrepo", visibility: "public", description: "tests" });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, { message: "seed", files: [{ path: ".env.example", content: "# Port to listen on\nPORT=3000\nAPI_KEY=sk-live-abc\n" }] });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "envrepo");
+      await openFile(h, ".env.example");
+      expect(h.text()).toContain("Port to listen on");
+      expect(h.text()).toContain("•••");
+      expect(h.text()).not.toContain("sk-live-abc");
+      await h.press("s");
+      expect(h.text()).toContain("API_KEY=sk-live-abc");
+    } finally {
+      h.stop();
+    }
+  });
+
   test("a JUnit-named file that is not a report opens as source and says why", async () => {
     const made = await createRepo(forge, alice, { name: "badjunit", visibility: "public", description: "tests" });
     if (!made.ok) throw new Error("repo failed");

@@ -40,6 +40,10 @@ A .zip, .tar or .tar.gz is drawn by `src/web/render/archive-view.ts` as the exis
 
 `src/web/render/junit.ts` draws the totals as a plain line, opened by one sentence of what the file is, then per suite an `h3`, one existing `.table` (`data-dense`) of its failing cases with each body in a `pre` below, and the passing cases inside one native `details`. `.junit-view` is only a hook on the wrapper and has no rule. The XML reader is its own: no DOCTYPE, no entity but the five predefined, at most 2,000 cases drawn (failing first). How it works: `docs/features/file-junit.md`.
 
+## Environment example (.env.example)
+
+`src/web/render/env.ts` draws one existing `.table` (`data-dense`): name, example, comment, with group headings as full-width `th` rows. `.env-view` is only a hook on the wrapper and has no rule. How it works: `docs/features/file-env.md`.
+
 ## OpenAPI operations (openapi.json, *.openapi.yaml)
 
 `src/web/render/openapi.ts` draws one `h3` per tag and under it one existing `.table` (`data-dense`) of method, path, summary and a `deprecated` mark; the cap line is a `muted small` paragraph. `.openapi-view` is only a hook on the wrapper and has no rule. How it works: `docs/features/file-openapi.md`.
