@@ -64,8 +64,8 @@ function refusal(body: Record<string, unknown>): { key?: string; text: string } 
   return m && body["error"] === "invalid" ? { key: m[1]!, text: m[2]! } : { text };
 }
 
-export function newForgeScreen(f: Session, ctx: Ctx): Screen {
-  const values: Record<string, string> = {};
+export function newForgeScreen(f: Session, ctx: Ctx, initial: Record<string, string> = {}): Screen {
+  const values: Record<string, string> = { ...initial };
   let focus = 0;
   let errorKey: string | undefined;
   let error: string | undefined;

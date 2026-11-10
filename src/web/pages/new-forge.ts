@@ -9,6 +9,7 @@
  * shown once, in the answer's body — never in a URL, never cached.
  */
 
+import { getPack, resolveRepos } from "../../packs/curated.ts";
 import { listAgents } from "../../core/agents.ts";
 import { listReposVisibleTo } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
@@ -20,6 +21,7 @@ import {
   LEFT_BEHIND,
   MAX_FOR_CHARS,
   MAX_FRESH_CHARS,
+  MAX_DIRECTION_CHARS,
   MAX_BUDGET_USD,
   MIN_BUDGET_USD,
 } from "../../spawn/plan.ts";
@@ -440,6 +442,19 @@ function madeView(body: Record<string, unknown>): Html {
 const asBool = (form: Form, name: string): boolean =>
   field(form, name) === "on";
 
+/**
+ * `?pack=name`: the pack as it stands now, as the form's starting values (its
+ * public, readable repos ticked and its crew brief as the direction). The
+ * form is then what is posted, so a later edit of the pack changes nothing
+ * about a forge started from this one.
+ */
+function fromPack(ctx: Ctx, user: User | undefined): Partial<Values> {
+  const pack = getPack(ctx.app.db, ctx.url.searchParams.get("pack") ?? "");
+  if (pack === undefined) return {};
+  const apps = resolveRepos(ctx.app.db, pack, user).filter((r) => r.left === undefined).map((r) => r.full);
+  return { apps, direction: pack.brief.slice(0, MAX_DIRECTION_CHARS) };
+}
+
 // GET /forges/new — any signed-in person, or a stranger (agents are refused).
 export function newForgePage(ctx: Ctx): Response {
   const user = ctx.auth.user;
@@ -450,7 +465,7 @@ export function newForgePage(ctx: Ctx): Response {
   const response = page({
     ctx,
     title: "New forge",
-    body: formView(ctx, user, { ...EMPTY, name: (ctx.url.searchParams.get("name") ?? "").slice(0, 38) }, {}, null, reads),
+    body: formView(ctx, user, { ...EMPTY, name: (ctx.url.searchParams.get("name") ?? "").slice(0, 38), ...fromPack(ctx, user) }, {}, null, reads),
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;

@@ -348,6 +348,7 @@ import { passportRoutes } from "./passport_edge.ts";
 import { egressGrantRoutes } from "./api/egress_grants.ts";
 import { printRoutes } from "./api/print.ts";
 import { forgeRoutes } from "./api/forges.ts";
+import { packRoutes } from "./api/packs.ts";
 import { forgeViewRoutes } from "./api/forge_view.ts";
 import { economicsRoutes } from "./api/economics.ts";
 import { releasesRoutes } from "./api/releases.ts";
@@ -3581,6 +3582,7 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   forgeRoutes(router);
+  packRoutes(router);
   forgeViewRoutes(router);
   economicsRoutes(router);
   releasesRoutes(router);

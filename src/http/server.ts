@@ -294,7 +294,7 @@ import { HOME_REGIONS } from "../web/studio/home_last.ts";
 import { serviceWorker } from "../web/sw.ts";
 import { explorePage } from "../web/studio/explore.ts";
 import { isPacksMirror, MIRROR_PUSH_REFUSED } from "../packs/owner.ts";
-import { packPage, packsMirror, packsPage } from "../web/pages/packs.ts";
+import { packEdit, packNew, packPage, packRepos, packsMirror, packsPage } from "../web/pages/packs.ts";
 import {
   makeItYoursPage,
   makeItYoursReceipt,
@@ -849,6 +849,9 @@ export function buildRouter(): Router<Handler> {
   // Forge packs: premade forges to deploy, and the way to help build their apps.
   router.add("GET", "/packs", packsPage);
   router.add("POST", "/packs/mirror", packsMirror);
+  router.add("POST", "/packs/new", packNew);
+  router.add("POST", "/packs/:name/edit", packEdit);
+  router.add("POST", "/packs/:name/repos", packRepos);
   router.add("GET", "/packs/:name", packPage);
   router.add("POST", "/front", frontUpdate);
   router.add("POST", "/home/archive", homeArchive);

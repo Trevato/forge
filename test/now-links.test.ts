@@ -111,7 +111,7 @@ const MENU_TITLES: Record<string, string> = {
   Notes: "Notes",
   Talk: "Talk",
   Explore: "Explore",
-  Packs: "Forge packs",
+  Packs: "Packs",
   Displays: "Displays",
   Map: "Map",
   "New app": "New app",

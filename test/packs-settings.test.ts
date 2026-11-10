@@ -45,8 +45,11 @@ const listed = async () => await (await fetch(`${servers.url}/packs`)).text();
 
 test("nothing is marked, so /packs lists no pack even though the repos exist", async () => {
   const text = await listed();
+  // the deployable packs (a pack.json in a marked repo) are listed apart from the curated cards
+  expect(text).not.toContain("Deploy on your own machine");
   expect(text).not.toContain(`href="/packs/games"`);
-  expect(text).not.toContain(`href="/packs/business"`);
+  // the seeded curated Business pack is a page of its own, with no deploy command: it is not a marked pack.json
+  expect(text).toContain(`href="/packs/business"`);
 });
 
 test("only an admin sees the page or saves; a cross-origin post is refused", async () => {
@@ -61,8 +64,8 @@ test("a save lists exactly the marked repo, at once, and keeps the change", asyn
   expect(res.status).toBe(303);
   const text = await listed();
   expect(text).toContain(`href="/packs/games"`);
-  expect(text).not.toContain(`href="/packs/business"`);
-  expect((await fetch(`${servers.url}/packs/business`)).status).toBe(404);
+  expect(await (await fetch(`${servers.url}/packs/business`)).text()).not.toContain("scripts/pack.ts deploy business");
+  expect((await fetch(`${servers.url}/packs/games`)).status).toBe(200);
   const changes = app.db.query<{ to_value: string }, []>("SELECT to_value FROM forge_setting_change WHERE key = 'packs.repos'").all();
   expect(changes.at(-1)!.to_value).toBe('["packs/games"]');
   const page = await (await fetch(`${servers.url}/settings/packs`, { headers: { cookie: admin } })).text();
