@@ -80,6 +80,20 @@ export function realHands(url: string, token: string, options: HandsOptions = {}
       const me = await api.whoami();
       return me.ok && me.value.username !== "" ? { ok: false, exists, why: e.message, owner: me.value.username } : { ok: false, exists, why: e.message };
     },
+    async forkFrom(source, name) {
+      const r = await fetch(`${url}/api/v1/repos/${source}/forks`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ name }),
+      }).catch(() => null);
+      if (r === null) return { ok: false, exists: false, why: `cannot reach ${url}` };
+      const body = (await r.json().catch(() => null)) as { ownerName?: unknown; name?: unknown; message?: unknown } | null;
+      if (r.ok && typeof body?.ownerName === "string") return { ok: true, owner: body.ownerName };
+      const why = typeof body?.message === "string" ? body.message : `the forge answered ${r.status}`;
+      if (r.status !== 409) return { ok: false, exists: false, why };
+      const me = await api.whoami();
+      return me.ok && me.value.username !== "" ? { ok: false, exists: true, why, owner: me.value.username } : { ok: false, exists: true, why };
+    },
     async defaultBranch(owner, name) {
       const r = await fetch(`${url}/api/v1/repos/${owner}/${name}`, { headers: { authorization: `Bearer ${token}` } }).catch(() => null);
       const body = r?.ok ? ((await r.json().catch(() => null)) as { defaultBranch?: unknown } | null) : null;

@@ -34,7 +34,9 @@ describe("pack definition", () => {
   });
   test("sources are public https repositories without credentials", () => {
     expect(sourceOf("https://github.com/a/b.git")).toBe("https://github.com/a/b");
-    for (const bad of ["http://github.com/a/b", "https://u:p@github.com/a/b", "git@github.com:a/b", "https://github.com/a", "https://github.com/a/b?x=1", "file:///etc"])
+    expect(sourceOf("trevato/forge")).toBe("trevato/forge");
+    expect(parse({ ...good, apps: [{ name: "one", description: "d", source: "trevato/forge" }] }).ok).toBe(true);
+    for (const bad of ["a/b/c", "/a", "a/", "../x", "http://github.com/a/b", "https://u:p@github.com/a/b", "git@github.com:a/b", "https://github.com/a", "https://github.com/a/b?x=1", "file:///etc"])
       expect(sourceOf(bad)).toBeUndefined();
   });
   test("each field is checked", () => {
@@ -57,6 +59,9 @@ describe("pack absorb", () => {
     for (const v of ["yes", 1, {}, null]) expect(withAbsorb(v).ok).toBe(false);
   });
   const hands = (calls: string[], absorbed: { ok: boolean }): Hands => ({
+    async forkFrom() {
+      return { ok: false, exists: false, why: "unused" };
+    },
     async makeApp(name) {
       return name === "kept" ? { ok: false, exists: true, why: "x", owner: "me" } : { ok: true, owner: "me" };
     },
@@ -119,6 +124,9 @@ describe("deploy", () => {
       async carryHistory(source, owner, name) {
         calls.push(`history ${source} -> ${owner}/${name}`);
         return { ok: true };
+      },
+      async forkFrom() {
+        return { ok: false, exists: false, why: "unused" };
       },
       async defaultBranch() {
         return "main";
