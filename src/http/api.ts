@@ -327,6 +327,8 @@ import {
   respondAccess,
   str,
   unauthorized,
+  tryAgain,
+  retryAfterOf,
 } from "./respond.ts";
 import {
   explorePage,
@@ -1174,11 +1176,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
     const slot = signupSlot(ctx);
     if (typeof slot === "number")
-      return json(
-        { error: "rate_limited", message: "too many sign-ups; wait and send again" },
-        429,
-        { "retry-after": String(slot) },
-      );
+      return tryAgain("rate_limited", 429, "too many sign-ups; wait and send again", slot);
     // Anyone may call this, so its body is a stranger's (`http/limits.ts`).
     const input = await boundedBody(ctx.request, STRANGER_MAX);
     if (input === "too_large")
@@ -1386,7 +1384,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!minted.ok && minted.error === "invalid_via")
       return apiError("invalid_conversation", 422, "not a conversation of yours");
     if (!minted.ok && minted.error === "rate_limited")
-      return json({ error: "rate_limited", message: "too many conversation tokens are alive; wait for one to expire" }, 429, { "retry-after": "60" });
+      return tryAgain("rate_limited", 429, "too many conversation tokens are alive; wait for one to expire", 60);
     if (!minted.ok) return unauthorized();
     return json(minted.value, 201);
   });
@@ -1430,7 +1428,7 @@ export function apiRoutes(router: Router<Handler>): void {
     );
     // The throttle is in the action, before the code is read (H2's shape).
     if (!made.ok && made.error === "rate_limited")
-      return json({ error: made.error, message: FIRST_ADMIN_WORDS[made.error] }, 429, { "retry-after": "60" });
+      return tryAgain(made.error, 429, FIRST_ADMIN_WORDS[made.error], 60);
     if (!made.ok)
       return apiError(made.error, made.error === "refused" ? 403 : 422, FIRST_ADMIN_WORDS[made.error]);
     return json(
@@ -1465,7 +1463,7 @@ export function apiRoutes(router: Router<Handler>): void {
       address: clientAddress(ctx.request),
     });
     if (!recovered.ok && recovered.error === "rate_limited")
-      return json({ error: recovered.error, message: FIRST_ADMIN_WORDS.rate_limited }, 429, { "retry-after": "60" });
+      return tryAgain(recovered.error, 429, FIRST_ADMIN_WORDS.rate_limited, 60);
     if (!recovered.ok) return apiError("refused", 403, FIRST_ADMIN_WORDS.refused);
     const { user, id, token, expiresAt } = recovered.value;
     return json({ user: publicUser(user), scope, id, token, expiresAt, expiresIn }, 201);
@@ -1529,9 +1527,7 @@ export function apiRoutes(router: Router<Handler>): void {
       cleanQuery(query) !== "";
     const held = greps ? strangerCodeSearch(ctx.app, ctx.request) : undefined;
     if (held !== undefined && !held.allowed) {
-      const refused = apiError("rate_limited", 429, `${held.why}; sign in, or retry in ${held.retryAfter}s`);
-      refused.headers.set("retry-after", String(held.retryAfter));
-      return refused;
+      return tryAgain("rate_limited", 429, `${held.why}; sign in, or retry in ${retryAfterOf(held.retryAfter)}s`, held.retryAfter);
     }
     try {
       const input = {
@@ -3469,13 +3465,13 @@ export function apiRoutes(router: Router<Handler>): void {
     });
     if (!made.ok)
       return made.error.kind === "limit"
-        ? json(
-            {
-              error: "limit",
-              message: `at most ${COPIES_PER_DAY} copies a day; another after ${made.error.resetsAt}`,
-              resetsAt: made.error.resetsAt,
-            },
+        ? tryAgain(
+            "limit",
             429,
+            `at most ${COPIES_PER_DAY} copies a day; another after ${made.error.resetsAt}`,
+            (Date.parse(String(made.error.resetsAt)) - Date.now()) / 1000,
+            {},
+            { resetsAt: made.error.resetsAt },
           )
         : made.error.kind === "repository_limit"
         ? apiError("repository_limit", 403, made.error.message)

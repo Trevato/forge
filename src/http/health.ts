@@ -102,7 +102,7 @@ export function liveResponse(ping: () => unknown, log: Log, loopLagMs?: number):
         error: error instanceof Error ? error.message : String(error),
       });
     databaseDown = true;
-    return new Response("database", { status: 503 });
+    return new Response("database", { status: 503, headers: { "retry-after": "5" } });
   }
   if (databaseDown) log.info("forge alive again: the database answers");
   databaseDown = false;
@@ -142,9 +142,9 @@ export function drainLingerMs(raw: string | undefined): number | null {
  * drains.
  */
 export function readyResponse(now = Date.now()): Response {
-  if (health.draining) return new Response("draining", { status: 503 });
+  if (health.draining) return new Response("draining", { status: 503, headers: { "retry-after": "5" } });
   const waiting = stillStarting(now);
   return waiting > 0
-    ? new Response(`starting ${waiting} app${waiting === 1 ? "" : "s"}`, { status: 503 })
+    ? new Response(`starting ${waiting} app${waiting === 1 ? "" : "s"}`, { status: 503, headers: { "retry-after": "5" } })
     : new Response("ok", { status: 200 });
 }

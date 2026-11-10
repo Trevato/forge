@@ -10,8 +10,11 @@ import { getAppByRepo } from "../../core/apps.ts";
 import { loadRepo } from "../api.ts";
 import type { Ctx, Handler } from "../context.ts";
 import { holds, weakEtag } from "../etag.ts";
-import { apiError, forbidden, json, notFound, requireScope } from "../respond.ts";
+import { forbidden, json, notFound, requireScope, tryAgain } from "../respond.ts";
 import type { Router } from "../router.ts";
+
+/** Moderation needs the builders, who are away just now; no clock says when they are back, so a short stated guess. */
+const NOTES_RETRY = 30;
 
 /** The repository and its app, or the refusal. */
 function target(ctx: Ctx) {
@@ -55,7 +58,7 @@ function moderation(action: "hide" | "ban" | "unban"): Handler {
     if (!done.ok) {
       if (done.error === "forbidden") return forbidden();
       if (done.error === "not_found") return notFound();
-      return apiError("unavailable", 503, "that could not be done just now");
+      return tryAgain("unavailable", 503, "that could not be done just now", NOTES_RETRY);
     }
     const note = ownerNote(ctx.app, t.record, t.repo, ctx.auth.user, id);
     return note === undefined ? notFound() : json(note);

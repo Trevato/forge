@@ -7,7 +7,7 @@
 import { PRINT_WORDS, PDF_MAX_BYTES, permitPrint, printFor, releasePermit, type PrintError } from "../../devices/print.ts";
 import type { Handler } from "../context.ts";
 import { readBounded } from "../limits.ts";
-import { apiError, json, unauthorized } from "../respond.ts";
+import { apiError, json, tryAgain, unauthorized, untilNextDay, WINDOW } from "../respond.ts";
 import type { Router } from "../router.ts";
 import { tokenSecret } from "../token_header.ts";
 
@@ -23,6 +23,13 @@ const STATUS: Record<PrintError, number> = {
   printer_refused: 502,
 };
 
+/** A print refusal; the two 429s say when: the minute's window, or the next UTC day for the daily cap. */
+function printRefusal(error: PrintError): Response {
+  if (error === "rate_limited") return tryAgain(error, 429, PRINT_WORDS[error], WINDOW.minute);
+  if (error === "daily_cap") return tryAgain(error, 429, PRINT_WORDS[error], untilNextDay());
+  return apiError(error, STATUS[error], PRINT_WORDS[error]);
+}
+
 export function printRoutes(router: Router<Handler>): void {
   router.add("POST", "/api/v1/devices/:id/print", async (ctx) => {
     const secret = tokenSecret(ctx.request.headers.get("authorization") ?? "");
@@ -30,7 +37,7 @@ export function printRoutes(router: Router<Handler>): void {
     const id = /^\d{1,9}$/.test(ctx.params["id"] ?? "") ? Number(ctx.params["id"]) : Number.NaN;
     // Who and where first; the body (up to 10 MB) is read only for a granted app.
     const permit = permitPrint(ctx.app, secret, id);
-    if (!permit.ok) return apiError(permit.error, STATUS[permit.error], PRINT_WORDS[permit.error]);
+    if (!permit.ok) return printRefusal(permit.error);
     // The permit holds a place until printFor, or here when the body never gets that far.
     let pdf: Awaited<ReturnType<typeof readBounded>>;
     try {
@@ -44,7 +51,7 @@ export function printRoutes(router: Router<Handler>): void {
       return apiError("too_large", 422, PRINT_WORDS.too_large);
     }
     const done = await printFor(ctx.app, permit.value, pdf);
-    if (!done.ok) return apiError(done.error, STATUS[done.error], PRINT_WORDS[done.error]);
+    if (!done.ok) return printRefusal(done.error);
     return json({ job: { id: done.value.id, state: done.value.state, reasons: done.value.reasons } });
   });
 }

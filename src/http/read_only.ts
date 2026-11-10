@@ -40,7 +40,7 @@ export function readOnlyRefusal(request: Request): Response | undefined {
   const headers = { ...MAINTENANCE_HEADERS };
   if (wantsJson) {
     headers["content-type"] = "application/json; charset=utf-8";
-    return new Response(JSON.stringify({ error: "read_only", message: WORDS }), { status: 503, headers });
+    return new Response(JSON.stringify({ error: "read_only", message: WORDS, retryAfter: Number(MAINTENANCE_HEADERS["retry-after"]) }), { status: 503, headers });
   }
   headers["content-type"] = "text/plain; charset=utf-8";
   return new Response(`${WORDS}: this forge is serving reads while the main one is away; nothing can be changed here.\n`, {

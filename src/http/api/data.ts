@@ -17,7 +17,8 @@ import {
 } from "../../data/repo_scope.ts";
 import { loadRepo } from "../api.ts";
 import type { Ctx, Handler } from "../context.ts";
-import { apiError, body, json, notFound, requireScope } from "../respond.ts";
+import { QUERY_TIMEOUT_MS } from "../../data/query.ts";
+import { apiError, body, json, notFound, requireScope, tryAgain } from "../respond.ts";
 import type { Router } from "../router.ts";
 
 const PRIVATE = { "cache-control": "private, no-store", vary: "authorization, cookie" };
@@ -74,8 +75,10 @@ export function dataRoutes(router: Router<Handler>): void {
     const result = await runSql(ctx.app, user, found.source, input["sql"]);
     if (!result.ok) {
       if (result.error === "rate")
-        return json({ error: "rate_limited", message: result.message, retryAfter: result.retryAfter }, 429, { ...PRIVATE, "retry-after": String(result.retryAfter) });
-      return apiError(result.error === "busy" ? "busy" : result.error === "timeout" ? "timeout" : "invalid_sql", result.error === "busy" ? 429 : 422, result.message);
+        return tryAgain("rate_limited", 429, result.message, result.retryAfter, PRIVATE);
+      // Every worker is taken; one frees within the query timeout at the latest.
+      if (result.error === "busy") return tryAgain("busy", 429, result.message, QUERY_TIMEOUT_MS / 1000, PRIVATE);
+      return apiError(result.error === "timeout" ? "timeout" : "invalid_sql", 422, result.message);
     }
     return reply(result);
   });

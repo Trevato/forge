@@ -19,10 +19,37 @@ export function json(
   status = 200,
   headers: Record<string, string> = {},
 ): Response {
+  // The floor under every 429 and 503: a wait is always named, in the header
+  // and in the body, even where a site did not say how long (docs/MCP.md).
+  if (status === 429 || status === 503) {
+    const named = Object.entries(headers).find(([k]) => k.toLowerCase() === "retry-after")?.[1];
+    const wait = retryAfterOf(named === undefined ? 60 : Number(named));
+    headers = { ...Object.fromEntries(Object.entries(headers).filter(([k]) => k.toLowerCase() !== "retry-after")), "retry-after": String(wait) };
+    if (typeof data === "object" && data !== null && !Array.isArray(data) && !("retryAfter" in data))
+      data = { ...data, retryAfter: wait };
+  }
   return new Response(JSON.stringify(data), {
     status,
     headers: { "content-type": "application/json", ...headers },
   });
+}
+
+/**
+ * A 429 or 503 that says for how long: an integer `Retry-After` header and the
+ * same seconds as `retryAfter` in the body, so an agent told to slow down
+ * knows when to come back (docs/MCP.md, "Slowing down").
+ */
+export const retryAfterOf = (seconds: number): number => Math.max(1, Math.ceil(Number.isFinite(seconds) ? seconds : 1));
+export function tryAgain(
+  code: string,
+  status: 429 | 503,
+  message: string,
+  seconds: number,
+  headers: Record<string, string> = {},
+  extra: Record<string, unknown> = {},
+): Response {
+  const wait = retryAfterOf(seconds);
+  return json({ error: code, message, ...extra, retryAfter: wait }, status, { ...headers, "retry-after": String(wait) });
 }
 
 /**
@@ -58,14 +85,7 @@ export const unauthorized = () =>
   );
 // A password door past the sign-in windows (`core/signin-window.ts`).
 export const tooManyAttempts = (retryAfter: number) =>
-  json(
-    {
-      error: "too_many_attempts",
-      message: `too many sign-in attempts: try again in ${retryAfter} s`,
-    },
-    429,
-    { "retry-after": String(retryAfter) },
-  );
+  tryAgain("too_many_attempts", 429, `too many sign-in attempts: try again in ${retryAfter} s`, retryAfter);
 export const FORBIDDEN_MESSAGE = "your credentials lack the scope for this action";
 export const forbidden = () => apiError("forbidden", 403, FORBIDDEN_MESSAGE);
 // A path matching no route at all — distinct from a missing resource, so a
@@ -391,3 +411,8 @@ export function paged<T>(
       items.length >= limit && last !== undefined ? cursorOf(last) : null,
   };
 }
+
+/** Seconds a limiter's window lasts, named where a site has no sharper figure. */
+export const WINDOW = { minute: 60, day: 86_400 } as const;
+/** Seconds until the next UTC midnight: when a per-day count starts over. */
+export const untilNextDay = (now = Date.now()): number => (WINDOW.day * 1000 - (now % (WINDOW.day * 1000))) / 1000;

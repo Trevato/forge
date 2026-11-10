@@ -18,7 +18,8 @@ import type { Result } from "../../kernel/result.ts";
 import { appJson, appLimitResponse, loadRepo } from "../api.ts";
 import type { Ctx, Handler } from "../context.ts";
 import { holds, weakEtag } from "../etag.ts";
-import { apiError, body, json, notFound, requireScope, respondAccess, str, unauthorized } from "../respond.ts";
+import { BUILD_ASKS_WINDOW_MS } from "../../actions/build_preview.ts";
+import { apiError, body, json, notFound, requireScope, respondAccess, str, tryAgain, unauthorized } from "../respond.ts";
 import type { Router } from "../router.ts";
 
 function appPatch(input: Record<string, unknown>): AppSettingsInput {
@@ -336,7 +337,7 @@ export function appRoutes(router: Router<Handler>): void {
     const preview = await previewBuild(ctx.app, ctx.auth.user, repo, sha);
     if (!preview.ok)
       return preview.error === "rate_limited"
-        ? json({ error: previewBuildRefusalText(preview.error) }, 429)
+        ? tryAgain("rate_limited", 429, previewBuildRefusalText(preview.error), BUILD_ASKS_WINDOW_MS / 1000)
         : respondAccess(preview.error, 422);
     return json({ env: preview.value.env, url: preview.value.url }, 201);
   });

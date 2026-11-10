@@ -540,6 +540,7 @@ import {
   securityFloor,
   privateWhenSignedIn,
   tooManyAttempts,
+  tryAgain,
 } from "./respond.ts";
 import { compress } from "./compress.ts";
 import { RateLimiter, type Verdict } from "../core/ratelimit.ts";
@@ -1776,10 +1777,11 @@ function tokenCredential(request: Request, auth: Auth): string | undefined {
 }
 
 const tooManyRequests = (verdict: Verdict): Response =>
-  apiError(
+  tryAgain(
     "rate_limited",
     429,
     `too many requests: ${verdict.limit} per minute per token — retry in ${verdict.retryAfter}s`,
+    verdict.retryAfter,
   );
 
 /**
@@ -1798,7 +1800,7 @@ function withRateHeaders(
     response.headers.set("x-ratelimit-remaining", String(verdict.remaining));
     response.headers.set("x-ratelimit-reset", String(verdict.reset));
     if (!verdict.allowed) {
-      response.headers.set("retry-after", String(verdict.retryAfter));
+      response.headers.set("retry-after", String(Math.max(1, Math.ceil(verdict.retryAfter))));
     }
   } catch {
     // An immutable header set is not worth failing a request over; the
@@ -2623,7 +2625,7 @@ export async function serve(app: App): Promise<Servers> {
           if (!may.ok) {
             const [status, text] =
               may.refusal === "not_found" ? [404, "not found"] : may.refusal === "busy" ? [429, "too many shells"] : [403, "forbidden"];
-            return securityFloor(new Response(text, { status }));
+            return securityFloor(new Response(text, { status, ...(status === 429 ? { headers: { "retry-after": "5" } } : {}) }));
           }
           // A machine's shell runs only where a cell holds it, asked at the
           // first shell rather than at boot; a test that set its own keeps them.
@@ -2913,10 +2915,11 @@ async function answerGet(
   if (verdict !== undefined && !verdict.allowed) {
     const refusal =
       credential === undefined
-        ? apiError(
+        ? tryAgain(
             "rate_limited",
             429,
             `too many requests without a token: ${verdict.limit} per minute — sign in, or retry in ${verdict.retryAfter}s`,
+            verdict.retryAfter,
           )
         : tooManyRequests(verdict);
     return withRateHeaders(refusal, verdict);
@@ -2927,10 +2930,11 @@ async function answerGet(
     : undefined;
   if (stranger !== undefined && !stranger.allowed) {
     return withRateHeaders(
-      apiError(
+      tryAgain(
         "rate_limited",
         429,
         `too many requests: ${stranger.limit} per minute from one source without a token — retry in ${stranger.retryAfter}s`,
+        stranger.retryAfter,
       ),
       stranger,
     );

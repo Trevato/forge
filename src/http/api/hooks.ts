@@ -14,7 +14,7 @@ import { getWebhook, listWebhooks, pingWebhook, recentDeliveries } from "../../c
 import { loadRepo, pageParams, slicePage } from "../api.ts";
 import type { Ctx, Handler } from "../context.ts";
 import { holds, weakEtag } from "../etag.ts";
-import { body, json, notFound, requireScope, respondAccess, str } from "../respond.ts";
+import { body, json, notFound, requireScope, respondAccess, str, tryAgain } from "../respond.ts";
 import type { Router } from "../router.ts";
 
 /**
@@ -64,11 +64,7 @@ export function hookRoutes(router: Router<Handler>): void {
     if (!hook) return notFound();
     const pinged = pingWebhook(ctx.app.db, `${ctx.params.owner}/${ctx.params.name}`, hook);
     if (!pinged.ok)
-      return json(
-        { error: "rate_limited", message: `too many pings: try again in ${pinged.error.retryAfter} s` },
-        429,
-        { "retry-after": String(pinged.error.retryAfter) },
-      );
+      return tryAgain("rate_limited", 429, `too many pings: try again in ${pinged.error.retryAfter} s`, pinged.error.retryAfter);
     return json({ id: pinged.value.id }, 202);
   });
 

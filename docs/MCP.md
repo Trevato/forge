@@ -15,6 +15,13 @@ for a tunnel and a forge that sleeps.
 - **The first call wakes it.** A forge scaled to zero is woken by the request
   like any page; a client's retry on a slow first answer is safe, because
   every write is an ordinary forge action and the reads change nothing.
+- **Slowing down is told in seconds.** Every 429 and 503 from the API and
+  `/mcp` carries an integer `Retry-After` header, and a JSON body names the
+  same seconds as `retryAfter`; wait that long. The answers that are not JSON
+  (`/healthz`, `/readyz`, a refused shell, the plain-text standby page) carry
+  the header alone. `test/retry-after.test.ts` checks every site in the code
+  and drives the token, stranger, code-search, sign-up and OAuth limits and
+  `/mcp` itself.
 - **A token, never a cookie.** `Authorization: Bearer <forge token>`. A
   browser session is refused even when signed in: a cookie is what a
   cross-site page could ride, and this door has no page. An `ro` token reads;

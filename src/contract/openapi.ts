@@ -127,7 +127,7 @@ export function openapi(origin: string, version: string): Record<string, unknown
       title: "forge",
       version,
       description:
-        "The routes the forge names to an agent. `not_found` means missing or not yours to see.",
+        "The routes the forge names to an agent. `not_found` means missing or not yours to see. Every 429 and 503 carries an integer `Retry-After` and `retryAfter` (the same seconds) in a JSON body.",
     },
     servers: [{ url: origin }],
     // The default: a bearer token. Open routes say `security: []`.

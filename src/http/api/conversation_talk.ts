@@ -33,8 +33,22 @@ import { fileQueued, queuedOf, turnRunning } from "../../crew/conversation.ts";
 import { crossOrigin, type Handler } from "../context.ts";
 import { holds, weakEtag } from "../etag.ts";
 import { readBounded } from "../limits.ts";
-import { apiError, boundedBody, forbidden, json, unauthorized } from "../respond.ts";
+import { apiError, boundedBody, forbidden, json, tryAgain, unauthorized, WINDOW } from "../respond.ts";
 import type { Router } from "../router.ts";
+
+/**
+ * Seconds to wait after each talk refusal that says wait. The per-minute
+ * limit and "busy" are a minute by their own words; the rest depend on a
+ * turn ending or an operator, so they are stated conservative guesses.
+ */
+const TALK_WAIT: Readonly<Record<string, number>> = {
+  rate_limited: WINDOW.minute,
+  busy: WINDOW.minute,
+  queue_full: 30,
+  resting: 300,
+  off: 300,
+};
+const talkWait = (error: string): number => TALK_WAIT[error] ?? WINDOW.minute;
 
 /** Room for the words at their cap even when every character is escaped. */
 const BODY_MAX = 128_000;
@@ -84,7 +98,7 @@ export function conversationTalkRoutes(router: Router<Handler>): void {
     const said = talk(ctx.app, user, text, files.value, during === "queue" ? "queue" : during === "steer" ? "interrupt" : "inject", named, typeof input["about"] === "string" ? input["about"] : null);
     if (!said.ok) {
       const [status, words] = TALK_WORDS[said.error];
-      return json({ error: said.error, message: words }, status, said.error === "rate_limited" || said.error === "busy" ? { "retry-after": "60" } : {});
+      return status === 429 || status === 503 ? tryAgain(said.error, status, words, talkWait(said.error)) : json({ error: said.error, message: words }, status);
     }
     return json(said.value.queued === undefined ? { how: said.value.how } : { how: said.value.how, queued: said.value.queued }, 202);
   });
@@ -104,7 +118,7 @@ export function conversationTalkRoutes(router: Router<Handler>): void {
     if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
     if (ctx.auth.via === "token" && !scopeAllows(ctx.auth.scope ?? "ro", "rw")) return forbidden();
     const stopped = stopTalk(ctx.app, user);
-    if (!stopped.ok) return json({ error: stopped.error, message: stopped.error === "idle" ? "no answer is running" : "the forge's agent is not running here" }, stopped.error === "idle" ? 409 : 503);
+    if (!stopped.ok) return stopped.error === "idle" ? json({ error: stopped.error, message: "no answer is running" }, 409) : tryAgain(stopped.error, 503, "the forge's agent is not running here", talkWait("off"));
     return json({ stopped: true }, 202);
   });
 
@@ -114,7 +128,7 @@ export function conversationTalkRoutes(router: Router<Handler>): void {
     if (user === undefined) return unauthorized();
     if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
     if (ctx.auth.via === "token" && !scopeAllows(ctx.auth.scope ?? "ro", "rw")) return forbidden();
-    if (!uploadLimiter(ctx.app).take(`upload:${user.id}`, "rw").allowed) return json({ error: "rate_limited", message: `at most ${UPLOADS_PER_MINUTE} files a minute` }, 429, { "retry-after": "60" });
+    if (!uploadLimiter(ctx.app).take(`upload:${user.id}`, "rw").allowed) return tryAgain("rate_limited", 429, `at most ${UPLOADS_PER_MINUTE} files a minute`, WINDOW.minute);
     const bytes = await readBounded(ctx.request, IMAGE_MAX);
     const refuse = (why: keyof typeof FILE_WORDS) => apiError(why, FILE_WORDS[why][0], FILE_WORDS[why][1]);
     if (bytes === "too_large") return refuse("too_large");
