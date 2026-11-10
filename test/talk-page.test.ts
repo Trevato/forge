@@ -12,7 +12,10 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { sayNo } from "../src/actions/conversation_confirms.ts";
+import { openIssue } from "../src/actions/issues.ts";
 import { clock, STREAMS_MAX } from "../src/web/pages/talk.ts";
+import { serveTalk } from "../src/tui/ssh-talk.ts";
+import { aboutLine, parseAbout } from "../src/core/talk_about.ts";
 import { appendTurn, listTurns, openConversation } from "../src/core/conversations.ts";
 import { hold, waitingFor } from "../src/core/fence.ts";
 import { getRepoById } from "../src/core/repos.ts";
@@ -660,5 +663,92 @@ describe("cost and context (#8822)", () => {
     const calm = await (await get("/talk", erin.value)).text();
     expect(calm).toContain("Context 20% full");
     expect(calm).not.toContain("A new conversation answers faster");
+  });
+});
+
+describe("?about= names the subject", () => {
+  const subject = (page: string) => /<p class="talk-about[^>]*>[^<]*<\/p>/.exec(page)?.[0];
+  test("parseAbout reads owner/repo and owner/repo#N, and nothing else", () => {
+    expect(parseAbout("a/b")).toEqual({ owner: "a", repo: "b" });
+    expect(parseAbout("a/b#12")).toEqual({ owner: "a", repo: "b", number: 12 });
+    for (const bad of ["../x", "a/b#x", "a/b#0", "a/b/c", "", "x".repeat(300), "a/b#1 "]) expect(parseAbout(bad)).toBeNull();
+    expect(parseAbout(null)).toBeNull();
+  });
+
+  test("a readable issue shows its title, escaped; a repository shows its name", async () => {
+    const made = await createRepo(app, alice, { name: "about-pub", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const issue = openIssue(app, alice, made.value, { title: "Fix <b>this</b>", body: "x" });
+    if (!issue.ok) throw new Error(String(issue.error));
+    const page = await (await get(`/talk?about=${encodeURIComponent(`alice/about-pub#${issue.value.number}`)}`, bob)).text();
+    expect(subject(page)).toContain(`About alice/about-pub#${issue.value.number}: Fix &lt;b&gt;this&lt;/b&gt;`);
+    expect(page).not.toContain("Fix <b>this</b>");
+    expect(subject(await (await get("/talk?about=alice/about-pub", bob)).text())).toContain("About alice/about-pub<");
+  });
+
+  test("a private repository names nothing for another person, and looks like one that does not exist", async () => {
+    const made = await createRepo(app, alice, { name: "about-priv", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    const issue = openIssue(app, alice, made.value, { title: "Secret title", body: "x" });
+    if (!issue.ok) throw new Error(String(issue.error));
+    const q = (v: string) => get(`/talk?about=${encodeURIComponent(v)}`, bob).then((r) => r.text());
+    const hidden = await q(`alice/about-priv#${issue.value.number}`);
+    expect(hidden).not.toContain("Secret title");
+    expect(subject(hidden)).toBeUndefined();
+    expect(hidden).toBe(await q("alice/no-such-repo#1"));
+    expect(await q("alice/about-priv")).toBe(await q("alice/no-such-repo"));
+    // Signed out the page sends to sign-in, which only echoes the asked URL: no repository is looked up.
+    const out = await get("/talk?about=alice/about-priv");
+    expect(out.status).toBe(303);
+    expect(out.headers.get("location")).toBe("/signin?next=%2Ftalk%3Fabout%3Dalice%2Fabout-priv");
+    expect(await out.text()).not.toContain("Secret title");
+    expect(await (await get(`/talk?about=${encodeURIComponent(`alice/about-priv#${issue.value.number}`)}`, alice)).text()).toContain("Secret title");
+    // The core lookup both doors share: the owner reads it, another person and nobody do not.
+    const ref = `alice/about-priv#${issue.value.number}`;
+    expect(aboutLine(app.db, ref, alice)).toBe(`About ${ref}: Secret title`);
+    expect(aboutLine(app.db, ref, bob)).toBeNull();
+    expect(aboutLine(app.db, ref, undefined)).toBeNull();
+    expect(aboutLine(app.db, "alice/about-priv", undefined)).toBeNull();
+    expect(aboutLine(app.db, "../x", alice)).toBeNull();
+  });
+
+  test("a malformed value is ignored: the page equals plain /talk", async () => {
+    const plain = await (await get("/talk", bob)).text();
+    for (const bad of ["../x", "a/b#x", "x".repeat(300)]) {
+      const res = await get(`/talk?about=${encodeURIComponent(bad)}`, bob);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe(plain);
+    }
+  });
+
+  test("a pull of a private repository names nothing for the person who cannot read it", async () => {
+    const made = await createRepo(app, alice, { name: "about-priv-pull", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    const issue = openIssue(app, alice, made.value, { title: "Secret pull", body: "x" });
+    if (!issue.ok) throw new Error(String(issue.error));
+    app.db.run("UPDATE issue SET kind = 'pull' WHERE id = ?", [issue.value.id]);
+    const ref = `alice/about-priv-pull#${issue.value.number}`;
+    const seen = await (await get(`/talk?about=${encodeURIComponent(ref)}`, bob)).text();
+    expect(seen).not.toContain("Secret pull");
+    expect(subject(seen)).toBeUndefined();
+    expect(seen).toBe(await (await get(`/talk?about=${encodeURIComponent("alice/none#1")}`, bob)).text());
+    expect(subject(await (await get(`/talk?about=${encodeURIComponent(ref)}`, alice)).text())).toContain("Secret pull");
+  });
+
+  test("the terminal prints the same gated line: `talk --about <ref>`", () => {
+    const run = (user: User | undefined, words: string) => {
+      let out = "";
+      let code: number | undefined;
+      const session = { write: (d: string) => void (out += d), writeStderr: () => {}, exit: (c: number) => void (code = c), onData() {}, onEof() {}, onClose() {} };
+      serveTalk(app, session as never, user, words);
+      return { out, code };
+    };
+    const priv = run(alice, "--about alice/about-priv#1");
+    expect(priv.code).toBe(0);
+    expect(priv.out.startsWith("About alice/about-priv#1: ")).toBe(true);
+    expect(run(bob, "--about alice/about-priv#1")).toEqual({ out: "", code: 0 });
+    expect(run(undefined, "--about alice/about-priv")).toEqual({ out: "", code: 0 });
+    expect(run(bob, "--about alice/about-pub").out).toBe("About alice/about-pub\r\n");
+    expect(run(bob, "--about ../x")).toEqual({ out: "", code: 0 });
   });
 });

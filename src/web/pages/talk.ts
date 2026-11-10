@@ -38,6 +38,7 @@ import {
   type Turn,
 } from "../../core/conversations.ts";
 import { contextOf, contextText, dollars, turnCosts, type Context } from "../../core/conversation_cost.ts";
+import { aboutLine as aboutText } from "../../core/talk_about.ts";
 import { WORDS_MAX } from "../../core/fence.ts";
 import { thinkingOf, worksOf, type Work } from "../../core/talk_work.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
@@ -69,6 +70,12 @@ const HERE = "/talk";
 /** Longest search typed, in characters. */
 const FIND_CHARS = 100;
 const CONVERSATION_ID = /^[0-9a-z]{1,40}$/;
+
+/** The one line naming what the talk is about (`core/talk_about.ts`), or nothing. */
+function aboutLine(ctx: Ctx): Html | null {
+  const line = aboutText(ctx.app.db, ctx.url.searchParams.get("about"), ctx.auth.user);
+  return line === null ? null : html`<p class="talk-about small muted" data-about>${line}</p>`;
+}
 
 /** What a conversation is called in a list: its title, else the day it began. */
 const nameOf = (c: Conversation): string => (c.title === "" ? `Chat of ${c.createdAt.slice(0, 10)}` : c.title);
@@ -316,6 +323,7 @@ function talkPage(ctx: Ctx, conversation: Conversation, before0: string | undefi
         </ol>
         <div id="end"></div>
       </div>
+      ${aboutLine(ctx)}
       <form class="talk-compose" id="compose" method="post" action="${editing === undefined ? here : `${here}/again/edit`}" ${editing === undefined ? null : html`data-edit`}>
         ${conversation.archivedAt === null ? null : html`<p class="small muted" data-archived-note>Archived: sending here keeps it archived; Restore puts it back in the list.</p>`}
         <p class="talk-status small muted" role="status" aria-live="polite">${running ? "The forge is answering…" : ""}</p>

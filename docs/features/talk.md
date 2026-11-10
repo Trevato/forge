@@ -18,6 +18,10 @@ A reply streams in over `GET /talk/stream?after=<turn id>` (server-sent events, 
 
 When the agent asks first (`needs_confirm`), the turn draws **Confirm** (the existing yes) and **Cancel** (a no: the confirm is spent, nothing runs, a turn says it was cancelled). A result shown once (an invite link) is drawn by Settings → Confirms instead, where Confirm leads.
 
+## Naming the subject: `?about=` and `--about`
+
+`/talk?about=owner/repo` or `/talk?about=owner/repo#N` (an issue or pull) puts one plain line above the composer: "About owner/repo" or "About owner/repo#N: <title>". The terminal twin is `ssh <forge> talk --about owner/repo[#N] [words]`: it prints the same line first, and with no words prints only that line. Both read one lookup, `aboutLine()` in `src/core/talk_about.ts`. A value that is malformed, names something unknown, or names something you cannot read (a private repository, a sealed issue, signed out) shows nothing and the page is byte-identical to plain `/talk`, so a private repository's existence is not revealed.
+
 ## Many conversations (#8814)
 
 A person has any number. `/talk` is their latest, with the list above it (newest activity first), **New**, and **Archived (n)** as the one filter (`/talk?archived=1`). Each opens at `/talk/<id>`, stable across reloads; Rename and Archive/Restore are plain forms (`POST /talk/:id/rename`, `/talk/:id/archive`, `POST /talk/new`), so they work without the script. Another person's id is 404 everywhere. A message with no conversation named goes to the latest one that is not archived.
