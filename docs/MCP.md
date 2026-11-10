@@ -208,7 +208,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `subscription_wake` | — | Admin: wake a resting subscription | 168 |
 | `subscriptions` | — | Claude accounts: scopes, budgets | 158 |
 | `sync` | — | Sync a mirror now; `originId` reconnects it | 197 |
-| `system` | — | The forge machine now: CPU, memory, disk, network | 193 |
+| `system` | `csp` | The forge machine now: CPU, memory, disk, network | 277 |
 | `take_back` | — | Open the pull that undoes a shipped pull | 219 |
 | `take_updates` | — | Take the parent forge's updates into a fork | 176 |
 | `teams` | — | Crew teams for person admins: charter, dial (0–100) and member agents | 338 |
@@ -273,6 +273,15 @@ a failure names the bytes over and the longest descriptions.
 each bug `{ repo, number, priority, dueAt }`, soonest due first, at most 100,
 from `src/flow/bugs.ts`. An admin sees every repository; anyone else only
 public ones, as the terminal's bugs screen does.
+
+`system` with `{ kind: "csp" }` is another (#10906): the last 24 hours of
+Content-Security-Policy violations browsers reported to `/csp-report`,
+`{ hours: 24, since, directives: [{ directive, n, newest }] }`, most first,
+counted per UTC hour so `n` holds only reports from `since` (the first whole
+hour inside the 24) on, `newest`
+the blocked host counted last, read by `violationsByDirective` in
+`src/http/csp_report.ts` as the security page reads its week. A forge admin
+only; anyone else is `forbidden`.
 
 `flow` with `{ q, action }` is the fleet's write door (#450): the plan
 `POST /api/v1/fleet/ops` answers for a dry run, `{ dryRun: true, query, kind,

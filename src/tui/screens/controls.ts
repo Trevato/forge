@@ -30,7 +30,7 @@ export function controlRows(dataDir: string, nowMs: number): ListRow[] {
 
 /** One row per directive the Content-Security-Policy blocked in the last 7 days; none when nothing was. */
 export function cspRows(db: Database, nowMs: number): ListRow[] {
-  return violationsByDirective(db, 7, new Date(nowMs)).map((w) => ({
+  return violationsByDirective(db, 7 * 24, new Date(nowMs)).map((w) => ({
     title: `Blocked by the page policy: ${w.directive}`,
     secondary: "",
     meta: `${w.n} in 7 days`,

@@ -240,7 +240,7 @@ function reportRow(dataDir: string, nowMs: number): Html {
 
 /** What browsers said the Content-Security-Policy blocked this week, by directive; nothing when nothing was. */
 function cspRow(db: Database, nowMs: number): Html | null {
-  const week = violationsByDirective(db, 7, new Date(nowMs));
+  const week = violationsByDirective(db, 7 * 24, new Date(nowMs));
   if (week.length === 0) return null;
   return statusRow(
     "Blocked by the page policy, 7 days",
