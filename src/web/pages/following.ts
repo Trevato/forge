@@ -37,7 +37,7 @@ import {
   type ParentReleases,
 } from "../../core/parent_releases.ts";
 import { running } from "../../kernel/version.ts";
-import { modeForm } from "./chain.ts";
+import { followModeWords } from "../../actions/follow_words.ts";
 import type { FollowMode } from "../../spawn/chain.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { convergeWords, followModeOf, takeOrTell, takeWords } from "../../actions/follow.ts";
@@ -371,8 +371,18 @@ export function followingCard(
   if (parent.detached === null && relation.action !== "none")
     prose.push(html`<p class="muted small">${relation.words}</p>`);
   if (foot !== null) prose.push(html`<p class="muted small">${foot}</p>`);
-  if (canAdmin(ctx.app.db, repo, ctx.auth.user) && writer)
-    prose.push(modeForm(base, following.mode, "How this fork follows its parent"));
+  const words = followModeWords(following.mode, parentName);
+  prose.push(
+    html`<p data-follow-mode="${following.mode}">
+      <strong>${words.line}</strong>.
+      ${canAdmin(ctx.app.db, repo, ctx.auth.user) && writer
+        ? btn(following.mode === "take-updates" ? "Only propose updates" : "Follow automatically", {
+            href: `/-/confirm?to=${encodeURIComponent(`${base}/following/mode/${words.other}`)}`,
+            size: "sm",
+          })
+        : null}
+    </p>`,
+  );
   if (followers > 0)
     rows.push(
       row({

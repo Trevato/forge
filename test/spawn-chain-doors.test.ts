@@ -185,7 +185,7 @@ describe("the chain at the MCP and terminal doors", () => {
     await owner.openChain();
     expect(owner.text()).toContain("follow mode");
     await owner.press("m");
-    await settleUntil(owner.app, `Now following in ${next} mode`);
+    await settleUntil(owner.app, next === "tell-me" ? "Proposes updates from its parent." : "Follows its parent automatically.");
     expect((await forgeLinkOf(child))?.mode).toBe(next);
     expect(events()).toBe(before + 1);
     owner.app.stop();

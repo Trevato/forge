@@ -1449,6 +1449,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/following", chainPage);
   router.add("POST", "/:owner/:name/following/sever", severSubmit);
   router.add("POST", "/:owner/:name/following/mode", modeSubmit);
+  router.add("POST", "/:owner/:name/following/mode/:mode", modeSubmit);
   router.add("POST", "/:owner/:name/following/take", takeSubmit);
   router.add("POST", "/:owner/:name/following/propose", proposeParentSubmit);
   router.add("POST", "/:owner/:name/following/check", checkSubmit);

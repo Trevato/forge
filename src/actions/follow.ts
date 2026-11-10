@@ -14,7 +14,7 @@ import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { chainOfRepo, forgeLinkOf, FOLLOW_MODES, isFollowMode, setChainMode, severChain, type FollowMode } from "../spawn/chain.ts";
 import { FAMILY_WORDS } from "./family_words.ts";
-import { FOLLOWS_NOTHING } from "./follow_words.ts";
+import { FOLLOWS_NOTHING, followModeWords } from "./follow_words.ts";
 import { forkFollowMode, setForkFollowMode } from "../core/fork_follow.ts";
 import { requireUser } from "./access.ts";
 import { takeFromParent, type Taken } from "../spawn/take.ts";
@@ -144,6 +144,13 @@ export async function setFollowMode(
     payload: { repo: `${repo.ownerName}/${repo.name}`, mode },
   });
   return ok(mode);
+}
+
+/** The sentence every door answers a mode change with. */
+export function followModeSaid(parent: Repo | undefined, mode: FollowMode): string {
+  const upstream = parent === undefined ? "its parent" : `${parent.ownerName}/${parent.name}`;
+  const words = followModeWords(mode, upstream);
+  return `${words.line}. ${words.reason}`;
 }
 
 /** What the crew did about a conflict, in a sentence; `danger` when nothing is in hand. */

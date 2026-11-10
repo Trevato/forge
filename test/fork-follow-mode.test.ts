@@ -126,10 +126,10 @@ describe("the terminal", () => {
   test("the owner sees the mode and flips it with m", async () => {
     must(await setFollowMode(app, users["bea"]!, fork, "tell-me"));
     const before = await open("bea", "");
-    expect(before).toContain("tells you");
+    expect(before).toContain("Proposes updates from");
     expect(before).toContain("follow mode");
     const after = await open("bea", "m");
-    expect(after).toContain("takes updates");
+    expect(after).toContain("Follows ann/yard automatically");
     expect(forkFollowMode(app.db, fork.id)).toBe("take-updates");
   });
 

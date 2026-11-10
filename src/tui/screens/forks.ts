@@ -18,7 +18,8 @@ import {
   type ForkRanking,
   type ForkRelation,
 } from "../../actions/forks.ts";
-import { FOLLOW_MODE_REFUSALS, convergeWords, followModeOf, setFollowMode, takeOrTell, takeWords } from "../../actions/follow.ts";
+import { followModeWords } from "../../actions/follow_words.ts";
+import { FOLLOW_MODE_REFUSALS, convergeWords, followModeOf, followModeSaid, setFollowMode, takeOrTell, takeWords } from "../../actions/follow.ts";
 import { FOLLOWS_NOTHING, proposeRefusalWords } from "../../actions/follow_words.ts";
 import { openProposal, proposeUpstream } from "../../actions/upstream.ts";
 import type { Pull } from "../../core/pulls.ts";
@@ -100,7 +101,7 @@ export function followingRows(
     {
       repo: parent,
       name: `follows ${name}`,
-      words: mode === undefined ? words : `${words} · ${mode === "take-updates" ? "takes updates" : "tells you"}`,
+      words: mode === undefined ? words : `${words} · ${followModeWords(mode, name).line}`,
       heading: "",
     },
     ...(converge === undefined
@@ -304,7 +305,7 @@ export function forksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
           const set = await setFollowMode(f.app, f.user, repo, next);
           if (!set.ok) return ctx.toast(FOLLOW_MODE_REFUSALS[set.error].message, "danger");
           await read();
-          ctx.toast(`Now following in ${set.value} mode.`, "success");
+          ctx.toast(followModeSaid(relation?.parent, set.value), "success");
         });
         return true;
       }

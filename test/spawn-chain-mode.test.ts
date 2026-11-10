@@ -143,8 +143,14 @@ describe("choosing how a forge follows its parent", () => {
     expect(((await res.json()) as any).mode).toBe("tell-me");
     const viaTool = await tool(ownerTok, { repo: "kid/forge", mode: "take-updates" });
     expect(viaTool.error).toBe(false);
+    expect(viaTool.text).toContain("automatically");
+    const told = await tool(ownerTok, { repo: "kid/forge", mode: "tell-me" });
+    expect(told.error).toBe(false);
+    expect(told.text).toContain("Proposes updates from");
+    expect((await tool(readerTok, { repo: "kid/forge", mode: "tell-me" })).error).toBe(true);
+    expect((await tool(ownerTok, { repo: "kid/forge", mode: "take-updates" })).error).toBe(false);
     expect((await forgeLinkOf(child))?.mode).toBe("take-updates");
-    expect(listEvents(child.db, { kind: "forge.follow_mode" })).toHaveLength(3);
+    expect(listEvents(child.db, { kind: "forge.follow_mode" })).toHaveLength(5);
   });
 
   test("a severed forge refuses with 409 and keeps its record", async () => {

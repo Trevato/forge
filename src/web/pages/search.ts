@@ -17,7 +17,9 @@ import { envsFor } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { openLabelCounts } from "../../core/issues.ts";
 import { getPull } from "../../core/pulls.ts";
-import { canAdmin, canWrite, enterableApps, getRepo } from "../../core/repos.ts";
+import { canAdmin, canWrite, enterableApps, forkParentFor, getRepo } from "../../core/repos.ts";
+import { followModeWords, followSwitchPreview } from "../../actions/follow_words.ts";
+import type { FollowMode } from "../../spawn/chain.ts";
 import { getMirrorTarget } from "../../core/migrate_mirror.ts";
 import {
   cleanQuery,
@@ -899,6 +901,17 @@ const DESTRUCTIVE: {
         detail: "The forge reads its droplet's address back and asks the forge there for its front page. Nothing is changed but what it says about itself.",
         phrase: "",
       };
+    },
+  },
+  {
+    pattern: /^\/([^/]+)\/([^/]+)\/following\/mode\/(tell-me|take-updates)$/,
+    describe: (m, ctx) => {
+      const mode = m[3] as FollowMode;
+      const repo = getRepo(ctx.app.db, m[1]!, m[2]!);
+      const parent = repo && canWrite(ctx.app.db, repo, ctx.auth.user) ? forkParentFor(ctx.app.db, repo, ctx.auth.user) : undefined;
+      const upstream = parent === undefined ? "its parent" : `${parent.ownerName}/${parent.name}`;
+      const words = followModeWords(mode, upstream);
+      return { verb: "Switch", title: `${words.line}?`, detail: followSwitchPreview(mode, upstream), phrase: "" };
     },
   },
   {

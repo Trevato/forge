@@ -19,6 +19,8 @@ import { getRepo, type Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { forkFollowMode } from "../src/core/fork_follow.ts";
+import { listEvents } from "../src/core/events.ts";
+import { followModeSaid } from "../src/actions/follow.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -122,35 +124,61 @@ describe("the fork tree, on one forge", () => {
     expect(tree.indexOf("you are here", mark + 1)).toBe(-1);
   });
 
-  test("a plain fork's page offers the modes; posting one changes it, and the page shows it", async () => {
+  test("a plain fork's page says how it follows in one line; the admin switches it after a confirm, a stranger and a cross-origin post change nothing", async () => {
     const cookie = await signIn("bea");
     const before = await (await get("/bea/yard", cookie)).text();
-    expect(before).toContain('name="mode" value="tell-me"');
-    expect(before).toContain('name="mode" value="take-updates"');
-    expect(before).toMatch(/value="tell-me"\s+checked/);
+    expect(before).toContain("Proposes updates from ann/yard");
+    expect(before).not.toContain("automatically</strong>");
+    expect(before).toContain("/-/confirm?to=%2Fbea%2Fyard%2Ffollowing%2Fmode%2Ftake-updates");
 
-    const cross = await post("/bea/yard/following/mode", cookie, { mode: "take-updates" }, "https://evil.test");
+    const confirm = await (await get("/-/confirm?to=%2Fbea%2Fyard%2Ffollowing%2Fmode%2Ftake-updates", cookie)).text();
+    expect(confirm).toContain("Follows ann/yard automatically?");
+    expect(confirm).toContain("the crew is told to converge");
+    expect(confirm).toContain('action="/bea/yard/following/mode/take-updates"');
+
+    const cross = await post("/bea/yard/following/mode/take-updates", cookie, {}, "https://evil.test");
     expect(cross.status).toBe(403);
+    const stranger = await post("/bea/yard/following/mode/take-updates", await signIn("cal"), {});
+    expect(stranger.status).toBe(303);
     expect(forkFollowMode(app.db, middle.id)).toBe("tell-me");
 
-    const changed = await post("/bea/yard/following/mode", cookie, { mode: "take-updates" });
+    const audits = () => listEvents(app.db, { kind: "forge.follow_mode" });
+    const audited = audits().length;
+    const changed = await post("/bea/yard/following/mode/take-updates", cookie, {});
     expect(changed.status).toBe(303);
     expect(changed.headers.get("location")).toBe("/bea/yard/following");
     expect(forkFollowMode(app.db, middle.id)).toBe("take-updates");
+    expect(audits().length).toBe(audited + 1);
+    const receipt = audits()[0]!;
+    expect(receipt.repoId).toBe(middle.id);
+    expect(receipt.actorId).toBe(bea.id);
+    expect(receipt.payload).toMatchObject({ repo: "bea/yard", mode: "take-updates" });
 
     const after = await (await get("/bea/yard", cookie)).text();
-    expect(after).toMatch(/value="take-updates"\s+checked/);
-    expect(after).not.toMatch(/value="tell-me"\s+checked/);
+    expect(after).toContain("Follows ann/yard automatically");
+    expect(after).toContain('data-follow-mode="take-updates"');
+    expect(after).toContain("Only propose updates");
 
-    // A reader without write access is not offered the form.
+    // A reader sees the line but no switch.
     const reader = await (await get("/bea/yard", await signIn("cal"))).text();
-    expect(reader).not.toContain('name="mode"');
-    expect(await (await fetch(`${servers.url}/bea/yard`)).text()).not.toContain('name="mode"');
-    expect(after).toContain("How this fork follows its parent");
+    expect(reader).toContain("Follows ann/yard automatically");
+    expect(reader).not.toContain("following%2Fmode");
 
     const bad = await post("/bea/yard/following/mode", cookie, { mode: "nope" });
     expect(bad.status).toBe(303);
     expect(forkFollowMode(app.db, middle.id)).toBe("take-updates");
+  });
+
+  test("the confirm for tell-me says it only proposes; a non-writer sees 'its parent'; a root repository has no line", async () => {
+    const confirm = await (await get("/-/confirm?to=%2Fbea%2Fyard%2Ffollowing%2Fmode%2Ftell-me", await signIn("bea"))).text();
+    expect(confirm).toContain("Proposes updates from ann/yard?");
+    expect(confirm).toContain("nothing is merged until you take it");
+    const stranger = await (await get("/-/confirm?to=%2Fbea%2Fyard%2Ffollowing%2Fmode%2Ftell-me", await signIn("cal"))).text();
+    expect(stranger).toContain("Proposes updates from its parent?");
+    expect(stranger).not.toContain("from ann/yard");
+    const root = await (await get("/ann/yard", await signIn("ann"))).text();
+    expect(root).not.toContain("data-follow-mode");
+    expect(followModeSaid(undefined, "tell-me")).toContain("Proposes updates from its parent.");
   });
 
   test("one POST from the offer page opens exactly one pull on the parent", async () => {

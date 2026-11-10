@@ -5,11 +5,11 @@
  * sever. A severed forge says so with the date and nothing is deleted.
  */
 
-import { FOLLOW_MODE_REFUSALS, setFollowMode, severForge, takeForgeCode, takeForgeWords } from "../../actions/follow.ts";
+import { FOLLOW_MODE_REFUSALS, followModeSaid, setFollowMode, severForge, takeForgeCode, takeForgeWords } from "../../actions/follow.ts";
 import { FOLLOWS_NOTHING, PROPOSE_NEEDS_WRITE } from "../../actions/follow_words.ts";
 import { forgeProposals, proposeToParentForge, type ForgeProposal } from "../../actions/upstream.ts";
 import { SEVER_CONFIRM } from "../../actions/sever_invite_words.ts";
-import { canAdmin, canWrite } from "../../core/repos.ts";
+import { canAdmin, canWrite, forkParentFor } from "../../core/repos.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { chainView, FOLLOW_MODES, forgeLinkOf, type ChainLine, type FollowMode } from "../../spawn/chain.ts";
@@ -228,7 +228,7 @@ export async function takeSubmit(ctx: Ctx): Promise<Response> {
   return flashOrJson(ctx, to, takeForgeWords(took.value));
 }
 
-/** POST /:owner/:name/following/mode {mode}; the owner only. */
+/** POST /:owner/:name/following/mode {mode} or /following/mode/:mode (what the confirm step posts); the owner only. */
 export async function modeSubmit(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
@@ -236,9 +236,9 @@ export async function modeSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   const to = `${repoBase(repo)}/following`;
-  const set = await setFollowMode(ctx.app, ctx.auth.user, repo, field(form, "mode"));
+  const set = await setFollowMode(ctx.app, ctx.auth.user, repo, ctx.params["mode"] ?? field(form, "mode"));
   if (!set.ok) return flashOrJson(ctx, to, { tone: "danger", message: FOLLOW_MODE_REFUSALS[set.error].message });
-  return flashOrJson(ctx, to, { message: `Now following in ${set.value} mode.` });
+  return flashOrJson(ctx, to, { message: followModeSaid(forkParentFor(ctx.app.db, repo, ctx.auth.user), set.value) });
 }
 
 /** POST /:owner/:name/following/propose: push to the parent forge and open the pull there; a writer only. */
