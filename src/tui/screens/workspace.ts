@@ -60,6 +60,8 @@ import { parseGeoJson, propertyRows } from "../../web/render/geojson.ts";
 import { gcodeFacts, parseGcode } from "../../web/render/gcode.ts";
 import { gpxFacts, parseGpx } from "../../web/render/gpx.ts";
 import { EVENT_CAP, parseIcs } from "../../web/render/ics.ts";
+import { fileSize } from "../../web/ui.ts";
+import { parseEml } from "../../web/render/eml-parse.ts";
 import { CARD_CAP, parseVcf } from "../../web/render/vcf-parse.ts";
 import { CUE_CAP, parseSubtitles } from "../../web/render/subtitles.ts";
 import { isJsonlPath, kindView, type KindLines } from "./workspace_kinds.ts";
@@ -365,6 +367,26 @@ function vcfTable(source: string): Table | null {
   };
 }
 
+/** `.eml`: a message, drawn as rows of its headers, body and attachments. */
+function isEmlPath(path: string): boolean {
+  return /\.eml$/i.test(path);
+}
+
+const EML_BODY_LINES = 200;
+
+/** The message as Field/Value rows; null when the file is not one. Shares the web's parser. */
+function emlTable(source: Uint8Array): Table | null {
+  const m = parseEml(source);
+  if ("error" in m) return null;
+  const rows: string[][] = m.headers.map(([k, v]) => [k, v]);
+  if (m.fromHtml) rows.push(["Note", "only an HTML part; tags stripped"]);
+  const lines = m.body.split("\n");
+  for (const line of lines.slice(0, EML_BODY_LINES)) rows.push(["", line]);
+  if (lines.length > EML_BODY_LINES) rows.push(["Note", `body cut: ${lines.length - EML_BODY_LINES} more lines`]);
+  for (const a of m.attachments) rows.push(["Attachment", `${a.name} · ${a.type} · ${fileSize(a.size)}`]);
+  return { header: ["Field", "Value"], rows, more: 0, delimiter: ",", columns: 2 };
+}
+
 /** `.gpx`: a GPS track, drawn as a table of its facts (track, distance, climb, points). */
 function isGpxPath(path: string): boolean {
   return /\.gpx$/i.test(path);
@@ -587,6 +609,9 @@ class Tab {
       if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isVcfPath(this.path)) {
       this.table = vcfTable(new TextDecoder().decode(source));
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isEmlPath(this.path)) {
+      this.table = emlTable(source);
       if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isGpxPath(this.path)) {
       this.table = gpxTable(new TextDecoder().decode(source), this.path);

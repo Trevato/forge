@@ -467,6 +467,34 @@ describe("the terminal workspace", () => {
     }
   });
 
+  test("an .eml opens as its header rows and body, and s flips to the source", async () => {
+    const made = await createRepo(forge, alice, { name: "mail", visibility: "public", description: "mail" });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, {
+      message: "seed",
+      files: [
+        {
+          path: "note.eml",
+          content: `From: Ada <ada@example.com>\r\nSubject: Hello there\r\nDate: Mon, 1 Jan 2026 10:00:00 +0000\r\nContent-Type: multipart/mixed; boundary=BB\r\n\r\n--BB\r\nContent-Type: text/plain\r\n\r\nBody line one\r\n--BB\r\nContent-Type: application/pdf; name="r.pdf"\r\nContent-Transfer-Encoding: base64\r\n\r\n${Buffer.from("x".repeat(2048)).toString("base64")}\r\n--BB--\r\n`,
+        },
+      ],
+    });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "mail");
+      await openFile(h, "note.eml");
+      expect(h.text()).toContain("Subject");
+      expect(h.text()).toContain("Hello there");
+      expect(h.text()).toContain("Body line one");
+      expect(h.text()).toContain("2.0 KB");
+      await h.press("s");
+      expect(h.text()).toContain("From: Ada");
+    } finally {
+      h.stop();
+    }
+  });
+
   test("a .gpx opens as its facts, sharing the web parser, and s flips to the source", async () => {
     const made = await createRepo(forge, alice, {
       name: "tracks",

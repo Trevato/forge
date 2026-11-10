@@ -12,6 +12,7 @@ import type { Renderer } from "../src/web/render/renderers.ts";
 import { csv } from "../src/web/render/csv.ts";
 import { log } from "../src/web/render/log.ts";
 import { ics } from "../src/web/render/ics.ts";
+import { eml } from "../src/web/render/eml.ts";
 import { vcf } from "../src/web/render/vcf.ts";
 import { gpx } from "../src/web/render/gpx.ts";
 import { geojson } from "../src/web/render/geojson.ts";
@@ -85,6 +86,13 @@ const SAMPLES: Record<string, { path: string; render: Renderer; files: readonly 
     render: vcf,
     files: [
       "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Ada Lovelace\r\nEMAIL:ada@a.test\r\nTEL:+1 555\r\nURL:https://a.test/\r\nORG:Engines\r\nNOTE:hi\r\nEND:VCARD\r\n",
+    ],
+  },
+  eml: {
+    path: "mail.eml",
+    render: eml,
+    files: [
+      "From: Ada <a@a.test>\r\nSubject: =?utf-8?Q?<script>?=\r\nMIME-Version: 1.0\r\nContent-Type: text/html\r\n\r\n<p onclick=x>hi</p>\r\n",
     ],
   },
   gpx: {

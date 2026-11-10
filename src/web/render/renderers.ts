@@ -10,6 +10,7 @@ import { archive } from "./archive-view.ts";
 import { audio } from "./audio.ts";
 import { config } from "./config.ts";
 import { isFormConfig } from "./config-format.ts";
+import { eml } from "./eml.ts";
 import { csv } from "./csv.ts";
 import { geojson } from "./geojson.ts";
 import { gcode } from "./gcode.ts";
@@ -88,6 +89,7 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
   geojson,
   calendar: ics,
   contacts: vcf,
+  mail: eml,
   archive,
   font,
 };
