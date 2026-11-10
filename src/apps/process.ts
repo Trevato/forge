@@ -135,7 +135,7 @@ const HEALTH_INTERVAL_MS = 250;
  * starts without them (its crew's Claude Code) reaches nothing: every model
  * call ended ENETUNREACH. Where the forge runs in no cell they are unset.
  */
-const PROXY_VARS = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"] as const;
+export const PROXY_VARS = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"] as const;
 
 /**
  * The environment every child starts from. Explicit, and short: the path,
