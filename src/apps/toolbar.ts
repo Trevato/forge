@@ -188,6 +188,21 @@ export const toolbarJs = `(function () {
       st.style.cssText = "opacity:.85";
       row.appendChild(t);
       row.appendChild(st);
+      var all = Array.isArray(n.replies) ? n.replies : [];
+      // Only the latest few, so a long thread cannot push the panel off a phone; the rest is on the issue.
+      var shown = all.slice(-5);
+      if (all.length > shown.length) {
+        var more = document.createElement("div");
+        more.textContent = (all.length - shown.length) + " earlier on the forge";
+        more.style.cssText = "opacity:.85;margin-top:2px";
+        row.appendChild(more);
+      }
+      shown.forEach(function (r) {
+        var rr = document.createElement("div");
+        rr.textContent = String(r.by) + " (" + String(r.at).slice(0, 16).replace("T", " ") + "): " + String(r.text);
+        rr.style.cssText = "margin-top:2px;padding-left:6px;border-left:2px solid #444c56;white-space:pre-wrap;max-height:8em;overflow:auto";
+        row.appendChild(rr);
+      });
       var al = n.url && link(n.url, "See it");
       if (al) row.appendChild(al);
       mine.appendChild(row);

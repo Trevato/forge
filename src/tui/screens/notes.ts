@@ -15,6 +15,9 @@ import type { Command } from "../app/palette.ts";
 import type { Session } from "../session.ts";
 import { confirmScreen, pickerScreen, promptScreen } from "./common.ts";
 
+/** "2 replies", "1 reply": what a note's list line says of the answers under it. */
+export const repliesWord = (n: number): string => `${n} repl${n === 1 ? "y" : "ies"}`;
+
 export function noteCommands(f: Session, ctx: Ctx, parent: () => Screen, repo: Repo | undefined): Command[] {
   const user = f.user;
   if (repo === undefined || user === undefined || !canRead(f.app.db, repo, user)) return [];
@@ -88,15 +91,18 @@ export function noteCommands(f: Session, ctx: Ctx, parent: () => Screen, repo: R
         ctx.push(
           pickerScreen(ctx, parent(), {
             title: "Notes from the app",
-            items: notes.map((n) => ({ id: n.id, label: `#${n.number} ${n.text}`, hint: `${n.status.label} — ${n.by}` })),
+            items: notes.map((n) => ({ id: n.id, label: `#${n.number} ${n.text}${n.replies.length > 0 ? ` (${repliesWord(n.replies.length)})` : ""}`, hint: `${n.status.label} — ${n.by}` })),
             onPick: ([id]) => {
               const picked = notes.find((n) => n.id === id);
               if (picked === undefined) return;
+              const said = picked.replies.map((r) => `${r.by} ${r.at.slice(0, 16).replace("T", " ")}: ${r.text}`);
+              if (!admin && said.length > 0)
+                return ctx.push(confirmScreen(ctx, parent(), { title: `#${picked.number}: ${picked.status.label}`, body: said, actions: [{ label: "Close", variant: "ghost" }], onChoose: () => {} }));
               if (!admin) return ctx.toast(`#${picked.number}: ${picked.status.label}.`);
               ctx.push(
                 confirmScreen(ctx, parent(), {
                   title: "Moderate this note",
-                  body: [`#${picked.number} ${picked.by}: ${picked.text}`, picked.status.label],
+                  body: [`#${picked.number} ${picked.by}: ${picked.text}`, picked.status.label, ...said],
                   actions: [{ label: "Keep", variant: "ghost" }, { label: "Hide" }, { label: "Ban sender", variant: "danger" }],
                   onChoose: (i) => {
                     if (i < 1) return;

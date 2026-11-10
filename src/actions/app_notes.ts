@@ -9,15 +9,15 @@ import { dropHiddenPictures } from "../core/note_pictures.ts";
 import type { App } from "../app.ts";
 import { banVisitor, bannedNotes, unbanVisitor, markSender, getNote, hideNote, insertNote, isBanned, notesOf, notesOfApp, type AppNote } from "../core/app_notes.ts";
 import type { AppRecord } from "../core/apps.ts";
-import { createLabel, getIssue, getLabel, type Issue } from "../core/issues.ts";
+import { createLabel, getIssue, getLabel, listComments, type Issue } from "../core/issues.ts";
 import { mergedPullClosing } from "../core/pulls.ts";
 import { releaseName, releaseOfPull } from "../release/record.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
-import { canAdmin, canRead, type Repo } from "../core/repos.ts";
+import { canAdmin, canRead, canWrite, type Repo } from "../core/repos.ts";
 import { plainText } from "../core/reports.ts";
 import { listActiveRuns, workingAgentRuns } from "../core/runs.ts";
 import { getUserById, isActive, type User } from "../core/users.ts";
-import { crewWithRole } from "../core/agents.ts";
+import { crewWithRole, isCrew } from "../core/agents.ts";
 import { fence } from "../crew/fence.ts";
 import { unadoptedAmong } from "../crew/direct.ts";
 import { NOTE_EMPTY } from "../apps/note_words.ts";
@@ -92,6 +92,13 @@ export interface NoteStatus {
   readonly label: string;
 }
 
+/** One answer to a note: a comment on its issue by the crew or a writer of the repository. */
+export interface NoteReply {
+  readonly by: string;
+  readonly at: string;
+  readonly text: string;
+}
+
 export interface NoteView {
   readonly id: string;
   readonly text: string;
@@ -100,12 +107,14 @@ export interface NoteView {
   readonly status: NoteStatus;
   /** The issue's number: shown to everyone, linked only to a reader of the repository. */
   readonly number: number;
+  /** The crew's and writers' comments on the issue, newest last; an outsider's are never here. */
+  readonly replies: readonly NoteReply[];
   readonly url?: string;
   readonly repoUrl?: string;
 }
 
 /** Where a note stands, read from the issue as it moves. */
-export function statusOf(app: App, repo: Repo, number: number): { status: NoteStatus; title: string } | undefined {
+export function statusOf(app: App, repo: Repo, number: number): { status: NoteStatus; title: string; issueId: string } | undefined {
   const issue = getIssue(app.db, repo.id, number);
   if (issue === undefined) return undefined;
   if (issue.state === "closed") {
@@ -116,20 +125,37 @@ export function statusOf(app: App, repo: Repo, number: number): { status: NoteSt
       const release = pull === undefined ? undefined : releaseOfPull(app.db, repo.id, pull.number);
       const label =
         release !== undefined ? `Shipped in ${releaseName(release)}` : `Shipped on ${(pull?.mergedAt ?? issue.closedAt ?? issue.updatedAt).slice(0, 10)}`;
-      return { title: issue.title, status: { state: "shipped", label } };
+      return { issueId: issue.id, title: issue.title, status: { state: "shipped", label } };
     }
     const label = issue.closeReason === "parked" ? "Set aside for now" : issue.closeReason === "split" ? "Split into smaller pieces" : "Closed without a change";
-    return { title: issue.title, status: { state: "closed", label: `${label} (${when})` } };
+    return { issueId: issue.id, title: issue.title, status: { state: "closed", label: `${label} (${when})` } };
   }
   // A stranger's words are a suggestion until a writer adopts them.
   if (unadoptedAmong(app.db, repo, [issue]).has(issue.id))
-    return { title: issue.title, status: { state: "waiting", label: "Waiting for the builders to look" } };
+    return { issueId: issue.id, title: issue.title, status: { state: "waiting", label: "Waiting for the builders to look" } };
   const run = workingAgentRuns(app.db, repo.id, issue.id)[0];
   if (run !== undefined) {
     const actor = run.actorId === null ? undefined : getUserById(app.db, run.actorId);
-    return { title: issue.title, status: { state: "building", label: `Being built by ${actor?.username ?? "the crew"}` } };
+    return { issueId: issue.id, title: issue.title, status: { state: "building", label: `Being built by ${actor?.username ?? "the crew"}` } };
   }
-  return { title: issue.title, status: { state: "queued", label: "In the queue for a builder" } };
+  return { issueId: issue.id, title: issue.title, status: { state: "queued", label: "In the queue for a builder" } };
+}
+
+/** What the crew and the repository's writers said on a note's issue; anyone else's comment stays on the forge. */
+function repliesTo(app: App, repo: Repo, issueId: string): NoteReply[] {
+  const standing = new Map<string, boolean>();
+  const speaks = (id: string): boolean => {
+    let yes = standing.get(id);
+    if (yes === undefined) {
+      const user = getUserById(app.db, id);
+      yes = user !== undefined && isActive(user) && (isCrew(app.db, repo.id, id) || canWrite(app.db, repo, user));
+      standing.set(id, yes);
+    }
+    return yes;
+  };
+  return listComments(app.db, issueId, { kind: "comment" })
+    .filter((c) => speaks(c.authorId))
+    .map((c) => ({ by: c.authorName, at: c.createdAt, text: c.body }));
 }
 
 function view(app: App, repo: Repo, forgeUrl: string | undefined, viewer: User | undefined, note: AppNote): NoteView | undefined {
@@ -144,6 +170,7 @@ function view(app: App, repo: Repo, forgeUrl: string | undefined, viewer: User |
     at: note.createdAt,
     status: found.status,
     number: note.issueNumber,
+    replies: repliesTo(app, repo, found.issueId),
     ...(open
       ? {
           url: new URL(`/${repo.ownerName}/${repo.name}/issues/${note.issueNumber}`, forgeUrl).href,

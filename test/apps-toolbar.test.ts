@@ -723,3 +723,14 @@ describe("pill link tap targets (#8462)", () => {
     expect(js).toContain("if (hasHome) panel.appendChild(link)");
   });
 });
+
+describe("replies under a note in the button's list", () => {
+  test("each is set as text, the latest five are shown and the rest counted", async () => {
+    const { toolbarJs } = await import("../src/apps/toolbar.ts");
+    expect(toolbarJs).toContain("n.replies");
+    expect(toolbarJs).toContain("all.slice(-5)");
+    expect(toolbarJs).toContain("earlier on the forge");
+    expect(toolbarJs).toContain('rr.textContent = String(r.by) + " ("');
+    expect(toolbarJs).not.toMatch(/rr\.innerHTML/);
+  });
+});

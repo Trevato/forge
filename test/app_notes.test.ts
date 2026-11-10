@@ -10,7 +10,9 @@ import { newApp } from "../src/actions/apps.ts";
 import { notesFor, sendNote, type Sender } from "../src/actions/app_notes.ts";
 import { createApp, type App } from "../src/app.ts";
 import { getAppBySlug } from "../src/core/apps.ts";
-import { getRepo } from "../src/core/repos.ts";
+import { addComment, getIssue } from "../src/core/issues.ts";
+import { addCrew, createAgentRow } from "../src/core/agents.ts";
+import { canWrite, getRepo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
@@ -75,5 +77,48 @@ describe("the link a note's sender gets", () => {
     const listed = notesFor(app, open, repo, FORGE, who);
     expect(listed[0]?.number).toBe(sent.value.number);
     expect(listed[0]?.url).toBeUndefined();
+  });
+
+  test("a writer's comment on the issue is a reply; an outsider's is not, and the order is oldest first", async () => {
+    const record = getAppBySlug(app.db, "sandbox-game")!;
+    const repo = getRepo(app.db, "alice", "sandbox-game")!;
+    const made = await createUser(app.db, { origin: "seed", trusted: true, username: "mallory", email: "mallory@forge.test" });
+    if (!made.ok) throw new Error(String(made.error));
+    const who = visitor();
+    const sent = await sendNote(app, record, repo, "production", FORGE, who, input, "10.1.0.3");
+    if (!sent.ok) throw new Error(sent.error.message);
+    const issue = getIssue(app.db, repo.id, sent.value.number)!;
+    expect(notesFor(app, record, repo, FORGE, who)[0]?.replies).toEqual([]);
+    addComment(app.db, { issueId: issue.id, authorId: alice.id, body: "first <b>answer</b>" });
+    addComment(app.db, { issueId: issue.id, authorId: made.value.id, body: "buy my stuff" });
+    addComment(app.db, { issueId: issue.id, authorId: alice.id, body: "second answer" });
+    const replies = notesFor(app, record, repo, FORGE, who)[0]!.replies;
+    expect(replies.map((r) => r.text)).toEqual(["first <b>answer</b>", "second answer"]);
+    expect(replies[0]?.by).toBe("alice");
+    expect(replies[0]?.at).toBeTruthy();
+  });
+
+  test("a crew agent who is not a writer is heard; a suspended one is not", async () => {
+    const record = getAppBySlug(app.db, "sandbox-game")!;
+    const repo = getRepo(app.db, "alice", "sandbox-game")!;
+    const mk = async (username: string) => {
+      const r = await createUser(app.db, { origin: "seed", username, email: `${username}@a.invalid`, agent: true });
+      if (!r.ok) throw new Error("agent");
+      createAgentRow(app.db, { userId: r.value.id, brief: "build", createdBy: alice.id });
+      addCrew(app.db, repo.id, r.value.id, alice.id);
+      return r.value;
+    };
+    const builder = await mk("builder-bot");
+    const gone = await mk("gone-bot");
+    expect(canWrite(app.db, repo, builder)).toBe(false);
+    const who = visitor();
+    const sent = await sendNote(app, record, repo, "production", FORGE, who, input, "10.1.0.4");
+    if (!sent.ok) throw new Error(sent.error.message);
+    const issue = getIssue(app.db, repo.id, sent.value.number)!;
+    addComment(app.db, { issueId: issue.id, authorId: builder.id, body: "on it" });
+    addComment(app.db, { issueId: issue.id, authorId: gone.id, body: "silenced" });
+    app.db.query("UPDATE user SET suspended_at = ?2 WHERE id = ?1").run(gone.id, new Date().toISOString());
+    const replies = notesFor(app, record, repo, FORGE, who)[0]!.replies;
+    expect(replies.map((r) => `${r.by}: ${r.text}`)).toEqual(["builder-bot: on it"]);
   });
 });

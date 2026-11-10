@@ -14,7 +14,7 @@ import { createApp, type App } from "../src/app.ts";
 import { sendNote, type Sender } from "../src/actions/app_notes.ts";
 import { isBanned } from "../src/core/app_notes.ts";
 import { getAppBySlug } from "../src/core/apps.ts";
-import { getIssue, labelsFor } from "../src/core/issues.ts";
+import { addComment, getIssue, labelsFor } from "../src/core/issues.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
@@ -125,5 +125,18 @@ describe("notes from the app, in the terminal", () => {
     const again = await sendNote(app, record, notes, "production", undefined, sender, { text: "back again", page: "", viewport: "unknown" }, "ssh:again");
     expect(again.ok).toBe(true);
     expect(await palette(alice, notes, [":", "Banned", "\r"])).not.toContain("Unban this sender");
+  }, 30_000);
+
+  test("a writer's reply shows to the sender on picking the note, and in the admin's moderation body", async () => {
+    for (const row of app.db.query<{ issue_number: number }, []>("SELECT issue_number FROM app_note").all())
+      addComment(app.db, { issueId: getIssue(app.db, notes.id, row.issue_number)!.id, authorId: alice.id, body: "we are on it" });
+    const list = await palette(bob, notes, [":", "Notes from", "\r"]);
+    expect(list).toMatch(/#\d+ back again \(\d+ replies?\)/);
+    const asBob = await palette(bob, notes, [":", "Notes from", "\r", "\r"]);
+    expect(asBob).toContain("alice");
+    expect(asBob).toContain("we are on it");
+    const asAlice = await palette(alice, notes, [":", "Notes from", "\r", "\r"]);
+    expect(asAlice).toContain("Moderate this note");
+    expect(asAlice).toContain("we are on it");
   }, 30_000);
 });
