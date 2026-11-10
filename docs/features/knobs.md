@@ -9,6 +9,9 @@ Five dials for the crew, on **Settings › Crew** (admin), in the terminal's pal
 5. **Feedback first**: always on; shown, not tuned.
 
 A change applies on the next pump and leaves the event the setting's own page leaves (`capacity.changed`, `repo.settings_updated`).
-Not done: the per-repository dollar ceiling (`autonomyCeilingUsd`) and `reserve.ts`'s two-per-slot reserve still stand.
 
-The pipeline's own dials (`queue.depth`, `pace.floor`, `slots.smallShare`, `polish.capMinutes`) are untouched: they stay on the capacity page and nothing in the panel derives them. Only `week.use` is new, and a stored or `FORGE_WEEK_USE` value is read as the budget; no stored value is dropped.
+## Derived from Speed
+
+`pace.floor` (half of Speed, at least 1) and `queue.depth` (half of Speed rounded up, 1 to 4) follow Speed until someone sets them on **Settings › Capacity**; a stored value always wins and nothing stored is dropped. While they follow, the Speed row (page, terminal, MCP) says `(derived from Speed)` beside each, and the capacity page and its terminal screen mark the row `derived`. Because the floor was a fixed 2 before, an install with no stored floor now gets half its Speed (Speed 10: 5). That is a deliberate move of the default pace; set `pace.floor` to keep the old number.
+
+`week.use` is new; a stored or `FORGE_WEEK_USE` value is read as the budget.

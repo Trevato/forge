@@ -23,6 +23,7 @@ let standIn: StandInCrew;
 
 beforeAll(async () => {
   standIn = await startStandInCrew({ tickMs: 50 });
+  setCapacity(standIn.app.db, "pace.floor", "2", standIn.alice.id);
   setCapacity(standIn.app.db, "crew.concurrency", "10", standIn.alice.id);
 }, 30_000);
 afterAll(() => stopStandInCrew(standIn));

@@ -14,13 +14,14 @@ import {
   CAPACITY_KEYS,
   capacityChanges,
   bootDefault,
-  capacityValue,
   isCapacityKey,
   setCapacity,
   storedCapacity,
   validCapacity,
   type CapacityChange,
   type CapacityKey,
+  effectiveCapacity,
+  followsSpeed,
 } from "../core/capacity.ts";
 import type { EgressTotal } from "../apps/egress.ts";
 import {
@@ -52,7 +53,7 @@ export interface CapacityRow {
   readonly help: string;
   readonly value: string;
   /** Where `value` comes from: an admin's setting, or the boot default. */
-  readonly source: "setting" | "default";
+  readonly source: "setting" | "default" | "derived";
   readonly default: string;
   readonly env: string;
   /** For a setting away from its default: when and by whom it was set. */
@@ -120,8 +121,8 @@ export function listCapacity(
       key,
       label: CAPACITY[key].label,
       help: CAPACITY[key].help,
-      value: capacityValue(app.db, key),
-      source: storedCapacity(app.db, key) === undefined ? "default" : "setting",
+      value: effectiveCapacity(app.db, key),
+      source: followsSpeed(app.db, key) ? "derived" : storedCapacity(app.db, key) === undefined ? "default" : "setting",
       default: bootDefault(app.db, key),
       env: CAPACITY[key].env,
       ...changedOf(app.db, key),

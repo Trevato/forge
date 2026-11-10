@@ -19,7 +19,7 @@ import { recordUsage } from "../src/core/usage.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { driveRepo, repoPace } from "../src/crew/autonomy.ts";
 import { changeCapacity } from "../src/actions/capacity.ts";
-import { capacityDefault } from "../src/core/capacity.ts";
+import { capacityDefault, setCapacity } from "../src/core/capacity.ts";
 import { crewLineWords, forgetWeek, weekWords } from "../src/crew/week_read.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -83,6 +83,7 @@ beforeAll(async () => {
   const a = await seedAdmin(app, { username: "alice", email: "a@forge.test", password: "a-long-passphrase" });
   if (!a.ok) throw new Error("signup failed");
   alice = a.value;
+  setCapacity(app.db, "pace.floor", "2", alice.id);
   const made = await createRepo(app, alice, { name: "svc", visibility: "private" });
   if (!made.ok) throw new Error(String(made.error));
   repo = made.value;

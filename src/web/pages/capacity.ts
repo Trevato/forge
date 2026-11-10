@@ -101,7 +101,9 @@ export function capacityPage(ctx: Ctx): Response {
           ? html`Set here; the boot default is
               <span class="mono">${s.default === "" ? "auto" : s.default}</span>
               (<span class="mono">${s.env}</span>).`
-          : html`The boot default, from <span class="mono">${s.env}</span>.`}
+          : s.source === "derived"
+            ? html`Derived from Speed (<span class="mono">crew.concurrency</span>); set it here to stop following.`
+            : html`The boot default, from <span class="mono">${s.env}</span>.`}
         ${awayLine(s, now)}`,
       trail: html`<form
         class="row-fields"

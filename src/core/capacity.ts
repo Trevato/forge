@@ -375,7 +375,26 @@ export function capacityCount(
 
 /** The slots the pace leaves reviews and assigned work (`pace.floor`). */
 export function paceFloor(db: Database): number {
-  return Number(capacityValue(db, "pace.floor"));
+  return Number(effectiveCapacity(db, "pace.floor"));
+}
+
+/** The dials that follow Speed (`crew.concurrency`) until set on their own. */
+export type SpeedDerivedKey = "pace.floor" | "queue.depth";
+
+export function followsSpeed(db: Database, key: CapacityKey): key is SpeedDerivedKey {
+  return (key === "pace.floor" || key === "queue.depth") && storedCapacity(db, key) === undefined;
+}
+
+/** What Speed implies for a dial that follows it: half of Speed, at least 1 for the floor; half rounded up, 1 to 4, for the depth. */
+export function derivedFromSpeed(db: Database, key: SpeedDerivedKey): number {
+  const speed = Number(capacityValue(db, "crew.concurrency"));
+  if (key === "pace.floor") return Math.max(1, Math.floor(speed / 2));
+  return Math.min(4, Math.max(1, Math.ceil(speed / 2)));
+}
+
+/** A capacity's value as the crew reads it: derived from Speed while a following dial is unset. */
+export function effectiveCapacity(db: Database, key: CapacityKey): string {
+  return followsSpeed(db, key) ? String(derivedFromSpeed(db, key)) : capacityValue(db, key);
 }
 
 /** The share of the week the crew may use, in percent (`week.use`); the rest is the reserve. */
@@ -429,7 +448,7 @@ export const BUILD_HOSTS: readonly string[] = [
 
 /** How many merge-queue candidates of one repository gate at once (#4053). */
 export function queueDepth(db: Database): number {
-  return Number(capacityValue(db, "queue.depth"));
+  return Number(effectiveCapacity(db, "queue.depth"));
 }
 
 /** The most pulls one merge-queue candidate carries (#6674); the line adapts below it. */

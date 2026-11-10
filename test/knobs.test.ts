@@ -3,14 +3,15 @@
  * turn read by the next pump; the pipeline's own dials stay on the capacity page.
  */
 
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { setKnob } from "../src/actions/knobs.ts";
 import { createApp, type App } from "../src/app.ts";
-import { CAPACITY_KEYS, capacityCount, setCapacity, weekUse } from "../src/core/capacity.ts";
+import { listCapacity } from "../src/actions/capacity.ts";
+import { CAPACITY_KEYS, capacityCount, followsSpeed, paceFloor, queueDepth, setCapacity, weekUse } from "../src/core/capacity.ts";
 import { listEvents } from "../src/core/events.ts";
 import { getRepoById } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
@@ -114,4 +115,46 @@ test("only a forge admin turns a knob, and the MCP tool says the same words", as
   const dry = await tool.run(ctx, admin, { knob: "speed", value: "3" });
   expect(JSON.stringify(dry)).toContain("Would set speed");
   expect(JSON.stringify(await tool.run(ctx, bob, {}))).toContain("not_found");
+});
+
+afterEach(() => {
+  for (const key of ["crew.concurrency", "pace.floor", "queue.depth"] as const) setCapacity(app.db, key, null, admin.id);
+});
+
+test("pace floor and queue depth follow Speed, and the next pump reads the new floor", async () => {
+  setCapacity(app.db, "crew.concurrency", "6", admin.id);
+  expect(paceFloor(app.db)).toBe(3);
+  expect(queueDepth(app.db)).toBe(3);
+  // The dispatch pump asks paceFloor on every pass: turning Speed moves it at once.
+  expect((await setKnob(app, admin, "speed", "1")).ok).toBe(true);
+  expect(paceFloor(app.db)).toBe(1);
+  expect(queueDepth(app.db)).toBe(1);
+});
+
+test("a stored pace floor or queue depth wins over Speed", () => {
+  setCapacity(app.db, "crew.concurrency", "6", admin.id);
+  setCapacity(app.db, "pace.floor", "2", admin.id);
+  setCapacity(app.db, "queue.depth", "4", admin.id);
+  expect(paceFloor(app.db)).toBe(2);
+  expect(queueDepth(app.db)).toBe(4);
+  expect(followsSpeed(app.db, "queue.depth")).toBe(false);
+});
+
+test("derived rows are labelled on the capacity page, the terminal's lines and the knobs", async () => {
+  setCapacity(app.db, "crew.concurrency", "6", admin.id);
+  const rows = listCapacity(app, admin);
+  if (!rows.ok) throw new Error("not admin");
+  const floor = rows.value.settings.find((r) => r.key === "pace.floor")!;
+  expect(floor.source).toBe("derived");
+  expect(floor.value).toBe("3");
+  setCapacity(app.db, "queue.depth", "2", admin.id);
+  const set = listCapacity(app, admin);
+  if (!set.ok) throw new Error("not admin");
+  expect(set.value.settings.find((r) => r.key === "queue.depth")!.source).toBe("setting");
+  const effect = readKnobs(app)[0]!.effect;
+  expect(effect).toContain("pace floor 3 (derived from Speed)");
+  expect(effect).toContain("queue depth 2 (set)");
+  // The MCP tool prints the same rows, in the same words.
+  const ctx = { app, auth: { scope: "admin" } } as never;
+  expect(JSON.stringify(await tool.run(ctx, admin, {}))).toContain("pace floor 3 (derived from Speed)");
 });

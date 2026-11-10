@@ -60,7 +60,7 @@ export function capacityScreen(f: Session, ctx: Ctx): Screen {
       const low = belowCeiling(f.app.db, r.key);
       return {
         title: `${r.label} (${r.key})`,
-        meta: `${shown(r.value)} · ${r.source} · takes ${boundsOf(r.key)}${r.source === "setting" ? ` · default ${shown(r.default)}` : ""}${low === null ? "" : ` · below ceiling ${low.ceiling}`}`,
+        meta: `${shown(r.value)} · ${r.source === "derived" ? "derived from Speed" : r.source} · takes ${boundsOf(r.key)}${r.source === "setting" ? ` · default ${shown(r.default)}` : ""}${low === null ? "" : ` · below ceiling ${low.ceiling}`}`,
         ...(low === null ? {} : { tone: "attn" as const }),
       };
     });

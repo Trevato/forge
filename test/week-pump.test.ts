@@ -79,6 +79,7 @@ test("builds fill the pace slots, yet a review or assigned run still starts; a t
   setHeadroom(app.db, sub.value.id, 0);
   app.db.query("INSERT INTO subscription_grant (scope_id, agent_id, subscription_id) VALUES (?1, '', ?2)").run(made.value.id, sub.value.id);
   setCapacity(app.db, "crew.concurrency", "10", alice.id);
+  setCapacity(app.db, "pace.floor", "2", alice.id);
   const now = Date.now();
   noteMeasure(app.db, sub.value.id, { window: "week", usedPct: 70, resetsAt: new Date(now + 3.5 * DAY).toISOString(), observedAt: new Date(now).toISOString() });
   // 30% free now, 36% an hour ago: 6 points an hour, far over what is allowed, so the pace is the floor of 2 slots.

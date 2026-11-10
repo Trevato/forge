@@ -4,12 +4,12 @@
  * line on what it does, the value, a control kind and its live effect. The
  * crew page, the terminal and the MCP `knobs` tool print these same rows;
  * `actions/knobs.ts` is the one place that turns them. The pipeline's own
- * dials (queue depth, pace floor, small share, polish cap) stay on the
+ * dials (small share, polish cap) stay on the
  * capacity page.
  */
 
 import type { App } from "../app.ts";
-import { capacityValue } from "../core/capacity.ts";
+import { capacityValue, followsSpeed, paceFloor, queueDepth } from "../core/capacity.ts";
 import { labelsForIssues } from "../core/issues.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import { listActive } from "../core/runs.ts";
@@ -41,6 +41,11 @@ export interface KnobRow {
 export function autonomyWord(repo: Repo): AutonomyWord {
   if (repo.autonomy === "off") return "off";
   return !repo.plansNeedNod && repo.decisionsBy !== "me" ? "go" : "ask";
+}
+
+/** Whether a dial follows Speed, in the words the capacity page and the terminal use. */
+function from(app: App, key: "pace.floor" | "queue.depth"): string {
+  return followsSpeed(app.db, key) ? " (derived from Speed)" : " (set)";
 }
 
 function runsLine(app: App): string {
@@ -86,7 +91,7 @@ export function readKnobs(app: App, now: Date = new Date()): KnobRow[] {
       control: "number",
       min: 1,
       max: 16,
-      effect: runsLine(app),
+      effect: `${runsLine(app)} · pace floor ${paceFloor(app.db)}${from(app, "pace.floor")} · queue depth ${queueDepth(app.db)}${from(app, "queue.depth")}`,
     },
     {
       id: "budget",
