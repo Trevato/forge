@@ -258,6 +258,10 @@ export function securityFloor(response: Response): Response {
       headers.set("strict-transport-security", HSTS);
     if (!headers.has("cross-origin-opener-policy"))
       headers.set("cross-origin-opener-policy", "same-origin");
+    // No other site loads this as a subresource unless the answer said so
+    // (the public set in corp.ts says `cross-origin` before this runs).
+    if (!headers.has("cross-origin-resource-policy"))
+      headers.set("cross-origin-resource-policy", "same-origin");
     // What left decides, not what was asked for: an HTML body writes the
     // only policy that can name its own nonce, and `default-src 'none'`
     // over a page would strip it of its stylesheet.

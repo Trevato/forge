@@ -481,6 +481,7 @@ import type { Database } from "bun:sqlite";
 import { mcpRoutes, REPORT_TOOL } from "./mcp.ts";
 import { TOOLS } from "./mcp/tools.ts";
 import { setMcpTools } from "../web/llms_tools.ts";
+import { resourcePolicy } from "./corp.ts";
 import { agentsPage } from "../web/pages/agents.ts";
 import { openapiRoute } from "../contract/served.ts";
 import { createUsageCounter, type UsageCounter } from "../core/usage_count.ts";
@@ -2500,7 +2501,7 @@ export async function serve(app: App): Promise<Servers> {
           if (url.pathname.startsWith("/api/v1/"))
             response.headers.set("www-authenticate", bearerChallenge(url.origin, request));
         }
-        const done = await compress(request, response).then(securityFloor).then((r) => privateWhenSignedIn(request, r));
+        const done = await compress(request, response).then((r) => securityFloor(resourcePolicy(request, r))).then((r) => privateWhenSignedIn(request, r));
         if (namesFrame(request)) notePhase(request, "compress", performance.now() - compressing);
         return done;
       },
