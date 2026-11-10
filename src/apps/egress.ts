@@ -48,7 +48,7 @@ export interface EgressPolicy {
   readonly maxPerDestination?: number | undefined;
   /** Close a connection that moved no bytes for this long; default 5 min. */
   readonly idleMs?: number | undefined;
-  /** Bytes held for a client that does not read before it is cut; default 4 MiB. */
+  /** Bytes held for a slow client; a quarter of it pauses the upstream, and past all of it once paused the client is cut. Default 4 MiB. */
   readonly queueMax?: number | undefined;
   /**
    * The proxy of the cell this forge itself runs in (`upstreamProxy`): a
@@ -85,8 +85,15 @@ const MAX_PER_DESTINATION = 8;
 /** A public destination's cap: an install opens dozens of parallel fetches to one registry. */
 export const MAX_PER_PUBLIC_DESTINATION = 64;
 const IDLE_MS = 5 * 60_000;
-/** Bytes held for a client that does not read before its upstream is cut. */
+/** Bytes held for a client that does not read before its upstream is cut, once the pause has landed. */
 const QUEUE_MAX = 4 * 1024 * 1024;
+/**
+ * A backlog past this share of `queueMax` pauses the side that fills it until
+ * the slow side drains: an install extracting a big tarball slower than the
+ * registry sends it gets every byte instead of a cut connection, and the
+ * bytes held stay bounded. A side that never drains is cut by the idle sweep.
+ */
+const PAUSE_AT = 4;
 
 interface Tally {
   open: number;
@@ -461,6 +468,11 @@ interface Conn {
   last: number;
   /** Frees the destination's slot and counts it closed; set once dialled. */
   release: (() => void) | undefined;
+  /**
+   * The upstream is paused until this client drains its backlog: "pausing"
+   * while the read already under way lands, "paused" once it has.
+   */
+  held?: "pausing" | "paused" | undefined;
 }
 
 /** Cut both sides now: the upstream must never outlive the client. */
@@ -673,13 +685,26 @@ async function open(
           count.bytesIn += chunk.length;
           recordEgress(label, destination, chunk.length, 0);
           send(client, client.data.toClient, chunk);
-          if (queued(client.data.toClient) > (policy.queueMax ?? QUEUE_MAX)) {
+          const backlog = queued(client.data.toClient);
+          const max = policy.queueMax ?? QUEUE_MAX;
+          if (backlog <= max / PAUSE_AT) return;
+          // The read under way when the pause lands may still deliver a socket
+          // buffer's worth; past the limit after that, the pause did not hold: cut.
+          if (client.data.held === "paused" && backlog > max) {
             drop(client);
             client.terminate();
+            return;
           }
+          if (client.data.held !== undefined) return;
+          client.data.held = "pausing";
+          peer.pause();
+          setImmediate(() => {
+            if (client.data.held === "pausing") client.data.held = "paused";
+          });
         },
         drain(peer) {
           flush(peer, client.data.toPeer);
+          if (queued(client.data.toPeer) <= (policy.queueMax ?? QUEUE_MAX) / PAUSE_AT) client.resume();
         },
         close: ended,
         error: ended,
@@ -751,6 +776,7 @@ export function startEgress(
         if (conn.tally !== undefined) conn.tally.bytesOut += chunk.length;
         if (conn.destination !== undefined) recordEgress(conn.label, conn.destination, 0, chunk.length);
         send(conn.peer, conn.toPeer, chunk);
+        if (queued(conn.toPeer) > (policy.queueMax ?? QUEUE_MAX) / PAUSE_AT) client.pause();
         return;
       }
       if (conn.done) return;
@@ -773,6 +799,10 @@ export function startEgress(
     drain(client: Socket<Conn>) {
       client.data.last = Date.now();
       flush(client, client.data.toClient);
+      if (client.data.held !== undefined && queued(client.data.toClient) <= (policy.queueMax ?? QUEUE_MAX) / PAUSE_AT) {
+        client.data.held = undefined;
+        client.data.peer?.resume();
+      }
     },
     close(client: Socket<Conn>) {
       live.delete(client);
