@@ -1,5 +1,5 @@
 /**
- * Connected origins in the terminal: the hosts your mirrors come from, as
+ * Origins in the terminal: the hosts your mirrors come from, as
  * Settings › Origins lists them. `s` syncs the selected one now, `d` disconnects
  * it after a confirm — through `actions/origins.ts`, in `origin_words.ts`'s words.
  */
@@ -27,7 +27,7 @@ export function connectionsScreen(f: Session, ctx: Ctx): Screen {
   const counts = () => (f.user === undefined ? new Map<string, { count: number }>() : mirrorsByOrigin(f.app.db, f.user.id));
 
   const screen: Screen = {
-    title: "Connected origins",
+    title: "Origins",
     keys: [binding(["j", "k"], "move cursor"), binding(["c"], "connect"), binding(["s"], "sync now"), binding(["v"], "verify again"), binding(["d"], "disconnect"), binding(["esc"], "back")],
     render(area, s) {
       const c = ctx.theme.c;
@@ -159,10 +159,10 @@ export function connectionsScreen(f: Session, ctx: Ctx): Screen {
   return screen;
 }
 
-/** Connected origins: a signed-in person, not an agent. */
+/** Origins: a signed-in person, not an agent. */
 export const entry: PaletteEntry = {
   id: "origins",
-  title: "Connected origins",
+  title: "Origins",
   hint: "the hosts your mirrors come from",
   offered: (session) => session.user !== undefined && session.user.kind !== "agent",
   run: (session, ctx) => ctx.push(connectionsScreen(session, ctx)),

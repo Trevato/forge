@@ -794,14 +794,14 @@ function originsView(
     </p>
     ${origins.length === 0
       ? html`<section class="settings-block">
-          <h2>Connected origins</h2>
+          <h2>Origins</h2>
           <p class="small">
-            No origins connected: connect another forge, GitHub, a Forgejo
+            No origins yet: connect another forge, GitHub, a Forgejo
             instance or a Gitea instance below.
           </p>
         </section>`
       : html`<section class="settings-block">
-          <h2>Connected origins</h2>
+          <h2>Origins</h2>
           <ul class="list setting-list" data-origins>
             ${origins.map((o) =>
               originCard(

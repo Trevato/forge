@@ -751,7 +751,7 @@ function tokensView(ctx: Ctx): Html {
     listSessions(ctx.app.db, ctx.auth.user!.id, cookieValue(ctx.request, "forge_session")),
   );
   const list = tokens.length === 0
-    ? html`<p class="muted">No tokens yet. Mint one when a script, a CI job, or another machine needs to act as you.</p>`
+    ? html`<p class="muted">No access tokens yet. Mint one when a script, a CI job, or another machine needs to act as you.</p>`
     : html`<ul class="list setting-list">
         ${tokens.map((t) =>
           row({
@@ -766,18 +766,18 @@ function tokensView(ctx: Ctx): Html {
       </ul>`;
   return html`${help([
       [
-        "Tokens",
+        "Access tokens",
         "Use a token as the password when pushing over HTTPS, or as a Bearer token for the API. Your account password works for git too — tokens are for scoped or automated access.",
       ],
-      ["Token name", "Name it after where it lives — laptop, CI, deploy box."],
+      ["Access token name", "Name it after where it lives — laptop, CI, deploy box."],
       ["Scope", "A token can never mint another token, whatever its scope."],
     ])}${connectCard(ctx, readFlash(ctx.request)?.code)}
-    ${block("Tokens", list)}
+    ${block("Access tokens", list)}
     ${block(
-      "New token",
+      "New access token",
       html`<form method="post" action="/settings/tokens">
         ${uiField({
-          label: "Token name",
+          label: "Access token name",
           name: "name",
           required: true,
         })}
@@ -804,7 +804,7 @@ function tokensView(ctx: Ctx): Html {
             </div>`
           : null}
         <div class="form-actions">
-          ${btn("Generate token", { variant: "primary" })}
+          ${btn("Generate access token", { variant: "primary" })}
         </div>
       </form>`,
     )}
@@ -816,7 +816,7 @@ export function tokensPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const body = tokensView(ctx);
-  return timePhase(ctx.request, "render", () => accountShell(ctx, "tokens", "Personal access tokens", body));
+  return timePhase(ctx.request, "render", () => accountShell(ctx, "tokens", "Access tokens", body));
 }
 
 // POST /settings/tokens
@@ -909,7 +909,7 @@ function keysView(
     ${block(
       "SSH keys",
       keys.length === 0
-        ? html`<p class="muted">No keys yet. Add one and git over SSH stops asking for a password.</p>`
+        ? html`<p class="muted">No SSH keys yet. Add one and git over SSH stops asking for a password.</p>`
         : html`<ul class="list setting-list">
             ${keys.map((k) =>
               row({
@@ -940,7 +940,7 @@ function keysView(
           placeholder: "ssh-ed25519 AAAA…",
         })}
         <div class="form-actions">
-          ${btn("Add key", { variant: "primary" })}
+          ${btn("Add SSH key", { variant: "primary" })}
         </div>
         ${refusal(values.error)}
       </form>`,

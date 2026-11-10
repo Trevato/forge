@@ -232,7 +232,7 @@ describe("origins on the web", () => {
 
   test("the origins page starts empty and offers the three ways in", async () => {
     const html = await (await asUser(alice, "/settings/origins")).text();
-    expect(html).toContain("No origins connected");
+    expect(html).toContain("No origins yet");
     expect(html).toContain("Forgejo / Gitea, one click");
     // Another forge leads (#9388); the rest are folded.
     expect(html).toContain("Another forge");
@@ -363,7 +363,7 @@ describe("origins on the web", () => {
 
   test("another user cannot see or act on that origin", async () => {
     const html = await (await asUser(bob, "/settings/origins")).text();
-    expect(html).toContain("No origins connected");
+    expect(html).toContain("No origins yet");
     const id = listOrigins(app.db, getUserByName(app.db, "alice")!.id)[0]!.id;
     const stolen = await asUser(bob, `/settings/origins/${id}/repos`);
     expect(stolen.status).toBe(404);

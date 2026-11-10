@@ -1,4 +1,4 @@
-/** Connected origins in the terminal: listed, disconnected after a confirm, never offered to a guest. */
+/** Origins in the terminal: listed, disconnected after a confirm, never offered to a guest. */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -47,7 +47,7 @@ describe("connected origins in the terminal", () => {
 
   const open = async (h: ReturnType<typeof boot>) => {
     await h.ctrl("k");
-    await h.type("Connected origins");
+    await h.type("Origins");
     return h;
   };
 
@@ -116,7 +116,7 @@ describe("connected origins in the terminal", () => {
     const h = boot({ sshUsername: "t", remoteAddress: "127.0.0.1", user: getUserByName(forge.db, "carol")! } as TuiIdentity);
     try {
       await h.ctrl("k");
-      await h.type("Connected origins");
+      await h.type("Origins");
       await h.press("enter");
       expect(listOrigins(forge.db, made.value.id)[0]!.lastError).toBe("");
       await h.press("s");
@@ -167,7 +167,7 @@ describe("connected origins in the terminal", () => {
     const h = boot({ ...alice(), user: { ...getUserByName(forge.db, "alice")!, kind: "agent" } } as TuiIdentity);
     try {
       await h.ctrl("k");
-      await h.type("Connected origins");
+      await h.type("Origins");
       expect(h.text()).not.toContain("the hosts your mirrors come from");
     } finally {
       h.stop();
@@ -200,7 +200,7 @@ describe("connected origins in the terminal", () => {
     const h = boot({ sshUsername: "git", remoteAddress: "127.0.0.1", fingerprint: "SHA256:unknown" });
     try {
       await h.ctrl("k");
-      await h.type("Connected origins");
+      await h.type("Origins");
       expect(h.text()).not.toContain("the hosts your mirrors come from");
     } finally {
       h.stop();

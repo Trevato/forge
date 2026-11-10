@@ -123,7 +123,7 @@ describe("onboarding: a person with just a login", () => {
     const pageHtml = await (
       await fetch(`${base}/settings/tokens`, { headers: { cookie } })
     ).text();
-    expect(pageHtml).toContain("Personal access tokens");
+    expect(pageHtml).toContain("Access tokens");
 
     // Post-redirect-get: minting redirects, and the secret rides a one-shot
     // flash cookie so a refresh shows the list instead of minting again.

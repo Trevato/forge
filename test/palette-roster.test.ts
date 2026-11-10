@@ -156,7 +156,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["cloud", "Cloud accounts", "provider tokens, what they are used for, today's calls"],
     ["pinned", "Pinned forges", "deploy, update and roll back a forge on your cloud"],
     ["bets", "Bets", "back, stop and finish a repository\'s bets"],
-    ["origins", "Connected origins", "the hosts your mirrors come from"],
+    ["origins", "Origins", "the hosts your mirrors come from"],
     ["domains", "Failure domains", "failure domains and their last drill"],
     ["feed", "Feed", "what happened, ranked; r replies on a post about an issue or pull, l likes, h who liked"],
     ["feature-review", "Menu entries to review", "absorbed apps whose declared name or page changed: accept them"],
@@ -248,7 +248,7 @@ test("a site-admin agent is offered the roster without the person-only entries",
   ]);
 });
 
-test("no agent is offered Connected origins", () => {
+test("no agent is offered Origins", () => {
   expect(roster({ ...admin, kind: "agent" }).map(([id]) => id)).not.toContain("origins");
 });
 
@@ -313,7 +313,7 @@ test("a member person is offered the signed-in roster without the admin entries"
     ["archived", "Archived repositories", "put away, not gone: open one or wake it"],
     ["bulk", "Bulk actions", "your last bulk actions; u undoes one inside its day"],
     ["bets", "Bets", "back, stop and finish a repository\'s bets"],
-    ["origins", "Connected origins", "the hosts your mirrors come from"],
+    ["origins", "Origins", "the hosts your mirrors come from"],
     ["feed", "Feed", "what happened, ranked; r replies on a post about an issue or pull, l likes, h who liked"],
     ["feature-feed", "Feature feeds", "the feed items about an absorbed app, as Settings › Features shows them"],
     ["front", "Front page", "the apps a first visitor sees, ranked; an admin pins or hides"],

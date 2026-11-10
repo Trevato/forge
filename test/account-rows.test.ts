@@ -63,8 +63,8 @@ test("no account page is a card or holds a table", async () => {
 test("tokens are rows under a Tokens heading, each with Revoke", async () => {
   const m = await main("/settings/tokens");
   expect(m).toContain('<section class="settings-block">');
-  const list = m.slice(m.indexOf("<h2>Tokens</h2>"));
-  expect(list).toMatch(/^<h2>Tokens<\/h2>\s*<ul class="list setting-list">/);
+  const list = m.slice(m.indexOf("<h2>Access tokens</h2>"));
+  expect(list).toMatch(/^<h2>Access tokens<\/h2>\s*<ul class="list setting-list">/);
   const item = list.slice(0, list.indexOf("</ul>"));
   expect(item).toContain("<strong>laptop</strong>");
   expect(item).toMatch(/settings%2Ftokens%2F[^"]+%2Fdelete/);
@@ -90,10 +90,10 @@ test("empty lists are one muted sentence, not a panel", async () => {
   const c = (other.headers.get("set-cookie") ?? "").split(";")[0]!;
   const get = async (path: string) => (await (await fetch(`${base}${path}`, { headers: { cookie: c } })).text());
   const tokens = await get("/settings/tokens");
-  expect(tokens).toContain('<p class="muted">No tokens yet.');
+  expect(tokens).toContain('<p class="muted">No access tokens yet.');
   expect(tokens).not.toContain("empty-title");
   const keys = await get("/settings/keys");
-  expect(keys).toContain('<p class="muted">No keys yet.');
+  expect(keys).toContain('<p class="muted">No SSH keys yet.');
   expect(keys).not.toContain("empty-title");
   const card = String(sessionsCard([], "/settings"));
   expect(card).toContain('<p class="muted">Not signed in on any browser.</p>');

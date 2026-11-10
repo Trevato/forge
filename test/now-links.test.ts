@@ -119,7 +119,7 @@ const MENU_TITLES: Record<string, string> = {
   Migrate: "Migrate",
   "New forge": "New forge",
   Settings: "Settings",
-  "Access tokens": "Personal access tokens",
+  "Access tokens": "Access tokens",
   "SSH keys": "SSH keys",
   Origins: "Origins",
   Crew: "Crew",
