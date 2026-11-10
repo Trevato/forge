@@ -34,6 +34,7 @@ const NOT_A_PAGE: Record<string, string> = {
   "/openapi.json": "a redirect to the contract document",
   "/favicon.ico": "the tab icon, an image",
   "/releases.json": "JSON feed of /releases",
+  "/docs": "a redirect to the forge's documentation",
   "/changelog.atom": "Atom feed of /changelog",
   "/sitemap.xml": "XML for crawlers",
   "/manifest.webmanifest": "the install manifest, JSON",

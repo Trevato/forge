@@ -168,6 +168,7 @@ import { flowsCheck, flowsPage, flowsProbe, flowsUpdate } from "../web/pages/flo
 import { findingAccept, findingsPage } from "../web/pages/findings.ts";
 import { betAct, betPage, betPropose, betsPage } from "../web/pages/bets.ts";
 import { changelogJson, changelogPage } from "../web/pages/changelog.ts";
+import { docsFile, docsFolder } from "../web/pages/docs_link.ts";
 import { releaseHoldSubmit, liftSubmit, releasesPage, rollbackSubmit } from "../web/pages/releases.ts";
 import {
   changePassword,
@@ -922,6 +923,9 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/now/:stage", nowPage);
   router.add("GET", "/audit", auditPage);
   router.add("GET", "/releases", releasesPage);
+  // The forge's own documentation: a redirect built from configuration only.
+  router.add("GET", "/docs", docsFolder);
+  router.add("GET", "/docs/:file", docsFile);
   router.add("GET", "/changelog", changelogPage);
   router.add("GET", "/changelog.atom", changelogAtom);
   router.add("GET", "/:owner/:name/api", appApiPage);

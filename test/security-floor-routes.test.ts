@@ -64,6 +64,7 @@ const UNSEEDED: Record<string, string> = {
   "/:owner/-/teams/:team": ORG,
   "/claim/start/:token": "needs a one-time start claim token, which the seed does not mint (test/start.test.ts covers it)",
   "/talk/:id": TALK,
+  "/docs/:file": "a file name of the documentation folder; the seed supplies no :file",
   "/bring/:id/:job": "needs a bring job of the signed-in person; the seed brings nothing",
   "/fleet/ops/:id": FLEET,
   "/:owner/:name/bets/:id": BET,

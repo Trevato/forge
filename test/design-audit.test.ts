@@ -15,7 +15,7 @@ const doc = readFileSync("docs/design/audit.md", "utf8");
 
 /** Routes that answer a file, a fragment, a redirect hop or a callback. */
 const NOT_PAGES =
-  /^\/(assets\/|\.well-known\/|icons\/|og\/|live\/|__forge\/|go\/|new\/issue$|events$|system\/stream$|talk\/stream$|settings\/teams\/stream$|sw\.js$|robots\.txt$|favicon\.ico$|apple-touch-icon(-precomposed)?\.png$|sitemap\.xml$|manifest\.webmanifest$|opensearch\.xml$|llms\.txt$|openapi\.json$|releases\.json$|changelog\.atom$|audit\.csv$|settings\/traffic\/scrapes\/export$|fleet\/graph\/live$|fleet\/graph\.csv$|settings\/origins\/callback$|home\/archived\/|settings\/backups\/live$|api\/v1(\/|$))/;
+  /^\/(assets\/|\.well-known\/|icons\/|og\/|live\/|__forge\/|go\/|new\/issue$|events$|system\/stream$|talk\/stream$|settings\/teams\/stream$|sw\.js$|robots\.txt$|favicon\.ico$|apple-touch-icon(-precomposed)?\.png$|sitemap\.xml$|manifest\.webmanifest$|opensearch\.xml$|llms\.txt$|openapi\.json$|releases\.json$|changelog\.atom$|docs(\/[^/]*)?$|audit\.csv$|settings\/traffic\/scrapes\/export$|fleet\/graph\/live$|fleet\/graph\.csv$|settings\/origins\/callback$|home\/archived\/|settings\/backups\/live$|api\/v1(\/|$))/;
 
 const getRoutes = [
   ...server.matchAll(/router\.add\(\s*"GET",\s*"([^"]+)"/g),

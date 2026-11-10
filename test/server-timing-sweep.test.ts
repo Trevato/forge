@@ -47,6 +47,7 @@ const REDIRECTS = new Set([
   "/alice/forge/tells",
   "/alice/forge/tells/new",
   "/big",
+  "/docs",
   "/login",
   "/openapi.json",
   "/settings/origins/callback",

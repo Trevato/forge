@@ -593,6 +593,7 @@ function overlays(): Html {
       <div class="dialog-head"><h2 id="help-title">Keyboard shortcuts</h2></div>
       <div class="dialog-body" data-help-body></div>
       <div class="dialog-foot">
+        <a class="btn" data-variant="link" href="/docs">Docs</a>
         <form method="dialog">
           <button class="btn" type="submit">Close</button>
         </form>
@@ -713,6 +714,7 @@ function footer(ctx: Ctx, own?: Html): Html {
           >${reduced}</span
         >`}
     <span class="spacer"></span>
+    <a href="/docs">Docs</a>
     <a href="/changelog">Changelog</a>
     <a href="/api">API</a>
     ${ctx.auth.user !== undefined && ctx.auth.user.kind !== "org"
