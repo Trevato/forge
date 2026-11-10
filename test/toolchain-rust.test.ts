@@ -136,6 +136,10 @@ const sysroot = (() => {
   return p.exitCode === 0 ? p.stdout.toString().trim() : undefined;
 })();
 
+if (sysroot === undefined) {
+  console.log("SKIPPED rust hello-world fixture: no cargo/rustc on PATH, so no pinned Rust toolchain on this host");
+}
+
 describe("rust hello-world fixture", () => {
   (sysroot === undefined ? test.skip : test)(
     "deploys with cargo build in install and answers /",
