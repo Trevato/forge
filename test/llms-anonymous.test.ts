@@ -46,7 +46,7 @@ const section = (body: string): string[] => {
 test("the anonymous text is small, varies by reader, and lists report and start plus one line", async () => {
   const res = await fetch(`${servers.url}/llms.txt`);
   const body = await res.text();
-  expect(Buffer.byteLength(body)).toBeLessThan(6 * 1024);
+  expect(Buffer.byteLength(body)).toBeLessThan(6.5 * 1024);
   expect(res.headers.get("vary")).toContain("Cookie");
   expect(res.headers.get("vary")).toContain("Authorization");
   const listed = section(body);
@@ -82,4 +82,11 @@ test("a signed-in reader still gets every tool and report", async () => {
     headers: { authorization: `Bearer ${token}` },
   }).then((r) => r.text());
   expect(section(body)).toHaveLength(TOOLS.length + 2);
+});
+
+test("the OpenAPI line names ?tag= and the tags", async () => {
+  const body = await (await fetch(`${servers.url}/llms.txt`)).text();
+  const line = body.split("\n").find((l) => l.startsWith("- OpenAPI:")) ?? "";
+  expect(line).toContain("?tag=");
+  expect(line).toContain("pulls");
 });

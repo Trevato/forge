@@ -46,6 +46,7 @@ import { SITE_LINE } from "./site_line.ts";
 import { mcpToolsSection } from "./llms_tools.ts";
 import { apiCatalog, DISCOVERY, mcpCard, offeredPlugins, mcpPointers, offeredPluginRepo, pluginSource } from "../core/mcp_card.ts";
 import { forgeDocument } from "../core/standards_index.ts";
+import { TAGS } from "../contract/served.ts";
 import { running } from "../kernel/version.ts";
 import { timePhase, timePhaseAsync } from "../core/route_timing.ts";
 import { shippedReleases, type Shipped } from "../release/shipped.ts";
@@ -479,7 +480,7 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
       `- MCP: ${mcp.url} (OAuth discovery: ${mcp.oauth}; server card, a draft format: ${o}${DISCOVERY.card})`,
       `- API: ${o}${DISCOVERY.api} (the root lists the other URLs), Authorization: Bearer <token>`,
       `- API catalog (RFC 9727, one linkset of the above): ${o}${DISCOVERY.catalog}`,
-      `- OpenAPI: GET ${o}${DISCOVERY.api}/openapi.json (redirects to ${o}${DISCOVERY.openapi})`,
+      `- OpenAPI: GET ${o}${DISCOVERY.openapi}, or one slice with ?tag= (${TAGS.join(", ")})`,
       "",
       ...mcpToolsSection(o, signedIn),
       "## Public repositories",
