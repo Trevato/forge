@@ -49,6 +49,12 @@ const MAX_CREW = 100;
 const placements = new WeakMap<App, Placement>();
 const probes = new WeakMap<App, (url: string) => Probe>();
 
+/** The probe this forge asks a child's address with: the test's when one was set, else `/healthz` within `timeoutMs`. */
+export function probeFor(app: App, url: string, timeoutMs: number): Probe {
+  const swapped = probes.get(app);
+  return swapped ? swapped(url) : probeOf(url, timeoutMs);
+}
+
 /** Tests swap how a new child is asked whether it is live. */
 export function useProbe(app: App, probe: (url: string) => Probe): void {
   probes.set(app, probe);

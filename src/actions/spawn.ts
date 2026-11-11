@@ -737,6 +737,12 @@ const childOf = (app: App, ledger: Ledger): Child => ({
   placementNote: ledger.placementNote ?? null,
 });
 
+/** One child by name, or undefined when this forge made none of that name. */
+export async function childNamed(app: App, name: string): Promise<Child | undefined> {
+  const ledger = await readLedger(app, name);
+  return ledger === undefined ? undefined : childOf(app, ledger);
+}
+
 /** The children this forge has made or begun, from its ledger, by name. */
 export async function listChildren(app: App): Promise<Child[]> {
   const dir = join(app.config.dataDir, "spawn");

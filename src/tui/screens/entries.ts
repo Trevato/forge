@@ -44,6 +44,7 @@ import { entry as flowsAll } from "./flowsall.ts";
 import { entry as front } from "./front.ts";
 import { entry as frontMilestones } from "./frontms.ts";
 import { entry as forges } from "./forges.ts";
+import { entry as forgeReady } from "./forgeready.ts";
 import { entry as homePins } from "./home_pins.ts";
 import { entry as claimStart } from "./claim_start.ts";
 import { entry as invites } from "./invites.ts";
@@ -170,6 +171,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   front,
   owner,
   forges,
+  forgeReady,
   childCredit,
   originAhead,
   profile,

@@ -269,6 +269,7 @@ import {
   composerSubmit,
   tellSubmit,
 } from "../web/studio/actions.ts";
+import { forgeReady } from "../web/pages/forge-ready.ts";
 import { claimFragmentPage, claimOptions, claimSubmit } from "../web/pages/claim.ts";
 import { firstAdminOptions, firstAdminPage, firstAdminSubmit } from "../web/pages/first-admin.ts";
 import { familyPage } from "../web/pages/family.ts";
@@ -846,6 +847,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/forges/:name/own-code", forgeOwnCodeSubmit);
   router.add("GET", "/forges/:name/remove", forgeRemoveConfirm);
   router.add("POST", "/forges/:name/remove", forgeRemoveSubmit);
+  router.add("GET", "/forges/:name/ready", forgeReady);
   router.add("GET", "/forges/new", newForgePage);
   router.add("POST", "/forges/new", newForgeSubmit);
   // The front page as a stranger sees it, for anyone; a site admin there
