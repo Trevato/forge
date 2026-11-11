@@ -167,6 +167,11 @@ export function plainWords(item: string): string {
   return PLAIN[item] ?? item.replace("its own model key", "its own AI account key");
 }
 
+/** The fresh field's error; when there is no picker, the apps' error too, so it is never lost. */
+function freshError(errors: Errors, repoCount: number): string | undefined {
+  return errors["fresh"] ?? (repoCount === 0 ? errors["apps"] : undefined);
+}
+
 function formView(
   ctx: Ctx,
   user: User | undefined,
@@ -188,12 +193,13 @@ function formView(
       </section>
     </div>`;
   const anon = user === undefined;
+  const freshErr = freshError(errors, repos.length);
+  const lead = repos.length === 0 ? "Pick a name, and say what it is for if you like" : "Pick a name and the apps to start from";
   return html`<div class="narrow-wide" data-forges>
     ${pageHead("New forge", {
-      sub: anon
-        ? "Pick a name and the apps to start from. Whoever opens the link becomes its admin."
-        : "Pick a name and the apps to start from; you get one link to send.",
-      actions: btn("Forges you sent", { href: "/forges", size: "sm" }),
+      sub: `${lead}${anon ? ". Whoever opens the link becomes its admin." : "; you get one link to send."}`,
+      // /forges answers only an admin; to anyone else the link would lead to a 404.
+      actions: ctx.auth.user?.isAdmin ? sentLink() : undefined,
     })}
     <p class="muted small" id="hosting-terms">Free within limits: it sleeps when idle, and its crew starts once you add your AI account.</p>
     ${quota ? html`<p role="status" id="quota-full">This forge has no room for another forge: ${quota}.</p>` : null}
@@ -231,23 +237,26 @@ function formView(
           hint: "In your words: the crew's first direction. Optional.",
           ...(errors["direction"] ? { error: errors["direction"] } : {}),
         })}
-        ${pickList({
-          legend: "Apps to fork, with their history",
-          name: "apps",
-          noun: "repositories",
-          items: repos.map((r) => ({
-            value: `${r.ownerName}/${r.name}`,
-            label: `${r.ownerName}/${r.name}`,
-          })),
-          chosen: values.apps,
-          error: errors["apps"],
-        })}
+        ${repos.length === 0
+          ? null
+          : pickList({
+              legend: "Apps to fork, with their history",
+              name: "apps",
+              noun: "repositories",
+              items: repos.map((r) => ({
+                value: `${r.ownerName}/${r.name}`,
+                label: `${r.ownerName}/${r.name}`,
+              })),
+              chosen: values.apps,
+              error: errors["apps"],
+            })}
         ${formField({
           label: "Or a fresh app (optional)",
           name: "fresh",
           value: values.fresh,
           hint: `One line on what it is; the new forge gets a small app to start from (at most ${MAX_FRESH_CHARS} characters).`,
-          ...(errors["fresh"] ? { error: errors["fresh"] } : {}),
+          // With no picker to show it, an error about the apps is said here.
+          ...(freshErr ? { error: freshErr } : {}),
         })}
         <details class="disclosure" ${Object.keys(errors).some((k) => MORE_FIELDS.includes(k)) ? html`open` : null}>
           <summary>More options</summary>
@@ -420,8 +429,13 @@ function giftLine(g: unknown): Html | null {
   return typeof gift?.plan === "string" ? html`<li><b>${giftWords({ plan: gift.plan })}</b></li>` : null;
 }
 
-/** The link, shown once: what to do with it, and a way to copy it. */
-export function claimLinkBody(link: string, note?: string): Html {
+/** The way to the list of forges sent; /forges answers only an admin, so only an admin is shown it. */
+function sentLink(): Html {
+  return btn("Forges you sent", { href: "/forges", size: "sm" });
+}
+
+/** The link, shown once: what to do with it, and a way to copy it; the list of forges sent only for an admin. */
+export function claimLinkBody(link: string, isAdmin: boolean, note?: string): Html {
   return html`<p class="mb">
       Send this link to the person it is for. It works once, for a day, and
       is shown only now.
@@ -435,11 +449,11 @@ export function claimLinkBody(link: string, note?: string): Html {
         trail: btn("Copy the link", { type: "button", copy: "claim-link", icon: "copy", variant: "primary", size: "sm" }),
       })
     }</ul>
-    <p class="mt">${btn("Forges you sent", { href: "/forges", size: "sm" })}</p>
+    ${isAdmin ? html`<p class="mt">${sentLink()}</p>` : null}
     ${note === undefined ? null : html`<p class="small mt">${note}</p>`}`;
 }
 
-function madeView(body: Record<string, unknown>): Html {
+function madeView(body: Record<string, unknown>, isAdmin: boolean): Html {
   const link = body["claimUrl"];
   const note = body["keyNote"];
   const name = String(body["name"] ?? "");
@@ -450,7 +464,7 @@ function madeView(body: Record<string, unknown>): Html {
     <section class="settings-block">
       <h2>${typeof link === "string" ? "The link to send" : "Its link"}</h2>
       ${typeof link === "string"
-        ? claimLinkBody(link, typeof note === "string" ? note : undefined)
+        ? claimLinkBody(link, isAdmin, typeof note === "string" ? note : undefined)
         : html`<p>
             It was made before, so its link is not shown again. Ask for a new
             one if it was lost.
@@ -618,7 +632,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
   const going = user === undefined && field(form, "from") === "home" ? await walkOn(ctx, door.body) : undefined;
   if (going !== undefined) return going;
   const response = page(
-    { ctx, title: "New forge", body: madeView(door.body) },
+    { ctx, title: "New forge", body: madeView(door.body, ctx.auth.user?.isAdmin === true) },
     door.status,
   );
   // The link is in this body only: never kept by a cache.

@@ -388,12 +388,19 @@ describe("the client list", () => {
 describe("the claim link's markup", () => {
   test("is drawn from the design system and stays one tap to copy", async () => {
     const { claimLinkBody } = await import("../src/web/pages/new-forge.ts");
-    const out = claimLinkBody("https://x.test/claim#abc").text;
+    const out = claimLinkBody("https://x.test/claim#abc", true).text;
     expect(out).not.toContain("claim-link-box");
     expect(out).toContain('id="claim-link"');
     expect(out).toContain('class="row"');
     // The long link wraps rather than ellipsizes: only .setting-list lifts nowrap.
     expect(out).toContain("list setting-list");
     expect(out).toContain("Copy the link");
+  });
+
+  test("offers the forges sent only to an admin: /forges is a 404 to anyone else", async () => {
+    const { claimLinkBody } = await import("../src/web/pages/new-forge.ts");
+    expect(claimLinkBody("https://x.test/claim#abc", true).text).toContain('href="/forges"');
+    expect(claimLinkBody("https://x.test/claim#abc", false).text).not.toContain('href="/forges"');
+    expect(claimLinkBody("https://x.test/claim#abc", false).text).not.toContain("Forges you sent");
   });
 });

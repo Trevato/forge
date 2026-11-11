@@ -381,7 +381,7 @@ export { hostOf };
 /** Title line with optional right-aligned actions and a subtitle. */
 export function pageHead(
   title: Html | string,
-  o: { actions?: Html; sub?: Html | string; lead?: Html } = {},
+  o: { actions?: Html | undefined; sub?: Html | string; lead?: Html } = {},
 ): Html {
   return html`<div class="page-head">
     ${o.lead ?? null}

@@ -204,7 +204,7 @@ export async function forgeLinkSubmit(ctx: Ctx): Promise<Response> {
         ${pageHead(typeof link === "string" ? `A fresh link for ${name}` : `No fresh link for ${name}`)}
         <section class="settings-block">
           ${typeof link === "string"
-            ? claimLinkBody(link)
+            ? claimLinkBody(link, true)
             : html`<p>${String(door.body["message"] ?? "")}</p>
                 <p class="mt">${btn("Forges you sent", { href: "/forges", size: "sm" })}</p>`}
         </section>
