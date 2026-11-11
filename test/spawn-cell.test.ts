@@ -185,7 +185,7 @@ describe("a child forge's crew inside its cell", () => {
     }
   });
 
-  test("a child with a run queued or running is at work, however quiet its visitors; one with none is not", () => {
+  test("a child with a run running or due is at work, however quiet its visitors; one paused on a limit or with none is not", () => {
     const dir = join(tmp, "at-work");
     expect(crewAtWork(dir)).toBe(false);
     const child = createApp({ dataDir: dir, url: "https://kid--f.test" });
@@ -195,6 +195,14 @@ describe("a child forge's crew inside its cell", () => {
       child.db.query("INSERT INTO run (id, repo_id, kind, state) VALUES ('r1', 'repo', 'agent', 'running')").run();
       expect(crewAtWork(dir)).toBe(true);
       child.db.query("UPDATE run SET state = 'queued' WHERE id = 'r1'").run();
+      expect(crewAtWork(dir)).toBe(true);
+      // paused on a limit until tomorrow: not at work, so the forge may sleep
+      const later = new Date(Date.now() + 86_400_000).toISOString();
+      child.db.query("UPDATE run SET not_before = ?1 WHERE id = 'r1'").run(later);
+      expect(crewAtWork(dir)).toBe(false);
+      // its moment has come: at work again
+      expect(crewAtWork(dir, Date.now() + 2 * 86_400_000)).toBe(true);
+      child.db.query("UPDATE run SET state = 'running' WHERE id = 'r1'").run();
       expect(crewAtWork(dir)).toBe(true);
       child.db.query("UPDATE run SET state = 'failed' WHERE id = 'r1'").run();
       expect(crewAtWork(dir)).toBe(false);

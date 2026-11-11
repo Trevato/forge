@@ -35,15 +35,26 @@ export const ownsBody = (bodyId: string): boolean => bodyId.startsWith(CELL_PREF
  * running. Its own process, not a request, is what a run keeps busy: a run
  * outlasts the idle window with no visitor at all, and a sleep killed it
  * (grokbot-agency: every run "interrupted by a restart" ten minutes in).
- * Read from its database, read-only; a database that cannot be read says no.
+ * A run paused on a limit (`not_before` ahead, e.g. a provider's weekly
+ * limit) is not at work: it would hold the forge awake, and a slot of the
+ * host's ceiling (`FORGE_CHILD_AWAKE_MAX`), for days. It starts when the
+ * forge next wakes. Read from its database, read-only; a database that
+ * cannot be read says no.
  */
-export function crewAtWork(dir: string): boolean {
+export function crewAtWork(dir: string, now = Date.now()): boolean {
   const path = join(dir, "forge.db");
   if (!existsSync(path)) return false;
   let db: Database | undefined;
   try {
     db = new Database(path, { readonly: true });
-    return db.query("SELECT 1 FROM run WHERE state IN ('queued','running') LIMIT 1").get() !== null;
+    return (
+      db
+        .query<{ one: number }, [string]>(
+          `SELECT 1 AS one FROM run WHERE state = 'running'
+              OR (state = 'queued' AND (not_before IS NULL OR not_before <= ?1)) LIMIT 1`,
+        )
+        .get(new Date(now).toISOString()) !== null
+    );
   } catch {
     return false;
   } finally {
@@ -466,7 +477,7 @@ export function makeRegistry(parent: App, launcher?: Launcher): CellChildren {
       for (const child of [...held.values()]) {
         if (isNewForge(startedAt.get(child.bodyId), now)) continue;
         if (now - (seen.get(child.bodyId) ?? now) < idleMs || (busy.get(child.bodyId) ?? 0) > 0) continue;
-        if (crewAtWork(childDirOf(parent, child.bodyId))) continue;
+        if (crewAtWork(childDirOf(parent, child.bodyId), now)) continue;
         asleep.push(child.name);
         seen.delete(child.bodyId);
         await this.stop(child.bodyId);
