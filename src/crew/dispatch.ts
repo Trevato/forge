@@ -1591,7 +1591,11 @@ export function pump(
     noted.add(shut.id);
     appendRunLog(app.config.dataDir, shut.id, "queued, not started: its repository's valve is shut (/flow)");
   }
-  for (const [at, queued] of gated.order.entries()) {
+  // One week read per repository per pass: past the slots the loop still
+  // reads every queued run, to say which the pace or a limit holds (#11518).
+  const weeks = new Map<string, ReturnType<typeof weekFor>>();
+  const floor = paceFloor(app.db);
+  for (const queued of gated.order) {
     // One run per issue at a time: this one waits for its sibling, not for a slot.
     // A sibling that hangs is still caught: the running run goes stale on its
     // heartbeat or past NO_PROGRESS_MS and vitals names it under `stuck:`.
@@ -1613,13 +1617,6 @@ export function pump(
       }
       continue;
     }
-    if (slots <= 0) {
-      // Out of slots: nothing more starts, but the runs behind this one that
-      // wait on a running sibling are still held by that, not by the slots.
-      for (const rest of gated.order.slice(at + 1))
-        if (rest.issueId !== null && runningIssues.has(rest.issueId)) held.set(rest.id, "issue");
-      break;
-    }
     // The week's pace holds every path that starts a run in an autonomous
     // repository: assigned, review, feedback and check runs as much as picks (#8873).
     if (home !== undefined && home.autonomy === "autonomous") {
@@ -1627,7 +1624,8 @@ export function pump(
       const priorityGoing =
         (priorityIn.get(home.id) ?? 0) +
         active.filter((r) => r.state === "running" && r.repoId === home.id && isPriorityRun(app, r, priorityMemo)).length;
-      const paced = weekHold(weekFor(app, home, new Date()), home.autonomySlots, going - priorityGoing, isPriorityRun(app, fresh, priorityMemo) ? fresh.reason : "pick", priorityGoing, paceFloor(app.db));
+      if (!weeks.has(home.id)) weeks.set(home.id, weekFor(app, home, new Date()));
+      const paced = weekHold(weeks.get(home.id)!, home.autonomySlots, going - priorityGoing, isPriorityRun(app, fresh, priorityMemo) ? fresh.reason : "pick", priorityGoing, floor);
       if (paced !== null) {
         held.set(fresh.id, "pace");
         if (!noted.has(fresh.id)) {
@@ -1654,6 +1652,10 @@ export function pump(
       }
       continue;
     }
+    // Out of slots: nothing more starts. The runs past this point are still
+    // read, so those a policy above holds are named for vitals, and only the
+    // rest count as waiting for a slot (#11518).
+    if (slots <= 0) continue;
     started.push(fresh.id);
     goingIn.set(fresh.repoId, (goingIn.get(fresh.repoId) ?? 0) + 1);
     if (isPriorityRun(app, fresh, priorityMemo)) priorityIn.set(fresh.repoId, (priorityIn.get(fresh.repoId) ?? 0) + 1);
