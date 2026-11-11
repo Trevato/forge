@@ -607,6 +607,7 @@ import {
   refusedResponse,
   socketToCell,
   wakeGate,
+  payAgainGate,
   watchHostedChildClose,
 } from "../spawn/host.ts";
 import { getVerifiedDomain } from "../core/domains.ts";
@@ -2655,6 +2656,8 @@ export async function serve(app: App): Promise<Servers> {
       // child's own App before the parent's pages. Ingress routes the label
       // here; forge terminates Host routing in-process.
       {
+        const paying = await payAgainGate(app, request);
+        if (paying !== undefined) return securityFloor(paying);
         const gated = wakeGate(app, request);
         if (gated !== undefined) return securityFloor(gated);
         const child = await resolveHostedChild(app, request);

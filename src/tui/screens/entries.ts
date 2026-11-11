@@ -18,6 +18,7 @@ import { entry as dotfiles } from "./dotfiles.ts";
 import { entry as devices } from "./devices.ts";
 import { entry as bets } from "./bets.ts";
 import { entry as billing } from "./billing.ts";
+import { entry as lapsed } from "./lapsed.ts";
 import { entry as codes } from "./codes.ts";
 import { entry as boards } from "./boards.ts";
 import { entry as drift } from "./drift.ts";
@@ -151,6 +152,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   economics,
   money,
   billing,
+  lapsed,
   codes,
   appTemplates,
   devices,
