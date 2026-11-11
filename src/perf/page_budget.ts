@@ -20,6 +20,8 @@ export interface PageBudget {
   readonly medianMs: number;
   /** One warm request runs at most this many SQL statements. */
   readonly statements: number;
+  /** Walked with no cookie: a stranger's page, not a signed-in person's. */
+  readonly signedOut?: true;
 }
 
 /** Statement limits are today's count, signed in, plus a little: lower them as pages get cheaper, raise one only on purpose. */
@@ -29,6 +31,11 @@ export const PAGE_BUDGETS: readonly PageBudget[] = [
   { page: "map", pattern: "/map", medianMs: 50, statements: 21 },
   { page: "an app page", pattern: "/:owner/:name", medianMs: 50, statements: 49 },
   { page: "changelog", pattern: "/changelog", medianMs: 50, statements: 20 },
+  // A stranger's way to a forge (#11410): walked signed out. `/claim` is
+  // measured on a spawned forge with a live link, as the child's owner sees it.
+  { page: "pricing", pattern: "/pricing", medianMs: 50, statements: 10, signedOut: true },
+  { page: "new forge", pattern: "/forges/new", medianMs: 50, statements: 14, signedOut: true },
+  { page: "claim", pattern: "/claim", medianMs: 50, statements: 14, signedOut: true },
 ];
 
 /** The path a budget's pattern names for one repository: `:owner` and `:name` filled, everything else as written. */

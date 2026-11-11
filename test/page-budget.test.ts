@@ -15,6 +15,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
+import { createOrg } from "../src/core/orgs.ts";
+import { mintClaim } from "../src/spawn/claim.ts";
 import { createIssue } from "../src/core/issues.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
@@ -73,6 +75,11 @@ beforeAll(async () => {
     const made = createIssue(app.db, { repoId: notes.id, authorId: bob.id, title: `Issue ${i}`, body: "body" });
     if (!made.ok) throw new Error(made.error);
   }
+  // A spawned forge with a live claim link, so `/claim` shows its form.
+  const kin = createOrg(app.db, "kin", alice.id);
+  if (!kin.ok) throw new Error(kin.error);
+  await Bun.write(join(root, "parent.json"), JSON.stringify({ org: "kin" }));
+  mintClaim(app.db, kin.value.id);
   servers = await serve(app);
   const signin = await fetch(`${servers.url}/signin`, {
     method: "POST",
@@ -90,8 +97,8 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-/** Every page is walked as alice, signed in: the map asks for a viewer. */
-const INIT = (): RequestInit => ({ headers: { cookie }, redirect: "manual" });
+/** Pages are walked as alice, signed in (the map asks for a viewer); a stranger's pages (`signedOut`) with no cookie. */
+const init = (b: PageBudget): RequestInit => (b.signedOut ? { redirect: "manual" } : { headers: { cookie }, redirect: "manual" });
 
 function url(b: PageBudget): string {
   return `${servers.url}${pagePath(b, "alice", "notes")}`;
@@ -99,14 +106,14 @@ function url(b: PageBudget): string {
 
 /** One request warms; then the fewest statements of `COUNTED` warm requests is the count, so a background tick's queries do not land on a page. */
 async function count(b: PageBudget): Promise<{ status: number; statements: number; phases: PageMeasure["phases"] }> {
-  const first = await fetch(url(b), INIT());
+  const first = await fetch(url(b), init(b));
   await first.arrayBuffer();
   let status = first.status;
   let header = "";
   let fewest = Number.POSITIVE_INFINITY;
   for (let i = 0; i < COUNTED; i++) {
     const n = await statements(app.db, async () => {
-      const res = await fetch(url(b), INIT());
+      const res = await fetch(url(b), init(b));
       await res.arrayBuffer();
       status = res.status;
       header = res.headers.get("server-timing") ?? "";
@@ -119,12 +126,12 @@ async function count(b: PageBudget): Promise<{ status: number; statements: numbe
 
 /** One warm-up, then `TIMED` timed requests; the phases are the last request's. */
 async function time(b: PageBudget): Promise<{ samples: number[]; phases: PageMeasure["phases"] }> {
-  await (await fetch(url(b), INIT())).arrayBuffer();
+  await (await fetch(url(b), init(b))).arrayBuffer();
   const samples: number[] = [];
   let header = "";
   for (let i = 0; i < TIMED; i++) {
     const t = performance.now();
-    const res = await fetch(url(b), INIT());
+    const res = await fetch(url(b), init(b));
     await res.arrayBuffer();
     samples.push(performance.now() - t);
     header = res.headers.get("server-timing") ?? "";
@@ -132,12 +139,19 @@ async function time(b: PageBudget): Promise<{ samples: number[]; phases: PageMea
   return { samples, phases: parsePhases(header) };
 }
 
-test("the budget table names five pages, each once, with a median and a statement limit", () => {
-  expect(PAGE_BUDGETS.map((b) => b.pattern)).toEqual(["/", "/explore", "/map", "/:owner/:name", "/changelog"]);
+test("the budget table names eight pages, each once, with a median and a statement limit", () => {
+  expect(PAGE_BUDGETS.map((b) => b.pattern)).toEqual([
+    "/", "/explore", "/map", "/:owner/:name", "/changelog", "/pricing", "/forges/new", "/claim",
+  ]);
   for (const b of PAGE_BUDGETS) {
     expect(b.medianMs).toBeLessThanOrEqual(50);
     expect(Number.isInteger(b.statements) && b.statements > 0).toBe(true);
   }
+});
+
+test("a stranger's way to a forge is on the list, walked signed out", () => {
+  const strangers = PAGE_BUDGETS.filter((b) => b.signedOut).map((b) => b.pattern);
+  expect(strangers).toEqual(["/pricing", "/forges/new", "/claim"]);
 });
 
 test("each first page runs no more SQL statements warm than its budget", async () => {
