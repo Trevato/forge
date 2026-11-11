@@ -12,6 +12,8 @@
  * Between them, the main-thread stalls of the last hour by route (#9016),
  * read once at first paint from the loop watch: the top routes plus
  * /api/v1/telemetry/flow always, as /metrics exports them.
+ * Just above the stalls, the last 20 minutes' worst loop lag against the
+ * 100 ms bar (#11220, `perf/lag_minutes.ts`), each minute over it named.
  * Then the in-process caches that answer strangers' code pages (#9514), each
  * with its entries, bytes held beside its cap, and hits and misses: together
  * they may hold ~128 MB, so what they hold is shown where memory is.
@@ -31,7 +33,8 @@ import { readerPaces, type ReaderPace } from "../../system/telemetry_reads.ts";
 import { slowPageLine, slowPages, type SlowPage } from "../../perf/watch.ts";
 import { stallHour } from "../../metrics/stalls.ts";
 import { HOUR_MS, type RouteStall } from "../../perf/loop.ts";
-import { loopWatch, stallBlame } from "../../perf/live.ts";
+import { lagMinutes, loopWatch, stallBlame } from "../../perf/live.ts";
+import { LAG_BAR_MS, LAG_READINGS, overBar, type LagReading } from "../../perf/lag_minutes.ts";
 import { WORST_STALLS, type BlamedStall } from "../../perf/stall_blame.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
@@ -228,6 +231,28 @@ export function worstStallsTable(rows: readonly BlamedStall[], nowMono: number, 
       </table></div>`;
 }
 
+/**
+ * The last 20 minutes' worst loop lag against the 100 ms bar (#11220): how many
+ * are over it, then one row a minute, oldest first — its worst ms, and what its
+ * worst named stall ran under (`loopWorstWhat`'s name), or "not named" when no
+ * wake in it passed the 200 ms stall limit. A row over the bar is marked.
+ */
+export function lagSection(rows: readonly LagReading[]): Html {
+  const over = overBar(rows);
+  return html`<div id="sys-lag" data-readings="${String(rows.length)}" data-over="${String(over)}"><section class="settings-block"><h2>Loop lag, last ${String(LAG_READINGS)} minutes</h2>${
+    rows.length === 0
+      ? html`<p class="muted">No full minute measured yet.</p>`
+      : html`<div class="row-meta">${over === 0 ? badge(`all ${String(rows.length)} under ${String(LAG_BAR_MS)} ms`) : badge(`${String(over)} of ${String(rows.length)} over ${String(LAG_BAR_MS)} ms`, { tone: "danger" })}</div>
+        <div class="table-scroll"><table class="table" aria-label="Worst loop lag each minute against the ${String(LAG_BAR_MS)} ms bar">
+          <thead><tr><th scope="col">Minute</th><th scope="col" class="num">Worst ms</th><th scope="col">What ran</th></tr></thead>
+          <tbody>${rows.map((r) => {
+            const isOver = r.ms > LAG_BAR_MS;
+            return html`<tr data-lag-over="${isOver ? "1" : "0"}"><td>${time(new Date(r.at).toISOString())}</td><td class="num mono">${String(Math.round(r.ms))}${isOver ? html` ${badge("over", { tone: "danger" })}` : null}</td><td class="mono">${r.what ?? html`<span class="muted">not named</span>`}</td></tr>`;
+          })}</tbody>
+        </table></div>`
+  }</section></div>`;
+}
+
 const SLOW_TTL_MS = 5000;
 let slowKept: { db: object; at: number; rows: SlowPage[] } | undefined;
 /** `slowPages`, kept a few seconds so a busy /system never repeats the query; changes show on reload. */
@@ -377,6 +402,7 @@ export async function systemPage(ctx: Ctx): Promise<Response> {
         <button class="btn" data-size="sm" type="button" data-sort="mem" aria-pressed="false"><kbd>m</kbd> memory</button></div>
       <div id="sys-procs">${at("sys-procs")}</div></section>
     ${featuresSection(timePhase(ctx.request, "features", () => featureHealth(ctx.app, reader)))}
+    ${lagSection(lagMinutes.readings())}
     <div id="sys-stalls">${stallSection(stalls, worstStallsTable(worst, nowMono, Date.now()))}</div>
     <div id="sys-slow-pages">${slowPagesSection(timePhase(ctx.request, "slowpages", () => slowPagesCached(ctx.app.db)))}</div>
     <div id="sys-readers">${readersSection(readerPaces())}</div>

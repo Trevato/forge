@@ -52,13 +52,14 @@ test("one <h2> per part, each in a settings-block, and no card", async () => {
     "Machine",
     "Disks and network",
     "Processes",
+    "Loop lag, last 20 minutes",
     "Main-thread stalls, last hour",
     "Telemetry readers",
     "Code page caches, since start",
     "Forge memory",
   ]);
   expect(main.match(/<section class="settings-block"/g)?.length).toBe(heads.length);
-  for (const id of ["sys-dup", "summary", "cores", "mem", "temps", "sys-disks", "sys-procs", "sys-stalls", "sys-readers", "sys-caches"]) {
+  for (const id of ["sys-dup", "summary", "cores", "mem", "temps", "sys-disks", "sys-procs", "sys-lag", "sys-stalls", "sys-readers", "sys-caches"]) {
     expect(main).toContain(`id="${id}"`);
   }
   expect(main).toMatch(/<section class="settings-block"><h2>Disks and network<\/h2>\s*<ul class="list" id="sys-disks">/);

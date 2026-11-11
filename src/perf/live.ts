@@ -8,6 +8,7 @@ import { createCaptureStore } from "./capture.ts";
 import { createReadLedger } from "./reads.ts";
 import { createStallBlame } from "./stall_blame.ts";
 import { createPerfRecord } from "./record.ts";
+import { createLagMinutes } from "./lag_minutes.ts";
 
 export const perfRecord = createPerfRecord();
 /** A stall no request ran across names the background jobs that did (#10834). */
@@ -20,3 +21,8 @@ export const readLedger = createReadLedger();
 export const captureStore = createCaptureStore();
 /** Each stall over 200 ms with what ran (#11069): the last hour's worst on /system, the last 10 s's on `/healthz`. */
 export const stallBlame = createStallBlame();
+/**
+ * The last 20 minutes' worst loop lag (#11220), each blamed on the worst stall
+ * `stallBlame` named in it: /system and the MCP `system` tool read it.
+ */
+export const lagMinutes = createLagMinutes((to, span) => stallBlame.worst(to, span, 1)[0]?.what ?? null);

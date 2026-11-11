@@ -16,10 +16,22 @@ palette entry):
   when the hour had one: the five worst single stalls, each with what ran (the route pattern, `job:<name>` for a job
   marked with `jobWatch.during`, or `unknown`), its ms and when. Kept in a
   fixed ring of 256 (`src/perf/stall_blame.ts`).
+- **`/system`**, "Loop lag, last 20 minutes" (#11220), just above the stalls
+  card: a badge counts how many of the last 20 full minutes' worst loop lag
+  are over the 100 ms bar (strictly: exactly 100 ms holds); then one row a
+  minute, oldest first: its start, its worst ms (marked "over" past the
+  bar), and what its worst stall ran under (the `loopWorstWhat` name), or
+  "not named" when no wake in that minute passed 200 ms. A fixed ring of 20 written once a minute
+  (`src/perf/lag_minutes.ts`); the open minute is not shown. The MCP `system`
+  tool answers the same as `readings: [{ at, ms, what }]` (`at` the minute's
+  start, ISO), with `barMs` and `over`.
 - **`/healthz`** with `Accept: application/json`: beside `loopLagMs`,
   `loopWorstWhat` names the worst stall of the same 10 s (null when none).
 - **The terminal**: `:` → "Main-thread stalls", the same rows, then the same
   worst single stalls (what ran, ms, when in UTC) when the hour had one.
+  Above them, the same loop-lag readings (#11220): "Loop lag, last 20
+  minutes: N of M over 100 ms", then a minute a row — its start in UTC, its
+  worst ms, `over` past the bar, and what ran or "not named".
 - **`GET /metrics`** (an admin `ro` token): `forge_loop_stall_milliseconds_total`
   and `forge_loop_stalls_total` by `route` since the process started, and the
   last hour as `forge_loop_stall_hour_milliseconds` / `forge_loop_stall_hour_count`

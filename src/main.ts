@@ -108,7 +108,7 @@ import { watchStalls } from "./kernel/loop_lag.ts";
 import { startPerfWatcher, TICK_MS } from "./perf/duty.ts";
 import { during } from "./perf/jobs.ts";
 import { stallLine } from "./perf/loop.ts";
-import { bootStall, gitRecord, loopWatch, perfRecord, stallBlame } from "./perf/live.ts";
+import { bootStall, gitRecord, lagMinutes, loopWatch, perfRecord, stallBlame } from "./perf/live.ts";
 import { timeStatements } from "./kernel/slow_sql.ts";
 import { waitForPeer } from "./runs/peer.ts";
 import { closeStaleSessions } from "./machines/shell.ts";
@@ -240,6 +240,7 @@ if (parentProblem !== null) {
 const loopLog = createLog("loop");
 watchStalls(loopLog, undefined, undefined, undefined, (late, at) => {
   bootStall.note(late, at);
+  lagMinutes.note(late, at);
   const stall = loopWatch.stalled(late, at);
   if (stall === null) return;
   loopLog.warn(stallLine(stall));

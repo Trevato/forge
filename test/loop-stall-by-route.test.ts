@@ -11,14 +11,15 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { watchStalls } from "../src/kernel/loop_lag.ts";
 import { openMetrics } from "../src/metrics/openmetrics.ts";
 import { stallFamilies, TOP_ROUTES } from "../src/metrics/stalls.ts";
-import { loopWatch, stallBlame } from "../src/perf/live.ts";
+import { lagMinutes, loopWatch, stallBlame } from "../src/perf/live.ts";
 import { WORST_STALLS } from "../src/perf/stall_blame.ts";
 import { createLoopWatch, HOUR_MS, NO_REQUEST } from "../src/perf/loop.ts";
 import { createAgent } from "../src/actions/crew.ts";
 import type { User } from "../src/core/users.ts";
 import { stallSection } from "../src/web/pages/system.ts";
 import { createForgeApp, forgeCommands, Session } from "../src/tui/forge.ts";
-import { stallLines } from "../src/tui/screens/loopstalls.ts";
+import { lagLines, stallLines, stallsScreen } from "../src/tui/screens/loopstalls.ts";
+import { settleApp } from "./helpers/tui.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { freshStallState } from "./helpers/stall-state.ts";
@@ -231,4 +232,41 @@ test("the Stalls screen reads the process's stall blame by default, the five /sy
   expect(named).toEqual(["/b", "/e", "/d", "/a", "/c"]);
   expect(stallBlame.worst(performance.now(), HOUR_MS, WORST_STALLS).map((s) => s.what)).toEqual(named);
   stallBlame.clear();
+});
+
+test("the Stalls screen shows the last 20 minutes' loop lag as /system does: over count, each minute, what ran (#11220)", async () => {
+  const at = (m: number) => Date.parse(`2026-11-11T09:0${String(m)}:00Z`);
+  const rows = [
+    { at: at(0), ms: 12.4, what: null },
+    { at: at(1), ms: 340.2, what: "/<owner>/<repo>/pulls" },
+    { at: at(2), ms: 100, what: null }, // exactly the bar holds it
+    { at: at(3), ms: 140.6, what: null },
+  ];
+  const lines = lagLines(new Session(app, identity(alice)), rows);
+  expect(lines[0]).toBe("Loop lag, last 20 minutes: 2 of 4 over 100 ms");
+  expect(lines[1]).toMatch(/^Minute \(UTC\)\s+Worst ms\s+What ran$/);
+  expect(lines[2]).toMatch(/^09:00\s+12\s+not named$/);
+  expect(lines[3]).toMatch(/^09:01\s+340\s+over\s*\/<owner>\/<repo>\/pulls$/);
+  expect(lines[4]).toMatch(/^09:02\s+100\s+not named$/);
+  expect(lines[5]).toMatch(/^09:03\s+141\s+over\s*not named$/);
+  expect(lines).toHaveLength(6);
+  expect(lagLines(new Session(app, identity(alice)), rows.slice(0, 1))[0]).toBe("Loop lag, last 20 minutes: all 1 under 100 ms");
+  expect(lagLines(new Session(app, identity(alice)), [])).toEqual(["Loop lag, last 20 minutes", "No full minute measured yet."]);
+  for (const who of [bob, bot, undefined]) expect(lagLines(new Session(app, identity(who)), rows)).toEqual([]);
+
+  // The screen itself draws the process's readings above the stalls.
+  lagMinutes.clear();
+  lagMinutes.note(250, 0);
+  lagMinutes.note(0, 60_000); // closes the first minute
+  const { app: tui, session } = createForgeApp(app, identity(alice), { terminal: headlessTerminal(120, 40), exitHooks: false });
+  tui.start();
+  await settleApp(tui);
+  tui.push(stallsScreen(session, tui.ctx));
+  await settleApp(tui);
+  const shown = tui.screen.toText();
+  tui.stop();
+  lagMinutes.clear();
+  expect(shown).toContain("Loop lag, last 20 minutes: 1 of 1 over 100 ms");
+  expect(shown).toContain("Route (last hour)");
+  expect(shown.indexOf("Loop lag")).toBeLessThan(shown.indexOf("Route (last hour)"));
 });
