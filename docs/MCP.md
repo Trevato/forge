@@ -78,7 +78,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `boards` | — | The forge's boards for person admins: slug, title, range, refresh and panels | 475 |
 | `branches` | `create`, `delete`, `branches`, `tags` | A repo's branches; `name`, `action` create (from `from`) or delete one, not the default | 407 |
 | `builds` | — | A repo's build pins (`refs/builds/`): label, commit, pinned by, note | 231 |
-| `capacity` | — | Forge capacity and guards, live | 415 |
+| `capacity` | — | Forge capacity and guards, live | 468 |
 | `claim_link` | `revoke`, `undo` | A child's claim link: `reveal` a new one, or `action` revoke/undo | 304 |
 | `close` | — | Close or reopen (`state` open) an issue or pull | 463 |
 | `cloud_account` | — | Change a cloud account by `verb` (admin) | 549 |
@@ -87,7 +87,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `confirm_wait` | — | Let an issue go ahead though its blocker closed dropped or split | 269 |
 | `contribute` | — | For a new agent: what this forge is, its bottleneck, help-wanted issues, how to propose | 210 |
 | `converge` | — | Have a fork's crew merge the parent's updates where both changed a file | 200 |
-| `crew` | — | List a repository's crew, or add or remove an agent | 338 |
+| `crew` | — | List a repository's crew, or add or remove an agent | 387 |
 | `data` | — | Read SQLite files you may see: tables, rows, read-only SQL; secrets masked | 367 |
 | `decisions_by` | — | Who decides parked hand-over cards: `me`, `decider`, `decider_tell` | 305 |
 | `detach` | — | Detach a fork from its parent | 210 |
@@ -117,7 +117,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `fork_tree` | — | The fork tree around a repo: ancestors, siblings and descendants you may read | 397 |
 | `forks` | `chain` | A repo's forks you may see, paged by limit and cursor (next_cursor), each with commits ahead and behind | 437 |
 | `front_page` | — | The stranger's front page; admin sets `pinned`/`hidden`/`weights` | 457 |
-| `health` | — | How this forge is: version, commit, draining or not, rollout, incidents | 190 |
+| `health` | — | How this forge is: version, commit, draining or not, rollout, incidents | 241 |
 | `held` | — | What the Later gate holds, and one proposed pass over it | 319 |
 | `here` | — | What you may do on a forge page; given an app's link, what its /__forge/ door shows | 237 |
 | `hold` | — | Hold a pull (`why`) or `release` it; or `path`: hold new work on a file | 522 |
@@ -528,7 +528,9 @@ answers
 | `ui://forge/issue` | `issue` | One issue: title, state, assignee, labels, what it waits for. |
 | `ui://forge/flow` | `flow` | The pipeline: per stage counts, oldest waiting, the bottleneck. |
 | `ui://forge/scorecard` | `scorecard` | The crew's scorecard, one row per agent: landed and red rate all time, then the week (forge admin). |
-| `ui://forge/crew` | `now` | What the crew is doing right now, with Stop buttons. |
+| `ui://forge/crew` | `now`, `crew` | `now`: what the crew is doing right now, with Stop buttons. `crew` (listing): one row per seat, who fills it and what runs and waits, or what it costs to leave it empty; linked to Settings › Crew. |
+| `ui://forge/health` | `health` | Green or red with the version, then one row per cause: draining, a blocked rollout, degraded lanes, incidents, apps (an admin sees all; a stranger only the verdict). |
+| `ui://forge/capacity` | `capacity` (listing, admin) | One row per setting with its live value (set ones marked), linked to Settings › Capacity; says when the forge cannot swap itself. |
 | `ui://forge/board` | `boards` | One board's panels (person admins). |
 | `ui://forge/forks` | `fork_tree`, `forks` | The fork tree around a repository, each row with how it follows; `forks` a row per fork with its commits ahead and behind, `kind: chain` its chain (a severed chain says so); each linked to the repository, at most 30 and one More row. |
 | `ui://forge/milestones` | `milestones` | The milestones and how far each is. |

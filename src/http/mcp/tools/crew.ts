@@ -61,7 +61,10 @@ export const tool: Tool = {
     if (add === undefined && remove === undefined) {
       const seen = crewAsSeen(app, user, repo);
       if (!seen.ok) return bad("not_found", "no such app or repository (owner/name)");
-      return good({ crew: seen.value, governor: governorSeen(app, user, repo, new Date()) ?? null, seats: seatsOf(app.db, repo, crewOffInPreview()), slots: seatSlotsOf(app.db, repo) });
+      return {
+        ...good({ crew: seen.value, governor: governorSeen(app, user, repo, new Date()) ?? null, seats: seatsOf(app.db, repo, crewOffInPreview()), slots: seatSlotsOf(app.db, repo) }),
+        card: { repo: `${repo.ownerName}/${repo.name}` },
+      };
     }
     if ((add !== undefined && typeof add !== "string") || (remove !== undefined && typeof remove !== "string"))
       return bad("invalid", "`add` and `remove` are an agent's username");
