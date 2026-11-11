@@ -3424,7 +3424,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const { query, unknown } = readExploreLine(line);
     const suggest = exploreSuggestion(line);
     if (unknown.length > 0)
-      return json({ error: "unknown_filter", message: exploreNote(unknown), ...(suggest === undefined ? {} : { suggest: suggest.line }) }, 422);
+      return json({ error: "unknown_filter", message: exploreNote(unknown), ...(suggest === undefined ? {} : { suggest: suggest.line }) }, 400);
     const mine = runRepos(ctx.app, ctx.auth);
     // A run token is shown only the rows of its own repositories; the cut
     // and the cursor are made from those rows alone.

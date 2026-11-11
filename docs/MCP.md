@@ -97,7 +97,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `egress_grants` | — | Private destinations and grants: list, grant or revoke (site admin) | 289 |
 | `email_verify` | — | Send yourself a new verification link | 126 |
 | `events` | — | Repository events | 259 |
-| `explore` | — | The apps, people (and, for an admin, forges) you can see, ranked | 547 |
+| `explore` | — | The apps, people (and, for an admin, forges) you can see, ranked | 573 |
 | `family` | — | The forge that sent this one and, for a site admin, those it sent, with state, version | 205 |
 | `features` | — | Apps absorbed as forge features: list, read, absorb or un-absorb, change typed settings | 357 |
 | `feed` | — | Your ranked home timeline; `cursor` pages; saved filter applies | 562 |
@@ -357,7 +357,7 @@ longer sentences:
 - `tell.from`: a path on this forge the issue links to, like `/alice/notes/pulls/3`. `tell.context`: where this was told from, for the builder.
 - `spawn.reveal`, `claim_link.reveal`: put the live claim link in the answer (default false); it is a secret, only when its person reads it. `spawn.fresh`: a fresh app beside the copied ones. `spawn.followMode`: `tell-me` (default) tells the owner in their inbox when this forge's code moves; `take-updates` opens a pull with the new code, and a person merges it. `spawn.size`: recorded only, not enforced. `spawn.keepAccess`: stay an owner once claimed.
 - `commits.ref`: branch, tag or commit; the default branch when absent. `report.page`: the http(s) address where the problem was seen. `plan.issues.pillar`: the pillar served, as `"P0"` or `"P0 Trust"`; `later: true` means no pillar and needs `why`.
-- `explore.q`: words, plus `kind:app|person|forge` and `sort:score|forks|ships|likes|use|fresh|name`, `updated:1d|7d|30d` (only what moved in that window), `owner:name` and `archived:yes`. `query` is the same argument; `q` wins when both are given. Each of `kind`, `sort`, `updated`, `owner`, `archived` is also its own argument (and a query parameter on `/explore` and `/api/v1/explore`); it wins over the same key in `q`.
+- `explore.q`: words, plus `kind:app|person|forge` and `sort:score|forks|ships|likes|use|fresh|name`, `updated:1d|7d|30d` (only what moved in that window), `owner:name` and `archived:yes`. `since` is another name for `updated`. `query` is the same argument; `q` wins when both are given. Each of `kind`, `sort`, `updated`, `owner`, `archived` is also its own argument (and a query parameter on `/explore` and `/api/v1/explore`); it wins over the same key in `q`.
 - `archive.repos`: several repositories, as `owner/name`, to archive in one operation.
 - `milestones.issue`: the number of an issue that waits for others; the limbs when absent. `watch.issue` is the same number; `watch.watch` false stops watching, anything else watches.
 - `limb.reason` (close): why it is not being done, in one sentence. `limb.pillar` (resume): the pillar to return it under. `limb.under` (raise, lower): `top` or a milestone number, only when the limb sits in several places.

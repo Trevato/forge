@@ -3,7 +3,7 @@ import { bad, good, type Tool, str } from "../shared.ts";
 
 export const tool: Tool = {
   name: "explore",
-  doc: "`{ q?, cursor? }` (`query` is the same, `q` wins): the apps and people you can see, ranked, with their numbers; `kind:` `sort:` `updated:` `owner:` `archived:` and words in one line; each also as its own argument; page on with `cursor`",
+  doc: "`{ q?, cursor? }` (`query` is the same, `q` wins): the apps and people you can see, ranked, with their numbers; `kind:` `sort:` `updated:` `owner:` `archived:` and words in one line; each also as its own argument (`since` = `updated`); page on with `cursor`",
   description:
     "The apps, people (and, for an admin, forges) you can see, ranked.",
   inputSchema: {
@@ -20,6 +20,7 @@ export const tool: Tool = {
         description: "Alias of q",
       },
       ...Object.fromEntries(EXPLORE_PARAMS.map((k) => [k, { type: "string", maxLength: 100 }])),
+      since: { type: "string", maxLength: 100 },
       cursor: {
         type: "string",
       },

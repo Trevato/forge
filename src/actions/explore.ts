@@ -109,7 +109,9 @@ export const EXPLORE_PARAMS = ["kind", "sort", "updated", "owner", "archived"] a
 export function exploreLineFrom(get: (name: string) => string | null | undefined): string {
   const given = new Map<string, string>();
   for (const key of EXPLORE_PARAMS) {
-    const value = (get(key) ?? "").replace(/\s+/g, "").slice(0, 100);
+    // `since` is the same window as `updated`, in the words the chips are shared in.
+    const raw = get(key) || (key === "updated" ? get("since") : "") || "";
+    const value = raw.replace(/\s+/g, "").slice(0, 100);
     if (value !== "") given.set(key, value);
   }
   // A parameter wins: the same key typed in `q` is dropped, not left to the reader's order.
@@ -125,7 +127,7 @@ export function exploreParams(query: ExploreQuery): string {
   const p = new URLSearchParams();
   if (query.kind !== "all") p.set("kind", query.kind);
   if (query.sort !== "score") p.set("sort", query.sort);
-  if (query.updated !== "all") p.set("updated", query.updated);
+  if (query.updated !== "all") p.set("since", query.updated);
   if (query.archived) p.set("archived", "yes");
   if (query.owner !== undefined) p.set("owner", query.owner);
   if (query.text !== "") p.set("q", query.text);

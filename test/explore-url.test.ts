@@ -11,6 +11,7 @@ import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { proveAll } from "./helpers/verified.ts";
+import { expectWork, requestStatements } from "./helpers/work.ts";
 import { promote } from "./helpers/members.ts";
 
 quietLogs();
@@ -73,7 +74,7 @@ test("an unknown parameter is ignored; an invalid value is named and the default
   expect(extra.status).toBe(200);
   expect(listed(extra.html)).toEqual(listed(plain.html));
   const bad = await page("?sort=bogus");
-  expect(bad.status).toBe(422);
+  expect(bad.status).toBe(400);
   expect(listed(bad.html)).toEqual(listed(plain.html));
 });
 
@@ -89,4 +90,46 @@ test("the chips link with separate parameters", async () => {
   expect(html).toContain('href="/explore?kind=app"');
   expect(html).toContain('href="/explore?sort=forks"');
   expect(exploreParams(readExploreLine("kind:app sort:forks owner:olive garden").query)).toBe("kind=app&sort=forks&owner=olive&q=garden");
+});
+
+test("`since` is the `updated` window: same line, bad value is a 400 (#11232)", async () => {
+  expect(exploreLineFrom((n) => (n === "since" ? "7d" : null))).toBe("updated:7d");
+  expect(exploreLineFrom((n) => (n === "since" ? "9y" : null))).toBe("updated:9y");
+  const ok = await fetch(`${servers.url}/explore?kind=app&since=7d`);
+  expect(ok.status).toBe(200);
+  const bad = await fetch(`${servers.url}/explore?since=9y`);
+  expect(bad.status).toBe(400);
+  expect(await bad.text()).toContain("1d, 7d, 30d");
+});
+
+test("each kind and each since narrows the list, and the filtered view costs few statements (#11232)", async () => {
+  const all = listed((await page("")).html);
+  expect(all.length).toBeGreaterThan(0);
+  const apps = listed((await page("?kind=app")).html);
+  const people = listed((await page("?kind=person")).html);
+  expect(apps.length).toBeGreaterThan(0);
+  expect(people.length).toBeGreaterThan(0);
+  expect(apps).not.toEqual(people);
+  expect(apps.length).toBeLessThan(all.length);
+  expect(people.length).toBeLessThan(all.length);
+  // Forges are an admin's to see: a visitor's `kind=forge` is a different (empty) list.
+  const forges = await page("?kind=forge");
+  expect(forges.status).toBe(200);
+  expect(listed(forges.html)).toEqual([]);
+  // Nothing here has shipped, so each window drops what the bare list shows.
+  for (const since of ["7d", "30d"]) {
+    const res = await page(`?since=${since}`);
+    expect(res.status).toBe(200);
+    expect(listed(res.html).length).toBeLessThan(all.length);
+  }
+  for (const qs of ["?kind=app&since=7d", "?kind=person&since=30d", "?kind=forge"]) {
+    expectWork(await requestStatements(app.db, `${servers.url}/explore${qs}`), { max: 40 });
+  }
+});
+
+test("the chips link with since=, and updated wins when both are given (#11232)", async () => {
+  const res = await page("?kind=app");
+  expect(res.html).toContain("since=7d");
+  expect(res.html).not.toContain("updated=");
+  expect(exploreLineFrom((n) => (n === "updated" ? "7d" : n === "since" ? "30d" : null))).toBe("updated:7d");
 });
