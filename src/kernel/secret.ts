@@ -152,9 +152,14 @@ function mint(path: string): Buffer {
  * write access but no key cannot swap one account's token onto another.
  */
 export function seal(dataDir: string, plain: string, aad: string): string {
-  const iv = randomBytes(IV_BYTES);
   const key = loadKey(dataDir);
-  const cipher = createCipheriv("aes-256-gcm", key, iv, {
+  return sealWith({ id: keyId(key), key }, plain, aad);
+}
+
+/** `seal` under a key the caller holds: how a rotation re-seals under a key not yet on disk. */
+export function sealWith(named: NamedKey, plain: string, aad: string): string {
+  const iv = randomBytes(IV_BYTES);
+  const cipher = createCipheriv("aes-256-gcm", named.key, iv, {
     authTagLength: TAG_BYTES,
   });
   cipher.setAAD(Buffer.from(aad, "utf8"));
@@ -163,7 +168,13 @@ export function seal(dataDir: string, plain: string, aad: string): string {
     cipher.final(),
     cipher.getAuthTag(),
   ]);
-  return `${VERSION}:${keyId(key)}:${iv.toString("base64url")}:${body.toString("base64url")}`;
+  return `${VERSION}:${named.id}:${iv.toString("base64url")}:${body.toString("base64url")}`;
+}
+
+/** The key id a sealed value names: a v2 value's id, null for a v1 value or anything else. */
+export function sealedKeyId(sealed: string): string | null {
+  const parts = sealed.split(":");
+  return parts.length === 4 && parts[0] === VERSION && KEY_ID.test(parts[1]!) ? parts[1]! : null;
 }
 
 export type OpenError = "bad_format" | "bad_key";
@@ -178,6 +189,21 @@ export function open(
   sealed: string,
   aad: string,
 ): Result<string, OpenError> {
+  // Only a sealed-looking value costs a key read.
+  if (!sealed.startsWith(`${LEGACY}:`) && !sealed.startsWith(`${VERSION}:`)) return err("bad_format");
+  const ring = loadKeys(dataDir);
+  return openWith(ring.previous ? [ring.current, ring.previous] : [ring.current], sealed, aad);
+}
+
+/**
+ * `open` with the keys the caller holds, tried in order for a v1 value; a
+ * v2 value opens only with the key it names.
+ */
+export function openWith(
+  keys: readonly NamedKey[],
+  sealed: string,
+  aad: string,
+): Result<string, OpenError> {
   const parts = sealed.split(":");
   let candidates: Buffer[];
   let ivText: string;
@@ -185,15 +211,11 @@ export function open(
   if (parts.length === 3 && parts[0] === LEGACY) {
     // A v1 value does not say which key sealed it: the current one first,
     // then the previous, so a rotation does not strand values from before.
-    const ring = loadKeys(dataDir);
-    candidates = ring.previous
-      ? [ring.current.key, ring.previous.key]
-      : [ring.current.key];
+    candidates = keys.map((k) => k.key);
     ivText = parts[1]!;
     bodyText = parts[2]!;
   } else if (parts.length === 4 && parts[0] === VERSION && KEY_ID.test(parts[1]!)) {
-    const ring = loadKeys(dataDir);
-    const named = [ring.current, ring.previous].find((k) => k?.id === parts[1]);
+    const named = keys.find((k) => k.id === parts[1]);
     // The value names a key this directory no longer holds.
     if (!named) return err("bad_key");
     candidates = [named.key];
