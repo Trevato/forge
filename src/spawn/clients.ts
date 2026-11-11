@@ -22,6 +22,7 @@ import { lastHeard, type Beat } from "./heartbeat.ts";
 import { reachOf, reachWords, type ChildReach } from "./reach.ts";
 import type { Size } from "./sizes.ts";
 import { firstScreenLine } from "../core/next-steps.ts";
+import { lapseFor } from "../billing/lapse.ts";
 import { forgeUse, type ForgeUse } from "./usage.ts";
 
 /** What a spawned forge says about itself to anyone: nothing more. */
@@ -70,6 +71,8 @@ export interface ClientRow {
   readonly disk: ChildDisk;
   /** When its last heartbeat reached this forge, ISO; null when none has. */
   readonly lastHeartbeatAt: string | null;
+  /** Epoch ms its grace for a late payment ends; absent when it is not in grace. */
+  readonly graceUntil?: number;
   /** The first step its person has not taken, read from the child's heartbeat. */
   readonly nextStep: NextStep;
 }
@@ -245,6 +248,7 @@ export async function clientRows(app: App): Promise<ClientRow[]> {
       spendTodayUsd: beats[i]?.beat.spendTodayUsd ?? null,
       ceilingUsd: beats[i]?.beat.ceilingUsd ?? null,
       ...creditView(app, c.name),
+      ...graceView(app, c.name, now),
       size: c.size,
       use: forgeUse(c, childDirOf(app, c.bodyId)),
       disk: liveChildDisk(app.config.dataDir, c.bodyId, mountinfo),
@@ -394,4 +398,18 @@ export function spendWords(r: ClientRow): { words: string; warn: boolean } | nul
   return share >= 1
     ? { words: `${base} · ceiling reached`, warn: true }
     : { words: base, warn: share >= 0.8 };
+}
+
+/** "grace until 2026-11-18" for a forge whose payment is late, as /forges and the terminal say it; null otherwise. */
+export function graceWords(r: Pick<ClientRow, "graceUntil">): string | null {
+  return r.graceUntil === undefined ? null : `grace until ${new Date(r.graceUntil).toISOString().slice(0, 10)}`;
+}
+
+function graceView(app: App, forge: string, now: number): { graceUntil?: number } {
+  try {
+    const l = lapseFor(app.db, forge, now);
+    return l.state === "grace" ? { graceUntil: l.graceUntil } : {};
+  } catch {
+    return {};
+  }
 }

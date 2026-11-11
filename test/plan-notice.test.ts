@@ -85,10 +85,9 @@ describe("plan notice", () => {
     const row = planRow(a, "https://host.example", true)!.toString();
     expect(row.split("\n").length).toBe(1);
     expect(row).toContain("<dt>Plan</dt>");
-    expect(row).not.toContain(" · ");
+    expect(row).toContain(" · <a href=\"" + PORTAL + "\"");
     expect(row).toContain("Medium");
-    expect(row).toContain("Past due, sleeps 2026-");
-    expect(row).toContain(`href="${PORTAL}"`);
+    expect(row).toContain("Payment due — paused on ");
     expect(row).toContain('href="https://host.example/pricing"');
     expect(planRow(a, "https://host.example", false)).toBeNull();
     // No portal URL for a forge that does not pay through Stripe: the plan, no link.
@@ -98,6 +97,25 @@ describe("plan notice", () => {
     expect(free).not.toContain("Change size");
     // A forge told nothing shows no row.
     expect(planRow(join(dir, "nowhere"), undefined, true)).toBeNull();
+  });
+
+  test("in grace with no portal, Pay goes to the host's pricing and Change size is not repeated", async () => {
+    const cd = await mkdtemp(join(tmpdir(), "forge-grace-row-"));
+    try {
+      await writeFile(join(cd, "plan.json"), JSON.stringify({ name: "Plan", size: "small", status: "grace", periodEnd: Date.UTC(2026, 10, 18) / 1000 }));
+      const row = planRow(cd, "https://host.example", true)!.toString();
+      expect(row).toContain('Payment due — paused on 18 Nov. · <a href="https://host.example/pricing"');
+      expect(row.match(/href="https:\/\/host\.example\/pricing"/g)?.length).toBe(1);
+      expect(row).not.toContain("Change size");
+      // With a portal, Pay goes there and Change size still offers the host's pricing.
+      await writeFile(join(cd, "plan.json"), JSON.stringify({ name: "Plan", size: "small", status: "grace", portalUrl: PORTAL }));
+      const withPortal = planRow(cd, "https://host.example", true)!.toString();
+      expect(withPortal).toContain(`· <a href="${PORTAL}"`);
+      expect(withPortal).toContain("Change size");
+      expect(withPortal).not.toContain("Manage billing");
+    } finally {
+      await rm(cd, { recursive: true, force: true });
+    }
   });
 
   test("a hostile notice is refused on read", async () => {
