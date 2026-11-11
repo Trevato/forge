@@ -70,7 +70,7 @@ export const DEFAULT_PAGE = "/";
  * column is truth.
  */
 const pageSlug = (page: string): string =>
-  page === DEFAULT_PAGE ? "" : page.slice(1).replace(/[/#]/g, "-");
+  page === DEFAULT_PAGE ? "" : page.slice(1).replace(/[/#?=&]/g, "-");
 
 /**
  * The fragment one picture is named by, on disk and in its URL: the page

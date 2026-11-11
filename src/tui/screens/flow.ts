@@ -32,9 +32,10 @@ import { keeperLine, type KeeperAsk, type KeeperRead } from "../../flow/keeper.t
 import { verifiedSays, type VerifiedRow } from "../../flow/verified.ts";
 import { conflictedSays, rebaseLaneSays } from "../../flow/conflicted.ts";
 import { IDLE_LIMIT, type IdlePull } from "../../flow/idle_pulls.ts";
+import { MERGE_QUEUE_HELP } from "../../flow/help.ts";
 import { pileSays } from "../../flow/pile.ts";
 import { panelFigures } from "../../flow/panel_cache.ts";
-import { readPipeline, readStepStats, STAGE_LABEL, statWords, verdict } from "../../flow/pipeline.ts";
+import { readPipeline, readStepStats, STAGE_HOLDS, STAGE_LABEL, statWords, verdict } from "../../flow/pipeline.ts";
 import { parkedSays } from "../../flow/parked.ts";
 import { firedAlarms } from "../../flow/alarms.ts";
 import { readVitals, vitalsFor, vitalsLine } from "../../flow/vitals.ts";
@@ -153,6 +154,10 @@ export function flowLines(
     ...wrap(reportLine(db), inner),
     "",
     ...duplicateLines(dups, inner),
+    "",
+    "Help (the web's /boards?help):",
+    ...wrap(`Stages: ${stages.map((x) => `${STAGE_LABEL[x.key]}: ${STAGE_HOLDS[x.key]}`).join("; ")}.`, inner),
+    ...wrap(`Merge queue: ${MERGE_QUEUE_HELP}`, inner),
   ];
 }
 

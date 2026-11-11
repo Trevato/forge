@@ -750,6 +750,10 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 }
 .disclosure[open] > summary::before { transform: rotate(90deg); }
 .disclosure > summary:hover { color: var(--accent); }
+/* A page's "? Help" (page_help.ts): a 44px target a thumb can hit, and a ring a keyboard can see. */
+.disclosure[data-page-help] > summary { width: fit-content; min-width: 44px; }
+.disclosure[data-page-help] > summary::before { content: none; }
+.disclosure[data-page-help] > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius); }
 
 /* ---- topbar search (always a real form, so JS-off still searches) ---- */
 .topbar-search {
@@ -1128,6 +1132,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 @media (forced-colors: active) {
   .input:focus-visible, .palette .palette-input:focus-visible { outline: 2px solid Highlight; outline-offset: 1px; }
   .color-field:focus-within { outline: 2px solid Highlight; outline-offset: 1px; }
+  .disclosure[data-page-help] > summary:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
 }
 
 /* Asked for less motion, the page keeps every state and loses the movement.

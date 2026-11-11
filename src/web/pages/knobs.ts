@@ -36,7 +36,6 @@ export function knobsCard(ctx: Ctx): Html {
   const rows = readKnobs(ctx.app);
   return html`<section id="knobs">
     <h2 class="mb">Knobs</h2>
-    <p class="muted small">Dials for the crew; a change applies on the next pump.</p>
     <dl class="status-rows">
       ${rows.map(
         (r) => html`<div class="status-row" data-knob="${r.id}">

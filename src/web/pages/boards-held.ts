@@ -25,17 +25,14 @@ function startableMeter(row: HeldRow): Html {
   );
 }
 
+/** What the held card counts: said once, behind the page's `?` (#10998). */
+export const HELD_EXPLAINED =
+  "Each ready issue a builder could start, or the first filter that holds it: a run on it, an open pull, the planner, stalled, its run cap, parked twice, a red-main fix, a file 5 or more open pulls touch. When nothing can start and builders are free, the planner is asked to re-plan what is stalled or capped.";
+
 /** Why ready issues cannot start, per autonomous repository (#2244). */
 export function heldCard(rows: readonly HeldRow[]): Html {
   return html`<section class="settings-block" id="held">
       <h2>Ready, and why it waits</h2>
-      <p class="muted small">
-        Each ready issue a builder could start, or the first filter that holds
-        it: a run on it, an open pull, the planner, stalled, its run cap,
-        parked twice, a red-main fix, a file 5 or more open pulls touch. When nothing can
-        start and builders are free, the planner is asked to re-plan what is
-        stalled or capped.
-      </p>
       ${rows.length === 0
         ? html`<p class="muted">No repository runs on its own.</p>`
         : html`<div class="table-scroll">

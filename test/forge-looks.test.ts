@@ -22,6 +22,9 @@ quietLogs();
 const NOT_A_PAGE: Record<string, string> = {
   "/audit": "no picture: its slot went to /pinned; /audit.csv is its download, covered by test/audit.test.ts",
   "/deploy-to": "a form for a forge admin that fills from its link; covered by test/pinned-page.test.ts",
+  "/settings": "a form of fields; its slot went to the open help of /boards and /settings/crew (#11170); covered by test/account-help.test.ts",
+  "/new": "a form that fills from its link; its slot went to the open help of /boards and /settings/crew (#11170)",
+  "/pinned": "no picture: its slot went to /settings/crew, the crew page; covered by test/pinned-page.test.ts",
   "/data": "no picture: the cap of 24 looks is spent; a guest sees the not-found page and the page is covered by its own tests",
   "/asked": "no picture: the cap of 24 looks went to /notes, the page that now leads with a person's thoughts; /asked is covered by test/asked.test.ts",
   "/forges": "no picture: the cap of 24 looks went to the preview's /waves and /milestones; the page is covered by its own tests",
@@ -64,7 +67,7 @@ const NOT_A_PAGE: Record<string, string> = {
   "/apple-touch-icon.png": "an icon, not a page",
   "/apple-touch-icon-precomposed.png": "an icon, not a page",
   "/events": "a live event stream that never ends",
-  "/boards": "the list of boards; /board is pictured, and the slot went to the preview seed's repository as its owner (#8865); covered by test/boards-page.test.ts",
+  "/boards": "the list of boards, and where the flow panel and its help sit: pictured as /boards?help, taken as the owner (#11170), and /board is pictured; the slot went to the preview seed's repository as its owner (#8865); covered by test/boards-page.test.ts",
   "/changelog": "the merged changes in words; /releases is pictured, and the slot went to the preview seed's pull as its owner (#8865); covered by test/changelog.test.ts",
   "/displays": "a list of displays behind sign-in; its slot is not pictured; covered by test/displays-list.test.ts",
   "/search": "a search box; its slot went to the preview seed's /next as its owner (#8866)",
@@ -106,7 +109,9 @@ const topLevel = () =>
 
 const manifest = (): { looks: string[]; looksAsOwner: string[] } =>
   JSON.parse(readFileSync(join(import.meta.dir, "..", "forge.json"), "utf8")).app;
-const isTopLevel = (p: string) => p === "/" || /^\/[^/]+$/.test(p);
+const isTopLevel = (p: string) => p === "/" || /^\/[^/?]+$/.test(p);
+/** A page's `?help` look: the page with its help open and focused (#11170). */
+const isHelpLook = (p: string) => p.endsWith("?help") && (isTopLevel(p.slice(0, -5)) || p === "/settings/crew?help");
 /** The top-level pages; a deeper one is the preview seed's, taken as the owner (test/looks-owner.test.ts). */
 const declared = (): string[] => manifest().looks.filter(isTopLevel);
 
@@ -142,7 +147,20 @@ test("app.looks stays within 24 paths, each once", () => {
 test("a look below the top level is the preview seed's, taken as the owner", () => {
   const { looks, looksAsOwner } = manifest();
   for (const p of looks.filter((p) => !isTopLevel(p))) {
-    expect(p.startsWith("/preview-admin/sample")).toBe(true);
+    expect(p.startsWith("/preview-admin/sample") || p === "/settings/crew" || isHelpLook(p)).toBe(true);
     expect(looksAsOwner).toContain(p);
+  }
+});
+
+test("the help is pictured open: /boards (where the flow panel sits) and /settings/crew each have a ?help look, taken as the owner", async () => {
+  const { looks, looksAsOwner } = manifest();
+  for (const p of ["/boards?help", "/settings/crew?help"]) {
+    expect(looks).toContain(p);
+    expect(looksAsOwner).toContain(p);
+    const r = await get(p);
+    expect(r.status).toBe(200);
+    const body = await r.text();
+    expect(body).toMatch(/<details[^>]*data-page-help[^>]* open>/);
+    expect(body).toMatch(/<summary autofocus>/);
   }
 });
