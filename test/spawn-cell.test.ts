@@ -417,7 +417,7 @@ describe("a child that will not start", () => {
 const cellTools = process.platform === "linux" && !portInsteadOfSocket() && !missing("bwrap", "socat");
 
 describe("a real child forge", () => {
-  test.skipIf(!cellTools)("boots in its own forge:<name> cell and answers / through the forward; its first request does not wait for it", async () => {
+  test.skipIf(!cellTools)("boots in its own forge:<name> cell and answers / through the forward; its first request is held until it is up", async () => {
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== "FORGE_CELLS") env[k] = v;
     const proc = Bun.spawn([process.execPath, join(import.meta.dir, "helpers", "real-child-forge.ts")], { env, stdout: "pipe", stderr: "pipe" });
@@ -435,8 +435,7 @@ describe("a real child forge", () => {
     }
     // The child's own reason and the machine's disk and load, not a bare mismatch.
     if (seen["failure"] !== null || seen["health"] !== 200) throw new Error(failedWith("the child forge did not come up in its cell", { seen, out: out.slice(-1500) }, errText));
-    expect(seen["first"]).toBe(503);
-    expect(seen["firstMs"] as number).toBeLessThan(1_000);
+    expect(seen["first"]).toBe(200);
     expect(seen["limits"]).toEqual({ memoryMiB: 2048, cpus: 1, diskMiB: 2048 });
     expect(seen["root"] as number).toBeLessThan(400);
     expect(seen["health"]).toBe(200);

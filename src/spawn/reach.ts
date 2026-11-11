@@ -25,6 +25,7 @@ import type { App } from "../app.ts";
 import { isSlug, slugFor } from "../core/apps.ts";
 import type { FiredAlarm } from "../flow/alarms.ts";
 import { childPublicUrl, parentOrigin } from "./placement.ts";
+import { uncleanInFirstMinutes } from "../kernel/boots.ts";
 import { during } from "../perf/jobs.ts";
 
 export const APP_HEADER = "x-forge-app";
@@ -154,6 +155,23 @@ export async function proveApp(fetcher: FetchLike, url: string, slug: string): P
   return { label: slug, url, ok: true, status: got.status, says: `answered ${got.status}` };
 }
 
+/**
+ * A child's own record of its starts: none of them in its first ten minutes
+ * may have ended uncleanly. Absent (undefined) while it has no record yet.
+ */
+export function proveBoots(app: App, child: Pick<Child, "url" | "bodyId">): Proof | undefined {
+  const unclean = uncleanInFirstMinutes(childDirOf(app, child.bodyId));
+  if (unclean === null) return undefined;
+  const ok = unclean === 0;
+  return {
+    label: "boots",
+    url: child.url,
+    ok,
+    status: null,
+    says: ok ? "no unclean restart in the first ten minutes" : `${unclean} unclean restart${unclean === 1 ? "" : "s"} in the first ten minutes`,
+  };
+}
+
 /** Ask every public address of a child, as a visitor does. Nothing is kept. */
 export async function proveChild(app: App, child: Child): Promise<ChildReach> {
   const fetcher = optionsOf(app).fetch ?? fetch;
@@ -161,6 +179,8 @@ export async function proveChild(app: App, child: Child): Promise<ChildReach> {
     proveHome(fetcher, child),
     ...slugsOf(app, child).map((slug) => proveApp(fetcher, appUrlOf(app, child, slug), slug)),
   ]);
+  const boots = proveBoots(app, child);
+  if (boots !== undefined) proofs.push(boots);
   return { name: child.name, at: new Date().toISOString(), ok: proofs.every((p) => p.ok), since: null, alarmed: false, proofs };
 }
 

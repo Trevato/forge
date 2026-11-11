@@ -638,13 +638,22 @@ export async function answerFromCell(parent: App, request: Request, named?: stri
       release();
     }
   }
-  // Asleep: it wakes behind this answer. A git push or an API call waits a few
-  // seconds for it; a page, or a wake that takes longer, is a plain "waking up" page.
-  // A page never waits: it starts the cell and gets the waking page at once.
-  const path = new URL(request.url).pathname;
-  const patient = path.startsWith("/api/") || path.includes(".git/");
+  // Asleep: it wakes behind this answer. Every request, a form's POST included, is
+  // held until the cell is up (wakeLimits.waitMs) so a submit is never lost; only a wake
+  // that takes longer is answered with the "waking up" page, which tries again by itself.
   const starting = settleCell(parent, ledger);
-  const woke = patient ? await Promise.race([starting, Bun.sleep(WAKE_WAIT_MS).then(() => undefined)]) : undefined;
+  // Only so many wait on one cell: the rest are told it is waking at once, so a crowd cannot pin connections and bodies.
+  const waiting = waiters.get(ledger.bodyId) ?? 0;
+  if (waiting >= wakeLimits.waiters) return wakingResponse(parent, request, ledger.name);
+  waiters.set(ledger.bodyId, waiting + 1);
+  let woke: CellChild | undefined;
+  try {
+    woke = await Promise.race([starting, Bun.sleep(wakeLimits.waitMs).then(() => undefined)]);
+  } finally {
+    const left = (waiters.get(ledger.bodyId) ?? 1) - 1;
+    if (left <= 0) waiters.delete(ledger.bodyId);
+    else waiters.set(ledger.bodyId, left);
+  }
   if (woke !== undefined) {
     const release = cells.hold(ledger.bodyId);
     try {
@@ -656,8 +665,14 @@ export async function answerFromCell(parent: App, request: Request, named?: stri
   return wakingResponse(parent, request, ledger.name);
 }
 
-/** How long a request waits for a sleeping cell forge before it is told it is waking. */
-const WAKE_WAIT_MS = 4000;
+/** How long a request waits for a sleeping cell forge before it is told it is waking, and how many may wait on one cell. */
+export const wakeLimits = { waitMs: 20_000, waiters: 16 };
+
+/** Requests held for a waking cell now, by body id. */
+const waiters = new Map<string, number>();
+
+/** How many requests wait on this cell's wake now. */
+export const waitingFor = (bodyId: string): number => waiters.get(bodyId) ?? 0;
 
 /**
  * A websocket handshake for a child in its own cell (its home or one of its

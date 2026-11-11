@@ -88,6 +88,9 @@ function alive(pid: number): boolean {
   }
 }
 
+/** A forge started within this long is not put to sleep by the idle sweep (#11155). */
+export const NEW_FORGE_MS = 10 * 60_000;
+
 /** After a child fails to start, requests are answered 503 at once for this long. */
 export const START_BACKOFF_MS = 30_000;
 
@@ -226,10 +229,38 @@ export function cellChildren(parent: App): CellChildren {
   return r;
 }
 
-async function answers(port: number, gone: Promise<unknown>): Promise<boolean> {
+/** Starts a child and resolves once it answers; undefined (with `fail` told why) when it does not. */
+export type Launcher = (input: { bodyId: string; name: string; size: Size }, fail: (why: string) => void) => Promise<CellChild | undefined>;
+
+/** Probes a starting child gets, 100 ms apart: about a minute for a slow first boot. */
+export const START_PROBES = 600;
+
+/** Whether a forge started at `startedAt` is still inside its first ten minutes at `now`. */
+export const isNewForge = (startedAt: number | undefined, now: number): boolean => startedAt !== undefined && now - startedAt < NEW_FORGE_MS;
+
+/**
+ * Wait for a just-spawned child to answer on `port`. One that never does is
+ * asked to go as a sleep is (SIGTERM first, `stopGently`), so a slow first
+ * boot is not also written down as a crash; `silent` hears it before the stop.
+ */
+export async function firstAnswer(
+  child: { readonly pid: number; readonly exited: Promise<unknown> },
+  port: number,
+  silent: () => void = () => {},
+  probes = START_PROBES,
+  graceMs = STOP_GRACE_MS,
+): Promise<boolean> {
+  if (await answers(port, child.exited, probes)) return true;
+  silent();
+  await stopGently(child, graceMs);
+  return false;
+}
+
+/** True once something answers on `port`; false when `gone` settles first or the probes run out. */
+export async function answers(port: number, gone: Promise<unknown>, probes = START_PROBES): Promise<boolean> {
   let over = false;
   void gone.then(() => (over = true));
-  for (let i = 0; i < 300 && !over; i++) {
+  for (let i = 0; i < probes && !over; i++) {
     try {
       await fetch(`http://127.0.0.1:${port}/`, { redirect: "manual", signal: AbortSignal.timeout(500) });
       return true;
@@ -269,29 +300,33 @@ export function launchSpecFor(
   });
 }
 
-function makeRegistry(parent: App): CellChildren {
-  const held = new Map<string, Held>();
+/** A registry of its own, not the parent's: tests pass a launcher in place of a cell's. */
+export function makeRegistry(parent: App, launcher?: Launcher): CellChildren {
+  const held = new Map<string, CellChild>();
   const starting = new Map<string, Promise<CellChild | undefined>>();
   /** When a start last failed: a broken child is not relaunched on every request. */
   const failed = new Map<string, { at: number; why: string }>();
   /** Held once it answers, never before: a start in flight is in `starting`. */
   /** When a request last reached each running child, ms. */
   const seen = new Map<string, number>();
+  /** When each running child was started: a new forge is not slept in its first ten minutes. */
+  const startedAt = new Map<string, number>();
   /** Requests under way, by body id. */
   const busy = new Map<string, number>();
 
-  const launch = async (input: { bodyId: string; name: string; size: Size }): Promise<CellChild | undefined> => {
+  const failOf = (bodyId: string) => (why: string): void => void failed.set(bodyId, { at: Date.now(), why });
+  const launchInCell: Launcher = async (input, fail) => {
     // Below the disk floor no child cell starts, a sleeping one included (#10850).
     const floor = floorRefusal(parent.config.dataDir);
     if (floor !== undefined) {
       parent.log.warn("child cell not started", { name: input.name, reason: floor });
-      failed.set(input.bodyId, { at: Date.now(), why: floor });
+      fail(floor);
       return undefined;
     }
     const cells = await cellsAvailable();
     if (!cells.ok) {
       parent.log.warn("child cell not started", { name: input.name, reason: cells.reason });
-      failed.set(input.bodyId, { at: Date.now(), why: cells.reason });
+      fail(cells.reason);
       return undefined;
     }
     const recent: string[] = [];
@@ -328,7 +363,6 @@ function makeRegistry(parent: App): CellChildren {
       if (why !== undefined) parent.log.warn("child forge stopped", { name: input.name, why });
       cell.close();
       door.close();
-      if (held.get(input.bodyId)?.proc === proc) held.delete(input.bodyId);
       if (why !== undefined) recent.push(why);
       return code;
     });
@@ -336,15 +370,25 @@ function makeRegistry(parent: App): CellChildren {
     void drain(proc.stdout, log);
     void drain(proc.stderr, log);
     const child: Held = { ...input, port, limits: spec.limits, pid: proc.pid, exited, cell, proc, door };
-    if (!(await answers(port, exited))) {
+    const up = await firstAnswer(child, port, () => {
       const why = `its cell did not come up: ${recent.slice(-3).join(" | ") || "no output"}`.slice(0, 400);
       parent.log.warn("child forge did not answer", { name: input.name, why });
-      failed.set(input.bodyId, { at: Date.now(), why });
-      killTree(proc.pid);
-      return undefined;
-    }
+      fail(why);
+    });
+    return up ? child : undefined;
+  };
+  const launch = async (input: { bodyId: string; name: string; size: Size }): Promise<CellChild | undefined> => {
+    const child = await (launcher ?? launchInCell)(input, failOf(input.bodyId));
+    if (child === undefined) return undefined;
     held.set(input.bodyId, child);
     seen.set(input.bodyId, Date.now());
+    startedAt.set(input.bodyId, Date.now());
+    void child.exited.then(() => {
+      if (held.get(input.bodyId) === child) {
+        held.delete(input.bodyId);
+        startedAt.delete(input.bodyId);
+      }
+    });
     return child;
   };
 
@@ -376,6 +420,7 @@ function makeRegistry(parent: App): CellChildren {
       const child = held.get(bodyId);
       if (child === undefined) return;
       held.delete(bodyId);
+      startedAt.delete(bodyId);
       await stopGently(child);
     },
     get: (bodyId) => held.get(bodyId),
@@ -398,6 +443,7 @@ function makeRegistry(parent: App): CellChildren {
     async sleepIdle(idleMs, now = Date.now()) {
       const asleep: string[] = [];
       for (const child of [...held.values()]) {
+        if (isNewForge(startedAt.get(child.bodyId), now)) continue;
         if (now - (seen.get(child.bodyId) ?? now) < idleMs || (busy.get(child.bodyId) ?? 0) > 0) continue;
         if (crewAtWork(childDirOf(parent, child.bodyId))) continue;
         asleep.push(child.name);
