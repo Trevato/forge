@@ -21,6 +21,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { doctorRuns, type DoctorRun } from "../../checks/doctor.ts";
 import { recentGates, type KeptResult } from "../../checks/gate_result.ts";
 import { reportLine } from "../../checks/report.ts";
 import { HOLDS } from "../../crew/held.ts";
@@ -133,6 +134,7 @@ export function flowLines(
           return [
             `${pad(truncate(q.repo, 15), 15)} ${pad(String(q.queued), 6, "right")} ${pad(String(q.gating), 6, "right")} ${pad(String(q.gates), 5, "right")} ${pad(String(q.landedHour), 9, "right")} ${pad(q.approvedToLanded === null ? "—" : String(q.approvedToLanded), 12, "right")}`,
             ...gateLines(id === undefined ? [] : recentGates(db, id, GATES_SHOWN), now.getTime(), inner),
+            ...doctorLines(id === undefined ? [] : doctorRuns(db, id, DOCTOR_SHOWN), now.getTime(), inner),
           ];
         })),
     ...(red.length === 0
@@ -213,6 +215,17 @@ export function gateLines(gates: readonly KeptResult[], now: number, inner: numb
         ? ""
         : ` · ${first.name}${first.file === undefined ? "" : ` (${first.file})`}${first.flaky ? " flaky" : ""}`;
     return truncate(`  ${pulls} ${STATE_WORD[g.state]} · ${ago(Date.parse(g.finishedAt), now)}${test}`, inner);
+  });
+}
+
+/** The doctor's acts shown under a repository's gates. */
+const DOCTOR_SHOWN = 3;
+
+/** One indented line per batch-doctor act (#7555), newest first: `doctor #14 held · functional · how long ago · the error line`; none when it has not acted. */
+export function doctorLines(runs: readonly DoctorRun[], now: number, inner: number): string[] {
+  return runs.map((r) => {
+    const pull = r.sealed || r.culprit === null ? "a sealed pull" : `#${r.culprit}`;
+    return truncate(`  doctor ${pull} ${r.action} · ${r.class} · ${ago(Date.parse(r.at), now)}${r.probe === "" ? "" : ` · ${r.probe}`}`, inner);
   });
 }
 

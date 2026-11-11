@@ -51,6 +51,7 @@ import { readHeld } from "../../flow/held.ts";
 import { readVerified, verifiedSays, type VerifiedRow } from "../../flow/verified.ts";
 import type { App } from "../../app.ts";
 import { html, type Html } from "../html.ts";
+import { doctorCard } from "./boards-doctor.ts";
 import { keeperRow } from "../studio/keeper_row.ts";
 import { gatesSection } from "./boards-gates.ts";
 import { heldCard } from "./boards-held.ts";
@@ -233,6 +234,7 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
     ${heldCard(readHeld(app, reader.kind === "owner", now))}
     ${queueCard(queuesFor(app, reader, new Date(now), { batches: true }))}
     ${gatesSection(app.db, reader.kind === "owner", now)}
+    ${doctorCard(app.db, reader.kind === "owner", now)}
     ${url.searchParams.get("idle") === "all" && idle.length > 0 ? idleList(idle) : null}
     ${listed === null || shown === undefined ? null : outList(shown, listed.hour, now)}`;
 }
