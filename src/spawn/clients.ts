@@ -21,6 +21,7 @@ import { hasAdmin, linkOf, spawnedOrg, type LinkInfo, type LinkState } from "./c
 import { lastHeard, type Beat } from "./heartbeat.ts";
 import { reachOf, reachWords, type ChildReach } from "./reach.ts";
 import type { Size } from "./sizes.ts";
+import { firstScreenLine } from "../core/next-steps.ts";
 import { forgeUse, type ForgeUse } from "./usage.ts";
 
 /** What a spawned forge says about itself to anyone: nothing more. */
@@ -355,6 +356,11 @@ export const CLAIM_WORDS: Record<"yes" | "no" | "unknown" | "making", string> = 
 export function claimState(r: ClientRow): keyof typeof CLAIM_WORDS {
   if (!r.made) return "making";
   return r.claimed === null ? "unknown" : r.claimed ? "yes" : "no";
+}
+
+/** What the recipient will see first, while they have not claimed it; null once they have (the page and the terminal share it). */
+export function firstScreenOf(r: ClientRow): string | null {
+  return claimState(r) === "no" ? firstScreenLine(r.apps) : null;
 }
 
 /** "3 apps running", or which one is not and why; null when none are run here. */

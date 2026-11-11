@@ -7,7 +7,7 @@
  */
 
 import type { Ctx } from "../../http/context.ts";
-import { ATTENTION_WORDS, CLAIM_WORDS, claimState, clientRows, creditWords, runningWords, spendWords, type ClientRow } from "../../spawn/clients.ts";
+import { ATTENTION_WORDS, firstScreenOf, CLAIM_WORDS, claimState, clientRows, creditWords, runningWords, spendWords, type ClientRow } from "../../spawn/clients.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
@@ -72,19 +72,18 @@ export function forgeRow(r: ClientRow, now: number): Html {
     // Enter opens the row's first link, the forge's name.
     nav: true,
     data: { forge: r.name, claimed: state },
-    ...(r.reach === null
-      ? {}
-      : {
-          // One row per public address; the word in the trail, not a colour, says which failed.
-          children: r.reach.proofs.map((p) =>
-            row({
-              title: html`<a href="${p.url}">${p.url.replace(/^https?:\/\//, "")}</a>`,
-              meta: html`${p.says}`,
-              trail: badge(p.ok ? "reachable" : "not reachable", p.ok ? { tone: "success" as const } : { tone: "attn" as const }),
-              data: { proof: p.ok ? "ok" : "failed" },
-            }),
-          ),
+    children: [
+      ...(firstScreenOf(r) === null ? [] : [row({ title: html`${firstScreenOf(r)}`, data: { "first-screen": "" } })]),
+      ...(r.reach?.proofs ?? []).map((p) =>
+        // One row per public address; the word in the trail, not a colour, says which failed.
+        row({
+          title: html`<a href="${p.url}">${p.url.replace(/^https?:\/\//, "")}</a>`,
+          meta: html`${p.says}`,
+          trail: badge(p.ok ? "reachable" : "not reachable", p.ok ? { tone: "success" as const } : { tone: "attn" as const }),
+          data: { proof: p.ok ? "ok" : "failed" },
         }),
+      ),
+    ],
     trail: html`${r.attention === null
         ? null
         : html`<span data-attention="${r.attention}">${badge(ATTENTION_WORDS[r.attention], { tone: "attn" })}</span>`}${badge(CLAIM_WORDS[state], {

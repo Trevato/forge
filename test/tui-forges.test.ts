@@ -7,6 +7,7 @@ import { createApp, type App as Forge } from "../src/app.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { fitLines, forgeLines } from "../src/tui/screens/forges.ts";
+import { firstScreenLine } from "../src/core/next-steps.ts";
 import { runningWords, type ClientRow } from "../src/spawn/clients.ts";
 import type { TuiIdentity } from "../src/tui/session.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -152,6 +153,7 @@ describe("forges you sent in the terminal", () => {
     const lines = forgeLines([row({ reach })]);
     expect(lines[0]![1]).toContain("Running, not reachable: deal answered 404, not by the app");
     expect(lines.slice(1).map(([, t]) => t.trim())).toEqual([
+      firstScreenLine([]),
       "reachable maria--forge.test/api/v1/forge: answered 200",
       "NOT REACHABLE deal--maria--forge.test/: answered 404, not by the app",
     ]);
@@ -185,6 +187,7 @@ describe("forges you sent in the terminal", () => {
     const down = { total: 2, running: 1, notRunning: [{ slug: "notes", why: "build failed" }] };
     expect(forgeLines([row({ running: up })])).toEqual([
       ["maria", "asleep · for Maria's bakery · Not claimed yet · 3 apps running · has not reported yet · small · shared · shared disk · no heartbeat yet"],
+      ["", `  ${firstScreenLine([])}`],
     ]);
     expect(forgeLines([row({ claimed: true, running: down, for: null })])).toEqual([
       ["maria", "asleep · Claimed · 1 app running · notes: build failed · has not reported yet · small · shared · shared disk · no heartbeat yet"],

@@ -6,7 +6,7 @@
 
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
-import { ATTENTION_WORDS, CLAIM_WORDS, claimState, creditWords, runningWords, spendWords, type ClientRow } from "../../spawn/clients.ts";
+import { ATTENTION_WORDS, firstScreenOf, CLAIM_WORDS, claimState, creditWords, runningWords, spendWords, type ClientRow } from "../../spawn/clients.ts";
 import { useLine } from "../../spawn/usage.ts";
 import { timeAgo } from "../../web/ui.ts";
 import { card } from "../ui/widgets.ts";
@@ -29,13 +29,19 @@ export function forgeLines(rows: readonly ClientRow[]): [string, string][] {
     [r.made ? (r.awake === true ? "awake" : "asleep") : null, r.attention === null ? null : ATTENTION_WORDS[r.attention], r.for === null ? null : `for ${r.for}`, CLAIM_WORDS[claimState(r)], linkWords(r.link), runningWords(r), r.stage?.words ?? null, r.nextStep.words, spendWords(r)?.words ?? null, creditWords(r), useLine(r.size, r.use), r.made ? diskWords(r.disk) : null, r.lastHeartbeatAt === null ? "no heartbeat yet" : `heartbeat ${timeAgo(r.lastHeartbeatAt)}`]
       .filter((m): m is string => m !== null)
       .join(" · "),
-  ], ...addressLines(r)]);
+  ], ...firstScreenLines(r), ...addressLines(r)]);
 }
 
 /** "link open", "link ended (undo with u)": what the sender can do about the link, as /forges shows it. */
 function linkWords(link: LinkInfo | null): string | null {
   if (link === null || link.state === "used") return null;
   return link.state === "open" ? "link open" : undoable(link) ? "link ended, undo with u" : "link ended";
+}
+
+/** Under a forge not yet claimed: what its person will see first, as /forges says it. */
+function firstScreenLines(r: ClientRow): [string, string][] {
+  const line = firstScreenOf(r);
+  return line === null ? [] : [["", `  ${line}`]];
 }
 
 /** Under a forge that is running, not reachable: each public address and what it answered (#7959), as /forges lists them. */
