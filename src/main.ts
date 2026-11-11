@@ -59,6 +59,7 @@ import { VERIFY_EVERY_MS } from "./checks/verify.ts";
 import { RED_HOLD_MS } from "./checks/red_main.ts";
 import { stopQueue } from "./checks/queue.ts";
 import { startLooks } from "./looks/service.ts";
+import { startMaintain } from "./maintain/runner.ts";
 import { startMirrorOut } from "./origins/mirror-out.ts";
 import { startMirrorPulls } from "./origins/mirror-pulls.ts";
 import { startProbes } from "./contract/probes.ts";
@@ -502,6 +503,8 @@ const mirrorPulls = startMirrorPulls(app);
 // The look: a picture of every environment that comes up green, taken
 // through this forge's own listener.
 const looks = appsOn ? startLooks(app, { localUrl: servers.url }) : undefined;
+// Maintenance duties (src/maintain): each runs on its interval and leaves a row.
+const maintain = startMaintain(app);
 // Is it so: the forge knocks on every door of an app with a contract after
 // each production deploy and once a night, and compares with the table.
 const probes = apps === undefined ? undefined : startProbes(app, apps);
@@ -954,6 +957,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
     mirrorOut(),
     mirrorPulls(),
     looks?.stop(),
+    maintain.stop(),
     probes?.stop(),
     nightly?.stop(),
     snapshots.stop(),

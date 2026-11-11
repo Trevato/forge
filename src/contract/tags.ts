@@ -52,6 +52,7 @@ const ALIAS: Readonly<Record<string, string>> = {
   heartbeat: "meta",
   telemetry: "meta",
   drills: "meta",
+  maintenance: "meta",
   devices: "meta",
   thoughts: "feed",
   share: "feed",

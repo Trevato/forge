@@ -102,6 +102,7 @@ export { route as getApiV1Front } from "./getApiV1Front.ts";
 export { route as getApiV1Health } from "./getApiV1Health.ts";
 export { route as getApiV1Here } from "./getApiV1Here.ts";
 export { route as getApiV1Keeper } from "./getApiV1Keeper.ts";
+export { route as getApiV1MaintenanceRuns } from "./getApiV1MaintenanceRuns.ts";
 export { route as getApiV1Map } from "./getApiV1Map.ts";
 export { route as getApiV1MigrateJob } from "./getApiV1MigrateJob.ts";
 export { route as getApiV1MigrateJobStream } from "./getApiV1MigrateJobStream.ts";

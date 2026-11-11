@@ -64,6 +64,7 @@ import { nightlyDue } from "../src/checks/scan_store.ts";
 import { startNotifier } from "../src/crew/notify.ts";
 import { fireDue } from "../src/apps/feature_schedule.ts";
 import { pullDue } from "../src/apps/pull_schedule.ts";
+import { startMaintain } from "../src/maintain/runner.ts";
 
 /** Thousands of issues and pulls, as the issue asks; runs, comments and events thinned so the file runs in seconds (#1242). */
 const BUSY = { issues: 2000, pulls: 2000, requested: 100, runs: 5000, comments: 5000, events: 10000, reviewComments: 500 };
@@ -134,6 +135,8 @@ function jobs(): Record<string, () => unknown> {
   const memory = startMemorySampler(app, 1e9);
   sampler.stop();
   memory.stop();
+  const maintainer = startMaintain(app, { everyMs: 1e9 });
+  maintainer.stop();
   return {
     sampler: () => sampler.tick(),
     "memory-sampler": () => memory.tick(),
@@ -221,6 +224,7 @@ function jobs(): Record<string, () => unknown> {
     "nightly-scan": () => nightlyDue(app.db, new Date(Date.now() - 24 * 3_600_000).toISOString(), 25),
     "feature-schedule": () => fireDue(app),
     "pull-schedule": () => pullDue(app),
+    maintain: () => maintainer.tick(new Date(Date.now() + 1e9)),
   };
 }
 
