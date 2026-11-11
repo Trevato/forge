@@ -156,9 +156,12 @@ describe("previews of idle pulls sleep", () => {
     // running. When it is not running, its own words are the failure.
     const production = () =>
       runtime.status(record).find((e) => e.env === "production");
-    await until(() =>
-      production()?.state === "deploying" ? undefined : true,
-    );
+    // Settled means running or failed: "stopped" before its deploy is queued
+    // is not an answer, and counting it as one reads a slow start as a fault.
+    await until(() => {
+      const state = production()?.state;
+      return state === "running" || state === "failed" ? true : undefined;
+    });
     expect(`${production()?.state}: ${production()?.error ?? ""}`).toBe(
       "running: ",
     );
