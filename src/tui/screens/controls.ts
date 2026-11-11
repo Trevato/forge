@@ -3,12 +3,13 @@
  * /settings/security/controls (`checks/controls.ts`), each safeguard and when
  * it was last tested, then what the page policy blocked this week by
  * directive (the security page's "Blocked by the page policy" line), absent
- * when nothing was. Read-only.
+ * when nothing was, then the uncaught script errors pages reported (#11447). Read-only.
  */
 
 import type { Database } from "bun:sqlite";
 import { controlStandings } from "../../checks/controls.ts";
 import { violationsByDirective } from "../../http/csp_report.ts";
+import { scriptErrorCounts } from "../../http/script_errors.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
@@ -37,10 +38,19 @@ export function cspRows(db: Database, nowMs: number): ListRow[] {
   }));
 }
 
+/** One row per page, place and message of the uncaught script errors browsers reported in the last 7 days; none when none. */
+export function scriptErrorRows(db: Database, nowMs: number): ListRow[] {
+  return scriptErrorCounts(db, 7 * 24, new Date(nowMs)).map((r) => ({
+    title: `Script error on ${r.page}: ${r.message}`,
+    secondary: r.where,
+    meta: `${r.n} in 7 days`,
+  }));
+}
+
 export function controlsScreen(f: Session, ctx: Ctx): Screen {
   const state = new ListState();
   const now = Date.now();
-  const rows = [...controlRows(f.app.config.dataDir, now), ...cspRows(f.app.db, now)];
+  const rows = [...controlRows(f.app.config.dataDir, now), ...cspRows(f.app.db, now), ...scriptErrorRows(f.app.db, now)];
   return {
     title: "Security controls",
     keys: [binding(["j", "k"], "move cursor")],

@@ -6,7 +6,8 @@ import { createApp, type App } from "../src/app.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { controlRows } from "../src/tui/screens/controls.ts";
+import { recordScriptError } from "../src/http/script_errors.ts";
+import { controlRows, scriptErrorRows, entry } from "../src/tui/screens/controls.ts";
 import { CONTROLS, readControlChecks } from "../src/checks/controls.ts";
 
 let dir = "";
@@ -100,4 +101,16 @@ test("the terminal rows match the page", () => {
   const rows = controlRows(dir, Date.now());
   expect(rows.map((r) => r.title)).toEqual(CONTROLS.map((c) => c.name));
   expect(rows.find((r) => r.title === "Pod security")?.meta).toBe("No check recorded");
+});
+
+test("the terminal lists script errors, for an admin only", () => {
+  expect(scriptErrorRows(app.db, Date.now())).toEqual([]);
+  recordScriptError(app.db, { page: "/", src: "/a.js", line: 3, msg: "boom" });
+  const rows = scriptErrorRows(app.db, Date.now());
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({ title: "Script error on /: boom", secondary: "/a.js:3", meta: "1 in 7 days" });
+  const as = (isAdmin: boolean, kind = "human") => entry.offered({ user: { isAdmin, kind } } as never);
+  expect(as(true)).toBe(true);
+  expect(as(false)).toBe(false);
+  expect(as(true, "agent")).toBe(false);
 });

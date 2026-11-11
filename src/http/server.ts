@@ -39,6 +39,7 @@ import { plansSet } from "../web/settings/plans.ts";
 import { allFlowsPage } from "../web/pages/flows-all.ts";
 import { measureSubmit } from "./measure.ts";
 import { cspReportSubmit } from "./csp_report.ts";
+import { scriptErrorSubmit } from "./script_errors.ts";
 import { stripeHook } from "./stripe_hook.ts";
 import { settingsRoutes } from "./settings_routes.ts";
 import { pluginRoutes } from "./plugin_routes.ts";
@@ -834,6 +835,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/sw.js", serviceWorker);
   // The page-view beacon's report (http/measure.ts): numbers only, no IP kept.
   router.add("POST", "/_measure", (ctx) => measureSubmit(ctx, routeOf));
+  // An uncaught script error the beacon saw (http/script_errors.ts): counts only.
+  router.add("POST", "/_script-error", (ctx) => scriptErrorSubmit(ctx, routeOf));
   router.add("POST", "/_funnel", funnelSubmit);
   // What a page's Content-Security-Policy blocked (http/csp_report.ts): counts only.
   router.add("POST", "/csp-report", cspReportSubmit);

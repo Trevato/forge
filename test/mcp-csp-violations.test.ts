@@ -7,6 +7,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { recordViolation, violationsByDirective } from "../src/http/csp_report.ts";
+import { recordScriptError } from "../src/http/script_errors.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 let dir = "";
@@ -68,7 +69,10 @@ test("a posted report is read back by directive, with its count and newest block
       { directive: "script-src-elem", n: 3, newest: "b.example" },
       { directive: "img-src", n: 1, newest: "data" },
     ],
+    scriptErrors: [],
   });
+  recordScriptError(app.db, { page: "/claim", src: "/a.js", line: 2, msg: "boom" });
+  expect((await csp(admin)).body.scriptErrors).toEqual([{ page: "/claim", where: "/a.js:2", message: "boom", n: 1, last: expect.any(String) }]);
   // The same function the security page reads.
   expect(got.body.directives).toEqual(violationsByDirective(app.db, 24));
 });
