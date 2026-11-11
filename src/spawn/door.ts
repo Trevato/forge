@@ -198,13 +198,13 @@ export async function spawnDoor(
   const crew = names(raw["crew"], "crew", MAX_CREW);
   if (!Array.isArray(crew)) return crew;
   if (anon && crew.length > 0)
-    return invalid("crew", "anonymous spawns carry no crew; claim the forge and invite one there");
+    return invalid("crew", "anonymous spawns carry no crew; open the forge as yours and invite one there");
   // A stranger has no key to seal and no account to keep: the key is
   // refused outright, the rest simply do not apply.
   if (anon && raw["modelKey"] !== undefined)
     return invalid(
       "modelKey",
-      "anonymous spawns carry no model key; claim the forge and add one there",
+      "anonymous spawns carry no model key; open the forge as yours and add one there",
     );
   // The child's model key: a key or subscription token with a whole-life budget, or none. A
   // subscription token is a person's own plan and never travels.

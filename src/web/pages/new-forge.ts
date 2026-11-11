@@ -177,7 +177,7 @@ function formView(
       ${pageHead("New forge")}
       <section class="settings-block">
         <h2>No room</h2>
-        <p role="status">This forge cannot hold another child: ${full}.</p>
+        <p role="status">This forge has no room for another forge: ${full}.</p>
         ${ctx.auth.user?.isAdmin
           ? html`<p><a href="/settings/capacity">Raise the room in settings</a></p>`
           : null}
@@ -187,12 +187,12 @@ function formView(
   return html`<div class="narrow-wide" data-forges>
     ${pageHead("New forge", {
       sub: anon
-        ? "Pick a name and the apps to start from. Whoever opens the claim link becomes its admin."
+        ? "Pick a name and the apps to start from. Whoever opens the link becomes its admin."
         : "Pick a name and the apps to start from; you get one link to send.",
       actions: btn("Forges you sent", { href: "/forges", size: "sm" }),
     })}
     <p class="muted small" id="hosting-terms">Free within limits: it sleeps when idle, and its crew starts once you add your AI account.</p>
-    ${quota ? html`<p role="status" id="quota-full">This forge cannot hold another child: ${quota}.</p>` : null}
+    ${quota ? html`<p role="status" id="quota-full">This forge has no room for another forge: ${quota}.</p>` : null}
     ${errors["form"]
       ? html`<p class="error mb" role="alert">${errors["form"]}</p>`
       : null}
@@ -242,7 +242,7 @@ function formView(
           label: "Or a fresh app (optional)",
           name: "fresh",
           value: values.fresh,
-          hint: `One line on what it is; the child gets a small app to start from (at most ${MAX_FRESH_CHARS} characters).`,
+          hint: `One line on what it is; the new forge gets a small app to start from (at most ${MAX_FRESH_CHARS} characters).`,
           ...(errors["fresh"] ? { error: errors["fresh"] } : {}),
         })}
         <details class="disclosure" ${Object.keys(errors).some((k) => MORE_FIELDS.includes(k)) ? html`open` : null}>
@@ -288,14 +288,14 @@ function formView(
         ${anon
           ? null
           : html`<fieldset class="field">
-              <legend>After it is claimed</legend>
+              <legend>After it is taken over</legend>
               <label class="check">
                 <input
                   type="checkbox"
                   name="keepAccess"
                   ${values.keepAccess ? html`checked` : null}
                 />
-                <span>Keep your owner access (the claim page tells them)</span>
+                <span>Keep your owner access (the page they open tells them)</span>
               </label>
             </fieldset>`}
         ${anon
@@ -328,25 +328,25 @@ function formView(
               name: "budgetUsd",
               type: "number",
               value: values.budgetUsd,
-              hint: "For the key's whole life; the child cannot raise it. Needed with a key.",
+              hint: "For the key's whole life; the new forge cannot raise it. Needed with a key.",
               ...(errors["budgetUsd"] ? { error: errors["budgetUsd"] } : {}),
             })}
         ${selectField({
           label: "Template",
           name: "template",
-          hint: "What the child starts from besides the apps you fork. Blank is the default.",
+          hint: "What the new forge starts from besides the apps you fork. Blank is the default.",
           options: templateOptions(values.template),
           ...(errors["template"] ? { error: errors["template"] } : {}),
         })}
         ${selectField({
           label: "Size (optional)",
           name: "size",
-          hint: "Room for the child to grow into. Small is the default and is not recorded.",
+          hint: "Room for the new forge to grow into. Small is the default and is not recorded.",
           options: sizeOptions(values.size),
           ...(errors["size"] ? { error: errors["size"] } : {}),
         })}
           <p class="muted small">
-            Never copied: ${LEFT_BEHIND.map(plainWords).join(", ")}. The child mints its own.
+            Never copied: ${LEFT_BEHIND.map(plainWords).join(", ")}. It makes its own.
           </p>
         </details>
         ${codeField(values.code, errors["code"])}
@@ -383,8 +383,8 @@ function planView(ctx: Ctx, user: User | undefined, values: Values, body: Record
           ? null
           : html`<li>
               ${values.keepAccess
-                ? "You keep owner access after it is claimed; the claim page tells them."
-                : "You leave once it is claimed; they can invite you back."}
+                ? "You keep owner access once it is taken over; the page they open tells them."
+                : "You leave once it is taken over; they can invite you back."}
             </li>`}
         ${plan?.template === undefined
           ? null
@@ -416,8 +416,7 @@ function giftLine(g: unknown): Html | null {
   return typeof gift?.plan === "string" ? html`<li><b>${giftWords({ plan: gift.plan })}</b></li>` : null;
 }
 
-/** The answer to a spawn: the link, once. */
-/** The claim link, shown once: what to do with it, and a way to copy it. */
+/** The link, shown once: what to do with it, and a way to copy it. */
 export function claimLinkBody(link: string, note?: string): Html {
   return html`<p class="mb">
       Send this link to the person it is for. It works once, for a day, and

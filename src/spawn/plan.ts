@@ -319,7 +319,7 @@ export function dryRun(plan: SpawnPlan, source: SpawnSource): DryRun {
     ...plan.briefs.map((b) => `crew brief for ${b.agent}`),
     ...plan.subscriptions.map((s) => `subscription ${s} (name only)`),
     ...(plan.direction === "" ? [] : ["your words, as the child's direction"]),
-    ...(plan.keepAccess ? ["your owner access, kept after the child is claimed"] : []),
+    ...(plan.keepAccess ? ["your owner access, kept after the forge is taken over"] : []),
     ...(plan.budgetUsd === null
       ? []
       : [`its own model key (sealed, never shown again), with a $${plan.budgetUsd} budget it cannot raise`]),

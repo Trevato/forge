@@ -75,18 +75,18 @@ function dead(ctx: Ctx, state: Exclude<ClaimState["state"], "ok">): Response {
   const says = {
     unknown: {
       status: 404,
-      title: "This is not a claim link",
+      title: "This is not a forge link",
       text: "The link may have been cut short, or replaced by a newer one. Ask whoever sent it for the latest.",
     },
     used: {
       status: 410,
       title: "This link has already been used",
-      text: "Each claim link works once. If it was you, sign in with the account you made.",
+      text: "Each link works once. If it was you, sign in with the account you made.",
     },
     expired: {
       status: 410,
       title: "This link has expired",
-      text: "Claim links work for a day. Ask whoever sent it for a new one.",
+      text: "Links work for a day. Ask whoever sent it for a new one.",
     },
     revoked: {
       status: 410,
@@ -96,7 +96,7 @@ function dead(ctx: Ctx, state: Exclude<ClaimState["state"], "ok">): Response {
     owned: {
       status: 410,
       title: "This forge already has an owner",
-      text: "Someone has already claimed it. If it was you, sign in.",
+      text: "Someone has already made this forge theirs. If it was you, sign in.",
     },
   }[state];
   return page(
@@ -139,7 +139,7 @@ function accessSentence(spawned: Spawned, spawner: User | undefined): string {
   const who = spawner?.username ?? "Whoever made it";
   return spawned.keepAccess
     ? `${who} keeps owner access to this forge; you can remove it in your organisation's Owners team.`
-    : `Once you claim it, only you can see its private work: ${who}, who made it, no longer has access unless you invite them back.`;
+    : `Once you open it as yours, only you can see its private work: ${who}, who made it, no longer has access unless you invite them back.`;
 }
 
 function claimForm(
@@ -163,7 +163,7 @@ function claimForm(
         <form method="post" action="/claim">
           <div id="claim-token-field">
             ${formField({
-              label: "Claim code",
+              label: "Link code",
               name: "token",
               value: values.token ?? "",
               required: true,
@@ -201,7 +201,7 @@ function claimForm(
           })}
           ${passkeyFields()}
           <div class="form-actions">
-            <button type="submit" class="btn" data-variant="primary">Claim this forge</button>
+            <button type="submit" class="btn" data-variant="primary">Make this forge mine</button>
           </div>
           <div class="stack stack-tight">
             ${passkeyState()}
@@ -211,7 +211,7 @@ function claimForm(
               face or device PIN. It needs an email address above.
             </p>
             ${passkeyNote("passkey-make-note", errors.passkey)}
-            <button type="button" id="passkey-make" class="btn" data-variant="outline" data-options="/claim/options" data-needs-email>Claim with a passkey instead</button>
+            <button type="button" id="passkey-make" class="btn" data-variant="outline" data-options="/claim/options" data-needs-email>Use a passkey instead</button>
             </div>
           </div>
         </form>
@@ -271,6 +271,15 @@ function problems(ctx: Ctx, username: string, email: string, needEmail: boolean)
   return errors;
 }
 
+/** Why a passkey challenge was refused, in the passkey note's plain words. */
+const LINK_REFUSED: Record<Exclude<ClaimState["state"], "ok">, string> = {
+  unknown: "This is not a forge link.",
+  used: "This link has already been used.",
+  expired: "This link has expired.",
+  revoked: "This link has ended.",
+  owned: "This forge already has an owner.",
+};
+
 // POST /claim/options — a passkey challenge, for a live link and a fit name.
 // Nothing is spent: the link burns only when the key comes back.
 export async function claimOptions(ctx: Ctx): Promise<Response> {
@@ -283,10 +292,9 @@ export async function claimOptions(ctx: Ctx): Promise<Response> {
   const data = await boundedBody(ctx.request, STRANGER_MAX);
   if (data === "too_large") return refuse(413, "payload too large");
   const spawned = await spawnedOrg(ctx.app);
-  if (spawned === undefined) return refuse(404, "This is not a claim link.");
+  if (spawned === undefined) return refuse(404, LINK_REFUSED.unknown);
   const state = readClaim(ctx.app.db, spawned.org.id, str(data.token)).state;
-  if (state !== "ok")
-    return refuse(state === "unknown" ? 404 : 410, state === "unknown" ? "This is not a claim link." : `This link is ${state === "owned" ? "already claimed" : state}.`);
+  if (state !== "ok") return refuse(state === "unknown" ? 404 : 410, LINK_REFUSED[state]);
   const username = str(data.username).trim();
   const bad = problems(ctx, username, str(data.email).trim(), true);
   const first = bad.username ?? bad.email;

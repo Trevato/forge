@@ -199,7 +199,7 @@ describe("+ New forge", () => {
     ).replace(/\s+/g, " ");
     expect(left).toContain("https://kai--forge.test");
     expect(left).toContain("Whoever opens the link becomes its admin");
-    expect(left).toContain("You leave once it is claimed");
+    expect(left).toContain("You leave once it is taken over");
     const kept = (
       await (
         await post(admin, [
@@ -347,7 +347,7 @@ describe("+ New forge", () => {
     usePlacement(app, hostedPlacement({ host: "forge.test", depth: 2 }));
     expect(await (await get(admin, "/")).text()).not.toContain('href="/forges/new"');
     const html = await (await get(admin, "/forges/new")).text();
-    expect(html).toContain("cannot hold another child");
+    expect(html).toContain("has no room for another forge");
     expect(html).not.toContain('action="/forges/new"');
   });
 
