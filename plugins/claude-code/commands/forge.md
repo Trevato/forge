@@ -1,6 +1,6 @@
 ---
-description: Talk to your forge: new, tell, status, decide, plan, preview, pulls, runs, log, asked
-argument-hint: new <name> <words> | tell <app> <words> | status | decide <approve|redirect|decline> [words] | plan [approve|redirect <words>|later] | preview <url> | pulls <app> | runs <app> | log <app> <run> | asked [app]
+description: Talk to your forge: new, tell, status, decide, archive, undo, plan, preview, pulls, runs, log, asked
+argument-hint: new <name> <words> | tell <app> <words> | status | decide <approve|redirect|decline> [words] | decide all <dismiss|ship|close> [kind] | archive <app> | undo <operation> | plan [approve|redirect <words>|later] | preview <url> | pulls <app> | runs <app> | log <app> <run> | asked [app]
 ---
 
 Use the `forge` MCP server's tools for `$ARGUMENTS`.
@@ -9,6 +9,9 @@ Use the `forge` MCP server's tools for `$ARGUMENTS`.
 - `tell <app> <words>`: call `tell` with `repo` = the app (owner/name) and `text` = the words. Pass `context` with `page` (if known), `run`, `commit` (the current `git rev-parse HEAD`) and `said` (the person's own words, verbatim).
 - `status`: call `now` and `asks`; say in three sentences what is running and what waits on the person.
 - `decide approve|redirect|decline`: call `asks`, take the first row; approve → `asks_act` with action `ship`, decline → `asks_act` with action `close`, redirect → `say` with the person's words. Plan first (`dryRun` defaults to true), show what would change, and apply (`dryRun: false`) only after the person says yes.
+- `archive <app>`: call `archive` with `repo` = the app (owner/name), planned first (`dryRun` defaults to true; `archived` true): show what would change and ask the person to confirm. Only after they say yes, call it again with `dryRun: false`. The receipt says it is put away, not deleted, and how to wake it: `archive` with `archived: false`, by saying `archive <app>` again.
+- `decide all <dismiss|ship|close> [kind]`: call `asks`; take every row (only those whose kind is `kind`, when given) and plan `asks_act` with `action` = the word and `items` = their ids. Say how many and which, one line each. Only after the person says yes, call `asks_act` again with the same `items` and `dryRun: false`, then print the `operation` id with `undo <operation>`. `asks_act` takes at most 100 `items`: with more rows, plan and apply only the first 100, say how many remain, and offer to run it again for the rest.
+- `undo <operation>`: call `asks_act` with `action: "undo"` and `operation` = the id, planned first (`dryRun` defaults to true, and then only answers `wouldUndo`); after the person says yes, call again with `dryRun: false`; say what it reversed from the receipt. Never say it is undone before that second call.
 - `plan`: call `asks`, take the first row whose kind is `proposal` (none: say no wave waits). Show it in three lines: the wave's title, what it holds, why now. With `approve`, `redirect <words>` or `later`, ask the person to confirm, and only after they say yes call `asks_proposal` with `id` = that row's `proposal.id` (the proposal's own id, not the row's `id`, which starts `proposal:`), `verb` = the word, and `words` for redirect.
 - `preview <url>`: call `preview` with `url`; say in two lines the app, environment, pull, check and who is working.
 - `pulls <app>`: call `pulls` with `repo` = the app (owner/name); list the open pulls, one line each with its check.

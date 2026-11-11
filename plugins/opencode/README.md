@@ -3,8 +3,10 @@
 Fetch `forge.ts` into `.opencode/plugin/` (or list this package under `plugin`
 in `opencode.json`), and set `FORGE_URL` and `FORGE_TOKEN` (make the token at `/settings/tokens` on the forge, which shows the line with its own address filled in):
 `mkdir -p .opencode/plugin && curl -fsSo .opencode/plugin/forge.ts <forge>/plugins/opencode/forge.ts && FORGE_URL=<forge> FORGE_TOKEN=<token> opencode`, where `<forge>` is the forge's own origin (it serves this file). It registers the
-forge's MCP server and the `forge` command: `new`, `tell`, `status`, `decide`, `plan`,
+forge's MCP server and the `forge` command: `new`, `tell`, `status`, `decide`, `archive`, `undo`, `plan`,
 `preview`, `pulls`, `runs`, `log`, `asked`.
+`/forge archive <app>` plans archiving the app, then archives it after you say yes (put away, not deleted; the receipt says how to wake it). `/forge decide all <dismiss|ship|close> [kind]` plans the same action over every waiting ask (of that kind), says how many and which, applies after a yes and prints the `operation` id; `/forge undo <operation>` reverses it.
+
 `/forge plan` shows the planner's next wave (the first wave-proposal row of `asks`);
 `/forge plan approve`, `redirect <words>` or `later` steers it through `asks_proposal`,
 applied only after you say yes. Only the owner may act on a proposal.
