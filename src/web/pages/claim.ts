@@ -43,6 +43,7 @@ import { createSession } from "../../core/sessions.ts";
 import { createUser, discardFreshUser, getUserByName, type User } from "../../core/users.ts";
 import {
   burnClaim,
+  linkOf,
   handOver,
   readClaim,
   spawnedOrg,
@@ -71,7 +72,29 @@ interface Values {
 }
 type Errors = Partial<Record<"username" | "email" | "password" | "passkey", string>>;
 
-function dead(ctx: Ctx, state: Exclude<ClaimState["state"], "ok">): Response {
+/** `Nov 12, 14:30 UTC`, from an ISO time. */
+function whenWords(iso: string): string {
+  const d = new Date(iso);
+  const month = d.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
+  return `${month} ${d.getUTCDate()}, ${iso.slice(11, 16)} UTC`;
+}
+
+/** "in 5 hours", "in 12 minutes", or "a minute ago", from a span in ms. */
+export function relativeWords(ms: number): string {
+  const mins = Math.max(1, Math.round(Math.abs(ms) / 60_000));
+  const [n, unit] =
+    mins < 60 ? [mins, "minute"] : mins < 2880 ? [Math.round(mins / 60), "hour"] : [Math.round(mins / 1440), "day"];
+  const span = `${n} ${unit}${n === 1 ? "" : "s"}`;
+  return ms >= 0 ? `in ${span}` : `${span} ago`;
+}
+
+function dead(
+  ctx: Ctx,
+  state: Exclude<ClaimState["state"], "ok">,
+  sender?: string,
+  endedAt?: string,
+): Response {
+  const ask = sender === undefined ? "whoever sent it" : sender;
   const says = {
     unknown: {
       status: 404,
@@ -81,17 +104,17 @@ function dead(ctx: Ctx, state: Exclude<ClaimState["state"], "ok">): Response {
     used: {
       status: 410,
       title: "This link has already been used",
-      text: "Each link works once. If it was you, sign in with the account you made.",
+      text: `Each link works once. If it was you, sign in with the account you made; if not, ask ${ask} to send you a new one.`,
     },
     expired: {
       status: 410,
       title: "This link has expired",
-      text: "Links work for a day. Ask whoever sent it for a new one.",
+      text: `It stopped working${endedAt === undefined ? "" : ` on ${whenWords(endedAt)}`}. Ask ${ask} to send you a new one.`,
     },
     revoked: {
       status: 410,
       title: "This link has ended",
-      text: "Whoever sent it took it back. Ask them for a new one.",
+      text: `Whoever sent it took it back. Ask ${ask} to send you a new one.`,
     },
     owned: {
       status: 410,
@@ -148,6 +171,7 @@ function claimForm(
   spawner: User | undefined,
   values: Values,
   errors: Errors,
+  expiresAt?: string,
 ): Html {
   return html`<div class="narrow">
     ${pageHead("This forge is yours")}
@@ -159,6 +183,12 @@ function claimForm(
             : "a crew that builds them once you add a model key"}. Make your account to take it: this first account
           is the forge's admin, so it can change everything here.
         </p>
+        ${expiresAt === undefined
+          ? null
+          : html`<p class="mb" id="claim-expiry">This link works until
+              <time datetime="${expiresAt}">${whenWords(expiresAt)}</time>
+              (${relativeWords(Date.parse(expiresAt) - Date.now())}). After that, ask
+              ${spawner?.username ?? "whoever sent it"} to send you a new one.</p>`}
         <p class="mb" id="claim-access">${accessSentence(spawned, spawner)}</p>
         <form method="post" action="/claim">
           <div id="claim-token-field">
@@ -245,11 +275,21 @@ export async function claimFragmentPage(ctx: Ctx): Promise<Response> {
   const spawned = await timePhaseAsync(ctx.request, "spawned", () => spawnedOrg(ctx.app));
   if (spawned === undefined) return timePhase(ctx.request, "render", () => dead(ctx, "unknown"));
   const { spawner } = timePhase(ctx.request, "owners", () => owners(ctx, spawned));
+  // The forge has one link at a time, so its state says nothing about any
+  // particular code: a stale or made-up code only ever meets "unknown" on the POST.
+  const link = linkOf(ctx.app.db);
+  if (link !== null && link.state !== "open")
+    return dead(
+      ctx,
+      link.state === "used" ? "used" : link.revokedAt !== null ? "revoked" : "expired",
+      spawner?.username,
+      link.expiresAt,
+    );
   const rendering = performance.now();
   const response = page({
     ctx,
     title: "This forge is yours",
-    body: claimForm(ctx, spawned, spawner, {}, {}),
+    body: claimForm(ctx, spawned, spawner, {}, {}, link?.expiresAt),
     scriptJs: fragmentJs + passkeyJs,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
@@ -313,8 +353,9 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
   // proxies and logs would keep.
   const token = field(form, "token");
   const before = readClaim(ctx.app.db, orgId, token);
-  if (before.state !== "ok") return dead(ctx, before.state);
   const { spawner } = owners(ctx, spawned);
+  if (before.state !== "ok")
+    return dead(ctx, before.state, spawner?.username, linkOf(ctx.app.db)?.expiresAt);
 
   const values = {
     username: field(form, "username"),
@@ -326,7 +367,7 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
       {
         ctx,
         title: "This forge is yours",
-        body: claimForm(ctx, spawned, spawner, values, e),
+        body: claimForm(ctx, spawned, spawner, values, e, linkOf(ctx.app.db)?.expiresAt),
         scriptJs: passkeyJs,
       },
       422,
