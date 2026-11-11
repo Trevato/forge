@@ -26,7 +26,7 @@ import { loadRepo, repoBase } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { flatten, noteLine } from "./note.ts";
 import { fragment, missingFragment } from "../layout.ts";
-import { avatar, badge, btn, card, icon, listCard, row, time } from "../ui.ts";
+import { avatar, badge, btn, icon, listCard, row, time } from "../ui.ts";
 import { changeHref, tellHref } from "./nouns.ts";
 import { LOG_TAIL_CAP, logBox } from "./log.ts";
 import { appPanels } from "./previews.ts";
@@ -325,17 +325,14 @@ export async function nowCard(
   ];
   const now =
     nowRows.length === 0
-      ? card(
-          html`<p class="muted small">
+      ? html`<section class="stack">
+          <h2>Now</h2>
+          <p class="muted">
             ${deployTailing
               ? "Production is coming up — the log above has it."
               : "Nothing yet. Tell the crew something."}
-          </p>`,
-          {
-            head: html`${icon("activity")}
-              <h2>Now</h2>`,
-          },
-        )
+          </p>
+        </section>`
       : listCard(nowRows, {
           head: html`${icon("activity")}
             <h2>Now</h2>

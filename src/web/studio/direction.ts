@@ -29,10 +29,10 @@ export function directionMarked(direction: string): Html | null {
 export function visionPreviewCard(preview: VisionPreview): Html {
   const head = html`${icon("code")}<h2>Direction after the merge</h2>`;
   if (!preview.ok)
-    return card(html`<p class="muted small">An admin's merge would leave the direction as it is: ${preview.why}.</p>`, {
-      head,
-      id: "direction-preview",
-    });
+    return html`<section id="direction-preview" class="stack">
+      <h2>Direction after the merge</h2>
+      <p class="muted">An admin's merge would leave the direction as it is: ${preview.why}.</p>
+    </section>`;
   const same = preview.today === preview.after;
   return card(
     html`${same ? html`<p class="muted small">The merge changes nothing in the direction.</p>` : null}

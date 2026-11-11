@@ -394,11 +394,8 @@ async function tellClosingPull(
 ): Promise<Html> {
   const base = repoBase(repo);
   const { word, note } = await pullWord(wordCtx, pull);
-  return html`${card(
-    html`<p>
-      <a href="${changeHref(base, pull.number)}">${pull.title}</a>
-      ${wordBadge(word)} <span class="muted small">${note}</span>
-    </p>`,
+  return html`${listCard(
+    [row({ href: changeHref(base, pull.number), title: pull.title, meta: html`${note}`, trail: wordBadge(word) })],
     { head: html`${icon("pull")} <h2>Closes with</h2>` },
   )}${previewBlock(ctx, repo, pull)}`;
 }

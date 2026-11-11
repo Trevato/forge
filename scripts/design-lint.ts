@@ -436,6 +436,64 @@ export function scanBanner(root: string): string[] {
     .flatMap((f) => banner(readFileSync(f, "utf8")).map((b) => `${relative(root, f)}:${b.line}  ${b.text}  →  a standing alert on home or the board: say it as one line on its own settings page and in the system page (a transient flash carries data-flash)`));
 }
 
+/**
+ * Principle 7 (#11190): a fact is a `dl` row, not a card. A `card(` from
+ * `src/web/ui.ts` whose body is one `<p>` or a bare line of text, with no list,
+ * form or `dl`, is a box around a sentence (principle 6). Textual and narrow:
+ * only a first argument that is an `html` template holding exactly that.
+ * The same box drawn through `listCard([row({ title })])` — one row with no
+ * link, lead, meta or trail — is refused too: a row is a thing you can open or
+ * read facts off; a lone title is a sentence. A template with a nested backtick
+ * (an `html` inside `${}`) is not examined: the scan reads the first argument
+ * as flat text and passes what it cannot read.
+ * `CARD_ALLOW` is the short list of pages that cannot change yet, one reason
+ * each; it only shrinks.
+ */
+export const CARD_ALLOW: Record<string, string> = {};
+export type CardFinding = { line: number; text: string };
+
+/** The first argument of the call whose `(` is at `open`: up to the top-level comma or the close. */
+function firstArg(code: string, open: number): string {
+  let depth = 0, tpl = 0;
+  for (let i = open + 1; i < code.length; i++) {
+    const c = code[i]!;
+    if (c === "\\") { i++; continue; }
+    if (c === "`") { tpl = tpl ? 0 : 1; continue; }
+    if (tpl) continue;
+    if (c === "(" || c === "{" || c === "[") depth++;
+    else if (c === ")" || c === "}" || c === "]") { if (depth-- === 0) return code.slice(open + 1, i); }
+    else if (c === "," && depth === 0) return code.slice(open + 1, i);
+  }
+  return code.slice(open + 1);
+}
+
+export function loneSentenceCards(text: string): CardFinding[] {
+  const code = blanked(text);
+  const out: CardFinding[] = [];
+  for (const m of code.matchAll(/(?<![\w.$])card\(/g)) {
+    if (/function\s+$/.test(code.slice(Math.max(0, m.index! - 12), m.index!))) continue;
+    const arg = firstArg(code, m.index! + m[0].length - 1).trim();
+    const body = /^html`([^`]*)`$/.exec(arg)?.[1]?.trim();
+    if (body === undefined || /<(?:ul|ol|dl|form|table|pre|h[1-6]|div|section|details)\b/i.test(body)) continue;
+    const one = /^<p\b[^>]*>(?:(?!<p\b)[\s\S])*<\/p>$/i.test(body);
+    const bare = !/</.test(body) && /[A-Za-z]{2}/.test(body.replace(/\$\{[^}]*\}/g, ""));
+    if (one || bare) out.push({ line: code.slice(0, m.index!).split("\n").length, text: arg.replace(/\s+/g, " ").slice(0, 70) });
+  }
+  for (const m of code.matchAll(/(?<![\w.$])listCard\(/g)) {
+    if (/function\s+$/.test(code.slice(Math.max(0, m.index! - 12), m.index!))) continue;
+    const arg = firstArg(code, m.index! + m[0].length - 1).trim();
+    const inner = /^\[\s*row\(\{([\s\S]*)\}\)\s*,?\s*\]$/.exec(arg)?.[1];
+    if (inner === undefined || /(?<![\w.])row\(/.test(inner) || /(?:^|[{,])\s*(?:href|lead|meta|trail)\s*[:,}]/.test(inner.replace(/\s+/g, " ").replace(/^/, "{"))) continue;
+    out.push({ line: code.slice(0, m.index!).split("\n").length, text: arg.replace(/\s+/g, " ").slice(0, 70) });
+  }
+  return out;
+}
+export function scanCards(root: string): string[] {
+  return sourceFiles(root)
+    .filter((f) => !(relative(root, f) in CARD_ALLOW))
+    .flatMap((f) => loneSentenceCards(readFileSync(f, "utf8")).map((c) => `${relative(root, f)}:${c.line}  card(${c.text}…)  →  principle 7 (docs/DESIGN.md): a card (or a listCard of one bare row) around one sentence is a box around a thing; put the sentence directly under the page head, or make it a dl row`));
+}
+
 const BASELINE = "docs/design/baseline.json";
 const DESIGN = "docs/DESIGN.md";
 const SECTIONS = "docs/design/sections";
@@ -452,7 +510,7 @@ if (import.meta.main) {
   } else {
     const base: Baseline = JSON.parse(readFileSync(join(root, BASELINE), "utf8"));
     const debt: QuietDebt = JSON.parse(readFileSync(join(root, QUIET_DEBT), "utf8"));
-    const problems = [...compare(base, now, designText(root), areaFiles(root)), ...compareQuiet(debt, scanQuiet(root)), ...scanBanner(root)];
+    const problems = [...compare(base, now, designText(root), areaFiles(root)), ...compareQuiet(debt, scanQuiet(root)), ...scanBanner(root), ...scanCards(root)];
     for (const p of problems) console.error(p);
     if (problems.length) process.exit(1);
     console.log("design: no colour, size or component added outside the system");
