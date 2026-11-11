@@ -125,7 +125,7 @@ describe("the registry of file kinds", () => {
   });
 
   test("a file with no known extension is text or binary by its bytes", () => {
-    expect(fileKind("Makefile", enc("all:\n"))).toBe("text");
+    expect(fileKind("LICENSE", enc("MIT\n"))).toBe("text");
     expect(fileKind("src/a.ts", enc("export {}\n"))).toBe("text");
     expect(fileKind("blob.dat", of(1, 0, 2))).toBe("binary");
     expect(fileKind(".png", SAMPLES.png![0])).toBe("binary");

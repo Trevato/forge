@@ -19,6 +19,7 @@ import { geojson } from "../src/web/render/geojson.ts";
 import { subtitles } from "../src/web/render/subtitles.ts";
 import { patch } from "../src/web/render/patch.ts";
 import { notebook } from "../src/web/render/notebook.ts";
+import { makefile } from "../src/web/render/makefile.ts";
 import { lcov } from "../src/web/render/lcov.ts";
 import { sarif } from "../src/web/render/sarif.ts";
 import { gcode } from "../src/web/render/gcode.ts";
@@ -120,6 +121,11 @@ const SAMPLES: Record<string, { path: string; render: Renderer; files: readonly 
     path: "lcov.info",
     render: lcov,
     files: ["TN:\nSF:src/a.ts\nFNF:2\nFNH:1\nDA:1,1\nDA:2,0\nLF:2\nLH:1\nBRF:4\nBRH:2\nend_of_record\n"],
+  },
+  makefile: {
+    path: "Makefile",
+    render: makefile,
+    files: [".PHONY: all clean\nCC := <b>gcc</b>\nall: a.o | dir\n\t$(CC) -o x \\\n\t  a.o\nclean:\n\trm -f *.o\ninclude <script>.mk\n"],
   },
   srt: {
     path: "talk.srt",

@@ -25,6 +25,7 @@ import { htmlPreview } from "./html_preview.ts";
 import { image } from "./image.ts";
 import { fileKind, HEAD_BYTES, kindByName, NO_BYTES, RENDER_CAP, type FileKind } from "./kinds.ts";
 import { log, hasEscape } from "./log.ts";
+import { makefile } from "./makefile.ts";
 import { markdown } from "./markdown.ts";
 import { model3d } from "./model3d.ts";
 import { notebook } from "./notebook.ts";
@@ -104,6 +105,7 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
   env: envView,
   sql: sqlView,
   openapi,
+  makefile,
   dockerfile,
   mail: eml,
   archive,
