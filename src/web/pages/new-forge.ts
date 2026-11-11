@@ -16,6 +16,7 @@ import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { giftOf, REDEEM_WORDS } from "../../actions/codes.ts";
+import { limitValue } from "../../settings/limits.ts";
 import { quotaFull } from "../../spawn/quota.ts";
 import { childHost, childUrlOf, noRoom, spawnDoor, type Door } from "../../spawn/door.ts";
 import {
@@ -170,6 +171,15 @@ function freshError(errors: Errors, repoCount: number): string | undefined {
   return errors["fresh"] ?? (repoCount === 0 ? errors["apps"] : undefined);
 }
 
+/** The line under the heading: the crew starts on the included credit when there is one, else on the person's AI account. */
+function hostingTerms(includedUsd: number): string {
+  const crew =
+    includedUsd > 0
+      ? `its crew starts on the included $${includedUsd} of credit, and you can add your AI account key later`
+      : "its crew starts once you add your AI account";
+  return `Free within limits: it sleeps when idle, and ${crew}.`;
+}
+
 function formView(
   ctx: Ctx,
   user: User | undefined,
@@ -191,6 +201,7 @@ function formView(
       </section>
     </div>`;
   const anon = user === undefined;
+  const includedUsd = limitValue(ctx.app.db, "spawn.included_credit_usd");
   const freshErr = freshError(errors, repos.length);
   const lead = repos.length === 0 ? "Pick a name, and say what it is for if you like" : "Pick a name and the apps to start from";
   return html`<div class="narrow-wide" data-forges>
@@ -199,7 +210,7 @@ function formView(
       // /forges answers only an admin; to anyone else the link would lead to a 404.
       actions: ctx.auth.user?.isAdmin ? sentLink() : undefined,
     })}
-    <p class="muted small" id="hosting-terms">Free within limits: it sleeps when idle, and its crew starts once you add your AI account.</p>
+    <p class="muted small" id="hosting-terms">${hostingTerms(includedUsd)}</p>
     ${quota ? html`<p role="status" id="quota-full">This forge has no room for another forge: ${quota}.</p>` : null}
     ${errors["form"]
       ? html`<p class="error mb" role="alert">${errors["form"]}</p>`
