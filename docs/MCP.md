@@ -209,7 +209,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `subscription_wake` | — | Admin: wake a resting subscription | 168 |
 | `subscriptions` | — | Claude accounts: scopes, budgets | 158 |
 | `sync` | — | Sync a mirror now; `originId` reconnects it | 197 |
-| `system` | `csp` | The forge machine now: CPU, memory, disk, network | 277 |
+| `system` | `csp`, `routes` | The forge machine now: CPU, memory, disk, network | 286 |
 | `take_back` | — | Open the pull that undoes a shipped pull | 219 |
 | `take_updates` | — | Take the parent forge's updates into a fork | 176 |
 | `teams` | — | Crew teams for person admins: charter, dial (0–100) and member agents | 338 |
@@ -313,6 +313,11 @@ hour inside the 24) on, `newest`
 the blocked host counted last, read by `violationsByDirective` in
 `src/http/csp_report.ts` as the security page reads its week. A forge admin
 only; anyone else is `forbidden`.
+
+`system` with `{ kind: "routes" }` (#11476): up to 10 budgeted routes as
+`{ route, p95Ms, budgetMs, n, slowestPhase }` over the watcher's 15-minute
+record, the most over budget first; route patterns only. An admin or an agent
+granted `telemetry:read`.
 
 `flow` with `{ q, action }` is the fleet's write door (#450): the plan
 `POST /api/v1/fleet/ops` answers for a dry run, `{ dryRun: true, query, kind,

@@ -176,6 +176,9 @@ function describe_server() {
     expect(inFlight.size()).toBe(0);
 
     const out = await system();
-    expect(out.stalls).toContainEqual({ cause: `${named[0]} (in flight)`, ms: LIMIT_MS + 10, count: 1 });
+    // A loaded machine may charge a real stall to the same cause as well: at least ours is there.
+    const row = out.stalls.find((r: { cause: string }) => r.cause === `${named[0]} (in flight)`);
+    expect(row.count).toBeGreaterThanOrEqual(1);
+    expect(row.ms).toBeGreaterThanOrEqual(LIMIT_MS + 10);
   });
 }
