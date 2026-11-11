@@ -229,7 +229,7 @@ touch) and it snaps to the nearest corner on release; with the pill focused, the
 arrow keys walk it from corner to corner. The corner is kept in the browser's
 `localStorage` for that app's host (bottom-right until then), and the panel opens
 toward the inside of the screen, bounded to it at phone width. The script stays
-under a 10 KB budget (a test holds it), since it loads on every app page.
+under 24 KB (`test/toolbar-budget.test.ts` holds it), since it loads on every app page.
 
 The forge pill on an app's pages says where you are: its accessible name reads
 `notes, production` or `notes, preview of pull #7`, and pressing it opens a

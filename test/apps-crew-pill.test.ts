@@ -214,7 +214,6 @@ describe("the crew line", () => {
     );
     expect(toolbarJs).not.toContain("document.cookie");
     expect(toolbarJs).toContain('aria-live", "polite"');
-    // 24 KB: the script keeps its comments, and the filed number and links (#10560) added about 0.8 KB.
-    expect(toolbarJs.length).toBeLessThan(24 * 1024);
+    // The byte budget lives in test/toolbar-budget.test.ts.
   });
 });

@@ -6,6 +6,8 @@ Short rules. `test/web-budget.test.ts` counts the bytes and fails when one is br
 
 Anything that is the same bytes for everyone and changes only when the code does: the stylesheet, the shell and beacon scripts, each page's own script, the icon sprite (`/assets/i-<hash>.svg`), the speculation rules. Each is named by a hash of its content (`web/asset.ts`) and sent `public, max-age=31536000, immutable`. Nothing inline: a page never carries a drawing or a script. Runtime data reaches a page script through `data-*` attributes. A page script is also kept under `<dataDir>/page-scripts/` the first time a process renders it, so after a restart an edge copy or a cached page that names it is still answered; the body read back must hash to its name, and a file nothing has rendered for 30 days is pruned.
 
+The forge toolbar script stays under **24 KB** (24,576 bytes) because it loads on every app page; `test/toolbar-budget.test.ts` holds it.
+
 ## What is HTML
 
 Markup only, and small. It names its assets; it never carries them. Budget: **home under 40 KB raw**, no inline `<script>` (a `type="application/json"` or `application/ld+json` data block is data), no inline `<symbol>`. The two inline `<style>` blocks (the boot theme and a page's own) are admitted by hash in the policy, not by a nonce, so a page is the same bytes for every visitor and can be cached.
