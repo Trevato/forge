@@ -6,6 +6,7 @@
  * then goes straight to the new forge's claim page (username and password,
  * signed in on landing). The claim link is in this one no-store body, as the
  * target of a link and a redirect: never shown as text, never to copy.
+ * With JavaScript the answer is a 303 to `/forges/<name>/waiting#<code>` instead.
  * A signed-in person is sent to the fuller `/forges/new`, which keeps its form.
  */
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
@@ -16,6 +17,7 @@ import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
+import { waitingAddress } from "../claim_code.ts";
 import { startRefusalHref, startRefusalOf } from "../start_refusal.ts";
 
 /** The home's live name check: 404 from the ready probe means nothing by that name was made here. */
@@ -73,6 +75,13 @@ export async function startForgeSubmit(ctx: Ctx): Promise<Response> {
   const link = door.body["claimUrl"];
   if (typeof link !== "string") return redirect(startRefusalHref("taken", name));
   noteForgeMade(ctx);
+  // A browser that ran the page's script goes to the static waiting page, the code in the fragment only (#11202).
+  const waiting = field(form, "js") === "1" ? waitingAddress(door.body) : undefined;
+  if (waiting !== undefined) {
+    const to = redirect(waiting);
+    to.headers.set("cache-control", "no-store");
+    return to;
+  }
   const body = startWaitBody(name, link);
   const response = page({ ctx, title: "Setting up…", body, scriptJs: startWaitJs });
   response.headers.set("cache-control", "no-store");

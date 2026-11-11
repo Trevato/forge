@@ -28,6 +28,7 @@ import { plansRow } from "../plans_row.ts";
 import { freePlanName, funnelJs, noteHomeVisit } from "../funnel_door.ts";
 import { publicPlans } from "../../settings/plans.ts";
 import { getDoorSettings } from "../../settings/door.ts";
+import { JS_FLAG_JS } from "../claim_code.ts";
 import { startNameJs } from "../pages/start-forge.ts";
 import { GET_A_FORGE_PATH } from "../../billing/plan_words.ts";
 import { appsForRepos } from "../../core/apps.ts";
@@ -797,7 +798,7 @@ export function studioDoor(ctx: Ctx): Response {
       <div class="door-under">
         <div class="door-lead">
           <p class="door-support">Say what you need and an AI crew builds it in your own forge, free to try.</p>
-          <form method="post" action="/forges/start" class="door-start" id="start-forge">
+          <form method="post" action="/forges/start" class="door-start" id="start-forge" data-js>
             ${refusal === undefined ? null : html`<p class="error" id="start-refused">${START_REFUSALS[refusal]}</p>`}
             <div class="field">
               <label for="start-name">Forge name</label>
@@ -928,7 +929,7 @@ bun run src/main.ts</code></pre>
     title: "forge: software for what you're building, yours to keep",
     description: "Your own forge, with a private AI crew that builds your apps, games and business tools. Open source, and yours to keep.",
     body,
-    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${funnelJs}\n${startNameJs}`,
+    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${funnelJs}\n${startNameJs}\n${JS_FLAG_JS}`,
     jsonLd: siteStructuredData(origin, running().version),
     ...(visitor
       ? {

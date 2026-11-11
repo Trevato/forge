@@ -281,6 +281,7 @@ import { forgeLinkRevoke, forgeLinkSubmit, forgeLinkUndo, forgeRemoveConfirm, fo
   forgeOwnCodeSubmit, forgesPage } from "../web/pages/forges.ts";
 import { forgeItSubmit } from "../web/pages/forge-it.ts";
 import { funnelSubmit } from "./funnel.ts";
+import { forgeWaitingPage } from "../web/pages/forge-waiting.ts";
 import { startForgeSubmit } from "../web/pages/start-forge.ts";
 import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
@@ -857,6 +858,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/forges/:name/remove", forgeRemoveConfirm);
   router.add("POST", "/forges/:name/remove", forgeRemoveSubmit);
   router.add("GET", "/forges/:name/ready", forgeReady);
+  router.add("GET", "/forges/:name/waiting", forgeWaitingPage);
   router.add("GET", "/forges/new", newForgePage);
   router.add("POST", "/forges/new", newForgeSubmit);
   router.add("POST", "/forges/start", startForgeSubmit);
