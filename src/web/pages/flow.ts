@@ -20,6 +20,9 @@ import { field, readForm } from "../form.ts";
 import { html, when } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { btn, icon, row, time } from "../ui.ts";
+import { handoverSection } from "./flow-handover.ts";
+import { readDrifts } from "../../flow/alarm_drift.ts";
+import { readHandoverLists } from "../../flow/handover_read.ts";
 import { readWaiting, waitingSection } from "./flow-waiting.ts";
 
 const money = (usd: number): string => `$${usd.toFixed(2)}`;
@@ -101,6 +104,7 @@ export async function flowPage(ctx: Ctx): Promise<Response> {
     ${waitingSection(await readWaiting(ctx.app.db, ctx.app.reposRoot, new Date()))}
     ${pipesSvg(p)}
     <p class="muted small">${money(p.usd)} spent in the last 7 days; ${plural(p.shipped, "pull")} shipped.</p>
+    ${handoverSection(readHandoverLists(ctx.app.db, await readDrifts(ctx.app), Date.now()))}
     ${p.valves.length === 0
       ? html`<p class="muted">No repository has spent, queued or shipped anything this week, so there is no pipe to turn yet.</p>`
       : html`<h2>Valves</h2>
