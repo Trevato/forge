@@ -15,6 +15,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { addMemory, editMemory, listMemory, memoryBrief, removeMemory, rulesOf, seedMemory, STARTING_RULES } from "../src/core/talk_memory.ts";
 import { due, listRoutines, ROUTINE_KINDS, setRoutine } from "../src/core/talk_routines.ts";
 import { compose, LINES_MAX, type Facts } from "../src/crew/routine_report.ts";
+import { releasesSince } from "../src/crew/routine_facts_story.ts";
 import { runDue, runRoutine } from "../src/crew/routines.ts";
 import { setNotifyUrl } from "../src/crew/notify.ts";
 import { conversationBrief } from "../src/crew/conversation_brief.ts";
@@ -49,7 +50,7 @@ afterAll(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-const quiet: Facts = { health: [], redMain: [], asks: 0, holds: {}, grokbotPulls: 0, mergedLastHour: 0, newPeople: [], waiting: 0, stuckRuns: 0, mergedToday: 0, openedToday: 0 };
+const quiet: Facts = { health: [], redMain: [], asks: 0, holds: {}, grokbotPulls: 0, mergedLastHour: 0, newPeople: [], waiting: 0, stuckRuns: 0, mergedToday: 0, openedToday: 0, releases: [], pillarsMoved: [] };
 
 describe("memory", () => {
   test("is the person's own, bounded, and in the brief", () => {
@@ -132,6 +133,22 @@ describe("schedules", () => {
 });
 
 describe("what a routine says", () => {
+  test("the check-in names releases and pillars that moved, in one line, and never needs you for it", () => {
+    const told = compose("checkin", { ...quiet, releases: ["0.7.9", "0.7.10"], pillarsMoved: [{ pillar: "Trust", merged: 2 }] });
+    expect(told.lines.filter((l) => l.includes("0.7.10"))).toHaveLength(1);
+    expect(told.lines.join(" ")).toContain("released 0.7.9, 0.7.10; moved: Trust 2");
+    expect(told.lines.length).toBeLessThanOrEqual(LINES_MAX);
+    expect(told.needs).toBe(false);
+    const many = compose("checkin", { ...quiet, releases: ["1", "2", "3", "4", "5"], pillarsMoved: [] });
+    expect(many.lines.join(" ")).toContain("released 5 (to 5)");
+    expect(many.lines).toHaveLength(3);
+    expect(compose("checkin", quiet).lines.join(" ")).not.toMatch(/released|moved/);
+  });
+  test("releases since an instant, oldest first", () => {
+    const entries = [{ version: "0.7.3", date: "2026-11-10T11:00:00Z" }, { version: "0.7.2", date: "2026-11-10T10:00:00Z" }, { version: "0.7.1", date: "2026-11-10T08:00:00Z" }];
+    expect(releasesSince(entries, Date.parse("2026-11-10T09:00:00Z"))).toEqual(["0.7.2", "0.7.3"]);
+    expect(releasesSince(entries, Date.parse("2026-11-11T00:00:00Z"))).toEqual([]);
+  });
   test("every report is at most three lines, and only trouble needs the person", () => {
     for (const kind of ["checkin", "friends", "paper"] as const) {
       expect(compose(kind, quiet).lines.length).toBeLessThanOrEqual(LINES_MAX);

@@ -12,10 +12,11 @@ import { redLines } from "./notify.ts";
 import { askLinesFor } from "../web/studio/asks.ts";
 import type { RoutineKind } from "../core/talk_routines.ts";
 import type { User } from "../core/users.ts";
+import { storyFacts, type Story } from "./routine_facts_story.ts";
 
 export const LINES_MAX = 3;
 
-export interface Facts {
+export interface Facts extends Story {
   /** The forge's own words for what is wrong, empty when healthy. */
   readonly health: readonly string[];
   readonly redMain: readonly string[];
@@ -41,6 +42,17 @@ export interface Report {
 }
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
+/** The one short clause for what shipped, or nothing when nothing moved. */
+export function storyText(f: Story): string {
+  const parts: string[] = [];
+  if (f.releases.length > 0) {
+    const shown = f.releases.slice(-3).join(", ");
+    parts.push(`released ${f.releases.length > 3 ? `${f.releases.length} (to ${f.releases.at(-1)})` : shown}`);
+  }
+  if (f.pillarsMoved.length > 0) parts.push(`moved: ${f.pillarsMoved.slice(0, 3).map((p) => `${p.pillar} ${p.merged}`).join(", ")}`);
+  return parts.join("; ");
+}
+
 const holdsText = (holds: Readonly<Record<string, number>>): string => {
   const names = Object.entries(holds).sort(([a], [b]) => a.localeCompare(b));
   return names.length === 0 ? "the crew holds nothing" : `crew: ${names.map(([n, c]) => `${n} ${c}`).join(", ")}`;
@@ -53,7 +65,7 @@ export function compose(kind: RoutineKind, f: Facts): Report {
     const lines = [
       trouble.length === 0 ? "Forge healthy, trunk green." : `Needs you: ${trouble.slice(0, 2).join("; ")}.`,
       `${plural(f.asks, "ask")} for you, ${plural(f.grokbotPulls, "grokbot pull")} open, ${plural(f.mergedLastHour, "merge")} in the last hour.`,
-      `${holdsText(f.holds)}${f.stuckRuns > 0 ? `; ${plural(f.stuckRuns, "run")} stuck` : ""}.`,
+      `${holdsText(f.holds)}${f.stuckRuns > 0 ? `; ${plural(f.stuckRuns, "run")} stuck` : ""}${storyText(f) === "" ? "" : `; ${storyText(f)}`}.`,
     ];
     return { lines, needs: trouble.length > 0 || f.stuckRuns > 0 };
   }
@@ -75,7 +87,7 @@ export function compose(kind: RoutineKind, f: Facts): Report {
 const DAY = 86_400_000;
 
 /** Read the forge as `user`; admins only, since the lines name other people's work. */
-export function facts(app: App, user: User, now: number): Facts {
+export async function facts(app: App, user: User, now: number, sinceMs = now - 3_600_000): Promise<Facts> {
   const db = app.db;
   const iso = (ms: number): string => new Date(ms).toISOString();
   const vitals = forgeVitals(app);
@@ -88,7 +100,9 @@ export function facts(app: App, user: User, now: number): Facts {
     holds[r.name] = r.n;
   const count = (sql: string, ...args: string[]): number => db.query<{ n: number }, string[]>(sql).get(...args)?.n ?? 0;
   const accounts = newAccountLines(db, user, now);
+  const story = await storyFacts(app, sinceMs);
   return {
+    ...story,
     health: vitals.ok ? [] : vitals.needs.slice(0, 3),
     redMain: redLines(app, user, now).map((l) => l.line),
     asks: askLinesFor(db, user).length,

@@ -41,7 +41,7 @@ export interface Posted {
 export async function runRoutine(app: App, user: User, kind: RoutineKind, now: Date, send: Sender = post): Promise<Posted> {
   const row = listRoutines(app.db, user.id).find((r) => r.kind === kind)!;
   const thread = captainThread(app, user.id, row.conversationId);
-  const report = compose(kind, facts(app, user, now.getTime()));
+  const report = compose(kind, await facts(app, user, now.getTime(), row.lastAt === null ? undefined : Date.parse(row.lastAt)));
   appendTurn(app.db, user.id, thread.id, { role: "agent", text: routineText(kind, report) });
   // Marked before the push: a dead endpoint must not make the routine run again.
   markRan(app.db, user.id, kind, thread.id, now);

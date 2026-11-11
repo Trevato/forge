@@ -8,4 +8,6 @@ Talk is where the forge's owner steers it. What the owner used to do in a Claude
 - **Resume.** A thread resumes its Claude session (#10457). When the last turn left the context 85% full, the next turn starts a fresh session from the thread's stored record and the memory, and the thread says so (`CONTEXT_RENEWED_LINE`).
 - **Terminal** (`tui/screens/captain.ts`, palette › Captain, owner only). The rules, then the three routines, in one list. `a` adds a rule; `enter` edits the rule or the routine's schedule under the cursor; `d` deletes a rule; `space` turns a routine on or off; `p` posts a routine now; `r` reads again. A schedule is typed as minutes, `45` for every 45 minutes (15 to 1440), or `at 7` (also `daily 7`) for daily at 07:00 UTC.
 
-Not here yet: the check-in names health, red trunk, asks, crew holds, grokbot pulls and merges; it does not yet report releases, pillar movement or child forges stuck.
+The check-in also names the releases cut since the last one and the pillars that merged work (`crew/routine_facts_story.ts`), in one clause of its third line, since the last check-in (`lastAt`; the git changelog is cached by head oid, so this costs a `rev-parse` between releases); it never reaches the phone for that alone.
+
+Not here yet: child forges stuck.
