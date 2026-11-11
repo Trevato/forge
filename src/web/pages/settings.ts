@@ -97,6 +97,7 @@ import { NOT_CHANGED } from "../edit_words.ts";
 import { STOP_APP } from "../danger_words.ts";
 import { icon } from "../icons.ts";
 import { flashTo, page, redirect } from "../layout.ts";
+import { helpAsked, pageHelp } from "../page_help.ts";
 import type { Flash } from "../flash.ts";
 import {
   badge,
@@ -330,12 +331,6 @@ export async function settingsPage(
   const wave = html`<section class="settings-block">
     <h2>Cut a wave</h2>
     <form method="post" action="${base}/settings/wave">
-      <p class="muted">
-        Opens a pull that adds the next <code>waves/&lt;version&gt;.md</code>,
-        listing every pull merged since the last wave. The headline and
-        highlights are left as TODO for you to write.
-        <a href="${base}/waves">See the waves so far</a>.
-      </p>
       <div class="form-actions">${btn("Cut a wave", { variant: "primary" })}</div>
     </form>
   </section>`;
@@ -345,11 +340,7 @@ export async function settingsPage(
     <h2>Archive</h2>
     <form method="post" action="${base}/settings/archive">
       <input type="hidden" name="archived" value="${repo.archivedAt === null ? "1" : "0"}" />
-      <p class="muted">
-        ${repo.archivedAt === null
-          ? "Put a finished repository away without deleting it. Its page says when it was archived; links, clone and push keep working."
-          : html`Archived on ${repo.archivedAt.slice(0, 10)}. Restore it to take the label off.`}
-      </p>
+      ${repo.archivedAt === null ? null : html`<p class="muted small">Archived on ${repo.archivedAt.slice(0, 10)}.</p>`}
       <div class="form-actions">
         ${btn(repo.archivedAt === null ? "Archive" : "Restore", {
           variant: "primary",
@@ -359,12 +350,9 @@ export async function settingsPage(
   </section>`;
   const move = html`<section class="settings-block" id="move">
     <h2>Move to another owner</h2>
+    <p class="muted small">Hands the repository to someone else.</p>
     <form method="get" action="/-/confirm">
       <input type="hidden" name="to" value="${base}/settings/transfer" />
-      <p class="muted">
-        Give the repository to an account or organisation you can create
-        repositories under.
-      </p>
       ${formField({
         label: "New owner",
         name: "owner",
@@ -388,9 +376,7 @@ export async function settingsPage(
       : html`<section class="settings-block">
           <h2>Mirror</h2>
           <p class="muted" data-mirror-line>${mirrorLine(held)}</p>
-            <p class="muted small">
-              Stopping leaves ${held.fullName} as it is; nothing more is pushed.
-            </p>
+            <p class="muted small">Stopping leaves ${held.fullName} as it is; nothing more is pushed.</p>
             <div class="form-actions">
               ${confirmAction({
                 action: `${base}/settings/mirror/stop`,
@@ -398,12 +384,22 @@ export async function settingsPage(
               })}
             </div>
         </section>`;
+  const trailHelp = getProvenance(ctx.app.db, repo.id);
+  const help = pageHelp(
+    [
+      ["Cut a wave", html`Opens a pull that adds the next <code>waves/&lt;version&gt;.md</code>, listing every pull merged since the last wave. The headline and highlights are left as TODO for you to write. <a href="${base}/waves">See the waves so far</a>.`],
+      ["Archive", "Puts a finished repository away without deleting it. Its page says when it was archived; links, clone and push keep working. Restore takes the label off."],
+      ["Move to another owner", "Gives the repository to an account or organisation you can create repositories under. You are asked to confirm before it moves."],
+      ...(trailHelp === undefined ? [] : ([["Where this came from", "Where this repository was migrated from. Shown, it appears under the repository's name and in the API. Hidden, nobody else sees it, but the record is kept, so you can show it again."]] as const)),
+    ],
+    helpAsked(ctx.request.url),
+  );
   const response = settingsPageResponse(
     ctx,
     repo,
     "general",
     "Settings",
-    html`${lead}${mirror ? html`<div class="mt">${mirror}</div>` : null}<div class="mt">${body}</div>${trail
+    html`${help}${lead}${mirror ? html`<div class="mt">${mirror}</div>` : null}<div class="mt">${body}</div>${trail
       ? html`<div class="mt">${trail}</div>`
       : null}${upstream ? html`<div class="mt">${upstream}</div>` : null}${sources ? html`<div class="mt">${sources}</div>` : null}<div class="mt">${wave}</div><div class="mt">${archive}</div><div class="mt">${move}</div>${proposals
       ? html`<div class="mt">${proposals}</div>`
@@ -563,7 +559,13 @@ function provenanceCard(ctx: Ctx, repo: Repo): Html | null {
     <h2>Show where this came from</h2>
     <form method="post" action="${base}/settings/provenance">
       <input type="hidden" name="shown" value="${trail.shown ? "0" : "1"}" />
-      <p class="muted">
+      <p class="muted small">${trail.shown ? "Shown under the repository's name." : "Hidden; the record is kept."}</p>
+      <div class="form-actions">
+        ${btn(trail.shown ? "Hide where this came from" : "Show where this came from", {
+          variant: "outline",
+        })}
+      </div>
+      <p class="muted small mt">
         Migrated from
         <a href="${trail.sourceUrl}" rel="noopener noreferrer"
           >${sourceLabel(trail.sourceUrl)}</a
@@ -575,15 +577,7 @@ function provenanceCard(ctx: Ctx, repo: Repo): Html | null {
               >`,
         )}
         on ${trail.migratedAt.slice(0, 10)}.
-        ${trail.shown
-          ? "Shown under the repository's name on every page and in the API. Hiding it keeps the record, so it can come back."
-          : "Hidden: nobody else sees it, on a page or in the API. The record is kept."}
       </p>
-      <div class="form-actions">
-        ${btn(trail.shown ? "Hide where this came from" : "Show where this came from", {
-          variant: "outline",
-        })}
-      </div>
     </form>
   </section>`;
 }
@@ -766,7 +760,16 @@ function appSettingsView(
   const vitals = timePhase(ctx.request, "vitals", () =>
     appVitals(ctx.app.db, record.id),
   );
-  return html`${form}
+  const help = pageHelp(
+    [
+      ["Visitors and speed", "Counted by the beacon, with no address kept; the 7 day figure adds the days up."],
+      ["Environment", "What the app reads at start-up; values are write-only, and one set for production only or previews only wins there over one set everywhere."],
+      ["Who may enter", "Named people may open the app and its previews, and nothing else: not the code, the crew, the settings or the terminal. Removing a name shuts them out at once. What the app itself shows them is the app's to decide: it runs with your read-only token, so anything it shows visitors from the forge, they see too."],
+      ["Domains", html`Serve the app at a name of your own — <span class="mono">app.example.com</span>, or an apex. Add it, publish the two records it shows, and press Check now. The forge serves the app there as soon as the record is verified; the app itself learns its new address at its next deploy.`],
+    ],
+    helpAsked(ctx.request.url),
+  );
+  return html`${help}${form}
     ${when(listed?.ok === true, () => html`<div class="mt">${appMembersView(base, values.access, named)}</div>`)}
     <div class="mt">${appVisitorsView(vitals)}</div>
     <div class="mt">${statement}</div>
@@ -811,10 +814,7 @@ export function appVisitorsView(v: AppVitals): Html {
   );
   return html`<section class="settings-block" id="visitors">
     <h2>Visitors and speed</h2>
-    <p class="muted small mb">
-      Counted by the beacon, with no address kept; the 7 day figure adds
-      the days up. <a href="app/traffic">Where visitors come from</a>
-    </p>
+    <p class="small mb"><a href="app/traffic">Where visitors come from</a></p>
       <dl class="stats">
         <div><dt>Visitors today</dt><dd>${v.today}</dd></div>
         <div><dt>Visitors, 7 days</dt><dd>${v.week}</dd></div>
@@ -856,10 +856,6 @@ export function appEnvView(base: string, names: AppEnvName[]): Html {
   );
   return html`<section class="settings-block" id="environment">
     <h2>Environment</h2>
-    <p class="muted small">
-      What the app reads at start-up; values are write-only, and one set
-      for production only or previews only wins there over one set everywhere.
-    </p>
       ${when(
         rows.length > 0,
         () =>
@@ -933,11 +929,7 @@ function appMembersView(
         >
 ${named.join("\n")}</textarea
         >
-        <p class="hint">
-          ${access === "private"
-            ? "They may open the app and its previews, and nothing else: not the code, the crew, the settings or the terminal. Removing a name shuts them out at once. What the app itself shows them is the app's to decide: it runs with your read-only token, so anything it shows visitors from the forge, they see too."
-            : "The app is public, so anyone may open it now; these names matter once it is private."}
-        </p>
+        ${access === "private" ? null : html`<p class="hint">The app is public, so anyone may open it now; these names matter once it is private.</p>`}
       </div>
       <div class="form-actions">${btn("Save people", { variant: "primary" })}</div>
     </form>
@@ -984,11 +976,6 @@ function appDomainsView(
   );
   return html`<section class="settings-block" id="domains">
     <h2>${icon("globe")} Domains</h2>
-        <p class="muted small mb">
-          Serve the app at a name of your own —
-          <span class="mono">app.example.com</span>, or an apex. Add it, publish
-          the two records it shows, and press Check now.
-        </p>
       ${when(
         rows.length > 0,
         () =>
@@ -1001,12 +988,7 @@ function appDomainsView(
               Nothing is serving apps on this forge, so a domain would have
               nowhere to point.
             </p>`
-        : html`<p class="muted small mb">
-              The forge serves the app there as soon as the record is
-              verified. The app itself learns its new address at its next
-              deploy.
-            </p>
-            <form
+        : html`<form
               class="edit-row"
               method="post"
               action="${base}/settings/app/domains"
