@@ -6,9 +6,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { sealKey, sealWebhook } from "../src/billing/connection.ts";
-import { getStored } from "../src/billing/store.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { refusedCount, setStripeHookCaps } from "../src/http/stripe_hook.ts";
+import { getStored } from "../src/billing/store.ts";
+import { refusedCount, setStripeHookCaps, setStripeHookFetch } from "../src/http/stripe_hook.ts";
 
 const secret = "whsec_hook_test_secret";
 let dir: string;
@@ -113,7 +113,7 @@ describe("POST /hooks/stripe", () => {
     const before = reads();
     expect((await post("{}", "t=1,v1=00")).status).toBe(400);
     expect(reads()).toBe(before);
-    const body = evt("evt_audit");
+    const body = evt("evt_audit", "ping.neutral"); // a type the hook does not act on, so only the signing secret is opened
     expect((await post(body, await sign(body))).status).toBe(200);
     expect(reads()).toBe(before + 1);
   });
@@ -134,6 +134,85 @@ describe("POST /hooks/stripe", () => {
     app.db.query("DELETE FROM stripe_hook_refused WHERE day >= '2001'").run();
     await post("{}", "t=1,v1=00"); // a new day row: prune
     expect(old()).toBeNull();
+  });
+
+  describe("subscription and invoice events", () => {
+    let nowSub: { status: string };
+    let calls: string[];
+    let down = false;
+    const sub = () => ({ id: "sub_1", status: nowSub.status, customer: "cus_1", metadata: { forge: "acme", plan: "medium" }, items: { data: [{ current_period_end: 1900000000 }] } });
+    const ev = (id: string, type: string, status: string) =>
+      JSON.stringify({ id, type, data: { object: type.startsWith("invoice.") ? { id: "in_1", subscription: "sub_1", status } : { id: "sub_1", status } } });
+    const deliver = async (body: string) => (await post(body, await sign(body))).status;
+    beforeAll(() => {
+      setStripeHookFetch(app, (async (url: string) => {
+        calls.push(String(url));
+        if (down) throw new Error("offline");
+        return new Response(JSON.stringify(sub()), { status: 200 });
+      }) as unknown as typeof fetch);
+    });
+    afterAll(() => setStripeHookFetch(app, undefined));
+
+    test("events in reverse order end on what Stripe says now, not on the event bodies", async () => {
+      calls = [];
+      nowSub = { status: "active" };
+      // the stale `past_due` event arrives last; its own body says past_due, Stripe says active
+      expect(await deliver(ev("evt_s2", "invoice.paid", "paid"))).toBe(200);
+      expect(await deliver(ev("evt_s1", "customer.subscription.updated", "past_due"))).toBe(200);
+      expect(calls).toEqual(["https://api.stripe.com/v1/subscriptions/sub_1", "https://api.stripe.com/v1/subscriptions/sub_1"]);
+      expect(getStored(app.db, "acme")).toMatchObject({ plan: "medium", status: "active", periodEnd: 1900000000, source: "stripe", provider: "stripe", customerId: "cus_1", subscriptionId: "sub_1" });
+    });
+
+    test("Stripe unreachable leaves the entitlement as it was and answers 200", async () => {
+      const before = getStored(app.db, "acme");
+      nowSub = { status: "canceled" };
+      down = true;
+      expect(await deliver(ev("evt_s3", "customer.subscription.deleted", "canceled"))).toBe(200);
+      down = false;
+      expect(getStored(app.db, "acme")).toEqual(before!);
+    });
+
+    test("a later event re-reads and follows Stripe to canceled", async () => {
+      nowSub = { status: "canceled" };
+      expect(await deliver(ev("evt_s4", "invoice.payment_failed", "open"))).toBe(200);
+      expect(getStored(app.db, "acme")).toMatchObject({ plan: "free", status: "none" });
+    });
+
+    test("a replayed event id does not read Stripe again", async () => {
+      calls = [];
+      nowSub = { status: "active" };
+      const body = ev("evt_r1", "invoice.paid", "paid");
+      const header = await sign(body);
+      expect((await post(body, header)).status).toBe(200);
+      expect((await post(body, header)).status).toBe(200);
+      expect(calls.length).toBe(1);
+    });
+
+    test("deliveries for one subscription are serialised: a slow older read cannot land last", async () => {
+      const gates: Array<(status: string) => void> = [];
+      setStripeHookFetch(app, (async () =>
+        new Promise<Response>((resolve) => {
+          gates.push((status) => resolve(new Response(JSON.stringify({ ...sub(), status }), { status: 200 })));
+        })) as unknown as typeof fetch);
+      const first = deliver(ev("evt_c1", "customer.subscription.updated", "x"));
+      await Bun.sleep(30);
+      const second = deliver(ev("evt_c2", "customer.subscription.updated", "x"));
+      await Bun.sleep(30);
+      expect(gates.length).toBe(1); // the second read waits for the first write
+      gates[0]!("past_due"); // the first read is the older state
+      await Bun.sleep(30);
+      expect(gates.length).toBe(2);
+      gates[1]!("active");
+      expect([await first, await second]).toEqual([200, 200]);
+      expect(getStored(app.db, "acme")).toMatchObject({ status: "active" });
+    });
+
+    test("a failed read is audited", async () => {
+      setStripeHookFetch(app, (async () => { throw new Error("offline"); }) as unknown as typeof fetch);
+      expect(await deliver(ev("evt_f1", "invoice.paid", "paid"))).toBe(200);
+      const n = app.db.query<{ n: number }, []>("SELECT count(*) n FROM event WHERE kind = 'billing.sync_failed'").get()?.n ?? 0;
+      expect(n).toBeGreaterThan(0);
+    });
   });
 
   describe("checkout.session.completed", () => {

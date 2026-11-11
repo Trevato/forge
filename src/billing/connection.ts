@@ -44,7 +44,7 @@ export function sealWebhook(db: Database, dataDir: string, secret: string, endpo
 }
 
 /** The sealed key and the endpoint id, opened (audited as `secret.read`). */
-export function openKey(db: Database, dataDir: string, bus: EventBus, actor: string): { key: string; endpointId: string } | undefined {
+export function openKey(db: Database, dataDir: string, bus: EventBus, actor: string | undefined): { key: string; endpointId: string } | undefined {
   const c = connectionOf(db);
   if (!c) return undefined;
   const got = resolveSecrets(db, dataDir, bus, [KEY_NAME[c.mode], ENDPOINT], { actor });

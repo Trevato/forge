@@ -66,6 +66,18 @@ export function formBody(data: { [k: string]: Value }): string {
 export interface StripeClient {
   addWebhook(url: string): Promise<Result<{ id: string; secret: string }, StripeError>>;
   removeWebhook(id: string): Promise<Result<true, StripeError>>;
+  /** The subscription as Stripe has it now. */
+  getSubscription(id: string): Promise<Result<StripeSubscription, StripeError>>;
+}
+
+/** The parts of a Stripe subscription the entitlement is written from. */
+export interface StripeSubscription {
+  readonly id: string;
+  readonly status: string;
+  readonly customer: string;
+  /** Unix seconds; 0 when Stripe gave none. */
+  readonly periodEnd: number;
+  readonly metadata: Readonly<Record<string, string>>;
 }
 
 const PERMISSION = "This key may not create webhook endpoints. Paste a signing secret from Stripe's webhook page instead.";
@@ -111,6 +123,19 @@ export function stripeClient(key: string, fetchFn: typeof fetch = fetch): Stripe
     async removeWebhook(id) {
       const r = await call("DELETE", `/v1/webhook_endpoints/${encodeURIComponent(id)}`);
       return r.ok ? ok(true as const) : r;
+    },
+    async getSubscription(id) {
+      const r = await call("GET", `/v1/subscriptions/${encodeURIComponent(id)}`);
+      if (!r.ok) return r;
+      const v = r.value;
+      if (str(v, "id") === "" || str(v, "status") === "") return err(missing("subscription"));
+      const customer = typeof v["customer"] === "object" && v["customer"] !== null ? str(v["customer"] as Record<string, unknown>, "id") : str(v, "customer");
+      // the period end is on the subscription in older API versions and on its first item in newer ones
+      const item = ((v["items"] as { data?: unknown } | undefined)?.data as Record<string, unknown>[] | undefined)?.[0];
+      const end = [v["current_period_end"], item?.["current_period_end"]].find((n) => typeof n === "number") as number | undefined;
+      const metadata: Record<string, string> = {};
+      for (const [k, x] of Object.entries((v["metadata"] ?? {}) as Record<string, unknown>)) if (typeof x === "string") metadata[k] = x;
+      return ok({ id: str(v, "id"), status: str(v, "status"), customer, periodEnd: end ?? 0, metadata });
     },
   };
 }
