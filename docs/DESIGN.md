@@ -11,6 +11,13 @@
 7. Rows over boxes: a list is rows, a fact is a `dl` row, not a card.
 8. Plain words, as in `docs/WRITING.md`.
 
+**The first five minutes.** Later work is judged against this one journey, a stranger's from a link to a change live:
+1. They follow a link. 2. They name the forge. 3. They choose a username and password. 4. They say what to build. 5. They see the crew working.
+
+Budgets: at most three screens before the forge; the forge ready in under 20 s; the first crew activity in under 60 s; the change live within five minutes.
+
+Words a stranger is never shown on this path: subscription, autonomy, cell, child, claim. The list lives once, as `STRANGER_NEVER_SEES` in `src/design/first_five_minutes.ts` (with the budgets), for a test to import.
+
 **The five rules of attention.** Every pass over a page follows them; the owner's time is the cost.
 Each has a real page as its pair. Enforced by rule 5: `test/attention.test.ts`.
 

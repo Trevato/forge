@@ -1,5 +1,6 @@
 [
   "src/crew/governor_log.ts",
+  "src/design/first_five_minutes.ts",
   "src/flow/alarm_unproposed.ts",
   "src/flow/approved_wait.ts",
   "src/flow/clog_words.ts",
