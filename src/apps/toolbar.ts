@@ -13,6 +13,7 @@
 
 import { staticResponse } from "../web/asset.ts";
 import { sha256 } from "../kernel/hash.ts";
+import { CHECK_WORDS, type PillCheck } from "./pill_check.ts";
 import { NOTE_EMPTY, NOTE_FAILED } from "./note_words.ts";
 
 /** What the panel says about a preview's freshness (#9111): the pill's words, in one table. */
@@ -96,6 +97,8 @@ const toolbarSource = `(function () {
     panel.appendChild(pl);
   } else if (d.pull) line("Preview of pull #" + d.pull);
   if (d.title) line(d.title);
+  var CW = ${JSON.stringify(CHECK_WORDS)};
+  if (d.env !== "production" && d.check && Object.prototype.hasOwnProperty.call(CW, d.check)) line(CW[d.check]);
   // Whether this is the pull as it stands now; an open, current preview says nothing.
   var W = ${JSON.stringify(FRESHNESS_WORDS)};
   var freshness = d.state === "merged" ? W.merged
@@ -627,6 +630,8 @@ export type PillWhere = {
   behind?: boolean;
   /** A newer commit is being deployed now. */
   deploying?: boolean;
+  /** The newest check of the pull's head, a key of `CHECK_WORDS`. */
+  check?: PillCheck;
 };
 
 /** `text` safe inside a double-quoted HTML attribute. */
@@ -675,6 +680,7 @@ export function toolbarTag(
           ["pull", where.pull === undefined ? undefined : String(where.pull)],
           ["title", where.title],
           ["state", where.state],
+          ["check", where.check],
           ["behind", where.behind === true ? "1" : undefined],
           ["deploying", where.deploying === true ? "1" : undefined],
         ]

@@ -58,6 +58,7 @@ import { clientBucket } from "../http/peer.ts";
 import { DOOR_PULL_LIMIT, doorPage, type DoorPullLine } from "./door.ts";
 import { checkWord } from "./check_word.ts";
 import { servingWords } from "./serving_words.ts";
+import { pillCheck } from "./pill_check.ts";
 import { openPulls } from "./door_pulls.ts";
 import { notePhase, startedAt, takePhases, timePhase } from "../core/route_timing.ts";
 import { readServing } from "./serving.ts";
@@ -563,17 +564,18 @@ export function pillWhere(
   if (pull === undefined) return where;
   if (!reads || !mayView(db, repo, pull, user)) return where;
   where.title = pull.title;
+  const head = getPull(db, target.app.repoId, where.pull);
+  if (head !== undefined && head.headOid !== "") where.check = pillCheck(db, pull.id, head.headOid);
   // How current the preview is: the row's head against the commit it runs. A
   // signed-in reader only, so a page an anonymous viewer may share never carries it.
   if (user === undefined) return where;
-  const row = getPull(db, target.app.repoId, where.pull);
-  if (row === undefined) return where;
-  where.state = row.mergedAt !== null ? "merged" : row.state === "closed" ? "closed" : "open";
+  if (head === undefined) return where;
+  where.state = head.mergedAt !== null ? "merged" : head.state === "closed" ? "closed" : "open";
   // Only an open pull has a newer push to be behind.
   if (where.state !== "open") return where;
   const status = runtime.envStatus?.(target.app, target.env);
   if (status?.state === "deploying") where.deploying = true;
-  where.behind = status?.state !== "deploying" && status?.commitOid !== undefined && status.commitOid !== row.headOid;
+  where.behind = status?.state !== "deploying" && status?.commitOid !== undefined && status.commitOid !== head.headOid;
   return where;
 }
 

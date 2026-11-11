@@ -28,11 +28,11 @@ const make = (tag: string): El => ({
 });
 const all = (el: El): El[] => [el, ...el.children.flatMap(all)];
 
-export function boot(store: Record<string, string> | null, width = 400, height = 800) {
+export function boot(store: Record<string, string> | null, width = 400, height = 800, dataset: Record<string, string> = { app: "notes", env: "production" }) {
   let root!: El;
   const host = { el: null as El | null };
   const doc = {
-    currentScript: { src: "https://forge.test/assets/t.js", dataset: { app: "notes", env: "production" } },
+    currentScript: { src: "https://forge.test/assets/t.js", dataset },
     createElement: (tag: string) => {
       const el = make(tag);
       if (tag === "div" && !host.el) {
@@ -56,5 +56,5 @@ export function boot(store: Record<string, string> | null, width = 400, height =
   const box = root.children[0]!;
   const panel = els.find((e) => e.attrs.role === "region")!;
   const fire = (el: El, t: string, e: object = {}) => el.listeners[t]!.forEach((f) => f({ preventDefault() {}, type: t, ...e }));
-  return { host: host.el!, pill, box, panel, fire };
+  return { host: host.el!, pill, box, panel, fire, texts: () => all(panel).map((e) => e.textContent).filter(Boolean) };
 }
