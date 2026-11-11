@@ -112,7 +112,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `following` | — | Where a fork stands against what it follows: in step, behind, ahead, diverged | 243 |
 | `forge_proposals` | — | What this forge proposed to its parent; `reachable` false if it is silent | 245 |
 | `forge_view` | — | The forge as one picture: counts, apps, runs with stations, health | 189 |
-| `forges` | — | Forges sent from here (admin; a stage says when to resend), or one forge's plan to read or grant | 336 |
+| `forges` | — | Forges sent from here (admin; a stage says when to resend), or one forge's plan to read or grant | 387 |
 | `fork` | — | Fork a repository into your account; for a guest, a copy to send changes back from | 232 |
 | `fork_tree` | — | The fork tree around a repo: ancestors, siblings and descendants you may read | 397 |
 | `forks` | `chain` | A repo's forks you may see, paged by limit and cursor (next_cursor), each with commits ahead and behind | 387 |
@@ -531,6 +531,7 @@ answers
 | `ui://forge/issues` | `issues` | A repository's issues, one row each: state, pillar, what it waits on, `untrusted` when an outsider wrote it. |
 | `ui://forge/release` | `releases` | Kept releases, the last 10 newest first, each proven, unproven or rolled back, linked to its pull. |
 | `ui://forge/releases` | `releases` with `shipped` | What shipped: one linked row per landing, the live version, what is on its way. |
+| `ui://forge/forges` | `forges` (listing, admin) | Forges you sent: one linked row each, whom it is for and its stage in words (sent, opened, signed in, last tell); a link unopened for 3 days says `resend` and comes first. |
 | `ui://forge/held` | `held` | What waits on a person: themes, one row each, and one button that closes the done ones. |
 
   The Runs card (`runs`) is one row per run, newest first: glyph, kind, the issue or pull and its title, then the state as a word with how long it ran (or has been running), linked to the run page; failed runs lead the status line. The Plan card (`map`) shows one row per pillar with

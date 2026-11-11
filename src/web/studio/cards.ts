@@ -11,7 +11,7 @@ import { html, raw } from "../html.ts";
 import { timeAgo } from "../ui.ts";
 import { span, STAGE_LABEL, verdict, type PipelineKey, type PipelineStage } from "../../flow/pipeline.ts";
 
-export type CardKind = "app" | "run" | "asks" | "wave" | "map" | "feed" | "pull" | "pulls" | "runs" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones" | "release" | "releases" | "search" | "issues" | "held";
+export type CardKind = "app" | "run" | "asks" | "wave" | "map" | "feed" | "pull" | "pulls" | "runs" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones" | "release" | "releases" | "search" | "issues" | "forges" | "held";
 
 export interface CardRow {
   readonly label: string;
@@ -44,7 +44,7 @@ const here = (origin: string, path: string): boolean => origin !== "" && /^\/(?!
 
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "asks", "wave", "map", "feed", "pull", "pulls", "runs", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones", "release", "releases", "search", "issues", "held"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "asks", "wave", "map", "feed", "pull", "pulls", "runs", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones", "release", "releases", "search", "issues", "held", "forges"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
@@ -70,6 +70,7 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   fork_tree: "forks",
   search: "search",
   issues: "issues",
+  forges: "forges",
   held: "held",
 };
 
@@ -96,6 +97,7 @@ const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   releases: "Shipped",
   search: "Search",
   issues: "Issues",
+  forges: "Forges you sent",
   held: "Later",
 };
 
@@ -129,6 +131,8 @@ const SAYS_WORDS = 160;
 const BOARD_PANELS = 8;
 /** A forks card shows this many nodes, then counts the rest. */
 const FORK_ROWS = 30;
+/** A sent-forges card shows this many rows, then counts the rest. */
+const SENT_ROWS = 30;
 /** How a fork follows its parent, in plain words. */
 const FOLLOW_WORDS: Readonly<Record<string, string>> = {
   autonomous: "follows on its own",
@@ -281,6 +285,28 @@ export function cardFor(
     if (left > 0) rows.push({ label: "More", value: `${left} more not shown` });
     if (v["truncated"] === true) rows.push({ label: "Truncated", value: "more forks exist than the tool returned; ask with a larger limit or a smaller depth" });
     return { kind, title: CARD_TITLE[kind], status: `${nodes.length} repositor${nodes.length === 1 ? "y" : "ies"} · from ${text(v["root"])}`, rows, actions };
+  }
+  if (kind === "forges") {
+    // `forges` lists `{ says, forges: [clientRows] }`; a plan, a code or a refusal has no `forges` array, so no card.
+    const v = obj(value);
+    if (!Array.isArray(v["forges"])) return undefined;
+    const all = v["forges"].map(obj);
+    const word = (f: Obj): string => {
+      const stage = obj(f["stage"]);
+      return stage["resend"] === true ? "resend" : text(stage["words"]).toLowerCase() || "being made";
+    };
+    // Unopened-for-days links first; the rest keep the server's order.
+    const ordered = [...all.filter((f) => obj(f["stage"])["resend"] === true), ...all.filter((f) => obj(f["stage"])["resend"] !== true)];
+    for (const f of ordered.slice(0, SENT_ROWS)) {
+      const owner = text(f["for"]);
+      rows.push({
+        label: text(f["name"]),
+        value: `${owner === "" ? "no one named" : `for ${owner}`} · ${word(f)}`,
+        ...(web(text(f["url"])) ? { link: text(f["url"]) } : {}),
+      });
+    }
+    if (all.length > SENT_ROWS) rows.push({ label: "More", value: `${all.length - SENT_ROWS} more not shown` });
+    return { kind, title: CARD_TITLE[kind], status: `${all.length} forge${all.length === 1 ? "" : "s"} sent`, rows, actions };
   }
   if (tool === "asks_act") {
     // Only a done bulk action has a card: its receipt, and the undo that takes it back.

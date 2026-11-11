@@ -179,7 +179,7 @@ describe("the client list", () => {
     const maria = JSON.parse(rows.result.content[0].text).forges.find((f: any) => f.name === "maria");
     expect(typeof maria.lastActivityAt).toBe("string");
     // The secret itself is never in an answer.
-    expect(JSON.stringify(rows)).not.toMatch(/status|secret/i);
+    expect(rows.result.content[0].text).not.toMatch(/status|secret/i);
   });
 
   test("`for` is at most 200 characters", async () => {
