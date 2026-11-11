@@ -20,7 +20,7 @@ import { notFoundPage, pageHead } from "../chrome.ts";
 import { waitingAddress } from "../claim_code.ts";
 import { startRefusalHref, startRefusalOf } from "../start_refusal.ts";
 
-/** The home's live name check: 404 from the ready probe means nothing by that name was made here. */
+/** The home's live name check: asks `GET /forges/name/<name>` and says free, taken, or the route's own reason; a 429 or a failure says nothing. */
 export const startNameJs = `(function(d){
 var i=d.getElementById("start-name"),s=d.getElementById("start-name-says"),t,k=0;
 if(!i||!s||!window.fetch)return;
@@ -29,8 +29,9 @@ i.addEventListener("input",function(){
 clearTimeout(t);var n=i.value.trim().toLowerCase(),q=++k;
 if(!n){say("");return}
 if(!/^[a-z0-9][a-z0-9-]*$/.test(n)){say("Use lowercase letters, digits and dashes.");return}
-t=setTimeout(function(){fetch("/forges/"+encodeURIComponent(n)+"/ready",{credentials:"omit"}).then(function(r){
-if(q!==k)return;say(r.status===404?n+" is free.":r.status===200?n+" is taken. Try another.":"")}).catch(function(){})},300)})
+t=setTimeout(function(){fetch("/forges/name/"+encodeURIComponent(n),{credentials:"omit"}).then(function(r){
+return r.status===200?r.json():null}).then(function(j){
+if(q!==k||!j)return;say(j.verdict==="free"?n+" is free.":j.verdict==="taken"?n+" is taken. Try another.":typeof j.why==="string"?j.why:"")}).catch(function(){})},300)})
 })(document)`;
 
 /** Waits for the forge, then goes to its claim page; after a minute and a half the link is still there. */

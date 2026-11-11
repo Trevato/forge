@@ -195,24 +195,36 @@ const settle = async () => {
   for (let i = 0; i < 400; i++) await Promise.resolve();
 };
 
-test("the live check: 404 reads free, 200 reads taken, a bad name never asks", async () => {
+test("the live check: free, taken and why read in words, a 429 reads nothing, a bad name never asks", async () => {
   const { startNameJs } = await import("../src/web/pages/start-forge.ts");
   const input = fake({}, "Sunny-Day");
   const says = fake();
-  const run = runScript(startNameJs, { "start-name": input, "start-name-says": says }, (u) => ({ status: u.includes("sunny-day") ? 404 : 200 }));
+  const run = runScript(startNameJs, { "start-name": input, "start-name-says": says }, (u) => ({
+    status: u.includes("rate") ? 429 : 200,
+    json: { verdict: u.includes("sunny-day") ? "free" : u.includes("admin") ? "reserved" : "taken", why: "admin can't be used as a name." },
+  }));
   try {
     input.on["input"]!();
     await settle();
-    expect(run.asked).toEqual(["/forges/sunny-day/ready"]);
+    expect(run.asked).toEqual(["/forges/name/sunny-day"]);
+    expect(startNameJs).not.toContain("/ready");
     expect(says.textContent).toBe("sunny-day is free.");
     input.value = "taken";
     input.on["input"]!();
     await settle();
     expect(says.textContent).toBe("taken is taken. Try another.");
+    input.value = "admin";
+    input.on["input"]!();
+    await settle();
+    expect(says.textContent).toBe("admin can't be used as a name.");
+    input.value = "rate";
+    input.on["input"]!();
+    await settle();
+    expect(says.textContent).toBe("admin can't be used as a name.");
     input.value = "No Good!";
     input.on["input"]!();
     expect(says.textContent).toBe("Use lowercase letters, digits and dashes.");
-    expect(run.asked.length).toBe(2);
+    expect(run.asked.length).toBe(4);
     input.value = "";
     input.on["input"]!();
     expect(says.textContent).toBe("");
