@@ -208,14 +208,18 @@ test("Settings → Billing: set three links, the home shows them; clear, the hom
   expect(badPage).toContain(`value="${LINKS.small}"`);
   expect(getBillingLinks(app.db)).toEqual({});
   expect((await links(adminCookie, LINKS)).status).toBe(303);
-  const text = await home();
-  expect(text.match(/Get a forge/g)).toHaveLength(3);
-  for (const u of Object.values(LINKS)) expect(text).toContain(`href="${u}"`);
-  expect(text).not.toContain("Hosted forges are");
+  // Since #11164 the home has one "Get a forge" button and a pay link per paid plan.
+  const section = yours(await home());
+  expect(section.match(/>Get a forge</g)).toHaveLength(1);
+  const anchors = payAnchors(section);
+  expect(anchors).toHaveLength(3);
+  for (const u of Object.values(LINKS)) expect(section).toContain(`href="${u}"`);
   await links(adminCookie, { small: "", medium: "", large: "" });
-  const none = await home();
-  expect(none).toContain("Hosted forges are");
-  expect(none).not.toContain("Get a forge");
+  expect(getBillingLinks(app.db)).toEqual({});
+  const none = yours(await home());
+  expect(payAnchors(none)).toHaveLength(0);
+  for (const u of Object.values(LINKS)) expect(none).not.toContain(u);
+  expect(none.match(/>Get a forge</g)).toHaveLength(1);
 });
 
 test("PUT /api/v1/admin/billing/links replaces the links; a member and a bad link are refused; the spec names it", async () => {
