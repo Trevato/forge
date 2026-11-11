@@ -191,3 +191,10 @@ test("each explorer line starts with why it ranks there, and does not say that n
   expect(text).toContain("2 forks");
   expect(text.match(/2 forks/g)?.length).toBe(1);
 });
+
+test("the terminal says how many a line leaves and that Esc clears it", async () => {
+  const text = await typed("kind:app sort:forks");
+  expect(text).toContain("Read as: kind:app sort:forks · 3 apps · Esc clears");
+  const none = await typed("kind:app zzzzqqq");
+  expect(none).toContain("No apps match · Esc clears");
+});

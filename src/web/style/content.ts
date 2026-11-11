@@ -262,6 +262,7 @@ form.inline { display: inline; margin-left: auto; }
 .door-lead .bar { gap: 8px; flex-wrap: wrap; }
 .door-start { width: 100%; max-width: 28rem; }
 .door-start .btn { width: 100%; }
+[data-hits] { line-height: 24px; }
 .explore-more { margin-top: 12px; }
 .explore-more .btn { width: 100%; min-height: 44px; }
 .door-says { min-height: 1lh; margin: 6px 0 0; }

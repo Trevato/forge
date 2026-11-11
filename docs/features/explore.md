@@ -64,3 +64,9 @@ An app's row carries `action: { do: "make_it_yours", label: "Make it yours" }` e
 `GET /explore.atom` is `/explore` as an Atom feed, public, for a feed reader. It holds the apps `/explore` ranks first for a stranger (default ranking, apps only, read through the page's own `explore`), at most 30 (`EXPLORE_ENTRIES` in `web/feeds.ts`), shown newest-made first, one entry each titled with the app's name, linked to its page (`rel="alternate"`) with its description as the summary. Private and archived apps are never in it. It is cached for five minutes (`cache-control: public, max-age=300`) and carries a weak `ETag`, so a reader that sends `If-None-Match` gets a 304. `/explore` links it with `<link rel="alternate" type="application/atom+xml">`. Server-Timing names `read` and `render`.
 
 The terminal's palette has `Explore feed`, which opens or shows the feed's address (copy it into a reader).
+
+## The count and the way back (#11323)
+
+Under the filters, `/explore` says how much a filter leaves: `66 results`, `2 apps`, `1 app`, `No apps match`, in the words of `exploreCount` in `src/actions/explore.ts` (the count is the whole filtered list, not the page). While a filter narrows the list (kind, words, archived, updated or owner; the sort only orders) the line ends with `Clear filters`, a link to bare `/explore`. When nothing matches it also offers `Drop <term>` for each filter, one tap to remove just that one. With no filter and nothing public the line is silent; the empty state speaks.
+
+In the terminal the same sentence sits in the `Read as:` line under the search box (`Read as: kind:app · 2 apps · Esc clears`); Esc clears the line.

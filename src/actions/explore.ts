@@ -376,6 +376,23 @@ export interface ExploreRow {
   readonly action?: typeof MAKE_IT_YOURS;
 }
 
+const NOUNS = {
+  app: ["app", "apps"],
+  person: ["person", "people"],
+  forge: ["forge", "forges"],
+  all: ["result", "results"],
+} as const;
+
+/** True when the line narrows the list; the sort only orders it. */
+export const exploreFiltered = (q: ExploreQuery): boolean =>
+  q.kind !== "all" || q.text !== "" || q.archived || q.updated !== "all" || q.owner !== undefined;
+
+/** How much a filter leaves, in words: "2 apps", "1 app", "No apps match". One sentence for the page and the terminal. */
+export function exploreCount(query: ExploreQuery, total: number): string {
+  const noun = NOUNS[query.kind];
+  return total === 0 ? `No ${noun[1]} match` : `${total.toLocaleString("en-US")} ${noun[total === 1 ? 0 : 1]}`;
+}
+
 /**
  * The ranking as last computed, per viewer (id and admin standing) and line
  * (#3394, #6129). A signed-out viewer has the one key every stranger shares;
@@ -416,6 +433,8 @@ export interface ExplorePage {
   readonly items: readonly ExploreRow[];
   /** Pass back as `cursor` for the page after; null on the last. */
   readonly nextCursor: string | null;
+  /** Every row the query leaves, whatever page this is. */
+  readonly total: number;
 }
 
 /**
@@ -443,6 +462,7 @@ export async function explorePage(
   return {
     items,
     nextCursor: rest.length > ROWS ? writeCursor(items[items.length - 1]!, query) : null,
+    total: rows.length,
   };
 }
 

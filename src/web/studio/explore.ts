@@ -9,6 +9,8 @@
 import {
   explorePage as readPage,
   exploreLine,
+  exploreCount,
+  exploreFiltered,
   exploreLineFrom,
   exploreParams,
   exploreNote,
@@ -144,6 +146,33 @@ function emptyState(ctx: Ctx, query: ExploreQuery): Html {
   });
 }
 
+/** What the filter's terms are, for a link that takes one away: the owner too, which `terms` leaves to the line. */
+function removable(query: ExploreQuery): { term: string; without: ExploreQuery }[] {
+  const out = terms(query).filter((t) => !t.term.startsWith("sort:"));
+  if (query.owner !== undefined) {
+    const { owner: _owner, ...rest } = query;
+    out.push({ term: `owner:${query.owner}`, without: rest });
+  }
+  return out;
+}
+
+/**
+ * How much is left, and the way back. A fixed-height line, so the list never
+ * moves. Unfiltered and empty it is silent: "Nothing public yet" says it.
+ * A miss names each filter that can be dropped, beside Clear filters.
+ */
+function countLine(query: ExploreQuery, total: number): Html {
+  const on = exploreFiltered(query);
+  if (total === 0 && !on) return html``;
+  const drops =
+    total === 0
+      ? removable(query).map((t) => html` · <a href="${href(t.without)}">Drop ${shorten(t.term)}</a>`)
+      : [];
+  return html`<span class="muted" role="status" data-hits>${exploreCount(query, total)}${drops}${
+    on ? html` · <a href="/explore" data-clear-filters>Clear filters</a>` : html``
+  }</span>`;
+}
+
 // GET /explore
 export async function explorePage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -188,7 +217,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
     { label: "This month", updated: "30d" as const },
   ];
   const body = html`<div data-explore>${pageHead("Explore", {
-      sub: "Apps and their makers, ranked by forks, ships, use and how lately — the numbers on every row.",
+      sub: "Apps and their makers, ranked by forks, ships, use and recency.",
     })}
     <form method="get" action="/explore" class="bar mb">
       <input
@@ -240,6 +269,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
         aria-pressed="${query.archived ? "true" : "false"}"
         >Show archived</a
       >
+      ${countLine(query, page0?.total ?? 0)}
     </div>
     ${rows.length === 0
       ? emptyState(ctx, query)

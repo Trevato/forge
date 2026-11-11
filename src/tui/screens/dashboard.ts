@@ -15,7 +15,7 @@
  */
 
 import { DEFAULT_WEIGHTS, frontWeights, type FrontWeights } from "../../core/front.ts";
-import { exploreLine, isExploreLine, exploreNote, exploreSuggestion, explorePage, parseExploreQuery, readExploreLine, whyOf, type ExploreRow } from "../../actions/explore.ts";
+import { exploreCount, exploreFiltered, exploreLine, isExploreLine, exploreNote, exploreSuggestion, explorePage, parseExploreQuery, readExploreLine, whyOf, type ExploreRow } from "../../actions/explore.ts";
 import { protectionNotice } from "../../kernel/protection.ts";
 import { holdWords, plannerHold } from "../../crew/autonomy.ts";
 import { governorSeen } from "../../crew/governed.ts";
@@ -249,7 +249,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
    * A search line with `kind:` or `sort:` is the explorer's (#7325): the rows
    * `/explore` ranks, answered by the same action, for the line last settled.
    */
-  let explored: { line: string; rows: readonly ExploreRow[] } | undefined;
+  let explored: { line: string; rows: readonly ExploreRow[]; total: number } | undefined;
   let askedLine = "";
   /** The forge's front weights, read once per ranked line so the reasons agree with the order. */
   let exploredWeights: FrontWeights = DEFAULT_WEIGHTS;
@@ -273,7 +273,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       if (askedLine !== line) return;
       const rows = page?.items ?? [];
       exploredWeights = frontWeights(f.app.db);
-      explored = { line, rows };
+      explored = { line, rows, total: page?.total ?? 0 };
       at("repos").clamp(rows.length);
       ctx.invalidate();
     });
@@ -1182,7 +1182,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       const readAs =
         read === undefined
           ? undefined
-          : `Read as: ${exploreLine(read.query) || "everything"}${mend === undefined ? "" : ` · Did you mean ${mend.line}?`}${note === "" ? "" : ` · ${note}`}`;
+          : `Read as: ${exploreLine(read.query) || "everything"}${explored === undefined ? "" : ` · ${exploreCount(read.query, explored.total)}${exploreFiltered(read.query) ? " · Esc clears" : ""}`}${mend === undefined ? "" : ` · Did you mean ${mend.line}?`}${note === "" ? "" : ` · ${note}`}`;
       const reduced = readAs ?? (f.user?.isAdmin === true ? protectionNotice() : undefined);
       const [box, warn, list] = split(
         main,
