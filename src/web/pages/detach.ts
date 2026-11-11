@@ -8,6 +8,7 @@
  */
 
 import { detachFromParent, detachJob, type DetachJob } from "../../actions/detach.ts";
+import { DETACH_STAYS, DETACH_STOPS } from "../../actions/detach_words.ts";
 import { forkParentFor, type Repo } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -64,10 +65,9 @@ export function detachBlock({ name, action, job }: DetachView): Html {
               </div>`
             : null}
           <p>
-            Copies every object this fork borrows from <strong>${name}</strong>
-            into its own store, drops the link, then forgets the parent: no
-            Following card, no updates to take, nothing to propose upstream.
-            Branches, history, issues and pulls stay. There is no undo.
+            Copies what this fork borrows from <strong>${name}</strong> into its
+            own store and forgets the parent. ${DETACH_STAYS} ${DETACH_STOPS}
+            It is recorded in this repository's history. There is no undo.
           </p>
           <div class="form-actions">
             ${confirmAction({ action, verb: "Detach from parent" })}
@@ -96,6 +96,6 @@ export async function detachSubmit(ctx: Ctx): Promise<Response> {
             : "Only an admin of this repository detaches it.",
     });
   return flashTo(ctx, back, {
-    message: `Detaching from ${started.value.parent ?? "its parent"}: the repack runs on its own.`,
+    message: "The repack runs on its own; the history records it when it lands.",
   });
 }

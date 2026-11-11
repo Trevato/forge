@@ -10,6 +10,7 @@
  * that was never meant to be confirmed.
  */
 
+import { DETACH_STAYS, DETACH_STOPS } from "../../actions/detach_words.ts";
 import { DISCONNECT_DETAIL } from "../../actions/origin_words.ts";
 import { strangerCodeSearch } from "../../http/strangers.ts";
 import { search } from "../../actions/search.ts";
@@ -606,8 +607,7 @@ const DESTRUCTIVE: {
     describe: (m) => ({
       verb: "Detach from parent",
       title: `Detach ${m[1]}/${m[2]} from its parent?`,
-      detail:
-        "Every object it borrows is copied into its own store and the link is dropped: no updates to take, nothing to propose upstream. Branches, history, issues and pulls stay. There is no undo.",
+      detail: `Every object it borrows is copied into its own store and the link is dropped. ${DETACH_STAYS} ${DETACH_STOPS} It is recorded in this repository's history. There is no undo.`,
       phrase: "",
     }),
   },

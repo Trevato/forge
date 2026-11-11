@@ -10,6 +10,7 @@
  */
 
 import { VIA_WORDS } from "../core/acting_via.ts";
+import { DETACH_RECEIPT } from "../actions/detach_words.ts";
 import type { ForgeEvent } from "../core/events.ts";
 
 /** The pull number an environment name carries, for `pull-12`. */
@@ -170,7 +171,7 @@ const WORDS: Record<string, string> = {
   "pull.thread_resolved": "resolved a review thread",
   "repo.created": "created a repository",
   "repo.forked": "forked a repository",
-  "repo.detached": "detached a fork from its parent",
+  "repo.detached": DETACH_RECEIPT,
   "repo.settings_updated": "changed repository settings",
   "repo.upstream_follow": "changed which upstream the repository follows",
   "repo.source_added": "followed another source",
