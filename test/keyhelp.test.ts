@@ -10,20 +10,19 @@ const handlerStart = src.lastIndexOf("doc.addEventListener('keydown'", helpStart
 const handler = src.slice(handlerStart, helpStart);
 const help = src.slice(helpStart, src.indexOf('// ---- command palette'));
 
-test('the field guard returns before any plain key is read', () => {
-  const guard = handler.indexOf("t.matches('input, textarea, select, [contenteditable]')");
-  expect(guard).toBeGreaterThan(0);
-  // The keys are looked up in the table, after the guard.
-  expect(handler.indexOf('rowForKey(e.key)')).toBeGreaterThan(guard);
-  // The chords are looked up ahead of it.
-  expect(handler.indexOf("rowForKey('Mod+'")).toBeLessThan(guard);
-  // The guard block ends in a bare return: nothing typed in a field falls through.
-  const block = handler.slice(guard, handler.indexOf('if (e.metaKey || e.ctrlKey || e.altKey) return;'));
-  expect(block).toMatch(/\n\s+return;\n\s+\}\n/);
+test('the field guard is the shared decision, read before any plain key is looked up', () => {
+  // The rule itself is tested on plain data in feed-keys.test.ts.
+  const decided = handler.indexOf("decideKey({");
+  expect(decided).toBeGreaterThan(0);
+  expect(handler).toContain("t.matches('input, textarea, select, [contenteditable]')");
+  expect(handler.indexOf("if (what !== 'key') return;")).toBeGreaterThan(decided);
+  expect(handler.indexOf('rowForKey(e.key)')).toBeGreaterThan(handler.indexOf("if (what !== 'key') return;"));
+  // The chords are looked up ahead of the decision.
+  expect(handler.indexOf("rowForKey('Mod+'")).toBeLessThan(decided);
 });
 
 test('an open dialog owns its keys', () => {
-  expect(handler).toContain("t.closest('dialog[open]')) return;");
+  expect(handler).toContain("t.closest('dialog[open]')");
 });
 
 test('j/k, enter, esc and ? are rows of the one table the sheet renders', () => {
@@ -101,11 +100,11 @@ test('the label of each row names the keys it answers', () => {
   }
 });
 
-test('after the guards the handler reads no key literally but Escape; the table answers', () => {
-  const after = handler.slice(handler.indexOf('if (e.metaKey || e.ctrlKey || e.altKey) return;'));
+test('after the decision the handler reads no key literally but Escape; the table answers', () => {
+  const after = handler.slice(handler.indexOf("if (what !== 'key') return;"));
   expect([...after.matchAll(/e\.key === '([^']+)'/g)].map((m) => m[1])).toEqual(['Escape']);
-  // Before the field guard the chords are looked up in the table too, not written out.
-  const before = handler.slice(0, handler.indexOf("t.matches('input, textarea, select, [contenteditable]')"));
+  // Before it the chords are looked up in the table too, not written out.
+  const before = handler.slice(0, handler.indexOf('decideKey({'));
   expect(before).toContain("rowForKey('Mod+'");
   expect(before).not.toContain("e.key === 'Enter'");
 });

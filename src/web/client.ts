@@ -11,6 +11,7 @@
  */
 
 import { GO_MATCH_JS, goPagesData } from "./go_pages.ts";
+import { keyDecisionJs } from "./key_decision.ts";
 import { actNowJs } from "./act_now.ts";
 import { pickJs } from "./pick.ts";
 import { imageViewJs } from "./render/image.ts";
@@ -1459,6 +1460,7 @@ const shellCore = /* js */ `
   });
 
   // ---- keyboard: sequences from the DOM, so the help can never drift ----
+  ${keyDecisionJs}
   var seq = []; var last = 0;
   function rows() { return Array.prototype.slice.call(doc.querySelectorAll('[data-nav]')); }
   function move(step) {
@@ -1550,20 +1552,18 @@ const shellCore = /* js */ `
   window.addEventListener('blur', function () { hints(false); });
   doc.addEventListener('keydown', function (e) {
     var t = e.target;
-    // Inside an open dialog the dialog owns the keys; none of these apply.
-    if (t && t.closest && t.closest('dialog[open]')) return;
-    // Chords answer from the same table, ahead of the field guard: the palette
-    // is one chord away from anywhere, a field included, and Cmd/Ctrl+Enter
-    // sends the form a box belongs to.
-    if ((e.metaKey || e.ctrlKey) && !e.altKey) {
-      var chord = rowForKey('Mod+' + (e.key === 'K' ? 'k' : e.key));
-      if (chord) { chord[3](e); return; }
-    }
-    if (t && t.matches && t.matches('input, textarea, select, [contenteditable]')) {
-      if (e.key === 'Escape') { e.preventDefault(); t.blur(); }
-      return;
-    }
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    var chord = (e.metaKey || e.ctrlKey) && !e.altKey ? rowForKey('Mod+' + (e.key === 'K' ? 'k' : e.key)) : null;
+    // The decision is key_decision.ts: a dialog owns its keys, a chord
+    // answers from anywhere, a field keeps its typing, a held modifier is
+    // the browser's.
+    var what = decideKey({
+      ctrl: e.ctrlKey, meta: e.metaKey, alt: e.altKey, key: e.key, hasChord: !!chord,
+      inDialog: !!(t && t.closest && t.closest('dialog[open]')),
+      inField: !!(t && t.matches && t.matches('input, textarea, select, [contenteditable]')),
+    });
+    if (what === 'chord') { chord[3](e); return; }
+    if (what === 'blur') { e.preventDefault(); t.blur(); return; }
+    if (what !== 'key') return;
     var row = rowForKey(e.key);
     if (e.key === 'Escape') { if (row) row[3](e); return; }
     if (Date.now() - last > 1000) seq.length = 0;
