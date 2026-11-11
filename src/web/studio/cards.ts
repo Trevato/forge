@@ -11,7 +11,7 @@ import { html, raw } from "../html.ts";
 import { timeAgo } from "../ui.ts";
 import { span, STAGE_LABEL, verdict, type PipelineKey, type PipelineStage } from "../../flow/pipeline.ts";
 
-export type CardKind = "app" | "run" | "asks" | "wave" | "map" | "feed" | "pull" | "pulls" | "runs" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones" | "release";
+export type CardKind = "app" | "run" | "asks" | "wave" | "map" | "feed" | "pull" | "pulls" | "runs" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones" | "release" | "search" | "issues";
 
 export interface CardRow {
   readonly label: string;
@@ -44,7 +44,7 @@ const here = (origin: string, path: string): boolean => origin !== "" && /^\/(?!
 
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "asks", "wave", "map", "feed", "pull", "pulls", "runs", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones", "release"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "asks", "wave", "map", "feed", "pull", "pulls", "runs", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones", "release", "search", "issues"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
@@ -68,6 +68,8 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   scorecard: "scorecard",
   boards: "board",
   fork_tree: "forks",
+  search: "search",
+  issues: "issues",
 };
 
 const CARD_TITLE: Readonly<Record<CardKind, string>> = {
@@ -90,6 +92,8 @@ const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   forks: "Forks",
   milestones: "Milestones",
   release: "Releases",
+  search: "Search",
+  issues: "Issues",
 };
 
 type Obj = Record<string, unknown>;
@@ -101,6 +105,8 @@ const text = (v: unknown): string =>
 const LIMIT = 12;
 const FEED_LIMIT = 10;
 const PULLS_LIMIT = 20;
+export const SEARCH_ROWS = 20;
+export const ISSUES_ROWS = 20;
 const ASKED_WORDS = 80;
 const ASKED_LIMIT = 20;
 const RELEASE_ROWS = 20;
@@ -132,6 +138,11 @@ const checkWord = (state: string): string =>
   : "none";
 
 /** An absolute http(s) address: the only origin a card builds links on. */
+/** `/blob/<ref>/<path>` with each segment escaped, or nothing when there is no branch or path. */
+const fileOf = (branch: unknown, path: string): string =>
+  typeof branch === "string" && branch !== "" && path !== "" && !path.split("/").includes("..")
+    ? `/blob/${encodeURIComponent(branch)}/${path.split("/").map(encodeURIComponent).join("/")}`
+    : "";
 const web = (u: string): boolean => /^https?:\/\//.test(u);
 /** A repository named `owner/name`. */
 const slugOf = (s: string): boolean => /^[^/]+\/[^/]+$/.test(s);
@@ -319,6 +330,81 @@ export function cardFor(
     const preview = text(extra["preview"]);
     if (web(preview)) rows.push({ label: "Preview", value: preview, link: preview });
     return { kind, title: `#${number} ${text(p["title"])}`.trim(), status, rows, actions };
+  }
+  if (kind === "search") {
+    // `search` answers `{ repos, issues, code, … }`; the query comes in `extra`. One row per hit:
+    // its kind and title as the label, where it stands as the value, linked to its page.
+    const v = obj(value);
+    const q = text(extra["q"]);
+    const untrusted = new Set(list(extra["untrusted"]).map(text));
+    const branches = obj(extra["branches"]);
+    const seg = (x: string): boolean => /^[^/\s]+$/.test(x);
+    const page = (owner: string, name: string, rest = ""): { link?: string } =>
+      web(origin) && seg(owner) && seg(name) ? { link: `${origin}/${owner}/${name}${rest}` } : {};
+    const hits: CardRow[] = [];
+    for (const r of list(v["repos"]).map(obj)) {
+      const local = r["source"] === "local";
+      const label = local ? `repo ${text(r["owner"])}/${text(r["name"])}` : `repo ${text(r["fullName"])}`;
+      const ext = text(r["htmlUrl"]);
+      hits.push({
+        label,
+        value: text(r["description"]) || `${text(r["openIssues"])} open issues`,
+        ...(local ? page(text(r["owner"]), text(r["name"])) : web(ext) ? { link: ext } : {}),
+      });
+    }
+    for (const i of list(v["issues"]).map(obj)) {
+      const n = text(i["number"]);
+      const pull = i["kind"] === "pull";
+      const local = i["source"] === "local";
+      const at = obj(i["repo"]);
+      const ext = text(i["htmlUrl"]);
+      hits.push({
+        label: `${pull ? "pull" : "issue"} #${n} ${text(i["title"])}`.trim(),
+        value: [text(i["state"]), ...(local && untrusted.has(`${text(at["owner"])}/${text(at["name"])}#${n}`) ? ["untrusted"] : [])].join(" · "),
+        ...(local && /^[1-9]\d*$/.test(n)
+          ? page(text(at["owner"]), text(at["name"]), `/${pull ? "pulls" : "issues"}/${n}`)
+          : web(ext) ? { link: ext } : {}),
+      });
+    }
+    for (const c of list(v["code"]).map(obj)) {
+      const at = obj(c["repo"]);
+      hits.push({
+        label: `code ${text(at["owner"])}/${text(at["name"])}:${text(c["path"])}:${text(c["line"])}`,
+        value: text(c["text"]).trim().slice(0, SAYS_WORDS),
+        // The file itself, at the repository's default branch, when the tool said which it is.
+        ...page(text(at["owner"]), text(at["name"]), fileOf(branches[`${text(at["owner"])}/${text(at["name"])}`], text(c["path"]))),
+      });
+    }
+    rows.push(...hits.slice(0, SEARCH_ROWS));
+    status = `${hits.length} hit${hits.length === 1 ? "" : "s"}${hits.length > SEARCH_ROWS ? `, first ${SEARCH_ROWS}` : ""}`;
+    return { kind, title: q === "" ? CARD_TITLE[kind] : `Search: ${q}`, status, rows, actions };
+  }
+  if (kind === "issues") {
+    // `issues` answers `{ items, next_cursor }`; the repo, the pillar of each issue and what it
+    // waits on (both by number) come in `extra`. A sealed blocker is left out before it gets here.
+    const items = list(obj(value)["items"]).map(obj);
+    const slug = text(extra["repo"]);
+    const pillars = obj(extra["pillars"]);
+    const waits = obj(extra["waits"]);
+    for (const i of items.slice(0, ISSUES_ROWS)) {
+      const n = text(i["number"]);
+      const path = `/${slug}/issues/${n}`;
+      const parts = [text(i["state"])];
+      const pillar = text(pillars[n]);
+      if (pillar !== "") parts.push(pillar);
+      // A blocker here is its number; one in another repository is `owner/name#number`.
+      const on = list(waits[n]).map(text).filter((x) => /^(?:[^/\s#]+\/[^/\s#]+#)?[1-9]\d*$/.test(x)).slice(0, 5);
+      if (on.length > 0) parts.push(`waits on ${on.map((x) => (x.includes("#") ? x : `#${x}`)).join(" ")}`);
+      if (i["untrusted"] === true) parts.push("untrusted");
+      rows.push({
+        label: `#${n} ${text(i["title"])}`.trim(),
+        value: parts.join(" · "),
+        ...(web(origin) && slugOf(slug) && /^[1-9]\d*$/.test(n) && here(origin, path) ? { link: origin + path } : {}),
+      });
+    }
+    const more = text(obj(value)["next_cursor"]) !== "" ? "+" : "";
+    status = `${items.length}${more} issue${items.length === 1 && more === "" ? "" : "s"}`;
+    return { kind, title: CARD_TITLE[kind], status, rows, actions };
   }
   if (kind === "pulls") {
     // `pulls` answers `{ pulls: [{ number, title, check, … }] }`; the repo and

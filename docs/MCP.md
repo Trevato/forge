@@ -125,7 +125,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `invites` | `list`, `revoke` | Open invites; `id` revokes | 206 |
 | `issue` | — | One issue with comments, `blockedBy`, `blocks`; non-writers' text is `untrusted` | 341 |
 | `issue_teams` | — | Name up to two crew teams to review | 267 |
-| `issues` | — | A repository's issues by state, label and author, newest first, paged | 422 |
+| `issues` | — | A repository's issues by state, label and author, newest first, paged | 473 |
 | `iterations` | — | A repo's fork family of build pins and runs, as the Iterations page draws them | 279 |
 | `keep_plan` | — | Keep a short plan checklist on your issue, replaced whole each time | 415 |
 | `knobs` | — | The crew's five knobs and what each does now | 307 |
@@ -189,7 +189,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `say` | `list`, `new`, `rename`, `archive`, `restore`, `build`, `build_state`, `build_diff`, `build_restore`, `build_publish` | Say something on an issue or pull; with no repo, to the forge's own agent, and manage its conversations (action) | 585 |
 | `scorecard` | — | Crew scorecard (forge admin): per agent, all time and 30 days | 237 |
 | `seal` | `private` | Seal or unseal an issue or pull: a sealed one is seen only by writers and crew | 297 |
-| `search` | `all`, `issues`, `repos`, `code` | Find issues, pulls, repositories and code you can read; `kind` and `repo` narrow | 378 |
+| `search` | `all`, `issues`, `repos`, `code` | Find issues, pulls, repositories and code you can read; `kind` and `repo` narrow | 429 |
 | `secrets` | — | Admin: list\|set\|remove sealed secrets | 248 |
 | `sessions` | `list`, `end`, `end_idle`, `signins`, `shells` | Where you are signed in: your tokens and browsers, never a secret; `username` for a person as owner; action end + id signs a browser out | 385 |
 | `sever` | — | Unlink a spawned forge from its parent (owner of its `forge` repo only) | 214 |
@@ -504,6 +504,8 @@ answers
 | `ui://forge/board` | `boards` | One board's panels (person admins). |
 | `ui://forge/forks` | `fork_tree` | The fork tree around a repository, each row with how it follows. |
 | `ui://forge/milestones` | `milestones` | The milestones and how far each is. |
+| `ui://forge/search` | `search` | The query on top, one row per hit (repository, issue, pull, code) with its kind, title and link. |
+| `ui://forge/issues` | `issues` | A repository's issues, one row each: state, pillar, what it waits on, `untrusted` when an outsider wrote it. |
 | `ui://forge/release` | `releases` | Kept releases, newest first, each proven, unproven or rolled back. |
 
   The Runs card (`runs`) is one row per run, newest first: glyph, kind, the issue or pull and its title, then the state as a word with how long it ran (or has been running), linked to the run page; failed runs lead the status line. The Plan card (`map`) shows one row per pillar with
