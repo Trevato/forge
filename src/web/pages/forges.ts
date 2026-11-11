@@ -20,7 +20,8 @@ import { noRoom } from "../../spawn/door.ts";
 import { sizeWords, useWords } from "../../spawn/usage.ts";
 import { diskWords } from "../../spawn/disk_mount.ts";
 import { listChildren } from "../../actions/spawn.ts";
-import { removeForge, stopForge, type Managed } from "../../spawn/manage.ts";
+import { ownCode, removeForge, stopForge, type Managed } from "../../spawn/manage.ts";
+import { readOwnCode } from "../../spawn/own_code.ts";
 import { claimLinkBody } from "./new-forge.ts";
 
 
@@ -177,6 +178,7 @@ export async function forgesPage(ctx: Ctx): Promise<Response> {
                 ${rows.map((r) => forgeRow(r, Date.now()))}
               </ul>
             </section>`}
+      ${await ownCodeSection(ctx)}
       <p class="mt"><a href="/fleet/graph">Fleet graph</a></p>
     </div>`,
   });
@@ -298,4 +300,62 @@ export async function forgeRemoveConfirm(ctx: Ctx): Promise<Response> {
   });
   response.headers.set("cache-control", "no-store");
   return response;
+}
+
+const CODE_WORDS = {
+  on: "will run its own code from its next start.",
+  off: "will run this forge's code from its next start.",
+  refused: "stays on this forge's code: only a forge in its own cell, with a forge repository, can run its own.",
+} as const;
+
+/** What `/forges?code=…&forge=…` says after the switch: fixed words, and only for a forge in the list. */
+function codeReceipt(ctx: Ctx, names: readonly string[]): Html | null {
+  const name = ctx.url.searchParams.get("forge") ?? "";
+  const code = ctx.url.searchParams.get("code") ?? "";
+  if (!names.includes(name) || !(code in CODE_WORDS)) return null;
+  return html`<p role="status" class="muted" data-receipt>${name} ${CODE_WORDS[code as keyof typeof CODE_WORDS]}</p>`;
+}
+
+/** Each forge's code, one row each: whose code it runs, the switch, and the last rollback. */
+async function ownCodeSection(ctx: Ctx): Promise<Html | null> {
+  const children = (await listChildren(ctx.app)).filter((c) => c.done);
+  if (children.length === 0) return null;
+  return html`<section class="settings-block" id="forge-code">
+    <h2>Forge code</h2>
+    ${codeReceipt(ctx, children.map((c) => c.name))}
+    <dl class="status-rows">
+      ${children.map((c) => {
+        const own = readOwnCode(ctx.app, c.name);
+        const rb = own.rolledBack;
+        const state = html`${own.on ? "Its own code" : "This forge's code"}${rb === undefined
+          ? null
+          : html`<br /><span data-rolled-back>${badge("Rolled back", { tone: "attn" })} ${time(rb.at)}${rb.commit === "" ? null : html` from ${rb.commit}`}: ${rb.why}. Ran ${rb.to === "last-good" ? "its last good commit" : "this forge's code"}.</span>`}`;
+        const action =
+          c.placement === "cell"
+            ? html`<form method="post" action="/forges/${c.name}/own-code" class="inline">
+                <input type="hidden" name="on" value="${own.on ? "off" : "on"}" />
+                ${btn(own.on ? "Use this forge's code" : "Use its own code", { size: "sm", variant: "ghost" })}
+              </form>`
+            : html`<span class="muted small">Shares this forge's process</span>`;
+        return html`<div class="status-row" data-own-code="${own.on ? "on" : "off"}">
+          <dt>${c.name}</dt>
+          <dd>${state}</dd>
+          <dd class="status-act">${action}</dd>
+        </div>`;
+      })}
+    </dl>
+  </section>`;
+}
+
+// POST /forges/:name/own-code — the owner's switch: `on` is "on" or "off"; then back to the list, with a receipt.
+export async function forgeOwnCodeSubmit(ctx: Ctx): Promise<Response> {
+  const user = ctx.auth.user;
+  if (!user?.isAdmin) return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const want = form.get("on");
+  if (want !== "on" && want !== "off") return notFoundPage(ctx);
+  const name = ctx.params["name"] ?? "";
+  const done = await ownCode(ctx.app, name, want === "on");
+  return redirect(`/forges?code=${done.ok ? want : "refused"}&forge=${encodeURIComponent(name)}#forge-code`);
 }

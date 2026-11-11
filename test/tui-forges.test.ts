@@ -113,6 +113,16 @@ describe("forges you sent in the terminal", () => {
     h.stop();
   });
 
+  test("o switches a forge's code; with no forge it says so", async () => {
+    const h = boot("alice");
+    await h.palette();
+    await h.enter();
+    expect(h.text()).toContain("own code or this forge's");
+    await h.press("o");
+    expect(h.text()).toContain("No forge to switch");
+    h.stop();
+  });
+
   test("a row says whether its link is open, ended, or can be undone; a used link says nothing", () => {
     const line = (link: ClientRow["link"]) => forgeLines([row({ link })])[0]![1];
     expect(line({ state: "open", revokedAt: null })).toContain("link open");

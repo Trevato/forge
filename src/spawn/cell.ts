@@ -25,6 +25,7 @@ import { floorRefusal } from "./disk_floor.ts";
 import { CGROUP_DIR_ENV, SIZE_ENV } from "./usage.ts";
 import { childModelHosts, childPaymentHosts, childRegistryHosts } from "../core/capacity.ts";
 import { liveChildDisk, type ChildDisk } from "./disk_mount.ts";
+import { oneAtATime, sourcesFor, startFirstThatWorks, useTree, type CodeSource } from "./own_code.ts";
 
 export const CELL_PREFIX = "cell-";
 export const ownsBody = (bodyId: string): boolean => bodyId.startsWith(CELL_PREFIX);
@@ -133,6 +134,8 @@ export function cellSpecFor(input: {
    * what it always was.
    */
   disk?: ChildDisk;
+  /** A checked copy of the child's own forge code, when it runs that (`own_code.ts`); the parent's code is revealed either way, for its dependencies. */
+  ownRoot?: string;
 }): CellSpec {
   return {
     dir: input.dir,
@@ -144,7 +147,7 @@ export function cellSpecFor(input: {
     // data and is bound back, deepest last.
     hide: [input.parentDataDir, input.parentHome ?? process.env["HOME"] ?? "", tmpdir()].filter((path) => path !== ""),
     // The forge's own code may live under the parent's data (a release checkout).
-    reveal: [CODE],
+    reveal: input.ownRoot === undefined ? [CODE] : [CODE, input.ownRoot],
     egress: [...(input.modelHosts ?? []), ...(input.registryHosts ?? []), ...(input.paymentHosts ?? [])],
     // A child's cell is held to this list whatever cells.egress says: report
     // mode is for apps still declaring hosts, not for a whole forge.
@@ -282,6 +285,7 @@ export function launchSpecFor(
   input: { readonly bodyId: string; readonly name: string; readonly size: Size },
   at: { readonly port: number; readonly parentPort: number },
   mountinfo?: string,
+  ownRoot?: string,
 ): CellSpec {
   return cellSpecFor({
     dir: childDirOf(parent, input.bodyId),
@@ -297,6 +301,7 @@ export function launchSpecFor(
     registryHosts: childRegistryHosts(parent.db),
     paymentHosts: childPaymentHosts(parent.db),
     disk: liveChildDisk(parent.config.dataDir, input.bodyId, mountinfo),
+    ...(ownRoot === undefined ? {} : { ownRoot }),
   });
 }
 
@@ -315,6 +320,59 @@ export function makeRegistry(parent: App, launcher?: Launcher): CellChildren {
   const busy = new Map<string, number>();
 
   const failOf = (bodyId: string) => (why: string): void => void failed.set(bodyId, { at: Date.now(), why });
+  const startOn = async (input: { bodyId: string; name: string; size: Size }, source: CodeSource): Promise<{ child: CellChild } | { why: string }> => {
+    const recent: string[] = [];
+    let why: string | undefined;
+    const port = freePort();
+    const dir = childDirOf(parent, input.bodyId);
+    const url = childPublicUrl(input.name, parentOrigin(parent.config));
+    const door = openBeatDoor(parent);
+    const parentPort = door.port;
+    const spec = launchSpecFor(parent, input, { port, parentPort }, undefined, source.kind === "parent" ? undefined : source.root);
+    const heard = childLog((line) => parent.log.info("child forge", { name: input.name, line }));
+    const log = (raw: string): void => {
+      const line = plainLine(raw);
+      recent.push(line);
+      if (recent.length > 5) recent.shift();
+      heard(line);
+    };
+    // Its tree is not pruned while this cell may read it.
+    const release = source.kind === "parent" ? () => {} : useTree(source.root);
+    let cell: Cell;
+    try {
+      cell = openCell(spec, log);
+    } catch (error) {
+      door.close();
+      release();
+      throw error;
+    }
+    const command = `exec ${JSON.stringify(process.execPath)} ${JSON.stringify(source.main)}`;
+    const proc = Bun.spawn(cell.argv(command), {
+      cwd: dirname(source.main),
+      env: cell.env(cellEnv({ port, dataDir: dir, url, parentPort, size: input.size, ...(cell.cgroupDir === undefined ? {} : { cgroupDir: cell.cgroupDir }) })),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const exited = proc.exited.then((code) => {
+      const why = cell.breach();
+      if (why !== undefined) parent.log.warn("child forge stopped", { name: input.name, why });
+      cell.close();
+      door.close();
+      release();
+      if (why !== undefined) recent.push(why);
+      return code;
+    });
+    cell.watch(proc.pid, () => killTree(proc.pid));
+    void drain(proc.stdout, log);
+    void drain(proc.stderr, log);
+    const child: Held = { ...input, port, limits: spec.limits, pid: proc.pid, exited, cell, proc, door };
+    const up = await firstAnswer(child, port, () => {
+      why = `its cell did not come up: ${recent.slice(-3).join(" | ") || "no output"}`.slice(0, 400);
+      parent.log.warn("child forge did not answer", { name: input.name, why });
+    });
+    return up ? { child } : { why: why ?? "its cell did not come up" };
+  };
   const launchInCell: Launcher = async (input, fail) => {
     // Below the disk floor no child cell starts, a sleeping one included (#10850).
     const floor = floorRefusal(parent.config.dataDir);
@@ -329,53 +387,16 @@ export function makeRegistry(parent: App, launcher?: Launcher): CellChildren {
       fail(cells.reason);
       return undefined;
     }
-    const recent: string[] = [];
-    const port = freePort();
-    const dir = childDirOf(parent, input.bodyId);
-    const url = childPublicUrl(input.name, parentOrigin(parent.config));
-    const door = openBeatDoor(parent);
-    const parentPort = door.port;
-    const spec = launchSpecFor(parent, input, { port, parentPort });
-    const heard = childLog((line) => parent.log.info("child forge", { name: input.name, line }));
-    const log = (raw: string): void => {
-      const line = plainLine(raw);
-      recent.push(line);
-      if (recent.length > 5) recent.shift();
-      heard(line);
-    };
-    let cell: Cell;
-    try {
-      cell = openCell(spec, log);
-    } catch (error) {
-      door.close();
-      throw error;
+    // The parent decides what the cell runs: its own code, the last that came up, or the parent's (`own_code.ts`).
+    const started = await oneAtATime(parent, input.name, async () => {
+      const sources = await sourcesFor(parent, { name: input.name, childDir: childDirOf(parent, input.bodyId) }, { main: MAIN, root: CODE });
+      return startFirstThatWorks(parent, input.name, sources, (source) => startOn(input, source));
+    });
+    if ("why" in started) {
+      fail(started.why);
+      return undefined;
     }
-    const command = `exec ${JSON.stringify(process.execPath)} ${JSON.stringify(MAIN)}`;
-    const proc = Bun.spawn(cell.argv(command), {
-      cwd: dirname(MAIN),
-      env: cell.env(cellEnv({ port, dataDir: dir, url, parentPort, size: input.size, ...(cell.cgroupDir === undefined ? {} : { cgroupDir: cell.cgroupDir }) })),
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const exited = proc.exited.then((code) => {
-      const why = cell.breach();
-      if (why !== undefined) parent.log.warn("child forge stopped", { name: input.name, why });
-      cell.close();
-      door.close();
-      if (why !== undefined) recent.push(why);
-      return code;
-    });
-    cell.watch(proc.pid, () => killTree(proc.pid));
-    void drain(proc.stdout, log);
-    void drain(proc.stderr, log);
-    const child: Held = { ...input, port, limits: spec.limits, pid: proc.pid, exited, cell, proc, door };
-    const up = await firstAnswer(child, port, () => {
-      const why = `its cell did not come up: ${recent.slice(-3).join(" | ") || "no output"}`.slice(0, 400);
-      parent.log.warn("child forge did not answer", { name: input.name, why });
-      fail(why);
-    });
-    return up ? child : undefined;
+    return started.child;
   };
   const launch = async (input: { bodyId: string; name: string; size: Size }): Promise<CellChild | undefined> => {
     const child = await (launcher ?? launchInCell)(input, failOf(input.bodyId));
