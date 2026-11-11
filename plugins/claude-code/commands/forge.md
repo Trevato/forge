@@ -1,6 +1,6 @@
 ---
-description: Talk to your forge: new, tell, status, decide, archive, undo, plan, preview, pulls, runs, log, asked
-argument-hint: new <name> <words> | tell <app> <words> | status | decide <approve|redirect|decline> [words] | decide all <dismiss|ship|close> [kind] | archive <app> | undo <operation> | plan [approve|redirect <words>|later] | preview <url> | pulls <app> | runs <app> | log <app> <run> | asked [app]
+description: Talk to your forge: new, tell, status, decide, archive, undo, plan, preview, pulls, runs, log, asked, waves, held, forks
+argument-hint: new <name> <words> | tell <app> <words> | status | decide <approve|redirect|decline> [words] | decide all <dismiss|ship|close> [kind] | archive <app> | undo <operation> | plan [approve|redirect <words>|later] | preview <url> | pulls <app> | runs <app> | log <app> <run> | asked [app] | waves <app> | held | forks <app>
 ---
 
 Use the `forge` MCP server's tools for `$ARGUMENTS`.
@@ -18,5 +18,8 @@ Use the `forge` MCP server's tools for `$ARGUMENTS`.
 - `runs <app>`: call `runs` with `repo` = the app (owner/name); say, one line each, the running runs and the last three finished ones: kind, issue or pull number, state, and how long (from `startedAt` to `endedAt`, or to now while running).
 - `log <app> <run>`: call `run_log` with `repo` = the app, `run` = the run id and `tail` = 40; relay the lines verbatim, in a code block.
 - `asked [app]`: call `asked` with `show` = `all`, and `repo` = the app (owner/name) when one is given; say, one line each, flagged ones first, what was asked (its title and number), its state (waiting, building, shipped or closed), the pull that closes it (none yet: say so) and the `outcomeText` sentence, so a parked or failed ask says why.
+- `waves <app>`: call `waves` with `repo` = the app (owner/name); relay the newest three waves, one line each: version, date, headline. Read-only: it lands nothing.
+- `held`: call `held` with `app` = the app the conversation names (owner/name); when none is named, ask which app before calling, since `held` needs one (never `apply`); say in two sentences how many themes the Later gate holds and which are done (the issues in `approve`, found done on main). Read-only: never close or land anything; closing is the person's, on the page.
+- `forks <app>`: call `forks` with `repo` = the app (owner/name) and `kind: "chain"`; say in two lines what it follows upstream (its parent and grandparent, or that it follows none) and who follows it downstream (its children, or none), noting a severed link. Read-only.
 
 Keep what you relay short. Never merge: a person lands changes.

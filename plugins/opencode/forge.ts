@@ -1,6 +1,6 @@
 /**
  * forge for OpenCode: registers the forge's MCP server and a `forge`
- * command (new, tell, status, decide, archive, undo, plan, preview, pulls, runs, log, asked). Set FORGE_URL, and FORGE_TOKEN too
+ * command (new, tell, status, decide, archive, undo, plan, preview, pulls, runs, log, asked, waves, held, forks). Set FORGE_URL, and FORGE_TOKEN too
  * to skip the OAuth sign-in.
  * No logic lives here: the tools are the forge's own (`docs/MCP.md`).
  */
@@ -21,6 +21,9 @@ const COMMAND = `Use the forge MCP tools for: $ARGUMENTS
 - runs <app>: call \`runs\` with repo; say, one line each, the running runs and the last three finished: kind, issue or pull number, state, how long (startedAt to endedAt, or to now).
 - log <app> <run>: call \`run_log\` with repo, run (the run id) and \`tail\` 40; relay the lines verbatim.
 - asked [app]: call \`asked\` with \`show\` \`all\`, and repo when an app is given; say, one line each, flagged ones first, what was asked (title and number), its state (waiting, building, shipped or closed), the pull that closes it and the \`outcomeText\` sentence, so a parked or failed ask says why.
+- waves <app>: call \`waves\` with repo; relay the newest three waves, one line each: version, date, headline. Read-only: it lands nothing.
+- held: call \`held\` with app = the app the conversation names; when none is named, ask which app before calling, since \`held\` needs one (never \`apply\`); say in two sentences how many themes the Later gate holds and which are done (the issues in \`approve\`). Read-only: never close or land anything.
+- forks <app>: call \`forks\` with repo and kind "chain"; say in two lines what it follows upstream (parent, grandparent, or none) and who follows it downstream (children, or none), noting a severed link. Read-only.
 Never merge: a person lands changes.`;
 
 export const Forge: Plugin = async () => ({
@@ -39,7 +42,7 @@ export const Forge: Plugin = async () => ({
     };
     config["command"] = {
       ...config["command"],
-      forge: { description: "New, tell, status, decide, archive, undo, plan, preview, pulls, runs, log or asked on your forge", template: COMMAND },
+      forge: { description: "New, tell, status, decide, archive, undo, plan, preview, pulls, runs, log, asked, waves, held or forks on your forge", template: COMMAND },
     };
   },
 });

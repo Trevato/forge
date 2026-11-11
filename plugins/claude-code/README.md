@@ -8,7 +8,7 @@ claude plugin marketplace add $FORGE_URL/plugins/claude-code/marketplace.json &&
 
 The forge serves that marketplace manifest (name `forge`, one plugin `forge`, fetched by Claude Code as the `plugins/claude-code` subdirectory of the forge's public source repository). Inside Claude Code, the same from the repository: `/plugin marketplace add $FORGE_URL/trevato/forge.git` then `/plugin install forge@forge`. Then set `FORGE_URL` (the forge's address, no trailing slash) in your environment. From a clone, `claude --plugin-dir plugins/claude-code` loads it locally instead. It registers the forge's MCP
 server and a `/forge` command: `new`, `tell`, `status`, `decide`, `archive`, `undo`, `plan`, `preview`,
-`pulls`, `runs`, `log`, `asked`.
+`pulls`, `runs`, `log`, `asked`, `waves`, `held`, `forks`.
 
 **Sign in (nothing to copy).** The `forge` server sends no Authorization header, so Claude Code takes the forge's OAuth sign-in: open `/mcp` in Claude Code, choose `forge`, and approve in the browser.
 
@@ -34,5 +34,7 @@ each, shipped ones included: one line per ask (what, waiting/building/shipped/cl
 the pull that closes it, and the outcome sentence: landed, who is building,
 parked and why, failed), flagged ones first, through MCP `asked` with
 `show: "all"`; with an app, only that app's asks.
+
+`/forge waves <app>` relays the app's newest three waves (version, date, headline), through MCP `waves`. `/forge held` says how many themes the Later gate holds and which are done, through MCP `held`; it only reads. `/forge forks <app>` says in two lines what the app follows upstream and who follows it downstream, through MCP `forks` with `kind: "chain"`. None of them lands or closes anything.
 
 `test/plugins.test.ts` fails when this plugin names an MCP tool the forge does not list, so a rename in `src/http/mcp.ts` cannot leave it behind.

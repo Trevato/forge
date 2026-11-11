@@ -2,6 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { toolNames } from "../src/http/mcp.ts";
+import { tool as heldTool } from "../src/http/mcp/tools/held.ts";
 import { tool as askedTool } from "../src/http/mcp/tools/asked.ts";
 import { ASKED_STATES, askedJson, type Asked } from "../src/core/asked.ts";
 
@@ -21,7 +22,7 @@ const opencodeText = (): string => {
 const backticked = (text: string): string[] => [...text.matchAll(/`([a-z][a-z0-9_]*)`/g)].map((m) => m[1]!);
 
 /** Backticked words that are the server or an argument, not a tool. */
-const NOT_TOOLS = new Set(["forge", "repo", "text", "context", "page", "run", "commit", "said", "action", "ship", "close", "status", "words", "id", "verb", "proposal", "approve", "later", "url", "tail", "name", "description", "show", "all", "outcomeText", "items", "operation", "archived", "kind", "undo"]);
+const NOT_TOOLS = new Set(["forge", "repo", "text", "context", "page", "run", "commit", "said", "action", "ship", "close", "status", "words", "id", "verb", "proposal", "approve", "later", "url", "tail", "name", "description", "show", "all", "outcomeText", "items", "operation", "archived", "kind", "undo", "app", "apply"]);
 
 /** Tools the command text tells the agent to call: every backticked name that is not an argument. */
 const toolsNamed = (text: string): string[] => [...new Set(backticked(text))].filter((n) => !NOT_TOOLS.has(n));
@@ -200,7 +201,7 @@ const verbDiff = (a: string, b: string): { onlyA: string[]; onlyB: string[] } =>
 
 describe("the two plugin commands offer the same verbs", () => {
   test("Claude Code and OpenCode have the same set", () => {
-    expect(verbsOf(claudeText())).toEqual(["archive", "asked", "decide", "log", "new", "plan", "preview", "pulls", "runs", "status", "tell", "undo"]);
+    expect(verbsOf(claudeText())).toEqual(["archive", "asked", "decide", "forks", "held", "log", "new", "plan", "preview", "pulls", "runs", "status", "tell", "undo", "waves"]);
     expect(verbDiff(claudeText(), opencodeText())).toEqual({ onlyA: [], onlyB: [] });
   });
 
@@ -209,6 +210,39 @@ describe("the two plugin commands offer the same verbs", () => {
     const missing = "- tell <app>: x\n- status: y";
     expect(verbDiff(full, missing)).toEqual({ onlyA: ["plan"], onlyB: [] });
     expect(verbDiff(missing, full)).toEqual({ onlyA: [], onlyB: ["plan"] });
+  });
+});
+
+describe("waves, held and forks reach the story, the Later gate and the fork chain", () => {
+  for (const [label, text] of [
+    ["Claude Code", claudeText],
+    ["OpenCode", opencodeText],
+  ] as const) {
+    test(`${label} names the three read tools, never applies, and lands nothing`, () => {
+      const t = text();
+      expect(toolsNamed(t)).toEqual(expect.arrayContaining(["waves", "held", "forks"]));
+      for (const tool of ["waves", "held", "forks"]) expect(tools.has(tool)).toBe(true);
+      for (const verb of ["waves <app>", "held", "forks <app>"]) {
+        const line = t.split("\n").find((l) => l.startsWith(`- ${verb}:`) || l.startsWith(`- \`${verb}\`:`))!;
+        expect(line).toContain("Read-only");
+      }
+      const heldLine = t.split("\n").find((l) => /^- `?held`?:/.test(l))!;
+      expect(heldLine).toContain("never");
+      expect(heldLine).toContain("`apply`");
+      expect(heldLine).toMatch(/when none is named, ask which app/);
+      expect(heldTool.inputSchema["required"]).toContain("app");
+      expect(t.split("\n").find((l) => /^- `?forks <app>/.test(l))).toContain("chain");
+    });
+  }
+
+  test("argument hint, description and both READMEs list them", () => {
+    expect(read("plugins/claude-code/commands/forge.md")).toMatch(/description:.*waves, held, forks/);
+    expect(read("plugins/claude-code/commands/forge.md")).toMatch(/argument-hint:.*waves <app> \| held \| forks <app>/);
+    expect(read("plugins/opencode/forge.ts")).toMatch(/description: "[^"]*waves, held or forks/);
+    for (const p of ["plugins/claude-code/README.md", "plugins/opencode/README.md"]) {
+      const r = read(p);
+      for (const v of ["`/forge waves <app>`", "`/forge held`", "`/forge forks <app>`"]) expect(r).toContain(v);
+    }
   });
 });
 
