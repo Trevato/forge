@@ -5,7 +5,7 @@ import { openapi } from "../src/contract/openapi.ts";
 const R = "/api/v1/repos/{owner}/{name}";
 
 test("runs, log, cancel, usage and spend are in the served document", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const want: [string, string][] = [
     ["get", `${R}/runs`],
     ["get", `${R}/runs/{id}`],

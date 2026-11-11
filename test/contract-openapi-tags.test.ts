@@ -4,7 +4,7 @@ import { TAG_WORDS, tagOf } from "../src/contract/tags.ts";
 import { openapiSliceText, TAGS } from "../src/contract/served.ts";
 
 type Doc = { tags: { name: string; description: string }[]; paths: Record<string, Record<string, { tags: string[] }>>; components: unknown; info: unknown };
-const doc = openapi("https://x.test", "v") as Doc;
+const doc = openapi("https://x.test", "v", "admin") as Doc;
 
 test("every operation carries exactly one tag, and every tag is listed with a line", () => {
   const listed = new Set(doc.tags.map((t) => t.name));
@@ -25,13 +25,13 @@ test("a path's tag is its resource", () => {
 });
 
 test("a slice keeps only its tag's operations and the rest of the document", () => {
-  const slice = JSON.parse(openapiSliceText("https://x.test", "v", "pulls").text) as Doc;
+  const slice = JSON.parse(openapiSliceText("https://x.test", "v", "pulls", "admin").text) as Doc;
   expect(slice.info).toEqual(doc.info);
   expect(slice.components).toEqual(doc.components);
   expect(slice.tags.map((t) => t.name)).toEqual(["pulls"]);
   const n = Object.values(slice.paths).flatMap((o) => Object.values(o)).length;
   expect(n).toBe(ROUTES.filter((r) => tagOf(r.path) === "pulls").length);
-  expect(openapiSliceText("https://x.test", "v", "pulls").text.length).toBeLessThan(40_000);
+  expect(openapiSliceText("https://x.test", "v", "pulls", "admin").text.length).toBeLessThan(40_000);
 });
 
 test("?tag= over HTTP: a slice, the whole, and a 400 naming the tags", async () => {
@@ -48,7 +48,9 @@ test("?tag= over HTTP: a slice, the whole, and a 400 naming the tags", async () 
   expect(bad.status).toBe(400);
   expect(((await bad.json()) as { message: string }).message).toContain(TAGS.join(", "));
   const whole = JSON.parse(await (await call("")).text()) as Doc;
-  expect(Object.keys(whole.paths).length).toBe(Object.keys(doc.paths).length);
+  // No account asked: the whole is the anonymous cut (#11286).
+  const anonymous = openapi("https://x.test", "v", "anonymous") as Doc;
+  expect(Object.keys(whole.paths).length).toBe(Object.keys(anonymous.paths).length);
   const one = JSON.parse(await (await call("?tag=pulls")).text()) as Doc;
   expect(Object.keys(one.paths).length).toBeLessThan(Object.keys(whole.paths).length);
 });

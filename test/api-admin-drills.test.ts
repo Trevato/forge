@@ -7,6 +7,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { adminOpenapi } from "./helpers/openapi-doc.ts";
 
 let dataDir = "";
 let app: App;
@@ -79,6 +80,6 @@ test("no token is 401", async () => {
 });
 
 test("openapi lists the route", async () => {
-  const doc = (await (await fetch(`${servers.url}/api/v1/openapi.json`)).json()) as any;
+  const doc = (await (await adminOpenapi(app, servers.url, "/api/v1/openapi.json")).json()) as any;
   expect(doc.paths["/api/v1/admin/drills"].get).toBeDefined();
 });

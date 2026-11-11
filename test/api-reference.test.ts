@@ -7,7 +7,7 @@ import { readSpec, rememberSpec } from "../src/apps/api_spec.ts";
 import { createApp, type App } from "../src/app.ts";
 import { narrow, reference, runnable } from "../src/contract/reference.ts";
 import { ROUTES } from "../src/contract/openapi.ts";
-import { createUser } from "../src/core/users.ts";
+import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { apiScreen, runGet } from "../src/tui/screens/api.ts";
@@ -48,13 +48,26 @@ describe("the API reference", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  test("every route in the contract appears on /api, with no script and no CDN", async () => {
+  const anchor = (r: (typeof ROUTES)[number]): string => `id="${r.method}${r.path.replace(/[^A-Za-z0-9]+(.)?/g, (_, c: string | undefined) => (c ?? "").toUpperCase())}"`;
+
+  test("every route in the contract appears on /api to an admin, with no script and no CDN", async () => {
+    const res = await get("/api", { cookie });
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    for (const r of ROUTES) expect(body).toContain(anchor(r));
+    expect(body).toContain("<details");
+    expect(body).not.toMatch(/https?:\/\/(?!localhost|127\.0\.0\.1)[a-z.]*cdn/i);
+  });
+
+  test("/api read signed out shows only the anonymous rows: no admin path (#11286)", async () => {
     const res = await get("/api");
     expect(res.status).toBe(200);
     const body = await res.text();
-    for (const r of ROUTES) expect(body).toContain(`id="${r.method}${r.path.replace(/[^A-Za-z0-9]+(.)?/g, (_, c: string | undefined) => (c ?? "").toUpperCase())}"`);
-    expect(body).toContain("<details");
-    expect(body).not.toMatch(/https?:\/\/(?!localhost|127\.0\.0\.1)[a-z.]*cdn/i);
+    const admin = ROUTES.filter((r) => r.role === "admin");
+    expect(admin.length).toBeGreaterThan(0);
+    for (const r of admin) expect(body, r.path).not.toContain(anchor(r));
+    for (const r of ROUTES.filter((r) => r.role === "member")) expect(body, r.path).not.toContain(anchor(r));
+    for (const r of ROUTES.filter((r) => r.role === "anonymous")) expect(body, r.path).toContain(anchor(r));
   });
 
   test("the search narrows by a word and says how many matched", async () => {
@@ -112,10 +125,23 @@ describe("the API reference", () => {
     tui.start();
     tui.ctx.push(apiScreen(session, tui.ctx));
     await settleApp(tui);
-    expect(tui.screen.toText()).toContain("operations");
+    // A guest at the terminal reads what a signed-out page does (#11286).
+    expect(tui.screen.toText()).toContain(`${ROUTES.filter((r) => r.role === "anonymous").length} operations`);
     const answer = await runGet(session, "/api/v1/openapi.json");
     expect(answer.status).toBe(200);
     expect(answer.body).toContain('"openapi"');
+  });
+
+  test("the terminal's API screen shows an admin every operation (#11286)", async () => {
+    const terminal = headlessTerminal(120, 30);
+    const user = getUserByName(app.db, "alice")!;
+    expect(user.isAdmin).toBe(true);
+    const identity = { sshUsername: "git", remoteAddress: "127.0.0.1", fingerprint: "SHA256:admin", user };
+    const { app: tui, session } = createForgeApp(app, identity, { terminal, exitHooks: false });
+    tui.start();
+    tui.ctx.push(apiScreen(session, tui.ctx));
+    await settleApp(tui);
+    expect(tui.screen.toText()).toContain(`${ROUTES.length} operations`);
   });
 
   test("readSpec stops reading a body past the cap instead of buffering it", async () => {

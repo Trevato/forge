@@ -17,6 +17,7 @@ import { getBillingLinks, parseBillingLinks, sizeWords } from "../src/settings/b
 import { quietLogs } from "./helpers/globals.ts";
 import { mcpTool } from "./helpers/mcp.ts";
 import { promote } from "./helpers/members.ts";
+import { adminOpenapi } from "./helpers/openapi-doc.ts";
 
 quietLogs();
 
@@ -237,6 +238,6 @@ test("PUT /api/v1/admin/billing/links replaces the links; a member and a bad lin
   expect(getBillingLinks(app.db)).toEqual(LINKS);
   await put(adminToken, {});
   expect(getBillingLinks(app.db)).toEqual({});
-  const spec = await (await fetch(`${servers.url}/api/v1/openapi.json`)).text();
+  const spec = await (await adminOpenapi(app, servers.url, "/api/v1/openapi.json")).text();
   expect(spec).toContain("/api/v1/admin/billing/links");
 });

@@ -34,6 +34,7 @@ import { promote } from "./helpers/members.ts";
 import { showBoard } from "../src/actions/boards.ts";
 import { panelData } from "../src/boards/panel_data.ts";
 import { listVia } from "./mcp-list.ts";
+import { adminOpenapi } from "./helpers/openapi-doc.ts";
 
 /** tools/list's order: the tools by name, then `report`. */
 const sortedThenReport = (names: string[]): string[] => [
@@ -1589,14 +1590,14 @@ describe("the forge over MCP", () => {
   });
 
   test("GET /contract/openapi.json describes the public API", async () => {
-    const res = await fetch(`${base}/contract/openapi.json`);
+    const res = await adminOpenapi(app, base, "/contract/openapi.json");
     expect(res.status).toBe(200);
     const doc = (await res.json()) as any;
     expect(doc.openapi).toBe("3.1.0");
     expect(doc.paths["/mcp"].post).toBeDefined();
   });
   test("GET /contract/openapi.json serves the triage routes", async () => {
-    const doc = (await (await fetch(`${base}/contract/openapi.json`)).json()) as any;
+    const doc = (await (await adminOpenapi(app, base, "/contract/openapi.json")).json()) as any;
     const R = "/api/v1/repos/{owner}/{name}";
     expect(doc.paths[`${R}/issues/{number}/teams`].get).toBeDefined();
     expect(doc.paths[`${R}/issues/{number}/teams`].put).toBeDefined();

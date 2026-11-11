@@ -70,7 +70,7 @@ const PINNED: Readonly<Record<string, "anonymous" | "member" | "admin">> = {
 };
 
 test("every operation names its role, as the pinned list says", () => {
-  const doc = openapi("https://x.test", "0") as { paths: Record<string, Record<string, { "x-role": string }>> };
+  const doc = openapi("https://x.test", "0", "admin") as { paths: Record<string, Record<string, { "x-role": string }>> };
   const byKey = new Map(ROUTES.map((r) => [`${r.method.toUpperCase()} ${r.path.replace(/\{owner\}\/\{name\}/, "{owner}/{name}")}`, r]));
   for (const [k, role] of Object.entries(PINNED)) {
     const r = byKey.get(k);

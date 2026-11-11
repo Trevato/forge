@@ -18,6 +18,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { mcpTool } from "./helpers/mcp.ts";
+import { adminOpenapi } from "./helpers/openapi-doc.ts";
 
 quietLogs();
 
@@ -132,7 +133,7 @@ describe("the crew's work right now over the API and MCP", () => {
   });
 
   test("openapi lists the route", async () => {
-    const doc = (await (await fetch(`${servers.url}/api/v1/openapi.json`)).json()) as any;
+    const doc = (await (await adminOpenapi(app, servers.url, "/api/v1/openapi.json")).json()) as any;
     expect(doc.paths["/api/v1/crew/now"].get).toBeDefined();
   });
 });

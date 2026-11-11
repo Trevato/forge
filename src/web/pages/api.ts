@@ -9,7 +9,8 @@ import { knownSpec, refreshSpec } from "../../apps/api_spec.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { appView } from "../../actions/apps.ts";
 import { narrow, reference, type Area } from "../../contract/reference.ts";
-import { openapiText } from "../../contract/served.ts";
+import { openapiText, roleOf } from "../../contract/served.ts";
+import type { Role } from "../../contract/openapi/shared.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { canEnterApp } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -24,17 +25,20 @@ const MAX_QUERY = 100;
 const asked = (ctx: Ctx): string => (ctx.url.searchParams.get("q") ?? "").trim().slice(0, MAX_QUERY);
 const count = (areas: readonly Area[]): number => areas.reduce((n, a) => n + a.operations.length, 0);
 
-/** The forge's reading, once per build of the document. */
+/**
+ * The forge's reading as `role` may see it (#11286): the same cut the
+ * document gets, once per build of it and per role.
+ */
 const forgeAreas = (() => {
-  let tag = "";
-  let areas: Area[] = [];
-  return (origin: string): Area[] => {
-    const hit = openapiText(origin, running().version);
-    if (hit.etag !== tag) {
-      areas = reference(JSON.parse(hit.text));
-      tag = hit.etag;
+  const read = new Map<Role, { tag: string; areas: Area[] }>();
+  return (origin: string, role: Role): Area[] => {
+    const hit = openapiText(origin, running().version, role);
+    let held = read.get(role);
+    if (held?.tag !== hit.etag) {
+      held = { tag: hit.etag, areas: reference(JSON.parse(hit.text)) };
+      read.set(role, held);
     }
-    return areas;
+    return held.areas;
   };
 })();
 
@@ -44,11 +48,11 @@ export function apiPage(ctx: Ctx): Response {
   if (prefersJson(ctx.request)) return noRoute(ctx.request.method, ctx.url.pathname);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const query = asked(ctx);
-  const all = timePhase(ctx.request, "spec", () => forgeAreas(ctx.url.origin));
+  const all = timePhase(ctx.request, "spec", () => forgeAreas(ctx.url.origin, roleOf(ctx.auth)));
   const rendering = performance.now();
   const body = html`<div class="page-head"><h1>API</h1></div>
     <p class="muted">
-      Every route the forge names to an agent. <a href="/contract/openapi.json">The OpenAPI document</a>, as JSON.
+      Every route the forge names to you: a signed-out reader sees the ones open to anyone. <a href="/contract/openapi.json">The OpenAPI document</a>, as JSON.
       Try it sends the request as you; paste a token to send it as that token instead.
     </p>
     ${referenceBody({ areas: narrow(all, query), total: count(all), query, action: "/api", tryable: true })}`;

@@ -15,6 +15,7 @@ import { createUser } from "../src/core/users.ts";
 import { listSources } from "../src/data/sources.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { adminOpenapi } from "./helpers/openapi-doc.ts";
 
 quietLogs();
 
@@ -157,7 +158,7 @@ test("a cross-origin session post is refused with a 403; the same-origin one run
 });
 
 test("the spec lists all four routes", async () => {
-  const spec = (await (await fetch(`${servers.url}/api/v1/openapi.json`, { redirect: "follow" })).json()) as any;
+  const spec = (await (await adminOpenapi(app, servers.url, "/api/v1/openapi.json")).json()) as any;
   const paths = Object.keys(spec.paths);
   for (const p of ["/data", "/data/{env}/{file}/tables", "/data/{env}/{file}/rows", "/data/{env}/{file}/query"])
     expect(paths).toContain(`/api/v1/repos/{owner}/{name}${p}`);

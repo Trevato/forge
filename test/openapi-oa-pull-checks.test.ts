@@ -5,7 +5,7 @@ import { openapi } from "../src/contract/openapi.ts";
 const P = "/api/v1/repos/{owner}/{name}/pulls/{number}/checks";
 
 test("GET and POST …/pulls/{number}/checks are described", () => {
-  const paths = openapi("http://x", "1").paths as Record<string, Record<string, any>>;
+  const paths = openapi("http://x", "1", "admin").paths as Record<string, Record<string, any>>;
   expect(paths[P]?.get?.summary).toContain("checks");
   expect(paths[P]?.post?.responses?.["202"]).toBeDefined();
   expect(paths[P]?.get?.security).toEqual([]);

@@ -25,7 +25,7 @@ const WANT: readonly (readonly [string, string])[] = [
 ];
 
 test("each repository path and method is in the document", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   for (const [method, path] of WANT) expect(doc.paths[path]?.[method], `${method} ${path}`).toBeDefined();
   expect(doc.paths["/api/v1/repos"].post.responses["201"]).toBeDefined();
 });
@@ -73,7 +73,7 @@ async function call(method: string, path: string, body: unknown): Promise<{ stat
 }
 
 function documented(method: string, path: string, code: string): void {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   expect(doc.paths[path][method].responses.default.description).toContain(`\`${code}\``);
 }
 

@@ -11,6 +11,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { adminOpenapi } from "./helpers/openapi-doc.ts";
 
 quietLogs();
 
@@ -95,6 +96,6 @@ test("refusals: agent, scope, bad URL, bad body, cross-site, anonymous", async (
 });
 
 test("the OpenAPI document lists both", async () => {
-  const doc = (await (await fetch(`${servers.url}/api/v1/openapi.json`)).json()) as { paths: Record<string, Record<string, unknown>> };
+  const doc = (await (await adminOpenapi(app, servers.url, "/api/v1/openapi.json")).json()) as { paths: Record<string, Record<string, unknown>> };
   expect(Object.keys(doc.paths["/api/v1/user/notify"] ?? {}).sort()).toEqual(["get", "put"]);
 });

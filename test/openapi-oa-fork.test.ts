@@ -23,6 +23,6 @@ const WANT: readonly [string, string][] = [
 ];
 
 test("each fork-tree path and method is in the document", () => {
-  const paths = openapi("http://x", "1").paths as Record<string, Record<string, unknown>>;
+  const paths = openapi("http://x", "1", "admin").paths as Record<string, Record<string, unknown>>;
   for (const [method, path] of WANT) expect(paths[path]?.[method]).toBeDefined();
 });

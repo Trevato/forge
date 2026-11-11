@@ -8,6 +8,7 @@ import { addSubscription } from "../src/core/subscriptions.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { adminOpenapi } from "./helpers/openapi-doc.ts";
 
 const SECRET = "sk-ant-api03-seeded-secret-text-0123456789abcdef";
 let dataDir = "";
@@ -74,6 +75,6 @@ test("a member is 403 not_admin, no token is 401", async () => {
 });
 
 test("openapi lists the route", async () => {
-  const doc = (await (await fetch(`${servers.url}/api/v1/openapi.json`)).json()) as any;
+  const doc = (await (await adminOpenapi(app, servers.url, "/api/v1/openapi.json")).json()) as any;
   expect(doc.paths["/api/v1/admin/subscriptions"].get).toBeDefined();
 });

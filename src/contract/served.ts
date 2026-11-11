@@ -1,33 +1,44 @@
 /**
- * The OpenAPI document as `/contract/openapi.json` serves it: built once per
- * origin and version, tagged by its own bytes, answered 304 to that tag.
+ * The OpenAPI document as `/contract/openapi.json` serves it: cut to the
+ * caller's role (anonymous, member, admin), built once per origin, version
+ * and role, tagged by its own bytes, answered 304 to that tag.
  */
 
 import { encodeOnce, negotiate } from "../http/compress.ts";
 import { holds, weakEtag } from "../http/etag.ts";
-import type { Handler } from "../http/context.ts";
+import type { Auth, Handler } from "../http/context.ts";
 import type { Router } from "../http/router.ts";
 import { running } from "../kernel/version.ts";
 import { openapi, ROUTES } from "./openapi.ts";
+import type { Role } from "./openapi/shared.ts";
 import { tagList, tagOf } from "./tags.ts";
 
 const MAX = 8;
 /** The tags the document lists. */
 export const TAGS: readonly string[] = tagList(ROUTES.map((r) => tagOf(r.path))).map((t) => t.name);
+const ROLES = 3;
 const built = new Map<string, { text: string; etag: string }>();
 
+/** The role the asker holds: no account is anonymous, a site admin is admin, any other account a member. */
+export function roleOf(auth: Pick<Auth, "user"> | undefined): Role {
+  const user = auth?.user;
+  return user === undefined ? "anonymous" : user.isAdmin ? "admin" : "member";
+}
+
 /**
- * The document and its tag. The origin comes from the request, so the map
- * is bounded; the oldest entry goes first. The tag hashes the text, so a
- * build without a version stamp still changes it when the contract does.
+ * The document and its tag, for `role`: every caller names the role it
+ * serves, so nothing reads the whole document by default. The origin comes from the request,
+ * so the map is bounded; the oldest entry goes first. The tag hashes the
+ * text, so it differs per role, and a build without a version stamp still
+ * changes it when the contract does.
  */
-export function openapiText(origin: string, version: string): { text: string; etag: string } {
-  const key = `${version}\n${origin}`;
+export function openapiText(origin: string, version: string, role: Role): { text: string; etag: string } {
+  const key = `${version}\n${origin}\n${role}`;
   let hit = built.get(key);
   if (!hit) {
-    const text = JSON.stringify(openapi(origin, version));
+    const text = JSON.stringify(openapi(origin, version, role));
     hit = { text, etag: weakEtag(text) };
-    if (built.size >= MAX) built.delete(built.keys().next().value as string);
+    if (built.size >= MAX * ROLES) built.delete(built.keys().next().value as string);
     built.set(key, hit);
   }
   return hit;
@@ -36,14 +47,14 @@ export function openapiText(origin: string, version: string): { text: string; et
 /**
  * One tag's slice: the same document with only the paths (and operations)
  * carrying the tag, and the tag list cut to it. Info, servers, security and
- * components are unchanged. Built per (origin, version, tag); the tag has
- * been checked against the list, so the cache is bounded by it.
+ * components are unchanged. Built per (origin, version, role, tag); the tag
+ * has been checked against the list, so the cache is bounded by it.
  */
-export function openapiSliceText(origin: string, version: string, tag: string): { text: string; etag: string } {
-  const key = `${version}\n${origin}\n${tag}`;
+export function openapiSliceText(origin: string, version: string, tag: string, role: Role): { text: string; etag: string } {
+  const key = `${version}\n${origin}\n${role}\n${tag}`;
   let hit = built.get(key);
   if (!hit) {
-    const doc = openapi(origin, version) as { paths: Record<string, Record<string, { tags: string[] }>>; tags: { name: string }[] };
+    const doc = openapi(origin, version, role) as { paths: Record<string, Record<string, { tags: string[] }>>; tags: { name: string }[] };
     const paths: typeof doc.paths = {};
     for (const [path, ops] of Object.entries(doc.paths)) {
       const kept = Object.entries(ops).filter(([, op]) => op.tags.includes(tag));
@@ -51,7 +62,7 @@ export function openapiSliceText(origin: string, version: string, tag: string): 
     }
     const text = JSON.stringify({ ...doc, tags: doc.tags.filter((t) => t.name === tag), paths });
     hit = { text, etag: weakEtag(text) };
-    if (built.size >= MAX * 4) built.delete(built.keys().next().value as string);
+    if (built.size >= MAX * 4 * ROLES) built.delete(built.keys().next().value as string);
     built.set(key, hit);
   }
   return hit;
@@ -66,8 +77,14 @@ export function openapiRoute(router: Router<Handler>): void {
         { status: 400, headers: { "cache-control": "no-store" } },
       );
     }
-    const hit = tag === null ? openapiText(ctx.url.origin, running().version) : openapiSliceText(ctx.url.origin, running().version, tag);
-    const headers = { "cache-control": "public, max-age=300", etag: hit.etag, vary: "accept-encoding" };
+    const role = roleOf(ctx.auth);
+    const hit = tag === null ? openapiText(ctx.url.origin, running().version, role) : openapiSliceText(ctx.url.origin, running().version, tag, role);
+    // The document depends on who asks: a shared cache keeps only the anonymous one.
+    const headers = {
+      "cache-control": role === "anonymous" ? "public, max-age=300" : "private, max-age=300",
+      etag: hit.etag,
+      vary: "accept-encoding, authorization, cookie",
+    };
     if (holds(ctx.request, hit.etag)) return new Response(null, { status: 304, headers });
     const type = { "content-type": "application/json", ...headers };
     // Encoded once per build at the slow, small level, not per request.
