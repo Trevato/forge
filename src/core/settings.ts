@@ -10,6 +10,9 @@ import type { Database } from "bun:sqlite";
 
 const MAX_VALUE = 200;
 
+/** The setting that says the preview admin was seeded: only a preview has it. */
+export const PREVIEW_SEEDED = "preview_seeded";
+
 export function getUserSetting(
   db: Database,
   userId: string,

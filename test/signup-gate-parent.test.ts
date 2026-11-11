@@ -118,7 +118,7 @@ test("every caller of createUser says where its account comes from", async () =>
     "src/chaos/world.ts": ["seed"],
     "src/packs/mirror.ts": ["seed"],
     "src/packs/up.ts": ["seed"],
-    "src/spawn/preview-seed.ts": ["seed", "seed"],
+    "src/spawn/preview-seed.ts": ["seed", "seed", "seed"],
     "src/spawn/starter_crew.ts": ["spawn"],
     "src/web/pages/claim.ts": ["claim"],
     "src/web/pages/everyday.ts": ["everyday"],

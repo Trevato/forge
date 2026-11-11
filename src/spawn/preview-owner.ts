@@ -15,7 +15,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { App } from "../app.ts";
 import type { User } from "../core/users.ts";
-import { isPreviewEnv, previewAdmin } from "./preview-seed.ts";
+import { PREVIEW_NEWCOMER } from "./preview-looks.ts";
+import { isPreviewEnv, previewAdmin, previewNewcomer } from "./preview-seed.ts";
 
 type Env = Record<string, string | undefined>;
 
@@ -45,8 +46,9 @@ export function previewOwner(
     return undefined;
   const parts = identity.split("|");
   if (parts.length !== 4) return undefined;
-  const [, , role, expires] = parts as [string, string, string, string];
+  const [, name, role, expires] = parts as [string, string, string, string];
   if (role !== "admin" || !/^\d+$/.test(expires) || Number(expires) <= now)
     return undefined;
-  return previewAdmin(app);
+  // The parent's looks of the first screen are taken as the newcomer (#11285).
+  return name === PREVIEW_NEWCOMER ? previewNewcomer(app) : previewAdmin(app);
 }

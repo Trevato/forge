@@ -62,7 +62,7 @@ import { getPull } from "../core/pulls.ts";
 import { frontPicks } from "../core/front.ts";
 import { getRepoById } from "../core/repos.ts";
 import { getUserById } from "../core/users.ts";
-import { ownerLooksFor } from "../spawn/preview-looks.ts";
+import { ownerLooksFor, PREVIEW_NEWCOMER } from "../spawn/preview-looks.ts";
 import { thumbnail } from "../design/image/image.ts";
 import { decodePng, encodePng, pngHeader } from "../design/image/png.ts";
 import { createLog } from "../kernel/log.ts";
@@ -408,6 +408,9 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         ? undefined
         : { id: owner.id, name: owner.username, role: "admin" };
     const host = runtime.hostFor(record.slug, item.env);
+    const newcomer: GrantWho = { id: PREVIEW_NEWCOMER, name: PREVIEW_NEWCOMER, role: "admin" };
+    const isNewcomerLook = (page: string): boolean =>
+      ownerLooks.some((l) => l.page === page && l.as === "newcomer");
     let allOk = true;
     for (const { page, kind, theme } of wanted) {
       if (stopped) return;
@@ -416,7 +419,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         { app: record, env: item.env },
         GRANT_TTL_MS,
         Date.now(),
-        asNobody(kind, page) ? undefined : asOwner,
+        asNobody(kind, page) ? undefined : isNewcomerLook(page) ? newcomer : asOwner,
       );
       const url = `http://${host}:${port}/__forge/grant?t=${encodeURIComponent(token)}&to=${encodeURIComponent(page)}`;
       const path = lookPath(item.appId, item.env, item.commitOid, page, kind, theme);

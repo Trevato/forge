@@ -13,7 +13,7 @@ import type { App } from "../app.ts";
 import { spawnedOrg } from "../spawn/claim.ts";
 import { adminOf, everydayOf, keptAdmin } from "./everyday.ts";
 import { listReposByOwner, type Repo } from "./repos.ts";
-import { getUserSetting, setUserSetting } from "./settings.ts";
+import { PREVIEW_SEEDED, getUserSetting, setUserSetting } from "./settings.ts";
 import { getUserById, type User } from "./users.ts";
 
 export type StepKey = "everyday" | "apps" | "tell";
@@ -45,6 +45,9 @@ export async function nextStepsFor(
   if (!user) return undefined;
   const owner = ownerFor(app, user);
   if (!owner) return undefined;
+  // The preview admin is a site admin of a seeded world, not a newcomer: its
+  // home stays the full one though the preview has a parent.json (#11285).
+  if (getUserSetting(app.db, owner.id, PREVIEW_SEEDED) !== undefined) return undefined;
   if ((await spawnedOrg(app)) === undefined) return undefined;
   const daily = everydayOf(app.db, owner);
   const people = [owner.id, ...(daily ? [daily.id] : [])];
