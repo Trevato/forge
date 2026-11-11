@@ -8,7 +8,7 @@
 import { cutWaveFor, planCutFor } from "../../actions/cut_wave.ts";
 import { canRead, getRepo } from "../../core/repos.ts";
 import { VERSION } from "../../story/wave.ts";
-import { movedForViewer, type MovedMilestone } from "../../story/wave_moved.ts";
+import { movedWithPulls, waveProgress, type MovedMilestone } from "../../story/wave_moved.ts";
 import { milestonePath, planNow } from "../../story/wave_plan.ts";
 import { repoBase } from "../../web/chrome.ts";
 import { carriedPulls, pullPath, type CarriedPull } from "../../story/wave_pulls.ts";
@@ -45,7 +45,7 @@ const plain = (s: string): string =>
   s.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]+/g, " ");
 
 /** A moved milestone with the path that opens it. */
-export type MovedLine = MovedMilestone & { path: string };
+export type MovedLine = MovedMilestone & { path: string; pulls?: number[] };
 
 /** One wave as lines of plain text: headline, version and date, highlights with why, then the pulls the viewer may see. */
 export function waveLines(
@@ -60,6 +60,7 @@ export function waveLines(
   return [
     plain(w.headline),
     `${plain(w.version)}  ${plain(w.date)}`,
+    ...(moved.length === 0 ? [] : [plain(waveProgress(moved))]),
     "",
     "Highlights",
     ...w.highlights.map((h) => `  ${plain(h.title)} - ${plain(h.why)}`),
@@ -71,6 +72,10 @@ export function waveLines(
           ...moved.flatMap((m) => [
             `  ${plain(m.title)} - ${m.done} of ${m.total} done`,
             `    ${plain(m.path)}`,
+            ...(m.pulls ?? []).flatMap((n) => {
+              const p = pulls.find((x) => x.number === n);
+              return p === undefined ? [] : [`    #${p.number} ${plain(p.title)}`];
+            }),
           ]),
           "",
         ]),
@@ -170,7 +175,7 @@ export function wavesScreen(f: Session, ctx: Ctx, src: RepoSource): Screen {
       const pulls = one.ok ? carriedPulls(f.db, pullRefs(one.wave), f.user) : [];
       // Same list as the page, from the same function, with the same gate.
       const moved = one.ok
-        ? movedForViewer({
+        ? movedWithPulls({
             db: f.db,
             repo,
             refs: pullRefs(one.wave),

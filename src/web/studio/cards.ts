@@ -176,6 +176,7 @@ export function cardFor(
     const repo = text(obj(value)["repo"]);
     const pulls = list(w["pulls"]).map(text);
     rows.push({ label: "Headline", value: text(w["headline"]) });
+    if (text(w["progress"]) !== "") rows.push({ label: "Progress", value: text(w["progress"]) });
     for (const h of list(w["highlights"]).map(obj).slice(0, LIMIT))
       rows.push({ label: text(h["title"]), value: text(h["why"]) });
     if (pulls.length > 0)

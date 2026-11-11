@@ -11,6 +11,10 @@ A wave names the pulls it carries. You can go from the wave to a pull, to its co
 
 The `from` value is checked against the shape of a wave address before it is used; anything else shows no breadcrumb.
 
+## How far the wave got
+
+When a wave's pulls closed issues under a milestone, the wave opens as its headline, then one progress line (`<milestone>: 1 of 2 done`, the widest milestone it moved), then the highlights. Under **Moved** each change is a closed fold: tap it to see the pulls of this wave that moved it, and a link to the milestone. Pulls no fold holds (another repository's, or ones that closed no milestone issue) are listed under **Pulls**; each pull is said once. A wave that moved no milestone has no progress line. The MCP `waves` tool says the same line as `progress`, and the terminal prints it under the date, with each moved milestone's pulls beneath it. Tested in `test/wave-folds.test.ts` and `test/tui-waves.test.ts`.
+
 ## In the terminal
 
 1. Open a repository's Waves screen and press Enter on a wave.

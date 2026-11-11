@@ -229,6 +229,9 @@ describe("waves in the terminal", () => {
     owner.stop();
     expect(owner.text).toContain("Moved");
     expect(owner.text).toContain("Open goal - 1 of 2 done");
+    // the progress line under the date, and the pull under the milestone it moved
+    expect(owner.text).toContain("Open goal: 1 of 2 done");
+    expect(owner.text).toMatch(/milestones\/\d+\n\s+#\d+ Part A work/);
     expect(owner.text).toContain(`/alice/ms/milestones/${goal.number}`);
     expect(owner.text).not.toContain("Hidden goal");
     const outsider = await open(bob, repo, ["enter"]);
