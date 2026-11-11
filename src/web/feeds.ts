@@ -22,6 +22,10 @@ import { getIssuesByRef } from "../core/issues.ts";
 import { canRead, forkParentFor, getRepo, repoDatesFor } from "../core/repos.ts";
 import { explore, type ExploreQuery, type ExploreRow } from "../actions/explore.ts";
 import { getUsersByIds } from "../core/users.ts";
+import { pullRefs, readWaves, wavePath } from "../story/waves.ts";
+import type { Wave } from "../story/wave.ts";
+import { refTip } from "../git/read.ts";
+import { repoDir } from "../git/repos.ts";
 import { shippedAnswer } from "../release/answer.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../core/route_timing.ts";
 import type { Ctx } from "../http/context.ts";
@@ -196,6 +200,35 @@ ${entries.join("\n")}
 
 const CHANGELOG_ENTRIES = 30;
 
+/** Waves by the forge repository's default-branch tip, so the common request reads no files. */
+const waveCache = new Map<string, Wave[]>();
+
+/**
+ * The forge's own waves, newest first, and the tip they were read at (the
+ * part of the feed's tag that the waves own). A repository with no waves, or
+ * any failure reading them, is no waves: the feed falls back, never errors.
+ */
+async function ownWaves(ctx: Ctx): Promise<{ tip: string; waves: Wave[] }> {
+  try {
+    const [owner = "", name = ""] = (ctx.app.config.forgeRepo ?? "").split("/");
+    const repo = owner && name ? getRepo(ctx.app.db, owner, name) : undefined;
+    if (repo === undefined || repo.visibility !== "public") return { tip: "", waves: [] };
+    const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
+    const tip = (await refTip(dir, `refs/heads/${repo.defaultBranch}`)) ?? "";
+    if (tip === "") return { tip, waves: [] };
+    const key = `${dir}@${tip}`;
+    let waves = waveCache.get(key);
+    if (waves === undefined) {
+      waves = (await readWaves(dir, repo.defaultBranch)).flatMap((e) => (e.ok ? [e.wave] : []));
+      if (waveCache.size > 8) waveCache.clear();
+      waveCache.set(key, waves);
+    }
+    return { tip, waves };
+  } catch {
+    return { tip: "", waves: [] };
+  }
+}
+
 /**
  * The weak tag of a changelog answer: the live version, the rows' repo,
  * number, title and time, and `scope` (the chosen repo, the viewer when the
@@ -220,17 +253,40 @@ export async function changelogAtom(ctx: Ctx): Promise<Response> {
   const answer = await timePhaseAsync(ctx.request, "releases", () => shippedAnswer(ctx.app));
   const origin = ctx.url.origin;
   const live = answer.live.slice(0, CHANGELOG_ENTRIES);
-  const etag = changelogTag(answer.version, live);
+  const { tip, waves } = await timePhaseAsync(ctx.request, "waves", () => ownWaves(ctx));
+  const [ownerName = "", repoName = ""] = (ctx.app.config.forgeRepo ?? "").split("/");
+  const etag = changelogTag(answer.version, live, [tip]);
   const headers = { etag, "cache-control": "public, max-age=300" };
   if (holds(ctx.request.headers.get("if-none-match"), etag)) return new Response(null, { status: 304, headers });
-  const entries = live.map((l) => {
+  const waveOf = new Map<string, Wave>();
+  for (const w of waves)
+    for (const r of pullRefs(w)) {
+      const k = `${r.owner}/${r.name}#${r.number}`;
+      if (!waveOf.has(k)) waveOf.set(k, w);
+    }
+  const told = new Set<string>();
+  const entries = live.flatMap((l) => {
+    const wave = waveOf.get(`${l.repo}#${l.number}`);
+    if (wave !== undefined) {
+      // One entry per wave, at its newest landing: the story is told once.
+      if (told.has(wave.version)) return [];
+      told.add(wave.version);
+      const summary = wave.highlights.map((h) => `${h.title.trim()}: ${h.why.trim()}`).join(" · ");
+      return [`  <entry>
+    <id>urn:forge:wave:${xml(`${ownerName}/${repoName}@${wave.version}`)}</id>
+    <title>${xml(wave.headline.trim())}</title>
+    <updated>${xml(stamp(l.at))}</updated>
+    <link rel="alternate" type="text/html" href="${xml(`${origin}${wavePath(ownerName, repoName, wave.version)}`)}"/>
+    <summary>${xml(summary)}</summary>
+  </entry>`];
+    }
     const link = `${origin}/${l.repo}/pulls/${l.number}`;
-    return `  <entry>
+    return [`  <entry>
     <id>urn:forge:landing:${xml(l.repo)}#${l.number}</id>
     <title>${xml(`Went live: ${plainTitle(l.title)}`)}</title>
     <updated>${xml(stamp(l.at))}</updated>
     <link rel="alternate" type="text/html" href="${xml(link)}"/>
-  </entry>`;
+  </entry>`];
   });
   const updated = live[0]?.at ?? STARTED;
   const body = `<?xml version="1.0" encoding="utf-8"?>
