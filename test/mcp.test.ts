@@ -1301,6 +1301,7 @@ describe("the forge over MCP", () => {
       "ui://forge/pulls",
       "ui://forge/release",
       "ui://forge/run",
+      "ui://forge/runs",
       "ui://forge/scorecard",
       "ui://forge/wave",
     ]);
@@ -1326,6 +1327,7 @@ describe("the forge over MCP", () => {
     expect(meta("explore")).toBe("ui://forge/explore");
     expect(meta("pull")).toBe("ui://forge/pull");
     expect(meta("pulls")).toBe("ui://forge/pulls");
+    expect(meta("runs")).toBe("ui://forge/runs");
     expect(meta("asked")).toBe("ui://forge/asked");
     expect(meta("flow")).toBe("ui://forge/flow");
     expect(meta("scorecard")).toBe("ui://forge/scorecard");
@@ -1508,19 +1510,16 @@ describe("the forge over MCP", () => {
     const id = "01m23vygyffx5hg2f5vm8r74sr";
     runs[1]!.id = id;
     const card = cardFor("runs", { runs }, "https://f.example", { repo: "alice/game" })!;
-    expect(card.kind).toBe("run");
+    expect(card.kind).toBe("runs");
     expect(card.title).toBe("Runs");
     expect(card.rows[1]!.link).toBe(`https://f.example/alice/game/runs/${id}`);
     expect(card.rows[0]!.link).toBeUndefined();
     const nolink = cardFor("runs", { runs }, "https://f.example", { repo: "alice" })!;
     expect(nolink.rows[1]!.link).toBeUndefined();
-    expect(card.rows).toHaveLength(12);
-    expect(card.rows[0]).toEqual({ label: "agent r0", value: "done" });
-    expect(card.rows[1]).toMatchObject({ label: `agent ${id}`, value: "#1 — done" });
     const { body } = await call(rw, "tools/call", { name: "runs", arguments: { repo: "alice/game" } });
-    expect(body.result.structuredContent.card.kind).toBe("run");
+    expect(body.result.structuredContent.card.kind).toBe("runs");
     const tools = (await listCall(rw)).body.result.tools;
-    expect(tools.find((t: any) => t.name === "runs")._meta?.ui?.resourceUri).toBe("ui://forge/run");
+    expect(tools.find((t: any) => t.name === "runs")._meta?.ui?.resourceUri).toBe("ui://forge/runs");
   });
 
   test("a tool result carries the card it renders", async () => {

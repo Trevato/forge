@@ -11,7 +11,7 @@ import { html, raw } from "../html.ts";
 import { timeAgo } from "../ui.ts";
 import { span, STAGE_LABEL, verdict, type PipelineKey, type PipelineStage } from "../../flow/pipeline.ts";
 
-export type CardKind = "app" | "run" | "asks" | "wave" | "map" | "feed" | "pull" | "pulls" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones" | "release";
+export type CardKind = "app" | "run" | "asks" | "wave" | "map" | "feed" | "pull" | "pulls" | "runs" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones" | "release";
 
 export interface CardRow {
   readonly label: string;
@@ -44,13 +44,13 @@ const here = (origin: string, path: string): boolean => origin !== "" && /^\/(?!
 
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "asks", "wave", "map", "feed", "pull", "pulls", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones", "release"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "asks", "wave", "map", "feed", "pull", "pulls", "runs", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones", "release"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   apps: "app",
   now: "crew",
-  runs: "run",
+  runs: "runs",
   asks: "asks",
   milestones: "milestones",
   releases: "release",
@@ -80,6 +80,7 @@ const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   explore: "Explore",
   pull: "Pull",
   pulls: "Pulls",
+  runs: "Runs",
   asked: "Asked",
   issue: "Issue",
   flow: "Flow",
@@ -118,6 +119,9 @@ const FOLLOW_WORDS: Readonly<Record<string, string>> = {
 };
 /** The forge's id shape (src/kernel/id.ts): 26 lowercase Crockford base32 characters. */
 const RUN_ID = /^[0-9a-hjkmnp-tv-z]{26}$/;
+
+/** A run state as one glyph beside its word: a card is read at a glance. */
+const RUN_GLYPH: Readonly<Record<string, string>> = { queued: "◌", running: "▶", ok: "✓", failed: "✗", cancelled: "–" };
 
 /** A run state as one check word: what a pull's check says at a glance. */
 const checkWord = (state: string): string =>
@@ -338,6 +342,39 @@ export function cardFor(
     }
     return { kind, title: CARD_TITLE[kind], status, rows, actions };
   }
+  if (kind === "runs") {
+    // `runs` answers `{ runs: [{ id, kind, state, number, title, startedAt, endedAt }] }`, newest first;
+    // the repo comes in `extra`. A failed run says failed before anything else.
+    const runs = list(obj(value)["runs"]).map(obj);
+    const slug = text(extra["repo"]);
+    const now = Date.now();
+    const failed = runs.filter((r) => text(r["state"]) === "failed").length;
+    const going = runs.filter((r) => text(r["state"]) === "running").length;
+    status = [
+      failed > 0 ? `${failed} failed` : "",
+      going > 0 ? `${going} running` : "",
+      `${runs.length} run${runs.length === 1 ? "" : "s"}`,
+    ].filter((w) => w !== "").join(" · ");
+    for (const r of runs.slice(0, PULLS_LIMIT)) {
+      const state = text(r["state"]);
+      const number = text(r["number"]);
+      const title = text(r["title"]);
+      const started = Date.parse(text(r["startedAt"]));
+      const ended = Date.parse(text(r["endedAt"]));
+      const length = Number.isNaN(started) ? "" : Number.isNaN(ended)
+        ? state === "running" ? ` · running for ${span(now - started)}` : ""
+        : ` · ${span(ended - started)}`;
+      const path = `/${slug}/runs/${text(r["id"])}`;
+      rows.push({
+        label: `${RUN_GLYPH[state] ?? "·"} ${text(r["kind"])}${number === "" ? "" : ` #${number}`}${title === "" ? "" : ` ${title}`}`,
+        value: `${state}${length}`,
+        ...(web(origin) && slugOf(slug) && RUN_ID.test(text(r["id"])) && here(origin, path)
+          ? { link: origin + path }
+          : {}),
+      });
+    }
+    return { kind, title: CARD_TITLE[kind], status, rows, actions };
+  }
   if (kind === "release") {
     // `releases` answers `{ items: [{ sha, version, pull?, landed, proof, live? }] }`; the shipped list has no `items`, so no card.
     const items = list(obj(value)["items"]).map(obj);
@@ -419,21 +456,6 @@ export function cardFor(
     for (const a of apps.slice(0, 3))
       if (text(a["app"]) !== "")
         actions.push({ label: `Tell ${text(a["app"])}`, tool: "tell", args: { repo: text(a["app"]), context: {} }, words: true });
-  } else if (tool === "runs") {
-    // `runs` answers `{ runs: [{ id, kind, state, number, startedAt, endedAt }] }`,
-    // newest first; the repo comes in `extra`; past runs, so the card offers no stop.
-    const runs = list(obj(value)["runs"]).map(obj);
-    status = runs.length === 0 ? "no runs" : `${runs.length} run${runs.length === 1 ? "" : "s"}`;
-    const slug = text(extra["repo"]);
-    for (const r of runs.slice(0, LIMIT))
-      rows.push({
-        label: `${text(r["kind"])} ${text(r["id"])}`,
-        value: `${r["number"] == null ? "" : `#${text(r["number"])} — `}${text(r["state"])}`,
-        ...(web(origin) && slugOf(slug) && RUN_ID.test(text(r["id"]))
-          ? { link: `${origin}/${slug}/runs/${text(r["id"])}` }
-          : {}),
-      });
-    return { kind, title: "Runs", status, rows, actions };
   } else if (kind === "run") {
     const runs = list(value).map(obj);
     status = runs.length === 0 ? "nothing running" : `${runs.length} going`;
