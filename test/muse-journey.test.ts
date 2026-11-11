@@ -206,7 +206,7 @@ describe("the Muse test: a stranger agent needs no teaching", () => {
     const before = pending();
     const one = { "x-forwarded-for": "203.0.113.77" };
     const statuses: number[] = [];
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 6; i++) {
       const res = await fetch(`${servers.url}/api/v1/repos/alice/notes/reports`, {
         method: "POST",
         headers: { "content-type": "application/json", ...one },
@@ -214,7 +214,7 @@ describe("the Muse test: a stranger agent needs no teaching", () => {
       });
       statuses.push(res.status);
     }
-    expect(statuses).toEqual([202, 202, 202, 429, 429]);
+    expect(statuses).toEqual([202, 202, 202, 202, 202, 429]);
     // The MCP tool is the same door and the same source, so the same limit.
     const limited = (await (
       await rpc(
@@ -242,7 +242,7 @@ describe("the Muse test: a stranger agent needs no teaching", () => {
       params: { name: "report", arguments: { repo: "alice/notes", title: "t", body: "x".repeat(70_000) } },
     });
     expect(hugeMcp.status).toBe(413);
-    expect(pending()).toBe(before + 3);
+    expect(pending()).toBe(before + 5);
   });
 
   test("a private app's door answers neither route and leaks no repository name", async () => {

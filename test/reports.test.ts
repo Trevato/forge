@@ -9,10 +9,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
+import { REPORT_WHERE_REPLY, REPORT_WHO_READS } from "../src/actions/report_words.ts";
 import { acceptReport, acceptedBody } from "../src/actions/reports.ts";
 import { renderMarkdown } from "../src/web/markdown.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
+import { setLimit } from "../src/settings/limits.ts";
 import { getIssue } from "../src/core/issues.ts";
 import { OUTSIDE_TITLE, outsideTitle } from "../src/core/reports.ts";
 import { taskPrompt } from "../src/crew/brief.ts";
@@ -229,7 +231,7 @@ describe("reports from outside", () => {
     const before = count("report");
     const source = { "x-forwarded-for": "203.0.113.9" };
     const statuses: number[] = [];
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 7; i++) {
       const res = await report("alice/game", { title: `t${i}` }, source);
       statuses.push(res.status);
       if (res.status === 429) {
@@ -237,9 +239,9 @@ describe("reports from outside", () => {
         expect(((await res.json()) as any).error).toBe("rate_limited");
       }
     }
-    expect(statuses.slice(0, 3)).toEqual([202, 202, 202]);
-    expect(statuses.slice(3)).toEqual([429, 429]);
-    expect(count("report")).toBe(before + 3);
+    expect(statuses.slice(0, 5)).toEqual([202, 202, 202, 202, 202]);
+    expect(statuses.slice(5)).toEqual([429, 429]);
+    expect(count("report")).toBe(before + 5);
   });
 
   test("the web form's honeypot looks accepted and stores nothing", async () => {
@@ -279,6 +281,51 @@ describe("reports from outside", () => {
     expect(count("report")).toBe(before + 1);
     const hidden = await fetch(`${base}/alice/vault/report`);
     expect(hidden.status).toBe(404);
+  });
+
+  test("the form says who reads it and where the reply appears; the web form answers 429 after five a minute", async () => {
+    // Its own repository, so the per-repository cap other tests spend is not drawn on.
+    const side = await createRepo(app, alice, { name: "side", visibility: "public" });
+    if (!side.ok) throw new Error(String(side.error));
+    const page = await (await fetch(`${base}/alice/side/report`)).text();
+    expect(page).toContain(REPORT_WHO_READS);
+    expect(page).toContain(REPORT_WHERE_REPLY);
+    const source = { "x-forwarded-for": "198.51.100.77" };
+    const post = () =>
+      fetch(`${base}/alice/side/report`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded", ...source },
+        body: "title=flood&body=x",
+        redirect: "manual",
+      });
+    let link = "";
+    for (let i = 0; i < 5; i++) {
+      const ok = await post();
+      expect(ok.status).toBe(303);
+      link = ok.headers.get("location") ?? "";
+    }
+    // The returned link is this report's own, and says where it stands.
+    expect(link).toMatch(/^\/alice\/side\/report\?sent=\w+/);
+    const sentPage = await (await fetch(`${base}${link}`)).text();
+    expect(sentPage).toContain("Not read yet");
+    const sixth = await post();
+    expect(sixth.status).toBe(429);
+    expect(Number(sixth.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect(await sixth.text()).toContain("Too many reports from here just now");
+  });
+
+  test("report.per_source is read on every use: set to 2, the third is 429", async () => {
+    const side = await createRepo(app, alice, { name: "dial", visibility: "public" });
+    if (!side.ok) throw new Error(String(side.error));
+    expect(setLimit(app.db, "report.per_source", 2, alice.id).ok).toBe(true);
+    try {
+      const source = { "x-forwarded-for": "198.51.100.88" };
+      const statuses: number[] = [];
+      for (let i = 0; i < 3; i++) statuses.push((await report("alice/dial", { title: `d${i}` }, source)).status);
+      expect(statuses).toEqual([202, 202, 429]);
+    } finally {
+      setLimit(app.db, "report.per_source", null, alice.id);
+    }
   });
 
   test("the owner sees reports marked from outside, escaped, and only the owner", async () => {

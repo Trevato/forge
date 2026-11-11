@@ -49,6 +49,7 @@ export type LimitKey =
   | "guest.fork_storage_mb"
   | "guest.cooldown_minutes"
   | "api.anonymous_per_source"
+  | "report.per_source"
   | "model_review.auto"
   | "model_review.min_landed"
   | "model_review.slack_pct"
@@ -281,6 +282,14 @@ export const LIMITS: Record<LimitKey, LimitDef> = {
     min: 1,
     max: 100_000,
     reason: "A token's reads are counted by the token; a stranger's have no token to count, so one source reading without one has a ceiling of its own.",
+  },
+  "report.per_source": {
+    label: "Reports from outside per source a minute",
+    unit: "reports",
+    default: 5,
+    min: 1,
+    max: 1_000,
+    reason: "Anyone may file a report with no account, so one address cannot flood the people who read them; the sixth in a minute waits.",
   },
   "model_review.auto": {
     label: "Weekly model review applies a cheaper model on its own",

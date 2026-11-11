@@ -48,9 +48,9 @@ import { getUserById, type User } from "../core/users.ts";
 import { defect } from "../kernel/error.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { isMirror } from "../origins/write-through.ts";
+import { limitValue } from "../settings/limits.ts";
 import { openIssueThrough, setIssueLabels } from "./issues.ts";
 
-const PER_SOURCE = 3;
 const PER_REPO = 20;
 const PER_FORGE = 60;
 
@@ -62,6 +62,7 @@ interface Limits {
 
 const limiter = (perMinute: number) =>
   new RateLimiter({ perMinute, adminPerMinute: perMinute, enabled: true });
+const perSourceOf = (app: App) => limitValue(app.db, "report.per_source");
 
 /** One set per forge, so a test's forge never throttles another's. */
 const limits = new WeakMap<App, Limits>();
@@ -69,7 +70,7 @@ function limitsOf(app: App): Limits {
   let found = limits.get(app);
   if (found === undefined) {
     found = {
-      source: limiter(PER_SOURCE),
+      source: limiter(perSourceOf(app)),
       repo: limiter(PER_REPO),
       forge: limiter(PER_FORGE),
     };
@@ -99,6 +100,9 @@ export function fileReport(
   const clean = cleanReport(input);
   if (!clean.ok) return err({ error: clean.error });
   const { forge, repo: perRepo, source: perSource } = limitsOf(app);
+  // The per-source number is a setting (`report.per_source`), read on every use.
+  const perMinute = perSourceOf(app);
+  perSource.setLimits({ perMinute, adminPerMinute: perMinute, enabled: true });
   for (const verdict of [
     () => forge.take("forge", "ro"),
     () => perRepo.take(repo.id, "ro"),
