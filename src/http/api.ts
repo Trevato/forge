@@ -334,6 +334,7 @@ import {
 } from "./respond.ts";
 import {
   explorePage,
+  rowsWithWhy,
   cursorFits,
   type ExploreRow,
   exploreLine,
@@ -3470,7 +3471,7 @@ export function apiRoutes(router: Router<Handler>): void {
     );
     if (page === null)
       return apiError("invalid_cursor", 400, "cursor is the next_cursor of a page before");
-    const items = page.items;
+    const items = rowsWithWhy(ctx.app, query, page.items);
     return timePhase(ctx.request, "render", () => json({ query: exploreLine(query), ...(unknown.length === 0 ? {} : { note: exploreNote(unknown) }), ...(suggest === undefined ? {} : { suggest: suggest.line }), items, next_cursor: page.nextCursor }, 200, headers));
   });
 

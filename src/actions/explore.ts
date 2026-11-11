@@ -402,6 +402,16 @@ export async function explore(
   return (await everything(app, viewer, query, now)).slice(0, ROWS);
 }
 
+/** The rows as the API and the MCP send them: each with its `why` line when the ranking has one to say (omitted otherwise). */
+export function rowsWithWhy(app: App, query: ExploreQuery, items: readonly ExploreRow[]): (ExploreRow & { why?: string })[] {
+  const weights = frontWeights(app.db);
+  const now = Date.now();
+  return items.map((row) => {
+    const why = whyOf(row, query.sort, now, weights);
+    return why === undefined ? row : { ...row, why: why.text };
+  });
+}
+
 export interface ExplorePage {
   readonly items: readonly ExploreRow[];
   /** Pass back as `cursor` for the page after; null on the last. */
