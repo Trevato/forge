@@ -37,3 +37,18 @@ export function forkFollowModes(db: Database, repoIds: readonly string[]): Map<s
     .all(...repoIds);
   return new Map(rows.map((r) => [r.repo_id, r.mode]));
 }
+
+/**
+ * When this repository last took code from what it follows (ISO), or null: the newest push recorded as
+ * followed (a fast-forward, a merge, or a forge's take of its upstream). Walks `event_repo_kind_seq`
+ * newest first and stops at the first hit.
+ */
+export function lastTookAt(db: Database, repoId: string): string | null {
+  return (
+    db
+      .query<{ at: string | null }, [string]>(
+        "SELECT created_at AS at FROM event WHERE repo_id = ?1 AND kind = 'push' AND json_extract(payload, '$.followed') IS NOT NULL ORDER BY seq DESC LIMIT 1",
+      )
+      .get(repoId)?.at ?? null
+  );
+}

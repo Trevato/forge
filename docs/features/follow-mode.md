@@ -25,3 +25,13 @@ A spawned forge's chain (its code repository following its parent forge) takes o
 `follow` in `src/core/following.ts` skips a `dont-follow` fork when its parent's default branch moves, and `followDivergence` in `src/crew/converge.ts` never converges one.
 
 The words live in `src/actions/follow_words.ts` and `followModeSaid` in `src/actions/follow.ts`; every door reads them from there.
+
+## The standing line and the last take
+
+Every fork says in one plain line how it follows and when it last took: `Takes updates from alice/lib · last took 2 days ago`, `Sends offers to alice/lib`, `Not following alice/lib`. A repository that follows nothing says nothing, and an upstream the reader may not read is not named (`its upstream`).
+
+- **Web:** under the head of the fork's page, linking to `/:owner/:name/forks#following`. It shows only where the stored-check lines (behind a followed address, a mirror's origin ahead) are silent, so a page carries one line about how it stands.
+- **Terminal:** the line under the head of the fork's forks screen.
+- **MCP:** `line` in the answers of `following` and `follow_mode`.
+
+*Last took* is the newest `push` event of the fork carrying `followed`: a fast-forward, a clean merge (`takeOrTell`, `take_updates`, `t`), or a spawned forge's take of its parent forge. `lastTookAt` in `src/core/fork_follow.ts` reads it through `event_repo_kind_seq`, newest first, and stops at the first hit. The words are `followStandingLine` in `src/actions/follow_words.ts`; `followStanding` in `src/actions/follow.ts` assembles them for every door.

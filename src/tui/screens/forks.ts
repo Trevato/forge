@@ -19,7 +19,7 @@ import {
   type ForkRelation,
 } from "../../actions/forks.ts";
 import { followModeWords } from "../../actions/follow_words.ts";
-import { FOLLOW_MODE_REFUSALS, convergeWords, followModeOf, followModeSaid, setFollowMode, takeOrTell, takeWords } from "../../actions/follow.ts";
+import { FOLLOW_MODE_REFUSALS, convergeWords, followModeOf, followStanding, followModeSaid, setFollowMode, takeOrTell, takeWords } from "../../actions/follow.ts";
 import { FOLLOWS_NOTHING, proposeRefusalWords } from "../../actions/follow_words.ts";
 import { openProposal, proposeUpstream } from "../../actions/upstream.ts";
 import type { Pull } from "../../core/pulls.ts";
@@ -146,6 +146,8 @@ export function forksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let offer: string | undefined;
   let open: Pull | undefined;
   let mode: ForkFollowMode | undefined;
+  /** The one plain line the page and MCP say: how this fork follows, and when it last took. */
+  let standing: string | undefined;
   const state = new ListState();
   /** Only a person who writes to a fork may propose its work upstream. */
   const mayPropose = () => f.user !== undefined && f.user.kind !== "agent" && canWrite(f.db, repo, f.user);
@@ -199,6 +201,7 @@ export function forksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       relation !== undefined && relation.state === "diverged" && !relation.clean
         ? convergeState(f.app, repo, relation.parent)
         : undefined;
+    standing = await followStanding(f.app, repo, f.user);
     mode = relation === undefined ? undefined : await followModeOf(f.app, repo);
     following = followingRows(relation, converge, mode);
     ctx.invalidate();
@@ -250,7 +253,7 @@ export function forksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     load: () => read(),
     render(area, s) {
       const c = ctx.theme.c;
-      const [head, body] = split(area, "v", [len(1), fill(1)]);
+      const [head, line, body] = split(area, "v", [len(1), len(standing === undefined ? 0 : 1), fill(1)]);
       const list = rows();
       s.text(
         head!.x,
@@ -262,6 +265,7 @@ export function forksScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         style(c.mutedFg, c.bg),
         head!.x + head!.w,
       );
+      if (standing !== undefined) s.text(line!.x, line!.y, truncate(standing, line!.w), style(c.mutedFg, c.bg), line!.x + line!.w);
       if (list.length === 0) {
         emptyState(s, body!, c, {
           title: ranked === undefined ? "Reading…" : "No forks yet",

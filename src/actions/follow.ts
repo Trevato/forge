@@ -14,8 +14,8 @@ import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { chainOfRepo, forgeLinkOf, FOLLOW_MODES, isFollowMode, setChainMode, severChain } from "../spawn/chain.ts";
 import { FAMILY_WORDS } from "./family_words.ts";
-import { FOLLOWS_NOTHING, followModeWords } from "./follow_words.ts";
-import { FORK_FOLLOW_MODES, forkFollowMode, isForkFollowMode, setForkFollowMode, type ForkFollowMode } from "../core/fork_follow.ts";
+import { FOLLOWS_NOTHING, followModeWords, followStandingLine } from "./follow_words.ts";
+import { FORK_FOLLOW_MODES, forkFollowMode, lastTookAt, isForkFollowMode, setForkFollowMode, type ForkFollowMode } from "../core/fork_follow.ts";
 import { requireUser } from "./access.ts";
 import { takeFromParent, type Taken } from "../spawn/take.ts";
 import { takeUpdates, type ForkSync, type TakeUpdatesError } from "./forks.ts";
@@ -105,6 +105,21 @@ export async function followModeOf(app: App, repo: Repo): Promise<ForkFollowMode
   return link !== undefined && link.repo === `${repo.ownerName}/${repo.name}`
     ? link.mode
     : forkFollowMode(app.db, repo.id);
+}
+
+/**
+ * The line a fork's page and the MCP say: its choice and its last movement;
+ * undefined for a repository that is no fork. A parent the viewer cannot
+ * read is not named.
+ */
+export async function followStanding(app: App, repo: Repo, viewer: User | undefined): Promise<string | undefined> {
+  if (repo.forkParentId === null) return undefined;
+  const parent = forkParentFor(app.db, repo, viewer);
+  return followStandingLine(
+    await followModeOf(app, repo),
+    parent === undefined ? undefined : `${parent.ownerName}/${parent.name}`,
+    lastTookAt(app.db, repo.id),
+  );
 }
 
 export type FollowModeError = SeverError | "invalid_mode" | "severed";

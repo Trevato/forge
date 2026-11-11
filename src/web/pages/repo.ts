@@ -14,6 +14,7 @@ import { PINNED_PUBLIC, immutableWhenAddressed, mayShare } from "../../http/addr
 import { EDGE_VARY } from "../../http/edge_cache.ts";
 import { keepPage, keptPage, keptPageKey } from "./kept_page.ts";
 import { cachedBlobPage, cachedRaw, cachedTree, keepBlobPage, keepRaw, keepTree, keptRefs, resolveCommit, withKeptFolders } from "./tree_cache.ts";
+import { followStanding } from "../../actions/follow.ts";
 import { behindLine, followingLine, originAheadLine } from "./upstream-follow.ts";
 import { CONFLICT_WORDS, UNREAD_WORDS } from "../../origins/ahead.ts";
 import { upstreamOffer } from "../../actions/offer_upstream.ts";
@@ -1471,10 +1472,19 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
   const credit = await timePhaseAsync(ctx.request, "credit", () =>
     creditLine(ctx, repo, scope.source, ref),
   );
+  const standing = await followStanding(ctx.app, repo, ctx.auth.user);
+  // One line says how a fork stands: the checks' own words win, and the plain
+  // standing speaks only where they are silent.
+  const behind = timePhase(ctx.request, "behind", () => behindLine(ctx, repo));
+  const originAhead = originAheadLine(ctx, repo);
+  const standingLine =
+    standing === undefined
+      ? null
+      : html`<div class="small muted" data-follow-standing>${icon("sync")} <a href="${repoBase(repo)}/forks#following">${standing}</a></div>`;
   const rendering = performance.now();
   const body = html`${scopeHeader(ctx, scope, "code", {
     branchCount: refs.branches.length,
-  })}${credit}${timePhase(ctx.request, "behind", () => behindLine(ctx, repo))}${originAheadLine(ctx, repo)}${archivedLine(ctx, repo)}${movedLine(ctx, repo)}${noApp}
+  })}${credit}${behind}${originAhead}${behind === null && originAhead === null ? standingLine : null}${archivedLine(ctx, repo)}${movedLine(ctx, repo)}${noApp}
   ${offerUpstream(repo, parent, offer)}
   ${latest === null
     ? ""

@@ -66,3 +66,38 @@ export function followSwitchPreview(mode: ForkFollowMode, upstream: string): str
     return `From now on this fork goes its own way: nothing from ${upstream} is merged or announced here, and the crew is never asked to converge. You can still offer your changes up, and follow again at any time.`;
   return `From now on ${upstream} only proposes: you are told when it has something new and nothing is merged until you take it. You can switch back at any time.`;
 }
+
+/** An instant as people say it: "just now", "2 days ago". Said by the page and the MCP alike. */
+export function agoWords(iso: string, now: number = Date.now()): string {
+  const seconds = Math.max(0, (now - Date.parse(iso)) / 1000);
+  if (!Number.isFinite(seconds)) return "";
+  const unit = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"} ago`;
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return unit(Math.floor(seconds / 60), "minute");
+  if (seconds < 86_400) return unit(Math.floor(seconds / 3600), "hour");
+  if (seconds < 86_400 * 30) return unit(Math.floor(seconds / 86_400), "day");
+  if (seconds < 86_400 * 365) return unit(Math.floor(seconds / (86_400 * 30)), "month");
+  return unit(Math.floor(seconds / (86_400 * 365)), "year");
+}
+
+/** The words that name a fork's choice, by mode, before the upstream. */
+const STANDING_LEADS: Record<ForkFollowMode, string> = {
+  "take-updates": "Takes updates from",
+  "tell-me": "Sends offers to",
+  "dont-follow": "Not following",
+};
+
+/**
+ * The one plain line a fork's page and the MCP say: its choice, the upstream
+ * (`upstream` is undefined when the reader may not read it, so it is not named)
+ * and, when it ever took from it, when it last did.
+ */
+export function followStandingLine(
+  mode: ForkFollowMode,
+  upstream: string | undefined,
+  tookAt: string | null,
+  now: number = Date.now(),
+): string {
+  const line = `${STANDING_LEADS[mode]} ${upstream ?? "its upstream"}`;
+  return tookAt === null ? line : `${line} · last took ${agoWords(tookAt, now)}`;
+}
