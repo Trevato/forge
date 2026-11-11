@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { connectStripe } from "../src/actions/billing.ts";
+import { connectionOf } from "../src/billing/connection.ts";
 import { entitlementOf } from "../src/billing/store.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { ok } from "../src/kernel/result.ts";
@@ -106,4 +108,53 @@ test("a non-admin who reaches the screen sees no forge and cannot grant", async 
   await settleApp(tui);
   expect(entitlementOf(app.db, "kid", "small").plan).toBe("large");
   tui.stop?.();
+});
+
+const type = (tui: ReturnType<typeof open>["tui"], text: string) => {
+  for (const ch of text) tui.dispatch(key(ch));
+};
+
+test("the admin connects Stripe's signing secret, sees it masked, and disconnects after a yes", async () => {
+  const k = "sk_test_AbCdEf1234567890";
+  expect((await connectStripe(app, alice, k, "whsec_first1234567")).ok).toBe(true);
+  expect(connectionOf(app.db)).toEqual({ mode: "sandbox", signed: true });
+  const { tui, session } = open(alice);
+  tui.ctx.push(billingScreen(session, tui.ctx));
+  await settleApp(tui);
+  expect(tui.screen.toText()).toContain("Stripe sandbox, signed");
+  tui.dispatch(key("w"));
+  await settleApp(tui);
+  type(tui, "whsec_second123456");
+  await settleApp(tui);
+  expect(tui.screen.toText()).not.toContain("whsec_second123456");
+  tui.dispatch(key("enter"));
+  await settleApp(tui);
+  expect(tui.screen.toText()).toContain("Signing secret saved.");
+  tui.dispatch(key("x"));
+  await settleApp(tui);
+  expect(tui.screen.toText()).toContain("Remove the webhook and forget the key?");
+  tui.dispatch(key("n"));
+  await settleApp(tui);
+  expect(connectionOf(app.db)).toBeDefined();
+  tui.stop?.();
+});
+
+test("a bad key typed into the connect prompt is refused in words; a non-admin cannot open the prompt", async () => {
+  const { tui, session } = open(alice);
+  tui.ctx.push(billingScreen(session, tui.ctx));
+  await settleApp(tui);
+  tui.dispatch(key("c"));
+  await settleApp(tui);
+  type(tui, "pk_live_abcdefgh12");
+  tui.dispatch(key("enter"));
+  await settleApp(tui);
+  expect(tui.screen.toText()).toContain("That is not a Stripe secret or restricted key");
+  tui.stop?.();
+  const bobs = open(bob);
+  bobs.tui.ctx.push(billingScreen(bobs.session, bobs.tui.ctx));
+  await settleApp(bobs.tui);
+  bobs.tui.dispatch(key("x"));
+  await settleApp(bobs.tui);
+  expect(bobs.tui.screen.toText()).not.toContain("Remove the webhook");
+  bobs.tui.stop?.();
 });

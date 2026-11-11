@@ -5,7 +5,7 @@
  * Anyone else gets the not-found page.
  */
 
-import { BILLING_WORDS, grantPlan, readBilling, type BillingError } from "../../actions/billing.ts";
+import { BILLING_WORDS, STRIPE_WORDS, connectStripe, disconnectStripe, grantPlan, readBilling, saveSigningSecret, type BillingError, type StripeWords } from "../../actions/billing.ts";
 import { CODE_ERRORS, makeCode, readCodes, revoke, type CodeError } from "../../actions/codes.ts";
 import { publicOrigin } from "../../core/public_origin.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
@@ -19,7 +19,7 @@ import { btn, copyField, field as formField, selectField } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 const PATH = "/settings/billing";
-const words = (e: BillingError) => (e === "not_found" ? "Not found" : BILLING_WORDS[e]);
+const words = (e: BillingError | StripeWords) => (e === "not_found" ? "Not found" : e in BILLING_WORDS ? BILLING_WORDS[e as keyof typeof BILLING_WORDS] : STRIPE_WORDS[e as StripeWords]);
 
 /** A code just made: the plain code and its link, shown once and never kept. */
 interface Shown {
@@ -101,7 +101,28 @@ function billingView(ctx: Ctx, shown?: Shown, values: Record<string, string> = {
     </li>`,
   );
   const rendering = performance.now();
-  const body = html`<section class="settings-block">
+  const s = b.stripe;
+  const stripe = html`<section class="settings-block">
+      <h2>Provider</h2>
+      ${s
+        ? html`<dl class="status-rows">
+              <div class="status-row"><dt>Stripe</dt><dd data-mode="${s.mode}">${s.mode}</dd></div>
+              <div class="status-row"><dt>Events</dt><dd>${s.signed ? "signed" : "no signing secret yet"}</dd></div>
+            </dl>
+          ${s.signed
+            ? null
+            : html`<form class="row-fields" method="post" action="${PATH}/stripe/secret">
+                <input class="input mono" type="password" name="secret" autocomplete="off" placeholder="whsec_…" aria-label="Webhook signing secret" required />
+                ${btn("Save signing secret")}
+              </form>`}
+          <form method="post" action="${PATH}/stripe/disconnect">${btn("Disconnect")}</form>`
+        : html`<p class="muted small">Paste a Stripe secret or restricted key; the forge registers its own webhook.</p>
+          <form class="row-fields" method="post" action="${PATH}/stripe/connect">
+            <input class="input mono" type="password" name="key" autocomplete="off" placeholder="sk_test_… or rk_live_…" aria-label="Stripe key" required />
+            ${btn("Connect")}
+          </form>`}
+    </section>`;
+  const body = html`${stripe}<section class="settings-block">
       <h2>Plans</h2>
       <p class="muted small">Choose the plan each forge is on.</p>
       ${rows.length === 0
@@ -150,4 +171,36 @@ export async function billingGrant(ctx: Ctx): Promise<Response> {
   const set = grantPlan(ctx.app, ctx.auth.user, field(form, "forge"), field(form, "plan"));
   if (!set.ok && set.error === "not_found") return notFoundPage(ctx);
   return flashTo(ctx, PATH, set.ok ? { message: `${set.value.entitlement.forge} is on ${set.value.entitlement.plan}.` } : { tone: "danger", message: `${words(set.error)}.` });
+}
+
+const back = (ctx: Ctx, r: { ok: true; message: string } | { ok: false; error: BillingError | StripeWords }): Response | Promise<Response> =>
+  r.ok ? flashTo(ctx, PATH, { message: r.message }) : r.error === "not_found" ? notFoundPage(ctx) : flashTo(ctx, PATH, { tone: "danger", message: `${words(r.error)}.` });
+
+const isPerson = (ctx: Ctx): boolean => ctx.auth.user?.isAdmin === true && ctx.auth.user.kind !== "agent";
+
+// POST /settings/billing/stripe/connect
+export async function stripeConnect(ctx: Ctx): Promise<Response> {
+  if (!isPerson(ctx)) return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const r = await connectStripe(ctx.app, ctx.auth.user, field(form, "key"), field(form, "secret"));
+  return back(ctx, r.ok ? { ok: true, message: `Stripe is connected (${r.value.mode}).` } : r);
+}
+
+// POST /settings/billing/stripe/secret
+export async function stripeSecret(ctx: Ctx): Promise<Response> {
+  if (!isPerson(ctx)) return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const r = saveSigningSecret(ctx.app, ctx.auth.user, field(form, "secret"));
+  return back(ctx, r.ok ? { ok: true, message: "Signing secret saved." } : r);
+}
+
+// POST /settings/billing/stripe/disconnect
+export async function stripeDisconnect(ctx: Ctx): Promise<Response> {
+  if (!isPerson(ctx)) return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const r = await disconnectStripe(ctx.app, ctx.auth.user);
+  return back(ctx, r.ok ? { ok: true, message: "Stripe is disconnected." } : r);
 }

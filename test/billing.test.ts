@@ -137,7 +137,7 @@ describe("billing seam", () => {
     expect(page.status).toBe(200);
     const text = await page.text();
     expect(text).toContain("Choose the plan each forge is on.");
-    expect(text).not.toContain("Stripe");
+    expect(text).toContain("Paste a Stripe secret or restricted key");
     expect(text).toContain('data-forge="kid"');
     expect((await send("GET", "/settings/billing", bob)).status).toBe(404);
   });

@@ -18,7 +18,7 @@ import { teamPage, teamSet, teamsPage, teamsStream } from "../web/pages/teams.ts
 import { telemetryPage, telemetrySet } from "../web/pages/telemetry.ts";
 import { flagsPage, flagsSet } from "../web/pages/flags.ts";
 import { appTemplatesPage, appTemplatesSet } from "../web/pages/app_templates.ts";
-import { billingPage, billingGrant, billingMakeCode, billingRevokeCode } from "../web/pages/billing.ts";
+import { billingPage, billingGrant, billingMakeCode, billingRevokeCode, stripeConnect, stripeDisconnect, stripeSecret } from "../web/pages/billing.ts";
 import { economicsPage, economicsSet } from "../web/pages/economics.ts";
 import { trustedAdd, trustedPage, trustedRemove, trustedRevert, trustedStop } from "../web/pages/trusted.ts";
 import { usagePage } from "../web/pages/usage.ts";
@@ -210,6 +210,9 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("POST", "/settings/economics", economicsSet);
   router.add("GET", "/settings/billing", billingPage);
   router.add("POST", "/settings/billing/grant", billingGrant);
+  router.add("POST", "/settings/billing/stripe/connect", stripeConnect);
+  router.add("POST", "/settings/billing/stripe/secret", stripeSecret);
+  router.add("POST", "/settings/billing/stripe/disconnect", stripeDisconnect);
   router.add("POST", "/settings/billing/codes", billingMakeCode);
   router.add("POST", "/settings/billing/codes/revoke", billingRevokeCode);
   router.add("GET", "/settings/flags", flagsPage);

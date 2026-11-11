@@ -28,6 +28,7 @@ const AUDITED_CLEAR: string[] = [
   "degraded_span.sentence",
   "feed_chip.value",
   "fleet_operation.value",
+  "gift_redeem.code_id",
   "issue.body",
   "oauth_flow.detail",
   "oidc_key.public_jwk",

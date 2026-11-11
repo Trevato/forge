@@ -5,7 +5,8 @@ Billing records the plan each forge is on (`src/billing/`): a store of entitleme
 - **Plans:** small, medium or large, the sizes. A forge never granted a plan reads as `active` on its size, source `granted`.
 - **Grant by hand (admin, a person):** the Billing page, the terminal screen, `PUT /api/v1/forges/{name}/plan` with `{ "plan": "large" }` (`GET` reads it), or the MCP `forges` tool with `{ forge, plan }` (planned first; `dryRun: false` grants).
 - **Audit:** every grant is a row in `entitlement_change` and a `billing.plan` event.
-- **Terminal:** the palette's *Billing* (admins), `src/tui/screens/billing.ts`: `j`/`k` pick a forge, `s`, `m` or `l` grants that plan after a yes/no.
+- **Terminal:** the palette's *Billing* (admins), `src/tui/screens/billing.ts`: `j`/`k` pick a forge, `s`, `m` or `l` grants that plan after a yes/no; `c` connects Stripe (key shown as dots), `w` saves a signing secret, `x` disconnects after a yes/no.
+- **Stripe (#11136):** Settings → Billing → Provider takes one key (`src/billing/stripe.ts`, `connection.ts`); how to connect it is in `docs/PROFIT.md`. Not yet: the `/hooks/stripe` receiver, and checkout, portal and reconcile, which come with the pull that calls them.
 
 ## Gift codes
 A code gives a plan for free, with or without a payment provider (`src/billing/codes.ts`, `src/actions/codes.ts`). No provider is asked: a redeemed code writes the entitlement itself, source `code:<id>`.

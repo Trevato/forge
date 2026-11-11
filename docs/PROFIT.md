@@ -125,3 +125,11 @@ plans by hand (`PUT /api/v1/forges/{name}/plan`, the Billing page, the
 terminal, the MCP `forges` tool). A forge with no row is active on the plan
 its size names. Nothing reads a plan to limit a forge yet. How to use it:
 `docs/features/billing.md`.
+
+### Connect Stripe
+
+1. In Stripe, make a secret or restricted key (a `sk_test_`/`rk_test_` key is a sandbox; `sk_live_`/`rk_live_` is live). A restricted key needs write on Webhook Endpoints.
+2. Settings → Billing → Provider: paste it and press Connect. The forge seals it with its secrets and never shows it again; the page says **sandbox** or **live**. In the terminal: Billing, `c`, paste the key (shown as dots).
+3. The forge registers its own webhook at its configured public address (`FORGE_URL`) `/hooks/stripe` for five events and seals the signing secret. A key that may not do that is told so; paste a `whsec_` signing secret instead.
+4. Plain `fetch` calls, nothing to create in Stripe's dashboard (`src/billing/stripe.ts`, API version pinned in `STRIPE_VERSION`). Reconnecting forgets the old key's secret and removes its endpoint.
+5. Disconnect (page, or `x` in the terminal) removes the endpoint and the sealed key, and says so when Stripe could not remove the endpoint. `api.stripe.com` is the one declared vendor (`stripe`/`payments`, docs/CLOUD.md).
