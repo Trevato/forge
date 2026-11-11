@@ -106,6 +106,7 @@ test("no capacity lands on / with the sentence, and no raw message", async () =>
 
 test("the rate limit lands on / with the sentence, and no code or time", async () => {
   refusal = undefined;
+  useProbe(app, () => async () => false); // every forge started here is still booting: a 200 waiting page, then the 303 refusal
   resetAnonSpawns(app.db);
   let last = { to: "", body: "" };
   for (let i = 0; i < 12; i++) {

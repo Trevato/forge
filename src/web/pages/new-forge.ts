@@ -17,6 +17,8 @@ import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { giftOf, REDEEM_WORDS } from "../../actions/codes.ts";
 import { quotaFull } from "../../spawn/quota.ts";
+import { isChildName } from "../../core/proposal_token.ts";
+import { childReady } from "../../spawn/ready.ts";
 import { childHost, childUrlOf, noRoom, spawnDoor, type Door } from "../../spawn/door.ts";
 import {
   LEFT_BEHIND,
@@ -457,6 +459,57 @@ function madeView(body: Record<string, unknown>): Html {
   </div>`;
 }
 
+/** The script that waits for the new forge to answer, then goes on to its claim form. */
+export const WAIT_JS = /* js */ `
+(function () {
+  var el = document.getElementById("making");
+  if (!el) return;
+  var name = el.getAttribute("data-name"), go = document.getElementById("making-go"), tries = 0;
+  function late() {
+    el.textContent = "This is taking longer than usual. Press Continue to try the new forge now; if it is not up yet, come back to this page in a minute.";
+  }
+  function again(ms) { if (tries < 120) setTimeout(poll, ms); else late(); }
+  function poll() {
+    tries++;
+    fetch("/forges/" + encodeURIComponent(name) + "/ready", { credentials: "same-origin" })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { if (j && j.ready) location.replace(go.href); else again(1000); })
+      .catch(function () { again(2000); });
+  }
+  poll();
+})();
+`;
+
+/**
+ * Screen two of "Start my forge": the new forge's claim form, where the
+ * person picks a username and password and lands signed in as its admin
+ * (`/claim`). Answering already, the browser is sent straight there; still
+ * booting, a waiting page polls `/forges/<name>/ready` and goes on by itself.
+ * The code travels in the fragment of that one address and is never copied.
+ */
+async function walkOn(ctx: Ctx, body: Record<string, unknown>): Promise<Response | undefined> {
+  const link = body["claimUrl"];
+  const name = String(body["name"] ?? "");
+  if (typeof link !== "string" || !/^https?:\/\//.test(link) || !isChildName(name)) return undefined;
+  if ((await childReady(ctx.app, name)) === true) {
+    const res = redirect(link);
+    res.headers.set("cache-control", "no-store");
+    return res;
+  }
+  const response = page({
+    ctx,
+    title: "Making your forge",
+    scriptJs: WAIT_JS,
+    body: html`<div class="narrow stack">
+      ${pageHead("Making your forge")}
+      <p id="making" role="status" data-name="${name}">It will be ready in a moment; you will go on by yourself, to choose a username and a password.</p>
+      <p>${btn("Continue", { href: link, variant: "primary", id: "making-go" })}</p>
+    </div>`,
+  });
+  response.headers.set("cache-control", "no-store");
+  return response;
+}
+
 const asBool = (form: Form, name: string): boolean =>
   field(form, name) === "on";
 
@@ -561,6 +614,9 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
       body: formView(ctx, user, values, {}, planView(ctx, user, values, door.body), readsFor(ctx, user)),
     });
   noteForgeMade(ctx);
+  // A stranger from the home page is not handed a link: the browser goes on to the claim form itself (#11242).
+  const going = user === undefined && field(form, "from") === "home" ? await walkOn(ctx, door.body) : undefined;
+  if (going !== undefined) return going;
   const response = page(
     { ctx, title: "New forge", body: madeView(door.body) },
     door.status,

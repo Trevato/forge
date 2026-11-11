@@ -13,3 +13,7 @@ In the terminal, a guest's "Get your own forge" command prints the plans and the
 ## When the door refuses
 
 The form carries `from=home`. If the door refuses a stranger's start (rate limit, name taken, bad or reserved name, no room), they get a 303 back to `/?start=<kind>&name=<name>` and the home page shows one fixed sentence (`src/web/start_refusal.ts`) above the field, with the name kept. Only a kind from a fixed list is read; the door's own message, codes and times are never shown. Tests: `test/home-start-forge.test.ts`.
+
+## Three screens, no link to copy
+
+When the door accepts a start from the home page (`from=home`, signed out), the browser is not shown the claim link. If the new forge already answers, it gets a 303 straight to its `/claim#<code>` form; if it is still booting, a "Making your forge" page polls `GET /forges/<name>/ready` and goes on by itself (`walkOn` in `src/web/pages/new-forge.ts`). On the claim form the person picks a username and password and lands signed in as the forge's admin. Screens: `/`, the claim form, the forge. Test: `test/stranger-three-screens.test.ts` (in the gate, which runs every test file).
