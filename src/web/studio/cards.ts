@@ -60,6 +60,7 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   feed: "feed",
   explore: "explore",
   new_app: "app",
+  archive: "app",
   pull: "pull",
   pulls: "pulls",
   asked: "asked",
@@ -378,6 +379,49 @@ export function cardFor(
     if (repo !== "")
       actions.push({ label: `Tell ${repo}`, tool: "tell", args: { repo, context: {} }, words: true });
     return { kind, title: "New app", status, rows, actions };
+  }
+  if (tool === "archive") {
+    const v = obj(value);
+    const dry = v["dryRun"] === true;
+    const target = v["archived"] === true;
+    if (Array.isArray(v["rows"])) {
+      // A bulk answer: one card, one row per repository.
+      const found = v["rows"].map(obj);
+      for (const r of found.slice(0, LIMIT))
+        rows.push({
+          label: text(r["repo"]),
+          value: [text(r["outcome"]), text(r["reason"])].filter((x) => x !== "").join(" · "),
+          ...(web(origin) && REPO_SLUG.test(text(r["repo"])) ? { link: `${origin}/${text(r["repo"])}` } : {}),
+        });
+      if (found.length > LIMIT) rows.push({ label: "More", value: `${found.length - LIMIT} more not shown` });
+      const verb = target ? "archive" : "wake";
+      status = dry ? `plan: would ${verb} ${found.length} · nothing changed` : `${target ? "archived" : "woken"} ${found.length}`;
+      const first = found.map((r) => text(r["repo"])).find((n) => REPO_SLUG.test(n));
+      const names = found
+        .filter((r) => text(r["outcome"]) !== "refused")
+        .map((r) => text(r["repo"]))
+        .filter((n) => REPO_SLUG.test(n));
+      if (dry && names.length > 0)
+        actions.push({ label: `${target ? "Archive" : "Wake"} ${names.length}`, tool: "archive", args: { repos: names, archived: target, dryRun: false } });
+      else if (!dry && first !== undefined && text(v["operation"]) !== "")
+        actions.push({ label: "Undo", tool: "limb", args: { action: "undo", operation: text(v["operation"]), app: first } });
+      return { kind, title: "Archive", status, rows, actions };
+    }
+    const repo = text(v["repo"]);
+    if (repo === "" || typeof v["archived"] !== "boolean") return undefined;
+    const since = text(v["since"]);
+    const now = v["archived"] === true;
+    status = dry && v["was"] !== undefined
+      ? `plan: would ${target ? "archive" : "wake"} · nothing changed`
+      : now ? "archived" : "awake";
+    rows.push({ label: "App", value: repo, ...(web(origin) && REPO_SLUG.test(repo) ? { link: `${origin}/${repo}` } : {}) });
+    if (since !== "" && now && !(dry && v["was"] !== undefined)) rows.push({ label: "Archived", value: timeAgo(since) });
+    if (REPO_SLUG.test(repo)) {
+      if (dry && v["was"] !== undefined)
+        actions.push({ label: target ? "Archive it" : "Wake it", tool: "archive", args: { repo, archived: target, dryRun: false } });
+      else if (now) actions.push({ label: "Wake it", tool: "archive", args: { repo, archived: false, dryRun: false } });
+    }
+    return { kind, title: "Archive", status, rows, actions };
   }
   if (kind === "pull") {
     const p = obj(value);

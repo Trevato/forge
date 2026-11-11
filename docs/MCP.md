@@ -55,7 +55,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `app_members` | — | People a private app names, who may enter it and its previews | 297 |
 | `app_notes` | `hide`, `ban`, `unban` | Notes from an app's forge button and banned senders; hide a note, ban or unban its sender | 306 |
 | `apps` | — | Apps you can see: live or not, where served, how each runs, what works | 343 |
-| `archive` | — | Archive or wake a repository (`archived`) | 332 |
+| `archive` | — | Archive or wake a repository (`archived`) | 380 |
 | `asked` | — | What people asked the crew for: unmerged by default, oldest first | 372 |
 | `asks` | — | What waits on you, most important first; saved filter applies | 453 |
 | `asks_act` | `dismiss`, `decline`, `mute`, `listen`, `undo`, `ship`, `close`, `replan` | Decide asks (`items`): dismiss, ship, close (`reason`), mute, replan; `listen` (`repo`) unmutes; `undo` (`operation`) | 535 |
