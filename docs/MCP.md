@@ -491,12 +491,12 @@ answers
 | `ui://forge/asks` | `asks`, `asks_act` | One row per waiting decision with its button; after a press, the receipt. |
 | `ui://forge/wave` | `waves` | One wave: headline, highlights with their why, pull numbers. |
 | `ui://forge/map` | `map` | The plan: per pillar ready, working and waiting counts, the first ready issues. |
-| `ui://forge/feed` | `feed` | The latest timeline items, how many are new. |
+| `ui://forge/feed` | `feed` | The newest timeline items, at most 20, each linked; how many are new. |
 | `ui://forge/pull` | `pull` | One pull: state, check, conflicts, head → base, preview link. |
-| `ui://forge/pulls` | `pulls` | A repository's pulls, one row each, with check state. |
+| `ui://forge/pulls` | `pulls` | Pulls, at most 20: `#N title`, state, check and review word, each linked. |
 | `ui://forge/runs` | `runs` | Recent runs, newest first, linked to their logs. |
 | `ui://forge/asked` | `asked` | What people asked the crew for and where each ask stands. |
-| `ui://forge/explore` | `explore` | Apps and forges ranked by real metrics. |
+| `ui://forge/explore` | `explore` | Apps, people and forges ranked, at most 20: name, kind, the numbers (and likes or ship time when sorted by them), linked; only what you may see. |
 | `ui://forge/issue` | `issue` | One issue: title, state, assignee, labels, what it waits for. |
 | `ui://forge/flow` | `flow` | The pipeline: per stage counts, oldest waiting, the bottleneck. |
 | `ui://forge/scorecard` | `scorecard` | The crew's scorecard per agent (forge admin). |

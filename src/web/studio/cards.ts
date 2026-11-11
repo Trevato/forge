@@ -103,7 +103,16 @@ const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const text = (v: unknown): string =>
   typeof v === "string" ? v : typeof v === "number" ? String(v) : "";
 const LIMIT = 12;
-const FEED_LIMIT = 10;
+const FEED_LIMIT = 20;
+
+/** A pull's review word: the pile's `verdict`, or the counts a repository's list carries. */
+function reviewWord(verdict: string, approvals: number, changesRequested: number): string {
+  const asked = changesRequested > 0;
+  if (verdict === "approved" || (approvals > 0 && !asked)) return "approved";
+  if (verdict === "changes_requested" || asked) return "changes requested";
+  return "no review";
+}
+const EXPLORE_ROWS = 20;
 const PULLS_LIMIT = 20;
 export const SEARCH_ROWS = 20;
 export const ISSUES_ROWS = 20;
@@ -414,14 +423,17 @@ export function cardFor(
     // The tool stops at `limit`: a full answer may be the first of more.
     const cut = typeof extra["limit"] === "number" && pulls.length >= extra["limit"];
     status = `${pulls.length}${cut ? "+" : ""} ${extra["state"] === "closed" ? "closed" : "open"}`;
-    const slug = text(extra["repo"]);
+    const state = extra["state"] === "closed" ? "closed" : "open";
     for (const p of pulls.slice(0, PULLS_LIMIT)) {
       const number = text(p["number"]);
       const check = text(p["check"]);
+      const slug = text(p["repo"]) || text(extra["repo"]);
       const path = `/${slug}/pulls/${number}`;
+      const verdict = text(p["verdict"]);
+      const review = reviewWord(verdict, Number(p["approvals"]), Number(p["changesRequested"]));
       rows.push({
         label: `#${number} ${text(p["title"])}`.trim(),
-        value: checkWord(check),
+        value: `${state} · ${checkWord(check)} · ${review}`,
         ...(web(origin) && slugOf(slug) && /^[1-9]\d*$/.test(number) && here(origin, path)
           ? { link: origin + path }
           : {}),
@@ -632,7 +644,8 @@ export function cardFor(
     const items = list(obj(value)["items"]).map(obj);
     const query = text(obj(value)["query"]);
     status = `${items.length} ranked${query === "" ? "" : ` · ${query}`}`;
-    for (const i of items.slice(0, FEED_LIMIT)) {
+    const sort = /(?:^|\s)sort:(\w+)/i.exec(query)?.[1]?.toLowerCase();
+    for (const i of items.slice(0, EXPLORE_ROWS)) {
       const n = obj(i["numbers"]);
       const link = text(i["url"]);
       const kindOf = text(i["kind"]);
@@ -643,6 +656,8 @@ export function cardFor(
             ? text(i["description"])
             : `${text(n["forks"])} forks · ${text(n["ships"])} ships · ${text(n["awakeHours"])} h awake${
                 kindOf === "person" ? ` · ${text(n["apps"])} apps` : ""
+              }${sort === "likes" ? ` · ${text(n["likes"])} likes` : ""}${
+                sort === "fresh" && text(i["shippedAt"]) !== "" ? ` · shipped ${timeAgo(text(i["shippedAt"]))}` : ""
               }`,
         ...(here(origin, link) ? { link: origin + link } : {}),
       });

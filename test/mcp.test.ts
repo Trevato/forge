@@ -1480,9 +1480,9 @@ describe("the forge over MCP", () => {
     expect(cardFor("asks", { rows: lines }, "javascript:x")!.rows.every((r) => r.link === undefined)).toBe(true);
   });
 
-  test("the feed card draws one linked row per item, ten at most, escaped as text", async () => {
+  test("the feed card draws one linked row per item, twenty at most, escaped as text", async () => {
     const { cardFor } = await import("../src/web/studio/cards.ts");
-    const items = Array.from({ length: 12 }, (_, n) => ({
+    const items = Array.from({ length: 25 }, (_, n) => ({
       actor: "scout",
       what: n === 0 ? "<b>shipped</b>" : `did ${n}`,
       app: "alice/game",
@@ -1493,7 +1493,7 @@ describe("the forge over MCP", () => {
     expect(card.kind).toBe("feed");
     expect(card.title).toBe("Feed");
     expect(card.status).toBe("Latest");
-    expect(card.rows).toHaveLength(10);
+    expect(card.rows).toHaveLength(20);
     expect(card.rows[0]).toEqual({
       label: "scout: <b>shipped</b>",
       value: "alice/game · just now",
