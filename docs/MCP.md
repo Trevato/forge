@@ -507,6 +507,7 @@ answers
 | `ui://forge/search` | `search` | The query on top, one row per hit (repository, issue, pull, code) with its kind, title and link. |
 | `ui://forge/issues` | `issues` | A repository's issues, one row each: state, pillar, what it waits on, `untrusted` when an outsider wrote it. |
 | `ui://forge/release` | `releases` | Kept releases, the last 10 newest first, each proven, unproven or rolled back, linked to its pull. |
+| `ui://forge/releases` | `releases` with `shipped` | What shipped: one linked row per landing, the live version, what is on its way. |
 
   The Runs card (`runs`) is one row per run, newest first: glyph, kind, the issue or pull and its title, then the state as a word with how long it ran (or has been running), linked to the run page; failed runs lead the status line. The Plan card (`map`) shows one row per pillar with
   its ready, working and waiting counts, and the first five ready issues linked
@@ -521,7 +522,7 @@ answers
   The Apps card (`apps`) links each `owner/name` row to the app's page on the forge and adds a
   linked production row when the app has an http(s) URL; the `new_app` card links its
   Production row the same way. Any other address stays plain text, never a link.
-  The Releases card (`releases`, `ui://forge/release`) is one row per kept release, the last 10, newest first (the status line reads `last 10 of N` when there are more), its version (else its short sha), how long ago it landed, the pull that landed it (as the releases page names it, linked to that pull) and one word, `proven` (the keeper verified it), `unproven` (preflight failed, the keeper never cut it or is still verifying it) or `rolled back` (the keeper rolled it back). The keeper's row is looked up by sha, however old. The rows are the `items` of the tool's text, which carry the same `proof` and `pull`; `releases` with `shipped` has no card.
+  The Releases card (`releases`, `ui://forge/release`) is one row per kept release, the last 10, newest first (the status line reads `last 10 of N` when there are more), its version (else its short sha), how long ago it landed, the pull that landed it (as the releases page names it, linked to that pull) and one word, `proven` (the keeper verified it), `unproven` (preflight failed, the keeper never cut it or is still verifying it) or `rolled back` (the keeper rolled it back). The keeper's row is looked up by sha, however old. The rows are the `items` of the tool's text, which carry the same `proof` and `pull`; `releases` with `shipped` draws the Shipped card (`ui://forge/releases`).
   The Forks card (`fork_tree`, `ui://forge/forks`) is one row per repository you may read, nested by a `depth` field the card pads (not leading spaces, which HTML collapses); the value says how it follows: `follows on its own`, `takes updates`, `offers updates` (the card's own wording for the `offers` mode) or `off`.
   `resources/list` and `resources/read` serve one small
   sandboxed page, which draws the `structuredContent.card` model that the

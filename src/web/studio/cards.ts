@@ -11,7 +11,7 @@ import { html, raw } from "../html.ts";
 import { timeAgo } from "../ui.ts";
 import { span, STAGE_LABEL, verdict, type PipelineKey, type PipelineStage } from "../../flow/pipeline.ts";
 
-export type CardKind = "app" | "run" | "asks" | "wave" | "map" | "feed" | "pull" | "pulls" | "runs" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones" | "release" | "search" | "issues";
+export type CardKind = "app" | "run" | "asks" | "wave" | "map" | "feed" | "pull" | "pulls" | "runs" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones" | "release" | "releases" | "search" | "issues";
 
 export interface CardRow {
   readonly label: string;
@@ -44,7 +44,7 @@ const here = (origin: string, path: string): boolean => origin !== "" && /^\/(?!
 
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "asks", "wave", "map", "feed", "pull", "pulls", "runs", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones", "release", "search", "issues"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "asks", "wave", "map", "feed", "pull", "pulls", "runs", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones", "release", "releases", "search", "issues"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
@@ -92,6 +92,7 @@ const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   forks: "Forks",
   milestones: "Milestones",
   release: "Releases",
+  releases: "Shipped",
   search: "Search",
   issues: "Issues",
 };
@@ -477,7 +478,30 @@ export function cardFor(
     return { kind, title: CARD_TITLE[kind], status, rows, actions };
   }
   if (kind === "release") {
-    // `releases` answers `{ items: [{ sha, version, pull?, landed, proof, live? }] }`; the shipped list has no `items`, so no card.
+    // `releases` answers `{ items: [{ sha, version, pull?, landed, proof, live? }] }`; with `shipped` it answers
+    // `{ version, commit, live: [{ repo, number, title, at }], onItsWay }`, the /changelog list.
+    if (Array.isArray(obj(value)["live"])) {
+      const kind = "releases";
+      const v = obj(value);
+      const live = list(v["live"]).map(obj);
+      const onItsWay = list(v["onItsWay"]).map(obj);
+      const commit = text(v["commit"]);
+      status = `live ${text(v["version"])}${commit === "" ? "" : ` · ${commit.slice(0, 7)}`} · ${live.length} shipped · ${onItsWay.length} on its way`;
+      const row = (l: Record<string, unknown>, way: boolean): CardRow => {
+        const repo = text(l["repo"]);
+        const number = text(l["number"]);
+        const path = `/${repo}/pulls/${number}`;
+        const at = text(l["at"]);
+        return {
+          label: `#${number} ${text(l["title"])}`,
+          value: way ? "on its way" : `${repo}${at === "" ? "" : ` · ${timeAgo(at)}`}`,
+          ...(web(origin) && slugOf(repo) && /^[1-9]\d*$/.test(number) && here(origin, path) ? { link: origin + path } : {}),
+        };
+      };
+      for (const l of live.slice(0, RELEASE_ROWS)) rows.push(row(l, false));
+      for (const l of onItsWay.slice(0, Math.max(0, RELEASE_ROWS - rows.length))) rows.push(row(l, true));
+      return { kind, title: CARD_TITLE[kind], status, rows, actions };
+    }
     const items = list(obj(value)["items"]).map(obj);
     if (!Array.isArray(obj(value)["items"])) return undefined;
     const shown = items.slice(0, RELEASE_ROWS);

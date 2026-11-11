@@ -133,9 +133,40 @@ describe("MCP releases card", () => {
     expect(SHELL_JS).not.toContain("innerHTML");
   });
 
-  test("releases with shipped has no card", async () => {
+  test("releases with shipped draws the listed releases card: rows match the JSON, each linked", async () => {
+    const uris = ((await rpc("resources/list")).resources as any[]).map((r) => r.uri);
+    expect(uris).toContain("ui://forge/releases");
+    expect((await rpc("resources/read", { uri: "ui://forge/releases" })).contents[0].uri).toBe("ui://forge/releases");
     const res = await rpc("tools/call", { name: "releases", arguments: { shipped: true } });
-    expect(res.structuredContent?.card).toBeUndefined();
-    expect(cardFor("releases", { version: "1", live: [], onItsWay: [] })).toBeUndefined();
+    const json = JSON.parse(res.content[0].text);
+    const card = res.structuredContent.card;
+    expect(card.kind).toBe("releases");
+    expect(uris).toContain(`ui://forge/${card.kind}`);
+    expect(card.status).toContain(`live ${json.version}`);
+    const all = [...json.live, ...json.onItsWay];
+    expect(card.rows.length).toBe(Math.min(20, all.length));
+    json.live.slice(0, card.rows.length).forEach((l: any, i: number) => {
+      expect(card.rows[i].label).toBe(`#${l.number} ${l.title}`);
+      expect(card.rows[i].link).toBe(`${servers.url}/${l.repo}/pulls/${l.number}`);
+    });
+  });
+
+  test("a changelog longer than the cap is cut to the cap, live rows first", () => {
+    const live = Array.from({ length: 25 }, (_, i) => ({ repo: "a/b", number: i + 1, title: `t${i}`, at: "" }));
+    const card = cardFor("releases", { version: "1", commit: null, live, onItsWay: [{ repo: "a/b", number: 99, title: "n", at: "" }] }, "https://f.example")!;
+    expect(card.kind).toBe("releases");
+    expect(card.rows.length).toBe(10);
+    expect(card.rows.every((r) => r.value !== "on its way")).toBe(true);
+  });
+
+  test("the shipped card links each row to its pull and keeps a hostile title as text", () => {
+    const evil = `<img src=x onerror=alert(1)>`;
+    const card = cardFor("releases", { version: "1.0", commit: "abcdef1234", live: [{ repo: "a/b", number: 3, title: evil, at: "" }], onItsWay: [{ repo: "a/b", number: 4, title: "next", at: "" }] }, "https://f.example")!;
+    expect(card.status).toBe("live 1.0 · abcdef1 · 1 shipped · 1 on its way");
+    expect(card.rows[0]!.label).toBe(`#3 ${evil}`);
+    expect(card.rows[0]!.link).toBe("https://f.example/a/b/pulls/3");
+    expect(card.rows[1]!.value).toBe("on its way");
+    expect(card.kind).toBe("releases");
+    expect(CARD_SHELL("release")).not.toContain(evil);
   });
 });
