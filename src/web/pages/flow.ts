@@ -20,6 +20,7 @@ import { field, readForm } from "../form.ts";
 import { html, when } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { btn, icon, row, time } from "../ui.ts";
+import { readWaiting, waitingSection } from "./flow-waiting.ts";
 
 const money = (usd: number): string => `$${usd.toFixed(2)}`;
 const plural = (n: number, one: string, many = `${one}s`): string => `${String(n)} ${n === 1 ? one : many}`;
@@ -87,7 +88,7 @@ export function backupRow(alarm: BackupAlarm) {
 }
 
 // GET /flow
-export function flowPage(ctx: Ctx): Response {
+export async function flowPage(ctx: Ctx): Promise<Response> {
   if (ctx.url.search !== "") return new Response(null, { status: 301, headers: { location: `/boards${ctx.url.search}` } });
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const user = ctx.auth.user;
@@ -97,6 +98,7 @@ export function flowPage(ctx: Ctx): Response {
   const body = html`<div class="page-head"><h1>Flow</h1>${btn("Boards", { href: "/boards", variant: "ghost" })}</div>
     <p class="mb">Money flows from the left to shipped on the right, as wide as this week's real spend. Every repository has a valve: drag it to give the repository a share of the week, all the way down to shut. The crew does exactly what the valves say, from the next tick, and nothing but you turns one.</p>
     ${backupRow(alarmBackup(ctx.app.config.dataDir, new Date()))}
+    ${waitingSection(await readWaiting(ctx.app.db, ctx.app.reposRoot, new Date()))}
     ${pipesSvg(p)}
     <p class="muted small">${money(p.usd)} spent in the last 7 days; ${plural(p.shipped, "pull")} shipped.</p>
     ${p.valves.length === 0
