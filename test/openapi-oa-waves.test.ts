@@ -50,7 +50,22 @@ test("GET /api/v1/changelog lists each query parameter its handler reads", () =>
 
 test("the waves list lists each query parameter its handler reads", () => {
   const code = slice("src/http/api.ts", '"/api/v1/repos/:owner/:name/waves", async', '"/api/v1/repos/:owner/:name/waves/:version"');
+  expect(reads(code)).toEqual([]);
   expect(described(`${R}/waves`)).toEqual(reads(code));
+});
+
+test("one wave lists each query parameter its handler reads", () => {
+  const code = slice("src/http/api.ts", '"/api/v1/repos/:owner/:name/waves/:version", async', "router.add(");
+  expect(reads(code)).toEqual([]);
+  expect(described(`${R}/waves/{version}`)).toEqual(reads(code));
+});
+
+test("the waves summaries say they take no query parameters", () => {
+  const doc = openapi("https://f.test", "1", "admin") as any;
+  const list = doc.paths[`${R}/waves`].get;
+  const one = doc.paths[`${R}/waves/{version}`].get;
+  expect(list.summary).toContain("Takes no query parameters (the list is not paged: next_cursor is always null)");
+  expect(one.summary).toContain("Takes no query parameters");
 });
 
 test("the comparison fails on a parameter the description lacks", () => {
