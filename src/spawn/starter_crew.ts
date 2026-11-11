@@ -45,21 +45,61 @@ export const hasStarterCrew = (db: Database, orgId: string): boolean => getUserS
  * the organisation. Returns whether the crew exists afterwards.
  */
 export async function seedStarterCrew(db: Database, orgId: string, founderId: string): Promise<boolean> {
-  if (listAgents(db).length === 0) {
-    for (const seat of STARTER_SEATS) {
-      const made = await createUser(db, {
-        username: seat.name,
-        email: `${seat.name}@agents.spawn.forge.invalid`,
-        agent: true,
-        origin: "spawn",
-      });
-      if (!made.ok) return false;
-      createAgentRow(db, { userId: made.value.id, brief: seat.brief, roles: [seat.role], createdBy: founderId });
-    }
-  }
-  if (STARTER_SEATS.some((s) => getAgentByName(db, s.name) === undefined)) return false;
+  if (!(await makeStarterAgents(db, founderId))) return false;
   setUserSetting(db, orgId, MARK, "on");
   for (const repo of listReposOwnedBy(db, orgId)) seatStarterCrew(db, repo, founderId);
+  return true;
+}
+
+/** Make one starter agent; false when its name could not be taken. */
+async function makeSeat(db: Database, seat: Seat, founderId: string): Promise<boolean> {
+  const made = await createUser(db, {
+    username: seat.name,
+    email: `${seat.name}@agents.spawn.forge.invalid`,
+    agent: true,
+    origin: "spawn",
+  });
+  if (!made.ok) return false;
+  createAgentRow(db, { userId: made.value.id, brief: seat.brief, roles: [seat.role], createdBy: founderId });
+  return true;
+}
+
+/** Make the builder and reviewer when the forge has no agent at all; true when both exist afterwards. */
+async function makeStarterAgents(db: Database, founderId: string): Promise<boolean> {
+  if (listAgents(db).length === 0) {
+    for (const seat of STARTER_SEATS) if (!(await makeSeat(db, seat, founderId))) return false;
+  }
+  return STARTER_SEATS.every((s) => getAgentByName(db, s.name) !== undefined);
+}
+
+/** Seat one agent on a repository in one role; `setCrewRole` as well, because an existing seat is kept by `addCrew`. */
+function seatAgent(db: Database, repo: Repo, userId: string, founderId: string, role: CrewRole): void {
+  addCrew(db, repo.id, userId, founderId, role);
+  setCrewRole(db, repo.id, userId, role);
+}
+
+/**
+ * The first ask's app (#11508): a builder and a reviewer are seated on this
+ * one app and autonomy is turned on as the founder, so the next tick starts
+ * the ready issue. A forge with agents of its own keeps them (the first of
+ * each role, two different agents); a role nobody holds is made as the starter
+ * agent. Both seats or nothing: false (and autonomy untouched) when either
+ * cannot be filled, so the caller says so. Other apps are left as they are.
+ */
+export async function seatFirstAskCrew(db: Database, repo: Repo, founderId: string): Promise<boolean> {
+  if (listAgents(db).length === 0 && !(await makeStarterAgents(db, founderId))) return false;
+  let builder = listAgents(db).find((a) => a.roles.includes("builder"));
+  if (builder === undefined && (await makeSeat(db, STARTER_SEATS[0]!, founderId)))
+    builder = getAgentByName(db, STARTER_SEATS[0]!.name);
+  if (builder === undefined) return false;
+  const other = (): ReturnType<typeof listAgents>[number] | undefined =>
+    listAgents(db).find((a) => a.roles.includes("reviewer") && a.user.id !== builder!.user.id);
+  let reviewer = other();
+  if (reviewer === undefined && (await makeSeat(db, STARTER_SEATS[1]!, founderId))) reviewer = other();
+  if (reviewer === undefined) return false;
+  seatAgent(db, repo, builder.user.id, founderId, "builder");
+  seatAgent(db, repo, reviewer.user.id, founderId, "reviewer");
+  updateRepoSettings(db, getRepoById(db, repo.id) ?? repo, { autonomy: "autonomous", autonomyBy: founderId });
   return true;
 }
 
@@ -70,8 +110,7 @@ export function seatStarterCrew(db: Database, repo: Repo, founderId: string): vo
   for (const seat of STARTER_SEATS) {
     const agent = getAgentByName(db, seat.name);
     if (agent === undefined) continue;
-    addCrew(db, repo.id, agent.user.id, founderId, seat.role);
-    setCrewRole(db, repo.id, agent.user.id, seat.role);
+    seatAgent(db, repo, agent.user.id, founderId, seat.role);
   }
   const fresh = getRepoById(db, repo.id) ?? repo;
   if (fresh.autonomy === "off" && fresh.autonomyBy === null)
