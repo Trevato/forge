@@ -42,6 +42,7 @@ export type FileKind =
   | "junit"
   | "env"
   | "openapi"
+  | "dockerfile"
   | "sql"
   | "text"
   | "binary";
@@ -83,6 +84,7 @@ export const RENDER_CAP: Readonly<Record<FileKind, number>> = {
   junit: 5 * MB,
   env: 1 * MB,
   openapi: 1 * MB,
+  dockerfile: 1 * MB,
   sql: 1 * MB,
   text: 1 * MB,
   binary: 0,
@@ -217,6 +219,9 @@ export const isEnvExample = (path: string): boolean =>
 /** `openapi.json|yaml|yml` and `*.openapi.*`: the name of an OpenAPI document; its content decides whether it is drawn as one. */
 const isOpenApiName = (path: string): boolean => /(^|\/|\.)openapi\.(json|ya?ml)$/i.test(path);
 
+/** `Dockerfile`, `Containerfile` and `*.Dockerfile`, in any case. */
+const isDockerfileName = (path: string): boolean => /(^|\/)(Dockerfile|Containerfile|[^/]+\.Dockerfile)$/i.test(path);
+
 /** `lcov.info`: the name `lcov` and `bun test` write, whatever its extension. */
 const isLcovName = (path: string): boolean => /(^|\/)lcov\.info$/i.test(path);
 
@@ -289,6 +294,7 @@ export function fileKind(path: string, head: Uint8Array): FileKind {
   if (isEnvExample(path)) return "env";
   if (isJunit(path, head)) return "junit";
   if (isOpenApiName(path)) return "openapi";
+  if (isDockerfileName(path)) return "dockerfile";
   return TEXTUAL[extension(path)] ?? "text";
 }
 
@@ -305,6 +311,7 @@ export function kindByName(path: string): FileKind {
   if (isLcovName(path)) return "lcov";
   if (isEnvExample(path)) return "env";
   if (isOpenApiName(path)) return "openapi";
+  if (isDockerfileName(path)) return "dockerfile";
   return MEDIA[ext]?.kind ?? TEXTUAL[ext] ?? "text";
 }
 

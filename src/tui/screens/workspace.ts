@@ -61,6 +61,7 @@ import { gcodeFacts, parseGcode } from "../../web/render/gcode.ts";
 import { gpxFacts, parseGpx } from "../../web/render/gpx.ts";
 import { CASE_CAP, parseJunit } from "../../web/render/junit.ts";
 import { parseOpenApi } from "../../web/render/openapi.ts";
+import { parseDockerfile } from "../../web/render/dockerfile.ts";
 import { parseSql } from "../../web/render/sql.ts";
 import { RESULT_CAP, parseSarif } from "../../web/render/sarif.ts";
 import { RECORD_CAP, parseLcov, worstFirst, type Ratio } from "../../web/render/lcov.ts";
@@ -469,6 +470,29 @@ function openapiTable(text: string, path: string): Table | string | null {
   return { header: ["Tag", "Method", "Path", "Summary"], rows, more: parsed.more, delimiter: ",", columns: 4 };
 }
 
+/** A Dockerfile by file name. */
+function isDockerfilePath(path: string): boolean {
+  return kindByName(path) === "dockerfile";
+}
+
+/**
+ * A Dockerfile as a table: per stage, its ports and ENV names, then one row per instruction;
+ * the web's reason when it is not drawn. Shares the web's parser.
+ */
+function dockerfileTable(source: string): Table | string {
+  const parsed = parseDockerfile(source);
+  if ("error" in parsed) return `not drawn as a build: ${parsed.error}`;
+  const rows: string[][] = [];
+  for (const s of parsed.stages) {
+    const title = s.image === "" ? "(before the first stage)" : `${s.image}${s.name === "" ? "" : ` as ${s.name}`}`;
+    rows.push([title, "FROM", s.image]);
+    if (s.ports.length > 0) rows.push([title, "EXPOSE", s.ports.join(" ")]);
+    if (s.env.length > 0) rows.push([title, "ENV", s.env.join(" ")]);
+    for (const r of s.rows) rows.push([title, r.keyword, r.args.replace(/\s+/g, " ")]);
+  }
+  return { header: ["Stage", "Instruction", "Arguments"], rows, more: parsed.total - parsed.shown, delimiter: ",", columns: 3 };
+}
+
 /** A `.sql` file by name. */
 function isSqlPath(path: string): boolean {
   return kindByName(path) === "sql";
@@ -740,6 +764,11 @@ class Tab {
     } else if (api !== null) {
       this.table = typeof api === "string" ? null : api;
       this.fault = typeof api === "string" ? api : "";
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isDockerfilePath(this.path)) {
+      const build = dockerfileTable(new TextDecoder().decode(source));
+      this.table = typeof build === "string" ? null : build;
+      this.fault = typeof build === "string" ? build : "";
       if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isSqlPath(this.path)) {
       const schema = sqlTable(new TextDecoder().decode(source));
@@ -2867,7 +2896,7 @@ export function workspaceScreen(
                   t.tabular && t.table !== null
                     ? t.raw !== null && isJunitPath(t.path, t.raw)
                       ? plural(t.table.rows.length - 1 + t.table.more, "failing case")
-                      : tableStatus(t.table, t.unread, isSubtitlePath(t.path), isIcsPath(t.path), isGpxPath(t.path), isVcfPath(t.path), isGeoJsonPath(t.path), isJsonlPath(t.path), isSarifPath(t.path), isLcovPath(t.path), isOpenApiPath(t.path))
+                      : tableStatus(t.table, t.unread, isSubtitlePath(t.path), isIcsPath(t.path), isGpxPath(t.path), isVcfPath(t.path), isGeoJsonPath(t.path), isJsonlPath(t.path), isSarifPath(t.path), isLcovPath(t.path), isOpenApiPath(t.path), isDockerfilePath(t.path))
                     : `${plural(
                         t.reading ? t.doc.length : t.plain.length,
                         "line",
@@ -3201,9 +3230,9 @@ function drawCode(s: Surface, r: Rect, c: Tokens, t: Tab): void {
 }
 
 /** `80 rows, first 50 shown · 3 more columns`: what the table leaves out. */
-function tableStatus(table: Table, unread = 0, subs = false, events = false, facts = false, people = false, features = false, jsonl = false, findings = false, files = false, operations = false): string {
+function tableStatus(table: Table, unread = 0, subs = false, events = false, facts = false, people = false, features = false, jsonl = false, findings = false, files = false, operations = false, instructions = false): string {
   const rows = table.rows.length + table.more;
-  return `${plural(rows, subs ? "cue" : events ? "event" : people ? "contact" : facts ? "fact" : features ? "feature" : findings ? "finding" : files ? "file" : operations ? "operation" : "row")}${
+  return `${plural(rows, subs ? "cue" : events ? "event" : people ? "contact" : facts ? "fact" : features ? "feature" : findings ? "finding" : files ? "file" : operations ? "operation" : instructions ? "instruction" : "row")}${
     unread > 0 ? ` · ${unread} unreadable, check their arrow lines` : ""
   }${
     table.more > 0

@@ -616,6 +616,29 @@ describe("the terminal workspace", () => {
     }
   });
 
+  test("a Dockerfile opens as its stages, and s shows the source", async () => {
+    const made = await createRepo(forge, alice, { name: "dockerdoc", visibility: "public", description: "build" });
+    if (!made.ok) throw new Error("repo failed");
+    const df = "FROM oven/bun:1 AS build\nEXPOSE 3000\nENV TOKEN=abc\nRUN <<EOF\nbun install\nEOF\nFROM scratch\nCOPY --from=build /app /app\n";
+    await commitToBranch(forge, alice, made.value, { message: "seed", files: [{ path: "Dockerfile", content: df }, { path: "sub/Containerfile", content: "RUN x\n" }] });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "dockerdoc");
+      await openFile(h, "Dockerfile");
+      expect(h.text()).toContain("oven/bun:1 as build");
+      expect(h.text()).toContain("3000");
+      expect(h.text()).toContain("TOKEN");
+      expect(h.text()).not.toContain("abc");
+      expect(h.text()).toContain("COPY");
+      expect(h.text()).toContain("instructions");
+      await h.press("s");
+      expect(h.text()).toContain("TOKEN=abc");
+    } finally {
+      h.stop();
+    }
+  });
+
   test("a .sql file opens as its columns, and s shows the source", async () => {
     const made = await createRepo(forge, alice, { name: "sqlrepo", visibility: "public", description: "db" });
     if (!made.ok) throw new Error("repo failed");
