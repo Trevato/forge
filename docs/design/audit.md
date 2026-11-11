@@ -94,6 +94,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/family` — `pages/family.ts` · parent, this forge and children as a tree · `/forges` (the same children) · colour 1.
 - `/claim` — `pages/claim.ts` · claim a forge that was sent to me · none · colour 1.
 - `/privacy` — `pages/privacy.ts` · what the forge keeps about a visitor, three plain lines, open to anyone · none · none seen.
+- `/pricing` — `pricing.ts` · the plans and what each brings, the page the no-credit line points to · that line, `/` · none seen.
 - `/first-admin` — `pages/first-admin.ts` · the first person becomes admin · none · none seen.
 - `/fleet/graph` — `pages/fleet-graph.ts` · the fleet as a graph · `/family`, `/forges` · none seen.
 - `/fleet` — `pages/fleet.ts` · the rows a fleet query line selects, as a table · `/fleet/graph` · none seen.

@@ -71,7 +71,7 @@ describe("the next-steps card of a spawned forge", () => {
     const file = join(forge.child.config.dataDir, "parent.json");
     const before = readFileSync(file, "utf8");
     const lines: Record<string, string> = {
-      "": "The crew needs a model key to start.",
+      "": "The crew cannot build until you",
       credit: "included credit.",
     };
     try {
@@ -82,7 +82,18 @@ describe("the next-steps card of a spawned forge", () => {
         const home = await page(owner);
         const main = home.slice(home.indexOf("<main"), home.indexOf("</main>"));
         expect(main).toContain(said);
-        expect(main).toContain('href="/settings/subscriptions"');
+        if (mode === "") {
+          // No credit: the two ways forward, once, each a link.
+          expect(main).toContain('href="/settings/subscriptions"');
+          expect(main).toContain('href="/pricing"');
+          expect(main.match(/cannot build/g)?.length).toBe(1);
+        } else {
+          // Credit: the next step instead.
+          expect(main).toContain("Next:");
+          expect(main).toContain('href="/apps/new"');
+          expect(main).toContain('href="/new"');
+          expect(main).not.toContain("cannot build");
+        }
         expect(main).not.toContain('action="/settings/crew/key"');
         expect(main).not.toContain('type="password"');
         expect([...main.matchAll(/<form[^>]*>/g)].length).toBe(1);
@@ -91,6 +102,53 @@ describe("the next-steps card of a spawned forge", () => {
     } finally {
       writeFileSync(file, before);
     }
+  });
+
+  test("with no credit a tell is kept and says the crew cannot build yet, with the way forward; with credit it does not", async () => {
+    const file = join(forge.child.config.dataDir, "parent.json");
+    const before = readFileSync(file, "utf8");
+    const flashOf = (res: Response) => decodeURIComponent(res.headers.get("set-cookie") ?? "");
+    try {
+      const doc = JSON.parse(before);
+      delete doc.credit;
+      writeFileSync(file, JSON.stringify(doc));
+      const none = await post(owner, "/marias/bakery/tell", { text: "Add a contact page." });
+      expect(none.status).toBeLessThan(400);
+      expect(flashOf(none)).toContain("cannot build until you add a model key or pick a plan");
+      expect(flashOf(none)).toContain("/settings/subscriptions");
+      writeFileSync(file, before);
+      const funded = await post(owner, "/marias/bakery/tell", { text: "Add a gallery page." });
+      expect(flashOf(funded)).not.toContain("cannot build");
+    } finally {
+      writeFileSync(file, before);
+    }
+  });
+
+  test("the first screen's own box (app=forge) with no credit says the crew cannot build, with the link; with credit it says Received", async () => {
+    const file = join(forge.child.config.dataDir, "parent.json");
+    const before = readFileSync(file, "utf8");
+    const flashOf = (res: Response) => decodeURIComponent(res.headers.get("set-cookie") ?? "");
+    try {
+      const doc = JSON.parse(before);
+      delete doc.credit;
+      writeFileSync(file, JSON.stringify(doc));
+      const none = await post(owner, "/tell", { app: "forge", text: "A shop for my bakery." });
+      expect(none.status).toBeLessThan(400);
+      expect(flashOf(none)).toContain("cannot build until you add a model key or pick a plan");
+      expect(flashOf(none)).toContain("/settings/subscriptions");
+      writeFileSync(file, before);
+      const funded = await post(owner, "/tell", { app: "forge", text: "A shop for my bakery." });
+      expect(flashOf(funded)).toContain("Received.");
+      expect(flashOf(funded)).not.toContain("cannot build");
+    } finally {
+      writeFileSync(file, before);
+    }
+  });
+
+  test("/pricing answers, signed out, with the plans", async () => {
+    const res = await fetch(url("/pricing"));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('id="pricing"');
   });
 
   test("the tell box sends a tell, and the everyday offer appears once one exists", async () => {

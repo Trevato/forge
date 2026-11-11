@@ -59,7 +59,22 @@ export function crewNote(app: App): string {
   if (credit !== undefined && credit.leftUsd > 0)
     return `The crew is building on ${usdWords(credit.leftUsd)} of ${usdWords(credit.capUsd)} included credit.`;
   if (credit !== undefined) return "The included credit is spent; the crew needs a model key to go on.";
-  return "The crew needs a model key to start.";
+  return NO_CREDIT_WORDS;
+}
+
+/** What a forge whose crew has nothing to run on says, on the page and in the terminal. */
+export const NO_CREDIT_WORDS = "The crew cannot build until you add a model key or pick a plan.";
+
+/** The first screen's line as plain text, for the terminal: the same words as `crewFirstLine`, no links. */
+export function crewFirstText(app: App): string {
+  return crewCanRun(app) ? `${crewNote(app)} Next: make an app or bring a repository.` : NO_CREDIT_WORDS;
+}
+
+/** The first screen's one line: with credit the next step, without it the two ways forward, each a link (#11240). */
+export function crewFirstLine(app: App, admin: boolean): Html {
+  if (crewCanRun(app))
+    return html`${crewNote(app)} Next: <a href="/apps/new">make an app</a> or <a href="/new">bring a repository</a>.`;
+  return html`The crew cannot build until you ${admin ? html`<a href="/settings/subscriptions">add a model key</a>` : "add a model key"} or <a href="/pricing">pick a plan</a>.`;
 }
 
 const keyField = (): Html => html`<form class="stack" method="post" action="${KEY_ACTION}" id="crew-key-form">

@@ -27,7 +27,7 @@ import { appCrew } from "../../core/app-crew.ts";
 import { nextStepsFor } from "../../core/next-steps.ts";
 import { keepThought } from "../../actions/thought.ts";
 import { SAY_SOMETHING_WORDS } from "../../actions/tell_words.ts";
-import { crewNote } from "../../web/studio/crew_key.ts";
+import { crewFirstText } from "../../web/studio/crew_key.ts";
 import { agentsLine } from "../../web/studio/client_home.ts";
 import { lastVisit } from "../../core/home_visit.ts";
 import { sinceDigest } from "../../web/studio/since.ts";
@@ -292,7 +292,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     firstTell = steps.some((s) => s.key === "tell" && !s.done);
     everyday = everydayHead();
     if (firstTell) {
-      clientLines = [FIRST_TELL_LINE, crewNote(f.app)];
+      clientLines = [FIRST_TELL_LINE, crewFirstText(f.app)];
       ctx.invalidate();
       return;
     }

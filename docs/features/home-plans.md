@@ -21,3 +21,7 @@ The plans themselves are the forge's plans setting (`src/settings/plans.ts`; edi
 ## Cost
 
 The home reads who may sign up, the plans and the buy links in one statement (`src/settings/door.ts`), so the section adds no query to the page's statement budget. A stored value that does not parse reads as its default.
+
+## When the crew has no credit
+
+A forge whose crew has no key and no included credit says so once on its first screen: "The crew cannot build until you add a model key or pick a plan." (`NO_CREDIT_WORDS`, `crewFirstLine` in `src/web/studio/crew_key.ts`; the terminal's first screen says the same line as text, `crewFirstText`, with credit too). The key is a link to `/settings/subscriptions` (admins), the plan a link to `/pricing`, the plans on a page of their own (`src/web/pricing.ts`). With credit the line is the next step: make an app or bring a repository. A tell sent with no credit is kept, and the flash says the crew cannot build yet, with the same two ways forward; that holds for the first screen's own box (`app=forge`, kept as a thought) as for a tell to an app. `/pricing` has no terminal screen: its door there is the palette's *Get your own forge*.

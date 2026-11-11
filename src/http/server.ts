@@ -34,6 +34,7 @@ import { fleetAct, fleetReceipt, fleetUndo } from "../web/pages/fleet-ops.ts";
 import { maintenanceDuty, maintenancePage, maintenancePrepare, maintenanceResume } from "../web/pages/maintenance.ts";
 import { nightlyOutputPage, resiliencePage } from "../web/pages/resilience.ts";
 import { agentStartSet, billingLinksSet, limitsPage, limitsSet, quotasSet, signupSet, inviteMint, inviteRevoke } from "../web/pages/admin-limits.ts";
+import { pricingPage } from "../web/pricing.ts";
 import { plansSet } from "../web/settings/plans.ts";
 import { allFlowsPage } from "../web/pages/flows-all.ts";
 import { measureSubmit } from "./measure.ts";
@@ -1016,6 +1017,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/live/moving", liveMovingFragment);
   router.add("GET", "/live/chips", liveChipsFragment);
   router.add("GET", "/feed", feedPage);
+  router.add("GET", "/pricing", pricingPage);
   // The home's late regions, each drawn alone (#7660).
   for (const name of HOME_REGIONS) router.add("GET", `/live/home/${name}`, (ctx) => liveHomeFragment(ctx, name));
   // Whether a hostname is an app's verified domain — what Caddy's

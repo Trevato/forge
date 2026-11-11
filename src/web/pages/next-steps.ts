@@ -26,8 +26,7 @@ import { badge, btn, row } from "../ui.ts";
 import { tellHref } from "../studio/nouns.ts";
 import { everydayAsk } from "./everyday.ts";
 import { EVERYDAY_WHY } from "../../core/everyday.ts";
-import { crewNote } from "../studio/crew_key.ts";
-import { crewHasCredential } from "../../core/subscriptions.ts";
+import { crewFirstLine } from "../studio/crew_key.ts";
 import { FORGE_TARGET } from "../studio/feed.ts";
 import { COMPOSER_FIELDS, TELL_MAX } from "../share_target.ts";
 
@@ -72,7 +71,7 @@ function firstTell(ctx: Ctx, user: User, crew: Html[]): Html {
       <textarea class="input" name="${COMPOSER_FIELDS.text}" rows="3" maxlength="${String(TELL_MAX)}" required placeholder="A weekly menu page for the bakery" aria-label="Your request" data-draft="${user.id}"></textarea>
       <div class="bar">${btn("Tell the crew", { variant: "primary" })}</div>
     </form>
-    <p class="small muted" id="crew-credit-note">${crewNote(ctx.app)}${crewHasCredential(ctx.app.db) || !ctx.auth.user?.isAdmin ? null : html` <a href="/settings/subscriptions">Add your own key</a>.`}</p>
+    <p class="small muted" id="crew-credit-note">${crewFirstLine(ctx.app, ctx.auth.user?.isAdmin === true)}</p>
     ${crew.length > 0 ? html`<ul class="list">${crew}</ul>` : null}
   </section>`;
 }

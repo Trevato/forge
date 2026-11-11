@@ -33,6 +33,7 @@ import { backTo, field, readForm, type Form } from "../form.ts";
 import { isLocalPath } from "../flash.ts";
 import { html } from "../html.ts";
 import { flashOrJson, flashTo, page } from "../layout.ts";
+import { crewCanRun, NO_CREDIT_WORDS } from "./crew_key.ts";
 import { FORGE_TARGET } from "./feed.ts";
 import { changeHref } from "./nouns.ts";
 
@@ -95,6 +96,8 @@ async function tellFrom(
   if (from === "/" && field(form, "ask") === "1") return flashOrJson(ctx, back, { message: SENT_WORDS });
   // The tell's own page, for a caller that asked for JSON (the palette's row).
   const at = { href: `${repoBase(repo)}/issues/${told.value.issue.number}` };
+  // "Build" never silently does nothing: with no credit the person is told, with the way forward.
+  if (!crewCanRun(ctx.app)) return flashOrJson(ctx, back, noCreditFlash(ctx), at);
   if (routed === undefined)
     return flashOrJson(
       ctx,
@@ -113,6 +116,15 @@ async function tellFrom(
     },
     at,
   );
+}
+
+/** The flash for words kept while the crew has no credit: saved, the crew cannot build yet, and the way forward. */
+function noCreditFlash(ctx: Ctx): { tone: "attn"; message: string; link: { href: string; label: string } } {
+  return {
+    tone: "attn",
+    message: `Saved, but ${NO_CREDIT_WORDS.charAt(0).toLowerCase()}${NO_CREDIT_WORDS.slice(1)}`,
+    link: ctx.auth.user?.isAdmin === true ? { href: "/settings/subscriptions", label: "Add a model key" } : { href: "/pricing", label: "See the plans" },
+  };
 }
 
 /** POST /:owner/:name/tell  { text } — a sentence becomes work. */
@@ -213,11 +225,12 @@ async function composerTell(ctx: Ctx, form: Form, target: string, home: string, 
       return flashOrJson(ctx, home, { tone: "danger", message: SAY_SOMETHING_WORDS });
     const kept = keepThought(ctx.app, ctx.auth.user, field(form, COMPOSER_FIELDS.text), "composer");
     if (kept.ok) onTold();
+    // The first screen's Build: kept, and never silently nothing when the crew cannot run.
     return flashOrJson(
       ctx,
       home,
       kept.ok
-        ? { message: "Received." }
+        ? crewCanRun(ctx.app) ? { message: "Received." } : noCreditFlash(ctx)
         : {
             tone: "danger",
             message:
