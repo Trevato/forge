@@ -433,9 +433,11 @@ export function outsideSeat(
         ? "planner"
         : "builder";
   const held = crewRole(app.db, repo.id, agent.user.id);
-  // A pull assigned to its reviewer is asked for a look, a builder's for a fix: only a planner is outside.
-  if (reason !== "review" && issue.kind === "pull")
-    return (held ?? agent.roles[0]) === "planner";
+  // A pull assigned to its reviewer is asked for a look, a builder's for a fix: a planner and a maintainer are outside.
+  if (reason !== "review" && issue.kind === "pull") {
+    const own = held ?? agent.roles[0];
+    return own === "planner" || own === "maintainer";
+  }
   return held === undefined ? !agent.roles.includes(seat) : held !== seat;
 }
 

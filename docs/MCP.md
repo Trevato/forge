@@ -152,7 +152,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `now` | — | What the crew does across your apps: who, on what, since when, cost; what awaits review | 252 |
 | `open_pull` | — | Open a pull request, from a branch or from your fork | 327 |
 | `org_create` | — | Make an organization | 151 |
-| `org_teams` | `create`, `add_member`, `members`, `metrics`, `remove_member`, `remove` | An org's teams: create, add member with a role, list members, remove | 669 |
+| `org_teams` | `create`, `add_member`, `members`, `metrics`, `remove_member`, `remove` | An org's teams: create, add member with a role, list members, remove | 682 |
 | `orgs` | — | Your orgs; with org, its teams | 170 |
 | `origin_apps` | — | Your origin OAuth apps: list, add, remove | 290 |
 | `origins` | `list`, `repos`, `sync`, `hosts` | Origins: list, repos, sync, hosts | 253 |

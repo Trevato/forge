@@ -129,6 +129,7 @@ const SEAT_TITLE: Record<CrewRole, string> = {
   planner: "Planners",
   builder: "Builders",
   reviewer: "Reviewers",
+  maintainer: "Maintainers",
 };
 
 /**
@@ -212,6 +213,8 @@ function teamCard(
       ],
     });
   });
+  const maintainers = maintainerRow(base, admin, everyone, crew, held);
+  if (maintainers !== null) rows.push(maintainers);
   const intro = crewOffInPreview()
     ? "The crew is off in a preview."
     : team.auto
@@ -228,6 +231,60 @@ function teamCard(
         ${rows}
       </ul>
   </section>`;
+}
+
+/**
+ * The maintainers: agents that tend the code (refactors, upkeep) and hold no
+ * pillar, so no number of them works at once and an empty list warns of
+ * nothing; the row appears once there is one to seat or seated. They are never handed a build, a plan or a review, and never
+ * merge or push the default branch.
+ */
+function maintainerRow(
+  base: string,
+  admin: boolean,
+  everyone: readonly Agent[],
+  crew: ReturnType<typeof listCrewRoles>,
+  held: ReadonlyMap<string, CrewRole>,
+): Html | null {
+  const picks = everyone.filter((a) => a.roles.includes("maintainer") && held.get(a.user.username) !== "maintainer");
+  const add =
+    !admin || picks.length === 0
+      ? null
+      : html`<form class="row-fields" method="post" action="${base}/settings/crew" data-team>
+          <input type="hidden" name="role" value="maintainer" />
+          <label class="sr-only" for="f-add-maintainer">Add to ${SEAT_TITLE.maintainer}</label>
+          <select class="input input-sm" id="f-add-maintainer" name="agent">
+            <option value="" disabled selected>Add…</option>
+            ${picks.map((a) => html`<option value="${a.user.username}">${a.user.username}</option>`)}
+          </select>
+          ${btn("Add", { size: "sm" })}
+        </form>`;
+  const members = crew
+    .filter((c) => c.role === "maintainer")
+    .map((c) =>
+      row({
+        lead: icon("bot"),
+        title: userLink(c.agent.user.username, { mark: markOf(c.agent.user) }),
+        ...(admin
+          ? {
+              trail: html`<form class="row-actions" method="post" action="${base}/settings/crew/${encodeURIComponent(c.agent.user.username)}/remove">
+                ${btn("Remove", { size: "sm", icon: "x" })}
+              </form>`,
+            }
+          : {}),
+        data: { member: c.agent.user.username, seat: "maintainer" },
+      }),
+    );
+  // No maintainer seated and none to add: the row would say nothing, so it is not drawn.
+  if (members.length === 0 && add === null) return null;
+  return row({
+    lead: icon("bot"),
+    title: SEAT_TITLE.maintainer,
+    meta: html`Keeps the code easy to change.`,
+    trail: html`${add}`,
+    data: { seat: "maintainer" },
+    children: members,
+  });
 }
 
 /**

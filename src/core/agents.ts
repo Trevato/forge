@@ -306,11 +306,12 @@ export function deleteAgent(db: Database, userId: string): boolean {
  * landed. Per repository, because the same agent may plan one and build
  * another.
  */
-export type CrewRole = "builder" | "planner" | "reviewer";
+export type CrewRole = "builder" | "planner" | "reviewer" | "maintainer";
 export const CREW_ROLES: readonly CrewRole[] = [
   "planner",
   "builder",
   "reviewer",
+  "maintainer",
 ];
 export const isCrewRole = (value: unknown): value is CrewRole =>
   (CREW_ROLES as readonly unknown[]).includes(value);

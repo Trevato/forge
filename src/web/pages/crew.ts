@@ -175,7 +175,7 @@ const agentErrors = (ctx: Ctx): Record<string, string> => ({
   email_taken: USERNAME_TAKEN,
   invalid_model: `A model is up to ${MODEL_MAX} characters with no spaces.`,
   brief_too_long: `A brief is at most ${BRIEF_MAX} characters.`,
-  invalid_roles: "Pick at least one job: planner, builder or reviewer.",
+  invalid_roles: "Pick at least one job: planner, builder, reviewer or maintainer.",
   role_held: "That agent still holds a seat it would lose on a repository. Move it there first, under Settings → Crew.",
   invalid_budget: `A budget is a number of dollars between 0 and ${limitValue(ctx.app.db, "agent.budget_max_usd")}.`,
 });
