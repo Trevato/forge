@@ -12,8 +12,6 @@
   "src/flow/stale_fold.ts",
   "src/perf/page_budget.ts",
   "src/spawn/pod.ts",
-  "src/tui/gallery.ts",
   "src/tui/ui/qr.ts",
-  "src/web/highlight-client.ts",
   "src/web/studio/held_posts.ts"
 ]
