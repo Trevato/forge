@@ -1,10 +1,12 @@
 // POST /hooks/stripe: a signed event once, 400 on a bad or stale signature, 200 and nothing on a replay (#11244).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { sealKey, sealWebhook } from "../src/billing/connection.ts";
+import { getStored } from "../src/billing/store.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { refusedCount, setStripeHookCaps } from "../src/http/stripe_hook.ts";
 
@@ -132,5 +134,64 @@ describe("POST /hooks/stripe", () => {
     app.db.query("DELETE FROM stripe_hook_refused WHERE day >= '2001'").run();
     await post("{}", "t=1,v1=00"); // a new day row: prune
     expect(old()).toBeNull();
+  });
+
+  describe("checkout.session.completed", () => {
+    const session = (id: string, forge: unknown, extra: Record<string, unknown> = {}) =>
+      JSON.stringify({
+        id,
+        type: "checkout.session.completed",
+        data: { object: { mode: "subscription", payment_status: "paid", customer: "cus_123", subscription: "sub_456", metadata: { forge }, ...extra } },
+      });
+    const changeCount = (forge: string) => (app.db.query("SELECT COUNT(*) AS n FROM entitlement_change WHERE forge = ?1").get(forge) as { n: number }).n;
+    beforeAll(() => {
+      mkdirSync(join(dir, "spawn"), { recursive: true });
+      writeFileSync(join(dir, "spawn", "kid.json"), JSON.stringify({ name: "kid", bodyId: "cell-k", done: true, placement: "hosted", size: "small", apps: [], createdAt: new Date().toISOString() }));
+    });
+
+    test("binds customer and subscription to the named forge and marks it paid", async () => {
+      const body = session("evt_co1", "kid", { metadata: { forge: "kid", plan: "medium" } });
+      expect((await post(body, await sign(body))).status).toBe(200);
+      expect(getStored(app.db, "kid")).toMatchObject({
+        status: "active", plan: "medium", provider: "stripe", customerId: "cus_123", subscriptionId: "sub_456", source: "stripe",
+      });
+    });
+
+    test("a session for an unknown forge is recorded and changes nothing", async () => {
+      const body = session("evt_co2", "ghost");
+      expect((await post(body, await sign(body))).status).toBe(200);
+      expect(events()).toContainEqual({ id: "evt_co2", type: "checkout.session.completed" });
+      expect(getStored(app.db, "ghost")).toBeUndefined();
+      expect(changeCount("ghost")).toBe(0);
+    });
+
+    test("an unpaid or non-subscription session changes nothing", async () => {
+      const before = changeCount("kid");
+      const bodies = [
+        session("evt_co6", "kid", { payment_status: "unpaid" }),
+        session("evt_co7", "kid", { mode: "payment" }),
+        session("evt_co8", "kid", { payment_status: undefined }),
+      ];
+      for (const body of bodies) expect((await post(body, await sign(body))).status).toBe(200);
+      expect(changeCount("kid")).toBe(before);
+    });
+
+    test("a binding that throws keeps no event id, so the retry binds", async () => {
+      app.db.run("CREATE TRIGGER boom BEFORE INSERT ON entitlement_change BEGIN SELECT RAISE(ABORT, 'boom'); END");
+      const body = session("evt_co9", "kid", { customer: "cus_retry" });
+      expect((await post(body, await sign(body))).status).toBeGreaterThanOrEqual(400); // the server turns a db refusal into an error answer
+      app.db.run("DROP TRIGGER boom");
+      expect(events().find((e) => (e as { id: string }).id === "evt_co9")).toBeUndefined();
+      expect((await post(body, await sign(body))).status).toBe(200);
+      expect(getStored(app.db, "kid")?.customerId).toBe("cus_retry");
+    });
+
+    test("a malformed session changes nothing", async () => {
+      const before = (app.db.query("SELECT COUNT(*) AS n FROM entitlement_change").get() as { n: number }).n;
+      for (const [i, body] of [session("evt_co3", 7), session("evt_co4", "kid", { customer: 5 }), session("evt_co5", "../kid")].entries()) {
+        expect((await post(body, await sign(body))).status, String(i)).toBe(200);
+      }
+      expect((app.db.query("SELECT COUNT(*) AS n FROM entitlement_change").get() as { n: number }).n).toBe(before);
+    });
   });
 });

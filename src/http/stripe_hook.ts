@@ -6,9 +6,11 @@
  * only then parsed. A bad or stale signature is 400 and counted per UTC day
  * (`stripe_hook_refused`). A verified event's id is stored once; a repeated id
  * is 200 and does nothing, and so is an event type nobody acts on yet.
+ * `checkout.session.completed` binds its forge (`billing/checkout_completed.ts`).
  */
 
 import type { App } from "../app.ts";
+import { bindCheckout } from "../billing/checkout_completed.ts";
 import { openWebhookSecret } from "../billing/connection.ts";
 import { verifyStripeSignature } from "../billing/signature.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
@@ -98,6 +100,10 @@ export async function stripeHook(ctx: Ctx): Promise<Response> {
   if (e === null || typeof e !== "object" || typeof e.id !== "string" || !EVENT_ID.test(e.id)) return answer(400);
   const type = typeof e.type === "string" && EVENT_TYPE.test(e.type) ? e.type : "unknown";
   // A repeated id changes nothing: the primary key refuses it.
-  app.db.query("INSERT OR IGNORE INTO stripe_event (id, type, at) VALUES (?1, ?2, ?3)").run(e.id, type, now.toISOString());
+  // One transaction: if binding throws, the id is not kept, so Stripe's retry is not taken for a replay.
+  app.db.transaction(() => {
+    const stored = app.db.query("INSERT OR IGNORE INTO stripe_event (id, type, at) VALUES (?1, ?2, ?3)").run(e.id as string, type, now.toISOString());
+    if (stored.changes === 1 && type === "checkout.session.completed") bindCheckout(app, event);
+  })();
   return answer(200);
 }
