@@ -37,6 +37,8 @@
  * accent token such as `--accent-2`; only `--accent` and `--accent-fg` exist).
  * They match markup and style, never a paragraph's words. Named in docs/design/areas/quiet.md.
  *
+ * `stranger` (#11458) names each word of `STRANGER_NEVER_SEES` that a stranger-path page says; see `strangerWords()`.
+ *
  * `banner` (#10699) refuses a standing alert in the home and board builders; see `banner()`.
  *
  * A red names the file:line, the literal and what to use instead, so one pass
@@ -59,6 +61,7 @@
 
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
+import { STRANGER_NEVER_SEES } from "../src/design/first_five_minutes.ts";
 
 /** The type scale in docs/DESIGN.md §3, in px. */
 export const TYPE_SCALE: readonly number[] = [11.5, 12.5, 13, 14, 15, 16, 20];
@@ -494,6 +497,83 @@ export function scanCards(root: string): string[] {
     .flatMap((f) => loneSentenceCards(readFileSync(f, "utf8")).map((c) => `${relative(root, f)}:${c.line}  card(${c.text}…)  →  principle 7 (docs/DESIGN.md): a card (or a listCard of one bare row) around one sentence is a box around a thing; put the sentence directly under the page head, or make it a dl row`));
 }
 
+/**
+ * The stranger's words (#11458): the screens a signed-out person passes from a
+ * link to their forge show none of `STRANGER_NEVER_SEES`. Only visible text is
+ * read: the words of a template or a sentence-like string, with tags (so
+ * attributes), `${}` code, comments, CSS and scripts left out. "claim" stays a
+ * fine route name and class; it is a refusal only where it is read.
+ */
+export const STRANGER_FILES = ["src/web/pages/claim.ts", "src/web/pages/start-forge.ts", "src/web/pages/new-forge.ts", "src/web/pages/forge-waiting.ts"];
+const STRANGER_RE = new RegExp(`(?<![A-Za-z0-9_-])(?:${STRANGER_NEVER_SEES.join("|")})(?:s|ed|ing)?(?![A-Za-z0-9_-])`, "gi");
+export type StrangerFinding = { line: number; word: string; text: string };
+
+/** The strings of `code`: [start offset, raw text with `${}` holes blanked]; nested templates are their own strings. */
+function stringsOf(code: string): { at: number; text: string; quote: string }[] {
+  const out: { at: number; text: string; quote: string }[] = [];
+  const template = (i: number): number => {
+    let text = "";
+    const at = i + 1;
+    for (i++; i < code.length; i++) {
+      const c = code[i]!;
+      if (c === "\\") { text += "  "; i++; continue; }
+      if (c === "`") break;
+      if (c === "$" && code[i + 1] === "{") {
+        let depth = 1;
+        i += 2;
+        text += "  ";
+        for (; i < code.length && depth > 0; i++) {
+          const d = code[i]!;
+          if (d === "`") { i = template(i); text += " "; i--; continue; }
+          if (d === '"' || d === "'") { const e = code.indexOf(d, i + 1); i = e < 0 ? code.length : e; text += " "; continue; }
+          if (d === "{") depth++;
+          else if (d === "}") depth--;
+          if (d === "\n") text += "\n";
+        }
+        i--;
+        continue;
+      }
+      text += c;
+    }
+    out.push({ at, text, quote: "`" });
+    return i;
+  };
+  for (let i = 0; i < code.length; i++) {
+    const c = code[i]!;
+    if (c === "`") i = template(i);
+    else if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < code.length && code[j] !== c && code[j] !== "\n") j += code[j] === "\\" ? 2 : 1;
+      if (code[j] === c) out.push({ at: i + 1, text: code.slice(i + 1, j), quote: c });
+      i = j;
+    } else if (c === "/" && /[(,=:]\s*$/.test(code.slice(Math.max(0, i - 4), i)) && code[i + 1] !== "/") {
+      const e = code.indexOf("\n", i); // a regex literal: skip to the line's end rather than read its quotes
+      i = e < 0 ? code.length : e;
+    }
+  }
+  return out;
+}
+
+export function strangerWords(text: string): StrangerFinding[] {
+  const code = blanked(text);
+  const out: StrangerFinding[] = [];
+  for (const s of stringsOf(code)) {
+    let t = s.text;
+    if (s.quote === "`" && !/<[a-z]/i.test(t) && (!/\s/.test(t.trim()) || /^[\w./#:?&=@-]+\s*$/.test(t.trim()))) continue; // a key or a path, not a sentence
+    if (s.quote === "`") {
+      t = t.replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, (m) => m.replace(/[^\n]/g, " ")).replace(/<[^<>]*>/g, (m) => m.replace(/[^\n]/g, " "));
+      if (/[{};]\s*[\w.#:-]*\s*[{};]|[{;]\s*$/.test(t) && /[{}]/.test(t)) continue; // CSS
+    } else if (!/\s/.test(t) || /^[\w./#:?&=@-]+$/.test(t)) continue; // an id, a path, a key: not a sentence
+    for (const m of t.matchAll(STRANGER_RE)) {
+      out.push({ line: code.slice(0, s.at).split("\n").length + t.slice(0, m.index!).split("\n").length - 1, word: m[0], text: t.slice(Math.max(0, m.index! - 20), m.index! + m[0].length + 20).replace(/\s+/g, " ").trim() });
+    }
+  }
+  return out.sort((a, b) => a.line - b.line);
+}
+export function scanStranger(root: string): string[] {
+  return STRANGER_FILES.flatMap((f) => strangerWords(readFileSync(join(root, f), "utf8")).map((w) => `${f}:${w.line}  "${w.word}" in "${w.text}"  →  a stranger is never shown this word (docs/DESIGN.md § The first five minutes): say it in plain words`));
+}
+
 const BASELINE = "docs/design/baseline.json";
 const DESIGN = "docs/DESIGN.md";
 const SECTIONS = "docs/design/sections";
@@ -510,7 +590,7 @@ if (import.meta.main) {
   } else {
     const base: Baseline = JSON.parse(readFileSync(join(root, BASELINE), "utf8"));
     const debt: QuietDebt = JSON.parse(readFileSync(join(root, QUIET_DEBT), "utf8"));
-    const problems = [...compare(base, now, designText(root), areaFiles(root)), ...compareQuiet(debt, scanQuiet(root)), ...scanBanner(root), ...scanCards(root)];
+    const problems = [...compare(base, now, designText(root), areaFiles(root)), ...compareQuiet(debt, scanQuiet(root)), ...scanBanner(root), ...scanCards(root), ...scanStranger(root)];
     for (const p of problems) console.error(p);
     if (problems.length) process.exit(1);
     console.log("design: no colour, size or component added outside the system");
