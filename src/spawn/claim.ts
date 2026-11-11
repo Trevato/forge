@@ -228,7 +228,11 @@ export function unburnClaim(db: Database, orgId: string, token: string): void {
   ).run(JSON.stringify(back), orgId, KEY, found.raw);
 }
 
-/** No way in of its own, for the account whose id is `id` (a column or a parameter): no password, passkey, token, SSH key, session, parent link, edge link, or OAuth-client grant. */
+/**
+ * No way in of its own, for the account whose id is `id` (a column or a
+ * parameter): no password, passkey, token, SSH key, session, parent link,
+ * edge link, or OAuth-client grant.
+ */
 const noWayIn = (id: string): string =>
   `u.password_hash = '' AND u.is_agent = 0
    ${["passkey", "token", "user_key", "session", "federated_identity", "edge_link", "oauth_refresh", "oauth_code"]
