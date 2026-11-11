@@ -31,7 +31,7 @@ import {
 import type { Credential } from "../auth/webauthn.ts";
 import { addPasskey } from "../core/passkeys.ts";
 import { activeEdgeToken } from "../http/edge.ts";
-import { getUserByName, isActive, type User } from "../core/users.ts";
+import { getUserById, type User } from "../core/users.ts";
 import { sha256 } from "../kernel/hash.ts";
 
 const KEY = "spawn_claim";
@@ -228,6 +228,13 @@ export function unburnClaim(db: Database, orgId: string, token: string): void {
   ).run(JSON.stringify(back), orgId, KEY, found.raw);
 }
 
+/** No way in of its own, for the account whose id is `id` (a column or a parameter): no password, passkey, token, SSH key, session, parent link, edge link, or OAuth-client grant. */
+const noWayIn = (id: string): string =>
+  `u.password_hash = '' AND u.is_agent = 0
+   ${["passkey", "token", "user_key", "session", "federated_identity", "edge_link", "oauth_refresh", "oauth_code"]
+     .map((table) => `AND NOT EXISTS (SELECT 1 FROM ${table} WHERE user_id = ${id})`)
+     .join("\n   ")}`;
+
 /**
  * The spawn-made founder a claim may take over, when the name asked for is
  * its name: the account `copyInto` made under the spawner's own username,
@@ -248,34 +255,29 @@ export function founderToTake(
   username: string,
 ): User | undefined {
   if (spawned.keepAccess) return undefined;
+  // One statement: the claim page asks this on every view (page budget).
+  const row = app.db
+    .query<{ id: string }, [string, string, string]>(
+      `SELECT u.id FROM user u JOIN team t ON t.org_id = ?2 AND t.name = ?3
+       WHERE u.username = ?1 COLLATE NOCASE AND u.kind = 'user' AND u.is_agent = 0
+         AND u.suspended_at IS NULL AND u.removed_at IS NULL AND u.waiting_at IS NULL
+         AND u.id = (SELECT user_id FROM team_member WHERE team_id = t.id LIMIT 1)
+         AND ${noWayIn("u.id")}`,
+    )
+    .get(username, spawned.org.id, OWNERS_TEAM);
+  if (row === null) return undefined;
   // Where the platform edge signs people in, a name is a login: the
   // spawner's edge sign-in lands on this account, so it is never handed to
   // whoever holds the link.
   if (activeEdgeToken(app) !== undefined) return undefined;
-  const db = app.db;
-  const user = getUserByName(db, username);
-  if (user === undefined || user.kind !== "user" || !isActive(user)) return undefined;
-  const team = listTeams(db, spawned.org.id).find((t) => t.name === OWNERS_TEAM);
-  const founder = team === undefined ? undefined : listTeamMembers(db, team.id)[0];
-  if (founder?.id !== user.id) return undefined;
-  return untouched(db, user.id) ? user : undefined;
+  return getUserById(app.db, row.id);
 }
 
-/** No way in of its own: no password, passkey, token, SSH key, session, parent link, edge link, or OAuth-client grant. */
+/** Whether the account still has no way in of its own (`noWayIn`). */
 function untouched(db: Database, userId: string): boolean {
   return (
     db
-      .query<{ n: number }, [string]>(
-        `SELECT count(*) AS n FROM user u WHERE u.id = ?1 AND u.password_hash = '' AND u.is_agent = 0
-           AND NOT EXISTS (SELECT 1 FROM passkey WHERE user_id = ?1)
-           AND NOT EXISTS (SELECT 1 FROM token WHERE user_id = ?1)
-           AND NOT EXISTS (SELECT 1 FROM user_key WHERE user_id = ?1)
-           AND NOT EXISTS (SELECT 1 FROM session WHERE user_id = ?1)
-           AND NOT EXISTS (SELECT 1 FROM federated_identity WHERE user_id = ?1)
-           AND NOT EXISTS (SELECT 1 FROM edge_link WHERE user_id = ?1)
-           AND NOT EXISTS (SELECT 1 FROM oauth_refresh WHERE user_id = ?1)
-           AND NOT EXISTS (SELECT 1 FROM oauth_code WHERE user_id = ?1)`,
-      )
+      .query<{ n: number }, [string]>(`SELECT count(*) AS n FROM user u WHERE u.id = ?1 AND ${noWayIn("?1")}`)
       .get(userId)!.n === 1
   );
 }
