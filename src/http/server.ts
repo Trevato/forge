@@ -37,6 +37,7 @@ import { plansSet } from "../web/settings/plans.ts";
 import { allFlowsPage } from "../web/pages/flows-all.ts";
 import { measureSubmit } from "./measure.ts";
 import { cspReportSubmit } from "./csp_report.ts";
+import { stripeHook } from "./stripe_hook.ts";
 import { settingsRoutes } from "./settings_routes.ts";
 import { pluginRoutes } from "./plugin_routes.ts";
 import { pinnedRoutes } from "./pinned_routes.ts";
@@ -830,6 +831,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/_funnel", funnelSubmit);
   // What a page's Content-Security-Policy blocked (http/csp_report.ts): counts only.
   router.add("POST", "/csp-report", cspReportSubmit);
+  // Stripe's signed events (http/stripe_hook.ts): public, no cookie read, each event id once.
+  router.add("POST", "/hooks/stripe", stripeHook);
   router.add("GET", "/", home);
   // A spawned child's claim link: GET shows, POST takes it (spawn/claim.ts).
   router.add("GET", "/claim", claimFragmentPage);

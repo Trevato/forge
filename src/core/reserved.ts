@@ -80,6 +80,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "front",
   "go",
   "home",
+  "hooks",
   "icons",
   "live",
   "login",

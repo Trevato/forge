@@ -54,6 +54,18 @@ export function openKey(db: Database, dataDir: string, bus: EventBus, actor: str
   return { key, endpointId: got[ENDPOINT] ?? "" };
 }
 
+/**
+ * The sealed signing secret, opened (audited as `secret.read`); undefined when none is sealed.
+ * `quiet` opens it with no audit row, for a caller that audits only what it verified.
+ */
+export function openWebhookSecret(db: Database, dataDir: string, bus: EventBus, actor?: string, quiet = false): string | undefined {
+  if (!connectionOf(db)?.signed) return undefined;
+  const secret = resolveSecrets(db, dataDir, bus, [SECRET], { actor, quiet })[SECRET];
+  if (secret === undefined || secret === "") return undefined;
+  holdValues("stripe", [secret]);
+  return secret;
+}
+
 export function forget(db: Database): void {
   for (const n of [...Object.values(KEY_NAME), SECRET, ENDPOINT]) deleteSecret(db, "forge", "", n);
 }

@@ -26,6 +26,7 @@ const AUDITED_CLEAR: string[] = [
   "app_feature_setting.value",
   "comment.body",
   "degraded_span.sentence",
+  "efficiency_sample.value",
   "feed_chip.value",
   "fleet_operation.value",
   "gift_redeem.code_id",
