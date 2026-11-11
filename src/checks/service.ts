@@ -68,7 +68,7 @@ import { ASKED, redMain, unheld } from "./red_main.ts";
 import { proposeRevert } from "./revert_red.ts";
 import { rebasesFirst } from "./finishing_first.ts";
 import { IMPACT_FILE, keepImpact, seedImpact } from "./impact-store.ts";
-import { afterVerify } from "./culprit.ts";
+import { afterVerify, closeOnGreen } from "./culprit.ts";
 import { redDetail, reportGreen, reportRed } from "./report.ts";
 import {
   bisectOrigin,
@@ -886,6 +886,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         reportRed(app, repo, done).forEach(write);
         // A file the run printed passing closes its open report issue (#9524).
         reportGreen(app, repo, done, outcome.passed ?? []).forEach(write);
+        // A green that ran every file a culprit's issue names closes it (#11395).
+        closeOnGreen(app, repo, done, outcome.passed ?? []).forEach(write);
       }
       if (done && inVerifyLane(run.env))
         await afterVerify(app, repo, done, (r, env, oid, reason) => request(r, env, oid, reason))
