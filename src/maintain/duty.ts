@@ -1,6 +1,7 @@
 /** What a maintenance duty is (#11204): a name, an interval and a handler; plain data in, plain data out. */
 
 import type { Database } from "bun:sqlite";
+import type { App } from "../app.ts";
 
 /** The number a finding rests on and when it was read: a query's result or a measurement. */
 export interface Probe {
@@ -26,6 +27,8 @@ export interface DutyResult {
 export interface DutyContext {
   readonly db: Database;
   readonly now: Date;
+  /** The running app, for a duty that files or comments through the same actions a person uses. */
+  readonly app?: App | undefined;
 }
 
 export interface Duty {

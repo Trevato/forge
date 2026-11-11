@@ -2,5 +2,6 @@
 
 import type { Duty } from "./duty.ts";
 import { duty as pullsWaiting } from "./duties/stale_pulls.ts";
+import { duty as efficiencyWatcher } from "./duties/efficiency_watcher.ts";
 
-export const duties: readonly Duty[] = [pullsWaiting];
+export const duties: readonly Duty[] = [pullsWaiting, efficiencyWatcher];

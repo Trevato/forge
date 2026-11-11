@@ -34,6 +34,7 @@ export const GUIDE: Readonly<Record<string, Guide>> = {
   tokens: { name: "API tokens", rows: "tokens", kind: "events" },
   adminActions: { name: "Admin actions", rows: "admin actions", kind: "events" },
   machine: { name: "Machine readings", rows: "15-second readings", kind: "samples", value: "cpu_cores", filter: { column: "target", op: "eq", value: "forge" } },
+  efficiency: { name: "Efficiency by cause", rows: "hourly readings", kind: "samples", value: "value", filter: { column: "cause", op: "eq", value: "npm-registry-bytes" } },
   reach: { name: "Visitors and page speed", rows: "daily figures", kind: "samples", value: "value", filter: { column: "metric", op: "eq", value: "visitors" } },
   app_vital: { name: "App page speed", rows: "app-days", kind: "samples", value: "load_p75" },
   keeperReleases: { name: "Releases", rows: "releases", kind: "events" },
