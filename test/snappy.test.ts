@@ -52,7 +52,7 @@ describe("budgets", () => {
       [await timeRoute(f, "map member", "/map", peer, 20), SQL.mapMember],
       [await timeRoute(f, "home owner", "/", owner, 20), SQL.homeOwner],
       [await timeRoute(f, "home member", "/", peer, 20), SQL.homeMember],
-      [await timeRoute(f, "home stranger", "/", {}, 20), 20],
+      [await timeRoute(f, "home stranger", "/", {}, 20), 19],
       [await timeRoute(f, "map owner cold", "/map", owner, 20, touch), COLD_SQL.mapOwner],
       [await timeRoute(f, "home owner cold", "/", owner, 20, touch), COLD_SQL.homeOwner],
     ] as const;

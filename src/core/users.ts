@@ -12,7 +12,7 @@ import { id } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { admitSignin } from "./signin-window.ts";
 import { waitingCount, WAITING_CAP } from "./requests.ts";
-import { getSignup } from "../settings/signup.ts";
+import { getSignup, type SignupMode } from "../settings/signup.ts";
 import { inviteOpen, redeemInvite, reopenInvite } from "./invites.ts";
 import type { SignupSlot } from "../actions/signup-window.ts";
 
@@ -179,10 +179,7 @@ export type CreateUserInput = CreateUserFields & AccountOrigin;
  * (`inviteNeeded` says when it must be spent).
  */
 export function newAccountsClosed(db: Database, invite?: string): boolean {
-  // In `request` the door shuts once the Waiting list is full, for anyone an open invite does not vouch for.
-  if (getSignup(db) === "request") return waitingCount(db) >= WAITING_CAP && !(invite !== undefined && inviteOpen(db, invite));
-  if (!inviteNeeded(db)) return false;
-  return !(getSignup(db) === "invite" && invite !== undefined && inviteOpen(db, invite));
+  return accountsClosedIn(db, getSignup(db), invite);
 }
 
 /**
@@ -192,6 +189,15 @@ export function newAccountsClosed(db: Database, invite?: string): boolean {
 function inviteNeeded(db: Database): boolean {
   const mode = getSignup(db);
   return mode === "invite" || mode === "closed";
+}
+
+/** `newAccountsClosed` for a mode the caller has read already, so one request reads the setting once. */
+export function accountsClosedIn(db: Database, mode: SignupMode, invite?: string): boolean {
+  // In `request` the door shuts once the Waiting list is full, for anyone an open invite does not vouch for.
+  if (mode === "request") return waitingCount(db) >= WAITING_CAP && !(invite !== undefined && inviteOpen(db, invite));
+  // Open lets anyone in; invite and closed need an invite, and only invite takes one.
+  if (mode !== "invite" && mode !== "closed") return false;
+  return !(mode === "invite" && invite !== undefined && inviteOpen(db, invite));
 }
 
 interface CreateUserFields {

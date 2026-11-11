@@ -32,7 +32,7 @@ import { adminDataPage, appDataPage, dataPage } from "../web/pages/data.ts";
 import { fleetAct, fleetReceipt, fleetUndo } from "../web/pages/fleet-ops.ts";
 import { maintenancePage, maintenancePrepare, maintenanceResume } from "../web/pages/maintenance.ts";
 import { nightlyOutputPage, resiliencePage } from "../web/pages/resilience.ts";
-import { agentStartSet, limitsPage, limitsSet, quotasSet, signupSet, inviteMint, inviteRevoke } from "../web/pages/admin-limits.ts";
+import { agentStartSet, billingLinksSet, limitsPage, limitsSet, quotasSet, signupSet, inviteMint, inviteRevoke } from "../web/pages/admin-limits.ts";
 import { plansSet } from "../web/settings/plans.ts";
 import { allFlowsPage } from "../web/pages/flows-all.ts";
 import { measureSubmit } from "./measure.ts";
@@ -1060,6 +1060,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/admin/plans", plansSet);
   router.add("POST", "/admin/signup", signupSet);
   router.add("POST", "/admin/agent-start", agentStartSet);
+  router.add("POST", "/admin/billing-links", billingLinksSet);
   router.add("POST", "/admin/invites", inviteMint);
   router.add("POST", "/admin/invites/:id/revoke", inviteRevoke);
 

@@ -11,7 +11,8 @@ import { changeQuotas, readQuotas } from "../../actions/quotas.ts";
 import { inviteLink, list as listInviteLinks, mint as mintInviteLink, revoke as revokeInviteLink } from "../../actions/invites.ts";
 import { INVITE_NOT_OPEN } from "../../actions/sever_invite_words.ts";
 import { DEFAULT_DAYS, MAX_DAYS } from "../../core/invites.ts";
-import { changeAgentStart, changeSignup, readAgentStart, readSignup } from "../../actions/signup.ts";
+import { changeAgentStart, changeBillingLinks, changeSignup, readAgentStart, readBillingLinks, readSignup } from "../../actions/signup.ts";
+import { BILLING_SIZES } from "../../settings/billing.ts";
 import { AGENT_START_MODES } from "../../settings/agent_start.ts";
 import { SIGNUP_MEANS, SIGNUP_MODES } from "../../settings/signup.ts";
 import { QUOTA_KEYS } from "../../settings/quotas.ts";
@@ -33,6 +34,7 @@ export function limitsPage(ctx: Ctx): Response {
   const quotas = timePhase(ctx.request, "quotas", () => readQuotas(ctx.app, ctx.auth.user));
   const signup = timePhase(ctx.request, "signup", () => readSignup(ctx.app, ctx.auth.user));
   const agentStart = readAgentStart(ctx.app, ctx.auth.user);
+  const billing = readBillingLinks(ctx.app, ctx.auth.user);
   const invites = timePhase(ctx.request, "invites", () => listInviteLinks(ctx.app, ctx.auth.user));
   const rendering = performance.now();
   const { limits, changes } = listed.value;
@@ -155,6 +157,20 @@ export function limitsPage(ctx: Ctx): Response {
     </dd>
     <dd class="status-act"></dd>
   </div>`;
+  const billingRow = html`<div class="status-row">
+    <dt>Buy links</dt>
+    <dd>
+      <form class="row-fields" method="post" action="/admin/billing-links">
+        ${BILLING_SIZES.map(
+          (z) => html`<label class="small">${z}
+            <input class="input mono" type="url" name="${z}" maxlength="300" placeholder="https://" value="${billing.ok ? (billing.value[z] ?? "") : ""}" /></label>`,
+        )}
+        ${btn("Save", { size: "sm", variant: "primary", label: "Save buy links" })}
+      </form>
+      <span class="muted small">One payment link per size. With any set, the home page offers paid forges; empty by default.</span>
+    </dd>
+    <dd class="status-act"></dd>
+  </div>`;
   const inviteRows = (invites.ok ? invites.value : []).map((i) =>
     row({
       lead: icon("activity"),
@@ -197,7 +213,7 @@ export function limitsPage(ctx: Ctx): Response {
   const body = html`<p class="small muted mb">
       Every limit you can hit, and why. A change applies to the next request that meets it; nothing needs a restart.
     </p>
-    <dl class="status-rows">${signupRow}${agentStartRow}${inviteRow}${quotaRow}${plansRow(ctx)}</dl>
+    <dl class="status-rows">${signupRow}${agentStartRow}${billingRow}${inviteRow}${quotaRow}${plansRow(ctx)}</dl>
     ${historyBlock("Invite links made", inviteRows)}
     <section class="settings-block mt">
       <h2>Limits</h2>
@@ -317,6 +333,26 @@ export async function agentStartSet(ctx: Ctx): Promise<Response> {
     changed.ok
       ? { message: "Agent start saved." }
       : { tone: "danger", message: "Agents can start here: open, invite code or off." },
+  );
+}
+
+// POST /admin/billing-links
+export async function billingLinksSet(ctx: Ctx): Promise<Response> {
+  if (ctx.auth.user?.isAdmin !== true || ctx.auth.user.kind === "agent") return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const changed = changeBillingLinks(
+    ctx.app,
+    ctx.auth.user,
+    Object.fromEntries(BILLING_SIZES.map((z) => [z, field(form, z)])),
+  );
+  if (!changed.ok && changed.error === "not_found") return notFoundPage(ctx);
+  return flashTo(
+    ctx,
+    "/admin/limits",
+    changed.ok
+      ? { message: "Buy links saved." }
+      : { tone: "danger", message: "Each buy link is an https address, or empty." },
   );
 }
 

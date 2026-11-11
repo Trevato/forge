@@ -20,10 +20,12 @@ import {
 } from "../../actions/front.ts";
 import { catalog, refreshCatalogQuietly } from "../../packs/catalog.ts";
 import { appsRuntime, type EnvState } from "../../apps/runtime.ts";
-import { signupClosed, YOURE_IN_MESSAGE } from "../../actions/users.ts";
+import { YOURE_IN_MESSAGE } from "../../actions/users.ts";
+import { accountsClosedIn } from "../../core/users.ts";
 import { markTold, untoldAnswer } from "../../core/requests.ts";
 import { requestsCard } from "../requests_card.ts";
-import { getSignup } from "../../settings/signup.ts";
+import { getSignupAndLinks, BILLING_SIZES, sizeWords } from "../../settings/billing.ts";
+import { getPlans } from "../../settings/plans.ts";
 import { appsForRepos } from "../../core/apps.ts";
 import { WEIGHT_MAX, WEIGHT_NAMES } from "../../core/front.ts";
 import { LOOK_SIZES } from "../../core/looks.ts";
@@ -757,7 +759,8 @@ export function studioDoor(ctx: Ctx): Response {
   const featured = front.featured;
   const all = [...(featured === undefined ? [] : [featured]), ...front.shelf];
   const made = all.slice(0, Math.max(DOOR_TILES, all.filter((e) => e.pinned).length));
-  const accounts = !signupClosed(ctx.app);
+  const { mode, links } = getSignupAndLinks(ctx.app.db);
+  const accounts = !accountsClosedIn(ctx.app.db, mode);
   timePhase(ctx.request, "tiles", () => {
     tiles = made.map((e, at) =>
       tile(e, at, accounts, e === featured ? html`role="region" aria-label="Featured"` : undefined),
@@ -774,7 +777,10 @@ export function studioDoor(ctx: Ctx): Response {
   const ssh = sshCommand(ctx.app);
   const signup = offersSignup(ctx) && accounts;
   // Closed is a door with nothing behind it; invite still lands an invite link's holder.
-  const mode = getSignup(ctx.app.db);
+  // The plans setting is read only when a link is set: no link, no extra statement on the home.
+  const priced = BILLING_SIZES.some((z) => links[z] !== undefined) ? getPlans(ctx.app.db).filter((p) => p.priceUsd > 0) : [];
+  const plans = BILLING_SIZES.filter((z) => links[z] !== undefined && priced.some((p) => p.size === z));
+  const planOf = (z: (typeof BILLING_SIZES)[number]) => priced.find((p) => p.size === z)!;
   const origin = (ctx.app.config.url ?? ctx.url.origin).replace(/\/$/, "");
   const prompt = agentPrompt(origin);
   const asked = encodeURIComponent(prompt);
@@ -878,9 +884,20 @@ export function studioDoor(ctx: Ctx): Response {
       <div class="stack">
         <h2>Get your own forge</h2>
         <p class="door-support">
-          ${SITE_LINE} Free and open source. Run it on your own computer or server today. Hosted forges are
-          coming.${accounts ? "" : mode === "invite" ? " New accounts on this forge are by invitation." : " This forge is not taking new accounts."}
+          ${SITE_LINE} Free and open source. Run it on your own computer or server today.${plans.length > 0 ? "" : " Hosted forges are coming."}${accounts ? "" : mode === "invite" ? " New accounts on this forge are by invitation." : " This forge is not taking new accounts."}
         </p>
+        ${when(plans.length > 0, () => html`<div class="stack-tight" id="plans">
+          <ul class="list">
+            ${plans.map((z) =>
+              row({
+                title: html`<strong>${z[0]!.toUpperCase()}${z.slice(1)}</strong> <span class="muted small">${sizeWords(z)}</span>`,
+                meta: html`$${String(planOf(z).priceUsd)} a month, with $${String(planOf(z).creditUsd)} of crew credit`,
+                trail: btn("Get a forge", { href: links[z]!, external: true, size: "sm", variant: "primary" }),
+              }),
+            )}
+          </ul>
+          <p class="muted small">Your forge is made after payment; the link to claim it arrives by email, usually within a few hours.</p>
+        </div>`)}
         <div class="bar">${btn("Read the step-by-step guide", { href: `${FORGE_REPO}`, size: "lg" })}</div>
       </div>
       <div class="stack">

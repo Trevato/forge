@@ -149,6 +149,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["economics", "Economics", "the profit slider's position, the margin, the owned-node label and the prices; change one"],
     ["flows-all", "Flows across the forge", "every repository's flow lines, by kind and stale"],
     ["teams", "Crew teams", "each team's charter, dial and members"],
+    ["billing-links", "Buy links", "where each hosted plan is paid for, shown on the home page"],
     ["agents", "Crew agents", "each agent's model, budget and brief"],
     ["invites", "Invite links", "make a single-use link, see which are open, revoke one"],
     ["claim-start", "Take an agent's work", "claim the repositories an agent started, from its one-time link"],

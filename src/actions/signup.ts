@@ -14,6 +14,7 @@ import {
 } from "../settings/signup.ts";
 import { getAgentStart, parseAgentStart, setAgentStart, type AgentStartMode } from "../settings/agent_start.ts";
 import { forgeSource, parseForgeSource, setForgeSource, storedForgeSource } from "../settings/forge_source.ts";
+import { getBillingLinks, parseBillingLinks, setBillingLinks, type BillingLinks } from "../settings/billing.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
@@ -88,4 +89,24 @@ export function changeAgentStart(
   if (!mode.ok) return mode;
   setAgentStart(app.db, mode.value, who.value.id);
   return ok(mode.value);
+}
+
+/** The billing links (`settings/billing.ts`), for a forge admin who is a person. */
+export function readBillingLinks(app: App, actor: User | undefined): Result<BillingLinks, "not_found"> {
+  const who = admin(actor);
+  return who.ok ? ok(getBillingLinks(app.db)) : who;
+}
+
+/** Replace the links: an object of sizes to https URLs; a size left out or empty has none. */
+export function changeBillingLinks(
+  app: App,
+  actor: User | undefined,
+  raw: unknown,
+): Result<BillingLinks, "not_found" | "invalid_billing_links"> {
+  const who = admin(actor);
+  if (!who.ok) return who;
+  const links = parseBillingLinks(raw);
+  if (!links.ok) return links;
+  setBillingLinks(app.db, links.value, who.value.id);
+  return ok(links.value);
 }

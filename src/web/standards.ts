@@ -48,6 +48,7 @@ import { apiCatalog, DISCOVERY, mcpCard, offeredPlugins, mcpPointers, offeredPlu
 import { forgeDocument } from "../core/standards_index.ts";
 import { TAGS } from "../contract/served.ts";
 import { running } from "../kernel/version.ts";
+import { getBillingLinks } from "../settings/billing.ts";
 import { timePhase, timePhaseAsync } from "../core/route_timing.ts";
 import { shippedReleases, type Shipped } from "../release/shipped.ts";
 
@@ -398,10 +399,11 @@ export function llmsBody(ctx: Ctx): { body: string; etag: string } {
   const repos = timePhase(ctx.request, "repos", () => llmsRepos(ctx.app.db));
   // The tools section depends on who asks, so the signed-in and the anonymous body are kept apart.
   const signedIn = ctx.auth.user !== undefined;
-  const key = `${o} ${signedIn}`;
+  const sold = Object.keys(getBillingLinks(ctx.app.db)).length > 0;
+  const key = `${o} ${signedIn} ${sold}`;
   let kept = llmsBodies.get(key);
   if (kept === undefined || kept.repos !== repos || kept.running !== running || kept.tell !== tell || kept.plugins !== plugins) {
-    const body = timePhase(ctx.request, "render", () => renderLlmsTxt(ctx, o, tell, running, repos, signedIn, plugins));
+    const body = timePhase(ctx.request, "render", () => renderLlmsTxt(ctx, o, tell, running, repos, signedIn, plugins, sold));
     const etag = timePhase(ctx.request, "etag", () => `"${new Bun.CryptoHasher("sha256").update(body).digest("hex").slice(0, 32)}"`);
     kept = { signedIn, repos, running, tell, plugins, body, etag };
     // Origins come from the Host header: keep a handful, not one per guess.
@@ -421,7 +423,7 @@ function pluginLines(o: string, plugins: string | undefined): string[] {
   return plugins === undefined ? [...lines, "- Claude Code plugin: not offered here (no public source)"] : lines;
 }
 
-function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: string, repos: LlmsListing, signedIn: boolean, plugins: string | undefined): string {
+function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: string, repos: LlmsListing, signedIn: boolean, plugins: string | undefined, sold: boolean): string {
   const mcp = mcpPointers(o);
   return (
     [
@@ -437,7 +439,7 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
       "",
       `- Build now, no account: \`curl -sX POST ${o}/api/v1/start -d '{"name":"my-app"}'\` -> {user, token, repo, git, app, claim}. Clone git.url (user:token@), \`git push\` to main: app.url is live. Give claim.url to the person who takes it over. Unclaimed: asleep in 7 days, archived in 30.`,
       `- Or with an account: sign up at ${o}/signup, then follow "Offer a change" below. By request, POST ${o}/api/v1/users gives 202 {state:"waiting"}. If /signup says 403, use "Report a problem".`,
-      `- Get your own forge: \`git clone ${UPSTREAM_REPO}.git && cd forge && bun install && bun run src/main.ts\`, then in a second terminal \`bun src/main.ts --first-admin\`, which prints a one-time link that makes you the admin. It needs Bun; its crew needs the claude CLI and a model credential. Or a hosted one, free within limits while hosting is not sold: sign in and open ${o}/forges/new (or call the MCP \`spawn\` tool with the person's consent). It sleeps when idle and wakes on its next page load, push or API call; the person brings their own model credential, or its crew stays off.`,
+      `- Get your own forge: \`git clone ${UPSTREAM_REPO}.git && cd forge && bun install && bun run src/main.ts\`, then in a second terminal \`bun src/main.ts --first-admin\`, which prints a one-time link that makes you the admin. It needs Bun; its crew needs the claude CLI and a model credential. Or a hosted one${sold ? " (paid plans are on the home page; this way is free within limits)" : ", free within limits while hosting is not sold"}: sign in and open ${o}/forges/new (or call the MCP \`spawn\` tool with the person's consent). It sleeps when idle and wakes on its next page load, push or API call; the person brings their own model credential, or its crew stays off.`,
       `- Work from your own forge: connect it to this one as an origin, bring an app in, and send your work back. How: ${UPSTREAM_REPO}/raw/main/docs/ORIGINS.md`,
       `- Connect an assistant that uses tools: custom connector URL ${mcp.url} (OAuth); start and report need no account.`,
       "",

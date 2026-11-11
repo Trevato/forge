@@ -25,7 +25,8 @@ import { changeQuotas, readQuotas } from "../../actions/quotas.ts";
 import { allowRequest, declineRequest, listRequests } from "../../actions/requests.ts";
 import { setRole } from "../../actions/roles.ts";
 import { SETTING_WORDS } from "../../actions/setting_words.ts";
-import { changeForgeSource, changeSignup, readForgeSource, readSignup } from "../../actions/signup.ts";
+import { BILLING_WORDS } from "../../settings/billing.ts";
+import { changeBillingLinks, changeForgeSource, changeSignup, readBillingLinks, readForgeSource, readSignup } from "../../actions/signup.ts";
 import { SPEND_WORDS } from "../../actions/spend_words.ts";
 import { TEAM_SAYS, changeTeam, readTeams } from "../../actions/teams.ts";
 import { SIGNUP_WORDS } from "../../core/arg_words.ts";
@@ -327,14 +328,15 @@ export function adminRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
-    const { read, signup, source } = timePhase(ctx.request, "settings", () => ({
+    const { read, signup, source, billing } = timePhase(ctx.request, "settings", () => ({
+      billing: readBillingLinks(ctx.app, ctx.auth.user),
       read: readQuotas(ctx.app, ctx.auth.user),
       signup: readSignup(ctx.app, ctx.auth.user),
       source: readForgeSource(ctx.app, ctx.auth.user),
     }));
     return timePhase(ctx.request, "render", () =>
-      read.ok && signup.ok && source.ok
-        ? json({ ...read.value, ...signup.value, ...source.value, signupChanges: signup.value.changes, changes: read.value.changes })
+      read.ok && signup.ok && source.ok && billing.ok
+        ? json({ billingLinks: billing.value, ...read.value, ...signup.value, ...source.value, signupChanges: signup.value.changes, changes: read.value.changes })
         : notFound());
   });
 
@@ -342,8 +344,14 @@ export function adminRoutes(router: Router<Handler>): void {
     const denied = accountAdmin(ctx, "admin");
     if (denied) return denied;
     const input = await body(ctx.request);
-    const sent = [input.signup, input.quotas, input.forgeRepo].filter((v) => v !== undefined).length;
-    if (sent > 1) return apiError("invalid_body", 422, "send one of signup, quotas or forgeRepo");
+    const sent = [input.signup, input.quotas, input.forgeRepo, input.billingLinks].filter((v) => v !== undefined).length;
+    if (sent > 1) return apiError("invalid_body", 422, "send one of signup, quotas, forgeRepo or billingLinks");
+    if (input.billingLinks !== undefined) {
+      const set = changeBillingLinks(ctx.app, ctx.auth.user, input.billingLinks);
+      if (set.ok) return json({ billingLinks: set.value });
+      if (set.error === "not_found") return notFound();
+      return apiError(set.error, 422, BILLING_WORDS);
+    }
     if (input.forgeRepo !== undefined) {
       const set = changeForgeSource(ctx.app, ctx.auth.user, input.forgeRepo);
       if (set.ok) return json({ forgeRepo: set.value });
