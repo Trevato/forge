@@ -6,6 +6,13 @@ it (`none` when no request did) — the same reading as the `event loop blocked`
 log lines (`src/perf/loop.ts`), so a fix's before and after reads from the
 forge itself, not the pod log.
 
+A request still running when the wake comes (#11478) is charged too, when it
+began at or before the stall did: its row is `<route> (in flight)`, apart from
+the same route's finished requests, in every place below (MCP `system`
+`stalls` as `{ cause, ms, count }` with `cause` that name). The open set is
+`src/perf/in_flight.ts`: one map entry per request being answered, added and
+removed in O(1), read only at a stall.
+
 Where to look (a forge admin who is a person; anyone else gets 404, or no
 palette entry):
 
@@ -47,5 +54,5 @@ figure for the last hour; for the same 6-minute window,
 in Prometheus, compared with 69,600.
 
 Caveats: a stall over two requests counts against both, so routes sum past
-the wall time; a request still running when the wake comes is not yet named;
-a restart starts the figures at zero.
+the wall time; a request held open across many stalls (a slow upload, say)
+is charged with each; a restart starts the figures at zero.

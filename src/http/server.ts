@@ -519,7 +519,7 @@ import {
   takeDbTime,
   type RouteTiming,
 } from "../core/route_timing.ts";
-import { captureStore, loopWatch, perfRecord, readLedger, stallBlame } from "../perf/live.ts";
+import { captureStore, inFlight, loopWatch, perfRecord, readLedger, stallBlame } from "../perf/live.ts";
 import { during } from "../perf/jobs.ts";
 import { classOf, countryOf, repoOf, signatureOf } from "../perf/traffic.ts";
 import { createTrafficWriter } from "../perf/traffic_store.ts";
@@ -2759,7 +2759,8 @@ export async function serve(app: App): Promise<Servers> {
     // The only sockets the forge holds are an app's, carried through the
     // proxy; its own live surfaces are SSE (`sse.ts`) and stay so.
     websocket: withShells(appWebSocketWith(app.config.wsMaxMessage)),
-    fetch: handle,
+    // Open until it is answered, so a stall while it runs names it (#11478).
+    fetch: (request, server) => inFlight.during(request, performance.now(), () => handle(request, server)),
     // A last resort: `handle` answers a throw itself, so it is counted.
     error: (error) => failure(app, error),
   });

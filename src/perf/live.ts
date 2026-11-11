@@ -4,6 +4,8 @@ import { createBootStall } from "./boot_stall.ts";
 import { createGitRecord } from "./git.ts";
 import { jobWatch } from "./jobs.ts";
 import { createLoopWatch } from "./loop.ts";
+import { createInFlight } from "./in_flight.ts";
+import { patternOf } from "../http/usage_tag.ts";
 import { createCaptureStore } from "./capture.ts";
 import { createReadLedger } from "./reads.ts";
 import { createStallBlame } from "./stall_blame.ts";
@@ -11,8 +13,13 @@ import { createPerfRecord } from "./record.ts";
 import { createLagMinutes } from "./lag_minutes.ts";
 
 export const perfRecord = createPerfRecord();
-/** A stall no request ran across names the background jobs that did (#10834). */
-export const loopWatch = createLoopWatch(undefined, jobWatch.across);
+/** The requests the server is answering now (#11478): begun and ended around each one in `http/server.ts`. */
+export const inFlight = createInFlight<Request>(patternOf);
+/**
+ * A stall names the requests that ran across it, finished or still in flight
+ * (#11478); when none did, the background jobs that did (#10834).
+ */
+export const loopWatch = createLoopWatch(undefined, jobWatch.across, inFlight.since);
 export const gitRecord = createGitRecord();
 /** The worst stall in this process's first five minutes, read by the release keeper (#8848). */
 export const bootStall = createBootStall();

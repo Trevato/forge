@@ -30,7 +30,7 @@ export function stallFamilies(tally: StallTally): Family[] {
     {
       type: "counter",
       name: "forge_loop_stall_milliseconds_total",
-      help: "Milliseconds the main thread stalled past 200 ms, by the route running across the stall (route=\"none\" when none), since the process started.",
+      help: "Milliseconds the main thread stalled past 200 ms, by the route running across the stall (\"<route> (in flight)\" when still running at the wake, route=\"none\" when none), since the process started.",
       samples: tally.total.map((r) => ({ labels: { route: r.route }, value: Math.round(r.ms) })),
     },
     {

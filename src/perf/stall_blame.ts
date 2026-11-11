@@ -4,10 +4,11 @@
  * can say what held the loop behind its `loopLagMs`.
  *
  * Who ran is the loop watch's finding (`loop.ts`): the route patterns whose
- * request ran across the blocked window, else the background jobs marked
+ * request ran across the blocked window, then those still running at the
+ * wake as `<pattern> (in flight)` (#11478), else the background jobs marked
  * with `jobWatch.during` (`jobs.ts`), else nothing. `what` is the first of
- * those — the longest-running route, or `job:<name>` — and `unknown` when
- * nothing marked ran across the stall.
+ * those — the longest-running finished route, the oldest open one, or
+ * `job:<name>` — and `unknown` when nothing marked ran across the stall.
  *
  * The ring holds `KEPT` stalls and never grows: a note is three array
  * writes and an index step. At one stall per 200 ms an hour would be 18,000,
