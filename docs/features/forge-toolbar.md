@@ -9,6 +9,12 @@ preview), so you always know where you are and can get back to the forge.
   byte. A page that already carries the tag is not given a second.
 - **What it says:** the app, the environment and, on a preview, a link
   "Preview of pull #N" to the pull's page on the forge; Home goes to the forge.
+- **Which commit:** one more line, `Serving a1b2c3d, live 4 min ago`, the short
+  id linked to the commit on the forge. The id and the instant come from the
+  forge's own record of the running environment (the same source as the note's
+  build), never the client's; they travel as escaped `data-commit` and
+  `data-live` attributes and are set as text. Only a reader of the repository
+  gets them, and with no running record the line is left out.
 - **Make it yours:** on a public app, a reader who is not on its crew sees
   one more link, "Make it yours", to the forge's own make-it-yours page for
   that app (no new route), opened in the same tab. Signed out, that page asks
@@ -39,4 +45,4 @@ preview), so you always know where you are and can get back to the forge.
   pill out; the app still works.
 - **Off:** `"toolbar": false` in `forge.json`.
 
-Tests: `test/toolbar-injection.test.ts`, `test/apps-toolbar.test.ts`, `test/note-context.test.ts`, `test/apps-feedback.test.ts`, `test/apps-toolbar-yours.test.ts`.
+Tests: `test/toolbar-injection.test.ts`, `test/apps-toolbar.test.ts`, `test/note-context.test.ts`, `test/apps-feedback.test.ts`, `test/apps-toolbar-yours.test.ts`, `test/toolbar-serving.test.ts`.

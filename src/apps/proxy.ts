@@ -557,6 +557,11 @@ export function pillWhere(
   // An app's access is not its repository's: the name goes only to a reader.
   const reads = canRead(db, repo, user);
   if (reads) where.repo = `${repo.ownerName}/${repo.name}`;
+  // What the forge's own record says is running here, for a reader of the repository only.
+  const live = reads ? runtime.envStatus?.(target.app, target.env) : undefined;
+  const liveAt = live?.servingAt ?? live?.since;
+  if (live?.state === "running" && live.commitOid !== "" && liveAt !== undefined)
+    where.serving = { oid: live.commitOid, at: liveAt };
   const number = /^pull-(\d+)$/.exec(target.env)?.[1];
   if (number === undefined) return where;
   where.pull = Number(number);
