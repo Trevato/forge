@@ -4,11 +4,14 @@ A signed-out visitor starts their own forge from the home page, with no account 
 
 1. Open `/`. The first view has one sentence, a "Forge name" field and the button "Start my forge".
 2. Type a name (lowercase letters, digits and dashes) and press Enter or the button.
-3. The form posts to `/forges/new`, the same door `/agents` uses: the free plan and the visitor rate limits apply, and a bad name comes back worded by the door. There is no second spawn path.
+   While you type, the field says "<name> is free" or "is taken" (it asks `GET /forges/<name>/ready`, where 404 means nothing by that name was made).
+3. The form posts to `/forges/start` (`src/web/pages/start-forge.ts`), which calls the same `spawnDoor` as `/forges/new` and `/agents`: the free plan and the visitor rate limits apply, and a bad name comes back on the same page, worded by the door.
+4. The answer says "Setting up <name>…" and polls `/forges/<name>/ready`; when it says yes the browser goes to the new forge's claim page (username and password) and lands signed in. No link is shown to copy; a plain "Open <name>" link holds the same address if scripts are off or the forge is slow.
+5. A signed-in person posting the form is sent to `/forges/new`, with `?name=` only when the name is a valid forge name, which keeps its fuller form (what it is for, apps to fork, key, budget). The Free plan's "Get a forge" button on the home goes to this start form.
 
 The field is a slug, so it turns off autocomplete and capitalisation on phones. The form is in `src/web/studio/home.ts`; its test is `test/home-start-forge.test.ts`.
 
-In the terminal, a guest's "Get your own forge" command prints the plans and the web address to start from; signed in, "New forge" spawns one.
+In the terminal, a guest's "Start my forge" command (`src/tui/screens/startforge.ts`) asks for the name, goes through the same `spawnDoor` as a stranger (counted under the SSH client's address), shows a refusal in the same fixed sentences as the home page, and shows the claim link once. Signed in, "New forge" is the fuller form. Test: `test/tui-startforge.test.ts`.
 
 ## When the door refuses
 

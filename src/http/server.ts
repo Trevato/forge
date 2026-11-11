@@ -279,6 +279,7 @@ import { forgeLinkRevoke, forgeLinkSubmit, forgeLinkUndo, forgeRemoveConfirm, fo
   forgeOwnCodeSubmit, forgesPage } from "../web/pages/forges.ts";
 import { forgeItSubmit } from "../web/pages/forge-it.ts";
 import { funnelSubmit } from "./funnel.ts";
+import { startForgeSubmit } from "../web/pages/start-forge.ts";
 import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
 import { notesOverrule, notesSave, notesView } from "../web/pages/notes.ts";
@@ -856,6 +857,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/forges/:name/ready", forgeReady);
   router.add("GET", "/forges/new", newForgePage);
   router.add("POST", "/forges/new", newForgeSubmit);
+  router.add("POST", "/forges/start", startForgeSubmit);
   // The front page as a stranger sees it, for anyone; a site admin there
   // also gets the controls that decide it (#686).
   router.add("GET", "/front", studioDoor);

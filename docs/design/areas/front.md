@@ -40,3 +40,5 @@ The page a visitor reads first runs past §3's working scale on purpose, in `cla
 - `.door-press-actions` — a press's actions; its empty `data-slot="host"` is where a later "host it for me" sits.
 - `.door-wide` — a visitor's top-bar link that a phone leaves out, so the bar never overflows.
 - `.door-start` — the hero's one form: a labelled forge-name field and "Start my forge", full width on a phone, posting to `/forges/new`.
+
+`.door-says` is the one-line live note under the start form's name field. It keeps the height of one line so the page does not move when text appears.

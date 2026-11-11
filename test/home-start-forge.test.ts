@@ -8,6 +8,8 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { err, ok } from "../src/kernel/result.ts";
 import { usePlacement, useProbe } from "../src/spawn/door.ts";
 import { resetAnonSpawns } from "../src/spawn/rate.ts";
+import { createSession } from "../src/core/sessions.ts";
+import { createUser } from "../src/core/users.ts";
 import { START_REFUSALS } from "../src/web/start_refusal.ts";
 
 let dataDir: string;
@@ -27,7 +29,7 @@ afterAll(async () => {
 test("a visitor with no cookies sees the start form on /", async () => {
   const body = await (await fetch(`${servers.url}/`)).text();
   const form = body.match(/<form[^>]*id="start-forge"[\s\S]*?<\/form>/)?.[0] ?? "";
-  expect(form).toContain('action="/forges/new"');
+  expect(form).toContain('action="/forges/start"');
   expect(form).toMatch(/method="post"/i);
   expect(form).toMatch(/<label[^>]*for="start-name"/);
   expect(form).toContain('id="start-name"');
@@ -48,7 +50,7 @@ test("the first view has one primary button, and the first sentence is one", asy
 });
 
 test("the form's POST without a same-origin header is refused by the door", async () => {
-  const res = await fetch(`${servers.url}/forges/new`, {
+  const res = await fetch(`${servers.url}/forges/start`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded", origin: "https://evil.example" },
     body: "name=sneaky",
@@ -57,14 +59,41 @@ test("the form's POST without a same-origin header is refused by the door", asyn
   expect([400, 403]).toContain(res.status);
 });
 
+test("the plans button goes to the start form, not to /forges/new", async () => {
+  const body = await (await fetch(`${servers.url}/`)).text();
+  const section = body.slice(body.indexOf('id="yours"'));
+  expect(section).toContain('href="#start-forge"');
+  expect(body).toContain('id="start-name-says"');
+});
+
+test("starting holds on 'Setting up', waits on ready, and leads to the claim page", async () => {
+  const res = await fetch(`${servers.url}/forges/start`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", origin: servers.url },
+    body: "name=Sunny-Day",
+  });
+  const body = await res.text();
+  if (res.status >= 400) throw new Error(`refused ${res.status}: ${body.slice(0, 300)}`);
+  expect(res.headers.get("cache-control")).toBe("no-store");
+  expect(body).toContain("Setting up sunny-day.");
+  expect(body).not.toContain("btn-primary");
+  expect(body).toContain('id="start-go"');
+  expect(body).toContain("/forges/");
+  expect(body).toMatch(/data-href="[^"]*claim/);
+  // No link to copy, no "What it is for", no apps to fork on this path.
+  expect(body).not.toContain("Send this link");
+  expect(body).not.toContain("What it is for");
+  expect(body).not.toContain("Apps to fork");
+});
+
 // ---- a refused start says why on `/` (#11238) ----
 
 let refusal: { reason: "exists" | "quota"; message: string } | undefined;
 const start = (name: string) =>
-  fetch(`${servers.url}/forges/new`, {
+  fetch(`${servers.url}/forges/start`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ name, from: "home" }),
+    body: new URLSearchParams({ name }),
     redirect: "manual",
   });
 /** Follow the refusal to `/` the way a browser does: one redirect, then the page. */
@@ -128,4 +157,119 @@ test("the name is escaped and an unknown kind shows nothing", async () => {
   const unknown = await (await fetch(`${servers.url}/?start=<b>&name=x`)).text();
   expect(unknown).not.toContain('id="start-refused"');
   expect(unknown).not.toContain('value="x"');
+});
+
+// ---- the page's scripts, run against a stand-in document (#11281) ----
+
+type Fake = { value: string; textContent: string; attrs: Record<string, string>; on: Record<string, () => void> };
+const fake = (attrs: Record<string, string> = {}, value = ""): Fake => ({ value, textContent: "", attrs, on: {} });
+
+/** Runs a page script with fake elements, a scripted fetch and instant timers; returns what it asked for. */
+function runScript(js: string, els: Record<string, Fake>, answer: (url: string) => { status: number; json?: unknown } | "fail") {
+  const asked: string[] = [];
+  const doc = {
+    getElementById: (id: string) =>
+      els[id] === undefined
+        ? null
+        : Object.assign(els[id], {
+            addEventListener: (ev: string, fn: () => void) => (els[id]!.on[ev] = fn),
+            getAttribute: (k: string) => els[id]!.attrs[k],
+          }),
+  };
+  const gone: string[] = [];
+  const g = globalThis as unknown as Record<string, unknown>;
+  const saved = { window: g["window"], fetch: g["fetch"], location: g["location"], setTimeout: g["setTimeout"] };
+  g["window"] = { fetch: true };
+  g["location"] = { replace: (u: string) => gone.push(u) };
+  g["fetch"] = (url: string) => {
+    asked.push(url);
+    const a = answer(url);
+    return a === "fail" ? Promise.reject(new Error("down")) : Promise.resolve({ status: a.status, json: () => Promise.resolve(a.json) });
+  };
+  g["setTimeout"] = (fn: () => void) => queueMicrotask(fn);
+  const restore = () => Object.assign(g, saved);
+  new Function("document", `return ${js.replace(/\(document\)\s*$/, "")}`)(doc)(doc);
+  return { asked, gone, restore };
+}
+const settle = async () => {
+  for (let i = 0; i < 400; i++) await Promise.resolve();
+};
+
+test("the live check: 404 reads free, 200 reads taken, a bad name never asks", async () => {
+  const { startNameJs } = await import("../src/web/pages/start-forge.ts");
+  const input = fake({}, "Sunny-Day");
+  const says = fake();
+  const run = runScript(startNameJs, { "start-name": input, "start-name-says": says }, (u) => ({ status: u.includes("sunny-day") ? 404 : 200 }));
+  try {
+    input.on["input"]!();
+    await settle();
+    expect(run.asked).toEqual(["/forges/sunny-day/ready"]);
+    expect(says.textContent).toBe("sunny-day is free.");
+    input.value = "taken";
+    input.on["input"]!();
+    await settle();
+    expect(says.textContent).toBe("taken is taken. Try another.");
+    input.value = "No Good!";
+    input.on["input"]!();
+    expect(says.textContent).toBe("Use lowercase letters, digits and dashes.");
+    expect(run.asked.length).toBe(2);
+    input.value = "";
+    input.on["input"]!();
+    expect(says.textContent).toBe("");
+  } finally {
+    run.restore();
+  }
+});
+
+test("the wait script goes to the claim page when ready, and says so when it takes too long", async () => {
+  const { startWaitJs } = await import("../src/web/pages/start-forge.ts");
+  const attrs = { "data-name": "sunny-day", "data-href": "/forges/sunny-day/claim?t=x" };
+  let n = 0;
+  const ready = runScript(startWaitJs, { "start-go": fake(attrs), "start-wait": fake() }, () => (++n < 3 ? { status: 200, json: { ready: false } } : { status: 200, json: { ready: true } }));
+  try {
+    await settle();
+    expect(ready.asked.every((u) => u === "/forges/sunny-day/ready")).toBe(true);
+    expect(ready.gone).toEqual(["/forges/sunny-day/claim?t=x"]);
+  } finally {
+    ready.restore();
+  }
+  const wait = fake();
+  const slow = runScript(startWaitJs, { "start-go": fake(attrs), "start-wait": wait }, () => "fail");
+  try {
+    await settle();
+    await settle();
+    expect(slow.gone).toEqual([]);
+    expect(wait.textContent).toBe("sunny-day is taking longer than usual. Use the link to open it.");
+  } finally {
+    slow.restore();
+  }
+});
+
+test("the waiting body escapes its name and link", async () => {
+  const { startWaitBody } = await import("../src/web/pages/start-forge.ts");
+  const out = startWaitBody('"><script>x</script>', '/c?a="><img src=x onerror=1>').toString();
+  expect(out).not.toContain("<script>");
+  expect(out).not.toContain("<img");
+  expect(out).toContain("&quot;&gt;&lt;img");
+});
+
+// ---- a signed-in poster goes to the fuller form, with a checked name only ----
+
+test("a signed-in start redirects to /forges/new, keeping only a valid name", async () => {
+  const r = await createUser(app.db, { origin: "seed", trusted: true, username: "ann", allowReserved: true, email: "ann@forge.local", password: "a-good-passphrase", adminIfFirst: true });
+  if (!r.ok) throw new Error(r.error);
+  const cookie = `forge_session=${createSession(app.db, r.value.id).token}`;
+  const post = async (name: string) => {
+    const res = await fetch(`${servers.url}/forges/start`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { "content-type": "application/x-www-form-urlencoded", origin: servers.url, cookie },
+      body: `name=${encodeURIComponent(name)}`,
+    });
+    return res.headers.get("location") ?? "";
+  };
+  expect(await post("Sunny-Day")).toBe("/forges/new?name=sunny-day");
+  expect(await post('"><script>')).toBe("/forges/new");
+  expect(await post("-bad-")).toBe("/forges/new");
+  expect(await post("a".repeat(60))).toBe("/forges/new");
 });

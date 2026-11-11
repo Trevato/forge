@@ -80,13 +80,13 @@ const yours = async (): Promise<string> => {
 test("the signed-out home shows each plan and one button to a page that exists", async () => {
   const section = await yours();
   for (const p of DEFAULT_PLANS) expect(section).toContain(p.name);
-  expect(section).toContain('href="/forges/new"');
+  expect(section).toContain('href="#start-forge"');
   expect(section).not.toContain("/pricing");
   expect(section).toContain("$19 a month");
   expect(section).not.toContain("Paid");
   expect(section).not.toContain("Get Free");
   expect(section.match(/data-size="lg"/g)).toHaveLength(1);
-  expect((await fetch(`${servers.url}/forges/new`)).status).toBe(200);
+  expect((await fetch(`${servers.url}/`)).status).toBe(200);
 });
 
 test("getDoorSettings reads signup, plans and links in one statement", () => {

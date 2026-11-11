@@ -28,6 +28,7 @@ import { plansRow } from "../plans_row.ts";
 import { freePlanName, funnelJs, noteHomeVisit } from "../funnel_door.ts";
 import { publicPlans } from "../../settings/plans.ts";
 import { getDoorSettings } from "../../settings/door.ts";
+import { startNameJs } from "../pages/start-forge.ts";
 import { GET_A_FORGE_PATH } from "../../billing/plan_words.ts";
 import { appsForRepos } from "../../core/apps.ts";
 import { WEIGHT_MAX, WEIGHT_NAMES } from "../../core/front.ts";
@@ -796,12 +797,12 @@ export function studioDoor(ctx: Ctx): Response {
       <div class="door-under">
         <div class="door-lead">
           <p class="door-support">Say what you need and an AI crew builds it in your own forge, free to try.</p>
-          <form method="post" action="/forges/new" class="door-start" id="start-forge">
-            <input type="hidden" name="from" value="home" />
+          <form method="post" action="/forges/start" class="door-start" id="start-forge">
             ${refusal === undefined ? null : html`<p class="error" id="start-refused">${START_REFUSALS[refusal]}</p>`}
             <div class="field">
               <label for="start-name">Forge name</label>
-              <input class="input" id="start-name" name="name" type="text" value="${keptName}" ${refusal === undefined ? null : html`aria-invalid="true" aria-describedby="start-refused"`} required autocomplete="off" autocapitalize="none" spellcheck="false" />
+              <input class="input" id="start-name" name="name" type="text" value="${keptName}" aria-describedby="${refusal === undefined ? "start-name-says" : "start-refused start-name-says"}" ${refusal === undefined ? null : html`aria-invalid="true"`} required autocomplete="off" autocapitalize="none" spellcheck="false" />
+              <p class="muted small door-says" id="start-name-says" role="status" aria-live="polite"></p>
             </div>
             ${btn("Start my forge", { variant: "primary", size: "lg" })}
           </form>
@@ -899,7 +900,7 @@ export function studioDoor(ctx: Ctx): Response {
           Hosted for you, or free and open source on a machine you keep.
         </p>
         ${plansRow(publicPlans(allPlans), links)}
-        <div class="bar" data-plan="${freePlanName(allPlans)}">${btn("Get a forge", { href: GET_A_FORGE_PATH, variant: "primary", size: "lg" })}</div>
+        <div class="bar" data-plan="${freePlanName(allPlans)}">${btn("Get a forge", { href: visitor ? "#start-forge" : GET_A_FORGE_PATH, variant: "primary", size: "lg" })}</div>
         <p class="door-support">Or run it yourself, free and open source: <a href="${FORGE_REPO}">read the step-by-step guide</a>.</p>
         <pre class="door-code"><code>git clone ${FORGE_REPO}.git
 cd forge
@@ -927,7 +928,7 @@ bun run src/main.ts</code></pre>
     title: "forge: software for what you're building, yours to keep",
     description: "Your own forge, with a private AI crew that builds your apps, games and business tools. Open source, and yours to keep.",
     body,
-    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${funnelJs}`,
+    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${funnelJs}\n${startNameJs}`,
     jsonLd: siteStructuredData(origin, running().version),
     ...(visitor
       ? {
