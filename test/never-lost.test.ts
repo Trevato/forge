@@ -153,7 +153,10 @@ describe("never lost: the pill from production and from a preview", () => {
         expect(html).toContain(' data-app="notes"');
         expect(html).toContain(` data-env="${env()}"`);
         if (place.preview) expect(html).toContain(` data-pull="${pull}"`);
-        expect(await (await ask(host(), "/__forge/crew")).json()).toEqual({});
+        // A public app offers a stranger Make it yours, never the tell page.
+        expect(await (await ask(host(), "/__forge/crew")).json()).toEqual({
+          yours: `${servers.url}/alice/notes/make-it-yours`,
+        });
         const door = await (await ask(host(), "/__forge/")).text();
         expect(door).toContain("/__forge/signin");
         expect(door).not.toContain("/alice/notes/tell");

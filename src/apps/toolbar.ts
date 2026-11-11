@@ -396,6 +396,18 @@ const toolbarSource = `(function () {
             crew.appendChild(ta);
           }
         }
+        // Make it yours: the forge's own fork page, on its origin; it asks a
+        // signed-out reader to sign in and returns to itself.
+        if (typeof c.yours === "string") {
+          var y = new URL(c.yours);
+          if (y.origin === forge) {
+            var ya = document.createElement("a");
+            ya.textContent = "Make it yours";
+            ya.href = y.href;
+            ya.style.cssText = LS;
+            crew.appendChild(ya);
+          }
+        }
         // The other side: origin plus this path as text, so "//" cannot leave it.
         var sd = c.side;
         if (sd && typeof sd.label === "string" && typeof sd.url === "string") {

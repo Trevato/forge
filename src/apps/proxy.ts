@@ -51,7 +51,7 @@ import {
   type EnvName,
 } from "./data.ts";
 import type { AppsRuntime, EnvStatus } from "./runtime.ts";
-import { crewNow, tellLink } from "./crew.ts";
+import { crewNow, tellLink, yoursLink } from "./crew.ts";
 import { sideOf, type Side } from "./side.ts";
 import { feedback, mintProof } from "./feedback.ts";
 import { clientBucket } from "../http/peer.ts";
@@ -1038,6 +1038,10 @@ export async function proxyApp(
       target.app,
       signed?.who?.id,
     );
+    const yours =
+      sealedPull(runtime, target) !== undefined
+        ? undefined
+        : yoursLink(runtime.app.db, runtime.options.forgeUrl, target.app, signed?.who?.id);
     const side =
       signed?.who === undefined
         ? null
@@ -1046,6 +1050,7 @@ export async function proxyApp(
       JSON.stringify({
         ...crew,
         ...(tell === undefined ? {} : { tell }),
+        ...(yours === undefined ? {} : { yours }),
         ...(side === null ? {} : { side }),
       }),
     );
