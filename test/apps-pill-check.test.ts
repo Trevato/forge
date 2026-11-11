@@ -92,7 +92,7 @@ describe("the pill's check line", () => {
     // Production, even handed a check, names the app and says no check.
     const prod = drawn({ app: "notes", env: "production", check: "passed" });
     expect(prod).toContain("notes");
-    expect(prod).toContain("Production");
+    expect(prod).toContain("production");
     expect(prod.some((t) => /^(Checks|No checks)/.test(t))).toBe(false);
   });
 

@@ -229,7 +229,7 @@ describe("lost journey: where you are and three exits", () => {
     expect(focusable(home)).toBe(true);
     expect(home.href).toBe(`${origin}/`);
 
-    const pullLink = run.named(`Preview of pull #${pull}`)!;
+    const pullLink = run.named(`preview \u00b7 #${pull}`)!;
     expect(focusable(pullLink)).toBe(true);
     expect(pullLink.href).toBe(`${origin}/alice/public/pulls/${pull}`);
 
@@ -258,8 +258,8 @@ describe("lost journey: where you are and three exits", () => {
     const cookie = cookieFor("public", "production");
     const html = await (await ask(host, "/", cookie)).text();
     const run = await boot(html, await crewOf(host, cookie), `http://${host}/`);
-    expect(run.named("Production")).toBeDefined();
-    expect(run.built.some((e) => String(e.textContent).startsWith("Preview of pull"))).toBe(false);
+    expect(run.named("production")).toBeDefined();
+    expect(run.built.some((e) => String(e.textContent).startsWith("preview \u00b7"))).toBe(false);
     expect(run.named("Home")!.href).toBe(`${new URL(servers.url).origin}/`);
   });
 
@@ -272,7 +272,7 @@ describe("lost journey: where you are and three exits", () => {
     expect(tag[2]).toContain(` data-env="pull-${pull}"`);
     expect(tag[2]).toContain(` data-pull="${pull}"`);
     const run = await boot(html, await crewOf(host), `http://${host}/`);
-    expect(run.named(`Preview of pull #${pull}`)!.href).toBe(`${new URL(servers.url).origin}/alice/public/pulls/${pull}`);
+    expect(run.named(`preview \u00b7 #${pull}`)!.href).toBe(`${new URL(servers.url).origin}/alice/public/pulls/${pull}`);
     expect(run.named("Home")).toBeDefined();
     expect(run.named("Tell the crew")).toBeUndefined();
     // Comment goes to the forge's own page, which asks the stranger to sign in there.

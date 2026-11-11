@@ -85,6 +85,6 @@ test("the pill overlays the page: fixed, out of flow, in a shadow root", () => {
 });
 
 test("on a preview the pill links to the pull's forge page in plain words", () => {
-  expect(toolbarJs).toContain('"Preview of pull #"');
+  expect(toolbarJs).toContain('"preview \\u00b7 #"');
   expect(toolbarJs).toContain('"/pulls/"');
 });

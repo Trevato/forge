@@ -86,7 +86,7 @@ const toolbarSource = `(function () {
     panel.appendChild(el);
   }
   if (d.app) line(d.app, true);
-  if (d.env === "production") line("Production");
+  if (d.env === "production") line("production");
   var LS = "color:#8ab4ff;text-decoration:none;display:flex;align-items:center;min-height:44px";
   var pullHref = "";
   // The pull this preview shows, one tap away: built from the script's own origin, never from page text.
@@ -96,12 +96,12 @@ const toolbarSource = `(function () {
   if (d.env === "production") {}
   else if (pullHref) {
     var pl = document.createElement("a");
-    pl.textContent = "Preview of pull #" + d.pull;
+    pl.textContent = "preview \\u00b7 #" + d.pull;
     pl.href = pullHref;
     pl.rel = "noopener";
     pl.style.cssText = LS;
     panel.appendChild(pl);
-  } else if (d.pull) line("Preview of pull #" + d.pull);
+  } else if (d.pull) line("preview \\u00b7 #" + d.pull);
   if (d.title) line(d.title);
   var CW = ${JSON.stringify(CHECK_WORDS)};
   if (d.env !== "production" && d.check && Object.prototype.hasOwnProperty.call(CW, d.check)) line(CW[d.check]);
