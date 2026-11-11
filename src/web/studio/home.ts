@@ -921,7 +921,6 @@ bun run src/main.ts</code></pre>
       Running this for a team? <a href="https://www.open-platform.sh/#platform">The Platform</a> runs on your own cloud, and
       <a href="https://www.espodev.com">EspoDev</a> delivers enterprise implementations.
     </p>
-    ${accounts ? "" : html`<p class="muted small">${mode === "invite" ? "New accounts on this forge are by invitation." : "This forge is not taking new accounts."}</p>`}
     ${when(admin, () => html`<div class="door-section front-admin">${frontControls(ctx, front)}</div>`)}
   </div>`;
   const res = page({

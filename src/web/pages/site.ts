@@ -241,8 +241,8 @@ interface AuthErrors {
 const SIGNUP_SENTENCES: Record<SignupMode, string | undefined> = {
   open: undefined,
   request: "New accounts here start after someone who runs the forge allows them.",
-  invite: "This forge is invite-only: new accounts need an invite link.",
-  closed: "This forge is closed to new accounts.",
+  invite: undefined,
+  closed: undefined,
 };
 
 /**
@@ -316,7 +316,8 @@ function authForm(
       <button type="button" id="passkey-signin" class="btn" data-variant="primary" data-size="lg">Sign in with a passkey</button>
       ${passkeyNote("passkey-signin-note")}
     </div>
-    ${when(mode === undefined ? undefined : SIGNUP_SENTENCES[mode], (said) => html`<p class="muted small mb" id="signup-mode">${said}</p>`)}`,
+    ${when(mode === undefined ? undefined : SIGNUP_SENTENCES[mode], (said) => html`<p class="muted small mb" id="signup-mode">${said}</p>`)}
+    ${when(mode === "invite" || mode === "closed" ? mode : undefined, () => byInvitationLine())}`,
   );
 
   const body = html`${unknownLink}
@@ -486,6 +487,11 @@ function siteKey(ctx: Ctx): string | undefined {
 export function inviteOf(ctx: Ctx): string | undefined {
   const token = ctx.url.searchParams.get("invite") ?? "";
   return token === "" ? undefined : token;
+}
+
+/** The one place the forge says its accounts are closed: `/signin` (and `/signup` through its own message), never the home page (#11325). */
+function byInvitationLine(): Html {
+  return html`<p class="small mb" id="by-invitation">Accounts on this forge are by invitation. <a href="/#yours">Start your own forge instead.</a></p>`;
 }
 
 /** The whole of `/signup` while the forge makes no new accounts: a sentence, no form. */

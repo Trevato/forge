@@ -159,3 +159,22 @@ test("changing a price in the plans setting changes the page", async () => {
   expect(section).toContain("$7 of crew credit each month");
   expect(section).not.toContain("$19 a month");
 });
+
+test("the anonymous home never says the forge is not taking accounts; /signin says it once, linking /#yours (#11325)", async () => {
+  app.db.run("DELETE FROM forge_setting WHERE key = 'billing.links'");
+  put("billing.links", JSON.stringify({ small: "https://buy.example/s" }));
+  for (const mode of ["closed", "invite"]) {
+    app.db.run("DELETE FROM forge_setting WHERE key = 'signup'");
+    put("signup", mode);
+    const home = await (await fetch(`${servers.url}/`)).text();
+    expect(home).not.toContain("not taking new accounts");
+    expect(home).not.toContain("are by invitation");
+    const signin = await (await fetch(`${servers.url}/signin`)).text();
+    expect(signin).toContain("Accounts on this forge are by invitation.");
+    expect(signin).toContain('<a href="/#yours">Start your own forge instead.</a>');
+    expect(signin).not.toContain("closed to new accounts");
+    expect(signin).not.toContain("invite-only");
+    const signup = await (await fetch(`${servers.url}/signup`)).text();
+    expect(signup).not.toContain("id=\"by-invitation\"");
+  }
+});
