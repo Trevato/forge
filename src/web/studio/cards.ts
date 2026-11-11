@@ -59,6 +59,7 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   map: "map",
   feed: "feed",
   explore: "explore",
+  forks: "forks",
   new_app: "app",
   archive: "app",
   pull: "pull",
@@ -177,6 +178,34 @@ const previewWords = (previews: unknown): string =>
   list(previews).map(obj).filter((p) => web(text(p["url"]))).slice(0, 3)
     .map((p) => ` · pull #${text(p["pull"])} ${text(p["url"])}`).join("");
 
+type LinkOf = (repo: string) => { link?: string };
+type Drawn = { rows: CardRow[]; status: string };
+
+/** `forks` page `{ parent, forks: [{ repo, ahead, behind }] }`: a row per fork with its standing. */
+function forksPageRows(v: Obj, at: LinkOf): Drawn {
+  const forks = list(v["forks"]).map(obj);
+  const rows = forks.map((f): CardRow => {
+    const known = Number.isInteger(f["ahead"]) && Number.isInteger(f["behind"]);
+    return { label: text(f["repo"]), value: known ? `${text(f["ahead"])} ahead · ${text(f["behind"])} behind` : "standing unknown", ...at(text(f["repo"])) };
+  });
+  return { rows, status: `${forks.length} fork${forks.length === 1 ? "" : "s"}${text(v["parent"]) === "" ? "" : ` of ${text(v["parent"])}`}` };
+}
+
+/** `forks` with `kind: chain` `{ chain: [{ role, repo, follows }], severed }`: a row per link; a severed chain says so. */
+function forkChainRows(v: Obj, at: LinkOf): Drawn {
+  const chain = list(v["chain"]).map(obj);
+  const rows = chain.map((c): CardRow => ({ label: text(c["repo"]), value: `${text(c["role"])} · ${text(c["follows"])}`, ...at(text(c["repo"])) }));
+  if (v["severed"] === true) rows.push({ label: "Severed", value: "a link above is cut; the chain stops here" });
+  return { rows, status: `${chain.length} in the chain${v["severed"] === true ? " · severed" : ""}` };
+}
+
+/** `explore` with `kind: tree` `{ app, upstream, forks }`: upstream from the top, then this, then its forks. */
+function exploreTreeRows(v: Obj, at: LinkOf): Drawn {
+  const row = (r: Obj, role: string): CardRow => ({ label: text(r["repo"]), value: [role, text(r["follows"]), text(r["standing"])].filter((x) => x !== "").join(" · "), ...at(text(r["repo"])) });
+  const rows = [...list(v["upstream"]).map(obj).reverse().map((r) => row(r, "upstream")), row(obj(v["app"]), "this"), ...list(v["forks"]).map(obj).map((r) => row(r, "fork"))];
+  return { rows, status: `${rows.length} repositor${rows.length === 1 ? "y" : "ies"} around ${text(obj(v["app"])["repo"])}` };
+}
+
 /** The card for a tool's answer, or nothing when the answer has no card. */
 export function cardFor(
   tool: string,
@@ -266,6 +295,19 @@ export function cardFor(
     if (approve.length > 0 && slugOf(slug) && text(v["digest"]) !== "")
       actions.push({ label: `Close ${approve.length} done`, tool: "held", args: { app: slug, apply: approve, digest: text(v["digest"]) } });
     return { kind, title: CARD_TITLE[kind], status: text(v["says"]), rows, actions };
+  }
+  if (tool === "forks" || (tool === "explore" && Array.isArray(obj(value)["upstream"]))) {
+    // Each answer has its own helper; the card kind stays the tool's (`forks` or `explore`).
+    const v = obj(value);
+    const at = (repo: string): { link?: string } => (web(origin) && slugOf(repo) ? { link: `${origin}/${repo}` } : {});
+    const drawn = tool === "explore" ? exploreTreeRows(v, at) : Array.isArray(v["chain"]) ? forkChainRows(v, at) : Array.isArray(v["forks"]) ? forksPageRows(v, at) : undefined;
+    if (drawn === undefined) return undefined;
+    rows.push(...drawn.rows.slice(0, FORK_ROWS));
+    const left = drawn.rows.length - FORK_ROWS;
+    const paged = v["truncated"] === true || (typeof v["next_cursor"] === "string" && v["next_cursor"] !== "");
+    if (left > 0 || paged)
+      rows.push({ label: "More", value: [left > 0 ? `${left} more not shown` : "", paged ? "more forks exist; page on with the tool" : ""].filter((x) => x !== "").join("; ") });
+    return { kind, title: CARD_TITLE[kind], status: drawn.status, rows, actions };
   }
   if (kind === "forks") {
     // `fork_tree` answers `{ root, nodes: [{ repo, parent, depth, follow }], truncated }`; a repo with no readable tree has no card.

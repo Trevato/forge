@@ -59,6 +59,14 @@ describe("MCP cards coverage", () => {
     expect(missing).toEqual([]);
   });
 
+  test("forks and explore point tools/list at their cards", async () => {
+    const tools = (await listVia((p) => rpc("tools/list", p))).result.tools;
+    const uri = (name: string) => tools.find((t: any) => t.name === name)?._meta?.ui?.resourceUri;
+    expect(uri("forks")).toBe("ui://forge/forks");
+    expect(uri("explore")).toBe("ui://forge/explore");
+    expect(uri("feed")).toBe("ui://forge/feed");
+  });
+
   test("every card a tool names is a card kind", () => {
     const kinds: readonly string[] = CARD_KINDS;
     const unknown = Object.values(CARD_OF_TOOL).filter((k) => !kinds.includes(k));

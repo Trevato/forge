@@ -4,7 +4,7 @@ import { bad, good, type Tool, str, repoArg, isAnswer } from "../shared.ts";
 
 export const tool: Tool = {
   name: "explore",
-  doc: "`{ kind: tree, app }`: `{ app, upstream, forks, truncated }`, rows `{ repo, follows, standing, updatedAt }` for the app, the chain above it (nearest first) and its direct forks, in the words of the forks page, only what you may read; else `{ q?, cursor? }` (`query` is the same, `q` wins): the apps and people you can see, ranked, with their numbers and `why` (a short line on the ranking, absent when none); `kind:` `sort:` `updated:` `owner:` `archived:` and words in one line; each also as its own argument (`since` = `updated`); page on with `cursor`",
+  doc: "`{ kind: tree, app }`: `{ app, upstream, forks, truncated }`, rows `{ repo, follows, standing, updatedAt }` for the app, the chain above it (nearest first) and its direct forks, in the words of the forks page, only what you may read, drawn on the `ui://forge/explore` card as upstream, this and fork rows; else `{ q?, cursor? }` (`query` is the same, `q` wins): the apps and people you can see, ranked, with their numbers and `why` (a short line on the ranking, absent when none); `kind:` `sort:` `updated:` `owner:` `archived:` and words in one line; each also as its own argument (`since` = `updated`); page on with `cursor`",
   description:
     "The apps, people (and, for an admin, forges) you can see, ranked.",
   inputSchema: {

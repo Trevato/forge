@@ -115,7 +115,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `forges` | — | Forges sent from here (admin; a stage says when to resend), or one forge's plan to read or grant | 387 |
 | `fork` | — | Fork a repository into your account; for a guest, a copy to send changes back from | 232 |
 | `fork_tree` | — | The fork tree around a repo: ancestors, siblings and descendants you may read | 397 |
-| `forks` | `chain` | A repo's forks you may see, paged by limit and cursor (next_cursor), each with commits ahead and behind | 387 |
+| `forks` | `chain` | A repo's forks you may see, paged by limit and cursor (next_cursor), each with commits ahead and behind | 437 |
 | `front_page` | — | The stranger's front page; admin sets `pinned`/`hidden`/`weights` | 457 |
 | `health` | — | How this forge is: version, commit, draining or not, rollout, incidents | 190 |
 | `held` | — | What the Later gate holds, and one proposed pass over it | 319 |
@@ -524,13 +524,13 @@ answers
 | `ui://forge/pulls` | `pulls` | Pulls, at most 20: `#N title`, state, check and review word, each linked. |
 | `ui://forge/runs` | `runs` | Recent runs, newest first, linked to their logs. |
 | `ui://forge/asked` | `asked` | What people asked the crew for and where each ask stands. |
-| `ui://forge/explore` | `explore` | Apps, people and forges ranked, at most 20: name, kind, the numbers (and likes or ship time when sorted by them), linked; only what you may see. |
+| `ui://forge/explore` | `explore` | Apps, people and forges ranked, at most 20: name, kind, the numbers (and likes or ship time when sorted by them), linked; only what you may see. With `kind: tree`: upstream, this and fork rows, each with how it follows and linked to its repository. |
 | `ui://forge/issue` | `issue` | One issue: title, state, assignee, labels, what it waits for. |
 | `ui://forge/flow` | `flow` | The pipeline: per stage counts, oldest waiting, the bottleneck. |
 | `ui://forge/scorecard` | `scorecard` | The crew's scorecard per agent (forge admin). |
 | `ui://forge/crew` | `now` | What the crew is doing right now, with Stop buttons. |
 | `ui://forge/board` | `boards` | One board's panels (person admins). |
-| `ui://forge/forks` | `fork_tree` | The fork tree around a repository, each row with how it follows. |
+| `ui://forge/forks` | `fork_tree`, `forks` | The fork tree around a repository, each row with how it follows; `forks` a row per fork with its commits ahead and behind, `kind: chain` its chain (a severed chain says so); each linked to the repository, at most 30 and one More row. |
 | `ui://forge/milestones` | `milestones` | The milestones and how far each is. |
 | `ui://forge/search` | `search` | The query on top, one row per hit (repository, issue, pull, code) with its kind, title and link. |
 | `ui://forge/issues` | `issues` | A repository's issues, one row each: state, pillar, what it waits on, `untrusted` when an outsider wrote it. |
