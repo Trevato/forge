@@ -164,4 +164,29 @@ describe("billing seam", () => {
     expect(text).not.toContain("invoice.paid");
     expect(text).not.toContain("Refused today");
   });
+
+  test("the Billing page says a forge's lapse: past due until, then lapsed, with the keep-until date", async () => {
+    const row = async () => {
+      const text = await (await send("GET", "/settings/billing", admin)).text();
+      return text.slice(text.indexOf('data-forge="kid"'), text.indexOf("</li>", text.indexOf('data-forge="kid"')));
+    };
+    const enter = (status: "grace" | "none", at: string) => {
+      putEntitlement(app.db, { forge: "kid", plan: "medium", status, source: "stripe", provider: "stripe", subscriptionId: "sub_kid" }, "small", "test");
+      app.db.query("UPDATE entitlement_change SET at = ?1 WHERE id = (SELECT MAX(id) FROM entitlement_change WHERE forge = 'kid')").run(at);
+    };
+    const soon = new Date(Date.now() - 86_400_000);
+    enter("grace", soon.toISOString());
+    const day = (ms: number) => new Date(soon.getTime() + ms * 86_400_000).toISOString().slice(0, 10);
+    expect(await row()).toContain(`past due until ${day(7)}, data kept until ${day(37)}`);
+
+    enter("none", "2026-01-01T00:00:00.000Z");
+    const none = await row();
+    expect(none).toContain("lapsed, data kept until 2026-01-31");
+    expect(none).not.toContain("past due");
+
+    putEntitlement(app.db, { forge: "kid", plan: "medium", status: "active", source: "granted" }, "small", "test");
+    const back = await row();
+    expect(back).not.toContain("lapsed");
+    expect(back).not.toContain("past due");
+  });
 });

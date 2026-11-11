@@ -9,6 +9,7 @@ import { ledBlock } from "./visitors.ts";
 import { BILLING_WORDS, STRIPE_WORDS, connectStripe, disconnectStripe, grantPlan, readBilling, saveSigningSecret, type BillingError, type StripeWords } from "../../actions/billing.ts";
 import { retryOrder } from "../../actions/order.ts";
 import { REFUND_URL } from "../../billing/checkout.ts";
+import { lapseFor, type Lapse } from "../../billing/lapse.ts";
 import { failedOrders } from "../../billing/orders.ts";
 import { CODE_ERRORS, makeCode, readCodes, revoke, type CodeError } from "../../actions/codes.ts";
 import { publicOrigin } from "../../core/public_origin.ts";
@@ -163,6 +164,14 @@ function funnelRow(r: FunnelReport): Html {
   </section>`;
 }
 
+/** The lapse state as a suffix for a forge's row: nothing while active. */
+function lapseWords(l: Lapse): string {
+  const day = (t: number) => new Date(t).toISOString().slice(0, 10);
+  if (l.state === "grace") return ` · past due until ${day(l.graceUntil)}, data kept until ${day(l.keepUntil)}`;
+  if (l.state === "none") return ` · lapsed, data kept until ${day(l.keepUntil)}`;
+  return "";
+}
+
 // GET /settings/billing
 export function billingPage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -179,7 +188,7 @@ function billingView(ctx: Ctx, shown?: Shown, values: Record<string, string> = {
       <form class="row-fields" method="post" action="${PATH}/grant">
         <input type="hidden" name="forge" value="${f.forge}" />
         <span class="mono">${f.forge}</span>
-        <span class="muted small">${f.status} · ${f.source}</span>
+        <span class="muted small">${f.status} · ${f.source}${lapseWords(lapseFor(ctx.app.db, f.forge))}</span>
         <select class="input" name="plan" aria-label="Plan for ${f.forge}">
           ${Object.keys(SIZES).map((p) => html`<option value="${p}" ${p === f.plan ? html`selected` : null}>${p}</option>`)}
         </select>

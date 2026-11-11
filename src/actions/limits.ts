@@ -13,7 +13,7 @@ import {
   LIMIT_KEYS,
   isLimitKey,
   limitChanges,
-  limitState,
+  limitStates,
   setLimit,
   type LimitChange,
   type LimitDef,
@@ -39,11 +39,12 @@ export function listLimits(
 ): Result<{ limits: LimitRow[]; changes: LimitChange[] }, "not_found"> {
   const who = admin(actor);
   if (!who.ok) return who;
+  const states = limitStates(app.db, LIMIT_KEYS);
   return ok({
     limits: LIMIT_KEYS.map((key) => ({
       ...LIMITS[key],
       key,
-      ...limitState(app.db, key),
+      ...states.get(key)!,
     })),
     changes: limitChanges(app.db),
   });

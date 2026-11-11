@@ -52,7 +52,9 @@ export type LimitKey =
   | "model_review.auto"
   | "model_review.min_landed"
   | "model_review.slack_pct"
-  | "shell_idle_minutes";
+  | "shell_idle_minutes"
+  | "billing.grace_days"
+  | "billing.retention_days";
 
 export interface LimitDef {
   readonly label: string;
@@ -312,6 +314,22 @@ export const LIMITS: Record<LimitKey, LimitDef> = {
     max: 1440,
     reason: "A shell nobody types in and that prints nothing holds a process and memory for no reason; one that prints, like a build, is never stopped.",
   },
+  "billing.grace_days": {
+    label: "Days a forge keeps working after its payment fails",
+    unit: "days",
+    default: 7,
+    min: 0,
+    max: 90,
+    reason: "A card that fails is usually fixed within days, so a lapse is not felt at once; past this the forge's billing reads as none.",
+  },
+  "billing.retention_days": {
+    label: "Days a lapsed forge keeps its data",
+    unit: "days",
+    default: 30,
+    min: 1,
+    max: 365,
+    reason: "A forge that lapsed may come back, so its data waits this long before anything is allowed to remove it; paying again makes it active at once.",
+  },
 };
 
 export const LIMIT_KEYS = Object.keys(LIMITS) as LimitKey[];
@@ -398,6 +416,31 @@ export function limitState(
     return { value: limitValue(db, key), isSet: limitIsSet(db, key), defaultValue: limitDefault(db, key) };
   const set = stored(db, key);
   return { value: set ?? LIMITS[key].default, isSet: set !== undefined, defaultValue: LIMITS[key].default };
+}
+
+/** `limitState` for every limit with one read of the stored settings, not one per limit. */
+export function limitStates(
+  db: Database,
+  keys: readonly LimitKey[],
+): Map<LimitKey, { value: number; isSet: boolean; defaultValue: number }> {
+  const rows = new Map(
+    db
+      .query<{ key: string; value: string }, []>("SELECT key, value FROM forge_setting WHERE key LIKE 'limit.%'")
+      .all()
+      .map((r) => [r.key, r.value]),
+  );
+  const out = new Map<LimitKey, { value: number; isSet: boolean; defaultValue: number }>();
+  for (const key of keys) {
+    if (capacityKey(key) !== undefined) {
+      out.set(key, limitState(db, key));
+      continue;
+    }
+    const raw = rows.get(storeKey(key));
+    const n = raw !== undefined && /^\d+$/.test(raw) ? Number(raw) : NaN;
+    const set = validLimit(key, n) ? n : undefined;
+    out.set(key, { value: set ?? LIMITS[key].default, isSet: set !== undefined, defaultValue: LIMITS[key].default });
+  }
+  return out;
 }
 
 export type LimitError = {

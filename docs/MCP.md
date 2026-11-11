@@ -133,7 +133,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `land_past_gate` | — | Land one pull past a broken gate, with a recorded reason; an owner's only | 321 |
 | `lift` | — | Lift an issue out from behind the Later gate | 214 |
 | `limb` | `defer`, `resume`, `close`, `raise`, `lower`, `replan`, `takeback`, `undo` | Act on a limb by `action` | 532 |
-| `limits` | — | Every limit the owner can hit | 959 |
+| `limits` | — | Every limit the owner can hit | 1005 |
 | `maintenance` | `status`, `prepare`, `resume`, `pause-duty`, `resume-duty` | Prepare the forge for a power-off, check the drain, or end maintenance (admin) | 308 |
 | `make_it_yours` | — | Fork an app you can see: code and history, following the original | 337 |
 | `map` | — | An app's plan: ready or waiting, critical path, crew, parkedTwice; `done` adds closed; `first: N` ranks N first | 375 |
