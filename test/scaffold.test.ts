@@ -28,11 +28,16 @@ import { scaffoldFiles } from "../src/apps/scaffold.ts";
 /** How long the written-out app's `bun test` may take, wall clock. */
 const SUITE_BUDGET_MS = 3_000;
 
-/** A child that inherits nothing it was not handed. */
+/**
+ * A child that inherits nothing it was not handed. Its TMPDIR is a directory
+ * made inside the test's own temp dir: the builder's sandbox holds anything
+ * else read-only, and a child bun refuses to start without a tempdir it can
+ * write (#11051).
+ */
 const run = async (
   cwd: string,
   argv: string[],
-  temp = process.env.TMPDIR ?? tmpdir(),
+  temp: string,
 ): Promise<{ code: number; out: string }> => {
   const child = Bun.spawn(argv, {
     cwd,
@@ -53,7 +58,9 @@ const run = async (
 };
 
 describe("a scaffolded app, written out and run on its own", () => {
+  let scratch: string;
   let dir: string;
+  let temp: string;
   const files = scaffoldFiles({ name: "field-notes", description: "" });
   const content = (path: string): string => {
     const file = files.find((f) => f.path === path);
@@ -63,21 +70,24 @@ describe("a scaffolded app, written out and run on its own", () => {
   };
 
   beforeAll(async () => {
-    dir = await mkdtemp(join(tmpdir(), "forge-scaffold-"));
+    scratch = await mkdtemp(join(tmpdir(), "forge-scaffold-"));
+    dir = join(scratch, "app");
+    temp = join(scratch, "tmp");
+    await mkdir(temp);
     for (const file of files) {
       const path = join(dir, file.path);
       await mkdir(dirname(path), { recursive: true });
       await writeFile(path, file.content as string);
     }
   });
-  afterAll(() => rm(dir, { recursive: true, force: true }));
+  afterAll(() => rm(scratch, { recursive: true, force: true }));
 
   test("its own suite is green, inside its 3 s budget", async () => {
     // Every deploy and every pull on the app waits on this suite, so it is
     // held to a budget (docs/APPS.md, "What a new app starts as").
-    const temp = await mkdtemp(join(tmpdir(), "forge-scaffold-tmp-"));
+    const own = await mkdtemp(join(scratch, "suite-tmp-"));
     const started = performance.now();
-    const { code, out } = await run(dir, [process.execPath, "test"], temp);
+    const { code, out } = await run(dir, [process.execPath, "test"], own);
     const ms = Math.round(performance.now() - started);
     console.log(`the scaffold's own suite ran in ${ms} ms (budget ${SUITE_BUDGET_MS} ms)`);
     expect([code, out.includes(" 0 fail")]).toEqual([0, true]);
@@ -85,8 +95,7 @@ describe("a scaffolded app, written out and run on its own", () => {
     // It leaves its temporary directory as it found it: a check cell's /tmp
     // is a small tmpfs every scaffolded suite in the forge's own check shares
     // (#5326), and every app's own check cell has one too.
-    expect(await readdir(temp)).toEqual([]);
-    await rm(temp, { recursive: true, force: true });
+    expect(await readdir(own)).toEqual([]);
     // Each guarantee has its own file of tests in the suite.
     for (const name of [
       "design.test.ts",
@@ -101,12 +110,12 @@ describe("a scaffolded app, written out and run on its own", () => {
 
   test("the design lint passes, and refuses a colour spelled out", async () => {
     expect(
-      (await run(dir, [process.execPath, "run", "lint:design"])).code,
+      (await run(dir, [process.execPath, "run", "lint:design"], temp)).code,
     ).toBe(0);
     const css = join(dir, "static", "app.css");
     const before = await readFile(css, "utf8");
     await writeFile(css, `${before}\n.oops { color: #ff0000; }\n`);
-    const refused = await run(dir, [process.execPath, "run", "lint:design"]);
+    const refused = await run(dir, [process.execPath, "run", "lint:design"], temp);
     await writeFile(css, before);
     expect(refused.code).toBe(1);
     expect(refused.out).toContain("static/app.css");
@@ -115,7 +124,7 @@ describe("a scaffolded app, written out and run on its own", () => {
 
   test("the committed API description is exactly what contract:emit writes", async () => {
     const committed = content("contract/openapi.json");
-    const emitted = await run(dir, [process.execPath, "run", "contract:emit"]);
+    const emitted = await run(dir, [process.execPath, "run", "contract:emit"], temp);
     expect(emitted.code).toBe(0);
     expect(await readFile(join(dir, "contract", "openapi.json"), "utf8")).toBe(
       committed,
@@ -130,9 +139,11 @@ describe("a scaffolded app, written out and run on its own", () => {
   }, 30_000);
 
   test("it typechecks under strict settings, with the forge's own type definitions", async () => {
-    // The app ships no dependencies, so the checker borrows the forge's
-    // Bun types; the app's code itself must be clean under the same strictness
-    // the forge holds itself to.
+    // The app ships no dependencies, so the checker borrows the forge's own
+    // tsc and Bun types, run straight from node_modules: `bun x` would reach
+    // for a package cache and the registry, neither of which a sandbox
+    // promises (#11051). The app's code itself must be clean under the same
+    // strictness the forge holds itself to.
     const root = fileURLToPath(new URL("..", import.meta.url));
     const sources = [
       ...(await readdir(join(dir, "src"))).map((f) => join("src", f)),
@@ -140,8 +151,7 @@ describe("a scaffolded app, written out and run on its own", () => {
     ].filter((f) => f.endsWith(".ts"));
     const { code, out } = await run(dir, [
       process.execPath,
-      "x",
-      "tsc",
+      join(root, "node_modules", "typescript", "bin", "tsc"),
       "--noEmit",
       "--strict",
       "--target",
@@ -158,9 +168,8 @@ describe("a scaffolded app, written out and run on its own", () => {
       "--typeRoots",
       `${root}node_modules/@types,${root}node_modules`,
       ...sources,
-    ]);
-    // tsc's exit code is the verdict: `bun x` may print its own install
-    // lines on a fresh machine (#664). On a failure, the output is the
+    ], temp);
+    // tsc's exit code is the verdict. On a failure, the output is the
     // reason, so the assertion shows it beside the code.
     expect({ code, out: code === 0 ? "" : out.trim() }).toEqual({ code: 0, out: "" });
   }, 120_000);
@@ -180,6 +189,8 @@ describe("a scaffolded app signs a person in through the forge", () => {
     const root = await mkdtemp(join(tmpdir(), "forge-signin-"));
     const appDir = join(root, "app");
     const dataDir = join(root, "data");
+    const temp = join(root, "tmp");
+    await mkdir(temp);
     for (const file of scaffoldFiles({ name: "field-notes", description: "" })) {
       const path = join(appDir, file.path);
       await mkdir(dirname(path), { recursive: true });
@@ -211,6 +222,7 @@ describe("a scaffolded app signs a person in through the forge", () => {
         FORGE_APP_DATA: dataDir,
         FORGE_APP_URL: base,
         FORGE_URL: servers.url,
+        TMPDIR: temp,
       },
       stdout: "ignore",
       stderr: "ignore",

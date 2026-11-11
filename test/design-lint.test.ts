@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { areaFiles, classesIn, compare, compareQuiet, quiet, scanQuiet, countFile, designText, documentedClasses, locate, registeredClasses, scan, sectionLinks, webCss } from "../scripts/design-lint.ts";
+import { areaFiles, classesIn, compare, compareQuiet, quiet, scanQuiet, scanCards, countFile, designText, documentedClasses, locate, loneSentenceCards, registeredClasses, scan, sectionLinks, webCss } from "../scripts/design-lint.ts";
 
 /** A DESIGN.md in miniature: the §5 table, a §5d register, and a §6 that names a class too. */
 const DESIGN = [
@@ -256,4 +256,33 @@ describe("design check: the quiet-page rules (#8775)", () => {
     const debt = JSON.parse(readFileSync("docs/design/quiet-debt.json", "utf8"));
     expect(compareQuiet(debt, scanQuiet("."))).toEqual([]);
   }, 60_000);
+});
+
+describe("design check: a card around one sentence (#11190, principle 7)", () => {
+  test("flags a card that wraps one <p> or a bare line, not one holding a list or form", () => {
+    expect(loneSentenceCards("x = card(html`<p>Nothing yet.</p>`, { head });")).toHaveLength(1);
+    expect(loneSentenceCards("x = card(\n  html`Nothing yet.`,\n  { head });")).toHaveLength(1);
+    expect(loneSentenceCards("x = card(html`<p>a</p><ul class=\"list\"></ul>`);")).toEqual([]);
+    expect(loneSentenceCards("x = card(html`<form method=\"post\"><p>a</p></form>`);")).toEqual([]);
+    expect(loneSentenceCards("x = card(html`<dl><div><dt>a</dt><dd>b</dd></div></dl>`);")).toEqual([]);
+    expect(loneSentenceCards("function card(f, d) { return 1; } card(f, d);")).toEqual([]);
+  });
+
+  test("a listCard of one bare row is the same box; a row with a link or facts is a row", () => {
+    expect(loneSentenceCards("x = listCard([row({ title: `Nothing yet.` })], { head });")).toHaveLength(1);
+    expect(loneSentenceCards("x = listCard([row({ title: msg })]);")).toHaveLength(1);
+    expect(loneSentenceCards("x = listCard([row({ href: h, title: t })], { head });")).toEqual([]);
+    expect(loneSentenceCards("x = listCard([row({ title: t, meta: m, trail: b })]);")).toEqual([]);
+    expect(loneSentenceCards("x = listCard([row({ title: a }), row({ title: b })]);")).toEqual([]);
+    expect(loneSentenceCards("x = listCard(rows, { head });")).toEqual([]);
+  });
+
+  test("a template with a nested backtick is not examined (the scan reads flat text)", () => {
+    expect(loneSentenceCards("x = card(html`<p>${a ? `b` : `c`}</p>`, { head });")).toEqual([]);
+  });
+
+  test("no page draws one", () => {
+    const bad = scanCards(".");
+    expect(bad).toEqual([]);
+  });
 });

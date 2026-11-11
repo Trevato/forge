@@ -9,6 +9,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 quietLogs();
 
@@ -51,7 +52,7 @@ afterAll(async () => {
 async function phases(path: string): Promise<{ status: number; names: string[]; res: Response }> {
   const res = await fetch(`${servers.url}${path}`, { headers: { authorization: `Bearer ${token}` } });
   await res.text();
-  const names = (res.headers.get("server-timing") ?? "").split(", ").map((p) => p.split(";")[0]!);
+  const names = requestTiming(res).split(", ").map((p) => p.split(";")[0]!);
   return { status: res.status, names: names.slice(names.indexOf("app") + 1), res };
 }
 

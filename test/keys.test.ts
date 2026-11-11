@@ -284,7 +284,7 @@ describe.skipIf(NO_KEYGEN)("ssh keys", () => {
     const empty = await (
       await fetch(`${base}/settings/keys`, { headers: { cookie } })
     ).text();
-    expect(empty).toContain("No keys yet");
+    expect(empty).toContain("No computer keys yet");
 
     const added = await fetch(`${base}/settings/keys`, {
       method: "POST",

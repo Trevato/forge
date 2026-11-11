@@ -11,6 +11,7 @@ import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { useFlagRegistry } from "../src/web/pages/flags.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { adminOpenapi } from "./helpers/openapi-doc.ts";
 
 quietLogs();
 
@@ -75,7 +76,7 @@ describe("GET /api/v1/flags", () => {
   });
 
   test("the route is in the OpenAPI document", async () => {
-    const doc = (await (await fetch(`${servers.url}/api/v1/openapi.json`)).json()) as any;
+    const doc = (await (await adminOpenapi(app, servers.url, "/api/v1/openapi.json")).json()) as any;
     expect(doc.paths["/api/v1/flags"].get).toBeDefined();
   });
 });

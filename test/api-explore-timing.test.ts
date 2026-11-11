@@ -8,6 +8,7 @@ import { createSession } from "../src/core/sessions.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 quietLogs();
 
@@ -41,7 +42,7 @@ afterAll(async () => {
 test("the API explore read names session, explore and render in order", async () => {
   const res = await fetch(`${servers.url}/api/v1/explore`, { headers: { cookie } });
   const body = JSON.parse(await res.text());
-  const names = (res.headers.get("server-timing") ?? "").split(", ").map((p) => p.split(";")[0]!);
+  const names = requestTiming(res).split(", ").map((p) => p.split(";")[0]!);
   expect(res.status).toBe(200);
   expect(names.slice(names.indexOf("app") + 1)).toEqual(["session", "explore", "render"]);
   expect(Array.isArray(body.items)).toBe(true);

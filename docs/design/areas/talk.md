@@ -17,6 +17,7 @@
 - `.talk-meta` — who said it and when, with the copy button.
 - `.talk-copy` — a quiet text button that copies a message or a code block.
 - `.talk-suggest` — the starter questions on an empty chat; each fills the composer.
+- `.talk-about` — the one line naming the subject (`?about=`), above the composer; no rule of its own: it is plain `small muted` text that wraps like any paragraph.
 - `.talk-jump` — "Latest" button, shown when you have scrolled up from the end.
 - `.talk-chats` — the conversations list above the chat (#8814): New, the person's conversations newest first, and the Archived filter link.
 - `.talk-here` — the line naming the open conversation, with its Rename and Archive forms.
@@ -38,3 +39,12 @@ Under a reply, `.talk-cost` is one quiet line with the turn's dollars; above the
 Search (#8823) adds no component class: the form is a `.bar` with `.input` and `.btn`, and the results and the conversations list are `.list` of `row()`s (an "archived" `badge` as the trail, the match as the row's meta). The turn a result opens at is marked by a muted hairline on its left edge, `.talk-turn:target`, the one new rule, which replaces the two `.talk-chats li a` rules the rows made unnecessary.
 
 #9690: the page speaks the home page's language: an `sr-only` h1, the conversations as a `.list` of rows, and no box round a turn, a tool call or a held action; the only hairline is above the composer. No new classes.
+
+#11009: the builder layout. The pane's tabs are the `.tabs` component and the phone's Chat / Preview switch is `.seg`, both links (`?pane=`) the server draws, so it works with the script off; the pane is parted from the chat by one hairline, no box.
+
+- `.talk-shell` — the grid holding the chats sidebar, the chat and the preview pane; one column on a phone, where `data-pane` (from `?pane=`) says which shows.
+- `.talk-side` — the sidebar column wrapping `.talk-chats`.
+- `.talk-tabs` — the phone-only Chat / Preview `.seg`.
+- `.talk-pane` — the right pane: one head line (repository · pull or Production · Open on its own), `.tabs`, then the chosen panel; its left hairline is the only rule.
+- `.talk-frame` — the framed live preview, no border.
+- `.talk-step` — a tool call drawn as one closed line; opened, its `key: value` lines, one per line, in the tool card's plain paragraph.

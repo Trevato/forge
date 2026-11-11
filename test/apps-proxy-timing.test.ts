@@ -1,6 +1,8 @@
 /**
- * A proxied answer keeps the app's Server-Timing and appends the forge's own
- * phases, `forge-` named: where a slow request spent its time.
+ * A proxied answer keeps the app's Server-Timing and, for a reader who may
+ * write the app's repository, appends the forge's own phases, `forge-`
+ * named: where a slow request spent its time. Anyone else gets the app's
+ * own entries untouched (#11112).
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -8,12 +10,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { AppsRuntime, type EnvStatus } from "../src/apps/runtime.ts";
-import { newApp } from "../src/actions/apps.ts";
+import { appVisitors, newApp } from "../src/actions/apps.ts";
+import { signGrant } from "../src/apps/proxy.ts";
+import { getAppByRepo } from "../src/core/apps.ts";
+import { clearRelayWaits } from "../src/apps/relay_wait.ts";
+import { visitorsLine } from "../src/apps/vitals.ts";
 import { commitToBranch } from "../src/actions/repos.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { deploySettled } from "./helpers/apps-forge.ts";
+import { forgeWaited, startLoopWorst, stopLoopWorst } from "../src/perf/loop_worst.ts";
 
 const DOMAIN = "apps.test";
 // node:http, not Bun.serve: Bun drops a streamed Response's content-length,
@@ -56,10 +63,25 @@ describe("a proxied answer's Server-Timing", () => {
   let servers: Servers;
   let runtime: AppsRuntime;
   let alice: User;
+  let bob: User;
   let repo: Repo;
 
-  const viaHost = (path = "/") =>
-    fetch(`${servers.url}${path}`, { headers: { host: `hello.${DOMAIN}`, accept: "text/html" }, redirect: "manual" });
+  /** A request to the app as `who` (a grant cookie), or as a visitor with none. */
+  const asViewer = (who: User | undefined, path = "/") => {
+    const headers: Record<string, string> = { host: `hello.${DOMAIN}`, accept: "text/html" };
+    if (who !== undefined) {
+      const record = getAppByRepo(app.db, repo.id)!;
+      const grant = signGrant(app.config.dataDir, { app: record, env: "production" }, 60_000, Date.now(), {
+        id: who.id,
+        name: who.username,
+        role: who.isAdmin ? "admin" : "user",
+      });
+      headers.cookie = `forge_grant_${record.id.slice(-8)}=${grant}`;
+    }
+    return fetch(`${servers.url}${path}`, { headers, redirect: "manual" });
+  };
+  /** The app's owner reading it: the one who is told the forge's phases. */
+  const viaHost = (path = "/") => asViewer(alice, path);
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-ptiming-"));
@@ -80,6 +102,13 @@ describe("a proxied answer's Server-Timing", () => {
     });
     if (!created.ok) throw new Error(created.error);
     alice = created.value;
+    const other = await createUser(app.db, { origin: "seed", trusted: true,
+      username: "bob",
+      email: "bob@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!other.ok) throw new Error(other.error);
+    bob = other.value;
     const made = await newApp(app, alice, { name: "hello", description: "d", visibility: "public" });
     if (!made.ok) throw new Error(String(made.error));
     repo = made.value.repo;
@@ -122,6 +151,27 @@ describe("a proxied answer's Server-Timing", () => {
     expect(header).not.toContain("hello");
   });
 
+  test("a visitor and a signed-in reader who may not write get the app's entries untouched", async () => {
+    for (const who of [undefined, bob]) {
+      for (const path of ["/healthz", "/"]) {
+        const res = await asViewer(who, path);
+        expect(res.status).toBe(200);
+        await res.text();
+        const header = res.headers.get("server-timing");
+        // Exactly what the app wrote: no forge- entry, and none of the forge's unnamed ones.
+        expect(header).toBe(path === "/healthz" ? "db;dur=0.1, app;dur=1.1" : null);
+      }
+    }
+  });
+
+  test("the writer's copy keeps the app's entries first, as the app wrote them", async () => {
+    const header = (await viaHost("/healthz")).headers.get("server-timing")!;
+    expect(header.split(", ").slice(0, 2)).toEqual(["db;dur=0.1", "app;dur=1.1"]);
+    expect(header.split(", ").slice(2).every((e) => e.startsWith("forge-"))).toBe(true);
+    for (const name of ["forge-route", "forge-lookup", "forge-session", "forge-lag", "forge-ttfb"])
+      expect(dur(header, name)).toBeDefined();
+  });
+
   test("an app slow to its headers shows in forge-ttfb, which is forge-upstream", async () => {
     const res = await viaHost("/ttfb");
     expect(res.status).toBe(200);
@@ -132,6 +182,41 @@ describe("a proxied answer's Server-Timing", () => {
     // No probe socket: the connect is inside ttfb, never named apart.
     expect(dur(header, "forge-connect")).toBeUndefined();
     expect(header).toMatch(/^[a-z0-9.;=, -]+$/);
+  });
+
+  test("forge-lag names the forge's own loop lag beside forge-ttfb, well-formed", async () => {
+    const res = await viaHost("/ttfb");
+    expect(res.status).toBe(200);
+    const header = res.headers.get("server-timing")!;
+    // Exactly one, a duration with one decimal, right after forge-ttfb.
+    expect(header.match(/(?:^|, )forge-lag;/g)?.length).toBe(1);
+    expect(header).toMatch(/(?:^|, )forge-ttfb;dur=[0-9]+\.[0-9], forge-lag;dur=[0-9]+\.[0-9](?:,|$)/);
+    expect(dur(header, "forge-lag")!).toBeGreaterThanOrEqual(0);
+  });
+
+  test("a blocked forge loop shows in forge-lag, so the app is not blamed", async () => {
+    // The sampler started here, not by whoever ran first: the test cannot depend on it.
+    stopLoopWorst();
+    startLoopWorst({ everyMs: 5 });
+    try {
+      await Bun.sleep(20);
+      // Block the forge's loop for 250 ms; the sampler names it in the 10 s window.
+      const until = performance.now() + 250;
+      while (performance.now() < until) {}
+      await Bun.sleep(30);
+      clearRelayWaits();
+      const header = (await viaHost("/ttfb")).headers.get("server-timing")!;
+      expect(dur(header, "forge-lag")!).toBeGreaterThanOrEqual(200);
+      // /ttfb answers in ~30 ms: the lag is more than half of it, so the wait was the forge's.
+      expect(forgeWaited(dur(header, "forge-lag")!, dur(header, "forge-ttfb")!)).toBe(true);
+      // The app's speed card and terminal line say so: the forge was busy, not the app (#10858).
+      const vitals = appVisitors(app, alice, repo)!;
+      expect(vitals.wait?.forge).toBe(true);
+      expect(visitorsLine(vitals)).toContain("the forge was busy: ");
+    } finally {
+      stopLoopWorst();
+      startLoopWorst();
+    }
   });
 
   test("forge-route splits into forge-lookup, forge-state and forge-session", async () => {
@@ -254,5 +339,25 @@ describe("a proxied answer's Server-Timing", () => {
     } finally {
       restore();
     }
+  });
+});
+
+describe("forgeWaited: the forge's lag explains the wait when it is more than half of forge-ttfb", () => {
+  test("the issue's own readings: 1490.7 ms ttfb with the app at 3.6 ms", () => {
+    expect(forgeWaited(1400, 1490.7)).toBe(true); // 1400 > 745.35
+    expect(forgeWaited(700, 1490.7)).toBe(false); // 700 < 745.35: the app's to explain
+  });
+
+  test("exactly half is not more than half", () => {
+    expect(forgeWaited(50, 100)).toBe(false);
+    expect(forgeWaited(50.1, 100)).toBe(true);
+    expect(forgeWaited(0, 43.8)).toBe(false);
+  });
+
+  test("a reading that is not a duration never blames the forge", () => {
+    expect(forgeWaited(10, 0)).toBe(false);
+    expect(forgeWaited(-1, 10)).toBe(false);
+    expect(forgeWaited(Number.NaN, 10)).toBe(false);
+    expect(forgeWaited(10, Number.POSITIVE_INFINITY)).toBe(false);
   });
 });

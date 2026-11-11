@@ -8,6 +8,7 @@
  * already spent its automatic tries, so any red that is its own parks it.
  */
 
+import { pullCloses } from "./helpers/pull-closes.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { App } from "../src/app.ts";
 import { announceRun } from "../src/actions/runs.ts";
@@ -92,6 +93,7 @@ describe("the crew, with a red many pulls share", () => {
       [`flake-${test}`, repo.id, test, new Date().toISOString()],
     );
   const open = (pull: Pull) => getIssueById(app.db, pull.id)?.state === "open";
+  const closes = (pull: Pull) => pullCloses(app, pull);
   const sharedCards = () =>
     vitals({
       db: app.db,
@@ -114,11 +116,11 @@ describe("the crew, with a red many pulls share", () => {
 
     const own = await spentPull();
     announceRun(app, failed(own, ["Y"]));
-    expect(open(own)).toBe(false);
+    await closes(own);
     // X and Y together is not only the lane's red: Y is the pull's own.
     const mixed = await spentPull();
     announceRun(app, failed(mixed, ["X", "Y"]));
-    expect(open(mixed)).toBe(false);
+    await closes(mixed);
     expect(sharedCards()).toHaveLength(1);
 
     // Main's next green check sends the three back through the lane, once.
@@ -133,7 +135,7 @@ describe("the crew, with a red many pulls share", () => {
     mainGreen();
     const pulls = [await spentPull(), await spentPull(), await spentPull()];
     for (const p of pulls) announceRun(app, failed(p, ["Z"]));
-    for (const p of pulls) expect(open(p)).toBe(false);
+    for (const p of pulls) await closes(p);
     expect(sharedCards().map((c) => c.sentence).filter((s) => s.includes('"Z"'))).toEqual([]);
   });
 

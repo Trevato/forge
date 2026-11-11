@@ -23,6 +23,7 @@ import { basicHeader, gitAuthEnv, redact, secretsIn } from "../origins/credentia
 import { forgeLinkOf, originOf } from "./chain.ts";
 import { parentCredential } from "./parent_credential.ts";
 import { newestCommits, takeFromParent, type Taken } from "./take.ts";
+import { during } from "../perf/jobs.ts";
 
 export const CHECK_MS = 60 * 60_000;
 export const FETCH_TIMEOUT_MS = 60_000;
@@ -67,6 +68,8 @@ export async function upstreamState(app: App): Promise<UpstreamState | undefined
 function readTaken(v: unknown): { taken?: Taken } {
   if (typeof v !== "object" || v === null) return {};
   const t = v as Record<string, unknown>;
+  if (t["kind"] === "forwarded" && typeof t["commits"] === "number")
+    return { taken: { kind: "forwarded", commits: t["commits"] } };
   if (t["kind"] === "pull" && typeof t["number"] === "number" && typeof t["commits"] === "number")
     return { taken: { kind: "pull", number: t["number"], commits: t["commits"] } };
   if (t["kind"] === "conflict" && Array.isArray(t["files"]))
@@ -211,7 +214,7 @@ function tellOwner(app: App, repo: Repo, fork: string, behind: number, commits =
 /** Check at boot and every hour; returns the timer to clear. */
 export function startUpstreamWatch(app: App): ReturnType<typeof setInterval> {
   void checkUpstream(app);
-  return setInterval(() => void checkUpstream(app), CHECK_MS);
+  return setInterval(() => void during("upstream", () => checkUpstream(app)), CHECK_MS);
 }
 
 /** The state in one plain sentence, escaped by whoever renders it. */
@@ -220,6 +223,8 @@ export function upstreamWords(s: UpstreamState | undefined, now = Date.now()): s
   const mins = Math.max(0, Math.floor((now - s.checkedAt) / 60_000));
   const when = mins < 1 ? "just now" : mins < 60 ? `${mins} min ago` : `${Math.floor(mins / 60)} h ago`;
   if (s.error !== "") return `could not check your parent: ${s.error} (${when})`;
+  if (s.taken?.kind === "forwarded")
+    return `${s.taken.commits} commit${s.taken.commits === 1 ? "" : "s"} from your parent ${s.taken.commits === 1 ? "was" : "were"} taken in (checked ${when})`;
   if (s.taken?.kind === "pull")
     return `${s.taken.commits} commit${s.taken.commits === 1 ? "" : "s"} from your parent ${s.taken.commits === 1 ? "is" : "are"} in pull #${s.taken.number} (checked ${when})`;
   if (s.taken?.kind === "conflict")

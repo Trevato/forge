@@ -23,7 +23,7 @@ import {
 import { html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
 import { plural } from "../../kernel/plural.ts";
-import { btn, card } from "../ui.ts";
+import { btn } from "../ui.ts";
 import { issueRow } from "./limb_view.ts";
 import { milestoneHref } from "./milestones.ts";
 
@@ -56,12 +56,9 @@ export function replanPreviewPage(ctx: Ctx, repo: Repo, number: number): Respons
       </div>
       <section class="mt" id="replan-issues">
         <h2>${plural(p.issues.length, "issue")} the planner will be given</h2>
-        ${card(
-          html`<ul class="list">
-            ${p.issues.map((i) => issueRow(base, i))}
-          </ul>`,
-          { pad: false },
-        )}
+        <ul class="list">
+          ${p.issues.map((i) => issueRow(base, i))}
+        </ul>
       </section>
       ${p.blocked !== undefined
         ? html`<p class="mt" id="replan-refused">

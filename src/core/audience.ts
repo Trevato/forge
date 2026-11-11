@@ -46,6 +46,18 @@ export interface Audience {
   readonly sentence: string;
 }
 
+/**
+ * Who may read the repository, as one word a client can branch on: its
+ * owner (and the owner's crew), the members of the organization that owns
+ * it, or anyone. The sentence says the same thing for a person to read.
+ */
+export type Who = "owner" | "members" | "anyone";
+
+export function whoOf(facts: Pick<AudienceFacts, "visibility" | "ownerKind">): Who {
+  if (facts.visibility === "public") return "anyone";
+  return facts.ownerKind === "org" ? "members" : "owner";
+}
+
 const people = (n: number): string => (n === 1 ? "1 person" : `${n} people`);
 
 /** "a", "a and b", "a, b, and c". */
@@ -218,6 +230,7 @@ export function audienceFor(
   db: Database,
   repo: Repo,
   viewer: User | undefined,
-): Audience {
-  return audienceOf(audienceFacts(db, repo, viewer));
+): Audience & { readonly who: Who } {
+  const facts = audienceFacts(db, repo, viewer);
+  return { ...audienceOf(facts), who: whoOf(facts) };
 }

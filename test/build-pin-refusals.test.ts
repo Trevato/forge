@@ -14,6 +14,7 @@ import { getRepo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { adminOpenapi } from "./helpers/openapi-doc.ts";
 
 let dataDir: string;
 let app: App;
@@ -70,7 +71,7 @@ afterAll(async () => {
 });
 
 test("every error POST …/builds answers is a refusal the OpenAPI document lists", async () => {
-  const doc = (await (await fetch(`${servers.url}/api/v1/openapi.json`)).json()) as any;
+  const doc = (await (await adminOpenapi(app, servers.url, "/api/v1/openapi.json")).json()) as any;
   const op = doc.paths["/api/v1/repos/{owner}/{name}/builds"].post;
   const refusals = String(op.responses.default.description).split("Refusals: ")[1] ?? "";
   const codes = [...refusals.matchAll(/`([a-z_]+)` \(/g)].map((m) => m[1]!);

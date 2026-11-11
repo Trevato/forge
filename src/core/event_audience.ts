@@ -27,10 +27,11 @@ import type { Database } from "bun:sqlite";
 import type { ForgeEvent } from "./events.ts";
 import { getAppByRepo } from "./apps.ts";
 import { personOwners } from "./orgs.ts";
-import { canAdmin, canEnterApp, canSeeOwnerFacts, getRepoById } from "./repos.ts";
+import { getTeam } from "./teams.ts";
+import { canAdmin, canEnterApp, canWrite, canSeeOwnerFacts, getRepoById } from "./repos.ts";
 import type { User } from "./users.ts";
 
-export type EventAudience = "readers" | "admins" | "actor" | "app";
+export type EventAudience = "readers" | "admins" | "actor" | "app" | "writers" | "team";
 
 /**
  * Whether this viewer answers for a deleted repository: the forge's admin, who
@@ -104,11 +105,17 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "team.deleted",
   "team.member_added",
   "team.member_removed",
+  "team.member_role_set",
   "forge.spawn.started",
   "forge.spawned",
   "forge.removed",
   "forge.stopped",
+  "forge.own_code_on",
+  "forge.own_code_off",
+  "forge.rolled_back",
   "forge.claim_reissued",
+  "forge.claim_revoked",
+  "forge.claim_restored",
   "agent.created",
   "agent.updated",
   "agent.deleted",
@@ -129,6 +136,8 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "issue.teams",
   "account.role_set",
   "account.email_verified",
+  "account.allowed",
+  "account.declined",
   "account.recovered",
   "limb.replan",
   "limb.replan_taken_back",
@@ -144,6 +153,8 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "repo.links_probed",
   "repo.detached",
   "repo.deleted",
+  // Who moved a repository from where to where (#569): its readers knew both paths.
+  "repo.transferred",
   "label.updated",
   "label.deleted",
   "telemetry.granted",
@@ -171,6 +182,10 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "traffic.capture_started",
   "traffic.networks_imported",
   "crew.governed",
+  // Starts by an agent with only the URL (#10912): the forge owner hears them.
+  "start.made",
+  "start.claimed",
+  "start.swept",
 ]);
 
 /**
@@ -178,6 +193,9 @@ const READER_KINDS: ReadonlySet<string> = new Set([
  * `test/event-audience-coverage.test.ts` fails on an emitted kind that is.
  */
 export function classifiedAudience(kind: string): EventAudience | undefined {
+  // A hook that keeps failing is for those who can act on it: the host and
+  // the reason, never the address (`webhook_streak.ts`).
+  if (kind === "webhook.failing") return "writers";
   if (
     kind.startsWith("webhook.") ||
     kind.startsWith("app.env_") ||
@@ -202,6 +220,10 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind.startsWith("clog.") ||
     // What the throughput keeper did to lift a brake is the owner's too (`flow/keeper.ts`).
     kind.startsWith("keeper.") ||
+    // The flow keeper's acts on pulls, lulls and forge-down are the owner's too (`maintain/keeper/`, #7556).
+    kind.startsWith("keeper_") ||
+    kind === "forge_down" ||
+    kind === "forge_up" ||
     // Who is trusted to fold in, and the switch that stops it, are the owner's (`actions/trusted_sources.ts`).
     kind.startsWith("trust.") ||
     kind.startsWith("foldin.") ||
@@ -221,6 +243,10 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind.startsWith("pinned.") ||
     // Which of a person's connected accounts a mirror syncs through is too.
     kind.startsWith("origin.") ||
+    // A forge's plan and the billing provider are the admins' books (#11134).
+    kind.startsWith("billing.") ||
+    // A declared LAN device names the owner's own network (#10567).
+    kind.startsWith("device.") ||
     kind === "repo.settings_updated" ||
     // Where a repository follows is its admins' to read, off or on: the
     // address is often a private repository's.
@@ -237,9 +263,15 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind.startsWith("release.") ||
     // A file held against new work is its admins' book-keeping (#6522).
     kind === "repo.file_held" ||
-    kind === "repo.file_released"
+    kind === "repo.file_released" ||
+    // Which repositories New app offers is the admins' choice (`actions/app_templates.ts`).
+    kind.startsWith("app_template.") ||
+    // What a parent lends a child's crew, by name and dollar, is the admins' business (`actions/child_credit.ts`, #10484).
+    kind === "forge.credit_set"
   )
     return "admins";
+  // A broken adapter sync is for those who may write the repository (`apps/pull.ts`).
+  if (kind === "adapter.sync_failed") return "writers";
   // A fleet operation spans repositories; its receipt is its actor's. So is
   // a thought: it belongs to no repository and to nobody but its author.
   if (
@@ -256,6 +288,9 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
   // (#620, #599).
   if (kind.startsWith("run.") || kind.startsWith("app.") || kind.startsWith("look."))
     return "app";
+  // A pull waiting on a named team's review is that team's news alone
+  // (`actions/team_waits.ts`, #10164): its members, among those who may read.
+  if (kind === "pull.team_waiting" || kind === "pull.team_answered") return "team";
   if (READER_KINDS.has(kind)) return "readers";
   return undefined;
 }
@@ -286,6 +321,19 @@ export function audienceFilter(
     const repo = getRepoById(db, repoId);
     const yes = repo !== undefined && canAdmin(db, repo, viewer);
     admins.set(repoId, yes);
+    return yes;
+  };
+  const writers = new Map<string, boolean>();
+  const mayWrite = (repoId: string): boolean => {
+    const known = writers.get(repoId);
+    if (known !== undefined) return known;
+    const repo = getRepoById(db, repoId);
+    const yes =
+      repo !== undefined &&
+      viewer !== undefined &&
+      isActive(viewer) &&
+      canWrite(db, repo, viewer);
+    writers.set(repoId, yes);
     return yes;
   };
   const entrants = new Map<string, boolean>();
@@ -323,6 +371,15 @@ export function audienceFilter(
       subjects.set(key, rows.get(key) ?? null);
     }
   }
+  const teams = new Map<string, boolean>();
+  const onTeam = (slug: unknown): boolean => {
+    if (typeof slug !== "string" || viewer === undefined || !isActive(viewer)) return false;
+    const known = teams.get(slug);
+    if (known !== undefined) return known;
+    const yes = getTeam(db, slug)?.members.includes(viewer.id) ?? false;
+    teams.set(slug, yes);
+    return yes;
+  };
   const hidden = (event: ForgeEvent): boolean => {
     const subject = eventSubject(event);
     if (subject === undefined) return false;
@@ -345,8 +402,12 @@ export function audienceFilter(
         return true;
       case "app":
         return event.repoId === null || mayEnter(event.repoId);
+      case "writers":
+        return event.repoId !== null && mayWrite(event.repoId);
       case "actor":
         return viewer !== undefined && event.actorId === viewer.id;
+      case "team":
+        return onTeam(event.payload.team);
       case "admins":
         return event.repoId === null
           ? viewer?.isAdmin === true && isActive(viewer)

@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { askUntilBelieved, cellsAvailable, openCell } from "../src/apps/contain.ts";
 import { answerFromCell, closeHostedChildren, resolveHostedChild } from "../src/spawn/host.ts";
 import { createApp } from "../src/app.ts";
-import { cellChildren, stopCellChildren, cellEnv, cellLimits, cellPlacement, cellSpecFor, forward, ownsBody } from "../src/spawn/cell.ts";
+import { childEnv } from "../src/apps/process.ts";
+import { watchedLimits } from "../src/apps/contain.ts";
+import { childLog, plainLine, cellChildren, crewAtWork, stopCellChildren, stopGently, cellEnv, cellLimits, cellPlacement, cellSpecFor, forward, launchSpecFor, ownsBody } from "../src/spawn/cell.ts";
 import { fallbackPlacement, hostedPlacement, memoryBodies } from "../src/spawn/placement.ts";
 import type { SpawnPlan } from "../src/spawn/plan.ts";
 import { SIZES } from "../src/spawn/sizes.ts";
@@ -13,10 +15,12 @@ import { notePeer } from "../src/http/peer.ts";
 import type { App } from "../src/app.ts";
 import { portInsteadOfSocket } from "../src/git/hook-address.ts";
 import { missing } from "./helpers/tools.ts";
+import { resultLine } from "./helpers/result-line.ts";
 import { hostAllowed } from "../src/apps/egress.ts";
-import { childModelHosts, setCapacity } from "../src/core/capacity.ts";
+import { childModelHosts, childPaymentHosts, childRegistryHosts, setCapacity } from "../src/core/capacity.ts";
 import { openBeatDoor, parentLocal } from "../src/spawn/beat-door.ts";
 import { lastHeard, sendBeat } from "../src/spawn/heartbeat.ts";
+import { failedWith } from "./helpers/machine-note.ts";
 
 const plan = (name: string): SpawnPlan => ({ name, org: "o", apps: [], briefs: [], subscriptions: [], direction: "", keepAccess: false, budgetUsd: null });
 const tmp = mkdtempSync(join(tmpdir(), "spawn-cell-"));
@@ -27,11 +31,33 @@ describe("a child forge's cell", () => {
     for (const size of ["small", "medium", "large"] as const) {
       expect(cellLimits(size)).toEqual({ memoryMiB: SIZES[size].memoryMiB, cpus: SIZES[size].cpu, diskMiB: SIZES[size].diskMiB });
     }
-    const spec = cellSpecFor({ dir: "/d/children/c1", parentDataDir: "/d", parentUrl: "https://f.test", size: "small", port: 4100, label: "forge:kid" });
-    expect(spec.limits).toEqual({ memoryMiB: 512, cpus: 1, diskMiB: 2048 });
-    expect(spec.hide).toEqual(["/d"]);
+    const spec = cellSpecFor({ dir: "/d/children/c1", parentDataDir: "/d", parentHome: "/home/f", parentUrl: "https://f.test", size: "small", port: 4100, label: "forge:kid" });
+    expect(spec.limits).toEqual({ memoryMiB: 2048, cpus: 1, diskMiB: 2048 });
+    expect(spec.hide).toEqual(["/d", "/home/f", tmpdir()]);
     expect(spec.listen).toBe(4100);
     expect(spec.dir).toBe("/d/children/c1");
+  });
+
+  test("a child's lines reach the parent's log bounded and plain", () => {
+    let at = 0;
+    const out: string[] = [];
+    const log = childLog((line) => out.push(line), 3, () => at);
+    for (let i = 0; i < 10; i++) log(`l${i}`);
+    expect(out).toEqual(["l0", "l1", "l2"]);
+    at = 60_000;
+    log("next");
+    expect(out.slice(3)).toEqual(["(7 more lines in the last minute were dropped: past 3 a minute)", "next"]);
+    expect(plainLine("ok\x1b[2J\rlevel=error\ttab")).toBe("ok?[2J?level=error\ttab");
+  });
+
+  test("hides the parent's home, where its crew sessions and model login live", () => {
+    // scottishbob, 2026-11-10: the cell hid only the parent's data, and the
+    // child, running as the parent's user, could read the parent's ~/.claude.
+    const spec = cellSpecFor({ dir: "/d/c", parentDataDir: "/d", parentUrl: "https://f.test", size: "small", port: 4100, label: "forge:kid" });
+    const home = process.env["HOME"];
+    expect(home).toBeTruthy();
+    expect(spec.hide).toContain(home!);
+    expect(spec.hide).toContain("/d");
   });
 
   test("reaches no outside host unless an admin names a model provider, and always enforces", () => {
@@ -49,6 +75,17 @@ describe("a child forge's cell", () => {
     expect(hostAllowed(open.egress, "api.anthropic.com", 443)).toBe(false);
   });
 
+  test("a small forge holds a forge with an app deploying, and reaches its own address", () => {
+    // scottishbob, 2026-11-10: its first deploy used 1195 MiB and the cell
+    // stopped it at 512; its own address was refused as outside egress.
+    expect(SIZES.small.memoryMiB).toBeGreaterThanOrEqual(2048);
+    expect(SIZES.medium.memoryMiB).toBeGreaterThan(SIZES.small.memoryMiB);
+    expect(SIZES.large.memoryMiB).toBeGreaterThan(SIZES.medium.memoryMiB);
+    const spec = cellSpecFor({ dir: "/d/c", parentDataDir: "/d", parentUrl: "https://f.test", url: "https://kid--f.test", size: "small", port: 4100, label: "forge:kid" });
+    expect(spec.reach).toEqual(["https://f.test", "https://kid--f.test"]);
+    expect(spec.egress).toEqual([]);
+  });
+
   test("the model provider is the admin's choice, off until set, and ignores report mode", () => {
     const app = createApp({ dataDir: join(tmp, "model-egress"), url: "https://f.test" });
     try {
@@ -57,6 +94,11 @@ describe("a child forge's cell", () => {
       expect(childModelHosts(app.db)).toEqual([]);
       setCapacity(app.db, "children.modelEgress", "openrouter", "system");
       expect(childModelHosts(app.db)).toEqual(["openrouter.ai:443"]);
+      setCapacity(app.db, "children.modelEgress", "anthropic", "system");
+      expect(childModelHosts(app.db)).toEqual(["api.anthropic.com:443"]);
+      setCapacity(app.db, "children.modelEgress", "both", "system");
+      expect(childModelHosts(app.db)).toEqual(["openrouter.ai:443", "api.anthropic.com:443"]);
+      expect(hostAllowed(childModelHosts(app.db), "evil.anthropic.com", 443)).toBe(false);
       setCapacity(app.db, "children.modelEgress", "off", "system");
       expect(childModelHosts(app.db)).toEqual([]);
     } finally {
@@ -74,6 +116,90 @@ describe("a child forge's cell", () => {
       expect(env["PORT"]).toBe("4100");
     } finally {
       delete process.env["FORGE_EDGE_TOKEN"];
+    }
+  });
+});
+
+describe("a child forge's checks reaching the package registry", () => {
+  test("off until an admin opens it, then registry.npmjs.org on 443 alone, enforced even in report mode", () => {
+    const app = createApp({ dataDir: join(tmp, "registry-egress"), url: "https://f.test" });
+    try {
+      expect(childRegistryHosts(app.db)).toEqual([]);
+      setCapacity(app.db, "cells.egress", "report", "system");
+      expect(childRegistryHosts(app.db)).toEqual([]);
+      setCapacity(app.db, "children.registryEgress", "npm", "system");
+      expect(childRegistryHosts(app.db)).toEqual(["registry.npmjs.org:443"]);
+      const spec = cellSpecFor({ dir: "/d/c", parentDataDir: "/d", parentUrl: "https://f.test", size: "small", port: 4100, label: "forge:kid", registryHosts: childRegistryHosts(app.db) });
+      expect(spec.egressMode).toBe("enforce");
+      expect(hostAllowed(spec.egress, "registry.npmjs.org", 443)).toBe(true);
+      expect(hostAllowed(spec.egress, "registry.npmjs.org", 80)).toBe(false);
+      expect(hostAllowed(spec.egress, "evil.registry.npmjs.org", 443)).toBe(false);
+      expect(hostAllowed(spec.egress, "openrouter.ai", 443)).toBe(false);
+      setCapacity(app.db, "children.registryEgress", "build", "system");
+      const build = cellSpecFor({ dir: "/d/c", parentDataDir: "/d", parentUrl: "https://f.test", size: "small", port: 4100, label: "forge:kid", registryHosts: childRegistryHosts(app.db) });
+      expect(build.egressMode).toBe("enforce");
+      for (const host of ["registry.npmjs.org", "registry.yarnpkg.com", "pypi.org", "files.pythonhosted.org", "github.com", "codeload.github.com", "objects.githubusercontent.com", "crates.io", "static.crates.io", "proxy.golang.org", "sum.golang.org"]) {
+        expect(hostAllowed(build.egress, host, 443)).toBe(true);
+        expect(hostAllowed(build.egress, host, 80)).toBe(false);
+      }
+      for (const host of ["api.github.com", "raw.githubusercontent.com", "gist.github.com", "evil.github.com", "example.com", "openrouter.ai"])
+        expect(hostAllowed(build.egress, host, 443)).toBe(false);
+      expect(build.egress.every((h) => !h.includes("*"))).toBe(true);
+      setCapacity(app.db, "children.registryEgress", "off", "system");
+      expect(childRegistryHosts(app.db)).toEqual([]);
+    } finally {
+      app.close();
+    }
+  });
+});
+
+describe("a busy child forge is slowed, not stopped", () => {
+  test("its cell asks the kernel to hold its cores, and the watch then never stops it for CPU", () => {
+    const spec = cellSpecFor({ dir: "/d/c", parentDataDir: "/d", parentUrl: "https://f.test", size: "large", port: 4100, label: "forge:kid" });
+    expect(spec.cpuQuota).toBe(true);
+    expect(spec.limits.cpus).toBe(4);
+    expect(watchedLimits(spec.limits, { cpuCapped: true }).cpus).toBe(Number.POSITIVE_INFINITY);
+    expect(watchedLimits(spec.limits, { cpuCapped: true }).memoryMiB).toBe(spec.limits.memoryMiB);
+    // Where the kernel cannot hold it, the watch still does.
+    expect(watchedLimits(spec.limits, { cpuCapped: false }).cpus).toBe(4);
+    expect(watchedLimits(spec.limits, undefined).cpus).toBe(4);
+  });
+});
+
+describe("a child forge's crew inside its cell", () => {
+  test("what the child starts keeps the cell's proxy: the only way out, so its crew reaches its model", () => {
+    const keys = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "NO_PROXY"] as const;
+    const saved = keys.map((k) => process.env[k]);
+    try {
+      process.env["HTTPS_PROXY"] = "http://127.0.0.1:3128";
+      process.env["https_proxy"] = "http://127.0.0.1:3128";
+      process.env["HTTP_PROXY"] = "http://127.0.0.1:3128";
+      process.env["NO_PROXY"] = "localhost,127.0.0.1,::1";
+      const env = childEnv({ CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" });
+      expect(env["HTTPS_PROXY"]).toBe("http://127.0.0.1:3128");
+      expect(env["https_proxy"]).toBe("http://127.0.0.1:3128");
+      expect(env["HTTP_PROXY"]).toBe("http://127.0.0.1:3128");
+      expect(env["NO_PROXY"]).toBe("localhost,127.0.0.1,::1");
+    } finally {
+      keys.forEach((k, i) => (saved[i] === undefined ? delete process.env[k] : (process.env[k] = saved[i])));
+    }
+  });
+
+  test("a child with a run queued or running is at work, however quiet its visitors; one with none is not", () => {
+    const dir = join(tmp, "at-work");
+    expect(crewAtWork(dir)).toBe(false);
+    const child = createApp({ dataDir: dir, url: "https://kid--f.test" });
+    try {
+      expect(crewAtWork(dir)).toBe(false);
+      child.db.exec("PRAGMA foreign_keys = OFF");
+      child.db.query("INSERT INTO run (id, repo_id, kind, state) VALUES ('r1', 'repo', 'agent', 'running')").run();
+      expect(crewAtWork(dir)).toBe(true);
+      child.db.query("UPDATE run SET state = 'queued' WHERE id = 'r1'").run();
+      expect(crewAtWork(dir)).toBe(true);
+      child.db.query("UPDATE run SET state = 'failed' WHERE id = 'r1'").run();
+      expect(crewAtWork(dir)).toBe(false);
+    } finally {
+      child.close();
     }
   });
 });
@@ -291,26 +417,26 @@ describe("a child that will not start", () => {
 const cellTools = process.platform === "linux" && !portInsteadOfSocket() && !missing("bwrap", "socat");
 
 describe("a real child forge", () => {
-  test.skipIf(!cellTools)("boots in its own forge:<name> cell and answers / through the forward; its first request does not wait for it", async () => {
+  test.skipIf(!cellTools)("boots in its own forge:<name> cell and answers / through the forward; its first request is held until it is up", async () => {
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== "FORGE_CELLS") env[k] = v;
     const proc = Bun.spawn([process.execPath, join(import.meta.dir, "helpers", "real-child-forge.ts")], { env, stdout: "pipe", stderr: "pipe" });
     const [out, errText] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
-    const line = out.trim().split("\n").pop() ?? "";
+    const line = resultLine(out);
     let seen: Record<string, unknown>;
     try {
       seen = JSON.parse(line) as Record<string, unknown>;
     } catch {
-      throw new Error(`the child forge run printed no result: ${out.slice(-800)} ${errText.slice(-800)}`);
+      throw new Error(failedWith("the child forge run printed no result", out.slice(-800), errText));
     }
     if (typeof seen["skipped"] === "string") {
       console.log(`SKIPPING: this host refuses a cell inside the test (${seen["skipped"]}), so no child forge was booted in one`);
       return;
     }
-    expect(seen["failure"]).toBeNull();
-    expect(seen["first"]).toBe(503);
-    expect(seen["firstMs"] as number).toBeLessThan(1_000);
-    expect(seen["limits"]).toEqual({ memoryMiB: 512, cpus: 1, diskMiB: 2048 });
+    // The child's own reason and the machine's disk and load, not a bare mismatch.
+    if (seen["failure"] !== null || seen["health"] !== 200) throw new Error(failedWith("the child forge did not come up in its cell", { seen, out: out.slice(-1500) }, errText));
+    expect(seen["first"]).toBe(200);
+    expect(seen["limits"]).toEqual({ memoryMiB: 2048, cpus: 1, diskMiB: 2048 });
     expect(seen["root"] as number).toBeLessThan(400);
     expect(seen["health"]).toBe(200);
     expect(seen["labelled"]).toBe(true);
@@ -383,6 +509,63 @@ describe("a child whose cell will not come up", () => {
     } finally {
       await closeHostedChildren(parent);
       parent.close();
+    }
+  });
+});
+
+describe("a child forge told to go", () => {
+  const forge = (body: string) =>
+    Bun.spawn([process.execPath, "-e", body], { stdout: "ignore", stderr: "ignore" });
+
+  test("drains on SIGTERM and leaves clean, with no kill", async () => {
+    const mark = join(tmp, "left-clean");
+    const proc = forge(`process.on("SIGTERM", () => { require("node:fs").writeFileSync(${JSON.stringify(mark)}, "clean"); process.exit(0); }); setInterval(() => {}, 1000);`);
+    await Bun.sleep(300);
+    const started = Date.now();
+    await stopGently({ pid: proc.pid, exited: proc.exited }, 5_000);
+    expect(Date.now() - started).toBeLessThan(3_000);
+    expect(readFileSync(mark, "utf8")).toBe("clean");
+    expect(proc.signalCode).toBeNull();
+  });
+
+  test("one that will not go is killed once its grace is up", async () => {
+    const proc = forge(`process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);`);
+    await Bun.sleep(300);
+    const started = Date.now();
+    await stopGently({ pid: proc.pid, exited: proc.exited }, 400);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(400);
+    expect(proc.signalCode).toBe("SIGKILL");
+  });
+});
+
+describe("a child forge's apps reaching a payment provider", () => {
+  test("api.stripe.com on 443 alone by default, enforced even in report mode, closed by off", () => {
+    const app = createApp({ dataDir: join(tmp, "payment-egress"), url: "https://f.test" });
+    try {
+      expect(childPaymentHosts(app.db)).toEqual(["api.stripe.com:443"]);
+      setCapacity(app.db, "cells.egress", "report", "system");
+      const spec = cellSpecFor({ dir: "/d/c", parentDataDir: "/d", parentUrl: "https://f.test", size: "small", port: 4100, label: "forge:kid", paymentHosts: childPaymentHosts(app.db) });
+      expect(spec.egressMode).toBe("enforce");
+      expect(hostAllowed(spec.egress, "api.stripe.com", 443)).toBe(true);
+      expect(hostAllowed(spec.egress, "api.stripe.com", 80)).toBe(false);
+      expect(hostAllowed(spec.egress, "evil.api.stripe.com", 443)).toBe(false);
+      expect(hostAllowed(spec.egress, "example.com", 443)).toBe(false);
+      setCapacity(app.db, "children.paymentEgress", "off", "system");
+      expect(childPaymentHosts(app.db)).toEqual([]);
+    } finally {
+      app.close();
+    }
+  });
+  test("the launch path carries the setting: Stripe in the child's egress by default, gone once off", () => {
+    const app = createApp({ dataDir: join(tmp, "payment-launch"), url: "https://f.test" });
+    try {
+      const input = { bodyId: "cell-pay1", name: "kid", size: "small" } as const;
+      const at = { port: 4100, parentPort: 4101 };
+      expect(launchSpecFor(app, input, at, "").egress).toContain("api.stripe.com:443");
+      setCapacity(app.db, "children.paymentEgress", "off", "system");
+      expect(launchSpecFor(app, input, at, "").egress).not.toContain("api.stripe.com:443");
+    } finally {
+      app.close();
     }
   });
 });

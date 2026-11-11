@@ -23,7 +23,7 @@ not an admin, 200 for an admin's `ro` token. It is never cached
 | `forge_ask_to_live_seconds` | histogram | none (plus `le`) | Seconds from an issue opening to the first successful release of a pull that closes it. Buckets: 1 m, 5 m, 15 m, 1 h, 4 h, 12 h, 1 d, 3 d, 7 d. |
 | `forge_main_red_seconds_total` | counter | `repo` | Seconds the default branch's check spent failing: from a failed check to the next green one, or to now while still red. |
 | `forge_telemetry_reads_total` | counter | `route`, `reader` | Reads of `/api/v1/telemetry` routes since the process started, by route and reader; the rate is the slope. The owner's `/system` page names each reader's pace over the last 10 minutes. |
-| `forge_loop_stall_milliseconds_total` | counter | `route` | Milliseconds the main thread stalled past 250 ms since the process started, charged in full to every route pattern running across the stall (`none` when no request was). |
+| `forge_loop_stall_milliseconds_total` | counter | `route` | Milliseconds the main thread stalled past 200 ms since the process started, charged in full to every route pattern running across the stall (`none` when no request was). |
 | `forge_loop_stalls_total` | counter | `route` | Those stalls, counted the same way. |
 | `forge_loop_stall_hour_milliseconds` | gauge | `route` | Stall milliseconds in the last hour: the top 10 routes, most first, plus `/api/v1/telemetry/flow` always (0 when it stalled nothing). |
 | `forge_loop_stall_hour_count` | gauge | `route` | Stalls in the last hour, for the routes the gauge above lists. |

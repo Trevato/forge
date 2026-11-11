@@ -10,11 +10,23 @@
 
 import type { App as Forge } from "../app.ts";
 import { search } from "../actions/search.ts";
-import { cleanQuery } from "../core/search.ts";
+import { greppable } from "../core/search.ts";
 import { guestCodeSearch } from "../http/strangers.ts";
 import { canRead, getRepo, type Repo } from "../core/repos.ts";
+import { nearRepos } from "../core/near_repos.ts";
 import { sourceFor } from "../view/source.ts";
+import { fleetCommand } from "./screens/fleet.ts";
+import { dataCommand } from "./screens/data.ts";
 import { packsCommand } from "./screens/packs.ts";
+import { getForgeCommand } from "./screens/getforge.ts";
+import { startForgeCommand } from "./screens/startforge.ts";
+import { pricingCommand } from "./screens/pricing.ts";
+import { forgeNameCommand } from "./screens/forgename.ts";
+import { workCommand } from "./screens/work.ts";
+import { shellsScreen } from "./screens/shells.ts";
+import { forkTreeScreen } from "./screens/fork_tree.ts";
+import { roadmapScreen } from "./screens/roadmap.ts";
+import { spaceScreen } from "./screens/space.ts";
 import { App, type Ctx, type Screen } from "./app/app.ts";
 import type { Command, PaletteItem, PaletteSearch } from "./app/palette.ts";
 import { G } from "./term/screen.ts";
@@ -51,6 +63,7 @@ import { usageScreen } from "./screens/usage.ts";
 import { canScreen } from "./screens/can.ts";
 import { modelScreen } from "./screens/model.ts";
 import { notifyScreen } from "./screens/notify.ts";
+import { talkBuildScreen } from "./screens/talk_build.ts";
 import { talkChatsScreen } from "./screens/talk_chats.ts";
 import { sshKeysScreen } from "./screens/sshkeys.ts";
 import { passkeysScreen } from "./screens/passkeys.ts";
@@ -72,6 +85,7 @@ import { noteRead, telemetryReader } from "../actions/telemetry.ts";
 import { queuesFor, systemFor } from "../system/telemetry.ts";
 import { apiScreen } from "./screens/api.ts";
 import { changelogScreen } from "./screens/changelog.ts";
+import { docsScreen } from "./screens/docs.ts";
 import { keeperScreen } from "./screens/keeper.ts";
 import { releasesScreen } from "./screens/releases.ts";
 import { mayRead } from "../release/gate.ts";
@@ -90,7 +104,7 @@ import { newForgeScreen } from "./screens/newforge.ts";
 import { newOrgScreen } from "./screens/neworg.ts";
 import { migrateScreen } from "./screens/migrate.ts";
 import { bringScreen } from "./screens/bring.ts";
-import { newAppScreen } from "./screens/newapp.ts";
+import { openNewApp, templateAppScreen } from "./screens/newapp.ts";
 import { newRepoScreen } from "./screens/newrepo.ts";
 import { repoScreen } from "./screens/repo.ts";
 import { signInScreen } from "./screens/signin.ts";
@@ -124,6 +138,22 @@ const REPO_VERBS: readonly {
     id: "held",
     title: "Held by the Later gate",
     open: (f, ctx, repo) => heldScreen(f, ctx, repo),
+  },
+  {
+    // The ancestors, siblings and descendants of a repository the person may read.
+    id: "fork-tree",
+    title: "Fork tree of a repository",
+    open: (f, ctx, repo) => forkTreeScreen(f, ctx, repo),
+  },
+  {
+    id: "roadmap",
+    title: "Roadmap of a repository",
+    open: (f, ctx, repo) => roadmapScreen(f, ctx, repo),
+  },
+  {
+    id: "space",
+    title: "Space of a repository",
+    open: (f, ctx, repo) => spaceScreen(f, ctx, repo),
   },
   {
     id: "pulls",
@@ -206,7 +236,21 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "on the web",
         run: () => openOnWeb(session, ctx, "/explore", "The explorer"),
       },
+      {
+        // The same list as an Atom feed (#10967): the terminal hands over
+        // the feed's address, to copy into a reader.
+        id: "explore-feed",
+        title: "Explore feed",
+        hint: "Atom address",
+        run: () => openOnWeb(session, ctx, "/explore.atom", "The explore feed"),
+      },
       packsCommand(session, ctx),
+      getForgeCommand(session, ctx),
+      ...startForgeCommand(session, ctx),
+      pricingCommand(session, ctx),
+      ...forgeNameCommand(session, ctx),
+      ...dataCommand(session, ctx),
+      fleetCommand(session, ctx),
       {
         // A person's or an org's page is the web's (#636): the terminal
         // hands over its address.
@@ -237,8 +281,12 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               // The palette is a client like any other: a repo you cannot
               // read is "not found", indistinguishable from a typo. Without
               // this check the palette would be a way around `canRead`.
-              if (!repo || !canRead(session.db, repo, session.user))
-                return "not found";
+              if (!repo || !canRead(session.db, repo, session.user)) {
+                const near = owner && name ? nearRepos(session.db, session.user, owner, name) : [];
+                return near.length === 0
+                  ? "not found"
+                  : `not found — did you mean ${near.map((r) => `${r.ownerName}/${r.name}`).join(", ")}?`;
+              }
               // After the prompt has popped itself, or the pop takes the
               // screen just pushed instead (`later` in screens/common.ts).
               return Promise.resolve().then(() => {
@@ -263,13 +311,23 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               ctx.push(signInScreen(session, ctx, () => ctx.invalidate())),
           },
     );
+    // The owner's read-only mirrors, as the profile's "work (read-only)" draws them.
+    if (session.user !== undefined && session.user.kind !== "agent") commands.push(workCommand(session, ctx));
     // An app from a sentence, as /apps/new makes it: a person's, never an agent's.
     if (session.user !== undefined && session.user.kind !== "agent")
       commands.push({
         id: "new-app",
         title: "New app",
         hint: "say what it does in a sentence; the crew starts on it",
-        run: () => ctx.push(newAppScreen(session, ctx, blank("New app"))),
+        run: () => openNewApp(session, ctx, blank("New app")),
+      });
+    // The same from a template repository, as /apps/new?template= does.
+    if (session.user !== undefined && session.user.kind !== "agent")
+      commands.push({
+        id: "new-app-template",
+        title: "New app from a template",
+        hint: "copy a repository you can read, as the starting files",
+        run: () => ctx.push(templateAppScreen(session, ctx, blank("New app"))),
       });
     // An app from another forge, as /bring does: a person's, never an agent's.
     if (session.user !== undefined && session.user.kind !== "agent")
@@ -325,6 +383,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "what it closed, deferred and asked you about today",
         run: () => ctx.push(deciderScreen(session, ctx)),
       });
+    // The machine shells this person holds (#10544); an agent holds none.
+    if (session.signedIn && session.user?.kind !== "agent")
+      commands.push({
+        id: "shells",
+        title: "Your shells",
+        hint: "the machine shells you hold, live then ended",
+        run: () => ctx.push(shellsScreen(session, ctx)),
+      });
     // Where a decision finds the owner; an agent is never offered it.
     if (session.signedIn && session.user?.kind !== "agent")
       commands.push({
@@ -357,10 +423,18 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "your talks with the forge's agent; n starts one, r renames, x archives",
         run: () => ctx.push(talkChatsScreen(session, ctx)),
       });
+    // One prompt builds an app; each turn is a version to diff, restore and publish (#11010).
+    if (session.signedIn && session.user?.kind !== "agent")
+      commands.push({
+        id: "build-app",
+        title: "Build an app",
+        hint: "say what to build; versions, diff, restore and publish. n starts one",
+        run: () => ctx.push(talkBuildScreen(session, ctx)),
+      });
     if (session.signedIn)
       commands.push({
         id: "ssh-keys",
-        title: "SSH keys",
+        title: "Computer keys",
         hint: "list, add and remove the keys that sign in as you",
         run: () => ctx.push(sshKeysScreen(session, ctx)),
       });
@@ -386,11 +460,11 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
           hint: "your browsers and tokens; d signs a browser out",
           run: () => ctx.push(signInsScreen(session, ctx)),
         },
-        // Settings → Origins' OAuth apps and MCP `origin_apps` (#7291).
+        // Settings → Connected accounts' OAuth apps and MCP `origin_apps` (#7291).
         {
           id: "origin-apps",
-          title: "Origin apps",
-          hint: "your OAuth apps for connecting origins; a adds, d removes",
+          title: "Connection apps",
+          hint: "your OAuth apps for connecting accounts; a adds, d removes",
           run: () => ctx.push(originAppsScreen(session, ctx)),
         },
       );
@@ -422,6 +496,7 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               forgeCeiling(session.app.config),
               readVerified(session.app, flowReader.kind === "owner"),
               keeper,
+              session.app.config.dataDir,
             ), keeper.ask && user ? { ask: keeper.ask, answer: () => answerKeeper(session.app, keeper.ask!.id, user.id) } : undefined));
         },
       });
@@ -447,6 +522,13 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
       title: "API",
       hint: "the forge's endpoints; run a GET",
       run: () => ctx.push(apiScreen(session, ctx)),
+    });
+    // The forge's documentation, as /docs lists it: for anyone.
+    commands.push({
+      id: "docs",
+      title: "Docs",
+      hint: "the forge's documentation; Enter reads one",
+      run: () => ctx.push(docsScreen(ctx)),
     });
     // The last releases with their pulls, as /changelog shows them: for anyone.
     commands.push({
@@ -495,7 +577,7 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "declared flags and their live values",
         run: () => ctx.push(flagsScreen(session, ctx)),
       });
-    // Settings → Origins' trusted internal hosts: the same admin gate as the page.
+    // Settings → Connected accounts' trusted internal hosts: the same admin gate as the page.
     if (mayEditTrustedHosts(session.user))
       commands.push({
         id: "trusted-hosts",
@@ -592,7 +674,8 @@ export function forgeSearch(session: Session): (ctx: Ctx) => PaletteSearch {
     // A guest is a stranger with a key: its search greps code under the same
     // limits as the page's and the API's (`http/strangers.ts`), counted
     // under its peer address. Refused, everything but the code is searched.
-    const greps = session.user === undefined && cleanQuery(query) !== "";
+    // A one-letter query greps nothing (#11120), so it takes no slot either.
+    const greps = session.user === undefined && greppable(query);
     const held = greps
       ? guestCodeSearch(session.app, session.identity.remoteAddress)
       : undefined;

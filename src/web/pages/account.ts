@@ -9,6 +9,7 @@
  * has been read once.
  */
 
+import { UPSTREAM_REPO } from "../../core/upstream.ts";
 import { resendVerification } from "../../actions/verify.ts";
 import { clientAddress } from "../../http/peer.ts";
 import { emailVerified } from "../../core/verify.ts";
@@ -43,20 +44,25 @@ import {
 import { endAccountSession } from "../../actions/signins.ts";
 import { listSessions, type SessionInfo } from "../../core/sessions.ts";
 import { ADMIN_TOKEN_WORDS, type TokenScope } from "../../core/tokens.ts";
+import { claudeInstall, opencodeInstall } from "../../core/plugin_install.ts";
 import type { CommitEmail, User } from "../../core/users.ts";
 import { isStandInEmail } from "../../core/users.ts";
 import { cookieValue, isAccountItself, type Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
+import { offeredPluginRepo } from "../../core/mcp_card.ts";
+import { publicOrigin } from "../../core/public_origin.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import {
   settingsLayout,
   signInFirst,
   type SettingsSection,
   forbiddenPage,
+  notFoundPage,
 } from "../chrome.ts";
 import { accountSections } from "./origins.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
+import { planRow } from "../plan_row.ts";
 import { flashTo, page } from "../layout.ts";
 import { readFlash } from "../flash.ts";
 import {
@@ -71,6 +77,8 @@ import {
   field as uiField,
   icon,
 } from "../ui.ts";
+import { STOPPED_ONE, myShells, stopIdleShells, stopShell, stoppedIdleSays } from "../../machines/shell.ts";
+import { DOTFILES_ERRORS, dotfilesRepoOf, setDotfilesRepo } from "../../machines/dotfiles.ts";
 import { everydayLine } from "./everyday.ts";
 import { passkeyJs } from "../passkey-client.ts";
 
@@ -82,7 +90,19 @@ const block = (title: string, body: Html, intro?: string): Html =>
     ${body}
   </section>`;
 
-type Section = "profile" | "password" | "tokens" | "keys" | "passkeys";
+/**
+ * The one help toggle of a settings page: what each field means, kept out of the
+ * form so a field is its label and its current value. Closed until asked for.
+ */
+const help = (notes: readonly (readonly [string, string | Html])[]): Html =>
+  html`<details class="disclosure mb" data-page-help>
+    <summary>Help with these fields</summary>
+    <dl class="status-rows">
+      ${notes.map(([name, text]) => html`<div class="status-row"><dt>${name}</dt><dd>${text}</dd></div>`)}
+    </dl>
+  </details>`;
+
+type Section = "profile" | "password" | "tokens" | "keys" | "passkeys" | "shells";
 
 // The section list lives beside the newest page that joins it, so adding one
 // cannot leave the others pointing at a nav that has forgotten it.
@@ -151,10 +171,7 @@ function notifyView(ctx: Ctx, error?: string): Html {
         type: "url",
         autocomplete: "off",
         placeholder: host === undefined ? "https://ntfy.sh/your-topic" : "••••••••",
-        hint:
-          host === undefined
-            ? "When something newly needs you, one line and a link is posted here. https: only; leave it empty to turn it off."
-            : `Sending to ${host}. The rest of the address stays hidden; paste a new one to replace it, or save it empty to turn it off.`,
+        hint: host === undefined ? "https: only." : `Sending to ${host}. https: only.`,
       })}
       <div class="form-actions">
         ${btn("Save notify URL", { variant: "primary" })}
@@ -162,6 +179,46 @@ function notifyView(ctx: Ctx, error?: string): Html {
       ${refusal(error)}
     </form>`,
   );
+}
+
+function dotfilesView(ctx: Ctx, error?: string): Html {
+  const named = dotfilesRepoOf(ctx.app.db, ctx.auth.user!.id);
+  return block(
+    "Dotfiles",
+    html`<form method="post" action="/settings/dotfiles">
+      ${uiField({
+        label: "Dotfiles repository",
+        name: "repo",
+        value: named ?? "",
+        placeholder: "owner/name",
+        autocomplete: "off",
+        hint: "A repository on this forge that you can read; empty for none.",
+      })}
+      <div class="form-actions">
+        ${btn("Save dotfiles repository", { variant: "primary" })}
+      </div>
+      ${refusal(error)}
+    </form>`,
+  );
+}
+
+// POST /settings/dotfiles
+export async function dotfilesUpdate(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const saved = setDotfilesRepo(ctx.app.db, ctx.auth.user, field(form, "repo"));
+  if (!saved.ok)
+    return accountShell(
+      ctx,
+      "shells",
+      "Shells",
+      html`${dotfilesView(ctx, DOTFILES_ERRORS[saved.error])}${shellsView(ctx, ctx.auth.user)}`,
+      422,
+    );
+  return flashTo(ctx, "/settings/shells", {
+    message: saved.value === "set" ? "Dotfiles repository saved." : "Dotfiles repository cleared.",
+  });
 }
 
 /** open-platform.sh: linked as <login>, or not, with Link and Unlink. */
@@ -290,24 +347,46 @@ export async function resendVerifyLink(ctx: Ctx): Promise<Response> {
   return flashTo(ctx, "/settings", { message });
 }
 
-/** The signed-in account's role and its row of the roles table. */
+/** What the signed-in account's role allows: one row of the page's Help. */
+function roleHelp(ctx: Ctx): readonly [string, Html] {
+  const row = rowOf(roleOf(ctx.app.db, ctx.auth.user!));
+  return [
+    "What your role allows",
+    html`<ul class="role-can">
+      ${(Object.keys(ABILITIES) as Ability[]).map(
+        (a) => html`<li>${ABILITIES[a]}: <strong>${row[a] ? "yes" : "no"}</strong></li>`,
+      )}
+    </ul>`,
+  ];
+}
+
+/** The signed-in account's role, in one line. */
 function roleView(ctx: Ctx): Html {
-  const role = roleOf(ctx.app.db, ctx.auth.user!);
-  const row = rowOf(role);
-  return block(
-    "What you can do here",
-    html`<p>You are ${badge(role)} here.</p>
-      <ul class="role-can">
-        ${(Object.keys(ABILITIES) as Ability[]).map(
-          (a) => html`<li>${ABILITIES[a]}: <strong>${row[a] ? "yes" : "no"}</strong></li>`,
-        )}
-      </ul>`,
-  );
+  return block("What you can do here", html`<p>You are ${badge(roleOf(ctx.app.db, ctx.auth.user!))} here.</p>`);
 }
 
 function profileView(ctx: Ctx, values: ProfileForm): Html {
   const user = ctx.auth.user!;
-  return html`${unverifiedNotice(ctx)}${roleView(ctx)}${block(
+  return html`${unverifiedNotice(ctx)}${help([
+    [
+      "Username",
+      "Your handle, your URL, and your git author identity. Renaming an account is not supported yet.",
+    ],
+    ["Display name", "Shown beside your username. Commits you make through the web use it."],
+    [
+      "Email",
+      "Where the forge reaches you. Never shown to other people, and never in a commit unless you choose it below.",
+    ],
+    [
+      "Commit email",
+      "The address on commits the forge makes for you: merges, reverts, web edits. A commit in a public repository cannot be taken back, so the default reaches nobody.",
+    ],
+    [
+      "Notify URL",
+      "When something newly needs you, one line and a link is posted here. The rest of a saved address stays hidden; paste a new one to replace it, or save it empty to turn it off.",
+    ],
+    roleHelp(ctx),
+  ])}${roleView(ctx)}${block(
     "Public profile",
     html`<form method="post" action="/settings">
       <div class="field">
@@ -316,19 +395,13 @@ function profileView(ctx: Ctx, values: ProfileForm): Html {
           class="input"
           id="f-username"
           value="${user.username}"
-          aria-describedby="f-username-hint"
           readonly
         />
-        <span class="hint" id="f-username-hint"
-          >Your handle, your URL, and your git author identity. Renaming an
-          account is not supported yet.</span
-        >
       </div>
       ${uiField({
         label: "Display name",
         name: "displayName",
         value: values.displayName,
-        hint: "Shown beside your username. Commits you make through the web use it.",
         ...(values.errors?.displayName
           ? { error: values.errors.displayName }
           : {}),
@@ -339,7 +412,6 @@ function profileView(ctx: Ctx, values: ProfileForm): Html {
         type: "email",
         value: values.email,
         autocomplete: "email",
-        hint: "Where the forge reaches you. Never shown to other people, and never in a commit unless you choose it below.",
         ...(values.errors?.email ? { error: values.errors.email } : {}),
       })}
       ${selectField({
@@ -357,14 +429,79 @@ function profileView(ctx: Ctx, values: ProfileForm): Html {
             selected: values.commitEmail === "account",
           },
         ],
-        hint: "The address on commits the forge makes for you: merges, reverts, web edits. A commit in a public repository cannot be taken back, so the default reaches nobody.",
       })}
       <div class="form-actions">
-        ${btn("Save profile", { variant: "primary" })}
+        ${btn("Save", { variant: "primary" })}
       </div>
       ${refusal(values.errors?.form)}
     </form>`,
   )}`;
+}
+
+/** A reading the cell may not give: a dash, never a zero that says "idle". */
+const reading = (n: number | null, unit: string): string => (n === null ? "–" : `${n}${unit}`);
+
+/** The machine shells this person holds and last held (#10544). Read only; the live row says its few facts in a `dl`. */
+export function shellsView(ctx: Ctx, user: User): Html {
+  const shells = myShells(ctx.app, user.id);
+  if (shells.length === 0) return html`<p class="muted" id="shells">You have opened no shell on a machine yet.</p>`;
+  const anyLive = shells.some((s) => s.endedAt === null);
+  return html`${anyLive
+      ? html`<form method="post" action="/settings/shells/stop-idle">${btn("Stop all idle", { type: "submit" })}</form>`
+      : null}<ul class="list setting-list" id="shells">
+    ${shells.map((s) =>
+      s.endedAt === null
+        ? row({
+            title: html`${s.repository} · ${s.machine}`,
+            meta: html`${s.kind === "app" ? "App terminal · " : ""}Started ${time(s.startedAt)}`,
+            trail: html`${badge("running", { tone: "success" })}
+              <form method="post" action="/settings/shells/${s.id}/stop">${btn("Stop", { type: "submit", size: "sm", label: `Stop ${s.repository} · ${s.machine}` })}</form>`,
+            facts: [
+              { label: "Last input", value: s.lastInputAt ? time(s.lastInputAt) : "–" },
+              { label: "Last output", value: s.lastOutputAt ? time(s.lastOutputAt) : "–" },
+              ...(s.kind === "app"
+                ? []
+                : [
+                    { label: "Attached", value: s.peers === 0 ? "nobody" : String(s.peers) },
+                    { label: "CPU", value: reading(s.cpuCores === null ? null : Math.round(s.cpuCores * 100), "%") },
+                    { label: "Memory", value: reading(s.memoryMiB, " MiB") },
+                  ]),
+            ],
+            data: { session: s.id },
+          })
+        : row({
+            title: html`${s.repository} · ${s.machine}`,
+            meta: html`Ended ${time(s.endedAt)} · ${s.endedBecause}`,
+            data: { session: s.id },
+          }),
+    )}
+  </ul>`;
+}
+
+// GET /settings/shells
+export function shellsPage(ctx: Ctx): Response {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const body = html`${dotfilesView(ctx)}${shellsView(ctx, ctx.auth.user)}`;
+  return timePhase(ctx.request, "render", () => accountShell(ctx, "shells", "Shells", body));
+}
+
+// POST /settings/shells/:id/stop
+export async function shellStop(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const id = ctx.params.id ?? "";
+  if (!stopShell(ctx.app, ctx.auth.user.id, id)) return notFoundPage(ctx);
+  return flashTo(ctx, "/settings/shells", { message: STOPPED_ONE });
+}
+
+// POST /settings/shells/stop-idle
+export async function shellsStopIdle(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  return flashTo(ctx, "/settings/shells", { message: stoppedIdleSays(stopIdleShells(ctx.app, ctx.auth.user.id)) });
 }
 
 // GET /settings
@@ -383,7 +520,7 @@ export function accountPage(ctx: Ctx): Response {
     ctx,
     "profile",
     "Settings",
-    html`${pair}${profile}${edge}${parent}${notify}`,
+    html`${planRow(ctx.app.config.dataDir, parentIssuerOf(ctx.app.config), user.isAdmin === true)}${pair}${profile}${edge}${parent}${notify}`,
     200,
     // The everyday form makes its account with a passkey (#1890).
     pair ? passkeyJs : undefined,
@@ -464,7 +601,7 @@ function passwordView(error?: {
   field: "current" | "next";
   text: string;
 }): Html {
-  return block(
+  return html`${help([["New password", "A passphrase beats a puzzle: a few unrelated words are long and easy to remember."]])}${block(
     "Change password",
     html`<form method="post" action="/settings/password">
       ${uiField({
@@ -482,7 +619,7 @@ function passwordView(error?: {
         autocomplete: "new-password",
         minlength: 10,
         required: true,
-        hint: "At least 10 characters. A passphrase beats a puzzle.",
+        hint: "At least 10 characters.",
         ...(error?.field === "next" ? { error: error.text } : {}),
       })}
       ${uiField({
@@ -496,7 +633,7 @@ function passwordView(error?: {
         ${btn("Change password", { variant: "primary" })}
       </div>
     </form>`,
-  );
+  )}`;
 }
 
 // GET /settings/password
@@ -580,8 +717,12 @@ export function sessionsCard(
  * and the token just minted when there is one (else a placeholder).
  */
 export function connectCard(ctx: Ctx, token: string | undefined): Html {
-  const url = (ctx.app.config.url ?? ctx.url.origin).replace(/\/+$/, "");
+  const url = publicOrigin(ctx.app.config.url, ctx.url.origin);
   const env = `FORGE_URL=${url} FORGE_TOKEN=${token ?? "<token>"}`;
+  // The plugin marketplace is the forge's configured source, offered only while anyone can clone it.
+  const repo = offeredPluginRepo(ctx.app.db, ctx.app.config.forgeRepo, UPSTREAM_REPO);
+  const market = repo !== undefined;
+  const clone = copyField("connect-claude", `${env} claude --plugin-dir plugins/claude-code`, "Claude Code command", "Copy command");
   return block(
     "Connect your harness",
     html`<p class="muted small mb">
@@ -590,11 +731,15 @@ export function connectCard(ctx: Ctx, token: string | undefined): Html {
       </p>
       <p class="small">Claude Code</p>
       <p class="muted small mb">Start it with only FORGE_URL and sign in through /mcp (the forge server): nothing to copy. For scripts, use this command and the forge-token server, which sends the token.</p>
-      ${copyField("connect-claude", `${env} claude --plugin-dir plugins/claude-code`, "Claude Code command", "Copy command")}
+      ${market
+        ? html`${copyField("connect-claude-install", claudeInstall(url), "Install the plugin (one command)", "Copy command")}
+          <p class="muted small mb">From a clone</p>`
+        : null}
+      ${clone}
       <p class="small">OpenCode</p>
       ${copyField(
         "connect-opencode",
-        `mkdir -p .opencode/plugin && cp plugins/opencode/forge.ts .opencode/plugin/ && ${env} opencode`,
+        `${opencodeInstall(url)} && ${env} opencode`,
         "OpenCode command",
         "Copy command",
       )}`,
@@ -607,7 +752,7 @@ function tokensView(ctx: Ctx): Html {
     listSessions(ctx.app.db, ctx.auth.user!.id, cookieValue(ctx.request, "forge_session")),
   );
   const list = tokens.length === 0
-    ? html`<p class="muted">No tokens yet. Mint one when a script, a CI job, or another machine needs to act as you.</p>`
+    ? html`<p class="muted">No access codes yet. Mint one when a script, a CI job, or another machine needs to act as you.</p>`
     : html`<ul class="list setting-list">
         ${tokens.map((t) =>
           row({
@@ -620,21 +765,22 @@ function tokensView(ctx: Ctx): Html {
           }),
         )}
       </ul>`;
-  return html`<p class="muted small mb">
-      Use a token as the password when pushing over HTTPS, or as a
-      <span class="mono">Bearer</span> token for the API. Your account password
-      works for git too — tokens are for scoped or automated access.
-    </p>
-    ${connectCard(ctx, readFlash(ctx.request)?.code)}
-    ${block("Tokens", list)}
+  return html`${help([
+      [
+        "Access codes",
+        "Use an access code as the password when pushing over HTTPS, or to call the API (sent as a Bearer header). Your account password works for git too — access codes are for scoped or automated access.",
+      ],
+      ["Access code name", "Name it after where it lives — laptop, CI, deploy box."],
+      ["Scope", "An access code can never make another access code, whatever its scope."],
+    ])}${connectCard(ctx, readFlash(ctx.request)?.code)}
+    ${block("Access codes", list)}
     ${block(
-      "New token",
+      "New access code",
       html`<form method="post" action="/settings/tokens">
         ${uiField({
-          label: "Token name",
+          label: "Access code name",
           name: "name",
           required: true,
-          hint: "Name it after where it lives — laptop, CI, deploy box.",
         })}
         ${selectField({
           label: "Scope",
@@ -646,21 +792,20 @@ function tokensView(ctx: Ctx): Html {
               ? [{ value: "admin", label: "admin — everything, including settings" }]
               : []),
           ],
-          hint: "A token can never mint another token, whatever its scope.",
         })}
         ${ctx.auth.user?.isAdmin
           ? html`<div class="field" id="ai-admin">
               <label class="check">
                 <input type="checkbox" name="aiAdmin" required />
                 <span
-                  >I mean to give this token admin: you are the forge's admin,
+                  >I mean to give this access code admin: you are the forge's admin,
                   so whatever holds it — an AI included — acts as admin.</span
                 >
               </label>
             </div>`
           : null}
         <div class="form-actions">
-          ${btn("Generate token", { variant: "primary" })}
+          ${btn("Generate access code", { variant: "primary" })}
         </div>
       </form>`,
     )}
@@ -672,7 +817,7 @@ export function tokensPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const body = tokensView(ctx);
-  return timePhase(ctx.request, "render", () => accountShell(ctx, "tokens", "Personal access tokens", body));
+  return timePhase(ctx.request, "render", () => accountShell(ctx, "tokens", "Access codes", body));
 }
 
 // POST /settings/tokens
@@ -682,7 +827,7 @@ export async function tokenCreate(ctx: Ctx): Promise<Response> {
   // the platform edge's sign-in, or the password — never from another token
   // (no privilege bootstrapping). readForm below refuses a cross-site post.
   if (!isAccountItself(ctx.auth)) {
-    return forbiddenPage(ctx, "A token is made from your own signed-in account, never by another token.");
+    return forbiddenPage(ctx, "An access code is made from your own signed-in account, never by another access code.");
   }
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
@@ -691,7 +836,7 @@ export async function tokenCreate(ctx: Ctx): Promise<Response> {
   if (ctx.auth.user.isAdmin && field(form, "aiAdmin") !== "on")
     return flashTo(ctx, "/settings/tokens", {
       tone: "danger",
-      message: "You are the forge's admin: tick that you mean to give this token admin, or make it from your everyday account.",
+      message: "You are the forge's admin: tick that you mean to give this access code admin, or make it from your everyday account.",
     });
   const scope = field(form, "scope");
   const chosen: TokenScope = scope === "ro" || scope === "admin" ? scope : "rw";
@@ -763,9 +908,9 @@ function keysView(
       >) — ed25519, ecdsa, or rsa (2048 bits or more).
     </p>
     ${block(
-      "SSH keys",
+      "Computer keys",
       keys.length === 0
-        ? html`<p class="muted">No keys yet. Add one and git over SSH stops asking for a password.</p>`
+        ? html`<p class="muted">No computer keys yet. Add one and git over SSH stops asking for a password.</p>`
         : html`<ul class="list setting-list">
             ${keys.map((k) =>
               row({
@@ -796,7 +941,7 @@ function keysView(
           placeholder: "ssh-ed25519 AAAA…",
         })}
         <div class="form-actions">
-          ${btn("Add key", { variant: "primary" })}
+          ${btn("Add computer key", { variant: "primary" })}
         </div>
         ${refusal(values.error)}
       </form>`,
@@ -808,7 +953,7 @@ export function keysPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const body = keysView(ctx, { name: "", key: "" });
-  return timePhase(ctx.request, "render", () => accountShell(ctx, "keys", "SSH keys", body));
+  return timePhase(ctx.request, "render", () => accountShell(ctx, "keys", "Computer keys", body));
 }
 
 // POST /settings/keys
@@ -827,7 +972,7 @@ export async function keyCreate(ctx: Ctx): Promise<Response> {
     return accountShell(
       ctx,
       "keys",
-      "SSH keys",
+      "Computer keys",
       keysView(ctx, {
         name,
         key,

@@ -18,6 +18,7 @@
  * so before anyone submits, and where to remove it.
  */
 
+import { crewCanRun, hasCrew } from "../studio/crew_key.ts";
 import { PASSWORD_TOO_LONG, withinPasswordCap } from "../../core/hash-gate.ts";
 import { givenEmail, MIN_SIGNUP_PASSWORD, noEmail } from "../../actions/users.ts";
 import type { Credential } from "../../auth/webauthn.ts";
@@ -43,6 +44,7 @@ import { createUser, discardFreshUser, getUserByName, type User } from "../../co
 import {
   burnClaim,
   founderToTake,
+  linkOf,
   handOver,
   readClaim,
   spawnedOrg,
@@ -72,27 +74,54 @@ interface Values {
 }
 type Errors = Partial<Record<"username" | "email" | "password" | "passkey", string>>;
 
-function dead(ctx: Ctx, state: Exclude<ClaimState["state"], "ok">): Response {
+/** `Nov 12, 14:30 UTC`, from an ISO time. */
+function whenWords(iso: string): string {
+  const d = new Date(iso);
+  const month = d.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
+  return `${month} ${d.getUTCDate()}, ${iso.slice(11, 16)} UTC`;
+}
+
+/** "in 5 hours", "in 12 minutes", or "a minute ago", from a span in ms. */
+export function relativeWords(ms: number): string {
+  const mins = Math.max(1, Math.round(Math.abs(ms) / 60_000));
+  const [n, unit] =
+    mins < 60 ? [mins, "minute"] : mins < 2880 ? [Math.round(mins / 60), "hour"] : [Math.round(mins / 1440), "day"];
+  const span = `${n} ${unit}${n === 1 ? "" : "s"}`;
+  return ms >= 0 ? `in ${span}` : `${span} ago`;
+}
+
+function dead(
+  ctx: Ctx,
+  state: Exclude<ClaimState["state"], "ok">,
+  sender?: string,
+  endedAt?: string,
+): Response {
+  const ask = sender === undefined ? "whoever sent it" : sender;
   const says = {
     unknown: {
       status: 404,
-      title: "This is not a claim link",
+      title: "This is not a forge link",
       text: "The link may have been cut short, or replaced by a newer one. Ask whoever sent it for the latest.",
     },
     used: {
       status: 410,
       title: "This link has already been used",
-      text: "Each claim link works once. If it was you, sign in with the account you made.",
+      text: `Each link works once. If it was you, sign in with the account you made; if not, ask ${ask} to send you a new one.`,
     },
     expired: {
       status: 410,
       title: "This link has expired",
-      text: "Claim links work for a day. Ask whoever sent it for a new one.",
+      text: `It stopped working${endedAt === undefined ? "" : ` on ${whenWords(endedAt)}`}. Ask ${ask} to send you a new one.`,
+    },
+    revoked: {
+      status: 410,
+      title: "This link has ended",
+      text: `Whoever sent it took it back. Ask ${ask} to send you a new one.`,
     },
     owned: {
       status: 410,
       title: "This forge already has an owner",
-      text: "Someone has already claimed it. If it was you, sign in.",
+      text: "Someone has already made this forge theirs. If it was you, sign in.",
     },
   }[state];
   return page(
@@ -135,7 +164,7 @@ function accessSentence(spawned: Spawned, spawner: User | undefined): string {
   const who = spawner?.username ?? "Whoever made it";
   return spawned.keepAccess
     ? `${who} keeps owner access to this forge; you can remove it in your organisation's Owners team.`
-    : `Once you claim it, only you can see its private work: ${who}, who made it, no longer has access unless you invite them back.`;
+    : `Once you open it as yours, only you can see its private work: ${who}, who made it, no longer has access unless you invite them back.`;
 }
 
 /**
@@ -146,7 +175,7 @@ function accessSentence(spawned: Spawned, spawner: User | undefined): string {
 function takeover(ctx: Ctx, spawned: Spawned, spawner: User | undefined): Html | null {
   if (spawner === undefined || founderToTake(ctx.app, spawned, spawner.username) === undefined)
     return null;
-  return html`<p class="mb" id="claim-takeover">Claim it as ${spawner.username} and you will take over ${spawner.username}'s account on this forge, with everything the spawn made under it.</p>`;
+  return html`<p class="mb" id="claim-takeover">Open it as ${spawner.username} and you will take over ${spawner.username}'s account on this forge, with everything already made under it.</p>`;
 }
 
 function claimForm(
@@ -155,21 +184,30 @@ function claimForm(
   spawner: User | undefined,
   values: Values,
   errors: Errors,
+  expiresAt?: string,
 ): Html {
   return html`<div class="narrow">
     ${pageHead("This forge is yours")}
     <section class="settings-block">
       <p class="mb">
-          ${spawned.org.username} was made for you, with its apps and a crew
-          ready to build them. Make your account to take it: this first account
+          ${spawned.org.username} was made for you, with its apps and
+          ${crewCanRun(ctx.app) && hasCrew(ctx.app)
+            ? "a crew ready to build them"
+            : "a crew that builds them once you add a model key"}. Make your account to take it: this first account
           is the forge's admin, so it can change everything here.
         </p>
+        ${expiresAt === undefined
+          ? null
+          : html`<p class="mb" id="claim-expiry">This link works until
+              <time datetime="${expiresAt}">${whenWords(expiresAt)}</time>
+              (${relativeWords(Date.parse(expiresAt) - Date.now())}). After that, ask
+              ${spawner?.username ?? "whoever sent it"} to send you a new one.</p>`}
         <p class="mb" id="claim-access">${accessSentence(spawned, spawner)}</p>
         ${takeover(ctx, spawned, spawner)}
         <form method="post" action="/claim">
           <div id="claim-token-field">
             ${formField({
-              label: "Claim code",
+              label: "Link code",
               name: "token",
               value: values.token ?? "",
               required: true,
@@ -207,7 +245,7 @@ function claimForm(
           })}
           ${passkeyFields()}
           <div class="form-actions">
-            <button type="submit" class="btn" data-variant="primary">Claim this forge</button>
+            <button type="submit" class="btn" data-variant="primary">Make this forge mine</button>
           </div>
           <div class="stack stack-tight">
             ${passkeyState()}
@@ -217,7 +255,7 @@ function claimForm(
               face or device PIN. It needs an email address above.
             </p>
             ${passkeyNote("passkey-make-note", errors.passkey)}
-            <button type="button" id="passkey-make" class="btn" data-variant="outline" data-options="/claim/options" data-needs-email>Claim with a passkey instead</button>
+            <button type="button" id="passkey-make" class="btn" data-variant="outline" data-options="/claim/options" data-needs-email>Use a passkey instead</button>
             </div>
           </div>
         </form>
@@ -251,11 +289,21 @@ export async function claimFragmentPage(ctx: Ctx): Promise<Response> {
   const spawned = await timePhaseAsync(ctx.request, "spawned", () => spawnedOrg(ctx.app));
   if (spawned === undefined) return timePhase(ctx.request, "render", () => dead(ctx, "unknown"));
   const { spawner } = timePhase(ctx.request, "owners", () => owners(ctx, spawned));
+  // The forge has one link at a time, so its state says nothing about any
+  // particular code: a stale or made-up code only ever meets "unknown" on the POST.
+  const link = linkOf(ctx.app.db);
+  if (link !== null && link.state !== "open")
+    return dead(
+      ctx,
+      link.state === "used" ? "used" : link.revokedAt !== null ? "revoked" : "expired",
+      spawner?.username,
+      link.expiresAt,
+    );
   const rendering = performance.now();
   const response = page({
     ctx,
     title: "This forge is yours",
-    body: claimForm(ctx, spawned, spawner, {}, {}),
+    body: claimForm(ctx, spawned, spawner, {}, {}, link?.expiresAt),
     scriptJs: fragmentJs + passkeyJs,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
@@ -285,6 +333,15 @@ function problems(
   return errors;
 }
 
+/** Why a passkey challenge was refused, in the passkey note's plain words. */
+const LINK_REFUSED: Record<Exclude<ClaimState["state"], "ok">, string> = {
+  unknown: "This is not a forge link.",
+  used: "This link has already been used.",
+  expired: "This link has expired.",
+  revoked: "This link has ended.",
+  owned: "This forge already has an owner.",
+};
+
 // POST /claim/options — a passkey challenge, for a live link and a fit name.
 // Nothing is spent: the link burns only when the key comes back.
 export async function claimOptions(ctx: Ctx): Promise<Response> {
@@ -297,10 +354,9 @@ export async function claimOptions(ctx: Ctx): Promise<Response> {
   const data = await boundedBody(ctx.request, STRANGER_MAX);
   if (data === "too_large") return refuse(413, "payload too large");
   const spawned = await spawnedOrg(ctx.app);
-  if (spawned === undefined) return refuse(404, "This is not a claim link.");
+  if (spawned === undefined) return refuse(404, LINK_REFUSED.unknown);
   const state = readClaim(ctx.app.db, spawned.org.id, str(data.token)).state;
-  if (state !== "ok")
-    return refuse(state === "unknown" ? 404 : 410, state === "unknown" ? "This is not a claim link." : `This link is ${state === "owned" ? "already claimed" : state}.`);
+  if (state !== "ok") return refuse(state === "unknown" ? 404 : 410, LINK_REFUSED[state]);
   const username = str(data.username).trim();
   const bad = problems(ctx, spawned, username, str(data.email).trim(), true);
   const first = bad.username ?? bad.email;
@@ -319,8 +375,9 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
   // proxies and logs would keep.
   const token = field(form, "token");
   const before = readClaim(ctx.app.db, orgId, token);
-  if (before.state !== "ok") return dead(ctx, before.state);
   const { spawner } = owners(ctx, spawned);
+  if (before.state !== "ok")
+    return dead(ctx, before.state, spawner?.username, linkOf(ctx.app.db)?.expiresAt);
 
   const values = {
     username: field(form, "username"),
@@ -332,7 +389,7 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
       {
         ctx,
         title: "This forge is yours",
-        body: claimForm(ctx, spawned, spawner, values, e),
+        body: claimForm(ctx, spawned, spawner, values, e, linkOf(ctx.app.db)?.expiresAt),
         scriptJs: passkeyJs,
       },
       422,

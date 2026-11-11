@@ -6,6 +6,7 @@ export const route: Route = {
   summary:
     "Record a domain drill and its verdict, green or red (a site admin's, admin token only); answers 201 with the recorded drill",
   auth: true,
+  role: "admin",
   status: 201,
   body: { domain: "string", seen: "object", backSeconds: "integer" },
   refusals: {

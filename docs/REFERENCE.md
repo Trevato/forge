@@ -19,8 +19,12 @@ git underneath is one click away — the switch in the top bar, or `?mode=dev` o
 any URL — and it is the rest of this page.
 
 Slow app? Its response's `Server-Timing` keeps the app's entries and adds the
-forge's `forge-route`, `forge-wake`, `forge-upstream` and `forge-rewrite`
-(milliseconds only; see `docs/APPS.md`).
+forge's `forge-route`, `forge-wake`, `forge-upstream`, `forge-ttfb`,
+`forge-lag`, `forge-body` and `forge-rewrite` (milliseconds only; see
+`docs/APPS.md`). When `forge-lag` is more than half of `forge-ttfb`, the wait
+was the forge's, not the app's; a signed-in forge admin then also gets
+`forge-stall;desc="<pattern>";dur=<ms>` naming the route or `job:<name>` that held
+the loop (sent `private, no-store`; nobody else gets it).
 
 A forge this one spawned (hosted) runs the apps it was given too: its `bakery`
 answers at `bakery--<child>--<this forge's host>`, in this forge's lanes, on the
@@ -179,6 +183,7 @@ here fails `test/dependencies-named.test.ts`; so does a line for one that left.
 
 - `@anthropic-ai/sandbox-runtime` — lets `test/crew-sandbox-real.test.ts` run a shell under the very sandbox Claude Code builds from the crew's settings.
 - `@types/bun` — the type check's types for Bun's own APIs.
+- `@vscode/ripgrep` — the `rg` that `srt` scans with, pinned and shipped in the package (no install script), so `test/crew-sandbox-escape.test.ts` runs on a check host with no ripgrep of its own.
 - `axe-core` — the release check's accessibility rules (`src/release/axe.ts`); they need a rendered page, and there is no zero-dependency equivalent.
 - `happy-dom` — a DOM for tests that run a page's script (`test/changelog.test.ts`) without a browser.
 - `typescript` — the native 7.x checker behind `bun x tsc --noEmit`.
@@ -517,6 +522,7 @@ This page is the front door. Everything else is a file of its own under
 **Apps and the crew**
 
 - [`docs/APPS.md`](APPS.md) — the contract for apps, previews and runs: making an app, the vocabulary, and the rules that are mechanical rather than advisory.
+- [`docs/ADAPTERS.md`](ADAPTERS.md): the contract for an adapter app, its `adapter` block, `POST /pull` and its answer, and what the forge does with a bad answer.
 - [`docs/CONTRACT.md`](CONTRACT.md) — who may do what, as a table: an app's `contract.json`, the one evaluator every app decides with, the audit that reads it from git, the probe that knocks on the running app, and the wall a person alone crosses.
 - [`docs/WEBSPEC-PREVIEWS.md`](WEBSPEC-PREVIEWS.md) — the website specification run over every preview, report-only.
 - [`docs/CREW.md`](CREW.md) — the crew: agents, how a run works, review, live triage, the merge queue, spend, roles and invites, the sandbox, passports, and the direction a vision pull will write.

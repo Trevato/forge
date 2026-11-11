@@ -5,7 +5,7 @@
  *   bun scripts/pack.ts show games
  *   FORGE_URL=http://localhost:3000 FORGE_TOKEN=forge_… bun scripts/pack.ts deploy games
  *
- * `<pack>` is a shipped pack's name, or the path of a pack.json. `deploy` makes
+ * `<pack>` is the name of a pack repo (`packs/<name>` on FORGE_PACKS_FROM, default the public forge), or the path of a pack.json. `deploy` makes
  * each app in the forge at FORGE_URL (the token's owner owns them), copies the
  * source's whole history in, and adds the crew. It brings no data, secret or
  * variable, and leaves the model credential to you. Run it again to finish a
@@ -16,13 +16,28 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ForgeApi } from "../src/cli/api.ts";
-import { packNamed } from "../src/packs/catalog.ts";
 import { deployPack, type Hands } from "../src/packs/deploy.ts";
 import { parsePack, type Pack } from "../src/packs/pack.ts";
 import { finishWords, OWNER, prepareOwner } from "../src/packs/up.ts";
 
-function load(arg: string): Pack | string {
-  if (/^[a-z][a-z0-9-]*$/.test(arg) && !existsSync(arg)) return packNamed(arg) ?? `no pack named ${arg}`;
+/** Where a pack's name is looked up: the forge whose `packs/<name>` repository holds its pack.json. */
+export const PACKS_FORGE = "https://forge.open-platform.sh";
+
+/** The pack `<name>` as published at `packs/<name>` on `origin` (its default branch, whatever it is called), or why not. */
+export async function fetchPack(name: string, origin: string, get: typeof fetch = fetch): Promise<Pack | string> {
+  const url = `${origin.replace(/\/+$/, "")}/packs/${name}/raw/HEAD/pack.json`;
+  try {
+    const res = await get(url, { redirect: "error", signal: AbortSignal.timeout(15_000) });
+    if (res.status !== 200) return `no pack named ${name} at ${url} (${res.status})`;
+    const parsed = parsePack(await res.text());
+    return parsed.ok ? parsed.value : `${url}: ${parsed.error}`;
+  } catch {
+    return `could not read ${url}`;
+  }
+}
+
+async function load(arg: string): Promise<Pack | string> {
+  if (/^[a-z][a-z0-9-]*$/.test(arg) && !existsSync(arg)) return fetchPack(arg, process.env.FORGE_PACKS_FROM ?? PACKS_FORGE);
   if (!existsSync(arg)) return `no such file: ${arg}`;
   const parsed = parsePack(readFileSync(arg, "utf8"));
   return parsed.ok ? parsed.value : parsed.error;
@@ -79,6 +94,20 @@ export function realHands(url: string, token: string, options: HandsOptions = {}
       if (!exists) return { ok: false, exists, why: e.message };
       const me = await api.whoami();
       return me.ok && me.value.username !== "" ? { ok: false, exists, why: e.message, owner: me.value.username } : { ok: false, exists, why: e.message };
+    },
+    async forkFrom(source, name) {
+      const r = await fetch(`${url}/api/v1/repos/${source}/forks`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ name }),
+      }).catch(() => null);
+      if (r === null) return { ok: false, exists: false, why: `cannot reach ${url}` };
+      const body = (await r.json().catch(() => null)) as { ownerName?: unknown; name?: unknown; message?: unknown } | null;
+      if (r.ok && typeof body?.ownerName === "string") return { ok: true, owner: body.ownerName };
+      const why = typeof body?.message === "string" ? body.message : `the forge answered ${r.status}`;
+      if (r.status !== 409) return { ok: false, exists: false, why };
+      const me = await api.whoami();
+      return me.ok && me.value.username !== "" ? { ok: false, exists: true, why, owner: me.value.username } : { ok: false, exists: true, why };
     },
     async defaultBranch(owner, name) {
       const r = await fetch(`${url}/api/v1/repos/${owner}/${name}`, { headers: { authorization: `Bearer ${token}` } }).catch(() => null);
@@ -214,7 +243,7 @@ export async function up(pack: Pack, options: UpOptions): Promise<number> {
 
 if (import.meta.main) {
   const [verb, which] = process.argv.slice(2);
-  const pack = which === undefined ? USAGE : load(which);
+  const pack = which === undefined ? USAGE : await load(which);
   if (typeof pack === "string" || (verb !== "show" && verb !== "deploy" && verb !== "up")) {
     console.error(typeof pack === "string" ? pack : USAGE);
     process.exit(2);

@@ -1,5 +1,5 @@
 /**
- * The `origins` tool's `hosts` action is Settings → Origins' internal-host list over
+ * The `origins` tool's `hosts` action is Settings → Connected accounts' internal-host list over
  * MCP: the same rules, the same refusals, a forge admin only.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";

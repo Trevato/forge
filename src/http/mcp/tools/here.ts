@@ -1,21 +1,23 @@
 import { appsRuntime } from "../../../apps/runtime.ts";
 import { hereOf } from "../../../apps/here.ts";
 import { manifestFor } from "../../../actions/here.ts";
+import { noticeOf } from "../../../billing/notice.ts";
+import { planLine } from "../../../web/plan_row.ts";
 import { good, bad, type Tool, str } from "../shared.ts";
 
 export const tool: Tool = {
   name: "here",
   description:
     "What you may do on a forge page; given an app's link, what its /__forge/ door shows.",
-  doc: "`{ url }`: on a forge page, what you may do there as who you are, each action with its route and tool; on the link of one of this forge's app hosts, what its `/__forge/` door shows: `{ app, repo, environment, pull: { number, title } or null, working: [names], links: { home, repo, report } }`; a foreign host, or a private app you may not enter, is refused like a missing page",
+  doc: "`{ url }` (none: the forge's own page; its admin also gets `plan: { text, manage? }` on `/` or `/settings`, the Plan row's words and billing link, absent without a plan): on a forge page, what you may do there as who you are, each action with its route and tool; on the link of one of this forge's app hosts, what its `/__forge/` door shows: `{ app, repo, audience: { level, who, sentence } (only when you may read the repository), environment, pull: { number, title } or null, working: [names], links: { home, repo, report } }`; a foreign host, or a private app you may not enter, is refused like a missing page",
   inputSchema: {
     type: "object",
     properties: { url: { type: "string", maxLength: 2000 } },
-    required: ["url"],
+    required: [],
   },
   writes: false,
   run(ctx, user, args) {
-    const raw = str(args["url"]);
+    const raw = str(args["url"]) || "/";
     const runtime = appsRuntime(ctx.app);
     const door = runtime === undefined || raw.length > 2000 ? undefined : hereOf(runtime, raw, user);
     if (door !== undefined) return good(door);
@@ -29,8 +31,11 @@ export const tool: Tool = {
       ctx.url.origin,
       parsed.pathname,
     );
+    const forgePage = parsed.pathname === "/" || parsed.pathname === "/settings";
+    const text = forgePage && user.isAdmin === true ? planLine(ctx.app.config.dataDir) : undefined;
+    const manage = text === undefined ? undefined : noticeOf(ctx.app.config.dataDir)?.portalUrl;
     return found.ok
-      ? good(found.value)
+      ? good(text === undefined ? found.value : { ...found.value, plan: { text, ...(manage === undefined ? {} : { manage }) } })
       : bad("not_found", "no such page here, or it is not visible to you");
   },
 };

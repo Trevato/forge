@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { appendTurn, archiveConversation, CONVERSATIONS_MAX, createConversation, listConversations, listTurns, renameConversation } from "../src/core/conversations.ts";
 import { createUser, type User } from "../src/core/users.ts";
+import { createRepo } from "../src/actions/repos.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { settleApp } from "./helpers/tui.ts";
@@ -97,6 +98,50 @@ describe("the terminal's conversations screen", () => {
     expect(said).toContain("not running here");
     const turns = listTurns(app.db, bob.id, made.value.id, { limit: 50 });
     expect(turns.ok && turns.value.length).toBe(2);
+  });
+
+  test("a tool call reads as a step, and the header names the repository it works on", async () => {
+    const made = createConversation(app.db, bob.id);
+    if (!made.ok) throw new Error(made.error);
+    appendTurn(app.db, bob.id, made.value.id, { role: "tool", text: 'mcp__forge__read_file {"repo":"bob/site","path":"src/x.ts"}' });
+    const text = await drive(bob, [...open, "\r"]);
+    expect(text).toContain("Read src/x.ts");
+    expect(text).toContain("working on bob/site");
+    expect(text).not.toContain("mcp__forge__read_file");
+  });
+
+  test("p shows what the chat works on, as the web's pane does; a repository it cannot read shows nothing of it", async () => {
+    const made = createConversation(app.db, alice.id);
+    if (!made.ok) throw new Error(made.error);
+    const repo = await createRepo(app, alice, { name: "pane", visibility: "public" });
+    if (!repo.ok) throw new Error(repo.error);
+    appendTurn(app.db, alice.id, made.value.id, { role: "tool", text: 'mcp__forge__write_file {"repo":"alice/pane","path":"src/y.ts","content":"a"}' });
+    const text = await drive(alice, [...open, "\r", "p"]);
+    expect(text).toContain("alice/pane · Production");
+    expect(text).toContain("Nothing running yet.");
+    expect(text).toContain("No open pull yet.");
+    expect(text).toContain("src/y.ts");
+    const hidden = createConversation(app.db, alice.id);
+    if (!hidden.ok) throw new Error(hidden.error);
+    appendTurn(app.db, alice.id, hidden.value.id, { role: "tool", text: 'mcp__forge__read_file {"repo":"alice/nothere","path":"a"}' });
+    expect(await drive(alice, [...open, "\r", "p"])).toContain("Not a repository you can see.");
+  });
+
+  test("turns are read when the chat opens and on r, not on every draw", async () => {
+    const made = createConversation(app.db, bob.id);
+    if (!made.ok) throw new Error(made.error);
+    appendTurn(app.db, bob.id, made.value.id, { role: "person", text: "first words" });
+    const terminal = headlessTerminal(120, 30);
+    const { app: tui } = createForgeApp(app, { sshUsername: bob.username, remoteAddress: "127.0.0.1", fingerprint: "SHA256:test", user: bob }, { terminal, exitHooks: false });
+    tui.start();
+    for (const k of [...open, "\r"]) { terminal.feed(k); await settleApp(tui); }
+    appendTurn(app.db, bob.id, made.value.id, { role: "person", text: "later words" });
+    terminal.feed("p"); await settleApp(tui);
+    terminal.feed("p"); await settleApp(tui);
+    expect(tui.screen.toText()).not.toContain("later words");
+    terminal.feed("r"); await settleApp(tui);
+    expect(tui.screen.toText()).toContain("later words");
+    tui.stop?.();
   });
 
   test("past the cap, n says so and starts nothing", async () => {

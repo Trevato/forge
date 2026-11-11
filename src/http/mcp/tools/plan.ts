@@ -29,15 +29,15 @@ export const tool: Tool = {
             },
             pillar: {
               type: "string",
-              description: 'Pillar, "P0".',
+              description: "e.g. P0",
             },
             later: {
               type: "boolean",
-              description: "No pillar; needs why.",
+              description: "Needs why.",
             },
             why: {
               type: "string",
-              description: "With later: why.",
+              description: "For later.",
             },
           },
           required: ["key", "title"],

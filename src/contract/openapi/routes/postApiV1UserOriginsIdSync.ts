@@ -9,5 +9,6 @@ export const route: Route = {
   path: "/api/v1/user/origins/{id}/sync",
   summary: "Sync an origin's mirrors now; answers the sync report; the account only",
   auth: true,
+  role: "member",
   refusals: { unauthorized: U, forbidden: F, not_found: NF },
 };

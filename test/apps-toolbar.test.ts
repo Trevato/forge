@@ -55,6 +55,10 @@ describe("the forge pill", () => {
               })
             : new Response(HTML, { headers });
         }
+        if (path === "/has-tag")
+          return new Response(`<html><body>hi<script src="${TOOLBAR_ASSET_PATH}" defer></script></body></html>`, { headers: html });
+        if (path === "/quotes")
+          return new Response(`<html><body><code>&lt;script src="${TOOLBAR_ASSET_PATH}"&gt;</code> src="/__forge/toolbar-x"</body></html>`, { headers: html });
         if (path === "/json") return Response.json({ a: 1 });
         if (path === "/img") return new Response(PNG, { headers: { "content-type": "image/png" } });
         if (path === "/bare") return new Response("<p>no body tag</p>", { headers: html });
@@ -239,6 +243,26 @@ describe("the forge pill", () => {
     expect(await (await at("/notmarkup")).text()).toBe('{"a":1}</body>');
   });
 
+  test("through the proxy: data, ranges and HEAD come back byte for byte; a page with the tag keeps exactly one", async () => {
+    expect(await (await at("/json")).text()).toBe('{"a":1}');
+    expect(new Uint8Array(await (await at("/img")).arrayBuffer())).toEqual(PNG);
+    const range = await at("/range");
+    expect(await range.text()).toBe(HTML.slice(0, 20));
+    const head = await fetch(`${servers.url}/`, { method: "HEAD", headers: { host: `notes.${DOMAIN}` } });
+    expect(head.headers.get("content-length")).toBe(String(HTML.length));
+    expect(await head.text()).toBe("");
+    const had = await (await at("/has-tag")).text();
+    expect(had.split(TOOLBAR_ASSET_PATH).length - 1).toBe(1);
+    expect(had).not.toContain("data-forge");
+  });
+
+  test("a page that only quotes the toolbar's path still gets one tag", async () => {
+    const quoted = await (await at("/quotes")).text();
+    expect(quoted.split("<script").length - 1).toBe(1);
+    expect(quoted).toContain("data-forge");
+    expect(quoted).toContain(`&lt;script src="${TOOLBAR_ASSET_PATH}"&gt;`);
+  });
+
   test("a ranged answer, a HEAD, a huge page and a foreign charset pass through", async () => {
     const range = await at("/range");
     expect(range.status).toBe(206);
@@ -366,9 +390,11 @@ describe("the forge pill", () => {
     expect(res.headers.get("content-type")).toContain("javascript");
     const code = await res.text();
     expect(code).toBe(toolbarJs);
-    expect(code.length).toBeLessThan(22 * 1024);
+    expect(code.length).toBeLessThan(24 * 1024);
     expect(code).not.toMatch(/\beval\b|new Function|\son[a-z]+\s*=/);
     expect(code).toContain("attachShadow");
+    // The source's whole-line comments are for readers, not shipped (#10869).
+    expect(code).not.toMatch(/^[ \t]*\/\//m);
   });
 
   test("the tag lands before the last </body>, whatever its case", () => {
@@ -450,15 +476,19 @@ describe("the pill's keyboard and touch behaviour", () => {
 
 
     test("on a preview with a repo the pull line links to the pull; otherwise it is plain text", () => {
-      const a = tree({ app: "notes", repo: "alice/notes", pull: "12" }).lines.find((l) => l.textContent === "Preview of pull #12")!;
+      const a = tree({ app: "notes", repo: "alice/notes", pull: "12" }).lines.find((l) => l.textContent === "preview \u00b7 #12")!;
       expect(a.tag).toBe("a");
       expect(a.href).toBe("https://forge.test/alice/notes/pulls/12");
       expect(a.style.cssText).toContain("min-height:44px");
       const prod = tree({ app: "notes", repo: "alice/notes", env: "production", pull: "12" });
-      expect(prod.lines.some((l) => l.textContent.includes("Preview"))).toBe(false);
+      expect(prod.lines.some((l) => l.textContent.startsWith("preview \u00b7"))).toBe(false);
+      expect(prod.lines.some((l) => l.textContent === "production")).toBe(true);
+      // An unknown environment with no pull draws no environment line at all.
+      const unknown = tree({ app: "notes", repo: "alice/notes", env: "staging" });
+      expect(unknown.lines.some((l) => l.textContent === "production" || l.textContent.startsWith("preview"))).toBe(false);
       for (const bad of [{ pull: "12x" }, { pull: "../1" }, { pull: "1234567890" }, { repo: "" }]) {
         const t = tree({ app: "notes", repo: "alice/notes", pull: "12", ...bad });
-        const l = t.lines.find((x) => x.textContent.startsWith("Preview of pull"))!;
+        const l = t.lines.find((x) => x.textContent.startsWith("preview \u00b7"))!;
         expect(l.tag === "a").toBe(false);
       }
     });
@@ -697,5 +727,16 @@ describe("pill link tap targets (#8462)", () => {
     expect(set).toBeGreaterThan(0);
     expect(add).toBeGreaterThan(set);
     expect(js).toContain("if (hasHome) panel.appendChild(link)");
+  });
+});
+
+describe("replies under a note in the button's list", () => {
+  test("each is set as text, the latest five are shown and the rest counted", async () => {
+    const { toolbarJs } = await import("../src/apps/toolbar.ts");
+    expect(toolbarJs).toContain("n.replies");
+    expect(toolbarJs).toContain("all.slice(-5)");
+    expect(toolbarJs).toContain("earlier on the forge");
+    expect(toolbarJs).toContain('rr.textContent = String(r.by) + " ("');
+    expect(toolbarJs).not.toMatch(/rr\.innerHTML/);
   });
 });

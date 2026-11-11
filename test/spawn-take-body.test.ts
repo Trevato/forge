@@ -59,6 +59,9 @@ describe("the take pull's description", () => {
     work = join(dir, "work");
     await git(dir, "clone", "-q", "--bare", repoDir(app.reposRoot, "kid", "forge"), parent);
     await git(dir, "clone", "-q", parent, work);
+    // The fork has a commit of its own, so updates arrive as a pull.
+    const own = await commitToBranch(app, u.value, repo, { message: "own", files: [{ path: "own.txt", content: "own\n" }] });
+    if (!own.ok) throw new Error(JSON.stringify(own.error));
     await Bun.write(
       join(app.config.dataDir, "parent.json"),
       JSON.stringify({
@@ -98,7 +101,7 @@ describe("the take pull's description", () => {
     await theirs("c6", "subject 6");
     await take();
     expect(body()).toBe("My own words.");
-    expect(open()[0]!.headOid).toBe(await git(parent, "rev-parse", "refs/heads/main"));
+    expect((await git(repoDir(app.reposRoot, "kid", "forge"), "rev-list", "--parents", "-n1", open()[0]!.headOid)).split(" ")).toContain(await git(parent, "rev-parse", "refs/heads/main"));
   });
 
   test("hostile subjects stay inert in a fresh pull's body", async () => {

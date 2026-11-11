@@ -48,3 +48,29 @@ test("a passing proof clears it", () => {
   keep({ version: "9.9.10", at: "2026-10-18T11:00:00.000Z", ok: true });
   expect(card()).toBeUndefined();
 });
+
+// The process running a version reports only that version's failure: one kept
+// for another version (a roll the launcher undid, a newer boot) is no card (#10248).
+const runningAs = (version: string, body: () => void) => {
+  const was = process.env["FORGE_VERSION"];
+  process.env["FORGE_VERSION"] = version;
+  try {
+    body();
+  } finally {
+    if (was === undefined) delete process.env["FORGE_VERSION"];
+    else process.env["FORGE_VERSION"] = was;
+  }
+};
+
+test("a failed proof kept for another version is no card for the running one", () => {
+  keep({ version: "0.7.479", at: "2026-11-09T12:57:00.000Z", ok: false, failure: "the public URL never answered as 0.7.479" });
+  runningAs("0.7.478", () => expect(card()).toBeUndefined());
+});
+
+test("a failed proof for the running version is still a card", () => {
+  keep({ version: "0.7.479", at: "2026-11-09T12:57:00.000Z", ok: false, failure: "the public URL never answered as 0.7.479" });
+  runningAs("0.7.479", () =>
+    expect(card()).toMatchObject({ href: "/board", since: "2026-11-09T12:57:00.000Z" }),
+  );
+  runningAs("v0.7.479", () => expect(card()?.sentence).toStartWith("Release 0.7.479 is unproven"));
+});

@@ -17,7 +17,7 @@ import type { Database } from "bun:sqlite";
 export const HELD_FRESH_MS = 2 * 60_000;
 
 /** Why the dispatcher held a run. */
-export type HoldCause = "valve" | "pace" | "limit" | "maintenance";
+export type HoldCause = "valve" | "pace" | "limit" | "maintenance" | "issue";
 
 /** How vitals names each cause: "2 by a shut valve". */
 export const HOLD_WORDS: Readonly<Record<HoldCause, string>> = {
@@ -25,6 +25,7 @@ export const HOLD_WORDS: Readonly<Record<HoldCause, string>> = {
   pace: "the week's pace",
   limit: "an account limit",
   maintenance: "planned maintenance",
+  issue: "its own issue's run still going",
 };
 
 interface Pass {

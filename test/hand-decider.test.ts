@@ -156,6 +156,8 @@ describe("let the decider answer a hand-over", () => {
     const board = await home("/board");
     expect(board.includes("hand-over")).toBe(true);
     expect(board.includes("Saw:")).toBe(true);
+    // Its why is the decider's own words: one clamped line, whole in its title (#10199).
+    expect(board).toMatch(/<span class="row-note" title="[^"]*Saw:[^"]*">[^<]*Saw:/);
     const receipt = await home(res.headers.get("location")!);
     expect(receipt.includes("90% sure")).toBe(true);
     expect(receipt.includes(`/asks/decide/${row!.id}/undo`)).toBe(true);

@@ -46,12 +46,14 @@ function useWords(ctx: Ctx, repo: Repo, b: Bet, now: Date): string {
 
 function betRow(ctx: Ctx, repo: Repo, b: Bet, now: Date, owner: boolean): Html {
   // The plan — shares, what is left — is for those who administer; a reader sees names and states.
-  if (!owner) return row({ href: betHref(repo, b.id), title: html`${b.name}`, trail: badge(STATE_WORDS[b.state]) });
+  if (!owner) return row({ href: betHref(repo, b.id),
+    nav: true, title: html`${b.name}`, trail: badge(STATE_WORDS[b.state]) });
   const meta = [b.state === "backed" ? useWords(ctx, repo, b, now) : "", whoBacked(b), b.state === "stopped" ? b.leftLine : ""]
     .filter((x) => x !== "")
     .join(" · ");
   return row({
     href: betHref(repo, b.id),
+    nav: true,
     title: html`${b.name}`,
     meta: html`${meta}`,
     trail: badge(`${STATE_WORDS[b.state]} · ${b.appetite}% of the week`, { tone: b.state === "backed" ? "success" : b.state === "stopped" ? "attn" : "default" }),
@@ -93,6 +95,7 @@ function proposedRow(ctx: Ctx, repo: Repo, b: Bet, backed: readonly Bet[]): Html
       </details>`;
   return row({
     href: betHref(repo, b.id),
+    nav: true,
     title: html`${b.name}`,
     meta: html`${b.appetite}% of the week · next: ${why === null ? "back it or cut it" : "cut it"}`,
     trail: badge(STATE_WORDS[b.state]),
@@ -168,6 +171,7 @@ export function betPage(ctx: Ctx): Response {
     const state = scopeState(s, now);
     return row({
       href: `${repoBase(repo)}/issues/${s.number}`,
+      nav: true,
       title: html`#${s.number} ${s.title}`,
       trail: badge(state, { tone: state === "raised hand" ? "attn" : state === "done" ? "success" : "default" }),
     });

@@ -9,11 +9,13 @@
  * also follows its source (`follow`), so upstream commits show as drift.
  */
 
-import type { Pack } from "./pack.ts";
+import { isForgeSource, type Pack } from "./pack.ts";
 
 export interface Hands {
   /** Make an app; `exists` when the forge already has one of that name. */
   makeApp(name: string, description: string): Promise<{ ok: true; owner: string } | { ok: false; exists: boolean; why: string; owner?: string }>;
+  /** Fork the forge repo `source` (`owner/name`) into the person's account as `name`, with lineage: the fork records its parent. No network but the forge's own. */
+  forkFrom(source: string, name: string): Promise<{ ok: true; owner: string } | { ok: false; exists: boolean; why: string; owner?: string }>;
   /** The default branch of an app already in the forge, or undefined when it cannot be read. */
   defaultBranch(owner: string, name: string): Promise<string | undefined>;
   /** Copy every branch and tag of `source` into the app, history whole. */
@@ -37,9 +39,25 @@ async function absorbStep(hands: Hands, owner: string, name: string): Promise<St
   return r.ok ? { what: `absorb ${name}`, state: "done", note: "a feature in the menu" } : { what: `absorb ${name}`, state: "failed", note: r.why };
 }
 
+/** A forge-repo source is forked, not copied: the fork's lineage is the follow, so nothing is carried or followed over the network. */
+async function forkStep(hands: Hands, app: Pack["apps"][number]): Promise<Step[]> {
+  const forked = await hands.forkFrom(app.source, app.name);
+  if (!forked.ok) {
+    if (!forked.exists) return [{ what: `app ${app.name}`, state: "failed", note: forked.why }];
+    return [{ what: `app ${app.name}`, state: "kept", note: "already here" }];
+  }
+  const steps: Step[] = [{ what: `app ${app.name}`, state: "done", note: `forked from ${app.source}` }];
+  if (app.absorb === true) steps.push(await absorbStep(hands, forked.owner, app.name));
+  return steps;
+}
+
 export async function deployPack(pack: Pack, hands: Hands): Promise<readonly Step[]> {
   const steps: Step[] = [];
   for (const app of pack.apps) {
+    if (isForgeSource(app.source)) {
+      steps.push(...(await forkStep(hands, app)));
+      continue;
+    }
     const made = await hands.makeApp(app.name, `${app.description} (from ${app.source})`);
     if (!made.ok) {
       if (!made.exists) {

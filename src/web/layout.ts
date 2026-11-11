@@ -7,6 +7,8 @@
  * `/search`), and every dialog (a link to a real page).
  */
 
+import { waitingCount } from "../actions/conversation_confirms.ts";
+import { goLevel, goPaletteRows } from "./go_pages.ts";
 import { NEW_ISSUE_KEY } from "./script_keys.ts";
 import { newIssueHref } from "./issue_from.ts";
 import { OPENSEARCH_PATH, OPENSEARCH_TITLE, OPENSEARCH_TYPE } from "./opensearch.ts";
@@ -15,15 +17,19 @@ import { administersAny } from "../core/admin_repos.ts";
 import { appsForRepos } from "../core/apps.ts";
 import { foundryHref } from "../actions/foundry_door.ts";
 import { appsRuntime } from "../apps/runtime.ts";
+import { actionRows, peopleRows, settingsRows } from "./palette_rows.ts";
 import { wordClip } from "../text/word_clip.ts";
 import { absorbedForNav } from "../actions/features.ts";
 import {
   enterableApps,
   getRepo,
+  type Repo,
   listReposByOwner,
   listReposVisibleTo,
 } from "../core/repos.ts";
 import { mayDirectCrew } from "../crew/direct.ts";
+import { signupModeKnown } from "../settings/signup.ts";
+import { parentIssuerOf } from "../core/federation.ts";
 import type { User } from "../core/users.ts";
 import type { Ctx } from "../http/context.ts";
 import { activeEdgeToken, edgeLoginUrl, edgeLogoutUrl, edgeStrangerLogin } from "../http/edge.ts";
@@ -62,6 +68,7 @@ import { quotaFull } from "../spawn/quota.ts";
 import { icon, inlineIcons, pointAtSprite, themeGlyph } from "./icons.ts";
 import { btn, copyField, hintAttr, kbd, menu, type MenuItem } from "./ui.ts";
 import { SITE_LINE } from "./site_line.ts";
+import { CSP_REPORT_DIRECTIVES, CSP_REPORTING_ENDPOINTS } from "../http/csp_report.ts";
 
 /** One row of the command palette: title, href, category. */
 export interface PaletteItem {
@@ -75,6 +82,12 @@ export interface PaletteItem {
   m?: 1;
   /** A mutation: the palette posts these fields to `h`, as the page's own form does. */
   p?: Record<string, string>;
+  /** An issue or pull's number: `#123` lands on it. */
+  k?: number;
+  /** A person's detail or an issue's "#n". */
+  d?: string;
+  /** An action: the palette asks once before it runs. */
+  a?: 1;
 }
 
 export interface PageOptions {
@@ -112,6 +125,14 @@ export interface PageOptions {
   jsonLd?: string;
   /** Breadcrumb segments rendered in the topbar, e.g. owner / repo. */
   crumbs?: { label: string; href: string }[];
+  /**
+   * What the viewer is looking at, for the header's Talk link: `owner/repo`
+   * or `owner/repo#N`. Only a page that rendered that subject for this viewer
+   * passes it (repository home, issue, pull); it is never derived from the
+   * path, so a 404 and a refusal keep the bare /talk and cannot tell a
+   * private repository from a missing one.
+   */
+  about?: string;
   body: Html;
   /**
    * CSS this request computed: label colors mixed from the labels actually
@@ -150,6 +171,17 @@ export interface PageOptions {
    * blob page of a PDF asks; no other page's policy changes.
    */
   objectSrc?: boolean;
+  /**
+   * The page frames an HTML file from the media route in a sandboxed
+   * `<iframe>` (`frame-src 'self'`). Only the blob page of an HTML file asks.
+   */
+  frameSelf?: boolean;
+  /**
+   * The page sets a font file in the font itself (`render/font.ts`): the
+   * browser may load a font from this origin (`font-src 'self'`). Only the
+   * blob page of a font asks; no other page's policy changes.
+   */
+  fontSrc?: boolean;
   /**
    * The page carries a Cloudflare Turnstile widget (`/signup`): its script,
    * frame and verification call may come from challenges.cloudflare.com, and
@@ -290,18 +322,24 @@ function featureItems(ctx: Ctx, user: User): MenuItem[] {
     : [{ separator: true, label: "" }, { label: "Features from apps", heading: true }, ...entries];
 }
 
+/** `/talk`, or `/talk?about=…` when the page rendered a subject. */
+function talkHref(about: string | undefined): string {
+  return about === undefined ? "/talk" : `/talk?about=${encodeURIComponent(about).replace(/%2F/g, "/")}`;
+}
+
 function userMenu(
   ctx: Ctx,
   user: User,
   theme: ThemeName | undefined,
   signOut: MenuItem,
+  about?: string,
 ): Html {
   const items: (MenuItem | Html)[] = [
     { label: "Your profile", href: `/${user.username}`, icon: "user" },
     { label: "Repositories", href: "/repos", icon: "repo" },
     { label: "Apps", href: "/apps", icon: "rocket" },
     { label: "Notes", href: "/notes", icon: "comment" },
-    { label: "Talk", href: "/talk", icon: "comment" },
+    { label: "Talk", href: talkHref(about), icon: "comment" },
     { label: "Explore", href: "/explore", icon: "search" },
     { label: "Packs", href: "/packs", icon: "rocket" },
     { label: "Displays", href: "/displays", icon: "monitor" },
@@ -316,9 +354,9 @@ function userMenu(
     ...forgeDoor(ctx),
     { separator: true, label: "" },
     { label: "Settings", href: "/settings", icon: "settings" },
-    { label: "Access tokens", href: "/settings/tokens", icon: "key" },
-    { label: "SSH keys", href: "/settings/keys", icon: "lock" },
-    { label: "Origins", href: "/settings/origins", icon: "globe" },
+    { label: "Access codes", href: "/settings/tokens", icon: "key" },
+    { label: "Computer keys", href: "/settings/keys", icon: "lock" },
+    { label: "Connected accounts", href: "/settings/origins", icon: "globe" },
     ...(!user.isAdmin && administersAny(ctx.app.db, user)
       ? [{ label: "Boards", href: "/boards", icon: "activity" as const }]
       : []),
@@ -373,35 +411,35 @@ function searchBar(): Html {
 
 /** The palette's own verbs: where to go, what to make, what to set. */
 const STATIC_PALETTE: PaletteItem[] = [
-  { t: "Home", h: "/", c: "Go to" },
-  { t: "Apps", h: "/apps", c: "Go to" },
-  { t: "Explore", h: "/explore", c: "Go to" },
-  { t: "Forge packs", h: "/packs", c: "Go to" },
-  { t: "Displays", h: "/displays", c: "Go to" },
-  { t: "Map", h: "/map", c: "Go to" },
-  { t: "What you asked for", h: "/asked", c: "Go to" },
-  { t: "Front page", h: "/front", c: "Go to" },
+  ...goPaletteRows().map((r) => ({ t: r.t, h: r.h, c: "Go to" })),
   { t: "New app", h: "/apps/new", c: "Create" },
   { t: "New repository", h: "/new", c: "Create" },
   { t: "Migrate a repository", h: "/migrate", c: "Create" },
   { t: "New organization", h: "/organizations/new", c: "Create" },
-  { t: "Notes", h: "/notes", c: "Go to" },
-  { t: "Talk to the forge", h: "/talk", c: "Go to" },
-  { t: "Search", h: "/search", c: "Go to" },
   { t: "Account settings", h: "/settings", c: "Settings" },
-  { t: "Access tokens", h: "/settings/tokens", c: "Settings" },
-  { t: "SSH keys", h: "/settings/keys", c: "Settings" },
-  { t: "Origins", h: "/settings/origins", c: "Settings" },
+  { t: "Access codes", h: "/settings/tokens", c: "Settings" },
+  { t: "Computer keys", h: "/settings/keys", c: "Settings" },
+  { t: "Connected accounts", h: "/settings/origins", c: "Settings" },
+  { t: "Your shells", h: "/settings/shells", c: "Settings" },
 ];
 
 /** What a signed-out visitor can reach: places to go, not Create and Settings rows that end at a sign-in wall. */
-const VISITOR_PALETTE = new Set(["Home", "Apps", "Explore", "Forge packs", "Front page", "Search"]);
+const VISITOR_PALETTE = new Set(goPaletteRows().filter((r) => r.visitor).map((r) => r.t));
 
 /** First path segments that are the forge's own pages, never an owner: no repository read for them. */
 const NOT_AN_OWNER = new Set([
   ...STATIC_PALETTE.map((p) => p.h.split("/")[1] ?? ""),
   "api", "releases", "audit", "admin", "tell", "login", "logout", "signup", "feed", "boards", "organizations", "static", "assets",
 ]);
+
+/** The repository the page is on, if its path names one; signed out, none (no read, #5885). */
+function pageRepo(ctx: Ctx): Repo | undefined {
+  if (ctx.auth.user === undefined) return undefined;
+  const [owner, name] = ctx.url.pathname.split("/").filter((s) => s !== "");
+  return owner !== undefined && name !== undefined && !NOT_AN_OWNER.has(owner)
+    ? getRepo(ctx.app.db, owner, name)
+    : undefined;
+}
 
 /**
  * Where the palette's "Tell the crew" row sends a sentence, as the feed
@@ -410,14 +448,9 @@ const NOT_AN_OWNER = new Set([
  * repository read. Absent for anyone who may not tell (signed out, or an
  * organization), and then the row is not drawn.
  */
-function tellTarget(ctx: Ctx): { app: string } | undefined {
+function tellTarget(ctx: Ctx, here: Repo | undefined): { app: string } | undefined {
   const user = ctx.auth.user;
   if (user === undefined || user.kind === "org") return undefined;
-  const [owner, name] = ctx.url.pathname.split("/").filter((s) => s !== "");
-  const here =
-    owner !== undefined && name !== undefined && !NOT_AN_OWNER.has(owner)
-      ? getRepo(ctx.app.db, owner, name)
-      : undefined;
   if (here !== undefined && mayDirectCrew(ctx.app.db, here, user))
     return { app: `${here.ownerName}/${here.name}` };
   return { app: "forge" };
@@ -470,8 +503,17 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
   });
   const states = open.length > 0 ? appsRuntime(ctx.app)?.statusMany(open) : undefined;
   const foundry = foundryHref(ctx.app, ctx.auth.user);
+  const here = pageRepo(ctx);
+  const tell = tellTarget(ctx, here);
+  const tellHref =
+    here !== undefined && tell?.app === `${here.ownerName}/${here.name}`
+      ? `/${tell.app}/tell?from=${encodeURIComponent(ctx.url.pathname)}`
+      : undefined;
   const items: PaletteItem[] = [
     ...extra,
+    ...peopleRows(ctx.app.db, ctx.auth.user),
+    ...settingsRows(ctx.auth.user),
+    ...actionRows(ctx.auth.user, tellHref),
     ...repos.map((r): PaletteItem => {
       const found = apps.get(r.id);
       const app = found !== undefined && enterable.has(found.id) ? found : undefined;
@@ -524,7 +566,9 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
     items,
     studio,
     me: ctx.auth.user?.username,
-    tell: tellTarget(ctx),
+    tell,
+    here:
+      here !== undefined && (here.visibility === "public" || tellHref !== undefined) ? `/${here.ownerName}/${here.name}` : undefined,
   }).replaceAll("<", "\\u003c");
   return raw(
     `<script type="application/json" id="palette-index">${json}</script>`,
@@ -539,33 +583,10 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
  * one that should close the dialog.
  */
 function overlays(): Html {
-  return html`<dialog
-      class="dialog palette"
-      id="palette"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Command palette"
-    >
-      <input
-        class="input palette-input"
-        type="text"
-        role="combobox"
-        aria-expanded="true"
-        aria-haspopup="listbox"
-        aria-controls="palette-list"
-        aria-autocomplete="list"
-        placeholder="Jump to a repository, page or action…"
-        aria-label="Command palette"
-        autocomplete="off"
-        autocapitalize="off"
-        spellcheck="false"
-      />
-      <div
-        class="palette-list"
-        id="palette-list"
-        role="listbox"
-        aria-label="Results"
-      ></div>
+  // One line per element: this markup ships on every page, so its indentation is bytes too.
+  return html`<dialog class="dialog palette" id="palette" role="dialog" aria-modal="true" aria-label="Jump to anywhere">
+      <input class="input palette-input" type="text" role="combobox" aria-expanded="true" aria-haspopup="listbox" aria-controls="palette-list" aria-autocomplete="list" placeholder="Jump to a repository, page or action…" aria-label="Jump to anywhere" autocomplete="off" autocapitalize="off" spellcheck="false" />
+      <div class="palette-list" id="palette-list" role="listbox" aria-label="Results"></div>
       <div class="palette-foot">
         ${kbd(["↑", "↓"])} navigate ${kbd(["↵"])} open ${kbd(["⌘", "↵"])} its app ${kbd(["esc"])} close
       </div>
@@ -574,6 +595,7 @@ function overlays(): Html {
       <div class="dialog-head"><h2 id="help-title">Keyboard shortcuts</h2></div>
       <div class="dialog-body" data-help-body></div>
       <div class="dialog-foot">
+        <a class="btn" data-variant="link" href="/docs">Docs</a>
         <form method="dialog">
           <button class="btn" type="submit">Close</button>
         </form>
@@ -610,12 +632,37 @@ export function signInHref(ctx: Ctx): string {
   return token === undefined ? "/signin" : edgeLoginUrl(ctx.url.pathname + ctx.url.search);
 }
 
+/**
+ * Where an anonymous visitor's "Sign up" leads on the top forge: `/signup`
+ * while signup there is open, the home page's form (`/`) while it is closed.
+ * Undefined where the button is not offered: behind a platform edge, or on a
+ * forge that has a parent (its people come in through it).
+ */
+export function signUpHref(ctx: Ctx): string | undefined {
+  if (ctx.auth.user !== undefined) return undefined;
+  // The token is read from config first: no edge, no query.
+  if (ctx.app.config.edgeToken !== undefined && activeEdgeToken(ctx.app) !== undefined) return undefined;
+  if (parentIssuerOf(ctx.app.config) !== undefined) return undefined;
+  const mode = signupModeKnown(ctx.app.db);
+  return mode === "open" || mode === "request" ? "/signup" : "/";
+}
+
+/** The Talk button; the count of confirms waiting on the viewer's yes is asked only here, where the button renders. */
+function talkButton(ctx: Ctx, user: User, about?: string): Html {
+  const waiting = waitingCount(ctx, user);
+  const label = waiting > 0 ? `Talk to the forge, ${waiting} waiting` : "Talk to the forge";
+  return html`<a class="btn btn-icon talk-btn" href="${talkHref(about)}" aria-label="${label}" data-shortcut="g t" ${hintAttr("g t", "Talk to the forge")}
+    >${icon("comment")}${waiting > 0 ? html`<span class="talk-count" aria-hidden="true">${waiting > 9 ? "9+" : String(waiting)}</span>` : null}</a
+  >`;
+}
+
 /** The skip link and the topbar: the wordmark, the crumbs, the tools. */
 function topbar(
   ctx: Ctx,
   theme: ThemeName | undefined,
   crumbs: PageOptions["crumbs"],
   tools?: Html,
+  about?: string,
 ): Html {
   const user = ctx.auth.user;
   return html`<a class="skip" href="#main">Skip to content</a>
@@ -640,9 +687,7 @@ function topbar(
       <span class="topbar-tools">
         ${tools ?? html`${searchBar()}
         ${user
-          ? html`<a class="btn btn-icon" href="/talk" aria-label="Talk to the forge" data-shortcut="g t" ${hintAttr("g t", "Talk to the forge")}
-                >${icon("comment")}</a
-              ><a class="small" href="/asks" data-shortcut="g q" ${hintAttr("g q")}>Asks</a
+          ? html`${talkButton(ctx, user, about)}<a class="small" href="/asks" data-shortcut="g q" ${hintAttr("g q")}>Asks</a
               >${newMenu(ctx)}${userMenu(
                 ctx,
                 user,
@@ -654,8 +699,9 @@ function topbar(
                       icon: "signOut",
                     }
                   : { label: "Sign out", post: "/logout", icon: "signOut" },
+                about,
               )}`
-          : html`${guestMenu(ctx, theme)}${btn("Sign in", {
+          : html`${guestMenu(ctx, theme)}${when(signUpHref(ctx), (href) => btn("Sign up", { href }))}${btn("Sign in", {
               href: signInHref(ctx),
             })}`}`}
       </span>
@@ -685,20 +731,14 @@ function footer(ctx: Ctx, own?: Html): Html {
           >${reduced}</span
         >`}
     <span class="spacer"></span>
+    <a href="/docs">Docs</a>
+    <a href="/pricing">Pricing</a>
     <a href="/changelog">Changelog</a>
     <a href="/api">API</a>
     ${ctx.auth.user !== undefined && ctx.auth.user.kind !== "org"
       ? html`<a class="btn" data-variant="link" data-size="sm" href="/#composer">Tell the crew</a>`
       : ""}
-    <button
-      class="btn js-only"
-      data-variant="link"
-      data-size="sm"
-      type="button"
-      data-palette
-    >
-      Command palette
-    </button>
+    <button class="btn js-only" data-variant="link" data-size="sm" type="button" data-palette>Jump to anywhere</button>
   </footer>`;
 }
 
@@ -733,7 +773,7 @@ export function page(options: PageOptions, status = 200): Response {
 
   // The body's markup. Every `icon()` left a `<use>` behind; they are aimed
   // at the one hashed sprite file below, so no page carries a drawing.
-  const shell = html`${options.bare ? null : topbar(ctx, theme, options.crumbs, options.tools)}
+  const shell = html`${options.bare ? null : topbar(ctx, theme, options.crumbs, options.tools, options.about)}
     <main
       class="${options.bare
         ? "bare"
@@ -859,7 +899,7 @@ export function page(options: PageOptions, status = 200): Response {
           ? raw(`<style>${options.styleCss}</style>`)
           : null}
       </head>
-      <body>
+      <body data-go="${goLevel({ signedIn: ctx.auth.user !== undefined, admin: ctx.auth.user?.isAdmin === true })}">
         ${shell}
         <script src="${shellAsset().path}" defer></script>
         <script src="${beaconAsset().path}" defer></script>
@@ -882,7 +922,9 @@ export function page(options: PageOptions, status = 200): Response {
     // The hashed stylesheet and scripts are 'self'; the two inline <style>s
     // are named by hash. connect-src 'self' lets the live event stream
     // (EventSource) and fragment fetches reach same-origin.
-    "content-security-policy": `default-src 'none'; style-src 'self' ${styleSources}; script-src 'self'${options.wasm ? " 'wasm-unsafe-eval'" : ""}${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; connect-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; ${frameSources(options)}worker-src 'self'; manifest-src 'self'; img-src 'self' data:; ${options.objectSrc ? "object-src 'self'; " : ""}form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+    "content-security-policy": `default-src 'none'; style-src 'self' ${styleSources}; script-src 'self'${options.wasm ? " 'wasm-unsafe-eval'" : ""}${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; connect-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; ${frameSources(options)}worker-src 'self'; manifest-src 'self'; img-src 'self' data:; ${options.objectSrc ? "object-src 'self'; " : ""}${options.fontSrc ? "font-src 'self'; " : ""}form-action 'self'; base-uri 'none'; frame-ancestors 'none'; ${CSP_REPORT_DIRECTIVES}`,
+    // Where the browser says what that policy blocked (http/csp_report.ts).
+    "reporting-endpoints": CSP_REPORTING_ENDPOINTS,
     "referrer-policy": "same-origin",
     "x-content-type-options": "nosniff",
     // Markup is revalidated every time; only the hashed assets it names are
@@ -922,8 +964,9 @@ const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
 const BARE_ORIGIN = /^https?:\/\/[a-z0-9.-]+(?::\d{1,5})?$/i;
 
 /** The `frame-src` directive (with its trailing space), or nothing when the page frames nothing. */
-export function frameSources(options: Pick<PageOptions, "turnstile" | "frameSrc">): string {
+export function frameSources(options: Pick<PageOptions, "turnstile" | "frameSrc" | "frameSelf">): string {
   const origins = [
+    ...(options.frameSelf ? ["'self'"] : []),
     ...(options.turnstile ? [TURNSTILE_ORIGIN] : []),
     ...(options.frameSrc !== undefined && BARE_ORIGIN.test(options.frameSrc) ? [options.frameSrc] : []),
   ];

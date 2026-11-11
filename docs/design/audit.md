@@ -49,6 +49,9 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 
 - `/` — `pages/site.ts` (`home`, studio mode in `studio/home.ts`) · where I am, what needs me · `/front` (same page for anyone), `/board`, `/asks` · colours 3 in `site.ts`, 7 in `studio/home.ts`.
 - `/front` — `studio/home.ts` (`studioDoor`) · the signed-out door, and the site admin's controls over it · `/` for a signed-out reader · colours 7.
+- `/pricing` — `pages/pricing.ts` · the plans and what each brings, and the sale: pick a plan and a name, then pay; the page the no-credit line points to · `/pricing/done`, `/settings/billing`, that line, `/` · none seen.
+- `/pricing/done` — `pages/pricing.ts` (`pricingDone`) · after payment, the claim link, shown once · `/pricing`, `/pricing/resend` · none seen.
+- `/pricing/resend` — `pages/pricing.ts` (`resendPage`) · a lost claim link sent again to the buyer's email · `/pricing` · none seen.
 - `/explore` — `studio/explore.ts` · browse what the forge holds · `/search`, `/apps` · colours 2.
 - `/board` — `pages/board.ts` (1,231 lines) · every app the viewer can see, with a wall mode · `/boards` (saved queries as panels), `/flow`, `/` · colour 1, sizes 6.
 - `/board/returns` — `pages/returns.ts` · what the window's dollars bought · `/settings/subscriptions` spend tables, `/settings/usage` · none seen.
@@ -58,6 +61,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/feed` — `studio/home.ts` · the composer and one timeline, what home was before it became the living pipeline (#8015) · `/` · none seen.
 - `/boards/data` — `pages/boards.ts` · the boards' query/data surface · `/board` · none seen.
 - `/asks` — `studio/asks_page.ts` · what the crew is waiting on me for · `/` "needs me" list · colours 2.
+- `/data` — `pages/data.ts` · the SQLite files I may see, their tables and rows, secrets masked · `/system` · none seen.
 - `/asked` — `studio/asked_page.ts` · what I answered, as a record · `/asks` · none seen.
 - `/review` — `studio/review_page.ts` · every ask waiting on me, one row each, newest first · `/asks` (same asks, with buttons) · none seen.
 - `/flow` — `pages/flow.ts` · the pipeline from ready issue to live deploy, and the bottleneck · `/system`, `/board`, `/` · none seen. A topbar button points here.
@@ -92,8 +96,10 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/forges/new` — `pages/new-forge.ts` · send a new forge · none · colour 1.
 - `/family` — `pages/family.ts` · parent, this forge and children as a tree · `/forges` (the same children) · colour 1.
 - `/claim` — `pages/claim.ts` · claim a forge that was sent to me · none · colour 1.
+- `/privacy` — `pages/privacy.ts` · what the forge keeps about a visitor, three plain lines, open to anyone · none · none seen.
 - `/first-admin` — `pages/first-admin.ts` · the first person becomes admin · none · none seen.
 - `/fleet/graph` — `pages/fleet-graph.ts` · the fleet as a graph · `/family`, `/forges` · none seen.
+- `/fleet` — `pages/fleet.ts` · the rows a fleet query line selects, as a table · `/fleet/graph` · none seen.
 
 ### Machine and operation (admin)
 
@@ -102,6 +108,9 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/maintenance` — `pages/maintenance.ts` · prepare the forge for a power-off and end it · `/resilience`, `/settings/backups` · none seen.
 - `/admin/limits` — `pages/admin-limits.ts` · every limit with value, default and reason · `/settings/capacity` (also a numbers-you-can-change page) · none seen.
 - `/admin/flows` — `pages/flows-all.ts` · every repository's flow lines with state and last moved, by kind and stale · `/:owner/:name/flows` · none seen.
+- `/admin/data` — `pages/data.ts` · the forge's own database: tables, rows, read-only SQL, secrets masked · `/data` (the Forge data button) · none seen; shares its body (`pages/data_view.ts`) with `/data` and `/:owner/:name/data`.
+- `/settings/billing` — `pages/billing.ts` · each forge's plan, granted by hand · `/settings/economics` · none seen.
+- `/settings/economics` — `pages/economics.ts` · the profit slider's position and the margin, with the policy in words · `/admin/limits`, `/settings/capacity` · none seen.
 - `/settings/capacity` — `pages/capacity.ts` · how many runs and checks go at once · `/admin/limits`, `/settings/usage` · none seen.
 - `/settings/usage` — `pages/usage.ts` · route patterns by use, unused first · `/settings/telemetry`, `/board/returns` · none seen. Not about cost, despite the name.
 - `/settings/telemetry` — `pages/telemetry.ts` · which agents may read telemetry · `/settings/crew` (agent grants) · none seen.
@@ -110,11 +119,14 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/settings/resilience` — `pages/domains.ts` · failure domains and their last drill · `/resilience` · none seen.
 - `/settings/backups` — `pages/backups.ts` (621 lines) · backups and restore · `/settings/resilience`, `/releases` · none seen.
 - `/settings/flags` — `pages/flags.ts` · the forge's switches · none · none seen.
+- `/settings/app-templates` — `pages/app_templates.ts` · which repositories New app offers as templates · `/apps/new` · none seen.
 - `/settings/features` — `pages/features.ts` · apps absorbed as the forge's features, and their settings · `/apps` (the same apps, as apps) · none seen.
+- `/settings/packs` — `pages/packs-settings.ts` · the repositories /packs lists, one textarea and Save · `/packs`, `/settings/features` · none seen.
 - `/settings/model` — `pages/model.ts` · which model the crew runs on · `/settings/crew` · none seen.
 - `/settings/cloud` — `pages/cloud.ts` · cloud provider connection · none · none seen.
 - `/settings/cloud/audit` — `pages/cloud.ts` · what the cloud connection did · `/audit` (different subject, same word) · none seen.
 - `/settings/access` — `pages/access.ts` · who may reach the forge · `/settings/people`, `/settings/accounts` · none seen.
+- `/settings/captain` — `pages/captain.ts` · what Talk remembers and the check-ins it posts · `/talk` · none seen.
 
 ### Sign-in and account
 
@@ -124,11 +136,13 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/login` — `http/server.ts` (`signinAlias`) · the address people type to sign in · it is `/signin`, keeping a same-origin `next` · none (308, no page of its own).
 - `/sign-in` — `http/server.ts` (`signinAlias`) · the same, hyphenated · it is `/signin` · none (308, no page of its own).
 - `/signup` — `pages/site.ts` · make an account · `/signup` passkey flow (`signup-passkey.ts`) · colours 3 (file).
+- `/signup/requested` — `pages/site.ts` · what a stranger whose request waits is told · `/signin` · colours 3 (file).
 - `/verify` — `pages/site.ts` · confirm an email address · none · colours 3 (file).
 - `/recover` — `pages/passkeys.ts` · get back in without a password · `/settings/passkeys` · none seen.
 - `/settings` — `pages/account.ts` · my account · the rest of settings · colour 1.
 - `/settings/password` — `pages/account.ts` · change password · `/settings/passkeys` · colour 1.
 - `/settings/tokens` — `pages/account.ts` · my API tokens · `/settings/keys` (credentials of two kinds on two pages) · colour 1.
+- `/settings/shells` — `pages/account.ts` · the machine shells I hold, live then ended · `/settings/keys` · colour 1.
 - `/settings/keys` — `pages/account.ts` · my SSH keys · `/settings/tokens` · colour 1.
 - `/settings/passkeys` — `pages/passkeys.ts` · my passkeys · `/settings/password` · none seen.
 - `/settings/confirms` — `pages/confirms.ts` · what the forge's agent asked to do and waits for my yes · the terminal's Confirms (y) · none seen.
@@ -138,8 +152,10 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/settings/people` — `pages/people.ts` · people and their roles · `/settings/accounts`, `/settings/crew` · none seen.
 - `/settings/crew` — `pages/crew.ts` · the named agents and what each may do · `/settings/model`, `/settings/telemetry` · none seen.
 - `/settings/teams` — `pages/teams.ts` · the named crew teams, each with a charter, a dial and members · `/settings/crew` · none seen.
+- `/settings/devices` — `settings/devices.ts` · LAN printers the owner declares, with model, state and supplies · `/settings/origins` (the same account sections) · none seen.
 - `/settings/origins` — `pages/origins.ts` (1,497 lines) · other forges this one reads and mirrors from · `/migrate` · none seen.
 - `/settings/security` — `pages/security.ts` · the Shield and the evidence an admin needs to act with no AI · `/settings/traffic`, `/settings/backups` · none seen.
+- `/settings/security/controls` — `pages/security_controls.ts` · one line per RED-TEAM control and when it was last checked · `/settings/security` · none seen.
 - `/settings/traffic` — `pages/traffic.ts` · who used the answering time in the last 15 minutes · `/settings/usage`, `/settings/telemetry` · none seen.
 - `/settings/traffic/sources` — `pages/sources.ts` · where people come from and where they go: sources, campaigns, landing pages, exits, a path to a goal, GitHub traffic; each number links to its probe · `/settings/traffic`, `/settings/traffic/scrapes` · none seen.
 - `/settings/traffic/scrapes` — `pages/scrapes.ts` · what was read by repository and path, which networks and addresses did it, a bounded capture, the abuse export · `/settings/traffic`, `/settings/security` · none seen.

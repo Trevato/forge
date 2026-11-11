@@ -1,19 +1,20 @@
 /**
  * A repository's webhooks over the API: `GET` and `POST`
  * `/api/v1/repos/:owner/:name/hooks`, and `DELETE` `…/hooks/:id`;
- * `GET …/hooks/:id/deliveries` answers the last twenty. Moved out of
- * `api.ts` (#6333); the rules live in `actions/repos.ts`. Admin-scoped,
- * since a webhook exfiltrates repo events.
+ * `GET …/hooks/:id/deliveries` answers the last twenty; `POST
+ * …/hooks/:id/pause` and `…/resume` stop and restart deliveries (#10104).
+ * Moved out of `api.ts` (#6333); the rules live in `actions/repos.ts`.
+ * Admin-scoped, since a webhook exfiltrates repo events.
  */
 
-import { createWebhook, deleteWebhook } from "../../actions/repos.ts";
+import { createWebhook, deleteWebhook, pauseWebhook, redeliverWebhook } from "../../actions/repos.ts";
 import { canAdmin } from "../../core/repos.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { getWebhook, listWebhooks, pingWebhook, recentDeliveries } from "../../core/webhooks.ts";
 import { loadRepo, pageParams, slicePage } from "../api.ts";
 import type { Ctx, Handler } from "../context.ts";
 import { holds, weakEtag } from "../etag.ts";
-import { body, json, notFound, requireScope, respondAccess, str } from "../respond.ts";
+import { body, json, notFound, requireScope, respondAccess, str, tryAgain } from "../respond.ts";
 import type { Router } from "../router.ts";
 
 /**
@@ -63,12 +64,34 @@ export function hookRoutes(router: Router<Handler>): void {
     if (!hook) return notFound();
     const pinged = pingWebhook(ctx.app.db, `${ctx.params.owner}/${ctx.params.name}`, hook);
     if (!pinged.ok)
-      return json(
-        { error: "rate_limited", message: `too many pings: try again in ${pinged.error.retryAfter} s` },
-        429,
-        { "retry-after": String(pinged.error.retryAfter) },
-      );
+      return tryAgain("rate_limited", 429, `too many pings: try again in ${pinged.error.retryAfter} s`, pinged.error.retryAfter);
     return json({ id: pinged.value.id }, 202);
+  });
+
+  const setActive = (pause: boolean): Handler => (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    // As for ping: a token short of admin learns nothing, the same 404.
+    if (denied) return denied.status === 403 ? notFound() : denied;
+    const repo = loadRepo(ctx);
+    if (!repo || !canAdmin(ctx.app.db, repo, ctx.auth.user)) return notFound();
+    const done = pauseWebhook(ctx.app, ctx.auth.user, repo, ctx.params.id!, pause);
+    if (!done.ok) return notFound();
+    return json({ id: ctx.params.id!, active: !pause });
+  };
+  router.add("POST", "/api/v1/repos/:owner/:name/hooks/:id/pause", setActive(true));
+  router.add("POST", "/api/v1/repos/:owner/:name/hooks/:id/resume", setActive(false));
+  router.add("POST", "/api/v1/repos/:owner/:name/hooks/:id/deliveries/:delivery/redeliver", (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied.status === 403 ? notFound() : denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const done = redeliverWebhook(ctx.app, ctx.auth.user, repo, ctx.params.id!, ctx.params.delivery!);
+    if (done.ok) return json({ id: ctx.params.delivery!, state: "pending" });
+    if (done.error === "not_failed")
+      return json({ error: "conflict", message: "only a failed delivery can be sent again" }, 409);
+    if (done.error === "sealed")
+      return json({ error: "conflict", message: "this delivery belongs to a sealed report and stays refused" }, 409);
+    return notFound();
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/hooks", async (ctx) => {

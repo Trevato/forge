@@ -6,14 +6,18 @@
 
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
-import { ATTENTION_WORDS, CLAIM_WORDS, claimState, runningWords, spendWords, type ClientRow } from "../../spawn/clients.ts";
+import { ATTENTION_WORDS, firstScreenOf, CLAIM_WORDS, claimState, creditWords, runningWords, spendWords, type ClientRow } from "../../spawn/clients.ts";
 import { useLine } from "../../spawn/usage.ts";
 import { timeAgo } from "../../web/ui.ts";
 import { card } from "../ui/widgets.ts";
 import { drawFacts, runAsync } from "./common.ts";
 import type { PaletteEntry } from "./entries.ts";
 import { clientRows } from "../../spawn/clients.ts";
-import { removeForge, stopForge } from "../../spawn/manage.ts";
+import { diskWords } from "../../spawn/disk_mount.ts";
+import { changeLink, ownCode, removeForge, stopForge } from "../../spawn/manage.ts";
+import { readOwnCode } from "../../spawn/own_code.ts";
+import type { App } from "../../app.ts";
+import { undoable, type LinkInfo } from "../../spawn/claim.ts";
 import { confirmScreen, pickerScreen } from "./common.ts";
 import type { Session } from "../session.ts";
 
@@ -22,10 +26,22 @@ export function forgeLines(rows: readonly ClientRow[]): [string, string][] {
   if (rows.length === 0) return [["", "You have not sent a forge yet"]];
   return rows.flatMap((r): [string, string][] => [[
     r.name,
-    [r.made ? (r.awake === true ? "awake" : "asleep") : null, r.attention === null ? null : ATTENTION_WORDS[r.attention], r.for === null ? null : `for ${r.for}`, CLAIM_WORDS[claimState(r)], runningWords(r), r.nextStep.words, spendWords(r)?.words ?? null, useLine(r.size, r.use), r.lastHeartbeatAt === null ? "no heartbeat yet" : `heartbeat ${timeAgo(r.lastHeartbeatAt)}`]
+    [r.made ? (r.awake === true ? "awake" : "asleep") : null, r.attention === null ? null : ATTENTION_WORDS[r.attention], r.for === null ? null : `for ${r.for}`, CLAIM_WORDS[claimState(r)], linkWords(r.link), runningWords(r), r.stage?.words ?? null, r.nextStep.words, spendWords(r)?.words ?? null, creditWords(r), useLine(r.size, r.use), r.made ? diskWords(r.disk) : null, r.lastHeartbeatAt === null ? "no heartbeat yet" : `heartbeat ${timeAgo(r.lastHeartbeatAt)}`]
       .filter((m): m is string => m !== null)
       .join(" · "),
-  ], ...addressLines(r)]);
+  ], ...firstScreenLines(r), ...addressLines(r)]);
+}
+
+/** "link open", "link ended (undo with u)": what the sender can do about the link, as /forges shows it. */
+function linkWords(link: LinkInfo | null): string | null {
+  if (link === null || link.state === "used") return null;
+  return link.state === "open" ? "link open" : undoable(link) ? "link ended, undo with u" : "link ended";
+}
+
+/** Under a forge not yet claimed: what its person will see first, as /forges says it. */
+function firstScreenLines(r: ClientRow): [string, string][] {
+  const line = firstScreenOf(r);
+  return line === null ? [] : [["", `  ${line}`]];
 }
 
 /** Under a forge that is running, not reachable: each public address and what it answered (#7959), as /forges lists them. */
@@ -42,6 +58,18 @@ export function fitLines(lines: [string, string][], room: number): [string, stri
   return kept;
 }
 
+/** The `o` picker's rows, as /forges's Forge code rows say them: whose code each runs, and its last rollback. */
+export function ownCodePicks(app: App, rows: readonly ClientRow[]): { id: string; label: string; hint: string }[] {
+  return rows
+    .filter((r) => r.made)
+    .map((r) => {
+      const own = readOwnCode(app, r.name);
+      const rb = own.rolledBack;
+      const back = rb === undefined ? "" : ` · rolled back${rb.commit === "" ? "" : ` from ${rb.commit}`}: ${rb.why}`;
+      return { id: r.name, label: r.name, hint: `${own.on ? "its own code" : "this forge's code"}${back}` };
+    });
+}
+
 export function forgesScreen(ctx: Ctx, rows: readonly ClientRow[], session?: Session): Screen {
   const lines = forgeLines(rows);
   // Stop and Remove are the page's buttons, through the same actions (`spawn/manage.ts`).
@@ -50,9 +78,45 @@ export function forgesScreen(ctx: Ctx, rows: readonly ClientRow[], session?: Ses
     if (items.length === 0 || session === undefined) return;
     ctx.push(pickerScreen(ctx, screen, { title, items, onPick: (ids) => { if (ids[0] !== undefined) act(ids[0]); } }));
   };
+  // Revoke and Undo are the page's buttons, through the same action (`changeLink`): an admin's, for the rows that allow it.
+  const changeOne = (act: "revoke" | "undo"): void => {
+    const user = session?.user;
+    if (session === undefined || user?.isAdmin !== true) return;
+    const items = rows
+      .filter((r) => r.link !== null && (act === "revoke" ? r.link.state === "open" : undoable(r.link)))
+      .map((r) => ({ id: r.name, label: r.name, hint: act === "revoke" ? "link open" : "link ended" }));
+    if (items.length === 0) return ctx.toast(act === "revoke" ? "No open link to end" : "No ended link to bring back");
+    ctx.push(
+      pickerScreen(ctx, screen, {
+        title: act === "revoke" ? "End which link?" : "Bring back which link?",
+        items,
+        onPick: (ids) => {
+          if (ids[0] !== undefined) void changeLink(session.app, user.id, ids[0], act).then((done) => ctx.toast(done.says, done.ok ? "success" : "danger"));
+        },
+      }),
+    );
+  };
+  // "Use its own code" and back: the page's switch, through the same action (`ownCode`), an admin's.
+  const switchCode = (): void => {
+    const user = session?.user;
+    if (session === undefined || user?.isAdmin !== true) return;
+    const items = ownCodePicks(session.app, rows);
+    if (items.length === 0) return ctx.toast("No forge to switch");
+    ctx.push(
+      pickerScreen(ctx, screen, {
+        title: "Switch whose code which forge runs?",
+        items,
+        onPick: (ids) => {
+          const name = ids[0];
+          if (name === undefined) return;
+          void ownCode(session.app, name, !readOwnCode(session.app, name).on).then((done) => ctx.toast(done.says, done.ok ? "success" : "danger"));
+        },
+      }),
+    );
+  };
   const screen: Screen = {
     title: "Forges you sent",
-    keys: [binding(["s"], "stop one (sleep now)"), binding(["x"], "remove one"), binding(["esc"], "close")],
+    keys: [binding(["s"], "stop one (sleep now)"), binding(["x"], "remove one"), binding(["l"], "end a link"), binding(["u"], "undo an ended link"), binding(["o"], "own code or this forge's"), binding(["esc"], "close")],
     render(area, s) {
       const c = ctx.theme.c;
       const w = Math.min(100, Math.max(30, area.w - 6));
@@ -66,6 +130,9 @@ export function forgesScreen(ctx: Ctx, rows: readonly ClientRow[], session?: Ses
       if (e.key === "esc" || e.key === "q") ctx.pop();
       else if (e.key === "s" && session !== undefined)
         choose("Stop which forge?", (name) => void stopForge(session.app, name).then((done) => ctx.toast(done.says, done.ok ? "success" : "danger")));
+      else if (e.key === "l") changeOne("revoke");
+      else if (e.key === "u") changeOne("undo");
+      else if (e.key === "o") switchCode();
       else if (e.key === "x" && session !== undefined)
         choose("Remove which forge?", (name) =>
           ctx.push(

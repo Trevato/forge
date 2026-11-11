@@ -62,7 +62,12 @@ repository's machines:
   it does not declare, answers 404.
 - **Where.** tmux (or `/bin/sh` where tmux is not installed) on a real pty,
   in a cell (`apps/contain.ts`) under the machine's memory and CPU ceilings,
-  with the forge's data hidden and no reach beyond the forge. Each writer has
+  with the forge's data hidden. It reaches the forge and, when the machine
+  says `apps` (as `standard` does), the repository's own production and each
+  open pull's preview, each at its exact host and port through the cell's
+  egress proxy (`shellReach`, #9934); a machine with `reach: []` reaches the
+  forge alone. Another repository's app and every other host stay refused,
+  and nothing a machine says un-hides the forge's data. Each writer has
   a directory and home of their own on each machine,
   `<data>/machines/<repo id>/<machine>/<user id>`: one writer's files and
   shell history are never the next's. A forge that cannot hold a cell closes
@@ -82,6 +87,9 @@ repository's machines:
   output. The session ends when the shell exits, after 30 minutes with no
   keystroke, or — checked every 5 seconds and when its last connection
   closes — once its owner is suspended or can no longer write here.
+- **Idle.** A shell with no keystroke and no output for the admin limit
+  `shell_idle_minutes` (default 30, 5 to 1440, set at `/admin/limits`, read at
+  every check) ends as `idle`; one that prints, like a build, is never idle.
 - **Records.** Each session is a row in `machine_sessions` (machine, owner,
   start, end and why: `exit`, `idle`, `stopped`, `revoked`, `failed`). No
   shell outlives its forge, so a row a stop or crash left open is closed as
@@ -134,5 +142,4 @@ forge that cannot hold a cell says so in the status line and closes.
 ## Not done yet (split from #9418)
 
 Disk ceilings are not declared (#9460); the tools are declared, not yet
-installed in an image (the brief reports which are on PATH); the shell's cell does not reach the repository's
-apps even when its machine says `apps`.
+installed in an image (the brief reports which are on PATH).

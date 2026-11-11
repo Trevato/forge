@@ -52,6 +52,40 @@ export const systemLiveJs = /* js */ `
     if ((tag === 'BUTTON' || tag === 'A') && !(t.hasAttribute && t.hasAttribute('data-sort'))) return;
     if (e.key === 'c') pick('cpu'); else if (e.key === 'm') pick('mem');
   });
+  // A region marked data-live-hold keeps the reader's place across a swap: the scroll of
+  // its table box and of itself, and the focused element, found again by a stable key
+  // (the kind and the row's first cell, the tag, its place among that tag in the row).
+  // hold() notes the place and returns what puts it back; it is called after sort(),
+  // so a row the sort moved still gets its focus. When that row is gone (its process
+  // ended), focus falls back to the same control in the first row of the same group,
+  // then to the first of that tag in the region, so it is never dropped to the page.
+  function keyOf(f) {
+    var tr = f.closest('tr'), tb = f.closest('tbody');
+    var same = tr ? Array.prototype.indexOf.call(tr.querySelectorAll(f.tagName), f) : -1;
+    return [tb ? tb.getAttribute('data-kind') : '', tr && tr.cells[0] ? tr.cells[0].textContent : '', f.tagName, same].join('|');
+  }
+  function hold(el) {
+    var box = el.querySelector('.table-scroll'), top = box ? box.scrollTop : 0, left = box ? box.scrollLeft : 0;
+    var own = el.scrollTop, f = document.activeElement;
+    var key = f && f !== el && el.contains(f) ? keyOf(f) : null;
+    return function () {
+      var b = el.querySelector('.table-scroll');
+      if (b) { b.scrollTop = top; b.scrollLeft = left; }
+      el.scrollTop = own;
+      if (key === null) return;
+      var part = key.split('|'), all = el.querySelectorAll(part[2]), group = null, any = null;
+      for (var i = 0; i < all.length; i++) {
+        var c = all[i];
+        if (!c.focus || c.tagName !== part[2]) continue;
+        var k = keyOf(c), p = k.split('|');
+        if (k === key) { c.focus({ preventScroll: true }); return; }
+        if (!group && p[0] === part[0] && p[3] === part[3]) group = c;
+        if (!any) any = c;
+      }
+      var to = group || any;
+      if (to) to.focus({ preventScroll: true });
+    };
+  }
   if (typeof EventSource === 'undefined' || /[?&]pause\\b/.test(location.search)) return;
   var es = new EventSource('/system/stream');
   es.addEventListener('sample', function (e) {
@@ -59,11 +93,15 @@ export const systemLiveJs = /* js */ `
     try { data = JSON.parse(e.data); } catch (_) { return; }
     var regions = data && data.regions;
     if (!regions) return;
+    var restores = [];
     for (var id in regions) {
       var el = document.getElementById(id);
-      if (el && el.innerHTML !== regions[id]) el.innerHTML = regions[id];
+      if (!el || el.innerHTML === regions[id]) continue;
+      if (el.hasAttribute('data-live-hold')) restores.push(hold(el));
+      el.innerHTML = regions[id];
     }
     sort();
+    restores.forEach(function (put) { put(); });
   });
 })();
 `;

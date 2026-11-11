@@ -138,3 +138,53 @@ test("with the real dispatcher, every queued run held is quiet while the pass is
     servers.stop();
   }
 });
+
+test("with the real dispatcher, a run queued behind its issue's running run is held, named, and not a stalled queue", async () => {
+  app.db.query("DELETE FROM run").run();
+  const servers = await serve(app);
+  const fake = join(dataDir, "fake-claude-2");
+  writeFileSync(fake, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi\nexit 1\n`);
+  chmodSync(fake, 0o755);
+  // The previous test shut the valve; open it fully, so only the issue holds the sibling.
+  app.db.query("DELETE FROM flow_valve WHERE repo_id = ?1").run(repoId);
+  const issueId = crypto.randomUUID();
+  app.db
+    .query("INSERT INTO issue (id, repo_id, number, kind, title, body, author_id, state, created_at) VALUES (?1, ?2, 7, 'issue', 'T', '', ?3, 'open', ?4)")
+    .run(issueId, repoId, ownerId, new Date().toISOString());
+  const running = createRun(app.db, { repoId, kind: "agent", issueId });
+  // An unrelated run ahead of the sibling: the pass stops at it (no slot) and must still mark the sibling behind it.
+  const ahead = createRun(app.db, { repoId, kind: "agent" });
+  const sibling = createRun(app.db, { repoId, kind: "agent", issueId });
+  const hourAgo = new Date(Date.now() - 2 * QUEUE_WAIT_MAX_MS).toISOString();
+  const earlier = new Date(Date.now() - 3 * QUEUE_WAIT_MAX_MS).toISOString();
+  app.db.query("UPDATE run SET created_at = ?1 WHERE id = ?2").run(hourAgo, sibling.id);
+  app.db.query("UPDATE run SET created_at = ?1 WHERE id = ?2").run(earlier, ahead.id);
+  app.db
+    .query("UPDATE run SET state = 'running', started_at = ?1, heartbeat_at = ?1, created_at = ?1 WHERE id = ?2")
+    .run(new Date().toISOString(), running.id);
+  const crew = await startCrew(app, {
+    forgeUrl: servers.url,
+    localUrl: servers.url,
+    binary: fake,
+    concurrency: 1,
+    budgetUsd: 1,
+    runTimeoutMs: 60_000,
+    // No tick inside the test: the pass read below is the one startCrew runs
+    // before it returns, so nothing on a timer (the autonomy sweep, a slow
+    // shard) can race it.
+    tickMs: 600_000,
+  });
+  try {
+    // Every slot is taken (1 of 1), and the sibling is still marked.
+    expect(heldRuns(app.db).get(sibling.id)).toBe("issue");
+    await crew.stop();
+    const now = Date.now();
+    // The unrelated run waits for a slot and is the queue; the sibling is named, not counted.
+    const sentence = agentQueue(now)?.sentence ?? "";
+    expect(sentence).toContain("1 queued, 1 of 1 slots running");
+    expect(sentence).toContain("held on purpose: 1 by its own issue's run still going.");
+  } finally {
+    await crew.stop();
+    servers.stop();
+  }
+});

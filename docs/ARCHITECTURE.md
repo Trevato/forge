@@ -14,7 +14,12 @@ keeps its own SQLite file. Forgejo is the reference for how a forge should behav
 1. **The repository holds truth for code.** Git is the durable log. The database
    indexes git, and it is the only record of what git does not hold: issues,
    comments, accounts. Boot reconciliation (`src/core/reconcile.ts`) refreshes
-   hook stubs today. It does not yet repair index rows from git.
+   hook stubs, then moves every open same-repository pull whose recorded head
+   differs from its branch's ref to that ref, through the call a push makes
+   (`trackPullHead`) and with a `push` event, so a forge that stopped between
+   a push and its index write comes back right. A missing branch leaves the
+   row and logs a line. Pulls from forks, and merged branches whose pull says
+   open, are not repaired yet.
 2. **One process, one file of state.** A single Bun process serves git, web,
    and API. SQLite is the only database. Everything a forge instance _is_ lives
    in one data directory you can tar up and move.
@@ -149,7 +154,9 @@ curate, never implement.
   `GIT_CONFIG_SYSTEM=/dev/null`, `GIT_TERMINAL_PROMPT=0`, explicit
   `GIT_PROTOCOL` only); every ref/path argument validated (no `-` prefix, no
   `..`, no absolute paths); wall-clock timeouts with process kill on every
-  spawn; `--` separators everywhere git accepts them.
+  spawn; `--` separators everywhere git accepts them. Every file under `src/`
+  that starts a process is listed in `test/spawn-sites.test.ts` with why its
+  arguments are fixed or validated; a new or vanished site fails that test.
 
 ## Data & state model
 
@@ -195,8 +202,9 @@ each name, #783) — they only add, so it serves as it did.
 
 State transitions use compare-and-swap (`UPDATE … WHERE state = ?`), and every
 transition writes its event row in the same transaction. On boot, a
-reconciliation sweep repairs the index from git (a merged branch whose pull row
-says "open" gets healed from the ref state, not trusted).
+reconciliation sweep repairs the index from git: an open pull's recorded head
+is healed from its branch's ref, not trusted (principle 1 says what is not
+healed yet).
 
 **The one exception to "the database is derived."** A connected origin's
 access token is third-party state: it cannot be rebuilt from the bare repos,
@@ -529,6 +537,8 @@ the dialect details, including the one that bites — GitHub takes the verb
 
 `docs/APPS.md` is the contract; this is why it is shaped as it is.
 
+An adapter, an app that pulls records from an external system on a schedule, answers the contract in [`docs/ADAPTERS.md`](ADAPTERS.md).
+
 An **app** is a repository that runs, on the forge's own port, by `Host`:
 `<slug>.<domain>` is production (the default branch), `<slug>--<n>.<domain>`
 the preview of pull `n`. The runtime (`apps/runtime.ts`) holds every
@@ -573,6 +583,14 @@ refusals make the guardrail mechanical: the pre-receive hook refuses an
 agent's push to the default branch whether or not it is protected, and
 `mergePull` refuses an agent actor. Everything the agent can do, it does
 through a pull a person merges.
+
+Which seat each agent holds on a repository is read in one place,
+`crewSeats` (`core/agents.ts`), which `listCrewRoles`, `crewWithRole` and so
+the reviewer routing all read. On an org's repository the crew comes from
+its write and admin teams: a `team_member.role` of planner, builder or
+reviewer seats that agent, and `member` (the default, and every membership
+from before roles) is access only. When no team seats an agent, the
+repository's own `repo_crew` roster is the crew, as it always was (#571).
 
 Work reaches an agent off the outbox with a sweep behind it, like every
 other consumer: an assignment starts a run; a person's comment, verdict, or

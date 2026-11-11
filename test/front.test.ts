@@ -559,7 +559,8 @@ describe("the front page", () => {
     expect(closed).toContain(">Suggest a change<");
     expect(closed).not.toContain(">Help build<");
     expect(closed).toContain('href="/signup"');
-    expect(closed).toContain("New accounts on this forge are by invitation.");
+    expect(closed).not.toContain("by invitation");
+    expect(closed).not.toContain("not taking new accounts");
     changeSignup(app, admin, "open");
     expect((await put(adminToken, { pinned: [], hidden: [] })).status).toBe(200);
   });

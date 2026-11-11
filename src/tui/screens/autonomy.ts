@@ -15,7 +15,7 @@
  */
 
 import { updateRepoSettings } from "../../actions/repos.ts";
-import { POLISH_SHARE_MAX, validPolishShare } from "../../crew/small_share.ts";
+import { POLISH_SHARE_MAX, validPolishShare } from "../../crew/polish_share.ts";
 import { seatSlotsSaid, setSeatSlots } from "../../actions/seat_slots.ts";
 import { checkSeatSlots, seatSlotsOf, seatSlotsWords } from "../../crew/seat_slots.ts";
 import type { CrewRole } from "../../core/agents.ts";

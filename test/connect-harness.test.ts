@@ -16,7 +16,7 @@ let base: string;
 
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "connect-"));
-  app = createApp({ dataDir: dir, port: 0 });
+  app = createApp({ dataDir: dir, port: 0, forgeRepo: "trevato/forge" });
   servers = await serve(app);
   base = servers.url;
 });
@@ -27,7 +27,7 @@ afterAll(async () => {
 });
 
 const value = (html: string, id: string) =>
-  new RegExp(`id="${id}"[^>]*value="([^"]*)"`).exec(html)?.[1]?.replaceAll("&lt;", "<").replaceAll("&gt;", ">") ?? "";
+  new RegExp(`id="${id}"[^>]*value="([^"]*)"`).exec(html)?.[1]?.replaceAll("&amp;", "&").replaceAll("&lt;", "<").replaceAll("&gt;", ">") ?? "";
 
 test("lines use the forge's address, a placeholder, then the minted token once", async () => {
   const signup = await fetch(`${base}/signup`, {
@@ -41,7 +41,7 @@ test("lines use the forge's address, a placeholder, then the minted token once",
   const before = await (await fetch(`${base}/settings/tokens`, { headers: { cookie } })).text();
   expect(before).toContain("Connect your harness");
   expect(value(before, "connect-claude")).toBe(`FORGE_URL=${url} FORGE_TOKEN=<token> claude --plugin-dir plugins/claude-code`);
-  expect(value(before, "connect-opencode")).toContain(`FORGE_URL=${url} FORGE_TOKEN=<token> opencode`);
+  expect(value(before, "connect-opencode")).toBe(`mkdir -p .opencode/plugin && curl -fsSo .opencode/plugin/forge.ts ${url}/plugins/opencode/forge.ts && FORGE_URL=${url} FORGE_TOKEN=<token> opencode`);
 
   const made = await fetch(`${base}/settings/tokens`, {
     method: "POST",
@@ -58,4 +58,37 @@ test("lines use the forge's address, a placeholder, then the minted token once",
 
   const later = await (await fetch(`${base}/settings/tokens`, { headers: { cookie } })).text();
   expect(later).not.toContain(token);
+});
+
+test("the marketplace lines show only while the forge's plugin repository is public, and are escaped", async () => {
+  const { createRepo: initRepo } = await import("../src/core/repos.ts");
+  const { createUser } = await import("../src/core/users.ts");
+  const cookie = ((await fetch(`${base}/signin`, { method: "POST", body: new URLSearchParams({ username: "ada", password: "connect-password" }), redirect: "manual" })).headers.get("set-cookie") ?? "").split(";")[0]!;
+  const get = async () => (await fetch(`${base}/settings/tokens`, { headers: { cookie } })).text();
+  const url = (app.config.url ?? base).replace(/\/+$/, "");
+  expect(value(await get(), "connect-claude-install")).toBe(`claude plugin marketplace add ${url}/plugins/claude-code/marketplace.json && claude plugin install forge@forge`); // no own source: the upstream's
+  expect(await get()).toContain('id="connect-claude"');
+
+  const owner = await createUser(app.db, { origin: "seed", trusted: true, username: "trevato", email: "t@f.dev", password: "connect-password" });
+  if (!owner.ok) throw new Error(owner.error);
+  const made = await initRepo(app.db, app.reposRoot, { ownerId: owner.value.id, name: "forge", visibility: "private", description: "" });
+  expect(made).toMatchObject({ ok: true });
+  expect(value(await get(), "connect-claude-install")).toBe(`claude plugin marketplace add ${url}/plugins/claude-code/marketplace.json && claude plugin install forge@forge`); // private: the upstream's, which a stranger can run
+  app.db.query("UPDATE repo SET visibility = 'public' WHERE name = 'forge'").run();
+
+  const page = await get();
+  expect(value(page, "connect-claude-install")).toBe(`claude plugin marketplace add ${url}/plugins/claude-code/marketplace.json && claude plugin install forge@forge`);
+  expect(value(page, "connect-claude")).toContain("--plugin-dir plugins/claude-code");
+  expect(value(page, "connect-opencode")).toContain(`FORGE_URL=${url}`);
+
+  // A hostile public address is escaped in every attribute and never lands raw.
+  const was = app.config.url;
+  Object.assign(app.config, { url: 'http://h.test/"><script>x</script>' });
+  try {
+    const hostile = await get();
+    expect(hostile).not.toContain("<script>x</script>");
+    expect(hostile).toContain("marketplace add http://h.test/&quot;&gt;&lt;script&gt;x&lt;/script&gt;/plugins/claude-code/marketplace.json");
+  } finally {
+    Object.assign(app.config, { url: was });
+  }
 });

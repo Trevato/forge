@@ -10,6 +10,7 @@
  * that was never meant to be confirmed.
  */
 
+import { DETACH_STAYS, DETACH_STOPS } from "../../actions/detach_words.ts";
 import { DISCONNECT_DETAIL } from "../../actions/origin_words.ts";
 import { strangerCodeSearch } from "../../http/strangers.ts";
 import { search } from "../../actions/search.ts";
@@ -17,11 +18,15 @@ import { envsFor } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { openLabelCounts } from "../../core/issues.ts";
 import { getPull } from "../../core/pulls.ts";
-import { canAdmin, canWrite, enterableApps, getRepo } from "../../core/repos.ts";
+import { canAdmin, canWrite, enterableApps, forkParentFor, getRepo } from "../../core/repos.ts";
+import { followModeWords, followSwitchPreview } from "../../actions/follow_words.ts";
+import type { ForkFollowMode } from "../../core/fork_follow.ts";
 import { getMirrorTarget } from "../../core/migrate_mirror.ts";
 import {
   cleanQuery,
   CODE_BUDGET_MS,
+  CODE_TOO_SHORT,
+  greppable,
   searchKind,
   type CodeHit,
   type IssueHit,
@@ -339,11 +344,11 @@ async function find(
 ): Promise<{ found: SearchResults; busy?: number }> {
   // A stranger's code search takes a slot of its own (`http/strangers.ts`);
   // refused, the page still answers with everything but the code, and says so.
-  // The same test as the API's: a blank or stop-word query greps nothing.
+  // The same test as the API's: a blank or one-letter query greps nothing.
   const greps =
     ctx.auth.user === undefined &&
     (a.kind === "code" || a.kind === "all") &&
-    cleanQuery(a.query) !== "";
+    greppable(a.query);
   const held = greps
     ? timePhase(ctx.request, "gate", () => strangerCodeSearch(ctx.app, ctx.request))
     : undefined;
@@ -398,7 +403,7 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
       type="search"
       name="q"
       value="${a.query}"
-      placeholder="Search apps, repositories, issues, pull requests and code"
+      placeholder="Apps, repos, issues, pulls, code"
       aria-label="Search"
       autofocus
       data-search-input
@@ -419,8 +424,7 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
       ctx,
       title: "Search",
       styleCss: SEARCH_CSS,
-      body: html`<div data-search>${pageHead("Search")} ${form}
-      <p class="muted">Search this forge: an app or repository by name or description, a word from what was told or changed, or a line of the code itself — across everything you can see, here and on every origin you have connected.</p>
+      body: html`<div data-search data-palette-auto>${pageHead("Search")} ${form}
       </div>`,
     });
     notePhase(ctx.request, "render", performance.now() - rendering);
@@ -517,6 +521,10 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
       </p>`,
   )}
   ${when(
+    (a.kind === "code" || a.kind === "all") && !greppable(a.query),
+    () => html`<p class="muted small" role="status" data-code-short>${CODE_TOO_SHORT}</p>`,
+  )}
+  ${when(
     found.codeSkipped,
     () =>
       html`<p class="muted small" role="status" data-code-skipped>
@@ -550,6 +558,8 @@ interface Destructive {
   detail: string;
   /** A phrase the visitor must type back before the button will work. */
   phrase: string;
+  /** A form value the settings page typed that the confirmed POST needs back. */
+  carries?: string;
 }
 
 /**
@@ -562,6 +572,16 @@ const DESTRUCTIVE: {
   describe: (m: RegExpMatchArray, ctx: Ctx) => Destructive;
 }[] = [
   {
+    pattern: /^\/([^/]+)\/([^/]+)\/archive$/,
+    describe: (m) => ({
+      verb: "Archive",
+      title: `Archive ${m[1]}/${m[2]}?`,
+      detail:
+        "Its process stops and it leaves home and the apps list. Its data and git stay, its address still answers, and Restore on the Archived list starts it again.",
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/delete$/,
     describe: (m) => ({
       verb: DELETE_REPO,
@@ -572,12 +592,22 @@ const DESTRUCTIVE: {
     }),
   },
   {
+    pattern: /^\/([^/]+)\/([^/]+)\/settings\/transfer$/,
+    describe: (m) => ({
+      verb: "Move",
+      title: `Move ${m[1]}/${m[2]} to another owner?`,
+      detail:
+        "The repository, its issues and pulls move to the new owner and its address changes; the old address redirects. You must be able to create repositories under the new owner.",
+      phrase: "",
+      carries: "owner",
+    }),
+  },
+  {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/detach$/,
     describe: (m) => ({
       verb: "Detach from parent",
       title: `Detach ${m[1]}/${m[2]} from its parent?`,
-      detail:
-        "Every object it borrows is copied into its own store and the link is dropped: no updates to take, nothing to propose upstream. Branches, history, issues and pulls stay. There is no undo.",
+      detail: `Every object it borrows is copied into its own store and the link is dropped. ${DETACH_STAYS} ${DETACH_STOPS} It is recorded in this repository's history. There is no undo.`,
       phrase: "",
     }),
   },
@@ -798,6 +828,15 @@ const DESTRUCTIVE: {
     }),
   },
   {
+    pattern: /^\/([^/]+)\/([^/]+)\/variants\/([a-z0-9]{1,16})\/retire$/,
+    describe: (m) => ({
+      verb: "Retire",
+      title: `Retire the ${m[3]} variant?`,
+      detail: "Its environment stops and its data is removed. The branch and its variant.json stay.",
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/settings\/crew\/([^/]+)\/delete$/,
     describe: (m) => ({
       verb: "Retire agent",
@@ -851,6 +890,44 @@ const DESTRUCTIVE: {
           "This opens a new change that undoes exactly what it shipped — nothing changes until a person ships that new change, same as any other.",
         phrase: "",
       };
+    },
+  },
+  {
+    pattern: /^\/pinned\/([a-z][a-z0-9-]*)\/(update|rollback|check)$/,
+    describe: (m) => {
+      const name = m[1]!;
+      if (m[2] === "update")
+        return {
+          verb: "Update",
+          title: `Update ${name}?`,
+          detail: "The forge is replaced with the version you named. It changes only when you press this, and the change is recorded with your name.",
+          phrase: "",
+          carries: "version",
+        };
+      if (m[2] === "rollback")
+        return {
+          verb: "Roll back",
+          title: `Roll ${name} back?`,
+          detail: "The forge is replaced with the version the latest change replaced. The change is recorded with your name.",
+          phrase: "",
+        };
+      return {
+        verb: "Check",
+        title: `Check ${name}?`,
+        detail: "The forge reads its droplet's address back and asks the forge there for its front page. Nothing is changed but what it says about itself.",
+        phrase: "",
+      };
+    },
+  },
+  {
+    pattern: /^\/([^/]+)\/([^/]+)\/following\/mode\/(tell-me|take-updates|dont-follow)$/,
+    describe: (m, ctx) => {
+      const mode = m[3] as ForkFollowMode;
+      const repo = getRepo(ctx.app.db, m[1]!, m[2]!);
+      const parent = repo && canWrite(ctx.app.db, repo, ctx.auth.user) ? forkParentFor(ctx.app.db, repo, ctx.auth.user) : undefined;
+      const upstream = parent === undefined ? "its parent" : `${parent.ownerName}/${parent.name}`;
+      const words = followModeWords(mode, upstream);
+      return { verb: "Switch", title: `${words.line}?`, detail: followSwitchPreview(mode, upstream), phrase: "" };
     },
   },
   {
@@ -912,7 +989,8 @@ function confirmBody(ctx: Ctx): Response {
   // link therefore cannot invent reassuring words for a dangerous button, and
   // cannot aim the form at an endpoint that was never meant for it.
   if (!known) return notFoundPage(ctx);
-  const { verb, title, detail, phrase } = known;
+  const { verb, title, detail, phrase, carries } = known;
+  const carried = carries === undefined ? "" : (params.get(carries) ?? "").slice(0, 200);
 
   const referer = ctx.request.headers.get("referer");
   let back = "/";
@@ -926,6 +1004,7 @@ function confirmBody(ctx: Ctx): Response {
     ${pageHead(title)}
     <p>${detail}</p>
     <form method="post" action="${to}" class="mt">
+      ${carries === undefined ? null : html`<input type="hidden" name="${carries}" value="${carried}" />`}
       ${when(phrase !== "", () =>
         formField({
           label: `Type ${phrase} to continue`,

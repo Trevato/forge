@@ -35,8 +35,8 @@ import {
  *
  * The device grant shows the code and where to type it; the code flow shows
  * one link to the instance. Both work with no JavaScript: the page carries a
- * "check again" form, and reloading it re-polls. With script, the same form
- * is submitted for you every couple of seconds.
+ * "check again" form, and reloading it re-polls. With script, the page listens on
+ * a stream the forge holds open and reloads when the flow settles.
  */
 export function originFlowPage(ctx: Ctx): Response {
   const denied = accountOnly(ctx);
@@ -85,10 +85,10 @@ export function originFlowPage(ctx: Ctx): Response {
           ${authorize === undefined
             ? html`<p>
                   This connect cannot be continued from here — the authorization
-                  link was lost. Start it again from Origins.
+                  link was lost. Start it again from Connected accounts.
                 </p>
                 <div class="bar mt">
-                  ${btn("Back to origins", {
+                  ${btn("Back to connected accounts", {
                     href: "/settings/origins",
                     variant: "primary",
                   })}
@@ -105,9 +105,7 @@ export function originFlowPage(ctx: Ctx): Response {
     class="bar mt"
     method="post"
     action="${pollAction}"
-    data-poll="${flow.flow === "device"
-      ? String(Math.max(1, flow.intervalSecs))
-      : "0"}"
+    ${flow.flow === "device" ? html`data-stream="/settings/origins/flows/${flow.id}/stream"` : ""}
   >
     <span class="muted small"
       >Waiting for you to authorize

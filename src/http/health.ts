@@ -87,8 +87,20 @@ export function startDraining(log: Log, why: string, fields: Record<string, numb
  * Liveness: `ping` runs one trivial query against the database. However
  * long it takes, an answer is 200; only a throw is 503, logged when it
  * starts and when it ends.
+ *
+ * Given `loopLagMs` (the caller asked for JSON), the 200 is
+ * `{"ok":true,"loopLagMs":n}`: the worst event-loop lag of the last 10 s
+ * (`perf/loop_worst.ts`, #10288), with `loopWorstWhat`: the route pattern,
+ * `job:<name>` or `unknown` the worst stall over 200 ms in those 10 s was
+ * blamed on, null when there was none (`perf/stall_blame.ts`, #11069).
+ * Otherwise it stays the plain `ok` a probe and a stranger hear (#2917).
  */
-export function liveResponse(ping: () => unknown, log: Log): Response {
+export function liveResponse(
+  ping: () => unknown,
+  log: Log,
+  loopLagMs?: number,
+  loopWorstWhat: string | null = null,
+): Response {
   try {
     ping();
   } catch (error) {
@@ -97,10 +109,15 @@ export function liveResponse(ping: () => unknown, log: Log): Response {
         error: error instanceof Error ? error.message : String(error),
       });
     databaseDown = true;
-    return new Response("database", { status: 503 });
+    return new Response("database", { status: 503, headers: { "retry-after": "5" } });
   }
   if (databaseDown) log.info("forge alive again: the database answers");
   databaseDown = false;
+  if (loopLagMs !== undefined && Number.isFinite(loopLagMs))
+    return Response.json(
+      { ok: true, loopLagMs: Math.round(loopLagMs * 10) / 10, loopWorstWhat },
+      { status: 200 },
+    );
   return new Response("ok", { status: 200 });
 }
 
@@ -135,9 +152,9 @@ export function drainLingerMs(raw: string | undefined): number | null {
  * drains.
  */
 export function readyResponse(now = Date.now()): Response {
-  if (health.draining) return new Response("draining", { status: 503 });
+  if (health.draining) return new Response("draining", { status: 503, headers: { "retry-after": "5" } });
   const waiting = stillStarting(now);
   return waiting > 0
-    ? new Response(`starting ${waiting} app${waiting === 1 ? "" : "s"}`, { status: 503 })
+    ? new Response(`starting ${waiting} app${waiting === 1 ? "" : "s"}`, { status: 503, headers: { "retry-after": "5" } })
     : new Response("ok", { status: 200 });
 }

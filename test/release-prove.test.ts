@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { lastProof, proofDue, proofNeed, proveRelease, proveRunning, retryAfter, RETRY_MS, startProving, type Proof } from "../src/release/prove.ts";
+import { GIVE_UP_MS, isNewer, lastProof, proofDue, proofNeed, proveRelease, proveRunning, QUICK_RETRIES, retryAfter, RETRY_MS, startProving, type Proof, type ProveOptions } from "../src/release/prove.ts";
 import { owned } from "../src/crew/incidents.ts";
 
 const CSS = '<html><link rel="stylesheet" href="/a.css"></html>';
@@ -103,6 +103,20 @@ describe("proving a release", () => {
     expect(proofNeed(dir)).toBeUndefined();
   });
 
+  test("each ask of the public URL is uncacheable (#10184)", async () => {
+    const seen: { url: string; cc: string | null }[] = [];
+    const { fake } = site("1.0.0");
+    const spy = (async (input: string | URL, init?: RequestInit) => {
+      if (new URL(String(input)).pathname === "/healthz") seen.push({ url: String(input), cc: new Headers(init?.headers).get("cache-control") });
+      return fake(input, init);
+    }) as unknown as typeof fetch;
+    await run("1.0.0", spy);
+    expect(seen.length).toBeGreaterThan(0);
+    const polls = seen.filter((h) => h.url.includes("?proof="));
+    expect(polls.length).toBeGreaterThan(0);
+    expect(polls.every((h) => h.cc === "no-cache")).toBe(true);
+  });
+
   test("it gives up after 10 minutes as unproven", async () => {
     let t = 0;
     const old = site("0.9.0"); // the old version keeps answering
@@ -110,8 +124,107 @@ describe("proving a release", () => {
     expect(p?.ok).toBe(false);
     expect(t).toBeLessThanOrEqual(10 * 60_000);
     expect(t).toBeGreaterThan(9 * 60_000);
+    expect(p?.slow).toBe(true); // a version not yet answering is retried in minutes, not backed off (#9942)
     expect(proofNeed(dir)?.sentence).toStartWith("Release 1.0.0 is unproven: the public URL never answered as 1.0.0. It is proven again at ");
     expect(old.hits.every((h) => h === "/healthz")).toBe(true);
+  });
+
+  test("every give-up is retried after one tick, and a retry polls only ten seconds (#10222)", async () => {
+    expect(retryAfter(1, true, true)).toBe(60_000);
+    expect(retryAfter(2, true, true)).toBe(60_000);
+    expect(retryAfter(QUICK_RETRIES, true, true)).toBe(60_000);
+    // the cap: past QUICK_RETRIES give-ups the plain doubling takes over
+    expect(retryAfter(QUICK_RETRIES + 1, true, true)).toBe(retryAfter(QUICK_RETRIES + 1, true));
+    expect(retryAfter(QUICK_RETRIES + 1, true, true)).toBeGreaterThan(60_000);
+    expect(retryAfter(40, false, true)).toBe(60 * 60_000);
+    let t = 0;
+    const old = site("0.9.0");
+    const sleep = async (ms: number) => void (t += ms);
+    const first = await run("1.0.0", old.fake, { now: () => t, sleep });
+    t = Date.parse(first!.at) + 60_000;
+    const start = t;
+    const firstHits = old.hits.length;
+    expect(firstHits).toBeGreaterThan(250); // a first attempt polls the full ten minutes
+    const second = await run("1.0.0", old.fake, { now: () => t, sleep });
+    expect(second?.failures).toBe(2);
+    expect(t - start).toBeLessThanOrEqual(10_000);
+    expect(old.hits.length - firstHits).toBeLessThanOrEqual(10_000 / 2_000 + 1); // a retry polls about RETRY_POLL_MS worth
+    t += 60_000;
+    expect(proofDue(second, "1.0.0", t)).toBe(true);
+    expect(retryAfter(4, true)).toBe(4 * 60_000);
+  });
+
+  test("a silent public URL keeps gaveUp, and due and the card both wait one tick (#10168)", async () => {
+    let t = 0;
+    const p = await run("1.0.0", site("0.9.0").fake, { now: () => t, sleep: async (ms: number) => void (t += ms) });
+    expect(p?.gaveUp).toBe(true);
+    expect(lastProof(dir)?.gaveUp).toBe(true);
+    const at = Date.parse(p!.at);
+    expect(proofDue(p, "1.0.0", at + 59_000)).toBe(false);
+    expect(proofDue(p, "1.0.0", at + 60_000)).toBe(true);
+    const when = new Date(at + 60_000).toISOString().slice(11, 16);
+    expect(proofNeed(dir)?.sentence).toEndWith(`It is proven again at ${when} UTC.`);
+    // a smoke failure is not a give-up
+    const smoke = await run("1.0.1", site("1.0.1", { "/": () => new Response("x", { status: 500 }) }).fake);
+    expect(smoke?.gaveUp).toBeUndefined();
+  });
+
+  test("it keeps no failure when a newer release answers instead (#10138)", async () => {
+    let t = 0;
+    const p = await run("1.0.0", site("1.0.1").fake, { now: () => t, sleep: async (ms: number) => void (t += ms) });
+    expect(p).toBeUndefined();
+    expect(proofNeed(dir)).toBeUndefined();
+    const again = site("1.0.1");
+    expect(await run("1.0.0", again.fake, { now: () => t, sleep: async (ms: number) => void (t += ms) })).toBeUndefined();
+    expect(again.hits).toEqual([]); // a replaced process does not poll again
+  });
+
+  test("a process still running after a newer release answered proves its version again (#10248)", async () => {
+    let t = 0;
+    const clock = { now: () => t, sleep: async (ms: number) => void (t += ms) };
+    // 1.4.0 failed once, then a newer release answered for a moment and was undone.
+    expect((await run("1.4.0", site("1.3.0").fake, clock))?.ok).toBe(false);
+    t += 60_000;
+    expect(await run("1.4.0", site("1.4.1").fake, clock)).toBeUndefined();
+    expect(proofNeed(dir, "1.4.0")).toBeDefined();
+    const soon = site("1.4.0");
+    t += GIVE_UP_MS - 60_000;
+    expect(await run("1.4.0", soon.fake, clock)).toBeUndefined();
+    expect(soon.hits).toEqual([]);
+    t += 60_000;
+    const later = site("1.4.0");
+    expect((await run("1.4.0", later.fake, clock))?.ok).toBe(true);
+    expect(later.hits.length).toBeGreaterThan(0);
+    expect(proofNeed(dir, "1.4.0")).toBeUndefined();
+  });
+
+  test("a failure kept for another version than the running one is no card (#10248)", async () => {
+    let t = 0;
+    await run("1.0.2", site("1.0.0").fake, { now: () => t, sleep: async (ms: number) => void (t += ms) });
+    expect(proofNeed(dir)).toBeDefined();
+    expect(proofNeed(dir, "1.0.2")).toBeDefined();
+    expect(proofNeed(dir, "1.0.3")).toBeUndefined();
+    expect(proofNeed(dir, "dev")).toBeDefined();
+  });
+
+  test("an older or non-numeric answer is still a kept failure (#10138)", async () => {
+    for (const [mine, answered] of [["1.0.1", "1.0.0"], ["1.0.2", "dev"]] as const) {
+      let t = 0;
+      const p = await run(mine, site(answered).fake, { now: () => t, sleep: async (ms: number) => void (t += ms) });
+      expect(p?.ok).toBe(false);
+      expect(proofNeed(dir)?.sentence).toContain(`never answered as ${mine}`);
+    }
+  });
+
+  test("isNewer compares dotted numbers", () => {
+    expect(isNewer("1.0.1", "1.0.0")).toBe(true);
+    expect(isNewer("1.0.0", "1.0.0")).toBe(false);
+    expect(isNewer("1.0.0", "1.0.1")).toBe(false);
+    expect(isNewer("1.0.1", "1.0")).toBe(true);
+    expect(isNewer("1.0", "1.0.0")).toBe(false);
+    expect(isNewer("0.7.472", "0.7.471")).toBe(true);
+    expect(isNewer("dev", "1.0.0")).toBe(false);
+    expect(isNewer("", "1.0.0")).toBe(false);
   });
 
   test("a failed version is proven again after RETRY_MS, and a pass clears the card (#7622)", async () => {
@@ -208,13 +321,62 @@ describe("proving a release", () => {
     expect(queued).toEqual([]);
   });
 
+  test("startProving aborts a hung proof, logs it, and never runs two proofs at once (#10313)", async () => {
+    const queued: { fn: () => void; ms: number }[] = [];
+    const schedule = (fn: () => void, ms: number) => {
+      queued.push({ fn, ms });
+      return () => {};
+    };
+    const warned: string[] = [];
+    const log = { warn: (m: string) => void warned.push(m) };
+    let calls = 0, live = 0, most = 0;
+    let release: (() => void) | undefined;
+    const signals: AbortSignal[] = [];
+    const prove = (o: ProveOptions) => {
+      calls++;
+      signals.push(o.signal!);
+      live++;
+      most = Math.max(most, live);
+      if (calls === 1) return new Promise<Proof | undefined>((resolve) => (release = () => ((live--), resolve(undefined)))); // ignores the abort
+      live--;
+      return Promise.reject(new Error("boom"));
+    };
+    const stop = startProving({ dataDir: dir, version: "4.2.0", url: "https://forge.test" }, () => {}, 60_000, schedule, prove, 20, log);
+    await Bun.sleep(60);
+    expect(signals[0]!.aborted).toBe(true);
+    expect(warned).toEqual(["release proof hung"]);
+    expect(queued.map((q) => q.ms)).toEqual([60_000]);
+    queued.shift()!.fn(); // the hung one has not settled: no second proof
+    await Bun.sleep(5);
+    expect(calls).toBe(1);
+    expect(warned).toEqual(["release proof hung", "release proof still running"]);
+    release!();
+    await Bun.sleep(5);
+    queued.shift()!.fn();
+    await Bun.sleep(10);
+    expect(calls).toBe(2);
+    expect(warned.at(-1)).toBe("release proof failed");
+    expect(most).toBe(1);
+    stop();
+  });
+
+  test("proveRelease aborted mid-wait stops asking and keeps no verdict (#10313)", async () => {
+    const abort = new AbortController();
+    const fetcher = ((_u: unknown, init?: RequestInit) =>
+      new Promise((_r, reject) => init?.signal?.addEventListener("abort", () => reject(new Error("aborted"))))) as unknown as typeof fetch;
+    setTimeout(() => abort.abort(), 20);
+    const run = proveRelease({ dataDir: dir, version: "9.9.9", url: "https://forge.test", fetch: fetcher, signal: abort.signal });
+    await expect(run).rejects.toThrow("aborted");
+    expect(lastProof(dir)).toBeUndefined();
+  });
+
   test("proveRunning, what main.ts boots, logs each verdict that ran as one release proof line", async () => {
     const lines: [string, unknown][] = [];
     const queued: (() => void)[] = [];
     const results: (Proof | undefined)[] = [{ version: "4.6.0", at: "a", ok: false, failure: "slow" }, undefined, { version: "4.6.0", at: "b", ok: true }];
     const stop = proveRunning(
       { dataDir: dir, version: "4.6.0", url: "https://forge.test" },
-      { info: (msg, fields) => void lines.push([msg, fields]) },
+      { info: (msg, fields) => void lines.push([msg, fields]), warn: () => {} },
       60_000,
       (fn) => (queued.push(fn), () => {}),
       async () => results.shift(),

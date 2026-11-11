@@ -11,7 +11,7 @@ import { isEnvName, type EnvName } from "../apps/data.ts";
 import type { Chips } from "../core/feed_chips.ts";
 import { listDecidedIn } from "../core/decisions.ts";
 import { audienceFilter } from "../core/event_audience.ts";
-import { listEventsVisibleTo, type ForgeEvent } from "../core/events.ts";
+import { listEventsVisibleTo, listTeamEventsFor, type ForgeEvent } from "../core/events.ts";
 import { getReview } from "../core/reviews.ts";
 import { commentAnchor, getIssuesByIds, getIssuesByNumbers, numberKey, type Issue } from "../core/issues.ts";
 import {
@@ -21,6 +21,7 @@ import {
 } from "../core/origins.ts";
 import { joinMany, toldBy, type Pull } from "../core/pulls.ts";
 import {
+  canRead,
   canSeeOwnerFacts,
   onCrew,
   getReposByIds,
@@ -126,6 +127,23 @@ const heardCache = new WeakMap<Database, Stamped<Heard>>();
  * count (both read it under the same write stamp). A quiet run older than the
  * window stays a post, so none vanishes uncounted.
  */
+/**
+ * The team waits told to this viewer (#10164) from repositories they read
+ * that the feed's window leaves out — a private repository whose crew they
+ * are on — by the same `canRead` the pull's page asks, then the audience.
+ */
+function teamWaitsHeard(db: Database, viewer: User, heard: readonly ForgeEvent[]): ForgeEvent[] {
+  const seen = new Set(heard.map((e) => e.id));
+  const fresh = listTeamEventsFor(db, viewer.id, "pull.team_waiting").filter((e) => !seen.has(e.id));
+  if (fresh.length === 0) return [];
+  const repos = getReposByIds(db, fresh.map((e) => e.repoId!));
+  const meant = audienceFilter(db, viewer, fresh);
+  return fresh.filter((e) => {
+    const repo = repos.get(e.repoId!);
+    return repo !== undefined && canRead(db, repo, viewer) && meant(e);
+  });
+}
+
 function heardBy(db: Database, viewer: User, now: number): Heard {
   const work = (): Heard => {
     const recent = listEventsVisibleTo(db, viewer, { limit: EVENT_WINDOW });
@@ -161,6 +179,8 @@ export function quietRunsFor(
     .filter((e) => quiet.has(e.id) && repos.get(e.repoId!)?.archivedAt == null)
     .map((e) => ({ repoId: e.repoId!, actorId: e.actorId, id: e.id }));
 }
+/** How much of a sync failure's stored reason (`PULL_REASON_MAX`, `apps/pull.ts`) a feed line shows. */
+const SYNC_REASON_SHOWN = 120;
 const clip = (s: string, n = 120): string =>
   s.length > n ? `${s.slice(0, n - 1)}…` : s;
 
@@ -314,29 +334,18 @@ function hotCandidates(writable: readonly Repo[]): Candidate[] {
   return out;
 }
 
-export function candidatesFor(
+/**
+ * What events say, as candidates: one read of their subjects, one per event.
+ * `repos` holds each event's repository; an event whose repository is not in
+ * it is left out. Shared by the ranked feed and the timeline (`readTimeline`).
+ */
+export function eventCandidates(
   db: Database,
   viewer: User,
   now: number,
-  chips?: Chips,
-  /** False when the caller shows asks itself (the home pins them): they are not read twice. */
-  withAsks = true,
+  events: readonly ForgeEvent[],
+  repos: ReadonlyMap<string, Repo>,
 ): Candidate[] {
-  // A quiet run is counted at the end of the first page, not posted.
-  const { heard, quiet } = heardBy(db, viewer, now);
-  const events = heard.filter((e) => !quiet.has(e.id));
-  const writable = listReposWritableTo(db, viewer, { limit: 200 });
-  const asks = withAsks ? askLinesFor(db, viewer, chips) : [];
-  const decided = listDecidedIn(
-    db,
-    writable.map((r) => r.id),
-  );
-  const repos = getReposByIds(db, [
-    ...events.map((e) => e.repoId!),
-    ...asks.map((a) => a.repoId),
-  ]);
-  for (const r of writable) repos.set(r.id, r);
-
   const names = new Map<string, string | null>();
   const nameOf = (id: string | null): string | null => {
     if (id === null) return null;
@@ -395,6 +404,33 @@ export function candidatesFor(
         ...(fold === undefined ? {} : { what: `${c.what} · ${foldedWords(fold, now)}` }),
       });
   }
+  return out;
+}
+
+export function candidatesFor(
+  db: Database,
+  viewer: User,
+  now: number,
+  chips?: Chips,
+  /** False when the caller shows asks itself (the home pins them): they are not read twice. */
+  withAsks = true,
+): Candidate[] {
+  // A quiet run is counted at the end of the first page, not posted.
+  const { heard, quiet } = heardBy(db, viewer, now);
+  const events = [...heard.filter((e) => !quiet.has(e.id)), ...teamWaitsHeard(db, viewer, heard)];
+  const writable = listReposWritableTo(db, viewer, { limit: 200 });
+  const asks = withAsks ? askLinesFor(db, viewer, chips) : [];
+  const decided = listDecidedIn(
+    db,
+    writable.map((r) => r.id),
+  );
+  const repos = getReposByIds(db, [
+    ...events.map((e) => e.repoId!),
+    ...asks.map((a) => a.repoId),
+  ]);
+  for (const r of writable) repos.set(r.id, r);
+
+  const out: Candidate[] = eventCandidates(db, viewer, now, events, repos);
   for (const a of asks) {
     const repo = repos.get(a.repoId);
     if (!repo) continue;
@@ -630,6 +666,17 @@ function fromEvent(
         what: `${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind} run${subject} ${state === "failed" ? "failed" : "finished"}${state === "failed" ? (failure ? `: ${failure}` : "") : summary ? `: ${summary}` : ""}`,
       };
     }
+    case "adapter.sync_failed": {
+      const reason = clip(typeof p["reason"] === "string" ? p["reason"] : "", SYNC_REASON_SHOWN);
+      return {
+        ...common,
+        kind: "run",
+        link: `${base(repo)}/app`,
+        urgency: 4,
+        said: `${slug(repo)} sync failed: ${reason}`,
+        what: `sync failed: ${reason}`,
+      };
+    }
     case "pull.opened":
       return { ...common, kind: "pull", link: change, what: `opened a pull request${title ? `: ${clip(title)}` : ""}${toldWords}` };
     case "pull.merged":
@@ -701,6 +748,12 @@ function fromEvent(
         what: said === "" ? `replied on “${on}”` : `on “${on}”: ${clip(said)}`,
       };
     }
+    case "pull.team_waiting": {
+      const name = typeof p["name"] === "string" ? p["name"] : "";
+      if (number === undefined || name === "") return undefined;
+      const what = `${slug(repo)}#${number} waits on ${clip(name, 60)}'s review`;
+      return { ...common, kind: "pull", link: change, what, said: what };
+    }
     case "clog.cleared": {
       const note = typeof p["note"] === "string" ? p["note"] : "";
       if (note === "") return undefined;
@@ -718,6 +771,25 @@ function fromEvent(
             ? `#${String(number)} now waits for #${String(p["blockedBy"])}`
             : `#${String(number)} no longer waits for #${String(p["blockedBy"])}`,
       };
+    // A hook that failed three deliveries in a row: writers only (`webhook_streak.ts`).
+    case "webhook.failing": {
+      const host = typeof p["host"] === "string" ? p["host"] : "a webhook";
+      const reason = typeof p["reason"] === "string" ? p["reason"] : "";
+      const failures = typeof p["failures"] === "number" ? p["failures"] : 3;
+      const what = clip(
+        `Webhook to ${host} failed ${failures} times${reason === "" ? "" : `: ${reason}`}`,
+        300,
+      );
+      // Settings › Webhooks is for admins; a writer who is not one lands on a
+      // page that names the admins, so the line links there for everyone.
+      return {
+        ...common,
+        kind: "map",
+        link: `${base(repo)}/settings/hooks`,
+        what: `${what} (a repository admin can redeliver or pause it in Settings › Webhooks)`,
+        urgency: 3,
+      };
+    }
     case "crew.governed":
       return {
         ...common,
@@ -725,6 +797,14 @@ function fromEvent(
         link: `${base(repo)}/map`,
         what: clip(typeof p["why"] === "string" ? p["why"] : "the crew's slots changed"),
       };
+    // A move is news to the repository's readers; the link is the new path.
+    case "repo.transferred": {
+      const from = typeof p["from"] === "string" ? p["from"] : "";
+      const to = typeof p["to"] === "string" ? p["to"] : "";
+      if (from === "" || to === "") return undefined;
+      const what = `moved from ${clip(from, 60)} to ${clip(to, 60)}`;
+      return { ...common, kind: "map", link: base(repo), what, said: what };
+    }
     default:
       return undefined;
   }

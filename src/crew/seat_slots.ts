@@ -34,6 +34,7 @@ export const SEAT_UNIT: Record<CrewRole, string> = {
   planner: "planning pass at once",
   builder: "build at once",
   reviewer: "review at once",
+  maintainer: "upkeep pass at once",
 };
 
 export function slotsOf(repo: Repo, role: CrewRole): number {
@@ -46,7 +47,7 @@ export function maxOf(role: CrewRole): number {
 
 /** A pillar's slots as a person or an agent typed them: a whole number from 0 to its most, or undefined. */
 export function checkSeatSlots(role: string, raw: unknown): { role: CrewRole; slots: number } | undefined {
-  if (!isCrewRole(role)) return undefined;
+  if (!isCrewRole(role) || !PILLAR_ROLES.includes(role)) return undefined;
   const n = typeof raw === "string" && /^\d{1,2}$/.test(raw.trim()) ? Number(raw) : raw;
   return typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= maxOf(role) ? { role, slots: n } : undefined;
 }

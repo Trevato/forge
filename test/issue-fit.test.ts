@@ -14,7 +14,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { PREVIEW_ISSUE_PAGE, PREVIEW_OWNER_LOOKS } from "../src/spawn/preview-looks.ts";
+import { PREVIEW_ISSUE_EDIT_PAGE, PREVIEW_ISSUE_PAGE, PREVIEW_OWNER_LOOKS } from "../src/spawn/preview-looks.ts";
 import { utilities as base } from "../src/web/style/base.ts";
 import { components } from "../src/web/style/components.ts";
 import { content } from "../src/web/style/content.ts";
@@ -86,11 +86,26 @@ test("the owner's phone look takes an issue's page", () => {
   expect(PREVIEW_OWNER_LOOKS).toContainEqual({ page: PREVIEW_ISSUE_PAGE, kind: "phone" });
 });
 
+test("?edit=1 opens the Edit fold, and the phone look takes it (#10074)", async () => {
+  const closed = await (await fetch(`${servers.url}/alice/fit/issues/1`, { headers: { cookie } })).text();
+  const open = await (await fetch(`${servers.url}/alice/fit/issues/1?edit=1`, { headers: { cookie } })).text();
+  expect(closed).toMatch(/<details class="tl-edit" id="edit"\s*>/);
+  expect(open).toMatch(/<details class="tl-edit" id="edit" open\s*>/);
+  expect(PREVIEW_OWNER_LOOKS).toContainEqual({ page: PREVIEW_ISSUE_EDIT_PAGE, kind: "phone" });
+});
+
 const found = findChromium();
 const chromium = found !== undefined && chromiumRuns(found) ? found : undefined;
 if (chromium === undefined) console.log("SKIPPING: no chromium that starts here, so the issue page is not measured");
 
 describe.skipIf(chromium === undefined)("measured at 390x844", () => {
+  test("no sideways scroll with Edit open", async () => {
+    const measure = `(() => JSON.stringify({ scrollWidth: document.documentElement.scrollWidth, viewportWidth: document.documentElement.clientWidth, open: document.querySelector("#edit")?.open === true }))()`;
+    const m = JSON.parse(await evaluateLoaded(chromium!, `${servers.url}/alice/fit/issues/1?edit=1`, { width: 390, height: 844 }, [{ name: "forge_session", value: cookie.split("=")[1]! }], measure));
+    expect(m.open).toBe(true);
+    expect(m.scrollWidth).toBeLessThanOrEqual(m.viewportWidth);
+  }, 30_000);
+
   test("no sideways scroll", async () => {
     const measure = `(() => JSON.stringify({ scrollWidth: document.documentElement.scrollWidth, viewportWidth: document.documentElement.clientWidth,
       comments: document.querySelectorAll(".comment").length }))()`;

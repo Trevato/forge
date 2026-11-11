@@ -13,6 +13,7 @@
  * without touching the network. Plain data in, plain data out.
  */
 
+import { during } from "../perf/jobs.ts";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DrillResult } from "./drill.ts";
@@ -361,7 +362,7 @@ export function watchBucket(
   };
   const next = (ms: number): void => {
     if (stopped) return;
-    timer = setTimeout(() => void pass().catch(() => {}).finally(() => next(everyMs)), ms);
+    timer = setTimeout(() => void during("bucket-watch", pass).catch(() => {}).finally(() => next(everyMs)), ms);
   };
   next(Math.min(firstMs, everyMs));
   return {

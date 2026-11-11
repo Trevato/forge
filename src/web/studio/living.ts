@@ -14,13 +14,16 @@ import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { html, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
-import { btn, row, timeAgo } from "../ui.ts";
+import { btn, disclosure, row, timeAgo } from "../ui.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { NowStage } from "../../flow/now_rows.ts";
 import { nowHref } from "../pages/now.ts";
+import type { Repo } from "../../core/repos.ts";
 import { writableAppsOf } from "./asks.ts";
-import { FORGE_TARGET, sharedDraft } from "./feed.ts";
+import { FORGE_TARGET } from "./feed.ts";
+import { COMPOSER_FIELDS, TELL_MAX, sharedDraft, shareToken } from "../share_target.ts";
 import { repoBase } from "../chrome.ts";
+import { crewFace, type FaceState } from "../pixel.ts";
 
 /** The events that move a build or a shipment. */
 const MOVING_LIVE = "run.started,run.finished,pull.merged,pull.opened,pull.closed,app.serving";
@@ -53,29 +56,30 @@ export function nowLine(now: Now, boards = true): Html {
   </section>`;
 }
 
-function listOf(label: string, rows: readonly MovingRow[], empty: string): Html {
+function listOf(label: string, rows: readonly MovingRow[], empty: string, heading = true, face?: FaceState): Html {
   const shown = rows.map((r) =>
     row({
       href: r.href,
-      ...(r.who === "" ? {} : { lead: html`<span class="muted small">${r.who}</span>` }),
-      title: html`<span class="truncate" title="${r.repo}">${r.title}</span>`,
+      ...(r.who === "" ? {} : { lead: html`${(face && crewFace(r.who, face, 16, true)) ?? null}<span class="muted small">${r.who}</span>` }),
+      title: html`<span class="truncate" title="${r.repo}: ${r.full}">${r.title}</span>`,
       trail: html`<span class="muted small">${timeAgo(r.at)}</span>`,
     }),
   );
   // Always MOVING_ROWS rows: a quiet slot is as tall as a busy one.
   for (let i = shown.length; i < MOVING_ROWS; i++)
     shown.push(row({ title: html`<span class="muted small">${i === 0 ? empty : " "}</span>` }));
-  return html`<section aria-label="${label}">
-    <h2 class="small muted">${label}</h2>
-    <ul class="list">
+  const list = html`<ul class="list">
       ${shown}
-    </ul>
-  </section>`;
+    </ul>`;
+  return heading ? html`<section aria-label="${label}">
+    <h2 class="small muted">${label}</h2>
+    ${list}
+  </section>` : list;
 }
 
 /**
- * The pipeline, then being built and just shipped side by side on a desk and
- * stacked on a phone; one live region. The pipeline counts every repository,
+ * The pipeline, then what is being built; what just shipped is one tap away,
+ * open in place (calm pass, #10298). One live region. The pipeline counts every repository,
  * private ones too, so only a site admin, who reads them all, sees the line.
  */
 export function movingRegion(db: Database, viewer: User): Html {
@@ -83,10 +87,8 @@ export function movingRegion(db: Database, viewer: User): Html {
   const shipped = readShipped(db, viewer);
   return html`<div id="live-moving" class="stack" data-live="${MOVING_LIVE}" data-live-src="/live/moving">
     ${viewer.isAdmin ? nowLine(pipelineNow(db), viewer.kind !== "agent") : null}
-    <div class="moving">
-      ${listOf("Being built", building, "Nothing is being built right now")}
-      ${listOf("Just shipped", shipped, "Nothing has shipped yet")}
-    </div>
+    ${listOf("Being built", building, "Nothing is being built right now", true, "working")}
+    ${disclosure("Just shipped", listOf("Just shipped", shipped, "Nothing has shipped yet", false), { small: true })}
   </div>`;
 }
 
@@ -107,11 +109,13 @@ export function liveMovingFragment(ctx: Ctx): Response {
 export function tellBox(ctx: Ctx, user: User): Html {
   const { repos } = writableAppsOf(ctx, user);
   const slug = (r: { ownerName: string; name: string }) => `${r.ownerName}/${r.name}`;
+  const shared = sharedDraft(ctx.url.searchParams);
   return html`<form id="tell-box" class="bar tell-box" method="post" action="/tell">
-    <input class="input" name="text" maxlength="2000" required placeholder="Tell the crew…" aria-label="Tell the crew" data-draft="${user.id}" value="${sharedDraft(ctx.url.searchParams).replace(/\s+/g, " ")}" />
+    ${shared === "" ? "" : html`<input type="hidden" name="${COMPOSER_FIELDS.once}" value="${shareToken(user.id, shared)}" />`}
+    <input class="input" name="${COMPOSER_FIELDS.text}" maxlength="${String(TELL_MAX)}" required placeholder="Tell the crew…" aria-label="Tell the crew" data-draft="${user.id}" value="${shared.replace(/\s+/g, " ")}" />
     ${repos.length === 0
-      ? html`<input type="hidden" name="app" value="${FORGE_TARGET}" />`
-      : html`<select name="app" class="input" aria-label="Send to">
+      ? html`<input type="hidden" name="${COMPOSER_FIELDS.app}" value="${FORGE_TARGET}" />`
+      : html`<select name="${COMPOSER_FIELDS.app}" class="input" aria-label="Send to">
           ${repos.map((r) => html`<option value="${slug(r)}">${slug(r)}</option>`)}
           <option value="${FORGE_TARGET}">the forge</option>
         </select>`}
@@ -124,8 +128,8 @@ export function tellBox(ctx: Ctx, user: User): Html {
 }
 
 /** Your apps as chips, each a link to the app, and a plus for a new one. */
-export function appChips(ctx: Ctx, user: User): Html {
-  const { repos } = writableAppsOf(ctx, user);
+export function appChips(ctx: Ctx, user: User, apps?: readonly Repo[]): Html {
+  const repos = apps ?? writableAppsOf(ctx, user).repos;
   return html`<section aria-label="Your apps" id="live-chips" data-live="app.serving,app.stopped,app.created,app.deleted" data-live-src="/live/chips">
     <h2 class="small muted">Your apps</h2>
     <p class="bar small">

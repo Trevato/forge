@@ -5,7 +5,9 @@
  * change cost over the week — each a live region that swaps itself when a
  * matching event lands. A site admin also gets two strips above them: the
  * forge's health, and each subscription's windows; whoever owns an app gets
- * a line for each thing its crew waits on them for. Nothing on it
+ * a line for each thing its crew waits on them for. A site admin's board
+ * opens on the money line: this month's cost, revenue and gap, and thirty
+ * days of them drawn (`studio/money_line.ts`). Nothing on it
  * needs a click, and everything on it links somewhere. It reads the same
  * tables as the studio and adds no state of its own — nor words: every
  * run, change and decision on it is worded by `runWord`/`pullWord`/
@@ -16,7 +18,10 @@
  * pointer. The old big view (`/big`, every address it had) lands here.
  */
 
+import { hoursSpan, readThroughput } from "../../flow/throughput.ts";
 import { usd } from "../../core/money.ts";
+import { NO_CLOUD_BODY } from "../../core/placement_policy.ts";
+import { CLOUD_BODY_CONFIGURED } from "../../spawn/placement.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { sentinelNotice } from "../../crew/sentinel.ts";
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
@@ -47,6 +52,7 @@ import {
 } from "../../core/subscriptions.ts";
 import { readSpend } from "../../actions/spend.ts";
 import { spendView } from "./spend.ts";
+import { narrowedGraphHref } from "../fleet-graph.ts";
 import type { HandContext } from "../../crew/handover.ts";
 import { forgeHealth, rolloutLine } from "../../kernel/guard.ts";
 import { coveredByVerdict, forgeVerdict, verdictLine } from "../../kernel/guard_verdict.ts";
@@ -80,10 +86,8 @@ import {
   autonomyStatus,
   holdWords,
   plannerHold,
-  smallShareOf,
   startOfTodayUtc,
 } from "../../crew/autonomy.ts";
-import { smallIssuesWords } from "../../crew/small_share.ts";
 import { distinct, notesRegion, type Note } from "./board-notes.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase, signInFirst } from "../chrome.ts";
@@ -102,6 +106,9 @@ import {
   time,
   tokenCount,
 } from "../ui.ts";
+import { noteLine } from "../studio/note.ts";
+import { readForgeMoney } from "../../actions/money.ts";
+import { forgeMoneyLine } from "../studio/money_line.ts";
 import { tellWord } from "../studio/tell.ts";
 import { voiceFor } from "../studio/voice.ts";
 import { repoDir } from "../../git/repos.ts";
@@ -151,6 +158,7 @@ const KIND_WORDS: Record<DecisionKind, string> = {
   hand: "hand-over",
   // Never listed (`listDecisionsForRepos` leaves guards out); named for the type.
   guard: "not started",
+  place: "where it runs",
 };
 
 const money = (n: number): string => `$${n.toFixed(2)}`;
@@ -261,6 +269,7 @@ export async function boardPage(ctx: Ctx): Promise<Response> {
   const repos = scope.repos;
   const wall = ctx.url.searchParams.has("wall");
   const forge = timePhase(rq, "forge", () => forgeNotes(ctx));
+  const money = timePhase(rq, "money", () => moneyStrip(ctx));
   const declined = timePhase(rq, "declined", () => declinedNotes(ctx, scope));
   const review = timePhase(rq, "review", () => reviewNotes(ctx, scope));
   const asks = timePhase(rq, "asks", () => asksStrip(ctx));
@@ -297,6 +306,7 @@ export async function boardPage(ctx: Ctx): Promise<Response> {
       >
       <time class="num small muted" id="board-clock"></time>
     </header>
+    ${money}
     ${boardNotes(forge, declined, review)}
     <div class="board-grid">
       ${workingNow} ${landedNow} ${decidedNow}
@@ -399,10 +409,21 @@ export function bigRedirect(ctx: Ctx): Response {
 // ---- the forge ----
 
 /**
- * The forge's health as notes, for a site admin only: each thing that needs
- * them, and the lane when checks are queued. Nobody else pays for the reads.
+ * The money line (#510): this month's cost, revenue and gap with thirty
+ * days drawn beside it, for whoever may read Settings → Economics. Nobody
+ * else pays for the reads.
  */
-function forgeNotes(ctx: Ctx): { notes: Note[]; ok: boolean } | null {
+function moneyStrip(ctx: Ctx): Html | null {
+  const money = readForgeMoney(ctx.app, ctx.auth.user);
+  return money.ok ? forgeMoneyLine(money.value) : null;
+}
+
+/**
+ * The forge's health as notes, for a site admin only: each thing that needs
+ * them, the lane when checks are queued, and that bursts queue while no
+ * cloud body is configured. Nobody else pays for the reads.
+ */
+function forgeNotes(ctx: Ctx): { notes: Note[]; ok: boolean; placement: Html | null } | null {
   if (!ctx.auth.user?.isAdmin) return null;
   const v = forgeVitals(ctx.app);
   const fh = forgeHealth();
@@ -434,7 +455,12 @@ function forgeNotes(ctx: Ctx): { notes: Note[]; ok: boolean } | null {
     ...(lane === null ? [] : [{ key: "lane", need: false, line: html`<span>Lane: ${lane}</span>` }]),
     ...(flaky === null ? [] : [{ key: "flakes", need: false, line: html`<span data-flakes>Flaky this week: ${flaky}</span>` }]),
   ];
-  return { notes, ok };
+  // Where a burst waits (#509): with no cloud body it queues for owned metal,
+  // said on the board, never silently — beside "All fine", or among the notes.
+  const placement = (CLOUD_BODY_CONFIGURED as boolean)
+    ? null
+    : html`<a data-placement href="/settings/economics">Placement: ${NO_CLOUD_BODY}</a>`;
+  return { notes, ok, placement };
 }
 
 // ---- agent pulls that wait for a person's review ----
@@ -497,9 +523,9 @@ function returnsStrip(ctx: Ctx, scope: BoardScope): Html | null {
   // The crew spends on every repository, app or not: the whole of the
   // viewer's own unless `?apps=` narrows the board.
   const apps = ctx.url.searchParams.get("apps");
-  const ids = apps
-    ? scope.repos.filter((r) => scope.ownerFacts.has(r.id)).map((r) => r.id)
-    : returnsRepos(ctx.app, user).map((r) => r.id);
+  // One list for the money and the graph's link, so the two never disagree.
+  const owned = apps ? scope.repos.filter((r) => scope.ownerFacts.has(r.id)) : [];
+  const ids = apps ? owned.map((r) => r.id) : returnsRepos(ctx.app, user).map((r) => r.id);
   if (ids.length === 0) return null;
   const now = Date.now();
   const r = tokenReturns(ctx.app.db, ids, {
@@ -507,14 +533,24 @@ function returnsStrip(ctx: Ctx, scope: BoardScope): Html | null {
     until: new Date(now).toISOString(),
   });
   if (r.spent.runs === 0) return null;
+  const ask = readThroughput(ctx.app.db, [], new Date(now)).medianAskToLiveMs;
   const href = `/board/returns${apps ? `?apps=${encodeURIComponent(apps)}` : ""}`;
-  return html`<a class="muted small" id="returns-line" href="${href}"
+  // The graph of the same money, narrowed as the board is (#578).
+  const graph = narrowedGraphHref(
+    apps !== null && apps !== "",
+    owned.map((r) => `${r.ownerName}/${r.name}`),
+  );
+  return html`<span id="returns"
+    ><a class="muted small" id="returns-line" href="${href}"
     >Tokens, ${ASKS_WINDOW_DAYS} days: <b>${usd(r.spent.usd)}</b> → <b>${r.landed}</b> landed
     ${r.onLanded.perChange.changes === 0
       ? null
       : html`· <b>${usd(r.onLanded.perChange.median)}</b> a landed change`}
     · <b>${usd(r.landedNothing.closed.usd)}</b> closed with nothing
-    · <b>${usd(r.landedNothing.open.usd)}</b> still open</a
+    · <b>${usd(r.landedNothing.open.usd)}</b> still open${
+      ask === null ? null : html` · median ask→live <b>${hoursSpan(ask)}</b> (24 h)`
+    }</a
+    >${graph === null ? null : html`<a id="returns-graph" href="${graph}">Fleet graph</a>`}</span
   >`;
 }
 
@@ -561,9 +597,16 @@ function boardNotes(
   declined: readonly Note[],
   review: readonly Note[],
 ): Html {
-  const notes = distinct([...(forge?.notes ?? []), ...declined, ...review]);
+  const others = distinct([...(forge?.notes ?? []), ...declined, ...review]);
+  const placement = forge?.placement ?? null;
+  const fine = forge !== null && forge.ok;
+  // Beside "All fine" when nothing else is noted; one more note when something is.
+  const aside = fine && others.length === 0 ? placement : null;
+  const notes =
+    placement === null || aside !== null ? others : [...others, { key: "placement", need: false, line: placement }];
   return notesRegion(notes, {
-    fine: forge !== null && forge.ok,
+    fine,
+    ...(aside === null ? {} : { aside }),
     live: "run.queued,run.started,run.finished,issue.*,pull.*,app.*",
     ok: forge === null ? null : forge.ok,
   });
@@ -608,46 +651,44 @@ function windowsStrip(ctx: Ctx): Html | null {
     id === PLATFORM
       ? "every app no subscription is granted to"
       : (scopes.get(id) ?? []).join(", ");
-  const card = (s: Subscription): Html | null => {
+  const row = (s: Subscription): Html | null => {
     const st = all.get(s.id);
     if (st === undefined) return null;
     return html`<a
-      class="card"
+      class="bar small muted"
       href="/settings/subscriptions"
       data-key="sub:${s.id}"
     >
-      <span class="card-body bar small muted">
-        <b>${s.name}</b>
-        ${st.windows.map((w) => {
-          const words = windowWords(w);
-          return html`<span class="bar" data-window="${w.window}"
-            >${words.name}
-            ${
-              words.usedPct === null
-                ? null
-                : meter(
-                    words.usedPct,
-                    `${words.name} used`,
-                    words.usedPct >= 100 ? "attn" : undefined,
-                  )
-            }
-            <span class="num"
-              >${figures([words.used, words.remaining, words.resets])}${when(
-                w.tokensIn + w.tokensOut > 0,
-                () => html` · ${tokenCount(w.tokensIn + w.tokensOut, "counted")}`,
-              )}</span
-            ></span
-          >`;
-        })}
-        ${when(scopeWords(s.id) !== "", () => html`<span>for ${scopeWords(s.id)}</span>`)}
-      </span>
+      <b>${s.name}</b>
+      ${st.windows.map((w) => {
+        const words = windowWords(w);
+        return html`<span class="bar" data-window="${w.window}"
+          >${words.name}
+          ${
+            words.usedPct === null
+              ? null
+              : meter(
+                  words.usedPct,
+                  `${words.name} used`,
+                  words.usedPct >= 100 ? "attn" : undefined,
+                )
+          }
+          <span class="num"
+            >${figures([words.used, words.remaining, words.resets])}${when(
+              w.tokensIn + w.tokensOut > 0,
+              () => html` · ${tokenCount(w.tokensIn + w.tokensOut, "counted")}`,
+            )}</span
+          ></span
+        >`;
+      })}
+      ${when(scopeWords(s.id) !== "", () => html`<span>for ${scopeWords(s.id)}</span>`)}
     </a>`;
   };
   const crew = pool.filter((s) => s.id === PLATFORM || scopes.has(s.id));
   const apart = pool.filter((s) => s.id !== PLATFORM && !scopes.has(s.id));
   const group = (name: string, key: string, subs: readonly Subscription[]): Html =>
     html`<div class="stack stack-tight" data-group="${key}">
-      <span class="muted small">${name}</span>${subs.map(card)}
+      <span class="muted small">${name}</span>${subs.map(row)}
     </div>`;
   return html`<div
     class="stack"
@@ -933,7 +974,7 @@ async function decided(ctx: Ctx, scope: BoardScope): Promise<Html> {
       title: answer,
       meta: [
         `${KIND_WORDS[d.kind]} · ${issue?.title ?? repo.name} · ${d.by === "rule" ? "by the rule" : `by ${d.by}`}`,
-        hand === null ? null : html`<span title="${hand}">${hand}</span>`,
+        hand === null ? null : noteLine(hand),
       ],
       under: meter(sure, `${sure}% sure`),
       trail: html`${
@@ -1024,8 +1065,6 @@ function today(ctx: Ctx, scope: BoardScope): Html {
             <span><b>${shipped}</b> shipped</span>`,
           `${perShippedWords(week.get(repo.id))} this week`,
           holdLine,
-          // Small issues in flight of the slots they may hold (#7571).
-          repo.autonomy === "off" ? null : smallIssuesWords(smallShareOf(ctx.app, repo, now)),
           review,
         ],
         under: meter(

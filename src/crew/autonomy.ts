@@ -12,6 +12,7 @@
  * repository's origin.
  */
 
+import { noteRed, treatRed } from "../checks/doctor.ts";
 import { tickBets } from "../actions/bets.ts";
 import { betsInUse } from "../core/bets.ts";
 import { onlyListDocs, resolveListConflicts } from "../actions/list-conflicts.ts";
@@ -31,10 +32,8 @@ import { queueStore } from "../checks/queue_store.ts";
 import { addLearned } from "../checks/learned.ts";
 import { batchWords, dropFromLine, enqueue, type GateCandidate, type Queued, type QueueOptions, queueClashes, queueWords, waitingPulls } from "../checks/queue.ts";
 import { checksFor } from "../checks/service.ts";
-import { queueBatch, queueDepth, smallShare } from "../core/capacity.ts";
-import { shareWords, slotOrder, smallCap, smallIssues, smallOfIds } from "./small_share.ts";
+import { queueBatch, queueDepth } from "../core/capacity.ts";
 import { crewFor as crewForIssue, passedWords, pickFilter, routable } from "./pick_filter.ts";
-import { tickPolish } from "./polish_cap.ts";
 import { readConflictLane, readConflictRoom } from "./conflict_room.ts";
 import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
 import { CLOSED_NOTE, leftNote, reopenedByPerson, unticked } from "../core/done_on_main.ts";
@@ -48,7 +47,7 @@ import {
   crewRole,
 } from "../core/agents.ts";
 import { pickBuilder, routeIssue } from "./route.ts";
-import { firstAt } from "../core/first.ts";
+import { fromAppIssues } from "../core/from_app.ts";
 import { pickOrder } from "../core/next_up.ts";
 import { ranksInRepo } from "../core/rank.ts";
 import { ensurePlanner } from "./planner.ts";
@@ -127,7 +126,7 @@ import {
   parkedCount as countParks,
   parkedTwice,
 } from "./parks.ts";
-import { reserveOf, reserveWords, short } from "./reserve.ts";
+import { due, reserveOf, reserveWords } from "./reserve.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import {
@@ -144,7 +143,7 @@ import { approvedOnHead, finishApproved, finishFields } from "./finishing.ts";
 import { recheckRedApproved } from "./red_approved.ts";
 import { sweepStaleReds } from "./stale_reds.ts";
 import { sweepStranded } from "./stranded.ts";
-import { parkPull, strikeNote } from "./park_pull.ts";
+import { parkPull, parkPullTold, strikeNote } from "./park_pull.ts";
 import { keepVerdict } from "../flow/culprits.ts";
 import { sweepRepeats } from "./repeat_checks.ts";
 import { breathe } from "../kernel/breathe.ts";
@@ -159,7 +158,7 @@ import { bootCounts } from "../kernel/boots.ts";
 
 const log = createLog("autonomy");
 
-export { parkPull };
+export { parkPull, parkPullTold };
 
 export const AUTONOMY_TICK_MS = 60_000;
 /**
@@ -433,38 +432,12 @@ function freeSlots(app: App, repo: Repo, now: Date): number {
   return Math.max(0, repoPace(app, repo, now, false).slots - slotted.length);
 }
 
-/** The pickable issues in slot order: the order Next up shows, small work held to its share (#7571). */
-export function inSlotOrder(app: App, repo: Repo, ready: readonly Ranked[], slotted: readonly Run[], slots: number, picked: ReadonlySet<string> = new Set(), now: Date = new Date()): Ranked[] {
-  const issues = ready.map((r) => r.issue);
-  const small = smallIssues(app.db, issues);
-  const first = firstAt(app.db, issues.map((i) => i.id));
+/** The pickable issues in slot order: the order Next up shows. */
+export function inSlotOrder(app: App, repo: Repo, ready: readonly Ranked[], now: Date = new Date()): Ranked[] {
   const ranked = ranksInRepo(app.db, repo.id);
-  // Issues picked earlier in this tick hold their share before their runs show (#8729).
-  const running = smallOfIds(app.db, [...new Set([...slotted.flatMap((r) => (r.issueId === null ? [] : [r.issueId])), ...picked])]);
   const { allowed } = pickFilter(app, repo, ready, now);
   // The order is the one Next up shows (#8826): ranked by place, then the ready order.
-  return slotOrder(
-    pickOrder(allowed, ranked, (r) => r.issue.id),
-    (r) => ({
-      ranked: ranked.has(r.issue.id),
-      small: small.has(r.issue.id) && !first.has(r.issue.id),
-    }),
-    running,
-    smallCap(slots, smallShare(app.db)),
-  );
-}
-
-/** Slotted runs on small issues, and the slots they may hold (#7571). */
-export function smallShareOf(app: App, repo: Repo, now = new Date()): { running: number; cap: number } {
-  const slotted = slottedRuns(activeRuns(app, repo.id), listCrewRoles(app.db, repo.id));
-  const running = smallOfIds(app.db, slotted.flatMap((r) => (r.issueId === null ? [] : [r.issueId])));
-  return { running, cap: smallCap(repoPace(app, repo, now).slots, smallShare(app.db)) };
-}
-
-/** `1/2`: {@link smallShareOf} as the tick line, the terminal and the studio print it. */
-export function smallShareWords(app: App, repo: Repo, now = new Date()): string {
-  const { running, cap } = smallShareOf(app, repo, now);
-  return shareWords(running, cap);
+  return pickOrder(allowed, ranked, (r) => r.issue.id, [], fromAppIssues(app.db, allowed.map((r) => r.issue.id)));
 }
 
 export type Drove = "off" | "paused" | "waiting" | "full" | "picked" | "planned" | "released" | "idle";
@@ -505,7 +478,6 @@ async function driveOnce(
 ): Promise<Drove> {
   if (repo.autonomy === "off") return "off";
   tickBets(app, repo, now);
-  tickPolish(app, repo, now);
   const status = autonomyStatus(app, repo, now);
   if (status.paused !== null) return "paused";
   const by = getUserById(app.db, repo.autonomyBy!);
@@ -564,7 +536,7 @@ async function driveOnce(
   const crewFor = (issue: Issue) => crewForIssue(app, repo, issue.id, crew, now);
   const pickable = await withoutRetired(app, repo, routable(app, repo, ready, crew, now).kept);
   // The roadmap first, and small issues held to their share of the slots (#7571).
-  const next = await nextOf(app, repo, inSlotOrder(app, repo, pickable, slotted, paced.slots, taken, now));
+  const next = await nextOf(app, repo, inSlotOrder(app, repo, pickable, now));
   if (next !== undefined) {
     taken.add(next.issue.id);
     const routed = await routeIssue(app, repo, next.issue, crewFor(next.issue), inFlight);
@@ -675,8 +647,8 @@ export function startable(
 }
 
 /**
- * Give the planner the direction when the reserve is short — fewer
- * startable issues than two per builder slot (`reserve.ts`) — or when the crew has handed it an issue it parked twice,
+ * Give the planner the direction when the reserve is due a pass — down to
+ * half of two startable issues per builder slot (`reserve.ts`) — or when the crew has handed it an issue it parked twice,
  * and no planning run is in flight, and the last one is old enough.
  * Returns whether a planning run was set up. Planning runs alongside
  * building: the builders are never waited for.
@@ -806,7 +778,7 @@ async function planIfThin(
   const handed = [...parkedTwice(app.db, [repo]), ...handedOverPulls(app.db, repo)];
   const limbs = pendingReplans(app.db, repo);
   const reserve = reserveOf(ready, repo.autonomySlots);
-  if (!short(reserve) && handed.length === 0 && limbs.length === 0) return false;
+  if (!due(reserve) && handed.length === 0 && limbs.length === 0) return false;
   // Paused by its pillar's setting (#7668): the planner stays on the crew.
   if (repo.plannerSlots === 0) return notPlanned(repo, "the planner is paused");
   if (repo.autonomyDirection.trim() === "")
@@ -833,7 +805,7 @@ async function planIfThin(
   // A limb a person handed over is owed one pass, whatever the map and
   // whatever the planner said of the direction before (#761).
   const limbsOwed = limbs.filter((r) => !given(app.db, repo, r.at));
-  if (!short(reserve) && owed.length === 0 && limbsOwed.length === 0) return false;
+  if (!due(reserve) && owed.length === 0 && limbsOwed.length === 0) return false;
   // Nothing startable for issues held since its last pass that re-planning
   // lifts: owed one pass like a hand-over, once (#2244).
   const unstuck = stuck === null ? [] : replannable(stuck).filter((issue) => heldSince(app, issue, seen));
@@ -1257,7 +1229,7 @@ export function startSweep(
 
 /** The label every direction issue's title starts with. Read elsewhere to
  * find a repository's standing direction — keep it exactly as it is. */
-const DIRECTION_PREFIX = "Direction: ";
+export const DIRECTION_PREFIX = "Direction: ";
 /** How much of the direction fits in the title, capped so the title
  * (prefix included) never exceeds `MAX_TITLE`. */
 const DIRECTION_TITLE_LIMIT = Math.min(120, MAX_TITLE - DIRECTION_PREFIX.length);
@@ -1431,8 +1403,6 @@ export async function autonomyTick(
         slots: status.slots,
         // Builders with nothing in flight: what bounds active beside slots and startable (#7006).
         idle: idleBuilders(activeNow, crewNow),
-        // Small issues in flight of the slots they may hold (#7571).
-        small: smallShareWords(app, current, now),
         ...(governor === undefined ? {} : { governor }),
         // Approved conflicted pulls: queued, in flight, and why each other is
         // skipped (#3682, #6237), or "0 candidates of N open" (#6263); and the lane for rebases: conflicted N,
@@ -2227,6 +2197,10 @@ async function admit(
       });
       addLearned(app.config.dataDir, pull.id, red.learn);
       if (!again) addComment(app, by, repo, getIssueById(app.db, pull.id) ?? pull, clashSaid(red.comment, together));
+      // A red that reproduces on the re-gate is the code's: only then is it the doctor's to hold.
+      if (again) treatRed(app, repo, by, pull, red, baseOid);
+      // Red only on top of pulls that landed first: no single culprit yet, so the class is recorded and the re-gate alone decides.
+      else noteRed(app, repo, pull, red, baseOid, together);
     },
   });
 }

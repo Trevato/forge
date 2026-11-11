@@ -58,8 +58,8 @@ const BUN_LOG = [
 describe("failedTests", () => {
   test("bun's closing summary gives no failure to the last file printed", () => {
     expect(failedTests(BUN_LOG)).toEqual([
-      { file: "test/a.test.ts", name: "a > one" },
-      { file: "test/b.test.ts", name: "b > two" },
+      { file: "test/a.test.ts", name: "a > one", ms: 0 },
+      { file: "test/b.test.ts", name: "b > two", ms: 0 },
     ]);
     expect(failedFiles(BUN_LOG)).toEqual(["test/a.test.ts", "test/b.test.ts"]);
   });
@@ -84,7 +84,7 @@ describe("failedTests", () => {
       "(fail) b > two",
     ];
     expect(failedTests(lines)).toEqual([
-      { file: "test/a.test.ts", name: "a > one" },
+      { file: "test/a.test.ts", name: "a > one", ms: 3 },
       { file: "test/b.test.ts", name: "b > two" },
     ]);
   });

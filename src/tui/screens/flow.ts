@@ -21,6 +21,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { doctorRuns, type DoctorRun } from "../../checks/doctor.ts";
 import { recentGates, type KeptResult } from "../../checks/gate_result.ts";
 import { reportLine } from "../../checks/report.ts";
 import { HOLDS } from "../../crew/held.ts";
@@ -32,9 +33,10 @@ import { keeperLine, type KeeperAsk, type KeeperRead } from "../../flow/keeper.t
 import { verifiedSays, type VerifiedRow } from "../../flow/verified.ts";
 import { conflictedSays, rebaseLaneSays } from "../../flow/conflicted.ts";
 import { IDLE_LIMIT, type IdlePull } from "../../flow/idle_pulls.ts";
+import { MERGE_QUEUE_HELP } from "../../flow/help.ts";
 import { pileSays } from "../../flow/pile.ts";
 import { panelFigures } from "../../flow/panel_cache.ts";
-import { readPipeline, readStepStats, STAGE_LABEL, statWords, verdict } from "../../flow/pipeline.ts";
+import { readPipeline, readStepStats, STAGE_HOLDS, STAGE_LABEL, statWords, verdict } from "../../flow/pipeline.ts";
 import { parkedSays } from "../../flow/parked.ts";
 import { firedAlarms } from "../../flow/alarms.ts";
 import { readVitals, vitalsFor, vitalsLine } from "../../flow/vitals.ts";
@@ -74,6 +76,8 @@ export function flowLines(
   verified?: readonly VerifiedRow[],
   /** The keeper's cause and last act (`readKeeper`, already cut to what the reader may see). */
   keeper?: KeeperRead,
+  /** Where the backup outcome files are kept; without it the off-box backup alarm cannot be read (the terminal passes the app's). */
+  dataDir: string | null = null,
 ): string[] {
   const stages = readPipeline(db, now);
   const flow = readThroughput(db, stages.map((s) => s.key), now);
@@ -100,7 +104,7 @@ export function flowLines(
     "",
     ...wrap(vitalsLine(vitalsFor(readVitals(db, now, agent !== undefined), agent === undefined)), inner),
     ...(agent === undefined ? clogLines(readClog(db, now), now.getTime()).flatMap((l) => wrap(l, inner)) : []),
-    ...firedAlarms(db, now, { publicOnly: agent !== undefined, ceilingUsd }).flatMap((a) => wrap(a.says, inner)),
+    ...firedAlarms(db, now, { publicOnly: agent !== undefined, ceilingUsd, dataDir }).flatMap((a) => wrap(a.says, inner)),
     "",
     ...wrap(parkedSays(fig.parked), inner),
     "",
@@ -110,6 +114,7 @@ export function flowLines(
     ...wrap(leadTimeSays(fig.lead), inner),
     ...wrap(buildYieldSays(fig.yielded), inner),
     ...wrap(reviewLatencySays(fig.latency), inner),
+    ...(fig.declined.says === "" ? [] : wrap(fig.declined.says, inner)),
     ...openerLines(fig.openers, inner),
     "",
     `${pad("Out", 12)} ${pad("last hour", 9, "right")} ${pad("24 h", 5, "right")}`,
@@ -129,6 +134,7 @@ export function flowLines(
           return [
             `${pad(truncate(q.repo, 15), 15)} ${pad(String(q.queued), 6, "right")} ${pad(String(q.gating), 6, "right")} ${pad(String(q.gates), 5, "right")} ${pad(String(q.landedHour), 9, "right")} ${pad(q.approvedToLanded === null ? "—" : String(q.approvedToLanded), 12, "right")}`,
             ...gateLines(id === undefined ? [] : recentGates(db, id, GATES_SHOWN), now.getTime(), inner),
+            ...doctorLines(id === undefined ? [] : doctorRuns(db, id, DOCTOR_SHOWN), now.getTime(), inner),
           ];
         })),
     ...(red.length === 0
@@ -150,6 +156,10 @@ export function flowLines(
     ...wrap(reportLine(db), inner),
     "",
     ...duplicateLines(dups, inner),
+    "",
+    "Help (the web's /boards?help):",
+    ...wrap(`Stages: ${stages.map((x) => `${STAGE_LABEL[x.key]}: ${STAGE_HOLDS[x.key]}`).join("; ")}.`, inner),
+    ...wrap(`Merge queue: ${MERGE_QUEUE_HELP}`, inner),
   ];
 }
 
@@ -208,6 +218,17 @@ export function gateLines(gates: readonly KeptResult[], now: number, inner: numb
   });
 }
 
+/** The doctor's acts shown under a repository's gates. */
+const DOCTOR_SHOWN = 3;
+
+/** One indented line per batch-doctor act (#7555), newest first: `doctor #14 held · functional · how long ago · the error line`; none when it has not acted. */
+export function doctorLines(runs: readonly DoctorRun[], now: number, inner: number): string[] {
+  return runs.map((r) => {
+    const pull = r.sealed || r.culprit === null ? "a sealed pull" : `#${r.culprit}`;
+    return truncate(`  doctor ${pull} ${r.action} · ${r.class} · ${ago(Date.parse(r.at), now)}${r.probe === "" ? "" : ` · ${r.probe}`}`, inner);
+  });
+}
+
 /** Idle pulls shown before `+N more`. */
 const IDLE_SHOWN = 5;
 
@@ -241,7 +262,7 @@ export function openerLines(rows: readonly Opener[], inner: number): string[] {
   return rows.length > 5 ? [...lines, `and ${rows.length - 5} more`] : lines;
 }
 
-/** One line per autonomous repository: its name, then `startable=N`, each filter holding any, and `small 1/2` (#7571). */
+/** One line per autonomous repository: its name, then `startable=N`, each filter holding any. */
 export function heldLines(rows: readonly HeldRow[], inner: number): string[] {
   if (rows.length === 0) return ["Ready, and why it waits: no repository runs on its own."];
   return [
@@ -252,7 +273,6 @@ export function heldLines(rows: readonly HeldRow[], inner: number): string[] {
           r.repo,
           `startable=${r.startable}`,
           ...HOLDS.filter((h) => r.counts[h] > 0).map((h) => `${h}=${r.counts[h]}`),
-          `small ${r.small}`,
         ].join(" "),
         inner,
       ),

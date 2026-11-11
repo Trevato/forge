@@ -261,19 +261,6 @@ describe("the ranked list is bounded", () => {
   });
 });
 
-describe("the picker's order", () => {
-  test("at the small cap a ranked small issue survives and keeps its place; an unranked one is left out", async () => {
-    const { slotOrder } = await import("../src/crew/small_share.ts");
-    const items = [
-      { id: "a", small: false },
-      { id: "ranked-small", ranked: true, small: true },
-      { id: "b", small: true },
-    ];
-    const picks = slotOrder(items, (t) => t, 1, 1).map((t) => t.id);
-    expect(picks).toEqual(["a", "ranked-small"]);
-  });
-});
-
 describe("the picker follows the page (#8826)", () => {
   test("with two ranked and three unranked issues, five ticks start the page's rows top to bottom", async () => {
     const { inSlotOrder } = await import("../src/crew/autonomy.ts");
@@ -305,7 +292,7 @@ describe("the picker follows the page (#8826)", () => {
         const ready = readyNow(repoGraph(app.db, repo.id, { sealed: true })).filter(
           (x) => !started.includes(x.issue.number),
         );
-        const next = inSlotOrder(app, repo, ready, [], 5)[0]!;
+        const next = inSlotOrder(app, repo, ready)[0]!;
         started.push(next.issue.number);
       }
       expect(started).toEqual(page);

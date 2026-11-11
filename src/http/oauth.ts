@@ -22,7 +22,7 @@ import { RateLimiter } from "../core/ratelimit.ts";
 import type { Handler } from "./context.ts";
 import { clientBucket } from "./peer.ts";
 import { readBounded } from "./limits.ts";
-import { boundedBody, json } from "./respond.ts";
+import { boundedBody, json, retryAfterOf, tryAgain } from "./respond.ts";
 import type { Router } from "./router.ts";
 import { authorizePage, authorizeSubmit } from "../web/pages/oauth.ts";
 
@@ -148,10 +148,7 @@ export function oauthRoutes(router: Router<Handler>): void {
       limiterIn(revokeAllLimiters, ctx.app, REVOKE_ALL_PER_MINUTE).take("all", "ro"),
     ].find((v) => !v.allowed) ?? { allowed: true, retryAfter: 0 };
     if (!verdict.allowed)
-      return json({ error: "rate_limited" }, 429, {
-        ...noStore,
-        "retry-after": String(verdict.retryAfter),
-      });
+      return tryAgain("rate_limited", 429, "too many revocations", verdict.retryAfter, noStore);
     const get = await tokenParams(ctx.request);
     if (get === null) return grantError("invalid_request", 413);
     const presented = get("token");
@@ -243,14 +240,10 @@ export function oauthRoutes(router: Router<Handler>): void {
   router.add("POST", "/oauth/register", async (ctx) => {
     const verdict = limiterIn(limiters, ctx.app, REGISTER_PER_MINUTE).take(clientBucket(ctx.request), "ro");
     if (!verdict.allowed)
-      return json(
-        {
-          error: "rate_limited",
-          message: `too many registrations — retry in ${verdict.retryAfter}s`,
-        },
-        429,
-        { ...open, "retry-after": String(verdict.retryAfter), "cache-control": "no-store" },
-      );
+      return tryAgain("rate_limited", 429, `too many registrations — retry in ${retryAfterOf(verdict.retryAfter)}s`, verdict.retryAfter, {
+        ...open,
+        "cache-control": "no-store",
+      });
     const raw = await boundedBody(ctx.request, BODY_MAX);
     if (raw === "too_large")
       return json({ error: "invalid_client_metadata", error_description: `at most ${BODY_MAX} bytes` }, 413, { ...open, "cache-control": "no-store" });

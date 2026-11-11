@@ -106,8 +106,10 @@ export function answersRegion(
   >
     ${rows.length === 0
       ? null
-      : html`<div class="card"><div class="card-head"><h2>The crew's answers</h2></div>
-          <div class="card-body"><ul class="list answers">${rows}</ul></div></div>`}
+      : html`<section class="settings-block">
+          <h2>The crew's answers</h2>
+          <ul class="list answers">${rows}</ul>
+        </section>`}
   </div>`;
 }
 

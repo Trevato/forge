@@ -6,6 +6,7 @@
  * best of what is public (`actions/front.ts`).
  */
 
+import { UPSTREAM_REPO } from "../../core/upstream.ts";
 import { foundryHref } from "../../actions/foundry_door.ts";
 import { forgeCeiling } from "../../flow/ceiling.ts";
 import { liveLine } from "../pages/releases.ts";
@@ -17,30 +18,42 @@ import {
   type FrontPage,
   type FrontPicksJson,
 } from "../../actions/front.ts";
-import { catalog } from "../../packs/catalog.ts";
+import { catalog, refreshCatalogQuietly } from "../../packs/catalog.ts";
 import { appsRuntime, type EnvState } from "../../apps/runtime.ts";
-import { signupClosed } from "../../actions/users.ts";
-import { getSignup } from "../../settings/signup.ts";
+import { YOURE_IN_MESSAGE } from "../../actions/users.ts";
+import { accountsClosedIn } from "../../core/users.ts";
+import { markTold, untoldAnswer } from "../../core/requests.ts";
+import { requestsCard } from "../requests_card.ts";
+import { plansRow } from "../plans_row.ts";
+import { freePlanName, funnelJs, noteHomeVisit } from "../funnel_door.ts";
+import { publicPlans } from "../../settings/plans.ts";
+import { getDoorSettings } from "../../settings/door.ts";
+import { JS_FLAG_JS } from "../claim_code.ts";
+import { startNameJs } from "../pages/start-forge.ts";
+import { GET_A_FORGE_PATH } from "../../billing/plan_words.ts";
 import { appsForRepos } from "../../core/apps.ts";
 import { WEIGHT_MAX, WEIGHT_NAMES } from "../../core/front.ts";
 import { LOOK_SIZES } from "../../core/looks.ts";
 import { canRead, getRepo } from "../../core/repos.ts";
 import { type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
-import { edgeLoginUrl } from "../../http/edge.ts";
+import { activeEdgeToken, edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import { repoBase, offersSignup, signInFirst, NOT_ADMIN_HERE, forbiddenPage } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
 import { fragment, page, redirect } from "../layout.ts";
+import { START_REFUSALS, startRefusalIn } from "../start_refusal.ts";
 import { siteStructuredData } from "../structured_data.ts";
 import { running } from "../../kernel/version.ts";
+import { homeMilestones } from "./milestone_lines.ts";
 import { liveClientJs } from "../live.ts";
 import {
   btn,
   card,
   dot,
+  disclosure,
   empty,
   envStateBadge,
   icon,
@@ -75,13 +88,12 @@ import { pinnedPanels, pinnedSlot } from "./pinned.ts";
 import { isNavigation, lastVisit, noteVisit } from "../../core/home_visit.ts";
 import { sinceYouWere } from "./since.ts";
 import { homeTabs, unshippedAsks } from "./home_tabs.ts";
-import { crewKeyNote } from "./crew.ts";
+import { crewKeyCard } from "./crew_key.ts";
 import { everydayCard } from "../pages/everyday.ts";
 import { nextStepsCard, nextStepsOf } from "../pages/next-steps.ts";
 import { spawnedOrg } from "../../spawn/claim.ts";
 import { clientApps } from "./client_home.ts";
 import { passkeyJs } from "../passkey-client.ts";
-import { SITE_LINE } from "../site_line.ts";
 
 /** The events that can change what is on you. */
 const ON_YOU_LIVE =
@@ -246,9 +258,13 @@ export function homeDraws(ctx: Ctx, user: User): Record<HomeRegion, () => Html |
       const ceilingUsd = forgeCeiling(ctx.app.config);
       const kpiTime: KpiTimer = (name, fn) => timePhase(request, name, fn);
       const kpiOpts = { idle: () => idleReason(ctx.app, new Date()), dataDir: ctx.app.config.dataDir, time: kpiTime, ...(ceilingUsd === null ? {} : { ceilingUsd }) };
-      return html`${timePhase(request, "kpis", () => kpiRow(db, kpiOpts), () => kpiCache(db))}
-        ${homeWeek(ctx.app, user)}
-        ${alarmLines(cachedAlarms(db, new Date(), ceilingUsd))}`;
+      // The figures and the week's pace open in place; alarms need the owner, so they sit under "Needs you".
+      return html`${disclosure(
+          "Figures",
+          html`${timePhase(request, "kpis", () => kpiRow(db, kpiOpts), () => kpiCache(db))}
+            ${homeWeek(ctx.app, user)}`,
+          { small: true, id: "home-figures" },
+        )}`;
     },
     waiting: () => timePhase(request, "waiting", () => waitingLine(db, user), () => waitingCache(db)),
     panels: async () => (await timePhaseAsync(request, "panels", () => pinnedPanels(ctx.app, user), () => panelCache(db))) ?? html``,
@@ -307,10 +323,12 @@ export async function studioHome(
     steps !== undefined
   ) {
     const apps = await clientApps(ctx, user);
+    // Before the first tell the card is the one box and carries the key line and the composer.
+    const firstTell = steps.some((s) => s.key === "tell" && !s.done);
     const lean = html`<h1 class="sr-only">Home</h1>
-      ${firstSteps} ${address} ${crewKeyNote(ctx)} ${heldLine(ctx, user)} ${apps}
+      ${firstSteps} ${address} ${firstTell ? null : crewKeyCard(ctx)} ${heldLine(ctx, user)} ${apps}
       <div class="stack">
-        ${composer(ctx, user)}
+        ${firstTell ? null : composer(ctx, user)}
         <p class="small muted">
           <a href="/?all=1">Show everything</a>
         </p>
@@ -320,7 +338,7 @@ export async function studioHome(
       title: "Home",
       body: lean,
       // The everyday step makes its account with a passkey (#1890).
-      ...(firstSteps ? { scriptJs: passkeyJs } : {}),
+      ...(firstSteps && !firstTell ? { scriptJs: passkeyJs } : {}),
     });
   }
   // The client's first screen names its own phases (`clientApps`).
@@ -333,14 +351,36 @@ export async function studioHome(
   const kpis = figures
     ? await homeRegion(ctx.app.db, ctx.request, user.id, "kpis", homeVariant(ctx.url), access, homeDraws(ctx, user).kpis)
     : liveLine(ctx);
+  // Three compartments (#10298): what needs the owner, what moved since the last look, what is live.
+  const draws = homeDraws(ctx, user);
+  const waiting = await homeRegion(ctx.app.db, ctx.request, user.id, "waiting", homeVariant(ctx.url), access, draws.waiting);
+  const held = timePhase(ctx.request, "held", () => heldLine(ctx, user));
+  const alarms = user.isAdmin
+    ? alarmLines(cachedAlarms(ctx.app.db, new Date(), forgeCeiling(ctx.app.config), ctx.app.config.dataDir))
+    : null;
+  const visitedAt = Date.now();
+  const before = timePhase(ctx.request, "visit", () =>
+    isNavigation(ctx.request) ? noteVisit(ctx.app.db, user.id, visitedAt) : lastVisit(ctx.app.db, user.id),
+  );
+  const since = timePhase(ctx.request, "since", () => sinceYouWere(ctx.app.db, user, before, visitedAt));
+  // A stranger's request for an account is the first thing that needs an admin (#10928).
+  const requests = requestsCard(ctx, "home");
+  // The first page after Allow says so, once.
+  const allowed = untoldAnswer(ctx.app.db, user.id) === "allowed";
+  if (allowed) markTold(ctx.app.db, user.id, new Date().toISOString());
+  const needsYou = html`${requests}${waiting}${held}${alarms}`;
+  const mine = writableAppsOf(ctx, user).repos;
   const body = html`<h1 class="sr-only">Home</h1>
+    ${allowed ? html`<div class="toast" data-tone="success" role="status" id="youre-in"><strong>${YOURE_IN_MESSAGE}</strong> Your account is open: tell the crew what you want to build.</div>` : null}
     ${tellBox(ctx, user)}
     ${ask} ${address}
-    ${timePhase(ctx.request, "held", () => heldLine(ctx, user))}
+    ${when(String(needsYou).trim() !== "", () => html`<section class="stack stack-tight" id="needs-you" aria-label="Needs you"><h2 class="small muted">Needs you</h2>${needsYou}</section>`)}
+    ${when(String(since).trim() !== "", () => html`<section aria-label="Since you were here">${since}</section>`)}
+    <section aria-label="Live">${timePhase(ctx.request, "moving", () => movingRegion(ctx.app.db, user))}</section>
+    ${homeMilestones(ctx, mine)}
     <section class="stack" aria-label="The forge">${kpis}</section>
     ${pinnedSlot(ctx.app.db, user)}
-    ${timePhase(ctx.request, "moving", () => movingRegion(ctx.app.db, user))}
-    ${appChips(ctx, user)}
+    ${appChips(ctx, user, mine)}
     ${when(
       steps,
       () => html`<p class="small muted" id="lean-home"><a href="/">Just my apps</a></p>`,
@@ -352,7 +392,7 @@ export async function studioHome(
     body,
     scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${refreshJs}\n${registerWorkerJs}${ask ? `\n${passkeyJs}` : ""}`,
   });
-  notePhaseRest(ctx.request, "render", rendering, ["kpis", "moving", "access"]);
+  notePhaseRest(ctx.request, "render", rendering, ["kpis", "moving", "access", "waiting", "held", "visit", "since"]);
   return res;
 }
 
@@ -389,7 +429,7 @@ export async function feedPage(ctx: Ctx): Promise<Response> {
         ${await regionOf("feed")}
       </div>
       <aside class="stack">
-        ${user.isAdmin || appRepos.length > 0 ? crewKeyNote(ctx) : null}
+        ${user.isAdmin || appRepos.length > 0 ? crewKeyCard(ctx) : null}
         ${appsRegion(ctx, user)}
         ${terminalCard(ctx)} ${downloadsCard(ctx, user)}
         ${orgsCard(ctx, user)}
@@ -664,7 +704,7 @@ function doorPulse(days: FrontPage["pulse"]["days"]): Html | null {
   </figure>`;
 }
 
-const FORGE_REPO = "https://forge.open-platform.sh/trevato/forge";
+const FORGE_REPO = UPSTREAM_REPO;
 
 /**
  * One press for each shipped pack (#9572): what it is, and the way to its page,
@@ -718,13 +758,19 @@ function agentPrompt(origin: string): string {
  * controls that decide it.
  */
 export function studioDoor(ctx: Ctx): Response {
+  // A refused start lands back here: one fixed sentence for why, and the name still in its field.
+  const refusal = startRefusalIn(ctx.url.searchParams.get("start"));
+  const keptName = refusal === undefined ? "" : (ctx.url.searchParams.get("name") ?? "").slice(0, 39);
+  // The door draws what is in memory; a pack pushed since is picked up for the next visit.
+  void refreshCatalogQuietly(ctx.app, 5_000);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   let tiles: Html[] = [];
   const front = timePhase(ctx.request, "shelf", () => frontPage(ctx.app, Date.now(), ctx.request));
   const featured = front.featured;
   const all = [...(featured === undefined ? [] : [featured]), ...front.shelf];
   const made = all.slice(0, Math.max(DOOR_TILES, all.filter((e) => e.pinned).length));
-  const accounts = !signupClosed(ctx.app);
+  const { mode, plans: allPlans, links } = getDoorSettings(ctx.app.db);
+  const accounts = !accountsClosedIn(ctx.app.db, mode);
   timePhase(ctx.request, "tiles", () => {
     tiles = made.map((e, at) =>
       tile(e, at, accounts, e === featured ? html`role="region" aria-label="Featured"` : undefined),
@@ -733,6 +779,8 @@ export function studioDoor(ctx: Ctx): Response {
   // Render is what is left of the page once the shelf read is taken out.
   const rendering = performance.now();
   const visitor = ctx.auth.user === undefined;
+  // The funnel's first step: a stranger at the home (#11259), no SQL here.
+  if (visitor && ctx.url.pathname === "/" && ctx.request.method === "GET") noteHomeVisit(ctx);
   const admin = ctx.auth.user?.isAdmin === true && ctx.url.pathname === "/front";
   // A share sheet lands here with the shared words in the query; signing in
   // comes back to them rather than to a bare home, so they are not lost.
@@ -741,7 +789,6 @@ export function studioDoor(ctx: Ctx): Response {
   const ssh = sshCommand(ctx.app);
   const signup = offersSignup(ctx) && accounts;
   // Closed is a door with nothing behind it; invite still lands an invite link's holder.
-  const mode = getSignup(ctx.app.db);
   const origin = (ctx.app.config.url ?? ctx.url.origin).replace(/\/$/, "");
   const prompt = agentPrompt(origin);
   const asked = encodeURIComponent(prompt);
@@ -750,11 +797,17 @@ export function studioDoor(ctx: Ctx): Response {
       <h1>Software for what you're building.<br /><span class="muted">Yours to keep.</span></h1>
       <div class="door-under">
         <div class="door-lead">
-          <p class="door-support">Say what you need. An AI crew builds it, for a business or a game studio.</p>
-          <div class="bar">
-            ${btn("Get your own forge", { href: "#yours", variant: "primary", size: "lg" })}
-            ${when(made.length > 0, () => btn("See what it built", { href: "#made", size: "lg" }))}
-          </div>
+          <p class="door-support">Say what you need and an AI crew builds it in your own forge, free to try.</p>
+          <form method="post" action="/forges/start" class="door-start" id="start-forge" data-js>
+            ${refusal === undefined ? null : html`<p class="error" id="start-refused">${START_REFUSALS[refusal]}</p>`}
+            <div class="field">
+              <label for="start-name">Forge name</label>
+              <input class="input" id="start-name" name="name" type="text" value="${keptName}" aria-describedby="${refusal === undefined ? "start-name-says" : "start-refused start-name-says"}" ${refusal === undefined ? null : html`aria-invalid="true"`} required autocomplete="off" autocapitalize="none" spellcheck="false" />
+              <p class="muted small door-says" id="start-name-says" role="status" aria-live="polite"></p>
+            </div>
+            ${btn("Start my forge", { variant: "primary", size: "lg" })}
+          </form>
+          ${when(made.length > 0, () => html`<div class="bar">${btn("See what it built", { href: "#made", size: "lg" })}</div>`)}
           <div class="door-agent">
             <p>
               Have an AI assistant? Give it this:
@@ -839,16 +892,17 @@ export function studioDoor(ctx: Ctx): Response {
       </ul>
     </section>
 
-    <section class="door-section door-split" id="yours">
+    <div class="door-section">${homeMilestones(ctx)}</div>
+
+    <section class="door-section" id="yours">
       <div class="stack">
         <h2>Get your own forge</h2>
         <p class="door-support">
-          ${SITE_LINE} Free and open source. Run it on your own computer or server today. Hosted forges are
-          coming.${accounts ? "" : mode === "invite" ? " New accounts on this forge are by invitation." : " This forge is not taking new accounts."}
+          Hosted for you, or free and open source on a machine you keep.
         </p>
-        <div class="bar">${btn("Read the step-by-step guide", { href: `${FORGE_REPO}`, size: "lg" })}</div>
-      </div>
-      <div class="stack">
+        ${plansRow(publicPlans(allPlans), links)}
+        <div class="bar" data-plan="${freePlanName(allPlans)}">${btn("Get a forge", { href: visitor ? "#start-forge" : GET_A_FORGE_PATH, variant: "primary", size: "lg" })}</div>
+        <p class="door-support">Or run it yourself, free and open source: <a href="${FORGE_REPO}">read the step-by-step guide</a>.</p>
         <pre class="door-code"><code>git clone ${FORGE_REPO}.git
 cd forge
 bun install
@@ -874,6 +928,7 @@ bun run src/main.ts</code></pre>
     title: "forge: software for what you're building, yours to keep",
     description: "Your own forge, with a private AI crew that builds your apps, games and business tools. Open source, and yours to keep.",
     body,
+    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${funnelJs}\n${startNameJs}\n${JS_FLAG_JS}`,
     jsonLd: siteStructuredData(origin, running().version),
     ...(visitor
       ? {
@@ -883,7 +938,7 @@ bun run src/main.ts</code></pre>
               ? html`<a class="small" href="/signin${nextQuery}">Sign in</a>
                 ${btn("Create an account", { href: `/signup${nextQuery}` })}`
               : html`${when(mode !== "closed", () => html`<a class="small door-wide" href="/signup">Create an account</a>`)}
-                ${btn("Sign in", { href: edgeLoginUrl(back) })}`}`,
+                ${btn("Sign in", { href: activeEdgeToken(ctx.app) === undefined ? `/signin${nextQuery}` : edgeLoginUrl(back) })}`}`,
           foot: html`<span class="mark"></span>
             <span>Open Platform: two open source projects, AGPL-3.0</span>
             <span class="spacer"></span>

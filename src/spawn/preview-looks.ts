@@ -27,6 +27,9 @@ export const PREVIEW_PULL = 3;
 export const PREVIEW_REPO_HOME = `/${PREVIEW_ADMIN}/${PREVIEW_REPO}`;
 export const PREVIEW_PULL_PAGE = `${PREVIEW_REPO_HOME}/pulls/${String(PREVIEW_PULL)}`;
 
+/** The pull's Files tab, whose diff holds a line comment that must not scroll sideways (#10073). */
+export const PREVIEW_PULL_FILES = `${PREVIEW_PULL_PAGE}/files`;
+
 /**
  * The seeded app: a second repository whose only app fact is its record, so
  * its home is the app page (#9782). Nothing runs: the page says so. The seed
@@ -34,6 +37,25 @@ export const PREVIEW_PULL_PAGE = `${PREVIEW_REPO_HOME}/pulls/${String(PREVIEW_PU
  */
 export const PREVIEW_APP = "hello";
 export const PREVIEW_APP_PAGE = `/${PREVIEW_ADMIN}/${PREVIEW_APP}`;
+
+/**
+ * The recently moved repository (#10195): made by the admin as `moved`, then
+ * moved to the first seeded fork owner through the action a person uses, so
+ * its head draws "Moved from preview-admin/moved on <date>". The seed refuses
+ * to finish unless the page answers 200 and holds the line.
+ */
+export const PREVIEW_MOVED = "moved";
+export const PREVIEW_MOVED_OWNER = "preview-ada";
+export const PREVIEW_MOVED_PAGE = `/${PREVIEW_MOVED_OWNER}/${PREVIEW_MOVED}`;
+
+/**
+ * The sample's Settings scrolled to "Move to another owner" by the fragment
+ * (#10194): the owner field, button and refusal sentences must fit a 390 px
+ * phone. The seed refuses to finish unless the page answers 200 and holds
+ * `id="move"`. The path is the page's own; no route is added.
+ */
+export const PREVIEW_MOVE_PAGE = `${PREVIEW_REPO_HOME}/settings`;
+export const PREVIEW_MOVE_LOOK = `${PREVIEW_MOVE_PAGE}#move`;
 
 /** The Iterations page of the seeded fork family (#9182). */
 export const PREVIEW_ITERATIONS_PAGE = `${PREVIEW_REPO_HOME}/iterations`;
@@ -80,6 +102,9 @@ export const PREVIEW_NEXT_PAGE = `${PREVIEW_REPO_HOME}/next`;
 /** The sample's first issue, whose long title and comments must wrap at a 390 px phone (#9384). */
 export const PREVIEW_ISSUE_PAGE = `${PREVIEW_REPO_HOME}/issues/1`;
 
+/** The same issue with its Edit fold open, for its phone look (#10074). */
+export const PREVIEW_ISSUE_EDIT_PAGE = `${PREVIEW_ISSUE_PAGE}?edit=1`;
+
 /** The commits list, whose long messages must wrap at a 390 px phone (#9348). */
 export const PREVIEW_COMMITS_PAGE = `${PREVIEW_REPO_HOME}/commits`;
 
@@ -114,9 +139,30 @@ export const PREVIEW_SETTINGS_PAGES: readonly string[] = [
   "/settings/usage",
 ];
 
+/**
+ * The sample's Settings › Machines with the disks the seed records for its
+ * `standard` machine (#10466): healthy, alerting and behind a controller,
+ * closed; and the alerting line opened by its figures' fragment.
+ */
+export const PREVIEW_MACHINES_PAGE = `${PREVIEW_REPO_HOME}/settings/machines`;
+export const PREVIEW_DISK_ALERT = "nvme1";
+export const PREVIEW_DISK_OPEN_LOOK = `${PREVIEW_MACHINES_PAGE}#disk-standard-${PREVIEW_DISK_ALERT}-figures`;
+
+/**
+ * The newcomer (#11285): a preview-only person of a spawned forge who has
+ * claimed it and told the crew nothing, so their home is the first-login
+ * card at "What do you want built?". Their look is of `/` with a query the
+ * page ignores, so it is a page of its own beside the admin's home.
+ */
+export const PREVIEW_NEWCOMER = "preview-newcomer";
+export const PREVIEW_NEWCOMER_ORG = "preview-newcomer-forge";
+export const PREVIEW_NEWCOMER_PAGE = "/?as=newcomer";
+
 export interface OwnerLook {
   readonly page: string;
   readonly kind: LookKind;
+  /** Taken as the newcomer, not the preview admin. */
+  readonly as?: "newcomer";
 }
 
 /** The named list: each page at desk and phone, taken as the owner. */
@@ -125,7 +171,10 @@ export const PREVIEW_OWNER_LOOKS: readonly OwnerLook[] = [
   "/flow",
   PREVIEW_REPO_HOME,
   PREVIEW_APP_PAGE,
+  PREVIEW_MOVED_PAGE,
+  PREVIEW_MOVE_LOOK,
   PREVIEW_PULL_PAGE,
+  PREVIEW_PULL_FILES,
   PREVIEW_ITERATIONS_PAGE,
   PREVIEW_HELD_PAGE,
   PREVIEW_BETS_PAGE,
@@ -137,10 +186,18 @@ export const PREVIEW_OWNER_LOOKS: readonly OwnerLook[] = [
   PREVIEW_COMMITS_PAGE,
   PREVIEW_ISSUES_PAGE,
   PREVIEW_ISSUE_PAGE,
+  PREVIEW_ISSUE_EDIT_PAGE,
   PREVIEW_RESILIENCE_PAGE,
   PREVIEW_SEARCH_PAGE,
+  PREVIEW_NEWCOMER_PAGE,
+  PREVIEW_MACHINES_PAGE,
+  PREVIEW_DISK_OPEN_LOOK,
   ...PREVIEW_SETTINGS_PAGES,
-].flatMap((page) => (["desktop", "phone"] as const).map((kind) => ({ page, kind })));
+].flatMap((page) =>
+  (["desktop", "phone"] as const).map((kind): OwnerLook =>
+    page === PREVIEW_NEWCOMER_PAGE ? { page, kind, as: "newcomer" } : { page, kind },
+  ),
+);
 
 /**
  * The owner looks a picture of `repo`'s `env` must include: the named list

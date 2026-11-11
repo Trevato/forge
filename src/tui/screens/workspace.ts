@@ -42,17 +42,42 @@ import { createBranch } from "../../actions/branches.ts";
 import { NAME_THE_BRANCH } from "../../actions/branch_words.ts";
 import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
 import { isPinned } from "../../core/pins.ts";
+import { creditOf, creditText } from "../../core/credit.ts";
 import { setDecisionsBy } from "../../actions/repos.ts";
 import { stopMirroring } from "../../actions/mirror_target.ts";
 import { getMirrorTarget, mirrorLine } from "../../core/migrate_mirror.ts";
 import { canAdmin, canWrite, DECISIONS_BY, getRepoById, type Repo } from "../../core/repos.ts";
 import type { TreeEntry } from "../../git/read.ts";
-import { fileKind, NO_BYTES } from "../../web/render/kinds.ts";
+import { parseUnifiedDiff, type Diff } from "../../git/diff.ts";
+import { renderDiff as renderPatch } from "../ui/diff.ts";
+import { fileKind, isEnvExample, kindByName, NO_BYTES } from "../../web/render/kinds.ts";
+import { downloadHref } from "../../web/pages/media.ts";
+import { isModelPath, modelFacts } from "../../web/render/model-facts.ts";
 import type { RepoFacts, RepoSource } from "../../view/source.ts";
 import { detectLanguage, highlightLines } from "../../web/highlight.ts";
 import { MAX_COLUMNS, parseCsv, type Table } from "../../text/csv.ts";
+import { parseGeoJson, propertyRows } from "../../web/render/geojson.ts";
+import { gcodeFacts, parseGcode } from "../../web/render/gcode.ts";
+import { gpxFacts, parseGpx } from "../../web/render/gpx.ts";
+import { CASE_CAP, parseJunit } from "../../web/render/junit.ts";
+import { parseOpenApi } from "../../web/render/openapi.ts";
+import { parseDockerfile } from "../../web/render/dockerfile.ts";
+import { parseWorkflow } from "../../web/render/workflow.ts";
+import { parseGraphql } from "../../web/render/graphql.ts";
+import { parseSql } from "../../web/render/sql.ts";
+import { RESULT_CAP, parseSarif } from "../../web/render/sarif.ts";
+import { RECORD_CAP, parseLcov, worstFirst, type Ratio } from "../../web/render/lcov.ts";
+import { EVENT_CAP, parseIcs } from "../../web/render/ics.ts";
+import { fileSize } from "../../web/ui.ts";
+import { parseEml } from "../../web/render/eml-parse.ts";
+import { parsePackage, ROW_CAP as PKG_ROW_CAP } from "../../web/render/package-json.ts";
+import { parseEnv, ROW_CAP as ENV_ROW_CAP } from "../../web/render/env.ts";
+import { CARD_CAP, parseVcf } from "../../web/render/vcf-parse.ts";
+import { CUE_CAP, parseSubtitles } from "../../web/render/subtitles.ts";
+import { isJsonlPath, kindView, type KindLines } from "./workspace_kinds.ts";
 import { layoutTable, type Grid } from "../ui/grid.ts";
 import type { Ctx, Screen } from "../app/app.ts";
+import { stripAnsi } from "../term/ansi.ts";
 import { binding, type Binding } from "../app/keys.ts";
 import type { KeyEvent } from "../term/input.ts";
 import {
@@ -79,6 +104,7 @@ import {
 } from "../ui/image.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { renderMarkdown, type Line } from "../ui/markdown.ts";
+import { archiveNote } from "../ui/archive-note.ts";
 import { mediaNote } from "../ui/media-note.ts";
 import { tokColor, type Tokens } from "../ui/theme.ts";
 import { card, emptyState, input, scrollbar } from "../ui/widgets.ts";
@@ -131,6 +157,7 @@ import { workingCommands } from "./working.ts";
 import { forgeItCommands } from "./forge_it.ts";
 import { makeItYoursScreen, yoursCommands } from "./yours.ts";
 import { deleteRepoCommands } from "./deleterepo.ts";
+import { transferRepoCommands } from "./transferrepo.ts";
 import { grantsCommands } from "./grants.ts";
 import { visionCommands } from "./vision.ts";
 import { buildsCommands } from "./builds.ts";
@@ -138,8 +165,14 @@ import { displayCommands } from "./display.ts";
 import { iterationsCommands } from "./iterations.ts";
 import { labelsCommands } from "./labels.ts";
 import { appEnvCommands } from "./appenv.ts";
+import { variantsCommands } from "./variants.ts";
 import { autonomyCommands } from "./autonomy.ts";
 import { trafficCommands } from "./trafficview.ts";
+import { blockedCommands } from "./blocked.ts";
+import { statementCommands } from "./statement.ts";
+import { moneyCommands } from "./money.ts";
+import { adapterCommands } from "./adapter.ts";
+import { atlasCommands } from "./atlas.ts";
 import { externalEditor, editorHint, hasExternalEditor } from "./external.ts";
 import { finderScreen } from "./finder.ts";
 import { issuesScreen } from "./issues.ts";
@@ -247,12 +280,19 @@ function landing(nodes: readonly Node[]): Node | undefined {
  * spans: the pane draws line numbers itself, so they stay pinned while the
  * code scrolls sideways under them.
  */
-function buildLines(
+function isLogPath(path: string): boolean {
+  return /\.(log|ansi)$/i.test(path);
+}
+
+export function buildLines(
   text: string,
   path: string,
   c: Tokens,
 ): { plain: string[]; lines: Span[][] } {
-  const body = text.replace(/\n$/, "");
+  // A terminal log carries escapes; the viewer shows its text, never drives
+  // the terminal or prints "[31m" as if it were the log.
+  const clean = isLogPath(path) && text.includes("\x1b") ? stripAnsi(text) : text;
+  const body = clean.replace(/\n$/, "");
   const plain = body.split("\n").map((l) => expandTabs(l));
   // The first line is handed to the detector too: a `#!/usr/bin/env python3`
   // with no extension, a `.zshrc`, a vim modeline. The name is the strong
@@ -271,11 +311,313 @@ function buildLines(
 type TabMode = "view" | "edit";
 type FindMode = "off" | "find" | "replace";
 /** What a path is, as far as the file pane is concerned. */
-type TabKind = "image" | "markdown" | "code";
+type TabKind = "image" | "markdown" | "patch" | "code";
 
 /** `.csv` and `.tsv`: files that read as a table. */
 function isTablePath(path: string): boolean {
   return /\.[ct]sv$/i.test(path);
+}
+
+/** `.srt` and `.vtt`: a transcript, drawn as the same two-column table. */
+function isSubtitlePath(path: string): boolean {
+  return /\.(srt|vtt)$/i.test(path);
+}
+
+/** The cues of a subtitle file as a table: start time, text. Shares the web's parser. */
+function subtitleTable(source: string): { table: Table; unread: number } {
+  const { cues, failures } = parseSubtitles(source);
+  const shown = cues.slice(0, CUE_CAP);
+  return {
+    unread: failures.length,
+    table: {
+      header: ["Start", "Text"],
+      rows: shown.map((c) => [c.start, c.text]),
+      more: cues.length - shown.length,
+      delimiter: ",",
+      columns: 2,
+    },
+  };
+}
+
+/** `.ics`: a calendar, drawn as a table of its events. */
+function isIcsPath(path: string): boolean {
+  return /\.ics$/i.test(path);
+}
+
+/** The events of a calendar as a table; null when the file is not a calendar. Shares the web's parser. */
+function icsTable(source: string): Table | null {
+  const cal = parseIcs(source);
+  if ("error" in cal) return null;
+  const shown = cal.events.slice(0, EVENT_CAP);
+  return {
+    header: ["Start", "End", "Summary", "Location"],
+    rows: shown.map((e) => [e.start, e.end, e.summary, e.location]),
+    more: cal.events.length - shown.length,
+    delimiter: ",",
+    columns: 4,
+  };
+}
+
+/** `.vcf` and `.vcard`: contacts, drawn as a table of people. */
+function isVcfPath(path: string): boolean {
+  return /\.(vcf|vcard)$/i.test(path);
+}
+
+/** The cards of a contacts file as a table; null when the file is not one. Shares the web's parser. */
+function vcfTable(source: string): Table | null {
+  const parsed = parseVcf(source);
+  if ("error" in parsed || parsed.total === 0) return null;
+  const shown = parsed.cards.slice(0, CARD_CAP);
+  return {
+    header: ["Name", "Organisation", "Email", "Phone"],
+    rows: shown.map((c) => [c.name, c.org, c.emails.join(", "), c.phones.join(", ")]),
+    more: parsed.total - shown.length,
+    delimiter: ",",
+    columns: 4,
+  };
+}
+
+/** The variables of a `.env.example` as a table; null when it holds none. Shares the web's parser. */
+function envTable(source: string): Table | null {
+  const doc = parseEnv(source);
+  if (doc.total === 0) return null;
+  const dash = (v: string): string => (v === "" ? "—" : v);
+  const rows: string[][] = [];
+  let last = "";
+  for (const r of doc.rows.slice(0, ENV_ROW_CAP)) {
+    if (r.group !== "" && r.group !== last) rows.push([`# ${r.group}`, "", ""]);
+    last = r.group;
+    rows.push([r.name, dash(r.value), dash(r.comment)]);
+  }
+  return { header: ["Name", "Example", "Comment"], rows, more: doc.total - doc.rows.length, delimiter: ",", columns: 3 };
+}
+
+/** A `package.json` as Section/Name/Value rows; null when it is not a JSON object. Shares the web's parser. */
+function packageTable(source: string): Table | null {
+  const doc = parsePackage(source);
+  if (doc === undefined) return null;
+  const rows: string[][] = [];
+  if (doc.name !== "") rows.push(["package", doc.name, doc.version]);
+  if (doc.facts.length > 0) rows.push(["facts", doc.facts.join(" · "), ""]);
+  let more = 0;
+  for (const s of doc.sections) {
+    for (const [k, v] of s.rows.slice(0, PKG_ROW_CAP)) rows.push([s.title, k, v]);
+    more += s.total - s.rows.length;
+  }
+  if (rows.length === 0) return null;
+  return { header: ["Section", "Name", "Value"], rows, more, delimiter: ",", columns: 3 };
+}
+
+/** `.eml`: a message, drawn as rows of its headers, body and attachments. */
+function isEmlPath(path: string): boolean {
+  return /\.eml$/i.test(path);
+}
+
+const EML_BODY_LINES = 200;
+
+/** The message as Field/Value rows; null when the file is not one. Shares the web's parser. */
+function emlTable(source: Uint8Array): Table | null {
+  const m = parseEml(source);
+  if ("error" in m) return null;
+  const rows: string[][] = m.headers.map(([k, v]) => [k, v]);
+  if (m.fromHtml) rows.push(["Note", "only an HTML part; tags stripped"]);
+  const lines = m.body.split("\n");
+  for (const line of lines.slice(0, EML_BODY_LINES)) rows.push(["", line]);
+  if (lines.length > EML_BODY_LINES) rows.push(["Note", `body cut: ${lines.length - EML_BODY_LINES} more lines`]);
+  for (const a of m.attachments) rows.push(["Attachment", `${a.name} · ${a.type} · ${fileSize(a.size)}`]);
+  return { header: ["Field", "Value"], rows, more: 0, delimiter: ",", columns: 2 };
+}
+
+/** `.gpx`: a GPS track, drawn as a table of its facts (track, distance, climb, points). */
+function isGpxPath(path: string): boolean {
+  return /\.gpx$/i.test(path);
+}
+
+/** The facts of a track as a table; null when the file is not a track. Shares the web's parser. */
+function gpxTable(source: string, path: string): Table | null {
+  const parsed = parseGpx(source);
+  if (parsed === undefined) return null;
+  const rows = gpxFacts(parsed, path);
+  return { header: ["Fact", "Value"], rows, more: 0, delimiter: ",", columns: 2 };
+}
+
+/** `.sarif`: a scanner's findings, drawn as a table of level, rule, location and message. */
+function isSarifPath(path: string): boolean {
+  return /\.sarif$/i.test(path);
+}
+
+/** The findings of a SARIF file as a table, tool by tool; the reason, as the page words it, when it is not SARIF. Shares the web's parser. */
+function sarifTable(source: string): Table | string {
+  const parsed = parseSarif(source);
+  if ("error" in parsed) return `not drawn as findings: ${parsed.error}`;
+  const all = parsed.runs.flatMap((r) =>
+    r.results.map((f) => [f.level, f.rule, f.file === "" ? "-" : f.line > 0 ? `${f.file}:${f.line}` : f.file, f.message.replace(/\s+/g, " "), r.tool]),
+  );
+  const rows = all.slice(0, RESULT_CAP);
+  return { header: ["Level", "Rule", "Location", "Message", "Tool"], rows, more: all.length - rows.length, delimiter: ",", columns: 5 };
+}
+
+/** `lcov.info` / `.lcov`: a coverage tracefile, drawn as a table per source file, worst line coverage first. */
+function isLcovPath(path: string): boolean {
+  return kindByName(path) === "lcov";
+}
+
+/** The coverage of an lcov file as a table; the reason, as the page words it, when it is not lcov. Shares the web's parser. */
+function lcovTable(source: string): Table | string {
+  const parsed = parseLcov(source);
+  if ("error" in parsed) return `not drawn as coverage: ${parsed.error}`;
+  const pct = (r: Ratio | undefined): string => (r === undefined || r.found === 0 ? "-" : `${r.hit}/${r.found} ${(Math.floor((r.hit / r.found) * 1000) / 10).toFixed(1)}%`);
+  const sorted = worstFirst(parsed.records);
+  const rows = sorted.slice(0, RECORD_CAP).map((r) => [r.file, pct(r.lines), pct(r.functions), pct(r.branches)]);
+  return { header: ["File", "Lines", "Functions", "Branches"], rows, more: sorted.length - rows.length, delimiter: ",", columns: 4 };
+}
+
+/** An OpenAPI document by file name; whether its content is one is `openapiTable`'s to say. */
+function isOpenApiPath(path: string): boolean {
+  return kindByName(path) === "openapi";
+}
+
+/**
+ * The operations of an OpenAPI document as a table, tag by tag; null when the file is not one,
+ * the reason when it is but cannot be drawn. Shares the web's parser.
+ */
+function openapiTable(text: string, path: string): Table | string | null {
+  const parsed = parseOpenApi(text, path);
+  if (parsed === "not") return null;
+  if ("error" in parsed) return `not drawn as an API: ${parsed.error}`;
+  const rows = parsed.groups.flatMap((g) => g.ops.map((o) => [g.tag === "" ? "-" : g.tag, o.method, o.path, o.deprecated ? `${o.summary} (deprecated)`.trim() : o.summary]));
+  return { header: ["Tag", "Method", "Path", "Summary"], rows, more: parsed.more, delimiter: ",", columns: 4 };
+}
+
+/** A Dockerfile by file name. */
+function isDockerfilePath(path: string): boolean {
+  return kindByName(path) === "dockerfile";
+}
+
+/**
+ * A Dockerfile as a table: per stage, its ports and ENV names, then one row per instruction;
+ * the web's reason when it is not drawn. Shares the web's parser.
+ */
+function dockerfileTable(source: string): Table | string {
+  const parsed = parseDockerfile(source);
+  if ("error" in parsed) return `not drawn as a build: ${parsed.error}`;
+  const rows: string[][] = [];
+  for (const s of parsed.stages) {
+    const title = s.image === "" ? "(before the first stage)" : `${s.image}${s.name === "" ? "" : ` as ${s.name}`}`;
+    rows.push([title, "FROM", s.image]);
+    if (s.ports.length > 0) rows.push([title, "EXPOSE", s.ports.join(" ")]);
+    if (s.env.length > 0) rows.push([title, "ENV", s.env.join(" ")]);
+    for (const r of s.rows) rows.push([title, r.keyword, r.args.replace(/\s+/g, " ")]);
+  }
+  return { header: ["Stage", "Instruction", "Arguments"], rows, more: parsed.total - parsed.shown, delimiter: ",", columns: 3 };
+}
+
+/** A GitHub Actions workflow by file name. */
+function isWorkflowPath(path: string): boolean {
+  return kindByName(path) === "workflow";
+}
+
+/**
+ * A workflow as a table: the triggers, then per job its runner, needs and matrix, then one row
+ * per step; the web's reason when it is not drawn. Shares the web's parser.
+ */
+function workflowTable(source: string): Table | string {
+  const parsed = parseWorkflow(source);
+  if ("error" in parsed) return `not drawn as a workflow: ${parsed.error}`;
+  const rows: string[][] = [["-", "on", parsed.triggers.join(" ")]];
+  let more = parsed.jobsTotal - parsed.jobs.length;
+  for (const j of parsed.jobs) {
+    if (j.runsOn !== "") rows.push([j.id, "runs-on", j.runsOn]);
+    if (j.needs.length > 0) rows.push([j.id, "needs", j.needs.join(" ")]);
+    if (j.matrix.length > 0) rows.push([j.id, "matrix", j.matrix.join("; ")]);
+    for (const s of j.steps) rows.push([j.id, s.kind === "" ? "step" : s.kind, [s.name, s.does].filter((t) => t !== "").join(": ").replace(/\s+/g, " ")]);
+    more += j.stepsTotal - j.steps.length;
+  }
+  return { header: ["Job", "Kind", "Value"], rows, more, delimiter: ",", columns: 3 };
+}
+
+/** A `.sql` file by name. */
+function isSqlPath(path: string): boolean {
+  return kindByName(path) === "sql";
+}
+
+/** A SQL file as a table: a row per column of each CREATE TABLE, one row per other statement; the reason when it is not drawn. Shares the web's parser. */
+function sqlTable(source: string): Table | string {
+  const doc = parseSql(source);
+  if (doc === null) return "not drawn as a schema: this file holds no SQL statements to draw";
+  const dash = (v: string): string => (v === "" ? "-" : v);
+  const rows = doc.statements.flatMap((s) =>
+    s.kind === "other"
+      ? [["-", s.line, "-", "-", "-", "-"]]
+      : s.columns.map((c) => [s.name, c.name, dash(c.type), c.notNull ? "NOT NULL" : "-", c.primaryKey ? "PRIMARY KEY" : "-", dash(c.default)]),
+  );
+  return { header: ["Table", "Column", "Type", "Null", "Key", "Default"], rows, more: doc.total - doc.statements.length, delimiter: ",", columns: 6 };
+}
+
+/** A `.graphql` or `.gql` file by name. */
+function isGraphqlPath(path: string): boolean {
+  return kindByName(path) === "graphql";
+}
+
+/**
+ * A GraphQL schema as a table: a row per field or enum value of each block (roots first), one row
+ * per other definition; the reason when it is not drawn. Shares the web's parser.
+ */
+function graphqlTable(source: string): Table | string {
+  const doc = parseGraphql(source);
+  if (doc === null) return "not drawn as a schema: this file holds no type, input, interface or enum to draw";
+  const dash = (v: string): string => (v === "" ? "-" : v);
+  const rows = doc.blocks.flatMap((b) =>
+    b.kind === "other"
+      ? [["-", b.text, "-", "-", "-"]]
+      : [
+          ...(b.header === "" ? [] : [[`${b.extend ? "extend " : ""}${b.kind} ${b.name}`, "-", "-", "-", b.header]]),
+          ...b.fields.map((f) => [`${b.extend ? "extend " : ""}${b.kind} ${b.name}`, f.name, dash(f.args), dash(f.type), dash(f.note)]),
+          ...(b.fields.length === 0 && b.header === "" ? [[`${b.kind} ${b.name}`, "-", "-", "-", "-"]] : []),
+        ],
+  );
+  return { header: ["Block", "Field", "Arguments", "Type", "Directives"], rows, more: doc.total - doc.blocks.length, delimiter: ",", columns: 5 };
+}
+
+/** A JUnit report, by the web's own rule (file name, or root element). */
+function isJunitPath(path: string, source: Uint8Array): boolean {
+  return /\.xml$/i.test(path) && fileKind(path, source.subarray(0, 4096)) === "junit";
+}
+
+/** A JUnit report as a table: a totals row, then each failing case with its message; the reason when it is not drawn. Shares the web's parser. */
+function junitTable(source: string): Table | string {
+  const parsed = parseJunit(source);
+  if ("error" in parsed) return `not drawn as test results: ${parsed.error}`;
+  const t = parsed.totals;
+  const bad = parsed.suites.flatMap((s) =>
+    s.cases.filter((c) => c.status === "failed" || c.status === "error").map((c) => [c.status === "error" ? "error" : "failed", (c.classname === "" ? c.name : `${c.classname} › ${c.name}`) || "(unnamed)", c.message.replace(/\s+/g, " ")]),
+  );
+  const rows = [["total", `${t.tests} tests`, `${t.failures + t.errors} of ${t.tests} tests fail · ${t.skipped} skipped`], ...bad.slice(0, CASE_CAP)];
+  return { header: ["Result", "Case", "Message"], rows, more: bad.length - Math.min(bad.length, CASE_CAP), delimiter: ",", columns: 3 };
+}
+
+/** `.gcode`: a sliced print, drawn as a table of its facts (layers, box, filament, time). Shares the web's parser. */
+function isGcodePath(path: string): boolean {
+  return /\.(gcode|gco)$/i.test(path);
+}
+
+function gcodeTable(source: string): Table | null {
+  const parsed = parseGcode(source);
+  if (parsed === undefined) return null;
+  return { header: ["Fact", "Value"], rows: gcodeFacts(parsed).map(([k, v]) => [k, v]), more: 0, delimiter: ",", columns: 2 };
+}
+
+/** `.geojson`: features, drawn as a table of their geometry type and properties. */
+function isGeoJsonPath(path: string): boolean {
+  return /\.geojson$/i.test(path);
+}
+
+/** The properties table of a GeoJSON file; null when it is not GeoJSON. Shares the web's parser. */
+function geoJsonTable(source: string): Table | null {
+  const parsed = parseGeoJson(source);
+  if (parsed === undefined) return null;
+  const { header, rows } = propertyRows(parsed.features);
+  return { header, rows, more: Math.max(0, parsed.features.length - rows.length), delimiter: ",", columns: header.length };
 }
 
 /** `README.md`, `NOTES.markdown`, `readme` — the prose a repo opens on. */
@@ -284,10 +626,17 @@ function isMarkdownPath(path: string): boolean {
   return fileKind(name, NO_BYTES) === "markdown" || /^readme(\.|$)/i.test(name);
 }
 
+/** `.patch` and `.diff`: a file the pull page's diff draws. */
+function isPatchPath(path: string): boolean {
+  return fileKind(path.slice(path.lastIndexOf("/") + 1), NO_BYTES) === "patch";
+}
+
 class Tab {
   loading = true;
   /** Non-empty when there is a reason the bytes are not on screen. */
   note = "";
+  noteTitle = "Not shown";
+  noteDetail = "";
   raw: Uint8Array | null = null;
   plain: string[] = [];
   lines: Span[][] = [];
@@ -323,12 +672,21 @@ class Tab {
   /** The rendered document, and the width it was wrapped for. */
   doc: Line[] = [];
   docPlain: string[] = [];
+  /** The parsed diff of a patch file; null when the text is not a git diff. */
+  patch: Diff | null = null;
   docWidth = 0;
   /** `s` on a CSV/TSV: the aligned table, or the source behind it. */
   asTable = true;
   /** The parsed file, when its name says table. Parse errors ride along. */
   table: Table | null = null;
   grid: Grid = { header: "", rows: [] };
+  /** Cues of a subtitle file that could not be read. */
+  unread = 0;
+  /** Why a file whose name promises a view is shown as source instead; "" when nothing failed. */
+  fault = "";
+  /** The .ipynb / .log view, and the source it replaces while `s` has it up. */
+  kindLines: KindLines | null = null;
+  sourceLines: KindLines | null = null;
 
   constructor(readonly path: string) {}
 
@@ -338,12 +696,14 @@ class Tab {
 
   get kind(): TabKind {
     if (this.image !== null) return "image";
+    if (isPatchPath(this.path)) return "patch";
     return isMarkdownPath(this.path) ? "markdown" : "code";
   }
 
   /** True when the pane is showing prose rather than the bytes behind it. */
   get reading(): boolean {
-    return this.kind === "markdown" && this.rendered && this.mode === "view";
+    if (!this.rendered || this.mode !== "view") return false;
+    return this.kind === "markdown" || (this.kind === "patch" && this.patch !== null);
   }
 
   /** True when the pane is showing a CSV/TSV as columns. */
@@ -367,10 +727,21 @@ class Tab {
   document(width: number, c: Tokens): void {
     if (this.docWidth === width && this.doc.length > 0) return;
     this.docWidth = width;
-    this.doc = renderMarkdown(this.plain.join("\n"), Math.max(8, width), c);
+    this.doc =
+      this.patch !== null
+        ? renderPatch(this.patch, Math.max(8, width), c)
+        : renderMarkdown(this.plain.join("\n"), Math.max(8, width), c);
     this.docPlain = this.doc.map((line) =>
       line.map((span) => span.text).join(""),
     );
+  }
+
+  /** Put up the notebook/log view or its source, whichever `asTable` says. */
+  showKind(): void {
+    if (this.kindLines === null || this.sourceLines === null) return;
+    const shown = this.asTable ? this.kindLines : this.sourceLines;
+    this.plain = shown.plain;
+    this.lines = shown.lines;
   }
 
   get modified(): boolean {
@@ -404,15 +775,104 @@ class Tab {
       this.lines = [];
       return;
     }
-    const built = buildLines(new TextDecoder().decode(source), this.path, c);
+    const text = new TextDecoder().decode(source);
+    const built = buildLines(text, this.path, c);
+    if (isPatchPath(this.path)) {
+      const parsed = parseUnifiedDiff(text);
+      this.patch = parsed.files.length > 0 ? parsed : null;
+    } else this.patch = null;
     this.plain = built.plain;
     this.lines = built.lines;
-    if (isTablePath(this.path)) {
+    this.unread = 0;
+    this.fault = "";
+    this.kindLines = null;
+    this.sourceLines = built;
+    const kind = kindView(this.path, text, c);
+    if (kind?.table !== undefined) {
+      this.table = kind.table;
+      this.grid = layoutTable(kind.table);
+    } else if (kind !== null) {
+      this.kindLines = kind;
+      if (this.asTable && this.mode === "view") {
+        this.plain = kind.plain;
+        this.lines = kind.lines;
+      }
+    }
+    const api = isOpenApiPath(this.path) ? openapiTable(text, this.path) : null;
+    if (isSubtitlePath(this.path)) {
+      const subs = subtitleTable(new TextDecoder().decode(source));
+      this.table = subs.table;
+      this.unread = subs.unread;
+      this.grid = layoutTable(this.table);
+    } else if (isIcsPath(this.path)) {
+      this.table = icsTable(new TextDecoder().decode(source));
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isVcfPath(this.path)) {
+      this.table = vcfTable(new TextDecoder().decode(source));
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isEnvExample(this.path)) {
+      this.table = envTable(new TextDecoder().decode(source));
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (kindByName(this.path) === "package") {
+      this.table = packageTable(new TextDecoder().decode(source));
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isEmlPath(this.path)) {
+      this.table = emlTable(source);
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isGpxPath(this.path)) {
+      this.table = gpxTable(new TextDecoder().decode(source), this.path);
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isSarifPath(this.path)) {
+      const findings = sarifTable(new TextDecoder().decode(source));
+      this.table = typeof findings === "string" ? null : findings;
+      this.fault = typeof findings === "string" ? findings : "";
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isLcovPath(this.path)) {
+      const coverage = lcovTable(new TextDecoder().decode(source));
+      this.table = typeof coverage === "string" ? null : coverage;
+      this.fault = typeof coverage === "string" ? coverage : "";
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (api !== null) {
+      this.table = typeof api === "string" ? null : api;
+      this.fault = typeof api === "string" ? api : "";
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isDockerfilePath(this.path)) {
+      const build = dockerfileTable(new TextDecoder().decode(source));
+      this.table = typeof build === "string" ? null : build;
+      this.fault = typeof build === "string" ? build : "";
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isWorkflowPath(this.path)) {
+      const flow = workflowTable(new TextDecoder().decode(source));
+      this.table = typeof flow === "string" ? null : flow;
+      this.fault = typeof flow === "string" ? flow : "";
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isSqlPath(this.path)) {
+      const schema = sqlTable(new TextDecoder().decode(source));
+      this.table = typeof schema === "string" ? null : schema;
+      this.fault = typeof schema === "string" ? schema : "";
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isGraphqlPath(this.path)) {
+      const schema = graphqlTable(new TextDecoder().decode(source));
+      this.table = typeof schema === "string" ? null : schema;
+      this.fault = typeof schema === "string" ? schema : "";
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isJunitPath(this.path, source)) {
+      const results = junitTable(new TextDecoder().decode(source));
+      this.table = typeof results === "string" ? null : results;
+      this.fault = typeof results === "string" ? results : "";
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isGcodePath(this.path)) {
+      this.table = gcodeTable(new TextDecoder().decode(source));
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isGeoJsonPath(this.path)) {
+      this.table = geoJsonTable(new TextDecoder().decode(source));
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isTablePath(this.path)) {
       // The decoded source, not `plain`: `expandTabs` has eaten every tab there.
       const delimiter = /\.tsv$/i.test(this.path) ? "\t" : undefined;
       this.table = parseCsv(new TextDecoder().decode(source), { delimiter });
       this.grid = layoutTable(this.table);
-    } else this.table = null;
+    } else if (kind?.table === undefined) this.table = null;
     // The rendered document is derived from the same text, so an edit, a
     // theme switch or a re-read has to throw it away with everything else.
     this.doc = [];
@@ -444,6 +904,10 @@ class Tab {
 /** One blob, as the workspace keeps it: text, a picture, or a reason. */
 interface CacheEntry {
   readonly note: string;
+  /** The note's heading; "Not shown" unless the file is something we name. */
+  readonly noteTitle: string;
+  /** A last line under the note: where to get the file. */
+  readonly noteDetail: string;
   readonly raw: Uint8Array | null;
   readonly picture: Uint8Array | null;
 }
@@ -522,6 +986,11 @@ export function workspaceScreen(
   // arriving from a search hit means "show me *that*", not "show me where I
   // was". Everything else is restored.
   let ref = o.ref ?? memory?.ref ?? knownDefaultRef(src) ?? "";
+  /** Where a file downloads from, said in words the terminal can print. */
+  const downloadAt = (path: string): string => {
+    const web = mediaWeb();
+    return web === undefined ? "Download it from its web page." : `Download: ${downloadHref(web, ref, path)}`;
+  };
   let facts: RepoFacts | undefined;
   let roots: Node[] = memory?.roots ?? [];
   let loadedTree = roots.length > 0;
@@ -595,7 +1064,7 @@ export function workspaceScreen(
    * The arrays are the live ones, so this is a pointer plus a clock rather
    * than a copy — the cost of remembering is one `Map.set` a paint.
    */
-  const remember_ = (): void => {
+  const rememberView = (): void => {
     f.scratch.set(key, {
       tabs,
       roots,
@@ -716,6 +1185,15 @@ export function workspaceScreen(
       const read = await src.blob(ref, t.path);
       if (stale(mine)) return;
       let note = "";
+      let noteTitle = "Not shown";
+      let noteDetail = "";
+      // A model is named and measured here, as the page draws it (#7335).
+      const model = (bytes: Uint8Array | null, size: number): void => {
+        const facts = modelFacts(t.path, bytes, size);
+        noteTitle = facts.title;
+        note = facts.facts;
+        noteDetail = downloadAt(t.path);
+      };
       let raw: Uint8Array | null = null;
       let picture: Uint8Array | null = null;
       if (!read.ok)
@@ -724,12 +1202,15 @@ export function workspaceScreen(
             ? "No such file at this revision."
             : errorText(read.error);
       else {
-        // Audio and video are not played here; the note says where they are.
+        // Audio and video are not played here, and a model is not drawn
+        // here: each note says what the file is and where it is.
         const media =
           read.value.kind === "text"
             ? undefined
             : mediaNote(t.path, formatSize(read.value.size), mediaWeb(), ref);
-        if (media !== undefined) note = media;
+        if (read.value.kind !== "text" && isModelPath(t.path))
+          model(read.value.kind === "binary" ? read.value.body : null, read.value.size);
+        else if (media !== undefined) note = media;
         else if (read.value.kind === "too_large")
           note = `${formatSize(read.value.size)} — too large to display.`;
         else if (read.value.kind === "binary") {
@@ -737,15 +1218,20 @@ export function workspaceScreen(
           // something with. Everything else keeps the honest note: showing
           // bytes as text is how a terminal ends up beeping at you.
           if (looksLikeImage(t.path)) picture = read.value.body;
-          else note = `Binary file, ${formatSize(read.value.size)}.`;
-        } else raw = read.value.body;
+          else
+            note =
+              archiveNote(t.path, read.value.body, read.value.size, formatSize) ??
+              `Binary file, ${formatSize(read.value.size)}.`;
+        } else raw = read.value.body; // .html included: source here, the page preview is web-only
       }
-      entry = { note, raw, picture };
+      entry = { note, noteTitle, noteDetail, raw, picture };
       remember(key, entry);
     }
     if (stale(mine)) return;
     t.loading = false;
     t.note = entry.note;
+    t.noteTitle = entry.noteTitle;
+    t.noteDetail = entry.noteDetail;
     t.raw = entry.raw;
     t.image =
       entry.picture === null
@@ -791,6 +1277,18 @@ export function workspaceScreen(
     await loadTab(made);
   };
 
+  /** A mirror's credit line (#10531), the same sentence the web page prints; empty until read. */
+  let creditWords = "";
+  const askCredit = async (mine: number): Promise<void> => {
+    if (repo === undefined || ref === "") return;
+    const credit = await creditOf(f.db, f.app.reposRoot, repo, f.user, src, ref);
+    if (stale(mine)) return;
+    const words = credit === undefined ? "" : creditText(credit);
+    if (words === creditWords) return;
+    creditWords = words;
+    ctx.invalidate();
+  };
+
   const reload = async (arriving = false): Promise<void> => {
     const mine = ++gen;
     readPin();
@@ -805,6 +1303,7 @@ export function workspaceScreen(
       return;
     }
     void askUpstream(mine);
+    void askCredit(mine);
     // Coming back to a workspace we remember: the tree and every buffer are
     // already here, edits included. Re-reading them would be slower *and*
     // would throw away uncommitted work, so the only thing worth asking git
@@ -1347,6 +1846,7 @@ export function workspaceScreen(
     // set would put the document back on `esc` with the edits invisible.
     t.rendered = false;
     t.asTable = false;
+    t.showKind();
     t.mode = "edit";
     focus = "file";
     ctx.invalidate();
@@ -1412,13 +1912,14 @@ export function workspaceScreen(
         binding(["ctrl+c", "ctrl+x", "ctrl+v"], "copy / cut / paste"),
       ];
     const two =
-      t !== undefined && (t.image !== null || isMarkdownPath(t.path));
+      t !== undefined &&
+      (t.image !== null || isMarkdownPath(t.path) || t.patch !== null);
     return [
-      ...(t?.table == null
+      ...(t?.table == null && t?.kindLines == null
         ? []
         : [
             binding(["s"], t.asTable ? "show the source" : "show the table", {
-              disabled: t.table.error !== undefined || t.table.header.length === 0,
+              disabled: t.table != null && (t.table.error !== undefined || t.table.header.length === 0),
             }),
           ]),
       binding(["tab"], "focus explorer"),
@@ -1448,6 +1949,7 @@ export function workspaceScreen(
       ...reportsCommands(f, ctx, repo),
       ...noteCommands(f, ctx, () => screen, repo),
       ...yoursCommands(f, ctx, repo),
+      ...transferRepoCommands(f, ctx, repo),
       ...deleteRepoCommands(f, ctx, repo),
       ...grantsCommands(f, ctx, repo),
       ...forgeItCommands(f, ctx, repo, () => screen),
@@ -1458,8 +1960,14 @@ export function workspaceScreen(
       ...iterationsCommands(f, ctx, repo),
       ...displayCommands(f, ctx, repo),
       ...appEnvCommands(f, ctx, repo),
+      ...variantsCommands(f, ctx, repo),
       ...autonomyCommands(f, ctx, repo),
       ...trafficCommands(f, ctx, repo),
+      ...blockedCommands(f, ctx, repo),
+      ...statementCommands(f, ctx, repo),
+      ...moneyCommands(f, ctx, repo),
+      ...adapterCommands(f, ctx, repo),
+      ...atlasCommands(f, ctx, repo),
     ],
     get title() {
       return sourceName(src);
@@ -1660,7 +2168,7 @@ export function workspaceScreen(
         });
       }
       drawStatus(s, status!, c);
-      remember_();
+      rememberView();
     },
     paste(text) {
       const t = tab();
@@ -2209,7 +2717,7 @@ export function workspaceScreen(
       t.showImage = !t.showImage;
       return;
     }
-    if (t.kind !== "markdown" || t.mode === "edit") {
+    if ((t.kind !== "markdown" && t.kind !== "patch") || t.mode === "edit") {
       ctx.toast("nothing else to show for this file", "attn");
       return;
     }
@@ -2222,7 +2730,16 @@ export function workspaceScreen(
   /** `s` — a table file's two views: aligned columns, or the text itself. */
   function toggleTable(t: Tab): void {
     // A stray `s` on anything else is not worth a toast.
-    if (t.table === null || t.mode === "edit") return;
+    if (t.mode === "edit") return;
+    if (t.kindLines !== null && t.sourceLines !== null) {
+      t.asTable = !t.asTable;
+      t.showKind();
+      t.scroll.top = 0;
+      t.left = 0;
+      t.findHits();
+      return;
+    }
+    if (t.table === null) return;
     if (t.table.error !== undefined) {
       ctx.toast(tableProblem(t.table), "attn");
       return;
@@ -2254,7 +2771,11 @@ export function workspaceScreen(
       return;
     }
     if (t.note !== "") {
-      emptyState(s, r, c, { title: "Not shown", body: t.note });
+      emptyState(s, r, c, {
+        title: t.noteTitle,
+        body: t.note,
+        ...(t.noteDetail === "" ? {} : { detail: t.noteDetail }),
+      });
       return;
     }
     if (t.mode === "edit") {
@@ -2420,6 +2941,7 @@ export function workspaceScreen(
     const parts = [
       ref === "" ? "no ref" : ref,
       held === undefined ? "" : mirrorLine(held),
+      creditWords,
       dirty === 0 ? "" : `${dirty} modified`,
       pending.size === 0 ? "" : `${plural(pending.size, "deletion")} pending`,
       // Said on every frame, not only in the dialog: somebody typing into a
@@ -2453,7 +2975,9 @@ export function workspaceScreen(
               ? ""
               : `${t.path} · ${
                   t.tabular && t.table !== null
-                    ? tableStatus(t.table)
+                    ? t.raw !== null && isJunitPath(t.path, t.raw)
+                      ? plural(t.table.rows.length - 1 + t.table.more, "failing case")
+                      : tableStatus(t.table, t.unread, isSubtitlePath(t.path), isIcsPath(t.path), isGpxPath(t.path), isVcfPath(t.path), isGeoJsonPath(t.path), isJsonlPath(t.path), isSarifPath(t.path), isLcovPath(t.path), isOpenApiPath(t.path), isDockerfilePath(t.path))
                     : `${plural(
                         t.reading ? t.doc.length : t.plain.length,
                         "line",
@@ -2461,7 +2985,7 @@ export function workspaceScreen(
                         t.table?.error === undefined || t.mode === "edit"
                           ? ""
                           : ` · ${tableProblem(t.table)}`
-                      }`
+                      }${t.fault === "" || t.mode === "edit" ? "" : ` · ${t.fault}`}`
                 }${
                   writable() || target !== undefined ? "" : forkable() ? " · proposes from your fork" : " · read only"
                 }`;
@@ -2787,10 +3311,16 @@ function drawCode(s: Surface, r: Rect, c: Tokens, t: Tab): void {
 }
 
 /** `80 rows, first 50 shown · 3 more columns`: what the table leaves out. */
-function tableStatus(table: Table): string {
+function tableStatus(table: Table, unread = 0, subs = false, events = false, facts = false, people = false, features = false, jsonl = false, findings = false, files = false, operations = false, instructions = false): string {
   const rows = table.rows.length + table.more;
-  return `${plural(rows, "row")}${
-    table.more > 0 ? `, first ${table.rows.length} shown` : ""
+  return `${plural(rows, subs ? "cue" : events ? "event" : people ? "contact" : facts ? "fact" : features ? "feature" : findings ? "finding" : files ? "file" : operations ? "operation" : instructions ? "instruction" : "row")}${
+    unread > 0 ? ` · ${unread} unreadable, check their arrow lines` : ""
+  }${
+    table.more > 0
+      ? jsonl
+        ? `, ${plural(table.more, "more row")} not shown`
+        : `, first ${table.rows.length} shown`
+      : ""
   }${
     table.columns > MAX_COLUMNS
       ? ` · ${table.columns - MAX_COLUMNS} more columns`

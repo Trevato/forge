@@ -1,6 +1,6 @@
 /**
- * Connected origins in the terminal: the hosts your mirrors come from, as
- * Settings › Origins lists them. `s` syncs the selected one now, `d` disconnects
+ * Connected accounts in the terminal: the hosts your mirrors come from, as
+ * Settings › Connected accounts lists them. `s` syncs the selected one now, `d` disconnects
  * it after a confirm — through `actions/origins.ts`, in `origin_words.ts`'s words.
  */
 
@@ -27,7 +27,7 @@ export function connectionsScreen(f: Session, ctx: Ctx): Screen {
   const counts = () => (f.user === undefined ? new Map<string, { count: number }>() : mirrorsByOrigin(f.app.db, f.user.id));
 
   const screen: Screen = {
-    title: "Connected origins",
+    title: "Connected accounts",
     keys: [binding(["j", "k"], "move cursor"), binding(["c"], "connect"), binding(["s"], "sync now"), binding(["v"], "verify again"), binding(["d"], "disconnect"), binding(["esc"], "back")],
     render(area, s) {
       const c = ctx.theme.c;
@@ -55,7 +55,7 @@ export function connectionsScreen(f: Session, ctx: Ctx): Screen {
           return {
             title: `${host(o.webUrl)} · ${o.login}`,
             ...(o.lastError !== "" || writesPaused(f.app, o.id) !== undefined ? { tone: "danger" as const } : {}),
-            secondary: `${o.software === "forge" ? "another forge · " : ""}${k} repositor${k === 1 ? "y" : "ies"} · ${day(o.lastSyncAt)}`,
+            secondary: `${o.software === "forge" ? "another forge · " : ""}${o.readOnly ? "read-only · " : ""}${k} repositor${k === 1 ? "y" : "ies"} · ${day(o.lastSyncAt)}`,
             meta: o.lastError !== "" ? o.lastError : writesPaused(f.app, o.id) !== undefined ? "writes paused" : o.authKind === "oauth" ? "OAuth" : "token",
           };
         }),
@@ -68,24 +68,34 @@ export function connectionsScreen(f: Session, ctx: Ctx): Screen {
         const user = f.user;
         ctx.push(
           promptScreen(ctx, screen, {
-            title: "Connect an origin",
+            title: "Connect an account",
             label: "Host or address (a forge, Forgejo, Gitea, GitHub)",
             placeholder: "forge.example.com",
             onSubmit: (hostText) => {
               if (hostText === "") return "Type the address of the forge.";
               return later(ctx, () =>
                 promptScreen(ctx, screen, {
-                  title: "Connect an origin",
+                  title: "Connect an account",
                   label: `Access token for ${hostText}`,
                   hint: "Made in that forge's settings; kept encrypted here.",
                   mask: true,
                   onSubmit: (token) => {
                     if (token.trim() === "") return "Paste the token.";
-                    ctx.toast(`Connecting ${hostText}…`);
-                    return connectOrigin(f.app, user, { host: hostText, token }).then((r) => {
-                      ctx.toast(r.ok ? `Connected ${r.value.login} at ${host(r.value.webUrl)}.` : connectRefusal(r.error).message ?? connectWords(connectRefusal(r.error).code), r.ok ? "success" : "danger");
-                      ctx.invalidate();
-                    });
+                    return later(ctx, () =>
+                      promptScreen(ctx, screen, {
+                        title: "Connect an account",
+                        label: "Read-only? Type yes to never write back to it",
+                        hint: "Leave empty to connect the ordinary way.",
+                        onSubmit: (answer) => {
+                          const readOnly = /^y(es)?$/i.test(answer.trim());
+                          ctx.toast(`Connecting ${hostText}…`);
+                          return connectOrigin(f.app, user, { host: hostText, token, readOnly }).then((r) => {
+                            ctx.toast(r.ok ? `Connected ${r.value.login} at ${host(r.value.webUrl)}${readOnly ? ", read-only" : ""}.` : connectRefusal(r.error).message ?? connectWords(connectRefusal(r.error).code), r.ok ? "success" : "danger");
+                            ctx.invalidate();
+                          });
+                        },
+                      }),
+                    );
                   },
                 }),
               );
@@ -149,10 +159,10 @@ export function connectionsScreen(f: Session, ctx: Ctx): Screen {
   return screen;
 }
 
-/** Connected origins: a signed-in person, not an agent. */
+/** Origins: a signed-in person, not an agent. */
 export const entry: PaletteEntry = {
   id: "origins",
-  title: "Connected origins",
+  title: "Connected accounts",
   hint: "the hosts your mirrors come from",
   offered: (session) => session.user !== undefined && session.user.kind !== "agent",
   run: (session, ctx) => ctx.push(connectionsScreen(session, ctx)),

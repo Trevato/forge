@@ -65,7 +65,7 @@ beforeAll(async () => {
       { path: "art/evil.svg", content: EVIL_SVG },
       { path: "doc.pdf", content: PDF },
       { path: "fake.pdf", content: "<script>alert(1)</script>" },
-      { path: "art/page.html", content: "<script>alert(1)</script>" },
+      { path: "art/page.txt", content: "<script>alert(1)</script>" },
       { path: "clip.mp4", content: CLIP },
       { path: "README.md", content: "# gallery\n" },
       { path: "src/a.ts", content: "export const a = 1\n" },
@@ -119,7 +119,7 @@ describe("the media route", () => {
     const fake = await get("/alice/gallery/media/main/art/fake.png");
     expect(fake.status).toBe(200);
     expect(fake.headers.get("content-type")).toBe("application/octet-stream");
-    const page = await get("/alice/gallery/media/main/art/page.html");
+    const page = await get("/alice/gallery/media/main/art/page.txt");
     expect(page.headers.get("content-type")).toBe("application/octet-stream");
   });
 

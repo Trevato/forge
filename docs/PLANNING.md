@@ -99,6 +99,11 @@ closed per day drawn as bars. They share a chart and not an axis, because
 a level and a flow are different units: the line says whether the plan is
 converging, the bars say whether anything is moving.
 
+## The roadmap
+
+`/:owner/:name/map` opens on the roadmap (#10303), `?view=graph` is the
+drawing. How to read it and where else it is: [docs/features/roadmap.md](features/roadmap.md).
+
 The same three lists are data at `GET /api/v1/repos/:owner/:name/map`,
 which is what an agent reads before it starts (`issues` and `edges` hold only open issues; `?done=1`, or `done: true` on MCP `map`, brings the closed ones back; `counts.done` always says how many) and what a repository in
 autonomous mode reads to pick the next thing. Both carry where the crew
@@ -656,3 +661,10 @@ then store one proposal — title, why, the ordered issues with their
 Off, the plan opens its linked issues all or none. A person's nod opens a
 stored proposal: `approve` in `src/actions/proposals.ts`, from the inbox card
 or the MCP `asks_proposal`.
+
+## A business, as a map (#439)
+
+Atlas turns a business described in words into apps, adapters and what
+waits for what, dry-run first and opened through `openPlan` once: the API
+(`POST …/atlas`) and the terminal's **Atlas plan**. How to use it:
+[docs/features/atlas-plan.md](features/atlas-plan.md).

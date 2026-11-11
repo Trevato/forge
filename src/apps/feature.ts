@@ -34,6 +34,7 @@ const BUILT_IN_MENU_LABELS = [
   "your profile", "repositories", "apps", "notes", "talk", "explore", "packs", "displays", "map", "features",
   "new app", "new repository", "new issue", "new organization", "migrate", "settings", "access tokens", "ssh keys",
   "origins", "boards", "crew", "system memory", "help", "sign out", "log out", "sign in", "admin", "administration",
+  "access codes", "computer keys", "connected accounts", "jump to anywhere",
   "theme", "create", "new forge", "create new", "appearance and help", "features from apps", "keyboard shortcuts",
 ];
 
@@ -68,6 +69,39 @@ export interface FeatureSpec {
   readonly settings: readonly SettingSpec[];
   /** MCP tools the app serves through the forge's `features` tool (`feature_tools.ts`). */
   readonly tools: readonly ToolSpec[];
+  /** Tools the app asks the forge to call on a timer; empty when none. Fired by `apps/feature_schedule.ts`. */
+  readonly schedule: readonly ScheduleEntry[];
+}
+
+export interface ScheduleEntry {
+  readonly tool: string;
+  readonly everyMs: number;
+}
+
+const MINUTE = 60_000;
+/** The intervals a schedule entry may name. */
+export const SCHEDULE_EVERY: Readonly<Record<string, number>> = { "15m": 15 * MINUTE, "1h": 60 * MINUTE, "6h": 360 * MINUTE, "1d": 1440 * MINUTE };
+export const SCHEDULE_MAX = 4;
+
+/** The `schedule` of a feature block, checked against the tools the feature declares; an error names the entry. */
+function parseSchedule(raw: unknown, tools: readonly ToolSpec[]): Result<readonly ScheduleEntry[], string> {
+  if (raw === undefined) return ok([]);
+  if (!Array.isArray(raw)) return bad("schedule must be a list of { tool, every }");
+  if (raw.length > SCHEDULE_MAX) return bad(`schedule has at most ${SCHEDULE_MAX} entries`);
+  const out: ScheduleEntry[] = [];
+  for (const [i, e] of raw.entries()) {
+    const at = `schedule entry ${i + 1}`;
+    if (!isObject(e)) return bad(`${at} must be an object with tool and every`);
+    for (const extra of Object.keys(e)) if (extra !== "tool" && extra !== "every") return bad(`${at}: unknown field ${extra}`);
+    const tool = e["tool"];
+    if (typeof tool !== "string" || !tools.some((t) => t.name === tool))
+      return bad(`${at}: tool ${JSON.stringify(tool)} is not one of this feature's tools${tools.length ? ` (${tools.map((t) => t.name).join(", ")})` : ""}`);
+    const every = e["every"];
+    if (typeof every !== "string" || !Object.hasOwn(SCHEDULE_EVERY, every))
+      return bad(`${at} (${tool}): every is one of ${Object.keys(SCHEDULE_EVERY).join(", ")}`);
+    out.push({ tool, everyMs: SCHEDULE_EVERY[every]! });
+  }
+  return ok(out);
 }
 
 const KEY = /^[a-z][a-zA-Z0-9]{0,39}$/;
@@ -117,10 +151,12 @@ export function parseFeature(forgeJson: Raw): Result<FeatureSpec | undefined, st
   const envs = new Set(settings.map((s) => settingEnvName(s.key)));
   if (envs.size !== settings.length) return bad("two settings would share one FORGE_SETTING_ name");
   for (const extra of Object.keys(block))
-    if (!["name", "summary", "page", "settings", "tools"].includes(extra)) return bad(`unknown field ${extra}`);
+    if (!["name", "summary", "page", "settings", "tools", "schedule"].includes(extra)) return bad(`unknown field ${extra}`);
   const tools = parseTools(block["tools"]);
   if (!tools.ok) return tools;
-  return ok({ tools: tools.value, name: name.trim(), summary: typeof summary === "string" && summary.trim() !== "" ? summary.trim() : null, page, settings });
+  const schedule = parseSchedule(block["schedule"], tools.value);
+  if (!schedule.ok) return schedule;
+  return ok({ tools: tools.value, schedule: schedule.value, name: name.trim(), summary: typeof summary === "string" && summary.trim() !== "" ? summary.trim() : null, page, settings });
 }
 
 function parseSetting(key: string, raw: unknown): Result<SettingSpec, string> {

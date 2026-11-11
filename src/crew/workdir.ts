@@ -9,6 +9,7 @@ import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Agent } from "../core/agents.ts";
 import type { Repo } from "../core/repos.ts";
+import { PROXY_VARS } from "../apps/process.ts";
 
 export const crewRoot = (dataDir: string): string => join(dataDir, "crew");
 
@@ -117,18 +118,26 @@ export const INSTALL_TIMEOUT_MS = 120_000;
 
 /**
  * What an install sees of the forge's environment: a repository's package.json
- * is untrusted, so no FORGE_* variable, key or token goes with it.
+ * is untrusted, so no FORGE_* variable, key or token goes with it. The cell's
+ * proxy does go: inside a child forge's cell it is the only route out, and an
+ * install without it dials the registry directly and is refused before the
+ * proxy can allow or deny it. Which hosts are reachable stays the proxy's call.
  */
 export function installEnv(
   cacheDir: string,
   base: Record<string, string | undefined> = process.env,
 ): Record<string, string> {
-  return {
+  const env: Record<string, string> = {
     PATH: base["PATH"] ?? "/usr/local/bin:/usr/bin:/bin",
     HOME: join(dirname(cacheDir), "home"),
     TMPDIR: base["TMPDIR"] ?? "/tmp",
     BUN_INSTALL_CACHE_DIR: cacheDir,
   };
+  for (const name of PROXY_VARS) {
+    const value = base[name];
+    if (value !== undefined) env[name] = value;
+  }
+  return env;
 }
 
 /** Run a command with exactly `env`; killed after `timeoutMs` and reported as a failure. */

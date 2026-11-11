@@ -14,6 +14,7 @@ import { PINNED_PUBLIC, immutableWhenAddressed, mayShare } from "../../http/addr
 import { EDGE_VARY } from "../../http/edge_cache.ts";
 import { keepPage, keptPage, keptPageKey } from "./kept_page.ts";
 import { cachedBlobPage, cachedRaw, cachedTree, keepBlobPage, keepRaw, keepTree, keptRefs, resolveCommit, withKeptFolders } from "./tree_cache.ts";
+import { followStanding } from "../../actions/follow.ts";
 import { behindLine, followingLine, originAheadLine } from "./upstream-follow.ts";
 import { CONFLICT_WORDS, UNREAD_WORDS } from "../../origins/ahead.ts";
 import { upstreamOffer } from "../../actions/offer_upstream.ts";
@@ -40,6 +41,7 @@ import {
   archivedParentLine,
   followingCard,
   followingOf,
+  type Following,
   lineageCard,
 } from "./following.ts";
 import { nothingNew } from "../../actions/follow.ts";
@@ -80,16 +82,22 @@ import { declaresFeature } from "../../actions/features.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
+import { creditLine } from "../credit_line.ts";
 import { type CodeRows, rowsMarkup } from "../code_rows.ts";
-import { rowsOffThread } from "../code_rows_pool.ts";
+import { gcodeOffThread, rowsOffThread } from "../code_rows_pool.ts";
 import { flashTo, fragment, page, redirect } from "../layout.ts";
-import { renderMarkdown } from "../markdown.ts";
+import { renderMarkdown, type MarkdownRepo } from "../markdown.ts";
+import { overSize } from "../render/archive.ts";
 import { csvJs, isCsvPath } from "../render/csv.ts";
-import { HEAD_BYTES } from "../render/kinds.ts";
+import { fontJs } from "../render/font.ts";
+import { INLINE_MAX, keepGcode, keptGcode, layerCount } from "../render/gcode.ts";
+import { hasTable } from "../render/sqlite.ts";
+import { fileKind, HEAD_BYTES, kindByName, needsPaths, RENDER_CAP } from "../render/kinds.ts";
 import { RENDERERS, rendererFor } from "../render/renderers.ts";
-import { mediaHref } from "./media.ts";
+import { downloadHref, mediaHref } from "./media.ts";
 import { browseBase, localScope, type RepoScope } from "../scope.ts";
 import { repoForkOf } from "../../core/origins.ts";
+import { recentMove } from "../../core/transfer.ts";
 import {
   badge,
   btn,
@@ -166,8 +174,17 @@ export async function forksPage(ctx: Ctx): Promise<Response> {
   t = performance.now();
   const ranked = await rankedForksOf(ctx.app, repo, forks);
   notePhase(ctx.request, "drift", performance.now() - t);
+  // On a fork its admin may steer, the Following card: how this fork
+  // follows, and its change offered up when ahead (#608).
+  let following: Following | undefined;
+  if (repo.forkParentId !== null && canAdmin(ctx.app.db, repo, ctx.auth.user)) {
+    t = performance.now();
+    following = await followingOf(ctx, repo);
+    notePhase(ctx.request, "following", performance.now() - t);
+  }
   t = performance.now();
   const body = html`${repoHeader(ctx, repo, "forks")}
+    ${following === undefined ? "" : followingCard(ctx, repo, following, { family: false })}
     <div class="page-head mt">
       <h2>${forks.length} fork${forks.length === 1 ? "" : "s"}</h2>
     </div>
@@ -179,7 +196,7 @@ export async function forksPage(ctx: Ctx): Promise<Response> {
         })
       : html`${forkRanking(ranked, new Map(tree.map((n) => [n.repo.id, n])))}
           <h3 class="mt">The family, by who follows whom</h3>
-          ${lineageCard(lineage, repo.id)}`}`;
+          ${lineageCard(lineage, repo.id, ctx.auth.user?.id)}`}`;
   const res = page({
     ctx,
     title: `Forks · ${repo.ownerName}/${repo.name}`,
@@ -623,6 +640,18 @@ export function clearReadmeCache(): void {
 }
 
 /**
+ * Where a README's relative addresses point: its own repository at its own
+ * ref, read off the blob base the caller already passes. Nothing for the
+ * origins browser, which has no media route.
+ */
+function readmeRepo(whole: string | undefined, dir: string): MarkdownRepo | undefined {
+  if (whole === undefined) return undefined;
+  const at = whole.lastIndexOf("/blob/");
+  if (at <= 0 || whole.startsWith("/origins/")) return undefined;
+  return { base: whole.slice(0, at), ref: whole.slice(at + 6), dir };
+}
+
+/**
  * The README under a directory listing, read through whichever source is
  * answering. It is found in the entries we already have rather than by asking
  * for the tree again — `RepoSource.readme` only knows the root, and a README
@@ -642,7 +671,7 @@ export async function readmeFor(
   );
   if (!readme) return html``;
   const baseKey = readmeKey(source, readme);
-  const key = baseKey === null || whole === undefined ? baseKey : `${baseKey}:${whole}`;
+  const key = baseKey === null || whole === undefined ? baseKey : `${baseKey}:${whole}:${prefix}`;
   const cached = key === null ? undefined : readmeCache.get(key);
   if (key !== null && cached) {
     readmeCache.delete(key);
@@ -657,7 +686,7 @@ export async function readmeFor(
   const cut = whole === undefined ? null : cutAtBlock(full, README_HOME_BYTES);
   const text = cut ?? full;
   const rendered = /\.(md|markdown)$/i.test(readme.name)
-    ? renderMarkdown(text)
+    ? renderMarkdown(text, readmeRepo(whole, prefix))
     : html`<pre>${text}</pre>`;
   const more =
     cut === null
@@ -681,10 +710,6 @@ export async function readmeFor(
  */
 export type BlobView = "source" | "rendered";
 
-/** The file saved under its own name, streamed at any size. */
-const downloadHref = (base: string, ref: string, path: string): string =>
-  `${mediaHref(base, ref, path)}?download=1`;
-
 export function blobView(value: string | null): BlobView {
   return value === "source" ? "source" : "rendered";
 }
@@ -698,6 +723,7 @@ export function blobBody(
   highlighted?: (ms: number) => void,
   all = false,
   ready?: CodeRows,
+  why?: string,
 ): { content: Html; lines: number } {
   const encoded = encodeURIComponent(ref);
   if (blob.kind === "binary") {
@@ -705,8 +731,8 @@ export function blobBody(
       lines: 0,
       content: empty({
         icon: "file",
-        title: "Binary file",
-        note: `${fileSize(blob.size)} — not shown, but you can download it.`,
+        title: why !== undefined ? "Archive" : "Binary file",
+        note: why !== undefined ? `${fileSize(blob.size)} · ${why}` : `${fileSize(blob.size)} — not shown, but you can download it.`,
         action: btn("Download", {
           href: downloadHref(base, ref, path),
           variant: "primary",
@@ -721,7 +747,7 @@ export function blobBody(
       content: empty({
         icon: "alert",
         title: "Too large to render",
-        note: `${fileSize(blob.size)} — over the render cap. Download it instead.`,
+        note: why !== undefined ? `${fileSize(blob.size)} — ${why}` : `${fileSize(blob.size)} — over the render cap. Download it instead.`,
         action: btn("Download", {
           href: downloadHref(base, ref, path),
           variant: "primary",
@@ -750,7 +776,7 @@ export function blobBody(
   const fileHref = `${base}/blob/${encoded}/${path}`;
   return {
     lines: total,
-    content: html`<div class="card code">
+    content: html`${why !== undefined ? html`<p class="nb-cap">${why}</p>` : html``}<div class="card code">
         <table>
           ${raw(rows)}
         </table>
@@ -1090,8 +1116,18 @@ export function editAction(scope: RepoScope, ref: string, path: string): Html {
  * a repository on this forge has.
  */
 function blobRenderer(scope: RepoScope, path: string, blob: Blob): ReturnType<typeof rendererFor> {
-  const found = rendererFor(path, blob);
+  const found = rendererFor(path, blob, RENDERERS, { media: scope.kind === "local" });
   return found?.render === RENDERERS.pdf && scope.kind !== "local" ? undefined : found;
+}
+
+/** Why an archive too big to list is not listed, as one sentence. */
+function overCap(path: string, blob: Blob): string | undefined {
+  if (kindByName(path) === "notebook" && blob.size > RENDER_CAP.notebook)
+    return `This notebook is over ${RENDER_CAP.notebook / 1_000_000} MB, so it is not drawn as cells${blob.kind === "too_large" ? ". Download it to read it" : " and is shown as plain text"}.`;
+  if (kindByName(path) === "gcode" && blob.size > RENDER_CAP.gcode)
+    return `G-code, over the ${fileSize(RENDER_CAP.gcode)} the page draws, so its layers are not drawn. Download it to read it.`;
+  if (blob.kind !== "binary" || fileKind(path, blob.body.subarray(0, HEAD_BYTES)) !== "archive") return undefined;
+  return blob.size > RENDER_CAP.archive ? overSize(RENDER_CAP.archive) : undefined;
 }
 
 /** Whether the blob page of this file draws a PDF, and so needs `object-src`. */
@@ -1101,6 +1137,32 @@ export function drawsPdf(scope: RepoScope, path: string, blob: Blob, view: BlobV
     RENDERERS.pdf !== undefined &&
     blobRenderer(scope, path, blob)?.render === RENDERERS.pdf
   );
+}
+
+/** Whether the blob page of this file frames an HTML preview, and so needs `frame-src 'self'`. */
+export function drawsHtml(scope: RepoScope, path: string, blob: Blob, view: BlobView): boolean {
+  return (
+    view !== "source" &&
+    RENDERERS.html !== undefined &&
+    blobRenderer(scope, path, blob)?.render === RENDERERS.html
+  );
+}
+
+/** Whether the blob page of this file sets a font in itself, and so needs `font-src`. */
+export function drawsFont(scope: RepoScope, path: string, blob: Blob, view: BlobView): boolean {
+  return (
+    view !== "source" &&
+    RENDERERS.font !== undefined &&
+    blobRenderer(scope, path, blob)?.render === RENDERERS.font
+  );
+}
+
+/** The files at a ref as a lookup; undefined when the listing is unavailable or cut short (then nothing is linked). */
+export async function pathsAt(scope: RepoScope, ref: string): Promise<((path: string) => boolean) | undefined> {
+  const listed = await scope.source.paths(ref);
+  if (!listed.ok || listed.value.truncated) return undefined;
+  const set = new Set(listed.value.paths);
+  return (path) => set.has(path);
 }
 
 /**
@@ -1120,8 +1182,14 @@ export function renderBlob(
     highlighted?: (ms: number) => void;
     /** Draw every line instead of the first 1,500. */
     all?: boolean;
+    /** `?table=` on a SQLite file. */
+    table?: string;
+    /** `?layer=` on a G-code file. */
+    layer?: number;
     /** Rows a worker already built for this file. */
     rows?: CodeRows;
+    /** The files at the ref, for a renderer that links paths. */
+    exists?: (path: string) => boolean;
   },
 ): Html {
   const base = scope.base;
@@ -1136,15 +1204,23 @@ export function renderBlob(
           size: blob.size,
           body: renderer.body,
           media: mediaHref(base, o.ref, o.path),
+          download: downloadHref(base, o.ref, o.path),
           pathHref: `${base}/blob/${encoded}/${o.path}`,
+          repo: { base, ref: encoded },
+          ...(o.exists !== undefined ? { exists: o.exists } : {}),
           all: o.all === true,
+          ...(o.table !== undefined ? { table: o.table } : {}),
+          ...(o.layer !== undefined ? { layer: o.layer } : {}),
         })
       : undefined;
   const fellBack = drawn?.fallback;
   const { content, lines, summary } =
     drawn !== undefined && fellBack === undefined
       ? drawn
-      : { ...blobBody(base, o.ref, o.path, blob, o.highlighted, o.all, o.rows), summary: undefined };
+      : {
+          ...blobBody(base, o.ref, o.path, blob, o.highlighted, o.all, o.rows, fellBack ?? overCap(o.path, blob)),
+          summary: undefined,
+        };
   const sizeText =
     blob.kind === "too_large" ? "" : sizeWithTokens(blob.size, o.path);
   const fileHref = `${base}/blob/${encoded}/${o.path}`;
@@ -1284,8 +1360,15 @@ export async function repoFiles(ctx: Ctx): Promise<Response> {
   return await codeHome(ctx, repo);
 }
 
+/** "Moved from <old path> on <date>" for 30 days after a move; one muted line. */
+function movedLine(ctx: Ctx, repo: Repo): Html | null {
+  const move = recentMove(ctx.app.db, repo.id);
+  if (move === undefined) return null;
+  return html`<p class="muted small moved-from">Moved from ${move.from} on ${time(move.at, { date: true })}</p>`;
+}
+
 /**
- * "Archived on <date>" with, for an admin, the Wake button. A repository put
+ * "Archived on <date>" with, for an admin, the Restore button. A repository put
  * away still clones, pushes and links as before; this only says so.
  */
 function archivedLine(ctx: Ctx, repo: Repo): Html | null {
@@ -1300,7 +1383,7 @@ function archivedLine(ctx: Ctx, repo: Repo): Html | null {
       () => html`<form method="post" action="${repoBase(repo)}/settings/archive">
         <input type="hidden" name="archived" value="0" />
         <input type="hidden" name="to" value="repo" />
-        ${btn("Wake", { size: "sm" })}
+        ${btn("Restore", { size: "sm" })}
       </form>`,
     )}
   </div>`;
@@ -1318,7 +1401,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
 
   if (refs.branches.length === 0) {
     const emptyRendering = performance.now();
-    const body = html`${scopeHeader(ctx, scope, "code")}${archivedLine(ctx, repo)}${noApp}
+    const body = html`${scopeHeader(ctx, scope, "code")}${archivedLine(ctx, repo)}${movedLine(ctx, repo)}${noApp}
       <div class="mt">
         ${empty({
           icon: "repo",
@@ -1340,6 +1423,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
       title: repo.name,
       description: repoLine({ private: repo.visibility === "private", name: repo.name, description: repo.description }),
       ogImage: `/og/repo/${repo.ownerName}~${repo.name}.png`,
+      about: `${repo.ownerName}/${repo.name}`,
       feed: {
         href: `${repoBase(repo)}/activity.atom`,
         title: `${repo.ownerName}/${repo.name} activity`,
@@ -1385,10 +1469,22 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
       ? null
       : upstreamOffer(ctx.app, ctx.auth.user, repo, parent, drift?.ahead);
   const declares = isApp && (await timePhaseAsync(ctx.request, "feature", () => declaresFeature(ctx.app, ctx.auth.user, repo)));
+  const credit = await timePhaseAsync(ctx.request, "credit", () =>
+    creditLine(ctx, repo, scope.source, ref),
+  );
+  const standing = await followStanding(ctx.app, repo, ctx.auth.user);
+  // One line says how a fork stands: the checks' own words win, and the plain
+  // standing speaks only where they are silent.
+  const behind = timePhase(ctx.request, "behind", () => behindLine(ctx, repo));
+  const originAhead = originAheadLine(ctx, repo);
+  const standingLine =
+    standing === undefined
+      ? null
+      : html`<div class="small muted" data-follow-standing>${icon("sync")} <a href="${repoBase(repo)}/forks#following">${standing}</a></div>`;
   const rendering = performance.now();
   const body = html`${scopeHeader(ctx, scope, "code", {
     branchCount: refs.branches.length,
-  })}${timePhase(ctx.request, "behind", () => behindLine(ctx, repo))}${originAheadLine(ctx, repo)}${archivedLine(ctx, repo)}${noApp}
+  })}${credit}${behind}${originAhead}${behind === null && originAhead === null ? standingLine : null}${archivedLine(ctx, repo)}${movedLine(ctx, repo)}${noApp}
   ${offerUpstream(repo, parent, offer)}
   ${latest === null
     ? ""
@@ -1415,6 +1511,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
     title: repo.name,
     description: repoLine({ private: repo.visibility === "private", name: repo.name, description: repo.description }),
     ogImage: `/og/repo/${repo.ownerName}~${repo.name}.png`,
+    about: `${repo.ownerName}/${repo.name}`,
     feed: {
       href: `${repoBase(repo)}/activity.atom`,
       title: `${repo.ownerName}/${repo.name} activity`,
@@ -1476,6 +1573,10 @@ export function codePage(
     before?: Html;
     /** The page draws a PDF in an `<object>` (`PageOptions.objectSrc`). */
     objectSrc?: boolean;
+    /** The page frames an HTML preview (`PageOptions.frameSelf`). */
+    frameSelf?: boolean;
+    /** The page sets a font in itself (`PageOptions.fontSrc`). */
+    fontSrc?: boolean;
     /** Script only some files need (the CSV table's sort and filter). */
     extraJs?: string;
   },
@@ -1484,6 +1585,8 @@ export function codePage(
     ctx,
     title: o.title,
     ...(o.objectSrc ? { objectSrc: true } : {}),
+    ...(o.frameSelf ? { frameSelf: true } : {}),
+    ...(o.fontSrc ? { fontSrc: true } : {}),
     crumbs: scope.crumbs,
     palette: scope.palette,
     body: html`${o.header ?? scopeHeader(ctx, scope, "code", { compact: true })}
@@ -1620,6 +1723,9 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     ctx.auth.user === undefined && repo.visibility === "public" && FULL_OID.test(ref) && ctx.url.searchParams.get("fragment") !== "1";
   const view = blobView(ctx.url.searchParams.get("view"));
   const all = ctx.url.searchParams.get("all") === "1";
+  const table = ctx.url.searchParams.get("table")?.slice(0, 256) ?? undefined;
+  const layerText = ctx.url.searchParams.get("layer");
+  const layer = layerText !== null && /^\d{1,6}$/.test(layerText) ? Number(layerText) : undefined;
   // The whole page as it last went out to a stranger, encoded (`kept_page.ts`).
   const keptKey = kept ? keptPageKey(ctx, repo.id) : undefined;
   const finished = keptKey === undefined ? undefined : keptPage(keptKey);
@@ -1627,9 +1733,11 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     git.done();
     return immutableWhenAddressed(ctx.request, true, repo, ref, finished);
   }
-  const keepFinished = (response: Response) => (keptKey === undefined ? response : keepPage(keptKey, response, true));
+  // A `?table=` that names nothing in the file is a stranger's string: its page is never kept.
+  let keepable = true;
+  const keepFinished = (response: Response) => (keptKey === undefined || !keepable ? response : keepPage(keptKey, response, true));
   if (kept) {
-    const hit = cachedBlobPage(repo.id, ref, path, String(view), all);
+    const hit = cachedBlobPage(repo.id, ref, path, `${view}\0${table ?? ""}\0${layer ?? ""}`, all);
     if (hit !== undefined) {
       git.done();
       return immutableWhenAddressed(
@@ -1643,7 +1751,8 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
           explorer: hit.explorer,
           content: hit.content,
           objectSrc: hit.objectSrc,
-          ...(hit.csv ? { extraJs: csvJs } : {}),
+          frameSelf: hit.frame,
+          ...(hit.font ? { fontSrc: true, extraJs: fontJs } : hit.csv ? { extraJs: csvJs } : {}),
         })),
       );
     }
@@ -1655,7 +1764,18 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
   const refs = await git.read(() => (kept ? keptRefs(repo.id, () => refSetFrom(scope.source)) : refSetFrom(scope.source)));
   let highlightMs: number | undefined;
   const renderStart = performance.now();
-  const shown = capped(blob.value);
+  const shown = capped(blob.value, path);
+  if (table !== undefined) keepable = shown.kind !== "too_large" && hasTable(shown.body, table);
+  // A big sliced file is parsed on a worker, never on this thread; the renderer finds the parse kept.
+  if (shown.kind !== "too_large" && shown.body.length > INLINE_MAX && kindByName(path) === "gcode" && keptGcode(shown.body) === undefined) {
+    const began = performance.now();
+    const made = await gcodeOffThread(shown.body);
+    if (made !== undefined) keepGcode(shown.body, made.parsed ?? undefined);
+    notePhase(ctx.request, "parse", performance.now() - began);
+  }
+  // A `?layer=` past the last layer is a stranger's number: its page is never kept.
+  if (layer !== undefined && keepable)
+    keepable = shown.kind !== "too_large" && layer >= 1 && layer <= layerCount(shown.body);
   // A cold page for a stranger highlights and lays out its rows on a worker (#9630).
   let rows: CodeRows | undefined;
   if (kept && shown.kind === "text" && (view === "source" || !blobRenderer(scope, path, shown))) {
@@ -1663,8 +1783,10 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     rows = await rowsOffThread(shown.body, path, all ? MAX_RENDER_LINES : FIRST_LINES);
     if (rows !== undefined) notePhase(ctx.request, "highlight", performance.now() - began);
   }
+  const exists = needsPaths(kindByName(path)) ? await pathsAt(scope, ref) : undefined;
   const pane = renderBlob(scope, {
     ...(rows !== undefined ? { rows } : {}),
+    ...(exists !== undefined ? { exists } : {}),
     refs,
     ref,
     path,
@@ -1672,6 +1794,8 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     view,
     highlighted: (ms) => (highlightMs = (highlightMs ?? 0) + ms),
     all,
+    ...(table !== undefined ? { table } : {}),
+    ...(layer !== undefined ? { layer } : {}),
   });
   if (highlightMs !== undefined) notePhase(ctx.request, "highlight", highlightMs);
   const paneMs = performance.now() - renderStart - (highlightMs ?? 0);
@@ -1699,12 +1823,16 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     ),
   });
   const objectSrc = drawsPdf(scope, path, shown, view);
-  if (kept)
-    keepBlobPage(repo.id, ref, path, String(view), all, {
+  const frame = drawsHtml(scope, path, shown, view);
+  const font = drawsFont(scope, path, shown, view);
+  if (kept && keepable)
+    keepBlobPage(repo.id, ref, path, `${view}\0${table ?? ""}\0${layer ?? ""}`, all, {
       title: `${filename} · ${repo.name}`,
       explorer: explorerHtml,
       content: pane,
       objectSrc,
+      frame,
+      font,
       csv: isCsvPath(path),
     });
   const response = await keepFinished(codePage(ctx, scope, {
@@ -1713,7 +1841,8 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     explorer: explorerHtml,
     content: pane,
     objectSrc,
-    ...(isCsvPath(path) ? { extraJs: csvJs } : {}),
+    frameSelf: frame,
+    ...(font ? { fontSrc: true, extraJs: fontJs } : isCsvPath(path) ? { extraJs: csvJs } : {}),
   }));
   notePhase(ctx.request, "render", paneMs + performance.now() - pageStart);
   return immutableWhenAddressed(ctx.request, ctx.auth.user === undefined, repo, ref, response);
@@ -1746,7 +1875,12 @@ export async function pathsJson(ctx: Ctx): Promise<Response> {
  * The page's own render ceiling, under the source's fetch ceiling. A body
  * over it is dropped and only its head kept, so a media kind is still drawn.
  */
-export function capped(blob: Blob): Blob {
+export function capped(blob: Blob, path = ""): Blob {
+  // A SQLite file is read whole, up to its own cap, because the database is opened from the bytes.
+  if (blob.kind !== "too_large" && fileKind(path, blob.body.subarray(0, HEAD_BYTES)) === "sqlite" && blob.size <= RENDER_CAP.sqlite)
+    return blob;
+  if (blob.kind !== "too_large" && blob.size <= RENDER_CAP.gcode && fileKind(path, blob.body.subarray(0, HEAD_BYTES)) === "gcode")
+    return blob;
   return blob.kind !== "too_large" && blob.size > MAX_RENDER_BYTES
     ? { kind: "too_large", size: blob.size, head: blob.body.slice(0, HEAD_BYTES) }
     : blob;

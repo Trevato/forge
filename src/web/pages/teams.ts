@@ -1,11 +1,15 @@
 /**
  * Crew teams, for a forge admin (`core/teams.ts`): each team's charter, its
- * dial and who is on it, set on one page linked from the crew page. Anyone
- * else gets the not-found page, before a body is read.
+ * dial and who is on it. The list at /settings/teams is one j/k row per team;
+ * Enter opens the team's own page, where it is set. Anyone else gets the
+ * not-found page, before a body is read.
  */
 
-import { changeTeam, readTeams, teamChanges, TEAM_SAYS } from "../../actions/teams.ts";
-import { CHARTER_MAX, DIAL_MAX } from "../../core/teams.ts";
+import { changeTeam, readTeamQueue, readTeams, teamChanges, TEAM_SAYS } from "../../actions/teams.ts";
+import type { Agent } from "../../core/agents.ts";
+import { CHARTER_MAX, DIAL_MAX, type Team } from "../../core/teams.ts";
+import type { QueuedPull } from "../../core/team_queue.ts";
+import { timeAgo } from "../ui.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, settingsLayout } from "../chrome.ts";
@@ -13,7 +17,7 @@ import { field, readForm } from "../form.ts";
 import { eventStream } from "../../http/sse.ts";
 import { html, raw, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { btn, icon } from "../ui.ts";
+import { btn, icon, row } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 const isAdminPerson = (ctx: Ctx): boolean =>
@@ -25,44 +29,28 @@ function regions(ctx: Ctx, timed = false): Record<string, string> | undefined {
     timed ? timePhase(ctx.request, name, work) : work();
   const read = phase("teams", () => readTeams(ctx.app, ctx.auth.user));
   if (!read.ok) return undefined;
-  const { teams, agents } = read.value;
+  const { teams } = read.value;
   const changes = phase("changes", () => teamChanges(ctx.app, 10));
   const total = teams.reduce((n, t) => n + t.dial, 0);
-  const cards = teams.map((t) =>
-    html`<section>
-      <h2>${icon("bot")} ${t.name}</h2>
-      <form method="post" action="/settings/teams/${t.slug}">
-        <div class="field">
-          <label for="charter-${t.slug}">Charter</label>
-          <textarea class="input" id="charter-${t.slug}" name="charter" rows="3" maxlength="${String(CHARTER_MAX)}">${t.charter}</textarea>
-          <span class="hint">What it owns, what it reviews.</span>
-        </div>
-        <div class="field">
-          <label for="dial-${t.slug}">Dial (%)</label>
-          <input class="input mono" id="dial-${t.slug}" type="number" name="dial" min="0" max="${String(DIAL_MAX)}" step="1" value="${String(t.dial)}" />
-          <span class="hint">Its share of builder slots and budget.</span>
-        </div>
-        <fieldset class="field">
-          <legend>Members</legend>
-          ${agents.length === 0
-            ? html`<span class="muted small">No agents yet.</span>`
-            : agents.map(
-                (a) => html`<label class="small">
-                  <input type="checkbox" name="member" value="${a.user.id}" ${t.members.includes(a.user.id) ? "checked" : ""} />
-                  ${a.user.username}
-                  <span class="muted mono">${a.model === "" ? "default" : a.model}</span>
-                </label><br />`,
-              )}
-        </fieldset>
-        <div class="form-actions">
-          ${btn("Save", { variant: "primary", label: `Save ${t.name}` })}
-        </div>
-      </form>
-    </section>`,
+  const queues = phase("queue", () =>
+    new Map(teams.map((t) => {
+      const q = readTeamQueue(ctx.app, ctx.auth.user, t.slug);
+      return [t.slug, q.ok ? q.value : []] as const;
+    })),
   );
+  const cards = teams.map((t) => {
+    const waiting = queues.get(t.slug)?.length ?? 0;
+    return row({
+      nav: true,
+      href: `/settings/teams/${t.slug}`,
+      lead: icon("bot"),
+      title: t.name,
+      meta: html`${String(t.dial)}% · ${String(t.members.length)} ${t.members.length === 1 ? "member" : "members"} · ${String(waiting)} waiting`,
+    });
+  });
   const out: Record<string, Html> = {
     "teams-total": html`${String(total)}%`,
-    "teams-cards": html`${cards}`,
+    "teams-cards": cards.length === 0 ? html`<p class="muted small">No teams yet.</p>` : html`<ul class="list">${cards}</ul>`,
     "teams-changes":
       changes.length === 0
         ? html``
@@ -76,10 +64,74 @@ function regions(ctx: Ctx, timed = false): Record<string, string> | undefined {
   return Object.fromEntries(Object.entries(out).map(([k, h]) => [k, h.text]));
 }
 
+/** One team's page: who is waiting on it, and the form that sets its charter, dial and members. */
+function teamBody(t: Team, agents: readonly Agent[], waiting: readonly QueuedPull[]): Html {
+  return html`${waiting.length === 0
+      ? html`<p class="muted small">Nothing is waiting on this team.</p>`
+      : html`<p class="muted small">Waiting on this team, oldest first</p>
+        <dl class="status-rows">${waiting.map(
+          (w) => html`<div class="status-row">
+            <dt><a href="/${w.owner}/${w.repo}/pulls/${String(w.number)}">${w.owner}/${w.repo} #${String(w.number)}</a></dt>
+            <dd>${w.title} <span class="muted">${timeAgo(w.createdAt)}</span></dd>
+          </div>`,
+        )}</dl>`}
+    <form method="post" action="/settings/teams/${t.slug}">
+      <div class="field">
+        <label for="charter-${t.slug}">Charter</label>
+        <textarea class="input" id="charter-${t.slug}" name="charter" rows="3" maxlength="${String(CHARTER_MAX)}">${t.charter}</textarea>
+        <span class="hint">What it owns, what it reviews.</span>
+      </div>
+      <div class="field">
+        <label for="dial-${t.slug}">Dial (%)</label>
+        <input class="input mono" id="dial-${t.slug}" type="number" name="dial" min="0" max="${String(DIAL_MAX)}" step="1" value="${String(t.dial)}" />
+        <span class="hint">Its share of builder slots and budget.</span>
+      </div>
+      <fieldset class="field">
+        <legend>Members</legend>
+        ${agents.length === 0
+          ? html`<span class="muted small">No agents yet.</span>`
+          : agents.map(
+              (a) => html`<label class="small">
+                <input type="checkbox" name="member" value="${a.user.id}" ${t.members.includes(a.user.id) ? "checked" : ""} />
+                ${a.user.username}
+                <span class="muted mono">${a.model === "" ? "default" : a.model}</span>
+              </label><br />`,
+            )}
+      </fieldset>
+      <div class="form-actions">
+        ${btn("Save", { variant: "primary", label: `Save ${t.name}` })}
+      </div>
+    </form>`;
+}
+
+// GET /settings/teams/:slug
+export function teamPage(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const read = timePhase(ctx.request, "teams", () => readTeams(ctx.app, ctx.auth.user));
+  if (!read.ok) return notFoundPage(ctx);
+  const team = read.value.teams.find((t) => t.slug === (ctx.params.slug ?? ""));
+  if (!team) return notFoundPage(ctx);
+  const queue = timePhase(ctx.request, "queue", () => readTeamQueue(ctx.app, ctx.auth.user, team.slug));
+  const rendering = performance.now();
+  const out = page({
+    ctx,
+    title: team.name,
+    body: html`<div class="page-head"><h1>${team.name}</h1></div>
+      ${settingsLayout(
+        accountSections("crew", { admin: true }),
+        html`<p class="muted small">${btn("All teams", { href: "/settings/teams", variant: "ghost" })}</p>
+          ${teamBody(team, read.value.agents, queue.ok ? queue.value : [])}`,
+        "Account settings",
+      )}`,
+  });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return out;
+}
+
 /**
  * The client: one EventSource; a pushed region replaces the element of its
- * id. The cards are left alone while one of their fields has focus, so a
- * viewer's half-typed edit is never lost. Our own server's escaped markup.
+ * id. The list is redrawn whole, so the focused row (found by its link) gets
+ * focus back. Our own server's escaped markup.
  */
 export const teamsLiveJs = /* js */ `
 (function () {
@@ -93,8 +145,12 @@ export const teamsLiveJs = /* js */ `
     for (var id in regions) {
       var el = document.getElementById(id);
       if (!el || el.innerHTML === regions[id]) continue;
-      if (id === 'teams-cards' && el.contains(document.activeElement)) continue;
+      var a = document.activeElement, kept = a && el.contains(a) ? a.getAttribute('href') : null;
       el.innerHTML = regions[id];
+      if (kept) {
+        var again = el.querySelectorAll('a[href]');
+        for (var i = 0; i < again.length; i++) if (again[i].getAttribute('href') === kept) { again[i].focus(); break; }
+      }
     }
   });
 })();
@@ -158,7 +214,7 @@ export async function teamSet(ctx: Ctx): Promise<Response> {
   if (!changed.ok && changed.error === "not_found") return notFoundPage(ctx);
   return flashTo(
     ctx,
-    "/settings/teams",
+    `/settings/teams/${slug}`,
     changed.ok
       ? { message: `${changed.value.name} saved at ${changed.value.dial}%.` }
       : { tone: "danger", message: TEAM_SAYS[changed.error] },

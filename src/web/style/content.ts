@@ -225,6 +225,26 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .fg-s5 { fill: var(--series-5); color: var(--series-5); }
 .fg-s6 { fill: var(--series-6); color: var(--series-6); }
 .fg-s7 { fill: var(--series-7); color: var(--series-7); }
+/* The money line (studio/money_line.ts, #510, #11056, #11102): the
+   slider's word ("spend: balanced") is the board's one link to Settings →
+   Economics, in the accent; the gap takes the warning tint for a loss and
+   the text colour otherwise. The accent on --bg holds 4.5:1 in every theme
+   (test/themes.test.ts), so the small text reads. The word never breaks
+   inside itself, so the line wraps between its parts. Two rows of 24px,
+   the first wrapping once on a phone, so the reserved height is the real
+   one; the chart a fixed box, so nothing shifts when the figures arrive. */
+.money-gap[data-sign="down"] { color: var(--attn); }
+.money-spend { color: var(--accent); white-space: nowrap; }
+.money-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
+.money-line > p { margin: 0; line-height: 24px; min-height: 48px; }
+.money-line > p > span { display: block; }
+@media (max-width: 480px) { .money-line > p { min-height: 72px; } }
+.money-chart { display: block; width: 240px; height: 48px; flex: none; }
+.money-chart polyline { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.money-cost { stroke: var(--muted-fg); }
+.money-revenue { stroke: var(--fg); }
+.money-band [data-sign="up"] { fill: color-mix(in srgb, var(--fg) 10%, transparent); }
+.money-band [data-sign="down"] { fill: color-mix(in srgb, var(--attn) 22%, transparent); }
 .restore-command { margin: 8px 0 0; padding: 8px 10px; font-size: 12.5px; white-space: pre-wrap; word-break: break-all; background: var(--muted); border-radius: var(--radius); }
 form.inline { display: inline; margin-left: auto; }
 
@@ -240,6 +260,12 @@ form.inline { display: inline; margin-left: auto; }
 .door-under { display: grid; gap: 56px; margin-top: 28px; }
 .door-lead { display: flex; flex-direction: column; align-items: flex-start; gap: 24px; min-width: 0; }
 .door-lead .bar { gap: 8px; flex-wrap: wrap; }
+.door-start { width: 100%; max-width: 28rem; }
+.door-start .btn { width: 100%; }
+[data-hits] { line-height: 24px; }
+.explore-more { margin-top: 12px; }
+.explore-more .btn { width: 100%; min-height: 44px; }
+.door-says { min-height: 1lh; margin: 6px 0 0; }
 .door-agent { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 520px; font-size: 13px; color: var(--muted-fg); }
 .door-agent a { margin-left: 8px; color: var(--fg); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border-strong); }
 /* On the input's own tinted ground the muted color falls short of AA; the words are the thing to copy. */
@@ -276,6 +302,8 @@ form.inline { display: inline; margin-left: auto; }
 .door-steps p, .door-points dd { margin: 0; font-size: 15px; line-height: 1.55; color: var(--muted-fg); text-wrap: pretty; }
 .door-split { display: grid; gap: 32px; }
 .door-split > * { min-width: 0; }
+.door-plans { list-style: none; margin: 0; padding: 0; border-bottom: 1px solid var(--border); }
+.door-plans li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; padding: 10px 0; }
 .door-pulse { margin: 72px 0 0; }
 .door-pulse svg { display: block; width: 100%; height: clamp(72px, 10vw, 120px); fill: var(--fg); }
 .door-pulse-quiet { fill: var(--border-strong); }
@@ -342,6 +370,7 @@ form.inline { display: inline; margin-left: auto; }
 .bar > .menu { flex: 0 1 auto; min-width: 0; max-width: 100%; }
 .bar > .menu > summary { max-width: 100%; min-width: 0; }
 .bar > .menu > summary .truncate { min-width: 0; }
+.prose img { max-width: 100%; height: auto; }
 .prose pre, .prose table { max-width: 100%; overflow-x: auto; }
 .prose table { display: block; }
 
@@ -414,6 +443,23 @@ form.inline { display: inline; margin-left: auto; }
 .csv-view .num { text-align: right; }
 .csv-more { padding: 10px 12px; margin: 0; }
 
+/* A notebook (render/notebook.ts): cells are rows with space between, never boxes. */
+.nb-cell { margin: 0 0 28px; min-width: 0; }
+.nb pre { max-width: 100%; overflow-x: auto; margin: 8px 0; }
+.nb-img { display: block; max-width: 100%; height: auto; margin: 8px 0; }
+.nb-cap { color: var(--muted-fg); font-size: 12.5px; margin-top: 8px; }
+
+/* A terminal log (render/log.ts): SGR colours as fixed classes, theme tokens only. */
+.ansi-red { color: var(--danger); }
+.ansi-green { color: var(--success); }
+.ansi-yellow { color: var(--attn); }
+.ansi-blue { color: var(--tok-number); }
+.ansi-magenta { color: var(--merged); }
+.ansi-cyan { color: var(--tok-property); }
+.ansi-gray { color: var(--tok-comment); }
+.ansi-b { font-weight: 700; }
+.ansi-u { text-decoration: underline; }
+
 /* ---- syntax tokens (colors come from the active theme) ----
    Two layers, exactly as the tokenizer emits them: a colour class every
    consumer understands, and — where the web can say something finer — a kind
@@ -457,12 +503,33 @@ form.inline { display: inline; margin-left: auto; }
 .media-pane .media-player { display: block; width: 100%; max-width: 100%; }
 .media-pane video.media-player { height: auto; max-height: 80vh; background: var(--muted); border-radius: var(--radius-sm); }
 
+/* An HTML file's page in a sandboxed frame: one hairline, a fixed height, so nothing shifts. */
+.html-frame { display: block; width: 100%; height: 80vh; min-height: 480px; border: 1px solid var(--border); border-radius: var(--radius-sm); color-scheme: light; }
+@media (max-width: 600px) { .html-frame { height: 60vh; min-height: 360px; } }
 /* A PDF in the browser's own viewer: a fixed frame, so nothing shifts. */
 .pdf-view { overflow: hidden; }
 .pdf-frame { display: block; width: 100%; height: 80vh; min-height: 480px; border: 0; }
 .pdf-fallback { padding: 16px 20px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
 /* A phone: a shorter frame, so a thumb can scroll the page past it. */
 @media (max-width: 600px) { .pdf-frame { height: 60vh; min-height: 360px; } }
+
+/* A font specimen: set in the font itself once the script has loaded it from
+   the media route; until then (or without script) in the page's own face. */
+/* ---- gpx view: the outline scales to the column; its facts are status rows ---- */
+.gpx-view { margin: 0; }
+.gpx-view svg { display: block; max-width: 100%; height: auto; margin: 0 auto; color: var(--fg); }
+.gpx-view .status-rows { margin-top: 12px; }
+.gj-view { margin: 0; }
+.gj-view svg { display: block; max-width: 100%; height: auto; margin: 0 auto; color: var(--fg); }
+.gj-table { overflow-x: auto; max-width: 100%; }
+.gj-table:focus-visible { outline: 1px solid var(--fg); outline-offset: 2px; }
+.gj-table table { width: 100%; font-size: 13px; }
+.gj-table th, .gj-table td { text-align: left; padding: 3px 8px; overflow-wrap: anywhere; }
+.font-view { padding: 16px 20px; }
+.font-name { margin: 0 0 12px; font-size: 1.75rem; line-height: 1.3; overflow-wrap: anywhere; }
+.font-line { margin: 0 0 10px; line-height: 1.4; overflow-wrap: anywhere; }
+.font-s { font-size: 14px; } .font-m { font-size: 1.5rem; } .font-l { font-size: 3rem; line-height: 1.2; }
+.font-view.font-ready .font-name, .font-view.font-ready .font-line { font-family: "ForgeSpecimen", sans-serif; }
 
 /* ---- image view ---- */
 .imgview-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 4px 16px; font-size: 12.5px; border-bottom: 1px solid var(--border); }
@@ -501,6 +568,13 @@ form.inline { display: inline; margin-left: auto; }
   font-family: var(--mono); color: var(--muted-fg);
   white-space: pre-wrap; overflow-wrap: anywhere; overflow: visible;
 }
+/* A fold in prose (an issue's "Where this came from"): the global reset hides the marker, so the chevron is drawn here;
+   the summary is a native, focusable, Enter/Space control with a row-high target. */
+.prose details { margin: 12px 0; }
+.prose summary { cursor: pointer; padding: 10px 0; min-height: 44px; color: var(--muted-fg); font-size: 13px; }
+.prose summary::before { content: "\\25B8"; display: inline-block; width: 1.2em; }
+.prose details[open] > summary::before { content: "\\25BE"; }
+.prose details > ul { margin-top: 0; font-size: 13px; }
 .prose code { background: var(--muted); border: 1px solid var(--border); padding: 1px 5px; border-radius: 4px; }
 .prose pre code { background: none; border: none; padding: 0; }
 .prose blockquote {
@@ -562,6 +636,7 @@ form.inline { display: inline; margin-left: auto; }
 }
 .diff-stat .add { color: var(--add-fg); }
 .diff-stat .del { color: var(--del-fg); }
+.diff > p.muted { margin: 12px 0 0; padding: 0 4px; }
 .diff-note { padding: 20px 16px; text-align: center; color: var(--muted-fg); font-size: 13px; }
 .diff-stub p { margin: 0 0 10px; }
 .diff-stub .diff-stat { display: inline-flex; }
@@ -620,8 +695,11 @@ form.inline { display: inline; margin-left: auto; }
   padding: 8px 12px; background: var(--muted);
   border-left: 3px solid var(--accent); white-space: normal; font-family: var(--font);
 }
-.dc-review .card + .card, .dc-review .comment { margin-bottom: 8px; }
-.dc-review .comment-form { margin-top: 0; }
+.dc-review .comment-form { margin: 0; padding: 0; }
+/* An open thread is prose under its line, not a card: head and body start at the code column,
+   since .dc-review pads 12px past the 3px edge exactly as .dc does. */
+.dc-thread { display: grid; gap: 10px; min-width: 0; }
+.dc-thread .comment-body { overflow-wrap: anywhere; }
 /* A settled thread is one line plus a disclosure: the point of resolving is
    to get an answered question out of the way of the unanswered ones. */
 .dc-review .card-body > .muted .ico { width: 14px; height: 14px; color: var(--success); }
@@ -661,7 +739,6 @@ form.inline { display: inline; margin-left: auto; }
    line to be read on. The facts and the error read the same wherever they
    are shown — a pull's preview, the studio head — so they are not scoped to
    the card. */
-.env-card .card-head { gap: 10px; }
 .env-facts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--muted-fg); overflow-wrap: anywhere; }
 .env-error { color: var(--danger); font-size: 13px; margin-top: 6px; overflow-wrap: anywhere; text-wrap: pretty; }
 /* The checks line inside the merge box, in the reviews chip's voice. */
@@ -1040,12 +1117,12 @@ textarea.editor:focus-visible { outline: none; }
    arrays as a wrapping row of chips, object arrays as cards. */
 .config-group { border-left: 2px solid var(--border); padding-left: 12px; }
 .config-group > legend { font-weight: 600; margin-bottom: 8px; }
-.config-card { padding: 12px; margin: 0 0 12px; }
+.config-card { border-top: 1px solid var(--border); padding: 12px 0; margin: 0; }
 .config-chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
 .config-chips > li { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .config-chips .input { width: auto; min-width: 8rem; }
 .config-chips .field { margin: 0; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-.config-diff { overflow-x: auto; white-space: pre; padding: 12px; }
+.config-diff { overflow-x: auto; white-space: pre; margin: 0; }
 .config-diff > [data-op="add"] { background: var(--add-bg); color: var(--add-fg); }
 .config-diff > [data-op="del"] { background: var(--del-bg); color: var(--del-fg); }
 /* Reduced motion: the pulses hold still at a legible level, the scroll-tied

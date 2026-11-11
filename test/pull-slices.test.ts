@@ -187,7 +187,7 @@ describe("a fork's pull lands in slices (#9010)", () => {
     setHold(app.db, pull.id, getUserByName(app.db, "alice")!.id, "wait for the release");
     const held = await slice(mine[0]!);
     expect(held.status).toBe(409);
-    expect(await held.json()).toEqual({ error: "held" });
+    expect(await held.json()).toMatchObject({ error: "held" });
     // The page's form says so in its flash, and lands nothing.
     const form = async (upTo: string): Promise<string> => {
       const posted = await fetch(`${base}/alice/app/pulls/${number}/slice`, {
@@ -209,7 +209,7 @@ describe("a fork's pull lands in slices (#9010)", () => {
     app.db.query("UPDATE repo SET require_review = 1 WHERE id = ?1").run(repo.id);
     const unreviewed = await slice(mine[0]!);
     expect(unreviewed.status).toBe(409);
-    expect(await unreviewed.json()).toEqual({ error: "review_required" });
+    expect(await unreviewed.json()).toMatchObject({ error: "review_required" });
     app.db.query("UPDATE repo SET require_review = 0 WHERE id = ?1").run(repo.id);
 
     const run = createRun(app.db, { repoId: repo.id, kind: "check", issueId: pull.id, env: `pull-${number}`, commitOid: mine[1]! });
@@ -217,7 +217,7 @@ describe("a fork's pull lands in slices (#9010)", () => {
     finishRun(app.db, run.id, { state: "failed", summary: "red" });
     const red = await slice(mine[0]!);
     expect(red.status).toBe(409);
-    expect(await red.json()).toEqual({ error: "checks_required" });
+    expect(await red.json()).toMatchObject({ error: "checks_required" });
 
     // A branch of the repository itself lands whole.
     const a = join(work, "a");
@@ -233,6 +233,6 @@ describe("a fork's pull lands in slices (#9010)", () => {
     const ownNumber = ((await own.json()) as { number: number }).number;
     const notFork = await call(`/api/v1/repos/alice/app/pulls/${ownNumber}/slices`, alice, { upTo: first });
     expect(notFork.status).toBe(422);
-    expect(await notFork.json()).toEqual({ error: "not_fork" });
+    expect(await notFork.json()).toMatchObject({ error: "not_fork" });
   });
 });

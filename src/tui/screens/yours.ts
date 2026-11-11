@@ -4,7 +4,13 @@
  * repository. It is the fork screen (#606) the `F` key opens.
  */
 
-import { COPIES_PER_DAY, makeItYours, type MakeItYoursError } from "../../actions/make_it_yours.ts";
+import {
+  COPIES_PER_DAY,
+  makeItYours,
+  receiptWords,
+  undoMakeItYours,
+  type MakeItYoursError,
+} from "../../actions/make_it_yours.ts";
 import { APP_ALREADY_YOURS } from "../../actions/origin_app_words.ts";
 import { PROVE_FIRST } from "../../actions/verify_words.ts";
 import { NOT_A_MEMBER } from "../../core/roles.ts";
@@ -65,7 +71,12 @@ export function makeItYoursScreen(f: Session, ctx: Ctx, source: Repo): Screen {
       if (!made.ok) return refuse(made.error);
       const done = made.value.made;
       if (done === undefined) return;
-      ctx.toast(`${done.repo.ownerName}/${done.repo.name} is yours`, "success");
+      ctx.toast(
+        made.value.existing
+          ? receiptWords(made.value)
+          : `${receiptWords(made.value)} Undo: the palette, "Undo make it yours".`,
+        "success",
+      );
       ctx.replace(repoScreen(f, ctx, local(f, done.repo)));
     });
 
@@ -147,9 +158,57 @@ export function makeItYoursScreen(f: Session, ctx: Ctx, source: Repo): Screen {
   return self;
 }
 
+/** The palette's undo: confirm, then remove the copy while it has nothing of the person's own. */
+function undoScreen(f: Session, ctx: Ctx, source: Repo): Screen {
+  const self: Screen = {
+    title: "Undo make it yours",
+    keys: [binding(["esc"], "cancel")],
+    render() {},
+    key: () => false,
+  };
+  return confirmScreen(ctx, self, {
+    title: "Undo make it yours",
+    body: [
+      `Remove your copy of ${source.ownerName}/${source.name}?`,
+      "Kept if it has changes of your own or a pull sent from it.",
+    ],
+    actions: [{ label: "Undo", variant: "danger" }, { label: "Cancel" }],
+    onChoose: (choice) => {
+      if (choice !== 0) return;
+      runAsync(ctx, async () => {
+        const undone = await undoMakeItYours(f.app, f.user, source);
+        if (undone.ok) return ctx.toast(undone.value.says, "success");
+        ctx.toast(
+          undone.error.kind === "changed"
+            ? undone.error.message
+            : undone.error.kind === "unauthorized"
+              ? "sign in to undo"
+              : undone.error.kind === "failed"
+                ? "the copy could not be removed; try again"
+                : "nothing of yours was made from that app",
+          "danger",
+        );
+      });
+    },
+  });
+}
+
 export function yoursCommands(f: Session, ctx: Ctx, repo: Repo | undefined): Command[] {
   if (repo === undefined || f.user === undefined || canWrite(f.db, repo, f.user)) return [];
+  const made = f.db
+    .query(`SELECT 1 FROM repo WHERE owner_id = ?1 AND fork_parent_id = ?2`)
+    .get(f.user.id, repo.id);
   return [
+    ...(made === null
+      ? []
+      : [
+          {
+            id: "undo-make-it-yours",
+            title: `${repo.ownerName}/${repo.name} — Undo make it yours`,
+            hint: "remove your copy",
+            run: () => ctx.push(undoScreen(f, ctx, repo)),
+          },
+        ]),
     {
       id: "make-it-yours",
       title: `${repo.ownerName}/${repo.name} — Make it yours`,

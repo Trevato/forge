@@ -4,9 +4,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { createRepo } from "../src/actions/repos.ts";
-import { createUser } from "../src/core/users.ts";
+import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { createUser, getUserByName } from "../src/core/users.ts";
 import { forgetLive, keepLive } from "../src/release/landings.ts";
+import { getRepo } from "../src/core/repos.ts";
+import { writeWave } from "../src/story/wave.ts";
 import { checkAtom } from "./helpers/atom.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
@@ -37,7 +39,9 @@ describe("GET /changelog.atom", () => {
     insertPull.run("i1", made.value.defaultBranch, "2026-10-01T10:00:00.000Z", "oid-live");
     insertIssue.run("i2", made.value.id, 2, "Not shipped yet", u.value.id);
     insertPull.run("i2", made.value.defaultBranch, "2026-10-02T10:00:00.000Z", "oid-new");
-    keepLive("alice/forge", ["oid-live"], 0);
+    insertIssue.run("i3", made.value.id, 3, "small: j/k, enter, esc and ? on pulls, with test/keys-pulls.test.ts", u.value.id);
+    insertPull.run("i3", made.value.defaultBranch, "2026-09-30T10:00:00.000Z", "oid-live3");
+    keepLive("alice/forge", ["oid-live", "oid-live3"], 0);
   }, 30_000);
 
   afterAll(async () => {
@@ -56,10 +60,29 @@ describe("GET /changelog.atom", () => {
     expect(res.headers.get("cache-control")).toBe("public, max-age=300");
     const text = await res.text();
     const { titles } = checkAtom(text, `${servers.url}/changelog.atom`);
-    expect(titles).toEqual(["Went live: Fix <&> escaping"]);
+    expect(titles).toEqual(["Went live: Fix <&> escaping", "Went live: j/k, enter, esc and ? on pulls"]);
+    expect(text).not.toContain("small:");
+    expect(text).not.toContain("test/keys");
     expect(text).toContain(`href="${servers.url}/alice/forge/pulls/1"`);
     expect(text).toContain("Fix &lt;&amp;&gt; escaping");
     expect(text).not.toContain("Not shipped yet");
+  });
+
+  test("caps the feed at the newest 30 entries", async () => {
+    const insertIssue = app.db.query(
+      `INSERT INTO issue (id, repo_id, number, kind, title, author_id, state) SELECT ?1, repo_id, ?2, 'pull', ?3, author_id, 'closed' FROM issue WHERE id = 'i1'`,
+    );
+    const insertPull = app.db.query(
+      `INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, merged_at, merged_oid) VALUES (?1, 'main', 'b', 'base', '', ?2, 'oid-live')`,
+    );
+    for (let n = 10; n < 50; n++) {
+      insertIssue.run(`bulk${n}`, n, `Bulk ${n}`);
+      insertPull.run(`bulk${n}`, `2026-09-01T10:${String(n).padStart(2, "0")}:00.000Z`);
+    }
+    const text = await (await fetch(`${servers.url}/changelog.atom`)).text();
+    expect(text.match(/<entry>/g)?.length).toBe(30);
+    app.db.query(`DELETE FROM pull WHERE issue_id LIKE 'bulk%'`).run();
+    app.db.query(`DELETE FROM issue WHERE id LIKE 'bulk%'`).run();
   });
 
   test("answers 304 to its ETag", async () => {
@@ -68,6 +91,37 @@ describe("GET /changelog.atom", () => {
     expect(etag).toBeTruthy();
     const again = await fetch(`${servers.url}/changelog.atom`, { headers: { "if-none-match": etag } });
     expect(again.status).toBe(304);
+  });
+
+  test("a release a wave covers speaks the wave's headline, escaped, and links the wave; a broken wave falls back", async () => {
+    const repo = getRepo(app.db, "alice", "forge")!;
+    const user = getUserByName(app.db, "alice")!;
+    const w = writeWave({
+      version: "1.2.3",
+      date: "2026-10-03",
+      headline: "Faster <b>feeds</b> & more",
+      highlights: [1, 2, 3].map((n) => ({ title: `Thing ${n} <x>`, why: "because & so" })),
+      pulls: [{ title: "#1 Fix", url: `${servers.url}/alice/forge/pulls/1` }],
+    });
+    if (!w.ok) throw w.error;
+    const before = (await fetch(`${servers.url}/changelog.atom`)).headers.get("etag");
+    const done = await commitToBranch(app, user, repo, { message: "wave", files: [{ path: "waves/1.2.3.md", content: w.value }] });
+    expect(done.ok).toBe(true);
+    const res = await fetch(`${servers.url}/changelog.atom`);
+    const text = await res.text();
+    const { titles } = checkAtom(text, `${servers.url}/changelog.atom`);
+    expect(titles).toEqual(["Faster <b>feeds</b> & more", "Went live: j/k, enter, esc and ? on pulls"]);
+    expect(text).toContain(`href="${servers.url}/alice/forge/waves/1.2.3"`);
+    expect(text).toContain("<summary>Thing 1 &lt;x&gt;: because &amp; so");
+    expect(text).toContain("Faster &lt;b&gt;feeds&lt;/b&gt; &amp; more");
+    expect(text).not.toContain("<b>");
+    expect(res.headers.get("etag")).not.toBe(before);
+
+    const bad = await commitToBranch(app, user, repo, { message: "broken", files: [{ path: "waves/1.2.3.md", content: "not a wave" }] });
+    expect(bad.ok).toBe(true);
+    const fell = await fetch(`${servers.url}/changelog.atom`);
+    expect(fell.status).toBe(200);
+    expect((await fell.text())).toContain("Went live: Fix &lt;&amp;&gt; escaping");
   });
 
   test("the page links it", async () => {

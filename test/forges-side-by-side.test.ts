@@ -46,7 +46,7 @@ describe("what a forge uses against its size", () => {
       expect(u.kind).toBe("cell");
       if (u.kind === "cell") {
         expect(u.memoryMiB).toBeGreaterThan(0);
-        expect(useWords(u).memory).toMatch(/ of 512 MiB$/);
+        expect(useWords(u).memory).toMatch(/ of 2 GiB$/);
       }
     } finally {
       stop();

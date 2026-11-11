@@ -8,6 +8,7 @@
 import type { Database } from "bun:sqlite";
 import { sha256 } from "../kernel/hash.ts";
 import { dayOf, DAY_MAX, saltFor, type Report } from "../web/measure.ts";
+import { relayWait, relayWaitWords, type RelayWait } from "./relay_wait.ts";
 
 const KEEP_MS = 90 * 24 * 60 * 60 * 1000;
 
@@ -50,6 +51,8 @@ export interface AppVitals {
   readonly clsP75: number | undefined;
   /** p75 load for each of the last 30 days, oldest first; null for a day with no reports. */
   readonly loadDays: (number | null)[];
+  /** The slowest wait the forge relayed in the last 10 minutes, and whose it was; absent with none. */
+  readonly wait?: RelayWait;
 }
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -78,6 +81,7 @@ export function appVitals(db: Database, appId: string, at: number = Date.now()):
         "SELECT COUNT(*) AS n FROM (SELECT DISTINCT day, visitor FROM app_vital WHERE app_id = ? AND day >= ?)",
       )
       .get(appId, from)?.n ?? 0;
+  const wait = relayWait(appId, at);
   return {
     today: count(dayOf(at)),
     week: count(since),
@@ -87,6 +91,7 @@ export function appVitals(db: Database, appId: string, at: number = Date.now()):
     inpP75: p75(db, appId, "inp", since),
     clsP75: p75(db, appId, "cls", since),
     loadDays: loadP75Days(db, appId, at),
+    ...(wait === undefined ? {} : { wait }),
   };
 }
 
@@ -117,9 +122,10 @@ export const speedText = (v: number | undefined): string =>
 /** A layout shift score: "0.05", or a dash with no data. */
 export const shiftText = (v: number | undefined): string => (v === undefined ? "–" : v.toFixed(2));
 
-/** The one line the terminal shows. */
+/** The one line the terminal shows, and the slowest relayed wait's words when there is one. */
 export const visitorsLine = (v: AppVitals): string =>
-  `visitors ${v.today} today, ${v.week} in 7 days · p75 TTFB ${speedText(v.ttfbP75)} · load ${speedText(v.loadP75)} · LCP ${speedText(v.lcpP75)} · INP ${speedText(v.inpP75)} · CLS ${shiftText(v.clsP75)}`;
+  `visitors ${v.today} today, ${v.week} in 7 days · p75 TTFB ${speedText(v.ttfbP75)} · load ${speedText(v.loadP75)} · LCP ${speedText(v.lcpP75)} · INP ${speedText(v.inpP75)} · CLS ${shiftText(v.clsP75)}` +
+  (v.wait === undefined ? "" : ` · slowest wait, 10 min: ${relayWaitWords(v.wait)}`);
 
 /** Thirty days of load as blocks, oldest first, `·` for a silent day: "▁▃█·▂". Empty with no data. */
 export function loadTrend(days: readonly (number | null)[]): string {

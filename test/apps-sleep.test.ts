@@ -28,8 +28,16 @@ describe("apps that sleep", () => {
   let record: AppRecord;
   let preview = "";
   const DOMAIN = "apps.test";
-  const SOON = { production: 700, preview: 700 };
-  const LATER = { production: 3_600_000, preview: 3_600_000 };
+  const HOUR = 3_600_000;
+  const WINDOW = { production: HOUR, preview: HOUR };
+  /**
+   * The sweep's clock runs this far ahead of the wall: the test puts an
+   * environment to sleep by moving it, never by waiting out a window. Past
+   * the window and the busy grace both, so a process that looks busy
+   * sleeps on the next sweep too.
+   */
+  let ahead = 0;
+  const clock = () => Date.now() + ahead;
 
   const viaHost = (host: string, path = "/") =>
     fetch(`${servers.url}${path}`, { headers: { host }, redirect: "manual" });
@@ -64,7 +72,8 @@ describe("apps that sleep", () => {
       scheme: "http",
       publicPort: servers.port,
       forgeUrl: servers.url,
-      sleepAfterMs: SOON,
+      sleepAfterMs: WINDOW,
+      clock,
       sweepEveryMs: 150,
     });
     await runtime.start();
@@ -97,7 +106,15 @@ describe("apps that sleep", () => {
   });
 
   test("an environment nobody asks for sleeps, and the next request wakes it", async () => {
-    await until(() => (stateOf("production") === "asleep" ? true : undefined));
+    ahead = 3 * HOUR;
+    try {
+      await until(
+        () => (stateOf("production") === "asleep" ? true : undefined),
+        5_000,
+      );
+    } finally {
+      ahead = 0;
+    }
     const asleep = runtime.status(record).find((e) => e.env === "production")!;
     expect(asleep.port).toBeUndefined();
     expect(asleep.since).toBeDefined();
@@ -109,14 +126,46 @@ describe("apps that sleep", () => {
     const runId = runtime
       .status(record)
       .find((e) => e.env === "production")!.runId!;
+    // Nothing was busy: the idle path put it to sleep, not the busy grace.
     expect(log(runId)).toContain("asleep: nothing asked for it");
     expect(log(runId)).toContain("awake");
-    // Wanted again, it stays up past the limit.
-    await Bun.sleep(400);
+  }, 10_000);
+
+  test("a request inside the window starts it again; past it with none, it sleeps", async () => {
+    const MINUTE = 60_000;
+    // Waiting for a few sweeps to run at the clock as it stands now.
+    const sweeps = () => Bun.sleep(600);
+    const slept = () =>
+      log(
+        runtime.status(record).find((e) => e.env === "production")!.runId!,
+      ).match(/asleep: nothing asked for it/g)?.length ?? 0;
+    const before = slept();
+    try {
+      expect(stateOf("production")).toBe("running");
+      // Woken just now; the window is nearly out.
+      ahead = HOUR - 5 * MINUTE;
+      await sweeps();
+      expect(stateOf("production")).toBe("running");
+      // A request inside the window resets the idle timer...
+      expect((await viaHost(`hello.${DOMAIN}`)).status).toBe(200);
+      // ...so past the window from the wake, but not from the request, it stays up.
+      ahead = HOUR + 20 * MINUTE;
+      await sweeps();
+      expect(stateOf("production")).toBe("running");
+      // Past the window from the request, with nothing asked since: it sleeps.
+      ahead = 2 * HOUR;
+      await until(
+        () => (stateOf("production") === "asleep" ? true : undefined),
+        5_000,
+      );
+    } finally {
+      ahead = 0;
+    }
+    expect(slept()).toBe(before + 1);
+    // The next request wakes it again, for the test after this one.
     expect((await viaHost(`hello.${DOMAIN}`)).status).toBe(200);
-    await Bun.sleep(400);
     expect(stateOf("production")).toBe("running");
-  }, 30_000);
+  }, 15_000);
 
   test("the forge coming back starts production warm and leaves previews asleep", async () => {
     const branch = await commitToBranch(app, alice, repo, {
@@ -145,7 +194,8 @@ describe("apps that sleep", () => {
       scheme: "http",
       publicPort: servers.port,
       forgeUrl: servers.url,
-      sleepAfterMs: LATER,
+      sleepAfterMs: WINDOW,
+      clock,
       sweepEveryMs: 150,
     });
     await runtime.start();

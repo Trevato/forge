@@ -40,7 +40,7 @@ const main = async () => {
 test("with none, the page says so in a sentence, not an empty-state box", async () => {
   const page = await main();
   expect(page).toContain("No passkeys yet.");
-  expect(page).not.toContain('class="card empty"');
+  expect(page).not.toContain('class="empty"');
   expect(page).toContain('id="passkey-add"');
 });
 

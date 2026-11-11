@@ -43,6 +43,8 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { loadKey } from "../kernel/secret.ts";
 import {
   buildEnvFromLabel,
+  variantEnvFromLabel,
+  envVariant,
   envBuild,
   envWords,
   previewEnv,
@@ -56,6 +58,7 @@ import { clientBucket } from "../http/peer.ts";
 import { DOOR_PULL_LIMIT, doorPage, type DoorPullLine } from "./door.ts";
 import { checkWord } from "./check_word.ts";
 import { servingWords } from "./serving_words.ts";
+import { pillCheck } from "./pill_check.ts";
 import { openPulls } from "./door_pulls.ts";
 import { notePhase, startedAt, takePhases, timePhase } from "../core/route_timing.ts";
 import { readServing } from "./serving.ts";
@@ -63,6 +66,9 @@ import { notFound, securityFloor } from "../http/respond.ts";
 import { appMeasure } from "./measure.ts";
 import { holdPortRequest, holdPortSocket } from "./handoff.ts";
 import { secureFor } from "../http/cookie_secure.ts";
+import { currentLoopLag, forgeWaited, LAG_WINDOW_MS } from "../perf/loop_worst.ts";
+import { loopWatch } from "../perf/live.ts";
+import { heldBy, noteRelayWait, stallTiming } from "./relay_wait.ts";
 import { cspNonce, htmlAnswer, readPage, rewritable, TOOLBAR_ASSET_PATH, TOOLBAR_ASSET_PREFIX, toolbarResponse, withToolbar, type PillWhere } from "./toolbar.ts";
 
 const proxySecure = (request: Request, url: URL, forgeUrl: string): boolean =>
@@ -117,6 +123,10 @@ export function parseAppHost(
   if (build !== undefined) {
     return { slug: parts.at(-2)!, env: build, nested: parts.length > 2 };
   }
+  const variant = parts.length >= 2 ? variantEnvFromLabel(last) : undefined;
+  if (variant !== undefined) {
+    return { slug: parts.at(-2)!, env: variant, nested: parts.length > 2 };
+  }
   if (parts.length >= 2 && /^\d+$/.test(last)) {
     if (!/^[1-9]\d*$/.test(last)) return undefined;
     return {
@@ -152,6 +162,13 @@ export function resolveAppHostname(
 ): AppTarget | "unknown" | undefined {
   const parsed = parseAppHost(host, domain);
   if (parsed === undefined) return ownDomain(app, host);
+  // An app that already holds the slug `v-<label>` (made before that shape was
+  // reserved) keeps its name: the host is it, in its parent's world, not a variant.
+  const variant = envVariant(parsed.env);
+  const held = variant === undefined ? undefined : getAppBySlug(app.db, `v-${variant}`);
+  if (held !== undefined) {
+    return shown(app, held) ? { app: held, env: "production", nested: true } : "unknown";
+  }
   const record = getAppBySlug(app.db, parsed.slug);
   return record && shown(app, record)
     ? { app: record, env: parsed.env, nested: parsed.nested }
@@ -408,18 +425,61 @@ function sealedPull(runtime: AppsRuntime, target: AppTarget): Issue | undefined 
 
 /**
  * The response with the phases the request named, as `Server-Timing`: the
- * one writer for the proxy, on the forge's own `/__forge/*` pages and on a
- * relayed app answer alike. It appends, so an app's own entries stay first;
+ * one writer for the proxy, on the forge's own `/__forge/*` pages and, for
+ * a reader who may see them (`relayAnswer`), on a relayed app answer. It appends, so an app's own entries stay first;
  * on an app answer the forge's phases are `forge-` named (`relayPhase`) so
  * none can collide with the app's or with the server's `route`.
  */
 function withPhases(request: Request, res: Response): Response {
   const phases = takePhases(request);
-  if (phases.length === 0) return res;
-  const mine = phases.map((p) => `${p.name};dur=${p.ms.toFixed(1)}`).join(", ");
+  const stall = stallFor.get(request);
+  if (stall !== undefined) {
+    stallFor.delete(request);
+    // An admin's copy names internal routes: never one a shared cache may keep.
+    res.headers.set("cache-control", "private, no-store");
+    res.headers.delete("etag");
+  }
+  if (phases.length === 0 && stall === undefined) return res;
+  const named = phases.map((p) => `${p.name};dur=${p.ms.toFixed(1)}`);
+  if (stall !== undefined) named.push(stall);
+  const mine = named.join(", ");
   const theirs = res.headers.get("server-timing");
   res.headers.set("server-timing", theirs === null || theirs === "" ? mine : `${theirs}, ${mine}`);
   return res;
+}
+
+/**
+ * A relayed app answer, with the forge's phases only for a reader who may
+ * see them (#11112): someone who may write the app's repository, or a forge
+ * admin. Everyone else gets the app's own Server-Timing exactly as it came;
+ * how loaded the forge is and how long its lookups take are not a
+ * stranger's to read. The app's speed card and /system read the same
+ * numbers on the server side (`noteRelayWait`, the loop watch), never here.
+ */
+function relayAnswer(request: Request, res: Response): Response {
+  if (forgeReaders.has(request)) return withPhases(request, res);
+  takePhases(request);
+  stallFor.delete(request);
+  return res;
+}
+
+/** The requests whose reader is told the forge's phases (`relayAnswer`). */
+const forgeReaders = new WeakSet<Request>();
+
+/**
+ * Whether the grant names someone told the forge's phases on this app: an
+ * active person or agent who may write its repository, or a forge admin.
+ * A visitor with no grant is never asked about, so a stranger costs no read.
+ */
+function readsForgeTiming(runtime: AppsRuntime, target: AppTarget, who: GrantWho | undefined): boolean {
+  if (who === undefined) return false;
+  const db = runtime.app.db;
+  const viewer = getUserById(db, who.id);
+  if (viewer === undefined || !isActive(viewer)) return false;
+  // A forge admin, as `forgeAdmin` reads one: an agent never is.
+  if (viewer.isAdmin && viewer.kind !== "agent") return true;
+  const repo = getRepoById(db, target.app.repoId);
+  return repo !== undefined && canWrite(db, repo, viewer);
 }
 
 /**
@@ -428,7 +488,7 @@ function withPhases(request: Request, res: Response): Response {
  */
 type RelayPhase =
   | "route" | "lookup" | "state" | "session" | "wake"
-  | "upstream" | "ttfb" | "body" | "rewrite";
+  | "upstream" | "ttfb" | "lag" | "body" | "rewrite";
 
 /** Name one of the forge's phases of relaying an app answer. Durations only. */
 function relayPhase(request: Request, name: RelayPhase, ms: number): void {
@@ -439,10 +499,44 @@ function relayPhase(request: Request, name: RelayPhase, ms: number): void {
  * Name `ttfb` and `upstream` for headers that took `headersMs`. `fetch` says
  * nothing of its connection, so the two are the same wait: `ttfb` is the name
  * the split reads by, `upstream` the total older readers know.
+ *
+ * Beside them, `forge-lag` (#10838): the forge's worst event-loop lag of the
+ * last 10 s (`perf/loop_worst.ts`). `forge-ttfb` is read on the forge's clock,
+ * so a loop blocked by something else lands in it while the app sat idle;
+ * `forgeWaited` (the one place the rule lives) says when the wait was the forge's.
  */
-function relayUpstream(request: Request, headersMs: number): void {
+function relayUpstream(
+  runtime: AppsRuntime,
+  request: Request,
+  target: AppTarget,
+  headersMs: number,
+  who: GrantWho | undefined,
+): void {
+  const lag = currentLoopLag();
   relayPhase(request, "ttfb", headersMs);
+  relayPhase(request, "lag", lag);
   relayPhase(request, "upstream", headersMs);
+  // What held a wait that was the forge's (#11000): the stalls of the lag's
+  // window, read only then — at most 40 of them, so the common relay pays nothing.
+  const now = performance.now();
+  const held = forgeWaited(lag, headersMs) ? heldBy(loopWatch.within(now - LAG_WINDOW_MS, now)) : [];
+  // Production's slowest wait, for the app's speed card (`apps/relay_wait.ts`).
+  if (target.env === "production") noteRelayWait(target.app.id, headersMs, lag, Date.now(), held);
+  if (held.length > 0 && forgeAdmin(runtime, who)) stallFor.set(request, stallTiming(held));
+}
+
+/**
+ * The `forge-stall` entries a relayed answer carries, by request, until
+ * `withPhases` writes them. Set only for a forge admin: route patterns are
+ * the forge's own, so nobody else sees them.
+ */
+const stallFor = new WeakMap<Request, string>();
+
+/** Whether the grant names an active person who administers the forge (an agent never does). */
+function forgeAdmin(runtime: AppsRuntime, who: GrantWho | undefined): boolean {
+  if (who === undefined) return false;
+  const user = getUserById(runtime.app.db, who.id);
+  return user !== undefined && isActive(user) && user.isAdmin && user.kind !== "agent";
 }
 
 /**
@@ -470,17 +564,18 @@ export function pillWhere(
   if (pull === undefined) return where;
   if (!reads || !mayView(db, repo, pull, user)) return where;
   where.title = pull.title;
+  const head = getPull(db, target.app.repoId, where.pull);
+  if (head !== undefined && head.headOid !== "") where.check = pillCheck(db, pull.id, head.headOid);
   // How current the preview is: the row's head against the commit it runs. A
   // signed-in reader only, so a page an anonymous viewer may share never carries it.
   if (user === undefined) return where;
-  const row = getPull(db, target.app.repoId, where.pull);
-  if (row === undefined) return where;
-  where.state = row.mergedAt !== null ? "merged" : row.state === "closed" ? "closed" : "open";
+  if (head === undefined) return where;
+  where.state = head.mergedAt !== null ? "merged" : head.state === "closed" ? "closed" : "open";
   // Only an open pull has a newer push to be behind.
   if (where.state !== "open") return where;
   const status = runtime.envStatus?.(target.app, target.env);
   if (status?.state === "deploying") where.deploying = true;
-  where.behind = status?.state !== "deploying" && status?.commitOid !== undefined && status.commitOid !== row.headOid;
+  where.behind = status?.state !== "deploying" && status?.commitOid !== undefined && status.commitOid !== head.headOid;
   return where;
 }
 
@@ -619,7 +714,7 @@ const failedTokens = new WeakMap<App, RateLimiter>();
 /**
  * A bearer token on a request to a guarded app, read the way the forge's
  * own API reads it. It admits when its person may enter the app; a run's
- * token only on the repository it was minted for. A person who can read
+ * token only on the repository it was minted for; a proposal or via token never. A person who can read
  * the repository but not enter is told so (`hint`); anyone else — a token
  * that cannot read it, an expired one — gets nothing to learn from.
  */
@@ -657,7 +752,10 @@ function bearerAdmission(
   const verified = verifyToken(runtime.app.db, header.slice(7));
   if (!verified.ok) return undefined;
   limiter.refund(key);
-  const { user, run, scope } = verified.value;
+  const { user, run, scope, proposal, via } = verified.value;
+  // A proposal token is a writer's token held by a child forge, and a via
+  // token reaches /mcp alone: neither enters an app as the person who minted it.
+  if (proposal !== undefined || via !== undefined) return undefined;
   const repo = getRepoById(runtime.app.db, target.app.repoId);
   if (repo === undefined) return undefined;
   if (run !== undefined && run.repoId !== repo.id && run.forkId !== repo.id)
@@ -1082,6 +1180,7 @@ export async function proxyApp(
       sealed,
       viewerId,
       grantCookie: cookie,
+      build: runtime.liveFor(target.app, target.env)?.commitOid,
       secure: proxySecure(request, url, runtime.options.forgeUrl),
       source: clientBucket(request),
     });
@@ -1116,6 +1215,7 @@ export async function proxyApp(
       : admitted.error;
   const { status, port, grant: vouched } = admitted.value;
   runtime.touch(target.app, target.env);
+  if (readsForgeTiming(runtime, target, vouched?.who)) forgeReaders.add(request);
   const began = performance.now();
   // `route` split where it goes: the server finding the app (`lookup`), the
   // doors and the environment's state (`state`), the grant read (`session`).
@@ -1195,10 +1295,10 @@ export async function proxyApp(
     } as RequestInit);
   } catch {
     answered();
-    relayUpstream(request, performance.now() - sent);
-    return withPhases(request, unavailable(runtime, target, status, "the app stopped answering"));
+    relayUpstream(runtime, request, target, performance.now() - sent, vouched?.who);
+    return relayAnswer(request, unavailable(runtime, target, status, "the app stopped answering"));
   }
-  relayUpstream(request, performance.now() - sent);
+  relayUpstream(runtime, request, target, performance.now() - sent, vouched?.who);
   const out = new Headers(response.headers);
   for (const name of HOP_BY_HOP) out.delete(name);
   // Which app answered: a probe from outside (`spawn/reach.ts`) tells this
@@ -1239,7 +1339,7 @@ export async function proxyApp(
         // past that it goes on as it came, what was read first.
         const read = await readPage(response.body);
         if (!read.whole)
-          return withPhases(
+          return relayAnswer(
             request,
             new Response(read.rest, {
               status: response.status,
@@ -1251,7 +1351,7 @@ export async function proxyApp(
       }
       relayPhase(request, "body", performance.now() - rewriting);
     } catch {
-      return withPhases(request, unavailable(runtime, target, status, "the app stopped answering"));
+      return relayAnswer(request, unavailable(runtime, target, status, "the app stopped answering"));
     }
     // A signed-in person's page load gets the panel's one-use proof, and so
     // is theirs alone: never stored or shared. A page the app's own script
@@ -1306,11 +1406,11 @@ export async function proxyApp(
         out.delete("content-length");
         out.delete("content-encoding");
         relayPhase(request, "rewrite", performance.now() - rewriting);
-        return withPhases(request, new Response(null, { status: 304, headers: out }));
+        return relayAnswer(request, new Response(null, { status: 304, headers: out }));
       }
     }
     relayPhase(request, "rewrite", performance.now() - rewriting);
-    return withPhases(
+    return relayAnswer(
       request,
       new Response(sent, {
         status: response.status,
@@ -1319,7 +1419,7 @@ export async function proxyApp(
       }),
     );
   }
-  return withPhases(
+  return relayAnswer(
     request,
     new Response(body, {
       status: response.status,
@@ -1411,7 +1511,7 @@ const portSockets = new WeakMap<Bun.ServerWebSocket<AppSocket>, () => void>();
  * it the socket is closed rather than the memory kept, and the forge never
  * buffers a frame on its own account.
  */
-const WS_MAX_MESSAGE = 16 * 1024 * 1024;
+export const WS_MAX_MESSAGE = 16 * 1024 * 1024;
 /**
  * Seconds a socket may go without a frame or a pong before it is dropped.
  * Bun pings on its own at half this, so a quiet tab that is still there
@@ -1546,9 +1646,11 @@ function closeBoth(
  * close of one side carried to the other. Text stays text and binary
  * stays binary; the forge reads neither.
  */
-export const appWebSocket: Bun.WebSocketHandler<AppSocket> = {
-  maxPayloadLength: WS_MAX_MESSAGE,
-  backpressureLimit: WS_MAX_MESSAGE,
+export const appWebSocketWith = (
+  maxMessage: number = WS_MAX_MESSAGE,
+): Bun.WebSocketHandler<AppSocket> => ({
+  maxPayloadLength: maxMessage,
+  backpressureLimit: maxMessage,
   closeOnBackpressureLimit: true,
   idleTimeout: WS_IDLE_SECONDS,
 
@@ -1576,7 +1678,7 @@ export const appWebSocket: Bun.WebSocketHandler<AppSocket> = {
         typeof data === "string"
           ? Buffer.byteLength(data)
           : (data as ArrayBuffer).byteLength;
-      if (size > WS_MAX_MESSAGE) {
+      if (size > maxMessage) {
         closeBoth(ws, 1009, "message too big");
         return;
       }
@@ -1621,7 +1723,7 @@ export const appWebSocket: Bun.WebSocketHandler<AppSocket> = {
     if (code === 1006) upstream.close(1001, "the browser went away");
     else upstream.close(sendable(code) ? code : 1000, reason);
   },
-};
+});
 
 function grant(
   runtime: AppsRuntime,

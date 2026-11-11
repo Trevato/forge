@@ -83,11 +83,109 @@ describe("diff engine + resource edge cases", () => {
     const remote = `${base.replace("http://", `http://ada:${token}@`)}/ada/engine.git`;
 
     await shOk(["git", "clone", remote, "engine"], work);
-    await Bun.write(join(dir(), "README.md"), "# init\n");
-    await shOk(["git", "add", "."], dir());
-    await shOk(["git", "commit", "-m", "init"], dir());
+    await buildHistory();
+    // One push carries every scenario's commits: the server sees the same
+    // objects it would from one push per test, at a fraction of the cost.
     await shOk(["git", "push", "origin", "main"], dir());
   });
+
+  // Each scenario's commit, built once locally in beforeAll and pushed in one
+  // go; tests only read the server's rendering of them.
+  const oid: Record<string, string> = {};
+
+  async function commit(key: string, message: string): Promise<void> {
+    await shOk(["git", "add", "-A"], dir());
+    await shOk(["git", "commit", "-m", message], dir());
+    oid[key] = await shOk(["git", "rev-parse", "HEAD"], dir());
+  }
+
+  // Sized just past the caps in src/web/diff-view.ts (MAX_FILE_LINES 5000,
+  // MAX_FILE_BYTES 100_000): far enough over to trip each cap, small enough
+  // that git and the server move them in milliseconds.
+  const HUGE_LINES = 6_000;
+  const GIANT_LINE = 60_000;
+
+  async function buildHistory(): Promise<void> {
+    await Bun.write(join(dir(), "README.md"), "# init\n");
+    await commit("root", "init");
+
+    const bytes = new Uint8Array(2000);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = (i * 37 + 5) % 256;
+    await Bun.write(join(dir(), "blob.bin"), bytes);
+    await Bun.write(join(dir(), "text.txt"), "hello\nworld\n");
+    await commit("binary", "add binary + text");
+    bytes.reverse();
+    await Bun.write(join(dir(), "blob.bin"), bytes);
+    await Bun.write(join(dir(), "text.txt"), "hello\nworld\nmodified\n");
+    await commit("binaryModify", "modify binary + text");
+    await shOk(["git", "rm", "-q", "blob.bin"], dir());
+    await Bun.write(join(dir(), "text.txt"), "hello\nworld\nmodified\ndeleted\n");
+    await commit("binaryDelete", "delete binary, modify text");
+
+    await Bun.write(
+      join(dir(), "renme-src.txt"),
+      Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n") + "\n",
+    );
+    await commit("renameBase", "add renme-src");
+    await shOk(["git", "mv", "renme-src.txt", "renme-dst.txt"], dir());
+    const renamed = Array.from({ length: 20 }, (_, i) =>
+      i % 2 === 0 ? `line ${i}` : `CHANGED ${i}`,
+    );
+    await Bun.write(join(dir(), "renme-dst.txt"), renamed.join("\n") + "\n");
+    await commit("renamePartial", "rename+modify renme");
+    await shOk(["git", "mv", "renme-dst.txt", "renme-final.txt"], dir());
+    await commit("renamePure", "pure rename");
+
+    await Bun.write(join(dir(), "文件名.txt"), "chinese filename content\n");
+    await commit("unicode", "unicode filename");
+
+    await Bun.write(join(dir(), "nonl.txt"), "line1\nline2\nline3");
+    await commit("nonlAdd", "no trailing newline");
+    await Bun.write(join(dir(), "nonl.txt"), "line1\nline2\nline3\nline4");
+    await commit("nonlModify", "modify no trailing newline");
+
+    await shOk(["git", "checkout", "-b", "feature"], dir());
+    await Bun.write(join(dir(), "feature.txt"), "feature content\n");
+    await commit("feature", "feature commit");
+    await shOk(["git", "checkout", "main"], dir());
+    await Bun.write(join(dir(), "mainline.txt"), "mainline content\n");
+    await commit("mainline", "mainline commit");
+    await shOk(["git", "merge", "--no-ff", "feature", "-m", "merge feature"], dir());
+    oid.merge = await shOk(["git", "rev-parse", "HEAD"], dir());
+
+    await Bun.write(join(dir(), "chmod-me.sh"), "#!/bin/sh\necho hi\n");
+    await commit("chmodBase", "add chmod-me");
+    await shOk(["chmod", "+x", join(dir(), "chmod-me.sh")], dir());
+    await commit("chmod", "chmod only");
+
+    const lines: string[] = [];
+    for (let i = 1; i <= 100; i++) lines.push(`orig line ${i}`);
+    await Bun.write(join(dir(), "multihunk.txt"), lines.join("\n") + "\n");
+    await commit("multihunkBase", "add multihunk base");
+    const lines2 = [...lines];
+    lines2[4] = "CHANGED near top"; // old/new line 5
+    lines2[94] = "CHANGED near bottom"; // old/new line 95
+    await Bun.write(join(dir(), "multihunk.txt"), lines2.join("\n") + "\n");
+    await commit("multihunk", "modify multihunk two spots");
+
+    await Promise.all(
+      Array.from({ length: 300 }, (_, i) =>
+        Bun.write(join(dir(), `many/file-${i}.txt`), `content ${i}\n`),
+      ),
+    );
+    await commit("many", "touch 300 files");
+
+    // Short lines, so only the line-count cap can fire: HUGE_LINES lines of
+    // at most 5 characters stay well under MAX_FILE_BYTES and MAX_LINE_WIDTH.
+    const big = Array.from({ length: HUGE_LINES }, (_, i) => `L${i}`);
+    await Bun.write(join(dir(), "huge.txt"), big.join("\n") + "\n");
+    await commit("huge", `add huge file ${HUGE_LINES} lines`);
+
+    await Bun.write(join(dir(), "hugeline.txt"), "x".repeat(GIANT_LINE) + "\n");
+    await commit("hugelineBase", "add file with one giant line");
+    await Bun.write(join(dir(), "hugeline.txt"), "y".repeat(GIANT_LINE) + "\n");
+    await commit("hugeline", "modify the giant line");
+  }
 
   afterAll(async () => {
     servers.stop();
@@ -96,56 +194,39 @@ describe("diff engine + resource edge cases", () => {
     await rm(work, { recursive: true, force: true });
   });
 
-  test("binary add/modify/delete does not corrupt subsequent file parsing", async () => {
-    const bytes = new Uint8Array(2000);
-    for (let i = 0; i < bytes.length; i++) bytes[i] = (i * 37 + 5) % 256;
-    await Bun.write(join(dir(), "blob.bin"), bytes);
-    await Bun.write(join(dir(), "text.txt"), "hello\nworld\n");
-    await shOk(["git", "add", "."], dir());
-    await shOk(["git", "commit", "-m", "add binary + text"], dir());
-    await shOk(["git", "push", "origin", "main"], dir());
-    const oid = await shOk(["git", "rev-parse", "HEAD"], dir());
+  const page = async (key: string): Promise<Response> =>
+    fetch(`${base}/ada/engine/commit/${oid[key]}`);
 
-    const page = await (await fetch(`${base}/ada/engine/commit/${oid}`)).text();
-    expect(page).toContain("Binary file not shown");
-    expect(page).toContain("blob.bin");
-    // The text file after the binary section in the same diff must still parse.
-    expect(page).toContain("hello");
+  test("binary add/modify/delete does not corrupt subsequent file parsing", async () => {
+    // Invariant: a binary section in a diff is stubbed and the text file after it still parses.
+    // blob.bin sorts before text.txt, so the text section follows the binary one.
+    const cases: Array<[string, string]> = [
+      ["binary", "hello"],
+      ["binaryModify", "modified"],
+      ["binaryDelete", "deleted"],
+    ];
+    for (const [key, textLine] of cases) {
+      const text = await (await page(key)).text();
+      expect(text).toContain("Binary file not shown");
+      expect(text).toContain("blob.bin");
+      expect(text).toContain("text.txt");
+      expect(text).toContain(textLine);
+    }
   });
 
   test("rename with partial similarity keeps old/new path and hunk content", async () => {
-    await Bun.write(
-      join(dir(), "renme-src.txt"),
-      Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n") + "\n",
-    );
-    await shOk(["git", "add", "."], dir());
-    await shOk(["git", "commit", "-m", "add renme-src"], dir());
-    await shOk(["git", "push", "origin", "main"], dir());
-
-    await shOk(["git", "mv", "renme-src.txt", "renme-dst.txt"], dir());
-    const lines = Array.from({ length: 20 }, (_, i) =>
-      i % 2 === 0 ? `line ${i}` : `CHANGED ${i}`,
-    );
-    await Bun.write(join(dir(), "renme-dst.txt"), lines.join("\n") + "\n");
-    await shOk(["git", "add", "."], dir());
-    await shOk(["git", "commit", "-m", "rename+modify renme"], dir());
-    await shOk(["git", "push", "origin", "main"], dir());
-    const oid = await shOk(["git", "rev-parse", "HEAD"], dir());
-
-    const page = await (await fetch(`${base}/ada/engine/commit/${oid}`)).text();
-    expect(page).toContain("renme-src.txt");
-    expect(page).toContain("renme-dst.txt");
-    expect(page).toContain("CHANGED");
+    // Invariant: a rename-with-edits shows both paths and its hunk.
+    const text = await (await page("renamePartial")).text();
+    expect(text).toContain("renme-src.txt");
+    expect(text).toContain("renme-dst.txt");
+    expect(text).toContain("CHANGED");
   });
 
   test("pure rename (100% similarity) produces no hunks but shows both paths", async () => {
-    await shOk(["git", "mv", "renme-dst.txt", "renme-final.txt"], dir());
-    await shOk(["git", "commit", "-m", "pure rename"], dir());
-    await shOk(["git", "push", "origin", "main"], dir());
-    const oid = await shOk(["git", "rev-parse", "HEAD"], dir());
-    const page = await (await fetch(`${base}/ada/engine/commit/${oid}`)).text();
-    expect(page).toContain("renme-dst.txt");
-    expect(page).toContain("renme-final.txt");
+    // Invariant: a hunkless pure rename still names old and new path.
+    const text = await (await page("renamePure")).text();
+    expect(text).toContain("renme-dst.txt");
+    expect(text).toContain("renme-final.txt");
   });
 
   // git quotes non-ASCII paths with C-style octal byte escapes
@@ -153,227 +234,104 @@ describe("diff engine + resource edge cases", () => {
   // decodes them as UTF-8, so the real name survives — in the displayed path
   // and in the oldPath/newPath the highlighter keys blob lookups on.
   test("unicode filenames survive as real UTF-8", async () => {
-    await Bun.write(join(dir(), "文件名.txt"), "chinese filename content\n");
-    await shOk(["git", "add", "."], dir());
-    await shOk(["git", "commit", "-m", "unicode filename"], dir());
-    await shOk(["git", "push", "origin", "main"], dir());
-    const oid = await shOk(["git", "rev-parse", "HEAD"], dir());
-
-    const page = await (await fetch(`${base}/ada/engine/commit/${oid}`)).text();
-    expect(page).toContain("chinese filename content");
-    expect(page).toContain("文件名.txt"); // the real name, not mojibake
+    // Invariant: git's octal-quoted path decodes to the real UTF-8 name.
+    const text = await (await page("unicode")).text();
+    expect(text).toContain("chinese filename content");
+    expect(text).toContain("文件名.txt"); // the real name, not mojibake
   });
 
   test("no-newline-at-eof marker on add and modify", async () => {
-    await Bun.write(join(dir(), "nonl.txt"), "line1\nline2\nline3");
-    await shOk(["git", "add", "."], dir());
-    await shOk(["git", "commit", "-m", "no trailing newline"], dir());
-    await shOk(["git", "push", "origin", "main"], dir());
-    const oid1 = await shOk(["git", "rev-parse", "HEAD"], dir());
-    const page1 = await (
-      await fetch(`${base}/ada/engine/commit/${oid1}`)
-    ).text();
-    expect(page1).toContain("nonl");
+    // Invariant: "\ No newline at end of file" neither crashes nor swallows the next line.
+    const page1 = await (await page("nonlAdd")).text();
     expect(page1).toContain("nonl"); // renders without crashing
-
-    await Bun.write(join(dir(), "nonl.txt"), "line1\nline2\nline3\nline4");
-    await shOk(["git", "add", "."], dir());
-    await shOk(["git", "commit", "-m", "modify no trailing newline"], dir());
-    await shOk(["git", "push", "origin", "main"], dir());
-    const oid2 = await shOk(["git", "rev-parse", "HEAD"], dir());
-    const resp2 = await fetch(`${base}/ada/engine/commit/${oid2}`);
+    const resp2 = await page("nonlModify");
     expect(resp2.status).toBe(200);
-    const page2 = await resp2.text();
-    expect(page2).toContain("line4");
+    expect(await resp2.text()).toContain("line4");
   });
 
   test("root commit (no parent) diffs cleanly against the empty tree", async () => {
-    const rootOid = (
-      await shOk(["git", "rev-list", "--max-parents=0", "HEAD"], dir())
-    ).split("\n")[0]!;
-    const resp = await fetch(`${base}/ada/engine/commit/${rootOid}`);
+    // Invariant: a parentless commit diffs against the empty tree.
+    const resp = await page("root");
     expect(resp.status).toBe(200);
-    const page = await resp.text();
-    expect(page).toContain("init");
+    expect(await resp.text()).toContain("init");
   });
 
   test("merge commit does not crash and returns 200", async () => {
-    await shOk(["git", "checkout", "-b", "feature"], dir());
-    await Bun.write(join(dir(), "feature.txt"), "feature content\n");
-    await shOk(["git", "add", "."], dir());
-    await shOk(["git", "commit", "-m", "feature commit"], dir());
-    await shOk(["git", "checkout", "main"], dir());
-    await Bun.write(join(dir(), "mainline.txt"), "mainline content\n");
-    await shOk(["git", "add", "."], dir());
-    await shOk(["git", "commit", "-m", "mainline commit"], dir());
-    await shOk(
-      ["git", "merge", "--no-ff", "feature", "-m", "merge feature"],
-      dir(),
-    );
-    await shOk(["git", "push", "origin", "main"], dir());
-    const oid = await shOk(["git", "rev-parse", "HEAD"], dir());
-    const resp = await fetch(`${base}/ada/engine/commit/${oid}`);
+    // Invariant: a two-parent commit renders.
+    const resp = await page("merge");
     expect(resp.status).toBe(200);
   });
 
   test("mode-only change (chmod +x) with no content diff renders cleanly", async () => {
-    await Bun.write(join(dir(), "chmod-me.sh"), "#!/bin/sh\necho hi\n");
-    await shOk(["git", "add", "."], dir());
-    await shOk(["git", "commit", "-m", "add chmod-me"], dir());
-    await shOk(["git", "push", "origin", "main"], dir());
-    await shOk(["chmod", "+x", join(dir(), "chmod-me.sh")], dir());
-    await shOk(["git", "add", "."], dir());
-    await shOk(["git", "commit", "-m", "chmod only"], dir());
-    await shOk(["git", "push", "origin", "main"], dir());
-    const oid = await shOk(["git", "rev-parse", "HEAD"], dir());
-    const resp = await fetch(`${base}/ada/engine/commit/${oid}`);
+    // Invariant: a mode change with no hunks says so instead of rendering an empty table.
+    const resp = await page("chmod");
     expect(resp.status).toBe(200);
-    const page = await resp.text();
-    expect(page).toContain("No content changes");
+    expect(await resp.text()).toContain("No content changes");
   });
 
   test("multi-hunk file: second hunk's line numbers are exactly correct (no off-by-one)", async () => {
-    const lines: string[] = [];
-    for (let i = 1; i <= 100; i++) lines.push(`orig line ${i}`);
-    await Bun.write(join(dir(), "multihunk.txt"), lines.join("\n") + "\n");
-    await shOk(["git", "add", "."], dir());
-    await shOk(["git", "commit", "-m", "add multihunk base"], dir());
-    await shOk(["git", "push", "origin", "main"], dir());
-
-    const lines2 = [...lines];
-    lines2[4] = "CHANGED near top"; // old/new line 5
-    lines2[94] = "CHANGED near bottom"; // old/new line 95
-    await Bun.write(join(dir(), "multihunk.txt"), lines2.join("\n") + "\n");
-    await shOk(["git", "add", "."], dir());
-    await shOk(["git", "commit", "-m", "modify multihunk two spots"], dir());
-    await shOk(["git", "push", "origin", "main"], dir());
-    const oid = await shOk(["git", "rev-parse", "HEAD"], dir());
-
-    const page = await (await fetch(`${base}/ada/engine/commit/${oid}`)).text();
+    // Invariant: each hunk's rows carry the line numbers from its own header.
+    const text = await (await page("multihunk")).text();
     // Word-diff highlighting splits row text into per-token <span>s, so we
     // can't search for the literal phrase; instead find each token and
     // check the nearest preceding `<td class="dn">N</td>` line-number cell.
     function lineNumberBefore(token: string): string {
-      const idx = page.indexOf(token);
+      const idx = text.indexOf(token);
       expect(idx).toBeGreaterThan(-1);
-      const before = page.slice(Math.max(0, idx - 600), idx);
+      const before = text.slice(Math.max(0, idx - 600), idx);
       const matches = [...before.matchAll(/<td class="dn">(\d+)<\/td>/g)];
       return matches[matches.length - 1]![1]!;
     }
     expect(lineNumberBefore(">CHANGED<")).toBeTruthy();
     // First hunk: the add row for "CHANGED near top" is new-line 5, in the
     // second <td class="dn"> column (old is empty for an add row).
-    const topIdx = page.indexOf("CHANGED");
-    const topSnippet = page.slice(Math.max(0, topIdx - 500), topIdx);
+    const topIdx = text.indexOf("CHANGED");
+    const topSnippet = text.slice(Math.max(0, topIdx - 500), topIdx);
     expect(topSnippet).toContain('<td class="dn">5</td>');
-    const bottomIdx = page.lastIndexOf("CHANGED");
-    const bottomSnippet = page.slice(Math.max(0, bottomIdx - 500), bottomIdx);
+    const bottomIdx = text.lastIndexOf("CHANGED");
+    const bottomSnippet = text.slice(Math.max(0, bottomIdx - 500), bottomIdx);
     expect(bottomSnippet).toContain('<td class="dn">95</td>');
   });
 
   // ---- Resource / DoS ----
 
-  // BUG (confirmed, HIGH severity): diffSyntax() in src/web/diff-syntax.ts
-  // loops over every file in the diff sequentially (`for (const file of
-  // diff.files)`) and, per file, calls blobForRender() which spawns a fresh
-  // `git cat-file` subprocess (up to 3 spawns per side: -t, -s, blob) rather
-  // than using the batched RepoReader. MAX_CHANGED (5000) bounds total
-  // changed *lines* but not the *number of files* in a commit. A commit
-  // touching many trivial files is therefore linear in file count at
-  // roughly 17-18ms/file with no concurrency, no cap, and no timeout
-  // shorter than the diff's own 60s spawn timeout.
-  //
-  // Measured on this machine (outside the regression run, see report):
-  //   200 files  ->  3.47s
-  //   1000 files -> 18.2s
-  //   5200 files -> 95.2s  (commit page request)
-  // A forge that should feel interactive (per docs/ARCHITECTURE.md) turns a
-  // single push into a 95-second synchronous request.
-  test("DOS: file count is NOT capped independent of changed-line count (perf regression sentinel)", async () => {
-    const nFiles = 300;
-    for (let i = 0; i < nFiles; i++) {
-      await Bun.write(join(dir(), `many/file-${i}.txt`), `content ${i}\n`);
-    }
-    await shOk(["git", "add", "."], dir());
-    await shOk(["git", "commit", "-m", `touch ${nFiles} files`], dir());
-    await shOk(["git", "push", "origin", "main"], dir());
-    const oid = await shOk(["git", "rev-parse", "HEAD"], dir());
-
-    const t0 = performance.now();
-    const resp = await fetch(`${base}/ada/engine/commit/${oid}`);
+  // A commit touching many trivial files once cost a `git cat-file` spawn per
+  // file in diffSyntax(); MAX_DIFF_FILES (100) in diff-view.ts now bounds the
+  // files rendered and highlighted, and says how many it left out.
+  test("MAX_DIFF_FILES: a 300-file commit page answers 200 rendering 100 files and naming the rest", async () => {
+    // Invariant: past MAX_DIFF_FILES the page renders exactly that many files and counts the hidden ones.
+    const resp = await page("many");
     const text = await resp.text();
-    const elapsed = performance.now() - t0;
-    console.log(
-      `[perf] ${nFiles}-file commit diff took ${elapsed.toFixed(0)}ms, ${text.length} bytes`,
-    );
     expect(resp.status).toBe(200);
-    // No clock is asserted: a bound in milliseconds measures the machine
-    // (currently ~17ms/file with no cap). The sentinel is this test's own
-    // timeout, far above what an interactive forge should take, and it is
-    // expected to keep passing until the file count is capped like the line
-    // count already is.
-  }, 90_000);
+    const shown = new Set(text.match(/many\/file-\d+\.txt/g) ?? []);
+    expect(shown.size).toBe(100);
+    expect(text).toContain("200 more files not");
+  });
 
-  test("MAX_FILE_LINES caps a single huge file (200k+ changed lines) instead of rendering it", async () => {
-    const bigLines: string[] = [];
-    for (let i = 0; i < 210_000; i++)
-      bigLines.push(`line number ${i} of a huge file`);
-    await Bun.write(join(dir(), "huge.txt"), bigLines.join("\n") + "\n");
-    await shOk(["git", "add", "."], dir());
-    await shOk(["git", "commit", "-m", "add huge file 210k lines"], dir());
-    await shOk(["git", "push", "origin", "main"], dir());
-    const oid = await shOk(["git", "rev-parse", "HEAD"], dir());
-
-    const t0 = performance.now();
-    const resp = await fetch(`${base}/ada/engine/commit/${oid}`);
+  test("MAX_FILE_LINES caps a single huge file instead of rendering it", async () => {
+    // Invariant: a file over MAX_FILE_LINES changed lines is a stub naming its count, none of its lines on the wire.
+    const resp = await page("huge");
     const text = await resp.text();
-    const elapsed = performance.now() - t0;
-    console.log(
-      `[perf] 210k-line file diff took ${elapsed.toFixed(0)}ms, ${text.length} bytes`,
-    );
     expect(resp.status).toBe(200);
     expect(text).toContain("huge.txt");
     expect(text).toContain("Diff not shown");
-    expect(text).toContain("210,000 changed lines");
-    // The cap is what keeps this from being a resource sink, and the cap is
-    // what is checked: none of the file's lines are on the wire, and the
-    // page is small. How long it took is logged, not asserted.
-    expect(text).not.toContain("line number 209999 of a huge file");
+    expect(text).toContain(`${HUGE_LINES.toLocaleString()} changed lines`);
+    expect(text).not.toContain(`>L${HUGE_LINES - 1}<`);
     expect(text.length).toBeLessThan(500_000);
-  }, 60_000);
+  });
 
-  test("CAP_BYTES bounds a file that is few lines but huge in bytes (single giant line)", async () => {
-    const hugeLine1 = "x".repeat(2_000_000);
-    await Bun.write(join(dir(), "hugeline.txt"), hugeLine1 + "\n");
-    await shOk(["git", "add", "."], dir());
-    await shOk(["git", "commit", "-m", "add file with one 2MB line"], dir());
-    await shOk(["git", "push", "origin", "main"], dir());
-
-    const hugeLine2 = "y".repeat(2_000_000);
-    await Bun.write(join(dir(), "hugeline.txt"), hugeLine2 + "\n");
-    await shOk(["git", "add", "."], dir());
-    await shOk(["git", "commit", "-m", "modify the 2MB line"], dir());
-    await shOk(["git", "push", "origin", "main"], dir());
-    const oid = await shOk(["git", "rev-parse", "HEAD"], dir());
-
-    const t0 = performance.now();
-    const resp = await fetch(`${base}/ada/engine/commit/${oid}`);
+  test("MAX_FILE_BYTES bounds a file that is few lines but huge in bytes (single giant line)", async () => {
+    // Invariant: a one-line change over MAX_FILE_BYTES of diff is a stub, and neither giant line reaches the page.
+    const resp = await page("hugeline");
     const text = await resp.text();
-    const elapsed = performance.now() - t0;
-    console.log(
-      `[perf] 2MB-single-line modify diff took ${elapsed.toFixed(0)}ms, ${text.length} bytes`,
-    );
     expect(resp.status).toBe(200);
     expect(text).toContain("hugeline.txt");
     expect(text).toContain("Diff not shown");
     expect(text).toContain("bytes of diff");
-    // The byte ceiling this issue asks for: a 4MB-of-diff single line must
-    // not put anywhere near that on the wire, and must not creep back up.
     expect(text.length).toBeLessThan(500_000);
-    // MAX_FILE_BYTES/MAX_LINE_WIDTH in diff-view.ts stub the file before it
-    // is ever tokenized or rendered as rows, though the changed-line count
-    // (1) is far under MAX_FILE_LINES: neither giant line reached the page.
+    // The changed-line count (1) is far under MAX_FILE_LINES: only the byte
+    // bound keeps either giant line off the page.
     expect(text).not.toContain("x".repeat(1_000));
     expect(text).not.toContain("y".repeat(1_000));
-  }, 60_000);
+  });
 });

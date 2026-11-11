@@ -60,6 +60,8 @@ import { whenText } from "../../crew/limits.ts";
 import { accountSections } from "./origins.ts";
 import { liveRegionsJs } from "../client.ts";
 import { markOf } from "../../core/marks.ts";
+import { crewKeyCard, includedCredit, isHostedForge } from "../studio/crew_key.ts";
+import { usdWords } from "../../spawn/credit.ts";
 import { limitValue } from "../../settings/limits.ts";
 
 const POOL = "/settings/subscriptions";
@@ -108,8 +110,11 @@ export function subscriptionsPage(ctx: Ctx): Response {
   const denied = requireAdmin(ctx);
   if (denied) return denied;
   const now = new Date();
+  const included = includedCredit(ctx.app);
+  // On a hosted forge the platform row is the host's included credit, said
+  // as what is left of it, or it is not shown (#11154).
   const pool = timePhase(ctx.request, "credentials", () =>
-    listCredentials(ctx.app.db),
+    listCredentials(ctx.app.db).filter((s) => s.id !== PLATFORM || !isHostedForge(ctx.app)),
   );
   const places = timePhase(ctx.request, "places", () =>
     listGrantPlaces(ctx.app.db),
@@ -159,6 +164,7 @@ export function subscriptionsPage(ctx: Ctx): Response {
                 ? undefined
                 : getUserById(ctx.app.db, s.createdBy);
             return row({
+              nav: true,
               lead: icon("key"),
               title: html`${s.name}
               ${when(rests, () =>
@@ -269,6 +275,11 @@ export function subscriptionsPage(ctx: Ctx): Response {
           { extra: "setting-list" },
         );
 
+  const own = pool.some((s) => s.id !== PLATFORM) ? null : crewKeyCard(ctx, true);
+  const lent =
+    included === undefined
+      ? null
+      : html`<p class="small muted" id="included-credit">${icon("key")} Included crew credit: ${usdWords(included.leftUsd)} of ${usdWords(included.capUsd)} left. When it is spent the crew stops until you add your own key.</p>`;
   const add = html`<section class="settings-block"><h2>Add one</h2>
     <form class="stack" method="post" action="${POOL}">
       <div class="field">
@@ -335,7 +346,7 @@ export function subscriptionsPage(ctx: Ctx): Response {
 
   const response = shell(
     ctx,
-    html`${list} ${none === null ? null : html`<div class="mt">${none}</div>`}
+    html`${lent} ${own} ${isHostedForge(ctx.app) && sealed.length === 0 ? null : list} ${none === null || isHostedForge(ctx.app) ? null : html`<div class="mt">${none}</div>`}
       <p class="mt muted small">What they spent: <a href="/settings/spend">Usage → Spend</a>.</p>
       <div class="mt">${add}</div>
       ${used === null ? null : html`<div class="mt">${used}</div>`}`,

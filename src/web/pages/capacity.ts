@@ -6,10 +6,11 @@
  * and each one is listed below the settings: who, when, from what to what.
  */
 
-import { changeCapacity, edgeOffDryRun, listCapacity, type CapacityRow } from "../../actions/capacity.ts";
-import { CAPACITY, belowCeiling, type CapacityKey } from "../../core/capacity.ts";
+import { DERIVED_WORDS, REASON_WORDS, changeCapacity, edgeOffDryRun, listCapacity, type CapacityRow } from "../../actions/capacity.ts";
+import { CAPACITY, REASON_MAX, belowCeiling, needsReason, type CapacityKey } from "../../core/capacity.ts";
+import { EGRESS_REPORTED } from "../../system/egress_line.ts";
 import { bytes } from "../../system/format.ts";
-import { egressSnapshot } from "../../apps/egress.ts";
+import { egressRowsFor } from "../../spawn/process_counters.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
@@ -99,17 +100,38 @@ export function capacityPage(ctx: Ctx): Response {
       )}`,
       meta: html`${s.help} <br />Now <span class="mono">${s.value === "" ? "auto" : s.value}</span>. ${s.source === "setting"
           ? html`Set here; the boot default is
-              <span class="mono">${s.default === "" ? "auto" : s.default}</span>
-              (<span class="mono">${s.env}</span>).`
-          : html`The boot default, from <span class="mono">${s.env}</span>.`}
+              <span class="mono">${s.default === "" ? "auto" : s.default}</span>${s.env === ""
+                ? "."
+                : html` (<span class="mono">${s.env}</span>).`}`
+          : s.source === "derived"
+            ? html`Derived from Speed (<span class="mono">crew.concurrency</span>); read-only here: change Speed and it moves.`
+            : s.env === ""
+              ? html`The default.`
+              : html`The boot default, from <span class="mono">${s.env}</span>.`}
         ${awayLine(s, now)}`,
-      trail: html`<form
+      trail: s.source === "derived"
+        ? html`<span class="mono" data-derived="${s.key}">${s.value}</span>`
+        : html`<form
         class="row-fields"
         method="post"
         action="/settings/capacity"
       >
         <input type="hidden" name="key" value="${s.key}" />
         ${input(s.key, s.value)}
+        ${when(
+          // Inside the row's own form, posted with Save: a move to report says why (#10778).
+          needsReason(s.key),
+          () => html`<input
+            class="input"
+            id="cap-${s.key}-reason"
+            type="text"
+            name="reason"
+            maxlength="${String(REASON_MAX)}"
+            autocomplete="off"
+            placeholder="Why (needed to set report)"
+            aria-label="Why (needed to set report)"
+          />`,
+        )}
         ${btn("Save", {
           size: "sm",
           variant: "primary",
@@ -137,7 +159,7 @@ export function capacityPage(ctx: Ctx): Response {
       title: html`<span class="mono">${c.key}</span>
         <span class="mono">${c.from === "" ? "auto" : c.from}</span> →
         <span class="mono">${c.to === "" ? "auto" : c.to}</span>`,
-      meta: html`${c.actorName === "" ? "someone" : c.actorName} · ${time(c.at)}`,
+      meta: html`${c.actorName === "" ? "someone" : c.actorName} · ${time(c.at)}${c.reason === "" ? "" : html` · ${c.reason}`}`,
     }),
   );
   const reported = settings.some(
@@ -162,7 +184,7 @@ export function capacityPage(ctx: Ctx): Response {
           : ""}.
       </p>`,
   );
-  const open = egressSnapshot();
+  const open = egressRowsFor(ctx.app);
   // The bun cache at work (#7546): a warm cache keeps this near zero.
   const npm = html`The npm registry sent
     <span class="mono">${bytes(egress.npmBytesLastHour)}</span> over the last hour${
@@ -215,13 +237,7 @@ export function capacityPage(ctx: Ctx): Response {
     </p>
     ${when(
       reported,
-      () => html`<p class="muted small mb" id="egress-reported">
-        Egress is reported, not enforced: every new app,
-        preview, terminal and check cell may reach any public host on ports
-        80 and 443, declared or not. Private, loopback and cluster addresses,
-        and every other port, stay refused. Set it back to enforce once each
-        app's reported hosts are in its forge.json.
-      </p>`,
+      () => html`<p class="muted small mb" id="egress-reported">${EGRESS_REPORTED}</p>`,
     )}
     ${block("Capacity", html`<ul class="list setting-list">${rows}</ul>`)}
     ${block(
@@ -238,7 +254,9 @@ export function capacityPage(ctx: Ctx): Response {
 
 const ERRORS: Record<string, string> = {
   no_such_setting: "There is no such setting.",
+  derived: DERIVED_WORDS,
   invalid_value: "That value is outside what this setting takes.",
+  reason_required: REASON_WORDS,
   no_credential:
     "Add a passkey (or a password) to your own account first: with the edge off, you would be signed out for good.",
 };
@@ -268,6 +286,7 @@ export async function capacitySet(ctx: Ctx): Promise<Response> {
     ctx.auth.user,
     key,
     reset ? null : field(form, "value"),
+    field(form, "reason"),
   );
   if (!changed.ok && changed.error === "not_found") return notFoundPage(ctx);
   return flashTo(

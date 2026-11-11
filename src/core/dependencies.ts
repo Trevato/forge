@@ -164,6 +164,33 @@ export function blockerNumbersFor(
   return out;
 }
 
+/**
+ * The ids each issue waits for, for a batch of issues in one query per chunk.
+ * By id, not number: a blocker may live in another repository.
+ */
+export function blockerIdsFor(
+  db: Database,
+  issueIds: readonly string[],
+): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  const CHUNK = 500;
+  for (let i = 0; i < issueIds.length; i += CHUNK) {
+    const chunk = issueIds.slice(i, i + CHUNK);
+    const rows = db
+      .query<{ issue_id: string; blocked_by_id: string }, string[]>(
+        `SELECT issue_id, blocked_by_id FROM issue_dependency
+         WHERE issue_id IN (${chunk.map((_, n) => `?${n + 1}`).join(",")})`,
+      )
+      .all(...chunk);
+    for (const row of rows) {
+      const list = out.get(row.issue_id) ?? [];
+      list.push(row.blocked_by_id);
+      out.set(row.issue_id, list);
+    }
+  }
+  return out;
+}
+
 /** What this issue waits for, and what waits for it. */
 export function dependenciesOf(
   db: Database,

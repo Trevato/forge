@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { seedAdmin } from "./helpers/admin.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 let dataDir = "";
 let app: App, servers: Servers, bearer = "";
@@ -19,7 +20,7 @@ const call = (path: string, init: RequestInit = {}) =>
 const phases = async (path: string): Promise<{ status: number; names: string[] }> => {
   const res = await call(path);
   await res.arrayBuffer();
-  const names = (res.headers.get("server-timing") ?? "").split(", ").filter(Boolean).map((p) => p.split(";")[0]!).filter((n) => n !== "db" && n !== "app");
+  const names = requestTiming(res).split(", ").filter(Boolean).map((p) => p.split(";")[0]!).filter((n) => n !== "db" && n !== "app");
   return { status: res.status, names };
 };
 

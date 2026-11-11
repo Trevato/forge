@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { backupAge, backupOverdue, buildersValue, reactNote, speedWords, spendFull, spendValue, trendText, usersValue, visitorsNote, visitorsValue } from "../src/flow/kpi_words.ts";
+import { backupAge, backupOverdue, buildersValue, speedWords, spendFull, spendValue, trendText, usersValue, visitorsNote, visitorsValue } from "../src/flow/kpi_words.ts";
 import { NO_REACH, type Reach } from "../src/flow/reach.ts";
 
 const NOW = new Date("2026-10-27T12:00:00.000Z");
@@ -108,26 +108,22 @@ describe("reach words", () => {
     expect(usersValue(NO_REACH)).toBe("0 of 0");
     expect(visitorsValue(NO_REACH)).toBe("0 today");
     expect(visitorsNote(NO_REACH)).toBe("0 in 7 days");
-    expect(reactNote(NO_REACH)).toBe("no taps measured yet");
   });
   test("one", () => {
     const r = reach({ usersToday: 1, usersTotal: 1, visitorsToday: 1, visitors7d: 1, inpP75: 1 });
     expect(usersValue(r)).toBe("1 of 1");
     expect(visitorsValue(r)).toBe("1 today");
     expect(visitorsNote(r)).toBe("1 in 7 days");
-    expect(reactNote(r)).toBe("reacts in 1 ms");
   });
   test("many, and react speed crossing a second", () => {
     const r = reach({ usersToday: 3, usersTotal: 12, visitorsToday: 5, visitors7d: 31, inpP75: 180 });
     expect(usersValue(r)).toBe("3 of 12");
     expect(visitorsValue(r)).toBe("5 today");
     expect(visitorsNote(r)).toBe("31 in 7 days");
-    expect(reactNote(r)).toBe("reacts in 180 ms");
-    expect(reactNote(reach({ inpP75: 1500 }))).toBe("reacts in 1.5 s");
   });
   test("none of them is dirty", () => {
     for (const r of [NO_REACH, reach({ inpP75: 0 })]) {
-      for (const s of [usersValue(r), visitorsValue(r), visitorsNote(r), reactNote(r)]) clean(s);
+      for (const s of [usersValue(r), visitorsValue(r), visitorsNote(r)]) clean(s);
     }
   });
 });

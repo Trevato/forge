@@ -23,7 +23,9 @@ describe("a pin's cart", () => {
   let servers: Servers;
   let base: string;
   const tokens: Record<string, string> = {};
-  let oid = "";
+  // Each repository's own pinned commit: captures are keyed by oid, and two
+  // commits only share one when they land in the same clock second.
+  const oids: Record<string, string> = {};
 
   const api = (path: string, who?: string, init: RequestInit = {}) =>
     fetch(`${base}/api/v1/repos/alice/${path}`, {
@@ -47,8 +49,8 @@ describe("a pin's cart", () => {
       if (!made.ok) throw new Error(String(made.error));
       const c = await commitToBranch(app, alice, made.value, { message: "one", files: [{ path: "a.txt", content: "a\n" }] });
       if (!c.ok) throw new Error(JSON.stringify(c.error));
-      oid = c.value.commitOid;
-      const pinned = await pinBuild(app, alice, made.value, { label: "v1", oid });
+      oids[name] = c.value.commitOid;
+      const pinned = await pinBuild(app, alice, made.value, { label: "v1", oid: c.value.commitOid });
       if (!pinned.ok) throw new Error(pinned.error);
     }
   });
@@ -82,7 +84,7 @@ describe("a pin's cart", () => {
   });
 
   test("a captured cart plays sandboxed, with its picture, and the builds page links it", async () => {
-    importCapture(dataDir, { ownerName: "alice", name: "karts" }, oid, "/", new TextEncoder().encode("<p>kart</p>"), PNG);
+    importCapture(dataDir, { ownerName: "alice", name: "karts" }, oids.karts!, "/", new TextEncoder().encode("<p>kart</p>"), PNG);
     expect(await (await api("karts/builds/v1/cart")).json()).toMatchObject({
       capture: { state: "done" },
       play_url: "/alice/karts/builds/v1/cart",
@@ -106,7 +108,7 @@ describe("a pin's cart", () => {
   test("a private repository's cart is not found by a stranger", async () => {
     const send = await api("secret/builds/v1/cart", "alice", { method: "POST", body: JSON.stringify({ name: "hush", version: "1", page: "/", showcase: false }) });
     expect(send.status).toBe(202);
-    importCapture(dataDir, { ownerName: "alice", name: "secret" }, oid, "/", new TextEncoder().encode("<p>hush</p>"));
+    importCapture(dataDir, { ownerName: "alice", name: "secret" }, oids.secret!, "/", new TextEncoder().encode("<p>hush</p>"));
     expect((await api("secret/builds/v1/cart")).status).toBe(404);
     expect((await fetch(`${base}/alice/secret/builds/v1/cart`)).status).toBe(404);
     expect((await api("secret/builds/v1/cart", "alice")).status).toBe(200);

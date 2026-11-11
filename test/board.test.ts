@@ -690,6 +690,24 @@ describe("the board's forge strip", () => {
     app.db.query("UPDATE run SET state = 'cancelled' WHERE state IN ('queued','running')").run();
   });
 
+  test("the board says a burst queues while no cloud body is configured, to an admin only (#509)", async () => {
+    app.db.query("UPDATE run SET state = 'cancelled' WHERE state IN ('queued','running')").run();
+    const line = '<a data-placement href="/settings/economics">Placement: no cloud body: bursts queue</a>';
+    // Nothing else noted: beside All fine.
+    const idle = await board("root");
+    expect(idle).toContain(`All fine · ${line}`);
+    // Something noted: one note among them, and All fine is gone.
+    const made = await createRepo(app, admin, { name: "bursty" });
+    if (!made.ok) throw new Error(String(made.error));
+    createRun(app.db, { repoId: made.value.id, kind: "check" });
+    const busy = await board("root");
+    expect(busy).toContain("Lane: 1 check queued");
+    expect(busy).toContain(`<li>${line}</li>`);
+    expect(busy).not.toContain("All fine");
+    expect(await board("bob")).not.toContain("bursts queue");
+    app.db.query("UPDATE run SET state = 'cancelled' WHERE state IN ('queued','running')").run();
+  });
+
   test("a setting that is not the default is no incident: the strip stays fine and the cards render", async () => {
     const made = await createRepo(app, admin, { name: "calm" });
     if (!made.ok) throw new Error(String(made.error));
@@ -698,7 +716,7 @@ describe("the board's forge strip", () => {
     claimRun(app.db, createRun(app.db, { repoId: made.value.id, kind: "agent" }).id);
     // Clear the stuck run the first test left behind.
     app.db.query("UPDATE run SET state = 'failed' WHERE heartbeat_at = ?1").run("2020-01-01T00:00:00.000Z");
-    expect(changeCapacity(app, admin, "cells.egress", "report").ok).toBe(true);
+    expect(changeCapacity(app, admin, "cells.egress", "report", "a test says why").ok).toBe(true);
     try {
       const text = await board("root");
       expect(text).toContain("All fine");

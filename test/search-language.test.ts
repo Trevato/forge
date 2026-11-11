@@ -47,10 +47,11 @@ test("results are sections of rows with no card", async () => {
   expect(html).toContain('<ul class="list">');
 });
 
-test("an empty query and no results are one plain sentence", async () => {
-  for (const path of ["/search?q=", "/search?q=qqqnothingqqq"]) {
-    const html = main(await get(path));
-    expect(html).not.toContain('class="card');
-    expect(html).toContain('<p class="muted">');
-  }
+test("an empty query is the bare form and no results are one plain sentence", async () => {
+  const empty = main(await get("/search?q="));
+  expect(empty).not.toContain('class="card');
+  expect(empty).not.toContain('<p class="muted">');
+  const none = main(await get("/search?q=qqqnothingqqq"));
+  expect(none).not.toContain('class="card');
+  expect(none).toContain('<p class="muted">');
 });

@@ -43,7 +43,7 @@ const SPECS: readonly Spec[] = [
   { key: "direction", label: "What it is for", hint: "The crew's first direction. Optional." },
   { key: "apps", label: "Apps to fork", hint: "owner/name, comma-separated. Optional." },
   { key: "fresh", label: "Or a fresh app", hint: "One line on what it is. Optional." },
-  { key: "modelKey", label: "Model key", hint: "Sealed in the child, never shown again. Optional.", secret: true },
+  { key: "modelKey", label: "AI account key", hint: "Sealed in the new forge, never shown again. Optional.", secret: true },
   { key: "modelEndpoint", label: "API base URL", hint: "A gateway for the key; empty for Anthropic. Optional." },
   { key: "budgetUsd", label: "Budget in dollars", hint: `${MIN_BUDGET_USD}–${MAX_BUDGET_USD}, for the key's whole life. Needed with a key.` },
   { key: "followMode", label: "Follows this forge's code", hint: FOLLOW_LINE },
@@ -64,8 +64,8 @@ function refusal(body: Record<string, unknown>): { key?: string; text: string } 
   return m && body["error"] === "invalid" ? { key: m[1]!, text: m[2]! } : { text };
 }
 
-export function newForgeScreen(f: Session, ctx: Ctx): Screen {
-  const values: Record<string, string> = {};
+export function newForgeScreen(f: Session, ctx: Ctx, initial: Record<string, string> = {}): Screen {
+  const values: Record<string, string> = { ...initial };
   let focus = 0;
   let errorKey: string | undefined;
   let error: string | undefined;
@@ -82,7 +82,7 @@ export function newForgeScreen(f: Session, ctx: Ctx): Screen {
       name: val("name"),
       apps,
       ...(val("fresh") === "" ? {} : { fresh: val("fresh") }),
-      followMode: val("followMode") === "" ? "tell-me" : val("followMode"),
+      followMode: val("followMode") === "" ? "take-updates" : val("followMode"),
       ...(val("for") === "" ? {} : { for: val("for") }),
       ...(val("direction") === "" ? {} : { direction: val("direction") }),
       ...(val("modelKey") === "" ? {} : { modelKey: val("modelKey") }),
@@ -136,7 +136,7 @@ export function newForgeScreen(f: Session, ctx: Ctx): Screen {
           const budget = (body["plan"] as { budgetUsd?: number | null } | undefined)?.budgetUsd ?? null;
           const size = (body["plan"] as { size?: string } | undefined)?.size;
           const template = (body["plan"] as { template?: string } | undefined)?.template;
-          const mode = val("followMode") === "" ? "tell-me" : val("followMode");
+          const mode = val("followMode") === "" ? "take-updates" : val("followMode");
           plan = [
             `A forge at ${childUrlOf(f.app, val("name"))}.`,
             `It follows this forge's code as ${mode}${isFollowMode(mode) ? `: it ${FOLLOW_WORDS[mode]}` : "."}`,

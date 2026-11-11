@@ -13,18 +13,29 @@ import { entry as agents } from "./agents.ts";
 import { entry as askData } from "./ask_data.ts";
 import { entry as archived } from "./archived.ts";
 import { entry as audit } from "./audit.ts";
+import { entry as appTemplates } from "./app_templates.ts";
+import { entry as dotfiles } from "./dotfiles.ts";
+import { entry as devices } from "./devices.ts";
 import { entry as bets } from "./bets.ts";
+import { entry as billing } from "./billing.ts";
+import { entry as codes } from "./codes.ts";
 import { entry as boards } from "./boards.ts";
+import { entry as drift } from "./drift.ts";
+import { entry as captain } from "./captain.ts";
 import { entry as bugs } from "./bugs.ts";
 import { entry as bulk } from "./bulk.ts";
+import { entry as childCredit } from "./childcredit.ts";
 import { entry as cloud } from "./cloud.ts";
 import { entry as connections } from "./connections.ts";
 import { entry as crewHandover } from "./crewhandover.ts";
 import { entry as crewSplits } from "./crewsplits.ts";
+import { entry as knobs } from "./knobs.ts";
 import { entry as displays } from "./displays.ts";
+import { entry as disks } from "./disks.ts";
 import { entry as domains } from "./domains.ts";
 import { entry as edgeOnly } from "./edgeonly.ts";
 import { entry as traffic } from "./trafficview.ts";
+import { entry as funnelEntry } from "./funnel.ts";
 import { entry as featureReview } from "./features.ts";
 import { entry as feed } from "./feed.ts";
 import { entry as featureFeed } from "./featurefeed.ts";
@@ -32,12 +43,26 @@ import { entry as features } from "./featureswitch.ts";
 import { entry as forgeView } from "./forgeview.ts";
 import { entry as flowsAll } from "./flowsall.ts";
 import { entry as front } from "./front.ts";
+import { entry as frontMilestones } from "./frontms.ts";
 import { entry as forges } from "./forges.ts";
+import { entry as forgeReady } from "./forgeready.ts";
 import { entry as homePins } from "./home_pins.ts";
+import { entry as claimStart } from "./claim_start.ts";
 import { entry as invites } from "./invites.ts";
+import { entry as billingLinks } from "./billinglinks.ts";
+import { entry as planRow } from "./planrow.ts";
 import { entry as limits } from "./limits.ts";
+import { entry as plans } from "./plans.ts";
+import { entry as economics } from "./economics.ts";
+import { entry as money } from "./money.ts";
 import { entry as loopStalls } from "./loopstalls.ts";
+import { entry as slowPagesEntry } from "./slowpages.ts";
 import { entry as maintenance } from "./maintenance.ts";
+import { entry as maintainRuns } from "./maintainruns.ts";
+import { entry as dutyBudgets } from "./dutybudgets.ts";
+import { entry as dutySwitch } from "./dutyswitch.ts";
+import { entry as mirrorPacksEntry } from "./mirrorpacks.ts";
+import { entry as packReposEntry } from "./packrepos.ts";
 import { modelCeilingEntry, modelGrantEntry } from "./model.ts";
 import { entry as orgGrants } from "./orggrants.ts";
 import { entry as orgTeams } from "./orgteams.ts";
@@ -50,13 +75,18 @@ import { entry as people } from "./people.ts";
 import { entry as pinned } from "./pinned.ts";
 import { entry as profile } from "./profile.ts";
 import { entry as quotas } from "./quotas.ts";
+import { entry as requests } from "./requests.ts";
 import { entry as resilience } from "./resilience.ts";
 import { entry as scorecard } from "./scorecard.ts";
+import { entry as weekcard } from "./weekcard.ts";
 import { entry as scrapes } from "./scrapes.ts";
 import { entry as trafficScreenEntry } from "./traffic.ts";
+import { entry as returningEntry } from "./returning.ts";
+import { entry as securityControls } from "./controls.ts";
 import { entry as secrets } from "./secrets.ts";
 import { entry as sentinel } from "./sentinel.ts";
 import { entry as subscriptions } from "./subscriptions.ts";
+import { entry as crewKey } from "./crewkey.ts";
 import { entry as system } from "./system.ts";
 import { entry as teams } from "./teams.ts";
 import { entry as telemetry } from "./telemetry.ts";
@@ -81,39 +111,64 @@ export interface PaletteEntry {
 export const ENTRIES: readonly PaletteEntry[] = [
   sentinel,
   boards,
+  drift,
+  captain,
   askData,
   bugs,
   homePins,
   system,
   loopStalls,
+  slowPagesEntry,
   telemetry,
   resilience,
   maintenance,
+  maintainRuns,
+  dutySwitch,
+  dutyBudgets,
+  mirrorPacksEntry,
+  packReposEntry,
   valves,
   access,
   edgeOnly,
   traffic,
+  funnelEntry,
   audit,
+  securityControls,
   secrets,
   crewSplits,
+  knobs,
   crewHandover,
   scorecard,
+  weekcard,
   modelGrantEntry,
   modelCeilingEntry,
   people,
   quotas,
   limits,
+  plans,
+  economics,
+  money,
+  billing,
+  codes,
+  appTemplates,
+  devices,
   flowsAll,
   scrapes,
   trafficScreenEntry,
+  returningEntry,
   teams,
   orgTeams,
   orgGrants,
   agents,
   archived,
   invites,
+  billingLinks,
+  planRow,
+  claimStart,
+  requests,
   bulk,
   subscriptions,
+  crewKey,
   cloud,
   pinned,
   bets,
@@ -126,12 +181,17 @@ export const ENTRIES: readonly PaletteEntry[] = [
   front,
   owner,
   forges,
+  forgeReady,
+  childCredit,
   originAhead,
   profile,
+  dotfiles,
   now,
+  frontMilestones,
   forgeView,
   repos,
   displays,
+  disks,
   newIssue,
 ];
 

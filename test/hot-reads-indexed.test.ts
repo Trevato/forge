@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { listEvents } from "../src/core/events.ts";
-import { queuedApart } from "../src/core/runs.ts";
+import { lastPullCursor, listPullRuns, queuedApart } from "../src/core/runs.ts";
 import { closedByReview, reviewedClosed } from "../src/core/gate_hold.ts";
 import { askToLiveByPillar } from "../src/core/pillars.ts";
 
@@ -81,4 +81,22 @@ test("the queued agent runs weighed against the dispatcher's holds walk the queu
   const lines = plans(() => void queuedApart(app.db, "agent", ["a", "b"]));
   expect(lines.filter((l) => l.includes("USING INDEX run_queue")).length).toBe(2);
   noScan(lines.filter((l) => !l.startsWith("SCAN json_each")));
+});
+
+test("an app's last pull and last good cursor walk the pull_run indexes", () => {
+  const last = plans(() => void listPullRuns(app.db, "a", 1));
+  expect(last.join("\n")).toContain("pull_run_app");
+  noScan(last);
+  const cursor = plans(() => void lastPullCursor(app.db, "a"));
+  expect(cursor.join("\n")).toContain("pull_run_app_ok");
+  noScan(cursor);
+});
+
+test("a page-view flush counts a visitor's day from the visitor index, not the scope's whole day (#11118)", async () => {
+  const { flushViews, noteView } = await import("../src/perf/views_store.ts");
+  const origin = { refHost: "", source: "", medium: "", campaign: "", out: "" };
+  noteView(app.db, { scope: "s", path: "/", origin, client: "c", agent: "Mozilla/5.0" });
+  const lines = plans(() => void flushViews(app.db));
+  expect(lines.join("\n")).toContain("traffic_view_scope_visitor_at");
+  noScan(lines.filter((l) => l !== "SCAN CONSTANT ROW"));
 });

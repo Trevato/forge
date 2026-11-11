@@ -5,7 +5,7 @@ import { openapi } from "../src/contract/openapi.ts";
 const R = "/api/v1/repos/{owner}/{name}/pulls/{number}";
 
 test("a pull's labels and hold have rows, with the refusals the handlers answer", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   expect(doc.paths[`${R}/labels`]?.put, "put labels").toBeDefined();
   const put = doc.paths[`${R}/hold`]?.put;
   const del = doc.paths[`${R}/hold`]?.delete;

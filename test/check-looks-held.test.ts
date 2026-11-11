@@ -89,6 +89,7 @@ test("a forge preview's check lists the held page at desktop and phone with scre
       look: `${kind} ${PREVIEW_HELD_PAGE}`,
       screens: "2.5",
       sideways: false,
+      size,
     });
   }
 });

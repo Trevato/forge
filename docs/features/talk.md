@@ -18,6 +18,12 @@ A reply streams in over `GET /talk/stream?after=<turn id>` (server-sent events, 
 
 When the agent asks first (`needs_confirm`), the turn draws **Confirm** (the existing yes) and **Cancel** (a no: the confirm is spent, nothing runs, a turn says it was cancelled). A result shown once (an invite link) is drawn by Settings → Confirms instead, where Confirm leads.
 
+## Naming the subject: `?about=` and `--about`
+
+`/talk?about=owner/repo` or `/talk?about=owner/repo#N` (an issue or pull) puts one plain line above the composer: "About owner/repo" or "About owner/repo#N: <title>". The terminal twin is `ssh <forge> talk --about owner/repo[#N] [words]`: it prints the same line first, and with no words prints only that line. Both read one lookup, `aboutLine()` in `src/core/talk_about.ts`. A value that is malformed, names something unknown, or names something you cannot read (a private repository, a sealed issue, signed out) shows nothing and the page is byte-identical to plain `/talk`, so a private repository's existence is not revealed.
+
+The first message of a conversation opened this way also carries the subject to the agent as fenced context: the kind, name, title and body (the body capped at 4000 characters), fenced as data written by others, never as instructions. Only the first message carries it, the stored turn stays the person's own words, and the value is re-resolved against the sender's read access, so a forged `about` adds nothing. The page and the terminal send it the same way.
+
 ## Many conversations (#8814)
 
 A person has any number. `/talk` is their latest, with the list above it (newest activity first), **New**, and **Archived (n)** as the one filter (`/talk?archived=1`). Each opens at `/talk/<id>`, stable across reloads; Rename and Archive/Restore are plain forms (`POST /talk/:id/rename`, `/talk/:id/archive`, `POST /talk/new`), so they work without the script. Another person's id is 404 everywhere. A message with no conversation named goes to the latest one that is not archived.
@@ -106,3 +112,14 @@ Finds a conversation by a word in its title or in what was said, among the perso
 - **Terminal:** in Conversations, `/` asks for words and the results replace the list (archived ones marked); Enter opens the chat on the page around the match, that turn marked `▶`; `r` goes to the newest turns; esc leaves the results.
 - **How:** an FTS5 table, `conversation_find` (title and standing turns, kept in step by triggers; a turn set aside is left out), with the owner as an indexed column that the query names in its MATCH, so the engine's 200-row limit counts only the person's rows. `findConversations` and `pageAround` in `src/core/conversations.ts` are the one door for both screens.
 - **Left out:** the API and MCP do not search yet; no ranking beyond FTS5's, no highlighting of the words inside a turn.
+
+## Build an app from one prompt (#11010)
+
+An empty `/talk` asks "What do you want to build?" with starters from the marked app templates (`/talk?template=owner/name` chooses one). Send makes the repository from the template (`newAppFromSentence`), starts a conversation in it, and sends the prompt; the agent is told with every message to work on the branch `talk-<conversation id>` and never on main (`buildLead`, `src/core/chat_build.ts`).
+
+- **Versions** are the branch's commits past main, numbered v1, v2 from the oldest (`src/actions/build.ts`); nothing about them is stored twice. The first one opens the branch's pull, which is what gives it a preview: it opens when a turn ends, or on Restore or Publish; a read never writes. `?v=N` shows that version's files changed; **Restore** makes a new version holding exactly its tree, history kept.
+- **Publish** merges the pull to the default branch, which deploys production; the production URL then shows as a link. Only a person publishes.
+- **API:** `POST /api/v1/builds {prompt, template?}`, `GET /api/v1/conversations/:id/build`, `GET …/build/versions/:n/diff`, `POST …/build/restore {version}`, `POST …/build/publish`. Web forms: `POST /talk/build`, `/talk/:id/build/restore`, `/talk/:id/build/publish`.
+- **Limits:** five builds an hour and ten unpublished at once, per person (`BUILDS_PER_HOUR`, `UNPUBLISHED_MAX`); a template must be one on offer to that person, on the API as on the page; a start that fails takes back the repository and conversation it made.
+- **Terminal:** `:` then **Build an app**. `n` says what to build (`t` chooses the template), Enter opens a build and lists its versions newest first, Enter again shows the files that version changed, `R` restores the chosen version, `P` publishes, `r` reloads. The screen calls the same `actions/build.ts` functions as the page, so it is gated the same way (your own conversation, a writer of the repository) and what it does is what the page shows on its next read.
+- Proof: `test/talk-build.test.ts` runs prompt, repository, v1, v2, restore v1 and publish against a scratch forge; `test/tui-talk-build.test.ts` does the same from the terminal.

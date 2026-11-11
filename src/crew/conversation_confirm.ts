@@ -48,6 +48,11 @@ export const ASKING: Readonly<Record<string, Asking>> = {
     undo: (a) => `\`archive\` with \`archived: ${a["archived"] === false}\` turns it back`,
   },
   board_delete: { does: "delete a board" },
+  // One action over every row a fleet query selects (#450); only `apply: true` writes.
+  flow: {
+    does: "apply a fleet operation to every row its query selects",
+    undo: () => "`limb` with `action: undo` and the receipt's id reverts it for 24 hours",
+  },
   subscription_delete: { does: "remove a Claude subscription and its grants" },
   // Money: subscriptions, budgets, grants and limits.
   subscription_add: { does: "add a Claude login to the crew's pool", undo: () => "`subscription_delete` with its id removes it" },
@@ -104,6 +109,7 @@ export const ASKING: Readonly<Record<string, Asking>> = {
   app_deploy: { does: "redeploy or stop an app's production or preview" },
   stop: { does: "stop a crew run" },
   converge: { does: "have a fork's crew merge the parent's updates" },
+  forges: { does: "grant a forge a plan by hand, or make or revoke a gift code", asks: (a) => (a["plan"] !== undefined || a["code"] !== undefined || a["revoke"] !== undefined) && a["dryRun"] === false },
   origins: { does: "sync an origin or replace the internal hosts one may live on", asks: not("action", "list", "repos") },
   cloud_account: { does: "change a cloud account" },
   pinned_forge: { does: "deploy, update or roll back a pinned forge on the owner's cloud", asks: not("verb", "list") },

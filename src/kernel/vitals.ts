@@ -9,11 +9,13 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { statfsSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
+import { readDisk, type DiskReading } from "./disk_reading.ts";
+import { DISK_FLOOR } from "../spawn/disk_floor.ts";
 import { dirname } from "node:path";
 import { freemem, totalmem } from "node:os";
 import { refusedInternal, type RefusedLedger } from "./internal_refused.ts";
-import { recentErrors, type ErrorLedger, type ErrorLine } from "./log.ts";
+import { recentErrors, redactSecrets, type ErrorLedger, type ErrorLine } from "./log.ts";
 import {
   budgetFailures,
   leaseLapsed,
@@ -32,6 +34,7 @@ import { lastMirror, mirrorNeed } from "../snapshot/mirror.ts";
 import { lastSnapshotOutcome, snapshotNeed } from "../snapshot/outcome.ts";
 import { drillNeed, firstSeen as drillFirstSeen, lastVerdict } from "../snapshot/verdict.ts";
 import { proofNeed } from "../release/prove.ts";
+import { running as runningVersion } from "./version.ts";
 import { rollbackNeed } from "../release/launch.ts";
 import { behindStanding } from "../release/behind.ts";
 import { newestDrills } from "../core/domain_drills.ts";
@@ -119,20 +122,7 @@ export interface Vitals {
   readonly at: string;
 }
 
-/** What a volume holds and has free. */
-export interface DiskReading {
-  readonly freeBytes: number;
-  readonly totalBytes: number;
-}
-
-/** The volume under `dir`, as the operating system reports it. */
-export function statDisk(dir: string): DiskReading {
-  const fs = statfsSync(dir);
-  return {
-    freeBytes: Number(fs.bavail) * Number(fs.bsize),
-    totalBytes: Number(fs.blocks) * Number(fs.bsize),
-  };
-}
+export { statDisk, readDisk, type DiskReading } from "./disk_reading.ts";
 
 export interface VitalsInput {
   readonly db: Database;
@@ -342,11 +332,18 @@ export function vitals(input: VitalsInput): Vitals {
     degraded.push({ cause, sentence, since, href });
   };
 
-  const disk = (input.disk ?? statDisk)(input.dataDir);
+  const disk = (input.disk ?? readDisk)(input.dataDir);
   if (disk.totalBytes > 0 && disk.freeBytes / disk.totalBytes < (input.diskFreeMin ?? DISK_FREE_MIN))
     need(
       "disk",
       `Disk is nearly full: ${Math.round((disk.freeBytes / disk.totalBytes) * 100)}% free.`,
+      undefined,
+      "/settings/capacity",
+    );
+  else if (disk.totalBytes > 0 && disk.freeBytes / disk.totalBytes < DISK_FLOOR)
+    need(
+      "disk-floor",
+      `Disk is under the ${DISK_FLOOR * 100}% the forge keeps for itself: ${Math.round((disk.freeBytes / disk.totalBytes) * 100)}% free. Child forges sleep, and no child forge, app or check starts, until room is made.`,
       undefined,
       "/settings/capacity",
     );
@@ -515,12 +512,13 @@ export function vitals(input: VitalsInput): Vitals {
   if (behind !== undefined) need("mirror", behind.sentence, behind.since, "/settings/backups");
 
   // A release the forge could not prove against its own public URL is a card until a release does.
-  const unproven = proofNeed(input.dataDir);
+  const unproven = proofNeed(input.dataDir, runningVersion().version);
   if (unproven !== undefined) need("release", unproven.sentence, unproven.since, "/board");
 
-  // A roll the image's launcher undid is a card until a later version reads ready.
+  // A roll the image's launcher undid is a card until a later version reads ready. Its sentence
+  // carries the release's own last words (stderr), so anything credential-shaped is masked.
   const undone = rollbackNeed(input.dataDir);
-  if (undone !== undefined) need("release:rolled-back", undone.sentence, undone.since, "/board");
+  if (undone !== undefined) need("release:rolled-back", redactSecrets(undone.sentence), undone.since, "/board");
 
   // Production serving a version older than a release main has had over an hour is a card until they match.
   const lagging = behindStanding(now);

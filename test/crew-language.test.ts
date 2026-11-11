@@ -58,7 +58,7 @@ const speaksPlainly = (main: string): void => {
   expect(main.match(/<h1[\s>]/g)?.length).toBe(1);
   expect(main).not.toContain('class="card');
   expect(main).not.toContain("card-body");
-  expect(main).toMatch(/runner is up|cannot run|ready to run the crew|hosted inside/);
+  expect(main).toMatch(/runner is up|cannot run|Ready<\/strong>|hosted inside/);
   expect(main).toContain('action="/settings/crew"');
   // The danger notice (no runner in this test) wears a class the stylesheet really styles.
   expect(main).toContain('class="toast" data-tone="danger" role="alert"');

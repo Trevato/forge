@@ -66,7 +66,7 @@ describe("a run that spends its budget", () => {
           run.state === "cancelled")
       )
         return run;
-      await Bun.sleep(100);
+      await Bun.sleep(20);
     }
     throw new Error("agent run did not settle");
   }
@@ -135,6 +135,8 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
       concurrency: 1,
       budgetUsd: 2,
       runTimeoutMs: 60_000,
+      // The pump picks queued runs on a tick; 5 s by default, 20 ms here.
+      tickMs: 20,
     });
     const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
@@ -169,6 +171,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
   });
 
   test("gets one wrap-up turn in the same session, on the reserve", async () => {
+    // Invariant: a run that spends its working budget resumes its session once, on the reserve, and lands a pull.
     const { run, number } = await assigned(
       "Plant tulips",
       "Along the fence. BUDGET-ME",
@@ -207,6 +210,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
   }, 60_000);
 
   test("a run that finishes on its own gets no wrap-up", async () => {
+    // Invariant: a run that completes within its working budget is invoked exactly once.
     const { run, number } = await assigned("Plant roses", "Along the wall.");
     expect(run.state).toBe("ok");
     expect(run.summary).toMatch(/^opened pull #\d+( \([0-9a-f]{7,40}\))?$/);
@@ -221,6 +225,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
   }, 60_000);
 
   test("a wrap-up that runs out as well lands as before, and gets no third turn", async () => {
+    // Invariant: a wrap-up that also runs out is the last turn; the leftover work is committed and opened.
     const { run, number } = await assigned(
       "Plant ivy",
       "Up the shed. BUDGET-ME-TWICE",

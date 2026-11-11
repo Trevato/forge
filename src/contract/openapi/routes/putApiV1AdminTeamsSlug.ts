@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/admin/teams/{slug}",
   summary: "Change a crew team's charter, dial or members; send only what changes (a person admin's token, admin scope); answers the team",
   auth: true,
+  role: "admin",
   body: { charter: "string", dial: "integer", members: "array of agent ids" },
   refusals: {
     invalid_body: "charter is not text, dial not a number, or members not a list of agent ids (422)",

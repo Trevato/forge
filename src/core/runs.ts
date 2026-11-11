@@ -82,6 +82,10 @@ export interface Run {
   readonly heartbeatAt: string | null;
   /** For an agent run: how many turns the model took. */
   readonly turns: number;
+  /** For an agent run: the context its session held at the end, in tokens; 0 when unreported. */
+  readonly contextTokens: number;
+  /** For an agent run: whether it moved its branch; null when unrecorded (runs from before). */
+  readonly pushed: boolean | null;
   /** For an agent run: whether its shell was held to the sandbox; null when unrecorded. */
   readonly sandboxEnforced: boolean | null;
   /** Why it was not, when it was not. */
@@ -94,6 +98,8 @@ export interface Run {
   readonly checkDetail: CheckDetail | null;
   /** The base tip a pull's check merged the head with; empty when it merged nothing. */
   readonly baseOid: string;
+  /** The combined commit a kept fork's pull check tested; empty when it tested another tree. */
+  readonly combinedOid: string;
   /** The variant group this run belongs to; null for an ordinary run. */
   readonly variantGroup: string | null;
   readonly createdAt: string;
@@ -121,10 +127,13 @@ interface RunRow {
   attempt: number;
   heartbeat_at: string | null;
   turns: number;
+  context_tokens: number;
+  pushed: number | null;
   sandbox_enforced: number | null;
   sandbox_note: string;
   check_detail: string;
   base_oid: string;
+  combined_oid: string;
   placement: string;
   node: string;
   variant_group: string | null;
@@ -152,6 +161,8 @@ const toRun = (r: RunRow): Run => ({
   attempt: r.attempt,
   heartbeatAt: r.heartbeat_at,
   turns: r.turns,
+  contextTokens: r.context_tokens,
+  pushed: r.pushed === null ? null : r.pushed !== 0,
   sandboxEnforced:
     r.sandbox_enforced === null ? null : r.sandbox_enforced !== 0,
   sandboxNote: r.sandbox_note,
@@ -159,6 +170,7 @@ const toRun = (r: RunRow): Run => ({
   node: r.node,
   checkDetail: r.check_detail ? (JSON.parse(r.check_detail) as CheckDetail) : null,
   baseOid: r.base_oid,
+  combinedOid: r.combined_oid,
   variantGroup: r.variant_group,
   createdAt: r.created_at,
   startedAt: r.started_at,
@@ -290,6 +302,10 @@ export function finishRun(
     sessionId?: string | undefined;
     costUsd?: number | undefined;
     turns?: number | undefined;
+    /** For an agent run: the context its session held at the end, in tokens. */
+    contextTokens?: number | undefined;
+    /** For an agent run: whether it moved its branch. */
+    pushed?: boolean | undefined;
     /** A failed check's own detail, when its output was recognised. */
     checkDetail?: CheckDetail | undefined;
     /** For an agent run: the head it left the branch at, when that is worth keeping. */
@@ -302,6 +318,7 @@ export function finishRun(
          commit_oid = COALESCE(?8, commit_oid),
          session_id = COALESCE(?4, session_id), cost_usd = COALESCE(?5, cost_usd),
          turns = COALESCE(?6, turns), check_detail = ?7,
+         context_tokens = COALESCE(?9, context_tokens), pushed = COALESCE(?10, pushed),
          finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
        WHERE id = ?1 AND state = 'running'`,
     )
@@ -314,6 +331,8 @@ export function finishRun(
       outcome.turns ?? null,
       outcome.checkDetail ? JSON.stringify(outcome.checkDetail) : "",
       outcome.commitOid ?? null,
+      outcome.contextTokens ?? null,
+      outcome.pushed === undefined ? null : outcome.pushed ? 1 : 0,
     ).changes;
   return changes > 0 ? getRun(db, runId) : undefined;
 }
@@ -346,6 +365,11 @@ export function answerCancelled(
 /** Record the base tip a pull's check merged with. */
 export function setRunBase(db: Database, runId: string, baseOid: string): void {
   db.query(`UPDATE run SET base_oid = ?2 WHERE id = ?1`).run(runId, baseOid);
+}
+
+/** Record the combined commit a kept fork's pull check tests (#9932). */
+export function setRunCombined(db: Database, runId: string, combinedOid: string): void {
+  db.query(`UPDATE run SET combined_oid = ?2 WHERE id = ?1`).run(runId, combinedOid);
 }
 
 /** Cancel a run that has not finished. Returns the row, or undefined if it had. */
@@ -1023,8 +1047,11 @@ export function latestRunsForIssues(
  * How many automatic follow-ups for a failed check an agent has had on a
  * pull since a person last spoke: the bound behind rule 7 in docs/APPS.md.
  * A bring-up-to-date run (`conflict`) is no try: main moving is not the
- * change's failing, and those runs are bounded where they are queued. `since` is the
- * moment of the last human comment or review, or the pull's creation.
+ * change's failing, and those runs are bounded where they are queued. A run
+ * that pushed nothing tried nothing — the red was not the pull's to fix —
+ * and is no try either; one from before this was recorded reads as a try.
+ * `since` is the moment of the last human comment or review, or the pull's
+ * creation.
  */
 export function automaticRunsSince(
   db: Database,
@@ -1035,7 +1062,7 @@ export function automaticRunsSince(
     .query<{ n: number }, [string, string]>(
       `SELECT COUNT(*) AS n FROM run
        WHERE kind = 'agent' AND issue_id = ?1 AND created_at > ?2
-         AND reason = 'check_failed'`,
+         AND reason = 'check_failed' AND (pushed IS NULL OR pushed <> 0)`,
     )
     .get(issueId, since);
   return row?.n ?? 0;
@@ -1059,7 +1086,7 @@ export function automaticRunsSinceFor(
         `WITH since (issue_id, at) AS (VALUES ${batch.map((_, n) => `(?${2 * n + 1}, ?${2 * n + 2})`).join(",")})
          SELECT run.issue_id, COUNT(*) AS n FROM run JOIN since ON since.issue_id = run.issue_id
          WHERE run.kind = 'agent' AND run.created_at > since.at
-           AND run.reason = 'check_failed'
+           AND run.reason = 'check_failed' AND (run.pushed IS NULL OR run.pushed <> 0)
          GROUP BY run.issue_id`,
       )
       .all(...batch.flat());
@@ -1464,4 +1491,140 @@ export function runningCount(db: Database, repoId: string): number {
       )
       .get(repoId)?.n ?? 0
   );
+}
+
+/**
+ * A run of kind `pull`: one `POST /pull` the forge made to an adapter
+ * (docs/ADAPTERS.md), kept in `pull_run` because `run.kind`'s CHECK cannot
+ * widen without a rebuild (migration `20261109120000-pull-run`). Plain data:
+ * what the answer is worth is decided in `apps/pull.ts`, which writes here.
+ */
+export interface PullRun {
+  readonly id: string;
+  readonly appId: string;
+  readonly kind: "pull";
+  readonly state: "ok" | "failed";
+  /** Records the pull wrote — the answer's `pulled`; 0 on a repeat or a failure. */
+  readonly written: number;
+  /** Records read and not written — the answer's `skipped`. */
+  readonly skipped: number;
+  /** Records that failed — the answer's `errors`. */
+  readonly failed: number;
+  /** Where the next pull starts; empty on a failed pull. */
+  readonly cursor: string;
+  readonly durationMs: number;
+  /** Why a failed pull failed, or what a repeat was; empty otherwise. */
+  readonly reason: string;
+  /** The cursor matched the last good pull's, so nothing counted as written. */
+  readonly repeat: boolean;
+  readonly createdAt: string;
+}
+
+interface PullRunRow {
+  id: string;
+  app_id: string;
+  state: "ok" | "failed";
+  written: number;
+  skipped: number;
+  failed: number;
+  cursor: string;
+  duration_ms: number;
+  reason: string;
+  repeat: number;
+  created_at: string;
+}
+
+const toPullRun = (r: PullRunRow): PullRun => ({
+  id: r.id,
+  appId: r.app_id,
+  kind: "pull",
+  state: r.state,
+  written: r.written,
+  skipped: r.skipped,
+  failed: r.failed,
+  cursor: r.cursor,
+  durationMs: r.duration_ms,
+  reason: r.reason,
+  repeat: r.repeat !== 0,
+  createdAt: r.created_at,
+});
+
+export interface CreatePullRunInput {
+  appId: string;
+  state: "ok" | "failed";
+  written: number;
+  skipped: number;
+  failed: number;
+  cursor: string;
+  durationMs: number;
+  reason: string;
+  repeat: boolean;
+}
+
+/** Write one finished pull run. The table's CHECKs refuse what `apps/pull.ts` should already have. */
+export function createPullRun(db: Database, input: CreatePullRunInput): PullRun {
+  const runId = id();
+  db.query(
+    `INSERT INTO pull_run (id, app_id, state, written, skipped, failed, cursor, duration_ms, reason, repeat)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
+  ).run(
+    runId,
+    input.appId,
+    input.state,
+    input.written,
+    input.skipped,
+    input.failed,
+    input.cursor,
+    input.durationMs,
+    input.reason.slice(0, 500),
+    input.repeat ? 1 : 0,
+  );
+  return toPullRun(
+    db.query<PullRunRow, [string]>("SELECT * FROM pull_run WHERE id = ?1").get(runId)!,
+  );
+}
+
+/** The cursor of an app's last good pull, from `pull_run_app_ok`; undefined before the first. */
+export function lastPullCursor(db: Database, appId: string): string | undefined {
+  return (
+    db
+      .query<{ cursor: string }, [string]>(
+        `SELECT cursor FROM pull_run
+          WHERE app_id = ?1 AND state = 'ok' ORDER BY id DESC LIMIT 1`,
+      )
+      .get(appId)?.cursor ?? undefined
+  );
+}
+
+/** An app's pull runs, newest first, from `pull_run_app`. */
+export function listPullRuns(db: Database, appId: string, limit = 50): PullRun[] {
+  return db
+    .query<PullRunRow, [string, number]>(
+      `SELECT * FROM pull_run WHERE app_id = ?1 ORDER BY id DESC LIMIT ?2`,
+    )
+    .all(appId, Math.max(1, Math.min(500, Math.trunc(limit))))
+    .map(toPullRun);
+}
+
+/** The state of an app's newest pull run; undefined before the first. */
+export function lastPullState(db: Database, appId: string): "ok" | "failed" | undefined {
+  return (
+    db
+      .query<{ state: "ok" | "failed" }, [string]>(
+        `SELECT state FROM pull_run WHERE app_id = ?1 ORDER BY id DESC LIMIT 1`,
+      )
+      .get(appId)?.state ?? undefined
+  );
+}
+
+/** When an app's last pull, good or failed, was recorded, in ms since the epoch; undefined before the first. */
+export function lastPullAt(db: Database, appId: string): number | undefined {
+  const row = db
+    .query<{ created_at: string }, [string]>(
+      `SELECT created_at FROM pull_run WHERE app_id = ?1 ORDER BY id DESC LIMIT 1`,
+    )
+    .get(appId);
+  if (row === null) return undefined;
+  const at = Date.parse(row.created_at);
+  return Number.isFinite(at) ? at : undefined;
 }

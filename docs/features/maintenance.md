@@ -16,6 +16,12 @@
 The page says plainly what stops: releases, new crew runs, then the forge, its
 apps and previews when the host powers off.
 
+**Duties.** `/maintenance`, the terminal's Maintenance screen and the `duties` of MCP `maintenance {action: "status"}`
+list each nightly job and the radar in one line (`src/maintenance/duties.ts`, one function for all three doors):
+when it last ran (UTC), what it found ("nothing found" when it filed nothing), and "overdue". A duty is
+overdue when now is past its last slot plus one day plus 6 hours of grace (a night may run long); one
+that never ran says so and gives its slot, and is not overdue.
+
 **Come back.** On boot `resumeAtBoot` acts only when the host has restarted since the prepare
 (`/proc/sys/kernel/random/boot_id` differs from the one stored); a release roll of the process on
 the same host boot keeps what the admin prepared. It then lifts the hold, unpauses the crew and

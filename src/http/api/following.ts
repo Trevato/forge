@@ -19,7 +19,7 @@ import { upstreamPayload } from "../../spawn/upstream.ts";
 import { loadRepo, respondTake } from "../api.ts";
 import type { Handler } from "../context.ts";
 import { holds, weakEtag } from "../etag.ts";
-import { apiError, body, json, notFound, requireScope, respondAccess } from "../respond.ts";
+import { apiError, body, json, notFound, requireScope, respondAccess, tryAgain, untilNextDay } from "../respond.ts";
 import type { Router } from "../router.ts";
 
 /**
@@ -242,8 +242,7 @@ export function followingRoutes(router: Router<Handler>): void {
               : outcome.kind === "nobody" || outcome.kind === "forbidden" || outcome.kind === "not_member"
                 ? 403
                 : 409;
-      return json(
-        {
+      const payload = {
           kind: outcome.kind,
           issue: "issue" in outcome ? outcome.issue.number : null,
           pull: "pull" in outcome ? outcome.pull.number : null,
@@ -251,9 +250,11 @@ export function followingRoutes(router: Router<Handler>): void {
             "agent" in outcome && outcome.agent !== undefined
               ? outcome.agent.user.username
               : null,
-        },
-        status,
-      );
+        };
+      // The crew's ceiling is a day's spend: it starts over at the next UTC day.
+      if (outcome.kind === "ceiling")
+        return tryAgain("ceiling", 429, "the crew is at its ceiling for today", untilNextDay(), {}, payload);
+      return json(payload, status);
     },
   );
 }

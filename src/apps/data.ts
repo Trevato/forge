@@ -38,7 +38,7 @@ import { defect } from "../kernel/error.ts";
  * `production`, `pull-<n>` for the preview of pull `n`, or `build-<sha7>`
  * for a build preview: one commit a writer asked to see now, short-lived.
  */
-export type EnvName = "production" | `pull-${number}` | `build-${string}`;
+export type EnvName = "production" | `pull-${number}` | `build-${string}` | `variant-${string}`;
 
 export const previewEnv = (pullNumber: number): EnvName => `pull-${pullNumber}`;
 
@@ -50,9 +50,26 @@ export function envBuild(env: EnvName): string | undefined {
   return /^build-[0-9a-f]{7}$/.test(env) ? env.slice(6) : undefined;
 }
 
+/** A variant's label: what its environment and hostname carry, `[a-z0-9]` and short. */
+export const VARIANT_LABEL = /^[a-z0-9]{1,16}$/;
+
+/** The environment of the variant `label` (`variant-print`): a branch kept running (`core/variants.ts`). */
+export const variantEnv = (label: string): EnvName => `variant-${label}`;
+
+/** The label a variant environment serves; `undefined` for any other environment. */
+export function envVariant(env: EnvName): string | undefined {
+  return env.startsWith("variant-") && VARIANT_LABEL.test(env.slice(8)) ? env.slice(8) : undefined;
+}
+
+/** A host label's tail read back as a variant: `v-print` → `variant-print`. */
+export function variantEnvFromLabel(tail: string): EnvName | undefined {
+  return tail.startsWith("v-") && VARIANT_LABEL.test(tail.slice(2)) ? variantEnv(tail.slice(2)) : undefined;
+}
+
 export function isEnvName(value: string): value is EnvName {
   return (
     value === "production" ||
+    /^variant-[a-z0-9]{1,16}$/.test(value) ||
     /^pull-[1-9]\d*$/.test(value) ||
     /^build-[0-9a-f]{7}$/.test(value)
   );
@@ -73,6 +90,8 @@ export function envHostLabel(slug: string, env: EnvName): string {
   if (env === "production") return slug;
   const build = envBuild(env);
   if (build !== undefined) return `${slug}--b${build}`;
+  const variant = envVariant(env);
+  if (variant !== undefined) return `${slug}--v-${variant}`;
   return `${slug}--${env.slice(5)}`;
 }
 
@@ -90,6 +109,8 @@ export function envWords(env: EnvName): string {
   if (env === "production") return "production";
   const build = envBuild(env);
   if (build !== undefined) return `the build at ${build}`;
+  const variant = envVariant(env);
+  if (variant !== undefined) return `the ${variant} variant`;
   return `the preview of #${env.slice(5)}`;
 }
 

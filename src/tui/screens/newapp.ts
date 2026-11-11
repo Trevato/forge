@@ -11,8 +11,11 @@ import { appLimitWords } from "../../actions/app_limit.ts";
 import { NEW_APP_ERRORS, NO_NAME_ERROR, newAppFromSentence } from "../../actions/apps.ts";
 import { repositoryLimitMessage } from "../../actions/repos.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
+import { templateChoices } from "../../apps/template_folders.ts";
+import { offeredTemplates } from "../../core/app_templates.ts";
 import { listOrgsForUser } from "../../core/orgs.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
+import { parseTemplateName } from "../../apps/template_tip.ts";
 import { deriveAppName } from "../../web/pages/apps-name.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import type { Session } from "../session.ts";
@@ -28,7 +31,32 @@ function refusal(f: Session, code: string, ownerId: string): string {
   return NEW_APP_ERRORS[code] ?? "That app could not be created.";
 }
 
-export function newAppScreen(f: Session, ctx: Ctx, parent: Screen): Screen {
+/**
+ * `template` (`owner/name`) makes the app a copy of that repository's tip,
+ * as `/apps/new?template=` does; the action refuses one the person cannot read.
+ */
+export function newAppScreen(
+  f: Session,
+  ctx: Ctx,
+  parent: Screen,
+  template?: string,
+  choices?: string[],
+): Screen {
+  // With no template named and more than one offered, ask which first.
+  if (template === undefined && f.user !== undefined) {
+    const offered = choices ?? offeredTemplates(f.db, f.user);
+    if (offered.length > 1)
+      return promptScreen(ctx, parent, {
+        title: "New app",
+        label: `Start from which template? ${offered.join(", ")}`,
+        value: offered[0]!,
+        onSubmit: (named) => {
+          const pick = named.trim();
+          if (!offered.includes(pick)) return `Pick one of: ${offered.join(", ")}.`;
+          return later(ctx, () => newAppScreen(f, ctx, parent, pick));
+        },
+      });
+  }
   const owners = f.user
     ? [f.user.username, ...listOrgsForUser(f.db, f.user.id).map((o) => o.username)]
     : [];
@@ -36,7 +64,11 @@ export function newAppScreen(f: Session, ctx: Ctx, parent: Screen): Screen {
   const make = (sentence: string, owner: string): void => {
     ctx.toast("Making your app… the crew starts on it next.");
     runAsync(ctx, async () => {
-      const made = await newAppFromSentence(f.app, f.user, { sentence, owner });
+      const made = await newAppFromSentence(f.app, f.user, {
+        sentence,
+        owner,
+        ...(template === undefined ? {} : { template }),
+      });
       if (!made.ok) {
         ctx.toast(refusal(f, made.code, f.user!.id), "danger");
         return;
@@ -53,7 +85,7 @@ export function newAppScreen(f: Session, ctx: Ctx, parent: Screen): Screen {
   };
 
   return promptScreen(ctx, parent, {
-    title: "New app",
+    title: template === undefined ? "New app" : `New app from ${template}`,
     label: "What should it do?",
     placeholder: "a shared shopping list for the flat",
     hint: "One sentence; the app is named from it.",
@@ -75,6 +107,32 @@ export function newAppScreen(f: Session, ctx: Ctx, parent: Screen): Screen {
           },
         }),
       );
+    },
+  });
+}
+
+/**
+ * Opens "New app" with the choices (repositories, and the folders of those
+ * that hold templates) read first, since the screen itself is synchronous.
+ */
+export function openNewApp(f: Session, ctx: Ctx, parent: Screen): void {
+  runAsync(ctx, async () => {
+    const choices = (await templateChoices(f.app, f.user)).map((c) => c.value);
+    ctx.push(newAppScreen(f, ctx, parent, undefined, choices));
+  });
+}
+
+/** Asks which repository to copy, then goes on as "New app" does. */
+export function templateAppScreen(f: Session, ctx: Ctx, parent: Screen): Screen {
+  return promptScreen(ctx, parent, {
+    title: "New app from a template",
+    label: "Which repository?",
+    placeholder: "owner/name",
+    hint: "A repository you can read; its files start the app.",
+    onSubmit: (named) => {
+      const parsed = parseTemplateName(named);
+      if (parsed === undefined) return "Name it owner/name.";
+      return later(ctx, () => newAppScreen(f, ctx, parent, `${parsed.owner}/${parsed.name}`));
     },
   });
 }

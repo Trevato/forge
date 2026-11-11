@@ -75,6 +75,15 @@ test("tools/list shows q first", async () => {
 
 test("llms.txt names every filter explore reads", async () => {
   const txt = await (await fetch(`${servers.url}/llms.txt`)).text();
-  const line = txt.split("\n").find((l) => l.includes('the tool "explore"')) ?? "";
+  const line = txt.split("\n").find((l) => l.includes('MCP "explore"')) ?? "";
   for (const k of ["kind:", "sort:", "updated:", "owner:", "archived:", "1d, 7d or 30d", "yes or no"]) expect(line).toContain(k);
+});
+
+test("explore takes since like the page: the window narrows, a bad one is an error naming the valid ones (#11232)", async () => {
+  const all = await explore({});
+  const week = await explore({ since: "7d" });
+  expect(week.items.length).toBeLessThan(all.items.length);
+  const r = await rpc("tools/call", { name: "explore", arguments: { since: "9y" } });
+  expect(r.isError).toBe(true);
+  expect(r.content[0].text).toContain("1d, 7d, 30d");
 });

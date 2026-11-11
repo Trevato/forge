@@ -21,6 +21,7 @@ import {
   cleanQuery,
   searchKind,
   grepRepos,
+  greppable,
   searchLocalIssues,
   matchOneRepo,
   searchLocalRepos,
@@ -184,17 +185,19 @@ export async function search(
   if (wants("issues")) phase("issues", performance.now() - issuesAt);
 
   const codeAt = performance.now();
-  const code = wants("code") && input.withCode !== false
-    ? await grepRepos(
-        app.reposRoot,
-        visible,
-        q,
-        Math.min(limit * 5, MAX_CODE_HITS),
-        input.codeBudgetMs ?? Infinity,
-        // The slot is keyed on the actor the session resolved, never on input.
-        { memberId: actor?.id },
-      )
-    : { hits: [], truncated: false, more: false, skipped: false };
+  const code =
+    // A one-letter query greps nothing: it would match every line (#11120).
+    wants("code") && input.withCode !== false && greppable(q)
+      ? await grepRepos(
+          app.reposRoot,
+          visible,
+          q,
+          Math.min(limit * 5, MAX_CODE_HITS),
+          input.codeBudgetMs ?? Infinity,
+          // The slot is keyed on the actor the session resolved, never on input.
+          { memberId: actor?.id },
+        )
+      : { hits: [], truncated: false, more: false, skipped: false };
   if (wants("code")) phase("code", performance.now() - codeAt);
 
   return {

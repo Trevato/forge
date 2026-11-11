@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/conversation/messages",
   summary: "Say something to the forge's own agent, as the signed-in person: it answers through the forge's MCP with that person's permissions, resuming their conversation; a message sent while it answers is handed to the turn, or with `during` (optional) set to `queue` waits for it (at most 5), or set to `steer` stops it and goes at once; answers 202 at once, read the answer from the turns; at most 12 a minute per person",
   auth: true,
+  role: "member",
   status: 202,
   body: { text: "string", conversation: "string" },
   reply: { how: "string" },

@@ -20,11 +20,8 @@ import {
   type Label,
 } from "../../core/issues.ts";
 import { listPulls, openPullsClosing } from "../../core/pulls.ts";
-import { stepsOfStored, type PathStep } from "../../flow/path.ts";
-import { canRead, canWrite, type Repo } from "../../core/repos.ts";
-import { FLOW_LABEL } from "../../core/flow_label.ts";
-import { flowButton } from "../flow_button.ts";
-import { stepLink } from "./step_link.ts";
+import { stepsOfStored } from "../../flow/path.ts";
+import { canRead, type Repo } from "../../core/repos.ts";
 import { waitingCount } from "../../actions/reports.ts";
 
 import { listRepoRuns } from "../../actions/runs.ts";
@@ -41,6 +38,7 @@ import {
   signInHref,
 } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
+import { noteLine } from "./note.ts";
 import { page } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import {
@@ -59,10 +57,9 @@ import {
   time,
 } from "../ui.ts";
 import type { Run, RunState } from "../../core/runs.ts";
-import { actorsFor, durationText, issuesFor, runTitleFrom } from "../pages/runs.ts";
+import { actorsFor, issuesFor, runTitleFrom } from "../pages/runs.ts";
 import { originGlyph } from "../pages/thread.ts";
 import { changeHref, PAGE_TITLES, pageTitle, tellHref } from "./nouns.ts";
-import { tellLine, tellsAnswered } from "./branch_tell.ts";
 import { knowMergeClosings, tellWords } from "./tell.ts";
 import {
   pullWords,
@@ -129,6 +126,19 @@ function emptyNote(
   return `${subject} is ${filter} yet.`;
 }
 
+/** The one link under an empty list. A set filter points back at the whole
+ * list; none set points at what fills it: for issues, telling the crew (or
+ * signing in to), for pulls and runs, the issues that start them. */
+function nextStep(
+  list: string,
+  filter: WordFilter | undefined,
+  start: { label: string; href: string },
+): Html {
+  return filter === undefined
+    ? btn(start.label, { href: start.href, variant: "primary" })
+    : btn("Show all", { href: list, variant: "ghost" });
+}
+
 /** A filter bar of five words, each a link carrying `?word=` — never a
  * form, so the filter lives in the address and can be shared. No filter
  * reads as "Open": what is open and moving. `trail` sits at the bar's far
@@ -159,6 +169,15 @@ function wordFilterBar(
  * told to a crew apart from being open, and no head is ever deployed for a
  * look — so those two are not offered as filters there. */
 const PLAIN_FILTERS: readonly WordFilter[] = ["working", "shipped", "stopped"];
+
+/** The words a pull or a run can carry, as a list links to them: every word
+ * but *told*. `pullWord` never hands that word back, and `runWord` reaches a
+ * pull's word only through `pullWord` — so on the changes and runs lists a
+ * *Not started* filter could only ever land on an empty page (#175). The
+ * tells list, built on `tellWord`, is the one that offers all five. */
+const PULL_FILTERS: readonly WordFilter[] = WORD_FILTERS.filter(
+  (w) => w !== "told",
+);
 
 const LIST_PAGE = 25;
 
@@ -437,19 +456,18 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
     .map((issue, i) => ({ issue, info: words[i]! }))
     .filter((r) => shown(r.info.word, f));
 
-  const mayLabel = canWrite(db, repo, ctx.auth.user);
   const list =
     rows.length === 0
       ? empty({
           icon: "issue",
-          title: "Nothing here",
-          note: emptyNote(
+          title: emptyNote(
             f.word,
             "No issue",
-            record === undefined
-              ? "Nothing open."
-              : "Nothing open. Tell the crew what you want and it shows up here.",
+            "Nothing open.",
           ),
+          action: nextStep(`${base}/issues`, f.word, ctx.auth.user === undefined
+            ? { label: "Sign in", href: `/signin?next=${encodeURIComponent(`${base}/issues`)}` }
+            : { label: "Tell the crew", href: `${base}/issues/new` }),
         })
       : listCard(
           rows.map(({ issue, info }) =>
@@ -462,18 +480,7 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
               meta: html`${wordText(info.word)}${when(
                 issue.originAuthor,
                 (login) => html`${originTag(login, originGlyph(repo))} · `,
-              )}${issue.assigneeName
-                ? html`${issue.assigneeName} · `
-                : null}${time(issue.updatedAt)}`,
-              ...(mayLabel && issue.state === "open"
-                ? {
-                    after: flowButton(
-                      `${base}/issues/${issue.number}/flow`,
-                      (labels.get(issue.id) ?? []).some((l) => l.name.toLowerCase() === FLOW_LABEL),
-                      `${ctx.url.pathname}${ctx.url.search}`,
-                    ),
-                  }
-                : {}),
+              )}${time(issue.updatedAt)}`,
             }),
           ),
           { extra: "bare" },
@@ -565,11 +572,6 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
   return response;
 }
 
-/** The pull's step beside its row, as a sibling of the row's link: `after`. */
-function stepAfter(step: PathStep | null | undefined): { after?: Html } {
-  return step == null ? {} : { after: stepLink(step) };
-}
-
 /**
  * A pull's title and branch are the writer's words, so inside `[data-pulls]`
  * a row wraps them (a long word breaks anywhere) in place of the list's
@@ -610,29 +612,31 @@ export async function changesList(ctx: Ctx): Promise<Response> {
   lap("pulls");
   const words = await pullWords(wordCtx, fetched);
   lap("words");
-  const answered = tellsAnswered(db, repo.id, fetched);
-  lap("tells");
   const labels = labelsForIssues(db, fetched.map((pull) => pull.id));
   const repoLabels = listLabels(db, repo.id);
   lap("labels");
   const rows = fetched
     .map((pull, i) => ({ pull, info: words[i]! }))
-    .filter((r) => shown(r.info.word, f));
-  const steps = stepsOfStored(db, repo, rows.map((r) => r.pull));
-  lap("steps");
+    // An open pull is always listed, whatever its word: the tab counts them all.
+    .filter((r) => f.word === undefined || shown(r.info.word, f));
+
+  // Only a stopped pull's row says why: the step's sentence, one clamped line.
+  const stopped = stepsOfStored(
+    db,
+    repo,
+    rows.filter((r) => r.info.word === "stopped").map((r) => r.pull),
+  );
 
   const list =
     rows.length === 0
       ? empty({
           icon: "pull",
-          title: "Nothing here",
-          note: emptyNote(
+          title: emptyNote(
             f.word,
             "No pull request",
-            record === undefined
-              ? "Nothing open."
-              : "Nothing open. A pull request is the crew's proposed edit to your app; the crew opens them as it works.",
+            "No pull request is open.",
           ),
+          action: nextStep(`${base}/pulls`, f.word, { label: "See open issues", href: `${base}/issues` }),
         })
       : listCard(
           rows.map(({ pull, info }) =>
@@ -642,11 +646,7 @@ export async function changesList(ctx: Ctx): Promise<Response> {
               lead: wordDot(info.word, info.note),
               title: titled(pull.title, labels.get(pull.id)),
               titleAttr: pull.title,
-              meta: html`${wordText(info.word)}${pull.originAuthor
-                ? originTag(pull.originAuthor, originGlyph(repo))
-                : pull.authorName} ·
-              ${when(answered.get(pull.number), (t) => html`${tellLine(base, t)} · `)}${time(pull.updatedAt)}`,
-              ...stepAfter(steps.get(pull.id)),
+              meta: html`${wordText(info.word)}${when(info.word === "stopped" ? stopped.get(pull.id) : undefined, (step) => html`${noteLine(step.why)} · `)}${time(pull.updatedAt)}`,
             }),
           ),
         );
@@ -661,7 +661,7 @@ export async function changesList(ctx: Ctx): Promise<Response> {
         f.word,
         f.word === undefined && f.state === "open",
         undefined,
-        record === undefined ? PLAIN_FILTERS : WORD_FILTERS,
+        record === undefined ? PLAIN_FILTERS : PULL_FILTERS,
       )}
       ${facetChips(listBase, f, repoLabels)} ${list}
       ${pager(
@@ -736,18 +736,6 @@ function runsHref(
   return text === "" ? `${base}/runs` : `${base}/runs?${text}`;
 }
 
-/** What a queued run waits on, in the words its row says it by: a builder
- * for an agent run, a slot for a check, the deploy lane for a deploy; a run
- * paused on a limit says it resumes later. */
-export function whatRunWaitsOn(run: Run): string {
-  if (run.notBefore !== null) return "paused on a limit, resumes soon";
-  return run.kind === "agent"
-    ? "waiting for a builder"
-    : run.kind === "check"
-      ? "waiting for a check slot"
-      : "waiting for the deploy lane";
-}
-
 /** Whether a run is doing something at this moment — the only runs under
  * Working. A deploy is not counted: the flow report's stages are builders,
  * reviewers and checks, and the tab's count is held to theirs. */
@@ -771,14 +759,6 @@ export function onRunsList(
   return inWordFilter(word, filter);
 }
 
-/** A check's state in the words its row names it by. */
-const checkState = (run: Run): string =>
-  run.state === "ok"
-    ? "passed"
-    : run.state === "queued"
-      ? whatRunWaitsOn(run)
-      : run.state;
-
 const RUNS_KIND_WORDS: Record<RunsKind, string> = {
   agent: "Agent runs",
   deploy: "Deploys",
@@ -790,7 +770,9 @@ const RUNS_KIND_WORDS: Record<RunsKind, string> = {
  * one row per run in its studio word — who ran it, when it last moved, and
  * the transcript as the row's own link. Agent runs, checks and deploys
  * together, newest first, by default; `?kind=agent|deploy|check` narrows to
- * one, from the three links under the list. `?word=` narrows any of them.
+ * one, from the three links under the list. `?word=` narrows any of them,
+ * from the changes list's words (`PULL_FILTERS`). The header is the full one
+ * the tells and changes lists carry, description included.
  */
 export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
   const db = ctx.app.db;
@@ -838,14 +820,12 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
     rows.length === 0
       ? empty({
           icon: "bot",
-          title: "Nothing here",
-          note: emptyNote(
+          title: emptyNote(
             filter,
             "No run",
-            kind === undefined || kind === "agent"
-              ? "Nothing open. A run is one go the crew takes at a job; each one shows up here."
-              : `Nothing open. Every ${kind === "deploy" ? "deploy" : "check"} shows up here while it runs.`,
+            "No run is open.",
           ),
+          action: nextStep(`${base}/runs`, filter, { label: "Start with an issue", href: `${base}/issues` }),
         })
       : listCard(
           rows.map(({ run, info }) => {
@@ -862,12 +842,11 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
                   : icon(run.kind === "check" ? "check" : "rocket"),
               title: runTitleFrom(run, actors, issues),
               meta:
-                run.kind === "check"
-                  ? html`${run.commitOid.slice(0, 7)} · ${checkState(run)}
-                    ${when(durationText(run), (d) => html` · took ${d}`)} ·
-                    ${time(run.finishedAt ?? run.createdAt)}`
-                  : html`${run.kind === "agent" ? html`${who} · ` : null}${run.state === "queued" ? whatRunWaitsOn(run) : info.note}
-              · ${time(run.finishedAt ?? run.createdAt)}`,
+                run.state === "failed"
+                  ? html`${noteLine(info.note)} · ${time(run.finishedAt ?? run.createdAt)}`
+                  : run.state === "queued" && run.notBefore !== null
+                    ? html`${noteLine("paused on a limit, resumes soon")} · ${time(run.createdAt)}`
+                  : time(run.finishedAt ?? run.createdAt),
               trail: wordBadge(info.word),
             });
           }),
@@ -875,7 +854,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
         );
   const last = fetched[fetched.length - 1];
 
-  const body = html`${repoHeader(ctx, repo, "runs", { compact: true })}
+  const body = html`${repoHeader(ctx, repo, "runs")}
     <div class="mt">
       <nav aria-label="Run state">
         ${seg(
@@ -890,6 +869,8 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
         (word) => runsHref(base, kind, word, undefined, state),
         filter,
         filter === undefined,
+        undefined,
+        PULL_FILTERS,
       )}
       ${list}
       ${pager(

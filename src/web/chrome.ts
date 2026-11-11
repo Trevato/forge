@@ -8,6 +8,7 @@
  * `ui.ts` may not. That is the line between the two files.
  */
 
+import { assetNotFound, isAssetMiss } from "../http/asset_miss.ts";
 import { audienceFacts, audienceOf } from "../core/audience.ts";
 import { activeEdgeToken, edgeLoginUrl, edgeStrangerLogin } from "../http/edge.ts";
 import {
@@ -15,6 +16,7 @@ import {
   forkParentFor,
   getRepo,
 } from "../core/repos.ts";
+import { nearRepos as nearTo } from "../core/near_repos.ts";
 import { type Repo } from "../core/repos.ts";
 import { parentUrl, shownTrail, sourceLabel } from "../core/provenance.ts";
 import type { Database } from "bun:sqlite";
@@ -65,12 +67,20 @@ export function crumbsFor(repo: Repo): { label: string; href: string }[] {
  * this address; `plain` leaves that out for a miss that must reveal nothing
  * (a dead `/go/:code`). */
 export function notFoundPage(ctx: Ctx, opts: { plain?: boolean } = {}): Response {
+  if (!opts.plain && isAssetMiss(ctx.request, ctx.url.pathname)) return assetNotFound();
   const get = !opts.plain && ctx.request.method === "GET";
   const offerSignIn = get && ctx.auth.user === undefined;
   const asked = get ? askedFor(ctx.url.pathname) : "";
   const search = asked
     ? btn(`Search for ‘${asked}’`, { href: `/search?q=${encodeURIComponent(asked)}` })
     : html``;
+  const near = get ? nearTo(ctx.app.db, ctx.auth.user, ctx.params.owner ?? "", ctx.params.name ?? "") : [];
+  const didYouMean =
+    near.length === 0
+      ? html``
+      : html`<p class="muted">Did you mean ${near.map(
+          (r, i) => html`${i > 0 ? ", " : ""}<a href="${repoBase(r)}">${r.ownerName}/${r.name}</a>`,
+        )}?</p>`;
   return page(
     {
       ctx,
@@ -88,7 +98,7 @@ export function notFoundPage(ctx: Ctx, opts: { plain?: boolean } = {}): Response
                 ${btn("Go home", { href: "/" })} ${btn("Explore", { href: "/explore" })}`
               : html`${btn("Go home", { href: "/", variant: "primary" })} ${search}
                 ${btn("Explore", { href: "/explore" })}`,
-        })}`,
+        })}${didYouMean}`,
     },
     404,
   );
@@ -371,7 +381,7 @@ export { hostOf };
 /** Title line with optional right-aligned actions and a subtitle. */
 export function pageHead(
   title: Html | string,
-  o: { actions?: Html; sub?: Html | string; lead?: Html } = {},
+  o: { actions?: Html | undefined; sub?: Html | string; lead?: Html } = {},
 ): Html {
   return html`<div class="page-head">
     ${o.lead ?? null}

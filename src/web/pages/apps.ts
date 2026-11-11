@@ -12,9 +12,11 @@
  * 404 for everyone.
  */
 
+import { crewKeyCard } from "../studio/crew_key.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
 import { repositoryLimitMessage } from "../../actions/repos.ts";
 import { appLimitWords } from "../../actions/app_limit.ts";
+import { templateChoices, type TemplateChoice } from "../../apps/template_folders.ts";
 import { getUserByName } from "../../core/users.ts";
 import {
   NEW_APP_ERRORS,
@@ -77,7 +79,6 @@ import { shelfRows } from "../studio/shelf.ts";
 import {
   badge,
   btn,
-  card,
   envFacts,
   envStateBadge,
   icon,
@@ -147,8 +148,8 @@ export function archivedAppCount(ctx: Ctx): number {
   ).size;
 }
 
-/** The archived list's Wake: a small form under each row the viewer administers. */
-function wakeForms(ctx: Ctx, repos: readonly Repo[]): Map<string, Html> {
+/** The archived list's Restore: a small form under each row the viewer administers. */
+function restoreForms(ctx: Ctx, repos: readonly Repo[]): Map<string, Html> {
   const out = new Map<string, Html>();
   for (const repo of repos) {
     if (!canAdmin(ctx.app.db, repo, ctx.auth.user)) continue;
@@ -158,7 +159,7 @@ function wakeForms(ctx: Ctx, repos: readonly Repo[]): Map<string, Html> {
         <form method="post" action="${repoBase(repo)}/settings/archive">
           <input type="hidden" name="archived" value="0" />
           <input type="hidden" name="to" value="/apps?archived=1" />
-          ${btn(html`Wake<span class="sr-only"> ${repo.ownerName}/${repo.name}</span>`)}
+          ${btn(html`Restore<span class="sr-only"> ${repo.ownerName}/${repo.name}</span>`)}
         </form>
       </li>`,
     );
@@ -225,7 +226,7 @@ export async function appsList(ctx: Ctx): Promise<Response> {
             },
           ])}
         </div>`;
-  const wake = archivedView ? wakeForms(ctx, shown.map((e) => e.repo)) : undefined;
+  const wake = archivedView ? restoreForms(ctx, shown.map((e) => e.repo)) : undefined;
   const rows = await timePhaseAsync(ctx.request, "shelf", () =>
     shelfRows(
       ctx,
@@ -237,8 +238,16 @@ export async function appsList(ctx: Ctx): Promise<Response> {
     costLine(ctx.app.db, writableAppsOf(ctx, ctx.auth.user).repos),
   );
   const rendering = performance.now();
+  // The door to /data: an admin, or someone who writes an app (already counted
+  // above); no per-app work here, /data itself lists what exists.
+  const hasData =
+    ctx.auth.user !== undefined &&
+    (ctx.auth.user.isAdmin || writableAppsOf(ctx, ctx.auth.user).repos.length > 0);
   const body = html`<div data-apps-page>${when(ctx.auth.user, (user) => homeTabs("apps", unshippedAsks(ctx.app.db, user)))}
-    ${pageHead("Apps", { actions: create, sub: APPS_PURPOSE })}
+    ${pageHead("Apps", {
+      actions: hasData ? html`${btn("Data", { href: "/data", size: "sm" })}${create}` : create,
+      sub: APPS_PURPOSE,
+    })}
     ${cost}
     ${filters}
     ${archivedView
@@ -276,6 +285,8 @@ interface NewAppValues {
   description: string;
   visibility: string;
   agent: string;
+  /** `owner/name` of a template to copy; empty for the starter app. */
+  template?: string;
 }
 
 /** The agent select's sentinel for "turn the sentence into a plan and pick". */
@@ -292,6 +303,7 @@ function newAppForm(
   ctx: Ctx,
   values: NewAppValues,
   canPlan: boolean,
+  offered: TemplateChoice[],
   error?: string,
 ): Html {
   const user = ctx.auth.user!;
@@ -306,7 +318,6 @@ function newAppForm(
   );
   const crew = agents.ok ? agents.value : [];
   const domain = appsRuntime(ctx.app)?.options.domain;
-
   // An org's form stays the org's: carry the owner only when it is one the
   // select offers, and only when it is not the viewer's own default.
   const carried =
@@ -318,7 +329,20 @@ function newAppForm(
     ${pageHead("New app", {
       sub: "Describe what it should do. You get a repository, a first issue, a crew member on it, a live app, and a preview for every change.",
     })}
+    ${crewKeyCard(ctx, true)}
     ${html`<form method="post" action="/apps/new">
+        ${values.template
+          ? formField({ label: "Copy of", name: "template", value: values.template, readonly: true, mono: true })
+          : offered.length > 1
+            ? selectField({
+                label: "Start from",
+                name: "template",
+                options: offered.map((t) => ({
+                  value: t.value,
+                  label: t.line === "" ? t.title : `${t.title} — ${t.line}`,
+                })),
+              })
+            : html``}
         ${formField({
           label: "What should it do?",
           name: "description",
@@ -428,10 +452,11 @@ function newAppForm(
 }
 
 // GET /apps/new
-export function newAppPage(ctx: Ctx): Response {
+export async function newAppPage(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const picks = plannerOffered(ctx);
+  const offered = await timePhaseAsync(ctx.request, "templates", () => templateChoices(ctx.app, ctx.auth.user));
   const rendering = performance.now();
   const response = page({
     ctx,
@@ -442,7 +467,8 @@ export function newAppPage(ctx: Ctx): Response {
       description: starterFromQuery(ctx.url.searchParams.get("description")),
       visibility: "private",
       agent: picks ? PICK_AGENT : "",
-    }, picks),
+      template: ctx.url.searchParams.get("template") ?? "",
+    }, picks, offered),
     scriptJs: appNameJs,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
@@ -462,6 +488,7 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
     description: field(form, "description"),
     visibility: field(form, "visibility") === "public" ? "public" : "private",
     agent: field(form, "agent"),
+    template: field(form, "template"),
   };
   const pickAgent = values.agent === PICK_AGENT;
   // An explicit name is never second-guessed; left blank, the sentence
@@ -471,6 +498,7 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
   const rest = {
     owner: values.owner,
     visibility: values.visibility === "public" ? "public" : "private",
+    ...(values.template ? { template: values.template } : {}),
     ...(pickAgent
       ? { pickAgent: true }
       : values.agent === ""
@@ -496,7 +524,7 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
       {
         ctx,
         title: "New app",
-        body: newAppForm(ctx, values, plannerOffered(ctx), NO_NAME_ERROR),
+        body: newAppForm(ctx, values, plannerOffered(ctx), await timePhaseAsync(ctx.request, "templates", () => templateChoices(ctx.app, ctx.auth.user)), NO_NAME_ERROR),
         scriptJs: appNameJs,
       },
       422,
@@ -517,6 +545,7 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
           ctx,
           values,
           plannerOffered(ctx),
+          await timePhaseAsync(ctx.request, "templates", () => templateChoices(ctx.app, ctx.auth.user)),
           made.error === "repository_limit"
             ? `Not made: ${repositoryLimitMessage(ctx.app, ctx.auth.user!)}.`
             : made.error === "storage_limit"
@@ -527,7 +556,8 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
         ),
         scriptJs: appNameJs,
       },
-      422,
+      // A template the person cannot read answers as one that does not exist, as the API does.
+      made.error === "no_such_template" ? 404 : 422,
     );
   }
   const { repo, app: record, issue, plan } = made.value;
@@ -661,25 +691,38 @@ export function appPage(ctx: Ctx): Response {
   return response;
 }
 
-// ---- the pull page's preview card ----
+// ---- the pull page's preview block ----
 
-/**
- * How the preview card looks: a quiet one is bare (heading over rows, no
- * box); a failed one or one that needs attention keeps its tone and box,
- * since a bare card draws no tone.
- */
-export function previewLook(env: EnvStatus): {
-  extra: string;
-  tone?: "danger" | "attn";
-} {
-  if (env.state === "failed" || env.error !== undefined)
-    return { extra: "env-card", tone: "danger" };
-  if (env.failedDeploy !== undefined) return { extra: "env-card", tone: "attn" };
-  return { extra: "bare env-card" };
+/** The block itself: a bar with the heading, a status line when it failed, then the body. */
+export function previewSection(
+  body: Html,
+  head: Html,
+  tone?: "danger" | "attn",
+): Html {
+  return html`<section
+    class="settings-block"
+    data-preview-block
+    ${tone ? html`data-tone="${tone}"` : null}
+  >
+    <div class="bar">${head}</div>
+    ${tone === "danger"
+      ? html`<p class="small" role="status">This preview has failed. Push again to redeploy it.</p>`
+      : tone === "attn"
+        ? html`<p class="muted small" role="status">The last deploy of this preview failed. Push again to redeploy it.</p>`
+        : null}
+    ${body}
+  </section>`;
 }
 
-/** Where this pull's preview stands, with the way in. */
-export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
+/** How loud a preview reads: danger when it failed or errs, attn when only its last deploy failed. */
+export function envTone(env: EnvStatus): "danger" | "attn" | undefined {
+  if (env.state === "failed" || env.error !== undefined) return "danger";
+  if (env.failedDeploy !== undefined) return "attn";
+  return undefined;
+}
+
+/** Where this pull's preview stands, with the way in: a plain block under an h2, the home page's language. */
+export function previewBlock(ctx: Ctx, repo: Repo, pull: Pull): Html {
   const view = appView(ctx.app, ctx.auth.user, repo);
   if (!view.ok) return html``;
   const base = repoBase(repo);
@@ -690,9 +733,9 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
     <h2>Preview</h2>
     ${env === undefined ? null : envStateBadge(env.state, env.dormant !== undefined)}`;
   if (!view.value.serving)
-    return card(
+    return previewSection(
       html`<p class="muted small">Nothing is serving apps on this forge.</p>`,
-      { head, extra: "bare" },
+      head,
     );
   if (env === undefined) {
     const why =
@@ -701,13 +744,13 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
         : pull.state === "closed"
           ? "The preview was removed when this closed. Reopen the pull request and it comes back."
           : "No preview yet — one starts when this pull request's head deploys.";
-    return card(html`<p class="muted small">${why}</p>`, { head, extra: "bare" });
+    return previewSection(html`<p class="muted small">${why}</p>`, head);
   }
   // A preview's terminal is a different login from production's — its own
   // command, shown only to a writer, same as the app page's.
   const writer = canWrite(ctx.app.db, repo, ctx.auth.user);
   const dataNote = previewDataNote(view.value.app.previewData, pull.createdAt);
-  return card(
+  return previewSection(
     html`${envFacts(base, env)}
       ${dataNote === null ? null : html`<p class="muted small">${dataNote}</p>`}
       ${when(writer, () =>
@@ -728,10 +771,8 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
               icon: "external",
             })}
       </div>`,
-    {
-      head,
-      ...previewLook(env),
-    },
+    head,
+    envTone(env),
   );
 }
 
@@ -773,6 +814,14 @@ function appsOpenResponse(ctx: Ctx): Response {
   });
 }
 
+/**
+ * Opening an app is the one place a forge page's address leaves the forge:
+ * the app's pill reads it to take the visitor back to that page (#11295).
+ * `origin-when-cross-origin` would send only the origin, so the redirect
+ * says `no-referrer-when-downgrade`: the full address, https to https only.
+ */
+const LEAVING_POLICY = "no-referrer-when-downgrade";
+
 export function appOpen(ctx: Ctx): Response {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
@@ -781,7 +830,7 @@ export function appOpen(ctx: Ctx): Response {
   const record = env === "production" ? getAppByRepo(ctx.app.db, repo.id) : undefined;
   const shown = record === undefined ? undefined : shownProduction(ctx.app, repo, appsRuntime(ctx.app)?.urlFor(record, "production"));
   if (shown?.copy !== undefined && shown.url !== undefined)
-    return new Response(null, { status: 302, headers: { location: shown.url, "cache-control": "no-store" } });
+    return new Response(null, { status: 302, headers: { location: shown.url, "cache-control": "no-store", "referrer-policy": LEAVING_POLICY } });
   const link = openEnvUrl(ctx.app, ctx.auth.user, repo, env);
   if (!link.ok) {
     if (link.error === "unauthorized") return signInFirst(ctx);
@@ -794,7 +843,7 @@ export function appOpen(ctx: Ctx): Response {
   }
   return new Response(null, {
     status: 302,
-    headers: { location: link.value, "cache-control": "no-store" },
+    headers: { location: link.value, "cache-control": "no-store", "referrer-policy": LEAVING_POLICY },
   });
 }
 

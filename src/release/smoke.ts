@@ -15,7 +15,10 @@
  * lost answer in a release's proof says little, two in a row fail it (#9334, #9482).
  * An answer slow on the probe's clock whose `Server-Timing` says the forge
  * itself spent `SLOW_MS` or less is the road to the public edge, not the
- * release, and passes (#9022); a hang still fails.
+ * release, and passes (#9022); a hang, no answer within `ANSWER_MS`, still
+ * fails. The hang's line sat at twice `SLOW_MS` until #11250: a repository
+ * home answering in 2.1 s was then cut off before its `Server-Timing` could
+ * say whose time it was, and failed 0.7.531 for 13 minutes as a hang.
  *
  * The running forge proves each new version with it (`release/prove.ts`), so
  * it lives here: the image ships src/ and nothing else (#2652).
@@ -35,6 +38,10 @@ export const AGENTS: Record<string, string> = {
 export const WATCH_MS = 60_000;
 export const WATCH_POLL_MS = 1_000;
 export const SLOW_MS = 1_000;
+/** The pause before a slow or lost first load is asked again: a boot's stall is seconds, a slow release stays slow (#10993). */
+export const SETTLE_MS = 3_000;
+/** How long an ask waits before it is a hang: past `SLOW_MS` an answer is slow, and its `Server-Timing` judges it (#11250). */
+export const ANSWER_MS = 10_000;
 /** One repository's home, for the heavy-page load. */
 export const REPO_HOME = "/trevato/forge";
 /** The heaviest pages; `/boards` is fetched with the token. */
@@ -67,6 +74,10 @@ export interface Heavy {
   watchMs?: number;
   pollMs?: number;
   slowMs?: number;
+  /** How long a slow first load waits before it is asked again, so a stall that follows the boot has passed (#10993). @default SETTLE_MS */
+  settleMs?: number;
+  /** How long an ask waits before it is a hang rather than a slow answer. @default ANSWER_MS */
+  answerMs?: number;
   /** The repository whose home is loaded; unset, `REPO_HOME` is tried and a 404 there is skipped. */
   repo?: string;
   /** Every `/healthz` answer in the watch must carry this `X-Forge-Version`. */
@@ -85,7 +96,7 @@ export interface Failure {
   slow?: boolean;
   /** The check failed only because a 200 answered with no body: a lost answer, retried like a slow one (#9358). */
   empty?: boolean;
-  /** The check failed only because no answer came within twice the slowest allowed: retried like a slow one (#9482). */
+  /** The check failed only because no answer came within `ANSWER_MS`: retried like a slow one (#9482, #11250). */
   hung?: boolean;
 }
 
@@ -174,9 +185,19 @@ async function waitForVersion(root: URL, version: string, waitMs: number, pollMs
 /** Loads each of `HEAVY_PAGES`, then polls `/healthz` for the window; the first failure, or null. */
 async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globalThis.fetch, anonymousBoard: boolean): Promise<Failure | null> {
   const slowMs = heavy.slowMs ?? SLOW_MS;
+  const answerMs = Math.max(heavy.answerMs ?? ANSWER_MS, slowMs);
   const headers: Record<string, string> = { "user-agent": AGENTS["desktop"]! };
   const pages = HEAVY_PAGES.map((p) => (p === REPO_HOME && heavy.repo ? heavy.repo : p));
-  // An answer between `slowMs` and twice it is slow; none by then is a hang.
+  /** Is `url` whole when asked with no encoding: the way to tell the edge's encoding from the forge's answer (#10889). */
+  const unencodedBody = async (url: string): Promise<boolean> => {
+    try {
+      const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(answerMs), headers: { ...headers, "accept-encoding": "identity" } });
+      return res.status === 200 && (await res.text()).trim() !== "";
+    } catch {
+      return false;
+    }
+  };
+  // An answer between `slowMs` and `answerMs` is slow, judged by the forge's own time; none by then is a hang.
   const once = async (path: string): Promise<{ failure: Failure | null; slow: boolean; hung?: boolean; empty?: boolean }> => {
     const url = new URL(path, root).href;
     const started = performance.now();
@@ -184,13 +205,14 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
     const gone = (why: string, status: number | string = "error") => ({ failure: failureFor(why, status), slow: false });
     try {
       const auth: Record<string, string> = path === "/boards" && token ? { authorization: `Bearer ${token}` } : {};
-      const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(slowMs * 2), headers: { ...headers, ...(path === "/healthz" ? heavy.probe : {}), ...auth } });
+      const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(answerMs), headers: { ...headers, ...(path === "/healthz" ? heavy.probe : {}), ...auth } });
       const body = await res.text();
       const took = Math.round(performance.now() - started);
       if (took > slowMs) {
         // The forge's own time says whether the release was slow or the way to it was (#9022).
         const own = forgeMs(res);
-        if (own === undefined || own > slowMs) return { failure: { ...failureFor(`${path} took ${took} ms, over ${slowMs} ms`, res.status), slow: true }, slow: true };
+        const whose = own === undefined ? "" : `, the forge ${Math.round(own)} ms of it`;
+        if (own === undefined || own > slowMs) return { failure: { ...failureFor(`${path} took ${took} ms, over ${slowMs} ms${whose}`, res.status), slow: true }, slow: true };
         console.warn(`smoke: ${path} took ${took} ms, the forge ${Math.round(own)} ms of it; the rest was the network`);
       }
       if (path === REPO_HOME && !heavy.repo && res.status === 404) return { failure: null, slow: false };
@@ -199,12 +221,18 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
       if (path === "/boards" && anonymousBoard && !token && isSignInRedirect(url, res)) return { failure: null, slow: false };
       if (res.status !== 200) return gone(`${path} expected 200`, res.status);
       if (!body.trim()) {
+        // An empty body under a content-encoding may be the edge's encoding of it (#10889: zstd, twice in a row,
+        // 60 minutes). Asked again unencoded, a body says the forge answered and only the encoding lost it.
+        if (res.headers.has("content-encoding") && (await unencodedBody(url))) {
+          console.warn(`smoke: EDGE-ENCODING-EMPTY ${path} came back empty under content-encoding ${res.headers.get("content-encoding")} but whole unencoded; passed as the release's, though a browser accepting that encoding would see it blank (the edge's fault; cause unconfirmed)`);
+          return { failure: null, slow: false };
+        }
         const lost = gone(`${path} answered with an empty body${emptyEvidence(res)}`, res.status);
         return { failure: { ...lost.failure, empty: true }, slow: false, empty: true };
       }
       return { failure: null, slow: false };
     } catch (error) {
-      const lost = gone(`${path} did not answer within ${slowMs * 2} ms (${error})`);
+      const lost = gone(`${path} did not answer within ${answerMs} ms (${error})`);
       return { failure: { ...lost.failure, hung: true }, slow: false, hung: true };
     }
   };
@@ -218,6 +246,7 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
     const first = await once(path);
     if (!first.slow && !first.empty && !first.hung) return first.failure;
     console.warn(`smoke: ${first.failure?.why}; asking again`);
+    await Bun.sleep(heavy.settleMs ?? SETTLE_MS);
     return (await once(path)).failure;
   };
   for (const path of pages) {
@@ -313,12 +342,19 @@ export async function smoke(base: string, token = "", options: Options = {}): Pr
   }
   if (options.appHost) {
     const url = new URL("/", options.appHost).href;
-    try {
-      const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(10_000), headers: { "user-agent": AGENTS["desktop"]! } });
-      const body = await res.text();
-      if (/<title>\s*forge\s*<\/title>/i.test(body)) fail(url, "desktop", res, "an app host answered with the forge's page");
-    } catch (error) {
-      failures.push({ url, agent: "desktop", status: "error", contentType: "", why: String(error) });
+    // This check asks one thing: does an app host answer as the forge (#6726)? An app that is
+    // asleep, stopped or broken and gives no answer at all says nothing about that: it is the
+    // app's health, not the release's, so it is asked once more and then left out of the verdict
+    // (#10189: hello's host timing out held release 0.7.479 unproven for hours).
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(10_000), headers: { "user-agent": AGENTS["desktop"]! } });
+        const body = await res.text();
+        if (/<title>\s*forge\s*<\/title>/i.test(body)) fail(url, "desktop", res, "an app host answered with the forge's page");
+        break;
+      } catch (error) {
+        console.warn(`smoke: app host ${url} gave no answer (${error}); ${attempt === 1 ? "asking again" : "the app's health, not the release's"}`);
+      }
     }
   }
   if (options.heavy && failures.length === 0) {

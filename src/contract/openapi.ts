@@ -11,8 +11,9 @@
  * so pulls describing different routes do not collide (#5936).
  */
 
-import type { QueryType, Route } from "./openapi/shared.ts";
+import type { QueryType, Role, Route } from "./openapi/shared.ts";
 import { OAUTH_SCOPES, type OAuthScope } from "../core/oauth.ts";
+import { tagList, tagOf } from "./tags.ts";
 import * as each from "./openapi/routes/index.ts";
 
 /** What each OAuth scope grants; a scope added to OAUTH_SCOPES without a line here fails the type check. */
@@ -46,10 +47,25 @@ const schema = (t: QueryType) =>
     ? { type: t.type, ...(t.min === undefined ? {} : { minimum: t.min }), ...(t.max === undefined ? {} : { maximum: t.max }) }
     : (t === "object" ? { type: "object" } : t === "array" ? { type: "array", items: { type: "object" } } : { type: t });
 
-/** The document, for the forge served at `origin`. */
-export function openapi(origin: string, version: string): Record<string, unknown> {
+/** The roles each role may act as: an admin is a member, a member is anonymous too. */
+const REACHES: Readonly<Record<Role, readonly Role[]>> = {
+  anonymous: ["anonymous"],
+  member: ["anonymous", "member"],
+  admin: ["anonymous", "member", "admin"],
+};
+
+/** The rows a caller of `role` may call: the document is cut to them (#11286). */
+export const routesFor = (role: Role): readonly Route[] => ROUTES.filter((r) => REACHES[role].includes(r.role));
+
+/**
+ * The document, for the forge served at `origin`, cut to the rows `role`
+ * may call. There is no default: `admin` is every row, and a caller that
+ * wants it says so.
+ */
+export function openapi(origin: string, version: string, role: Role): Record<string, unknown> {
   const paths: Record<string, Record<string, unknown>> = {};
-  for (const r of ROUTES) {
+  const rows = routesFor(role);
+  for (const r of rows) {
     const refusals = pagesByCursor(r) ? { invalid_query: PAGE_REFUSAL, ...r.refusals } : r.refusals;
     const params = [...r.path.matchAll(/\{(\w+)\}/g)].map((m) => ({
       name: m[1],
@@ -72,7 +88,9 @@ export function openapi(origin: string, version: string): Record<string, unknown
     }));
     (paths[r.path] ??= {})[r.method] = {
       operationId: operationId(r),
+      tags: [tagOf(r.path)],
       summary: r.summary,
+      "x-role": r.role,
       parameters: [...params, ...query],
       ...(r.body === undefined
         ? {}
@@ -91,7 +109,8 @@ export function openapi(origin: string, version: string): Record<string, unknown
               },
             },
           }),
-      ...(r.auth ? { security: [{ token: [] }, { oauth2: [oauthScopeFor(r.method)] }] } : {}),
+      // Routes that need no credential opt out of the document's default with `security: []`.
+      security: r.auth ? [{ token: [] }, { oauth2: [oauthScopeFor(r.method)] }] : [],
       responses: {
         [String(r.status ?? 200)]: {
           description: "Done",
@@ -126,9 +145,12 @@ export function openapi(origin: string, version: string): Record<string, unknown
       title: "forge",
       version,
       description:
-        "The routes the forge names to an agent. `not_found` means missing or not yours to see.",
+        "The routes the forge names to an agent. `not_found` means missing or not yours to see. Every 429 and 503 carries an integer `Retry-After` and `retryAfter` (the same seconds) in a JSON body.",
     },
     servers: [{ url: origin }],
+    tags: tagList(rows.map((r) => tagOf(r.path))),
+    // The default: a bearer token. Open routes say `security: []`.
+    security: [{ token: [] }],
     paths,
     components: {
       securitySchemes: {

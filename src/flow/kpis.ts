@@ -19,6 +19,7 @@
 import { backupVerdict, isWatched, type BackupVerdict } from "../snapshot/bucket.ts";
 import { lastDrill } from "../snapshot/drills.ts";
 import type { Database } from "bun:sqlite";
+import { crewConcurrency, shownSlots } from "./slot_cap.ts";
 import { spentTodayEverywhere } from "../crew/autonomy.ts";
 import { ceilingHitAt, ceilingReached } from "./ceiling.ts";
 import type { IdleReason } from "../crew/idle_reason.ts";
@@ -78,7 +79,8 @@ export function readBuilders(db: Database, idle: IdleReason | null = null): Kpis
                 (SELECT COALESCE(SUM(autonomy_slots), 0) FROM repo WHERE autonomy != 'off') AS slots`,
       )
       .get() ?? { running: 0, slots: 0 };
-  return { ...counts, idle };
+  const slots = shownSlots(counts.slots, crewConcurrency(db));
+  return { ...counts, slots, idle };
 }
 
 /**

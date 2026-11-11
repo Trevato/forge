@@ -44,7 +44,7 @@ import { listActive, type Run } from "../core/runs.ts";
 import { getUserById } from "../core/users.ts";
 import type { Stuck } from "./brief.ts";
 import { proposedWork, speaksForCrew } from "./direct.ts";
-import { freshPullFor } from "./fresh_pull.ts";
+import { freshPulls, pullFor } from "./fresh_pull.ts";
 import { capReached, runCapOf } from "./guard.ts";
 import { interruptionOf } from "./interrupted.ts";
 import { landedUnanswered } from "./landed.ts";
@@ -143,6 +143,8 @@ export function heldBy(
     crew.filter((c) => c.role !== "builder").map((c) => c.agent.user.id),
   );
   const builders = crew.filter((c) => c.role === "builder").map((c) => c.agent.user.username);
+  // Read once for the whole pass, matched per issue in memory (#10445).
+  const fresh = builders.length === 0 ? [] : freshPulls(app.db, repo.id);
   const handed = withPlanner(app.db, repo);
   const hot = hotFiles(repo.id, admit);
   const pins = new Map(heldFiles(app.db, repo.id).map((h) => [h.path, h]));
@@ -199,7 +201,7 @@ export function heldBy(
     if (hotOverlap(issue, hot).length > 0) return "hot_file";
     if (waitsOnRelief(issue)) return "hot_file";
     // The dispatcher refuses a build on an issue whose pull just opened (#8473): held, not picked.
-    if (freshPullFor(app.db, repo.id, issue.number, builders) !== undefined) return "open_pull";
+    if (pullFor(fresh, issue.number, builders) !== undefined) return "open_pull";
     return null;
   };
   const by = Object.fromEntries(HOLDS.map((h) => [h, [] as Issue[]])) as Record<

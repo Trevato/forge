@@ -291,7 +291,7 @@ function accounts(ctx: Ctx, origins: readonly OriginChoices[]): Html {
       : html`<p class="muted small">
           ${icon("github")} Connect GitHub needs this forge's GitHub
           application, set up once under
-          <a href="/settings/origins">Settings → Origins</a>; a token pasted
+          <a href="/settings/origins">Settings → Connected accounts</a>; a token pasted
           there works until then.
         </p>`;
   return html`<section class="mb" id="migrate-accounts-section">
@@ -335,7 +335,7 @@ function picker(
   if (listed.length === 0)
     return html`<p class="muted small mb">
       ${icon("globe")} Connect an account above — or another forge under
-      <a href="/settings/origins">Settings → Origins</a> — to pick from your
+      <a href="/settings/origins">Settings → Connected accounts</a> — to pick from your
       repositories there, private ones included.
     </p>`;
   return html`<div class="field" id="migrate-picker">

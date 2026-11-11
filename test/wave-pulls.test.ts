@@ -103,7 +103,7 @@ test("rows give #N title · merged date, link to the pull, and leave out the uns
   expect(body).not.toContain("<b>thing");
   expect(body).toContain("Fix the other");
   expect(body).toContain("merged 2026-03-04");
-  expect(body).toMatch(/href="\/alice\/pub\/pulls\/\d+"[^>]*class="row"|class="row"[^>]*href="\/alice\/pub\/pulls\/\d+"/);
+  expect(body).toMatch(/href="\/alice\/pub\/pulls\/\d+(?:\?from=[^"]*)?"[^>]*class="row"|class="row"[^>]*href="\/alice\/pub\/pulls\/\d+(?:\?from=[^"]*)?"/);
   expect(body).not.toContain("Secret work");
   expect(body).not.toContain("/alice/priv/pulls/");
   expect(body).not.toContain("#999");

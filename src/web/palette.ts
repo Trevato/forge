@@ -25,6 +25,10 @@ export interface PaletteRow {
   readonly x?: string;
   /** Where Cmd/Ctrl+Enter goes: the app itself. */
   readonly o?: string;
+  /** An issue or pull's number: typing `#123` lands on it. */
+  readonly k?: number;
+  /** An action: asks one confirmation before it runs. */
+  readonly a?: 1;
 }
 
 /** A heading and the rows under it, best first. */
@@ -101,6 +105,18 @@ export function rankPalette(
     if (q !== "") {
       const title = fuzzyScore(q, r.t);
       const detail = r.d === undefined ? 0 : fuzzyScore(q, r.d);
+      const num = /^#(\d+)$/.exec(q);
+      if (num !== null && r.k !== undefined) {
+        // "#123" lands on that number; a shorter run of digits finds its extensions after.
+        const want = num[1]!;
+        const have = String(r.k);
+        if (have === want) s = 5000;
+        else if (have.indexOf(want) === 0) s = 1000 - have.length;
+        else return;
+        seen.add(r.h);
+        scored.push({ r, s, i });
+        return;
+      }
       if (title === 0 && detail === 0) return;
       s = title + detail / 2 + (recent.indexOf(r.h) === -1 ? 0 : 50);
       // A repository named by what was typed beats every other kind of
@@ -134,8 +150,161 @@ export function rankPalette(
 }
 
 /**
- * The two functions above as the JavaScript the page runs: Bun transpiles
+ * Whether the bare search page opens the palette sheet by itself: the page
+ * asked for it (`marked`) and the viewport is phone width, below the 720px
+ * at which `.palette` stops being a bottom sheet (style/components.ts).
+ * Self-contained, like the others; shipped in the script.
+ */
+export function opensAsSheet(marked: boolean, width: number): boolean {
+  return marked && width > 0 && width < 720;
+}
+
+/** A row opened before: where, how it was labelled, how often, and when last. */
+export interface PaletteUse {
+  readonly t: string;
+  readonly h: string;
+  readonly g: string;
+  /** Times opened. */
+  readonly c: number;
+  /** Milliseconds since the epoch of the last opening. */
+  readonly l: number;
+}
+
+/**
+ * Remembered rows in frecency order, best first: each opening is worth one,
+ * halved for every week since the last, so a row opened often and a row
+ * opened just now both lead a row opened once long ago. (Mozilla-style
+ * frecency, reduced to count × 2^(-weeks); the decay is applied to the whole
+ * count, an approximation that needs no per-visit history.) Ties go to the
+ * later opening. Returns a new array; `now` is passed in so the function is
+ * pure. Self-contained, shipped in the script.
+ */
+export function frecencyOrder<T extends { c: number; l: number }>(uses: readonly T[], now: number): T[] {
+  const week = 7 * 24 * 3600 * 1000;
+  const score = (u: T) => u.c * Math.pow(0.5, Math.max(0, now - u.l) / week);
+  return uses.slice().sort((a, b) => score(b) - score(a) || b.l - a.l);
+}
+
+/**
+ * What the browser's stored list means: anything that is not an array of
+ * `{t, h}` with a same-origin `h` is dropped; a missing or bad count is one
+ * opening, a missing time is the epoch (oldest). Cut to `max`. Self-contained.
+ */
+export function readUses(raw: unknown, max: number): PaletteUse[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PaletteUse[] = [];
+  for (const r of raw) {
+    if (out.length >= max) break;
+    if (!r || typeof r.t !== "string" || typeof r.h !== "string" || r.h.charAt(0) !== "/") continue;
+    out.push({
+      t: r.t,
+      h: r.h,
+      g: typeof r.g === "string" ? r.g : "",
+      c: typeof r.c === "number" && r.c >= 1 ? Math.min(r.c, 1e6) : 1,
+      l: typeof r.l === "number" && r.l > 0 ? r.l : 1,
+    });
+  }
+  return out;
+}
+
+/**
+ * The list after opening `row` at `now`: its count is one more than before
+ * (one if new), its time is now, and the whole list is re-ordered by
+ * frecency and cut to `max` — so the least useful entry is the one that
+ * falls off. Pure; self-contained apart from `frecencyOrder`.
+ */
+export function recordUse(
+  uses: readonly PaletteUse[],
+  row: { t: string; h: string; g: string },
+  now: number,
+  max: number,
+): PaletteUse[] {
+  const prev = uses.find((x) => x.h === row.h);
+  const entry: PaletteUse = { t: row.t, h: row.h, g: row.g, c: (prev ? prev.c : 0) + 1, l: now };
+  return frecencyOrder([entry].concat(uses.filter((x) => x.h !== row.h)), now).slice(0, max);
+}
+
+/**
+ * The visited pages after one more at `href`: newest first, the page moved
+ * to the front when seen before (so a page is listed once), cut to `max`.
+ * Only same-origin paths are kept, and only the path: no title is stored,
+ * so a shared machine learns no private name. Self-contained.
+ */
+export function recordVisit(visits: readonly string[], href: string, max: number): string[] {
+  if (typeof href !== "string" || href.charAt(0) !== "/" || href.charAt(1) === "/") return visits.slice(0, max);
+  return [href].concat(visits.filter((v) => v !== href)).slice(0, max);
+}
+
+/**
+ * The "Recent" rows for an empty box: the stored visits, newest first, each
+ * titled from the row the palette already has for that href (a visit with no
+ * row is skipped), never the page `here`, at most `limit`. Self-contained.
+ */
+export function visitRows(
+  visits: readonly unknown[],
+  rows: readonly PaletteRow[],
+  here: string,
+  limit: number,
+): PaletteRow[] {
+  const out: PaletteRow[] = [];
+  const seen = new Set<string>();
+  for (const v of visits) {
+    if (out.length >= limit) break;
+    if (typeof v !== "string" || v === here || seen.has(v)) continue;
+    const r = rows.find((x) => x.h === v);
+    if (r === undefined) continue;
+    seen.add(v);
+    out.push({ t: r.t, h: r.h, g: "Recent", d: r.g });
+  }
+  return out;
+}
+
+/**
+ * What a page load stores: the visit list with `href` added, but only when the
+ * palette has a row for that page (error pages, login and the like are not
+ * visits worth listing). Self-contained apart from `recordVisit`.
+ */
+export function visitLoad(
+  visits: readonly string[],
+  href: string,
+  rows: readonly { h: string }[],
+  max: number,
+): string[] {
+  return rows.some((r) => r.h === href) ? recordVisit(visits, href, max) : visits.slice(0, max);
+}
+
+/**
+ * The rows `rankPalette` is given. With nothing typed: one "Recent" group of
+ * at most `shown` rows, the visited pages first (newest first), then the rows
+ * picked before (by frecency) to fill it, each href once and never the page
+ * `here`; then the rest. Typed: no Recent rows, the rest and, from two
+ * letters, what the server `served`. Self-contained apart from `visitRows`
+ * and `frecencyOrder`.
+ */
+export function palettePool(
+  query: string,
+  rows: readonly PaletteRow[],
+  served: readonly PaletteRow[],
+  visits: readonly unknown[],
+  uses: readonly PaletteUse[],
+  here: string,
+  now: number,
+  shown: number,
+): PaletteRow[] {
+  const q = query.trim();
+  if (q !== "") return rows.concat(q.length >= 2 ? served : []);
+  const head = visitRows(visits, rows, here, shown);
+  for (const u of frecencyOrder(uses, now)) {
+    if (head.length >= shown) break;
+    if (u.h === here || head.some((r) => r.h === u.h)) continue;
+    head.push({ t: u.t, h: u.h, g: "Recent", d: u.g });
+  }
+  return head.concat(rows);
+}
+
+/**
+ * The functions above as the JavaScript the page runs: Bun transpiles
  * this module before it ever parses it, so `toString` is already the
  * browser's dialect. A test proves the string and the module agree.
  */
-export const paletteHelpersJs = `${fuzzyScore.toString()}\n${rankPalette.toString()}`;
+export const paletteHelpersJs = `${fuzzyScore.toString()}\n${rankPalette.toString()}\n${opensAsSheet.toString()}\n${frecencyOrder.toString()}\n${readUses.toString()}\n${recordUse.toString()}\n${recordVisit.toString()}\n${visitRows.toString()}\n${visitLoad.toString()}\n${palettePool.toString()}`;

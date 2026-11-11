@@ -131,8 +131,16 @@ export function systemPrompt(input: BriefInput): string {
     agent.brief.trim() === "" ? "" : `\n${agent.brief.trim()}\n`,
     `You are working in a clone of the repository on the branch \`${input.branch}\`. The remote \`origin\` is the forge; \`git push\` is already authenticated as you and the branch already tracks \`origin/${input.branch}\`. Git configuration is read-only here — do not try to change it, a plain \`git push\` is all you need.`,
     "",
-    "Read docs/VISION.md first: it says what the forge is for and the order of work. Done means reachable: a function nobody can call is not done. Where the repository has docs/PRINCIPLES.md, read it too: what it holds to, and what enforces each.",
-    "",
+    // A first build and a planning run read the vision; a run about a pull
+    // that exists (a red check, a conflict, feedback, a review) is told the
+    // task and the direction and reads no documents again: every read is
+    // tokens, and the vision did not change since the pull was opened.
+    ...(input.pull === undefined
+      ? [
+          "Read docs/VISION.md first: it says what the forge is for and the order of work. Done means reachable: a function nobody can call is not done. Where the repository has docs/PRINCIPLES.md, read it too: what it holds to, and what enforces each.",
+          "",
+        ]
+      : []),
     ...machineLines(input.machine),
     "How to finish:",
     "- Commit your work with clear messages and push: `git push`.",
@@ -169,6 +177,8 @@ export function systemPrompt(input: BriefInput): string {
       "- A worked example:",
       `  curl -sS -X POST -H "authorization: Bearer $FORGE_TOKEN" -H "content-type: application/json" "$FORGE_URL/api/v1/repos/${repo.ownerName}/${repo.name}/plan" -d '{"issues":[{"key":"a","title":"Refuse an unsigned upload","body":"Done: an unsigned upload is a 422.","pillar":"P0"},{"key":"b","title":"Show the upload in the feed","body":"Done: it is listed.","blockedBy":["a"],"pillar":"P1"},{"key":"c","title":"Offer a dark theme","later":true,"why":"No pillar needs it until the feed lands."}]}'`,
       "  It answers with what it opened (key and number), the numbers now ready, and those deferred.",
+      "- One change on several things is one issue: the same shortcut, wording or rendering across many lists, pages or kinds is one issue whose body names each as a checkbox, and a builder lands it in one or two pulls. A plan with three or more items of one shape is refused (look_alike).",
+      "- Polish — a shortcut, a wording, spacing, an existing page made nicer — is the small lane: start its title with `small:`. The forge holds that lane to the repository's polish share, and a pillar's umbrella is no reason to file polish as pillar work. A person's ask (a comment, an assignment, a `from-app` note) and the pillar work that is ready come before any polish; file polish behind them (blockedBy) when both are open.",
       "- The direction is never finished. When what it names is built, propose its next increment in the same spirit: what a demanding user would want next, what is fragile, slow, ugly, untested or undocumented, what the pictures and the previews show is off. Leave the map with the reserve your task names startable, every time.",
       '- An issue with a comment that starts "Parked by the crew" was tried and could not be finished as written. Split it into smaller issues, or rewrite what done looks like, or close it with a word if the direction no longer needs it — never leave it as it was. One the crew parked twice is yours: your task lists it, with what you may do with it.',
       "- Closing what you re-plan: PATCH …/issues/N with {\"state\":\"closed\",\"reason\":\"split\",\"into\":[A,B]} (open issues made since it was handed to you, or since the issue itself when it was never handed over), {\"state\":\"closed\",\"reason\":\"dropped\"} for an issue the crew wrote, or {\"state\":\"closed\",\"reason\":\"done\"} only when an \"already done on main\" note on it names commits on main. A person's ask is never yours to drop; nothing else is yours to close, and nothing to reopen.",
@@ -534,9 +544,7 @@ function taskBody(input: TaskInput): string {
             ...input.sourceNote.map((n) => `- ${n}`),
             "",
           ]),
-      "```diff",
-      input.reviewDiff ?? "(no diff available)",
-      "```",
+      ...fenced(input.reviewDiff ?? "(no diff available)", "diff"),
     );
     // The conversation is context for the verdict, never the task.
     if (talk.length > 0) {
@@ -635,9 +643,7 @@ function taskBody(input: TaskInput): string {
       out.push(
         "",
         `The end of the ${input.checkKind === "check" ? "check" : "deploy"} log:`,
-        "```",
-        ...input.checkLog,
-        "```",
+        ...fenced(input.checkLog.join("\n")),
       );
     }
     out.push("", "Fix the cause, make sure the tests pass, and push again.");
@@ -984,5 +990,15 @@ export function ownAppLines(own: OwnApp | undefined): string[] {
         ? "; no pull has a preview yet."
         : `, and the previews of the open pulls: ${previews.join(", ")}.`) +
       " Use them for checks that need the running app (end-to-end, screenshots, the public launch check).",
+    ...(own.blocked === undefined
+      ? []
+      : [
+          `- The app's cells were refused these hosts, because \`forge.json\` \`egress\` does not declare them: ${own.blocked.join("; ")}. A fetch to one hangs or fails; if the task needs it, add it to \`egress\` and say so in the pull. The owner can also allow it on the app's settings page.`,
+        ]),
+    ...(own.access === "private"
+      ? [
+          '- This app is private: signed out, its door answers 404 by design, so a 404 from a plain `curl` is the door, not a fault in the app. Probe it as its owner does, with `-H "authorization: Bearer $FORGE_TOKEN"`, and judge what that answers.',
+        ]
+      : []),
   ];
 }

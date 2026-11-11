@@ -16,6 +16,7 @@ import { getRepo } from "../../src/core/repos.ts";
 import { deliverDue } from "../../src/core/webhooks.ts";
 import { LOOPBACK } from "./loopback-hook.ts";
 import { queueAgentRun } from "../../src/crew/dispatch.ts";
+import "./roomy-disk.ts";
 
 const [mode, dataDir, startAt, count] = process.argv.slice(2);
 const app = createApp({ dataDir: dataDir!, port: 0 });

@@ -11,6 +11,30 @@
 7. Rows over boxes: a list is rows, a fact is a `dl` row, not a card.
 8. Plain words, as in `docs/WRITING.md`.
 
+**The first five minutes.** Later work is judged against this one journey, a stranger's from a link to a change live:
+1. They follow a link. 2. They name the forge. 3. They choose a username and password. 4. They say what to build. 5. They see the crew working.
+
+Budgets: at most three screens before the forge; the forge ready in under 20 s; the first crew activity in under 60 s; the change live within five minutes.
+
+Words a stranger is never shown on this path: subscription, autonomy, cell, child, claim. The list lives once, as `STRANGER_NEVER_SEES` in `src/design/first_five_minutes.ts` (with the budgets), for a test to import.
+
+**The five rules of attention.** Every pass over a page follows them; the owner's time is the cost.
+Each has a real page as its pair. Enforced by rule 5: `test/attention.test.ts`.
+
+1. **One answer.** A page answers its one question at first sight. State is a word and a glyph, not a sentence.
+   - Do: `securityPage` gives each fact a toned `badge` (Recent, Overdue), not a paragraph.
+   - Don't: `previewSection` (`src/web/pages/apps.ts`) says "The last deploy of this preview failed. Push again to redeploy it." where `Failed` with the tone says it.
+2. **No notes.** Explanatory prose that does not change a decision goes. Help lives in one place, on demand.
+   - Do: the home composer is the sentence of purpose and the control itself (`studioHome`).
+   - Don't: a `<p class="muted small">` under a list that explains what the list is; the heading already did.
+3. **Real depth only.** Details, history, logs and evidence open in place, in their own compartment. The essential is never one tap away, and nothing is a tap with nothing behind it.
+   - Do: the `disclosure` in `src/web/ui.ts` (used in `src/web/pages/new-forge.ts`) holds the optional extras; the choice stays on the page.
+   - Don't: a disclosure that opens onto one line, or one that hides the verdict.
+4. **Compartments.** Each concern sits in one region with one heading, in the same order on every page. Regions never repeat each other.
+   - Do: `/settings`, where each concern is one `settings-block` with one heading.
+   - Don't: the same fact in the header, the tab count and a status line, as the Pulls tab and its list once did (#10312).
+5. **Measured.** Every page has a first-view budget at a narrow (390 px) and a wide (1280 px) width: visible words, text blocks and distinct colours, in `docs/design/attention-budget.json`. A page over its budget fails `test/attention.test.ts`. A pass may lower a budget; raising one needs a note in the pull. See `docs/features/attention.md`.
+
 **Worked examples.**
 - `src/web/studio/home.ts`, `studioHome`: the `<h1 class="sr-only">Home</h1>` then `tellBox` is
   one sentence of purpose (1) and the real composer, not a picture of one (2); `<section class="stack">`

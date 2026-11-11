@@ -17,7 +17,7 @@ let owner: User;
 
 beforeAll(async () => {
   dataDir = await mkdtemp(join(tmpdir(), "forge-card-plugins-"));
-  app = createApp({ dataDir, port: 0 });
+  app = createApp({ dataDir, port: 0, forgeRepo: "trevato/forge" });
   servers = await serve(app);
   const made0 = await createUser(app.db, { origin: "seed", trusted: true, username: "trevato", email: "t@forge.local", password: "a-good-passphrase", adminIfFirst: true });
   if (!made0.ok) throw new Error(made0.error);
@@ -35,12 +35,16 @@ const setVisibility = async (visibility: "public" | "private") => {
   if (!r.ok) throw new Error(String(r.error));
 };
 
-test("a private plugin source offers no plugins in the card or llms.txt", async () => {
+test("a private own repository offers the upstream's plugins, in the card and llms.txt alike", async () => {
   const card = (await fetch(`${servers.url}/.well-known/mcp.json`).then((r) => r.json())) as any;
   const llms = await fetch(`${servers.url}/llms.txt`).then((r) => r.text());
-  expect(card.plugins).toEqual([]);
-  expect(llms).toContain("Harness plugins: not offered on this forge (their source is private)");
-  expect(llms).not.toContain("Claude Code plugin");
+  expect(card.plugins.map((p: any) => p.harness).sort()).toEqual(["claude-code", "opencode"]);
+  for (const p of card.plugins) {
+    expect(p.source).toBe("https://forge.open-platform.sh/trevato/forge.git");
+    expect(llms).toContain(p.install);
+  }
+  expect(llms).not.toContain("not offered here");
+  expect(llms).not.toContain(`${servers.url}/trevato/forge.git`);
   expect(llms).not.toContain("needs that repository to be public");
 });
 
@@ -60,10 +64,9 @@ test("card and llms.txt name both plugins, their install lines, and paths that e
     expect(p.install).not.toMatch(/\bcp /);
   }
   const claude = card.plugins.find((p: any) => p.harness === "claude-code");
-  expect(claude.install).toContain("--sparse");
-  expect(claude.install).toContain("--plugin-dir forge-plugin/plugins/claude-code");
+  expect(claude.install).toBe(`claude plugin marketplace add ${servers.url}/plugins/claude-code/marketplace.json && claude plugin install forge@forge`);
   const oc = card.plugins.find((p: any) => p.harness === "opencode");
-  expect(oc.install).toContain(`curl -fsSL ${servers.url}/trevato/forge/raw/main/plugins/opencode/forge.ts`);
+  expect(oc.install).toContain(`${servers.url}/plugins/opencode/forge.ts`);
   for (const p of card.plugins) expect(existsSync(join(import.meta.dir, "..", p.path))).toBe(true);
   expect(card.name).toBe("forge");
 });
@@ -72,6 +75,47 @@ test("llms.txt follows the source going private again, not its cached body", asy
   await setVisibility("public");
   expect(await fetch(`${servers.url}/llms.txt`).then((r) => r.text())).toContain("OpenCode plugin");
   await setVisibility("private");
-  expect(await fetch(`${servers.url}/llms.txt`).then((r) => r.text())).not.toContain("OpenCode plugin");
-  expect(((await fetch(`${servers.url}/.well-known/mcp.json`).then((r) => r.json())) as any).plugins).toEqual([]);
+  const text = await fetch(`${servers.url}/llms.txt`).then((r) => r.text());
+  expect(text).toContain("OpenCode plugin");
+  expect(text).not.toContain(`${servers.url}/trevato/forge.git`);
+  expect(((await fetch(`${servers.url}/.well-known/mcp.json`).then((r) => r.json())) as any).plugins[0].source).toBe("https://forge.open-platform.sh/trevato/forge.git");
+});
+
+test("the plugin repository is the configured source: an admin's setting outranks FORGE_REPO, in the card and llms.txt alike", async () => {
+  const { setForgeSource } = await import("../src/settings/forge_source.ts");
+  await setVisibility("public");
+  const made = await createRepo(app, owner, { name: "kit", visibility: "public" });
+  if (!made.ok) throw new Error(String(made.error));
+  setForgeSource(app.db, "trevato/kit", owner.id);
+  try {
+    const card = (await fetch(`${servers.url}/.well-known/mcp.json`).then((r) => r.json())) as any;
+    const llms = await fetch(`${servers.url}/llms.txt`).then((r) => r.text());
+    for (const p of card.plugins) {
+      expect(p.source).toBe(`${servers.url}/trevato/kit.git`);
+      expect(llms).toContain(p.install);
+    }
+    expect(llms).not.toContain(`${servers.url}/trevato/forge.git`);
+  } finally {
+    setForgeSource(app.db, null, owner.id);
+  }
+  expect(((await fetch(`${servers.url}/.well-known/mcp.json`).then((r) => r.json())) as any).plugins[0].source).toBe(`${servers.url}/trevato/forge.git`);
+});
+
+test("the upstream stands in while the own repository is private or unset, and with neither nothing is offered", async () => {
+  const bare = createApp({ dataDir: join(dataDir, "bare"), port: 0 });
+  const { offeredPluginRepo } = await import("../src/core/mcp_card.ts");
+  const { UPSTREAM_REPO } = await import("../src/core/upstream.ts");
+  await setVisibility("private");
+  expect(offeredPluginRepo(bare.db, bare.config.forgeRepo, UPSTREAM_REPO)).toBe(UPSTREAM_REPO);
+  expect(offeredPluginRepo(app.db, "trevato/forge", UPSTREAM_REPO)).toBe(UPSTREAM_REPO); // private here
+  expect(offeredPluginRepo(app.db, "trevato/nothing", UPSTREAM_REPO)).toBe(UPSTREAM_REPO);
+  await setVisibility("public");
+  expect(offeredPluginRepo(app.db, "trevato/forge", UPSTREAM_REPO)).toBe("trevato/forge");
+  await setVisibility("private");
+  // Neither source: the cloned plugin is not offered; the one this forge serves still is.
+  expect(offeredPluginRepo(bare.db, undefined, undefined)).toBeUndefined();
+  expect(offeredPluginRepo(app.db, "trevato/forge", undefined)).toBeUndefined();
+  const { mcpCard } = await import("../src/core/mcp_card.ts");
+  expect(mcpCard("http://x.test", undefined).plugins.map((p: any) => p.harness)).toEqual(["opencode"]);
+  bare.close();
 });

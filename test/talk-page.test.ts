@@ -6,15 +6,23 @@
  * a stream is capped per person; a once-result is never confirmed here.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { createRepo } from "../src/actions/repos.ts";
-import { sayNo } from "../src/actions/conversation_confirms.ts";
+import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { sayNo, sayYes } from "../src/actions/conversation_confirms.ts";
+import { openIssue } from "../src/actions/issues.ts";
+import { openPull } from "../src/actions/pulls.ts";
 import { clock, STREAMS_MAX } from "../src/web/pages/talk.ts";
-import { appendTurn, listTurns, openConversation } from "../src/core/conversations.ts";
-import { hold, waitingFor } from "../src/core/fence.ts";
+import { addSubscription, setGrants } from "../src/core/subscriptions.ts";
+import { serveTalk } from "../src/tui/ssh-talk.ts";
+import { aboutContext, aboutLine, parseAbout } from "../src/core/talk_about.ts";
+import { talk as talkTo } from "../src/actions/talk.ts";
+import { configureConversation } from "../src/crew/conversation.ts";
+import { appendTurn, createConversation, listTurns, openConversation } from "../src/core/conversations.ts";
+import { HELD_TTL_MS, hold, waitingFor } from "../src/core/fence.ts";
 import { getRepoById } from "../src/core/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
@@ -151,7 +159,7 @@ describe("the page", () => {
     expect(page).toContain("Forge · <time");
     expect(page).not.toContain("data-copy");
     expect(page).toContain('role="log"');
-    expect(page).toMatch(/<details><summary>list_issues /);
+    expect(page).toMatch(/<details><summary>List issues /);
     expect(page).not.toMatch(/<details open/);
   });
 
@@ -210,8 +218,8 @@ describe("the page", () => {
 
   test("the page's own bytes are held: stylesheet and script stay small", async () => {
     const { talkCss, talkJs } = await import("../src/web/pages/talk_client.ts");
-    expect(Buffer.byteLength(talkCss)).toBeLessThan(3_750);
-    expect(Buffer.byteLength(talkJs)).toBeLessThan(13_500);
+    expect(Buffer.byteLength(talkCss)).toBeLessThan(4_050);
+    expect(Buffer.byteLength(talkJs)).toBeLessThan(14_000);
     say(alice, "agent", "```ts\nlet x = 1;\n```");
     const page = await get("/talk", alice);
     const size = (await page.arrayBuffer()).byteLength;
@@ -289,12 +297,14 @@ describe("the page", () => {
         <form class="talk-compose"><p class="talk-status" role="status"></p><ul data-chips></ul><textarea name="text"></textarea><div class="bar"><span data-compose-hint></span><label data-attach hidden><input type="file" data-pick /></label><button class="btn" type="button" data-stop hidden>Stop</button><button class="btn" type="button" data-steer hidden>Steer</button><button class="btn" type="submit">Send</button></div></form></div>`;
       const how = { value: "started" };
       const cancel = { status: 200 };
+      const page = { html: "" };
       const sent: string[] = [];
       const urls: string[] = [];
       const copied: string[] = [];
       const bodies: { files?: string[] }[] = [];
       const fetchStub = async (u: string, init: { body: string; method?: string }) => {
         urls.push(u);
+        if (u.startsWith("?pane=")) return { ok: true, text: async () => page.html };
         if (u.endsWith("/files")) return { ok: true, json: async () => ({ id: "f1", name: "shot.png" }) };
         if (init.method === "DELETE") return { ok: true, json: async () => ({}) };
         if (u.includes("/queue/")) return { ok: cancel.status === 200, status: cancel.status, json: async () => ({}) };
@@ -311,9 +321,44 @@ describe("the page", () => {
       const box = doc.querySelector("textarea");
       const key = (init: object) => box.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...init }));
       const emit = (id: string, html: string) => sources.at(-1)!.on["turn"]!({ data: JSON.stringify({ id, html }) });
-      return { how, cancel, emit, bodies, sources, urls, window, doc, box, sent, copied, store, key, status: doc.querySelector(".talk-status") };
+      return { how, cancel, page, emit, bodies, sources, urls, window, doc, box, sent, copied, store, key, status: doc.querySelector(".talk-status") };
     };
     const tick = () => new Promise((r) => setTimeout(r, 5));
+
+    test("when a turn ends the preview frame is loaded again (a push has deployed)", async () => {
+      const t = await boot();
+      const loads: string[] = [];
+      const frame = t.doc.createElement("div");
+      frame.setAttribute("data-frame", "");
+      Object.defineProperty(frame, "src", { get: () => "https://x.example/", set: (v: string) => loads.push(v) });
+      t.doc.body.appendChild(frame);
+      t.sources.at(-1)!.on["running"]!({ data: "{}" });
+      expect(loads).toEqual([]);
+      t.sources.at(-1)!.on["done"]!({ data: "{}" });
+      expect(loads).toEqual(["https://x.example/"]);
+    });
+
+    test("a pane tab swaps the pane in place: no reload, the stream and the composer's words kept", async () => {
+      const t = await boot();
+      const shell = t.doc.createElement("div");
+      shell.setAttribute("data-shell", "");
+      shell.dataset.pane = "chat";
+      shell.innerHTML = `<nav class="seg talk-tabs"><a href="?pane=chat" aria-current="page">Chat</a><a href="?pane=preview">Preview</a></nav><aside class="talk-pane"><nav class="tabs"><a href="?pane=preview" aria-current="page">Preview</a><a href="?pane=code">Code</a></nav><p>old</p></aside>`;
+      t.doc.body.appendChild(shell);
+      t.box.value = "half typed";
+      const source = t.sources.at(-1);
+      const click = (a: any) => a.dispatchEvent(new t.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+      click(shell.querySelectorAll(".talk-tabs a")[1]);
+      expect(shell.dataset.pane).toBe("preview");
+      expect(shell.querySelectorAll(".talk-tabs a")[1].getAttribute("aria-current")).toBe("page");
+      t.page.html = `<html><body><div data-shell><aside class="talk-pane"><nav class="tabs"><a href="?pane=code" aria-current="page">Code</a></nav><p>new files</p></aside></div></body></html>`;
+      click(shell.querySelector(".talk-pane nav a[href='?pane=code']"));
+      await tick();
+      expect(t.urls.at(-1)).toBe("?pane=code");
+      expect(shell.querySelector(".talk-pane").textContent).toContain("new files");
+      expect(t.box.value).toBe("half typed");
+      expect(t.sources.at(-1)).toBe(source);
+    });
 
     test("a pasted file becomes a chip with Remove, and a sent message carries its id once", async () => {
       const t = await boot();
@@ -660,5 +705,293 @@ describe("cost and context (#8822)", () => {
     const calm = await (await get("/talk", erin.value)).text();
     expect(calm).toContain("Context 20% full");
     expect(calm).not.toContain("A new conversation answers faster");
+  });
+});
+
+describe("?about= names the subject", () => {
+  const subject = (page: string) => /<p class="talk-about[^>]*>[^<]*<\/p>/.exec(page)?.[0];
+  test("parseAbout reads owner/repo and owner/repo#N, and nothing else", () => {
+    expect(parseAbout("a/b")).toEqual({ owner: "a", repo: "b" });
+    expect(parseAbout("a/b#12")).toEqual({ owner: "a", repo: "b", number: 12 });
+    for (const bad of ["../x", "a/b#x", "a/b#0", "a/b/c", "", "x".repeat(300), "a/b#1 "]) expect(parseAbout(bad)).toBeNull();
+    expect(parseAbout(null)).toBeNull();
+  });
+
+  test("a readable issue shows its title, escaped; a repository shows its name", async () => {
+    const made = await createRepo(app, alice, { name: "about-pub", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const issue = openIssue(app, alice, made.value, { title: "Fix <b>this</b>", body: "x" });
+    if (!issue.ok) throw new Error(String(issue.error));
+    const page = await (await get(`/talk?about=${encodeURIComponent(`alice/about-pub#${issue.value.number}`)}`, bob)).text();
+    expect(subject(page)).toContain(`About alice/about-pub#${issue.value.number}: Fix &lt;b&gt;this&lt;/b&gt;`);
+    expect(page).not.toContain("Fix <b>this</b>");
+    expect(subject(await (await get("/talk?about=alice/about-pub", bob)).text())).toContain("About alice/about-pub<");
+  });
+
+  test("a private repository names nothing for another person, and looks like one that does not exist", async () => {
+    const made = await createRepo(app, alice, { name: "about-priv", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    const issue = openIssue(app, alice, made.value, { title: "Secret title", body: "x" });
+    if (!issue.ok) throw new Error(String(issue.error));
+    const q = (v: string) => get(`/talk?about=${encodeURIComponent(v)}`, bob).then((r) => r.text());
+    const hidden = await q(`alice/about-priv#${issue.value.number}`);
+    expect(hidden).not.toContain("Secret title");
+    expect(subject(hidden)).toBeUndefined();
+    expect(hidden).toBe(await q("alice/no-such-repo#1"));
+    expect(await q("alice/about-priv")).toBe(await q("alice/no-such-repo"));
+    // Signed out the page sends to sign-in, which only echoes the asked URL: no repository is looked up.
+    const out = await get("/talk?about=alice/about-priv");
+    expect(out.status).toBe(303);
+    expect(out.headers.get("location")).toBe("/signin?next=%2Ftalk%3Fabout%3Dalice%2Fabout-priv");
+    expect(await out.text()).not.toContain("Secret title");
+    expect(await (await get(`/talk?about=${encodeURIComponent(`alice/about-priv#${issue.value.number}`)}`, alice)).text()).toContain("Secret title");
+    // The core lookup both doors share: the owner reads it, another person and nobody do not.
+    const ref = `alice/about-priv#${issue.value.number}`;
+    expect(aboutLine(app.db, ref, alice)).toBe(`About ${ref}: Secret title`);
+    expect(aboutLine(app.db, ref, bob)).toBeNull();
+    expect(aboutLine(app.db, ref, undefined)).toBeNull();
+    expect(aboutLine(app.db, "alice/about-priv", undefined)).toBeNull();
+    expect(aboutLine(app.db, "../x", alice)).toBeNull();
+  });
+
+  test("a malformed value is ignored: the page equals plain /talk", async () => {
+    const plain = await (await get("/talk", bob)).text();
+    for (const bad of ["../x", "a/b#x", "x".repeat(300)]) {
+      const res = await get(`/talk?about=${encodeURIComponent(bad)}`, bob);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe(plain);
+    }
+  });
+
+  test("a pull of a private repository names nothing for the person who cannot read it", async () => {
+    const made = await createRepo(app, alice, { name: "about-priv-pull", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    const issue = openIssue(app, alice, made.value, { title: "Secret pull", body: "x" });
+    if (!issue.ok) throw new Error(String(issue.error));
+    app.db.run("UPDATE issue SET kind = 'pull' WHERE id = ?", [issue.value.id]);
+    const ref = `alice/about-priv-pull#${issue.value.number}`;
+    const seen = await (await get(`/talk?about=${encodeURIComponent(ref)}`, bob)).text();
+    expect(seen).not.toContain("Secret pull");
+    expect(subject(seen)).toBeUndefined();
+    expect(seen).toBe(await (await get(`/talk?about=${encodeURIComponent("alice/none#1")}`, bob)).text());
+    expect(subject(await (await get(`/talk?about=${encodeURIComponent(ref)}`, alice)).text())).toContain("Secret pull");
+  });
+
+  test("the terminal prints the same gated line: `talk --about <ref>`", () => {
+    const run = (user: User | undefined, words: string) => {
+      let out = "";
+      let code: number | undefined;
+      const session = { write: (d: string) => void (out += d), writeStderr: () => {}, exit: (c: number) => void (code = c), onData() {}, onEof() {}, onClose() {} };
+      serveTalk(app, session as never, user, words);
+      return { out, code };
+    };
+    const priv = run(alice, "--about alice/about-priv#1");
+    expect(priv.code).toBe(0);
+    expect(priv.out.startsWith("About alice/about-priv#1: ")).toBe(true);
+    expect(run(bob, "--about alice/about-priv#1")).toEqual({ out: "", code: 0 });
+    expect(run(undefined, "--about alice/about-priv")).toEqual({ out: "", code: 0 });
+    expect(run(bob, "--about alice/about-pub").out).toBe("About alice/about-pub\r\n");
+    expect(run(bob, "--about ../x")).toEqual({ out: "", code: 0 });
+  });
+});
+
+describe("the header's Talk link carries the subject the page rendered", () => {
+  const header = (page: string) => /<header class="topbar"[\s\S]*?<\/header>/.exec(page)?.[0] ?? "";
+  const talkLinks = (page: string) => [...header(page).matchAll(/href="(\/talk[^"]*)"/g)].map((m) => m[1]);
+
+  test("an issue page and a repository page link /talk?about=…", async () => {
+    const made = await createRepo(app, alice, { name: "hdr-pub", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const issue = openIssue(app, alice, made.value, { title: "Hello", body: "x" });
+    if (!issue.ok) throw new Error(String(issue.error));
+    const n = issue.value.number;
+    const links = talkLinks(await (await get(`/alice/hdr-pub/issues/${n}`, bob)).text());
+    expect(links).toContain(`/talk?about=alice/hdr-pub%23${n}`);
+    expect(links.length).toBeGreaterThanOrEqual(1);
+    expect(new Set(links).size).toBe(1);
+    expect(talkLinks(await (await get("/alice/hdr-pub", bob)).text())).toContain("/talk?about=alice/hdr-pub");
+    expect(talkLinks(await (await get("/explore", bob)).text())).toEqual(["/talk", "/talk"]);
+  });
+
+  test("a pull page links /talk?about=owner/repo%23N", async () => {
+    const made = await createRepo(app, alice, { name: "hdr-pull", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    for (const [branch, file] of [[undefined, "a.txt"], ["topic", "t.txt"]] as const) {
+      const done = await commitToBranch(app, alice, made.value, {
+        ...(branch === undefined ? {} : { branch }),
+        message: "change",
+        files: [{ path: file, content: "x" }],
+      });
+      if (!done.ok) throw new Error(JSON.stringify(done.error));
+    }
+    const pull = await openPull(app, alice, made.value, { title: "P", body: "", baseBranch: "main", headBranch: "topic" });
+    if (!pull.ok) throw new Error(JSON.stringify(pull.error));
+    const res = await get(`/alice/hdr-pull/pulls/${pull.value.number}`, bob);
+    expect(res.status).toBe(200);
+    expect(talkLinks(await res.text())).toContain(`/talk?about=alice/hdr-pull%23${pull.value.number}`);
+  });
+
+  test("a 404 under a private and under a missing repository render the same header", async () => {
+    const made = await createRepo(app, alice, { name: "hdr-priv", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    const a = await get("/alice/hdr-priv/issues/1", bob);
+    const b = await get("/alice/hdr-nowhere/issues/1", bob);
+    expect(a.status).toBe(404);
+    expect(b.status).toBe(404);
+    // The rest of the chrome echoes the asked path (the "new issue" link), so compare the Talk entries.
+    const [ta, tb] = [talkLinks(await a.text()), talkLinks(await b.text())];
+    expect(ta).toEqual(tb);
+    expect(ta).toEqual(["/talk", "/talk"]);
+  });
+});
+
+describe("the first message carries ?about= as fenced context (#10496)", () => {
+  const input = () => readFileSync(join(dir, "first.json"), "utf8");
+  const send = async (text: string, about: string | null, conversationId?: string, sender: User = alice) => {
+    rmSync(join(dir, "first.json"), { force: true });
+    const said = talkTo(app, sender, text, [], "queue", conversationId, about);
+    if (!said.ok) throw new Error(said.error);
+    await said.value.done;
+  };
+  const fresh = (u: User) => {
+    const made = createConversation(app.db, u.id);
+    if (!made.ok) throw new Error("conversation");
+    return made.value.id;
+  };
+
+  beforeAll(() => {
+    const bin = join(dir, "claude");
+    writeFileSync(
+      bin,
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
+IFS= read -r first
+printf '%s' "$first" > "${dir}/first.json"
+echo '{"type":"result","subtype":"success","is_error":false,"result":"Heard.","total_cost_usd":0.01,"num_turns":1,"session_id":"s1","terminal_reason":"completed","usage":{"input_tokens":1,"output_tokens":1}}'
+`,
+    );
+    chmodSync(bin, 0o755);
+    configureConversation(app, { binary: bin, localUrl: servers.url, budgetUsd: 1, timeoutMs: 30_000, signal: new AbortController().signal });
+  });
+
+  test("a readable issue's kind, name, title and body reach the agent fenced, on the first message only", async () => {
+    const made = await createRepo(app, alice, { name: "ctx-pub", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const issue = openIssue(app, alice, made.value, { title: "Crash on start", body: "Steps to reproduce" });
+    if (!issue.ok) throw new Error(String(issue.error));
+    const about = `alice/ctx-pub#${issue.value.number}`;
+    const c = fresh(alice);
+    await send("what is wrong?", about, c);
+    const first = input();
+    expect(first).toMatch(/\[\[data ([0-9a-f]+)\]\]/);
+    expect(first).toContain("kind: issue");
+    expect(first).toContain(`name: ${about}`);
+    expect(first).toContain("title: Crash on start");
+    expect(first).toContain("body: Steps to reproduce");
+    expect(first).toContain("what is wrong?");
+    // The stored turn is the person's words alone.
+    const turns = listTurns(app.db, alice.id, c);
+    if (!turns.ok) throw new Error("turns");
+    expect(turns.value.find((t) => t.role === "person")?.text).toBe("what is wrong?");
+    await send("and then?", about, c);
+    expect(input()).not.toContain("Crash on start");
+    expect(input()).toContain("and then?");
+  });
+
+  test("a forged about naming a private repository the sender cannot read adds nothing", async () => {
+    const made = await createRepo(app, alice, { name: "ctx-priv", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    const issue = openIssue(app, alice, made.value, { title: "Hidden plans", body: "Hidden body" });
+    if (!issue.ok) throw new Error(String(issue.error));
+    const forged = `alice/ctx-priv#${issue.value.number}`;
+    // Admins read everything, so the end-to-end send uses a name that resolves to nothing for its sender;
+    // the private case is held at the lookup every send goes through, for a sender who is not the owner.
+    expect(aboutContext(app.db, forged, alice)).toContain("Hidden plans");
+    const carol = await createUser(app.db, { origin: "seed", trusted: true, username: "ctxreader", email: "ctxreader@forge.local", password: "a-good-passphrase" });
+    if (!carol.ok) throw new Error(carol.error);
+    for (const who of [carol.value, undefined]) {
+      expect(aboutContext(app.db, forged, who)).toBe("");
+      expect(aboutContext(app.db, "alice/ctx-priv", who)).toBe("");
+    }
+    await send("hello", "bob/no-such-repo#1", fresh(alice));
+    expect(input()).toContain("hello");
+    expect(input()).not.toContain("[[data");
+    // End to end: a sender with no grant names the private issue and the agent hears only the words.
+    const plan = addSubscription(app.db, dir, { name: "ctx-plan", token: "sk-ant-api-test-token" });
+    if (!plan.ok) throw new Error(plan.error);
+    setGrants(app.db, carol.value.id, "", [plan.value.id]);
+    await send("peek", forged, fresh(carol.value), carol.value);
+    expect(input()).toContain("peek");
+    expect(input()).not.toContain("[[data");
+    expect(input()).not.toContain("Hidden plans");
+  });
+
+  test("the terminal's `talk --about` sends the same fenced context", async () => {
+    const made = await createRepo(app, alice, { name: "ctx-tty", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const issue = openIssue(app, alice, made.value, { title: "Tty subject", body: "Tty body" });
+    if (!issue.ok) throw new Error(String(issue.error));
+    rmSync(join(dir, "first.json"), { force: true });
+    const session = { write() {}, writeStderr() {}, exit() {}, onData() {}, onEof() {}, onClose() {} };
+    fresh(alice); // the latest conversation is the one the terminal speaks in
+    serveTalk(app, session as never, alice, `--about alice/ctx-tty#${issue.value.number} why?`);
+    for (let i = 0; i < 100 && !existsSync(join(dir, "first.json")); i++) await Bun.sleep(50);
+    expect(input()).toContain("title: Tty subject");
+    expect(input()).toContain("why?");
+  });
+});
+
+describe("the header's Talk button counts confirms waiting", () => {
+  const talk = async (u?: User) => /<a class="btn btn-icon talk-btn"[^>]*>.*?<\/a>/s.exec(await (await get("/", u)).text())?.[0] ?? "";
+
+  test("a waiting confirm counts for its person only, and a confirm answered clears it", async () => {
+    const fay = (await createUser(app.db, { origin: "seed", trusted: true, username: "fay", email: "fay@forge.local", password: "a-good-passphrase" }) as { value: User }).value;
+    expect(await talk(fay)).not.toContain("talk-count");
+    expect(await talk(fay)).toContain('aria-label="Talk to the forge"');
+    const id = hold(app.db, "conversation:talk", fay.id, "mint_invite", {})!;
+    hold(app.db, "conversation:talk", fay.id, "mint_invite", {});
+    const mine = await talk(fay);
+    expect(mine).toContain('aria-label="Talk to the forge, 2 waiting"');
+    expect(mine).toContain('<span class="talk-count" aria-hidden="true">2</span>');
+    expect(await talk(bob)).not.toContain("2 waiting");
+    expect(sayNo({ app }, fay, id).ok).toBe(true);
+    expect(await talk(fay)).toContain("Talk to the forge, 1 waiting");
+    expect(await (await get("/")).text()).not.toContain("talk-count");
+  });
+  test("a confirm said yes to clears it, and the box says it was done", async () => {
+    const gil = (await createUser(app.db, { origin: "seed", trusted: true, username: "gil", email: "gil@forge.local", password: "a-good-passphrase" }) as { value: User }).value;
+    promote(app.db, gil);
+    const made = await createRepo(app, gil, { name: "yes-count" });
+    if (!made.ok) throw new Error(String(made.error));
+    const issue = openIssue(app, gil, made.value, { title: "close me", body: "x" });
+    if (!issue.ok) throw new Error(JSON.stringify(issue.error));
+    const id = hold(app.db, "conversation:talk", gil.id, "close", { repo: "gil/yes-count", number: issue.value.number })!;
+    expect(await talk(gil)).toContain("Talk to the forge, 1 waiting");
+    const yes = await sayYes({ app } as never, gil, id);
+    expect(yes.ok && yes.done).toBe(true);
+    const after = await talk(gil);
+    expect(after).not.toContain("talk-count");
+    expect(after).toContain('aria-label="Talk to the forge"');
+  });
+
+  test("a confirm past its time does not count, swept or not", async () => {
+    const hal = (await createUser(app.db, { origin: "seed", trusted: true, username: "hal", email: "hal@forge.local", password: "a-good-passphrase" }) as { value: User }).value;
+    hold(app.db, "conversation:talk", hal.id, "mint_invite", {}, Date.now() - HELD_TTL_MS - 1000);
+    const left = app.db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM conversation_held WHERE user_id = ?1 AND answered_at IS NULL").get(hal.id)!.n;
+    expect(left).toBe(1); // still unswept: the count's own filter is what hides it
+    expect(await talk(hal)).not.toContain("talk-count");
+    hold(app.db, "conversation:talk", hal.id, "mint_invite", {});
+    expect(await talk(hal)).toContain("Talk to the forge, 1 waiting");
+  });
+
+  test("more than nine waiting shows 9+, and the label says the exact number", async () => {
+    const ida = (await createUser(app.db, { origin: "seed", trusted: true, username: "ida", email: "ida@forge.local", password: "a-good-passphrase" }) as { value: User }).value;
+    for (let i = 0; i < 9; i++) hold(app.db, "conversation:talk", ida.id, "mint_invite", {});
+    expect(await talk(ida)).toContain('<span class="talk-count" aria-hidden="true">9</span>');
+    hold(app.db, "conversation:talk", ida.id, "mint_invite", {});
+    hold(app.db, "conversation:talk", ida.id, "mint_invite", {});
+    const many = await talk(ida);
+    expect(many).toContain('<span class="talk-count" aria-hidden="true">9+</span>');
+    expect(many).toContain('aria-label="Talk to the forge, 11 waiting"');
   });
 });

@@ -15,6 +15,8 @@ import type { PipelineStage } from "./pipeline.ts";
 export interface MovingRow {
   readonly who: string;
   readonly title: string;
+  /** The title whole, for a hover or a screen reader: cutting `title` loses nothing. */
+  readonly full: string;
   readonly href: string;
   readonly at: string;
   /** `owner/name`, for the row's title attribute. */
@@ -22,6 +24,18 @@ export interface MovingRow {
 }
 
 export const MOVING_ROWS = 3;
+/** Longest title a home row shows. */
+export const TITLE_MAX = 60;
+
+/** A title cut at a word boundary, with an ellipsis; whole when it fits. */
+export function shortTitle(title: string, max = TITLE_MAX): string {
+  const t = title.replace(/\s+/g, " ").trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const at = cut.lastIndexOf(" ");
+  // One long unbroken token has no boundary to cut at: it is cut at the limit.
+  return `${(at > max / 2 ? cut.slice(0, at) : cut).replace(/[\s:,;.\-–]+$/, "")}…`;
+}
 /** Rows read before the viewer's access filters them; bounded, so the read is. */
 const SCAN = 40;
 
@@ -30,6 +44,8 @@ interface Raw {
   number: number;
   title: string;
   sealed: number;
+  /** The item's kind, when the read names it: a run may work a pull. */
+  kind?: "issue" | "pull";
   who: string | null;
   at: string;
 }
@@ -64,8 +80,9 @@ function visible(db: Database, viewer: User, raw: readonly Raw[], path: string, 
     if (repo === undefined) continue;
     out.push({
       who: r.who ?? "",
-      title: r.title,
-      href: `/${repo.ownerName}/${repo.name}/${path}/${r.number}`,
+      title: shortTitle(r.title),
+      full: r.title.replace(/\s+/g, " ").trim(),
+      href: `/${repo.ownerName}/${repo.name}/${r.kind === undefined ? path : r.kind === "pull" ? "pulls" : "issues"}/${r.number}`,
       at: r.at,
       repo: `${repo.ownerName}/${repo.name}`,
     });
@@ -74,11 +91,11 @@ function visible(db: Database, viewer: User, raw: readonly Raw[], path: string, 
   return out;
 }
 
-/** Agent builds running now (reviews are not building), newest first, each on the issue it works. */
+/** Agent builds running now (reviews are not building), newest first, each on the issue or pull it works. */
 export function readBuilding(db: Database, viewer: User, limit = MOVING_ROWS): MovingRow[] {
   const raw = scanned(db, "building", () => db
     .query<Raw, [number]>(
-      `SELECT r.repo_id, i.number, i.title, i.sealed, u.username AS who, COALESCE(r.started_at, r.created_at) AS at
+      `SELECT r.repo_id, i.number, i.title, i.sealed, i.kind, u.username AS who, COALESCE(r.started_at, r.created_at) AS at
          FROM run r JOIN issue i ON i.id = r.issue_id LEFT JOIN user u ON u.id = r.actor_id
         WHERE r.kind = 'agent' AND r.state = 'running' AND r.reason != 'review'
         ORDER BY at DESC LIMIT ?1`,

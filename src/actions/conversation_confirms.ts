@@ -14,7 +14,7 @@
 
 import { actingVia } from "../core/acting_via.ts";
 import { appendTurn, conversationOfVia, MAX_TURN_CHARS } from "../core/conversations.ts";
-import { answerHeld, HELD_TTL_MS, waitingFor, type YesRefusal } from "../core/fence.ts";
+import { answerHeld, countWaiting, HELD_TTL_MS, waitingFor, type YesRefusal } from "../core/fence.ts";
 import type { User } from "../core/users.ts";
 import { argumentsShown, confirmSentence, keptOf, undoOf } from "../crew/conversation_confirm.ts";
 import type { Ctx } from "../http/context.ts";
@@ -41,6 +41,11 @@ export function waitingConfirms(ctx: Pick<Ctx, "app">, user: User, now: number =
     createdAt: h.createdAt,
     expiresAt: new Date(Date.parse(h.createdAt) + HELD_TTL_MS).toISOString(),
   }));
+}
+
+/** How many confirms wait on the person's yes, for the header's Talk button. */
+export function waitingCount(ctx: Pick<Ctx, "app">, user: User, now: number = Date.now()): number {
+  return countWaiting(ctx.app.db, user.id, now);
 }
 
 export const CONFIRM_ID = /^[0-9a-z]{1,40}$/;

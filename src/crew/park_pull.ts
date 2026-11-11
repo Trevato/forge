@@ -13,6 +13,7 @@ import { closesFromBody, type Pull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
 import { getUserById } from "../core/users.ts";
 import { createLog } from "../kernel/log.ts";
+import { triesChanged } from "./tries.ts";
 import { authorsInRepoPull } from "./authors_pull.ts";
 import {
   PARK_NOTE,
@@ -74,6 +75,7 @@ export function parkPull(
   repo: Repo,
   pull: Pull,
   why: string,
+  tries: readonly string[] = [],
 ): boolean {
   if (repo.autonomy !== "autonomous" || repo.autonomyBy === null) return false;
   if (getHold(app.db, pull.id) !== undefined) return false;
@@ -96,12 +98,15 @@ export function parkPull(
       by,
       repo,
       about,
-      strikeNote(
-        app.db,
-        repo,
-        about,
-        `${why} (pull #${pull.number} closed).`,
-        PLANNER_HINT,
+      withTries(
+        strikeNote(
+          app.db,
+          repo,
+          about,
+          `${why} (pull #${pull.number} closed; its branch \`${pull.headBranch}\` at ${pull.headOid.slice(0, 12)} keeps the work so far).`,
+          PLANNER_HINT,
+        ),
+        tries,
       ),
     );
   }
@@ -111,4 +116,28 @@ export function parkPull(
     why,
   });
   return true;
+}
+
+/**
+ * A note with a line per failed try after its reason's paragraph, so
+ * `parkReason` still reads only the reason. Only a pull that went red more
+ * than once has anything to tell.
+ */
+function withTries(note: string, tries: readonly string[]): string {
+  return tries.length < 2 ? note : `${note}\n\n${tries.join("\n")}`;
+}
+
+/**
+ * `parkPull`, with the files each red head told in the issue's note: the
+ * heads after `since` (the last human word), the tries that counted.
+ */
+export async function parkPullTold(
+  app: App,
+  repo: Repo,
+  pull: Pull,
+  why: string,
+  since: string,
+): Promise<boolean> {
+  const tries = await triesChanged(app, repo, pull, since).catch(() => []);
+  return parkPull(app, repo, pull, why, tries);
 }

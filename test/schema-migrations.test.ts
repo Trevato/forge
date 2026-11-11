@@ -377,8 +377,8 @@ describe("a migration is a file named by a sortable id (#1837)", () => {
   test("two pulls' migrations land in either order and the schema ends the same", () => {
     // Two builders, each adding one migration at the second they wrote it:
     // a's after b's, so b sorts first whichever lands first.
-    const a = { "20261015120000-deploy-note.ts": "CREATE TABLE deploy_note (id TEXT PRIMARY KEY, body TEXT NOT NULL DEFAULT '')" };
-    const b = { "20261015110000-user-motto.ts": "ALTER TABLE user ADD COLUMN motto TEXT NOT NULL DEFAULT ''; CREATE INDEX user_motto ON user(motto)" };
+    const a = { "20991231120000-deploy-note.ts": "CREATE TABLE deploy_note (id TEXT PRIMARY KEY, body TEXT NOT NULL DEFAULT '')" };
+    const b = { "20991231110000-user-motto.ts": "ALTER TABLE user ADD COLUMN motto TEXT NOT NULL DEFAULT ''; CREATE INDEX user_motto ON user(motto)" };
     const both = listIn(directory({ ...a, ...b }));
     expect(both.length).toBe(migrations.length + 2);
 
@@ -397,12 +397,12 @@ describe("a migration is a file named by a sortable id (#1837)", () => {
     for (const path of [aFirst, bFirst, together]) {
       const db = new Database(path, { readonly: true, strict: true });
       const names = db
-        .query<{ name: string }, []>("SELECT name FROM schema_migration WHERE name LIKE '2026101511%' OR name LIKE '2026101512%' ORDER BY name")
+        .query<{ name: string }, []>("SELECT name FROM schema_migration WHERE name LIKE '2099123111%' OR name LIKE '2099123112%' ORDER BY name")
         .all()
         .map((row) => row.name);
       db.close();
-      expect(names).toContain("20261015110000-user-motto");
-      expect(names).toContain("20261015120000-deploy-note");
+      expect(names).toContain("20991231110000-user-motto");
+      expect(names).toContain("20991231120000-deploy-note");
     }
     const db = openDb(together, both);
     expect(has(db, "deploy_note")).toBe(true);

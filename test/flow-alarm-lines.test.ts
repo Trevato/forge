@@ -56,7 +56,7 @@ describe("alarm lines", () => {
       for (const path of ["/boards", "/"]) {
         const body = await (await fetch(servers.url + path, { headers })).text();
         expect(body.includes("nothing has gone live"), `${path} ${String(merged)}`).toBe(want);
-        expect(body.includes('role="alert"')).toBe(want);
+        expect(body.includes('role="alert"'), `${path} ${String(merged)} draws a line, not an alert`).toBe(false);
       }
       await servers.stop?.();
     }
@@ -67,7 +67,7 @@ describe("alarm lines", () => {
     expect(flowFor(app, { kind: "owner" }).alarms.map((a) => a.key)).toEqual(["no_release"]);
     const none = await seed();
     expect(flowFor(none.app, { kind: "owner" }).alarms).toEqual([]);
-    expect(firedAlarms(none.app.db, new Date())).toEqual([]);
+    expect(firedAlarms(none.app.db, new Date(), { dataDir: null })).toEqual([]);
   });
 
   test("the owner is told once when an alarm starts firing, not again while it stands", async () => {

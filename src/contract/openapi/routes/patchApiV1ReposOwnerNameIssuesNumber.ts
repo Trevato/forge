@@ -5,6 +5,7 @@ export const route: Route = {
   path: `${REPO}/issues/{number}`,
   summary: "Close or reopen an issue (state, with a reason and the issue it went into)",
   auth: true,
+  role: "member",
   body: { state: "string", reason: "string", into: "integer" },
   refusals: {
     forbidden:

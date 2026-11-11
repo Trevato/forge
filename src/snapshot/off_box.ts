@@ -11,7 +11,7 @@
  */
 
 import { lastMirror } from "./mirror.ts";
-import { lastSnapshotOutcome } from "./outcome.ts";
+import { lastSnapshotOutcome, offBoxAtOf } from "./outcome.ts";
 import type { Store } from "./store.ts";
 
 /** The host of a bucket's `where` (`host[:port]/bucket`), lower-cased, without its port or brackets. */
@@ -40,8 +40,8 @@ export function lastOffBox(dataDir: string): string | null {
   const mirrored = lastMirror(dataDir)?.newestAt;
   if (mirrored !== undefined && Number.isFinite(Date.parse(mirrored))) times.push(mirrored);
   const kept = lastSnapshotOutcome(dataDir);
-  if (kept?.offBox === true && kept.landedAt !== undefined && Number.isFinite(Date.parse(kept.landedAt)))
-    times.push(kept.landedAt);
+  const landed = offBoxAtOf(kept);
+  if (landed !== undefined && Number.isFinite(Date.parse(landed))) times.push(landed);
   if (times.length === 0) return null;
   return times.reduce((a, b) => (Date.parse(b) > Date.parse(a) ? b : a));
 }

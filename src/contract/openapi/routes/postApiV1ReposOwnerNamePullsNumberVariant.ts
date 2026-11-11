@@ -5,6 +5,7 @@ export const route: Route = {
   path: `${REPO}/pulls/{number}/variant`,
   summary: "Like or dislike a pull among its variant siblings (rw scope and write access); a dislike closes the pull with a one-line reason; answers 201 with { answer, closed }",
   auth: true,
+  role: "member",
   status: 201,
   body: { answer: "string", reason: "string" },
   refusals: {

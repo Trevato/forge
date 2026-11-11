@@ -9,7 +9,8 @@ import { setIssueState } from "../src/core/issues.ts";
 import { createPull } from "../src/core/pulls.ts";
 import { createRepo } from "../src/core/repos.ts";
 import { createUser } from "../src/core/users.ts";
-import { alarmDrift, clearDriftCache, branchTip, cachedDrift, driftAlarm, readDrift } from "../src/flow/alarm_drift.ts";
+import { driftSection } from "../src/web/pages/boards-drift.ts";
+import { alarmDrift, driftingPulls, readDrifts, clearDriftCache, branchTip, cachedDrift, driftAlarm, readDrift } from "../src/flow/alarm_drift.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
@@ -86,6 +87,17 @@ test("read from git: landings past a pull's base, open pulls only", async () => 
   expect(fired.says).toContain(`#${open.number} is 26 landings`);
   const both = await alarmDrift(app, new Date(Date.now()));
   expect(both.says).toBe(`#${open.number} is 26 landings behind main; #${shut.number} is 26 landings behind main.`);
+  // The list /boards and the MCP `flow` tool answer: furthest behind first, each with its update button.
+  const listed = driftingPulls(await readDrifts(app), Date.now());
+  expect(listed.map((d) => [d.repo, d.number, d.landings])).toEqual([
+    ["ada/svc", open.number, 26],
+    ["ada/svc", shut.number, 26],
+  ]);
+  expect(driftingPulls(await readDrifts(app, { publicOnly: true }), Date.now())).toHaveLength(2);
+  const card = String(driftSection(listed));
+  expect(card).toContain(`action="/ada/svc/pulls/${open.number}/update"`);
+  expect(card).toContain("26 landings");
+  expect(driftSection([])).toBeNull();
   setIssueState(app.db, shut.id, "closed");
   const one = await alarmDrift(app, new Date(Date.now()));
   expect(one.says).toBe(`#${open.number} is 26 landings behind main.`);

@@ -22,7 +22,7 @@ export const KPI_COUNTS = {
   traffic: "Who used the forge's answering time this minute and the 14 before, as a share of summed time to answer: people and tokens, named crawlers, anonymous readers on deep pages, other anonymous, the forge asking itself. Refused means answered 429.",
   visitors: "Browsers whose page sent a report back today (UTC); scrapers don't run the page, so they never count. The 7-day figure adds each day's count, so a browser seen on three days counts three times.",
   accounts: "Accounts with a browser session seen since UTC midnight, of every account including organizations and machine accounts; a token alone doesn't count.",
-  speed: "The slowest quarter of page views that reported back over 7 days: page load at the 75th percentile, and the delay after a tap. Scrapers don't report and an outage reports nothing, so this shows neither.",
+  speed: "The slowest quarter of page views that reported back over 7 days: page load at the 75th percentile, and the delay after a tap. LCP is how long the main content takes to show; INP is how long a tap takes to answer. Scrapers don't report and an outage reports nothing, so this shows neither.",
 } as const;
 
 /** A duration the way a person reads a check: `45s`, `3m 05s`, `1h 02m`. */
@@ -132,9 +132,10 @@ export function visitorsNote(r: Reach): string {
   return `${r.visitors7d} in 7 days`;
 }
 
-/** How quick the pages feel, over 7 days: `reacts in 180 ms`, or why there is no figure. */
-export function reactNote(r: Reach): string {
-  return r.inpP75 === null ? "no taps measured yet" : `reacts in ${speedWords(r.inpP75)}`;
+/** The speed tile's quiet note: p75 LCP and INP over 7 days, or that nobody has reported yet. */
+export function vitalsNote(r: Reach): string {
+  const parts = [r.lcpP75 == null ? null : `LCP ${speedWords(r.lcpP75)}`, r.inpP75 == null ? null : `INP ${speedWords(r.inpP75)}`].filter((p) => p !== null);
+  return parts.length === 0 ? "no visitors yet" : parts.join(" · ");
 }
 
 /** Shipped per hour, as the tile shows it. */
@@ -230,6 +231,6 @@ export function kpiLines(k: Kpis, live: { sha: string; since: string } | null, n
     k.backup ? k.backup.line : `Last off-box backup ${backupAge(k.backupAt, now)}${backupOverdue(k.backupAt, now) ? ", overdue" : ""}`,
     `Reporting browsers ${visitorsValue(k.reach)}, ${visitorsNote(k.reach)}  ${trendText(k.reach.visitorDays)}  30 days`,
     `Accounts ${usersValue(k.reach)} seen today`,
-    `Reported page speed ${k.reach.loadP75 === null ? "no page views measured yet" : `loads in ${speedWords(k.reach.loadP75)}`}, ${reactNote(k.reach)}`,
+    `Reported page speed ${k.reach.loadP75 === null ? "no page views measured yet" : `loads in ${speedWords(k.reach.loadP75)}`}, ${vitalsNote(k.reach)}`,
   ];
 }

@@ -6,7 +6,7 @@
  */
 
 import type { App as Forge } from "../../app.ts";
-import { FOLLOW_MODE_REFUSALS, setFollowMode, severForge, takeForgeCode, takeForgeWords } from "../../actions/follow.ts";
+import { FOLLOW_MODE_REFUSALS, followModeSaid, setFollowMode, severForge, takeForgeCode, takeForgeWords } from "../../actions/follow.ts";
 import { SEVER_CONFIRM } from "../../actions/sever_invite_words.ts";
 import { forgeProposalLine, forgeProposals, proposeToParentForge } from "../../actions/upstream.ts";
 import { checkUpstream, upstreamState, upstreamWords } from "../../spawn/upstream.ts";
@@ -110,7 +110,7 @@ export async function chainScreen(app: Forge, user: User | undefined, ctx: Ctx):
           const set = await setFollowMode(app, user, repo, next);
           if (!set.ok) return ctx.toast(FOLLOW_MODE_REFUSALS[set.error].message, "danger");
           rows = await linesOf();
-          ctx.toast(`Now following in ${set.value} mode.`, "success");
+          ctx.toast(followModeSaid(undefined, set.value), "success");
         });
       else if (e.key === "s" && owner)
         ctx.push(

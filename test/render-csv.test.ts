@@ -2,6 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import { parseCsv, numericColumns, type Table } from "../src/web/render/csv-parse.ts";
 import { COLUMN_CAP, csv, csvJs, isCsvPath, ROW_CAP } from "../src/web/render/csv.ts";
+import { parseJsonl } from "../src/web/render/jsonl-parse.ts";
 import { fileKind } from "../src/web/render/kinds.ts";
 import { renderBlob } from "../src/web/pages/repo.ts";
 import type { RepoScope } from "../src/web/scope.ts";
@@ -14,7 +15,7 @@ const ok = (s: string) => {
   return t;
 };
 const draw = (text: string, all = false) =>
-  csv({ path: "d.csv", size: text.length, body: enc(text), media: "/m", pathHref: "/o/r/blob/main/d.csv", all });
+  csv({ path: "d.csv", size: text.length, body: enc(text), media: "/m", download: "/d", pathHref: "/o/r/blob/main/d.csv", all });
 
 describe("csv parser", () => {
   test("quotes, escaped quotes and newline inside a field", () => {
@@ -44,7 +45,7 @@ describe("csv parser", () => {
 describe("csv bounds", () => {
   test("one very wide row cannot multiply the page", () => {
     const text = "h\n" + "x\n".repeat(1_000) + ",".repeat(100_000) + "\n";
-    const r = csv({ path: "w.csv", size: text.length, body: enc(text), media: "/m", pathHref: "/p", all: false });
+    const r = csv({ path: "w.csv", size: text.length, body: enc(text), media: "/m", download: "/d", pathHref: "/p", all: false });
     const h = String(r.content);
     expect(h.length).toBeLessThan(2_000_000);
     expect(h).toContain(`Showing ${COLUMN_CAP} of 100,001 columns`);
@@ -146,5 +147,47 @@ describe("csv on the blob page", () => {
   test("only a CSV path carries the script", () => {
     expect(isCsvPath("a/b.TSV")).toBe(true);
     expect(isCsvPath("a/b.ts")).toBe(false);
+  });
+});
+
+describe("json lines as a table", () => {
+  const lines = (text: string) =>
+    csv({ path: "d.jsonl", size: text.length, body: enc(text), media: "/m", download: "/d", pathHref: "/o/r/blob/main/d.jsonl" });
+  const text =
+    '{"a":1,"b":"x"}\n{"c":{"k":[1,2]},"a":"<script>alert(1)</script>"}\nnot json\n\n{"b":null}\n';
+  test("kinds: jsonl and ndjson are csv, and carry the table script", () => {
+    expect(fileKind("x.jsonl", enc("{}\n"))).toBe("csv");
+    expect(fileKind("x.ndjson", enc("{}\n"))).toBe("csv");
+    expect(isCsvPath("x.NDJSON")).toBe(true);
+  });
+  test("mixed keys in first-seen order, nested as compact JSON, a bad line as a row, script escaped", () => {
+    const r = lines(text);
+    const out = String(r.content);
+    expect(out).toMatch(/<th>a<\/th><th>b<\/th><th>c<\/th>/);
+    expect(out).toContain("{&quot;k&quot;:[1,2]}");
+    expect(out).toContain("Line 3: not valid JSON");
+    expect(out).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(out).not.toContain("<script>alert");
+    expect(r.summary).toContain("4 rows × 3 columns · JSON Lines");
+  });
+  test("a non-object line and an empty file", () => {
+    expect(String(lines('{"a":1}\n[1]\n').content)).toContain("Line 2: not a JSON object");
+    expect(lines("\n\n").fallback).toBe("The file has no rows.");
+  });
+  test("a key first seen after the 1,000th object is not a column; huge key sets are capped", () => {
+    const rows = Array.from({ length: 1_000 }, (_, i) => `{"a":${i}}`);
+    const out = String(lines([...rows, '{"late":1}'].join("\n")).content);
+    expect(out).toContain(">a</th>");
+    expect(out).not.toContain("late");
+    const wide = lines(JSON.stringify(Object.fromEntries(Array.from({ length: COLUMN_CAP + 5 }, (_, i) => [`k${i}`, i]))));
+    expect(String(wide.content)).toContain(`Showing ${COLUMN_CAP} of ${COLUMN_CAP + 5} columns`);
+    expect(String(wide.content)).not.toContain(`<th>k${COLUMN_CAP}</th>`);
+  });
+  test("a missing key is an empty cell, never an inherited property", () => {
+    const p = parseJsonl('{"constructor":1,"toString":2,"__proto__":3}\n{"a":1}\n', 10);
+    if ("error" in p) throw new Error(p.error);
+    expect(p.rows[0]).toEqual(["constructor", "toString", "__proto__", "a"]);
+    expect(p.rows[1]).toEqual(["1", "2", "3", ""]);
+    expect(p.rows[2]).toEqual(["", "", "", "1"]);
   });
 });

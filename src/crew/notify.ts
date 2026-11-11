@@ -20,8 +20,11 @@
  * settings, is never logged, and the account page shows its host only.
  */
 
+import { blockedLines } from "../actions/egress_refused.ts";
 import { newAccountLines } from "../actions/accounts.ts";
+import { requestLines } from "../actions/requests.ts";
 import { mailCeilingLines } from "../actions/mail.ts";
+import { forgetOnboarding, onboardedLines } from "../apps/onboarding.ts";
 import type { Database } from "bun:sqlite";
 import { outboundFetch } from "../kernel/outbound.ts";
 import type { App } from "../app.ts";
@@ -43,8 +46,10 @@ import { RECOVERED, drainIncident, nextPage, observe, recoveredLine, type Watch 
 import { firedAlarms, type FiredAlarm } from "../flow/alarms.ts";
 import { reachAlarms } from "../spawn/reach.ts";
 import { loadClog } from "../flow/clog_tick.ts";
+import { redactSecrets } from "../kernel/log.ts";
 import { forgeCeiling } from "../flow/ceiling.ts";
 import { askLinesFor } from "../web/studio/asks.ts";
+import { during } from "../perf/jobs.ts";
 
 const KEY = "notify_url";
 export const MAX_URL = 200;
@@ -60,10 +65,13 @@ const BACKOFF_MAX_MS = HOUR_MS;
 const WAKES = new Set([
   "clog.started",
   "run.finished",
+  "app.serving",
   "pull.opened",
   "pull.pushed",
   "pull.reviewed",
   "pull.merged",
+  // A new app's crew pull closed without landing: it needs its owner (`apps/onboarding.ts`).
+  "pull.closed",
   "issue.closed",
   "issue.commented",
   "repo.settings_updated",
@@ -71,6 +79,10 @@ const WAKES = new Set([
   "user.created",
   "mail.ceiling",
   "drill.finished",
+  // An app's cell was refused a host for the first time (`apps/egress_refused.ts`).
+  "app.egress.refused",
+  "app.egress.ignored",
+  "app.egress.allowed",
 ]);
 
 export type NotifyUrlError =
@@ -288,7 +300,7 @@ export function alarmLines(
   fired?: readonly FiredAlarm[],
 ): { id: string; line: string; items: readonly string[]; link: string }[] {
   if (!user.isAdmin || user.kind !== "user") return [];
-  const alarms = fired ?? [...firedAlarms(app.db, new Date(now), { ceilingUsd: forgeCeiling(app.config) }), ...reachAlarms(app)];
+  const alarms = fired ?? [...firedAlarms(app.db, new Date(now), { ceilingUsd: forgeCeiling(app.config), dataDir: app.config.dataDir }), ...reachAlarms(app)];
   return alarms.map((a) => {
     const id = `alarm:${a.key}@${a.since}`;
     return { id, line: a.says, items: [id], link: a.href };
@@ -456,7 +468,8 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
       const url = notifyUrlOf(app.db, id);
       if (user === undefined || url === undefined || !user.isAdmin || user.kind !== "user") continue;
       reachable = true;
-      if (await push(id, url, need.sentence)) delivered = true;
+      // The sentence quotes the release's stderr: nothing credential-shaped leaves in a push.
+      if (await push(id, url, redactSecrets(need.sentence))) delivered = true;
     }
     if (delivered || !reachable) markRollbackPaged(dataDir);
   }
@@ -489,6 +502,7 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
     // to itself.
     const asks: { line: string; items: readonly string[]; link?: string }[] = [
       ...askLinesFor(app.db, user).map((a) => ({ line: a.line, items: a.items })),
+      ...requestLines(app.db, user),
       ...newAccountLines(app.db, user, now()),
       ...landedLines(app.db, user, now()),
       ...mailCeilingLines(app, user, now()),
@@ -498,6 +512,8 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
       ...redLines(app, user, now()),
       ...alarmLines(app, user, now(), options.alarms?.()),
       ...clogLines(app, user),
+      ...onboardedLines(app.db, user, now()),
+      ...blockedLines(app, user, now()),
     ];
     const before = seen.get(userId);
     // What is gone may ask again later, and then it is new again. Seen by
@@ -544,6 +560,8 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
   }
 
   const unsubscribe = app.bus.subscribe((event) => {
+    // A run or pull moved: a new app's notice is judged afresh (`apps/onboarding.ts`).
+    if (event.repoId !== null && /^(run|pull)\.|^app\.serving$/.test(event.kind)) forgetOnboarding(app.db, event.repoId);
     if (stopped || !WAKES.has(event.kind)) return;
     const own =
       event.kind === "account.notify_set" ? event.actorId : undefined;
@@ -570,13 +588,13 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
 
   // Eight days of silence is no event: the clock wakes the notifier too.
   const clock = setInterval(() => {
-    queue = queue.then(async () => {
+    queue = queue.then(() => during("notify", async () => {
       try {
         for (const id of people()) await tell(id, false);
       } catch (error) {
         app.log.error("notify failed", { error: String(error) });
       }
-    });
+    }));
   }, options.clockMs ?? CLOCK_MS);
   clock.unref();
 
@@ -592,7 +610,10 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
     });
     return queue;
   };
-  const pager = setInterval(() => void pageAll(), Math.min(options.clockMs ?? CLOCK_MS, PAGE_MS));
+  const pager = setInterval(
+    () => void during("notify-page", pageAll),
+    Math.min(options.clockMs ?? CLOCK_MS, PAGE_MS),
+  );
   pager.unref();
 
   return {

@@ -43,6 +43,11 @@ export function noteUsage(request: Request, tag: UsageTag): void {
   noted.set(request, tag);
 }
 
+/** The pattern noted for this request so far, left in place; `(unmatched)` before the router names it. */
+export function patternOf(request: Request): string {
+  return noted.get(request)?.pattern ?? UNMATCHED;
+}
+
 /** What was noted for this request, or the unmatched, anonymous default. */
 export function takeUsage(request: Request): UsageTag {
   const tag = noted.get(request);

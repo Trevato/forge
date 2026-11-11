@@ -7,8 +7,15 @@
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { welcome } from "../../system/telemetry.ts";
-import { html } from "../html.ts";
+import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
+
+/** The welcomed issues as rows the shell's j/k walk; Enter opens the issue. */
+export function welcomedList(issues: readonly { path: string; repo: string; number: number; title: string }[]): Html {
+  return html`<ul class="list">${issues.map(
+    (i) => html`<li class="row" data-nav tabindex="-1"><a href="${i.path}">${i.repo}#${String(i.number)}</a> ${i.title}</li>`,
+  )}</ul>`;
+}
 
 // GET /contribute
 export function contributePage(ctx: Ctx): Response {
@@ -25,9 +32,7 @@ export function contributePage(ctx: Ctx): Response {
       <h2 id="welcome-h">Issues that welcome outside work</h2>
       ${w.issues.length === 0
         ? html`<p class="muted">No open issue carries the “${w.welcomeLabel}” label right now.</p>`
-        : html`<ul class="list">${w.issues.map(
-            (i) => html`<li class="row"><a href="${i.path}">${i.repo}#${String(i.number)}</a> ${i.title}</li>`,
-          )}</ul>`}
+        : welcomedList(w.issues)}
     </section>
     <section class="stack" aria-labelledby="propose-h">
       <h2 id="propose-h">How to propose</h2>

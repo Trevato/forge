@@ -6,6 +6,7 @@ export const route: Route = {
   summary:
     "Change the signup mode (open, invite or closed), the account quotas, or the forge's own source repository (forgeRepo: owner/name, null to clear; its app is then shown as the forge itself), one per call (a person admin's token, admin scope); answers { signup }, { quotas } or { forgeRepo }; a quota is a positive whole number, or null for no limit",
   auth: true,
+  role: "admin",
   body: { signup: "string", quotas: "object", forgeRepo: "string" },
   refusals: {
     invalid_body: "none of signup, quotas or forgeRepo was sent, or more than one was",

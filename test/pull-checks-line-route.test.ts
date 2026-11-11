@@ -137,9 +137,9 @@ test("the page that draws the line also ships the script that drives it", async 
   expect(text).toContain('id="live-checks"');
   // The line itself carries no beat attribute; the script still knows the mechanism.
   expect(text).not.toMatch(/id="live-checks"[^>]*data-live-every/);
-  // liveRegionsJs reads data-live-src and arms the beat; liveClientJs alone does not.
+  // liveRegionsJs reads data-live-src and swaps the region; liveClientJs alone does not.
   expect(text).toContain("data-live-src");
-  expect(await withScripts(servers.url, text)).toContain("function arm(");
+  expect(await withScripts(servers.url, text)).toContain("data-live-src");
 });
 
 test("once the check has passed, the line has no beat, no counts, and reads as passed", async () => {
@@ -165,5 +165,5 @@ test("the change page the owner lands on draws the same live line, with the coun
   expect(text).toContain('id="live-checks"');
   expect(text).not.toMatch(/id="live-checks"[^>]*data-live-every/);
   expect(text).toContain("2 of 170 files · 500 passed, 0 failed");
-  expect(await withScripts(servers.url, text)).toContain("function arm(");
+  expect(await withScripts(servers.url, text)).toContain("data-live-src");
 });

@@ -6,6 +6,7 @@ export const route: Route = {
   path: "/api/v1/forge/following",
   summary: "Choose how this forge follows the forge its code came from (its code repository's admin); answers { mode }",
   auth: true,
+  role: "member",
   body: { mode: "string" },
   refusals: {
     not_following: `404: ${FAMILY_WORDS.not_following}`,

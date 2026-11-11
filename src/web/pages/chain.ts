@@ -5,11 +5,11 @@
  * sever. A severed forge says so with the date and nothing is deleted.
  */
 
-import { FOLLOW_MODE_REFUSALS, setFollowMode, severForge, takeForgeCode, takeForgeWords } from "../../actions/follow.ts";
+import { FOLLOW_MODE_REFUSALS, followModeSaid, setFollowMode, severForge, takeForgeCode, takeForgeWords } from "../../actions/follow.ts";
 import { FOLLOWS_NOTHING, PROPOSE_NEEDS_WRITE } from "../../actions/follow_words.ts";
 import { forgeProposals, proposeToParentForge, type ForgeProposal } from "../../actions/upstream.ts";
 import { SEVER_CONFIRM } from "../../actions/sever_invite_words.ts";
-import { canAdmin, canWrite } from "../../core/repos.ts";
+import { canAdmin, canWrite, forkParentFor } from "../../core/repos.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { chainView, FOLLOW_MODES, forgeLinkOf, type ChainLine, type FollowMode } from "../../spawn/chain.ts";
@@ -79,14 +79,14 @@ async function carriesChain(ctx: Ctx): Promise<boolean> {
 
 const STATE_WORDS = { open: "open", merged: "merged", closed: "closed" } as const;
 
-function proposalSection(base: string, proposals: readonly ForgeProposal[], writer: boolean): Html {
+export function proposalSection(base: string, proposals: readonly ForgeProposal[], writer: boolean): Html {
   return html`<h2 class="mt">Proposals</h2>
     ${proposals.length === 0
       ? html`<p class="muted">Nothing proposed to the parent forge yet.</p>`
       : html`<ul class="list" aria-label="Proposals to the parent forge">
           ${proposals.map(
             (p) => html`<li>
-              <div class="row">
+              <div class="row" data-nav tabindex="-1">
                 <span class="row-main">
                   <a class="row-title" href="${p.url}" rel="noopener">#${p.number} ${p.title}</a>
                   <span class="row-meta">${STATE_WORDS[p.state]}${p.reachable ? null : html` · parent unreachable`}</span>
@@ -228,7 +228,7 @@ export async function takeSubmit(ctx: Ctx): Promise<Response> {
   return flashOrJson(ctx, to, takeForgeWords(took.value));
 }
 
-/** POST /:owner/:name/following/mode {mode}; the owner only. */
+/** POST /:owner/:name/following/mode {mode} or /following/mode/:mode (what the confirm step posts); the owner only. */
 export async function modeSubmit(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
@@ -236,9 +236,9 @@ export async function modeSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   const to = `${repoBase(repo)}/following`;
-  const set = await setFollowMode(ctx.app, ctx.auth.user, repo, field(form, "mode"));
+  const set = await setFollowMode(ctx.app, ctx.auth.user, repo, ctx.params["mode"] ?? field(form, "mode"));
   if (!set.ok) return flashOrJson(ctx, to, { tone: "danger", message: FOLLOW_MODE_REFUSALS[set.error].message });
-  return flashOrJson(ctx, to, { message: `Now following in ${set.value} mode.` });
+  return flashOrJson(ctx, to, { message: followModeSaid(forkParentFor(ctx.app.db, repo, ctx.auth.user), set.value) });
 }
 
 /** POST /:owner/:name/following/propose: push to the parent forge and open the pull there; a writer only. */

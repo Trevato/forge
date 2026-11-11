@@ -14,7 +14,10 @@
  * to show or log. Once: the admin remembers that it was seeded.
  */
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { App } from "../app.ts";
+import { createOrg } from "../core/orgs.ts";
 import type { Ctx } from "../http/context.ts";
 import type { Issue } from "../core/issues.ts";
 import { getRepo, type Repo } from "../core/repos.ts";
@@ -23,9 +26,11 @@ import { writeBoard } from "../actions/boards.ts";
 import { backBet } from "../actions/bets.ts";
 import { openIssue, setIssueState } from "../actions/issues.ts";
 import { pinBuild } from "../actions/builds.ts";
-import { mergePull, openPull } from "../actions/pulls.ts";
+import { addReview, mergePull, openPull } from "../actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../actions/repos.ts";
 import { reviewGate } from "../actions/gate_review.ts";
+import { forgeHttp } from "../http/server.ts";
+import { transferRepository } from "../actions/transfer.ts";
 import { linkIssue } from "../actions/dependencies.ts";
 import { createApp as createAppRecord } from "../core/apps.ts";
 import { studioApp } from "../web/studio/app.ts";
@@ -34,7 +39,7 @@ import { iterationsOf } from "../core/iterations.ts";
 import { turnValveFor } from "../actions/valves.ts";
 import { insertBet } from "../core/bets.ts";
 import { addDependency } from "../core/dependencies.ts";
-import { claimRun, createRun, finishRun } from "../core/runs.ts";
+import { claimRun, createPullRun, createRun, finishRun } from "../core/runs.ts";
 import { setMember } from "../core/roles.ts";
 import { noteLimit } from "../core/standing.ts";
 import { addSubscription, listSubscriptions } from "../core/subscriptions.ts";
@@ -43,20 +48,29 @@ import { getAgentByName } from "../core/agents.ts";
 import { createSession, destroySession } from "../core/sessions.ts";
 import { createToken, listTokens } from "../core/tokens.ts";
 import { recordUsage } from "../core/usage.ts";
-import { getUserSetting, setUserSetting } from "../core/settings.ts";
+import { PREVIEW_SEEDED, getUserSetting, setUserSetting } from "../core/settings.ts";
 import { createUser, getUserByName, type User } from "../core/users.ts";
+import { diskSummary, recordReading } from "../machines/disk_readings.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { PREVIEW_CONFIG_FILES } from "./preview-config.ts";
 import {
   PREVIEW_ADMIN,
   PREVIEW_APP,
   PREVIEW_APP_PAGE,
+  PREVIEW_DISK_ALERT,
   PREVIEW_FORKS,
   PREVIEW_HELD_PAGE,
   PREVIEW_HELD_THEMES,
   PREVIEW_ITERATIONS_PAGE,
+  PREVIEW_MACHINES_PAGE,
   PREVIEW_PULL,
   PREVIEW_PULL_PAGE,
+  PREVIEW_MOVED,
+  PREVIEW_MOVED_OWNER,
+  PREVIEW_MOVED_PAGE,
+  PREVIEW_MOVE_PAGE,
+  PREVIEW_NEWCOMER,
+  PREVIEW_NEWCOMER_ORG,
   PREVIEW_REPO,
   PREVIEW_SETTINGS_PAGES,
 } from "./preview-looks.ts";
@@ -69,12 +83,120 @@ export {
   PREVIEW_HELD_PAGE,
   PREVIEW_HELD_THEMES,
   PREVIEW_ITERATIONS_PAGE,
+  PREVIEW_MOVED_PAGE,
   PREVIEW_OWNER_LOOKS,
   PREVIEW_PULL,
   PREVIEW_PULL_PAGE,
   PREVIEW_REPO,
   PREVIEW_REPO_HOME,
 } from "./preview-looks.ts";
+
+/**
+ * A repository moved just now, through the action a person uses (#10195):
+ * its head draws "Moved from <old path> on <date>". Refused unless that page
+ * answers 200 and holds the line, in the first-paint HTML.
+ */
+async function seedMoved(app: App, admin: User): Promise<Result<void, string>> {
+  const made = await createRepo(app, admin, { name: PREVIEW_MOVED, visibility: "public", description: "A repository that moved" });
+  if (!made.ok) return err(`the moved repository: ${String(made.error)}`);
+  const first = await commitToBranch(app, admin, made.value, {
+    message: "Start",
+    files: [{ path: "README.md", content: "# moved\n\nA repository that changed owner.\n" }],
+  });
+  if (!first.ok) return err(`the moved repository's commit: ${JSON.stringify(first.error)}`);
+  const moved = await transferRepository(app, admin, made.value, PREVIEW_MOVED_OWNER);
+  if (!moved.ok) return err(`the move: ${String(moved.error)}`);
+  const http = forgeHttp(app);
+  const session = createSession(app.db, admin.id);
+  try {
+    const res = await http.handle(
+      new Request(`http://localhost${PREVIEW_MOVED_PAGE}`, { headers: { cookie: `forge_session=${session.token}` } }),
+    );
+    if (res.status !== 200) return err(`${PREVIEW_MOVED_PAGE} answers ${String(res.status)}, not 200`);
+    if (!(await res.text()).includes("moved-from")) return err(`${PREVIEW_MOVED_PAGE} holds no moved-from line`);
+  } finally {
+    destroySession(app.db, session.token);
+    http.close();
+  }
+  return ok();
+}
+
+/**
+ * The sample's Settings, asked for as the admin through `ask`, must answer
+ * 200 and hold `id="move"`: the section its phone look scrolls to (#10194).
+ * `ask` is the forge's own handler; a test hands in one that answers otherwise.
+ */
+export async function checkMoveSection(
+  ask: (path: string) => Promise<{ readonly status: number; text(): Promise<string> }>,
+): Promise<Result<void, string>> {
+  const res = await ask(PREVIEW_MOVE_PAGE);
+  if (res.status !== 200) return err(`${PREVIEW_MOVE_PAGE} answers ${String(res.status)}, not 200`);
+  if (!(await res.text()).includes('id="move"')) return err(`${PREVIEW_MOVE_PAGE} holds no id="move"`);
+  return ok();
+}
+
+async function seedMoveSection(app: App, admin: User): Promise<Result<void, string>> {
+  const http = forgeHttp(app);
+  const session = createSession(app.db, admin.id);
+  try {
+    return await checkMoveSection((path) =>
+      http.handle(new Request(`http://localhost${path}`, { headers: { cookie: `forge_session=${session.token}` } })),
+    );
+  } finally {
+    destroySession(app.db, session.token);
+    http.close();
+  }
+}
+
+/** One NVMe reading in smartctl's JSON shape (`smartctl -j -a`), as a host files it. */
+function nvmeReading(o: { name: string; units: number; spare: number; used: number }): string {
+  return JSON.stringify({
+    smartctl: { version: [7, 4] },
+    device: { name: o.name, type: "nvme", protocol: "NVMe" },
+    model_name: "Samsung SSD 980 PRO 1TB",
+    firmware_version: "5B2QGXA7",
+    user_capacity: { bytes: 1_000_204_886_016 },
+    nvme_smart_health_information_log: {
+      critical_warning: 0, temperature: 41, available_spare: o.spare, available_spare_threshold: 10,
+      percentage_used: o.used, data_units_written: o.units, media_errors: 0, power_on_hours: 1234,
+      unsafe_shutdowns: 7, warning_temp_time: 3, critical_comp_time: 0,
+    },
+  });
+}
+
+/**
+ * Disk readings for the sample's `standard` machine (#10466), once: a healthy
+ * disk, one that needs a look (spare under its threshold, wear at 85%), and
+ * one behind a controller. Fake numbers in a preview only, so the owner's
+ * look of Settings › Machines has every kind of line. Refused unless the page
+ * answers 200 and draws the alerting line.
+ */
+async function seedDisks(app: App, admin: User): Promise<Result<void, string>> {
+  if (diskSummary(app.db, "standard").devices.length === 0) {
+    const now = Date.now();
+    // 1e8 units × 512 000 B = 51.2 TB of the 980 PRO's 600 TBW.
+    const filed = [
+      recordReading(app.db, "standard", "nvme0", nvmeReading({ name: "/dev/nvme0", units: 100_000_000, spare: 100, used: 4 }), now),
+      recordReading(app.db, "standard", PREVIEW_DISK_ALERT, nvmeReading({ name: "/dev/nvme1", units: 1_000_000_000, spare: 5, used: 85 }), now),
+      recordReading(app.db, "standard", "sda", JSON.stringify({ smartctl: { version: [7, 4] }, device: { name: "/dev/sda", type: "megaraid,0" } }), now),
+    ];
+    const refused = filed.find((r) => !r.ok);
+    if (refused !== undefined && !refused.ok) return err(`the sample disk readings: ${refused.reason}`);
+  }
+  const http = forgeHttp(app);
+  const session = createSession(app.db, admin.id);
+  try {
+    const res = await http.handle(
+      new Request(`http://localhost${PREVIEW_MACHINES_PAGE}`, { headers: { cookie: `forge_session=${session.token}` } }),
+    );
+    if (res.status !== 200) return err(`${PREVIEW_MACHINES_PAGE} answers ${String(res.status)}, not 200`);
+    if (!(await res.text()).includes(`data-disk="${PREVIEW_DISK_ALERT}"`)) return err(`${PREVIEW_MACHINES_PAGE} draws no disk line`);
+  } finally {
+    destroySession(app.db, session.token);
+    http.close();
+  }
+  return ok();
+}
 
 /** The seeded wave's version and headline, which the owner's /waves look shows. */
 export const PREVIEW_WAVE = "0.1.0";
@@ -89,7 +211,7 @@ export const PREVIEW_LANDING_TITLE = `The changelog wraps a long landing title o
 const PREVIEW_BOARD = "preview";
 const PREVIEW_AGENT = "preview-agent";
 const PREVIEW_TOKEN = "preview fake token, not a credential";
-const SEEDED = "preview_seeded";
+const SEEDED = PREVIEW_SEEDED;
 const CONFIG_SEEDED = "preview_config_seeded";
 const SETTINGS_SEEDED = "preview_settings_seeded";
 
@@ -104,6 +226,70 @@ export function isPreviewEnv(env: Env = process.env): boolean {
 export function previewAdmin(app: App): User | undefined {
   const user = getUserByName(app.db, PREVIEW_ADMIN);
   return user?.isAdmin === true && user.kind !== "agent" ? user : undefined;
+}
+
+/** The newcomer, when this forge has one. */
+export function previewNewcomer(app: App): User | undefined {
+  const user = getUserByName(app.db, PREVIEW_NEWCOMER);
+  return user?.isAdmin === true && user.kind === "user" ? user : undefined;
+}
+
+/**
+ * The person of a spawned forge who has claimed it and told the crew nothing
+ * (#11285): the preview is given a `parent.json` naming a seeded organisation,
+ * so it reads as spawned, and an admin who has made no tell. Their home is
+ * then the first-login card at "What do you want built?". Idempotent; only a
+ * preview reaches it (`seedPreview` refuses anything else). The refusal says
+ * what the page lacked.
+ */
+async function seedNewcomer(app: App): Promise<Result<void, string>> {
+  let created = false;
+  let person = getUserByName(app.db, PREVIEW_NEWCOMER);
+  if (person === undefined) {
+    const made = await createUser(app.db, {
+      origin: "seed",
+      trusted: true,
+      isAdmin: true,
+      allowReserved: true,
+      username: PREVIEW_NEWCOMER,
+      email: `${PREVIEW_NEWCOMER}@preview.invalid`,
+    });
+    if (!made.ok) return err(`the preview newcomer: ${made.error}`);
+    person = made.value;
+    created = true;
+  }
+  if (!person.isAdmin || person.kind !== "user") return err("the preview newcomer's name is someone else's");
+  if (getUserByName(app.db, PREVIEW_NEWCOMER_ORG) === undefined) {
+    const org = createOrg(app.db, PREVIEW_NEWCOMER_ORG, person.id, { allowReserved: true });
+    if (!org.ok) return err(`the preview newcomer's organisation: ${org.error}`);
+    created = true;
+  }
+  const file = join(app.config.dataDir, "parent.json");
+  if (!existsSync(file)) {
+    await Bun.write(file, JSON.stringify({ org: PREVIEW_NEWCOMER_ORG }));
+    created = true;
+  }
+  // The self-check builds a whole server: only when the newcomer was just made.
+  if (!created) return ok(undefined);
+  const http = forgeHttp(app);
+  const session = createSession(app.db, person.id);
+  try {
+    const res = await http.handle(new Request("http://localhost/", { headers: { cookie: `forge_session=${session.token}` } }));
+    return checkFirstTell(res.status, await res.text());
+  } finally {
+    destroySession(app.db, session.token);
+    http.close();
+  }
+}
+
+/** Whether a newcomer's home answered 200 with the one box and no passkey form above it. */
+export function checkFirstTell(status: number, body: string): Result<void, string> {
+  if (status !== 200) return err(`the newcomer's home answered ${String(status)}`);
+  const box = body.indexOf("What do you want built?");
+  if (box < 0) return err("the newcomer's home lacks \"What do you want built?\"");
+  const passkey = body.search(/passkey/i);
+  if (passkey >= 0 && passkey < box) return err("the newcomer's home has a passkey form above the box");
+  return ok(undefined);
 }
 
 /**
@@ -134,16 +320,28 @@ export async function seedPreview(
   if (getUserSetting(app.db, admin.id, SEEDED) !== undefined) {
     const settings = await seedSettingsPages(app, admin);
     if (!settings.ok) return settings;
+    const moveSection = await seedMoveSection(app, admin);
+    if (!moveSection.ok) return moveSection;
+    const disks = await seedDisks(app, admin);
+    if (!disks.ok) return disks;
     const files = await seedConfigFiles(app, admin);
-    return files.ok ? ok({ seeded: false }) : files;
+    if (!files.ok) return files;
+    const newcomer = await seedNewcomer(app);
+    return newcomer.ok ? ok({ seeded: false }) : newcomer;
   }
   const world = await seedWorld(app, admin);
   if (!world.ok) return world;
   setUserSetting(app.db, admin.id, SEEDED, new Date().toISOString());
   const settings = await seedSettingsPages(app, admin);
   if (!settings.ok) return settings;
+  const moveSection = await seedMoveSection(app, admin);
+  if (!moveSection.ok) return moveSection;
+  const disks = await seedDisks(app, admin);
+  if (!disks.ok) return disks;
   const files = await seedConfigFiles(app, admin);
-  return files.ok ? ok({ seeded: true }) : files;
+  if (!files.ok) return files;
+  const newcomer = await seedNewcomer(app);
+  return newcomer.ok ? ok({ seeded: true }) : newcomer;
 }
 
 /**
@@ -173,7 +371,6 @@ async function seedSettingsPages(app: App, admin: User): Promise<Result<void, st
     });
     if (!added.ok) return err(`the sample account: ${added.error}`);
   }
-  const { forgeHttp } = await import("../http/server.ts");
   const http = forgeHttp(app);
   const session = createSession(app.db, admin.id);
   try {
@@ -254,6 +451,15 @@ async function seedWorld(app: App, admin: User): Promise<Result<void, string>> {
   if (!pull.ok) return err(`the pull: ${String(pull.error)}`);
   if (pull.value.number !== PREVIEW_PULL) return err(`the pull is #${String(pull.value.number)}, not #${String(PREVIEW_PULL)}`);
 
+  // A review comment on a line of the pull's diff, so its Files tab draws one (#10073).
+  const reviewed = await addReview(app, admin, repo.value, pull.value, {
+    body: `Say hello to the whole forge, not only to the one who reads this line. ${"A long unbroken word follows: " + "x".repeat(80)}`,
+    path: "GREETING.md",
+    line: 1,
+    side: "new",
+  });
+  if (!reviewed.ok) return err(`the line comment: ${String(reviewed.error)}`);
+
   // Issues and pulls share one numbering, so the pull above keeps PREVIEW_PULL
   // and the ones /next lists and the bets hold come after it.
   const listed = [
@@ -310,6 +516,8 @@ async function seedWorld(app: App, admin: User): Promise<Result<void, string>> {
   if (!gated.ok) return gated;
   const hosted = await seedApp(app, admin);
   if (!hosted.ok) return hosted;
+  const moved = await seedMoved(app, admin);
+  if (!moved.ok) return moved;
   const valve = turnValveFor(app, admin, `${PREVIEW_ADMIN}/${PREVIEW_REPO}`, 60);
   if (!valve.ok) return err(`the valve: ${valve.error}`);
 
@@ -565,11 +773,15 @@ async function seedApp(app: App, admin: User): Promise<Result<void, string>> {
   if (!repo.ok) return err(`the sample app's repository: ${String(repo.error)}`);
   const first = await commitToBranch(app, admin, repo.value, {
     message: "Start",
-    files: [{ path: "README.md", content: "# hello\n\nA preview's sample app.\n" }],
+    files: [
+      { path: "README.md", content: "# hello\n\nA preview's sample app.\n" },
+      { path: "forge.json", content: JSON.stringify({ app: { run: "bun run src/server.ts" }, adapter: { schedule: { every: 900 } } }) },
+    ],
   });
   if (!first.ok) return err(`the sample app's commit: ${JSON.stringify(first.error)}`);
   const record = createAppRecord(app.db, { repoId: repo.value.id, slug: PREVIEW_APP, access: "public" });
   if (!record.ok) return err(`the sample app's record: ${record.error}`);
+  seedPullRuns(app, record.value.id);
   const url = new URL(`https://preview.invalid${PREVIEW_APP_PAGE}`);
   const answer = await studioApp(
     { app, request: new Request(url.href), url, params: {}, auth: { user: admin }, theme: undefined } as Ctx,
@@ -577,4 +789,23 @@ async function seedApp(app: App, admin: User): Promise<Result<void, string>> {
     record.value,
   );
   return answer.status === 200 ? ok() : err(`${PREVIEW_APP_PAGE} would answer ${String(answer.status)}, not 200`);
+}
+
+/** Ten recorded pull runs for the app page's Adapter section (#10158): one failed with a reason of the longest allowed, an unbroken word in it. */
+export const PREVIEW_LONG_REASON = `upstream refused the pull: ${"x".repeat(60)} ${"https://api.example.invalid/v2/orders?cursor=".repeat(3)}`.slice(0, 200);
+function seedPullRuns(app: App, appId: string): void {
+  for (let i = 0; i < 10; i++) {
+    const failed = i === 4;
+    createPullRun(app.db, {
+      appId,
+      state: failed ? "failed" : "ok",
+      written: failed ? 0 : 12 + i,
+      skipped: failed ? 0 : 3,
+      failed: 0,
+      cursor: failed ? "" : `c${String(i)}`,
+      durationMs: 40 + i,
+      reason: failed ? PREVIEW_LONG_REASON : "",
+      repeat: false,
+    });
+  }
 }

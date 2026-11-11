@@ -7,6 +7,9 @@
  * count links back to the page that drew it with `?out=<what>[&hour=<0–23>]`.
  */
 
+import { MERGE_QUEUE_HELP } from "../../flow/help.ts";
+import { helpAsked, pageHelp } from "../page_help.ts";
+import { HELD_EXPLAINED } from "./boards-held.ts";
 import type { Reader } from "../../actions/telemetry.ts";
 import { queuesFor, systemFor } from "../../system/telemetry.ts";
 import { conflictedSays, rebaseLaneSays } from "../../flow/conflicted.ts";
@@ -40,6 +43,7 @@ import { IDLE_LIMIT, type IdlePull } from "../../flow/idle_pulls.ts";
 import { panelFigures } from "../../flow/panel_cache.ts";
 import { hoursWords } from "../../flow/lead_time.ts";
 import { buildYieldSays } from "../../flow/build_yield.ts";
+import { DECLINE_LABELS, DECLINE_REASONS } from "../../flow/declines.ts";
 import { reviewLatencySays } from "../../flow/review_latency.ts";
 import { openerCounts } from "../../flow/openers.ts";
 import { readRepeats, type Repeats } from "../../flow/repeats.ts";
@@ -47,8 +51,9 @@ import { readHeld } from "../../flow/held.ts";
 import { readVerified, verifiedSays, type VerifiedRow } from "../../flow/verified.ts";
 import type { App } from "../../app.ts";
 import { html, type Html } from "../html.ts";
+import { doctorCard } from "./boards-doctor.ts";
 import { keeperRow } from "../studio/keeper_row.ts";
-import { gatesCard } from "./boards-gates.ts";
+import { gatesSection } from "./boards-gates.ts";
 import { heldCard } from "./boards-held.ts";
 import { badge, card, meter } from "../ui.ts";
 
@@ -115,7 +120,14 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
   const newest = parked.newest[0];
   const listed = asked(url);
   const shown = listed === null ? undefined : out.get(listed.key);
-  return html`${keeperRow(app.db, reader.kind === "owner")}${card(
+  const help = pageHelp([
+    ["Stages", html`${(Object.keys(STAGE_HOLDS) as PipelineKey[]).map((k, i) => html`${i === 0 ? "" : "; "}<strong>${STAGE_LABEL[k]}</strong>: ${STAGE_HOLDS[k]}`)}.`],
+    ["Ready, and why it waits", HELD_EXPLAINED],
+    ["Merge queue", MERGE_QUEUE_HELP],
+    ["Verified after landing", html`A repository that declares <span class="mono">check.verify</span> in forge.json has its main verified after landing.`],
+    ["Elsewhere", html`Limits are set on <a href="/settings/capacity">Capacity</a>. How the forge stands against its threats is on <a href="/resilience">Resilience</a>; where an outside agent can help is on <a href="/contribute">Contribute</a>.`],
+  ], helpAsked(url));
+  return html`${keeperRow(app.db, reader.kind === "owner")}${help}${card(
       html`<p id="bottleneck" data-stage="${worst?.key ?? ""}">
           <strong>${verdict(stages, now)}</strong>
         </p>
@@ -157,6 +169,13 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
         : html`median <span data-median-hours>${hoursWords(lead.medianHours)}</span>, slowest <span data-max-hours>${hoursWords(lead.maxHours ?? 0)}</span>`}
     </p>
     <p id="build-yield" class="muted">${buildYieldSays(yielded)}</p>
+    ${fig.declined.says === ""
+      ? ""
+      : html`<p id="declines" class="muted">Declined in 24 h: ${DECLINE_REASONS.filter((r) => fig.declined.groups[r].count > 0).map(
+          (r, i) => html`${i === 0 ? "" : ", "}<span data-reason="${r}">${String(fig.declined.groups[r].count)} ${DECLINE_LABELS[r]}</span> (${fig.declined.runs[r].map(
+            (x, j) => html`${j === 0 ? "" : ", "}<a href="/${x.repo}/runs/${x.runId}">#${String(x.issue)}</a>`,
+          )}${fig.declined.groups[r].distinct > fig.declined.runs[r].length ? ", …" : ""})`,
+        )}</p>`}
     <p id="review-latency" class="muted">${reviewLatencySays(latency)}</p>
     <p id="openers" class="muted small">
       opened in the last hour:
@@ -170,10 +189,6 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
         : html`<strong>${String(dups.length)} test file${dups.length === 1 ? " is" : "s are"} running in more than one check:</strong>
           ${dups.slice(0, 5).map((d) => html`<span class="mono small">${d.file} (${d.checks.join(", ")})</span> `)}`}
       <a href="/system">System</a>
-    </p>
-    <p class="muted small">
-      Limits are set on <a href="/settings/capacity">Capacity</a>. How the forge stands against its threats is on
-      <a href="/resilience">Resilience</a>; where an outside agent can help is on <a href="/contribute">Contribute</a>.
     </p>`,
       { id: "flow-summary" },
     )}
@@ -200,7 +215,6 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
                   <th scope="row">
                     ${STAGE_LABEL[s.key]}
                     ${s === worst ? badge("bottleneck", { tone: "danger" }) : null}
-                    <div class="muted small">${STAGE_HOLDS[s.key]}</div>
                   </th>
                   <td class="mono">${String(s.waiting)}</td>
                   <td class="mono">${s.key === "live" ? "—" : String(s.active)}</td>
@@ -219,7 +233,8 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
     ${hotFilesCard(app, reader)}
     ${heldCard(readHeld(app, reader.kind === "owner", now))}
     ${queueCard(queuesFor(app, reader, new Date(now), { batches: true }))}
-    ${gatesCard(app.db, reader.kind === "owner", now)}
+    ${gatesSection(app.db, reader.kind === "owner", now)}
+    ${doctorCard(app.db, reader.kind === "owner", now)}
     ${url.searchParams.get("idle") === "all" && idle.length > 0 ? idleList(idle) : null}
     ${listed === null || shown === undefined ? null : outList(shown, listed.hour, now)}`;
 }
@@ -245,7 +260,7 @@ function verifiedCard(rows: readonly VerifiedRow[], now: number): Html {
   return card(
     html`<h2>Verified after landing</h2>
       ${rows.length === 0
-        ? html`<p class="muted">No repository verifies its main after landing yet: it declares <span class="mono">check.verify</span> in forge.json.</p>`
+        ? html`<p class="muted">None declare <span class="mono">check.verify</span></p>`
         : rows.map(
             (r) =>
               html`<p data-verified="${r.repo}" data-unverified-since="${r.unverifiedSince ?? ""}">
@@ -277,13 +292,6 @@ function idleList(idle: readonly IdlePull[]): Html {
 function queueCard(rows: readonly QueueRow[]): Html {
   return card(
     html`<h2>Merge queue</h2>
-      <p class="muted small">
-        Green, approved pulls join their repository's queue; each candidate
-        is gated once and lands whole, or is searched for the red one. Where
-        check slots are free the next candidate gates on top of this one, and
-        a red one's halves gate at once. A pull found red is re-checked alone
-        before it rides with others again.
-      </p>
       ${rows.length === 0
         ? html`<p class="muted">Nothing queued, gating or landed in the last hour.</p>`
         : html`<div class="table-scroll">

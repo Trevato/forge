@@ -20,6 +20,7 @@ import { seedAdmin } from "./helpers/admin.ts";
 /** Routes that answer 200 without a `session` phase → why. */
 const UNTIMED: Record<string, string> = {
   "/api/v1/conversations": "a person's conversation list, one indexed query; no page to phase",
+  "/api/v1/admin/machines/:machine/disks": "an owner's per-machine disk summary, one indexed read; no page to phase",
   "/metrics": "Prometheus text exposition, scraped by token; not a page read",
 };
 

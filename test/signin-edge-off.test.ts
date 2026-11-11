@@ -100,6 +100,14 @@ describe("signin.edge off: the owner signs in by passkey and turns it back on", 
     expect(capacityValue(app.db, "signin.edge")).toBe("off");
   });
 
+  test("off: a signed-out visitor's Sign in on home and explore goes to /signin, never the edge", async () => {
+    for (const path of ["/", "/explore"]) {
+      const body = await (await fetch(`${base}${path}`)).text();
+      expect(body).not.toContain("/_plat/login");
+      expect(body).toContain('href="/signin');
+    }
+  });
+
   test("off: the owner signs in by password and by passkey", async () => {
     const byPassword = cookieOf(await passwordSignin());
     expect(byPassword).toStartWith("forge_session=");

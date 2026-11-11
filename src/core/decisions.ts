@@ -20,6 +20,12 @@ import { id as newId } from "../kernel/id.ts";
  *
  * `hand` is a person's tap on "Let the decider" on a hand-over card
  * (`crew/handover.ts`): its state is the curated context the decider saw.
+ *
+ * `place` is where an environment's awake interval runs, owned metal or
+ * cloud (`core/placement_policy.ts`), recorded by the runtime as the meter
+ * interval opens (`recordPlacement`): its answer is the placement, its state
+ * the inputs, the reason and the body target. Like a guard it is counted,
+ * not listed among the crew's decisions.
  */
 export type DecisionKind =
   | "next"
@@ -27,7 +33,8 @@ export type DecisionKind =
   | "retry"
   | "lean"
   | "guard"
-  | "hand";
+  | "hand"
+  | "place";
 
 export interface Decision {
   readonly id: string;
@@ -117,6 +124,33 @@ export function recordDecision(
     input.ms,
   );
   return getDecision(db, id)!;
+}
+
+/**
+ * The placement policy's answer for one environment, by the rule: the
+ * inputs it saw, its reason and where the body goes, so cost can tell later
+ * which price applied and a person can tell why.
+ */
+export function recordPlacement(
+  db: Database,
+  input: {
+    readonly repoId: string;
+    readonly env: string;
+    readonly where: "owned" | "cloud";
+    readonly reason: string;
+    readonly seen: unknown;
+    readonly target: unknown;
+  },
+): Decision {
+  return recordDecision(db, {
+    kind: "place",
+    repoId: input.repoId,
+    state: { env: input.env, seen: input.seen, reason: input.reason, target: input.target },
+    answer: input.where,
+    p: 1,
+    by: "rule",
+    ms: 0,
+  });
 }
 
 /** A person's like or dislike of one pull among its variant siblings; the newest replaces their earlier one. */
@@ -351,11 +385,12 @@ export function listDecisionsForRepos(
   if (unique.length === 0) return [];
   return db
     .query<Row, (string | number)[]>(
-      // A guard's skips and caps are counted, not shown one by one: they
-      // would crowd out the decisions a person reads (`crew/guard.ts`).
+      // A guard's skips and caps, and where each environment was placed,
+      // are counted, not shown one by one: they would crowd out the
+      // decisions a person reads (`crew/guard.ts`).
       `SELECT * FROM decision
        WHERE repo_id IN (${unique.map((_, n) => `?${n + 1}`).join(",")})
-         AND kind != 'guard'
+         AND kind NOT IN ('guard', 'place')
        ORDER BY created_at DESC, id DESC LIMIT ?${unique.length + 1}`,
     )
     .all(...unique, Math.min(500, Math.max(1, limit)))

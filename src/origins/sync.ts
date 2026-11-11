@@ -57,6 +57,7 @@ import {
   importReviewStates,
 } from "./import.ts";
 import { refreshOpenPulls } from "./pull-check.ts";
+import { failureWords, gitFailureWords } from "./read-only-work.ts";
 import type { Provider, ProviderFailure, RemoteIssue } from "./types.ts";
 
 const log = createLog("origins");
@@ -343,6 +344,12 @@ async function syncMirrorUnguarded(
   } else if (described.error.error === "rate_limited") {
     out.rateLimited = described.error;
     return out;
+  } else if (described.error.error !== "invalid_response") {
+    // Bad token, host down, repository gone: say so in one line where the
+    // owner reads it, and do not go on to fetch from a host that refused.
+    out.error = failureWords(described.error);
+    recordFetch(app.db, repo.id, { at: new Date().toISOString(), error: out.error });
+    return out;
   }
 
   // A watcher's throw is never this loop's problem (the same rule the event
@@ -376,7 +383,7 @@ async function syncMirrorUnguarded(
       out.error = fetched.error.message;
       recordFetch(app.db, repo.id, {
         at: runStarted,
-        error: fetched.error.message,
+        error: gitFailureWords(fetched.error.message),
       });
     } else {
       recordFetch(app.db, repo.id, { at: runStarted });

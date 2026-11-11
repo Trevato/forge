@@ -75,6 +75,7 @@ export type ForkOriginError =
   | "origin_refused"
   /** The connection is not verified against the operator's rules yet. */
   | "origin_paused"
+  | "origin_read_only"
   /** The origin took the request and the fork never appeared in time. */
   | "fork_timeout";
 
@@ -123,6 +124,7 @@ export async function forkOrigin(
   // Somebody else's connected account does not exist for you (invariant 9).
   const origin = getOriginFor(app.db, user.value.id, originId);
   if (!origin) return err("not_found");
+  if (origin.readOnly) return err("origin_read_only");
   if (writesPaused(app, origin.id) !== undefined) return err("origin_paused");
   const provider = providerForOrigin(app, origin);
   if (!provider.ok) return err("origin_unreachable");
@@ -271,6 +273,7 @@ export async function contribute(
   if (!proven.ok) return proven;
   const origin = getOriginFor(app.db, user.value.id, input.originId);
   if (!origin) return err("not_found");
+  if (origin.readOnly) return err("origin_read_only");
   if (writesPaused(app, origin.id) !== undefined) return err("origin_paused");
   const branch = input.branch.trim();
   if (!isSafeRef(branch) || branch.startsWith("refs/"))

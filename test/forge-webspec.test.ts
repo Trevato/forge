@@ -18,12 +18,12 @@ import { compress } from "../src/http/compress.ts";
 import { securityFloor } from "../src/http/respond.ts";
 import { setCrawlClock } from "../src/http/crawl.ts";
 import { forgeHttp, type ForgeHttp } from "../src/http/server.ts";
-import { webspec } from "../src/release/webspec.ts";
+import { bodyProblems, headProblems, headerProblems, s, webspec } from "../src/release/webspec.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
 
-const PATHS = ["/", "/signin", "/signup", "/explore", "/alice/notes", "/alice/notes/issues", "/alice/notes/issues/1", "/alice/notes/tree/main", "/alice/notes/blob/main/a.txt"];
+const PATHS = ["/", "/signin", "/signup", "/explore", "/alice/notes", "/alice/notes/issues", "/alice/notes/issues/1", "/alice/notes/tree/main", "/alice/notes/blob/main/a.txt", "/explore?kind=people", "/apps", "/changelog"];
 
 /** A person's browser: a request with no User-Agent counts against the crawl budget (#8129), which shrinks while the check machine is loaded, so these tests are never crawlers. */
 const BROWSER = { "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36" };
@@ -154,4 +154,22 @@ test("the walked repository pages exist", async () => {
   for (const path of ["/alice/notes", "/alice/notes/issues", "/alice/notes/issues/1"]) {
     expect((await http.handle(new Request(`http://forge.test${path}`, { headers: BROWSER }))).status).toBe(200);
   }
+});
+
+test("the 404 page raises exactly the head, body and header findings named in KNOWN_404", async () => {
+  const res = await through(false)("http://forge.test/no-such-page-here");
+  expect(res.status).toBe(404);
+  const html = await res.text();
+  const problems = [...headProblems(html), ...bodyProblems(html, false), ...headerProblems(res.headers, false)];
+  // `check message` -> [section, why it stands], as KNOWN: a 404 has no address of its own, so it names no canonical and no og:url (asserted above).
+  const KNOWN_404: Record<string, [string, string]> = {
+    "canonical no <link rel=\"canonical\">": [s("canonical"), "a 404 names no canonical address, by design"],
+    "open-graph missing og:url": [s("open-graph"), "a 404 names no address to share, by design"],
+  };
+  const keyOf = (p: { check: string; message: string }) => `${p.check} ${p.message}`;
+  // New: not named, or citing another section than the one named.
+  expect(problems.filter((p) => KNOWN_404[keyOf(p)]?.[0] !== p.section).map((p) => `${keyOf(p)} [${p.section}]`)).toEqual([]);
+  // Fixed: named but no longer found, so the entry must go.
+  const found = new Set(problems.map(keyOf));
+  expect(Object.keys(KNOWN_404).filter((k) => !found.has(k))).toEqual([]);
 });

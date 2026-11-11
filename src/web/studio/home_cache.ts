@@ -14,6 +14,7 @@
  * again. The waiting line stays on the write clock: the asks count must be
  * exact.
  */
+import { during } from "../../perf/jobs.ts";
 import type { Database } from "bun:sqlite";
 import type { Answer } from "../../boards/query.ts";
 import { writeStamp } from "../../core/write_clock.ts";
@@ -112,7 +113,7 @@ function servedStale<V>(
   if (!keys.has(key)) {
     const held = keys;
     held.add(key);
-    setTimeout(() => {
+    setTimeout(() => during("home-refresh", () => {
       try {
         if (!db.inTransaction) cache.put(key, TTL, refresh());
       } catch (error) {
@@ -121,7 +122,7 @@ function servedStale<V>(
       } finally {
         held.delete(key);
       }
-    }, 0);
+    }), 0);
   }
   return kept.value;
 }

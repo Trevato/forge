@@ -11,6 +11,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { proveAll } from "./helpers/verified.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { promote } from "./helpers/members.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 quietLogs();
 
@@ -79,7 +80,7 @@ for (const [path, who, names] of PAGES)
       const res = await fetch(`${servers.url}${path}`, { headers: { cookie } });
       await res.text();
       expect(res.status).toBe(200);
-      return (res.headers.get("server-timing") ?? "").split(", ");
+      return requestTiming(res).split(", ");
     };
     const dur = (part: string | undefined): number => {
       expect(part).toMatch(/^[a-z-]+;dur=\d+\.\d$/);

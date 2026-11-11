@@ -73,12 +73,19 @@ test("a private app another person owns is absent from both", async () => {
 });
 
 test("a ro token lists the tool and is answered; polling builds once", async () => {
-  const res = await fetch(`${servers.url}/mcp`, {
-    method: "POST",
-    headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${adaRo}` },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
-  });
-  const listed = ((await res.json()) as any).result.tools.find((t: any) => t.name === "forge_view");
+  // The list is paged by size: follow the cursor until the tool turns up.
+  let listed: any;
+  let cursor: string | undefined;
+  do {
+    const res = await fetch(`${servers.url}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${adaRo}` },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: cursor === undefined ? {} : { cursor } }),
+    });
+    const page = ((await res.json()) as any).result;
+    listed = page.tools.find((t: any) => t.name === "forge_view");
+    cursor = listed === undefined ? page.nextCursor : undefined;
+  } while (listed === undefined && cursor !== undefined);
   expect(listed).toBeDefined();
   expect(listed.inputSchema.properties).toEqual({});
   // A build reads the runs once; three calls in one window may build once.

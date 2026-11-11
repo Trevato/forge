@@ -5,4 +5,5 @@ export const route: Route = {
   path: "/api/v1/family",
   summary: "The forge's family: { parent, here, children, more }; the parent for anyone, the children for a site admin",
   auth: false,
+  role: "anonymous",
 };

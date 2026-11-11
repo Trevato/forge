@@ -199,7 +199,7 @@ describe("+ New forge", () => {
     ).replace(/\s+/g, " ");
     expect(left).toContain("https://kai--forge.test");
     expect(left).toContain("Whoever opens the link becomes its admin");
-    expect(left).toContain("You leave once it is claimed");
+    expect(left).toContain("You leave once it is taken over");
     const kept = (
       await (
         await post(admin, [
@@ -228,7 +228,7 @@ describe("+ New forge", () => {
     const html = await planned.text();
     expect(html).not.toContain(KEY);
     expect(html).toMatch(/name="modelKey"[^>]*required|required[^>]*name="modelKey"/);
-    expect(html).toContain("Type the key again to spawn");
+    expect(html).toContain("Type the key again to make the forge");
     expect(html).not.toMatch(/Model key \(optional\)/);
     // The plan's own Spawn button submits the same form.
     expect(html).toMatch(/<button[^>]*form="new-forge"[^>]*>\s*Spawn/);
@@ -296,15 +296,15 @@ describe("+ New forge", () => {
     expect(await again.text()).not.toMatch(/claim#[A-Za-z0-9_-]{43}/);
   });
 
-  test("the form offers how the child follows the forge's code, tell-me by default, and take-updates is recorded", async () => {
+  test("the form offers how the child follows the forge's code, take-updates by default, and tell-me is recorded", async () => {
     const html = (await (await get(admin, "/forges/new")).text()).replace(/\s+/g, " ");
-    expect(html).toMatch(/name="followMode" value="tell-me" checked/);
-    expect(html).toContain('value="take-updates"');
+    expect(html).toMatch(/name="followMode" value="take-updates" checked/);
+    expect(html).toContain('value="tell-me"');
     (app.config as { forgeRepo?: string }).forgeRepo = "alice/bakery";
     try {
       const res = await post(admin, [
         ["name", "follower"],
-        ["followMode", "take-updates"],
+        ["followMode", "tell-me"],
         ["do", "spawn"],
       ]);
       expect(res.status).toBe(201);
@@ -314,7 +314,7 @@ describe("+ New forge", () => {
         ),
       );
       const mine = docs.find((d) => d?.name === "follower");
-      expect(mine?.forgeCode?.mode).toBe("take-updates");
+      expect(mine?.forgeCode?.mode).toBe("tell-me");
       const bad = await post(admin, [
         ["name", "wrongmode"],
         ["followMode", "yolo"],
@@ -330,7 +330,7 @@ describe("+ New forge", () => {
   test("the page promises no update that does not happen", async () => {
     const html = (await (await get(admin, "/forges/new")).text()).replace(/\s+/g, " ");
     expect(html).toContain("Tell me <span class=\"muted small\">tells the owner in their inbox when this forge&#39;s code moves.</span>");
-    expect(html).toContain("Take updates <span class=\"muted small\">opens a pull with the new code, and a person merges it.</span>");
+    expect(html).toContain("Take updates <span class=\"muted small\">takes new code in by itself; opens a pull once the repository has commits of its own.</span>");
     expect(html).toContain("<legend>How it follows this forge's code</legend>");
     expect(html).not.toMatch(/recorded for now|nothing acts on it yet/i);
     expect(html).not.toContain("when this forge changes");
@@ -339,7 +339,7 @@ describe("+ New forge", () => {
 
   test("MCP spawn says what each follow mode does, as the page does", () => {
     const followMode = (spawnTool.inputSchema.properties as Record<string, { description?: string }>)["followMode"];
-    expect(followMode?.description).toBe("tell-me: an inbox card; take-updates: a pull a person merges");
+    expect(followMode?.description).toBe("take-updates: merges itself or a pull; tell-me: inbox card");
   });
 
   test("a forge at its depth limit shows no door, and its page says why", async () => {
@@ -347,7 +347,7 @@ describe("+ New forge", () => {
     usePlacement(app, hostedPlacement({ host: "forge.test", depth: 2 }));
     expect(await (await get(admin, "/")).text()).not.toContain('href="/forges/new"');
     const html = await (await get(admin, "/forges/new")).text();
-    expect(html).toContain("cannot hold another child");
+    expect(html).toContain("has no room for another forge");
     expect(html).not.toContain('action="/forges/new"');
   });
 

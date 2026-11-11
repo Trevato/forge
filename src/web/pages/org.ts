@@ -32,6 +32,7 @@ import {
   accessAllows,
   getOrg,
   getTeam,
+  listTeamMemberRoles,
   listTeamMembers,
   listTeams,
   orgAccess,
@@ -40,11 +41,14 @@ import {
   type Team,
 } from "../../core/orgs.ts";
 import { appsForRepos } from "../../core/apps.ts";
+import { isTeamRole, TEAM_ROLES } from "../../core/agents.ts";
+import { metricsRows, teamWindows } from "../../core/team-metrics.ts";
 import { LIST_LIMIT_MAX } from "../../core/issues.ts";
 import { listReposByOwner, type Repo } from "../../core/repos.ts";
 import { getUserByName, hiddenFrom, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { nameFrame, notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
+import { readOnlyWork } from "../../origins/read-only-work.ts";
 import { notFoundPage, pageHead, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
@@ -117,7 +121,11 @@ function repoSection(
     ctx.app.db,
     page.map((r) => r.id),
   );
-  const shown = page.filter((repo) => !apps.has(repo.id));
+  // The owner's read-only mirrors are drawn once, in "work (read-only)".
+  const mirrored = new Set(
+    isSelf ? readOnlyWork(ctx.app.db, owner.id).flatMap((o) => o.repos.map((r) => r.name)) : [],
+  );
+  const shown = page.filter((repo) => !apps.has(repo.id) && !mirrored.has(repo.name));
 
   const lead = (repo: Repo) =>
     icon(repo.forkParentId !== null ? "fork" : "repo");
@@ -185,6 +193,38 @@ function repoSection(
 }
 
 /**
+ * "work (read-only)": what the owner mirrors from origins connected read-only,
+ * with its last fetch and, when it failed, why in one line. Only ever drawn
+ * for the owner's own view; nothing at all for anyone else.
+ */
+function workSection(ctx: Ctx, owner: User): Html {
+  const origins = readOnlyWork(ctx.app.db, owner.id);
+  if (origins.length === 0) return html``;
+  return html`<section class="settings-block" id="work-read-only">
+    <h2>work (read-only)</h2>
+    ${origins.map(
+      (o) => html`<p class="small muted">${URL.parse(o.webUrl)?.host ?? o.webUrl}</p>
+        ${plainList(
+          o.repos.map((r) =>
+            row({
+              href: `/${owner.username}/${r.name}`,
+              lead: icon("repo"),
+              title: r.fullName,
+              nav: true,
+              meta:
+                r.problem !== ""
+                  ? html`Last fetch failed: ${r.problem}`
+                  : r.lastFetchAt === null
+                    ? html`Not fetched yet`
+                    : html`Last fetch ${time(r.lastFetchAt)}`,
+            }),
+          ),
+        )}`,
+    )}
+  </section>`;
+}
+
+/**
  * The owner's apps, one shelf row each — the same row the home's *Your
  * apps* card draws (`shelfRows`, `studio/shelf.ts`), never a second copy of
  * it. Visibility is `listReposByOwner`'s own, the same rule the repository
@@ -243,6 +283,14 @@ function orgMembers(ctx: Ctx, teams: Team[]): User[] {
   );
 }
 
+/** A team's members with the role each holds (#571), one fact each: name, then role. */
+function teamMemberFacts(ctx: Ctx, team: Team): { label: string; value: string }[] {
+  return listTeamMemberRoles(ctx.app.db, team.id).map(({ user, role }) => ({
+    label: user.username,
+    value: role,
+  }));
+}
+
 /** "1 member" / "4 members" — a sentence, not a number in a pill. */
 function memberCount(n: number): Html {
   return html`${n} member${n === 1 ? "" : "s"}`;
@@ -277,6 +325,7 @@ function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
             lead: icon("users"),
             title: t.name,
             meta: memberCount(listTeamMembers(ctx.app.db, t.id).length),
+            facts: teamMemberFacts(ctx, t),
             trail: html`${badge(t.permission)}${when(canManage, () =>
               btn("Manage", {
                 href: `/${org.username}/-/teams/${t.id}`,
@@ -371,6 +420,9 @@ export async function ownerProfile(ctx: Ctx): Promise<Response> {
       : null}
     ${apps.html}
     ${repos}
+    ${when(ctx.auth.user !== undefined && ctx.auth.user.id === owner.id && !isOrg, () =>
+      workSection(ctx, owner),
+    )}
     ${when(isOrg && accessAllows(access, "read"), () =>
       teamsSection(ctx, owner, canManage),
     )}
@@ -534,7 +586,10 @@ export function teamPage(ctx: Ctx): Response {
   if (!team || team.orgId !== org.id) return notFoundPage(ctx);
 
   const members = timePhase(ctx.request, "members", () =>
-    listTeamMembers(ctx.app.db, team.id),
+    listTeamMemberRoles(ctx.app.db, team.id).map(({ user, role }) => ({ ...user, role })),
+  );
+  const figures = timePhase(ctx.request, "metrics", () =>
+    teamWindows(ctx.app.db, team.id, Date.now()),
   );
   const rendering = performance.now();
   const teamBase = `/${org.username}/-/teams/${team.id}`;
@@ -546,6 +601,18 @@ export function teamPage(ctx: Ctx): Response {
     sub: html`${badge(team.permission)} on every repository ${org.username} owns`,
   })}
   <section class="settings-block">
+    <h2>How fast this team turns issues into shipped changes, and what each costs</h2>
+    ${([
+      ["24 h", figures.day],
+      ["7 d", figures.week],
+    ] as const).map(
+      ([label, m]) => html`<h3>${label}</h3>
+        <dl class="status-rows">
+          ${metricsRows(m).map((r) => html`<div class="status-row"><dt>${r.label}</dt><dd>${r.value}</dd></div>`)}
+        </dl>`,
+    )}
+  </section>
+  <section class="settings-block">
     <h2>Members</h2>
     ${members.length === 0
       ? html`<p class="muted">Nobody is on this team yet.</p>`
@@ -556,7 +623,7 @@ export function teamPage(ctx: Ctx): Response {
               title: html`<a href="/${m.username}"
                 >${m.displayName || m.username}</a
               >`,
-              meta: html`@${m.username}`,
+              meta: html`@${m.username}${m.role === "member" ? "" : html` · ${m.role}`}`,
               trail: when(
                 !protectedTeam || members.length > 1,
                 () =>
@@ -579,6 +646,12 @@ export function teamPage(ctx: Ctx): Response {
         name: "user",
         required: true,
         hint: "Their username on this forge.",
+      })}
+      ${selectField({
+        label: "Role",
+        name: "role",
+        hint: "An agent's role is its seat on the org's repositories.",
+        options: TEAM_ROLES.map((r) => ({ value: r, label: r, selected: r === "member" })),
       })}
       <div class="form-actions">
         ${btn("Add member", { variant: "primary" })}
@@ -629,7 +702,11 @@ export async function teamMemberAdd(ctx: Ctx): Promise<Response> {
   if (r instanceof Response) return r;
   const username = field(r.form, "user").trim();
   const dest = `/${r.org.username}/-/teams/${r.team.id}`;
-  const added = addTeamMember(ctx.app, ctx.auth.user, r.org, r.team, username);
+  const rawRole = field(r.form, "role");
+  if (rawRole !== "" && !isTeamRole(rawRole))
+    return flashTo(ctx, dest, { tone: "danger", message: `A role is one of ${TEAM_ROLES.join(", ")}.` });
+  const role = isTeamRole(rawRole) ? rawRole : undefined;
+  const added = addTeamMember(ctx.app, ctx.auth.user, r.org, r.team, username, role);
   if (!added.ok)
     return flashTo(ctx, dest, {
       tone: "danger",

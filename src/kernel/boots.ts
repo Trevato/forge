@@ -32,6 +32,8 @@ interface Start {
 interface Ledger {
   total: number;
   starts: Start[];
+  /** When the very first start happened, ms; kept when the oldest of `starts` is trimmed. Absent in older ledgers. */
+  firstAt?: number;
 }
 
 /** What the ledger says, from this process's point of view. */
@@ -65,7 +67,8 @@ function read(dataDir: string): Ledger {
       typeof r.total === "number" && Number.isSafeInteger(r.total) && r.total >= starts.length
         ? r.total
         : starts.length;
-    return { total, starts };
+    const firstAt = typeof (raw as { firstAt?: unknown }).firstAt === "number" ? (raw as { firstAt: number }).firstAt : undefined;
+    return firstAt === undefined ? { total, starts } : { total, starts, firstAt };
   } catch {
     return { total: 0, starts: [] };
   }
@@ -97,6 +100,8 @@ export function recordBoot(
 ): BootCounts {
   thisStart = id;
   const ledger = read(dataDir);
+  // An older ledger that never trimmed still knows its first start; one that did, only from here.
+  ledger.firstAt ??= ledger.starts[0]?.at ?? now;
   ledger.total += 1;
   ledger.starts = [...ledger.starts, { id, at: now, clean: false }].slice(-KEPT);
   try {
@@ -123,4 +128,27 @@ export function recordCleanExit(dataDir: string, id = thisStart): void {
 /** The ledger as start `id` reads it now. */
 export function bootCounts(dataDir: string, id = thisStart): BootCounts {
   return countsOf(read(dataDir), id);
+}
+
+/** How long a new forge's first start is watched for crashes and kills (#11155). */
+export const FIRST_MINUTES_MS = 10 * 60_000;
+
+/** An unclean first-minutes start stops counting this long after it happened, so the alarm it raised clears. */
+export const FIRST_MINUTES_MEMORY_MS = 60 * 60_000;
+
+/**
+ * Starts that never exited cleanly within `windowMs` of the forge's first
+ * start (`firstAt`, which outlives the trimming of `starts` to {@link KEPT})
+ * and less than `memoryMs` ago; null when this directory has no ledger. Read
+ * from outside: a parent reads its child's.
+ *
+ * The newest start is left out: it may still be running, and from outside it
+ * cannot be told from one that crashed. So a crash with no start after it is
+ * counted only once the next start is written (a sleeping child's next wake).
+ */
+export function uncleanInFirstMinutes(dataDir: string, windowMs = FIRST_MINUTES_MS, now = Date.now(), memoryMs = FIRST_MINUTES_MEMORY_MS): number | null {
+  const ledger = read(dataDir);
+  const firstAt = ledger.firstAt ?? ledger.starts[0]?.at;
+  if (firstAt === undefined) return null;
+  return ledger.starts.slice(0, -1).filter((s) => !s.clean && s.at - firstAt <= windowMs && now - s.at < memoryMs).length;
 }

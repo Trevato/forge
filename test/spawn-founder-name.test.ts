@@ -203,7 +203,7 @@ describe("a child's founder holds the spawner's name", () => {
     const kid = await child("nia", false);
     const page = await (await fetch(`${kid.servers.url}/claim`)).text();
     expect(page).toContain('id="claim-takeover"');
-    expect(page).toContain("Claim it as alice and you will take over alice's account on this forge");
+    expect(page).toContain("Open it as alice and you will take over alice's account on this forge");
     // Where it does not apply (the spawner keeps access), the page makes no such promise.
     const kept = await child("ona", true);
     expect(await (await fetch(`${kept.servers.url}/claim`)).text()).not.toContain('id="claim-takeover"');

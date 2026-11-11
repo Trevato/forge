@@ -14,7 +14,8 @@
  * whole of this screen's design.
  */
 
-import { exploreLine, isExploreLine, exploreNote, exploreSuggestion, explorePage, parseExploreQuery, readExploreLine, type ExploreRow } from "../../actions/explore.ts";
+import { DEFAULT_WEIGHTS, frontWeights, type FrontWeights } from "../../core/front.ts";
+import { exploreCount, exploreFiltered, exploreLine, isExploreLine, exploreNote, exploreSuggestion, explorePage, parseExploreQuery, readExploreLine, whyOf, type ExploreRow } from "../../actions/explore.ts";
 import { protectionNotice } from "../../kernel/protection.ts";
 import { holdWords, plannerHold } from "../../crew/autonomy.ts";
 import { governorSeen } from "../../crew/governed.ts";
@@ -23,7 +24,11 @@ import { ownerWaits, waitLine, withMore } from "../../actions/owner_waits.ts";
 import { forgeHealth } from "../../kernel/guard.ts";
 import { coveredByVerdict, forgeVerdict, verdictLine } from "../../kernel/guard_verdict.ts";
 import { clientAppRows, clientDoings, clientFinished, doingLine, finishedLine } from "../../core/client-apps.ts";
+import { appCrew } from "../../core/app-crew.ts";
 import { nextStepsFor } from "../../core/next-steps.ts";
+import { keepThought } from "../../actions/thought.ts";
+import { SAY_SOMETHING_WORDS } from "../../actions/tell_words.ts";
+import { crewFirstText } from "../../web/studio/crew_key.ts";
 import { agentsLine } from "../../web/studio/client_home.ts";
 import { lastVisit } from "../../core/home_visit.ts";
 import { sinceDigest } from "../../web/studio/since.ts";
@@ -129,6 +134,9 @@ import { local } from "./where.ts";
 import { signInScreen } from "./signin.ts";
 
 /** Rows the list keeps under the figures strip; below it the strip shows fewer figures. */
+/** The first line of a new forge's home, as the page's heading and its one box. */
+const FIRST_TELL_LINE = "What do you want built? t says it to the crew.";
+
 const FIGURES_ROOM = 6;
 
 /** The forge-wide daily ceiling, from config, for the spend figure; the data directory, for the backup's age. */
@@ -174,6 +182,8 @@ const ORDER: readonly PaneId[] = ["repos", "onyou", "machine"];
 export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let repos: Repo[] = [];
   let all: Repo[] = [];
+  /** What a typed filter found past `all`, for the query it was read for. */
+  let found: { query: string; repos: Repo[] } | undefined;
   let pins: Pin[] = [];
   let pinned = new Set<string>();
   let onYou: OnYouItem[] = [];
@@ -228,6 +238,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
    * name of the account used day to day. Nobody else gets the row.
    */
   let everyday: { line: string; asking: boolean } | undefined;
+  /** A new forge's owner before their first tell: the home is one line, "what do you want built", and the everyday offer waits. */
+  let firstTell = false;
   /** One line per fired flow alarm; an admin reads every repository, anyone else public ones alone. */
   let alarms: string[] = [];
   /** The panels this admin pinned to the web home, by title and board, in their order. */
@@ -237,8 +249,10 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
    * A search line with `kind:` or `sort:` is the explorer's (#7325): the rows
    * `/explore` ranks, answered by the same action, for the line last settled.
    */
-  let explored: { line: string; rows: readonly ExploreRow[] } | undefined;
+  let explored: { line: string; rows: readonly ExploreRow[]; total: number } | undefined;
   let askedLine = "";
+  /** The forge's front weights, read once per ranked line so the reasons agree with the order. */
+  let exploredWeights: FrontWeights = DEFAULT_WEIGHTS;
   const exploring = (): boolean => isExploreLine(filter.query);
   const exploredRows = (): readonly ExploreRow[] => (exploring() ? (explored?.rows ?? []) : []);
   const syncExplore = (): void => {
@@ -258,7 +272,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       // A newer line was typed while this one was ranked; its answer wins.
       if (askedLine !== line) return;
       const rows = page?.items ?? [];
-      explored = { line, rows };
+      exploredWeights = frontWeights(f.app.db);
+      explored = { line, rows, total: page?.total ?? 0 };
       at("repos").clamp(rows.length);
       ctx.invalidate();
     });
@@ -273,14 +288,24 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
 
   const loadClientLines = async (): Promise<void> => {
     clientLines = [];
-    if (!f.user || (await nextStepsFor(f.app, f.user)) === undefined) return;
+    firstTell = false;
+    const steps = f.user ? await nextStepsFor(f.app, f.user) : undefined;
+    if (!f.user || steps === undefined) return;
     // A client's home never carries the forge-wide figures, on either door.
     figures = [];
+    firstTell = steps.some((s) => s.key === "tell" && !s.done);
+    everyday = everydayHead();
+    if (firstTell) {
+      clientLines = [FIRST_TELL_LINE, crewFirstText(f.app)];
+      ctx.invalidate();
+      return;
+    }
     const apps = await clientAppRows(f.app, f.user);
     clientRepoIds = new Set(apps.map((a) => a.repo.id));
     clientLive = new Map(apps.flatMap((a) => (a.live === undefined ? [] : [[a.repo.id, a.live] as const])));
     const now = new Date();
     const ids = apps.map((a) => a.repo.id);
+    const crewOf = new Map(appCrew(f.app.db, apps.map((a) => a.repo)).map((c) => [c.repo.id, c] as const));
     const doings = clientDoings(f.app.db, ids);
     const finished = clientFinished(f.app.db, ids);
     clientLines =
@@ -295,7 +320,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
               .join(" ");
             const mark = a.live === undefined ? "" : " (running, o opens it)";
             const line = `${a.repo.name}${mark}: ${agentsLine(a.working, a.queued)}`;
-            return doing === "" ? line : `${line} ${doing}`;
+            const crew = crewOf.get(a.repo.id)!.says;
+            return `${line}${doing === "" ? "" : ` ${doing}`} ${crew[0]!.toUpperCase()}${crew.slice(1)}.`;
           });
     ctx.invalidate();
   };
@@ -314,7 +340,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   };
 
   const everydayHead = (): typeof everyday => {
-    if (f.user === undefined || !f.user.isAdmin || f.user.kind !== "user") return undefined;
+    if (f.user === undefined || !f.user.isAdmin || f.user.kind !== "user" || firstTell) return undefined;
     if (askForEveryday(f.db, f.user))
       return { line: `${EVERYDAY_WHY} E makes it on the web · K keeps using admin`, asking: true };
     const daily = everydayOf(f.db, f.user);
@@ -338,6 +364,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     everyday = everydayHead();
     pinned = f.user ? pinnedRepoIds(f.db, f.user.id) : new Set<string>();
     all = listReposVisibleTo(f.db, f.user, { limit: 200 });
+    found = undefined;
     onYou = assignedToMe();
     onYouSteps = new Map(
       onYou.flatMap((item) => {
@@ -403,7 +430,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
             ...weekBlock(f.app, now),
             ...kpiLines(readKpis(f.db, now, { ...kpiForge(f.app), idle: () => idleReason(f.app, now) }), commit === null ? null : { sha: commit, since: ago(BOOTED) }),
             vitalsLine(readVitals(f.db, now)),
-            ...firedAlarms(f.db, now, { ceilingUsd: forgeCeiling(f.app.config) }).map((a) => a.says),
+            ...firedAlarms(f.db, now, { ceilingUsd: forgeCeiling(f.app.config), dataDir: f.app.config.dataDir }).map((a) => a.says),
             ...(cleared === undefined ? [] : [cleared]),
           ];
     // "Yours" is ownership plus the orgs you are on a team of; typing in the
@@ -851,9 +878,26 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** Yours with an empty filter; anything you can see once you type —
    * the one way to find someone else's repository from here. */
   const shown = (): Repo[] =>
-    exploring() ? [] : (filter.query !== "" ? all : repos).filter((repo) =>
+    exploring() ? [] : (filter.query !== "" ? typedPool() : repos).filter((repo) =>
       filter.matches(`${repo.ownerName}/${repo.name} ${repo.description}`),
     );
+
+  /**
+   * Everything a typed filter can reach: the newest 200 already read, and
+   * whatever the forge's own search finds among every visible repository
+   * past them, read once per query so drawing stays a filter.
+   */
+  const typedPool = (): Repo[] => {
+    const query = filter.query.trim();
+    if (found === undefined || found.query !== query) {
+      const seen = new Set(all.map((r) => r.id));
+      found = {
+        query,
+        repos: launcherSearch(f.db, f.user, query).filter((r) => !seen.has(r.id)),
+      };
+    }
+    return found.repos.length === 0 ? all : [...all, ...found.repos];
+  };
 
   /**
    * The panes the last frame drew, which is what `tab` can reach — a focus
@@ -993,7 +1037,11 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
           disabled: focus !== "machine" || pins.length === 0,
         }),
         binding(["C"], "decider", { disabled: !f.user }),
-        ...(clientLines.length > 0 ? [binding(["t"], "ask for something")] : []),
+        ...(firstTell
+          ? [binding(["t"], "say what you want built")]
+          : clientLines.length > 0
+            ? [binding(["t"], "ask for something")]
+            : []),
         ...(clientLive.size > 0 ? [binding(["o"], "open the app")] : []),
         binding(["n"], "new repo", { disabled: !f.signedIn }),
         binding(["M"], "migrate", { disabled: !f.signedIn }),
@@ -1134,7 +1182,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       const readAs =
         read === undefined
           ? undefined
-          : `Read as: ${exploreLine(read.query) || "everything"}${mend === undefined ? "" : ` · Did you mean ${mend.line}?`}${note === "" ? "" : ` · ${note}`}`;
+          : `Read as: ${exploreLine(read.query) || "everything"}${explored === undefined ? "" : ` · ${exploreCount(read.query, explored.total)}${exploreFiltered(read.query) ? " · Esc clears" : ""}`}${mend === undefined ? "" : ` · Did you mean ${mend.line}?`}${note === "" ? "" : ` · ${note}`}`;
       const reduced = readAs ?? (f.user?.isAdmin === true ? protectionNotice() : undefined);
       const [box, warn, list] = split(
         main,
@@ -1239,6 +1287,23 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
           reload();
           ctx.toast(wanted ? "pinned" : "unpinned", "success");
         }
+        return true;
+      }
+      if (e.key === "t" && f.user && firstTell) {
+        ctx.push(
+          promptScreen(ctx, screen, {
+            title: "What do you want built?",
+            label: "Your request",
+            hint: "enter sends",
+            onSubmit: (said) => {
+              if (said.trim() === "") return SAY_SOMETHING_WORDS;
+              const kept = keepThought(f.app, f.user, said, "composer");
+              ctx.toast(kept.ok ? "Received." : "That could not be kept.", kept.ok ? "success" : "danger");
+              if (kept.ok) void loadClientLines().then(reload);
+              return undefined;
+            },
+          }),
+        );
         return true;
       }
       if (e.key === "t" && f.user && clientLines.length > 0) {
@@ -1388,13 +1453,17 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** A row's numbers as the page says them; nothing that is zero. */
   function numbersOf(row: ExploreRow): string {
     const n = row.numbers;
+    // The row's reason first, as the page says it; its numbers are not said again.
+    const why = whyOf(row, parseExploreQuery(explored?.line ?? "").sort, Date.now(), exploredWeights);
+    const said = why?.signal;
     return metaOf(
+      why?.text ?? "",
       row.kind === "person" ? plural(n.apps, "app") : "",
-      n.forks > 0 ? plural(n.forks, "fork") : "",
-      n.likes > 0 ? plural(n.likes, "like") : "",
-      n.ships > 0 ? `${n.ships} shipped this month` : "",
-      n.awakeHours > 0 ? `${n.awakeHours} h in use` : "",
-      row.shippedAt !== null ? `shipped ${ago(row.shippedAt)}` : "",
+      n.forks > 0 && said !== "forks" ? plural(n.forks, "fork") : "",
+      n.likes > 0 && said !== "likes" ? plural(n.likes, "like") : "",
+      n.ships > 0 && said !== "ships" ? `${n.ships} shipped this month` : "",
+      n.awakeHours > 0 && said !== "use" ? `${n.awakeHours} h in use` : "",
+      row.shippedAt !== null && said !== "fresh" ? `shipped ${ago(row.shippedAt)}` : "",
     );
   }
 
@@ -1573,4 +1642,23 @@ function note(s: Surface, r: Rect, c: Tokens, lines: readonly string[]): void {
         r.x + r.w,
       ),
     );
+}
+
+/**
+ * The repositories a typed launcher filter finds among every one the viewer
+ * can see: the listing's own visibility rule and its owner/name match, so
+ * nothing past the first page is out of reach. `owner/name` is split, since
+ * the match reads the two columns apart.
+ */
+export function launcherSearch(
+  db: Parameters<typeof listReposVisibleTo>[0],
+  viewer: Parameters<typeof listReposVisibleTo>[1],
+  query: string,
+): Repo[] {
+  const q = query.trim();
+  if (q === "") return [];
+  const slash = q.indexOf("/");
+  if (slash > 0 && slash < q.length - 1)
+    return listReposVisibleTo(db, viewer, { owner: q.slice(0, slash), query: q.slice(slash + 1), limit: 200 });
+  return listReposVisibleTo(db, viewer, { query: q.replace(/\//g, ""), limit: 200 });
 }

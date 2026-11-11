@@ -5,36 +5,47 @@
  * (the Origin must be the forge's). It runs tmux on a real pty
  * (`Bun.spawn({terminal})`), held in a cell (`apps/contain.ts`) — the same
  * bubblewrap the forge holds repository code in — with the machine's memory
- * and CPU ceilings and no reach beyond the forge. A forge that cannot hold a
+ * and CPU ceilings and no reach beyond the forge, save the repository's own
+ * production and previews when its machine says `apps` (`shellReach`). A forge that cannot hold a
  * cell refuses the shell rather than hand out one on the host.
  *
  * One session per person, repository and machine: a second connection (a
  * second tab, a reload) joins the session that is running and sees the same
  * screen. Binary frames are keystrokes in and screen bytes out; a text frame
  * is JSON and says only `{"type":"resize","cols":n,"rows":n}`. The session
- * ends when its program exits or after `idleMs` with no keystroke, and each
- * one is a row in `machine_sessions`: machine, owner, start, end and why.
+ * ends when its program exits or after the idle limit with no keystroke and
+ * no output, and each one is a row in `machine_sessions`: machine, owner, start, end and why.
  *
  * No text a person sends ever reaches a command line: the command is a
  * constant, and the names in the path only pick a row and a directory after
  * they have been validated.
  */
 
-import { mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { cellHides } from "../spawn/hosted-mark.ts";
+import { dirname, join } from "node:path";
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
-import { openCell, resolveLimits, type Cell, type CellSpec } from "../apps/contain.ts";
+import { cellCounters, openCell, resolveLimits, type Cell, type CellSpec } from "../apps/contain.ts";
+import { appTtysOf, stopAllAppTtys, stopAppTty, stopIdleAppTtys } from "../apps/tty_registry.ts";
 import { startTerminal, type TerminalProgram } from "../apps/tty.ts";
+import { scheduleClock } from "../apps/feature_schedule.ts";
 import { holdOpen } from "../http/caller.ts";
 import { canWrite, getRepo, getRepoById, type Repo } from "../core/repos.ts";
 import { getUserById, isActive } from "../core/users.ts";
 import { isSafeName } from "../git/guard.ts";
 import type { User } from "../core/users.ts";
 import { repoMachines } from "../crew/machines_read.ts";
-import type { Machine } from "../crew/machines.ts";
+import { reachableApps, type Machine } from "../crew/machines.ts";
+import { ownApp, ownAppUrls } from "../crew/app_hosts.ts";
+import { limitValue } from "../settings/limits.ts";
 import { id as newId } from "../kernel/id.ts";
+import { readFileAt } from "../apps/checkout.ts";
+import { parseManifest } from "../apps/manifest.ts";
+import { resolveOid } from "../git/merge.ts";
+import { repoDir } from "../git/repos.ts";
+import { loadDotfiles, type DotfileSet } from "./dotfiles.ts";
+import { ensureCheckout, prepareHome, shellPlan, CHECKOUT_DIR, type ShellPlan } from "./rc.ts";
 
 // ---- the route ----
 
@@ -74,6 +85,10 @@ export interface ShellGrant {
   readonly machine: Machine;
   readonly user: User;
   readonly sessionId: string | undefined;
+  /** The app's own `tty` command at the default branch's tip, for the greeting. */
+  readonly tty?: string | null;
+  /** The person's dotfiles repository, read as them when the shell opened (#10548). */
+  readonly dotfiles?: DotfileSet;
 }
 
 /**
@@ -100,9 +115,23 @@ export async function mayOpenShell(
   const config = await repoMachines(app, repo);
   const machine = config.machines.find((m) => m.name === target.machine);
   if (machine === undefined) return { ok: false, refusal: "not_found" };
-  const grant = { repo, machine, user, sessionId: auth.sessionId };
+  const grant = { repo, machine, user, sessionId: auth.sessionId, tty: await appTty(app, repo), dotfiles: await loadDotfiles(app, user) };
   if (!roomFor(app, grant)) return { ok: false, refusal: "busy" };
+  // The first connection clones; async, so no other request waits on it.
+  await ensureCheckout(
+    repoDir(app.reposRoot, repo.ownerName, repo.name),
+    workspace(app, repo, machine, user.id),
+  );
   return { ok: true, grant };
+}
+
+/** The `tty` command forge.json declares at the default branch's tip, or null. */
+export async function appTty(app: App, repo: Repo): Promise<string | null> {
+  const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+  const tip = await resolveOid(dir, `refs/heads/${repo.defaultBranch}`);
+  if (tip === undefined) return null;
+  const parsed = parseManifest(await readFileAt(dir, tip, "forge.json"), undefined);
+  return parsed.ok ? parsed.value.tty : null;
 }
 
 // ---- frames ----
@@ -244,13 +273,18 @@ interface Session {
   /** The pty's size, as last set. */
   size: PtySize;
   lastInput: number;
+  /** When the program last printed: a running build is not idle. */
+  lastOutput: number;
   ended: boolean;
   readonly timer: ReturnType<typeof setInterval>;
 }
 
 export interface ShellOptions {
-  /** No keystroke for this long ends the session. */
-  readonly idleMs: number;
+  /**
+   * No keystroke and no output for this long ends the session. A function is
+   * asked at every check, so a changed setting governs the next one.
+   */
+  readonly idleMs: number | (() => number);
   /**
    * Whether this forge can hold a cell. Without one the shell is refused —
    * except where a test says `uncontained`, on purpose, to run the bridge.
@@ -258,6 +292,8 @@ export interface ShellOptions {
   readonly contain: "cell" | "uncontained" | "refuse";
   /** The command the pty runs: constant, never built from a request. */
   readonly command: string;
+  /** Whether leaving the command keeps the session (tmux holds it); said in the greeting. Defaults to no. */
+  readonly detaches?: boolean;
   /** How often a session asks again whether its owner may still write; defaults to `CHECK_MS`. */
   readonly checkMs?: number;
   /** Handshakes one person may make in a minute; defaults to `HANDSHAKES_PER_MINUTE`. */
@@ -275,10 +311,27 @@ export const MAX_BUFFERED_BYTES = 1024 * 1024;
 export const CHECK_MS = 5_000;
 
 /** tmux where the machine has it, so a person's windows survive a closed tab; else a login shell. */
-export function defaultCommand(): string {
-  return Bun.which("tmux") !== null
-    ? "exec tmux -L forge new-session -A -s shell"
-    : "exec /bin/sh -i";
+export function defaultShell(): ShellPlan {
+  return shellPlan(Bun.which("tmux") !== null, Bun.which("bash") !== null);
+}
+
+/**
+ * The environment a machine shell starts with: the forge's own bun first on
+ * PATH (the cell binds `/` read-only and reveals bun's directory even under a
+ * hidden home, see `cellMounts`), then the forge's PATH, where git is.
+ */
+export function shellEnv(grant: ShellGrant, dir: string): Record<string, string> {
+  return {
+    PATH: `${dirname(process.execPath)}:${process.env["PATH"] ?? "/usr/bin:/bin"}`,
+    FORGE_REPO: `${grant.repo.ownerName}/${grant.repo.name}`,
+    FORGE_CHECKOUT: join(dir, CHECKOUT_DIR),
+    HOME: join(dir, "home"),
+    TERM: "xterm-256color",
+    COLORTERM: "truecolor",
+    LANG: "C.UTF-8",
+    FORGE_MACHINE: grant.machine.name,
+    FORGE_MACHINE_TOOLS: grant.machine.tools.join(" "),
+  };
 }
 
 const sessions = new WeakMap<App, Map<string, Session>>();
@@ -333,16 +386,38 @@ export function workspace(app: App, repo: Repo, machine: Machine, userId: string
   return join(app.config.dataDir, "machines", repo.id, machine.name, userId);
 }
 
-/** The cell a shell runs in: its own directory, the forge's data hidden, the machine's ceilings. */
-export function shellCell(app: App, dir: string, machine: Machine, label: string): CellSpec {
+/**
+ * The origins a shell's cell may open (#9934): the forge always, and the
+ * repository's own production and previews only when the machine says
+ * `apps`. `appUrls` are made from this repository's slug and pulls
+ * (`crew/app_hosts.ts`), so another repository's app is never among them;
+ * each is an exact host and port, never a pattern.
+ */
+export function shellReach(forgeUrl: string | undefined, machine: Machine, appUrls: readonly string[]): string[] {
+  const forge = forgeUrl === undefined || forgeUrl === "" ? [] : [forgeUrl];
+  return [...forge, ...reachableApps(machine, appUrls)];
+}
+
+/**
+ * The cell a shell runs in: its own directory, the forge's data hidden, the
+ * machine's ceilings, and the reach `shellReach` decides. Nothing the machine
+ * says un-hides the forge's data.
+ */
+export function shellCell(
+  app: App,
+  dir: string,
+  machine: Machine,
+  label: string,
+  appUrls: readonly string[] = [],
+): CellSpec {
   const step = resolveLimits("step", undefined);
   return {
     dir,
     writable: [],
     home: join(dir, "home"),
-    hide: [app.config.dataDir, process.env["HOME"] ?? "", tmpdir()],
+    hide: cellHides(app),
     egress: [],
-    reach: [app.config.url ?? ""].filter((u) => u !== ""),
+    reach: shellReach(app.config.url, machine, appUrls),
     limits: {
       ...step,
       memoryMiB: machine.memoryMiB ?? step.memoryMiB,
@@ -350,7 +425,48 @@ export function shellCell(app: App, dir: string, machine: Machine, label: string
     },
     terminal: true,
     label,
+    // The prompt names the machine, never the pod it runs on (#10850).
+    hostname: machine.name,
   };
+}
+
+/** The idle limit an admin set at `/admin/limits`, in ms; read at every check. */
+export const shellIdleMs = (db: Database): number => limitValue(db, "shell_idle_minutes") * 60_000;
+
+const idleLimit = (opts: ShellOptions): number => (typeof opts.idleMs === "function" ? opts.idleMs() : opts.idleMs);
+
+/** Idle only when both the last keystroke and the last output are older than the limit. */
+export function idle(session: { lastInput: number; lastOutput: number }, limitMs: number, now = Date.now()): boolean {
+  return now - session.lastInput >= limitMs && now - session.lastOutput >= limitMs;
+}
+
+/** One live shell of a person's on a machine: attached while a connection is open, else detached and due to stop. */
+export interface MachineState {
+  readonly attached: boolean;
+  /** When an idle session ends (ms since epoch): the later of the last keystroke and output, plus the idle limit. */
+  readonly stopsAt: number;
+}
+
+/** "attached", or "detached, stops at HH:MM UTC unless you come back"; undefined when no shell is live. Both doors say it. */
+export function stateLine(state: MachineState | undefined): string | undefined {
+  if (state === undefined) return undefined;
+  return state.attached ? "attached" : `detached, stops at ${scheduleClock(state.stopsAt)} UTC unless you come back`;
+}
+
+/** A person's live shells in one repository, by machine name; only theirs, never another person's. */
+export function machineStates(app: App, repoId: string, userId: string): Map<string, MachineState> {
+  const opts = options.get(app);
+  const idleMs = opts === undefined ? shellIdleMs(app.db) : idleLimit(opts);
+  const states = new Map<string, MachineState>();
+  for (const s of sessionsOf(app).values()) {
+    if (s.userId !== userId || s.repoId !== repoId || s.ended) continue;
+    const row = app.db
+      .query<{ machine: string }, [string]>("SELECT machine FROM machine_sessions WHERE id = ?")
+      .get(s.row);
+    if (row === null) continue;
+    states.set(row.machine, { attached: s.peers.size > 0, stopsAt: Math.max(s.lastInput, s.lastOutput) + idleMs });
+  }
+  return states;
 }
 
 function end(app: App, session: Session, reason: EndReason): void {
@@ -377,13 +493,23 @@ function start(app: App, grant: ShellGrant, opts: ShellOptions, cols: number, ro
   let terminal: Bun.Terminal | undefined;
   let cell: Cell | undefined;
   let row: string | undefined;
+  let live: Session | undefined;
   try {
     mkdirSync(join(dir, "home"), { recursive: true });
+    prepareHome(join(dir, "home"), {
+      repo: `${grant.repo.ownerName}/${grant.repo.name}`,
+      machine: grant.machine.name,
+      detaches: opts.detaches === true,
+      checkout: existsSync(join(dir, CHECKOUT_DIR, ".git")),
+      tty: grant.tty ?? null,
+      dotfilesUnreadable: grant.dotfiles?.unreadable ?? null,
+    }, grant.dotfiles);
     row = recordStart(app.db, grant.repo.id, grant.machine.name, grant.user.id);
     terminal = new Bun.Terminal({
       cols,
       rows,
       data: (_t, chunk) => {
+        if (live !== undefined) live.lastOutput = Date.now();
         for (const peer of peers) {
           if (peer.readyState !== WebSocket.OPEN) continue;
           // A peer that is not reading is closed, never buffered without end.
@@ -393,16 +519,16 @@ function start(app: App, grant: ShellGrant, opts: ShellOptions, cols: number, ro
       },
     });
     if (opts.contain === "cell")
-      cell = openCell(shellCell(app, dir, grant.machine, `machine:${grant.repo.id}/${grant.machine.name}`));
-    const env: Record<string, string> = {
-      PATH: process.env["PATH"] ?? "/usr/bin:/bin",
-      HOME: join(dir, "home"),
-      TERM: "xterm-256color",
-      COLORTERM: "truecolor",
-      LANG: "C.UTF-8",
-      FORGE_MACHINE: grant.machine.name,
-      FORGE_MACHINE_TOOLS: grant.machine.tools.join(" "),
-    };
+      cell = openCell(
+        shellCell(
+          app,
+          dir,
+          grant.machine,
+          cellLabel(grant.repo.id, grant.machine.name, grant.user.id),
+          ownAppUrls(ownApp(app, grant.repo)),
+        ),
+      );
+    const env = shellEnv(grant, dir);
     const program = startTerminal(opts.command, { terminal, env, cwd: dir, cell });
     const term = terminal;
     const session: Session = {
@@ -415,19 +541,21 @@ function start(app: App, grant: ShellGrant, opts: ShellOptions, cols: number, ro
       peers,
       size: { cols, rows },
       lastInput: Date.now(),
+      lastOutput: Date.now(),
       ended: false,
       timer: setInterval(
         () => {
-          if (Date.now() - session.lastInput >= opts.idleMs) end(app, session, "idle");
+          if (idle(session, idleLimit(opts))) end(app, session, "idle");
           else if (!stillMay(app, session)) end(app, session, "revoked");
         },
-        Math.max(10, Math.min(opts.idleMs, opts.checkMs ?? CHECK_MS)),
+        Math.max(10, Math.min(idleLimit(opts), opts.checkMs ?? CHECK_MS)),
       ),
     };
     void program.exited.then(() => {
       term.close();
       end(app, session, "exit");
     });
+    live = session;
     sessionsOf(app).set(session.key, session);
     app.log.info("machine shell started", {
       repo: `${grant.repo.ownerName}/${grant.repo.name}`,
@@ -449,9 +577,149 @@ function start(app: App, grant: ShellGrant, opts: ShellOptions, cols: number, ro
   }
 }
 
+/** The label a shell's cell is watched under: one per person, so its counters are theirs alone. */
+export const cellLabel = (repoId: string, machine: string, userId: string): string =>
+  `machine:${repoId}/${machine}/${userId}`;
+
+/** One shell a person holds or held: plain data for the account page and the `sessions` tool. */
+export interface ShellRow {
+  readonly id: string;
+  /** A machine shell, or an app's terminal (#10549); an app row's `machine` is its environment. */
+  readonly kind: "machine" | "app";
+  /** `owner/name`. */
+  readonly repository: string;
+  readonly machine: string;
+  readonly startedAt: string;
+  /** Null when the shell has ended: its last keystroke is not kept. */
+  readonly lastInputAt: string | null;
+  readonly lastOutputAt: string | null;
+  /** Connections attached now; 0 is detached. */
+  readonly peers: number;
+  /** Cores in use and resident MiB, null where the cell does not report them. */
+  readonly cpuCores: number | null;
+  readonly memoryMiB: number | null;
+  readonly endedAt: string | null;
+  readonly endReason: EndReason | null;
+  /** The end in words, null while live. */
+  readonly endedBecause: string | null;
+}
+
+const iso = (ms: number): string => new Date(ms).toISOString();
+
+/** The shells running now for one person, newest first. */
+export function liveShells(app: App, userId: string): ShellRow[] {
+  const counters = new Map(cellCounters().map((c) => [c.label, c]));
+  const rows: ShellRow[] = [];
+  for (const s of sessionsOf(app).values()) {
+    if (s.userId !== userId) continue;
+    const repo = getRepoById(app.db, s.repoId);
+    const started = app.db
+      .query<{ machine: string; started_at: string }, [string]>("SELECT machine, started_at FROM machine_sessions WHERE id = ?")
+      .get(s.row);
+    if (repo === undefined || started === null) continue;
+    const counter = counters.get(cellLabel(s.repoId, started.machine, userId));
+    rows.push({
+      id: s.row,
+      kind: "machine",
+      repository: `${repo.ownerName}/${repo.name}`,
+      machine: started.machine,
+      startedAt: started.started_at,
+      lastInputAt: iso(s.lastInput),
+      lastOutputAt: iso(s.lastOutput),
+      peers: s.peers.size,
+      cpuCores: counter?.cores ?? null,
+      memoryMiB: counter === undefined ? null : Math.round(counter.memoryBytes / 1048576),
+      endedAt: null,
+      endReason: null,
+      endedBecause: null,
+    });
+  }
+  for (const e of appTtysOf(app, userId))
+    rows.push({
+      id: e.id,
+      kind: "app",
+      repository: e.repository,
+      machine: `${e.slug} · ${e.env}`,
+      startedAt: iso(e.startedAt),
+      lastInputAt: iso(e.lastInput),
+      lastOutputAt: iso(e.lastOutput),
+      peers: 0,
+      cpuCores: null,
+      memoryMiB: null,
+      endedAt: null,
+      endReason: null,
+      endedBecause: null,
+    });
+  return rows.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+}
+
+/** How many ended shells `myShells` adds after the live ones. */
+export const RECENT_ENDED = 10;
+
+/** A person's shells: the live ones, newest first, then the last ended ones, newest first. */
+export function myShells(app: App, userId: string, ended = RECENT_ENDED): ShellRow[] {
+  const gone = app.db
+    .query<
+      { id: string; machine: string; started_at: string; ended_at: string; end_reason: EndReason; owner_name: string; name: string },
+      [string, number]
+    >(
+      `SELECT s.id, s.machine, s.started_at, s.ended_at, s.end_reason, o.username AS owner_name, r.name
+         FROM machine_sessions s JOIN repo r ON r.id = s.repo_id JOIN user o ON o.id = r.owner_id
+        WHERE s.owner_id = ? AND s.ended_at IS NOT NULL ORDER BY s.started_at DESC LIMIT ?`,
+    )
+    .all(userId, ended)
+    .map(
+      (r): ShellRow => ({
+        id: r.id,
+        kind: "machine",
+        repository: `${r.owner_name}/${r.name}`,
+        machine: r.machine,
+        startedAt: r.started_at,
+        lastInputAt: null,
+        lastOutputAt: null,
+        peers: 0,
+        cpuCores: null,
+        memoryMiB: null,
+        endedAt: r.ended_at,
+        endReason: r.end_reason,
+        endedBecause: ENDED[r.end_reason] ?? r.end_reason,
+      }),
+    );
+  return [...liveShells(app, userId), ...gone];
+}
+
+/** Stop one shell a person holds, by its row id: false when they hold no such live shell (another person's is the same answer). */
+export function stopShell(app: App, userId: string, id: string): boolean {
+  if (stopAppTty(app, userId, id)) return true;
+  for (const s of sessionsOf(app).values()) {
+    if (s.userId !== userId || s.row !== id) continue;
+    end(app, s, "stopped");
+    return true;
+  }
+  return false;
+}
+
+/** Stop every shell of a person's that is detached and past half its idle limit; returns how many. */
+export function stopIdleShells(app: App, userId: string, idleMs = shellIdleMs(app.db)): number {
+  let n = 0;
+  for (const s of [...sessionsOf(app).values()]) {
+    if (s.userId !== userId || s.peers.size > 0 || !idle(s, idleMs / 2)) continue;
+    end(app, s, "stopped");
+    n++;
+  }
+  return n + stopIdleAppTtys(app, userId, idleMs);
+}
+
+/** The receipts, one line each; the page and the `sessions` tool say them in the same words. */
+export const STOPPED_ONE = "Shell stopped.";
+export const NO_SUCH_SHELL = "No such shell.";
+export const stoppedIdleSays = (n: number): string =>
+  n === 0 ? "No idle shell to stop." : `Stopped ${n} idle shell${n === 1 ? "" : "s"}.`;
+
 /** End every session (the forge is stopping). */
 export function stopShells(app: App): void {
   for (const session of [...sessionsOf(app).values()]) end(app, session, "stopped");
+  stopAllAppTtys(app);
 }
 
 /** Whether a socket's data is a shell's, so the forge's one handler can tell. */

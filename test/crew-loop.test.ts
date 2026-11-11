@@ -256,6 +256,10 @@ describe("a crew reviewer's changes-requested wakes the builder", () => {
       concurrency: 0,
       budgetUsd: 1,
       runTimeoutMs: 60_000,
+      // No tick inside the suite: the first one runs the autonomy pass, whose
+      // `moveRequested` queues its own follow-up on a standing verdict, and on
+      // a loaded shard it landed mid-test and moved the counts these assert.
+      tickMs: 3_600_000,
     });
   });
 
@@ -406,6 +410,15 @@ describe("a crew reviewer's changes-requested wakes the builder", () => {
     }
   };
   const verdict = async (pull: Pull, body: string, state = "changes_requested") => {
+    // A review is news to the builder only when written after its last run
+    // began (`news.ts`, strictly later, to the millisecond). Claimed a moment
+    // ago by `settleFeedback`, that run's start can share this millisecond, or
+    // sit one ahead of it as SQLite rounds its clock: the round then reads as
+    // nothing new and queues no follow-up (#10486). Real rounds are minutes apart.
+    const begun = listRuns(app.db, repo.id, { issueId: pull.id })
+      .map((r) => r.startedAt ?? "")
+      .reduce((a, b) => (a > b ? a : b), "");
+    while (new Date().toISOString() <= begun) await Bun.sleep(1);
     await submitReview(app, sentinel, fresh(), pull, {
       state: state as "changes_requested",
       body,

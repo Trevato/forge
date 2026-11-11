@@ -4,6 +4,7 @@
  * write path — committing files to a branch without a git client.
  */
 
+import { getOriginById } from "../core/origins.ts";
 import { isContributionFork, type GuestRefusal } from "../core/contribute.ts";
 import { contributionRefusal } from "../core/storage.ts";
 import { limitValue } from "../settings/limits.ts";
@@ -49,8 +50,11 @@ import type { User } from "../core/users.ts";
 import {
   createWebhook as insertWebhook,
   deleteWebhook as removeWebhook,
+  getWebhook,
+  redeliver,
   setWebhookActive,
   type CreateWebhookError,
+  type RedeliverError,
   type Webhook,
 } from "../core/webhooks.ts";
 import { resolveOid } from "../git/merge.ts";
@@ -71,9 +75,10 @@ import {
   requireWriter,
   type AccessError,
 } from "./access.ts";
-import { validPolishShare } from "../crew/small_share.ts";
+import { validPolishShare } from "../crew/polish_share.ts";
 import { removeInstallCache } from "../crew/workdir.ts";
 import type { SettingsChanged } from "../core/settings_changed.ts";
+import { seatStarterCrew } from "../spawn/starter_crew.ts";
 
 export interface CreateRepoInput {
   /** Owner name: the actor themselves (default) or an org they can write to. */
@@ -176,6 +181,7 @@ export async function createRepo(
   });
   if (!created.ok) return created;
   storageChanged(app, ownerId);
+  seatStarterCrew(app.db, created.value, user.value.id);
   app.bus.append({
     kind: "repo.created",
     repoId: created.value.id,
@@ -310,7 +316,7 @@ export async function privateRepoForSealed(
   return sealedForkFor(app, actor, base);
 }
 
-export type UpdateSettingsError = "not_found" | "unknown_branch" | "polish_share";
+export type UpdateSettingsError = "not_found" | "unknown_branch" | "polish_share" | "origin_read_only";
 
 /** Each repository's archive transitions, one after another. */
 const archiveTurns = new WeakMap<App, Map<string, Promise<void>>>();
@@ -336,7 +342,7 @@ function inTurn<T>(app: App, repoId: string, work: () => Promise<T>): Promise<T>
 }
 
 /**
- * Archive (true) or wake (false), and act on it only if this call moved the
+ * Archive (true) or restore (false), and act on it only if this call moved the
  * repository (`moveArchived`). The write and its effect take one turn per
  * repository, so a Wake asked while an Archive is still stopping the app
  * starts it after that stop, not before it. True when this call moved it.
@@ -391,6 +397,12 @@ export function settingsChanged(repo: Repo, settings: RepoSettings): SettingsCha
   return changed;
 }
 
+/** Whether `repo` mirrors an origin that was connected read-only. */
+export function mirrorsReadOnlyOrigin(app: App, repo: Repo): boolean {
+  if (repo.origin === null || repo.origin === undefined) return false;
+  return getOriginById(app.db, repo.origin.originId)?.readOnly === true;
+}
+
 /**
  * Change settings. A new default branch must exist; git HEAD is moved first
  * and the row follows (git is truth, the index is derived from it).
@@ -418,6 +430,10 @@ export async function updateRepoSettings(
   // base, whoever owns it (`core/sealed.ts`).
   if (repo.sealedFor !== null && settings.visibility === "public")
     return err("not_found");
+  // A repository mirrored from a read-only origin is private to its owner
+  // for as long as the origin is read-only (#10520).
+  if (settings.visibility === "public" && mirrorsReadOnlyOrigin(app, repo))
+    return err("origin_read_only");
   if (settings.polishShare !== undefined && !validPolishShare(settings.polishShare))
     return err("polish_share");
   const branch = settings.defaultBranch;
@@ -529,7 +545,7 @@ export interface ArchiveAnswer {
 }
 
 /**
- * Archive (true) or wake (false) a repository, for the MCP: the same
+ * Archive (true) or restore (false) a repository, for the MCP: the same
  * `updateRepoSettings` the API's PATCH goes through. A repository admin's,
  * never an agent's; a dry run answers what would change and changes nothing.
  */
@@ -716,6 +732,25 @@ export function pauseWebhook(
     payload: { webhookId },
   });
   return ok();
+}
+
+/**
+ * Send a failed delivery of this repository's hook again (admins). The one
+ * action behind the Settings form, the API and MCP; `redeliver` does the
+ * checks (only `failed` moves, a sealed report stays refused).
+ */
+export function redeliverWebhook(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  webhookId: string,
+  deliveryId: string,
+): Result<void, RedeliverError | "no_admin"> {
+  const admin = requireRepoAdmin(app, actor, repo);
+  if (!admin.ok) return err("no_admin");
+  if (!getWebhook(app.db, repo.id, webhookId)) return err("not_found");
+  const done = redeliver(app.db, deliveryId, webhookId);
+  return done.ok ? ok() : done;
 }
 
 export type CommitToBranchError =

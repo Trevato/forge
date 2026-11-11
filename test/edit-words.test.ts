@@ -448,6 +448,19 @@ describe("new words for an issue or a pull", () => {
     ).toBeDefined();
   });
 
+  test("the folded Edit form is plain fields, not a boxed card", async () => {
+    const html = await page(`/alice/garden/pulls/${pull.number}`, await signIn("alice"));
+    const at = html.indexOf('<details class="tl-edit" id="edit">');
+    expect(at).toBeGreaterThan(-1);
+    const fold = html.slice(at, html.indexOf("</details>", at));
+    const open = fold.match(/<form[^>]*>/)![0];
+    expect(open).not.toMatch(/\bcard\b/);
+    expect(open).not.toContain("comment-form");
+    expect(fold).toContain('name="title"');
+    expect(fold).toContain('name="body"');
+    expect(fold).toContain("Save");
+  });
+
   test("the pages offer Edit to the author and a writer, and the form saves", async () => {
     const mine = await signIn("alice");
     const change = `/alice/garden/pulls/${pull.number}`;

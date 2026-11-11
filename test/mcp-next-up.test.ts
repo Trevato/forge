@@ -106,7 +106,7 @@ describe("next_up over MCP", () => {
   };
 
   const picked = (repo: Repo, slots: number): number[] =>
-    inSlotOrder(app, repo, readyNow(repoGraph(app.db, repo.id, { sealed: true })), [], slots).map((r) => r.issue.number);
+    inSlotOrder(app, repo, readyNow(repoGraph(app.db, repo.id, { sealed: true }))).map((r) => r.issue.number);
 
   test("the list lists the order the picker starts in, ranked first and then the rest, and a ranked small issue survives a full small share", async () => {
     const { repo, numbers } = await orderRepo();
@@ -116,11 +116,11 @@ describe("next_up over MCP", () => {
     const before = await listed();
     expect(before.slice(0, 2)).toEqual([numbers[3]!, numbers[2]!]);
     expect(picked(repo, 5)).toEqual(before);
-    // With no small slot at all, the unranked small issue is dropped; ranking it keeps it, in its place.
-    expect(picked(repo, 0)).toEqual(before.filter((n) => n !== numbers[4]));
+    // No cap holds a small issue back; ranking it moves it to the top.
     await tool(rw, { app: "alice/order", issue: numbers[4], to: "top" });
     const after = await listed();
     expect(after[0]).toBe(numbers[4]!);
     expect(picked(repo, 0)).toEqual(after);
+    expect(after).toContain(numbers[4]!);
   });
 });

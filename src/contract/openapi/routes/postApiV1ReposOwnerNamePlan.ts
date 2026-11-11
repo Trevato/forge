@@ -5,5 +5,6 @@ export const route: Route = {
   path: `${REPO}/plan`,
   summary: "Open a plan of issues and their dependencies, all or nothing",
   auth: true,
+  role: "member",
   body: { issues: "array" },
 };

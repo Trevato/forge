@@ -10,6 +10,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { enableApp } from "../src/actions/apps.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openIssue, setIssueState } from "../src/actions/issues.ts";
 import { openPull } from "../src/actions/pulls.ts";
@@ -308,6 +309,19 @@ describe("what the tokens bought", () => {
     expect(line).toContain("<b>$2.40</b> closed with nothing");
     expect(line).toContain("<b>$0.10</b> still open");
     expect(line).not.toContain("landed nothing");
+    // The spend line's way to the fleet graph: the viewer's whole selection,
+    // the graph's own default, when nothing narrows the board (#578).
+    expect(board).toContain('<a id="returns-graph" href="/fleet/graph">Fleet graph</a>');
+    // Narrowed to something holding none of her money (mill is no app, so
+    // not on the board): no line and no graph link, never the whole fleet.
+    const narrowed = await (await get("/board?apps=alice/mill", { cookie: aliceCookie })).text();
+    expect(narrowed).not.toContain('id="returns-line"');
+    expect(narrowed).not.toContain('id="returns-graph"');
+    // Once mill is an app the narrowed board carries it, and the graph only it.
+    const enabled = enableApp(app, alice, repo, { slug: "mill" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    const asked = await (await get("/board?apps=alice/mill", { cookie: aliceCookie })).text();
+    expect(asked).toContain('<a id="returns-graph" href="/fleet/graph?repo=alice%2Fmill">Fleet graph</a>');
     const page = (
       await (await get("/board/returns", { cookie: aliceCookie })).text()
     ).replace(/\s+/g, " ");
@@ -324,6 +338,29 @@ describe("what the tokens bought", () => {
     expect(
       (await get("/api/v1/returns?days=0", { token: aliceRw })).status,
     ).toBe(422);
+  });
+
+  test("the line carries the day's median ask→live beside the dollars once a production deploy served a landing", async () => {
+    const before = await (await get("/board", { cookie: aliceCookie })).text();
+    expect(before).not.toContain("median ask→live");
+    const merged = app.db
+      .query<{ merged_at: string }, []>("SELECT merged_at FROM pull WHERE merged_at IS NOT NULL ORDER BY merged_at DESC LIMIT 1")
+      .get();
+    expect(merged).not.toBeNull();
+    // Served the instant it merged; the ask was exactly three hours before: 3.0 h.
+    const at = merged!.merged_at;
+    app.db
+      .query(
+        `UPDATE issue SET created_at = ?1 WHERE kind = 'issue' AND repo_id = ?3 AND number IN (
+           SELECT CAST(substr(i.body, 9) AS INTEGER) FROM pull p JOIN issue i ON i.id = p.issue_id WHERE p.merged_at = ?2)`,
+      )
+      .run(new Date(Date.parse(at) - 3 * 3_600_000).toISOString(), at, repo.id);
+    const dep = createRun(app.db, { repoId: repo.id, kind: "deploy", env: "production" });
+    app.db.query("UPDATE run SET state = 'ok', created_at = ?1, serving_at = ?1 WHERE id = ?2").run(at, dep.id);
+    const board = await (await get("/board", { cookie: aliceCookie })).text();
+    const line = /<a class="muted small" id="returns-line"[^>]*>([\s\S]*?)<\/a>/.exec(board)?.[1]?.replace(/\s+/g, " ");
+    expect(line).toContain("median ask→live <b>3.0 h</b> (24 h)");
+    expect(line).toContain("<b>$4.00</b> → <b>1</b> landed");
   });
 
   test("spend reported from outside shows apart and is never added in", async () => {

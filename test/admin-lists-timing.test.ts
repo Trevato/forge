@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { seedAdmin } from "./helpers/admin.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 let dataDir = "";
 let app: App, servers: Servers, bearer = "";
@@ -30,7 +31,7 @@ afterAll(async () => {
 });
 
 const names = (res: Response) =>
-  (res.headers.get("server-timing") ?? "").split(", ").map((p) => p.split(";")[0]!).filter(Boolean);
+  requestTiming(res).split(", ").map((p) => p.split(";")[0]!).filter(Boolean);
 
 for (const [path, read] of [["accounts", "accounts"], ["people", "people"], ["invites", "invites"], ["teams", "teams"]] as const) {
   test(`GET /admin/${path} names session, ${read}, render in order`, async () => {

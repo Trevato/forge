@@ -9,6 +9,7 @@ import { defect } from "../kernel/error.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { gitEnv, mediaGate, runGit, runGitRaw, type GitFailure } from "./env.ts";
 import { isSafeOid, isSafeRef } from "./guard.ts";
+import { during } from "../perf/jobs.ts";
 
 export type ObjectType = "blob" | "tree" | "commit" | "tag";
 
@@ -127,7 +128,7 @@ export function readerFor(dir: string): RepoReader {
   const reader = new RepoReader(dir);
   pool.set(dir, { reader, usedAt: Date.now() });
   if (sweeper === undefined) {
-    sweeper = setInterval(() => sweepReaders(), READER_IDLE_MS);
+    sweeper = setInterval(() => during("git-readers", () => sweepReaders()), READER_IDLE_MS);
     // The pool must never be the reason a process refuses to exit.
     sweeper.unref?.();
   }

@@ -7,6 +7,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { FUNNEL_SCOPE, funnelReport, paidSql } from "./funnel.ts";
 import {
   DIMENSIONS,
   DIRECT,
@@ -16,6 +17,7 @@ import {
   readVisits,
   sinceOf,
   windowOfViews,
+  WINDOWS,
   type Dimension,
   type Filter,
   type ViewWindow,
@@ -81,6 +83,7 @@ export function probeViews(
       one("SELECT COUNT(*) AS n FROM (SELECT DISTINCT day, visitor FROM traffic_view WHERE scope = ?1 AND at >= ?2 AND scraper = 1)", scope, since),
       { scope, window }),
   ];
+  if (scope === FUNNEL_SCOPE) numbers.push(...probeFunnel(db, window, since, now));
   const dimension = DIMENSIONS.find((d) => d === ask.dimension);
   if (dimension !== undefined && typeof ask.key === "string") {
     const key = ask.key === DIRECT && dimension === "source" ? "" : ask.key;
@@ -123,4 +126,30 @@ export function probeViews(
     });
   }
   return { as_of: new Date(now).toISOString(), scope, window, numbers };
+}
+
+/**
+ * The funnel's steps (`funnel.ts`), each counted again in SQL over the stored
+ * views (the report counts in memory); the paid step again from the change rows.
+ */
+function probeFunnel(db: Database, window: ViewWindow, since: number, now: number): ProbedView[] {
+  const report = funnelReport(db, WINDOWS[window], now);
+  const one = (sql: string, ...args: (string | number)[]): number => db.query<{ n: number }, (string | number)[]>(sql).get(...args)?.n ?? 0;
+  const distinct = (like: string): number =>
+    one("SELECT COUNT(*) AS n FROM (SELECT DISTINCT day, visitor FROM traffic_view WHERE scope = ?1 AND at >= ?2 AND scraper = 0 AND path LIKE ?3)", FUNNEL_SCOPE, since, like);
+  const sql: Record<string, number> = {
+    home: distinct("home"),
+    plans: distinct("plans"),
+    click: distinct("click:%"),
+    forge: one("SELECT COUNT(*) AS n FROM traffic_view WHERE scope = ?1 AND at >= ?2 AND scraper = 0 AND path = 'forge'", FUNNEL_SCOPE, since),
+    paid: paidSql(db, since),
+  };
+  const counts: Record<string, string> = {
+    home: "Visitors who were served the anonymous home page, once a day each; scrapers apart.",
+    plans: "Visitors for whom the plans came into view, once a day each.",
+    click: "Visitors who pressed a plan's button (a payment link or the free start), once a day each.",
+    forge: "Forges made from the new-forge form (free or by code).",
+    paid: "Entitlements that became active through a billing provider.",
+  };
+  return report.steps.map((s) => made(`funnel_${s.id}`, s.label, counts[s.id]!, s.count, sql[s.id]!, { window, days: report.days }));
 }

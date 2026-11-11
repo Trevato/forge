@@ -16,3 +16,26 @@ export const NO_SUCH_OPERATION = "no such operation here";
 
 /** A milestone that is not here, or not readable by the one asking. */
 export const NO_SUCH_MILESTONE = "no such milestone here";
+
+/** Undoing a bulk operation that was undone before. */
+export const ALREADY_UNDONE = "this operation was undone already";
+
+/** The fleet verbs a bulk action on asks takes, as a person reads them. */
+export const VERB_WORDS: Readonly<Record<string, string>> = {
+  dismiss: "Dismiss",
+  decline: "Decline",
+  mute: "Mute repository",
+  ship: "Ship",
+  close: "Close",
+  replan: "Hand back to the planner",
+};
+
+/**
+ * The receipt of a bulk action on asks in one sentence: "Dismiss: 3 done",
+ * or "Dismiss undone: 3" for its undo. The page, the terminal and MCP say
+ * exactly this.
+ */
+export function receiptSentence(verb: string, done: number, undo: boolean): string {
+  const word = Object.hasOwn(VERB_WORDS, verb) ? VERB_WORDS[verb]! : verb;
+  return undo ? `${word} undone: ${done}` : `${word}: ${done} done`;
+}

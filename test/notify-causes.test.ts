@@ -20,7 +20,7 @@ const MIN = 60_000;
 
 describe("owned causes", () => {
   test("an explicit list", () => {
-    for (const c of ["errors", "internal", "disk", "release", "queue:check", "queue:run"])
+    for (const c of ["errors", "internal", "disk", "disk-floor", "release", "queue:check", "queue:run"])
       expect(owned(c)).toBe(true);
     for (const c of ["drill", "mirror", "stuck:r1", "red:r1", "snapshots", "budget:r1", "shared:r:t"])
       expect(owned(c)).toBe(false);

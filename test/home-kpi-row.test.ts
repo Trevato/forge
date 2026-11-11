@@ -254,27 +254,29 @@ describe("home kpi row: the last off-box backup", () => {
 
 describe("the reach tiles", () => {
   test("say what they count in words, each linking to the reach board", () => {
-    const reach = { usersToday: 3, usersTotal: 12, visitorsToday: 5, visitors7d: 31, visitorDays: new Array<number>(30).fill(0), loadP75: 1250, inpP75: 180 };
+    const reach = { usersToday: 3, usersTotal: 12, visitorsToday: 5, visitors7d: 31, visitorDays: new Array<number>(30).fill(0), loadP75: 1250, inpP75: 180, lcpP75: 2400 };
     const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach, medianCheckMs: null, builders: { running: 0, slots: 0, idle: null }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
-    for (const v of ["5 today", "31 in 7 days", "3 of 12", "seen today", "1.3 s", "reacts in 180 ms"]) expect(out).toContain(`>${v}<`);
-    expect((out.match(/class="stat" href="\/boards\/reach"/g) ?? []).length).toBe(3);
-    expect(out).not.toContain("INP");
+    for (const v of ["1.3 s", "LCP 2.4 s · INP 180 ms"]) expect(out).toContain(`>${v}<`);
+    // Reporting browsers and Accounts feed no decision: only the page speed stays (#10440).
+    for (const gone of ["Reporting browsers", "Accounts", "Traffic"]) expect(out).not.toContain(gone);
+    expect((out.match(/class="stat" href="\/boards\/reach"/g) ?? []).length).toBe(1);
+    // #10738 asks for LCP and INP by name on the speed tile; the p75 jargon stays out of the row.
     expect(out).not.toContain("p75");
   });
 
   test("the terminal draws the 30 days as one block per day", () => {
     const days = Array.from({ length: 30 }, (_, i) => (i === 29 ? 8 : 0));
-    const reach = { usersToday: 0, usersTotal: 1, visitorsToday: 8, visitors7d: 8, visitorDays: days, loadP75: null, inpP75: null };
+    const reach = { usersToday: 0, usersTotal: 1, visitorsToday: 8, visitors7d: 8, visitorDays: days, loadP75: null, inpP75: null, lcpP75: null };
     const line = kpiLines({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach, medianCheckMs: null, builders: { running: 0, slots: 0, idle: null }, spend: { todayUsd: 0, ceilingUsd: null } }, null).find((l) => l.startsWith("Reporting browsers"))!;
     expect(line).toContain("▁".repeat(29) + "█");
   });
 
   test("the terminal says the same", () => {
-    const lines = kpiLines({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: { usersToday: 3, usersTotal: 12, visitorsToday: 5, visitors7d: 31, visitorDays: new Array<number>(30).fill(0), loadP75: 1250, inpP75: 180 }, medianCheckMs: null, builders: { running: 0, slots: 0, idle: null }, spend: { todayUsd: 0, ceilingUsd: null } }, null);
+    const lines = kpiLines({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: { usersToday: 3, usersTotal: 12, visitorsToday: 5, visitors7d: 31, visitorDays: new Array<number>(30).fill(0), loadP75: 1250, inpP75: 180, lcpP75: 2400 }, medianCheckMs: null, builders: { running: 0, slots: 0, idle: null }, spend: { todayUsd: 0, ceilingUsd: null } }, null);
     expect(lines.find((l) => l.startsWith("Reporting browsers"))).toContain("Reporting browsers 5 today, 31 in 7 days");
     expect(lines).toContain("Accounts 3 of 12 seen today");
     expect(lines.find((l) => l.startsWith("Reporting browsers"))).toContain("▁".repeat(30));
-    expect(lines).toContain("Reported page speed loads in 1.3 s, reacts in 180 ms");
+    expect(lines).toContain("Reported page speed loads in 1.3 s, LCP 2.4 s · INP 180 ms");
   });
 });
 
@@ -289,10 +291,6 @@ describe("the visitors sparkline", () => {
     expect(r.visitorDays[29]).toBe(2);
     expect(r.visitorDays[0]).toBe(1); // 2026-09-20 is 29 days back; 09-19 is out
     expect(r.visitorDays.reduce((a, b) => a + b, 0)).toBe(3);
-    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: r, medianCheckMs: null, builders: { running: 0, slots: 0, idle: null }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
-    const svg = /<svg[^>]*last 30 days[^>]*><polyline points="([^"]+)"/.exec(out)!;
-    expect(svg[1]!.split(" ")).toHaveLength(30);
-    expect(out).toContain('href="/boards/reach"');
   });
 });
 
@@ -305,7 +303,7 @@ describe("readReach", () => {
     return db;
   };
   const view = (db: import("bun:sqlite").Database, day: string, visitor: string, load: number | null, inp: number | null) =>
-    db.run("INSERT INTO page_vital VALUES (?, ?, ?, ?)", [day, visitor, load, inp]);
+    db.run("INSERT INTO page_vital (day, visitor, load, inp) VALUES (?, ?, ?, ?)", [day, visitor, load, inp]);
 
   test("nothing seeded: zeros and no speed", async () => {
     expect(readReach(await make(), NOW)).toEqual(NO_REACH);

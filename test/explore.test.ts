@@ -22,6 +22,9 @@ import { forgeHttp, serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { proveAll } from "./helpers/verified.ts";
 import { promote } from "./helpers/members.ts";
+import { exploreParams, readExploreLine } from "../src/actions/explore.ts";
+/** The href the page gives a line: separate parameters, `&` escaped as in markup. */
+const linkOf = (line: string): string => `/explore?${exploreParams(readExploreLine(line).query)}`.replace(/&/g, "&amp;");
 
 quietLogs();
 
@@ -234,6 +237,8 @@ describe("explore", () => {
     const page = await (await fetch(`${base}/explore?q=${encodeURIComponent("kind:app sort:ships")}`)).text();
     expect(page).toContain('value="kind:app sort:ships"');
     expect(page.indexOf('href="/bob/busy"')).toBeLessThan(page.indexOf('href="/alice/loved"'));
+    expect(page).toContain("shipped this month");
+    expect(page).not.toContain("data-why");
     expect(page).toContain("Make it yours");
     expect(page).not.toContain("alice/secret");
     const signedIn = await (
@@ -241,7 +246,7 @@ describe("explore", () => {
         headers: { authorization: `Bearer ${bobToken}` },
       })
     ).text();
-    expect(signedIn).toContain('href="/alice/loved/make-it-yours"');
+    expect(signedIn).toContain('action="/alice/loved/make-it-yours"');
     const res = await fetch(`${base}/mcp`, {
       method: "POST",
       headers: {
@@ -265,9 +270,9 @@ describe("explore", () => {
     expect(names((await api("kind:app owner:bob")).items)).toEqual(["bob/busy"]);
     expect(names((await api("owner:bob")).items).sort()).toEqual(["bob", "bob/busy"]);
     const bad = await api("kind:app owner:..");
-    expect((bad as { note?: string }).note).toBe("owner:.. is not a name");
+    expect((bad as { message?: string }).message).toBe("owner:.. is not a name");
     const page = await (await fetch(`${base}/explore?q=kind:person`)).text();
-    expect(page).toContain(`href="/explore?q=${encodeURIComponent("kind:app owner:bob")}">1 app</a>`);
+    expect(page).toContain(`href="${linkOf("kind:app owner:bob")}">1 app</a>`);
   });
 
   test("a hostile owner stays escaped text on the page", async () => {
@@ -303,9 +308,9 @@ describe("explore", () => {
     const asBob = await (
       await fetch(`${base}/explore`, { headers: { authorization: `Bearer ${bobToken}` } })
     ).text();
-    expect(asBob).toContain('href="/alice/loved/make-it-yours"');
+    expect(asBob).toContain('action="/alice/loved/make-it-yours"');
     // alice/gated is a public repository whose app only its writers enter.
-    expect(asBob).not.toContain('href="/alice/gated/make-it-yours"');
+    expect(asBob).not.toContain('action="/alice/gated/make-it-yours"');
     const rows = (await api("kind:app", bobToken)).items;
     expect(rows.find((r) => r.name === "alice/gated").copyable).toBe(false);
     expect(rows.find((r) => r.name === "alice/loved").copyable).toBe(true);
@@ -313,7 +318,7 @@ describe("explore", () => {
     const asAlice = await (
       await fetch(`${base}/explore`, { headers: { authorization: `Bearer ${aliceToken}` } })
     ).text();
-    expect(asAlice).not.toContain('href="/alice/loved/make-it-yours"');
+    expect(asAlice).not.toContain('action="/alice/loved/make-it-yours"');
   });
 
   test("Make it yours is offered to a signed-out visitor on public apps only, linking to the make-it-yours path", async () => {
@@ -324,7 +329,7 @@ describe("explore", () => {
     expect(rows.find((r) => r.name === "alice/gated").copyable).toBe(false);
     expect(rows.find((r) => r.name === "alice/secret")).toBeUndefined();
     const page = await (await fetch(`${base}/explore`)).text();
-    expect(page).toContain('href="/alice/loved/make-it-yours"');
+    expect(page).toContain('href="/alice/loved/make-it-yours?receipt=1"');
     expect(page).not.toContain('href="/alice/gated/make-it-yours"');
     expect(page).not.toContain("alice/secret");
   });
@@ -380,7 +385,7 @@ describe("explore", () => {
 
     const page = await (await fetch(`${base}/explore?q=${encodeURIComponent("updated:7d")}`)).text();
     for (const [label, w] of [["Today", "1d"], ["This week", "7d"], ["This month", "30d"]] as const) {
-      expect(page).toContain(`href="/explore?q=updated%3A${w}"`);
+      expect(page).toContain(`href="${linkOf(`updated:${w}`)}"`);
       expect(page).toContain(label);
     }
     expect(page).toMatch(/aria-current="page"\s*>This week/);
@@ -423,11 +428,11 @@ describe("explore on a forge with nothing public", () => {
     ).text();
 
   test("the Forges chip is a site admin's: current on kind:forge, sort kept, absent for a guest", async () => {
-    const chip = (q: string) => new RegExp(`<a[^>]*href="/explore\\?q=${q}"[^>]*>\\s*Forges</a\\s*>`);
+    const chip = (q: string) => new RegExp(`<a[^>]*href="/explore\\?${q}"[^>]*>\\s*Forges</a\\s*>`);
     const sorted = await get(`/explore?q=${encodeURIComponent("sort:forks")}`, true);
-    expect(sorted).toContain(`href="/explore?q=${encodeURIComponent("kind:forge sort:forks")}"`);
+    expect(sorted).toContain(`href="${linkOf("kind:forge sort:forks")}"`);
     const page = await get(`/explore?q=${encodeURIComponent("kind:forge")}`, true);
-    const tag = page.match(chip("kind%3Aforge"))?.[0] ?? "";
+    const tag = page.match(chip("kind=forge"))?.[0] ?? "";
     expect(tag).toContain("aria-current");
     const guest = await get(`/explore?q=${encodeURIComponent("kind:forge")}`, false);
     expect(guest).not.toMatch(/>\s*Forges</);
@@ -460,17 +465,17 @@ describe("explore on a forge with nothing public", () => {
   test("a miss names the line and offers each term as a link that drops it", async () => {
     const out = await get(`/explore?q=${encodeURIComponent("kind:app zzz-no-such")}`, false);
     expect(out).toContain("Nothing matches kind:app zzz-no-such");
-    expect(out).toContain(`href="/explore?q=${encodeURIComponent("zzz-no-such")}"`);
-    expect(out).toContain(`href="/explore?q=${encodeURIComponent("kind:app")}"`);
+    expect(out).toContain(`href="${linkOf("zzz-no-such")}"`);
+    expect(out).toContain(`href="${linkOf("kind:app")}"`);
     expect(out).toContain('href="/explore"');
   });
 
   test("a window with no hits offers to drop it, and the seg has an Any time chip", async () => {
     const out = await get(`/explore?q=${encodeURIComponent("updated:1d zzz-no-such")}`, false);
-    expect(out).toContain(`href="/explore?q=${encodeURIComponent("zzz-no-such")}"`);
-    expect(out).toContain(`href="/explore?q=${encodeURIComponent("updated:1d")}"`);
+    expect(out).toContain(`href="${linkOf("zzz-no-such")}"`);
+    expect(out).toContain(`href="${linkOf("updated:1d")}"`);
     const only = await get(`/explore?q=${encodeURIComponent("updated:1d kind:person zzz")}`, false);
-    expect(only).toContain(`href="/explore?q=${encodeURIComponent("kind:person zzz")}"`);
+    expect(only).toContain(`href="${linkOf("kind:person zzz")}"`);
     expect(only).toContain("Any time");
     expect(only).toMatch(/aria-current="page"\s*>Today/);
     const none = await get(`/explore?q=${encodeURIComponent("zzz")}`, false);

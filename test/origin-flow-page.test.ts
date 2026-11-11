@@ -53,7 +53,7 @@ describe("the connect flow page", () => {
       ...(form === undefined ? {} : { body: new URLSearchParams(form) }),
     });
 
-  /** Start a code flow from Settings → Origins: its page, and its id. */
+  /** Start a code flow from Settings → Connected accounts: its page, and its id. */
   const start = async (): Promise<{ page: string; id: string }> => {
     const started = await browse("/settings/origins/oauth", { host: fake.url });
     expect(started.status).toBe(303);

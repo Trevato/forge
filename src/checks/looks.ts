@@ -30,7 +30,8 @@ export const commitLooksPath = (
 const SAFE = /^[0-9A-Za-z]{1,64}$/;
 
 const MAX_BYTES = 1024 * 1024;
-const MAX_LOOKS = 20;
+// The forge's own preview takes ~55 looks (`PREVIEW_OWNER_LOOKS`); every one must fit.
+const MAX_LOOKS = 64;
 const MAX_WORDS = 80;
 
 const words = (v: unknown): string | null =>
@@ -116,4 +117,21 @@ export function writeCommitLooks(
   const side = `${path}.${process.pid}.tmp`;
   writeFileSync(side, JSON.stringify(kept));
   renameSync(side, path);
+}
+
+/**
+ * File one look under its commit as it is taken, keeping the others already
+ * filed and replacing a look of the same name. A set written only when the
+ * whole round ends is lost to any round that is interrupted (a newer head,
+ * a restart) and, on the next round, covers only what was still missing.
+ */
+export function addCommitLook(
+  dataDir: string,
+  repoId: string,
+  commitOid: string,
+  look: LookVitals,
+): void {
+  if (!SAFE.test(commitOid) || !SAFE.test(repoId)) return;
+  const kept = readFile(commitLooksPath(dataDir, repoId, commitOid)).filter((l) => l.look !== look.look);
+  writeCommitLooks(dataDir, repoId, commitOid, [...kept, look]);
 }

@@ -29,7 +29,7 @@ afterAll(async () => {
 });
 
 test("each browse path is a GET in the document, with its refusals and untrusted note", () => {
-  const paths = openapi("http://x", "1").paths as Record<string, Record<string, any>>;
+  const paths = openapi("http://x", "1", "admin").paths as Record<string, Record<string, any>>;
   for (const path of PATHS) {
     const get = paths[path]?.get;
     expect(get, path).toBeDefined();

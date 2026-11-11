@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { adminOpenapi } from "./helpers/openapi-doc.ts";
 
 let dataDir: string;
 let app: App;
@@ -16,7 +17,7 @@ beforeAll(async () => {
   dataDir = await mkdtemp(join(tmpdir(), "forge-openapi-limit-"));
   app = createApp({ dataDir, port: 0 });
   servers = await serve(app);
-  doc = (await (await fetch(`${servers.url}/contract/openapi.json`)).json()) as typeof doc;
+  doc = (await (await adminOpenapi(app, servers.url, "/contract/openapi.json")).json()) as typeof doc;
 });
 
 afterAll(async () => {

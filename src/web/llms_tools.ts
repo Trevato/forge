@@ -7,6 +7,7 @@
  * token-free tools and one line for the rest, so /llms.txt varies by reader.
  */
 import type { Tool } from "../http/mcp/shared.ts";
+import { TOKEN_FREE_TOOLS } from "../core/mcp_card.ts";
 
 /** What a line reads: `report` is not a `Tool`, having no `run`, but is listed. */
 export type Listed = Pick<Tool, "name" | "description" | "doc" | "writes" | "adminOnly" | "needsAdminScope">;
@@ -16,7 +17,9 @@ const oneLine = (s: string): string => s.replace(/\s+/g, " ").trim();
 export function toolLine(t: Listed): string {
   const admin = t.adminOnly === true || t.needsAdminScope === true ? " (admin)" : "";
   const writes = t.writes ? " (writes)" : "";
-  return `- ${t.name}: ${oneLine(t.doc ?? t.description)}${admin}${writes}`;
+  // The same list the MCP's anonymous gate reads (core/mcp_card.ts).
+  const open = TOKEN_FREE_TOOLS.includes(t.name) ? " (no account)" : "";
+  return `- ${t.name}: ${oneLine(t.doc ?? t.description)}${admin}${writes}${open}`;
 }
 
 export const toolsSection = (tools: readonly Listed[]): string[] => [

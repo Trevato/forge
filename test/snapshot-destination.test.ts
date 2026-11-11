@@ -5,7 +5,7 @@
  * for admins and the keys are never shown again.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -62,6 +62,11 @@ describe("the snapshot destination", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  // Every test starts with nothing sealed and makes the destination it reads.
+  beforeEach(() => {
+    forgetDestination(app, admin);
+  });
+
   const sources = () => ({
     db: app.db,
     dataDir: root,
@@ -93,6 +98,7 @@ describe("the snapshot destination", () => {
   });
 
   test("the service follows a saved or cleared destination without a restart", async () => {
+    expect(saveDestination(app, admin, input).ok).toBe(true);
     const svc = startSnapshots(
       app,
       () => resolveDestination({ ...sources(), env })?.store,
@@ -133,6 +139,8 @@ describe("the snapshot destination", () => {
     const sentence = said.ok ? said.value : "";
     expect(sentence).toStartWith("Could not list 127.0.0.1:1/my-bucket: ");
     expect(sentence).not.toContain("\n");
+    expect(sentence).not.toContain("  ");
+    expect(sentence).toBe(sentence.trim());
     expect(sentence).not.toContain(input.secretKey);
     expect(sentence).not.toContain(input.accessKey);
   });
@@ -166,12 +174,18 @@ describe("the snapshot destination", () => {
       expect(await page()).not.toContain("http-equiv=\"refresh\"");
       const taking = svc.now();
       let html = "";
-      for (let i = 0; i < 100 && !html.includes("A snapshot is being taken"); i++) {
+      // Until an object has landed: the first poll can come before any has.
+      for (let i = 0; i < 100 && !/A snapshot is being taken: [1-9]\d* objects/.test(html); i++) {
         await Bun.sleep(50);
         html = await page();
       }
       expect(html).toContain("A snapshot is being taken");
-      expect(html).toContain("http-equiv=\"refresh\"");
+      const words = html.indexOf("A snapshot is being taken");
+      const paragraph = html.slice(html.lastIndexOf("<p", words), words);
+      expect(paragraph).toContain('role="status"');
+      expect(paragraph).toContain('aria-live="polite"');
+      expect(html).toContain('data-live-src="/settings/backups/live"');
+      expect(html).not.toContain("http-equiv=\"refresh\"");
       expect(html).toMatch(/[1-9]\d* objects/);
       await taking;
       expect(await page()).not.toContain("A snapshot is being taken");

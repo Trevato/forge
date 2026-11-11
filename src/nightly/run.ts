@@ -8,7 +8,7 @@
  */
 
 import { mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cellHides } from "../spawn/hosted-mark.ts";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { exportTree } from "../apps/checkout.ts";
@@ -74,7 +74,7 @@ async function runSteps(
     dir,
     writable: [],
     home: `${dir}.home`,
-    hide: [app.config.dataDir, process.env["HOME"] ?? "", tmpdir()],
+    hide: cellHides(app),
     egress: [...STEP_HOSTS],
     reach: [options.forgeUrl],
     limits: resolveLimits("step", undefined),

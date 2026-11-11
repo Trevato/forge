@@ -1,0 +1,25 @@
+{
+  "json_format_version": [
+    1,
+    0
+  ],
+  "smartctl": {
+    "version": [
+      7,
+      4
+    ],
+    "exit_status": 0
+  },
+  "device": {
+    "name": "/dev/bus/0",
+    "type": "megaraid,0",
+    "info_name": "/dev/bus/0 [megaraid_disk_00]",
+    "protocol": "SCSI"
+  },
+  "scsi_vendor": "DELL",
+  "scsi_product": "PERC H730P",
+  "user_capacity": {
+    "blocks": 1,
+    "bytes": 480103981056
+  }
+}

@@ -6,6 +6,7 @@ export const route: Route = {
   summary:
     "Hand a child its own narrow credential to propose pulls to this repository (rw scope; a writer's); answers 201 with the token, whose secret shows once",
   auth: true,
+  role: "member",
   status: 201,
   body: { child: "string", origin: "string", childRepo: "string" },
   refusals: {

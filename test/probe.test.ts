@@ -2,7 +2,8 @@
  * Is it so: the probe knocks on a scaffolded app's doors as nobody, a user
  * and an admin, and every answer agrees with the table. Then a door is
  * broken by hand in the running app's source — a rule that lets anyone
- * delete — and the probe says exactly which cell the app disobeys.
+ * delete — and the probe says exactly which cell the app disobeys. Each
+ * test probes an app of its own, so neither verdict hangs on which ran first.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -36,7 +37,7 @@ describe("the probe asks the running app whether it obeys its table", () => {
     }
   };
   /** The newest production deploy, once it has settled — and that it is ok. */
-  const deployed = async (after: string): Promise<string> => {
+  const deployed = async (repo: Repo, after: string): Promise<string> => {
     let run: ReturnType<typeof listRuns>[number] | undefined;
     await until(() => {
       run = listRuns(app.db, repo.id, { kind: "deploy", limit: 50 }).find(
@@ -65,7 +66,7 @@ describe("the probe asks the running app whether it obeys its table", () => {
     }, 30_000);
     return run.commitOid;
   };
-  const probeNow = async (): Promise<Probed> => {
+  const probeNow = async (repo: Repo): Promise<Probed> => {
     const record = getAppByRepo(app.db, repo.id)!;
     const fresh = getRepoById(app.db, repo.id)!;
     const audited = await audit(app.reposRoot, fresh);
@@ -107,7 +108,7 @@ describe("the probe asks the running app whether it obeys its table", () => {
     });
     if (!made.ok) throw new Error(String(made.error));
     repo = made.value.repo;
-    await deployed("");
+    await deployed(repo, "");
   }, 150_000);
 
   afterAll(async () => {
@@ -118,7 +119,7 @@ describe("the probe asks the running app whether it obeys its table", () => {
   });
 
   test("a scaffolded app obeys every cell the probe can ask", async () => {
-    const out = await probeNow();
+    const out = await probeNow(repo);
     expect(out.verdict).toBe("ok");
     expect(out.said).toEqual([]);
     const asked = out.knocks.filter((k) => k.verdict !== "unprobed");
@@ -142,8 +143,12 @@ describe("the probe asks the running app whether it obeys its table", () => {
     // still says a stranger may not. The app's own tests would catch this
     // before it ever ran — the deploy runs them first — so the change also
     // drops them, which is what a change that gets a door wrong looks like.
+    const made = await newApp(app, alice, { name: "doors", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const doors = made.value.repo;
+    await deployed(doors, "");
     const files = new Map(
-      scaffoldFiles({ name: "notes", description: "" }).map((f) => [
+      scaffoldFiles({ name: "doors", description: "" }).map((f) => [
         f.path,
         f.content,
       ]),
@@ -164,7 +169,7 @@ describe("the probe asks the running app whether it obeys its table", () => {
     expect(opened).not.toBe(door);
     const since = new Date().toISOString();
     await Bun.sleep(5);
-    const wrote = await commitToBranch(app, alice, repo, {
+    const wrote = await commitToBranch(app, alice, doors, {
       message: "a hand-written rule, and the tests that knew better",
       files: [
         { path: "src/actions.ts", content: broken },
@@ -176,8 +181,8 @@ describe("the probe asks the running app whether it obeys its table", () => {
       ],
     });
     expect(wrote.ok).toBe(true);
-    await deployed(since);
-    const out = await probeNow();
+    await deployed(doors, since);
+    const out = await probeNow(doors);
     expect(out.verdict).toBe("mismatch");
     // Past the door, the stranger was told there is no such row: 404 is
     // what "admitted" looks like on an id no row has.
@@ -188,5 +193,5 @@ describe("the probe asks the running app whether it obeys its table", () => {
     expect(
       out.knocks.filter((k) => k.verdict === "mismatch").map((k) => k.verb),
     ).toEqual(["delete"]);
-  }, 120_000);
+  }, 180_000);
 });

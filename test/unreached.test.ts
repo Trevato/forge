@@ -50,8 +50,9 @@ test("unreached() follows imports from the entries and scripts, and nothing else
     put("src/types.d.ts");
     put("src/core/migrations/001.ts");
     put("src/f.ts");
+    put("src/orphan.ts");
     put("scripts/tool.ts", 'const { f } = await import("../src/f.ts");\n');
-    expect(unreached(dir)).toEqual(["src/c.ts", "src/d.ts", "src/e.ts", "src/g.ts"]);
+    expect(unreached(dir)).toEqual(["src/c.ts", "src/d.ts", "src/e.ts", "src/g.ts", "src/orphan.ts"]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

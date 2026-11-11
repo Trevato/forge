@@ -21,6 +21,7 @@ import { proposeQuarantine } from "./propose.ts";
 import { type Ran, runJob } from "./run.ts";
 import { lastSlot, owed, untilNext } from "./slots.ts";
 import { readLast, writeLast } from "./stamps.ts";
+import { during } from "../perf/jobs.ts";
 
 const log = createLog("nightly");
 
@@ -132,7 +133,7 @@ export function startNightly(
   const waitRadar = (): void => {
     const timer = setTimeout(() => {
       timers.delete(timer);
-      void runRadarNight().finally(() => !abort.signal.aborted && waitRadar());
+      void during("nightly", runRadarNight).finally(() => !abort.signal.aborted && waitRadar());
     }, untilNext(RADAR_SLOT, now()) + 1_000);
     timers.add(timer);
   };
@@ -142,7 +143,7 @@ export function startNightly(
   const wait = (job: Job): void => {
     const timer = setTimeout(() => {
       timers.delete(timer);
-      void run(job.name).finally(() => !abort.signal.aborted && wait(job));
+      void during("nightly", () => run(job.name)).finally(() => !abort.signal.aborted && wait(job));
     // A second past the slot: a timer that fires early would read yesterday's.
     }, untilNext(job.slot, now()) + 1_000);
     timers.add(timer);

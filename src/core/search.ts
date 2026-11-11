@@ -50,6 +50,21 @@ export const CODE_BUDGET_MS = 30;
 /** A grep in a budgeted search is given up after this long and reported as `more`: a cold clone must not hold the page (#7198). */
 export const BUDGETED_GREP_MS = 400;
 
+/**
+ * The fewest characters a code search greps for. One letter matches nearly
+ * every line of every repository, so its grep is all cost and no answer
+ * (#11120); repositories and issues still answer it.
+ */
+export const MIN_CODE_QUERY = 2;
+
+/** Whether `raw`, cleaned, is long enough to grep the code for. */
+export function greppable(raw: string): boolean {
+  return [...cleanQuery(raw)].length >= MIN_CODE_QUERY;
+}
+
+/** What a reader is told when the query was too short to grep, in plain words. */
+export const CODE_TOO_SHORT = `Code is searched for ${MIN_CODE_QUERY} or more characters; this found apps, repositories, issues and pulls only.`;
+
 /** Longest line of code echoed back; the rest is off-screen anyway. */
 const MAX_LINE_CHARS = 400;
 
@@ -63,9 +78,11 @@ export function searchKind(raw: string | null): SearchKind {
  * What a caller who asked wrongly is told, in one sentence, or undefined when
  * the request was fine (an unknown kind or limit is `searchRefusal`'s 422, not a note). Plain text: the caller escapes it where it draws it.
  */
-export function searchNote(rawQ: string | null): string | undefined {
+export function searchNote(rawQ: string | null, kind: SearchKind = "all"): string | undefined {
   if (cleanQuery(rawQ ?? "") === "")
     return "q is empty — send what to find, e.g. q=parser&kind=code (kind=all|repos|issues|code)";
+  // Only a search that asked for code is told the code was not grepped.
+  if ((kind === "all" || kind === "code") && !greppable(rawQ ?? "")) return CODE_TOO_SHORT;
   return undefined;
 }
 
@@ -341,9 +358,10 @@ export function searchOriginRepos(
 /**
  * Issues and pulls whose title matches, inside a bounded set of repos.
  *
- * `repo_id IN (...)` is not decoration: it is what lets SQLite walk the
- * `issue(repo_id, …)` indexes instead of scanning every conversation in the
- * forge, and `test/search.test.ts` asserts the plan stays that way.
+ * Each repository is its own arm, `repo_id = ?` walking `issue_repo_updated`
+ * newest first and stopping at `limit` matches: SQLite never scans every
+ * conversation in the forge, nor sorts every match of a one-letter query
+ * (#11168), and `test/search.test.ts` asserts the plan stays that way.
  */
 export function searchLocalIssues(
   db: Database,
@@ -357,8 +375,8 @@ export function searchLocalIssues(
 ): IssueHit[] {
   if (repos.length === 0) return [];
   const byId = new Map(repos.map((r) => [r.id, r]));
-  const ids = [...byId.keys()];
-  const holes = ids.map((_, i) => `?${i + 1}`).join(",");
+  // One arm a repository, so the compound stays far inside SQLite's 500.
+  const ids = [...byId.keys()].slice(0, MAX_SEARCH_REPOS);
   const open = [...sealedOk].filter((id) => byId.has(id));
   const extra: string[] = [...open, ...(sealedBy === undefined ? [] : [sealedBy])];
   const ors = [
@@ -369,6 +387,21 @@ export function searchLocalIssues(
     ...(sealedBy === undefined ? [] : [`author_id = ?${ids.length + 3 + open.length}`]),
   ];
   const sealedClause = `AND (${ors.join(" OR ")})`;
+  // One arm per repository, each walking `issue_repo_updated` newest first
+  // and stopping at `limit` matches: a one-letter query, which matches every
+  // title, reads at most `limit` rows a repository rather than sorting all of
+  // them (#11168). The arms are merged and cut to `limit` once more.
+  const arms = ids
+    .map(
+      (_, i) => `SELECT * FROM (SELECT repo_id, number, kind, title, state, updated_at
+         FROM issue
+         WHERE repo_id = ?${i + 1}
+           AND title LIKE ?${ids.length + 1} ESCAPE '\\' COLLATE NOCASE
+           ${sealedClause}
+         ORDER BY updated_at DESC
+         LIMIT ?${ids.length + 2})`,
+    )
+    .join("\nUNION ALL\n");
   const rows = db
     .query<
       {
@@ -381,13 +414,7 @@ export function searchLocalIssues(
       },
       (string | number)[]
     >(
-      `SELECT repo_id, number, kind, title, state, updated_at
-       FROM issue
-       WHERE repo_id IN (${holes})
-         AND title LIKE ?${ids.length + 1} ESCAPE '\\' COLLATE NOCASE
-         ${sealedClause}
-       ORDER BY updated_at DESC
-       LIMIT ?${ids.length + 2}`,
+      `SELECT * FROM (${arms}) ORDER BY updated_at DESC LIMIT ?${ids.length + 2}`,
     )
     .all(...ids, `%${likeEscape(query.trim())}%`, limit, ...extra);
 
@@ -417,7 +444,8 @@ export function searchLocalIssues(
  * a query starting with `-` a pattern rather than a flag; `--` ends the
  * options so a query containing `--` cannot re-open them; `-F` makes the
  * query a fixed string, so a search box cannot hand git a pathological
- * regex; `-I` skips binaries; `--max-count` and the timeout bound the work.
+ * regex; `-I` skips binaries; `--max-count` (per file), the read that stops
+ * after `maxCount` lines and the timeout bound the work.
  * The ref goes through `isSafeRef` like every other rev in the forge.
  */
 export async function grepRepo(
@@ -443,6 +471,7 @@ async function grepRun(
   query: string,
   maxCount: number,
   timeoutMs = GREP_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<RawHit[] | null | "timeout"> {
   const pattern = cleanQuery(query);
   if (pattern === "" || !isSafeRef(ref)) return [];
@@ -463,12 +492,15 @@ async function grepRun(
       "--",
       ".",
     ],
-    { cwd: dir, timeoutMs },
+    // `--max-count` is per file: `a` in a repository of thousands of files
+    // is megabytes of matches. Only the first `maxCount` are kept, so git is
+    // stopped once they are read rather than left to write the rest (#10395).
+    { cwd: dir, timeoutMs, stopAfterLines: maxCount, ...(signal === undefined ? {} : { signal }) },
   );
   // Exit 1 is "no match" — data, not failure. Anything else (a repo with no
   // commits, a killed process) is simply no results from this repo.
   if (run.timedOut === true) return "timeout";
-  if (run.code !== 0 && run.code !== 1) return null;
+  if (run.stopped !== true && run.code !== 0 && run.code !== 1) return null;
 
   // `-z` makes each record `ref:path NUL line NUL text`, so a path with a
   // colon in it (`a:1:b.txt`) cannot be split at the wrong colon.
@@ -537,13 +569,14 @@ async function grepCached(
   query: string,
   who: GrepWho,
   timeoutMs = GREP_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<RawHit[] | "skipped" | "timeout"> {
   const ref = repo.defaultBranch;
   const oid = await branchOid(dir, ref);
   const slotted = async (at: string): Promise<RawHit[] | null | "skipped" | "timeout"> => {
     const got = await (who.slots ?? grepSlots).run(who.memberId, () => {
       grepsRun++;
-      return (who.grep ?? grepRun)(dir, at, query, MAX_HITS_PER_REPO, timeoutMs);
+      return (who.grep ?? grepRun)(dir, at, query, MAX_HITS_PER_REPO, timeoutMs, signal);
     });
     return got.ran ? got.value : "skipped";
   };
@@ -608,9 +641,8 @@ function budgetTimer(ms: number): BudgetTimer {
  * a busy forge holding the page; what answered by then is kept, the rest is
  * `more` (#9402). Each later batch races the time
  * left: when the budget runs out first the answer goes back with `more`, and
- * the batch's greps are left to finish on their own. They keep the slot
- * `search/grep_slots.ts` gave them until git exits — that is the only cap on
- * abandoned greps, and it is charged to the caller who started them.
+ * the batch's greps are killed, so no abandoned git outlives the answer
+ * (#10730); the slot `search/grep_slots.ts` gave them is freed as git exits.
  */
 export async function grepRepos(
   reposRoot: string,
@@ -635,8 +667,12 @@ export async function grepRepos(
   // Set when this search answers at its budget: the batch it left behind
   // starts no further pair. Local to this call, never shared between callers.
   let answered = false;
+  // Fired when this search answers at its budget: the greps it leaves behind
+  // are killed (and not cached), so they stop holding git's gate and a slot.
+  const abandon = new AbortController();
   const more = () => {
     answered = true;
+    abandon.abort();
     return { hits, truncated: repos.length > MAX_SEARCH_REPOS, more: true, skipped };
   };
   // Each grep writes its answer into its own place as it settles, so a batch
@@ -651,6 +687,7 @@ export async function grepRepos(
             query,
             who,
             timeoutMs,
+            abandon.signal,
           ).then((got) => {
             found[k + j] = got;
           }),
@@ -681,6 +718,7 @@ export async function grepRepos(
       timer.clear();
       if (raced === "cut") {
         answered = true;
+        abandon.abort();
         cut = true;
       }
     }

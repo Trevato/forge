@@ -123,7 +123,9 @@ test("home says the whole crew's number", () => {
 });
 
 test("a repository that hit its ceiling yesterday restarts at its own time, spread over the morning", () => {
-  const midnight = new Date(Date.UTC(2026, 10, 3, 0, 5, 0));
+  // Midnight itself: repository ids are random, so an instant past 00:00 would
+  // find a repository whose offset has already come and nothing held.
+  const midnight = new Date(Date.UTC(2026, 10, 3, 0, 0, 0));
   for (const r of repos) {
     const run = createRun(app.db, { repoId: r.id, kind: "agent" });
     app.db.query("UPDATE run SET cost_usd = 1000, created_at = ?2, state = 'ok' WHERE id = ?1").run(run.id, new Date(Date.UTC(2026, 10, 2, 20, 0, 0)).toISOString());
@@ -147,13 +149,17 @@ test("a repository that hit its ceiling yesterday restarts at its own time, spre
 });
 
 test("a ceiling of 0 allows no spend and is held by the ceiling, so it is never also held until an offset", () => {
-  const midnight = new Date(Date.UTC(2026, 10, 3, 0, 5, 0));
+  // Midnight itself: repository ids are random, so an instant past 00:00 would
+  // find a repository whose offset has already come and nothing held.
+  const midnight = new Date(Date.UTC(2026, 10, 3, 0, 0, 0));
   forgetStagger();
   expect(staggeredUntil(app.db, { id: repos[0]!.id, autonomyCeilingUsd: 0 }, midnight)).toBeNull();
 });
 
 test("the stagger reads yesterday's spend once for one instant", () => {
-  const midnight = new Date(Date.UTC(2026, 10, 3, 0, 5, 0));
+  // Midnight itself: repository ids are random, so an instant past 00:00 would
+  // find a repository whose offset has already come and nothing held.
+  const midnight = new Date(Date.UTC(2026, 10, 3, 0, 0, 0));
   const run = createRun(app.db, { repoId: repos[3]!.id, kind: "agent" });
   app.db.query("UPDATE run SET cost_usd = 1000, created_at = ?2, state = 'ok' WHERE id = ?1").run(run.id, new Date(Date.UTC(2026, 10, 2, 20, 0, 0)).toISOString());
   forgetStagger();

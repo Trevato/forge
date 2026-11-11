@@ -12,3 +12,7 @@ limb page's confirm form (`limbPreviewPage()` in `src/web/pages/limb.ts`) both d
 The confirm page before a destructive route (`confirmPage()` in `src/web/pages/search.ts`) is not a dialog: it is a page
 heading, the one sentence of what will happen, the typed phrase when needed, and the action beside a way back, with no box
 and no new class.
+
+## The `:` go-to prompt (#10434)
+
+The prompt is the command palette's dialog (`.dialog.palette`, `.palette-input`, `.palette-list`, `.palette-item`, `.palette-foot`) with a combobox input over a listbox of `div` options; the leading match carries `aria-selected="true"` and the input's `aria-activedescendant` points at it. No new component class. One rule is added, in `src/web/style/components.ts`: `.palette-item[hidden] { display: none; }`, because `.palette-item` sets `display: flex`, which would otherwise show an option the filter hid. The list keeps its fixed height, so filtering moves nothing. The "no match" line is the `.palette-foot` text, announced as a status.

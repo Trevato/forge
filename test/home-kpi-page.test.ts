@@ -25,7 +25,7 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-test("home renders the eleven tiles; only an admin sees them", async () => {
+test("home renders the eight tiles; only an admin sees them", async () => {
   const mk = async (username: string, first = false): Promise<User> => {
     const r = await createUser(app.db, {
       origin: "seed",
@@ -60,7 +60,7 @@ test("home renders the eleven tiles; only an admin sees them", async () => {
   view(yesterday, "z", 400, 160);
   const a = await home(admin);
   expect(a).toContain('class="stats kpi-row mb"');
-  expect((a.match(/class="stat"/g) ?? []).length).toBe(11);
+  expect((a.match(/class="stat"/g) ?? []).length).toBe(8);
   for (const href of ["/board", "/releases", "/boards", "/settings/crew", "/settings/backups"]) expect(a).toContain(`class="stat" href="${href}"`);
   // The tiles are §5 stats (#3982): none of the page-local kpi classes is left on home.
   for (const name of ["kpis", "kpi", "kpi-value", "kpi-note", "kpi-spark"]) expect(a).not.toMatch(new RegExp(`class="[^"]*\\b${name}\\b(?!-)`));
@@ -68,16 +68,12 @@ test("home renders the eleven tiles; only an admin sees them", async () => {
 
   // 2 accounts, the admin alone with a session today; visitors 3 today and 4 over 7 days;
   // load p75 of [100,200,300,400,1900] is 400 ms, INP p75 of [40,80,120,160] is 120 ms.
-  expect(a).toContain(">1 of 2<");
-  expect(a).toContain(">3 today<");
-  expect(a).toContain(">4 in 7 days<");
   expect(a).toContain(">400 ms<");
-  expect(a).toContain(">reacts in 120 ms<");
-  expect((a.match(/class="stat" href="\/boards\/reach"/g) ?? []).length).toBe(3);
+  expect(a).toContain(">LCP 100 ms · INP 120 ms<");
+  expect((a.match(/class="stat" href="\/boards\/reach"/g) ?? []).length).toBe(1);
 
   // The figures count every repository, so a non-admin sees none.
   expect(a).toContain("no forge ceiling");
-  expect(a).toContain("last 30 days");
   expect(await home(bob)).not.toContain('class="stats kpi-row mb"');
   expect(await home(bob)).not.toContain("last 30 days");
   expect(await home()).not.toContain('class="stats kpi-row mb"');

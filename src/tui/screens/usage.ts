@@ -89,7 +89,7 @@ export function usageScreen(f: Session, ctx: Ctx, repo?: Repo): Screen {
     keys: [
       binding(["j", "k"], "move cursor", { hidden: rows.length === 0 }),
       binding(["[", "]"], "returns window", { hidden: returns === undefined }),
-      binding(["f"], "fleet graph", { hidden: repo !== undefined }),
+      binding(["f"], "fleet graph"),
     ],
     render(area, s) {
       const c = ctx.theme.c;
@@ -109,8 +109,9 @@ export function usageScreen(f: Session, ctx: Ctx, repo?: Repo): Screen {
       if (repo === undefined) drawList(s, list!, c, state, usageRows(all));
     },
     key: (e) => {
-      if (repo === undefined && !e.ctrl && !e.alt && e.key === "f") {
-        ctx.push(fleetGraphScreen(f, ctx));
+      if (!e.ctrl && !e.alt && e.key === "f") {
+        // A repository's Usage opens the graph on that repository alone.
+        ctx.push(fleetGraphScreen(f, ctx, scope.repo === undefined ? null : [scope.repo]));
         return true;
       }
       if (returns !== undefined && !e.ctrl && !e.alt && (e.key === "[" || e.key === "]")) {

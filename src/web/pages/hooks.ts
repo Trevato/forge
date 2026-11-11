@@ -2,17 +2,21 @@
  * Settings › Webhooks, admin-only: the hooks that carry this repository's
  * events out, the last deliveries of each, and the form that adds one. A
  * hook's signing secret is shown once, in the flash after it is created,
- * and never again.
+ * and never again. Pause quiets a failing hook where it is seen, as the
+ * terminal's `p` does (`pauseWebhook`); a paused row reads `paused` in
+ * place of its last delivery.
  */
 
-import { createWebhook, deleteWebhook } from "../../actions/repos.ts";
+import { createWebhook, deleteWebhook, pauseWebhook, redeliverWebhook } from "../../actions/repos.ts";
+import { repoAdminNames } from "../../core/repo_admins.ts";
+import { canWrite } from "../../core/repos.ts";
 import { notePhase, timePhase } from "../../core/route_timing.ts";
-import { getWebhook, listWebhooks, pingWebhook, recentDeliveries, redeliver } from "../../core/webhooks.ts";
+import { getWebhook, listWebhooks, pingWebhook, recentDeliveries } from "../../core/webhooks.ts";
 import type { Ctx } from "../../http/context.ts";
-import { repoBase, repoNotFound } from "../chrome.ts";
+import { crumbsFor, loadRepo, pageHead, repoBase, repoNotFound } from "../chrome.ts";
 import { field } from "../form.ts";
 import { html, when } from "../html.ts";
-import { flashTo } from "../layout.ts";
+import { flashTo, page } from "../layout.ts";
 import {
   btn,
   confirmAction,
@@ -23,9 +27,32 @@ import {
 } from "../ui.ts";
 import { adminForm, settingsPageResponse, timedAdminRepo } from "./settings.ts";
 
+/**
+ * A writer who is not an admin follows the feed's failing-webhook line here:
+ * they get a page naming who can act. Anyone else is refused as before.
+ */
+function notAdminPage(ctx: Ctx): Response {
+  const repo = loadRepo(ctx);
+  if (!repo || !canWrite(ctx.app.db, repo, ctx.auth.user)) return repoNotFound(ctx);
+  const names = repoAdminNames(ctx.app.db, repo);
+  const who =
+    names.length === 0
+      ? html`a site admin of this forge`
+      : html`${names.map((n, i) => html`${i > 0 ? ", " : ""}<a href="/${n}">${n}</a>`)}`;
+  return page({
+    ctx,
+    title: `Webhooks · ${repo.name}`,
+    crumbs: crumbsFor(repo),
+    body: html`${pageHead("Webhooks", {
+      sub: html`Only a repository admin can redeliver or pause a webhook; this repository's admins are ${who}.`,
+    })}
+    <p class="small"><a href="${repoBase(repo)}">Back to ${repo.name}</a></p>`,
+  });
+}
+
 export function hooksPage(ctx: Ctx): Response {
   const repo = timedAdminRepo(ctx);
-  if (!repo) return repoNotFound(ctx);
+  if (!repo) return notAdminPage(ctx);
   const hooks = timePhase(ctx.request, "hooks", () => listWebhooks(ctx.app.db, repo.id));
   const recent = timePhase(
     ctx.request,
@@ -57,15 +84,19 @@ export function hooksPage(ctx: Ctx): Response {
           ${hooks.map((hook) => {
             const deliveries = recent.get(hook.id) ?? [];
             return row({
+              nav: true,
               title: html`<span class="mono">${hook.url}</span>`,
               titleAttr: hook.url,
               meta: html`<span class="mono">${hook.kinds}</span> · ${dot(hook.active ? "success" : "attn")}${hook.active
                 ? "active"
                 : "paused"} · added ${time(hook.createdAt)}${when(!hook.hasSecret, () => html` · unsigned`)}${when(
-                deliveries.length === 0,
+                hook.active && deliveries.length === 0,
                 () => html` · No deliveries yet.`,
               )}`,
-              trail: html`<form method="post" action="${base}/settings/hooks/${hook.id}/ping">
+              trail: html`<form method="post" action="${base}/settings/hooks/${hook.id}/${hook.active ? "pause" : "resume"}">
+                  ${btn(hook.active ? "Pause" : "Resume", { size: "sm" })}
+                </form>
+                <form method="post" action="${base}/settings/hooks/${hook.id}/ping">
                   ${btn("Send ping", { size: "sm" })}
                 </form>
                 ${confirmAction({
@@ -163,14 +194,11 @@ export async function webhookRedeliver(ctx: Ctx): Promise<Response> {
   const gate = await adminForm(ctx);
   if (gate instanceof Response) return gate;
   const { repo } = gate;
-  const hook = getWebhook(ctx.app.db, repo.id, ctx.params.id ?? "");
-  const done = hook
-    ? redeliver(ctx.app.db, ctx.params.delivery ?? "", hook.id)
-    : undefined;
+  const done = redeliverWebhook(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "", ctx.params.delivery ?? "");
   return flashTo(
     ctx,
     `${repoBase(repo)}/settings/hooks`,
-    done?.ok
+    done.ok
       ? { message: "Delivery queued again." }
       : { tone: "danger", message: "That delivery cannot be sent again." },
   );
@@ -192,3 +220,26 @@ export async function webhookPing(ctx: Ctx): Promise<Response> {
       : { tone: "danger", message: `Too many pings: try again in ${pinged.error.retryAfter} s.` },
   );
 }
+
+/**
+ * POST …/settings/hooks/:id/pause and …/resume: one route each, so a
+ * repeated post leaves the hook as it asked, never toggled back.
+ */
+function webhookSetPaused(paused: boolean) {
+  return async (ctx: Ctx): Promise<Response> => {
+    const gate = await adminForm(ctx);
+    if (gate instanceof Response) return gate;
+    const { repo } = gate;
+    const done = pauseWebhook(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "", paused);
+    return flashTo(
+      ctx,
+      `${repoBase(repo)}/settings/hooks`,
+      done.ok
+        ? { message: paused ? "Webhook paused: it gets no deliveries until resumed." : "Webhook resumed." }
+        : { tone: "danger", message: "That webhook no longer exists." },
+    );
+  };
+}
+
+export const webhookPause = webhookSetPaused(true);
+export const webhookResume = webhookSetPaused(false);

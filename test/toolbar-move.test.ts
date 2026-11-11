@@ -70,6 +70,22 @@ describe("moving the pill", () => {
     expect(store["forge-pill-corner"]).toBe("br");
   });
 
+  test("an arrow move is announced in plain words", () => {
+    const { box, pill, fire } = boot({});
+    const sr = box.children.find((c: any) => c.attrs.role === "status")!;
+    fire(pill, "keydown", { key: "ArrowLeft" });
+    expect(sr.textContent).toBe("Moved to the bottom left");
+    fire(pill, "keydown", { key: "ArrowUp" });
+    expect(sr.textContent).toBe("Moved to the top left");
+  });
+
+  test("an arrow that changes nothing says nothing", () => {
+    const { box, pill, fire } = boot({ "forge-pill-corner": "tl" });
+    const sr = box.children.find((c: any) => c.attrs.role === "status")!;
+    fire(pill, "keydown", { key: "ArrowLeft" });
+    expect(sr.textContent ?? "").toBe("");
+  });
+
   test("a garbage stored corner is ignored; no storage at all still works", () => {
     expect(boot({ "forge-pill-corner": "<x>" }).host.style.right).toBe("12px");
     const { host, pill, fire } = boot(null);

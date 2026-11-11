@@ -7,6 +7,7 @@
  */
 
 import type { Spend, SpendLine, SpanName } from "../../actions/spend.ts";
+import { fleetGraphHref } from "../fleet-graph.ts";
 import { html, type Html } from "../html.ts";
 
 const usd = (n: number): string => `$${n.toFixed(2)}`;
@@ -71,7 +72,9 @@ function table(spend: Spend, dim: Dimension, title: string): Html {
             const of = at.get(n)!;
             const w = of.get("week");
             return html`<tr>
-              <th scope="row">${n}</th>
+              <th scope="row">${dim === "byApp" && n.includes("/")
+                ? html`<a href="${fleetGraphHref([n])}" title="This app on the fleet graph">${n}</a>`
+                : n}</th>
               ${spend.spans.map(
                 (s) =>
                   html`<td class="num">${usd(of.get(s.span)?.costUsd ?? 0)}</td>`,
@@ -100,6 +103,7 @@ export function spendView(spend: Spend): Html {
           >`,
       )}
     </p>
+    <p><a href="${fleetGraphHref([])}">Fleet graph</a></p>
     ${DIMENSIONS.map(([dim, title]) => table(spend, dim, title))}
     <p class="muted" id="spend-top">The 10 costliest runs, 7 days</p>
     <div class="table-scroll">

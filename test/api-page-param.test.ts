@@ -77,7 +77,7 @@ test("a list that does not page by cursor ignores page", async () => {
 });
 
 test("the contract names the 400 on every route the guard covers", () => {
-  const doc = openapi("http://x", "0") as { paths: Record<string, Record<string, { responses: Record<string, unknown> }>> };
+  const doc = openapi("http://x", "0", "admin") as { paths: Record<string, Record<string, { responses: Record<string, unknown> }>> };
   let seen = 0;
   for (const r of ROUTES) {
     const refused = r.method !== "get" ? undefined : pageParamRefused(r.path.replace(/\{(\w+)\}/g, ":$1"), new URLSearchParams("page=2"));

@@ -44,12 +44,12 @@ function summaryLine(notes: readonly Note[]): Html {
 
 /**
  * The live region for the notes. `fine` is the admin's quiet "All fine"
- * when nothing is noted; anyone else gets an empty region, ready for the
- * first note to swap in.
+ * when nothing is noted, followed by `aside` when there is one; anyone
+ * else gets an empty region, ready for the first note to swap in.
  */
 export function notesRegion(
   notes: readonly Note[],
-  o: { fine: boolean; live: string; ok: boolean | null },
+  o: { fine: boolean; live: string; ok: boolean | null; aside?: Html },
 ): Html {
   const attrs = html`id="notes" data-live="${o.live}"${
     o.ok === null ? "" : html` data-ok="${o.ok ? "yes" : "no"}"`
@@ -58,7 +58,9 @@ export function notesRegion(
     html`<div ${attrs} role="status">${inner}</div>`;
   if (notes.length === 0)
     return wrap(
-      o.fine ? html`<span class="small muted">${dot("success")} All fine</span>` : null,
+      o.fine
+        ? html`<span class="small muted">${dot("success")} All fine${o.aside === undefined ? "" : html` · ${o.aside}`}</span>`
+        : null,
     );
   return wrap(
     disclosure(

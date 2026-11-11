@@ -1,7 +1,7 @@
 /**
- * Builder slots serve the roadmap first (#7571): small issues — tests-only
- * or small additions — hold at most `slots.smallShare` of the slots, and an
- * issue under an open epic starts before a small one.
+ * The pick order (#7571, #10622): small issues — tests-only or small
+ * additions — hold no slots of their own now; Speed and the Next up order bound
+ * them like any work. An old `slots.smallShare` is ignored.
  */
 import { quietWeek } from "./helpers/week-quiet.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -14,7 +14,6 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { linkIssue } from "../src/actions/dependencies.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/repos.ts";
-import { smallShare } from "../src/core/capacity.ts";
 import { readyNow, repoGraph } from "../src/core/dependencies.ts";
 import { nextUp } from "../src/core/next_up.ts";
 import { putFirst } from "../src/core/first.ts";
@@ -22,8 +21,8 @@ import { getIssueById, type Issue } from "../src/core/issues.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createRun } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
-import { driveRepo, inSlotOrder, smallShareWords } from "../src/crew/autonomy.ts";
-import { isSmall, shareWords, slotOrder, smallCap, smallIssuesWords } from "../src/crew/small_share.ts";
+import { driveRepo, inSlotOrder } from "../src/crew/autonomy.ts";
+import { isSmall } from "../src/crew/polish_share.ts";
 import { readHeld } from "../src/flow/held.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { heldLines } from "../src/tui/screens/flow.ts";
@@ -36,23 +35,8 @@ describe("the rules", () => {
     expect(isSmall("Search notes by word", ["feature"])).toBe(false);
   });
 
-  test("5 slots at 30% hold 2 small; 1 slot still holds 1; 0% holds none", () => {
-    expect(smallCap(5, 30)).toBe(2);
-    expect(smallCap(1, 30)).toBe(1);
-    expect(smallCap(5, 0)).toBe(0);
-    expect(smallCap(5, 100)).toBe(5);
-  });
-
-  test("the order given is kept, and small work is left out at the cap unless ranked", () => {
-    const c = (t: string) => ({ ranked: t.endsWith("^"), small: t.startsWith("s") });
-    expect(slotOrder(["s1", "o1", "r1", "s2"], c, 0, 2)).toEqual(["s1", "o1", "r1", "s2"]);
-    expect(slotOrder(["s1", "o1", "s2^", "r1"], c, 2, 2)).toEqual(["o1", "s2^", "r1"]);
-  });
-
-  test("each label the docs name is small, and the words read as the doors print them", () => {
+  test("each label the docs name is small", () => {
     for (const label of ["test", "tests", "tests-only", "small"]) expect(isSmall("Anything", [label])).toBe(true);
-    expect(shareWords(1, 2)).toBe("1/2");
-    expect(smallIssuesWords({ running: 1, cap: 2 })).toBe("small issues: 1 of 2 slots");
   });
 });
 
@@ -65,15 +49,6 @@ let cookie: string;
 
 const get = (path: string) =>
   fetch(`${servers.url}${path}`, { headers: { cookie: `${cookie}; forge_mode=studio` }, redirect: "manual" });
-
-/** Sets `slots.smallShare` as an admin does, on /settings/capacity. */
-const setShare = (value: string) =>
-  fetch(`${servers.url}/settings/capacity`, {
-    method: "POST",
-    redirect: "manual",
-    headers: { cookie, "content-type": "application/x-www-form-urlencoded", origin: servers.url },
-    body: new URLSearchParams({ key: "slots.smallShare", value }),
-  });
 
 const fresh = () => getRepoById(app.db, repo.id)!;
 
@@ -150,34 +125,25 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-test("with 5 slots and only small issues ready, at most 2 start; then an epic's issue starts before a small one", async () => {
-  expect(smallShare(app.db)).toBe(30);
+test("no cap holds small issues back: with 5 slots and four small issues ready, all four start, whatever an old slots.smallShare says", async () => {
+  // A value stored by the knob that used to be here: ignored, not an error.
+  app.db.query("INSERT INTO forge_setting (key, value, updated_by, updated_at) VALUES ('slots.smallShare', '0', ?1, ?2)").run(alice.id, new Date().toISOString());
   const small = ["A test pins the title", "A test pins the body", "A test pins the date", "A test pins the tags"].map(open);
   const started: Issue[] = [];
-  for (let n = 0; n < 5; n++) {
-    started.push(...(await drive(small)));
-  }
-  expect(started.length).toBe(2);
-  expect(smallShareWords(app, fresh())).toBe("2/2");
-
-  // Room is made for one more small one, and an epic's issue arrives beside it.
-  const epic = open("Notes search");
-  const child = open("Search notes by word");
-  expect(linkIssue(app, alice, fresh(), epic, child).ok).toBe(true);
-  app.db.query("UPDATE run SET state = 'ok' WHERE issue_id = ?1").run(started[0]!.id);
-  const next = await drive([...small, child]);
-  expect(next.map((i) => i.id)).toContain(child.id);
+  for (let n = 0; n < 5; n++) started.push(...(await drive(small)));
+  expect(started.length).toBe(4);
+  // Those runs end, so the slots are free for the tests below.
+  app.db.query("UPDATE run SET state = 'ok' WHERE repo_id = ?1 AND state IN ('queued','running')").run(repo.id);
 });
 
-test("one small issue of two slots shows on /board's Today, the studio's crew panel and the terminal's Flow", async () => {
-  expect(smallShareWords(app, fresh())).toBe("2/2");
+test("small issues in flight show nowhere: not on /board's Today, the studio's crew panel or the terminal's Flow", async () => {
   const board = await (await get("/board")).text();
-  const today = board.slice(board.indexOf('id="today"'));
-  expect(today).toContain("small issues: 2 of 2 slots");
+  expect(board).not.toContain("small issues:");
   const studio = await (await get("/alice/notes/settings")).text();
-  expect(studio).toMatch(/<dt>Small issues<\/dt>\s*<dd>2\/2 slots<\/dd>/);
+  expect(studio).not.toContain("<dt>Small issues</dt>");
   const flow = heldLines(readHeld(app, true), 200).join("\n");
-  expect(flow).toMatch(/^alice\/notes startable=\d+.* small 2\/2$/m);
+  expect(flow).toMatch(/^alice\/notes startable=\d+/m);
+  expect(flow).not.toContain(" small ");
 });
 
 test("what the owner raised again is first in the page's order and in the picker's, ahead of an older epic issue", async () => {
@@ -188,7 +154,7 @@ test("what the owner raised again is first in the page's order and in the picker
   app.db.query("INSERT INTO issue_raise (issue_id, raised_at) VALUES (?1, ?2)").run(plain.id, new Date().toISOString());
   const mine = new Set([plain.id, child.id]);
   const ready = readyNow(repoGraph(app.db, repo.id, { sealed: true }));
-  const picker = inSlotOrder(app, fresh(), ready, [], 5).map((r) => r.issue.id).filter((id) => mine.has(id));
+  const picker = inSlotOrder(app, fresh(), ready).map((r) => r.issue.id).filter((id) => mine.has(id));
   const page = nextUp(app.db, fresh()).rows.map((r) => r.issue.id).filter((id) => mine.has(id));
   expect(picker).toEqual([plain.id, child.id]);
   expect(page).toEqual(picker);
@@ -204,7 +170,7 @@ test("an epic's issue leads older plain work only as the page's ready order has 
   const order = () => {
     const mine = new Set([older.id, child.id]);
     const ready = readyNow(repoGraph(app.db, repo.id, { sealed: true }));
-    const picker = inSlotOrder(app, fresh(), ready, [], 5).map((r) => r.issue.id).filter((id) => mine.has(id));
+    const picker = inSlotOrder(app, fresh(), ready).map((r) => r.issue.id).filter((id) => mine.has(id));
     const page = nextUp(app.db, fresh()).rows.map((r) => r.issue.id).filter((id) => mine.has(id));
     expect(page).toEqual(picker);
     return picker;
@@ -216,23 +182,4 @@ test("an epic's issue leads older plain work only as the page's ready order has 
   // Clean up so the drives below see the same open work as before.
   for (const i of [older, epic, child]) app.db.query("UPDATE issue SET state = 'closed' WHERE id = ?1").run(i.id);
   opened.splice(opened.length - 3, 3);
-});
-
-test("slots.smallShare set on /settings/capacity changes the pick: 0 starts no small issue, 100 does; out of range is refused", async () => {
-  // The earlier ticks filled the slots; those runs end so this pick has room.
-  app.db.query("UPDATE run SET state = 'ok' WHERE repo_id = ?1 AND state IN ('queued','running')").run(repo.id);
-  const small = open("A test pins the colour");
-  expect((await setShare("0")).status).toBe(303);
-  expect(smallShare(app.db)).toBe(0);
-  expect(await drive(opened)).toEqual([]);
-  expect(getIssueById(app.db, small.id)!.assigneeId).toBeNull();
-  expect((await setShare("100")).status).toBe(303);
-  expect(smallShare(app.db)).toBe(100);
-  const picked = await drive(opened);
-  expect(picked.length).toBeGreaterThan(0);
-  for (const i of picked) expect(isSmall(i.title, [])).toBe(true);
-  for (const value of ["101", "-1", "half"]) {
-    await setShare(value);
-    expect(smallShare(app.db)).toBe(100);
-  }
 });

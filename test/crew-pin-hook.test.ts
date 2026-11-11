@@ -36,7 +36,7 @@ for (const f of readdirSync("src/core/migrations")) {
 `;
 
 /** A remote with one pinned migration on main, and a builder's clone of it with the hook. */
-function clone(name: string, withScript = true) {
+function clone(name: string, withScript = true, withTryRule = false) {
   const seed = join(root, `${name}-seed`);
   const bare = join(root, `${name}.git`);
   const dir = join(root, name);
@@ -45,6 +45,7 @@ function clone(name: string, withScript = true) {
   put(seed, "src/core/migrations/0001-a.ts", "a");
   put(seed, "src/core/migration-pins/0001-a.pin", "id\n");
   if (withScript) put(seed, "scripts/pin-migrations.ts", FAKE_PIN_SCRIPT);
+  if (withTryRule) put(seed, "src/kernel/try_it.ts", "// the gate's rule");
   put(seed, "README.md", "r");
   ok(seed, "add", "-A");
   ok(seed, "commit", "-qm", "base");
@@ -100,4 +101,31 @@ test("a repository without the pin script is not touched", () => {
   ok(dir, "push", "-q", "origin", "work");
   expect(ok(bare, "rev-parse", "work")).toBe(head);
   expect(readFileSync(join(dir, ".git/hooks/pre-push"), "utf8")).toContain("pin-migrations");
+});
+
+test("a push that changes a page with no Try: line is refused with the line to add; with one it goes through", () => {
+  const { dir, bare } = clone("try", true, true);
+  put(dir, "src/web/pages/x.ts", "export const x = 1;");
+  ok(dir, "add", "-A");
+  ok(dir, "commit", "-qm", "a page");
+  const refused = git(dir, "push", "-q", "origin", "work");
+  expect(refused.exitCode).not.toBe(0);
+  expect(refused.stderr.toString()).toContain("Try: ");
+  expect(git(bare, "rev-parse", "--verify", "-q", "work").exitCode).not.toBe(0);
+  ok(dir, "commit", "-q", "--allow-empty", "-m", "words", "-m", "Try: open /x and see the page");
+  ok(dir, "push", "-q", "origin", "work");
+  expect(ok(bare, "rev-parse", "work")).toBe(ok(dir, "rev-parse", "HEAD"));
+});
+
+test("the Try: rule asks nothing of a push that changes no reachable file, or of a repository without it", () => {
+  const plain = clone("try-plain", true, true);
+  put(plain.dir, "src/core/y.ts", "export const y = 1;");
+  ok(plain.dir, "add", "-A");
+  ok(plain.dir, "commit", "-qm", "core only");
+  ok(plain.dir, "push", "-q", "origin", "work");
+  const other = clone("try-none");
+  put(other.dir, "src/web/pages/x.ts", "export const x = 1;");
+  ok(other.dir, "add", "-A");
+  ok(other.dir, "commit", "-qm", "a page");
+  ok(other.dir, "push", "-q", "origin", "work");
 });

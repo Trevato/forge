@@ -48,6 +48,7 @@ import { noteHeld, type HoldCause } from "../runs/held.ts";
 import { decideAndRecord } from "./ledger.ts";
 import { bugsFirst } from "../flow/bugs.ts";
 import { byDials } from "./team_share.ts";
+import { peopleFirst } from "./people_first.ts";
 import { inMaintenance } from "../maintenance/state.ts";
 import { gateQueue } from "../flow/valve_gate.ts";
 import { ARCHIVED_WHY, getRepoById, type Repo } from "../core/repos.ts";
@@ -95,13 +96,14 @@ import {
 } from "./guard.ts";
 import { noteProtection } from "../kernel/protection.ts";
 import { dataInTemp, sandboxAvailable, sweepRunTmp } from "./sandbox.ts";
+import { sandboxCause } from "./sandbox_cause.ts";
 import { mayDirectCrew } from "./direct.ts";
 import {
   AUTONOMY_TICK_MS,
   autonomyTick,
   landIfGreen,
   parkForBreaker,
-  parkPull,
+  parkPullTold,
   settleAgentRun,
   spentToday,
 } from "./autonomy.ts";
@@ -130,6 +132,7 @@ import {
 } from "./runner.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { abortAgentRun } from "./running.ts";
+import { during } from "../perf/jobs.ts";
 
 const log = createLog("crew");
 
@@ -184,6 +187,9 @@ export interface CrewHandle {
  */
 const DRAIN_MS = 3 * 60_000;
 
+/** How long `stop()` waits for the tick's own sweeps (converge, autonomy) to settle. */
+const SWEEPS_STOP_MS = 10_000;
+
 const handles = new WeakMap<App, CrewHandle>();
 
 /** The crew serving this forge, if one was started. */
@@ -226,6 +232,7 @@ export async function startCrew(
     );
   if (!sandbox.ok)
     log.warn("agent sandbox not available here; runs are unrestricted", {
+      cause: sandboxCause(sandbox.reason).words,
       reason: sandbox.reason,
     });
   const ready: CrewOptions = {
@@ -257,20 +264,35 @@ export async function startCrew(
   // Repositories that run on their own take a turn once a minute, on the
   // same clock as the pump, so a pick becomes a run on the next tick.
   let lastAutonomy = 0;
+  // The sweeps a tick started and has not seen settle: `stop()` waits for
+  // them, so none reads `app.db` after its caller closed it (#9977).
+  const sweeps = new Set<Promise<unknown>>();
+  const track = (sweep: Promise<unknown>): void => {
+    sweeps.add(sweep);
+    void sweep.finally(() => sweeps.delete(sweep));
+  };
   const timer = setInterval(() => {
     if (stopped) return;
-    requeueInterrupted(app);
-    recheckForDisk(app);
-    if (Date.now() - lastAutonomy >= AUTONOMY_TICK_MS) {
-      lastAutonomy = Date.now();
-      settleAll(app).catch((error) =>
-        log.error("converge sweep failed", { error: String(error) }),
-      );
-      autonomyTick(app).catch((error) =>
-        log.error("autonomy tick failed", { error: String(error) }),
-      );
+    // A tick that throws is logged and the next one tries again: thrown
+    // from a timer it is an uncaught error that takes the process down.
+    try {
+      during("crew", () => {
+        requeueInterrupted(app);
+        recheckForDisk(app);
+        if (Date.now() - lastAutonomy >= AUTONOMY_TICK_MS) {
+          lastAutonomy = Date.now();
+          track(settleAll(app).catch((error) =>
+            log.error("converge sweep failed", { error: String(error) }),
+          ));
+          track(autonomyTick(app).catch((error) =>
+            log.error("autonomy tick failed", { error: String(error) }),
+          ));
+        }
+        pump(app, ready, inFlight);
+      });
+    } catch (error) {
+      log.error("crew tick failed", { error: String(error) });
     }
-    pump(app, ready, inFlight);
   }, options.tickMs ?? TICK_MS);
   // Clones no open issue, pull or run claims fill the volume (#5697).
   const sweepClones = (): void => {
@@ -282,11 +304,13 @@ export async function startCrew(
     const pruned = pruneRunFiles(app.config.dataDir);
     if (pruned > 0) log.info("removed old run logs", { count: pruned });
   };
-  sweepClones();
-  const cloneTimer = setInterval(() => !stopped && sweepClones(), 60 * 60_000);
-  requeueInterrupted(app);
-  sweepAssigned(app);
-  pump(app, ready, inFlight);
+  during("clone-sweep", sweepClones);
+  const cloneTimer = setInterval(() => !stopped && during("clone-sweep", sweepClones), 60 * 60_000);
+  during("crew", () => {
+    requeueInterrupted(app);
+    sweepAssigned(app);
+    pump(app, ready, inFlight);
+  });
 
   const handle: CrewHandle = {
     ready: detected.ok,
@@ -299,6 +323,16 @@ export async function startCrew(
       unsubscribe();
       unfollow();
       unsettle();
+      // A sweep still going would read the database its caller closes next;
+      // bounded, for one stuck on the network must not hold a restart.
+      if (sweeps.size > 0) {
+        let bound: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          Promise.all(sweeps),
+          new Promise((resolve) => (bound = setTimeout(resolve, SWEEPS_STOP_MS))),
+        ]);
+        clearTimeout(bound);
+      }
       if (options.drain === true && inFlight.size > 0) {
         // Let what is in flight finish: a run cut short is a person's
         // money spent twice. The new forge takes new work meanwhile.
@@ -399,9 +433,11 @@ export function outsideSeat(
         ? "planner"
         : "builder";
   const held = crewRole(app.db, repo.id, agent.user.id);
-  // A pull assigned to its reviewer is asked for a look, a builder's for a fix: only a planner is outside.
-  if (reason !== "review" && issue.kind === "pull")
-    return (held ?? agent.roles[0]) === "planner";
+  // A pull assigned to its reviewer is asked for a look, a builder's for a fix: a planner and a maintainer are outside.
+  if (reason !== "review" && issue.kind === "pull") {
+    const own = held ?? agent.roles[0];
+    return own === "planner" || own === "maintainer";
+  }
   return held === undefined ? !agent.roles.includes(seat) : held !== seat;
 }
 
@@ -906,19 +942,27 @@ function answerRed(
   const since = lastHumanWord(app, issue, agent);
   if (automaticRunsSince(app.db, issue.id, since) >= CHECK_FAILED_LIMIT) {
     const pull = getPull(app.db, repo.id, issue.number);
-    if (
-      pull &&
-      parkPull(
-        app,
-        repo,
-        pull,
-        `the check stayed red through ${CHECK_FAILED_LIMIT} automatic tries`,
-      )
+    const waiting = () =>
+      log.info("check failed again; waiting for a person", {
+        issue: issue.number,
+      });
+    if (pull === undefined) return waiting();
+    parkPullTold(
+      app,
+      repo,
+      pull,
+      `the check stayed red through ${CHECK_FAILED_LIMIT} automatic tries`,
+      since,
     )
-      return;
-    log.info("check failed again; waiting for a person", {
-      issue: issue.number,
-    });
+      .then((parked) => {
+        if (!parked) waiting();
+      })
+      .catch((error) =>
+        log.error("parking a red pull failed", {
+          issue: issue.number,
+          error: String(error),
+        }),
+      );
     return;
   }
   const runId = payload["runId"];
@@ -1329,7 +1373,7 @@ function forgetWorkdir(app: App, repo: Repo, pull: Pull): void {
  * the task again itself when it stops. Runs at boot and on every tick: a
  * forge that fell and was back within the lease sees its runs lapse later.
  */
-function requeueInterrupted(app: App): void {
+export function requeueInterrupted(app: App): void {
   for (const run of listActive(app.db, "agent")) {
     if (run.state === "running" && leaseLapsed(run, STALE_AFTER_MS))
       requeue(app, run, "interrupted by a restart; queued again");
@@ -1495,15 +1539,21 @@ const notedBy = new WeakMap<App, Set<string>>();
 
 /**
  * The order queued agent runs are started in: the team dials first, then bugs
- * ahead of everything (#8709), then the valves a person turned. A bug outranks the dials by policy: the clock
- * is a promise, the dials a share of the rest.
+ * ahead of everything (#8709), then a person's ask ahead of the bugs
+ * (`people_first.ts`, #10365), then the valves a person turned. A bug
+ * outranks the dials by policy: the clock is a promise, the dials a share of
+ * the rest. A person outranks the bug: they are waiting, and the crew is not.
  */
 export function startOrder(app: App): ReturnType<typeof gateQueue> {
-  return gateQueue(app.db, bugsFirst(app.db, byDials(app.db, listQueued(app.db, "agent", 50))));
+  const queued = listQueued(app.db, "agent", 50);
+  return gateQueue(
+    app.db,
+    peopleFirst(app.db, bugsFirst(app.db, byDials(app.db, queued)), (run) => assignedByPerson(app, run)),
+  );
 }
 
 /** Take queued runs, oldest first, up to the limit — one per issue at a time. */
-function pump(
+export function pump(
   app: App,
   options: CrewOptions,
   inFlight: Map<string, Promise<void>>,
@@ -1541,8 +1591,14 @@ function pump(
     noted.add(shut.id);
     appendRunLog(app.config.dataDir, shut.id, "queued, not started: its repository's valve is shut (/flow)");
   }
-  for (const queued of gated.order) {
-    if (queued.issueId !== null && runningIssues.has(queued.issueId)) continue;
+  for (const [at, queued] of gated.order.entries()) {
+    // One run per issue at a time: this one waits for its sibling, not for a slot.
+    // A sibling that hangs is still caught: the running run goes stale on its
+    // heartbeat or past NO_PROGRESS_MS and vitals names it under `stuck:`.
+    if (queued.issueId !== null && runningIssues.has(queued.issueId)) {
+      held.set(queued.id, "issue");
+      continue;
+    }
     const fresh = getRun(app.db, queued.id);
     if (!fresh || fresh.state !== "queued") continue;
     // A fresh run queued before Archive is cancelled, not started, and
@@ -1557,7 +1613,13 @@ function pump(
       }
       continue;
     }
-    if (slots <= 0) break;
+    if (slots <= 0) {
+      // Out of slots: nothing more starts, but the runs behind this one that
+      // wait on a running sibling are still held by that, not by the slots.
+      for (const rest of gated.order.slice(at + 1))
+        if (rest.issueId !== null && runningIssues.has(rest.issueId)) held.set(rest.id, "issue");
+      break;
+    }
     // The week's pace holds every path that starts a run in an autonomous
     // repository: assigned, review, feedback and check runs as much as picks (#8873).
     if (home !== undefined && home.autonomy === "autonomous") {

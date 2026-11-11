@@ -13,6 +13,7 @@ import { addToCrew } from "../src/actions/crew.ts";
 import { addOwnModel, setAccountGrant } from "../src/actions/model_grant.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { assignIssue, openIssue } from "../src/actions/issues.ts";
+import { createOrg } from "../src/core/orgs.ts";
 import { createUser } from "../src/core/users.ts";
 import { recordUsage } from "../src/core/usage.ts";
 import { budgetLine, grantLeft, monthSpent } from "../src/core/model_grant.ts";
@@ -222,4 +223,39 @@ describe("model budget: zero, an own subscription, a capped grant", () => {
     const again = addOwnModel(app, user, { token: "sk-ant-api03-bobkey2" });
     expect(again.ok).toBe(false);
   });
+
+  test("an org reaches the forge's account only by an admin's explicit grant; adding an admin to Owners grants nothing", async () => {
+    const seed = async (owner: User, org: string, name: string) => {
+      const made = await createRepo(app, owner, { name, owner: org, visibility: "private" });
+      if (!made.ok) throw new Error(String(made.error));
+      const seeded = await commitToBranch(app, owner, made.value, {
+        message: "Start",
+        files: [{ path: "README.md", content: `# ${name}\n` }],
+      });
+      if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+      expect(addToCrew(app, owner, made.value, "bot").ok).toBe(true);
+      return made.value;
+    };
+
+    // A non-admin founds an org and puts a forge admin on Owners: still refused, the fix named.
+    const { user: founder } = await person("founder");
+    const theirs = createOrg(app.db, "plainorg", founder.id);
+    if (!theirs.ok) throw new Error(String(theirs.error));
+    const team = app.db
+      .query<{ id: string }, [string]>("SELECT id FROM team WHERE org_id = ?1")
+      .get(theirs.value.id)!;
+    app.db.query("INSERT INTO team_member (team_id, user_id) VALUES (?1, ?2)").run(team.id, admin.id);
+    const repo = await seed(founder, "plainorg", "shop");
+    const refused = await runOn(founder, repo);
+    expect(refused.state).toBe("failed");
+    expect(refused.summary).toBe(
+      "the account `plainorg` has no model grant; an admin can grant one at /settings/accounts/plainorg",
+    );
+
+    // The admin grants the org explicitly: its runs use the forge's account, up to the grant.
+    expect(setAccountGrant(app, admin, "plainorg", 5).ok).toBe(true);
+    const ran = await runOn(founder, repo);
+    expect(ran.summary).not.toContain("no model grant");
+    expect(readRunLog(standIn.dataDir, ran.id).lines.join("\n")).toContain("model grant: $");
+  }, 90_000);
 });

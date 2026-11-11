@@ -47,7 +47,7 @@ test("GET /settings/origins names its phases", async () => {
   const res = await fetch(`${servers.url}/settings/origins`, { headers: { cookie } });
   const body = await res.text();
   expect(res.status).toBe(200);
-  expect(body).toContain("<h1>Origins</h1>");
+  expect(body).toContain("<h1>Connected accounts</h1>");
   const parts = (res.headers.get("server-timing") ?? "").split(", ");
   for (const name of ["app", "session", "origins", "mirrors", "apps", "frozen", "render"])
     expect(parts.find((p) => p.startsWith(`${name};`))).toMatch(/^[a-z]+;dur=\d+\.\d$/);

@@ -246,6 +246,16 @@ describe("the planner declined, waiting for a person", () => {
     expect(after).not.toBe(before);
   });
 
+  test("an ask quotes the planner's words as one escaped, clamped line, whole in its title (#10199)", async () => {
+    const words = "nothing to plan:\n\n  - `main` is **done**\n  - see [the map](http://x.test) <b>now</b>";
+    decline(words, new Date().toISOString());
+    const asks = await page(await signIn("alice"), "/asks");
+    const flat = "nothing to plan: - `main` is **done** - see [the map](http://x.test) &lt;b&gt;now&lt;/b&gt;";
+    expect(asks).toContain(`The planner declined the direction: \u201c<span class="row-note" title="${flat}">${flat}</span>\u201d.`);
+    expect(asks).not.toContain("<b>now</b>");
+    expect(asks).not.toContain('href="http://x.test"');
+  });
+
   test("an assisted repository never waits on its planner", () => {
     app.db
       .query("UPDATE repo SET autonomy = 'assisted' WHERE id = ?1")

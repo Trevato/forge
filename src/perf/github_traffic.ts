@@ -11,6 +11,7 @@
 
 import type { Database } from "bun:sqlite";
 import { quietly } from "../core/write_clock.ts";
+import { during } from "./jobs.ts";
 
 const API = "https://api.github.com";
 const REPO = /^(?!\.+\/)[A-Za-z0-9_.-]{1,100}\/(?!\.+$)[A-Za-z0-9_.-]{1,100}$/;
@@ -149,8 +150,8 @@ export function startGithubPull(
     if (!pullDue(db, config, Date.now())) return;
     pullGithub(db, config, fetcher).catch((error) => log.warn("could not pull GitHub traffic", { error: String(error) }));
   };
-  const first = setTimeout(run, 30_000);
-  const tick = setInterval(run, CHECK_MS);
+  const first = setTimeout(() => during("github-traffic", run), 30_000);
+  const tick = setInterval(() => during("github-traffic", run), CHECK_MS);
   first.unref();
   tick.unref();
   return {

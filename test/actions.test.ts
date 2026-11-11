@@ -281,7 +281,7 @@ describe("actions own authorization and events", () => {
     });
     expect(addTeamMember(app, alice, acme, devs.value, "bob")).toEqual({
       ok: true,
-      value: { added: true },
+      value: { added: true, role: "member" },
     });
 
     // Bob is now a writer in acme — but still not an admin.

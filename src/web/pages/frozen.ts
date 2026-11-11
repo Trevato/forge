@@ -23,7 +23,7 @@ import { loadRepo, notFoundPage, repoBase } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo } from "../layout.ts";
-import { btn, card, selectField } from "../ui.ts";
+import { btn, selectField } from "../ui.ts";
 
 /** `codeberg.org` from a URL — what a person calls a forge; "" if unknown. */
 const hostLabel = (url: string): string => URL.parse(url)?.host ?? "";
@@ -70,7 +70,7 @@ export function frozenBlock(ctx: Ctx, repo: Repo): Html | null {
   // Only the viewer's own working origins on the same site — scheme, host
   // and port: reconnecting lends the mirror a credential, nobody can lend
   // one that is not theirs, and one that needs re-authorizing has nothing
-  // to lend until it is (which, done under Settings → Origins, reconnects
+  // to lend until it is (which, done under Settings → Connected accounts, reconnects
   // this mirror by itself).
   const origins =
     admin && user !== undefined
@@ -82,24 +82,14 @@ export function frozenBlock(ctx: Ctx, repo: Repo): Html | null {
   // is filled with something discovery takes as it is.
   const forge = URL.parse(d.htmlUrl)?.origin ?? "";
   const connect = `/settings/origins${forge === "" ? "" : `?host=${encodeURIComponent(forge)}`}#connect`;
-  const row = (body: Html): Html =>
-    html`<li class="row"><div class="row-main">${body}</div></li>`;
   const action = !admin
-    ? row(
-        html`<p class="muted small">
-          An admin of this repository can reconnect it.
-        </p>`,
-      )
+    ? html`<span class="muted">An admin of this repository can reconnect it.</span>`
     : origins.length === 0
-      ? row(
-          html`<p class="small">
-            Connect an
-            account${host === "" ? null : html` at ${hostLabel(d.htmlUrl)}`}
-            under <a href="${connect}">Settings → Origins</a>: connecting one
-            reconnects this mirror by itself.
-          </p>`,
-        )
-      : row(html`<form
+      ? html`Connect an
+        account${host === "" ? null : html` at ${hostLabel(d.htmlUrl)}`} under
+          <a href="${connect}">Settings → Connected accounts</a>: connecting one
+          reconnects this mirror by itself.`
+      : html`<form
           method="post"
           action="${repoBase(repo)}/settings/origin/reconnect"
           class="field-row"
@@ -114,13 +104,10 @@ export function frozenBlock(ctx: Ctx, repo: Repo): Html | null {
             })),
           })}
           ${btn("Reconnect", { size: "sm", variant: "primary", icon: "sync" })}
-        </form>`);
-  return card(
-    html`<ul class="list">
-      ${row(html`<p>${frozenSentence(d)}</p>`)} ${action}
-    </ul>`,
-    { tone: "attn", id: "frozen", pad: false },
-  );
+        </form>`;
+  return html`<div class="small mb" id="frozen">
+    ${frozenSentence(d)} ${action}
+  </div>`;
 }
 
 /** A refusal to re-attach, in a sentence a person can act on. */

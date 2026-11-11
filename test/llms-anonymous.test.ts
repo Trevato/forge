@@ -43,25 +43,26 @@ const section = (body: string): string[] => {
   return lines.slice(start + 1, end).filter((l) => l.startsWith("- "));
 };
 
-test("the anonymous text is small, varies by reader, and lists report plus one line", async () => {
+test("the anonymous text is small, varies by reader, and lists report and start plus one line", async () => {
   const res = await fetch(`${servers.url}/llms.txt`);
   const body = await res.text();
-  expect(Buffer.byteLength(body)).toBeLessThan(5 * 1024);
+  expect(Buffer.byteLength(body)).toBeLessThan(6.5 * 1024);
   expect(res.headers.get("vary")).toContain("Cookie");
   expect(res.headers.get("vary")).toContain("Authorization");
   const listed = section(body);
-  expect(listed).toHaveLength(2);
+  expect(listed).toHaveLength(3);
   expect(listed[0]).toStartWith("- report: ");
-  expect(listed[1]).toContain(`${TOOLS.length} more tools with an account`);
-  expect(listed[1]).toContain("tools/list");
-  expect(listed[1]).toContain("/contract/openapi.json");
+  expect(listed[1]).toStartWith("- start: ");
+  expect(listed[2]).toContain(`${TOOLS.length} more tools with an account`);
+  expect(listed[2]).toContain("tools/list");
+  expect(listed[2]).toContain("/contract/openapi.json");
 });
 
 test("every tool the anonymous text names is one tools/list returns", async () => {
   const names = section(await fetch(`${servers.url}/llms.txt`).then((r) => r.text()))
     .map((l) => /^- ([a-z_]+): /.exec(l)?.[1])
     .filter((n): n is string => n !== undefined);
-  expect(names).toEqual(["report"]);
+  expect(names).toEqual(["report", "start"]);
   const returned: string[] = [];
   let cursor: string | undefined;
   do {
@@ -80,5 +81,12 @@ test("a signed-in reader still gets every tool and report", async () => {
   const body = await fetch(`${servers.url}/llms.txt`, {
     headers: { authorization: `Bearer ${token}` },
   }).then((r) => r.text());
-  expect(section(body)).toHaveLength(TOOLS.length + 1);
+  expect(section(body)).toHaveLength(TOOLS.length + 2);
+});
+
+test("the OpenAPI line names ?tag= and the tags", async () => {
+  const body = await (await fetch(`${servers.url}/llms.txt`)).text();
+  const line = body.split("\n").find((l) => l.startsWith("- OpenAPI:")) ?? "";
+  expect(line).toContain("?tag=");
+  expect(line).toContain("pulls");
 });

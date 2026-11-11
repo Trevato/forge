@@ -50,14 +50,14 @@ test("the origins page has settings blocks with headings and no card", async () 
   expect(res.status).toBe(200);
   const body = await res.text();
   expect(body).not.toMatch(/class="(?:[^"]*\s)?card(?:\s[^"]*)?"/);
-  for (const h of ["Connected origins", "Trusted internal hosts", "Connect an origin"]) {
+  for (const h of ["Connected accounts", "Trusted internal hosts", "Connect an account"]) {
     expect(body).toMatch(new RegExp(`<section class="settings-block"[^>]*>\\s*<h2>${h}</h2>`));
   }
   expect(body).toContain(
-    "No origins connected: connect another forge, GitHub, a Forgejo\n            instance or a Gitea instance below.",
+    "No connected accounts yet: connect another forge, GitHub, a Forgejo\n            instance or a Gitea instance below.",
   );
   // One sentence: no full stop before its end.
-  const empty = body.split("<h2>Connected origins</h2>")[1]!.split("</p>")[0]!;
+  const empty = body.split("<h2>Connected accounts</h2>")[1]!.split("</p>")[0]!;
   expect(empty.replace(/<[^>]+>/g, "").trim().split(". ").length).toBe(1);
   expect(body).toContain('id="connect"');
 });
@@ -77,7 +77,7 @@ test("connected origins are rows of one list, with no wrapper box", async () => 
   }
   const body = await (await fetch(`${servers.url}/settings/origins`, { headers: { cookie } })).text();
   expect(body).not.toContain("origin-item");
-  const block = body.split("<h2>Connected origins</h2>")[1]!.split("</section>")[0]!;
+  const block = body.split("<h2>Connected accounts</h2>")[1]!.split("</section>")[0]!;
   expect(block.match(/<ul class="list setting-list" data-origins>/g)?.length).toBe(1);
   expect(block.match(/<li[ >]/g)!.length).toBeGreaterThanOrEqual(2);
   expect(block).toContain("Sync now");
@@ -100,7 +100,7 @@ test("an origin's error and notes render inside its own row", async () => {
     .query("UPDATE origin SET last_error = ?1 WHERE id = ?2")
     .run("upstream said 502", o.value.id);
   const body = await (await fetch(`${servers.url}/settings/origins`, { headers: { cookie } })).text();
-  const block = body.split("<h2>Connected origins</h2>")[1]!.split("</section>")[0]!;
+  const block = body.split("<h2>Connected accounts</h2>")[1]!.split("</section>")[0]!;
   const li = block
     .split(/<li[ >]/)
     .slice(1)

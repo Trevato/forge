@@ -11,7 +11,7 @@ import { appsRuntime } from "../apps/runtime.ts";
 import { knownSpec, warmSpec } from "../apps/api_spec.ts";
 import { runningCount } from "../core/runs.ts";
 import { getAppByRepo } from "../core/apps.ts";
-import { canAdmin, canEnterApp, visibleForks, type Repo } from "../core/repos.ts";
+import { canAdmin, canEnterApp, canWrite, visibleForks, type Repo } from "../core/repos.ts";
 import type { Ctx } from "../http/context.ts";
 import { sshCommand } from "../ssh/command.ts";
 import { changesHref, tellsHref } from "./studio/nouns.ts";
@@ -27,6 +27,7 @@ export type RepoTab =
   | "app"
   | "runs"
   | "events"
+  | "data"
   | "flows"
   | "api"
   | "settings"
@@ -114,6 +115,9 @@ function work(ctx: Ctx, base: string, repo: Repo | undefined): Steps {
         ...(running > 0 ? { count: running } : {}),
       });
     }
+    // An app's databases, for the people who can write the app.
+    if (record !== undefined && canWrite(ctx.app.db, repo, ctx.auth.user))
+      steps.push({ key: "data", label: "Data", href: `${base}/data` });
     steps.push({ key: "events", label: "Events", href: `${base}/events` });
     // What flows in and out: origin, sources, pins, forks (#9434). The page gates itself like the repo.
     steps.push({ key: "flows", label: "Flows", href: `${base}/flows` });

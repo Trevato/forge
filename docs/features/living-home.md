@@ -17,3 +17,16 @@ The feed — the composer, the timeline, what is on you, since you were here —
 Left out on purpose: the waiting-on-you line, the clog, vitals and keeper lines (the boards and the Flow dialog still show them), and "slowest right now" (it needs a timing read the home does not have). The box posts to `/tell` today; it becomes the `/talk` entry (#7652) when that lands.
 
 The two scans behind the lists are read once per write (`writeStamp`), so a warm home reads no tables for them.
+
+## The figures tell the truth (#10440)
+
+- **Slots** in "Builders running" are `crew.concurrency` (`crewConcurrency` in `src/flow/slot_cap.ts`), or the repositories' slots when those are fewer: the sum of the repositories' slots is a ceiling, not a limit. Home and the terminal read the same figure.
+- **"Nothing ready"** is said only when the repository's map has nothing ready (`/api/v1/repos/:owner/:name/map`); `test/home-builders-idle.test.ts` checks home against that answer.
+- **Pace line:** "Behind pace" only when the used percent is below the elapsed percent; otherwise "Under the allowed burn".
+- **Just shipped** titles are cut at a word (`shortTitle`); the row's hover and screen-reader title carry the whole one.
+- **Dropped on purpose** (the issue named them: no decision uses them): the Traffic, Reporting browsers and Accounts tiles. The same numbers stay on `/settings/traffic`, `/boards/reach` and the KPI probe.
+- A stuck approved pull is one line ("… waits for a person to merge it."); the wall it hit is on the pull.
+
+## The speed tile's note (#10738)
+
+"Reported page speed" shows the 75th-percentile page load as its figure and, under it, `LCP … · INP …` over seven days from the first-party beacon (`vitalsNote`): LCP is how long the main content takes to show, INP how long a tap takes to answer. With no report yet it says "no visitors yet". The terminal's "Reported page speed" line (`kpiLines`) uses the same note.

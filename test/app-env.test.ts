@@ -118,7 +118,7 @@ describe("an app's environment", () => {
     expect(JSON.stringify(set.value)).not.toContain("horse");
 
     const sealed = stored(hello.id, "ADMIN_PASSWORD");
-    expect(sealed).toStartWith("v1:");
+    expect(sealed).toStartWith("v2:");
     expect(sealed).not.toContain("horse");
     expect(Buffer.from(sealed!, "utf8").toString("base64")).not.toContain(
       Buffer.from(secret).toString("base64"),

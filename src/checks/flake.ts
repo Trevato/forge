@@ -36,7 +36,19 @@ const NAME_MAX = 300;
 export interface Flaky {
   readonly file: string;
   readonly name: string;
+  /** How long the failed attempt took, when the log said (#7560: the budget watcher's p95). */
+  readonly ms?: number;
 }
+
+const FAIL_TIME = /^\(fail\) .+? \[([0-9.]+)(m?s)\]/;
+/** The milliseconds a `(fail) name [1.2ms]` line says, or undefined. */
+export function failMs(line: string): number | undefined {
+  const m = FAIL_TIME.exec(line);
+  if (m === null) return undefined;
+  const n = Number(m[1]) * (m[2] === "s" ? 1000 : 1);
+  return Number.isFinite(n) ? Math.round(n) : undefined;
+}
+const withMs = (t: Flaky, ms: number | undefined): Flaky => (ms === undefined ? t : { ...t, ms });
 
 /**
  * The tests a failed check can re-run alone: at most {@link MAX_RERUN}
@@ -50,6 +62,7 @@ export function rerunnable(
   if (detail === undefined || detail.failed < 1 || detail.failed > MAX_RERUN) return undefined;
   if (detail.names.length !== detail.failed) return undefined;
   const found = new Map<string, string>();
+  const took = new Map<string, number>();
   let file: string | undefined;
   for (const line of lines) {
     const header = HEADER.exec(line);
@@ -58,8 +71,11 @@ export function rerunnable(
       continue;
     }
     const name = FAIL.exec(line)?.[1];
-    if (name !== undefined && detail.names.includes(name) && !found.has(name) && file !== undefined)
+    if (name !== undefined && detail.names.includes(name) && !found.has(name) && file !== undefined) {
       found.set(name, file);
+      const ms = failMs(line);
+      if (ms !== undefined) took.set(name, ms);
+    }
   }
   const out: Flaky[] = [];
   for (const name of detail.names) {
@@ -73,7 +89,7 @@ export function rerunnable(
       name.includes("(timeout)")
     )
       return undefined;
-    out.push({ file: at, name: name });
+    out.push(withMs({ file: at, name: name }, took.get(name)));
   }
   return out;
 }
@@ -232,8 +248,8 @@ export function recordFlakes(
   const opened: number[] = [];
   for (const t of tests) {
     db.query(
-      "INSERT INTO check_flake (id, repo_id, run_id, commit_oid, test, file, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-    ).run(id(), repo.id, ref.runId, ref.commit, t.name, t.file, new Date(now).toISOString());
+      "INSERT INTO check_flake (id, repo_id, run_id, commit_oid, test, file, at, ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    ).run(id(), repo.id, ref.runId, ref.commit, t.name, t.file, new Date(now).toISOString(), t.ms ?? null);
     const since = new Date(now - WINDOW_MS).toISOString();
     const count = db
       .query<{ n: number }, [string, string, string]>(
@@ -307,7 +323,7 @@ export function failedTests(lines: readonly string[]): Flaky[] {
     if (name === undefined || file === undefined || !PATH.test(file)) continue;
     if (name.length > NAME_MAX || CONTROL.test(name) || seen.has(`${file}\0${name}`)) continue;
     seen.add(`${file}\0${name}`);
-    out.push({ file, name });
+    out.push(withMs({ file, name }, failMs(line)));
   }
   return out;
 }

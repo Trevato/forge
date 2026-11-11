@@ -7,6 +7,8 @@
  * `tui/screens/valves.ts`, on the same `readPipes` and the same actions.
  */
 
+import { retryBackup } from "../../actions/backup_retry.ts";
+import { alarmBackup, type BackupAlarm } from "../../flow/alarm_backup.ts";
 import { acceptSuggestion, turnValveFor, type ValveError } from "../../actions/valves.ts";
 import type { Ctx } from "../../http/context.ts";
 import { readPipes, type ValveRow } from "../../flow/pipes.ts";
@@ -17,7 +19,7 @@ import { pipesSvg } from "../flow_pipes.ts";
 import { field, readForm } from "../form.ts";
 import { html, when } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { btn, card, icon, row, time } from "../ui.ts";
+import { btn, icon, row, time } from "../ui.ts";
 
 const money = (usd: number): string => `$${usd.toFixed(2)}`;
 const plural = (n: number, one: string, many = `${one}s`): string => `${String(n)} ${n === 1 ? one : many}`;
@@ -74,6 +76,16 @@ function valveRow(v: ValveRow) {
   });
 }
 
+/** The overdue off-box backup as one row: the sentence (with the last failure's cause) and the one action that retries. Nothing when none is overdue. */
+export function backupRow(alarm: BackupAlarm) {
+  if (!alarm.fired) return html``;
+  return html`<ul class="list mb">${row({
+    lead: icon("alert"),
+    title: html`${alarm.says}`,
+    meta: html`<form method="post" action="/flow/backup/retry">${btn("Retry the backup now", { type: "submit", variant: "primary", size: "sm" })}</form>`,
+  })}</ul>`;
+}
+
 // GET /flow
 export function flowPage(ctx: Ctx): Response {
   if (ctx.url.search !== "") return new Response(null, { status: 301, headers: { location: `/boards${ctx.url.search}` } });
@@ -84,11 +96,13 @@ export function flowPage(ctx: Ctx): Response {
   const p = readPipes(ctx.app.db, user.id);
   const body = html`<div class="page-head"><h1>Flow</h1>${btn("Boards", { href: "/boards", variant: "ghost" })}</div>
     <p class="mb">Money flows from the left to shipped on the right, as wide as this week's real spend. Every repository has a valve: drag it to give the repository a share of the week, all the way down to shut. The crew does exactly what the valves say, from the next tick, and nothing but you turns one.</p>
-    ${card(html`<div class="card-body">${pipesSvg(p)}
-      <p class="muted small">${money(p.usd)} spent in the last 7 days; ${plural(p.shipped, "pull")} shipped.</p></div>`)}
+    ${backupRow(alarmBackup(ctx.app.config.dataDir, new Date()))}
+    ${pipesSvg(p)}
+    <p class="muted small">${money(p.usd)} spent in the last 7 days; ${plural(p.shipped, "pull")} shipped.</p>
     ${p.valves.length === 0
-      ? card(html`<div class="card-body"><p class="muted">No repository has spent, queued or shipped anything this week, so there is no pipe to turn yet.</p></div>`)
-      : card(html`<ul class="list">${p.valves.map(valveRow)}</ul>`, { pad: false, head: html`${icon("activity")}<h2>Valves</h2>` })}`;
+      ? html`<p class="muted">No repository has spent, queued or shipped anything this week, so there is no pipe to turn yet.</p>`
+      : html`<h2>Valves</h2>
+    <ul class="list">${p.valves.map(valveRow)}</ul>`}`;
   const rendering = performance.now();
   const response = page({ ctx, title: "Flow", body, scriptJs: valveJs });
   notePhase(ctx.request, "render", performance.now() - rendering);
@@ -119,4 +133,14 @@ export async function suggestionTake(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
   return done(ctx, acceptSuggestion(ctx.app, ctx.auth.user, field(form, "repo")));
+}
+
+// POST /flow/backup/retry: one snapshot now, through the service's own queue, so two never run at once.
+export async function backupRetry(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const retried = await retryBackup(ctx.app, ctx.auth.user);
+  if (retried.refused) return notFoundPage(ctx);
+  return flashTo(ctx, "/flow", retried.cleared ? { message: retried.says } : { tone: "danger", message: retried.says });
 }

@@ -18,8 +18,9 @@ import {
   STARTERS,
   starterHref,
 } from "../src/web/pages/apps-starters.ts";
-import { previewLook, productionStrip } from "../src/web/pages/apps.ts";
+import { envTone, previewSection, productionStrip } from "../src/web/pages/apps.ts";
 import type { EnvStatus } from "../src/apps/runtime.ts";
+import { html } from "../src/web/html.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -33,7 +34,7 @@ import { getAgentByName, listCrew } from "../src/core/agents.ts";
 import { listAppEnvNames } from "../src/core/app_env.ts";
 import { spanWords } from "../src/apps/golden_path.ts";
 import { getAppByRepo } from "../src/core/apps.ts";
-import { getIssue } from "../src/core/issues.ts";
+import { createIssue, getIssue } from "../src/core/issues.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
 import { isTerminal, listRuns, type Run } from "../src/core/runs.ts";
 import { getUserByName, type User } from "../src/core/users.ts";
@@ -327,17 +328,12 @@ describe("apps, runs and the crew on the web", () => {
     expect(none).not.toMatch(/class="card[ "]/);
   });
 
-  test("the preview card is bare when quiet and keeps its tone and box when failed", () => {
+  test("a preview's tone: danger when failed or erroring, attn after a failed deploy, none when quiet", () => {
     const env = { env: "pull-1", state: "ok" } as unknown as EnvStatus;
-    expect(previewLook(env)).toEqual({ extra: "bare env-card" });
-    expect(previewLook({ ...env, state: "failed" } as EnvStatus)).toEqual({
-      extra: "env-card",
-      tone: "danger",
-    });
-    expect(previewLook({ ...env, error: "boom" } as EnvStatus).tone).toBe("danger");
-    expect(
-      previewLook({ ...env, failedDeploy: {} } as unknown as EnvStatus),
-    ).toEqual({ extra: "env-card", tone: "attn" });
+    expect(envTone(env)).toBeUndefined();
+    expect(envTone({ ...env, state: "failed" } as EnvStatus)).toBe("danger");
+    expect(envTone({ ...env, error: "boom" } as EnvStatus)).toBe("danger");
+    expect(envTone({ ...env, failedDeploy: {} } as unknown as EnvStatus)).toBe("attn");
   });
 
   // ---- the app page and the runs ----
@@ -487,7 +483,7 @@ describe("apps, runs and the crew on the web", () => {
     expect(list).toContain("Deploy production");
     expect(list).toContain(`href="/alice/hello/runs/${run!.id}"`);
     expect(await bodyOf(alice, "/alice/hello/runs?kind=agent")).toContain(
-      "Nothing open.",
+      "No run is open.",
     );
 
     const page = await bodyOf(alice, `/alice/hello/runs/${run!.id}`);
@@ -938,7 +934,10 @@ describe("apps, runs and the crew on the web", () => {
     // merge box are its Files step, one tab under it.
     const change = await bodyOf(alice, `/alice/hello/pulls/${number}`);
     expect(change).toContain("<h2>Preview</h2>");
-    expect(change).toMatch(/<div\s+class="card bare[ "][^>]*>\s*<div class="card-head">\s*<svg[^]*?<h2>Preview<\/h2>/);
+    // a plain block under its heading, not a boxed card
+    expect(change).toMatch(/<section\s+class="settings-block"\s+data-preview-block\s*>\s*<div class="bar">\s*<svg[^]*?<h2>Preview<\/h2>/);
+    const block = change.slice(change.indexOf("data-preview-block"));
+    expect(block.slice(0, block.indexOf("</section>"))).not.toContain('class="card');
     const page = await bodyOf(alice, `/alice/hello/pulls/${number}/files`);
     expect(page).toContain("<h2>Assignee</h2>");
     // Checks are required: the line says so, and the box waits for them
@@ -1097,5 +1096,34 @@ describe("apps, runs and the crew on the web", () => {
     expect(say("asleep")).toContain("Asleep. Deploy main to wake it.");
     expect(say("running", true)).toContain("Running");
     expect(say("failed", true)).toContain("Failed to start");
+  });
+
+  test("a pull with no preview yet says so as a plain block, no card", async () => {
+    const issue = createIssue(app.db, { repoId: hello.id, authorId: user("alice").id, title: "Quiet", kind: "pull" });
+    if (!issue.ok) throw new Error(issue.error);
+    app.db
+      .query(`INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid) VALUES (?1, 'main', 'quiet', 'a', 'b')`)
+      .run(issue.value.id);
+    const page = await bodyOf(alice, `/alice/hello/pulls/${issue.value.number}`);
+    const at = page.indexOf("data-preview-block");
+    expect(at).toBeGreaterThan(0);
+    const block = page.slice(at, page.indexOf("</section>", at));
+    expect(block).toContain("<h2>Preview</h2>");
+    expect(block).toContain("No preview yet");
+    expect(block).not.toContain('class="card');
+  });
+
+  test("a failed preview says so and what to do; a failed last deploy says it too; a healthy one is silent", () => {
+    const body = html`<p>body</p>`;
+    const head = html`<h2>Preview</h2>`;
+    const failed = previewSection(body, head, "danger").toString();
+    expect(failed).toContain('data-tone="danger"');
+    expect(failed).toContain("This preview has failed. Push again to redeploy it.");
+    const attn = previewSection(body, head, "attn").toString();
+    expect(attn).toContain('data-tone="attn"');
+    expect(attn).toContain("The last deploy of this preview failed. Push again to redeploy it.");
+    const ok = previewSection(body, head).toString();
+    expect(ok).not.toContain("data-tone");
+    expect(ok).not.toContain('role="status"');
   });
 });

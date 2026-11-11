@@ -10,7 +10,7 @@
 
 import { commitVerdicts, isCommitId, releaseCheck, type CommitCheck } from "../checks/commit_check.ts";
 import { readLooks } from "../checks/looks.ts";
-import { vitalsRows } from "../checks/summary.ts";
+import { vitalsRows, type PageSize } from "../checks/summary.ts";
 import { hasCommit, isAncestor } from "../git/local.ts";
 import { repoDir } from "../git/repos.ts";
 import { mayViewId } from "../core/sealed.ts";
@@ -33,11 +33,13 @@ import {
 } from "../core/runs.ts";
 import { getUsersByIds, type User } from "../core/users.ts";
 import { abortAgentRun } from "../crew/running.ts";
+import { stopRun } from "../runs/stoppable.ts";
 import { queueAgentRun, taskOf } from "../crew/dispatch.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { readRunLog, readRunLogTail, runLogPath } from "../runs/log.ts";
 import { shownStates, type ShownState } from "../runs/state.ts";
 import { firstErrorLine } from "../runs/error_line.ts";
+import { cancelledBy } from "../runs/cancelled.ts";
 import { requireReader, requireWriter, type AccessError } from "./access.ts";
 
 /** What a run event carries: enough for a surface to render the card. */
@@ -248,6 +250,8 @@ export interface LookFigures {
   readonly look: string;
   readonly screens: string;
   readonly sideways: boolean;
+  /** The window and page as measured (`scrollWidth` vs `innerWidth` says whether it fits); absent when none was recorded. */
+  readonly size?: PageSize;
 }
 
 /**
@@ -262,7 +266,12 @@ export function looksOfCheck(
 ): LookFigures[] {
   if (!mayReadRuns(app, actor, repo)) return [];
   const looks = readLooks(app.config.dataDir, { id: run.id, repoId: repo.id, commitOid: run.commitOid });
-  return vitalsRows(looks).map((g) => ({ look: g.look, screens: g.screens, sideways: g.sideways }));
+  return vitalsRows(looks).map((g) => ({
+    look: g.look,
+    screens: g.screens,
+    sideways: g.sideways,
+    ...(g.size === undefined ? {} : { size: g.size }),
+  }));
 }
 
 /** The own green or red verdicts of a page of commits, for whoever may read the runs; empty otherwise. */
@@ -325,8 +334,9 @@ export function runLog(
 
 /**
  * Cancel a run that has not finished. A queued run never starts; a running
- * agent run is stopped; a running deploy is abandoned by its environment
- * when its step ends.
+ * agent run or check worked here is stopped, every process it started with
+ * it (#10776); a running deploy is abandoned by its environment when its
+ * step ends.
  */
 export function cancelRepoRun(
   app: App,
@@ -341,10 +351,13 @@ export function cancelRepoRun(
   const cancelled = markCancelled(
     app.db,
     runId,
-    `cancelled by ${writer.value.username}`,
+    cancelledBy(writer.value.username),
   );
   if (!cancelled) return err("finished");
+  // The row says cancelled first, so the run's own end leaves it so; the
+  // abort then ends the process group it started.
   if (run.kind === "agent") abortAgentRun(runId);
+  else stopRun(runId);
   announceRun(app, cancelled, writer.value.id);
   return ok(cancelled);
 }

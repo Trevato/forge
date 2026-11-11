@@ -32,7 +32,7 @@ export const ADD_MESSAGES = {
 
 export type ModelGrantError = "not_found" | "not_allowed" | "invalid_amount";
 
-/** A person's account, for a forge admin who is a person: not an agent, not an org, not another admin. */
+/** A person's or an organization's account, for a forge admin who is a person: not an agent, not another admin. An org's grant is the only way its repositories reach the forge's credential: team membership never is. */
 export function setAccountGrant(
   app: App,
   actor: User | undefined,
@@ -43,7 +43,7 @@ export function setAccountGrant(
   if (!admin.ok || !admin.value.isAdmin || admin.value.kind !== "user")
     return err("not_found");
   const user = getUserByName(app.db, username);
-  if (user === undefined || user.kind === "org") return err("not_found");
+  if (user === undefined) return err("not_found");
   if (user.kind === "agent" || user.isAdmin) return err("not_allowed");
   if (usd !== null && !validGrant(usd)) return err("invalid_amount");
   setModelGrant(app.db, user.id, usd, admin.value.id, new Date());

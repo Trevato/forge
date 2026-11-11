@@ -25,11 +25,15 @@ import {
 import { DEFAULT_SIZE, isSize, type Size } from "./sizes.ts";
 import { cellChildren, forward, forwardSocket, type CellChild } from "./cell.ts";
 import { cellsAvailable } from "../apps/contain.ts";
+import { childNeedsOwnFilesystem } from "../core/capacity.ts";
+import { liveChildDisk, startRefusal } from "./disk_mount.ts";
+import { floorRefusal } from "./disk_floor.ts";
 import { limitValue } from "../settings/limits.ts";
 import { awakeRefusal, idleAfterMs, WakeRate } from "./sleep.ts";
 import { wakingResponse } from "../web/pages/waking.ts";
 import { takeDoor } from "../http/strangers.ts";
 import { vouched } from "./vouch.ts";
+import { during } from "../perf/jobs.ts";
 import { readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -119,10 +123,15 @@ function touch(parent: App, ledger: { bodyId: string; name: string }, now = Date
 
 /** Forges awake now: hosted children open in this process plus children running in a cell. */
 export function awakeCount(parent: App): number {
-  const awake = (caches.get(parent)?.size ?? 0) + cellChildren(parent).list().length;
+  // A child boot opened and nobody has asked for is not in use: it never crowds out a person's wake.
+  const unasked = bootOpened.get(parent)?.size ?? 0;
+  const awake = Math.max(0, (caches.get(parent)?.size ?? 0) - unasked) + cellChildren(parent).list().length;
   // A wake granted but not finished holds its slot, so two at once cannot both pass the ceiling.
   return awake + reservedCount(parent);
 }
+
+/** Hosted children the boot opened that no request has reached since, by body id. */
+const bootOpened = new WeakMap<App, Set<string>>();
 
 /** Wakes granted and not yet awake, by body id, with when. */
 const waking = new WeakMap<App, Map<string, number>>();
@@ -194,6 +203,42 @@ export async function sleepIdleChildren(parent: App, idleMs = idleAfterMs(), now
   return asleep;
 }
 
+/**
+ * Below the disk floor (`spawn/disk_floor.ts`) no child forge stays awake:
+ * every hosted child closes and every cell stops, busy or not, so nothing
+ * they write takes the parent's last room. Their data stays on disk; the
+ * wake gate keeps them asleep, answering the floor's one line, until room
+ * is made (#10873). Answers the names put to sleep; none when above it.
+ */
+export async function sleepBelowFloor(parent: App): Promise<string[]> {
+  const floor = floorRefusal(parent.config.dataDir);
+  if (floor === undefined) return [];
+  const asleep: string[] = [];
+  const cache = caches.get(parent);
+  for (const [bodyId, child] of [...(cache ?? [])])
+    asleep.push(await closeOne(parent, cache!, bodyId, child, touched.get(parent)?.get(bodyId)?.name ?? bodyId));
+  const cells = cellChildren(parent);
+  for (const child of [...cells.list()]) {
+    touched.get(parent)?.delete(child.bodyId);
+    waking.get(parent)?.delete(child.bodyId);
+    await cells.stop(child.bodyId);
+    asleep.push(child.name);
+  }
+  for (const name of asleep) parent.log.warn("child forge asleep", { name, why: floor });
+  return asleep;
+}
+
+/** How often the floor is looked at while children may be awake, ms. */
+export const FLOOR_EVERY_MS = 30_000;
+const floorWatchers = new WeakMap<App, ReturnType<typeof setInterval>>();
+
+function keepWatchingFloor(parent: App): void {
+  if (floorWatchers.has(parent)) return;
+  const timer = setInterval(() => void during("spawn-floor", () => sleepBelowFloor(parent)).catch(() => {}), FLOOR_EVERY_MS);
+  timer.unref?.();
+  floorWatchers.set(parent, timer);
+}
+
 /** Put one named child to sleep now (its owner stopped it); true when it was awake. */
 export async function sleepChild(parent: App, name: string): Promise<boolean> {
   const ledger = readLedgerSync(parent, name);
@@ -220,6 +265,7 @@ export function childAwake(parent: App, name: string): boolean {
 
 async function closeOne(parent: App, cache: Map<string, App>, bodyId: string, child: App, name: string): Promise<string> {
   cache.delete(bodyId);
+  bootOpened.get(parent)?.delete(bodyId);
   touched.get(parent)?.delete(bodyId);
   waking.get(parent)?.delete(bodyId);
   for (const onClose of closeWatchers.get(parent) ?? []) {
@@ -237,7 +283,7 @@ async function closeOne(parent: App, cache: Map<string, App>, bodyId: string, ch
 function keepSweeping(parent: App): void {
   if (sweepers.has(parent)) return;
   const every = Math.max(1000, Math.min(60_000, Math.floor(idleAfterMs() / 4)));
-  const timer = setInterval(() => void sleepIdleChildren(parent).catch(() => {}), every);
+  const timer = setInterval(() => void during("spawn-idle", () => sleepIdleChildren(parent)).catch(() => {}), every);
   timer.unref?.();
   sweepers.set(parent, timer);
 }
@@ -245,6 +291,33 @@ function keepSweeping(parent: App): void {
 /** Whether the child itself vouches for the request's session or token: a header a client merely wrote is not enough. */
 const carriesCredentials = (parent: App, bodyId: string, request: Request): boolean =>
   vouched(childDirOf(parent, bodyId), request, caches.get(parent)?.get(bodyId)?.db);
+
+/**
+ * Why the child `ledger` names may not start now, in one plain line;
+ * undefined when it may. Only `children.ownFilesystem` refuses: a child whose
+ * data is not a filesystem of its own. The setting is read first, so with it
+ * off a start costs no mountinfo read.
+ */
+export function startRefused(parent: App, ledger: { readonly name: string; readonly bodyId: string }): string | undefined {
+  // Below the disk floor nothing wakes, whatever its filesystem (#10873).
+  const floor = floorRefusal(parent.config.dataDir);
+  if (floor !== undefined) {
+    parent.log.warn("child forge not started", { name: ledger.name, why: floor });
+    return floor;
+  }
+  if (!childNeedsOwnFilesystem(parent.db)) return undefined;
+  const why = startRefusal(ledger.name, liveChildDisk(parent.config.dataDir, ledger.bodyId), true);
+  if (why !== undefined) parent.log.warn("child forge not started", { name: ledger.name, why });
+  return why;
+}
+
+/** The answer to a request for a child that may not start: the line, as text, 503. */
+export function refusedResponse(why: string): Response {
+  return new Response(`${why}\n`, {
+    status: 503,
+    headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+  });
+}
 
 /**
  * Before a child's Host is answered: a child already awake is marked busy (by a
@@ -259,14 +332,26 @@ export function wakeGate(parent: App, request: Request): Response | undefined {
   const ledger = readLedgerSync(parent, name);
   if (ledger === undefined || !ledger.done) return undefined;
   keepSweeping(parent);
+  keepWatchingFloor(parent);
+  // Below the disk floor an awake child is put to sleep now, not at the next look,
+  // and this request is answered with why: it writes nothing (#10873).
+  const floor = floorRefusal(parent.config.dataDir);
+  if (floor !== undefined) {
+    if (isAwakeBody(parent, ledger.bodyId)) void sleepChild(parent, name).catch(() => {});
+    return refusedResponse(floor);
+  }
   const known = carriesCredentials(parent, ledger.bodyId, request);
   if (isAwakeBody(parent, ledger.bodyId)) {
     if (known) {
+      bootOpened.get(parent)?.delete(ledger.bodyId);
       touch(parent, ledger);
       cellChildren(parent).touch(ledger.bodyId);
     }
     return undefined;
   }
+  // Asleep, so answering would start it: not where it has no filesystem of its own and one is required.
+  const refused = startRefused(parent, ledger);
+  if (refused !== undefined) return refusedResponse(refused);
   // A wake already granted (a cell takes a moment to answer) is one wake, not one per request.
   let reserved = waking.get(parent);
   if (!reserved) waking.set(parent, (reserved = new Map()));
@@ -294,7 +379,11 @@ export function closeHostedChildren(parent: App): void {
   const sweeper = sweepers.get(parent);
   if (sweeper !== undefined) clearInterval(sweeper);
   sweepers.delete(parent);
+  const watcher = floorWatchers.get(parent);
+  if (watcher !== undefined) clearInterval(watcher);
+  floorWatchers.delete(parent);
   touched.delete(parent);
+  bootOpened.delete(parent);
   waking.delete(parent);
   inFlight.delete(parent);
   const m = caches.get(parent);
@@ -330,7 +419,7 @@ async function openChild(parent: App, ledger: ChildLedger): Promise<App> {
       ? { clientIpHeader: parent.config.clientIpHeader }
       : {}),
   });
-  markHostedChild(child);
+  markHostedChild(child, parent.config.dataDir);
   await firstBoot(child);
   // Its apps run in this process's lanes, awake before the first visit.
   await startChildApps(parent, child, ledger.name);
@@ -436,6 +525,7 @@ function openOnce(parent: App, ledger: ChildLedger): Promise<App> | App {
 export async function bootHostedChild(parent: App, name: string): Promise<void> {
   let ledger = readLedgerSync(parent, name);
   if (ledger === undefined || !ledger.done) return;
+  if (!isAwakeBody(parent, ledger.bodyId) && startRefused(parent, ledger) !== undefined) return;
   if (ledger.placement === "cell") {
     if ((await settleCell(parent, ledger)) !== undefined) return;
     ledger = { ...ledger, placement: "hosted" };
@@ -449,6 +539,7 @@ export async function bootHostedChild(parent: App, name: string): Promise<void> 
 
 /** Open every finished child, on boot: their apps come back with the parent's. */
 export async function bootHostedChildren(parent: App): Promise<void> {
+  keepWatchingFloor(parent);
   let files: string[] = [];
   try {
     files = readdirSync(join(parent.config.dataDir, "spawn"));
@@ -459,7 +550,14 @@ export async function bootHostedChildren(parent: App): Promise<void> {
     if (!f.endsWith(".json")) continue;
     const name = f.slice(0, -".json".length);
     if (parseHostedChildName(`${name}${childHostSuffix(childHost(parent))}`, childHost(parent)) !== name) continue;
+    const ledger = readLedgerSync(parent, name);
+    const was = ledger !== undefined && caches.get(parent)?.has(ledger.bodyId) === true;
     await bootHostedChild(parent, name);
+    if (ledger !== undefined && !was && caches.get(parent)?.has(ledger.bodyId) === true) {
+      let set = bootOpened.get(parent);
+      if (!set) bootOpened.set(parent, (set = new Set()));
+      set.add(ledger.bodyId);
+    }
   }
 }
 
@@ -467,6 +565,11 @@ export async function bootHostedChildren(parent: App): Promise<void> {
 export interface ChildAppHit {
   readonly runtime: AppsRuntime;
   readonly target: AppTarget;
+}
+
+/** A child app whose forge may not start (`startRefused`): the line it is answered with. */
+export interface RefusedHit {
+  readonly refused: string;
 }
 
 /** A child app in a child's own cell: its runtime is in that process, so the request is carried there. */
@@ -482,7 +585,7 @@ export interface CellAppHit {
 export async function resolveHostedChildApp(
   parent: App,
   request: Request,
-): Promise<ChildAppHit | CellAppHit | "unknown" | undefined> {
+): Promise<ChildAppHit | CellAppHit | RefusedHit | "unknown" | undefined> {
   const host = request.headers.get("host");
   if (host === null) return undefined;
   const label = parseHostedChildAppLabel(host, childHost(parent));
@@ -498,6 +601,10 @@ export async function resolveHostedChildApp(
     if (!CHILD_NAME.test(name)) continue;
     const ledger = readLedgerSync(parent, name);
     if (ledger === undefined || !ledger.done) continue;
+    if (!isAwakeBody(parent, ledger.bodyId)) {
+      const refused = startRefused(parent, ledger);
+      if (refused !== undefined) return { refused };
+    }
     if (ledger.placement === "cell") return { cell: name };
     const child = await openOnce(parent, ledger);
     const runtime = appsRuntime(child);
@@ -531,13 +638,22 @@ export async function answerFromCell(parent: App, request: Request, named?: stri
       release();
     }
   }
-  // Asleep: it wakes behind this answer. A git push or an API call waits a few
-  // seconds for it; a page, or a wake that takes longer, is a plain "waking up" page.
-  // A page never waits: it starts the cell and gets the waking page at once.
-  const path = new URL(request.url).pathname;
-  const patient = path.startsWith("/api/") || path.includes(".git/");
+  // Asleep: it wakes behind this answer. Every request, a form's POST included, is
+  // held until the cell is up (wakeLimits.waitMs) so a submit is never lost; only a wake
+  // that takes longer is answered with the "waking up" page, which tries again by itself.
   const starting = settleCell(parent, ledger);
-  const woke = patient ? await Promise.race([starting, Bun.sleep(WAKE_WAIT_MS).then(() => undefined)]) : undefined;
+  // Only so many wait on one cell: the rest are told it is waking at once, so a crowd cannot pin connections and bodies.
+  const waiting = waiters.get(ledger.bodyId) ?? 0;
+  if (waiting >= wakeLimits.waiters) return wakingResponse(parent, request, ledger.name);
+  waiters.set(ledger.bodyId, waiting + 1);
+  let woke: CellChild | undefined;
+  try {
+    woke = await Promise.race([starting, Bun.sleep(wakeLimits.waitMs).then(() => undefined)]);
+  } finally {
+    const left = (waiters.get(ledger.bodyId) ?? 1) - 1;
+    if (left <= 0) waiters.delete(ledger.bodyId);
+    else waiters.set(ledger.bodyId, left);
+  }
   if (woke !== undefined) {
     const release = cells.hold(ledger.bodyId);
     try {
@@ -549,8 +665,14 @@ export async function answerFromCell(parent: App, request: Request, named?: stri
   return wakingResponse(parent, request, ledger.name);
 }
 
-/** How long a request waits for a sleeping cell forge before it is told it is waking. */
-const WAKE_WAIT_MS = 4000;
+/** How long a request waits for a sleeping cell forge before it is told it is waking, and how many may wait on one cell. */
+export const wakeLimits = { waitMs: 20_000, waiters: 16 };
+
+/** Requests held for a waking cell now, by body id. */
+const waiters = new Map<string, number>();
+
+/** How many requests wait on this cell's wake now. */
+export const waitingFor = (bodyId: string): number => waiters.get(bodyId) ?? 0;
 
 /**
  * A websocket handshake for a child in its own cell (its home or one of its

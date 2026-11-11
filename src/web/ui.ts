@@ -23,6 +23,7 @@ import {
 } from "../kernel/tokens-format.ts";
 import { drawChart, type Cell, type Chart } from "../boards/chart.ts";
 import { icon, type IconName } from "./icons.ts";
+import { crewFace, scene, type SceneName } from "./pixel.ts";
 import { Html, html, raw, when } from "./html.ts";
 
 export { icon, type IconName };
@@ -517,6 +518,13 @@ export function envFacts(
     ${when(env.note, (note) => html`<p class="muted small">${note}</p>`)}
     ${when(dormantNote(env), (note) => html`<p class="muted small" data-dormant>${note}</p>`)}
     ${when(
+      env.alwaysOn === true,
+      () =>
+        html`<dl class="row-facts" data-always-on>
+          <div><dt>Sleeps</dt><dd>never (app.always_on)</dd></div>
+        </dl>`,
+    )}
+    ${when(
       env.busy,
       (busy) =>
         html`<p class="muted small" data-busy>
@@ -815,6 +823,10 @@ function initials(name: string): string {
 }
 
 export function avatar(name: string, size?: "md" | "lg"): Html {
+  // The crew wear their own face wherever they appear (src/web/pixel.ts).
+  const face = crewFace(name, "still", size === "lg" ? 48 : size ? 24 : 16, true);
+  if (face !== null)
+    return html`<span class="avatar avatar-px" ${size ? html`data-size="${size}"` : null} aria-hidden="true">${face}</span>`;
   return html`<span
     class="avatar"
     data-h="${hueOf(name)}"
@@ -872,10 +884,10 @@ export function nameMark(mark: Mark | undefined): Html | null {
 /** An author: avatar plus a link to their profile, and their mark. Never bare text. */
 export function userLink(
   username: string,
-  o: { avatar?: boolean; display?: string; mark?: Mark | undefined } = {},
+  o: { avatar?: boolean; display?: string; mark?: Mark | undefined; nav?: boolean } = {},
 ): Html {
   return html`<span class="byline"
-    >${o.avatar === false ? null : avatar(username)}<a href="/${username}"
+    >${o.avatar === false ? null : avatar(username)}<a href="/${username}"${o.nav ? raw(" data-nav") : null}
       >${o.display || username}</a
     >${nameMark(o.mark)}</span
   >`;
@@ -1092,15 +1104,17 @@ export function pager(o: {
   prev?: string;
   next?: string;
   note?: Html | string;
+  /** Words for the two buttons when the list is not in time order. */
+  words?: { prev: string; next: string };
 }): Html {
   if (!o.prev && !o.next && !o.note) return html``;
   return html`<nav class="pager" aria-label="Pagination">
     ${o.prev
-      ? btn("Newer", { href: o.prev, size: "sm", variant: "outline" })
+      ? btn(o.words?.prev ?? "Newer", { href: o.prev, size: "sm", variant: "outline" })
       : null}
     ${o.note ? html`<span>${o.note}</span>` : null}
     ${o.next
-      ? btn("Older", { href: o.next, size: "sm", variant: "outline" })
+      ? btn(o.words?.next ?? "Older", { href: o.next, size: "sm", variant: "outline" })
       : null}
   </nav>`;
 }
@@ -1339,12 +1353,14 @@ export function confirmAction(o: {
 
 export function empty(o: {
   icon?: IconName;
+  /** A small drawn scene instead of the icon: one picture, then the line. */
+  scene?: SceneName;
   title: string;
   note?: string;
   action?: Html;
 }): Html {
-  return html`<div class="card empty">
-    ${o.icon ? icon(o.icon, 20) : null}
+  return html`<div class="empty">
+    ${o.scene ? scene(o.scene) : o.icon ? icon(o.icon, 20) : null}
     <p class="empty-title">${o.title}</p>
     ${o.note ? html`<p>${o.note}</p>` : null} ${o.action ?? null}
   </div>`;

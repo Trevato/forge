@@ -4,6 +4,8 @@
  * environment-only — a handful of variables, all with sane defaults.
  */
 
+import { sweepEntitlements } from "./billing/sync.ts";
+import { sweepStarts } from "./actions/start_sweep.ts";
 import { scanNightly } from "./checks/scan.ts";
 import { nightlyDue } from "./checks/scan_store.ts";
 import { runModelReview } from "./actions/model_review.ts";
@@ -18,14 +20,19 @@ import { parentUrlProblem } from "./core/parent_releases.ts";
 import { releaseEnv } from "./release/env.ts";
 import { createApp } from "./app.ts";
 import { readOnlyFrom } from "./http/read_only.ts";
+import { warmDisplays } from "./display/known.ts";
+import { warmSearch } from "./search/warm.ts";
 import { warmFlow } from "./system/flow_cache.ts";
 import { backfillCarried } from "./core/carried.ts";
+import { refreshCatalogQuietly } from "./packs/catalog.ts";
 import { loadTrustedHosts } from "./origins/trusted-hosts.ts";
 import { flushFlagUses, loadFlags } from "./core/flags.ts";
 import { reconcile } from "./core/reconcile.ts";
 import { offerStartingBoards } from "./actions/boards.ts";
 import { syncAllPillars } from "./actions/pillars.ts";
-import { bootHostedChildren } from "./spawn/host.ts";
+import { bootHostedChildren, childAwake } from "./spawn/host.ts";
+import { stopCellChildren } from "./spawn/cell.ts";
+import { backfillChildren } from "./spawn/forge_code_backfill.ts";
 import { firstBoot } from "./spawn/first-boot.ts";
 import { previewIdentityKey } from "./spawn/preview-owner.ts";
 import { PREVIEW_ADMIN, seedPreview } from "./spawn/preview-seed.ts";
@@ -43,7 +50,8 @@ import { runSync } from "./origins/sync.ts";
 import { runAheadReads } from "./origins/ahead.ts";
 import { runGuardSweep } from "./origins/credential.ts";
 import { startForgeSsh } from "./tui/ssh.ts";
-import { AppsRuntime } from "./apps/runtime.ts";
+import { AppsRuntime, IDLE_PULL_DAYS } from "./apps/runtime.ts";
+import { previewIdleMs } from "./apps/sleep_window.ts";
 import { listApps } from "./core/apps.ts";
 import { holdAppHosts, releaseAppHosts } from "./apps/holding.ts";
 import { resolveAppDomain } from "./apps/host.ts";
@@ -52,9 +60,11 @@ import { VERIFY_EVERY_MS } from "./checks/verify.ts";
 import { RED_HOLD_MS } from "./checks/red_main.ts";
 import { stopQueue } from "./checks/queue.ts";
 import { startLooks } from "./looks/service.ts";
+import { startMaintain } from "./maintain/runner.ts";
 import { startMirrorOut } from "./origins/mirror-out.ts";
 import { startMirrorPulls } from "./origins/mirror-pulls.ts";
 import { startProbes } from "./contract/probes.ts";
+import { startRoutines } from "./crew/routines.ts";
 import { startNightly } from "./nightly/service.ts";
 import { startSnapshots } from "./snapshot/service.ts";
 import { resolveDestination } from "./snapshot/destination.ts";
@@ -90,7 +100,7 @@ import { ownTagsReader } from "./release/own_tags.ts";
 import { rollProbe, tick as keeperTick } from "./keeper/keeper.ts";
 import { keeperEnv, keeperPorts } from "./keeper/wire.ts";
 import { snapshotPlace } from "./actions/health.ts";
-import { capacityDefault } from "./core/capacity.ts";
+import { capacityDefault, egressEnvIgnored } from "./core/capacity.ts";
 import { bootCounts, recordBoot, recordCleanExit } from "./kernel/boots.ts";
 import { census, censusWords, processRows } from "./kernel/census.ts";
 import { reapLeftoverBridges } from "./crew/leftovers.ts";
@@ -98,8 +108,9 @@ import { crewRoot } from "./crew/workdir.ts";
 import { createLog } from "./kernel/log.ts";
 import { watchStalls } from "./kernel/loop_lag.ts";
 import { startPerfWatcher, TICK_MS } from "./perf/duty.ts";
+import { during } from "./perf/jobs.ts";
 import { stallLine } from "./perf/loop.ts";
-import { bootStall, gitRecord, loopWatch, perfRecord } from "./perf/live.ts";
+import { bootStall, gitRecord, lagMinutes, loopWatch, perfRecord, stallBlame } from "./perf/live.ts";
 import { timeStatements } from "./kernel/slow_sql.ts";
 import { waitForPeer } from "./runs/peer.ts";
 import { closeStaleSessions } from "./machines/shell.ts";
@@ -231,8 +242,11 @@ if (parentProblem !== null) {
 const loopLog = createLog("loop");
 watchStalls(loopLog, undefined, undefined, undefined, (late, at) => {
   bootStall.note(late, at);
+  lagMinutes.note(late, at);
   const stall = loopWatch.stalled(late, at);
-  if (stall !== null) loopLog.warn(stallLine(stall));
+  if (stall === null) return;
+  loopLog.warn(stallLine(stall));
+  stallBlame.note(stall);
 });
 
 const previewKey = previewIdentityKey(process.env);
@@ -328,6 +342,7 @@ const app = createApp({
 timeStatements(app.db, createLog("sql"));
 loadFlags(app.db);
 loadTrustedHosts(app.db);
+await refreshCatalogQuietly(app);
 if (readOnly) {
   const servers = await serve(app);
   // Only the listener runs: no reconcile, perf watcher, timers, apps, crew,
@@ -346,7 +361,10 @@ const bootSignup = signupFromEnv(process.env.FORGE_SIGNUP);
 if (bootSignup.ok && bootSignup.value !== null)
   setSignup(app.db, bootSignup.value, BOOT_ACTOR);
 startPerfWatcher(app, perfRecord, Date.now, TICK_MS, gitRecord);
-const flagTimer = setInterval(() => flushFlagUses(app.db), 10_000);
+const flagTimer = setInterval(
+  () => during("flag-uses", () => flushFlagUses(app.db)),
+  10_000,
+);
 await reconcile(app);
 // Issues linked under a pillar's umbrella before pillars had labels.
 const labelled = syncAllPillars(app);
@@ -393,6 +411,9 @@ const publicUrl = new URL(forgeUrl);
 if (appDomain?.ok === false) app.log.error(appDomain.reason);
 if (appDomain?.ok === true && appDomain.note !== undefined)
   app.log.warn(appDomain.note);
+// An environment asking for egress report is ignored, and said so once (#10778).
+const egressIgnored = egressEnvIgnored();
+if (egressIgnored !== null) app.log.info(egressIgnored);
 // One crew run's length: what a run takes, and how long past its idle
 // window an app busy with one is left awake.
 const crewRunMs = positive(process.env.FORGE_CREW_TIMEOUT_MIN, 45) * 60_000;
@@ -410,8 +431,8 @@ const apps = appDomain?.ok
       concurrency: positive(process.env.FORGE_APPS_CONCURRENCY, 2),
       busyGraceMs: crewRunMs,
       // Days a pull may sit untouched before its preview sleeps; 0 keeps
-      // every preview warm.
-      idlePullMs: nonNegative(process.env.FORGE_PREVIEW_IDLE_DAYS, 3) * 86_400_000,
+      // every preview warm. Unset follows the profit slider, live.
+      idlePullMs: previewIdleMs(process.env.FORGE_PREVIEW_IDLE_DAYS, IDLE_PULL_DAYS),
     })
   : undefined;
 // Which other forge serves this data's apps, read before this one starts its own.
@@ -429,6 +450,12 @@ if (apps && presence) warmBehind(app.log, presence, () => apps.startingCount());
 void backfillCarried(app.db, app.reposRoot).catch((error) =>
   app.log.error("could not backfill what deploys carried", { error: String(error) }),
 );
+// Children born before each came with its own source get it (#10989).
+void backfillChildren(app)
+  .then((done) => {
+    if (Object.keys(done).length > 0) app.log.info("forge-code backfill", { done: JSON.stringify(done) });
+  })
+  .catch((error) => app.log.error("could not backfill children's forge code", { error: String(error) }));
 // A forge still draining on this database keeps writing for its gates and
 // runs; starting ours beside it stalls the listener behind its write lock
 // (#6957). The listener answers meanwhile; a signal now stops what is up.
@@ -477,6 +504,8 @@ const mirrorPulls = startMirrorPulls(app);
 // The look: a picture of every environment that comes up green, taken
 // through this forge's own listener.
 const looks = appsOn ? startLooks(app, { localUrl: servers.url }) : undefined;
+// Maintenance duties (src/maintain): each runs on its interval and leaves a row.
+const maintain = startMaintain(app);
 // Is it so: the forge knocks on every door of an app with a contract after
 // each production deploy and once a night, and compares with the table.
 const probes = apps === undefined ? undefined : startProbes(app, apps);
@@ -545,6 +574,7 @@ if (crew !== undefined) {
     signal: conversationsStop.signal,
   };
   configureConversation(app, conversation);
+  startRoutines(app, conversationsStop.signal);
   for (const turn of resumeInterrupted(app, conversation))
     turn.catch((error: unknown) => app.log.error("resumed conversation turn crashed", { error: String(error) }));
 }
@@ -553,6 +583,10 @@ if (crew !== undefined) {
 void bootHostedChildren(app);
 // The pipeline answer is filled in slices behind the listener, so no read computes it (#8978).
 void warmFlow(app);
+// Every repository's display read behind the listener, so /displays never pays the cold read (#11007).
+void warmDisplays(app).catch(() => undefined);
+// The release probe's search, grepped once behind the listener so the first visit reads the cache (#11059).
+void warmSearch(app);
 // A spawned child's first boot: its direction, opened once for its planner
 // (spawn/first-boot.ts). A forge that was not spawned is untouched.
 await firstBoot(app);
@@ -569,7 +603,7 @@ const heartbeatTimer = startHeartbeat(app);
 // ...and looks upstream once an hour (spawn/upstream.ts).
 const upstreamTimer = startUpstreamWatch(app);
 // ...and this forge asks every child's public addresses what a visitor would get, every few minutes (spawn/reach.ts).
-const reachTimer = startReachWatch(app);
+const reachTimer = startReachWatch(app, undefined, (name) => !childAwake(app, name));
 // Prompts from Instagram (docs/APPS.md): once a day, for each repository
 // that connected an account, the top comment on its latest Reel is told to
 // the crew. A minute's clock; nothing leaves the box until a source exists.
@@ -582,19 +616,17 @@ const notifier = startNotifier(app, { forgeUrl });
 // loses it. runDelivery never throws into the timer.
 // Expired sessions and run tokens ride the same tick: cheap DELETEs, never
 // worth a worker.
-const deliveryTimer = setInterval(() => {
-  runDelivery(app.db, app.log);
+const deliveryTimer = setInterval(() => during("delivery", () => {
+  runDelivery(app.db, app.log, app.bus);
   pruneSessions(app.db);
   pruneTokens(app.db);
-}, 5_000);
-runDelivery(app.db, app.log); // sweep anything queued while we were down
-pruneSessions(app.db);
-pruneTokens(app.db);
-
-function nonNegative(value: string | undefined, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-}
+}), 5_000);
+// Sweep anything queued while we were down.
+during("delivery", () => {
+  runDelivery(app.db, app.log, app.bus);
+  pruneSessions(app.db);
+  pruneTokens(app.db);
+});
 
 function positive(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
@@ -610,12 +642,13 @@ function positive(value: string | undefined, fallback: number): number {
 // the sweep. The operator guard's sweep of stored origins rides it too: one
 // origin a tick, the never-checked first (so on boot), every other daily.
 const syncTimer = setInterval(() => {
-  runSync(app);
-  void runAheadReads(app);
-  void runGuardSweep(app);
+  during("sync", () => runSync(app));
+  void during("ahead", () => runAheadReads(app));
+  void during("guard-sweep", () => runGuardSweep(app));
 }, 60_000);
-runSync(app); // one pass on boot: a forge that was down has fetching to do
-void runGuardSweep(app);
+// One pass on boot: a forge that was down has fetching to do.
+during("sync", () => runSync(app));
+void during("guard-sweep", () => runGuardSweep(app));
 
 // Which green pulls no longer merge as they stand, so the asks can leave
 // them out (`crew/stale_asks.ts`): git answers, off the request path, and an
@@ -656,9 +689,19 @@ const tickAsks = async (): Promise<void> => {
 };
 // Followed upstreams are read on a slow tick (`actions/upstream_follow.ts`):
 // the tip and how far behind land on the follow row; nothing is opened.
-const followTimer = setInterval(() => void checkDue(app), 60_000);
-const staleTimer = setInterval(() => void tickAsks(), 120_000);
-void tickAsks();
+const followTimer = setInterval(
+  () => void during("follow", () => checkDue(app)),
+  60_000,
+);
+const staleTimer = setInterval(() => void during("asks", tickAsks), 120_000);
+// Accounts an agent started and nobody claimed sleep after a week and are
+// archived after a month (`actions/start_sweep.ts`, #10912): hourly, and on boot.
+const startsTimer = setInterval(() => during("starts", () => void sweepStarts(app)), 3_600_000);
+during("starts", () => void sweepStarts(app));
+// Every paid entitlement is re-read from Stripe once a day, so a missed webhook heals (#11247).
+const entitlementTimer = setInterval(() => void during("entitlements", () => sweepEntitlements(app)), 86_400_000);
+void during("entitlements", () => sweepEntitlements(app));
+void during("asks", tickAsks);
 
 // Every start is counted, and one that follows a process that never said
 // goodbye is a crash the log could not record (kernel/boots.ts, #3708).
@@ -699,23 +742,23 @@ void resumeAtBoot(app, undefined, { forgeUrl, runner: checks?.lane }).catch((err
   app.log.warn("resume at boot failed", { error: String(error) }),
 );
 // An agent's hold that has stood 24 h is released each minute (#6918).
-const holdTimer = setInterval(() => {
+const holdTimer = setInterval(() => during("holds", () => {
   try {
     expireCrewHolds(app);
   } catch (error) {
     app.log.warn("hold expiry failed", { error: String(error) });
   }
-}, 60_000);
+}), 60_000);
 // The weekly model review (#7815): settles last week's changes, then proposes this week's; it runs once a week whatever the tick.
-const modelReviewTimer = setInterval(() => {
+const modelReviewTimer = setInterval(() => during("model-review", () => {
   try {
     runModelReview(app);
   } catch (error) {
     app.log.warn("model review failed", { error: String(error) });
   }
-}, 3_600_000);
+}), 3_600_000);
 // The week is the sprint (#8704): at each weekly reset the forge writes its retrospective, unasked.
-const weekTimer = setInterval(() => {
+const weekTimer = setInterval(() => during("week", () => {
   try {
     const repos = plannedRepoIds(app.db).flatMap((id) => getRepoById(app.db, id) ?? []);
     for (const repo of tickWeeks(app.db, repos, new Date()))
@@ -723,18 +766,18 @@ const weekTimer = setInterval(() => {
   } catch (error) {
     app.log.warn("week retrospective failed", { error: String(error) });
   }
-}, 3_600_000);
+}), 3_600_000);
 // Code scanning's nightly pass (#9593): each hour, the repositories whose last pass is a day old get secrets, advisories and static analysis over their default branch.
 const nightlyScanTimer = setInterval(() => {
-  void (async () => {
+  void during("nightly-scan", async () => {
     for (const id of nightlyDue(app.db, new Date(Date.now() - 24 * 3_600_000).toISOString(), 25)) {
       const repo = getRepoById(app.db, id);
       if (repo !== undefined) await scanNightly(app, repo);
     }
-  })().catch((error) => app.log.warn("nightly scan failed", { error: String(error) }));
+  }).catch((error) => app.log.warn("nightly scan failed", { error: String(error) }));
 }, 3_600_000);
-const processTimer = setInterval(processTick, 60_000);
-processTick();
+const processTimer = setInterval(() => during("processes", processTick), 60_000);
+during("processes", processTick);
 // A new version proves itself against the public URL; a failed one again, 5 min after and backing off to hourly (release/prove.ts).
 proveRunning({
   dataDir: app.config.dataDir,
@@ -758,11 +801,14 @@ if (app.config.forgeRepo) {
     read: ownTagsReader(app, app.config.forgeRepo),
   });
   setBehind(watch);
-  void watch.tick();
-  setInterval(() => void watch.tick(), CHECK_EVERY_MS);
+  void during("release-behind", () => watch.tick());
+  setInterval(
+    () => void during("release-behind", () => watch.tick()),
+    CHECK_EVERY_MS,
+  );
   // The no-release alarm reads what this keeps of the running commit (#7638).
-  void readLandings(app);
-  setInterval(() => void readLandings(app), 60_000);
+  void during("landings", () => readLandings(app));
+  setInterval(() => void during("landings", () => readLandings(app)), 60_000);
 }
 // The release keeper (#7557): cut on cadence, promote, verify under page load, roll back to the named
 // known-good image and hold. Off unless FORGE_RELEASE_KEEPER=on in a cluster (keeper/wire.ts).
@@ -784,9 +830,12 @@ if (keeperOn.on) {
           said = line;
         })
         .catch((error) => app.log.warn("release keeper step failed", { error: String(error) }));
-    step();
-    setInterval(step, 60_000);
-    setInterval(() => void rollProbe(ports).catch(() => {}), 1000);
+    during("release-keeper", step);
+    setInterval(() => during("release-keeper", step), 60_000);
+    setInterval(
+      () => void during("roll-probe", () => rollProbe(ports)).catch(() => {}),
+      1000,
+    );
   }
 } else app.log.info("the release keeper is off", { why: keeperOn.why });
 // Only an agent is on a crew (the `repo_crew_agents_only` trigger refuses anyone else). A person
@@ -823,7 +872,7 @@ if (ssh)
 // failed; checks are queued again while their commit heads an open pull;
 // agent runs are the crew's to queue again, unless there is no crew here to
 // do it.
-const leaseTimer = setInterval(() => {
+const leaseTimer = setInterval(() => during("lease", () => {
   failAbandonedRuns(
     app.db,
     STALE_AFTER_MS,
@@ -832,7 +881,7 @@ const leaseTimer = setInterval(() => {
   requeueAbandonedChecks(app, STALE_AFTER_MS);
   // A grant whose run is no longer running is a crash's leftover: close it.
   releaseOrphans(app.db);
-}, 30_000);
+}), 30_000);
 
 // A release that read healthy beside this process takes over (#1663),
 // and this one lets go of the port before it drains (#2040).
@@ -879,6 +928,8 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
   clearInterval(reachTimer);
   clearInterval(syncTimer);
   clearInterval(staleTimer);
+  clearInterval(startsTimer);
+  clearInterval(entitlementTimer);
   clearInterval(followTimer);
   stopClogTick();
   stopKeeper();
@@ -902,12 +953,16 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
     // Routers still send this process requests for the linger's length;
     // its apps answer them, and stop only after (#4496).
     (linger ?? Promise.resolve()).then(() => apps?.stop()).finally(() => presence?.stop()),
+    // Child forges in cells of their own leave after the linger too, each
+    // draining and marking its start clean; a release no longer kills them.
+    (linger ?? Promise.resolve()).then(() => stopCellChildren(app)),
     // A step leads a process group of its own, so a terminal's Ctrl-C no
     // longer ends it: a person's stop cuts checks off (queued again) at once.
     checks?.stop({ drain: signal === "SIGTERM" }),
     mirrorOut(),
     mirrorPulls(),
     looks?.stop(),
+    maintain.stop(),
     probes?.stop(),
     nightly?.stop(),
     snapshots.stop(),

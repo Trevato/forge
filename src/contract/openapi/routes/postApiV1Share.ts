@@ -6,6 +6,7 @@ export const route: Route = {
   summary:
     "Send a feed item to up to 10 people: `to` is one username or a list of them, each with or without a leading @; left out, the item goes to the app's crew and owners (or its followers). Answers 201 with { sent: [{ to, outcome }] }, one entry per recipient, outcome being delivered, queued, steered, told, duplicate, skipped or unreachable (no such person, or not one who can see the item); an item the caller cannot read is a 404",
   auth: true,
+  role: "member",
   status: 201,
   body: { item: "string", to: "array" },
   refusals: {

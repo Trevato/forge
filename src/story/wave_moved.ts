@@ -22,6 +22,54 @@ export interface MovedMilestone {
   total: number;
 }
 
+/** The words for how far a milestone is; the page, the card and the API say it alike. */
+export const doneWords = (m: Pick<MovedMilestone, "done" | "total">): string => `${m.done} of ${m.total} done`;
+
+/**
+ * The one progress line a wave opens with: its widest moved milestone, named
+ * with how far it is. Empty when the wave moved none, so no line is drawn.
+ */
+export function waveProgress(moved: readonly MovedMilestone[]): string {
+  let widest: MovedMilestone | undefined;
+  for (const m of moved) if (widest === undefined || m.total > widest.total) widest = m;
+  return widest === undefined ? "" : `${widest.title}: ${doneWords(widest)}`;
+}
+
+/**
+ * Which of the wave's pulls (by number) carry each moved milestone: a pull
+ * belongs to a milestone that waits, however far up, for an issue it closes.
+ */
+export function pullsByMilestone(input: {
+  pulls: readonly number[];
+  closes: ReadonlyMap<number, readonly number[]>;
+  plan: Pick<Plan, "read">;
+}): Map<number, number[]> {
+  const { graph, tree } = input.plan.read;
+  const byNumber = new Map(graph.issues.map((i) => [i.number, i.id]));
+  const numberOf = new Map(graph.issues.map((i) => [i.id, i.number]));
+  const out = new Map<number, number[]>();
+  for (const pull of new Set(input.pulls)) {
+    const seen = new Set<string>();
+    const queue: string[] = [];
+    for (const n of input.closes.get(pull) ?? []) {
+      const id = byNumber.get(n);
+      if (id !== undefined && !seen.has(id)) {
+        seen.add(id);
+        queue.push(id);
+      }
+    }
+    for (let at = 0; at < queue.length; at++)
+      for (const waiter of tree.waitedBy.get(queue[at]!) ?? []) {
+        if (seen.has(waiter)) continue;
+        seen.add(waiter);
+        queue.push(waiter);
+        const n = graph.structural.has(waiter) ? undefined : numberOf.get(waiter);
+        if (n !== undefined) out.set(n, [...(out.get(n) ?? []), pull]);
+      }
+  }
+  return out;
+}
+
 /**
  * `closes` maps a pull's number to the issue numbers it closes; `pulls` names
  * the wave's pulls in this repository. Milestones come back by number.
@@ -80,6 +128,17 @@ export function movedForViewer(input: {
   viewer: User | undefined;
   plan: () => Plan;
 }): MovedMilestone[] {
+  return movedWithPulls(input).map(({ pulls: _pulls, ...m }) => m);
+}
+
+/** `movedForViewer`, each milestone with the wave's pulls (numbers) that moved it. */
+export function movedWithPulls(input: {
+  db: Database;
+  repo: Repo;
+  refs: readonly PullRef[];
+  viewer: User | undefined;
+  plan: () => Plan;
+}): (MovedMilestone & { pulls: number[] })[] {
   const { db, repo } = input;
   const here = input.refs
     .filter((r) => r.owner === repo.ownerName && r.name === repo.name)
@@ -88,8 +147,11 @@ export function movedForViewer(input: {
   if ([...closes.values()].every((c) => c.length === 0)) return [];
   const plan = input.plan();
   const issues = new Map(plan.read.graph.issues.map((i) => [i.number, i]));
-  return movedMilestones({ pulls: here, closes, plan }).filter((m) => {
-    const issue = issues.get(m.number);
-    return issue !== undefined && mayView(db, repo, issue, input.viewer);
-  });
+  const carried = pullsByMilestone({ pulls: here, closes, plan });
+  return movedMilestones({ pulls: here, closes, plan })
+    .filter((m) => {
+      const issue = issues.get(m.number);
+      return issue !== undefined && mayView(db, repo, issue, input.viewer);
+    })
+    .map((m) => ({ ...m, pulls: carried.get(m.number) ?? [] }));
 }

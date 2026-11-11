@@ -18,10 +18,13 @@ import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { tokenFor } from "./helpers/tokens.ts";
 import { existsSync } from "node:fs";
-import { closeStaleSessions, recordStart, shellCell, workspace, MAX_SESSIONS } from "../src/machines/shell.ts";
+import { setLimit } from "../src/settings/limits.ts";
+import { idle, shellIdleMs, closeStaleSessions, recordStart, shellCell, workspace, MAX_SESSIONS } from "../src/machines/shell.ts";
 import { BUILT_IN } from "../src/crew/machines.ts";
 import {
   lastSessions,
+  machineStates,
+  stateLine,
   liveSessions,
   parseControl,
   setShellOptions,
@@ -37,6 +40,7 @@ let servers: Servers;
 let repo: Repo;
 let base: string;
 let staleRow: string;
+let aliceId: string;
 const cookies: Record<string, string> = {};
 
 async function person(name: string, isAdmin = false): Promise<User> {
@@ -51,6 +55,7 @@ beforeAll(async () => {
   app = createApp({ dataDir, port: 0 });
   setShellOptions(app, { idleMs: 60_000, contain: "uncontained", command: "exec /bin/sh", handshakesPerMinute: 1000 });
   const alice = await person("alice");
+  aliceId = alice.id;
   await person("bob");
   const made = await createRepo(app.db, app.reposRoot, { ownerId: alice.id, name: "lab", visibility: "public" });
   if (!made.ok) throw new Error(String(made.error));
@@ -215,6 +220,45 @@ test("a session with no keystroke past the idle limit ends, and says so", async 
   setShellOptions(app, { idleMs: 60_000, contain: "uncontained", command: "exec /bin/sh", handshakesPerMinute: 1000 });
 });
 
+test("output with no input keeps a session alive past the idle limit", async () => {
+  stopShells(app);
+  setShellOptions(app, { idleMs: 300, contain: "uncontained", command: "while :; do echo tick; sleep 0.05; done", checkMs: 30, handshakesPerMinute: 1000 });
+  const { ws } = await open("alice");
+  await Bun.sleep(1_000);
+  expect(liveSessions(app)).toBe(1);
+  expect(ws.readyState).toBe(WebSocket.OPEN);
+  stopShells(app);
+  setShellOptions(app, { idleMs: 60_000, contain: "uncontained", command: "exec /bin/sh", handshakesPerMinute: 1000 });
+}, 10_000);
+
+test("idle needs both the last input and the last output older than the limit", () => {
+  expect(idle({ lastInput: 0, lastOutput: 0 }, 100, 100)).toBe(true);
+  expect(idle({ lastInput: 0, lastOutput: 50 }, 100, 100)).toBe(false);
+  expect(idle({ lastInput: 50, lastOutput: 0 }, 100, 100)).toBe(false);
+});
+
+test("the idle limit the server installs is the shell_idle_minutes setting, in minutes", () => {
+  expect(shellIdleMs(app.db)).toBe(30 * 60_000);
+  expect(setLimit(app.db, "shell_idle_minutes", 7, "test").ok).toBe(true);
+  expect(shellIdleMs(app.db)).toBe(7 * 60_000);
+  expect(setLimit(app.db, "shell_idle_minutes", null, "test").ok).toBe(true);
+  expect(shellIdleMs(app.db)).toBe(30 * 60_000);
+});
+
+test("changing the setting changes the next check", async () => {
+  stopShells(app);
+  let ms = 60_000;
+  setShellOptions(app, { idleMs: () => ms, contain: "uncontained", command: "exec /bin/sh", checkMs: 30, handshakesPerMinute: 1000 });
+  const { ws } = await open("alice");
+  await Bun.sleep(300);
+  expect(liveSessions(app)).toBe(1);
+  ms = 100;
+  await new Promise((r) => ws.addEventListener("close", r));
+  await until(() => lastSessions(app.db, repo.id)[0]?.endReason !== undefined);
+  expect(lastSessions(app.db, repo.id)[0]?.endReason).toBe("idle");
+  setShellOptions(app, { idleMs: 60_000, contain: "uncontained", command: "exec /bin/sh", handshakesPerMinute: 1000 });
+}, 10_000);
+
 test("a forge that cannot hold a cell refuses the shell", async () => {
   setShellOptions(app, { idleMs: 60_000, contain: "refuse", command: "exec /bin/sh", handshakesPerMinute: 1000 });
   const ws = new WebSocket(`${base}/alice/lab/machines/standard/shell`, {
@@ -307,4 +351,59 @@ test("the repository's settings show a writer the last sessions, and a reader no
   const reader = await fetch(`${servers.url}/alice/lab/settings/machines`, { headers: { cookie: cookies["bob"]! } });
   await reader.body?.cancel();
   expect(reader.status).toBe(403);
+});
+
+test("a closed socket leaves the session detached with its stop time on the machines page; reconnecting joins it", async () => {
+  stopShells(app);
+  setShellOptions(app, { idleMs: 60_000, contain: "uncontained", command: "exec /bin/sh", handshakesPerMinute: 1000 });
+  const page = async () => (await fetch(`${ORIGIN()}/alice/lab/settings/machines`, { headers: { cookie: cookies["alice"]! } })).text();
+  const first = await open("alice");
+  first.ws.send(new TextEncoder().encode("echo kept''-line\n"));
+  await until(() => first.seen().includes("kept-line"));
+  expect(await page()).toContain('data-shell-state="attached"');
+
+  first.ws.close();
+  await until(() => first.ws.readyState === WebSocket.CLOSED);
+  await until(() => machineStates(app, repo.id, aliceId).get("standard")?.attached === false);
+  expect(liveSessions(app)).toBe(1);
+  const state = machineStates(app, repo.id, aliceId).get("standard")!;
+  const html = await page();
+  expect(html).toContain('data-shell-state="detached"');
+  expect(html).toContain(`detached, stops at ${new Date(state.stopsAt).toISOString().slice(11, 16)} UTC unless you come back`);
+
+  const second = await open("alice");
+  expect(liveSessions(app)).toBe(1);
+  second.ws.send(new TextEncoder().encode("echo back''-again\n"));
+  await until(() => second.seen().includes("back-again"));
+  expect(await page()).toContain('data-shell-state="attached"');
+  expect(await page()).not.toContain("detached, stops at");
+
+  const closed = new Promise((r) => second.ws.addEventListener("close", r));
+  second.ws.send(new TextEncoder().encode("exit\n"));
+  await closed;
+  await until(() => liveSessions(app) === 0);
+});
+
+test("stateLine words attached and detached (UTC), and says nothing without a shell", () => {
+  expect(stateLine(undefined)).toBeUndefined();
+  expect(stateLine({ attached: true, stopsAt: 0 })).toBe("attached");
+  expect(stateLine({ attached: false, stopsAt: Date.UTC(2026, 10, 10, 14, 5) })).toBe("detached, stops at 14:05 UTC unless you come back");
+});
+
+test("machineStates is the asker's own: another person, another repository and a guest see no shell", async () => {
+  stopShells(app);
+  const bob = await app.db.query<{ id: string }, []>("SELECT id FROM user WHERE username = 'bob'").get();
+  const shut = app.db.query<{ id: string }, []>("SELECT id FROM repo WHERE name = 'shut'").get();
+  const mine = await open("alice");
+  mine.ws.send(new TextEncoder().encode("echo own''ed\n"));
+  await until(() => mine.seen().includes("owned"));
+  expect(machineStates(app, repo.id, aliceId).get("standard")?.attached).toBe(true);
+  expect(machineStates(app, repo.id, bob!.id).size).toBe(0);
+  expect(machineStates(app, repo.id, "").size).toBe(0);
+  expect(machineStates(app, shut!.id, aliceId).size).toBe(0);
+  const closed = new Promise((r) => mine.ws.addEventListener("close", r));
+  mine.ws.send(new TextEncoder().encode("exit\n"));
+  await closed;
+  await until(() => liveSessions(app) === 0);
+  expect(machineStates(app, repo.id, aliceId).size).toBe(0);
 });

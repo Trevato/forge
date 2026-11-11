@@ -7,6 +7,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { seedAdmin } from "./helpers/admin.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 let dataDir = "";
 let app: App, servers: Servers, bearer = "";
@@ -34,7 +35,7 @@ afterAll(async () => {
 });
 
 const names = (res: Response): string[] =>
-  (res.headers.get("server-timing") ?? "").split(", ").map((p) => p.split(";")[0]!).filter((n) => n !== "app");
+  requestTiming(res).split(", ").map((p) => p.split(";")[0]!).filter((n) => n !== "app");
 
 test("the forks page names session, repository, forks, fork-tree, lineage, drift and render, in order", async () => {
   const res = await fetch(`${servers.url}/alice/notes/forks`, { headers: { authorization: `Bearer ${bearer}` } });

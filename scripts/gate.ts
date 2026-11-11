@@ -32,66 +32,7 @@ export type Exclusion = {
   issue: number;
 };
 
-export const EXCLUDED: readonly Exclusion[] = [
-  { file: "test/crew-sandbox-real.test.ts", reason: "landed unlisted and red locally; the builder admits it", issue: 1238 },
-  { file: "test/apps-api.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/apps-open-host.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
-  },
-  { file: "test/apps-sleep.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/apps-ws.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/board-windows.test.ts",
-    reason:
-      "red: an app with spend and nothing shipped is missing from the board",
-    issue: 555,
-  },
-  {
-    file: "test/crew-interrupted.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
-  },
-  { file: "test/parity.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/probe.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/probes.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/prompts.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/public-url.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/rehearsal-real.test.ts",
-    reason: "red on main@accaa65 under the gate: the second real roll's old forge does not come up",
-    issue: 7632,
-  },
-  {
-    file: "test/reviews.test.ts",
-    reason: "red in random order: a posted review comment appears inline, anchored to its line",
-    issue: 2106,
-  },
-  { file: "test/runs-lease.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/scaffold.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/snapshot-destination.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
-  },
-  { file: "test/snapshot.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/spawn-placement.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
-  },
-  { file: "test/ssh-app.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/ssh-port-taken.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
-  },
-  { file: "test/ssh.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/studio-phone.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/tui-asked.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/tui-boards.test.ts", reason: "not yet admitted", issue: 261 },
-];
+export const EXCLUDED: readonly Exclusion[] = [];
 
 /**
  * Everything wrong with the quarantine, against the test files that exist:
@@ -173,8 +114,8 @@ export async function treeGate(tree: string, key: string): Promise<string[]> {
  * What the check prints when the quarantine is wrong: every problem, then
  * one last line naming the files to fix. Empty when it is right.
  */
-export function gateRefusal(present: readonly string[]): string[] {
-  const problems = auditGate(present, EXCLUDED);
+export function gateRefusal(present: readonly string[], excluded: readonly Exclusion[] = EXCLUDED): string[] {
+  const problems = auditGate(present, excluded);
   if (problems.length === 0) return [];
   const named = [
     ...new Set(problems.map((p) => p.match(/^(test\/\S+\.test\.ts) /)?.[1])),
@@ -256,22 +197,29 @@ export async function pinRefusal(cwd: string = process.cwd()): Promise<string[]>
 }
 
 /**
- * A pull that adds a feature must say, in a commit message, why it goes
- * ahead of the pipeline (#8839). Same base as `pinRefusal`; with no base to
- * compare to it passes, since that function already says so.
+ * A `*.test.ts` under `src/` (vendor excepted) is outside every gate plan,
+ * since `presentTests` reads only `test/` (#11222): name each, and where it goes.
  */
-export async function whyNowRefusal(cwd: string = process.cwd()): Promise<string[]> {
-  const { parseNameStatus } = await import("../src/kernel/pin_edits.ts");
-  const { whyNowProblems } = await import("../src/kernel/why_now.ts");
-  const base =
-    process.env.FORGE_CHECK_BASE ||
-    git(["merge-base", "origin/main", "HEAD"], cwd).out ||
-    git(["merge-base", "main", "HEAD"], cwd).out;
-  if (!base) return [];
-  const diff = git(["diff", "--name-status", "-M", `${base}..HEAD`], cwd);
-  const log = git(["log", "--format=%B%x00", `${base}..HEAD`], cwd);
-  if (!diff.ok || !log.ok) return [];
-  return whyNowProblems(parseNameStatus(diff.out), log.out.split("\0").map((m) => m.trim()).filter(Boolean));
+export function strayTestRefusal(root = "."): string[] {
+  const src = join(root, "src");
+  if (!existsSync(src)) return [];
+  return (readdirSync(src, { recursive: true }) as string[])
+    .filter((f) => f.endsWith(".test.ts") && !f.split("/").includes("vendor"))
+    .sort()
+    .map((f) => `src/${f}: a test outside test/ never runs in the gate; move it to test/`);
+}
+
+/**
+ * No call path from the billing webhook deletes a forge, an app or a child
+ * (#11392): the walk in `src/kernel/destroy_reach.ts`, named here so it runs
+ * in the check's first second as well as in `test/billing-never-deletes.test.ts`.
+ */
+export function billingDeletesRefusal(root = "."): string[] {
+  const { destroyReachRefusal } = require("../src/kernel/destroy_reach.ts") as typeof import("../src/kernel/destroy_reach.ts");
+  // A fixture repository (the gate's own tests) holds no walk at all and has nothing to check.
+  // A tree that has the walk but not the webhook is the real one after a move: refused, not passed.
+  if (!existsSync(join(root, "src/kernel/destroy_reach.ts"))) return [];
+  return destroyReachRefusal(root);
 }
 
 /** Review findings that repeated (#8888): see `src/kernel/review_rules.ts`. */
@@ -279,16 +227,23 @@ export function reviewRefusal(root = "."): string[] {
   // Loaded by `require` so `treeGate`, which loads this file alone, never needs it.
   const { reviewProblems } = require("../src/kernel/review_rules.ts") as typeof import("../src/kernel/review_rules.ts");
   const dir = join(root, "test");
-  if (!existsSync(dir)) return [];
-  const sources = readdirSync(dir)
-    .filter((f) => f.endsWith(".test.ts"))
-    .map((f) => ({ path: `test/${f}`, text: readFileSync(join(dir, f), "utf8") }));
-  return reviewProblems(sources);
+  const tests = existsSync(dir)
+    ? readdirSync(dir)
+        .filter((f) => f.endsWith(".test.ts"))
+        .map((f) => ({ path: `test/${f}`, text: readFileSync(join(dir, f), "utf8") }))
+    : [];
+  const src = join(root, "src");
+  const code = existsSync(src)
+    ? (readdirSync(src, { recursive: true }) as string[])
+        .filter((f) => f.endsWith(".ts") && !f.includes("vendor/"))
+        .map((f) => ({ path: `src/${f}`, text: readFileSync(join(src, f), "utf8") }))
+    : [];
+  return reviewProblems([...tests, ...code]);
 }
 
 /**
  * A pull that changes a reachable surface must say how to try it on its
- * preview (#8889). Same base and same pass-when-unknown as `whyNowRefusal`.
+ * preview (#8889). Same base and same pass-when-unknown as `pinRefusal`.
  */
 export async function tryItRefusal(cwd: string = process.cwd()): Promise<string[]> {
   const { parseNameStatus } = await import("../src/kernel/pin_edits.ts");
@@ -304,10 +259,40 @@ export async function tryItRefusal(cwd: string = process.cwd()): Promise<string[
   return tryItProblems(parseNameStatus(diff.out), log.out.split("\0").map((m) => m.trim()).filter(Boolean));
 }
 
+/** A pull that adds a page adds its terminal screen and how-to too (#10628). */
+export async function bothDoorsRefusal(cwd: string = process.cwd()): Promise<string[]> {
+  const { parseNameStatus } = await import("../src/kernel/pin_edits.ts");
+  const { bothDoorsProblems } = await import("../src/kernel/both_doors.ts");
+  const base =
+    process.env.FORGE_CHECK_BASE ||
+    git(["merge-base", "origin/main", "HEAD"], cwd).out ||
+    git(["merge-base", "main", "HEAD"], cwd).out;
+  if (!base) return [];
+  const diff = git(["diff", "--name-status", "-M", `${base}..HEAD`], cwd);
+  const log = git(["log", "--format=%B%x00", `${base}..HEAD`], cwd);
+  if (!diff.ok || !log.ok) return [];
+  return bothDoorsProblems(parseNameStatus(diff.out), log.out.split("\0").map((m) => m.trim()).filter(Boolean));
+}
+
+/** A pull that adds a feature without touching the pipeline says why (#11036). */
+export async function directionRefusal(cwd: string = process.cwd()): Promise<string[]> {
+  const { parseNameStatus } = await import("../src/kernel/pin_edits.ts");
+  const { directionProblems } = await import("../src/kernel/direction.ts");
+  const base =
+    process.env.FORGE_CHECK_BASE ||
+    git(["merge-base", "origin/main", "HEAD"], cwd).out ||
+    git(["merge-base", "main", "HEAD"], cwd).out;
+  if (!base) return [];
+  const diff = git(["diff", "--name-status", "-M", `${base}..HEAD`], cwd);
+  const log = git(["log", "--format=%B%x00", `${base}..HEAD`], cwd);
+  if (!diff.ok || !log.ok) return [];
+  return directionProblems(parseNameStatus(diff.out), log.out.split("\0").map((m) => m.trim()).filter(Boolean));
+}
+
 // `bun scripts/gate.ts`: the audit alone, first in `forge.json`'s check, so
 // a stale exclusion fails in under a second — not after install and tsc.
 if (import.meta.main) {
-  const refusal = [...gateRefusal(presentTests()), ...(await pinRefusal()), ...(await whyNowRefusal()), ...(await tryItRefusal()), ...reviewRefusal()];
+  const refusal = [...gateRefusal(presentTests()), ...(await pinRefusal()), ...(await tryItRefusal()), ...(await bothDoorsRefusal()), ...(await directionRefusal()), ...strayTestRefusal(), ...reviewRefusal(), ...billingDeletesRefusal()];
   for (const line of refusal) console.error(`gate: ${line}`);
   process.exit(refusal.length === 0 ? 0 : 2);
 }

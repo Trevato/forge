@@ -95,6 +95,29 @@ describe("the install's bounds", () => {
     expect(Object.keys(installEnv("/c/bun")).some((k) => k.startsWith("FORGE_"))).toBe(false);
   });
 
+  test("the cell's proxy goes with the install, and nothing else does", () => {
+    const env = installEnv("/c/bun", {
+      PATH: "/bin",
+      HTTP_PROXY: "http://127.0.0.1:3128",
+      HTTPS_PROXY: "http://127.0.0.1:3128",
+      http_proxy: "http://127.0.0.1:3128",
+      https_proxy: "http://127.0.0.1:3128",
+      NO_PROXY: "localhost,127.0.0.1,::1",
+      no_proxy: "localhost,127.0.0.1,::1",
+      FORGE_TOKEN: "s",
+      ALL_PROXY: "socks5://elsewhere:1080",
+    });
+    expect(env["HTTPS_PROXY"]).toBe("http://127.0.0.1:3128");
+    expect(env["https_proxy"]).toBe("http://127.0.0.1:3128");
+    expect(env["NO_PROXY"]).toBe("localhost,127.0.0.1,::1");
+    expect(env["FORGE_TOKEN"]).toBeUndefined();
+    expect(env["ALL_PROXY"]).toBeUndefined();
+    expect(Object.keys(env).sort()).toEqual([
+      "BUN_INSTALL_CACHE_DIR", "HOME", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "PATH", "TMPDIR",
+      "http_proxy", "https_proxy", "no_proxy",
+    ]);
+  });
+
   test("the runner is handed that env, not the forge's", async () => {
     process.env["FORGE_TOKEN"] = "secret";
     let seen: Record<string, string> = {};

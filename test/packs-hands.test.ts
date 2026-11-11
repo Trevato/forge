@@ -6,7 +6,10 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve } from "../src/http/server.ts";
+import { deployPack } from "../src/packs/deploy.ts";
+import { parsePack } from "../src/packs/pack.ts";
 import { packNamed } from "../src/packs/catalog.ts";
+import { fixturePacks, seedPacks } from "./helpers/packs.ts";
 import { deployCommands } from "../src/packs/words.ts";
 import { createForgeApp, forgeCommands } from "../src/tui/forge.ts";
 import { packLines, packsScreen } from "../src/tui/screens/packs.ts";
@@ -66,7 +69,7 @@ describe("makeAgent", () => {
 });
 
 describe("deploy words", () => {
-  const games = packNamed("games")!;
+  const games = fixturePacks().find((p) => p.name === "games")!;
   test("the clone source is the configured address, never a request's Host", () => {
     expect(deployCommands(games, "https://f.example/")[0]).toContain("git clone https://f.example/trevato/forge.git");
     expect(deployCommands(games, undefined)[0]).not.toContain("http");
@@ -74,6 +77,7 @@ describe("deploy words", () => {
   test("the web page does not echo a forged Host", async () => {
     const dir = await mkdtemp(join(tmpdir(), "packs-host-"));
     const a = createApp({ dataDir: dir, port: 0 });
+    await seedPacks(a);
     const servers = await serve(a);
     try {
       const res = await fetch(`${servers.url}/packs/games`, { headers: { host: "evil.example" } });
@@ -95,6 +99,7 @@ describe("terminal screen", () => {
     app = createApp({ dataDir: dir, port: 0 });
     const r = await createUser(app.db, { origin: "seed", trusted: true, username: "carol", email: "c@forge.local", password: "a-good-passphrase", adminIfFirst: true });
     if (!r.ok) throw new Error(r.error);
+    await seedPacks(app);
   });
   afterAll(async () => {
     app.close();
@@ -176,5 +181,119 @@ describe("absorb hand", () => {
     const r = await realHands("http://127.0.0.1:1", "t").absorb("o", "radar");
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.why).toContain("cannot reach");
+  });
+});
+
+describe("forge-repo sources", () => {
+  const parsed = parsePack(
+    JSON.stringify({
+      pack: 1,
+      name: "mine",
+      title: "Mine",
+      version: "1.0.0",
+      description: "Apps from this forge.",
+      apps: [
+        { name: "radar", description: "A radar.", source: "trevato/radar" },
+        { name: "notes", description: "Notes.", source: "trevato/notes" },
+      ],
+    }),
+  );
+  if (!parsed.ok) throw new Error(parsed.error);
+
+  test("deploying forks from the forge: one POST each, no network anywhere else, no history carried", async () => {
+    const posts: string[] = [];
+    const forge = Bun.serve({
+      port: 0,
+      fetch: async (req) => {
+        const u = new URL(req.url);
+        posts.push(`${req.method} ${u.pathname} ${await req.text()}`);
+        return u.pathname.endsWith("/notes/forks")
+          ? Response.json({ error: "already_forked" }, { status: 409 })
+          : Response.json({ ownerName: "me", name: "radar" }, { status: 201 });
+      },
+    });
+    const real = globalThis.fetch;
+    const hosts: string[] = [];
+    globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+      const host = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url).host;
+      hosts.push(host);
+      if (host.includes("github.com")) return Promise.reject(new Error("network to github.com refused"));
+      return real(input, init);
+    }) as typeof fetch;
+    try {
+      const hands = realHands(`http://127.0.0.1:${forge.port}`, "t", {
+        cloneFrom: () => {
+          throw new Error("history must not be carried over the network");
+        },
+      });
+      const steps = await deployPack(parsed.value, hands);
+      expect(steps.map((s) => [s.what, s.state])).toEqual([
+        ["app radar", "done"],
+        ["app notes", "kept"],
+      ]);
+      expect(posts).toEqual([
+        'POST /api/v1/repos/trevato/radar/forks {"name":"radar"}',
+        'POST /api/v1/repos/trevato/notes/forks {"name":"notes"}',
+        "GET /api/v1/user ",
+      ]);
+      expect(hosts.every((h) => h === `127.0.0.1:${forge.port}`)).toBe(true);
+    } finally {
+      globalThis.fetch = real;
+      await forge.stop(true);
+    }
+  });
+
+  test("a refusal other than 409 (name taken, fork limit) fails that app's step with the forge's message, and the next app is still forked", async () => {
+    const forge = Bun.serve({
+      port: 0,
+      fetch: (req) => {
+        const u = new URL(req.url);
+        if (u.pathname.endsWith("/radar/forks")) return Response.json({ error: "name_taken", message: "you already have a repository named radar" }, { status: 422 });
+        return Response.json({ error: "rate_limited", message: "at most 5 forks a day" }, { status: 429 });
+      },
+    });
+    try {
+      const steps = await deployPack(parsed.value, realHands(`http://127.0.0.1:${forge.port}`, "t"));
+      expect(steps).toEqual([
+        { what: "app radar", state: "failed", note: "you already have a repository named radar" },
+        { what: "app notes", state: "failed", note: "at most 5 forks a day" },
+      ]);
+    } finally {
+      await forge.stop(true);
+    }
+  });
+
+  test("an unreachable forge fails the fork step and says so", async () => {
+    const r = await realHands("http://127.0.0.1:1", "t").forkFrom("trevato/radar", "radar");
+    expect(r).toEqual({ ok: false, exists: false, why: "cannot reach http://127.0.0.1:1" });
+  });
+
+  test("absorb: true on a forge source absorbs the fork as its new owner", async () => {
+    const absorbed: string[] = [];
+    const refuse = () => Promise.reject(new Error("not used for a forge source"));
+    const hands = {
+      makeApp: refuse,
+      defaultBranch: refuse,
+      carryHistory: refuse,
+      follow: refuse,
+      makeAgent: refuse,
+      forkFrom: async () => ({ ok: true as const, owner: "me" }),
+      absorb: async (owner: string, name: string) => {
+        absorbed.push(`${owner}/${name}`);
+        return { ok: true as const };
+      },
+    };
+    const pack = { ...parsed.value, apps: [{ ...parsed.value.apps[0]!, absorb: true }] };
+    const steps = await deployPack(pack, hands);
+    expect(steps.map((s) => [s.what, s.state])).toEqual([
+      ["app radar", "done"],
+      ["absorb radar", "done"],
+    ]);
+    expect(absorbed).toEqual(["me/radar"]);
+  });
+
+  test("the https form still parses", () => {
+    const r = parsePack(JSON.stringify({ pack: 1, name: "mine", title: "Mine", version: "1.0.0", description: "d", apps: [{ name: "x", description: "d", source: "https://github.com/a/b.git" }] }));
+    expect(r.ok && r.value.apps[0]!.source).toBe("https://github.com/a/b");
   });
 });

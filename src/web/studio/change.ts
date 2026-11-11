@@ -51,6 +51,7 @@ import { liveClientJs, liveMount } from "../live.ts";
 import {
   btn,
   card,
+  crumbs,
   confirmAction,
   badge,
   icon,
@@ -62,9 +63,10 @@ import {
   verdictBadge,
   type Tone,
 } from "../ui.ts";
-import { previewCard } from "../pages/apps.ts";
+import { previewBlock } from "../pages/apps.ts";
 import { lookCard } from "../pages/looks.ts";
-import { approveHereCard, pullChecksLineFor, teamsCard } from "../pages/pull.ts";
+import { approveHereCard, keptChange, pullChecksLineFor, teamsCard, verdictFacts } from "../pages/pull.ts";
+import { changeSummary, verdictLine, verdictOf } from "../pages/pull-verdict.ts";
 import { guestWalls, strangerCard } from "../pages/pull-guest.ts";
 import { combinedCard } from "../pages/pull-combined.ts";
 import { teamVerdicts } from "../../core/issue_teams.ts";
@@ -76,6 +78,7 @@ import {
   conversation,
   originGlyph,
   parseNumber,
+  threadContext,
   type Entry,
 } from "../pages/thread.ts";
 import { KIND_TIER, type Decision } from "./asks.ts";
@@ -85,11 +88,13 @@ import { previewVision } from "../../crew/vision.ts";
 import { visionPreviewCard } from "./direction.ts";
 import { holdCard } from "./hold.ts";
 import { pullMayRun } from "../../core/pull_trust.ts";
+import { landingLine } from "../../flow/landing_line.ts";
 import { nextOfPull } from "../../flow/next_actor.ts";
 import { STEP_MEANS, STEPS, stepOfPull, stepWord, type PathStep } from "../../flow/path.ts";
 import { changeHref } from "./nouns.ts";
 import { pullWord, servingHistory, stateDot, wordDot, type WordCtx } from "./words.ts";
 import { getHold } from "../../core/holds.ts";
+import { backToWave } from "../../story/waves.ts";
 import { pullRoster } from "./pull_roster.ts";
 
 /** The pull and its repo, or the response that refuses to say why not. */
@@ -99,8 +104,12 @@ export function pullContext(ctx: Ctx): { repo: Repo; pull: Pull } | Response {
   const number = parseNumber(ctx.params.number);
   const pull =
     number === undefined ? undefined : getPull(ctx.app.db, repo.id, number);
-  if (!pull || !mayView(ctx.app.db, repo, pull, ctx.auth.user))
-    return notFoundPage(ctx);
+  // Not a pull: an issue of that number sends a read to its own page (`threadContext`).
+  if (!pull) {
+    const other = threadContext(ctx, "pull");
+    return other instanceof Response ? other : notFoundPage(ctx);
+  }
+  if (!mayView(ctx.app.db, repo, pull, ctx.auth.user)) return notFoundPage(ctx);
   return { repo, pull };
 }
 
@@ -200,10 +209,8 @@ function reviewEntry(
       )}${when(
         review.body !== "",
         () =>
-          html`<div class="card">
-            <div class="prose comment-body">
-              ${renderMarkdown(review.body)}
-            </div>
+          html`<div class="prose comment-body">
+            ${renderMarkdown(review.body)}
           </div>`,
       )}`,
     }),
@@ -261,7 +268,10 @@ export function changeHead(
           >`,
       )}
     </div>
-    ${when(step, (st) => pathLine(st, next === null ? undefined : `${next.who}, ${next.why}`))}
+    ${when(step, (st) => pathLine(st, next === null ? undefined : `${next.who}, ${next.why}`))}${when(
+      live === null ? null : landingLine(ctx.app.db, pull, repo.id),
+      (eta) => html`<p class="muted small" data-landing-eta>${eta.says}</p>`,
+    )}
   </div>`;
 }
 
@@ -426,7 +436,7 @@ async function pullPanels(ctx: Ctx, repo: Repo, pull: Pull, spent: Spent = newSp
   </p>`;
 
   const preview = tick(spent, "preview", () =>
-    when(record, () => previewCard(ctx, repo, pull)),
+    when(record, () => previewBlock(ctx, repo, pull)),
   );
   return {
     record,
@@ -727,7 +737,17 @@ async function changeConversation(
   spent.reviews += performance.now() - reviewsAt;
 
   // From here on nothing is read: `render` only builds the page.
+  // The page opens on its verdict, then the change; the merge box and the
+  // reviews live on Files, so the line's anchors point there.
+  const files = `${thread}/files`;
+  const totals =
+    status === undefined ? null : (await lap(spent, "diff", () => keptChange(wordCtx.dir, status))).diff;
+  const verdict = verdictOf(verdictFacts(ctx, repo, pull, status, { mayMerge: writer }), thread, files);
+  const wave = backToWave(ctx.url.searchParams.get("from"));
   const body = html`${pageHead.top}
+    ${when(wave, (w) => crumbs([{ label: `Wave ${w.version}`, href: w.href }, { label: "This pull" }]))}
+    ${verdictLine(verdict, { action: false })}
+    ${changeSummary(pull.body, totals, files)}
     ${when(siblings.length > 0, () =>
       html`<p class="muted small variant-link">
         <a href="${base}/variants/${pull.variantGroup ?? ""}"
@@ -760,6 +780,7 @@ async function changeConversation(
     ctx,
     title: `${pull.title} · ${repo.name}`,
     ogImage: cardPath("pull", repo, pull),
+    about: `${repo.ownerName}/${repo.name}#${pull.number}`,
     description: threadLine({
       private: repo.visibility === "private",
       word,

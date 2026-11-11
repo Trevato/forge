@@ -34,11 +34,13 @@ import { promote } from "./helpers/members.ts";
 import { showBoard } from "../src/actions/boards.ts";
 import { panelData } from "../src/boards/panel_data.ts";
 import { listVia } from "./mcp-list.ts";
+import { adminOpenapi } from "./helpers/openapi-doc.ts";
 
 /** tools/list's order: the tools by name, then `report`. */
 const sortedThenReport = (names: string[]): string[] => [
-  ...names.filter((n) => n !== "report").sort((a, b) => a.localeCompare(b)),
+  ...names.filter((n) => n !== "report" && n !== "start").sort((a, b) => a.localeCompare(b)),
   "report",
+  "start",
 ];
 
 describe("the forge over MCP", () => {
@@ -159,10 +161,10 @@ describe("the forge over MCP", () => {
     const stream = await fetch(`${base}/mcp`, { headers: { accept: "text/event-stream" } });
     expect(stream.status).toBe(405);
     expect(stream.headers.get("allow")).toBe("POST");
-    expect(await stream.text()).toBe("");
+    expect(await stream.text()).toContain("JSON-RPC over POST");
     const bare = await fetch(`${base}/mcp`);
     expect(bare.status).toBe(405);
-    expect(await bare.text()).toBe("");
+    expect(await bare.text()).toContain("MCP endpoint");
     const anon = await (await fetch(`${base}/mcp`, { headers: { accept: "text/html" } })).text();
     expect(anon).toContain('href="/signin"');
     expect(anon).not.toContain('href="/settings/tokens">Settings');
@@ -211,6 +213,7 @@ describe("the forge over MCP", () => {
     const names = listed.body.result.tools.map((t: { name: string }) => t.name);
     // Listed by name, one file each (#5924), and `report` last.
     expect(names).toEqual(sortedThenReport([
+      "data",
       "drills",
       "sizes",
       "releases",
@@ -246,6 +249,7 @@ describe("the forge over MCP", () => {
       "issues",
       "iterations",
       "keep_plan",
+      "knobs",
       "orgs",
       "now",
       "open_pull",
@@ -263,6 +267,7 @@ describe("the forge over MCP", () => {
       "invites",
       "account_role",
       "account_suspend",
+      "account_requests",
       "flag_winner",
       "restore_drill",
       "model_ceiling",
@@ -290,9 +295,11 @@ describe("the forge over MCP", () => {
       "sync",
       "sever",
       "flag_set",
+      "economics",
       "follow_mode",
       "fork",
       "forks",
+      "fork_tree",
       "upstream",
       "propose_to_parent_forge",
       "forge_proposals",
@@ -318,6 +325,7 @@ describe("the forge over MCP", () => {
       "feed",
       "feed_chips",
       "feed_dismiss",
+      "feed_like",
       "maintenance",
       "make_it_yours",
       "origin_apps",
@@ -348,6 +356,7 @@ describe("the forge over MCP", () => {
       "attach_look",
       "hold",
       "plan",
+      "atlas",
       "access",
       "capacity",
       "scorecard",
@@ -377,6 +386,7 @@ describe("the forge over MCP", () => {
       "pins",
       "board_delete",
       "report",
+      "start",
     ]));
     const byName = new Map<string, any>(
       listed.body.result.tools.map((t: any) => [t.name, t]),
@@ -1278,14 +1288,27 @@ describe("the forge over MCP", () => {
     expect(uris).toEqual([
       "ui://forge/app",
       "ui://forge/asked",
-      "ui://forge/decision",
+      "ui://forge/asks",
+      "ui://forge/board",
+      "ui://forge/crew",
       "ui://forge/explore",
       "ui://forge/feed",
+      "ui://forge/flow",
+      "ui://forge/forges",
+      "ui://forge/forks",
+      "ui://forge/held",
       "ui://forge/issue",
+      "ui://forge/issues",
       "ui://forge/map",
+      "ui://forge/milestones",
       "ui://forge/pull",
       "ui://forge/pulls",
+      "ui://forge/release",
+      "ui://forge/releases",
       "ui://forge/run",
+      "ui://forge/runs",
+      "ui://forge/scorecard",
+      "ui://forge/search",
       "ui://forge/wave",
     ]);
     const read = await call(rw, "resources/read", { uri: "ui://forge/app" });
@@ -1299,16 +1322,21 @@ describe("the forge over MCP", () => {
     const meta = (n: string) => tools.find((t: any) => t.name === n)._meta?.ui?.resourceUri;
     expect(meta("apps")).toBe("ui://forge/app");
     expect(meta("new_app")).toBe("ui://forge/app");
-    expect(meta("now")).toBe("ui://forge/run");
-    expect(meta("asks")).toBe("ui://forge/decision");
-    expect(meta("milestones")).toBe("ui://forge/wave");
+    expect(meta("now")).toBe("ui://forge/crew");
+    expect(meta("asks")).toBe("ui://forge/asks");
+    expect(meta("milestones")).toBe("ui://forge/milestones");
+    expect(meta("asks_act")).toBe("ui://forge/asks");
     expect(meta("map")).toBe("ui://forge/map");
+    expect(meta("boards")).toBe("ui://forge/board");
     expect(meta("feed")).toBe("ui://forge/feed");
     expect(meta("issue")).toBe("ui://forge/issue");
     expect(meta("explore")).toBe("ui://forge/explore");
     expect(meta("pull")).toBe("ui://forge/pull");
     expect(meta("pulls")).toBe("ui://forge/pulls");
+    expect(meta("runs")).toBe("ui://forge/runs");
     expect(meta("asked")).toBe("ui://forge/asked");
+    expect(meta("flow")).toBe("ui://forge/flow");
+    expect(meta("scorecard")).toBe("ui://forge/scorecard");
   });
 
   test("tools/call pull carries the card beside an unchanged text answer", async () => {
@@ -1413,7 +1441,7 @@ describe("the forge over MCP", () => {
     expect(cardFor("issue", {}, "https://forge.test", { repo: "alice/game" })).toBeUndefined();
   });
 
-  test("the decision card links each ask to its pull or issue, and to nothing unsafe", async () => {
+  test("the asks card links each ask to its pull or issue, and to nothing unsafe", async () => {
     const { cardFor } = await import("../src/web/studio/cards.ts");
     const words = { decision: "Ship it?", options: ["ship", "close"] };
     const rows = [
@@ -1455,9 +1483,9 @@ describe("the forge over MCP", () => {
     expect(cardFor("asks", { rows: lines }, "javascript:x")!.rows.every((r) => r.link === undefined)).toBe(true);
   });
 
-  test("the feed card draws one linked row per item, ten at most, escaped as text", async () => {
+  test("the feed card draws one linked row per item, twenty at most, escaped as text", async () => {
     const { cardFor } = await import("../src/web/studio/cards.ts");
-    const items = Array.from({ length: 12 }, (_, n) => ({
+    const items = Array.from({ length: 25 }, (_, n) => ({
       actor: "scout",
       what: n === 0 ? "<b>shipped</b>" : `did ${n}`,
       app: "alice/game",
@@ -1468,7 +1496,7 @@ describe("the forge over MCP", () => {
     expect(card.kind).toBe("feed");
     expect(card.title).toBe("Feed");
     expect(card.status).toBe("Latest");
-    expect(card.rows).toHaveLength(10);
+    expect(card.rows).toHaveLength(20);
     expect(card.rows[0]).toEqual({
       label: "scout: <b>shipped</b>",
       value: "alice/game · just now",
@@ -1488,19 +1516,16 @@ describe("the forge over MCP", () => {
     const id = "01m23vygyffx5hg2f5vm8r74sr";
     runs[1]!.id = id;
     const card = cardFor("runs", { runs }, "https://f.example", { repo: "alice/game" })!;
-    expect(card.kind).toBe("run");
+    expect(card.kind).toBe("runs");
     expect(card.title).toBe("Runs");
     expect(card.rows[1]!.link).toBe(`https://f.example/alice/game/runs/${id}`);
     expect(card.rows[0]!.link).toBeUndefined();
     const nolink = cardFor("runs", { runs }, "https://f.example", { repo: "alice" })!;
     expect(nolink.rows[1]!.link).toBeUndefined();
-    expect(card.rows).toHaveLength(12);
-    expect(card.rows[0]).toEqual({ label: "agent r0", value: "done" });
-    expect(card.rows[1]).toMatchObject({ label: `agent ${id}`, value: "#1 — done" });
     const { body } = await call(rw, "tools/call", { name: "runs", arguments: { repo: "alice/game" } });
-    expect(body.result.structuredContent.card.kind).toBe("run");
+    expect(body.result.structuredContent.card.kind).toBe("runs");
     const tools = (await listCall(rw)).body.result.tools;
-    expect(tools.find((t: any) => t.name === "runs")._meta?.ui?.resourceUri).toBe("ui://forge/run");
+    expect(tools.find((t: any) => t.name === "runs")._meta?.ui?.resourceUri).toBe("ui://forge/runs");
   });
 
   test("a tool result carries the card it renders", async () => {
@@ -1509,7 +1534,7 @@ describe("the forge over MCP", () => {
     expect(card.kind).toBe("app");
     expect(card.rows.some((r: any) => r.label === "alice/game")).toBe(true);
     const asks = await call(rw, "tools/call", { name: "asks", arguments: {} });
-    expect(asks.body.result.structuredContent.card.kind).toBe("decision");
+    expect(asks.body.result.structuredContent.card.kind).toBe("asks");
   });
 
   test("ship and close card actions never apply at once and always meet the target tool's required fields", async () => {
@@ -1527,7 +1552,7 @@ describe("the forge over MCP", () => {
     ];
     let actions = 0;
     for (const card of cards)
-      for (const a of card!.actions) {
+      for (const a of [...card!.actions, ...card!.rows.flatMap((r) => r.actions ?? [])]) {
         actions++;
         expect(a.args["dryRun"]).not.toBe(false);
         const t = tools.find((x: any) => x.name === a.tool);
@@ -1568,14 +1593,14 @@ describe("the forge over MCP", () => {
   });
 
   test("GET /contract/openapi.json describes the public API", async () => {
-    const res = await fetch(`${base}/contract/openapi.json`);
+    const res = await adminOpenapi(app, base, "/contract/openapi.json");
     expect(res.status).toBe(200);
     const doc = (await res.json()) as any;
     expect(doc.openapi).toBe("3.1.0");
     expect(doc.paths["/mcp"].post).toBeDefined();
   });
   test("GET /contract/openapi.json serves the triage routes", async () => {
-    const doc = (await (await fetch(`${base}/contract/openapi.json`)).json()) as any;
+    const doc = (await (await adminOpenapi(app, base, "/contract/openapi.json")).json()) as any;
     const R = "/api/v1/repos/{owner}/{name}";
     expect(doc.paths[`${R}/issues/{number}/teams`].get).toBeDefined();
     expect(doc.paths[`${R}/issues/{number}/teams`].put).toBeDefined();

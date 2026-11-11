@@ -93,4 +93,23 @@ describe("MCP org_teams", () => {
     const unknown = await tool(owner, { org: "acme", action: "peek", team: "ops" });
     expect(unknown.isError).toBe(true);
   });
+
+  test("remove_member takes one role off, then the member", async () => {
+    await tool(owner, { org: "acme", action: "create", team: "crew", permission: "write" });
+    await tool(owner, { org: "acme", action: "add_member", team: "crew", user: "carol", role: "reviewer" });
+    const bad = await tool(owner, { org: "acme", action: "remove_member", team: "crew", user: "carol", role: "boss" });
+    expect(bad.isError).toBe(true);
+    expect(bad.text).toContain("bad_role");
+    const off = await tool(owner, { org: "acme", action: "remove_member", team: "crew", user: "carol", role: "reviewer" });
+    expect(off.isError).toBe(false);
+    const kept = JSON.parse((await tool(owner, { org: "acme", action: "members", team: "crew" })).text);
+    expect(kept).toEqual([{ user: "carol", role: "member" }]);
+    const gone = await tool(owner, { org: "acme", action: "remove_member", team: "crew", user: "carol" });
+    expect(gone.isError).toBe(false);
+    expect(JSON.parse((await tool(owner, { org: "acme", action: "members", team: "crew" })).text)).toEqual([]);
+    const none = await tool(owner, { org: "acme", action: "remove_member", team: "crew", user: "carol" });
+    expect(none.isError).toBe(true);
+    const denied = await tool(member, { org: "acme", action: "remove_member", team: "crew", user: "carol" });
+    expect(denied.isError).toBe(true);
+  });
 });

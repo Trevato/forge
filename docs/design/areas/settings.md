@@ -20,6 +20,17 @@ the text wrap and gives the control a place that is always visible. Use `.row-ac
   `src/web/style/components.ts`.
 - `.record-value` — a DNS record's value on an app's domain row (`.setting-list` row meta): monospace, wraps instead of ellipsizing, and `user-select: all` so one click selects the whole value to copy.
 
+## A setting as one line (#10999)
+
+A repository's Branch and gates form (`settingsPage()` in `src/web/pages/settings.ts`) shows each setting as one line:
+its name, its control (the checkbox, select or number is the value) and a mark that opens its reason. Built by
+`settingLine()` and `toggleLine()` in `src/web/setting_line.ts`; styled in `src/web/style/components.ts`.
+
+- `.setting-line` — the `.field` row: a wrapping flex line of label, control and mark, at desktop and 390 px alike.
+- `.why` — the `<details>` holding a setting's reason. Its summary is the help mark drawn as a small bordered round
+  button (28px, 44px on touch), named "Why" for a screen reader and a tooltip; open, the reason takes the full width
+  under the row.
+
 ## Labels
 
 Each label is a `row()` in a `.setting-list`: its chip is the title, `N open` the meta, and a `.row-fields` form (name,
@@ -94,8 +105,8 @@ accounts are `row()`s in `<ul class="list setting-list" id="accounts-list">` und
 (Sign-ins, Verify, Suspend, Remove) in the row's `after` slot; the mail, ownerless-organization, sign-in reach and
 confirm/refusal notices are plain `<section class="settings-block">` blocks with an `<h2>`. `test/accounts-rows.test.ts` holds the shape.
 
-Settings › Origins (`src/web/pages/origins.ts`) adds no component class. As on the home page it is headings over rows: Connected
-origins, Frozen mirrors, Trusted internal hosts (admin) and Connect an origin are each a `<section class="settings-block">`
+Settings › Connected accounts (`src/web/pages/origins.ts`) adds no component class. As on the home page it is headings over rows: Connected
+accounts, Frozen mirrors, Trusted internal hosts (admin) and Connect an account are each a `<section class="settings-block">`
 with an `<h2>`; each origin and each frozen mirror is a `row()` in a `.list`; with no origins, one plain sentence says how to
 connect one. An origin's error, notes (re-authorize, another forge, writes paused) and acts sit in the row's `after`
 slot; the list carries the attribute `data-origins` (not a class), which stacks that slot as a full-width block under
@@ -165,3 +176,21 @@ Settings › Flags (`flagsPage()` in `src/web/pages/flags.ts`, #9872) has no car
 ## General (#9853)
 
 Settings › General (`settingsPage()` and `provenanceCard()` in `src/web/pages/settings.ts`, #9853) adds no class and holds no `.card`: About, Your team, On its own and Held files (`src/web/studio/crew.ts`, `file_holds.ts`), Branch and gates, Mirror, Show where this came from, Follow upstream and Followed sources (`upstream-follow.ts`), and Cut a wave and Archive are each a `<section class="settings-block">` with an `<h2>`, one plain sentence and the form. The crew-readiness notices (`crewReadiness()` in `src/web/pages/crew.ts`) are `.toast` rows with `data-tone="danger"`. Every form keeps its action, method, field names and ids. Pinned by `test/settings.test.ts`, which asserts the whole page has no `class="card`.
+
+Settings › Danger zone (`src/web/pages/danger.ts`, #9952) adds no component class. The detach (`detachSection()` in
+`src/web/pages/detach.ts`, a fork only) and the delete are each a `<section class="settings-block">` with an `<h2>`,
+no `.card`: the plan says what goes and what survives, its danger button goes through `/-/confirm`. A running detach is
+one line with since-when; a failed one is a danger `.toast` over the plan. `test/danger-language.test.ts` holds the shape.
+
+## Calm: one help toggle per page (#10302)
+
+On Settings › Account (profile, password, tokens) a field is its label and its current value. What each field means
+moves into one `details.disclosure[data-page-help]` per page (`help()` in `src/web/pages/account.ts`: a `.status-rows`
+list of field → explanation), summary "Help with these fields" at normal size, closed until asked for, rendered at the
+top of the page (outside any block, with `mb` under it). The profile's role abilities are a row of that same Help, not
+a second disclosure. A rule that is a constraint stays beside its field as a one-line `hint` tied by `aria-describedby`:
+the password minimum (10 characters), the notify URL's https-only and, once saved, "Sending to <host>". No new class.
+The `settings` first-view budget fell from 274 to 137 words and 37 to 32 blocks (`FORGE_ATTENTION_WRITE=1`).
+`repository` and `app` read 197 / 29 on `main` itself (it fails the budget test there against the committed 189 / 28);
+this change does not touch them, and the file now records what they measure.
+Pinned by `test/account-help.test.ts`. Not done: the repository settings page (`settingsPage()`) and the admin pages still carry their prose.

@@ -4,10 +4,13 @@
  * issues — a pull is an issue with a diff.
  */
 
+import { teamsHolding } from "../core/issue_teams.ts";
 import { isContributionFork, type GuestRefusal } from "../core/contribute.ts";
 import { takeGuestPull } from "./guests.ts";
 import { requireAbility } from "./roles.ts";
+import { announceTeamWaits } from "./team_waits.ts";
 import { addComment as addIssueComment } from "../core/issues.ts";
+import { noteShipped } from "../crew/note_closed.ts";
 import { landedNote, leftNote, unticked } from "../core/done_on_main.ts";
 import { resolveOpen } from "../core/decisions.ts";
 import type { App } from "../app.ts";
@@ -355,6 +358,7 @@ async function createThePull(
       ...(assigned ? { assignee: user.username } : {}),
     },
   });
+  announceTeamWaits(app, baseRepo, created.value, user.id);
   return assigned ? ok({ ...created.value, ...assigneeOf(assigned) }) : created;
 }
 
@@ -476,7 +480,7 @@ export async function mergePull(
   requested: MergeStrategy,
   /** The merge queue's guard: land only onto this base, as this tree (#2036). */
   expect?: LandingExpect,
-  /** `pastGate`: the owner's break-glass (`checks/bypass.ts`) skips the checks requirement. */
+  /** `pastGate`: the owner's break-glass (`checks/bypass.ts`) skips the checks and team requirements. */
   opts: { readonly pastGate?: boolean } = {},
 ): Promise<
   Result<{ mergeOid: string; carried: boolean }, AccessError | MergePullError>
@@ -550,6 +554,13 @@ export async function mergePull(
         db: app.db,
         requireReview: repo.requireReview,
         requireChecks: repo.requireChecks && opts.pastGate !== true,
+        // A named team with a reviewer here reads this head first (#10080).
+        ...(opts.pastGate === true
+          ? {}
+          : {
+              teamsHolding: (headOid: string) =>
+                teamsHolding(app.db, { ...judged, headOid }).map((v) => v.name),
+            }),
       },
       strategy,
       ...(expect === undefined ? {} : { expect }),
@@ -639,6 +650,8 @@ export async function mergePull(
       actorId: writer.value.id,
       payload: { number: issue.number, by: "merge", pull: pull.number },
     });
+    // A note from an app's button hears, in plain words, that it shipped (#10564).
+    noteShipped(app, writer.value.id, repo, issue, pull);
   }
   return merged;
 }
@@ -805,6 +818,7 @@ export async function submitReview(
       reviewId: recorded.value.id,
     },
   });
+  announceTeamWaits(app, repo, { ...pull, headOid: status.headOid }, user.id);
   // The boxes the reviewer read at this head: only a crew reviewer's approval
   // counts. A pull yet to land holds them for its landing, which applies them
   // only if the head is still this one; one that landed takes them now.

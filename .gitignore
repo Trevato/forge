@@ -1,5 +1,6 @@
 node_modules
 data/
+!src/data/
 dist/
 *.local
 .DS_Store

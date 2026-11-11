@@ -239,7 +239,7 @@ describe("web ui", () => {
       "Closed without merging.",
     );
     expect(await (await fetch(`${base}/mel/proj/pulls`)).text()).toContain(
-      "Nothing open.",
+      "No pull request is open.",
     );
 
     await fetch(`${at}/state`, {
@@ -743,7 +743,7 @@ describe("web ui", () => {
       await fetch(`${base}/mel/proj/issues?q=nothing-matches-this&state=all`)
     ).text();
     expect(miss).not.toContain("needs a label");
-    expect(miss).toContain("Nothing here");
+    expect(miss).toContain("Nothing open.");
     expect(miss).toContain("nothing-matches-this in the title ✕");
 
     // A LIKE wildcard typed into the box is a literal character, not a glob.
@@ -844,7 +844,7 @@ describe("web ui", () => {
   test("the tell composer is the thread's comment box, on the page and in place", async () => {
     const as = async (path: string) =>
       (await fetch(`${base}${path}`, { headers: { cookie: owner } })).text();
-    const keys = /<form[^>]*class="card comment-form"[^>]*data-box="[^"]+"[^>]*data-submit-key/;
+    const keys = /<form[^>]*class="(?:card )?comment-form"[^>]*data-box="[^"]+"[^>]*data-submit-key/;
     // Two kinds of page: the issue's comment box, and the tell composer.
     const issue = await as("/mel/proj/issues/1");
     const page = await as("/mel/proj/tell?from=/mel/proj/issues/1");
@@ -988,7 +988,7 @@ describe("web ui", () => {
     const seeded = openIssue(app, mel, proj, { title: "dismiss me" });
     if (!seeded.ok) throw new Error(seeded.error);
     expect(assignIssue(app, mel, proj, seeded.value, mel).ok).toBe(true);
-    expect(shellJs).toContain(`e.key === '${NEW_ISSUE_KEY}'`);
+    expect(shellJs).toContain(`['${NEW_ISSUE_KEY}'], openNewIssue]`);
     for (const k of SCRIPT_KEYS) {
       const page = await (await fetch(`${base}${k.page}`, { headers: { cookie: `${owner}; forge_mode=studio` } })).text();
       // A menu row draws the key in its column; anything else carries it as data-hint (#8930).
@@ -1008,7 +1008,7 @@ describe("web ui", () => {
     // Cmd/Ctrl+Enter sends it. Signed out there is no box, so no key is promised.
     const issue = await as("/mel/proj/issues/1", owner);
     expect(issue).toMatch(
-      /<form[^>]*class="card comment-form"[^>]*data-box="Write a comment"[^>]*data-submit-key/,
+      /<form[^>]*class="comment-form"[^>]*data-box="Write a comment"[^>]*data-submit-key/,
     );
     expect(await as("/mel/proj/issues/1")).not.toContain("data-box=");
     // The close form is drawn from the design system's input, not page classes.
@@ -1064,9 +1064,8 @@ describe("web ui", () => {
 
     // The shell sends a form on Enter only with a modifier held, only for a
     // form that opted in, and nowhere else.
-    expect(shellJs).toContain(
-      "(e.metaKey || e.ctrlKey) && e.key === 'Enter' && t.form && t.form.hasAttribute('data-submit-key')",
-    );
+    expect(shellJs).toContain("['Mod+Enter'], function (e) {");
+    expect(shellJs).toContain("if (f && f.hasAttribute('data-submit-key')) { e.preventDefault(); submitBox(f); }");
     const sends = shellJs
       .split("\n")
       .filter((l) => /requestSubmit|\.submit\(/.test(l));

@@ -4,10 +4,7 @@
  * signalled refuses the requests routers still send it; one that lingers
  * past a probe period refuses none.
  *
- * Out of the gate (`scripts/gate.ts` EXCLUDED) under #7632: under the gate
- * on main@accaa65 the second roll's old forge does not come up, and every
- * proof went red on it, so nothing landed. The nightly outside-gate run
- * still runs it; it rejoins with #7632.
+ * In the gate (#11098); `scripts/flake-hunt.ts admit` is how it is proven.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -26,14 +23,14 @@ describe("a real roll of two forge processes on one data directory", () => {
 
   test("an old forge that exits on SIGTERM refuses what routers still send it", async () => {
     const v = await rehearse(short(0));
-    expect(v.problem).toBeNull();
+    expect(v.problem, v.problem ?? "").toBeNull();
     expect(v.refused).toBeGreaterThan(0);
     expect(v.tally.byOutcome["refused"]).toBeGreaterThan(0);
   }, 60_000);
 
   test("an old forge that lingers past a probe period refuses nobody", async () => {
     const v = await rehearse(short(5));
-    expect(v.problem).toBeNull();
+    expect(v.problem, v.problem ?? "").toBeNull();
     // Each refusal says when, whom, what came back and where both processes were.
     expect(v.tally.misses.filter((m) => isRefusal(m.outcome)).map(missLine)).toEqual([]);
     expect(v.refused).toBe(0);

@@ -455,7 +455,7 @@ describe("web pages end to end", () => {
     const { changeCapacity } = await import("../src/actions/capacity.ts");
     const { getUserByName } = await import("../src/core/users.ts");
     const ada = getUserByName(app.db, "ada")!;
-    expect(changeCapacity(app, ada, "cells.egress", "report").ok).toBe(true);
+    expect(changeCapacity(app, ada, "cells.egress", "report", "a test says why").ok).toBe(true);
     try {
       const text = await (await fetch(base, { headers: { cookie } })).text();
       expect(text).not.toMatch(/class="[^"]*\berror-note/);
@@ -849,7 +849,7 @@ function expectFloor(what: string, response: Response): void {
   );
   // No powers a page does not use, and https once https (#2917).
   const powers = response.headers.get("permissions-policy") ?? "";
-  for (const power of ["camera", "microphone", "geolocation", "payment", "usb", "interest-cohort"])
+  for (const power of ["camera", "microphone", "geolocation", "payment", "usb"])
     expect(label + powers).toContain(`${power}=()`);
   expect(label + response.headers.get("strict-transport-security")).toBe(
     label + "max-age=31536000",

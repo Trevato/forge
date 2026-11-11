@@ -17,6 +17,9 @@
  * each: `#N title · check <word> · <preview address or none>`. A guest sees
  * none.
  *
+ * Until production first runs, the head carries one line of where the app
+ * stands (`apps/onboarding.ts`, #10295), as the app page says it.
+ *
  * A writer who is a person — never an agent — gets `b`: type a commit's
  * full id and `previewBuild` serves it at `<slug>--b<sha7>`, as the API's
  * `POST …/builds/preview` does (`docs/features/build-preview.md`).
@@ -55,6 +58,7 @@
  * then says the repository is no longer an app.
  */
 
+import { appOnboardingLine } from "../../apps/onboarding.ts";
 import {
   appPace,
   appPreviews,
@@ -143,6 +147,8 @@ interface Production {
   readonly state: string;
   readonly redeploy: boolean;
   readonly stop: boolean;
+  /** Its forge.json sets `app.always_on`: production never sleeps. */
+  readonly alwaysOn: boolean;
 }
 
 /**
@@ -152,10 +158,16 @@ interface Production {
  */
 function readProduction(f: Session, repo: Repo): Production {
   const view = appView(f.app, f.user, repo);
-  if (!view.ok) return { state: "", redeploy: false, stop: false };
-  const state = view.value.environments.find((e) => e.env === "production")?.state ?? "";
+  if (!view.ok) return { state: "", redeploy: false, stop: false, alwaysOn: false };
+  const env = view.value.environments.find((e) => e.env === "production");
+  const state = env?.state ?? "";
   const writer = view.value.serving && f.user !== undefined && canWrite(f.db, repo, f.user);
-  return { state, redeploy: writer, stop: writer && state !== "" && state !== "stopped" };
+  return {
+    state,
+    redeploy: writer,
+    stop: writer && state !== "" && state !== "stopped",
+    alwaysOn: env?.alwaysOn === true,
+  };
 }
 
 /** `#N title · check <word> · <preview address or none>` */
@@ -203,6 +215,8 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let trend = "";
   let pace = "";
   let side: string[] = [];
+  /** Where a new or migrated app stands until production runs, or "". */
+  let onboarding = "";
   let egress: string[] = [];
   let pulls: AppPullLine[] = [];
   /** The app's previews, or undefined for anyone who may not see them. */
@@ -210,7 +224,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   const previewState = new ListState();
   /** Which list the cursor is in: production's deploys, or the previews under them. */
   let inPreviews = false;
-  let production: Production = { state: "", redeploy: false, stop: false };
+  let production: Production = { state: "", redeploy: false, stop: false, alwaysOn: false };
   let members = false;
   let prompts = false;
   let stoppable = false;
@@ -230,6 +244,8 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     trend = seen === undefined ? "" : trendLine(seen.loadDays);
     pace = appPace(f.app, f.user, repo);
     side = appSideLines(f.app, f.user, repo);
+    const standing = appOnboardingLine(f.app, repo, f.user);
+    onboarding = standing === undefined ? "" : `${standing.text}${standing.href === undefined ? "" : ` ${standing.href}`}`;
     egress = egressLines(f, repo);
     pulls = appPullLines(f.app, f.user, repo);
     previews = appPreviews(f.app, f.user, repo);
@@ -414,6 +430,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
             (trend === "" ? 0 : 1) +
             (pace === "" ? 0 : 1) +
             side.length +
+            (onboarding === "" ? 0 : 1) +
             egress.length +
             (named === "" ? 0 : 1),
         ),
@@ -438,13 +455,13 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         head!.x,
         head!.y,
         truncate(
-          `${repo.ownerName}/${repo.name} · production deploys${production.state === "" ? "" : ` · ${production.state}`}`,
+          `${repo.ownerName}/${repo.name} · production deploys${production.state === "" ? "" : ` · ${production.state}`}${production.alwaysOn ? " · never sleeps (app.always_on)" : ""}`,
           head!.w,
         ),
         style(c.mutedFg, c.bg),
         head!.x + head!.w,
       );
-      [visitors, trend, pace, ...side, named, ...egress]
+      [onboarding, visitors, trend, pace, ...side, named, ...egress]
         .filter((line) => line !== "")
         .forEach((line, i) =>
           s.text(head!.x, head!.y + 1 + i, truncate(line, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w),

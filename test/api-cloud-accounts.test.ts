@@ -9,6 +9,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { adminOpenapi } from "./helpers/openapi-doc.ts";
 
 quietLogs();
 
@@ -83,7 +84,7 @@ describe("GET /api/v1/cloud/accounts", () => {
   });
 
   test("the route is in the OpenAPI document", async () => {
-    const doc: any = await (await fetch(`${servers.url}/api/v1/openapi.json`)).json();
+    const doc: any = await (await adminOpenapi(app, servers.url, "/api/v1/openapi.json")).json();
     expect(doc.paths["/api/v1/cloud/accounts"].get).toBeDefined();
   });
 });

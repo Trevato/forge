@@ -552,8 +552,22 @@ describe("working: a run's own page in the studio", () => {
     expect(page).toContain("newer below");
     expect(page).toMatch(/<button[^>]*class="btn"[^>]*id="run-jump"/);
     expect(page).toMatch(
-      /<form[^>]*class="card stack"[^>]*id="run-steer"[^>]*action="\/alice\/engine\/runs\/\w+\/steer"/s,
+      /<form[^>]*class="stack"[^>]*id="run-steer"[^>]*action="\/alice\/engine\/runs\/\w+\/steer"/s,
     );
+    // Plain like the home page's tell box, not a boxed card (#9973).
+    expect(page).not.toMatch(/<form[^>]*class="[^"]*\bcard\b[^"]*"[^>]*id="run-steer"/s);
+    expect(page).toMatch(/<form[^>]*id="run-steer"[^>]*data-api="[^"]+"[^>]*data-running="1"/s);
+    expect(page).toContain('for="steer-text"');
+    // Not shown without an issue to speak on.
+    const bare = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      actorId: scoutId,
+      reason: "assigned",
+    });
+    claimRun(app.db, bare.id);
+    const barePage = await (await get(`/alice/engine/runs/${bare.id}`, writerCookie)).text();
+    expect(barePage).not.toContain('id="run-steer"');
     expect(page).toContain('name="text"');
     expect(page).toContain('formaction="/alice/engine/runs/');
     expect(page).toContain('id="run-stop"');
@@ -564,6 +578,75 @@ describe("working: a run's own page in the studio", () => {
     expect(page).toMatch(/<p class="mt" id="run-summary">/);
     expect(page).not.toContain('class="run-summary"');
     expect(page).not.toContain("run-actions");
+  });
+
+  test("the steer box is a writer's, on an agent run with an issue, never for a reader or a signed-out visitor", async () => {
+    const made = await createRepo(app, alice, {
+      name: "open",
+      visibility: "public",
+      description: "a public app",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    const open = made.value;
+    const seeded = await commitToBranch(app, alice, open, {
+      message: "Start",
+      files: [{ path: "README.md", content: "open\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const tell = openIssue(app, alice, open, { title: "Steer me" });
+    if (!tell.ok) throw new Error(String(tell.error));
+    const mk = (issueId?: string) => {
+      const run = createRun(app.db, {
+        repoId: open.id,
+        kind: "agent",
+        issueId,
+        actorId: scoutId,
+        reason: "assigned",
+      });
+      claimRun(app.db, run.id);
+      return run;
+    };
+    const page = async (id: string, cookie?: string) => {
+      const res = await fetch(`${base}/alice/open/runs/${id}`, {
+        headers: { cookie: `${cookie ?? ""}; forge_mode=studio` },
+        redirect: "manual",
+      });
+      return { status: res.status, text: await res.text() };
+    };
+    const live = mk(tell.value.id);
+    const asWriter = await page(live.id, writerCookie);
+    expect(asWriter.status).toBe(200);
+    expect(asWriter.text).toContain('id="steer-text"');
+    expect(asWriter.text).toContain('id="run-steer"');
+    // A reader of a public repository sees the run, not the box.
+    const asReader = await page(live.id, readerCookie);
+    expect(asReader.status).toBe(200);
+    expect(asReader.text).toContain('data-word=');
+    expect(asReader.text).not.toContain('id="steer-text"');
+    expect(asReader.text).not.toContain('id="run-steer"');
+    const signedOut = await page(live.id);
+    expect(signedOut.status).toBe(200);
+    expect(signedOut.text).toContain('data-word=');
+    expect(signedOut.text).not.toContain('id="steer-text"');
+    expect(signedOut.text).not.toContain('id="run-steer"');
+    // No issue to speak on: no box, even to a writer.
+    const bare = mk();
+    const bareWriter = await page(bare.id, writerCookie);
+    expect(bareWriter.status).toBe(200);
+    expect(bareWriter.text).toContain('data-word=');
+    expect(bareWriter.text).not.toContain('id="steer-text"');
+    // A finished run keeps the box for a writer only, as "tell it for its
+    // next run" (the comment starts a run); a reader never gets it.
+    finishRun(app.db, live.id, { state: "ok", summary: "done" });
+    const over = await page(live.id, writerCookie);
+    expect(over.text).toContain('data-running="0"');
+    expect(over.text).toContain("The run is over");
+    for (const cookie of [readerCookie, undefined]) {
+      const seen = await page(live.id, cookie);
+      expect(seen.status).toBe(200);
+      expect(seen.text).not.toContain('id="steer-text"');
+      expect(seen.text).not.toContain('id="run-steer"');
+    }
   });
 
   test("the cancel form sits in a .bar.mt row for an issue-less agent run and a non-agent run", async () => {

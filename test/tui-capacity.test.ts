@@ -11,10 +11,11 @@ import { createAgent } from "../src/actions/crew.ts";
 import { createApp, type App } from "../src/app.ts";
 import { listEvents } from "../src/core/events.ts";
 import { changeCapacity } from "../src/actions/capacity.ts";
-import { CAPACITY_KEYS, capacityDefault, capacityValue } from "../src/core/capacity.ts";
+import { CAPACITY_KEYS, capacityChanges, capacityDefault, capacityValue } from "../src/core/capacity.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp, forgeCommands } from "../src/tui/forge.ts";
 import { capacityScreen } from "../src/tui/screens/capacity.ts";
+import { EGRESS_REPORTED } from "../src/system/egress_line.ts";
 import { handover } from "../src/release/swap.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -31,8 +32,8 @@ let bot: User;
 const identity = (user?: User) => ({ sshUsername: user?.username ?? "git", remoteAddress: "127.0.0.1", fingerprint: "SHA256:test", user });
 const crew = () => capacityValue(app.db, "crew.concurrency");
 
-function boot(user: User) {
-  const { app: tui, session } = createForgeApp(app, identity(user), { terminal: headlessTerminal(140, 40), exitHooks: false });
+function boot(user: User, rows = 40) {
+  const { app: tui, session } = createForgeApp(app, identity(user), { terminal: headlessTerminal(140, rows), exitHooks: false });
   tui.start();
   tui.ctx.push(capacityScreen(session, tui.ctx));
   const press = async (...keys: string[]) => {
@@ -86,6 +87,56 @@ describe("tui capacity", () => {
     h.stop();
   });
 
+  test("egress in report mode is one row after the guards; enforced, there is none (#10699)", async () => {
+    const egressShown = async () => {
+      const h = boot(carol, 80);
+      await h.press();
+      const text = h.text();
+      h.stop();
+      expect(text).toContain("Crew runs at once");
+      return text.includes(EGRESS_REPORTED);
+    };
+    try {
+      expect(await egressShown()).toBe(false);
+      expect(changeCapacity(app, carol, "cells.egress", "report", "a test says why").ok).toBe(true);
+      expect(await egressShown()).toBe(true);
+      expect(changeCapacity(app, carol, "cells.egress", "enforce").ok).toBe(true);
+      expect(await egressShown()).toBe(false);
+    } finally {
+      changeCapacity(app, carol, "cells.egress", null);
+    }
+  });
+
+  test("cells.egress to report asks why in the terminal, keeps it with who; enforce asks nothing (#10778)", async () => {
+    const egress = () => capacityValue(app.db, "cells.egress");
+    const h = boot(carol, 60);
+    try {
+      for (let i = 0; i < CAPACITY_KEYS.indexOf("cells.egress"); i++) await h.press("j");
+      await h.press("e");
+      for (let i = 0; i < 10; i++) await h.press("backspace");
+      await h.press(..."report", "enter");
+      expect(h.text()).toContain("Why set cells.egress to report?");
+      await h.press("enter");
+      expect(h.text()).toContain("Say why");
+      await h.press(..."lab move", "enter");
+      expect(h.text()).toContain("why: lab move");
+      await h.press("left", "enter");
+      expect(egress()).toBe("report");
+      const kept = capacityChanges(app.db)[0]!;
+      expect([kept.actorName, kept.reason]).toEqual(["carol", "lab move"]);
+
+      await h.press("e");
+      for (let i = 0; i < 10; i++) await h.press("backspace");
+      await h.press(..."enforce", "enter");
+      expect(h.text()).not.toContain("Why set");
+      await h.press("left", "enter");
+      expect(egress()).toBe("enforce");
+    } finally {
+      h.stop();
+      changeCapacity(app, carol, "cells.egress", null);
+    }
+  });
+
   test("a crew concurrency below its ceiling is marked, and not at it", async () => {
     const ceiling = capacityDefault("crew.concurrency");
     try {
@@ -134,14 +185,15 @@ describe("tui capacity", () => {
     h.stop();
   });
 
-  test("queue.depth, which the page sets, changes after a confirm", async () => {
+  test("queue.depth follows Speed: an edit there changes nothing", async () => {
+    const before = capacityValue(app.db, "queue.depth");
     const h = boot(carol);
     for (let i = 0; i < CAPACITY_KEYS.indexOf("queue.depth"); i++) await h.press("j");
     await h.press("e");
     for (let i = 0; i < 4; i++) await h.press("backspace");
-    await h.press("4", "enter");
+    await h.press("9", "enter");
     await h.press("left", "enter");
-    expect(capacityValue(app.db, "queue.depth")).toBe("4");
+    expect(capacityValue(app.db, "queue.depth")).toBe(before);
     h.stop();
   });
 

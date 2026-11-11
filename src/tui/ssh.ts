@@ -15,9 +15,12 @@ import { holdOpen } from "../http/caller.ts";
 import { join } from "node:path";
 import type { App as Forge } from "../app.ts";
 import { findKeyByFingerprint, touchKey } from "../core/keys.ts";
-import { canRead, canWrite, getRepo } from "../core/repos.ts";
+import { canRead, canWrite, getRepo, type Repo } from "../core/repos.ts";
+import { redirectFor } from "../core/transfer.ts";
+import { sshCloneUrl } from "../ssh/command.ts";
 import { getUserById, isActive, type User } from "../core/users.ts";
 import { createRepo, repositoryLimitMessage, resolveOwner } from "../actions/repos.ts";
+import { isPacksMirror, MIRROR_PUSH_REFUSED } from "../packs/owner.ts";
 import { hookEnv } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
 import { pushCap, storageChanged, storageRefusal, storageRefusedText, storageSentence } from "../core/storage.ts";
@@ -289,6 +292,20 @@ export async function serveGitCommand(
 
   const write = parsed.service === "git-receive-pack";
   let repo = getRepo(forge.db, parsed.owner, parsed.name);
+  // A path a move left behind (#570): SSH has no redirect, so a fetch is
+  // served from the new place with one line naming the new remote, and a
+  // push is refused with that line — never applied, never push-to-create
+  // taking the old path back by accident. Someone who cannot read the
+  // repository gets the "not found" below, as for any missing path.
+  const moved = repo === undefined ? redirectFor(forge.db, parsed.owner, parsed.name) : undefined;
+  if (moved !== undefined && canRead(forge.db, moved, user)) {
+    session.writeStderr(`forge: ${movedLine(forge, parsed, moved, write)}${CRLF}`);
+    if (write) {
+      session.exit(1);
+      return;
+    }
+    repo = moved;
+  }
   if (!repo && write && user) {
     // Push-to-create, the same rule as smart HTTP: an authed owner (or org
     // writer) pushing to a repo that does not exist makes it.
@@ -316,6 +333,12 @@ export async function serveGitCommand(
       session.exit(1);
       return;
     }
+  }
+
+  if (write && repo !== undefined && isPacksMirror(repo) && canRead(forge.db, repo, user)) {
+    session.writeStderr(`forge: ${MIRROR_PUSH_REFUSED}${CRLF}`);
+    session.exit(1);
+    return;
   }
 
   const allowed =
@@ -361,6 +384,20 @@ export async function serveGitCommand(
 
   await runGitService(dir, parsed.service, session, { env });
   if (write) storageChanged(forge, repo.ownerId);
+}
+
+/** The one stderr line a moved repository's old SSH path answers with. */
+export function movedLine(
+  forge: Forge,
+  from: { owner: string; name: string },
+  to: Repo,
+  push: boolean,
+): string {
+  const path = `${to.ownerName}/${to.name}`;
+  const remote = sshCloneUrl(forge, to.ownerName, to.name) ?? path;
+  return push
+    ? `${from.owner}/${from.name} moved to ${path}. Nothing was pushed: run git remote set-url origin ${remote} and push again.`
+    : `${from.owner}/${from.name} moved to ${path}; fetching from there. Point the remote at it: git remote set-url origin ${remote}`;
 }
 
 export interface ForgeSshOptions {

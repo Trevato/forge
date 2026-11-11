@@ -37,7 +37,7 @@ export function backupsLineHtml(ctx: Ctx): Html {
 export function nightlyHtml(ctx: Ctx): Html {
   const lines = nightlyLines(ctx.app.config.dataDir);
   return html`<ul id="nightly" class="muted">
-    ${JOBS.map((job, i) => html`<li>${lines[i] ?? ""} <a href="${runPath(job.name)}">Output</a></li>`)}
+    ${JOBS.map((job, i) => html`<li data-nav tabindex="-1">${lines[i] ?? ""} <a href="${runPath(job.name)}">Output</a></li>`)}
     ${lines.slice(JOBS.length).map((line) => html`<li>${line}</li>`)}
   </ul>`;
 }
@@ -58,9 +58,15 @@ export function nightlyOutputPage(ctx: Ctx): Response {
     </div>
     ${output === undefined
       ? html`<p id="nightly-output" class="muted">No output here yet: it has not run on this forge.</p>`
-      : html`<pre id="nightly-output" class="card mono" tabindex="0" aria-label="Output">${output}</pre>`}`;
-  return page({ ctx, title: `${job.name} · Resilience`, body });
+      : html`<pre id="nightly-output" class="muted mono" tabindex="0" aria-label="Output">${output}</pre>`}`;
+  return page({ ctx, title: `${job.name} · Resilience`, body, styleCss: NIGHTLY_OUTPUT_CSS });
 }
+
+/**
+ * A night's output is plain muted lines, no card (#9974): a long line
+ * scrolls sideways inside the `pre`, never the page, at 390 px.
+ */
+export const NIGHTLY_OUTPUT_CSS = `pre#nightly-output { max-width: 100%; overflow-x: auto; scrollbar-width: thin; margin: 0; }`;
 
 /**
  * A protection is a sentence from THREATS.md and its test a path, so inside

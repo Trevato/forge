@@ -80,7 +80,7 @@ test("a recorded run's thinking, steps and links are drawn under the reply", asy
   const at = turns.findIndex((t) => t.role === "agent");
   const reply = turnHtml(turns[at]!, new Set(), undefined, undefined, workBefore(turns, at, lookupFrom(app.db))).text;
   // The read with a bad repo and path still counts as a file read, with no link.
-  expect(reply).toContain("read 3 files, opened #12");
+  expect(reply).toContain("Read 3 files, opened #12");
   expect(reply).toContain('href="/alice/x/blob/main/src/a.ts"');
   expect(reply).toContain('href="/alice/x/issues/12"');
   expect(reply).not.toContain("evil");
@@ -166,12 +166,12 @@ test("the stream draws a reply with the same steps and links as the page", async
   const at = turns.findIndex((t) => t.id === reply.value.id);
   const drawn = turnHtml(reply.value, new Set(), undefined, undefined, live).text;
   expect(drawn).toBe(turnHtml(reply.value, new Set(), undefined, undefined, workBefore(turns, at, lookupFrom(app.db))).text);
-  expect(drawn).toContain("opened #7");
+  expect(drawn).toContain("Opened #7");
   expect(drawn).toContain('href="/alice/x/issues/7"');
   // The wire: a client resuming from the person's turn is sent the reply drawn the same way.
   const person = turns[at - 2]!;
   const wire = await (await fetch(`${servers.url}/talk/stream?after=${person.id}`, { headers: { cookie } })).text();
-  expect(wire).toContain("opened #7");
+  expect(wire).toContain("Opened #7");
 });
 
 test("the API's agent turns carry the steps and links for the terminal", async () => {

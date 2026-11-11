@@ -187,6 +187,30 @@ export class ForgeApi {
     return ok(parsed as T);
   }
 
+  /**
+   * One MCP tool call (`POST /mcp`, tools/call): the tool's JSON answer, or
+   * the forge's words when it refused.
+   */
+  async tool(name: string, args: Record<string, unknown>): Promise<ApiResult<unknown>> {
+    const got = await this.call<{ result?: { content?: { text?: unknown }[]; isError?: boolean }; error?: { message?: unknown } }>(
+      "/mcp",
+      {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
+      },
+    );
+    if (!got.ok) return got;
+    const text = got.value.result?.content?.[0]?.text;
+    if (typeof text !== "string")
+      return err({ code: "bad_response", message: String(got.value.error?.message ?? "unexpected answer"), status: 200 });
+    if (got.value.result?.isError === true) return err({ code: "tool", message: text, status: 400 });
+    try {
+      return ok(JSON.parse(text) as unknown);
+    } catch {
+      return err({ code: "bad_response", message: "the answer was not JSON", status: 200 });
+    }
+  }
+
   async whoami(): Promise<ApiResult<Whoami>> {
     const out = await this.call<{ username?: string; displayName?: string }>(
       "/api/v1/user",

@@ -142,6 +142,12 @@ export function listKeeperReleases(db: Database, limit = 20): KeeperRelease[] {
   return db.query<Row, [number]>(`SELECT * FROM keeper_release ORDER BY id DESC LIMIT ?1`).all(limit).map(toRelease);
 }
 
+/** The keeper's newest row for one sha, whatever its age; undefined when it never cut it. */
+export function keeperReleaseOfSha(db: Database, sha: string): KeeperRelease | undefined {
+  const row = db.query<Row, [string]>(`SELECT * FROM keeper_release WHERE sha = ?1 ORDER BY id DESC LIMIT 1`).get(sha);
+  return row === null ? undefined : toRelease(row);
+}
+
 /** The release the keeper has not finished with, if any. */
 export function inFlight(db: Database): KeeperRelease | undefined {
   const row = db

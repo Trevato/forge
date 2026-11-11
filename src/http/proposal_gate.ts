@@ -18,7 +18,7 @@ import { getRepoById } from "../core/repos.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
 import { PROPOSAL_BODY_MAX, pullProposalOf } from "../core/proposal_token.ts";
 import type { Auth } from "./context.ts";
-import { apiError } from "./respond.ts";
+import { apiError, tryAgain } from "./respond.ts";
 
 const limiters = new WeakMap<App, RateLimiter>();
 
@@ -72,10 +72,11 @@ export function proposalGate(
   }
   const verdict = proposalLimiter(app).take(proposal.tokenId, "rw");
   if (!verdict.allowed)
-    return apiError(
+    return tryAgain(
       "rate_limited",
       429,
       `too many proposals: ${verdict.limit} per minute per token — retry in ${verdict.retryAfter}s`,
+      verdict.retryAfter,
     );
 
   if (method === "GET" && path === `${at}/info/refs`) {

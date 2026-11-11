@@ -44,6 +44,7 @@ import { isSafeOid, isSafeRef } from "../git/guard.ts";
 import { aheadCount, mergeBase, mergeable, resolveOid, writeRef } from "../git/merge.ts";
 import { REMOTE_PROTOCOLS } from "../git/remote-env.ts";
 import { repoDir } from "../git/repos.ts";
+import { isPacksMirror } from "../packs/owner.ts";
 import {
   BIG_FOLD_COMMITS,
   ownHost,
@@ -412,6 +413,16 @@ async function checkTarget(app: App, repo: Repo, follow: Target): Promise<Result
   }
   const staged = await resolveOid(dir, ref);
   if (staged === undefined) return failed("git");
+  // A packs mirror is a copy, not a fork: its default branch is the upstream's, moved, never proposed.
+  if (follow.sourceId === undefined && isPacksMirror(repo)) {
+    if (
+      (await resolveOid(dir, `refs/heads/${repo.defaultBranch}`)) !== staged &&
+      !(await writeRef(dir, `refs/heads/${repo.defaultBranch}`, staged))
+    )
+      return failed("git", "The mirror's branch could not be moved.");
+    follow.note({ at, tip: staged, behind: 0, error: "" });
+    return ok({ tip: staged, behind: 0, outcome: "none" });
+  }
   const main = await resolveOid(dir, `refs/heads/${repo.defaultBranch}`);
   if (main === undefined) return failed("git", "The default branch has no commits yet.");
   const behind = await aheadCount(dir, main, staged);

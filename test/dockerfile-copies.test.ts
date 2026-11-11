@@ -36,4 +36,9 @@ describe("what the Dockerfile copies reaches the build", () => {
       expect(existsSync(join(ROOT, path))).toBe(true);
       expect(ignored(lines(".dockerignore"), path)).toBe(false);
     });
+
+  // The packs are forge repos read from git (#10532): no folder of them rides in the image.
+  test("no packs folder is copied: /packs reads the marked repos", () => {
+    expect(copied).not.toContain("packs");
+  });
 });

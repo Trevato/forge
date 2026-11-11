@@ -227,8 +227,8 @@ describe("detach from parent", () => {
     const fork = ok(await forkRepo(app.db, app.reposRoot, secret, forker.id, `kept${n}`));
     const forkDir = repoDir(app.reposRoot, fork.ownerName, fork.name);
     const name = `${secret.ownerName}/${secret.name}`;
-    const { detachCard } = await import("../src/web/pages/detach.ts");
-    const card = String(detachCard(app.db, fork, forker));
+    const { detachSection } = await import("../src/web/pages/detach.ts");
+    const card = String(detachSection(app.db, fork, forker));
     expect(card).toContain("its parent");
     expect(card).not.toContain(secret.name);
 

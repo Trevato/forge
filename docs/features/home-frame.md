@@ -43,3 +43,7 @@ Tests: `test/home-frame.test.ts` (thousands of issues; p95 of the server's own
 time after a write under 50 ms; first response under 100 KB uncompressed),
 `test/home-memory.test.ts`. Tests that write and then read home use
 `test/helpers/home-fresh.ts`, which does what the page's script does.
+
+## An empty timeline
+
+A signed-in person whose timeline has nothing in it sees one line under the tell box, the named `empty` component with a title only: "Nothing yet. Tell the crew what to build." (`EMPTY_FEED`, `src/web/studio/feed.ts`). The tell box is already first on the page, so no field steals focus (a phone keyboard would cover the sentence). The terminal's Feed screen draws the same constant.

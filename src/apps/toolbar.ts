@@ -13,7 +13,8 @@
 
 import { staticResponse } from "../web/asset.ts";
 import { sha256 } from "../kernel/hash.ts";
-import { NOTE_EMPTY, NOTE_FAILED } from "./note_words.ts";
+import { CHECK_WORDS, type PillCheck } from "./pill_check.ts";
+import { NOTE_EMPTY, NOTE_FAILED, NOTE_OFFLINE, NOTE_WAIT } from "./note_words.ts";
 
 /** What the panel says about a preview's freshness (#9111): the pill's words, in one table. */
 export const FRESHNESS_WORDS = {
@@ -23,8 +24,8 @@ export const FRESHNESS_WORDS = {
   behind: "Shows an older push than the pull's newest",
 } as const;
 
-/** The client, as plain source: no `eval`, no inline handlers. */
-export const toolbarJs = `(function () {
+/** The client, as plain source: no `eval`, no inline handlers. Its comments are for readers here. */
+const toolbarSource = `(function () {
   if (window.__forgeToolbar) return;
   window.__forgeToolbar = true;
   var me = document.currentScript;
@@ -32,6 +33,12 @@ export const toolbarJs = `(function () {
   var fo = "";
   try { fo = new URL((me.dataset || {}).forge || "").origin; } catch (e) {}
   var home = fo ? fo + "/" : "/";
+  // Back to the forge page the visitor left: only a referrer on the forge's own origin counts.
+  var back = home;
+  try {
+    var ref = new URL(document.referrer);
+    if (fo && ref.origin === fo && (ref.protocol === "https:" || ref.protocol === "http:")) back = ref.origin + ref.pathname + ref.search;
+  } catch (e) {}
   var host = document.createElement("div");
   host.id = "forge-toolbar";
   host.style.cssText = "all:initial;position:fixed;z-index:2147483647";
@@ -79,7 +86,7 @@ export const toolbarJs = `(function () {
     panel.appendChild(el);
   }
   if (d.app) line(d.app, true);
-  if (d.env === "production") line("Production");
+  if (d.env === "production") line("production");
   var LS = "color:#8ab4ff;text-decoration:none;display:flex;align-items:center;min-height:44px";
   var pullHref = "";
   // The pull this preview shows, one tap away: built from the script's own origin, never from page text.
@@ -89,13 +96,15 @@ export const toolbarJs = `(function () {
   if (d.env === "production") {}
   else if (pullHref) {
     var pl = document.createElement("a");
-    pl.textContent = "Preview of pull #" + d.pull;
+    pl.textContent = "preview \\u00b7 #" + d.pull;
     pl.href = pullHref;
     pl.rel = "noopener";
     pl.style.cssText = LS;
     panel.appendChild(pl);
-  } else if (d.pull) line("Preview of pull #" + d.pull);
+  } else if (d.pull) line("preview \\u00b7 #" + d.pull);
   if (d.title) line(d.title);
+  var CW = ${JSON.stringify(CHECK_WORDS)};
+  if (d.env !== "production" && d.check && Object.prototype.hasOwnProperty.call(CW, d.check)) line(CW[d.check]);
   // Whether this is the pull as it stands now; an open, current preview says nothing.
   var W = ${JSON.stringify(FRESHNESS_WORDS)};
   var freshness = d.state === "merged" ? W.merged
@@ -109,7 +118,7 @@ export const toolbarJs = `(function () {
   link.style.cssText = LS;
   var hasHome = false;
   try {
-    var target = new URL(home);
+    var target = new URL(back);
     if (target.origin === fo) { link.href = target.href; hasHome = true; }
   } catch (e) {}
   // Tell the builders: one box, one button, no account. The note goes to
@@ -188,20 +197,39 @@ export const toolbarJs = `(function () {
       st.style.cssText = "opacity:.85";
       row.appendChild(t);
       row.appendChild(st);
-      try {
-        var u = new URL(n.url);
-        if (u.origin === forgeOrigin) {
-          var al = document.createElement("a");
-          al.textContent = "See it";
-          al.href = u.href;
-          al.target = "_blank";
-          al.rel = "noopener";
-          al.style.cssText = "color:#8ab4ff";
-          row.appendChild(al);
-        }
-      } catch (e) {}
+      var all = Array.isArray(n.replies) ? n.replies : [];
+      // Only the latest few, so a long thread cannot push the panel off a phone; the rest is on the issue.
+      var shown = all.slice(-5);
+      if (all.length > shown.length) {
+        var more = document.createElement("div");
+        more.textContent = (all.length - shown.length) + " earlier on the forge";
+        more.style.cssText = "opacity:.85;margin-top:2px";
+        row.appendChild(more);
+      }
+      shown.forEach(function (r) {
+        var rr = document.createElement("div");
+        rr.textContent = String(r.by) + " (" + String(r.at).slice(0, 16).replace("T", " ") + "): " + String(r.text);
+        rr.style.cssText = "margin-top:2px;padding-left:6px;border-left:2px solid #444c56;white-space:pre-wrap;max-height:8em;overflow:auto";
+        row.appendChild(rr);
+      });
+      var al = n.url && link(n.url, "See it");
+      if (al) row.appendChild(al);
       mine.appendChild(row);
     });
+  }
+  function link(u, text) {
+    try {
+      var l = new URL(u), el = document.createElement("a");
+      if (l.origin !== forgeOrigin) return null;
+      el.textContent = text; el.href = l.href; el.target = "_blank"; el.rel = "noopener"; el.style.color = "#8ab4ff";
+      return el;
+    } catch (e) { return null; }
+  }
+  function filed(n) {
+    if (!n || typeof n.number !== "number") return;
+    var t = "Filed as #" + n.number, a = n.url && link(n.url, t), r = n.repoUrl && link(n.repoUrl, "The repository");
+    tellSay.append(" ", a || t);
+    if (r) tellSay.append(" ", r);
   }
   function refresh(sent) {
     call("/__forge/notes", { credentials: "same-origin", cache: "no-store" })
@@ -256,6 +284,18 @@ export const toolbarJs = `(function () {
       } catch (e) { end(); }
     });
   }
+  // The last few console errors: message text only, cut short here and again on the server.
+  var errs = [];
+  function noted(m) { errs.push(String(m).slice(0, 200)); if (errs.length > 5) errs.shift(); }
+  if (window.addEventListener) {
+    window.addEventListener("error", function (e) { noted(e && e.message); });
+    window.addEventListener("unhandledrejection", function (e) { var r = e && e.reason; noted(r && r.message ? r.message : r); });
+  }
+  var logged = typeof console === "object" && console ? console.error : null;
+  if (logged) console.error = function () {
+    try { noted(Array.prototype.map.call(arguments, function (a) { return a && a.message ? a.message : typeof a === "string" ? a : ""; }).join(" ")); } catch (x) {}
+    return logged.apply(console, arguments);
+  };
   tellBox.addEventListener("submit", function (e) {
     e.preventDefault();
     var text = tellText.value.trim();
@@ -272,9 +312,9 @@ export const toolbarJs = `(function () {
         method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text: text, page: location.href, viewport: window.innerWidth + "x" + window.innerHeight })
+        body: JSON.stringify({ text: text, page: location.href, viewport: window.innerWidth + "x" + window.innerHeight, errors: errs.slice(-5) })
       })
-        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (r) { return r.json().catch(function () { return null; }).then(function (j) { return { ok: r.ok, s: r.status, w: r.headers.get("retry-after"), j: j }; }); })
         .then(function (a) {
           if (!a.ok || !blob || !a.j || !a.j.note || !a.j.note.id) return { a: a, pic: false };
           return call("/__forge/note/picture?note=" + encodeURIComponent(a.j.note.id), {
@@ -292,11 +332,12 @@ export const toolbarJs = `(function () {
           tellText.value = "";
           tellPic.checked = false;
           tellSay.textContent = wantPicture && x.pic !== true ? "Sent, without the picture. The builders will see it." : "Sent. The builders will see it.";
+          filed(a.j && a.j.note);
           refresh(true);
         }
-        else tellSay.textContent = a.j && a.j.message ? a.j.message : ${JSON.stringify(NOTE_FAILED)};
+        else tellSay.textContent = a.s === 429 && +a.w > 0 ? ${JSON.stringify(NOTE_WAIT[0])} + Math.ceil(+a.w) + ${JSON.stringify(NOTE_WAIT[1])} : a.j && a.j.message ? a.j.message : ${JSON.stringify(NOTE_FAILED)};
       })
-      .catch(function () { idle(); tellSay.textContent = ${JSON.stringify(NOTE_FAILED)}; });
+      .catch(function () { idle(); tellSay.textContent = navigator.onLine === false ? ${JSON.stringify(NOTE_OFFLINE)} : ${JSON.stringify(NOTE_FAILED)}; });
   });
   var poll = 0;
   function watch(open) {
@@ -439,6 +480,10 @@ export const toolbarJs = `(function () {
   }
   pill.addEventListener("pointerup", drop);
   pill.addEventListener("pointercancel", drop);
+  var sr = document.createElement("div");
+  sr.setAttribute("role", "status");
+  sr.style.cssText = "position:absolute;opacity:0";
+  box.appendChild(sr);
   pill.addEventListener("keydown", function (e) {
     var t = corner.charAt(0), l = corner.charAt(1);
     if (e.key === "ArrowLeft") l = "l";
@@ -447,8 +492,10 @@ export const toolbarJs = `(function () {
     else if (e.key === "ArrowDown") t = "b";
     else return;
     e.preventDefault();
+    if (t + l === corner) return;
     place(t + l);
     store(KEY, corner);
+    sr.textContent = "Moved to the " + (t > "b" ? "top " : "bottom ") + (l > "m" ? "right" : "left");
   });
   // An inline display beats the UA [hidden] rule, so display carries the state.
   function ring(b) {
@@ -518,6 +565,9 @@ export const toolbarJs = `(function () {
 })();
 `;
 
+/** What is served: the source without its whole-line comments, so the notes cost the pill none of its 24 KB (#10869). */
+export const toolbarJs = toolbarSource.replace(/^[ \t]*\/\/[^\n]*\n/gm, "");
+
 const hash = sha256(toolbarJs);
 const name = `toolbar-${hash.slice(0, 16)}`;
 
@@ -586,6 +636,8 @@ export type PillWhere = {
   behind?: boolean;
   /** A newer commit is being deployed now. */
   deploying?: boolean;
+  /** The newest check of the pull's head, a key of `CHECK_WORDS`. */
+  check?: PillCheck;
 };
 
 /** `text` safe inside a double-quoted HTML attribute. */
@@ -634,6 +686,7 @@ export function toolbarTag(
           ["pull", where.pull === undefined ? undefined : String(where.pull)],
           ["title", where.title],
           ["state", where.state],
+          ["check", where.check],
           ["behind", where.behind === true ? "1" : undefined],
           ["deploying", where.deploying === true ? "1" : undefined],
         ]
@@ -658,7 +711,19 @@ function lastBodyClose(buffer: Buffer): number {
   return -1;
 }
 
-/** `bytes` with the pill's tag before the last `</body>`, or at the end. */
+/** The opening of the tag the proxy writes, with the hashed name: what a page that has the toolbar contains. */
+const TAG_OPEN = Buffer.from(`<script src="${TOOLBAR_ASSET_PATH}"`);
+
+/**
+ * Whether a page already carries this toolbar's tag (a page served through two
+ * forges, or cached with one). A byte search for the exact tag opening: a page
+ * that only quotes the path in its text does not match, and nothing is decoded.
+ */
+export function carriesToolbar(bytes: Uint8Array): boolean {
+  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).includes(TAG_OPEN);
+}
+
+/** `bytes` with the pill's tag before the last `</body>`, or at the end; a page that has one is returned as it is. */
 export function withToolbar(
   bytes: Uint8Array,
   forgeUrl: string,
@@ -666,6 +731,7 @@ export function withToolbar(
   proof?: string,
   nonce?: string,
 ): Uint8Array<ArrayBuffer> {
+  if (carriesToolbar(bytes)) return new Uint8Array(bytes);
   const tag = Buffer.from(toolbarTag(forgeUrl, where, proof, nonce));
   const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const at = lastBodyClose(buffer);

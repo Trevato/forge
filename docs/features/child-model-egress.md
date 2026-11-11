@@ -8,3 +8,22 @@ A child forge that runs in a cell (`src/spawn/cell.ts`) could reach its parent a
 - **When it applies:** on the next child cell started. A running child keeps the list it started with.
 
 A hosted child (one that runs inside its parent's process) is not changed by this: it still has no crew runner.
+
+## The package registries
+
+A child cell could not reach a package registry either, so its checks failed filling the install cache. `children.registryEgress` (`FORGE_CHILDREN_REGISTRY_EGRESS`) is `off` by default:
+
+- `npm` opens `registry.npmjs.org`.
+- `build` opens what ordinary app builds fetch from: `registry.npmjs.org`, `registry.yarnpkg.com`, `pypi.org`, `files.pythonhosted.org`, `github.com`, `codeload.github.com`, `objects.githubusercontent.com` (git dependencies and release tarballs), `crates.io`, `static.crates.io`, `proxy.golang.org` and `sum.golang.org`.
+
+Each host is named exactly, on port 443 alone, with no wildcards. It is enforced the same way and applies from the next child cell started.
+
+## Cells inside a child
+
+A child forge opens cells of its own for its checks, apps and install steps. Those cells' proxy cannot dial out, since the child's cell has no route but its own proxy, so it tunnels through that proxy with `CONNECT` (`upstream` in `src/apps/egress.ts`). A host opens only when both policies allow it: the step's own egress, and the child cell's list above. Names are resolved and checked by the child cell's proxy.
+
+## Payment providers
+
+`children.paymentEgress` (`FORGE_CHILDREN_PAYMENT_EGRESS`) is `stripe` by default: a child's cell may reach `api.stripe.com` on 443, so an app a customer builds can take a payment. It is only the cell's ceiling: a cell the child opens for an app passes the host only when that app's `forge.json` `egress` declares it, and the crew's sandbox declares none. `off` closes it. Applies from the next child cell started.
+
+Payment hosts are enforce-only in every cell's own proxy (`decide` in `src/apps/egress.ts`): even when the child forge's `cells.egress` is `report`, an app that does not declare `api.stripe.com` is refused it.

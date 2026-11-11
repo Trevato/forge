@@ -83,8 +83,8 @@ test("render does not include the time already named as errors", async () => {
 // A warm answer costs a fixed, small number of SQL statements (#9725): work is
 // counted, not timed (#7824), so a regression — an N+1 over the settings or
 // the change history, a lost cache — fails every run, not a lucky one.
-// 58 warm today, 59 once a setting is away from its default; the rest is margin.
-const WARM_STATEMENTS = 64;
+// 59 warm today (one more with the week.use setting), 60 once a setting is away from its default; the rest is margin.
+const WARM_STATEMENTS = 69; // +1: the header Talk count (#10327)
 
 test("a warm capacity page costs a bounded number of statements, however many changes it lists", async () => {
   const url = `${servers.url}/settings/capacity`;

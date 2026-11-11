@@ -37,11 +37,11 @@ import {
   type ParentReleases,
 } from "../../core/parent_releases.ts";
 import { running } from "../../kernel/version.ts";
-import { modeForm } from "./chain.ts";
-import type { FollowMode } from "../../spawn/chain.ts";
+import { FOLLOW_SWITCH_LABELS, followModeWords } from "../../actions/follow_words.ts";
+import type { ForkFollowMode } from "../../core/fork_follow.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { convergeWords, followModeOf, takeOrTell, takeWords } from "../../actions/follow.ts";
-import { FOLLOWS_NOTHING, proposeRefusalWords } from "../../actions/follow_words.ts";
+import { FOLLOW_WORD, FOLLOWS_NOTHING, proposeRefusalWords } from "../../actions/follow_words.ts";
 import { openProposal, proposeUpstream } from "../../actions/upstream.ts";
 import { proposesViaFork } from "../../origins/fork-route.ts";
 import { field, readForm } from "../form.ts";
@@ -54,13 +54,17 @@ import { disconnectedOn } from "./frozen.ts";
  * The family as a tree: nested lists, so the nesting a sighted reader sees
  * as indentation is the nesting a screen reader announces, and a phone
  * never has to scroll sideways to follow it. The repository being looked at
- * is marked, and every fork carries its standing against its own parent.
+ * is marked "you are here", the viewer's other forks say "you", and every
+ * fork carries its standing against its own parent.
  */
-export function lineageCard(lineage: Lineage, hereId: string): Html {
+export function lineageCard(lineage: Lineage, hereId: string, viewerId?: string): Html {
   const node = (n: LineageNode, depth: number): Html => {
     const here = n.repo.id === hereId;
     const trail = [
       here ? badge("you are here", { variant: "outline" }) : null,
+      // The viewer's own forks say "you" in words. aria-current stays on the one row being looked at.
+      !here && viewerId !== undefined && n.repo.ownerId === viewerId ? badge("you", { variant: "outline" }) : null,
+      n.mode === undefined ? null : html`<span class="muted small">${FOLLOW_WORD[n.mode]}</span>`,
       n.relation === undefined ? null : relationBadge(n.relation),
     ].filter((t): t is Html => t !== null);
     return row({
@@ -95,7 +99,7 @@ export interface Following {
   /** The parent forge's releases, when this forge names a parent forge. */
   readonly releases: { url: string; view: ParentReleases } | undefined;
   /** How this repository follows its parent (`followModeOf`). */
-  readonly mode: FollowMode;
+  readonly mode: ForkFollowMode;
 }
 
 /** Everything the card needs, for a repo that follows something. */
@@ -187,8 +191,8 @@ export function relationBadge(relation: ForkRelation): Html {
         : relation.state === "ahead"
           ? [`${relation.ahead} ahead`, "default"]
           : relation.clean
-            ? ["diverged · merges cleanly", "attn"]
-            : ["diverged", "attn"];
+            ? [`diverged · ${relation.ahead} ahead · ${relation.behind} behind · merges cleanly`, "attn"]
+            : [`diverged · ${relation.ahead} ahead · ${relation.behind} behind`, "attn"];
   return badge(text, { tone });
 }
 
@@ -228,7 +232,8 @@ export function followingCard(
   ctx: Ctx,
   repo: Repo,
   following: Following,
-  o: { bare?: boolean } = {},
+  /** `bare` drops the card's margin; `family: false` drops the link to the forks page, for the forks page itself. */
+  o: { bare?: boolean; family?: boolean } = {},
 ): Html {
   const { relation, converge } = following;
   const parent = relation.parent;
@@ -292,7 +297,7 @@ export function followingCard(
                   icon: "fork",
                   title: `Your account can only read ${parent.ownerName}/${parent.name}'s origin, or its operator protects it: the change goes to your own fork there, and the pull opens from it`,
                 })
-              : btn("Propose upstream", {
+              : btn("Offer this change", {
                   size: "sm",
                   type: "submit",
                   icon: "merge",
@@ -371,9 +376,21 @@ export function followingCard(
   if (parent.detached === null && relation.action !== "none")
     prose.push(html`<p class="muted small">${relation.words}</p>`);
   if (foot !== null) prose.push(html`<p class="muted small">${foot}</p>`);
-  if (canAdmin(ctx.app.db, repo, ctx.auth.user) && writer)
-    prose.push(modeForm(base, following.mode, "How this fork follows its parent"));
-  if (followers > 0)
+  const words = followModeWords(following.mode, parentName);
+  prose.push(
+    html`<p data-follow-mode="${following.mode}">
+      <strong>${words.line}</strong>.
+      ${canAdmin(ctx.app.db, repo, ctx.auth.user) && writer
+        ? words.others.map((m) =>
+            btn(FOLLOW_SWITCH_LABELS[m], {
+              href: `/-/confirm?to=${encodeURIComponent(`${base}/following/mode/${m}`)}`,
+              size: "sm",
+            }),
+          )
+        : null}
+    </p>`,
+  );
+  if (followers > 0 && o.family !== false)
     rows.push(
       row({
         href: `${base}/forks`,

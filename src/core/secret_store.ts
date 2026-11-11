@@ -136,6 +136,8 @@ export interface SecretReader {
   /** Who is asking and for which run, as the audit will say. */
   readonly actor?: string | undefined;
   readonly run?: string | undefined;
+  /** Open without a `secret.read` event or a `last_read_at` stamp; the caller audits what it chooses to. */
+  readonly quiet?: boolean | undefined;
 }
 
 /**
@@ -189,6 +191,10 @@ export function resolveScoped(
           scope,
           reason: opened.error,
         });
+        break;
+      }
+      if (who.quiet === true) {
+        out[name] = { value: opened.value, scope };
         break;
       }
       db.query(

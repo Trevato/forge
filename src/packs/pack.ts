@@ -25,7 +25,7 @@ const FORBIDDEN = /secret|password|token|credential|env|variable|data|key/i;
 export interface PackApp {
   readonly name: string;
   readonly description: string;
-  /** An https address of a public git repository, no credentials in it. */
+  /** An https address of a public git repository, no credentials in it, or `owner/name` of a repository on this forge. */
   readonly source: string;
   readonly branch?: string;
   /** Deploy absorbs the app as a feature, as the deploying admin's act (an event). Only a yes is carried; it sets no setting. */
@@ -55,9 +55,15 @@ const text = (v: unknown, max = MAX_TEXT): string | undefined =>
     ? v.trim()
     : undefined;
 
-/** The source's address if it names a public https repository, else undefined. */
+const FORGE_SOURCE = /^([A-Za-z0-9][A-Za-z0-9._-]{0,99})\/([A-Za-z0-9][A-Za-z0-9._-]{0,99})$/;
+
+/** True when a source names a repository on this forge (`owner/name`) rather than an https address. */
+export const isForgeSource = (source: string): boolean => FORGE_SOURCE.test(source);
+
+/** The source's address if it names a public https repository or a forge repo (`owner/name`), else undefined. */
 export function sourceOf(v: unknown): string | undefined {
   const raw = text(v, 300);
+  if (raw !== undefined && FORGE_SOURCE.test(raw)) return raw;
   const url = raw === undefined ? null : URL.parse(raw);
   if (url === null || url.protocol !== "https:" || url.username !== "" || url.password !== "") return undefined;
   if (url.search !== "" || url.hash !== "") return undefined;

@@ -397,7 +397,7 @@ describe("a frozen mirror is said, and reconnected in one click", () => {
       expect(page).toContain(`>${day}</time>`);
       expect(page).toContain("it has been frozen since");
       // Alice has no origin on that host now: the way back is connecting one.
-      expect(page).toContain("Settings → Origins");
+      expect(page).toContain("Settings → Connected accounts");
       expect(page).toContain("connecting one reconnects this mirror by itself");
     }
     // A reader who cannot administer it reads the sentence, not the form.

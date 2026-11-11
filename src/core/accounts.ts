@@ -32,6 +32,8 @@ export interface AccountRow {
   readonly spentUsd: number;
   readonly suspendedAt: string | null;
   readonly removedAt: string | null;
+  /** Whether a request for this account waits for an answer (\`core/requests.ts\`). */
+  readonly waiting: boolean;
   /** Whether the email is proven (\`core/verify.ts\`); agents always are. */
   readonly verified: boolean;
 }
@@ -58,6 +60,7 @@ export function listAccounts(db: Database): AccountRow[] {
         created_at: string;
         suspended_at: string | null;
         removed_at: string | null;
+        waiting_at: string | null;
         verified_at: string | null;
         repos: number;
         apps: number;
@@ -67,7 +70,7 @@ export function listAccounts(db: Database): AccountRow[] {
       []
     >(
       `SELECT u.id, u.username, u.display_name, u.is_admin, u.is_agent,
-              u.created_at, u.suspended_at, u.removed_at,
+              u.created_at, u.suspended_at, u.removed_at, u.waiting_at,
               (SELECT c.verified_at FROM email_check c WHERE c.user_id = u.id) AS verified_at,
               (SELECT COUNT(*) FROM repo r WHERE r.owner_id = u.id) AS repos,
               (SELECT COUNT(*) FROM app a JOIN repo r ON r.id = a.repo_id
@@ -97,6 +100,7 @@ export function listAccounts(db: Database): AccountRow[] {
       spentUsd: Math.round((r.spent ?? 0) * 100) / 100,
       suspendedAt: r.suspended_at,
       removedAt: r.removed_at,
+      waiting: r.waiting_at !== null && r.removed_at === null,
       verified: r.is_agent === 1 || r.verified_at !== null,
     };
   });

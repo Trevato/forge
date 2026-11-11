@@ -5,4 +5,5 @@ export const route: Route = {
   path: "/api/v1/boards/sources",
   summary: "List the sources a board query reads; answers { sources: [{ name, time, columns, docs? }] }",
   auth: true,
+  role: "admin",
 };

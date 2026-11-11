@@ -10,7 +10,6 @@
 
 import type { App } from "../app.ts";
 import { listAutonomousRepos, type Repo } from "../core/repos.ts";
-import { smallShareWords } from "../crew/autonomy.ts";
 import { admits, heldCounts, heldNow, mapHolds, type Held, type HoldName } from "../crew/held.ts";
 
 export interface HeldRow {
@@ -21,8 +20,6 @@ export interface HeldRow {
   readonly counts: Readonly<Record<HoldName, number>>;
   /** Issues a hot file holds, with the open pulls on that file, oldest first. */
   readonly hot: readonly { readonly number: number; readonly detail: string; readonly pulls: readonly number[] }[];
-  /** `1/2`: small issues in flight of the builder slots they may hold (#7571). */
-  readonly small: string;
 }
 
 /** The most hot-file holds a row lists. */
@@ -53,7 +50,6 @@ export function readHeld(app: App, owner: boolean, now = Date.now()): HeldRow[] 
         public: repo.visibility === "public",
         startable: held.startable.length,
         counts: heldCounts(held),
-        small: smallShareWords(app, repo),
         hot: [...holds].flatMap(([number, h]) =>
           h.by === "hot_file" && h.pulls !== undefined && h.pulls.length > 0
             ? [{ number, detail: h.detail, pulls: h.pulls }]

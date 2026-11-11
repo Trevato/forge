@@ -5,7 +5,10 @@
  * pull title; Enter lists a release's pulls, and Enter on a pull opens it.
  */
 
+import { gather, plainTitle } from "../../story/gather.ts";
 import { forgeChangelog, type ReleaseEntry } from "../../release/changelog.ts";
+import { readLandings } from "../../release/landings.ts";
+import { nearMilestones, nearWords, type Near } from "../../web/pages/milestones_near.ts";
 import { sourceFor } from "../../view/source.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -19,7 +22,7 @@ import { Filter, ListState, ago, drawList, metaOf, type ListRow } from "./common
 
 /** Whether a release's version or any pull it carried names the word. */
 export function releaseMatches(filter: Filter, e: ReleaseEntry): boolean {
-  return filter.matches([e.version, ...e.pulls.map((p) => p.title)].join("\n"));
+  return filter.matches([e.version, ...e.pulls.map((p) => plainTitle(p.title))].join("\n"));
 }
 
 export function changelogRows(entries: readonly ReleaseEntry[]): ListRow[] {
@@ -28,21 +31,45 @@ export function changelogRows(entries: readonly ReleaseEntry[]): ListRow[] {
     meta: metaOf(
       ago(e.date),
       `${e.pulls.length} ${e.pulls.length === 1 ? "pull" : "pulls"}`,
-      e.pulls.map((p) => `#${p.number} ${p.title}`.trim()).join("; "),
+      e.pulls.map((p) => `#${p.number} ${plainTitle(p.title)}`.trim()).join("; "),
     ),
   }));
 }
 
+/** The open milestones as lines above the releases: "name  N of M done", at most `MOST` of them. */
+const MOST = 5;
+export function nearLines(near: readonly Near[]): string[] {
+  return near.slice(0, MOST).map((m) => `${m.name}  ${nearWords(m)}`);
+}
+
 type Repo = { owner: string; name: string };
 
-/** One release's pulls, `#N title`; Enter opens the pull as the changelog's Enter once did. */
-function releasePulls(f: Session, ctx: Ctx, repoRef: Repo, entry: ReleaseEntry): Screen {
+/** Who built a pull, in plain words: "by Scout, with Claude Sonnet 5.5"; empty when the commit says nothing. */
+export function creditWords(by: string | undefined, withNames: readonly string[] | undefined): string {
+  const parts = [by === undefined ? "" : `by ${by}`, withNames === undefined || withNames.length === 0 ? "" : `with ${withNames.join(", ")}`];
+  return parts.filter((p) => p !== "").join(", ");
+}
+
+type Pull = ReleaseEntry["pulls"][number];
+
+/** A release's pulls as lines: pulls of one shape gathered ("Keys on … · 9 pulls"), the rest `#N title`. */
+export function pullLines(pulls: readonly Pull[], credits: ReadonlyMap<number, string>): { row: ListRow; pulls: readonly Pull[] }[] {
+  return gather(pulls).map((g) =>
+    g.landings.length === 1
+      ? { row: { title: `#${g.landings[0]!.number} ${plainTitle(g.landings[0]!.title)}`.trim(), meta: credits.get(g.landings[0]!.number) ?? "" }, pulls: g.landings }
+      : { row: { title: g.shape, meta: metaOf(`${g.landings.length} pulls`, g.landings.map((p) => `#${p.number}`).join(" ")) }, pulls: g.landings },
+  );
+}
+
+/** One release's pulls; Enter opens a pull as the changelog's Enter once did, and a gathered line lists its own pulls. */
+function releasePulls(f: Session, ctx: Ctx, repoRef: Repo, entry: ReleaseEntry, credits: ReadonlyMap<number, string>, title = entry.version): Screen {
   const state = new ListState();
+  const lines = pullLines(entry.pulls, credits);
   return {
-    title: entry.version,
+    title,
     keys: [binding(["j", "k"], "move"), binding(["enter"], "open pull"), binding(["esc", "q"], "back")],
     render(area, s) {
-      const rows = entry.pulls.map((p) => ({ title: `#${p.number} ${p.title}`.trim() }));
+      const rows = lines.map((l) => l.row);
       if (rows.length === 0) {
         emptyState(s, area, ctx.theme.c, { title: "No pulls", body: "This release carried none." });
         return;
@@ -52,10 +79,11 @@ function releasePulls(f: Session, ctx: Ctx, repoRef: Repo, entry: ReleaseEntry):
     key(e) {
       if (e.key === "esc" || e.key === "q") ctx.pop();
       else if (e.key === "enter") {
-        const pull = entry.pulls[state.index];
-        const opened = pull === undefined ? undefined : sourceFor(f.app, f.user, repoRef);
-        if (pull !== undefined && opened?.ok) ctx.push(pullScreen(f, ctx, opened.value, pull.number));
-      } else state.key(e, entry.pulls.length);
+        const line = lines[state.index];
+        const opened = line === undefined ? undefined : sourceFor(f.app, f.user, repoRef);
+        if (line !== undefined && line.pulls.length > 1) ctx.push(releasePulls(f, ctx, repoRef, { ...entry, pulls: line.pulls }, credits, line.row.title));
+        else if (line !== undefined && opened?.ok) ctx.push(pullScreen(f, ctx, opened.value, line.pulls[0]!.number));
+      } else state.key(e, lines.length);
       return true;
     },
   };
@@ -67,6 +95,8 @@ export function changelogScreen(f: Session, ctx: Ctx): Screen {
   let entries: ReleaseEntry[] = [];
   let loaded = false;
   let repoRef: Repo | undefined;
+  let credits = new Map<number, string>();
+  let near: string[] = [];
   const shown = (): ReleaseEntry[] => entries.filter((e) => releaseMatches(filter, e));
   return {
     title: "Changelog",
@@ -80,6 +110,16 @@ export function changelogScreen(f: Session, ctx: Ctx): Screen {
       const read = await forgeChangelog(f.app);
       entries = read?.entries ?? [];
       repoRef = read === undefined ? undefined : { owner: read.repo.ownerName, name: read.repo.name };
+      if (read !== undefined) {
+        const landings = await readLandings(f.app).catch(() => undefined);
+        const repoName = `${read.repo.ownerName}/${read.repo.name}`.toLowerCase();
+        credits = new Map();
+        for (const l of [...(landings?.live ?? []), ...(landings?.onItsWay ?? [])]) {
+          const words = creditWords(l.by, l.with);
+          if (words !== "" && l.repo.toLowerCase() === repoName) credits.set(l.number, words);
+        }
+      }
+      near = nearLines(nearMilestones(f.app, f.app.config.forgeRepo, f.user)?.near ?? []);
       state.clamp(entries.length);
       loaded = true;
       ctx.invalidate();
@@ -94,7 +134,8 @@ export function changelogScreen(f: Session, ctx: Ctx): Screen {
         return;
       }
       const list = shown();
-      const [head, box, body] = split(area, "v", [len(1), len(filter.on ? 1 : 0), fill(1)]);
+      const [head, ms, box, body] = split(area, "v", [len(1), len(near.length), len(filter.on ? 1 : 0), fill(1)]);
+      near.forEach((line, i) => s.text(ms!.x, ms!.y + i, truncate(line, ms!.w), style(c.fg, c.bg), ms!.x + ms!.w));
       const count = filter.query === "" ? `${entries.length} releases` : `${list.length} of ${entries.length} releases match`;
       s.text(head!.x, head!.y, truncate(count, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       ctx.setCursor(filter.on ? filter.render(s, box!, c, "find a version or pull") : null);
@@ -115,7 +156,7 @@ export function changelogScreen(f: Session, ctx: Ctx): Screen {
       } else if (e.key === "esc" || e.key === "q") ctx.pop();
       else if (e.key === "enter") {
         const entry = shown()[state.index];
-        if (entry !== undefined && repoRef !== undefined) ctx.push(releasePulls(f, ctx, repoRef, entry));
+        if (entry !== undefined && repoRef !== undefined) ctx.push(releasePulls(f, ctx, repoRef, entry, credits));
       } else state.key(e, shown().length);
       return true;
     },

@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/feed/tells",
   summary: "Tell an app's agents what you want, from a card or any harness (rw scope); `app` is owner/name, `text` 1 to 2000 characters, `variants` 1 to 4 tries (default 1), `from` the forge path the tell was sent from (a leading single /, at most 512 characters, no spaces); answers 201 with { issue } and, for variants, { issue, issues, assigned, variantGroup }",
   auth: true,
+  role: "member",
   body: { app: "string", text: "string", variants: "integer", from: "string" },
   status: 201,
   refusals: {

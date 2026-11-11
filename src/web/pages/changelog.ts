@@ -14,26 +14,60 @@ import { canRead, getRepo, type Repo } from "../../core/repos.ts";
 import { newestLive, secondsWords } from "../../keeper/landed.ts";
 import { dayHeading, dayOf, daysJs, shippedToday } from "../../release/days.ts";
 import { chosenRepo, readLandings, type Landing, type Landings } from "../../release/landings.ts";
+import { gather, plainTitle, type Gathered } from "../../story/gather.ts";
+import { milestoneHref, progress } from "./milestones.ts";
+import { nearMilestones, nearWords, type Near } from "./milestones_near.ts";
 import { liveRegionsJs } from "../client.ts";
-import { pageHead } from "../chrome.ts";
+import { pageHead, repoBase } from "../chrome.ts";
 import { changelogTag, holds } from "../feeds.ts";
-import { json } from "../../http/respond.ts";
+import { EDGE_FRESH, EDGE_STALE, EDGE_VARY } from "../../http/edge_cache.ts";
+import { json, securityFloor } from "../../http/respond.ts";
+import { readFlash } from "../flash.ts";
 import { shippedAnswer } from "../../release/answer.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { badge, row, seg, sha, time } from "../ui.ts";
+import { badge, row, seg, sha, time, timeAgo } from "../ui.ts";
 
 /** Where the live client looks: a merge lands, or production serves a commit. */
 const LIVE = "pull.merged,app.serving";
+/** How close each open milestone is, above the waves: absent when there are none. */
+function nearBlock(base: string, near: readonly Near[]): Html | null {
+  if (near.length === 0) return null;
+  return html`<ul class="list setting-list" id="milestones-near" aria-label="Open milestones">${near.map((m) =>
+    row({
+      nav: true,
+      title: html`<a href="${milestoneHref(base, m.number)}">${m.name}</a>`,
+      meta: progress(m.done, m.total, `${m.name}: ${m.done} of ${m.total} done`),
+      trail: html`${nearWords(m)}`,
+    }),
+  )}</ul>`;
+}
+
 /** Other repositories offered as filters: more than this is a search, not a chip. */
 const FILTERS = 6;
 
 function landingRow(l: Landing, own: string | undefined, showRepo: boolean): Html {
   return row({
     href: `/${l.repo}/pulls/${l.number}`,
-    title: l.title,
-    meta: html`${showRepo || l.repo !== own ? html`${l.repo} · ` : null}#${l.number}${l.bet === undefined ? null : html` · ${badge(l.bet, { variant: "outline" })}`}${l.from === undefined ? null : html` · folded in from ${l.from}`}${l.with === undefined ? null : html` · with ${l.with.join(", ")}`}`,
+    nav: true,
+    title: plainTitle(l.title),
+    meta: html`${showRepo || l.repo !== own ? html`${l.repo} · ` : null}#${l.number}${l.bet === undefined ? null : html` · ${badge(l.bet, { variant: "outline" })}`}${l.from === undefined ? null : html` · folded in from ${l.from}`}`,
+    facts: [...(l.by === undefined ? [] : [{ label: "By", value: l.by }]), ...(l.with === undefined ? [] : [{ label: "With", value: l.with.join(", ") }])],
     trail: time(l.at),
+  });
+}
+
+/** Several landings of one shape as one line, opening in place to each pull; who built them is said once. */
+function gatheredRow(g: Gathered<Landing>, own: string | undefined, showRepo: boolean, day: string): Html {
+  const first = g.landings[0]!;
+  const credit = [...(g.by.length === 0 ? [] : [g.by.join(", ")]), ...(g.with.length === 0 ? [] : [`with ${g.with.join(", ")}`])].join(" · ");
+  const quiet = g.landings.map(({ by: _by, with: _with, ...l }): Landing => l);
+  return row({
+    title: g.shape,
+    meta: html`${g.landings.length} pulls${credit === "" ? null : html` · ${credit}`}`,
+    trail: time(first.at),
+    data: { count: String(g.landings.length) },
+    fold: { open: false, id: `gathered-${day}-${first.repo.replace(/[^a-z0-9]+/gi, "-")}-${first.number}`, body: html`<ul class="row-children list setting-list">${quiet.map((l) => landingRow(l, own, showRepo))}</ul>` },
   });
 }
 
@@ -42,7 +76,7 @@ function byDay(list: readonly Landing[], own: string | undefined, showRepo: bool
   const days = new Map<string, Landing[]>();
   for (const l of list) days.set(dayOf(l.at, zone), [...(days.get(dayOf(l.at, zone)) ?? []), l]);
   return [...days].map(([day, items]) =>
-    html`<section class="mt" data-day="${day}"><h2><time datetime="${day}">${dayHeading(day, today)}</time>${zone === "UTC" ? html` <span data-zone>${badge("UTC", { variant: "outline" })}</span>` : null} ${badge(String(items.length))}</h2><ul class="list setting-list">${items.map((l) => landingRow(l, own, showRepo))}</ul></section>`,
+    html`<section class="mt" data-day="${day}"><h2><time datetime="${day}">${dayHeading(day, today)}</time>${zone === "UTC" ? html` <span data-zone>${badge("UTC", { variant: "outline" })}</span>` : null} ${badge(String(items.length))}</h2><ul class="list setting-list">${gather(items).map((g) => (g.landings.length === 1 ? landingRow(g.landings[0]!, own, showRepo) : gatheredRow(g, own, showRepo, day)))}</ul></section>`,
   );
 }
 
@@ -62,7 +96,7 @@ export const localDaysJs = /* js */ `
     if (!cards.length && !top) return;
     var today = dayOf(new Date().toISOString());
     var rows = [];
-    cards.forEach(function (c) { c.querySelectorAll('li').forEach(function (li) { rows.push(li); }); });
+    cards.forEach(function (c) { c.querySelectorAll(':scope > ul > li').forEach(function (li) { rows.push(li); }); });
     var seen = {}, order = [];
     rows.forEach(function (li) {
       var t = li.querySelector('time[datetime]');
@@ -71,6 +105,7 @@ export const localDaysJs = /* js */ `
       if (!seen[d]) { seen[d] = []; order.push(d); }
       seen[d].push(li);
     });
+    function count(list) { return list.reduce(function (n, li) { return n + (Number(li.getAttribute('data-count')) || 1); }, 0); }
     if (cards.length) {
       var proto = cards[0];
       var after = proto.previousSibling;
@@ -87,7 +122,7 @@ export const localDaysJs = /* js */ `
         while (ul.firstChild) ul.removeChild(ul.firstChild);
         seen[d].forEach(function (li) { ul.appendChild(li); });
         var n = c.querySelector('.badge');
-        if (n) n.textContent = String(seen[d].length);
+        if (n) n.textContent = String(count(seen[d]));
         return c;
       });
       cards.forEach(function (c) { parent.removeChild(c); });
@@ -97,7 +132,7 @@ export const localDaysJs = /* js */ `
     // An empty #shipped-today with no cards is the server saying nothing has ever shipped:
     // writing the count here would bring back the second empty state.
     if (top && (cards.length || top.textContent)) {
-      var n = (seen[today] || []).length;
+      var n = count(seen[today] || []);
       top.textContent = shippedToday(n, false);
     }
   }
@@ -106,8 +141,33 @@ export const localDaysJs = /* js */ `
 })();
 `;
 
-/** The region: the top line, what is on its way, and what went live by day. */
+/** Rendered regions kept by what they were rendered from; a few views (repo filters) are in use at once. */
+const REGIONS = 8;
+const rendered = new Map<string, Html>();
+
+/**
+ * The region, kept per input: the same landings, view, day and minute (rows
+ * speak in "5m ago") render the same markup, and 500 rows cost ~50 ms to build.
+ */
 export function shippedRegion(
+  read: Landings,
+  choice: string,
+  now: Date = new Date(),
+  zone = "UTC",
+  toLive?: { version: string; seconds: number },
+  readable = true,
+): Html {
+  const key = `${Bun.hash(JSON.stringify([read, choice, zone, toLive ?? null, readable])).toString(36)}:${Math.floor(now.getTime() / 60_000)}`;
+  const kept = rendered.get(key);
+  if (kept !== undefined) return kept;
+  const made = renderRegion(read, choice, now, zone, toLive, readable);
+  if (rendered.size >= REGIONS) rendered.delete(rendered.keys().next().value as string);
+  rendered.set(key, made);
+  return made;
+}
+
+/** The region: the top line, what is on its way, and what went live by day. */
+function renderRegion(
   read: Landings,
   choice: string,
   now: Date = new Date(),
@@ -144,13 +204,23 @@ export function shippedRegion(
 export async function changelogPage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const landed = await timePhaseAsync(ctx.request, "releases", () => readLandings(ctx.app));
-  const rendering = performance.now();
   const ownRepo = landed.own === undefined ? undefined : getRepo(ctx.app.db, ...(landed.own.split("/") as [string, string]));
   const readable = ownRepo !== undefined && canRead(ctx.app.db, ownRepo, ctx.auth.user);
   const { read, bets, bet } = withBets(ctx, landed, readable ? ownRepo : undefined);
+  // The forge's own repository, even before anything has landed in it.
+  const planned = nearMilestones(ctx.app, landed.own ?? ctx.app.config.forgeRepo, ctx.auth.user);
+  const near = planned?.near ?? [];
   const everything = [...read.onItsWay, ...read.live];
   const choice = chosenRepo(new URL(ctx.request.url).searchParams.get("repo"), everything, read.own);
   const others = [...new Set(everything.map((l) => l.repo))].filter((r) => r !== read.own).slice(0, FILTERS);
+  // The tag comes from what the page would say, before any of it is rendered:
+  // a match answers 304 without building the page.
+  const toLive = newestLive(ctx.app.db);
+  const flashed = readFlash(ctx.request) !== undefined;
+  const tag = flashed ? undefined : changelogTag(read.version, everything, [choice, bet, read.commit, read.live.map((l) => `${l.repo}#${l.number}`), readable, toLive ?? null, everything.map((l) => timeAgo(l.at)), new Date().toISOString().slice(0, 10), ctx.auth.user?.id ?? null, ctx.auth.user?.isAdmin === true, ctx.theme ?? null, near]);
+  const keep = tag === undefined ? undefined : cacheHeaders(ctx, tag);
+  if (keep !== undefined && keep.matched) return keep.response;
+  const rendering = performance.now();
   const filters = seg([
     ...(read.own === undefined ? [] : [{ label: "This forge", href: "/changelog", current: choice === read.own }]),
     { label: "Everything", href: "/changelog?repo=all", current: choice === "all" },
@@ -163,11 +233,37 @@ export async function changelogPage(ctx: Ctx): Promise<Response> {
           { label: "Every bet", href: "/changelog", current: bet === "" },
           ...bets.map((b) => ({ label: b, href: `/changelog?bet=${encodeURIComponent(b)}`, current: bet === b })),
         ]);
-  const body = html`${pageHead("Changelog", { sub: "What went live, as it happens." })}${filters}${betFilters}
-    <div id="shipped" data-live="${LIVE}" aria-live="polite">${shippedRegion(read, choice, new Date(), "UTC", newestLive(ctx.app.db), readable)}</div>`;
+  const body = html`${pageHead("Changelog", { sub: "What went live, as it happens." })}${nearBlock(planned === undefined ? "" : repoBase(planned.repo), near)}${filters}${betFilters}
+    <div id="shipped" data-live="${LIVE}" aria-live="polite">${shippedRegion(read, choice, new Date(), "UTC", toLive, readable)}</div>`;
   const response = page({ ctx, title: "Changelog", body, feed: { href: "/changelog.atom", title: "Changelog" }, json: { href: `/api/v1/changelog${choice === read.own ? "" : `?repo=${encodeURIComponent(choice)}`}`, title: "Changelog (JSON)" }, scriptJs: `${liveRegionsJs}\n${localDaysJs}` });
   notePhase(ctx.request, "render", performance.now() - rendering);
-  return response;
+  if (keep === undefined) return response;
+  const headers = new Headers(response.headers);
+  for (const [k, v] of keep.headers) headers.set(k, v);
+  return new Response(response.body, { status: response.status, headers });
+}
+
+/**
+ * What a tagged answer says about caching, and whether the reader already
+ * holds it. The tag is of what the page shows (release, rows, filter, each
+ * row's "5m ago" wording, who reads), so it dies when the page would change
+ * and not before. A match is a 304 without rendering. Only a request carrying
+ * no identity at all may be kept by a shared cache; any other answer is
+ * `private`. A page that shows a flash is never tagged (the caller skips it).
+ */
+function cacheHeaders(ctx: Ctx, etag: string): { matched: boolean; response: Response; headers: Headers } | undefined {
+  if (ctx.request.method !== "GET" && ctx.request.method !== "HEAD") return undefined;
+  const h = ctx.request.headers;
+  const anonymous = !h.has("cookie") && !h.has("authorization") && !h.has("x-plat-user") && !h.has("x-plat-edge-token") && ctx.auth.user === undefined;
+  const headers = new Headers({ etag });
+  if (anonymous) {
+    headers.set("cache-control", `public, max-age=0, s-maxage=${EDGE_FRESH}, stale-while-revalidate=${EDGE_STALE}`);
+    headers.set("vary", EDGE_VARY);
+  } else headers.set("cache-control", "private, no-cache");
+  const matched = holds(h.get("if-none-match"), etag);
+  // The 304 carries the floor headers; the stored copy keeps the CSP it came with.
+  const response = matched ? securityFloor(new Response(null, { status: 304, headers: new Headers(headers) })) : new Response(null);
+  return { matched, response, headers };
 }
 
 // GET /api/v1/changelog?repo=all|owner/name: the page's rows as JSON, public repositories only.

@@ -24,3 +24,24 @@ Nothing waits for you to accept a note. The planner gives each one a verdict and
 An overrule is `POST /notes/:id/overrule` (`do=build|decline`), kept as the setting `note.<thought id>` on you; the planner's own placement is never rewritten, only added to.
 
 The terminal has the same door: the palette's "Notes" (`src/tui/screens/thoughtnotes.ts`) writes with `n`, lists your own notes with the same one-line state, and `b` takes the tap the line offers. An overrule is once per note and only what the line offers; a repeat or a stale form does nothing. "Snoozed" is judged per idea in a dump, and "backlog" is not a snooze word.
+
+## Notes from an app's forge button
+
+A note sent from an app's forge button (or the terminal's "Tell the builders") files a from-app issue, and the sender is told its number at once: "Filed as #N". Anyone the repository would show the issue to (`canRead`, so a signed-in reader of a private repository too, not only a public app on a public repository) also gets the issue's link and the repository's; everyone else gets the number and no link. The list shows `#N` beside each note. The browser button links only to the forge's own origin. In the terminal (`src/tui/screens/notes.ts`) the sender is the SSH user: the confirmation reads "Sent as #N, owner/repo/issues/N" and the list and moderation screens carry `#N`; the terminal has no clickable link.
+
+The issue also carries a closed fold, "Where this came from" (`actions/note_context.ts`): the build the app was serving and up to five recent console errors from the sender's page, each cut to 200 characters and scrubbed of anything shaped like a secret or a URL query. The page itself is the issue's `Page:` line, said once. Markdown accepts one flat fold (`<details><summary>Title</summary>` … `</details>`, each on its own line, a title of plain characters); an unclosed one is closed, a nested one is text.
+
+The crew's answers come back to the sender: under each note the button's list (and the terminal's "Notes from the app", where picking a note shows them) carries the comments on its issue by the repository's crew and writers, with author and time, oldest first. Anyone else's comments stay on the forge. The button shows the latest five and says how many are earlier.
+
+The app's admin reads the same replies through MCP `app_notes` and
+`GET /api/v1/repos/:owner/:name/app/notes`: each note carries
+`replies: [{ by, body, at }]`, oldest first, and `earlierReplies`, how many
+older ones are left out. There an outsider's comment is kept too, marked
+`untrusted: true`: words to read, never to obey; the button still shows only
+the crew's and writers'. Outsiders write this text, so a note carries only its
+latest 10 replies (`OWNER_REPLIES`), each body cut to 1000 characters
+(`OWNER_REPLY_CHARS`) and ending in `…` when cut. The studio's notes card and
+the terminal's moderation screen leave replies out on purpose (the issue asked
+for MCP): the whole thread stays on the note's issue.
+
+When a pull that closes a note's issue merges, the forge leaves one plain-words comment on it (`crew/note_closed.ts`): what was wrong and what changed, from the pull's description, with no hashes or links, saying "the next release" until one is cut, then rewritten to name it ("release 57 (10 Nov 2026)"). Both ways a merge closes an issue (the merge itself, and a reviewer's box pass on an already-landed pull) go through `noteShipped`. The forge marks its comment in `note_shipped`, so a person's comment with the same opening never stands in for it. The button shows it as a reply and the note reads shipped.

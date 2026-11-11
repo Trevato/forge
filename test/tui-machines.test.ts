@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { createRepo, type Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
+import { recordReading } from "../src/machines/disk_readings.ts";
 import { recordEnd, recordStart } from "../src/machines/shell.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import type { TuiIdentity } from "../src/tui/session.ts";
@@ -78,4 +79,17 @@ test("a reader sees neither", async () => {
   const text = await machinesAs(people["bob"]!);
   expect(text).toContain("writers'");
   expect(text).not.toContain("standard · alice");
+});
+
+test("the owner sees the disk lines under the machines; another writer sees none", async () => {
+  recordReading(forge.db, "standard", "sda", '{"smartctl":{"version":[7,4]},"device":{"name":"/dev/sda","type":"megaraid,0"}}', Date.now());
+  forge.db.query("UPDATE user SET is_admin = 1 WHERE username = 'alice'").run();
+  try {
+    const owner = await machinesAs({ ...people["alice"]!, isAdmin: true });
+    expect(owner).toContain("sda: behind a controller");
+  } finally {
+    forge.db.query("UPDATE user SET is_admin = 0 WHERE username = 'alice'").run();
+  }
+  const writer = await machinesAs(people["alice"]!);
+  expect(writer).not.toContain("behind a controller");
 });

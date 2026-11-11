@@ -9,7 +9,8 @@
  */
 
 import { getFleetOp, listFleetOps, undoFleetOp, UNDO_WINDOW_MS, isAsksOperation } from "../../actions/fleet.ts";
-import { undoable, undoAsksBulk } from "../../actions/asks_bulk.ts";
+import { ALREADY_UNDONE } from "../../actions/asks_words.ts";
+import { receiptOf, undoable, undoAsksBulk } from "../../actions/asks_bulk.ts";
 import type { Operation } from "../../core/fleet_ops.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -30,7 +31,7 @@ const show = (v: unknown): string => clean(v === null || v === undefined ? "—"
 export function whyNot(op: Operation, now = Date.now()): string {
   if (undoable(op, now)) return "";
   if (op.undoOf !== null) return "this is an undo, and is not undone again";
-  if (op.undoneBy !== null) return "this operation was undone already";
+  if (op.undoneBy !== null) return ALREADY_UNDONE;
   if (!op.reversible) return `${clean(op.verb)} cannot be undone`;
   if (now - Date.parse(op.createdAt) > UNDO_WINDOW_MS)
     return "an undo is kept for a day, and this one's day is over";
@@ -61,7 +62,7 @@ function rowsScreen(f: Session, ctx: Ctx, op: Operation): Screen {
     render(area, s) {
       const c = ctx.theme.c;
       const [head, body] = split(area, "v", [len(1), fill(1)]);
-      s.text(head!.x, head!.y, truncate(`${clean(op.verb)} · ${clean(op.query)}`, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
+      s.text(head!.x, head!.y, truncate(`${isAsksOperation(op) && full.ok ? receiptOf(full.value) : clean(op.verb)} · ${clean(op.query)}`, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       if (rows.length === 0) {
         emptyState(s, body!, c, { title: "No rows kept." });
         return;
@@ -114,7 +115,8 @@ export function bulkScreen(f: Session, ctx: Ctx): Screen {
         ? await undoAsksBulk(f.app, f.user, op.id)
         : await undoFleetOp(f.app, f.user, op.id);
       cache = undefined;
-      ctx.toast(done.ok ? "undone" : done.error.message, done.ok ? "success" : "danger");
+      const said = !done.ok ? done.error.message : isAsksOperation(op) ? receiptOf(done.value) : "undone";
+      ctx.toast(said, done.ok ? "success" : "danger");
       ctx.invalidate();
     });
   };

@@ -8,8 +8,8 @@
 import { contribute, forkOrigin } from "../../actions/contribute.ts";
 import { CAPPED_WORDS } from "../../actions/mail.ts";
 import { ORIGIN_UNREACHABLE } from "../../actions/origin_app_words.ts";
-import { connectOrigin, connectRefusal, listOriginRepoGroup, deleteOriginApp, disconnectOrigin, listOriginApps, listPinned, listRemoteRepos, listUserOrigins, mirrorJobFor, pinRepo, pollOAuthConnect, registerOriginApp, startMirrorJob, startOAuthConnect, syncOriginNow, unpinRepo } from "../../actions/origins.ts";
-import { addSshKey, changePassword, deleteSshKey, updateProfile } from "../../actions/users.ts";
+import { CONNECT_LIMITS, connectOrigin, connectRefusal, listOriginRepoGroup, deleteOriginApp, disconnectOrigin, listOriginApps, listPinned, listRemoteRepos, listUserOrigins, mirrorJobFor, pinRepo, pollOAuthConnect, registerOriginApp, startMirrorJob, startOAuthConnect, syncOriginNow, unpinRepo } from "../../actions/origins.ts";
+import { addSshKey, CHANGE_PASSWORD_WORDS, changePassword, deleteSshKey, updateProfile } from "../../actions/users.ts";
 import { VERIFY_WORDS } from "../../actions/verify_words.ts";
 import { resendVerification } from "../../actions/verify.ts";
 import { NOTIFY_ERRORS, notifyHost, notifyUrlOf, setNotifyUrl } from "../../crew/notify.ts";
@@ -20,7 +20,7 @@ import { listOrgsForUser } from "../../core/orgs.ts";
 import { canRead, getReposByIds } from "../../core/repos.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { mayView } from "../../core/sealed.ts";
-import { emailVerified } from "../../core/verify.ts";
+import { emailVerified, RESEND_AFTER_MS } from "../../core/verify.ts";
 import type { Result } from "../../kernel/result.ts";
 import { subscribe as subscribeJob } from "../../origins/jobs.ts";
 import { sshCloneUrl } from "../../ssh/command.ts";
@@ -30,7 +30,7 @@ import { connectMessage, contributeFailure, contributionJson, editFilesFrom, job
 import type { Ctx, Handler } from "../context.ts";
 import { holds, weakEtag } from "../etag.ts";
 import { clientAddress } from "../peer.ts";
-import { apiError, body, json, notFound, publicProfile, publicUser, requireAccount, requireScope, respondAccess, str, unauthorized } from "../respond.ts";
+import { apiError, body, json, notFound, publicProfile, publicUser, requireAccount, requireScope, respondAccess, str, tryAgain, unauthorized, WINDOW } from "../respond.ts";
 import type { Router } from "../router.ts";
 import { eventStream } from "../sse.ts";
 
@@ -73,11 +73,7 @@ function sourceFailure(error: SourceError): Response {
     case "not_found":
       return notFound();
     case "rate_limited":
-      return apiError(
-        "rate_limited",
-        429,
-        "the origin is rate-limiting us; try again shortly",
-      );
+      return tryAgain("rate_limited", 429, "the origin is rate-limiting us; try again shortly", WINDOW.minute);
     case "unauthorized":
       return apiError(
         "origin_unauthorized",
@@ -94,6 +90,9 @@ function sourceFailure(error: SourceError): Response {
       );
   }
 }
+
+/** No mailer is set: an operator must configure one, no clock ends it; ask again in five minutes. */
+const NO_MAIL_RETRY = 300;
 
 export function userRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/user", (ctx) => {
@@ -112,11 +111,11 @@ export function userRoutes(router: Router<Handler>): void {
       return json({ outcome: sent.value }, sent.value === "sent" ? 202 : 200);
     if (sent.error === "unauthorized") return unauthorized();
     if (sent.error === "too_soon")
-      return apiError("too_soon", 429, VERIFY_WORDS.too_soon);
+      return tryAgain("too_soon", 429, VERIFY_WORDS.too_soon, RESEND_AFTER_MS / 1000);
     if (sent.error === "no_mail")
-      return apiError("no_mail", 503, VERIFY_WORDS.no_mail);
+      return tryAgain("no_mail", 503, VERIFY_WORDS.no_mail, NO_MAIL_RETRY);
     if (sent.error === "capped")
-      return apiError("capped", 429, CAPPED_WORDS);
+      return tryAgain("capped", 429, CAPPED_WORDS, WINDOW.day);
     return apiError("failed", 502, VERIFY_WORDS.failed);
   });
 
@@ -152,14 +151,14 @@ export function userRoutes(router: Router<Handler>): void {
       next: str(input.next),
       source: clientAddress(ctx.request),
     });
+    if (!changed.ok && changed.error === "throttled")
+      return tryAgain("throttled", 429, CHANGE_PASSWORD_WORDS.throttled, WINDOW.minute);
     if (!changed.ok)
       return respondAccess(
         changed.error,
         changed.error === "bad_credentials"
           ? 403
-          : changed.error === "throttled"
-            ? 429
-            : 422,
+          : 422,
       );
     return json({}, 200);
   });
@@ -269,14 +268,17 @@ export function userRoutes(router: Router<Handler>): void {
         ? { kind }
         : {}),
       token: str(input.token),
+      readOnly: input.readOnly === true,
     });
     if (!connected.ok) {
       // A refusal that names its own reason (a missing scope) keeps it;
       // every other code has its sentence here.
       const refused = connectRefusal(connected.error);
+      if (refused.code === "rate_limited")
+        return tryAgain("rate_limited", 429, refused.message ?? connectMessage(refused.code), CONNECT_LIMITS.windowMs! / 1000);
       return apiError(
         refused.code,
-        refused.code === "rate_limited" ? 429 : 422,
+        422,
         refused.message ?? connectMessage(refused.code),
       );
     }
@@ -307,11 +309,9 @@ export function userRoutes(router: Router<Handler>): void {
       redirectUri: callbackUri(ctx),
     });
     if (!started.ok)
-      return apiError(
-        started.error.error,
-        started.error.error === "rate_limited" ? 429 : 422,
-        started.error.message,
-      );
+      return started.error.error === "rate_limited"
+        ? tryAgain("rate_limited", 429, started.error.message, CONNECT_LIMITS.windowMs! / 1000)
+        : apiError(started.error.error, 422, started.error.message);
     return json(started.value, 201);
   });
 

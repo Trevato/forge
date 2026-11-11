@@ -12,9 +12,9 @@
  */
 
 import { pullDir, runDir } from "../core/pulls.ts";
+import { cellHides } from "../spawn/hosted-mark.ts";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { chmod, lstat, readdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { releaseOnGreen } from "../actions/holds.ts";
@@ -38,6 +38,7 @@ import {
   noteRunProgress,
   overranBefore,
   setRunBase,
+  setRunCombined,
   vanishedBefore,
   VANISHED_SUMMARY,
   infraBefore,
@@ -50,6 +51,7 @@ import {
 import { Gate, runGit } from "../git/env.ts";
 import { resolveOid } from "../git/merge.ts";
 import { mergeForCheck } from "./merged.ts";
+import { readCombined } from "../git/combined.ts";
 import { approvedOnce } from "./approved_first.ts";
 import { checkOnApproval } from "./approval.ts";
 import { checkKey, provenBy, recordProven } from "./proven.ts";
@@ -66,7 +68,7 @@ import { ASKED, redMain, unheld } from "./red_main.ts";
 import { proposeRevert } from "./revert_red.ts";
 import { rebasesFirst } from "./finishing_first.ts";
 import { IMPACT_FILE, keepImpact, seedImpact } from "./impact-store.ts";
-import { afterVerify } from "./culprit.ts";
+import { afterVerify, closeOnGreen } from "./culprit.ts";
 import { redDetail, reportGreen, reportRed } from "./report.ts";
 import {
   bisectOrigin,
@@ -86,6 +88,8 @@ import { transact } from "../kernel/db.ts";
 import { createLog } from "../kernel/log.ts";
 import { holdLease, STALE_AFTER_MS } from "../runs/lease.ts";
 import { appendRunLog } from "../runs/log.ts";
+import { cancelledLine } from "../runs/cancelled.ts";
+import { trackRun, untrackRun } from "../runs/stoppable.ts";
 import { runningLimitSentence, runningRuns } from "../settings/quotas.ts";
 import { exportTree, readFileAt } from "../apps/checkout.ts";
 import { CHECK_TIMEOUT_MAX, parseCheck } from "../apps/manifest.ts";
@@ -124,6 +128,7 @@ import { checkStage, type GateStage } from "./gate_reason.ts";
 import { extraGates, GATE_DEADLINE_MS, gateQueued, gateRunId, gatesInFlight, watchGates } from "./queue.ts";
 import type { JobOptions } from "../cluster/jobs.ts";
 import type { CheckDetail } from "../core/runs.ts";
+import { during } from "../perf/jobs.ts";
 
 const log = createLog("checks");
 
@@ -559,6 +564,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     const abort = new AbortController();
     const low = inVerifyLane(run.env);
     if (low) verifying = run.id;
+    // A person's cancel (`cancelRepoRun`) reaches it through this.
+    trackRun(run.id, abort);
     const promise = execute(run, repo, abort.signal, !low)
       .catch((error) =>
         log.error("check failed to execute", {
@@ -567,6 +574,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         }),
       )
       .finally(() => {
+        untrackRun(run.id, abort);
         inFlight.delete(run.id);
         if (verifying === run.id) verifying = undefined;
         // The slot this run held is free again: give it to whichever queued
@@ -819,8 +827,10 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       }
       // Ended from outside while it ran: its pull landed or closed, and
       // the row says so. That is not this check failing.
-      if (!outcome.ok && getRun(app.db, run.id)?.state === "cancelled") {
-        write(`superseded: ${getRun(app.db, run.id)?.summary ?? "cancelled"}`);
+      // A person's cancel ends the log with who cancelled it (#11229).
+      const row = getRun(app.db, run.id);
+      if (!outcome.ok && row?.state === "cancelled") {
+        write(cancelledLine(row) ?? `superseded: ${row.summary}`);
         return;
       }
       if (!outcome.ok && stopped && signal.aborted) {
@@ -876,6 +886,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         reportRed(app, repo, done).forEach(write);
         // A file the run printed passing closes its open report issue (#9524).
         reportGreen(app, repo, done, outcome.passed ?? []).forEach(write);
+        // A green that ran every file a culprit's issue names closes it (#11395).
+        closeOnGreen(app, repo, done, outcome.passed ?? []).forEach(write);
       }
       if (done && inVerifyLane(run.env))
         await afterVerify(app, repo, done, (r, env, oid, reason) => request(r, env, oid, reason))
@@ -996,11 +1008,26 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       tip = await resolveOid(bare, `refs/heads/${x.pull.baseBranch}`);
       if (tip === undefined)
         return { ok: false, error: `the base ${x.pull.baseBranch} could not be found` };
-      const merged = await mergeForCheck(bare, x.pull.baseBranch, tip, x.commitOid);
-      if (!merged.ok) return { ok: false, error: merged.error };
-      source = merged.commit;
-      if (x.runId !== undefined) setRunBase(app.db, x.runId, tip);
-      mergeLine = merged.line;
+      // A kept fork's pull is checked on its combined commit (#9932): the
+      // tree that lands, built on the base tip it names (`combined/N`).
+      const combined = x.pull.crossRepo
+        ? await readCombined(bare, x.pull.number, x.commitOid)
+        : undefined;
+      if (combined !== undefined && combined.oid !== x.commitOid) {
+        source = combined.oid;
+        const builtOn = combined.baseOid === "" ? tip : combined.baseOid;
+        if (x.runId !== undefined) {
+          setRunBase(app.db, x.runId, builtOn);
+          setRunCombined(app.db, x.runId, combined.oid);
+        }
+        mergeLine = `checked as combined with ${x.pull.baseBranch} at ${builtOn.slice(0, 7)} (${combined.oid.slice(0, 7)})`;
+      } else {
+        const merged = await mergeForCheck(bare, x.pull.baseBranch, tip, x.commitOid);
+        if (!merged.ok) return { ok: false, error: merged.error };
+        source = merged.commit;
+        if (x.runId !== undefined) setRunBase(app.db, x.runId, tip);
+        mergeLine = merged.line;
+      }
     }
     const run = { id: x.id, commitOid: source };
     const [forgeJson, packageJson] = await Promise.all([
@@ -1162,7 +1189,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           dir,
           writable: [],
           home,
-          hide: [app.config.dataDir, process.env["HOME"] ?? "", tmpdir()],
+          hide: cellHides(app),
           egress: [...STEP_HOSTS, ...manifest.egress],
           reach: [options.forgeUrl],
           limits: resolveLimits("step", manifest.limits),
@@ -1639,7 +1666,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   }
 
   const timer = setInterval(() => {
-    if (!stopped) schedule();
+    if (!stopped) during("lane", schedule);
   }, TICK_MS);
   // Main is verified after landing on a schedule, when the forge says how often.
   const sweeper =
@@ -1647,12 +1674,14 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       ? undefined
       : setInterval(() => {
           if (!stopped)
-            askVerifications().catch((error) => log.error("verification not asked", { error: String(error) }));
+            during("verify-sweep", askVerifications).catch((error) =>
+              log.error("verification not asked", { error: String(error) }),
+            );
         }, Math.min(VERIFY_SWEEP_MS, options.verifyEveryMs));
   // A gate's slot frees: the pull check held for it starts now, not at the tick.
   const unwatch = watchGates(schedule);
-  schedule();
-  void catchUp();
+  during("lane", schedule);
+  void during("lane-catch-up", catchUp);
 
   /** One gate's run on the lane: the full tier on `commitOid`, traced, cut off by `controller`. */
   async function gateOnce(

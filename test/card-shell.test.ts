@@ -57,7 +57,7 @@ describe("the card shell", () => {
     });
   });
 
-  test("Tell and Redirect send the typed words, and nothing when empty", () => {
+  test("Tell sends the typed words, and nothing when empty", () => {
     const s = shell();
     const app = cardFor("apps", [{ app: "alice/game", live: "up" }])!;
     s.send(s.result(app));
@@ -72,22 +72,22 @@ describe("the card shell", () => {
       name: "tell",
       arguments: { repo: "alice/game", context: { said: "make it blue" }, text: "make it blue" },
     });
-    const ask = cardFor("asks", {
-      rows: [{ line: "a", kind: "look", items: ["x:1"], repo: "alice/game", number: 4, words: {} }],
-    })!;
-    s.send(s.result(ask));
-    const redirect = s.root.all().find((n) => n.tag === "button" && n.textContent === "Redirect")!;
-    s.root.all().find((n) => n.tag === "input")!.value = "not like that";
-    redirect.onclick!();
-    expect(s.posted[2].params).toEqual({
-      name: "say",
-      arguments: { repo: "alice/game", number: 4, text: "not like that" },
-    });
   });
 
-  test("an ask without a number offers no Redirect", () => {
-    const card = cardFor("asks", { rows: [{ line: "a", kind: "paused", items: ["x"], repo: "a/b", words: {} }] })!;
-    expect(card.actions.some((a) => a.tool === "say")).toBe(false);
+  test("an ask whose words are markup reaches the page only as text, and a collapsed parked row has no button", () => {
+    const s = shell();
+    const evil = "<script>alert(1)</script>";
+    const row = (kind: string, items: string[], line: string) =>
+      ({ line, kind, items, repo: "a/b", number: 1, numberOf: "issue", words: { decision: evil, options: [evil] } });
+    s.send(s.result(cardFor("asks", { rows: [row("parked", ["p:1"], evil), row("parked", ["p:1", "p:2"], "many"), row("look", ["l:1"], "l")] })!));
+    const nodes = s.root.all();
+    const dts = nodes.filter((n) => n.tag === "dt");
+    expect(dts[0]!.textContent).toBe(evil);
+    expect(nodes.filter((n) => n.tag === "dd")[0]!.textContent).toContain(evil);
+    // Only createElement'd text nodes: no node is a script, and no tag carries the markup.
+    expect(nodes.some((n) => n.tag === "script")).toBe(false);
+    expect(nodes.filter((n) => n.tag === "button").map((b) => b.textContent)).toEqual(["Decide", "Ship"]);
+    expect(nodes.some((n) => n.tag === "input")).toBe(false);
   });
 
   test("the map draws a Plan card from what mapJson returns: one count per issue, agreeing everywhere", () => {

@@ -750,7 +750,7 @@ describe("verdicts, threads, and the gate they open", () => {
   test("require-review is a checkbox in general settings, and it sticks", async () => {
     const settings = await bodyOf("ada", "/acme/lib/settings");
     expect(settings).toContain('name="requireReview"');
-    expect(words(settings)).toContain("Require an approving review before merging");
+    expect(words(settings)).toContain("Require an approving review");
 
     const saved = await web("ada", "/acme/lib/settings", {
       form: {

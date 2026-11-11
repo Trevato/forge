@@ -22,3 +22,12 @@ rows: Machines and Last sessions are each a `<section class="settings-block">` w
 page is); each session a `row()` in `#machine-sessions`, a running one marked by a ● glyph and a "running" badge, an ended
 one by a dash and its reason in words, so state is never colour alone. With no session, one plain sentence says so.
 `test/machine-shell-page.test.ts` holds the shape.
+
+Disks (#10466), the owner's alone: each machine's disks hang under its own row as `row()` `children` (a
+`ul.row-children`), so no heading of their own. A disk is a folded `row()`: the caret as its lead, device and
+model as the title, written of rated TBW and the temperature as the meta — two lines that each wrap in a
+`.setting-list`, so 360px never scrolls sideways. Open, a `dl.row-facts` gives every figure beside its rating. An
+alert adds a "needs a look" badge as the trail and its reasons, in words, on a muted line in the row's `after`
+slot — outside the `<details>`, so they read closed. A disk behind a controller is a plain row saying so; a machine
+with no reading is one muted row. No new class: one scoped rule, `.row-children > li[data-disk] > .row-after`,
+insets that reasons line to the title (`src/web/style/components.ts`). `test/machines-disks.test.ts` holds it.

@@ -4,7 +4,7 @@ import { good, bad, type Tool, APP_ARG, planRepo, isAnswer } from "../shared.ts"
 
 export const tool: Tool = {
   name: "held",
-  doc: "`{ app, apply? }`: what the Later gate holds, grouped by theme, with each as a candidate to close, from titles alone; `apply: [numbers], digest` (a person's token; the numbers to close, and the `digest` the read gave) does it, refused if what the gate holds has moved; only `done` ones are in `approve`; `lift` revives a closed one",
+  doc: "`{ app, apply? }`: what the Later gate holds, grouped by theme, with each as a candidate to close, from titles alone; `apply: [numbers], digest` (a person's token; the numbers to close, and the `digest` the read gave) does it, refused if what the gate holds has moved; only `done` ones are in `approve`; `lift` revives a closed one; a read draws the `ui://forge/held` card",
   description: "What the Later gate holds, and one proposed pass over it.",
   inputSchema: {
     type: "object",
@@ -37,14 +37,17 @@ export const tool: Tool = {
     }
     const review = reviewGate(ctx.app, repo);
     if (review === undefined) return bad("not_found", "there is no Later gate here");
-    return good({
-      says: `${review.held} held; ${review.ticked.length} found done on main.`,
-      themes: review.themes.map((t) => ({
-        theme: t.name,
-        issues: t.items.map((i) => ({ number: i.number, title: i.title, waiting: i.waiting, ...i.verdict })),
-      })),
-      approve: review.ticked,
-      digest: review.digest,
-    });
+    return {
+      ...good({
+        says: `${review.held} held; ${review.ticked.length} found done on main.`,
+        themes: review.themes.map((t) => ({
+          theme: t.name,
+          issues: t.items.map((i) => ({ number: i.number, title: i.title, waiting: i.waiting, ...i.verdict })),
+        })),
+        approve: review.ticked,
+        digest: review.digest,
+      }),
+      card: { repo: `${repo.ownerName}/${repo.name}` },
+    };
   },
 };

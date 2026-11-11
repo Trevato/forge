@@ -285,12 +285,16 @@ async function viaOlderForge(
       asString(field(health.value, "commit")) === ""
     )
       return undefined;
+    // A current forge lists what you can do as `can`; one before #10384 as `actions`.
     const here = await getJson(`${web}/api/v1/here`, web, probe);
     if (
       !here.ok ||
       typeof field(here.value, "here") !== "object" ||
       field(here.value, "here") === null ||
-      !Array.isArray(field(here.value, "actions"))
+      !(
+        Array.isArray(field(here.value, "can")) ||
+        Array.isArray(field(here.value, "actions"))
+      )
     )
       return undefined;
   }

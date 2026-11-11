@@ -14,7 +14,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { addComment } from "../src/core/issues.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { findChromium } from "../src/looks/capture.ts";
-import { PREVIEW_PULL_PAGE } from "../src/spawn/preview-looks.ts";
+import { PREVIEW_OWNER_LOOKS, PREVIEW_PULL_FILES, PREVIEW_PULL_PAGE } from "../src/spawn/preview-looks.ts";
 import { previewAdmin, seedPreview } from "../src/spawn/preview-seed.ts";
 import { base as elements, utilities as base } from "../src/web/style/base.ts";
 import { components } from "../src/web/style/components.ts";
@@ -108,6 +108,34 @@ describe.skipIf(chromium === undefined)("a pull's conversation page, measured", 
   }, 30_000);
   test("desk, 1280x800: no sideways scroll", async () => {
     const m = await look(1280, 800);
+    expect(m.scrollWidth).toBeLessThanOrEqual(m.viewportWidth);
+  }, 30_000);
+});
+
+describe("a pull's Files tab with a line comment (#10073)", () => {
+  test("the seeded diff carries the review comment", () => {
+    expect(files).toContain("Say hello to the whole forge");
+  });
+  test("the preview takes looks of the Files tab at desk and phone", () => {
+    const taken = PREVIEW_OWNER_LOOKS.filter((l) => l.page === PREVIEW_PULL_FILES).map((l) => l.kind).sort();
+    expect(taken).toEqual(["desktop", "phone"]);
+  });
+});
+
+describe.skipIf(chromium === undefined)("a pull's Files tab with a line comment, measured", () => {
+  const measure = `JSON.stringify({ scrollWidth: document.documentElement.scrollWidth, viewportWidth: document.documentElement.clientWidth, comment: document.body.textContent.includes("Say hello to the whole forge") })`;
+  const look = async (width: number, height: number) => {
+    const cookies = [{ name: "forge_session", value: createSession(app.db, previewAdmin(app)!.id).token }];
+    return JSON.parse(await evaluateLoaded(chromium!, `${servers.url}${PREVIEW_PULL_FILES}`, { width, height }, cookies, measure)) as { scrollWidth: number; viewportWidth: number; comment: boolean };
+  };
+  test("phone, 390x844: no sideways scroll", async () => {
+    const m = await look(390, 844);
+    expect(m.comment).toBe(true);
+    expect(m.scrollWidth).toBeLessThanOrEqual(m.viewportWidth);
+  }, 30_000);
+  test("desk, 1280x800: no sideways scroll", async () => {
+    const m = await look(1280, 800);
+    expect(m.comment).toBe(true);
     expect(m.scrollWidth).toBeLessThanOrEqual(m.viewportWidth);
   }, 30_000);
 });

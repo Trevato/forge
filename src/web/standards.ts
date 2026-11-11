@@ -6,6 +6,9 @@
  *   /.well-known/mcp.json         the MCP server card: endpoint, sign-in, the
  *                                 tool that needs no token (a draft format:
  *                                 only fields we keep true)
+ *   /.well-known/api-catalog      the API catalog (RFC 9727): a linkset naming the
+ *                                 OpenAPI description, the MCP card and the docs
+ *   /.well-known/forge            the standards this forge implements, with versions
  *   /.well-known/change-password  where a password manager sends someone
  *   /robots.txt                   what a crawler may index, and the sitemap
  *   /sitemap.xml                  every public repository
@@ -24,6 +27,7 @@
  * FORGE_SECURITY_CONTACT.
  */
 
+import { UPSTREAM_REPO } from "../core/upstream.ts";
 import { CRAWL_DELAY_S, DEEP_SEGMENTS } from "../http/crawl.ts";
 import { markPng, type MarkShape } from "../design/mark.ts";
 import { metaThemeColor } from "../design/themes.ts";
@@ -37,9 +41,13 @@ import { canRead, getRepo, type Repo } from "../core/repos.ts";
 import { publicForgeRepo } from "../core/forge_repo.ts";
 import type { Ctx } from "../http/context.ts";
 import { notFound } from "../http/respond.ts";
+import { SHARE_TARGET } from "./share_target.ts";
 import { SITE_LINE } from "./site_line.ts";
+import { holds } from "./feeds.ts";
 import { mcpToolsSection } from "./llms_tools.ts";
-import { HARNESS_PLUGINS, mcpCard, mcpPointers, pluginSource, pluginsOffered } from "../core/mcp_card.ts";
+import { apiCatalog, cardsLine, DISCOVERY, mcpCard, offeredPlugins, mcpPointers, offeredPluginRepo, pluginSource } from "../core/mcp_card.ts";
+import { forgeDocument } from "../core/standards_index.ts";
+import { TAGS } from "../contract/served.ts";
 import { running } from "../kernel/version.ts";
 import { timePhase, timePhaseAsync } from "../core/route_timing.ts";
 import { shippedReleases, type Shipped } from "../release/shipped.ts";
@@ -104,11 +112,48 @@ export function securityTxt(ctx: Ctx): Response {
   );
 }
 
+/** A discovery document and its ETag, per kind and origin, made again only when its inputs read differently. */
+const discoveryBodies = new Map<string, { inputs: string; body: string; etag: string }>();
+
+/**
+ * Serve a public discovery document with an ETag: `inputs` names what the
+ * body reads (the plugin repo offered, the running build), so the body is
+ * made once per origin until that changes. A matching If-None-Match is a 304.
+ */
+function discovery(ctx: Ctx, kind: string, inputs: string, make: () => unknown, type: string, cache: string, pretty = false): Response {
+  const key = `${kind} ${ctx.url.origin}`;
+  let kept = discoveryBodies.get(key);
+  if (kept === undefined || kept.inputs !== inputs) {
+    const body = JSON.stringify(make(), null, pretty ? 2 : undefined);
+    const etag = `"${new Bun.CryptoHasher("sha256").update(body).digest("hex").slice(0, 32)}"`;
+    kept = { inputs, body, etag };
+    // Origins come from the Host header: keep a handful, not one per guess.
+    // The oldest goes first (a Map keeps insertion order), so junk hosts never flush the real ones at once.
+    discoveryBodies.delete(key);
+    if (discoveryBodies.size >= 48) discoveryBodies.delete(discoveryBodies.keys().next().value!);
+    discoveryBodies.set(key, kept);
+  }
+  const headers = { etag: kept.etag, "cache-control": cache, "access-control-allow-origin": "*" };
+  if (holds(ctx.request.headers.get("if-none-match"), kept.etag)) return new Response(null, { status: 304, headers });
+  return new Response(kept.body, { headers: { ...headers, "content-type": type } });
+}
+
 /** GET /.well-known/mcp.json — the MCP server card (a draft format; see docs/MCP.md). */
 export function mcpJson(ctx: Ctx): Response {
-  const res = text(JSON.stringify(mcpCard(ctx.url.origin, pluginsOffered(ctx.app.db)), null, 2), "application/json");
-  res.headers.set("access-control-allow-origin", "*");
-  return res;
+  const repo = offeredPluginRepo(ctx.app.db, ctx.app.config.forgeRepo, UPSTREAM_REPO);
+  const now = running();
+  return discovery(ctx, "mcp", JSON.stringify([repo, now.version, now.commit]), () => mcpCard(ctx.url.origin, repo, now), "application/json", "public, max-age=3600", true);
+}
+
+/** GET /.well-known/api-catalog — RFC 9727: one linkset naming each API's description and docs. Anonymous. */
+export function apiCatalogJson(ctx: Ctx): Response {
+  return discovery(ctx, "api-catalog", "", () => apiCatalog(ctx.url.origin), 'application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"', "public, max-age=300");
+}
+
+/** GET /.well-known/forge — the standards this forge implements, by id and version (docs/standards/). */
+export function forgeJson(ctx: Ctx): Response {
+  const version = running().version;
+  return discovery(ctx, "forge", version, () => forgeDocument(version), "application/json", "public, max-age=3600");
 }
 
 /** GET /.well-known/change-password — where a password manager sends a person. */
@@ -254,12 +299,8 @@ export function webManifest(ctx: Ctx): Response {
         id: "/",
         display: "standalone",
         // Sharing a link or text to the installed forge opens the home's
-        // composer with it filled in (`sharedDraft`, studio/feed.ts).
-        share_target: {
-          action: "/",
-          method: "GET",
-          params: { title: "title", text: "text", url: "url" },
-        },
+        // composer with it filled in (`sharedDraft`, share_target.ts).
+        share_target: SHARE_TARGET,
         // A long-press on the installed icon: what is on the owner, or a
         // word with the forge's agents, one tap from the home screen.
         shortcuts: [
@@ -345,7 +386,7 @@ function runningSentence(): string {
 }
 
 /** llms.txt and its ETag per origin, valid while the listing read, the build, the tell command and the plugin source being public are the same. */
-const llmsBodies = new Map<string, { signedIn: boolean; repos: LlmsListing; running: string; tell: string | undefined; plugins: boolean; body: string; etag: string }>();
+const llmsBodies = new Map<string, { signedIn: boolean; repos: LlmsListing; running: string; tell: string | undefined; plugins: string | undefined; body: string; etag: string }>();
 
 /**
  * GET /llms.txt — the forge as an agent should meet it (llmstxt.org): what
@@ -372,7 +413,7 @@ export function llmsBody(ctx: Ctx): { body: string; etag: string } {
   const o = ctx.url.origin;
   const tell = sshTellCommand(ctx.app);
   const running = runningSentence();
-  const plugins = pluginsOffered(ctx.app.db);
+  const plugins = offeredPluginRepo(ctx.app.db, ctx.app.config.forgeRepo, UPSTREAM_REPO);
   const repos = timePhase(ctx.request, "repos", () => llmsRepos(ctx.app.db));
   // The tools section depends on who asks, so the signed-in and the anonymous body are kept apart.
   const signedIn = ctx.auth.user !== undefined;
@@ -390,7 +431,16 @@ export function llmsBody(ctx: Ctx): { body: string; etag: string } {
 }
 
 /** The llms.txt document for one origin. */
-function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: string, repos: LlmsListing, signedIn: boolean, plugins: boolean): string {
+/** One llms.txt line per plugin on offer; a cloned one names its source, a served one says so. */
+function pluginLines(o: string, plugins: string | undefined): string[] {
+  const lines = offeredPlugins(plugins).map((p) => {
+    const where = p.cloned && plugins !== undefined ? `source ${pluginSource(o, plugins)}, ` : "served by this forge, ";
+    return `- ${p.label} plugin (${where}path ${p.path}; ${p.setup}): \`${p.install(o, plugins ?? "")}\``;
+  });
+  return plugins === undefined ? [...lines, "- Claude Code plugin: not offered here (no public source)"] : lines;
+}
+
+function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: string, repos: LlmsListing, signedIn: boolean, plugins: string | undefined): string {
   const mcp = mcpPointers(o);
   return (
     [
@@ -402,18 +452,19 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
       "",
       "## Start here",
       "",
-      "If you are an assistant helping a person: say plainly what you can and cannot do from where you are. If you cannot reach this forge or hold an account on it, give the person these steps to do by hand.",
+      "If you are an assistant helping a person: say plainly what you can and cannot do from here. If you cannot reach this forge, give the person these steps.",
       "",
-      `- Help build a public app here: each one is a repository at ${o}/{owner}/{name}. A person makes an account at ${o}/signup, then follows "Offer a change" below. If /signup answers 403, new accounts here are by invitation for now: send a suggestion through "Report a problem" below, or work from a forge of your own.`,
-      `- Get your own forge: \`git clone https://forge.open-platform.sh/trevato/forge.git && cd forge && bun install && bun run src/main.ts\`, then in a second terminal \`bun src/main.ts --first-admin\`, which prints a one-time link that makes you the admin. It needs Bun; its crew needs the claude CLI and a model credential. Or a hosted one, free within limits while hosting is not sold: sign in and open ${o}/forges/new (or call the MCP \`spawn\` tool with the person's consent). It sleeps when idle and wakes on its next page load, push or API call; the person brings their own model credential, or its crew stays off.`,
-      "- Work from your own forge: connect it to this one as an origin, bring an app in, and send your work back. How: https://forge.open-platform.sh/trevato/forge/raw/main/docs/ORIGINS.md",
-      `- Connect an assistant that can use tools: add a custom connector with the URL ${mcp.url}. It signs in with OAuth; only the report tool works without an account.`,
+      `- Build now, no account: \`curl -sX POST ${o}/api/v1/start -d '{"name":"my-app"}'\` -> {user, token, repo, git, app, claim}. Clone git.url (user:token@), \`git push\` to main: app.url is live. Give claim.url to the person who takes it over. Unclaimed: asleep in 7 days, archived in 30.`,
+      `- Or with an account: sign up at ${o}/signup, then follow "Offer a change" below. By request, POST ${o}/api/v1/users gives 202 {state:"waiting"}. If /signup says 403, use "Report a problem".`,
+      `- Get your own forge: \`git clone ${UPSTREAM_REPO}.git && cd forge && bun install && bun run src/main.ts\`, then in a second terminal \`bun src/main.ts --first-admin\`, which prints a one-time link that makes you the admin. It needs Bun; its crew needs the claude CLI and a model credential. Or a hosted one, plans on ${o}: sign in and open ${o}/forges/new (or call the MCP \`spawn\` tool with the person's consent). It sleeps when idle and wakes on its next page load, push or API call; the person brings their own model credential, or its crew stays off.`,
+      `- Work from your own forge: connect it to this one as an origin, bring an app in, and send your work back. How: ${UPSTREAM_REPO}/raw/main/docs/ORIGINS.md`,
+      `- Connect an assistant that uses tools: custom connector URL ${mcp.url} (OAuth); start and report need no account.`,
       "",
       "## Report a problem (no account)",
       "",
       `- Page: ${o}/{owner}/{name}/report`,
       `- API: POST ${o}/api/v1/repos/{owner}/{name}/reports with JSON {"title": "...", "body": "...", "page": "https://..."} -> 202 {"id", "state": "pending"}`,
-      `- MCP: POST ${o}/mcp, method tools/call, name "report", arguments {"repo": "owner/name", "title", "body", "page"}; this one tool needs no token`,
+      `- MCP: POST ${mcp.url}, method tools/call, name "report", arguments {"repo": "owner/name", "title", "body", "page"}; this one tool needs no token`,
       `- Plain text: a title of 1-${TITLE_MAX} characters, a body of at most ${BODY_MAX}; a few a minute from one source. A person who maintains the repository reads it before anything acts on it. A private repository answers not_found.`,
       "",
       "## Offer a change",
@@ -423,11 +474,7 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
       "## Use it from your harness",
       "",
       `- MCP endpoint: ${mcp.url} (streamable HTTP; OAuth metadata at ${mcp.oauth}). Or send a token as Authorization: Bearer.`,
-      ...(plugins
-        ? HARNESS_PLUGINS.map(
-            (p) => `- ${p.label} plugin (source ${pluginSource(o)}, path ${p.path}; ${p.setup}): \`${p.install(o)}\``,
-          )
-        : ["- Harness plugins: not offered on this forge (their source is private)"]),
+      ...pluginLines(o, plugins),
       "",
       "## What you can do on any page",
       "",
@@ -443,17 +490,20 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
           ]),
       "## Find things (no account)",
       "",
-      `- Explore repositories: GET ${o}/api/v1/explore?q=kind:app+sort:forks+garden. MCP: the tool "explore" with {"q"}. In q, kind: is app, person or forge; sort: is score, forks, ships, likes, use, fresh or name; updated: is 1d, 7d or 30d; owner:<name> is one account; archived: is yes or no; any other word is free text matched against name, owner and description.`,
-      `- Search issues, pulls, repositories and code: GET ${o}/api/v1/search?q=websocket+timeout. MCP: the tool "search" with {"q"}.`,
+      `- Explore repositories: GET ${o}/api/v1/explore?q=kind:app+sort:forks+garden. (MCP "explore": with an account.) In q, kind: is app, person or forge; sort: is score, forks, ships, likes, use, fresh or name; updated: is 1d, 7d or 30d; owner:<name> is one account; archived: is yes or no; any other word is free text matched against name, owner and description.`,
+      `- Search issues, pulls, repositories and code: GET ${o}/api/v1/search?q=websocket+timeout. (MCP "search": with an account.)`,
       "- Both read only what is public to you.",
       "",
       "## For agents with an account",
       "",
-      `- MCP: ${mcp.url} (OAuth discovery: ${mcp.oauth}; server card, a draft format: ${o}/.well-known/mcp.json)`,
-      `- API: ${o}/api/v1, Authorization: Bearer <token>`,
-      `- OpenAPI: GET ${o}/api/v1/openapi.json (redirects to ${o}/contract/openapi.json)`,
+      `- MCP: ${mcp.url} (OAuth discovery: ${mcp.oauth}; server card, a draft format: ${o}${DISCOVERY.card})`,
+      `- API: ${o}${DISCOVERY.api} (the root lists the other URLs), Authorization: Bearer <token>`,
+      `- API catalog (RFC 9727, one linkset of the above): ${o}${DISCOVERY.catalog}`,
+      `- OpenAPI: GET ${o}${DISCOVERY.openapi}, or one slice with ?tag= (${TAGS.join(", ")})`,
       "",
       ...mcpToolsSection(o, signedIn),
+      cardsLine(),
+      "",
       "## Public repositories",
       "",
       // Names and addresses only: a description is whatever its owner

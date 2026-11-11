@@ -7,7 +7,7 @@
  */
 
 import type { App } from "../app.ts";
-import { getQuota } from "../settings/quotas.ts";
+import { quotaOf } from "../settings/quotas.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
@@ -24,7 +24,7 @@ export function appsOwnedBy(app: App, ownerId: string): number {
 
 /** The refusal, in words: the limit and the count, e.g. "3 of 3 apps". */
 export function appLimitWords(app: App, ownerId: string): string {
-  const limit = getQuota(app.db, "apps") ?? 0;
+  const limit = quotaOf(app.db, "apps", ownerId) ?? 0;
   return `This account is at its limit: ${Math.min(appsOwnedBy(app, ownerId), limit)} of ${limit} apps. Remove one to make room.`;
 }
 
@@ -35,7 +35,7 @@ export function requireAppRoom(
   ownerId: string,
 ): Result<void, "app_limit"> {
   if (actor.isAdmin) return ok();
-  const limit = getQuota(app.db, "apps");
+  const limit = quotaOf(app.db, "apps", ownerId);
   if (limit === null || appsOwnedBy(app, ownerId) < limit) return ok();
   return err("app_limit");
 }

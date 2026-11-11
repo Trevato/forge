@@ -99,7 +99,7 @@ describe("image blob pages", () => {
 
   test("the image cap decides: over it no <img>, under it one", () => {
     const draw = (size: number): string =>
-      renderBlob({ base: "/alice/pics", caps: { write: false }, facts: { name: "pics" } } as unknown as RepoScope, {
+      renderBlob({ base: "/alice/pics", kind: "local", caps: { write: false }, facts: { name: "pics" } } as unknown as RepoScope, {
         refs: { branches: ["main"], tags: [] } as RefSet,
         ref: "main",
         path: "a.png",

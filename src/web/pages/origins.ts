@@ -87,12 +87,14 @@ import {
 } from "../ui.ts";
 
 export type AccountSection =
+  | "billing"
   | "adminflows"
   | "security"
   | "profile"
   | "confirms"
   | "password"
   | "tokens"
+  | "shells"
   | "keys"
   | "model"
   | "passkeys"
@@ -107,12 +109,17 @@ export type AccountSection =
   | "backups"
   | "traffic"
   | "secrets"
+  | "devices"
   | "capacity"
   | "telemetry"
   | "access"
   | "limits"
+  | "economics"
   | "flags"
+  | "templates"
   | "features"
+  | "packs"
+  | "captain"
   | "cloud";
 
 /**
@@ -139,16 +146,18 @@ const SECTION_ROWS: readonly (readonly [
   ["Account", "Profile", "/settings", "user", (c) => c === "profile", false],
   ["Account", "Password", "/settings/password", "lock", (c) => c === "password", false],
   ["Account", "Passkeys", "/settings/passkeys", "key", (c) => c === "passkeys", false],
-  ["Account", "SSH keys", "/settings/keys", "lock", (c) => c === "keys", false],
-  ["Account", "Access tokens", "/settings/tokens", "key", (c) => c === "tokens", false],
+  ["Account", "Computer keys", "/settings/keys", "lock", (c) => c === "keys", false],
+  ["Account", "Access codes", "/settings/tokens", "key", (c) => c === "tokens", false],
   ["Account", "Confirms", "/settings/confirms", "check", (c) => c === "confirms", false],
   ["Crew and AI", "Model", "/settings/model", "key", (c) => c === "model", false],
   ["Crew and AI", "Crew", "/settings/crew", "bot", (c) => c === "crew", true],
+  ["Crew and AI", "Captain", "/settings/captain", "bot", (c) => c === "captain", true],
   ["Crew and AI", "Subscriptions", "/settings/subscriptions", "key", (c) => c === "subscriptions", true],
   ["Crew and AI", "Usage", "/settings/spend", "activity", (c) => USAGE.has(c), true],
-  ["Connections", "Origins", "/settings/origins", "globe", (c) => c === "origins", false],
-  ["Connections", "Cloud accounts", "/settings/cloud", "key", (c) => c === "cloud", true],
+  ["Connections", "Connected accounts", "/settings/origins", "globe", (c) => c === "origins", false],
+  ["Connections", "Cloud", "/settings/cloud", "key", (c) => c === "cloud", true],
   ["Connections", "Secrets", "/settings/secrets", "lock", (c) => c === "secrets", true],
+  ["Connections", "Devices", "/settings/devices", "globe", (c) => c === "devices", true],
   ["Security", "Security", "/settings/security", "lock", (c) => c === "security", true],
   ["Security", "Traffic", "/settings/traffic", "users", (c) => c === "traffic", true],
   ["Security", "Trusted sources", "/settings/trusted", "lock", (c) => c === "trusted", true],
@@ -156,9 +165,13 @@ const SECTION_ROWS: readonly (readonly [
   ["This forge", "Accounts", "/settings/accounts", "users", (c) => c === "accounts", true],
   ["This forge", "People", "/settings/people", "users", (c) => c === "people", true],
   ["This forge", "Limits", "/admin/limits", "activity", (c) => c === "limits", true],
+  ["This forge", "Economics", "/settings/economics", "activity", (c) => c === "economics", true],
+  ["This forge", "Billing", "/settings/billing", "activity", (c) => c === "billing", true],
   ["This forge", "Flows", "/admin/flows", "activity", (c) => c === "adminflows", true],
   ["This forge", "Flags", "/settings/flags", "activity", (c) => c === "flags", true],
+  ["This forge", "Templates", "/settings/app-templates", "rocket", (c) => c === "templates", true],
   ["This forge", "Features", "/settings/features", "rocket", (c) => c === "features", true],
+  ["This forge", "Packs", "/settings/packs", "rocket", (c) => c === "packs", true],
   ["This forge", "Backups", "/settings/backups", "download", (c) => c === "backups", true],
 ];
 
@@ -279,6 +292,7 @@ function originCard(origin: Origin, mirrors: number, paused = false): Html {
       origin.webUrl,
     )}`,
     meta: html`${origin.authKind === "oauth" ? "OAuth" : "personal access token"}
+      ${when(origin.readOnly, () => html` · read-only: nothing is written back`)}
       ·
       ${origin.lastSyncAt === null
         ? html`never synced`
@@ -589,9 +603,21 @@ function tokenSection(values: ConnectValues): Html {
         autocomplete: "off",
         hint: "It is never displayed after this.",
       })}
+      ${readOnlyField()}
       ${tokenNeeds(values.tokenHost)}
       <div class="form-actions">${btn("Connect")}</div>
     </form>`;
+}
+
+/** The one Read-only checkbox, on every way to connect by token. */
+function readOnlyField(): Html {
+  return uiField({
+    label: "Read-only",
+    name: "readOnly",
+    type: "checkbox",
+    value: "1",
+    hint: "Nothing is ever written back to that account: no comments, pulls, pushes or merges.",
+  });
 }
 
 const OLDER_FORGE_DOC = "/trevato/forge/blob/main/docs/features/forge-origin-older.md#connecting-from-an-older-forge";
@@ -666,7 +692,8 @@ function forgeSection(ctx: Ctx, values: ConnectValues): Html {
         autocomplete: "off",
         hint: "Read is enough to bring an app; private repositories come with it.",
       })}
-      <p class="muted small">Make the token there: ${tokens} (Settings → Access tokens).</p>
+      ${readOnlyField()}
+      <p class="muted small">Make the token there: ${tokens} (Settings → Access codes).</p>
       <div class="form-actions">
         ${btn("Connect that forge", { variant: "primary", icon: "globe" })}
       </div>
@@ -771,14 +798,14 @@ function originsView(
     </p>
     ${origins.length === 0
       ? html`<section class="settings-block">
-          <h2>Connected origins</h2>
+          <h2>Connected accounts</h2>
           <p class="small">
-            No origins connected: connect another forge, GitHub, a Forgejo
+            No connected accounts yet: connect another forge, GitHub, a Forgejo
             instance or a Gitea instance below.
           </p>
         </section>`
       : html`<section class="settings-block">
-          <h2>Connected origins</h2>
+          <h2>Connected accounts</h2>
           <ul class="list setting-list" data-origins>
             ${origins.map((o) =>
               originCard(
@@ -797,7 +824,7 @@ function originsView(
         )
       : null}
     <section class="settings-block" id="connect">
-      <h2>Connect an origin</h2>
+      <h2>Connect an account</h2>
       <ul class="list">
         ${connectPath(
           "connect-forge",
@@ -875,6 +902,7 @@ function frozenCard({ frozen, repos }: ReturnType<typeof readFrozen>): Html | nu
     return [
       row({
         href: `/${repo.ownerName}/${repo.name}#frozen`,
+        nav: true,
         lead: icon("repo"),
         title: `${repo.ownerName}/${repo.name}`,
         meta: html`mirrors <span class="mono">${m.fullName}</span>${host === ""
@@ -901,9 +929,9 @@ export function shell(
   return page(
     {
       ctx,
-      title: "Origins",
+      title: "Connected accounts",
       ...(scriptJs === undefined ? {} : { scriptJs }),
-      body: html`<div class="page-head"><h1>Origins</h1></div>
+      body: html`<div class="page-head"><h1>Connected accounts</h1></div>
         ${settingsLayout(
           accountSections("origins", {
             admin: ctx.auth.user?.isAdmin === true,
@@ -970,6 +998,7 @@ export async function originConnectToken(ctx: Ctx): Promise<Response> {
   const connected = await connectOrigin(ctx.app, ctx.auth.user, {
     host,
     token,
+    readOnly: field(form, "readOnly") === "1",
   });
   if (!connected.ok) {
     // The host comes back; the token deliberately does not. Re-typing a
@@ -1193,8 +1222,8 @@ export function notFoundNote(): Html {
   return empty({
     icon: "search",
     title: "No such connect",
-    note: "It finished, expired, or was never yours. Start again from Origins.",
-    action: btn("Back to origins", {
+    note: "It finished, expired, or was never yours. Start again from Connected accounts.",
+    action: btn("Back to connected accounts", {
       href: "/settings/origins",
       variant: "primary",
     }),

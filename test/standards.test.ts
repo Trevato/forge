@@ -223,6 +223,53 @@ describe("what the open web expects", () => {
     expect(body).not.toContain("alice/closed");
   });
 
+  test("GET /api/v1 names the forge and where its API, MCP, OAuth and docs live; POST is still no_route", async () => {
+    for (const path of ["/api/v1", "/api/v1/"]) {
+      const res = await fetch(`${base}${path}`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("cache-control")).toBe("no-cache");
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(res.headers.get("content-security-policy")).not.toBeNull();
+      const j = (await res.json()) as Record<string, unknown>;
+      expect(Object.keys(j).sort()).toEqual(["commit", "here", "llms", "mcp", "name", "oauth", "openapi", "version"]);
+      expect(j["openapi"]).toBe(`${base}/contract/openapi.json`);
+      expect(j["mcp"]).toBe(`${base}/mcp`);
+      expect(j["oauth"]).toBe(`${base}/.well-known/oauth-protected-resource`);
+      expect(j["llms"]).toBe(`${base}/llms.txt`);
+      expect(j["here"]).toBe(`${base}/api/v1/here`);
+    }
+    expect((await fetch(`${base}/api/v1`, { method: "HEAD" })).status).toBe(200);
+    const post = await fetch(`${base}/api/v1`, { method: "POST", headers: { origin: base } });
+    expect(post.status).toBe(404);
+    expect(((await post.json()) as { error?: string }).error).toBe("no_route");
+    expect(await fetch(`${base}/llms.txt`).then((r) => r.text())).toContain(`${base}/api/v1 (the root`);
+  });
+
+  test("every MCP tool llms.txt offers without an account answers non-401 to an anonymous call, and the no-account section names only HTTP routes for finding things", async () => {
+    const body = await fetch(`${base}/llms.txt`).then((r) => r.text());
+    const tools = body.split("## MCP tools")[1]!.split("\n## ")[0]!;
+    const open = [...tools.matchAll(/^- (\w+):.*\(no account\)/gm)].map((m) => m[1]!);
+    expect(open).toContain("report");
+    for (const name of open) {
+      const res = await fetch(`${base}/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: { repo: "nobody/none", title: "x" } } }),
+      });
+      expect(res.status).not.toBe(401);
+    }
+    const find = body.split("## Find things (no account)")[1]!.split("\n## ")[0]!;
+    expect(find).toContain("with an account");
+    expect(find).not.toContain("MCP: the tool");
+    expect(find).toContain('MCP "search": with an account');
+    const probe = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "explore", arguments: { q: "" } } }),
+    });
+    expect(probe.status).toBe(401);
+  });
+
   test("llms.txt says how to use the forge from a harness, with the endpoint built from the URL", async () => {
     const body = await fetch(`${base}/llms.txt`).then((r) => r.text());
     const section = body.slice(body.indexOf("## Use it from your harness"));
@@ -230,8 +277,8 @@ describe("what the open web expects", () => {
     expect(section).toContain(`${base}/mcp`);
     expect(section).toContain(`${base}/.well-known/oauth-protected-resource`);
     expect(section).toContain("streamable HTTP");
-    // trevato/forge is not here, so no install line is printed that could not work.
-    expect(section).toContain("Harness plugins: not offered on this forge (their source is private)");
+    // trevato/forge is not here, so the lines come from the public upstream.
+    expect(section).toContain("Claude Code plugin (source https://forge.open-platform.sh/trevato/forge.git");
     expect(section).not.toContain("needs that repository to be public");
   });
 

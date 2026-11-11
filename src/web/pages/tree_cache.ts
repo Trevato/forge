@@ -113,7 +113,9 @@ export const keptPartsStats = () => parts.stats();
 export interface RenderedBlob extends RenderedTree {
   readonly title: string;
   readonly objectSrc: boolean;
+  readonly frame: boolean;
   readonly csv: boolean;
+  readonly font: boolean;
 }
 
 const blobKey = (repoId: string, commit: string, path: string, view: string, all: boolean): string =>

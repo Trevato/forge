@@ -311,7 +311,7 @@ export function migrateScreen(f: Session, ctx: Ctx): Screen {
               : rows.length === 0 && unreachable.length > 0
                 ? `${down} Try again, or press u to paste a URL.`
                 : rows.length === 0
-                  ? "No connected origin has repositories. Press u to paste a URL, or connect one on the web under Settings → Origins."
+                  ? "No connected origin has repositories. Press u to paste a URL, or connect one on the web under Settings → Connected accounts."
                   : "Nothing matches.",
             list!.w,
           ),

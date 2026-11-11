@@ -18,6 +18,9 @@ import {
   type SettingView,
   provenanceFacts,
 } from "../../actions/features.ts";
+import { runNow } from "../../apps/feature_run.ts";
+import { runtimeReach, scheduleMeta, type Reach } from "../../apps/feature_schedule.ts";
+import { getAppBySlug, type AppRecord } from "../../core/apps.ts";
 import { DAYS } from "../../apps/feature.ts";
 import type { FeedItem } from "../../feed/rank.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -64,6 +67,8 @@ export function provenanceRows(p: FeatureView["provenance"]) {
 function featureRow(f: FeatureView) {
   const base = `/settings/features/${encodeURIComponent(f.slug)}`;
   return row({
+    href: base,
+    nav: true,
     title: html`${f.name} <span class="muted small mono">${f.repo}</span>
       ${f.absorbed ? badge("absorbed", { tone: "success" }) : null}
       ${f.pending !== null ? badge("declaration changed: review", { tone: "attn" }) : null}`,
@@ -78,7 +83,7 @@ function featureRow(f: FeatureView) {
       : html`${f.summary ?? ""}${when(f.summary !== null, () => html`<br />`)}${f.settings.length} setting${f.settings.length === 1 ? "" : "s"}${f.absorbed
           ? html` · absorbed by ${f.absorbedBy ?? "someone"}`
           : null}`}<br /><span id="sw-${f.slug}">${switchNote(f)}</span>`,
-    trail: html`${when(f.pending !== null, () => html`<form class="row-fields" method="post" action="${base}/accept">
+    after: html`${when(f.pending !== null, () => html`<form class="row-fields" method="post" action="${base}/accept">
         <input type="hidden" name="name" value="${f.pending?.name ?? ""}" />
         <input type="hidden" name="page" value="${f.pending?.page ?? ""}" />
         ${btn("Accept", { size: "sm", label: `Accept ${f.pending?.name ?? ""} as ${f.name}'s menu entry` })}
@@ -221,6 +226,14 @@ function featureView(ctx: Ctx, f: FeatureView, refused?: Refused, items: readonl
             meta: html`${i.actor ?? i.app} · ${time(i.at)}`,
           }))}</ul>`}
     </section>
+    ${when(f.schedule.length > 0, () => html`<section class="settings-block">
+      <h3>Scheduled</h3>
+      <ul class="list">${f.schedule.map((x) => row({
+        title: html`<span class="mono">${x.tool}</span> every ${x.every}`,
+        meta: html`${scheduleMeta(x).map((p) => typeof p === "string" ? p : "error" in p ? html`<span class="danger">${p.error}</span>` : "last" in p ? time(new Date(p.last).toISOString()) : time(new Date(p.next).toISOString(), { date: true }))}`,
+        trail: html`<form method="post" action="${base}/run/${encodeURIComponent(x.tool)}">${btn("Run now", { label: `Run ${x.tool} now` })}</form>`,
+      }))}</ul>
+    </section>`)}
     <p class="muted small">
       Saving restarts ${f.name}: its process reads each setting as an environment variable, named on the right.
       <a href="/settings/features">All features</a>
@@ -261,6 +274,23 @@ export async function featureSave(ctx: Ctx): Promise<Response> {
   if (changed.error.error === "invalid_setting")
     return featureView(ctx, found.value, { typed, key: changed.error.key, message: changed.error.message });
   return flashTo(ctx, back, { tone: "danger", message: changed.error.message });
+}
+
+/** POST /settings/features/:slug/run/:tool, with `reachOf` the seam a test replaces. */
+export function featureRun(reachOf: (app: Ctx["app"], record: AppRecord) => Reach = runtimeReach) {
+  return async (ctx: Ctx): Promise<Response> => {
+    const no = requireAdmin(ctx);
+    if (no) return no;
+    const form = await readForm(ctx, "admin");
+    if (form instanceof Response) return form;
+    const slug = ctx.params["slug"] ?? "";
+    const tool = ctx.params["tool"] ?? "";
+    const record = getAppBySlug(ctx.app.db, slug);
+    if (record === undefined) return notFoundPage(ctx);
+    const back = `/settings/features/${encodeURIComponent(slug)}`;
+    const said = await runNow(ctx.app.db, record.id, tool, reachOf(ctx.app, record));
+    return flashTo(ctx, back, said.ok ? { message: said.message } : { tone: "danger", message: said.message });
+  };
 }
 
 // POST /settings/features/:slug/absorb and /unabsorb

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { seedAdmin } from "./helpers/admin.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 let dataDir = "";
 let app: App, servers: Servers, bearer = "";
@@ -30,7 +31,7 @@ afterAll(async () => {
 });
 
 const phases = (res: Response) =>
-  (res.headers.get("server-timing") ?? "").split(", ").map((p) => p.split(";")[0]!).filter((n) => n && n !== "app");
+  requestTiming(res).split(", ").map((p) => p.split(";")[0]!).filter((n) => n && n !== "app");
 
 for (const what of ["system", "history", "flow", "sources"]) {
   test(`telemetry/${what} names session, read, render in order`, async () => {

@@ -31,6 +31,7 @@ import {
   requireScope,
   respondAccess,
   str,
+  tryAgain,
 } from "../respond.ts";
 import type { Router } from "../router.ts";
 
@@ -40,6 +41,9 @@ const REPORT_HINT =
   `a title of 1-${TITLE_MAX} characters, a body of at most ${BODY_MAX}, ` +
   "page an http(s) address, agent a name of letters, digits, . _ - " +
   "(a claim unless a token proves it)";
+
+/** A full queue drains as the crew reads reports; no clock says when, so a minute. */
+const REPORT_QUEUE_RETRY = 60;
 
 export function reportRoutes(router: Router<Handler>): void {
   // ── reports from outside — no account, a person decides ──────────────
@@ -66,17 +70,9 @@ export function reportRoutes(router: Router<Handler>): void {
       const refusal = filed.error;
       if (refusal.error === "not_found") return notFound();
       if (refusal.error === "rate_limited")
-        return json(
-          { error: "rate_limited", message: "too many reports; wait and send again" },
-          429,
-          { "retry-after": String(refusal.retryAfter) },
-        );
+        return tryAgain("rate_limited", 429, "too many reports; wait and send again", refusal.retryAfter);
       if (refusal.error === "queue_full")
-        return apiError(
-          "queue_full",
-          429,
-          "this repository has many reports waiting; try again later",
-        );
+        return tryAgain("queue_full", 429, "this repository has many reports waiting; try again later", REPORT_QUEUE_RETRY);
       return apiError(refusal.error, 422, REPORT_HINT);
     }
     return json(

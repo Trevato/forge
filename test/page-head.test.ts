@@ -8,6 +8,7 @@ import { getRepo } from "../src/core/repos.ts";
 import { createIssue } from "../src/core/issues.ts";
 import { createApp as createAppRecord } from "../src/core/apps.ts";
 import { createUser } from "../src/core/users.ts";
+import { seedPacks } from "./helpers/packs.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { appLine, plainDescription, repoLine } from "../src/web/describe.ts";
 
@@ -33,6 +34,7 @@ describe("every public page names itself for a link preview", () => {
       adminIfFirst: true,
     });
     if (!u.ok) throw new Error(u.error);
+    await seedPacks(app);
     // No description at all, and one that is scaffold jargon.
     for (const name of ["bare", "widget"]) {
       const made = await createRepo(app, u.value, { name, visibility: "public" });

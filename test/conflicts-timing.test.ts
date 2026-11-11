@@ -10,6 +10,7 @@ import { createSession } from "../src/core/sessions.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 quietLogs();
 
@@ -71,7 +72,7 @@ test("a conflicted pull's resolve page names its phases after app, in order", as
   const res = await fetch(`${servers.url}/alice/r/pulls/${number}/resolve`, { headers: { cookie } });
   expect(res.status).toBe(200);
   expect(await res.text()).toContain("Block 1 of 1");
-  const parts = (res.headers.get("server-timing") ?? "").split(", ");
+  const parts = requestTiming(res).split(", ");
   const names = parts.map((p) => p.split(";")[0]!);
   expect(names.slice(names.indexOf("app") + 1)).toEqual([
     "session", "pull", "checkout", "status", "file", "crew", "render",

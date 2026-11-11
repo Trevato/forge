@@ -14,22 +14,35 @@ import {
   CAPACITY_KEYS,
   capacityChanges,
   bootDefault,
-  capacityValue,
   isCapacityKey,
   setCapacity,
   storedCapacity,
   validCapacity,
   type CapacityChange,
   type CapacityKey,
+  effectiveCapacity,
+  followsSpeed,
+  needsReason,
+  REASON_MAX,
 } from "../core/capacity.ts";
-import { egressTotals, npmBytesLastHour, npmTopRepoLastHour, type EgressTotal } from "../apps/egress.ts";
+import type { EgressTotal } from "../apps/egress.ts";
+import {
+  egressTotalsFor,
+  liveCounters,
+  npmBytesFor,
+  npmTopRepoFor,
+  type ProcessCounters,
+} from "../spawn/process_counters.ts";
 import { getRepoById } from "../core/repos.ts";
 import { selfSwapState, type SelfSwap } from "../release/swap.ts";
 import { signinReach, signsInWithoutEdge } from "../core/accounts.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
-/** The six guards a caller may set by `key`: the MCP tool's enum and the terminal's `e`. */
+/** What a refused change to a dial that follows Speed says, on every door. */
+export const DERIVED_WORDS = "The pace floor and the queue depth follow Speed: change Speed (crew.concurrency) and they move with it.";
+
+/** The guards a caller may set by `key`: the MCP tool's enum and the terminal's `e`. */
 export const SETTABLE_CAPACITY = [
   "crew.concurrency",
   "checks.concurrency",
@@ -37,6 +50,7 @@ export const SETTABLE_CAPACITY = [
   "cells.egress",
   "guard_new_accounts",
   "signin.edge",
+  "children.ownFilesystem",
 ] as const satisfies readonly CapacityKey[];
 
 export interface CapacityRow {
@@ -45,7 +59,7 @@ export interface CapacityRow {
   readonly help: string;
   readonly value: string;
   /** Where `value` comes from: an admin's setting, or the boot default. */
-  readonly source: "setting" | "default";
+  readonly source: "setting" | "default" | "derived";
   readonly default: string;
   readonly env: string;
   /** For a setting away from its default: when and by whom it was set. */
@@ -69,14 +83,15 @@ export interface EgressHour {
   readonly destinations: readonly EgressTotal[];
 }
 
-export function egressHour(db: Database, now = Date.now()): EgressHour {
-  const top = npmTopRepoLastHour(now);
-  const repo = top === undefined ? undefined : getRepoById(db, top.repoId);
+/** This hour's egress as `app` may read it: none of it on a hosted child (#10517). */
+export function egressHour(app: App, now = Date.now(), read: ProcessCounters = liveCounters): EgressHour {
+  const top = npmTopRepoFor(app, now, read);
+  const repo = top === undefined ? undefined : getRepoById(app.db, top.repoId);
   return {
-    npmBytesLastHour: npmBytesLastHour(now),
+    npmBytesLastHour: npmBytesFor(app, now, read),
     npmTopRepoLastHour:
       top === undefined || repo === undefined ? null : { repo: `${repo.ownerName}/${repo.name}`, bytes: top.bytes },
-    destinations: egressTotals(now).slice(0, 10),
+    destinations: egressTotalsFor(app, now, read).slice(0, 10),
   };
 }
 
@@ -112,14 +127,14 @@ export function listCapacity(
       key,
       label: CAPACITY[key].label,
       help: CAPACITY[key].help,
-      value: capacityValue(app.db, key),
-      source: storedCapacity(app.db, key) === undefined ? "default" : "setting",
+      value: effectiveCapacity(app.db, key),
+      source: followsSpeed(key) ? "derived" : storedCapacity(app.db, key) === undefined ? "default" : "setting",
       default: bootDefault(app.db, key),
       env: CAPACITY[key].env,
       ...changedOf(app.db, key),
     })),
     changes: capacityChanges(app.db),
-    egress: egressHour(app.db),
+    egress: egressHour(app),
     selfSwap: selfSwapState(app.config.selfSwap === true),
   });
 }
@@ -149,34 +164,46 @@ export function edgeOffDryRun(
   });
 }
 
-/** Set `key` to `value`; `null` or `""` goes back to the boot default. */
+/** What a move to report, said without a reason, is told. */
+export const REASON_WORDS = "Say why: setting cells.egress to report is kept with who made it and the reason.";
+
+/**
+ * Set `key` to `value`; `null` or `""` goes back to the boot default.
+ * `reason` is kept beside who; a move of `cells.egress` to report is refused
+ * without one (#10778). Tightening (enforce, or back to the default) never is.
+ */
 export function changeCapacity(
   app: App,
   actor: User | undefined,
   key: string,
   value: string | null,
+  reason = "",
 ): Result<
   { key: CapacityKey; from: string; to: string },
-  "not_found" | "no_such_setting" | "invalid_value" | "no_credential"
+  "not_found" | "no_such_setting" | "invalid_value" | "no_credential" | "derived" | "reason_required"
 > {
   const who = admin(actor);
   if (!who.ok) return who;
   if (!isCapacityKey(key)) return err("no_such_setting");
+  if (followsSpeed(key)) return err("derived");
   const next = value === null ? null : value.trim();
   if (next !== null && next !== "" && !validCapacity(key, next))
     return err("invalid_value");
   if (key === "signin.edge" && next === "off" && !signsInWithoutEdge(app.db, who.value.id))
     return err("no_credential");
+  const why = reason.replace(/[\u0000-\u001f\u007f]+/g, " ").trim().slice(0, REASON_MAX);
+  if (needsReason(key) && next === "report" && why === "") return err("reason_required");
   const changed = setCapacity(
     app.db,
     key,
     next === "" ? null : next,
     who.value.id,
+    why,
   );
   app.bus.append({
     kind: "capacity.changed",
     actorId: who.value.id,
-    payload: { key, from: changed.from, to: changed.to },
+    payload: { key, from: changed.from, to: changed.to, ...(why === "" ? {} : { reason: why }) },
   });
   return ok({ key, ...changed });
 }

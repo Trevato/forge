@@ -6,6 +6,7 @@
  * the crew is actually there, in words, before anyone assigns anything.
  */
 
+import { fundingOf, fundingWords } from "../../spawn/funding.ts";
 import {
   createAgent,
   deleteAgent,
@@ -37,6 +38,8 @@ import {
   type SplitScorecard,
 } from "../../core/scorecard.ts";
 import { keeperDays, type KeeperDay } from "../../flow/keeper_rate.ts";
+import { weekCard, weekReturns, WEEK_DAYS, type ReturnedPull, type WeekLine } from "../../crew/week_card.ts";
+import { knobsCard } from "./knobs.ts";
 import { decideChange, readReview } from "../../actions/model_review.ts";
 import { wastedDays, type WastedDay } from "../../core/wasted_days.ts";
 import { modelDays, type ModelDay } from "../../core/model_days.ts";
@@ -52,10 +55,12 @@ import { listAutonomousRepos, type Repo } from "../../core/repos.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
+import { helpAsked, pageHelp } from "../page_help.ts";
 import { flashTo, page } from "../layout.ts";
 import {
   btn,
   confirmAction,
+  disclosure,
   icon,
   time,
   field as uiField,
@@ -139,8 +144,10 @@ export function crewReadiness(ctx: Ctx): Html {
   if (!crew.ready)
     return html`<div class="toast" data-tone="danger" role="alert">${icon("alert")}<div class="toast-body">The crew cannot run: ${crew.detail}. Agents can be
         created, but nothing picks up their work until this is fixed.</div></div>`;
-  return html`<p class="muted small mb">
-    ${icon("check")} ${crew.detail} is ready to run the crew.
+  const funded = fundingOf(ctx.app.config.dataDir);
+  // A word and a glyph; a forge its parent funds says so on the same line (#10484).
+  return html`<p class="mb">
+    ${icon("check")} <strong>Ready</strong> <span class="muted">${crew.detail}</span>${funded === undefined ? null : html` <span class="muted" data-funded>${fundingWords(funded)}</span>`}
   </p>
   ${when(
     !crew.sandbox.enforced,
@@ -168,7 +175,7 @@ const agentErrors = (ctx: Ctx): Record<string, string> => ({
   email_taken: USERNAME_TAKEN,
   invalid_model: `A model is up to ${MODEL_MAX} characters with no spaces.`,
   brief_too_long: `A brief is at most ${BRIEF_MAX} characters.`,
-  invalid_roles: "Pick at least one job: planner, builder or reviewer.",
+  invalid_roles: "Pick at least one job: planner, builder, reviewer or maintainer.",
   role_held: "That agent still holds a seat it would lose on a repository. Move it there first, under Settings → Crew.",
   invalid_budget: `A budget is a number of dollars between 0 and ${limitValue(ctx.app.db, "agent.budget_max_usd")}.`,
 });
@@ -182,7 +189,6 @@ function agentFields(values: AgentValues, error?: string): Html {
       label: m.label,
       selected: m.id === values.model,
     })),
-    hint: "An alias names the newest of its line, so the choice does not age.",
     ...(error !== undefined && error.startsWith("A model") ? { error } : {}),
   })}
   ${uiField({
@@ -379,13 +385,64 @@ function scorecardCard(
     </div>`,
     {
       title: "Scorecard",
-      note: html`Over the pulls each agent opened, and each team's members pooled (an
-          agent on two teams counts in both), in the last ${RECENT_DAYS} days
-          and over all time: review rounds are change requests per landed pull, red checks
-          the share of finished checks that failed; reverts (the landed pulls
-          a merged pull took back) and time to land (the mean from opening to
-          merge) are all time.`,
     },
+  );
+}
+
+/** A Returned count above zero links to its fold below; zero stays a bare 0. Only the count sits in the numeric cell. */
+function returnedCount(l: WeekLine, pulls: readonly ReturnedPull[]): Html | number {
+  if (l.returned === 0 || pulls.length === 0) return l.returned;
+  return html`<a href="#returned-${l.username}">${l.returned}</a>`;
+}
+
+/** The pulls that came back and why, folded in a full-width row under the member's: one link per pull. */
+function returnedRow(l: WeekLine, pulls: readonly ReturnedPull[]): Html | null {
+  if (l.returned === 0 || pulls.length === 0) return null;
+  const more = l.returned - pulls.length;
+  return html`<tr data-returned="${l.username}">
+    <td colspan="4">${disclosure(
+      `${l.returned} returned to ${l.username}`,
+      html`<ul class="list">
+        ${pulls.map(
+          (p) => html`<li>
+            <span class="muted">${p.repo}</span>
+            <a href="/${p.repo}/pulls/${p.number}">#${p.number}</a> ${p.title}${p.why ? html` <span class="muted">— ${p.why}</span>` : null}
+          </li>`,
+        )}
+        ${more > 0 ? html`<li class="muted">and ${more} more</li>` : null}
+      </ul>`,
+      { id: `returned-${l.username}`, small: true },
+    )}</td>
+  </tr>`;
+}
+
+/** The week at a glance: one dense row per member; a member with nothing reads "idle". */
+function weekCardPanel(lines: readonly WeekLine[], returns: ReadonlyMap<string, readonly ReturnedPull[]>): Html {
+  return panel(
+    html`<div class="table-scroll">
+      <table class="table" id="crew-week" data-sticky-lead>
+        <thead>
+          <tr><th>Member</th><th class="num">Merged</th><th class="num">Returned</th><th class="num">Spent</th></tr>
+        </thead>
+        <tbody>
+          ${lines.map((l) =>
+            l.idle
+              ? html`<tr data-idle>
+                  <td>${userLink(l.username, { avatar: false })}</td>
+                  <td colspan="3" class="muted">idle</td>
+                </tr>`
+              : html`<tr>
+                  <td>${userLink(l.username, { avatar: false })}</td>
+                  <td class="num">${l.merged}</td>
+                  <td class="num">${returnedCount(l, returns.get(l.username) ?? [])}</td>
+                  <td class="num">$${l.spentUsd.toFixed(2)}</td>
+                </tr>
+                ${returnedRow(l, returns.get(l.username) ?? [])}`,
+          )}
+        </tbody>
+      </table>
+    </div>`,
+    { title: `This week · ${WEEK_DAYS} days`, id: "crew-week-card" },
   );
 }
 
@@ -481,11 +538,7 @@ function modelReviewCard(ctx: Ctx): Html {
     n === null ? html`<td class="num muted">—</td>` : html`<td class="num">${f(n)}</td>`;
   const asked = r.changes.filter((c) => c.state === "asked");
   return panel(
-    html`<p class="muted small">At most one change of model per agent a week, to the cheapest that holds its quality.
-        A step up always asks; a step down ${r.limits.auto ? "applies on its own" : "asks too"} (Settings → Limits).
-        Under ${r.limits.minLanded} landed changes nothing. A week after a change the result is reported, and the
-        change undone if quality fell. An ask nobody answers lapses after two weeks.</p>
-      <div class="table-scroll">
+    html`<div class="table-scroll">
         <table class="table" id="model-review">
           <thead>
             <tr><th>Agent</th><th>Model</th><th>Landed</th><th>Per landed</th><th>Red</th><th>Rework</th><th>Reverts</th><th>Hard</th></tr>
@@ -564,7 +617,6 @@ function modelReviewCard(ctx: Ctx): Html {
       </div>`,
     {
       title: "Model review",
-      note: html`Weekly, from the last ${r.windowDays} days of the ledger`,
     },
   );
 }
@@ -601,14 +653,22 @@ function crewView(
   const usernameError =
     error !== undefined && /username/i.test(error) ? error : undefined;
   const handover = crewHandover(ctx.app.db);
+  const review = readReview(ctx.app);
   return html`${crewReadiness(ctx)}
+  ${pageHelp([
+    ["Knobs", "Dials for the crew; a change applies on the next pump."],
+    ["New agent", "The username is its handle: the author on the pull requests it opens, and the first half of its branch names. The display name is shown beside it. A model alias names the newest of its line, so the choice does not age."],
+    ["Scorecard", `Over the pulls each agent opened, and each team's members pooled (an agent on two teams counts in both), in the last ${RECENT_DAYS} days and over all time: review rounds are change requests per landed pull, red checks the share of finished checks that failed; reverts (the landed pulls a merged pull took back) and time to land (the mean from opening to merge) are all time.`],
+    ["Model review", `At most one change of model per agent a week, to the cheapest that holds its quality. A step up always asks; a step down ${review.limits.auto ? "applies on its own" : "asks too"} (Settings → Limits). Under ${review.limits.minLanded} landed changes nothing. A week after a change the result is reported, and the change undone if quality fell. An ask nobody answers lapses after two weeks. Weekly, from the last ${review.windowDays} days of the ledger.`],
+  ], helpAsked(ctx.request.url))}
+  ${knobsCard(ctx)}
   ${when(spending.length > 0, () =>
     spendingCard(spending, forgeCeiling(ctx.app.config) ?? undefined),
   )}
   ${agents.length === 0
     ? html`<section class="mb" id="crew-empty">
         <h2 class="mb">No agents yet</h2>
-        <p class="muted">An agent is an account that works on a repository while you are elsewhere. Make one below, then put it on a repository's crew in that repository's settings.</p>
+        <p class="muted">Make one below.</p>
       </section>`
     : panel(
         html`<div class="table-scroll">
@@ -688,6 +748,7 @@ function crewView(
         </div>`,
         { title: "Agents", id: "crew-agents" },
       )}
+  ${when(agents.length > 0 && ctx.auth.user?.isAdmin === true, () => weekCardPanel(weekCard(ctx.app.db), weekReturns(ctx.app.db)))}
   ${when(agents.length > 0, () =>
     scorecardCard(
       agents,
@@ -726,14 +787,12 @@ function crewView(
         value: values.username,
         required: true,
         pattern: "[A-Za-z0-9][A-Za-z0-9._-]*",
-        hint: "Its handle: the author on the pull requests it opens, and the first half of its branch names.",
         ...(usernameError ? { error: usernameError } : {}),
       })}
       ${uiField({
-        label: "Display name",
+        label: "Display name (optional)",
         name: "displayName",
         value: values.displayName,
-        hint: "Optional. Shown beside the username.",
       })}
       ${agentFields(values, usernameError === undefined ? error : undefined)}
       <div class="form-actions">
@@ -995,7 +1054,8 @@ function agentView(agent: Agent, values: AgentValues, error?: string): Html {
   const at = `/settings/crew/${encodeURIComponent(agent.user.username)}`;
   return html`<section class="settings-block">
       <h2>Settings</h2>
-      <p class="muted small">added ${time(agent.createdAt)}</p>
+      <span class="muted small">added ${time(agent.createdAt)}</span>
+      ${pageHelp([["Model", "An alias names the newest of its line, so the choice does not age."]])}
       <form method="post" action="${at}">
         <div class="field">
           <label for="f-username">Username</label>

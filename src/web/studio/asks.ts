@@ -98,7 +98,7 @@ export function appsOf(ctx: Pick<Ctx, "app">, user: User | undefined, archived =
  * repositories, with their records. This is "your apps": the studio home's
  * shelf and its cost line, never widened by what a stranger merely made
  * public. */
-export function writableAppsOf(ctx: Ctx, user: User | undefined) {
+export function writableAppsOf(ctx: Pick<Ctx, "app">, user: User | undefined) {
   return appsFiltered(
     ctx,
     listReposWritableTo(ctx.app.db, user, {
@@ -127,6 +127,10 @@ export interface Decision {
   readonly says: string;
   /** The same in one clause, for a row. */
   readonly short: string;
+  /** Free text a crew member wrote that the row quotes after `short` — a
+   * planner's decline, from its run's summary. A row shows it through
+   * `noteLine` (`./note.ts`): one escaped, clamped line (#10199). */
+  readonly note?: string | undefined;
   /** The option the decider thinks is right, and how sure; none for a rule. */
   readonly likely?: { readonly option: string; readonly p: number } | undefined;
   /** The preview pictured on a phone, when the forge has taken one. */
@@ -1074,6 +1078,8 @@ export function askLinesFor(
   /** For a wave proposal: what it says, as plain text (the reader escapes it). */
   proposal?: { id: string; title: string; why: string; issues: string[] };
   items: string[];
+  /** When the oldest ask in the row began to wait (ISO), for how long it has waited. */
+  since: string;
   /** The decision, its options and what happens if nobody acts (`ASK_WORDS`). */
   words: AskWords;
   /** Why it ranks where it does; rows come most consequential first. */
@@ -1094,6 +1100,7 @@ export function askLinesFor(
       repoId: row.repo.id,
       repo: `${row.repo.ownerName}/${row.repo.name}`,
       items: row.items.map((c) => c.id),
+      since: row.items.reduce((a, c) => (c.since < a ? c.since : a), row.items[0]!.since),
       words: ASK_WORDS[row.kind],
       consequence: row.consequence,
       waitingFor: row.items[0]!.waiting,

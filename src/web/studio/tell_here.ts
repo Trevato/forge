@@ -41,6 +41,7 @@ export function tellHerePage(ctx: Ctx): Response {
     action: `${repoBase(repo)}/tell`,
     state: "open",
     closeLabel: "",
+    boxed: true,
     tell: {
       from,
       rows: ctx.url.searchParams.get("in") === "place" ? 1 : 4,

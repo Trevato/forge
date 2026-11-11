@@ -1,5 +1,5 @@
 /**
- * Who may make an account: `open`, `invite` or `closed`. Stored in
+ * Who may make an account: `open`, `request`, `invite` or `closed`. Stored in
  * `forge_setting` under `signup`, and every change is kept in
  * `forge_setting_change` (who, when, from what to what). Default `open` when nothing is stored; a new forge stores `invite` (`seedSignup`).
  * `/signup`, `POST /api/v1/users`, passkey signup and a first edge sign-in ask
@@ -11,7 +11,15 @@ import type { Database } from "bun:sqlite";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { writeSetting } from "./limits.ts";
 
-export const SIGNUP_MODES = ["open", "invite", "closed"] as const;
+export const SIGNUP_MODES = ["open", "request", "invite", "closed"] as const;
+
+/** What each mode means, in one line: shown beside the setting and read by the MCP. */
+export const SIGNUP_MEANS: Record<SignupMode, string> = {
+  open: "anyone can make an account and starts at once, under small limits",
+  request: "anyone can ask for an account; it waits until an admin allows it",
+  invite: "only a person with an invite link can make an account",
+  closed: "no new accounts",
+};
 export type SignupMode = (typeof SIGNUP_MODES)[number];
 export const SIGNUP_DEFAULT: SignupMode = "open";
 
@@ -36,6 +44,19 @@ export function getSignup(db: Database): SignupMode {
   return parsed.ok ? parsed.value : SIGNUP_DEFAULT;
 }
 
+/** The mode last read or written per database: the header asks on every anonymous page, and only the writers below change it. */
+const known = new WeakMap<Database, SignupMode>();
+
+/** `getSignup` without a query once known; every write here forgets it. */
+export function signupModeKnown(db: Database): SignupMode {
+  let mode = known.get(db);
+  if (mode === undefined) {
+    mode = getSignup(db);
+    known.set(db, mode);
+  }
+  return mode;
+}
+
 /** The actor kept for the value a new forge starts with. */
 export const FRESH_ACTOR = "fresh";
 
@@ -49,6 +70,7 @@ export const FRESH_ACTOR = "fresh";
 export function seedSignup(db: Database, fresh: boolean): void {
   if (!fresh) return;
   const stored = db.query("SELECT 1 FROM forge_setting WHERE key = ?1").get(STORE_KEY);
+  known.delete(db);
   if (stored === null) writeSetting(db, STORE_KEY, "invite", SIGNUP_DEFAULT, "invite", FRESH_ACTOR);
 }
 
@@ -57,6 +79,7 @@ export function setSignup(db: Database, value: SignupMode, actorId: string): voi
   const from = getSignup(db);
   if (from === value) return;
   writeSetting(db, STORE_KEY, value, from, value, actorId);
+  known.delete(db);
 }
 
 /** `FORGE_SIGNUP` from the environment: unset is no opinion, a bad value is a message. */
@@ -66,7 +89,7 @@ export function signupFromEnv(raw: string | undefined): Result<SignupMode | null
   const parsed = parseSignup(s);
   return parsed.ok
     ? parsed
-    : err(`FORGE_SIGNUP: open, invite or closed, not "${s.slice(0, 20)}"`);
+    : err(`FORGE_SIGNUP: open, request, invite or closed, not "${s.slice(0, 20)}"`);
 }
 
 export interface SignupChange {

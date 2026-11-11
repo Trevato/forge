@@ -12,7 +12,8 @@ import { id } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { forgetListings } from "./listings.ts";
 import { reservedName } from "./reserved.ts";
-import { getUserById, getUserByName, type User } from "./users.ts";
+import { isTeamRole, type TeamRole } from "./agents.ts";
+import { getUserById, getUserByName, getUsersByIds, type User } from "./users.ts";
 
 export type Permission = "read" | "write" | "admin";
 export type Access = "none" | Permission;
@@ -165,6 +166,7 @@ export function addTeamMember(
   db: Database,
   team: Team,
   userId: string,
+  role: TeamRole = "member",
 ): boolean {
   const user = getUserById(db, userId);
   if (!user || user.kind === "org") return false; // can't nest orgs
@@ -174,9 +176,9 @@ export function addTeamMember(
   return (
     db
       .query(
-        "INSERT OR IGNORE INTO team_member (team_id, user_id) VALUES (?1, ?2)",
+        "INSERT OR IGNORE INTO team_member (team_id, user_id, role) VALUES (?1, ?2, ?3)",
       )
-      .run(team.id, userId).changes > 0
+      .run(team.id, userId, role).changes > 0
   );
 }
 
@@ -312,6 +314,55 @@ export function listTeamsVisibleTo(
     )
     .all(orgId, user.id)
     .map(toTeam);
+}
+
+/**
+ * Set the role a member holds on a team (#571); false when they are not on
+ * it or already hold it.
+ */
+export function setTeamRole(
+  db: Database,
+  teamId: string,
+  userId: string,
+  role: TeamRole,
+): boolean {
+  return (
+    db
+      .query(
+        "UPDATE team_member SET role = ?3 WHERE team_id = ?1 AND user_id = ?2 AND role <> ?3",
+      )
+      .run(teamId, userId, role).changes > 0
+  );
+}
+
+/** The role a member holds on a team, or undefined when they are not on it. */
+export function teamRoleOf(db: Database, teamId: string, userId: string): TeamRole | undefined {
+  const row = db
+    .query<{ role: string }, [string, string]>(
+      "SELECT role FROM team_member WHERE team_id = ?1 AND user_id = ?2",
+    )
+    .get(teamId, userId);
+  if (!row) return undefined;
+  return isTeamRole(row.role) ? row.role : "member";
+}
+
+/** A team's members with the role each holds, by name. */
+export function listTeamMemberRoles(
+  db: Database,
+  teamId: string,
+): { user: User; role: TeamRole }[] {
+  const rows = db
+    .query<{ user_id: string; role: string }, [string]>(
+      "SELECT user_id, role FROM team_member WHERE team_id = ?1",
+    )
+    .all(teamId);
+  const users = getUsersByIds(db, rows.map((r) => r.user_id));
+  return rows
+    .flatMap((r) => {
+      const user = users.get(r.user_id);
+      return user ? [{ user, role: isTeamRole(r.role) ? r.role : ("member" as const) }] : [];
+    })
+    .sort((a, b) => a.user.username.toLowerCase().localeCompare(b.user.username.toLowerCase()));
 }
 
 export function listTeamMembers(db: Database, teamId: string): User[] {

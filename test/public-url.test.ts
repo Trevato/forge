@@ -6,7 +6,7 @@ import { createApp, type App } from "../src/app.ts";
 import { crossOrigin, publicUrl } from "../src/http/context.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { promote } from "./helpers/members.ts";
-import { proveAll } from "./helpers/verified.ts";
+import { signUpProven } from "./helpers/verified.ts";
 
 describe("publicUrl", () => {
   test("without a configured origin the request's URL is the truth", () => {
@@ -89,14 +89,20 @@ describe("a forge behind a TLS-terminating proxy", () => {
   });
 
   test("clone URLs name the public address", async () => {
-    // Ada signed up above: an owner proves and promotes her before she makes things.
-    proveAll(app);
+    // Grace signs up here, so this test does not lean on the one above:
+    // an owner proves and promotes her before she makes things.
+    const grace = await signUpProven(app, {
+      username: "grace",
+      email: "grace@forge.example",
+      password: "compiler-pioneer",
+    });
+    if (!grace.ok) throw new Error("grace could not sign up");
     promote(app.db);
     const token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       body: JSON.stringify({ adminConfirm: true,
-        username: "ada",
-        password: "analytical-engine",
+        username: "grace",
+        password: "compiler-pioneer",
         name: "cli",
         scope: "rw",
       }),
@@ -109,8 +115,8 @@ describe("a forge behind a TLS-terminating proxy", () => {
       body: JSON.stringify({ name: "hello", visibility: "public" }),
     });
     expect(created.status).toBe(201);
-    const page = await fetch(`${base}/ada/hello`).then((r) => r.text());
-    expect(page).toContain("https://forge.example/ada/hello.git");
-    expect(page).not.toContain(`${base}/ada/hello.git`);
+    const page = await fetch(`${base}/grace/hello`).then((r) => r.text());
+    expect(page).toContain("https://forge.example/grace/hello.git");
+    expect(page).not.toContain(`${base}/grace/hello.git`);
   });
 });

@@ -101,6 +101,7 @@ GET /settings/crew
 POST /settings/crew
 GET /settings/teams
 GET /settings/teams/stream
+GET /settings/teams/:slug
 POST /settings/teams/:slug
 GET /settings/crew/:username
 POST /settings/crew/:username

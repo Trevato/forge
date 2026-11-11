@@ -13,6 +13,7 @@
  * caller on the request path must wrap it in try/catch.
  */
 
+import { during } from "../perf/jobs.ts";
 import type { Database } from "bun:sqlite";
 import { withoutWaiting } from "../kernel/db.ts";
 import { quietly } from "./write_clock.ts";
@@ -105,7 +106,7 @@ export function createUsageCounter(
     clear();
     timer = setTimeout(() => {
       try {
-        flush();
+        during("usage-count-flush", flush);
       } catch {
         // flush already put the counts back and rearmed the retry.
       }

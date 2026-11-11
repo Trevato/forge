@@ -16,6 +16,7 @@ import { AppsRuntime } from "../src/apps/runtime.ts";
 import {
   newApp,
   openEnvUrl,
+  redeployEnv,
   stopEnv,
   updateAppSettings,
 } from "../src/actions/apps.ts";
@@ -27,6 +28,8 @@ import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 const MIB = 1024 * 1024;
+/** The forge's frame limit for this file: the real one is 16 MiB, and moving that much three times took ~30 s under load (#1073). */
+const LIMIT = 2 * MIB;
 
 /**
  * The app under test: `/ws` echoes what it is sent, text as text and
@@ -218,7 +221,7 @@ describe("apps: websockets through the proxy", () => {
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-apps-ws-"));
-    app = createApp({ dataDir, port: 0 });
+    app = createApp({ dataDir, port: 0, wsMaxMessage: LIMIT });
     servers = await serve(app);
     runtime = new AppsRuntime(app, {
       domain: DOMAIN,
@@ -405,14 +408,14 @@ describe("apps: websockets through the proxy", () => {
     const inbound = connect("/ws");
     expect(await inbound.opened).toBe(true);
     await seenBy(inbound.next);
-    inbound.ws.send(new Uint8Array(16 * MIB + 1));
+    inbound.ws.send(new Uint8Array(LIMIT + 1));
     expect((await inbound.closed).code).not.toBe(1000);
 
     // From the app: the forge will not carry it.
     const outbound = connect("/ws");
     expect(await outbound.opened).toBe(true);
     await seenBy(outbound.next);
-    outbound.ws.send(`big:${16 * MIB + 1}`);
+    outbound.ws.send(`big:${LIMIT + 1}`);
     expect(await outbound.closed).toEqual({
       code: 1009,
       reason: "message too big",
@@ -423,10 +426,10 @@ describe("apps: websockets through the proxy", () => {
     const atLimit = connect("/ws");
     expect(await atLimit.opened).toBe(true);
     await seenBy(atLimit.next);
-    atLimit.ws.send(`big:${16 * MIB}`);
-    expect(bytes(await atLimit.next()).length).toBe(16 * MIB);
-    atLimit.ws.send(new Uint8Array(16 * MIB));
-    expect(bytes(await atLimit.next()).length).toBe(16 * MIB);
+    atLimit.ws.send(`big:${LIMIT}`);
+    expect(bytes(await atLimit.next()).length).toBe(LIMIT);
+    atLimit.ws.send(new Uint8Array(LIMIT));
+    expect(bytes(await atLimit.next()).length).toBe(LIMIT);
     atLimit.ws.close();
   }, 30_000);
 
@@ -535,12 +538,23 @@ describe("apps: websockets through the proxy", () => {
     await seenBy(client.next);
     const stopped = await stopEnv(app, alice, repo, "production");
     expect(stopped.ok).toBe(true);
-    // 1001, "going away"; Bun's own client reports the code as 1000 and
-    // keeps the reason, so the reason is what is asserted.
-    expect((await client.closed).reason).toBe("the app stopped answering");
+    try {
+      // 1001, "going away"; Bun's own client reports the code as 1000 and
+      // keeps the reason, so the reason is what is asserted.
+      expect((await client.closed).reason).toBe("the app stopped answering");
 
-    const page = await handshake(HOST, "/ws");
-    expect(page.status).toBe(502);
-    expect(await page.text()).toContain("not running");
-  }, 30_000);
+      const page = await handshake(HOST, "/ws");
+      expect(page.status).toBe(502);
+      expect(await page.text()).toContain("not running");
+    } finally {
+      // The tests run in any order (the gate shuffles them): the app comes
+      // back up for whichever runs next.
+      const again = await redeployEnv(app, alice, repo, "production");
+      if (!again.ok || again.value === undefined)
+        throw new Error("the app could not be brought back");
+      const id = again.value.id;
+      const run = await settled((r) => r.id === id);
+      if (run.state !== "ok") throw new Error(`redeploy failed: ${run.summary}`);
+    }
+  }, 90_000);
 });

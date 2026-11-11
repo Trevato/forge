@@ -129,7 +129,7 @@ const record = (name: string, n: number, extra: Record<string, unknown>) =>
 test("a pull with no app answers an empty list", async () => {
   const res = await get("bare", tokens["alice"]!);
   expect(res.status).toBe(200);
-  expect(await res.json()).toEqual({ items: [] });
+  expect(await res.json()).toEqual({ items: [], fit: [] });
 });
 
 test("a nonexistent pull number is a 404", async () => {

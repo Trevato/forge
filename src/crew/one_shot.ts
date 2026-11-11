@@ -25,7 +25,7 @@ export const ONE_SHOT_MS = 60_000;
 
 export type OneShotRefusal = "off" | "no_account" | "resting" | "failed";
 
-export async function oneShot(app: App, userId: string, system: string, prompt: string): Promise<Result<string, OneShotRefusal>> {
+export async function oneShot(app: App, userId: string, system: string, prompt: string, model?: string): Promise<Result<string, OneShotRefusal>> {
   const options = conversationOptions(app);
   if (options === undefined) return err("off");
   const now = new Date();
@@ -47,9 +47,9 @@ export async function oneShot(app: App, userId: string, system: string, prompt: 
       cwd: turnDir(app.config.dataDir),
       prompt,
       appendSystemPrompt: system,
-      model: options.model,
+      model: model ?? options.model,
       budgetUsd: budget,
-      env: { ...credentialEnv(picked), CLAUDE_CONFIG_DIR: sessionsDir(app.config.dataDir, options.configDir) },
+      env: { ...credentialEnv(picked, app.config.dataDir), CLAUDE_CONFIG_DIR: sessionsDir(app.config.dataDir, options.configDir) },
       sandbox: sandboxPolicy({ dataDir: app.config.dataDir, agentName: "one-shot", urls: [], enforced: false, runId }),
       label: "one-shot",
       timeoutMs: ONE_SHOT_MS,

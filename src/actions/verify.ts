@@ -56,7 +56,7 @@ export function mailConfigured(app: App): boolean {
   return MAIL_SECRETS.every((name) => set.has(name));
 }
 
-function mailerOf(app: App, forUser: User): Mailer | undefined {
+export function mailerOf(app: App, forUser: { readonly id: string }): Mailer | undefined {
   if (app.config.mailer !== undefined) return app.config.mailer;
   const stored = resolveSecrets(
     app.db,

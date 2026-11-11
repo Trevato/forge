@@ -6,6 +6,7 @@ export const route: Route = {
   path: `${REPO}/following/propose-parent`,
   summary: "Across forges: push this forge's change to the parent forge and open the pull there; answers 201 when opened, 200 when one stands",
   auth: true,
+  role: "member",
   refusals: {
     no_parent_forge: "404: this repository has no parent forge to propose to",
     nothing_to_propose: `409: ${FAMILY_WORDS.nothing_to_propose}`,

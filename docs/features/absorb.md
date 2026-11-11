@@ -57,7 +57,7 @@ What the feed holds about an app's repository (runs, pulls, issues, looks) shows
 
 ## Without the crew
 
-Absorbing, settings, the menu entry and the page use no model and start no agent run. They work with the crew off and no model credential on the forge. `test/apps-features.test.ts` runs the whole flow that way. The forge never hands an app the crew's credential. A feature's schedule is the app's own: the app reads `FORGE_SETTING_*` and runs its own timer. An app that wants a model's judgment on top, such as an issue written from what it found, must do its work without one and treat the model as optional.
+Absorbing, settings, the menu entry and the page use no model and start no agent run. They work with the crew off and no model credential on the forge. `test/apps-features.test.ts` runs the whole flow that way. The forge never hands an app the crew's credential. An app that wants a model's judgment on top, such as an issue written from what it found, must do its work without one and treat the model as optional.
 
 ## Settings are not secrets, except `secret`
 
@@ -80,9 +80,11 @@ A pack's app may carry `"absorb": true` (a boolean, nothing else). `pack deploy`
 
 Settings stay behind on a fork. A fork of another forge's app carries its `feature` block, which declares and does nothing; the new forge has its own settings (the declared defaults until an admin changes them) and its own admin decides on the absorb.
 
-## Not done yet
+## Schedule
 
-Until then an absorbed app is a menu link with kept settings (Settings › Features says so). The forge does not yet fire a feature's schedule (#9883).
+A feature may declare `"schedule": [{ "tool": "scan", "every": "1h" }]`: at most 4 entries, each naming one of the feature's own `tools` and an `every` of `15m`, `1h`, `6h` or `1d`. Anything else is refused with the field and the entry named. The forge keeps it as `schedule` (`tool`, `everyMs`) on the parsed feature. The forge calls it on that interval while the app is absorbed and running, and remembers how it went.
+
+Settings › Features › the app, the `features` tool and the terminal's feed screen each show one line per entry: when it last ran, how it went and when it runs next. What each door shows, and the data behind it, is in [feature-schedule.md](feature-schedule.md).
 
 ## MCP tools
 

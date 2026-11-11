@@ -7,7 +7,7 @@
  */
 
 import { narrow, reference, runnable, type Area, type Operation } from "../../contract/reference.ts";
-import { openapiText } from "../../contract/served.ts";
+import { openapiText, roleOf } from "../../contract/served.ts";
 import { createSession, destroySession } from "../../core/sessions.ts";
 import { running } from "../../kernel/version.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -94,7 +94,9 @@ function answerScreen(ctx: Ctx, op: Operation, answer: Answer): Screen {
 export function apiScreen(f: Session, ctx: Ctx): Screen {
   const state = new ListState();
   const filter = new Filter();
-  const all = apiOperations(reference(JSON.parse(openapiText(f.app.config.url ?? "http://localhost", running().version).text)));
+  // The rows this person may call, as the page cuts them: a guest reads the anonymous ones (#11286).
+  const doc = openapiText(f.app.config.url ?? "http://localhost", running().version, roleOf(f));
+  const all = apiOperations(reference(JSON.parse(doc.text)));
   const shown = (): Operation[] => apiOperations(narrow([{ name: "", operations: all }], filter.query)).slice(0, MAX_SHOWN);
   let note = "";
   return {

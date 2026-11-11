@@ -54,16 +54,30 @@ export async function messagesBetween(dir: string, base: string, head: string): 
   return r.stdout.split("\0").filter((m) => m.trim() !== "");
 }
 
-/** What a landed commit says of who else made it, per commit; a commit never changes, so it is asked once. */
-const credited = new Map<string, readonly string[]>();
+/** Who built a landed commit (its author) and who else it credits (the models and people in its trailers). */
+export interface Builders {
+  readonly by: string;
+  readonly with: readonly string[];
+}
+
+/** What a landed commit says of who made it, per commit; a commit never changes, so it is asked once. */
+const credited = new Map<string, Builders>();
+/** Commits remembered at most; the oldest remembered goes first. */
+export const CREDITED_MAX = 500;
+
+function remember(key: string, b: Builders): void {
+  credited.delete(key);
+  credited.set(key, b);
+  if (credited.size > CREDITED_MAX) credited.delete(credited.keys().next().value!);
+}
 
 /**
- * The names credited on each landed commit in `oids`, beyond the one who
- * committed it (its own `Co-authored-by` names the lander). Commits git
- * cannot read are left out.
+ * Who built each landed commit in `oids`: its author as `by`, and as `with`
+ * the names in its own `Co-authored-by` trailers, less the committer (the
+ * lander) and the author. Commits git cannot read are left out.
  */
-export async function creditsOf(dir: string, oids: readonly string[]): Promise<Map<string, readonly string[]>> {
-  const out = new Map<string, readonly string[]>();
+export async function buildersOf(dir: string, oids: readonly string[]): Promise<Map<string, Builders>> {
+  const out = new Map<string, Builders>();
   const todo: string[] = [];
   for (const oid of oids) {
     if (!isSafeOid(oid)) continue;
@@ -72,21 +86,27 @@ export async function creditsOf(dir: string, oids: readonly string[]): Promise<M
     else out.set(oid, known);
   }
   if (todo.length > 0) {
-    const r = await runGitCapture(["log", "--no-walk=unsorted", "--format=%H%x01%ce%x01%B%x02", ...todo], { cwd: dir });
+    const r = await runGitCapture(["log", "--no-walk=unsorted", "--format=%H%x01%an%x01%ce%x01%B%x02", ...todo], { cwd: dir });
     if (r.code === 0)
       for (const block of r.stdout.split("\x02")) {
-        const [oid, committer, message] = block.trim().split("\x01");
-        if (!oid || committer === undefined || message === undefined) continue;
+        const [oid, author, committer, message] = block.trim().split("\x01");
+        if (!oid || author === undefined || committer === undefined || message === undefined) continue;
         const names: string[] = [];
         for (const line of coAuthorLines([message], [committer])) {
           const name = /^Co-authored-by: (.*) <[^<>]*>$/.exec(line)?.[1];
-          if (name !== undefined) names.push(name);
+          if (name !== undefined && name.toLowerCase() !== author.toLowerCase()) names.push(name);
         }
-        credited.set(`${dir}\0${oid}`, names);
-        out.set(oid, names);
+        const builders = { by: author, with: names };
+        remember(`${dir}\0${oid}`, builders);
+        out.set(oid, builders);
       }
   }
   return out;
+}
+
+/** The names credited on each landed commit in `oids`, beyond its lander and author. */
+export async function creditsOf(dir: string, oids: readonly string[]): Promise<Map<string, readonly string[]>> {
+  return new Map([...(await buildersOf(dir, oids))].map(([oid, b]) => [oid, b.with] as const));
 }
 
 /**

@@ -62,15 +62,16 @@ import { getPull } from "../core/pulls.ts";
 import { frontPicks } from "../core/front.ts";
 import { getRepoById } from "../core/repos.ts";
 import { getUserById } from "../core/users.ts";
-import { ownerLooksFor } from "../spawn/preview-looks.ts";
+import { ownerLooksFor, PREVIEW_NEWCOMER } from "../spawn/preview-looks.ts";
 import { thumbnail } from "../design/image/image.ts";
 import { decodePng, encodePng, pngHeader } from "../design/image/png.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { writeCommitLooks } from "../checks/looks.ts";
+import { addCommitLook } from "../checks/looks.ts";
 import type { LookVitals } from "../checks/summary.ts";
 import { keepAsMain } from "./main_looks.ts";
 import { findChromium, isNoBrowser, takeLook, type Capture } from "./capture.ts";
+import { during } from "../perf/jobs.ts";
 
 const log = createLog("looks");
 
@@ -225,8 +226,8 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
   // Production missing a picture at its head — one never taken, or a
   // thumb from before thumbs were the page — gets one while it is up.
   // A woken app says nothing on the bus, so this is how it is pictured.
-  const firstSweep = setTimeout(sweep, FIRST_SWEEP_MS);
-  const sweeping = setInterval(sweep, SWEEP_MS);
+  const firstSweep = setTimeout(() => during("looks", sweep), FIRST_SWEEP_MS);
+  const sweeping = setInterval(() => during("looks", sweep), SWEEP_MS);
   firstSweep.unref?.();
   sweeping.unref?.();
 
@@ -407,9 +408,10 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         ? undefined
         : { id: owner.id, name: owner.username, role: "admin" };
     const host = runtime.hostFor(record.slug, item.env);
+    const newcomer: GrantWho = { id: PREVIEW_NEWCOMER, name: PREVIEW_NEWCOMER, role: "admin" };
+    const isNewcomerLook = (page: string): boolean =>
+      ownerLooks.some((l) => l.page === page && l.as === "newcomer");
     let allOk = true;
-    // What each look's page recorded, for the check summary's vitals table.
-    const vitals: LookVitals[] = [];
     for (const { page, kind, theme } of wanted) {
       if (stopped) return;
       const token = signGrant(
@@ -417,7 +419,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         { app: record, env: item.env },
         GRANT_TTL_MS,
         Date.now(),
-        asNobody(kind, page) ? undefined : asOwner,
+        asNobody(kind, page) ? undefined : isNewcomerLook(page) ? newcomer : asOwner,
       );
       const url = `http://${host}:${port}/__forge/grant?t=${encodeURIComponent(token)}&to=${encodeURIComponent(page)}`;
       const path = lookPath(item.appId, item.env, item.commitOid, page, kind, theme);
@@ -439,13 +441,22 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         timeoutMs: CAPTURE_TIMEOUT_MS,
       });
       // The thumb is the desktop page again, as a stranger: it adds no row.
+      // What the page recorded is filed under the commit at once, for the
+      // check summary's vitals table: a round that ends early keeps it.
       if (kind !== "thumb" && theme === "light") {
         const look = page === "/" ? kind : `${kind} ${page}`;
-        if (shot.ok) {
-          const size = shot.value.size === undefined ? {} : { size: shot.value.size };
-          vitals.push({ look, entries: shot.value.entries, ...size });
-        } else if (isNoBrowser(shot.error))
-          vitals.push({ look, skipped: "no browser" });
+        const filed: LookVitals | undefined = shot.ok
+          ? { look, entries: shot.value.entries, ...(shot.value.size === undefined ? {} : { size: shot.value.size }) }
+          : isNoBrowser(shot.error)
+            ? { look, skipped: "no browser" }
+            : undefined;
+        if (filed !== undefined) {
+          try {
+            addCommitLook(dataDir, record.repoId, item.commitOid, filed);
+          } catch (error) {
+            log.warn("vitals not recorded", { commit: item.commitOid, error: String(error) });
+          }
+        }
       }
       const taken =
         shot.ok && kind === "thumb" ? reduceToThumb(staged) : shot;
@@ -475,6 +486,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
           kind,
           path,
           takenAs: asNobody(kind, page) ? "nobody" : "owner",
+          ...(shot.ok && shot.value.size !== undefined ? { size: shot.value.size } : {}),
         });
       } else {
         rmSync(staged, { force: true });
@@ -488,14 +500,6 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
           error: taken.error,
         });
         recordLook(app.db, { ...row, kind, path: "", error: taken.error });
-      }
-    }
-    // Filed under the commit: the check of it shows them whenever it exists.
-    if (vitals.length > 0) {
-      try {
-        writeCommitLooks(dataDir, record.repoId, item.commitOid, vitals);
-      } catch (error) {
-        log.warn("vitals not recorded", { commit: item.commitOid, error: String(error) });
       }
     }
     // A full set at this head is the environment's look now; the pictures

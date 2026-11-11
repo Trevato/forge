@@ -6,5 +6,6 @@ export const route: Route = {
   path: "/api/v1/admin/invites",
   summary: "List invite links without their tokens (an admin's, read scope); answers { items, next_cursor }; limit 1 to 200 (default 50), cursor from next_cursor; a bad limit or cursor is a 422",
   auth: true,
+  role: "admin",
   query: { limit: limitTo(OFFSET_LIMIT_MAX), cursor: "string" },
 };

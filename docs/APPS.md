@@ -111,7 +111,8 @@ Under the box, four starter sentences are plain links (no script):
   `POST /:owner/:name/app/notes` on the forge's origin (`web/studio/notes.ts`). The same moderation is an API for
   agents and scripts (`http/api/app_notes.ts`): `GET /api/v1/repos/:owner/:name/app/notes`
   answers `{ notes, banned }`, and `POST …/app/notes/:id/hide`, `…/ban` and
-  `…/unban` each answer the note. They need an `rw` token (or a same-origin
+  `…/unban` each answer the note; each note carries its issue's `replies`
+  (see docs/features/notes.md). They need an `rw` token (or a same-origin
   session) and admin rights on the repository; anyone else gets `forbidden`.
   Limits count the socket's client (`http/peer.ts`, with its trusted-proxy
   rule), never a header the client wrote, and all three are checked before any
@@ -228,11 +229,16 @@ touch) and it snaps to the nearest corner on release; with the pill focused, the
 arrow keys walk it from corner to corner. The corner is kept in the browser's
 `localStorage` for that app's host (bottom-right until then), and the panel opens
 toward the inside of the screen, bounded to it at phone width. The script stays
-under a 10 KB budget (a test holds it), since it loads on every app page.
+under 24 KB (`test/toolbar-budget.test.ts` holds it), since it loads on every app page.
 
 The forge pill on an app's pages says where you are: its accessible name reads
 `notes, production` or `notes, preview of pull #7`, and pressing it opens a
-panel with the app, the environment, and a link home. The pull's title is shown
+panel with the app, the environment, and a Home link. When the visitor arrived
+through the forge's `Open the app` redirect, which lets the full address of the
+forge page through (`Referrer-Policy: no-referrer-when-downgrade`, so that page's
+path and query reach the app), Home returns to that page; a referrer from any
+other origin is ignored, and with none Home goes to the forge's `/`. Tab reaches
+it and Enter follows it. The pull's title is shown
 only to people who may read the pull. A tap outside the open panel, or Escape,
 closes it. When a crew run is working on the app (production) or on the preview's
 pull, the panel also says `scout is working on this` and links the run; it asks
@@ -266,9 +272,17 @@ the sum of `forge-lookup`, the server finding the app by its host,
 grant read), `forge-wake` (waiting for a sleeping or starting environment; 0
 when none), `forge-upstream` and `forge-ttfb` (the same wait, until the app's
 headers: `fetch` reports nothing of its connection, so the socket's opening
-is inside it), `forge-body` (reading a page whole for the pill) and
+is inside it), `forge-lag` (the forge's own worst event-loop lag of the last
+10 s, written right after `forge-ttfb`: `forge-ttfb` is read on the forge's
+clock, so a loop busy with something else lands in it), `forge-body` (reading a page whole for the pill) and
 `forge-rewrite` (pill injection with that read, when it ran). Big `forge-wake`
-is a cold start, big `forge-ttfb` is the app or its listener, big `forge-body`
+is a cold start, big `forge-ttfb` is the app or its listener — unless
+`forge-lag` is more than half of `forge-ttfb`, when the wait was the forge's,
+not the app's (`forgeWaited` in `src/perf/loop_worst.ts`), and a signed-in
+forge admin also gets `forge-stall;desc="<pattern>";dur=<ms>`, up to three, naming
+the route pattern or `job:<name>` that held the loop, longest first (that copy is
+`cache-control: private, no-store`; nobody else gets `forge-stall`;
+`docs/features/app-slowest-wait.md`) — big `forge-body`
 is an app slow to finish its page; if all are small, the time went before the
 request reached the forge. The forge opens no second socket to time the
 connect: it would take a backlog slot in the very case it is meant to find.
@@ -506,6 +520,7 @@ and `pick`: `pick: true` turns the description into a checklist and lets the
 plan pick the agent (ignored when `agent` is given or there is no
 description). The 201 answer carries `plan: {agent, summary, confidence}` when
 a pick happened and `plan: null` otherwise, planning being unavailable included.
+`template: "owner/name"` starts the app as a copy of that repository's tip, if the caller can read it (see `docs/features/app-template.md`).
 
 ## How an app is declared
 
@@ -534,6 +549,10 @@ that before the deploy fails; `tty` is the app's terminal interface (below);
 file is read from the commit being deployed, never from the database — a
 pull that changes how the app runs is previewed the way it will run.
 
+`app.always_on: true` keeps production awake whatever the profit slider
+says — the one per-app exception to it, shown on the app page. Previews
+still sleep as the forge says.
+
 `toolbar`, at the top level, is `true` unless you set it to `false`. The
 forge adds one `<script>` tag to the HTML pages your app serves (before
 `</body>`, or at the end): a small pill in the bottom-right corner, collapsed
@@ -543,6 +562,22 @@ code; a `Content-Security-Policy` that forbids it just leaves the pill out.
 Only `text/html` responses the app sends uncompressed with a `Content-Length`
 (up to 4 MiB) are rewritten; JSON, images, compressed or chunked HTML and
 `HEAD` requests pass through byte for byte. `"toolbar": false` keeps it out.
+
+`toolchain`, at the top level, pins a toolchain: `{ "toolchain": { "rust":
+"1.82" } }`. The forge knows `rust` and provides the versions listed in
+`src/apps/toolchain.ts`. An unknown toolchain, a version that is not
+`major.minor`, or one this forge does not provide fails the deploy in one
+line ("rust 1.70 is not provided here; this forge has rust 1.82"). Without the
+field nothing changes. The pinned toolchain is put on `PATH` for the app's install, test and run
+steps only ([`docs/features/toolchains.md`](features/toolchains.md)).
+
+`adapter`, at the top level, says the app is an adapter the forge pulls
+from on a schedule (#437): `{ "adapter": { "schedule": { "every": 900 } } }`.
+`every` is whole seconds, 60 to 86400. `source` (the system's name and the
+hosts it reads, each also in `egress`) and `config` (the settings it reads,
+by environment variable) are optional; any other key, at any level, fails
+the manifest with the field named (`src/apps/adapter.ts`). Absent, the app is
+not an adapter. The contract is [`docs/ADAPTERS.md`](ADAPTERS.md).
 
 Two more fields say what the app's code may use (rule 9):
 
@@ -558,11 +593,24 @@ Two more fields say what the app's code may use (rule 9):
 names, or `*.` for every name below one, at most 32, each reachable on 80
 and 443 — `db.example.com:5432` names one other port instead. Without it an app
 reaches the forge and nothing else; install, test and check steps also
-reach `registry.npmjs.org`. `limits` (MiB, cores, MiB) default to 512 MiB,
+reach `registry.npmjs.org`. In a child forge the cell is held to a ceiling
+(parent's model, registry and payment settings): `api.stripe.com` on 443
+(`children.paymentEgress`, on by default) is reachable there only by an app
+whose `forge.json` `egress` names it; an app that does not, and the child's
+crew sandbox, cannot reach it. `limits` (MiB, cores, MiB) default to 512 MiB,
 1 core and 1 GiB for an app and 2 GiB, 2 cores and 4 GiB for a step, and
 are capped by the machine (`FORGE_CELL_MEMORY_MAX_MIB`, default 4096; the
 number of cores; `FORGE_CELL_DISK_MAX_MIB`, default 16384). A cell's `/tmp`
 holds at most 256 MiB.
+
+An install or test step is also bounded in time: 15 minutes by default.
+`app.limits.time` (seconds, 1–3600) can lower it, and is held to 30 minutes. A
+build stopped by its time, memory or cores says which in one line, in the
+deploy log and as the deploy's error: "the build used its 15 minutes", "the
+build ran out of its 2 GiB", "the build used more than its 2 cores".
+`app.limits.memory` and `app.limits.cpus` hold the running app only: an
+install or test step keeps the step's own memory and cores, so a 128 MiB app
+still has room to install.
 
 Memory is held twice. The watch reads every cell's resident memory once a
 second and stops one over its limit. Where the forge holds a delegated
@@ -579,6 +627,40 @@ read-only by default, so the operator delegates it, for example as a
 writable cgroup mount owned by the forge's uid. Without that, cells are
 watched only. /system says which holds the cap, and why, and shows each
 cell's memory beside its cap.
+
+Processes are held the same way. The watch stops a cell whose tree passes
+512 processes; where the pids controller is delegated with memory, each
+app and check cell also gets `pids.max` 512, so a fork bomb fails inside
+its cell before a tick of the watch, and the forge's process table is
+never exhausted (#10518). Crew runs get no process cap, as before.
+/system says beside the memory line who holds the process count, and why
+when it is the watch alone.
+
+Every cell also starts under kernel rlimits, with or without a cgroup: its
+first shell sets, soft and hard, `RLIMIT_FSIZE` to the cell's disk (a small
+child forge: 2048 MiB, so `fallocate -l 50G` or a runaway `dd` fails at
+once with SIGXFSZ), `RLIMIT_NOFILE` 8192 and `RLIMIT_NPROC` 4096 tasks,
+counted per user namespace (`cellRlimits`, `RLIMIT_LINE` in
+`apps/contain.ts`). The file cap bounds one file, not their sum: the total
+is the watch's disk walk until a child's writable space is a filesystem of
+its own (#10850). A cell's hostname is its own: a child forge's cell
+answers `uname -n` with the child's name, a machine shell with the
+machine's, anything else with `cell`, never the pod's — where the host
+lets bwrap set it: the cell probe asks once (`hostnameArgs`), and a host
+that refuses `sethostname` runs its cells under the pod's name rather
+than not at all.
+
+The parent keeps 15% of its own volume (`spawn/disk_floor.ts`): below it
+no child forge is made or started (a sleeping one stays asleep), the New
+forge page and menu say why, and vitals carries the `disk-floor` line.
+
+On a Kubernetes pod the forge is usually not at a cgroup namespace root
+(`/proc/self/cgroup` is not `0::/`) and `/sys/fs/cgroup` is read-only, so
+cells are watched only. The operator delegates one: run the container in
+its own cgroup namespace with a writable cgroup2 mount owned by the
+forge's uid, or set `FORGE_CELL_CGROUP` to a delegated subtree with
+`memory` (and `pids`) in its `cgroup.controllers`. /system then says the
+kernel holds the cap.
 
 The forge's own process outranks what it starts (#3319, `apps/background.ts`).
 Every check step (install, test, check) and every crew run starts in the
@@ -626,8 +708,10 @@ purpose: a repository admin who is no site admin sees the list read-only on the
 page, and nothing on the terminal screen (no rows, no `g`/`x`).
 
 A release that turns egress on must not break an app whose writers have
-not declared what it uses yet, so the operator can start it reported:
-`FORGE_CELLS_EGRESS=report` lets an undeclared public host through (on 80
+not declared what it uses yet, so an admin can set it reported:
+`cells.egress` = `report` on /settings/capacity (or the API's
+`PUT /api/v1/admin/capacity/cells.egress` with a `reason`; the change log
+keeps who and why) lets an undeclared public host through (on 80
 and 443 only) and
 counts it per repository (`<data>/egress/<repo id>.json`, under the
 forge's data where no cell sees it), and the app's page tells its writers
@@ -1188,6 +1272,31 @@ memory only: a process is not state, and a restart rebuilds every
 environment from the default branch and the open pulls, exactly as
 `core/reconcile.ts` rebuilds the index from git.
 
+### A child forge's own filesystem
+
+How to read the line and turn the guard on: [docs/features/child-filesystem.md](features/child-filesystem.md).
+
+A child forge (`/forges`) keeps everything it writes under
+`<data>/children/<body id>`. The forge reads `/proc/self/mountinfo` to tell
+whether that directory is a filesystem of its own, a mount whose mount point
+is exactly that path, and reads its size with `statfs`: blocks × block size
+in bytes, and its inodes (`src/spawn/disk_mount.ts`). The forge mounts
+nothing itself. Making the filesystem is the platform's job (#10851).
+
+- **On its own filesystem**, writing past its size fails with ENOSPC inside
+  the child, and the parent's free space does not change. Its cell binds that
+  filesystem by its real path (`cellSpecFor`). On the shared disk, only the
+  cell's disk watch stops a child, and only after it has written too much.
+- **The child's line** on `/forges` and on the terminal's forges screen says
+  `own filesystem, N GiB` (GiB = 2^30 bytes, to one place) or `shared disk`.
+- **`children.ownFilesystem`** (Settings → Capacity, or the `capacity` MCP
+  tool with `key: "children.ownFilesystem"`) is `off` by default. When it is
+  `on`, the forge refuses to start a child with no filesystem of its own,
+  whether that child runs in a cell or in this forge's process. The refusal is
+  a 503 with one plain line naming the child and saying why. Its pages and its
+  apps answer with that line, and the boot skips the child and logs the same
+  line. A child that is already running is not stopped.
+
 ## Runs
 
 A run row is created `queued`, claimed with a compare-and-swap into
@@ -1387,6 +1496,14 @@ The same numbers are `GET /fleet/graph.csv` and `GET /api/v1/fleet/graph`;
 spend is the owner's fact, so a repository you cannot write is dropped
 and counted with the names that do not exist, never told apart.
 
+Before a fleet operation acts, `GET /fleet?q=<query line>` shows the rows
+its query line selects, as a table: `repo autonomy:autonomous`,
+`run state:queued`, `issue assignee:none`. The grammar and the rule that
+a repository you cannot read is absent are `src/fleet/selection.ts`'s; a
+line that does not parse shows why beside it. Headers sort by one column
+(`&sort=<column>`, `-<column>` descending), without JavaScript. Past 500
+rows the page asks for a narrower query rather than cutting the list.
+
 The agent runs Claude Code headless in its clone, with a prompt the forge
 composes: who it is, what the task is, how to finish, and what will be
 refused. Permissions are the forge's, passed as settings: file tools
@@ -1415,17 +1532,21 @@ works the crew page says so, in words, before anyone assigns anything.
 
 ### Asleep
 
-A preview whose pull has had no push and no comment for three days is
-stopped and shown as _asleep_ with when and why — its row, data and pictures
+A preview whose pull has had no push and no comment for as long as the
+profit slider says (three days at its default of 50, one at 0, never at
+100; `docs/PROFIT.md`) is stopped and shown as _asleep_ with when and why — its row, data and pictures
 stay. It is not failed, and a restart leaves it stopped. Asking for it (a
 request to its host, or **Wake it** on the change's page) deploys it again
 on the ordinary deploy path. Production, and a pull with a run queued or
 running on it, are never put to sleep this way. `FORGE_PREVIEW_IDLE_DAYS`
-sets the age; `0` keeps every preview warm.
+pins the age instead of the slider; `0` keeps every preview warm.
 
 An environment nobody asks for does not keep a process. A preview that has
-served no request for thirty minutes, or production for a day, is stopped
-and marked _asleep_, its checkout kept whole; the next request through the
+served no request for thirty minutes, or production for a day — the profit
+slider's 50; the sweep reads the slider's position on every pass, so moving
+it changes when environments sleep within a minute, with no restart — is
+stopped and marked _asleep_ (its log names the window and the position:
+"asleep: nothing asked for it in 10 min (economy 0)"), its checkout kept whole; the next request through the
 proxy starts it again — warm, without install or test, in about the time a
 page takes — and waits for it rather than showing a closed door. The forge
 coming back does the same: production starts warm from the checkout it kept,
@@ -1588,7 +1709,7 @@ a link to the milestone (`docs/PLANNING.md`); its progress never does.
 | `FORGE_APPS`              | `1`                             | `0` runs no apps and no crew                      |
 | `FORGE_APP_DOMAIN`        | the host in `FORGE_URL`/`_HOST` | what app hostnames attach to (`example` or `--x`) |
 | `FORGE_APPS_CONCURRENCY`  | `2`                             | deploys running their heavy steps at once         |
-| `FORGE_PREVIEW_IDLE_DAYS` | `3`                             | days a pull may sit untouched before its preview sleeps; `0` = never |
+| `FORGE_PREVIEW_IDLE_DAYS` | the profit slider               | days a pull may sit untouched before its preview sleeps; `0` = never; unset follows the slider (3 at 50) |
 | `FORGE_CREW_CONCURRENCY`  | 1 per 3 GiB above 2 GiB, 2–16   | agent runs at once (live: Settings → Capacity)    |
 | `FORGE_CHECKS_CONCURRENCY` | `1`                            | checks at once (live: Settings → Capacity)        |
 | `FORGE_CHECKS_PLACEMENT`  | `process`                       | `job` runs a check's commands as a cluster Job (see Placement above) |
@@ -1597,7 +1718,7 @@ a link to the milestone (`docs/PLANNING.md`); its progress never does.
 | `FORGE_CHECK_SHARDS`      | the machine's cores             | test shards per check (live: Settings → Capacity) |
 | `FORGE_CHECK_CACHE_DAYS`  | `30`                            | days a package may go unlent before the check install cache drops it |
 | `FORGE_CHECK_CACHE_MB`    | `2048`                          | size one repository's check install cache is swept down to |
-| `FORGE_CELLS_EGRESS`      | `enforce`                       | `report` lets undeclared egress through on 80/443 (live: Settings → Capacity) |
+| `FORGE_CELLS_EGRESS`      | ignored                         | logged once at boot; egress is enforced unless an admin sets `cells.egress` (Settings → Capacity), with a reason |
 | `FORGE_CELL_CGROUP`       | `/sys/fs/cgroup` at a namespace root | the delegated cgroup v2 whose children cap each cell's memory; `off` watches only |
 | `FORGE_CREW_CPUS`         | `4` | cores one crew run may use (`cpu.max` on its own cell cgroup, where the cpu controller is delegated) |
 | `FORGE_CREW_BUDGET_USD`   | `5`                             | spend per run unless the agent says otherwise     |

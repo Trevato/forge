@@ -5,4 +5,5 @@ export const route: Route = {
   path: `${REPO}/upstream`,
   summary: "The outside upstream this repository follows, for an admin: { following } (null when it follows none)",
   auth: true,
+  role: "member",
 };

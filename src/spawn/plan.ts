@@ -34,7 +34,9 @@ export const MAX_BUDGET_USD = 1000;
 
 /** One line saying what a fresh app is. */
 export const MAX_FRESH_CHARS = 200;
-const NAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
+/** The shape of a forge's name, as the door takes it. */
+export const NAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
+const PLAN_KEY = /^[a-z][a-z0-9-]{0,19}$/;
 const APP_REF = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
 
 /** An app the viewer can see, as the caller found it. */
@@ -69,12 +71,14 @@ export interface SpawnInput {
   readonly budgetUsd?: unknown;
   /** One line describing a fresh app to start in the child, beside the forked ones; optional. */
   readonly fresh?: unknown;
-  /** How the child follows the forge's code: `tell-me` (default) or `take-updates`. */
+  /** How the child follows the forge's code: `take-updates` (default) or `tell-me`. */
   readonly followMode?: unknown;
   /** How big the child is: `small`, `medium` or `large`; optional. */
   readonly size?: unknown;
   /** Which template the child's apps start from (`spawn/templates.ts`); optional. */
   readonly template?: unknown;
+  /** The plan (`settings/plans.ts`) the child is on; optional. The door has already set `size` from it. */
+  readonly plan?: unknown;
 }
 
 /** What the parent has to offer. Extra fields are ignored, never copied. */
@@ -113,12 +117,14 @@ export interface SpawnPlan {
   readonly forWhom?: string;
   /** A fresh app, present only when asked for. */
   readonly fresh?: PlannedFresh;
-  /** How the child follows its parent's forge code; absent means `tell-me`. */
+  /** How the child follows its parent's forge code; absent means `take-updates`. */
   readonly followMode?: FollowMode;
   /** The child's size, present only when chosen. */
   readonly size?: Size;
   /** The template the child starts from, present only when chosen and not `blank`. */
   readonly template?: string;
+  /** The key of the plan the child is on, present only when one was chosen; its credit is read when the child is made. */
+  readonly plan?: string;
 }
 
 export interface DryRun {
@@ -276,6 +282,13 @@ export function planSpawn(
     if (parsed.value !== DEFAULT_TEMPLATE) template = parsed.value;
   }
 
+  // Last of all, so every older field's refusal comes first.
+  let plan: string | undefined;
+  if (input.plan !== undefined && input.plan !== null && input.plan !== "") {
+    if (typeof input.plan !== "string" || !PLAN_KEY.test(input.plan)) return refuse("plan", "a plan key is 1-20 characters of a-z, 0-9 and \"-\"");
+    plan = input.plan;
+  }
+
   // `forWhom` only when said, so a plan without it hashes as it always did.
   return ok({
     name,
@@ -291,6 +304,7 @@ export function planSpawn(
     ...(followMode === undefined ? {} : { followMode }),
     ...(size === undefined ? {} : { size }),
     ...(template === undefined ? {} : { template }),
+    ...(plan === undefined ? {} : { plan }),
   });
 }
 
@@ -306,7 +320,7 @@ export function dryRun(plan: SpawnPlan, source: SpawnSource): DryRun {
     ...plan.briefs.map((b) => `crew brief for ${b.agent}`),
     ...plan.subscriptions.map((s) => `subscription ${s} (name only)`),
     ...(plan.direction === "" ? [] : ["your words, as the child's direction"]),
-    ...(plan.keepAccess ? ["your owner access, kept after the child is claimed"] : []),
+    ...(plan.keepAccess ? ["your owner access, kept after the forge is taken over"] : []),
     ...(plan.budgetUsd === null
       ? []
       : [`its own model key (sealed, never shown again), with a $${plan.budgetUsd} budget it cannot raise`]),

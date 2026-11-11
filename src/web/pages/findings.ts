@@ -31,7 +31,9 @@ function findingRow(f: FindingRow, base: string, writer: boolean): Html {
   const meta = f.accepted !== null
     ? html`${where(f)} · accepted by ${f.accepted.by} ${time(f.accepted.at)}: ${f.accepted.reason}`
     : html`${where(f)} · ${f.kind} · found ${time(f.foundAt)} at ${f.oid.slice(0, 12)}`;
-  const line = row({ title: html`${f.rule}`, meta, trail: badge(f.accepted !== null ? "accepted" : f.severity, { tone }) });
+  // A finding has no page of its own: a row opens the file at the commit that found it, on the line.
+  const href = `${base}/blob/${f.oid}/${f.path.split("/").map(encodeURIComponent).join("/")}${f.line > 0 ? `#L${f.line}` : ""}`;
+  const line = row({ href, nav: true, title: html`${f.rule}`, meta, trail: badge(f.accepted !== null ? "accepted" : f.severity, { tone }) });
   if (f.accepted !== null || !writer) return line;
   return html`${line}
     <form method="post" action="${base}/findings/${String(f.id)}/accept" class="mt">

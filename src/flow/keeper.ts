@@ -18,6 +18,7 @@ import { ownRepoPath } from "../kernel/own_repo.ts";
 import { KEEPER_CAUSES, pickCause, readKeeperFacts, type KeeperCause, type KeeperMove } from "./keeper_cause.ts";
 import { isLow, landedBetween, readRate, type Rate } from "./keeper_rate.ts";
 import { oldestWaiting } from "./pile.ts";
+import { during } from "../perf/jobs.ts";
 
 const log = createLog("keeper");
 const HOUR_MS = 3_600_000;
@@ -177,7 +178,7 @@ export function tickKeeper(app: App, now = new Date(), onLift: () => void = () =
 export function startKeeper(app: App, onLift: () => void, everyMs = 60_000, now: () => number = Date.now): () => void {
   const timer = setInterval(() => {
     try {
-      tickKeeper(app, new Date(now()), onLift);
+      during("keeper", () => tickKeeper(app, new Date(now()), onLift));
     } catch (error) {
       log.warn("keeper tick failed", { error: String(error) });
     }

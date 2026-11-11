@@ -3,13 +3,14 @@
  * ledger and handed to the pure policy in `week.ts` (#8695).
  */
 
+import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { listAutonomousRepos, type Repo } from "../core/repos.ts";
 import { measureFor } from "../core/measure.ts";
 import { getHeadroom, WINDOW_MS } from "../core/standing.ts";
 import { grantedAccounts, PLATFORM } from "../core/subscriptions.ts";
 import { burnFrom, noteReading, readingsSince } from "./week_burn.ts";
-import { belowCeiling, capacityCount, paceFloor } from "../core/capacity.ts";
+import { belowCeiling, capacityCount, capacityValue, paceFloor, weekUse } from "../core/capacity.ts";
 import { efficiencyWords, WEEK, weekDecision, type Efficiency, type WeekDecision, type WeekMeter } from "./week.ts";
 
 /** The week as the provider's meter reads it: a meter, or null while no account's limit is known. */
@@ -17,6 +18,18 @@ interface Week {
   readonly meter: WeekMeter | null;
   /** The accounts the meter reads, as one key: repositories drawing on the same accounts share one week. */
   readonly scope: string;
+  /** Whether any agent run on this forge finished with a cost over the burn window. */
+  readonly crewRan: boolean;
+}
+
+/** Whether an agent run finished with a cost since `since`: the crew ran, whatever the meter shows. */
+export function crewRanSince(db: Database, since: Date): boolean {
+  const row = db
+    .query<{ n: number }, [string]>(
+      "SELECT COUNT(*) AS n FROM run WHERE kind = 'agent' AND finished_at >= ?1 AND cost_usd > 0",
+    )
+    .get(since.toISOString());
+  return (row?.n ?? 0) > 0;
 }
 
 /** How long a repository's week is remembered: `repoPace` is asked many times a tick. */
@@ -58,8 +71,9 @@ function readWeek(app: App, repo: Repo, now: Date): Week {
     const at = Date.parse(m.resetsAt);
     if (resetsAt === null || at < resetsAt) resetsAt = at;
   }
+  const crewRan = crewRanSince(app.db, new Date(now.getTime() - WEEK.burnHours * 3_600_000));
   // No measurement is an unknown week, which holds the crew; it is never "not metered".
-  if (resetsAt === null) return { meter: null, scope: [...accounts].sort().join(",") };
+  if (resetsAt === null) return { meter: null, scope: [...accounts].sort().join(","), crewRan };
   const freePct = 100 - usedPct / known.length;
   // The burn is how fast the measured percent fell between successive readings of it.
   const scope = [...known].sort().join(",");
@@ -68,6 +82,7 @@ function readWeek(app: App, repo: Repo, now: Date): Week {
   const readings = readingsSince(app.db, scope, opened);
   return {
     scope,
+    crewRan,
     meter: {
       freePct,
       keptPct: keptPct / known.length,
@@ -117,7 +132,7 @@ export function weekFor(
   seen: { idleSlots: number; startable: number; gated: number } = { idleSlots: 0, startable: 0, gated: 0 },
 ): WeekDecision | null {
   const week = weekOf(app, repo, now);
-  return weekDecision({ ...week, now, ceiling: repo.autonomySlots, floorSlots: paceFloor(app.db), ...seen });
+  return weekDecision({ ...week, now, ceiling: repo.autonomySlots, floorSlots: paceFloor(app.db), reserve: 1 - weekUse(app.db) / 100, ...seen });
 }
 
 /** The key of the accounts a repository draws its week from. */
@@ -125,9 +140,15 @@ export function weekScope(app: App, repo: Repo, now: Date): string {
   return weekOf(app, repo, now).scope;
 }
 
-/** The slots the whole crew may run at once: what `crew.concurrency` says, else the repository's own. */
+/**
+ * The slots the whole crew may run at once: what `crew.concurrency` says, else
+ * the default the crew booted with — the same number the pump starts runs
+ * under (`dispatch.ts`), so home never says 5 of 5 while the crew runs 4
+ * (#10440) — else the repository's own.
+ */
 export function crewCeiling(app: App, repo: Repo): number {
-  return capacityCount(app.db, "crew.concurrency", repo.autonomySlots);
+  const booted = Number(capacityValue(app.db, "crew.concurrency"));
+  return capacityCount(app.db, "crew.concurrency", Number.isInteger(booted) && booted > 0 ? booted : repo.autonomySlots);
 }
 
 /**
@@ -137,7 +158,7 @@ export function crewCeiling(app: App, repo: Repo): number {
  */
 export function crewWeekFor(app: App, repo: Repo, now: Date): WeekDecision | null {
   const week = weekOf(app, repo, now);
-  return weekDecision({ ...week, now, ceiling: crewCeiling(app, repo), floorSlots: paceFloor(app.db), idleSlots: 0, startable: 0, gated: 0 });
+  return weekDecision({ ...week, now, ceiling: crewCeiling(app, repo), floorSlots: paceFloor(app.db), reserve: 1 - weekUse(app.db) / 100, idleSlots: 0, startable: 0, gated: 0 });
 }
 
 /** A sentence saying the crew's cap is lowered, so pacing is not mistaken for it; empty at the ceiling. */
@@ -218,4 +239,21 @@ export function weekBlock(app: App, now: Date = new Date()): string[] {
   const crew = crewLineWords(app, now);
   const words = weekWords(app, now, crew !== null);
   return [...(crew === null ? [] : [crew]), ...(words === null ? [] : [words])];
+}
+
+/**
+ * The weekly-budget knob's live effect (#10461): `25% used, 73% of the time
+ * left · on pace · lasts to the reset Sat 02:00 UTC` — the busiest repository's
+ * meter, the same week `weekWords` states. Plain words while it is unmeasured.
+ */
+export function budgetEffect(app: App, now: Date = new Date()): string {
+  const words = busiest(app, now, (repo, week) => {
+    const meter = weekOf(app, repo, now).meter;
+    if (meter === null) return null;
+    const used = Math.round(Math.min(100, Math.max(0, 100 - meter.freePct)));
+    const left = Math.round(Math.min(100, Math.max(0, ((meter.resetsAt.getTime() - now.getTime()) / WINDOW_MS.week) * 100)));
+    const lasts = week.runsOutAt === null ? `lasts to ${dayTime(meter.resetsAt)}` : `runs out ${dayTime(week.runsOutAt)}`;
+    return `${used}% used, ${left}% of the time left · ${week.status} · ${lasts}`;
+  });
+  return words ?? "the week is not measured yet · the crew holds at a few slots until it is";
 }

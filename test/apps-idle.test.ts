@@ -28,6 +28,11 @@ describe("previews of idle pulls sleep", () => {
   let alice: User;
   let repo: Repo;
   let record: AppRecord;
+  // Three previews, deployed once for the file: deploying is the slow part,
+  // and no test here is about deploying.
+  let fresh: number;
+  let idle: number;
+  let later: number;
   const DOMAIN = "apps.test";
 
   const options = () => ({
@@ -35,9 +40,21 @@ describe("previews of idle pulls sleep", () => {
     scheme: "http" as const,
     publicPort: servers.port,
     forgeUrl: servers.url,
-    sweepEveryMs: 150,
+    sweepEveryMs: 50,
     idlePullMs: 3 * DAY,
+    // The sweep reads its clock once per pass, after it has put idle pulls
+    // to sleep: counting reads is counting finished sweeps.
+    clock: () => {
+      swept++;
+      return Date.now();
+    },
   });
+  let swept = 0;
+  /** Wait until `n` whole sweeps have run from now: what "the sweep left it alone" needs. */
+  const sweeps = (n: number) => {
+    const target = swept + n + 1;
+    return until(() => (swept >= target ? true : undefined));
+  };
   const envOf = (n: number): EnvStatus | undefined =>
     runtime.status(record).find((e) => e.env === `pull-${n}`);
 
@@ -46,7 +63,7 @@ describe("previews of idle pulls sleep", () => {
     while (Date.now() < deadline) {
       const value = read();
       if (value !== undefined) return value;
-      await Bun.sleep(100);
+      await Bun.sleep(10);
     }
     throw new Error("did not happen in time");
   }
@@ -106,6 +123,9 @@ describe("previews of idle pulls sleep", () => {
     if (!made.ok) throw new Error(String(made.error));
     repo = made.value.repo;
     record = made.value.app;
+    fresh = await pull("fresh");
+    idle = await pull("idle");
+    later = await pull("later");
   }, 120_000);
 
   afterAll(async () => {
@@ -116,8 +136,7 @@ describe("previews of idle pulls sleep", () => {
   });
 
   test("a pull touched an hour ago keeps its preview; one idle past the age loses its process, and its page says so", async () => {
-    const fresh = await pull("fresh");
-    const idle = await pull("idle");
+    // Invariant: the sweep stops a preview idle past the age (state kept, page says asleep), and spares a fresh one and production.
     age(fresh, 3_600_000);
     age(idle, 4 * DAY);
     await until(() => (envOf(idle)?.dormant !== undefined ? true : undefined));
@@ -128,7 +147,7 @@ describe("previews of idle pulls sleep", () => {
     expect(asleep.port).toBeUndefined();
     expect(asleep.commitOid).not.toBe("");
     expect(asleep.runId).toBeDefined();
-    await Bun.sleep(500);
+    await sweeps(2);
     expect(envOf(fresh)?.state).toBe("running");
     expect(envOf(fresh)?.dormant).toBeUndefined();
     // Production is never put to sleep by a pull's age. It is waited for:
@@ -137,9 +156,12 @@ describe("previews of idle pulls sleep", () => {
     // running. When it is not running, its own words are the failure.
     const production = () =>
       runtime.status(record).find((e) => e.env === "production");
-    await until(() =>
-      production()?.state === "deploying" ? undefined : true,
-    );
+    // Settled means running or failed: "stopped" before its deploy is queued
+    // is not an answer, and counting it as one reads a slow start as a fault.
+    await until(() => {
+      const state = production()?.state;
+      return state === "running" || state === "failed" ? true : undefined;
+    });
     expect(`${production()?.state}: ${production()?.error ?? ""}`).toBe(
       "running: ",
     );
@@ -172,10 +194,9 @@ describe("previews of idle pulls sleep", () => {
   }, 120_000);
 
   test("asking for a stopped preview redeploys it on the ordinary path", async () => {
-    const idle = await until(() => {
-      const e = runtime.status(record).find((x) => x.dormant !== undefined);
-      return e === undefined ? undefined : Number(e.env.slice(5));
-    });
+    // Invariant: a request for a dormant preview runs one "wake" deploy, and the woken preview counts as touched.
+    // The idle preview the first test put to sleep.
+    await until(() => (envOf(idle)?.dormant !== undefined ? true : undefined));
     const before = listRuns(app.db, repo.id, { kind: "deploy", limit: 100 }).length;
     const res = await fetch(`${servers.url}/`, {
       headers: { host: `hello--${idle}.${DOMAIN}` },
@@ -187,25 +208,25 @@ describe("previews of idle pulls sleep", () => {
     expect(runs.length).toBe(before + 1);
     expect(runs[0]!.reason).toBe("wake");
     // Woken, it counts as touched: the next sweep leaves it up.
-    await Bun.sleep(500);
+    await sweeps(2);
     expect(envOf(idle)?.state).toBe("running");
   }, 120_000);
 
   test("a restart leaves a sleeping preview asleep", async () => {
-    const idle = await pull("later");
-    age(idle, 5 * DAY);
-    await until(() => (envOf(idle)?.dormant !== undefined ? true : undefined));
+    // Invariant: a runtime booting over a dormant preview keeps it stopped and deploys nothing for it.
+    age(later, 5 * DAY);
+    await until(() => (envOf(later)?.dormant !== undefined ? true : undefined));
     const before = listRuns(app.db, repo.id, { kind: "deploy", limit: 100 }).filter(
-      (r) => r.env === `pull-${idle}`,
+      (r) => r.env === `pull-${later}`,
     ).length;
     await runtime.stop();
     runtime = new AppsRuntime(app, options());
     await runtime.start();
-    expect(envOf(idle)?.dormant).toBeDefined();
-    expect(envOf(idle)?.state).toBe("stopped");
-    await Bun.sleep(500);
+    expect(envOf(later)?.dormant).toBeDefined();
+    expect(envOf(later)?.state).toBe("stopped");
+    await sweeps(2);
     const after = listRuns(app.db, repo.id, { kind: "deploy", limit: 100 }).filter(
-      (r) => r.env === `pull-${idle}`,
+      (r) => r.env === `pull-${later}`,
     ).length;
     expect(after).toBe(before);
   }, 120_000);

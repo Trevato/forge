@@ -245,11 +245,15 @@ export interface RunOptions {
   stdin?: Uint8Array | string;
   /** Kill the process after this long. @default 30_000 */
   timeoutMs?: number;
+  /** Kill the process, and fail with code `OVER_CAP`, once stdout passes this many bytes. */
+  maxBytes?: number;
   /** Kill the process when this aborts. */
   signal?: AbortSignal;
 }
 
 /** Run git to completion, capturing output as bytes. Non-zero exit is an Err. */
+export const OVER_CAP = -2;
+
 export async function runGitRaw(
   args: readonly string[],
   options: RunOptions = {},
@@ -268,14 +272,19 @@ export async function runGitRaw(
     const timeoutMs = options.timeoutMs ?? 30_000;
     const timer = setTimeout(() => proc.kill("SIGKILL"), timeoutMs);
     const stop = () => proc.kill("SIGKILL");
+    let over = false;
     if (options.signal?.aborted) stop();
     options.signal?.addEventListener("abort", stop, { once: true });
     try {
       const [stdout, stderr, code] = await Promise.all([
-        readAll(proc.stdout),
+        readAll(proc.stdout, options.maxBytes, () => {
+          over = true;
+          stop();
+        }),
         new Response(proc.stderr).text(),
         proc.exited,
       ]);
+      if (over) return err({ code: OVER_CAP, stderr: "output over the cap", args });
       if (code !== 0) return err({ code, stderr: stderr.trim(), args });
       return ok(stdout);
     } finally {
@@ -302,6 +311,59 @@ export interface GitCapture {
   readonly stderr: string;
   /** The timeout killed the process. */
   readonly timedOut?: boolean;
+  /** `stopAfterLines` was reached: stdout holds that many lines and the process was killed for it. */
+  readonly stopped?: boolean;
+}
+
+export interface CaptureOptions extends RunOptions {
+  /**
+   * Keep only the first this-many newline-ended lines of stdout and kill the
+   * process once they are read. For a caller that wants the first few
+   * answers of a command whose whole output can be megabytes (`git grep a`).
+   */
+  stopAfterLines?: number;
+  /** Kill the process when this fires (reported as `timedOut`); one already fired never starts it. */
+  signal?: AbortSignal;
+}
+
+/**
+ * The first `max` lines of `stream`, read as they come; `stop` is called
+ * once they are in, and nothing past them is kept. Without `max`, all of it.
+ */
+async function readLines(
+  stream: ReadableStream<Uint8Array>,
+  max: number | undefined,
+  stop: () => void,
+): Promise<{ text: string; stopped: boolean }> {
+  if (max === undefined) return { text: await new Response(stream).text(), stopped: false };
+  const decoder = new TextDecoder();
+  const parts: string[] = [];
+  let lines = 0;
+  const reader = stream.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      let cut = -1;
+      for (let i = 0; i < value.length; i++) {
+        if (value[i] === 10 && ++lines >= max) {
+          cut = i + 1;
+          break;
+        }
+      }
+      if (cut < 0) {
+        parts.push(decoder.decode(value, { stream: true }));
+        continue;
+      }
+      parts.push(decoder.decode(value.subarray(0, cut)));
+      stop();
+      return { text: parts.join(""), stopped: true };
+    }
+    parts.push(decoder.decode());
+    return { text: parts.join(""), stopped: false };
+  } finally {
+    reader.cancel().catch(() => {});
+  }
 }
 
 /**
@@ -311,10 +373,11 @@ export interface GitCapture {
  */
 export async function runGitCapture(
   args: readonly string[],
-  options: RunOptions = {},
+  options: CaptureOptions = {},
 ): Promise<GitCapture> {
   const start = performance.now();
   return gitGate.run(async () => {
+    if (options.signal?.aborted === true) return { code: 1, stdout: "", stderr: "", timedOut: true };
     const proc = Bun.spawn(["git", ...args], {
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
       env: gitEnv(options.env),
@@ -330,15 +393,27 @@ export async function runGitCapture(
       },
       options.timeoutMs ?? 30_000,
     );
+    const abort = () => {
+      timedOut = true;
+      proc.kill("SIGKILL");
+    };
+    options.signal?.addEventListener("abort", abort, { once: true });
     try {
-      const [stdout, stderr, code] = await Promise.all([
-        new Response(proc.stdout).text(),
+      const [out, stderr, code] = await Promise.all([
+        readLines(proc.stdout, options.stopAfterLines, () => proc.kill("SIGKILL")),
         new Response(proc.stderr).text(),
         proc.exited,
       ]);
-      return { code, stdout, stderr, ...(timedOut ? { timedOut } : {}) };
+      return {
+        code,
+        stdout: out.text,
+        stderr,
+        ...(timedOut && !out.stopped ? { timedOut } : {}),
+        ...(out.stopped ? { stopped: true } : {}),
+      };
     } finally {
       clearTimeout(timer);
+      options.signal?.removeEventListener("abort", abort);
       noteGit(gitRecord, args, start);
     }
   });
@@ -350,12 +425,18 @@ export async function runGitCapture(
  */
 async function readAll(
   stream: ReadableStream<Uint8Array>,
+  maxBytes?: number,
+  onOver?: () => void,
 ): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   let total = 0;
   for await (const chunk of stream) {
     chunks.push(chunk.slice());
     total += chunk.length;
+    if (maxBytes !== undefined && total > maxBytes) {
+      onOver?.();
+      break;
+    }
   }
   const out = new Uint8Array(total);
   let offset = 0;

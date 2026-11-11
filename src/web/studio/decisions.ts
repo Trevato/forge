@@ -19,6 +19,7 @@ import { html, type Html } from "../html.ts";
 import { btn } from "../ui.ts";
 import { thumbLook } from "../pages/looks.ts";
 import { changeHref } from "./nouns.ts";
+import { flatten } from "./note.ts";
 import { testsClause } from "./words.ts";
 import { reviewerPaused } from "../../crew/reviewer_paused.ts";
 import { reviewWhy, scoredFor, waitingOn, type Decision, type Scored } from "./asks.ts";
@@ -105,8 +106,9 @@ export function decisionsFor(
         repo: c.repo,
         issue: c.issue,
         who: c.who,
-        says: `The planner declined the direction: \u201c${c.decline.words}\u201d. It plans nothing more until you answer on #${c.issue.number}.`,
-        short: `the planner declined the direction: \u201c${c.decline.words}\u201d`,
+        says: `The planner declined the direction: \u201c${flatten(c.decline.words)}\u201d. It plans nothing more until you answer on #${c.issue.number}.`,
+        short: "the planner declined the direction",
+        note: c.decline.words,
       };
     if (c.kind === "handover" && c.pull && c.handover)
       return {

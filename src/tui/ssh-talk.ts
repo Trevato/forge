@@ -15,6 +15,11 @@
  * `talk-again edit <words>`, `talk-again regenerate` and `talk-again retry`
  * are the same three actions the page has (#8817), through `talkAgain`.
  *
+ * `talk --about owner/repo[#N] [words]` first prints the same one line the
+ * page shows above its composer ("About owner/repo#N: title"), and nothing
+ * when the subject is malformed, unknown or not the person's to read; with
+ * no words it prints only that line.
+ *
  * `talk --attach <name> <words>` sends one file with the words: its bytes are
  * the exec's standard input (`cat shot.png | ssh <forge> talk --attach
  * shot.png look at this`). The forge never opens a path of its own, so the
@@ -26,6 +31,7 @@ import { cancelTalk, queuedTalk, TALK_WORDS, stopTalk, talk, talkAgain } from ".
 import { FILE_WORDS, IMAGE_MAX, pendingAmong, removePending, storeFile } from "../core/conversation_files.ts";
 import { contextOf, contextText, dollars, turnCosts } from "../core/conversation_cost.ts";
 import { openConversation } from "../core/conversations.ts";
+import { aboutLine } from "../core/talk_about.ts";
 import type { App } from "../app.ts";
 import type { RedoHow } from "../crew/conversation.ts";
 import type { User } from "../core/users.ts";
@@ -56,6 +62,12 @@ export function parseDuring(words: string): { during: "queue" | "interrupt"; wor
 export function parseAttach(words: string): { name: string; words: string } | undefined {
   const m = /^--attach[ \t]+(\S+)(?:[ \t]+([\s\S]*))?$/.exec(words.trim());
   return m === null ? undefined : { name: m[1]!, words: m[2] ?? "" };
+}
+
+/** `--about <ref> <words>`: the subject named and the words after it; undefined without the flag. */
+export function parseAbout(words: string): { about: string; words: string } | undefined {
+  const m = /^--about[ \t]+(\S+)(?:[ \t]+([\s\S]*))?$/.exec(words.trim());
+  return m === null ? undefined : { about: m[1]!, words: m[2] ?? "" };
 }
 
 /** Standard input to its end, or `too_large` past `max` bytes. */
@@ -98,6 +110,14 @@ export function serveTalk(app: App, session: SshSession, user: User | undefined,
     session.write(`cancelled${CRLF}`);
     return session.exit(0);
   }
+  const subject = parseAbout(words);
+  const about = subject?.about ?? null;
+  if (subject !== undefined) {
+    const line = aboutLine(app.db, subject.about, user);
+    if (line !== null) session.write(`${line.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]/g, " ")}${CRLF}`);
+    if (subject.words.trim() === "") return session.exit(0);
+    words = subject.words;
+  }
   const during = parseDuring(words);
   if (during !== undefined) words = during.words;
   if (isStop(words)) {
@@ -125,14 +145,14 @@ export function serveTalk(app: App, session: SshSession, user: User | undefined,
     session.exit(0);
   };
   const attach = parseAttach(words);
-  if (attach === undefined) return finish(talk(app, user, words, [], during?.during ?? "inject"));
+  if (attach === undefined) return finish(talk(app, user, words, [], during?.during ?? "inject", undefined, about));
   if (user === undefined) return refuse(TALK_WORDS.unauthorized[1]);
   void readStdin(session, IMAGE_MAX).then((bytes) => {
     if (bytes === "too_large") return refuse(FILE_WORDS.too_large[1]);
     const stored = storeFile(app.db, app.config.dataDir, user.id, attach.name, bytes);
     if (!stored.ok) return refuse(FILE_WORDS[stored.error][1]);
     const files = pendingAmong(app.db, user.id, [stored.value.id]);
-    const said = talk(app, user, attach.words, files.ok ? files.value : [], during?.during ?? "inject");
+    const said = talk(app, user, attach.words, files.ok ? files.value : [], during?.during ?? "inject", undefined, about);
     // A message that was not taken leaves no file waiting behind it.
     if (!said.ok) removePending(app.db, app.config.dataDir, user.id, stored.value.id);
     finish(said);

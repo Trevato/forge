@@ -88,4 +88,20 @@ describe("MCP repo_settings", () => {
     expect(set.isError).toBe(true);
     expect(set.text).toContain("visibility is public or private");
   });
+
+  test("newOwner moves a repository; a non-admin and a missing owner are refused", async () => {
+    const miss = await call(admin, "repo_settings", { repo: "acme/game", newOwner: "nobody-here" });
+    expect(miss.isError).toBe(true);
+    expect(miss.text).toContain("unknown_owner");
+    const denied = await call(writer, "repo_settings", { repo: "acme/game", newOwner: "bob" });
+    expect(denied.isError).toBe(true);
+    expect(denied.text).toContain("not_found");
+    const moved = await call(admin, "repo_settings", { repo: "acme/game", newOwner: "alice" });
+    expect(moved.isError).toBe(false);
+    expect(JSON.parse(moved.text).repo).toBe("alice/game");
+    const read = await call(admin, "repo", { repo: "alice/game" });
+    expect(JSON.parse(read.text)).toMatchObject({ visibility: "private" });
+    const again = await call(admin, "repo_settings", { repo: "alice/game", newOwner: "alice" });
+    expect(again.text).toContain("same_owner");
+  });
 });

@@ -67,6 +67,6 @@ test("an empty stage says so in one line", async () => {
   const html = await (await get(`/now/${stage}`)).text();
   expect(html).toContain(`<p class="muted">Nothing in ${NOW_WORDS[stage].toLowerCase()} right now.</p>`);
   expect(html.split(NOW_HOLDS[stage]).length - 1).toBe(1);
-  expect(html).not.toContain('class="card empty"');
+  expect(html).not.toContain('class="empty"');
   expect(html).not.toContain("<ul class=\"list");
 });

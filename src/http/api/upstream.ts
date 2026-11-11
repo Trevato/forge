@@ -6,6 +6,7 @@
  * `actions/repos.ts`.
  */
 
+import { forksSince } from "../../core/repos.ts";
 import { forkRepo, FORKS_PER_DAY, repositoryLimitMessage } from "../../actions/repos.ts";
 import {
   checkUpstreamNow,
@@ -22,8 +23,16 @@ import { getFollow } from "../../core/upstream_follow.ts";
 import { holds, weakEtag } from "../etag.ts";
 import { loadRepo, pageParams, slicePage } from "../api.ts";
 import type { Handler } from "../context.ts";
-import { apiError, body, json, notFound, requireScope, respondAccess, str } from "../respond.ts";
+import { apiError, body, json, notFound, requireScope, respondAccess, str, tryAgain, WINDOW } from "../respond.ts";
 import type { Router } from "../router.ts";
+
+/** Seconds until the oldest fork in the last day ages out and frees a place. */
+function forkWait(db: Parameters<typeof forksSince>[0], ownerId: string): number {
+  const since = new Date(Date.now() - WINDOW.day * 1000).toISOString();
+  const made = forksSince(db, ownerId, since);
+  const oldest = made[Math.max(0, made.length - FORKS_PER_DAY)];
+  return oldest === undefined ? WINDOW.day : (Date.parse(oldest) + WINDOW.day * 1000 - Date.now()) / 1000;
+}
 
 export function upstreamRoutes(router: Router<Handler>): void {
   // Following an outside upstream (#3442): an admin reads, sets and checks.
@@ -138,7 +147,7 @@ export function upstreamRoutes(router: Router<Handler>): void {
         : forked.error === "already_forked"
         ? apiError("already_forked", 409, "you already have a fork of this repository")
         : forked.error === "limit"
-        ? apiError("limit", 429, `at most ${FORKS_PER_DAY} forks a day: try again tomorrow`)
+        ? tryAgain("limit", 429, `at most ${FORKS_PER_DAY} forks a day: try again tomorrow`, forkWait(ctx.app.db, ctx.auth.user!.id))
         : forked.error === "fork_failed"
         ? apiError("fork_failed", 422, "the fork could not be created")
         : respondAccess(forked.error, 422);

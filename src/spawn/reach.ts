@@ -25,6 +25,8 @@ import type { App } from "../app.ts";
 import { isSlug, slugFor } from "../core/apps.ts";
 import type { FiredAlarm } from "../flow/alarms.ts";
 import { childPublicUrl, parentOrigin } from "./placement.ts";
+import { uncleanInFirstMinutes } from "../kernel/boots.ts";
+import { during } from "../perf/jobs.ts";
 
 export const APP_HEADER = "x-forge-app";
 
@@ -153,6 +155,23 @@ export async function proveApp(fetcher: FetchLike, url: string, slug: string): P
   return { label: slug, url, ok: true, status: got.status, says: `answered ${got.status}` };
 }
 
+/**
+ * A child's own record of its starts: none of them in its first ten minutes
+ * may have ended uncleanly. Absent (undefined) while it has no record yet.
+ */
+export function proveBoots(app: App, child: Pick<Child, "url" | "bodyId">): Proof | undefined {
+  const unclean = uncleanInFirstMinutes(childDirOf(app, child.bodyId));
+  if (unclean === null) return undefined;
+  const ok = unclean === 0;
+  return {
+    label: "boots",
+    url: child.url,
+    ok,
+    status: null,
+    says: ok ? "no unclean restart in the first ten minutes" : `${unclean} unclean restart${unclean === 1 ? "" : "s"} in the first ten minutes`,
+  };
+}
+
 /** Ask every public address of a child, as a visitor does. Nothing is kept. */
 export async function proveChild(app: App, child: Child): Promise<ChildReach> {
   const fetcher = optionsOf(app).fetch ?? fetch;
@@ -160,6 +179,8 @@ export async function proveChild(app: App, child: Child): Promise<ChildReach> {
     proveHome(fetcher, child),
     ...slugsOf(app, child).map((slug) => proveApp(fetcher, appUrlOf(app, child, slug), slug)),
   ]);
+  const boots = proveBoots(app, child);
+  if (boots !== undefined) proofs.push(boots);
   return { name: child.name, at: new Date().toISOString(), ok: proofs.every((p) => p.ok), since: null, alarmed: false, proofs };
 }
 
@@ -250,11 +271,15 @@ export async function settleChild(app: App, name: string): Promise<void> {
   }
 }
 
-/** One pass over every finished child: prove, confirm a failure once, keep, alarm on a change. */
-export async function sweepReach(app: App): Promise<void> {
+/**
+ * One pass over every finished child: prove, confirm a failure once, keep, alarm on a change.
+ * A child `asleep` is passed over and keeps its last proof: asking its address wakes it, and
+ * a probe every five minutes woke every sleeping child, booting each anew every quarter hour.
+ */
+export async function sweepReach(app: App, asleep: (name: string) => boolean = () => false): Promise<void> {
   if (off(app)) return;
   const confirmMs = optionsOf(app).confirmMs ?? CONFIRM_MS;
-  const children = (await listChildren(app)).filter((c) => c.done);
+  const children = (await listChildren(app)).filter((c) => c.done && !asleep(c.name));
   for (let i = 0; i < children.length; i += BATCH) {
     await Promise.all(
       children.slice(i, i + BATCH).map(async (child) => {
@@ -274,9 +299,13 @@ export async function sweepReach(app: App): Promise<void> {
 }
 
 /** Re-prove every child on a schedule, the first pass soon after boot. Returns the timer to clear. */
-export function startReachWatch(app: App, everyMs = REACH_EVERY_MS): ReturnType<typeof setInterval> {
-  const first = setTimeout(() => void sweepReach(app), 30_000);
-  const timer = setInterval(() => void sweepReach(app), everyMs);
+export function startReachWatch(
+  app: App,
+  everyMs = REACH_EVERY_MS,
+  asleep: (name: string) => boolean = () => false,
+): ReturnType<typeof setInterval> {
+  const first = setTimeout(() => void during("reach", () => sweepReach(app, asleep)), 30_000);
+  const timer = setInterval(() => void during("reach", () => sweepReach(app, asleep)), everyMs);
   app.closing.signal.addEventListener("abort", () => clearTimeout(first), { once: true });
   return timer;
 }

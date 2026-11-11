@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/boards/query",
   summary: "Run one board query over every repository; answers { rows: [{ group, value, series? }] }",
   auth: true,
+  role: "admin",
   body: { source: "string", from: "string", to: "string", filter: "array", groupBy: "object", step: "integer", aggregate: "string", column: "string", series: "string" },
   refusals: {
     bad_json: "the body is not JSON (400)",

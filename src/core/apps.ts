@@ -47,10 +47,10 @@ const toApp = (r: AppRow): AppRecord => ({
 
 /**
  * A slug that is also an environment's suffix: `<slug>--b<sha7>` is a build
- * preview, so no slug may be `b` and seven hex digits.
+ * preview, so no slug may be `b` and seven hex digits; `<slug>--v-<label>` is a variant (`core/variants.ts`), so none is `v-` and a label.
  */
 const RESERVED_SLUG = /^b[0-9a-f]{7}$/;
-const reserved = (slug: string): boolean => RESERVED_SLUG.test(slug);
+const reserved = (slug: string): boolean => RESERVED_SLUG.test(slug) || /^v-[a-z0-9]{1,16}$/.test(slug);
 
 /**
  * A slug is a DNS label: lowercase letters, digits, single hyphens inside.
@@ -235,6 +235,8 @@ export function deleteApp(db: Database, appId: string): boolean {
     db.run("DELETE FROM app_vital WHERE app_id = ?1", [appId]);
     db.run("DELETE FROM app_feature WHERE app_id = ?1", [appId]);
     db.run("DELETE FROM app_feature_setting WHERE app_id = ?1", [appId]);
+    db.run("DELETE FROM feature_fire WHERE app_id = ?1", [appId]);
+    db.run("DELETE FROM pull_run WHERE app_id = ?1", [appId]);
     return db.query("DELETE FROM app WHERE id = ?1").run(appId).changes > 0;
   })();
 }

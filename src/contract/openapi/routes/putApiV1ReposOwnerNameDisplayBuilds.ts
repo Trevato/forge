@@ -5,6 +5,7 @@ export const route: Route = {
   path: `${REPO}/display/builds`,
   summary: "Choose the builds a repository's display shows, in order (rw scope, a person who writes it); commits display.json; answers the builds",
   auth: true,
+  role: "member",
   body: { builds: "array" },
   refusals: {
     bad_json: "the body is not JSON (400)",

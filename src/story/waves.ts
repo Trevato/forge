@@ -164,6 +164,25 @@ export function pullRefs(wave: Wave): PullRef[] {
   return out;
 }
 
+/**
+ * How big a wave is for one viewer: the pulls they can see, once each, and the
+ * distinct repositories (apps) those sit in. Takes the visible pulls (what
+ * `carriedPulls` returns), never the whole wave, so a hidden pull is not counted.
+ */
+export function waveSize(refs: readonly { owner: string; name: string }[]): { pulls: number; apps: number } {
+  return { pulls: refs.length, apps: new Set(refs.map((r) => `${r.owner}/${r.name}`)).size };
+}
+
+/** `7 changes in 3 apps`; `1 change in 1 app`. Numbers only, so nothing here needs escaping. */
+export function sizeWords(size: { pulls: number; apps: number }): string {
+  return `${size.pulls} ${size.pulls === 1 ? "change" : "changes"} in ${size.apps} ${size.apps === 1 ? "app" : "apps"}`;
+}
+
+/** A wave's one-line title, on the terminal's list: `<version> · <date> · <headline> · N changes in M apps`, counted over what this viewer can see. */
+export function waveLine(w: Wave, size: { pulls: number; apps: number }): string {
+  return `${w.version} · ${w.date} · ${w.headline} · ${sizeWords(size)}`;
+}
+
 /** Unreadable files tried before giving up on finding the newest good wave. */
 const LATEST_TRIES = 5;
 
@@ -187,4 +206,24 @@ export async function latestWave(dir: string, branch: string): Promise<Wave | nu
     if (parsed.ok) return parsed.value;
   }
   return null;
+}
+
+/** A wave's page on this forge. */
+export const wavePath = (owner: string, name: string, version: string): string =>
+  `/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/waves/${encodeURIComponent(version)}`;
+
+/** The query a pull link carries so the pull can lead back to the wave it was opened from. */
+export const fromWave = (owner: string, name: string, version: string): string =>
+  `?from=${encodeURIComponent(`${owner}/${name}@${version}`)}`;
+
+const FROM = /^([A-Za-z0-9._-]{1,100})\/([A-Za-z0-9._-]{1,100})@(.{1,64})$/;
+
+/**
+ * The wave a `?from=` names, as its page path, or null when the value is not
+ * a well-formed wave address. Pure text: nothing is read, nothing echoed raw.
+ */
+export function backToWave(from: string | null): { href: string; version: string } | null {
+  const m = from === null ? null : FROM.exec(from);
+  if (!m || !WAVE_VERSION.test(m[3]!)) return null;
+  return { href: wavePath(m[1]!, m[2]!, m[3]!), version: m[3]! };
 }

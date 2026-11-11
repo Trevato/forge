@@ -354,14 +354,14 @@ describe("egress, reported: what an app reached is kept per repository and shown
       ["api.stripe.com", 443, 2],
     ]);
     expect(reachedHosts(dataDir, "01other")).toEqual([]);
-    const note = String(egressNote(dataDir, "01repo", []));
+    const note = String(egressNote(dataDir, "01repo", [], "report"));
     expect(note).toContain("api.stripe.com:443");
     expect(note).toContain("&quot;api.stripe.com&quot;");
     expect(note).toContain("db.example.com:5432");
-    const after = String(egressNote(dataDir, "01repo", ["api.stripe.com"]));
+    const after = String(egressNote(dataDir, "01repo", ["api.stripe.com"], "report"));
     expect(after).not.toContain("api.stripe.com");
     expect(
-      egressNote(dataDir, "01repo", ["api.stripe.com", "db.example.com:5432"]),
+      egressNote(dataDir, "01repo", ["api.stripe.com", "db.example.com:5432"], "report"),
     ).toBeNull();
   });
 });
@@ -906,10 +906,8 @@ describe.skipIf(noCells)(
         hostname: "127.0.0.1",
         fetch: () => new Response("inside"),
       });
-      process.env["FORGE_CELLS_EGRESS"] = "report";
     });
     afterAll(async () => {
-      delete process.env["FORGE_CELLS_EGRESS"];
       listener.stop(true);
       await rm(dir, { recursive: true, force: true });
     });
@@ -938,6 +936,7 @@ describe.skipIf(noCells)(
             egress: [],
             reach: [],
             limits: { memoryMiB: 1024, cpus: 2, diskMiB: 1024 },
+            egressMode: "report",
             onUndeclared: (host, port) => seen.push(`${host}:${port}`),
           },
         },

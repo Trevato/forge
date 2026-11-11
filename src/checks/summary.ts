@@ -243,6 +243,8 @@ export interface LookRows {
   readonly screens: string;
   /** A phone look whose page is wider than its window; false without a size. */
   readonly sideways: boolean;
+  /** The page and window as measured; absent without a size. */
+  readonly size?: PageSize;
 }
 
 const isPhone = (look: string): boolean => look === "phone" || look.startsWith("phone ");
@@ -284,6 +286,6 @@ export function vitalsRows(looks: readonly LookVitals[]): readonly LookRows[] {
     const tall = z === undefined || z.innerHeight <= 0 ? null : z.scrollHeight / z.innerHeight;
     const screens = tall === null ? "" : (Math.round(tall * 10) / 10).toFixed(1);
     const sideways = z !== undefined && isPhone(l.look) && z.scrollWidth > z.innerWidth;
-    return { look: l.look, skipped: "", rows, screens, sideways };
+    return { look: l.look, skipped: "", rows, screens, sideways, ...(z === undefined ? {} : { size: z }) };
   });
 }

@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/conversations",
   summary: "Start a new, empty conversation with the forge's agent; answers it, and it opens at /talk/<id>",
   auth: true,
+  role: "member",
   status: 201,
   body: { title: "string" },
   reply: { conversation: "object" },

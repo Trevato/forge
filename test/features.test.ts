@@ -28,6 +28,7 @@ import { createApp as insertApp, deleteApp } from "../src/core/apps.ts";
 import { listEvents } from "../src/core/events.ts";
 import { muteRepo } from "../src/core/interactions.ts";
 import { readFeedPage } from "../src/feed/feed.ts";
+import { clearFires, recordFire } from "../src/core/feature_fires.ts";
 import { absorb, featureSettings, getAbsorbed } from "../src/core/features.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -53,6 +54,7 @@ const FEATURE = {
     scout: { type: "bool", default: true, label: "Search the web for ideas" },
   },
   tools: { scan: { description: "Run a scan now" }, latest: { description: "The last findings", writes: false } },
+  schedule: [{ tool: "scan", every: "1h" }],
 };
 const FORGE_JSON = JSON.stringify({ app: { run: "bun run src/server.ts" }, feature: FEATURE });
 
@@ -340,6 +342,38 @@ describe("absorbing an app", () => {
     expect(detail).toContain("<dt>Last changed by</dt>");
     const list = await (await web(adaCookie, "/settings/features")).text();
     expect(list).toMatch(/<dl class="row-facts"><div><dt>Last changed by<\/dt><dd>cy, \d{4}-\d{2}-\d{2}<\/dd><\/div><\/dl>/);
+  });
+
+  test("how the forge's scheduled calls went shows on the feature's page and in the API, escaped", async () => {
+    recordFire(app.db, appId, { tool: "scan", at: Date.now() - 120_000, ok: false, error: "<b>the app answered 500</b>", durationMs: 42 });
+    const view = await getFeature(app, ada, "radar");
+    expect(view.ok && view.value.fires).toEqual([{ tool: "scan", at: expect.any(Number), ok: false, error: "<b>the app answered 500</b>", durationMs: 42 }]);
+    const page = await (await web(adaCookie, "/settings/features/radar")).text();
+    expect(page).toContain("<h3>Scheduled</h3>");
+    expect(page).toContain("&lt;b&gt;the app answered 500&lt;/b&gt;");
+    expect(page).not.toContain("<b>the app answered 500");
+    expect(page).toMatch(/every 1h<\/span\s*>[\s\S]*?last <time datetime="[^"]+"[^>]*>[^<]+<\/time\s*>, <span class="danger">&lt;b&gt;the app answered 500&lt;\/b&gt;<\/span> · 42 ms · next <time datetime="[^"]+"[^>]*>\d{4}-\d\d-\d\d<\/time\s*>/);
+    expect(view.ok && view.value.schedule[0]!.line).toMatch(/^scan every 1h · last \d\d:\d\d, <b>the app answered 500<\/b> · 42 ms · next \d\d:\d\d$/);
+    expect(((await (await api("GET", adaToken, "/radar")).json()) as { fires: unknown[] }).fires).toHaveLength(1);
+    clearFires(app.db, appId);
+    const never = await (await web(adaCookie, "/settings/features/radar")).text();
+    expect(never).toContain("never run · next soon");
+    const idle = await getFeature(app, ada, "radar");
+    expect(idle.ok && idle.value.schedule[0]!.line).toBe("scan every 1h · never run · next soon");
+  });
+
+  test("the features tool with a slug says each scheduled tool's last and next run, as the page does", async () => {
+    const at = Date.now() - 120_000;
+    recordFire(app.db, appId, { tool: "scan", at, ok: false, error: "the app answered 500", durationMs: 7 });
+    const failed = await mcpTool(servers.url, adaToken, "features", { slug: "radar" });
+    expect(failed.value.schedule).toEqual([
+      expect.objectContaining({ tool: "scan", every: "1h", lastAt: at, ok: false, error: "the app answered 500", nextAt: at + 3_600_000 }),
+    ]);
+    clearFires(app.db, appId);
+    const idle = await mcpTool(servers.url, adaToken, "features", { slug: "radar" });
+    expect(idle.value.schedule).toEqual([
+      expect.objectContaining({ tool: "scan", every: "1h", lastAt: null, ok: null, error: null, nextAt: null }),
+    ]);
   });
 
   test("the facts are plain and escaped", () => {
@@ -812,6 +846,10 @@ describe("absorbing an app", () => {
     } finally {
       app.db.run("UPDATE repo SET visibility = 'private' WHERE id = ?1", [repo.id]);
       stub.stop(true);
+      // The constructor makes it this forge's runtime: a deploy it was asked
+      // for must settle before afterAll closes the database, or its
+      // finishRun is an unhandled error in whichever file runs next.
+      await runtime.stop();
     }
   });
 

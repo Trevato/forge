@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/conversation-tokens",
   summary: "Mint the token the forge's agent acts with in one conversation, as the signed-in person: rw, reaching the forge only through /mcp, fenced, expiring within the hour; `words` are what the person said to start the turn; without `conversation` a fresh one starts, with it only one of the person's own goes on; only the person's own browser session on the same origin mints it (a bearer token or password is 401); every event written with it names the person via the forge's agent; answers 201 with the token once",
   auth: false,
+  role: "member",
   status: 201,
   body: { conversation: "string", words: "string" },
   refusals: {

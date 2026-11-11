@@ -46,6 +46,16 @@ test("a person's sign-ins page is blocks all the way down, no card", async () =>
   expect((m.match(/class="settings-block"/g) ?? []).length).toBeGreaterThanOrEqual(4);
 });
 
+test("the accounts list is a settings-block under an h2, rows in .list, no card", async () => {
+  const m = main(await (await fetch(`${servers.url}/settings/accounts`, { headers: { cookie: admin } })).text());
+  expect(m).not.toContain('class="card');
+  expect(m).toMatch(/<section class="settings-block" id="accounts">\s*<h2>Who is on this forge<\/h2>/);
+  const list = m.slice(m.indexOf('id="accounts-list"'));
+  expect(m).toMatch(/<ul class="list[^"]*" id="accounts-list">/);
+  expect(list).toContain("bobby");
+  expect(list).toContain("alice");
+});
+
 test("the accounts list keeps its confirm links", async () => {
   const m = main(await (await fetch(`${servers.url}/settings/accounts`, { headers: { cookie: admin } })).text());
   expect(m).toContain("/-/confirm?to=%2Fsettings%2Faccounts%2Fbobby%2Fsuspend");

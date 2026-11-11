@@ -99,6 +99,7 @@ test("the page content (<main>, the shell excluded) depends on no script or inli
 const EXPECTED = [
   "/settings", // profile
   "/settings/notify",
+  "/settings/dotfiles",
   "/settings/everyday",
   "/settings/everyday/keep",
   "/settings/email/verify", // shown to an unverified user only: bob
@@ -111,7 +112,7 @@ const EXPECTED = [
 
 test("every form is a plain post form: the expected set is rendered and each refuses a cross-origin post", async () => {
   const found = new Set<string>();
-  for (const path of ["/settings", "/settings/tokens", "/settings/keys", "/settings/password", "bob"]) {
+  for (const path of ["/settings", "/settings/tokens", "/settings/keys", "/settings/password", "/settings/shells", "bob"]) {
     const html = await (path === "bob"
       ? fetch(servers.url + "/settings", { headers: { cookie: bobCookie } })
       : get(path)

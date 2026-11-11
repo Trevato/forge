@@ -6,6 +6,7 @@ export const route: Route = {
   summary:
     "Get a stranded admin a new expiring token with the operator's recovery code; no account is made: answers 201 with { user, scope, id, token, expiresAt, expiresIn }; scope and expiresIn as for first-admin; refused from another origin with 403 forbidden",
   auth: false,
+  role: "anonymous",
   status: 201,
   body: { code: "string", scope: "string", name: "string", expiresIn: "integer" },
   refusals: {

@@ -30,7 +30,7 @@ sends a pull across. It arrives as a guest pull.
 - **For:** no account on the root forge at all, so nothing new to abuse here;
   the pull path and its guards already exist; the person owns their work.
 - **Risks:** the highest bar for a newcomer ("run a forge" is not a grandma
-  step); a forge needs a machine or hosting, and hosting is not shipped; the
+  step); a forge needs a machine or hosting, and hosting is offered as plans on the home page; the
   forge is unknown to us, so every pull is from an unvetted origin, which
   writers must approve one by one.
 - **Cost to build:** low. A clear page that says how, plus the one-command

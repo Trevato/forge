@@ -16,6 +16,8 @@ import { parseService, type ServiceSpec } from "./service.ts";
 import type { DeclaredLimits } from "./contain.ts";
 import { isPublicAddress } from "./egress.ts";
 import { isLaunch, LAUNCHES, type Launch } from "../git/builds.ts";
+import { parseAdapter, type AdapterSpec } from "./adapter.ts";
+import { parseToolchain, type ToolchainPin } from "./toolchain.ts";
 
 export interface AppManifest {
   /** The command that serves on `$PORT`. Run through `sh -c`, `exec`-ed. */
@@ -52,6 +54,12 @@ export interface AppManifest {
   /** `app.launch`: how this repository's demos open unless a pin says otherwise. */
   readonly launch?: Launch | undefined;
   /**
+   * `app.always_on: true`: production never sleeps, whatever the profit
+   * slider says (docs/PROFIT.md) — the one per-app exception. Previews
+   * still follow the forge. Unset or false follows the slider.
+   */
+  readonly alwaysOn?: true | undefined;
+  /**
    * Set when `app.kind` is `"service"`: declared TCP ports, always on,
    * a placement preference and synced volumes. `null` for an ordinary
    * HTTP app.
@@ -70,6 +78,13 @@ export interface AppManifest {
    * out of the app's HTML pages. Unset is on.
    */
   readonly toolbar?: boolean | undefined;
+  /**
+   * `adapter` (top level of `forge.json`): the app is pulled from on a
+   * schedule (`apps/adapter.ts`). Unset is not an adapter.
+   */
+  readonly adapter?: AdapterSpec | undefined;
+  /** `toolchain` (top level of `forge.json`): pinned toolchain versions. Unset is none. */
+  readonly toolchain?: ToolchainPin | undefined;
 }
 
 export type ManifestError =
@@ -161,6 +176,9 @@ export function parseManifest(
   const launch = app["launch"];
   if (launch !== undefined && !isLaunch(launch))
     return invalid(`forge.json: app.launch must be one of ${LAUNCHES.map((l) => `"${l}"`).join(", ")}`);
+  const alwaysOn = app["always_on"];
+  if (alwaysOn !== undefined && typeof alwaysOn !== "boolean")
+    return invalid("forge.json: app.always_on must be true or false");
   const egress = egressField(parsed.value);
   if (!egress.ok) return egress;
   const limits = limitsField(app, "app");
@@ -168,6 +186,17 @@ export function parseManifest(
   const toolbar = parsed.value["toolbar"];
   if (toolbar !== undefined && typeof toolbar !== "boolean")
     return invalid("forge.json: toolbar must be true or false");
+  const adapter = parseAdapter(parsed.value["adapter"]);
+  if (!adapter.ok) return invalid(adapter.error);
+  const toolchain = parseToolchain(parsed.value["toolchain"]);
+  if (!toolchain.ok) return invalid(toolchain.error);
+  // Only `egress` opens a host (docs/ADAPTERS.md): a source host it does
+  // not list would be refused by the proxy, so the block is invalid.
+  const unopened = adapter.value?.source?.hosts.find(
+    (h) => !(egress.value ?? []).some((e) => e.toLowerCase() === h),
+  );
+  if (unopened !== undefined)
+    return invalid(`forge.json: adapter.source.hosts names ${unopened}, which egress does not list`);
   const kind = app["kind"];
   if (kind !== undefined && kind !== "web" && kind !== "service")
     return invalid('forge.json: app.kind must be "web" or "service"');
@@ -196,10 +225,13 @@ export function parseManifest(
     looksAsOwner: looksAsOwner.value,
     pages: pages.value,
     ...(launch === undefined ? {} : { launch }),
+    ...(alwaysOn === true ? { alwaysOn: true as const } : {}),
     service,
     egress: egress.value,
     limits: limits.value,
     toolbar: toolbar ?? true,
+    ...(adapter.value === undefined ? {} : { adapter: adapter.value }),
+    ...(toolchain.value === undefined ? {} : { toolchain: toolchain.value }),
   });
 }
 
@@ -253,6 +285,7 @@ const LIMIT_FIELDS = {
   memory: { key: "memoryMiB", min: 64, max: 65536, unit: "MiB" },
   cpus: { key: "cpus", min: 0.1, max: 64, unit: "cores" },
   disk: { key: "diskMiB", min: 64, max: 1048576, unit: "MiB" },
+  time: { key: "timeMs", min: 1, max: 3600, unit: "seconds a build step may take" },
 } as const;
 
 /** `app.limits` / `check.limits`: `{ memory, cpus, disk }`, each optional. */
@@ -264,18 +297,22 @@ function limitsField(
   if (value === undefined) return ok({});
   if (!isObject(value))
     return invalid(`forge.json: ${name}.limits must be an object`);
-  const out: { memoryMiB?: number; cpus?: number; diskMiB?: number } = {};
+  const out: { memoryMiB?: number; cpus?: number; diskMiB?: number; timeMs?: number } = {};
   for (const [field, raw] of Object.entries(value)) {
     const rule = LIMIT_FIELDS[field as keyof typeof LIMIT_FIELDS];
     if (rule === undefined)
       return invalid(
-        `forge.json: ${name}.limits takes memory, cpus and disk, not ${field}`,
+        `forge.json: ${name}.limits takes memory, cpus, disk and time, not ${field}`,
+      );
+    if (field === "time" && name === "check")
+      return invalid(
+        "forge.json: check.limits.time is not read: a check's time is the forge's own; app.limits.time lowers the build steps",
       );
     if (typeof raw !== "number" || !(raw >= rule.min && raw <= rule.max))
       return invalid(
         `forge.json: ${name}.limits.${field} must be a number of ${rule.unit}, ${rule.min}–${rule.max}`,
       );
-    out[rule.key] = raw;
+    out[rule.key] = rule.key === "timeMs" ? raw * 1000 : raw;
   }
   return ok(out);
 }
@@ -459,9 +496,9 @@ export function parseCheck(
 }
 
 /** The vendors a repository may name in `cloud.json`; a closed set. */
-export const CLOUD_VENDORS = ["cloudflare", "fly", "hetzner", "s3", "github", "vercel", "digitalocean", "azure"] as const;
+export const CLOUD_VENDORS = ["cloudflare", "fly", "hetzner", "s3", "github", "vercel", "digitalocean", "azure", "stripe"] as const;
 /** What a vendor may be used for; a closed set. */
-export const CLOUD_USES = ["compute", "storage", "backup", "dns", "cdn"] as const;
+export const CLOUD_USES = ["compute", "storage", "backup", "dns", "cdn", "payments"] as const;
 export type CloudVendor = (typeof CLOUD_VENDORS)[number];
 export type CloudUse = (typeof CLOUD_USES)[number];
 

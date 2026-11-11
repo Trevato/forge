@@ -185,3 +185,16 @@ test("sort:likes lists the apps by likes and each row says how many", async () =
   expect(text).toContain("2 likes");
   expect(text.indexOf("alice/ant")).toBeLessThan(text.indexOf("alice/zed"));
 });
+
+test("each explorer line starts with why it ranks there, and does not say that number again", async () => {
+  const text = await typed("kind:app sort:forks");
+  expect(text).toContain("2 forks");
+  expect(text.match(/2 forks/g)?.length).toBe(1);
+});
+
+test("the terminal says how many a line leaves and that Esc clears it", async () => {
+  const text = await typed("kind:app sort:forks");
+  expect(text).toContain("Read as: kind:app sort:forks · 3 apps · Esc clears");
+  const none = await typed("kind:app zzzzqqq");
+  expect(none).toContain("No apps match · Esc clears");
+});

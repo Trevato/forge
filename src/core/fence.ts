@@ -421,6 +421,19 @@ export function pastTime(db: Database, userId: string, ids: readonly string[]): 
 /** Why a yes is refused: no such confirm of this person's, already answered, or past its time. */
 export type YesRefusal = "not_found" | "answered" | "expired";
 
+/**
+ * How many confirms wait on the person's yes: one indexed count
+ * (`conversation_held_waiting`), no sweep, so a page can ask it on every
+ * render. Those past their time do not count, swept or not.
+ */
+export function countWaiting(db: Database, userId: string, now: number = Date.now()): number {
+  return db
+    .query<{ n: number }, [string, string]>(
+      "SELECT COUNT(*) AS n FROM conversation_held WHERE user_id = ?1 AND answered_at IS NULL AND created_at > ?2",
+    )
+    .get(userId, new Date(now - HELD_TTL_MS).toISOString())!.n;
+}
+
 /** A person's confirms still waiting for their yes, oldest first; those past their time are swept first. */
 export function waitingFor(db: Database, userId: string, now: number = Date.now()): Held[] {
   sweepHeld(db, now);

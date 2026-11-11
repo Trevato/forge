@@ -10,6 +10,7 @@
  */
 
 import { VIA_WORDS } from "../core/acting_via.ts";
+import { DETACH_RECEIPT } from "../actions/detach_words.ts";
 import type { ForgeEvent } from "../core/events.ts";
 
 /** The pull number an environment name carries, for `pull-12`. */
@@ -164,11 +165,13 @@ const WORDS: Record<string, string> = {
   "pull.guest_approved": "approved a guest pull request",
   "pull.labeled": "labelled a pull request",
   "pull.held": "held a pull request",
+  "pull.team_waiting": "waits on a team's review",
+  "pull.team_answered": "was answered by a team's review",
   "pull.released": "released a pull request",
   "pull.thread_resolved": "resolved a review thread",
   "repo.created": "created a repository",
   "repo.forked": "forked a repository",
-  "repo.detached": "detached a fork from its parent",
+  "repo.detached": DETACH_RECEIPT,
   "repo.settings_updated": "changed repository settings",
   "repo.upstream_follow": "changed which upstream the repository follows",
   "repo.source_added": "followed another source",
@@ -189,6 +192,7 @@ const WORDS: Record<string, string> = {
   "webhook.deleted": "removed a webhook",
   "webhook.paused": "paused a webhook",
   "webhook.resumed": "resumed a webhook",
+  "webhook.failing": "had a webhook fail three deliveries in a row",
   "origin.connected": "connected an origin",
   "origin.disconnected": "disconnected an origin",
   "origin.needs_reauth": "needs to reconnect an origin",

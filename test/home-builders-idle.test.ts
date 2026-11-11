@@ -92,7 +92,15 @@ async function terminal(): Promise<string> {
 /** The builders tile's anchor on home. */
 const tile = (page: string): string => /<a class="stat" href="[^"]*"[^>]*><span class="stat-label">Builders running.*?<\/a>/s.exec(page)?.[0] ?? "";
 
+/** The repository's map as the API answers it: what home's "nothing ready" must agree with. */
+async function mapReady(): Promise<number> {
+  const res = await fetch(`${servers.url}/api/v1/repos/alice/engine/map`, { headers: { cookie: `forge_session=${createSession(app.db, admin.id).token}` } });
+  expect(res.status).toBe(200);
+  return ((await res.json()) as { ready: unknown[] }).ready.length;
+}
+
 test("nothing ready: the map has nothing a builder may start", async () => {
+  expect(await mapReady()).toBe(0);
   const page = await home();
   expect(tile(page)).toContain("nothing ready");
   expect(tile(page)).toContain('href="/map"');
@@ -102,6 +110,7 @@ test("nothing ready: the map has nothing a builder may start", async () => {
 test("a ready issue and a builder with room: no reason is named", async () => {
   const opened = openIssue(app, admin, repo, { title: "Renderer" });
   if (!opened.ok) throw new Error(String(opened.error));
+  expect(await mapReady()).toBeGreaterThan(0);
   const page = await home();
   expect(tile(page)).not.toContain("nothing ready");
   expect(tile(page)).toContain("running now");
@@ -190,4 +199,38 @@ test("a cached reason is dropped when the counts change: one of two slots runnin
   claimRun(app.db, createRun(app.db, { repoId: repo.id, kind: "agent", actorId: builder.id, reason: "assigned" }).id);
   reason = null;
   expect(cachedKpis(app.db, now, forge).builders).toEqual({ running: 1, slots: 2, idle: null });
+});
+
+test("slots shown are the crew's concurrency, not the sum of the repositories' ceilings (#10440)", async () => {
+  const wide = await updateRepoSettings(app, admin, repo, { autonomy: "autonomous", autonomyDirection: "Build.", autonomyCeilingUsd: 10, autonomySlots: 16, autonomyBy: admin.id });
+  expect(wide.ok).toBe(true);
+  const set = (v: string) =>
+    app.db.query("INSERT OR REPLACE INTO forge_setting (key, value, updated_by, updated_at) VALUES ('crew.concurrency', ?1, ?2, datetime('now'))").run(v, admin.id);
+  try {
+    set("4");
+    const page = await home();
+    expect(tile(page)).toMatch(/>\d of 4</);
+    expect(tile(page)).not.toContain("of 16");
+    expect(kpiLines(readKpis(app.db, new Date()), null).find((l) => l.startsWith("Builders running"))).toMatch(/Builders running \d of 4/);
+    // Never more than the repositories offer.
+    set("40");
+    expect(readKpis(app.db, new Date()).builders.slots).toBe(16);
+  } finally {
+    app.db.query("DELETE FROM forge_setting WHERE key = 'crew.concurrency'").run();
+  }
+});
+
+test("the slots figure is crew.concurrency on home and in the terminal, and the running figure is the runs' own count (#10440)", async () => {
+  const wide = await updateRepoSettings(app, admin, repo, { autonomy: "autonomous", autonomyDirection: "Build.", autonomyCeilingUsd: 10, autonomySlots: 16, autonomyBy: admin.id });
+  expect(wide.ok).toBe(true);
+  try {
+    app.db.query("INSERT OR REPLACE INTO forge_setting (key, value, updated_by, updated_at) VALUES ('crew.concurrency', '3', ?1, datetime('now'))").run(admin.id);
+    const running = app.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM run WHERE kind = 'agent' AND state = 'running'").get()!.n;
+    const text = await terminal();
+    expect(text).toContain(`Builders running ${running} of 3`);
+    expect(text).not.toContain("of 16");
+    expect(tile(await home())).toContain(`${running} of 3`);
+  } finally {
+    app.db.query("DELETE FROM forge_setting WHERE key = 'crew.concurrency'").run();
+  }
 });

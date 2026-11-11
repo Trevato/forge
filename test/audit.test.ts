@@ -25,6 +25,7 @@ import { getRepo } from "../src/core/repos.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { giveHistory } from "./helpers/history.ts";
 
 /** A forge of its own with alice signed in, for a test that changes what it reads. */
 async function boot(prefix: string) {
@@ -66,6 +67,7 @@ async function seedApps(app: App, alice: User) {
     visibility: "public",
   });
   if (!notes.ok) throw new Error(String(notes.error));
+  giveHistory(app.db, getRepo(app.db, "alice", "notes")!.id);
 
   // An app whose contract does not hold.
   const broken = await createRepo(app, alice, {

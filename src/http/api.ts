@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { teamHoldRefusal } from "../core/teams_words.ts";
 import { guardedRefusal } from "../crew/stranger.ts";
 import { MAX_PASS, passOf } from "../actions/box_pass.ts";
 import { homeTruth } from "../system/home_truth.ts";
@@ -64,6 +65,7 @@ import { noteRead, telemetryReader, type Reader } from "../actions/telemetry.ts"
 import { flowCopy, flowEtag, flowMaxAge } from "../system/flow_cache.ts";
 import { countRead } from "../system/telemetry_reads.ts";
 import { historyFor, sourcesOut, systemWithReaders, welcome } from "../system/telemetry.ts";
+import { weekCard, WEEK_DAYS } from "../crew/week_card.ts";
 import { markReaders } from "../crew/direct.ts";
 import {
   addCommentThrough,
@@ -100,7 +102,7 @@ import {
 import { landSlice } from "../actions/pull_slices.ts";
 import { attachLook } from "../actions/attach_look.ts";
 import { lookUrl } from "../core/looks.ts";
-import { pullLooks } from "../looks/readable.ts";
+import { pullFit, pullLooks } from "../looks/readable.ts";
 import { holdPull, releasePull } from "../actions/holds.ts";
 import { getHold, type Hold } from "../core/holds.ts";
 import { watchMilestone } from "../actions/watches.ts";
@@ -117,6 +119,7 @@ import {
   resolveOwner,
   updateRepoSettings,
 } from "../actions/repos.ts";
+import { TRANSFER_SAID, TRANSFER_STATUS, transferRepository } from "../actions/transfer.ts";
 import {
   createToken,
   HUMAN_CHECK_MESSAGE,
@@ -124,10 +127,12 @@ import {
   PASSKEY_REQUIRED_MESSAGE,
   signUp,
   SIGNUP_CLOSED_MESSAGE,
+  REQUEST_IN_MESSAGE,
 } from "../actions/users.ts";
 import { OFFSET_LIMIT_MAX, offsetPage, offsetQuery } from "./offset_page.ts";
 import { EVENTS_LIMIT_MAX, eventsLimit, eventsPage, validEventsCursor, validEventsKind } from "../core/events_page.ts";
 import { audienceFor } from "../core/audience.ts";
+import { creditFacts } from "../actions/credit_facts.ts";
 import {
   forkParentFor,
   getReposByIds,
@@ -167,7 +172,7 @@ import {
   canWrite,
   getRepoById,
 } from "../core/repos.ts";
-import { cleanQuery, CODE_BUDGET_MS, searchKind, searchNote } from "../core/search.ts";
+import { CODE_BUDGET_MS, greppable, searchKind, searchNote } from "../core/search.ts";
 import { strangerCodeSearch } from "./strangers.ts";
 import {
   isReviewState,
@@ -190,7 +195,7 @@ import { isPinned } from "../core/pins.ts";
 import { diffCommit } from "../git/diff.ts";
 import { runGit } from "../git/env.ts";
 import { appLimitWords, appsOwnedBy } from "../actions/app_limit.ts";
-import { getQuota } from "../settings/quotas.ts";
+import { getQuota, quotaOf } from "../settings/quotas.ts";
 import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
 import { compareBranches, listBranchRows } from "../git/branches.ts";
 import {
@@ -240,6 +245,7 @@ import {
 import { forReader } from "../crew/handover.ts";
 import { globalMapJson } from "../web/pages/global-map.ts";
 import { mapJson, marksFor, withoutDone } from "../web/pages/map.ts";
+import { roadmapOf } from "../web/roadmap.ts";
 import { cachedMap } from "../web/map_snapshot.ts";
 import { scopeKey } from "../web/map_cache.ts";
 import {
@@ -274,6 +280,8 @@ import { checkStale } from "../checks/stale.ts";
 import { resolveOid } from "../git/merge.ts";
 import { readForgeUsage, readUsage, usageDays, USAGE_DAYS_MAX } from "../actions/usage.ts";
 import { readReturns, reportSpend, RETURNS_DAYS } from "../actions/returns.ts";
+import { COLUMNS, readSort, sortRows } from "../fleet/columns.ts";
+import { viewFleet } from "../fleet/rows.ts";
 import { fleetSelection, readFleetGraph } from "../actions/fleet-graph.ts";
 import { carriedBy } from "../core/carried.ts";
 import { readGateLog } from "../checks/gate_log.ts";
@@ -283,7 +291,7 @@ import { blobForRender, commitLog, listRefs, listTree, refTip } from "../git/rea
 import { repoDir } from "../git/repos.ts";
 import { holds, weakEtag } from "./etag.ts";
 import { carriedPulls, pullPath } from "../story/wave_pulls.ts";
-import { pullRefs, readWave, readWaves } from "../story/waves.ts";
+import { pullRefs, readWave, readWaves, waveSize } from "../story/waves.ts";
 import { originForRepo, type OriginRepoRow } from "../core/origins.ts";
 import { subscribe as subscribeJob, type MirrorJob } from "../origins/jobs.ts";
 import type { Origin } from "../origins/types.ts";
@@ -321,22 +329,31 @@ import {
   respondAccess,
   str,
   unauthorized,
+  tryAgain,
+  retryAfterOf,
 } from "./respond.ts";
 import {
   explorePage,
+  rowsWithWhy,
   cursorFits,
   type ExploreRow,
   exploreLine,
   exploreNote,
   exploreSuggestion,
   readExploreLine,
+  exploreLineFrom,
 } from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
 import { passportRoutes } from "./passport_edge.ts";
 import { egressGrantRoutes } from "./api/egress_grants.ts";
+import { printRoutes } from "./api/print.ts";
 import { forgeRoutes } from "./api/forges.ts";
+import { packRoutes } from "./api/packs.ts";
 import { forgeViewRoutes } from "./api/forge_view.ts";
+import { billingRoutes } from "./api/billing.ts";
+import { codesRoutes } from "./api/codes.ts";
+import { economicsRoutes } from "./api/economics.ts";
 import { releasesRoutes } from "./api/releases.ts";
 import { hookRoutes } from "./api/hooks.ts";
 import { keeperRoutes } from "./api/keeper.ts";
@@ -346,26 +363,36 @@ import { boardRoutes } from "./api/boards.ts";
 import { displayRoutes } from "./api/displays.ts";
 import { followingRoutes } from "./api/following.ts";
 import { labelsRoutes } from "./api/labels.ts";
+import { dataRoutes } from "./api/data.ts";
+import { statementRoutes } from "./api/statement.ts";
 import { visionRoutes } from "./api/vision.ts";
+import { businessPlanRoutes } from "./api/business_plan.ts";
 import { tokenRoutes } from "./api/tokens.ts";
 import { accountAdmin, adminRoutes } from "./api/admin.ts";
 import { maintenanceRoutes } from "./api/maintenance.ts";
+import { maintenanceRunsRoutes } from "./api/maintenance_runs.ts";
+import { diskReadingRoutes } from "./api/disk_readings.ts";
+import { TEMPLATE_ERRORS } from "../apps/template_tip.ts";
 import { flagsRoutes } from "./api/flags.ts";
+import { appTemplateRoutes } from "./api/app_templates.ts";
 import { issueRoutes, labelsHandler } from "./api/issues.ts";
 import { FORGE_NOT_CARRIED } from "../origins/words.ts";
 import { forgeOriginRoutes } from "./api/forge_origin.ts";
 import { userRoutes } from "./api/user.ts";
 import { appRoutes } from "./api/app.ts";
+import { appPullsRoutes } from "./api/app_pulls.ts";
 import { buildRoutes } from "./api/builds.ts";
 import { buildShotRoutes } from "./api/build_shots.ts";
 import { buildCartRoutes } from "./api/build_cart.ts";
 import { iterationRoutes } from "./api/iterations.ts";
 import { appNoteRoutes } from "./api/app_notes.ts";
 import { reportRoutes } from "./api/reports.ts";
+import { startRoutes } from "./api/start.ts";
 import { rollbackRoutes } from "./api/rollback.ts";
 import { takeBackRoutes } from "./api/take_back.ts";
 import { conversationConfirmRoutes } from "./api/conversation_confirms.ts";
 import { conversationTalkRoutes } from "./api/conversation_talk.ts";
+import { conversationBuildRoutes } from "./api/conversation_build.ts";
 import { orgRoutes } from "./api/orgs.ts";
 import { promptRoutes } from "./api/prompts.ts";
 import { cloudRoutes } from "./api/cloud.ts";
@@ -376,7 +403,7 @@ import { upstreamRoutes } from "./api/upstream.ts";
 import type { Router } from "./router.ts";
 import { clientAddress } from "./peer.ts";
 import { manifestFor } from "../actions/here.ts";
-import { egressSnapshot, egressTotals } from "../apps/egress.ts";
+import { egressRowsFor, egressTotalsFor } from "../spawn/process_counters.ts";
 import { egressMetrics } from "../apps/egress_metrics.ts";
 import { forgeMetrics } from "../metrics/forge.ts";
 import { appSources } from "../metrics/app_sources.ts";
@@ -669,6 +696,12 @@ export function originAware(error: string, status = 422): Response {
       "origin_protected",
       409,
       "the operator protects this repository at its origin: nothing is pushed to it from here; propose the change from your fork",
+    );
+  if (error === "origin_read_only")
+    return apiError(
+      "origin_read_only",
+      409,
+      "this account was connected read-only, so nothing is written through it; nothing was changed",
     );
   if (error === "origin_paused")
     return apiError(
@@ -1075,7 +1108,7 @@ export function positiveInt(raw: string | undefined): number | undefined {
 /** 403 naming the limit and the count, for an account at its app limit. */
 export function appLimitResponse(ctx: Ctx, ownerName: string): Response {
   const owner = getUserByName(ctx.app.db, ownerName);
-  const limit = getQuota(ctx.app.db, "apps");
+  const limit = owner ? quotaOf(ctx.app.db, "apps", owner.id) : getQuota(ctx.app.db, "apps");
   return json(
     {
       error: "app_limit",
@@ -1152,11 +1185,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
     const slot = signupSlot(ctx);
     if (typeof slot === "number")
-      return json(
-        { error: "rate_limited", message: "too many sign-ups; wait and send again" },
-        429,
-        { "retry-after": String(slot) },
-      );
+      return tryAgain("rate_limited", 429, "too many sign-ups; wait and send again", slot);
     // Anyone may call this, so its body is a stranger's (`http/limits.ts`).
     const input = await boundedBody(ctx.request, STRANGER_MAX);
     if (input === "too_large")
@@ -1172,6 +1201,9 @@ export function apiRoutes(router: Router<Handler>): void {
         email: str(input.email),
         password: str(input.password),
         humanToken: str(input.turnstile_token),
+        // Where the ask comes from (a forge or an agent) and what they want to build.
+        note: str(input.note),
+        source: str(input.from),
       },
       {
         slot,
@@ -1186,6 +1218,8 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!created.ok && created.error === "human_check")
       return apiError("human_check", 422, HUMAN_CHECK_MESSAGE);
     if (!created.ok) return json({ error: created.error }, 422);
+    // Signup is `request`: the account waits for an admin, and acts as nothing yet.
+    if (created.value.waitingAt !== null) return json({ state: "waiting", username: created.value.username, message: REQUEST_IN_MESSAGE }, 202);
     return json(publicUser(created.value), 201);
   });
 
@@ -1228,7 +1262,10 @@ export function apiRoutes(router: Router<Handler>): void {
   forgeOriginRoutes(router);
   adminRoutes(router);
   maintenanceRoutes(router);
+  maintenanceRunsRoutes(router);
+  diskReadingRoutes(router);
   flagsRoutes(router);
+  appTemplateRoutes(router);
 
   // Open read hooks (#1789): the owner, or an agent holding `telemetry:read`.
   // Anyone else is refused; every agent read is logged.
@@ -1316,6 +1353,16 @@ export function apiRoutes(router: Router<Handler>): void {
     return timePhase(ctx.request, "render", () => json(card));
   });
 
+  // The week's line per crew member (`crew/week_card.ts`); as MCP `crew` with kind "week".
+  router.add("GET", "/api/v1/crew/week", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const denied = requireScope(ctx, "ro");
+    if (denied) return denied;
+    if (ctx.auth.user?.isAdmin !== true) return apiError("forbidden", 403, ADMIN_WORDS.scorecard);
+    const members = timePhase(ctx.request, "week", () => weekCard(ctx.app.db));
+    return timePhase(ctx.request, "render", () => json({ days: WEEK_DAYS, members }));
+  });
+
   // What the crew is doing right now, as MCP `now` answers it: a read, so
   // any scope; the visibility checks live in `actions/crew_now.ts`.
   router.add("GET", "/api/v1/crew/now", (ctx) => {
@@ -1352,7 +1399,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!minted.ok && minted.error === "invalid_via")
       return apiError("invalid_conversation", 422, "not a conversation of yours");
     if (!minted.ok && minted.error === "rate_limited")
-      return json({ error: "rate_limited", message: "too many conversation tokens are alive; wait for one to expire" }, 429, { "retry-after": "60" });
+      return tryAgain("rate_limited", 429, "too many conversation tokens are alive; wait for one to expire", 60);
     if (!minted.ok) return unauthorized();
     return json(minted.value, 201);
   });
@@ -1396,7 +1443,7 @@ export function apiRoutes(router: Router<Handler>): void {
     );
     // The throttle is in the action, before the code is read (H2's shape).
     if (!made.ok && made.error === "rate_limited")
-      return json({ error: made.error, message: FIRST_ADMIN_WORDS[made.error] }, 429, { "retry-after": "60" });
+      return tryAgain(made.error, 429, FIRST_ADMIN_WORDS[made.error], 60);
     if (!made.ok)
       return apiError(made.error, made.error === "refused" ? 403 : 422, FIRST_ADMIN_WORDS[made.error]);
     return json(
@@ -1431,7 +1478,7 @@ export function apiRoutes(router: Router<Handler>): void {
       address: clientAddress(ctx.request),
     });
     if (!recovered.ok && recovered.error === "rate_limited")
-      return json({ error: recovered.error, message: FIRST_ADMIN_WORDS.rate_limited }, 429, { "retry-after": "60" });
+      return tryAgain(recovered.error, 429, FIRST_ADMIN_WORDS.rate_limited, 60);
     if (!recovered.ok) return apiError("refused", 403, FIRST_ADMIN_WORDS.refused);
     const { user, id, token, expiresAt } = recovered.value;
     return json({ user: publicUser(user), scope, id, token, expiresAt, expiresIn }, 201);
@@ -1492,12 +1539,10 @@ export function apiRoutes(router: Router<Handler>): void {
     const greps =
       ctx.auth.user === undefined &&
       (kind === "code" || kind === "all") &&
-      cleanQuery(query) !== "";
+      greppable(query);
     const held = greps ? strangerCodeSearch(ctx.app, ctx.request) : undefined;
     if (held !== undefined && !held.allowed) {
-      const refused = apiError("rate_limited", 429, `${held.why}; sign in, or retry in ${held.retryAfter}s`);
-      refused.headers.set("retry-after", String(held.retryAfter));
-      return refused;
+      return tryAgain("rate_limited", 429, `${held.why}; sign in, or retry in ${retryAfterOf(held.retryAfter)}s`, held.retryAfter);
     }
     try {
       const input = {
@@ -1515,7 +1560,7 @@ export function apiRoutes(router: Router<Handler>): void {
       const found = await (mine === undefined
         ? search(ctx.app, ctx.auth.user, timed)
         : searchWithin(ctx.app, ctx.auth.user, mine, timed));
-      const note = searchNote(q.get("q"));
+      const note = searchNote(q.get("q"), kind);
       return timePhase(ctx.request, "render", () => json(note === undefined ? found : { ...found, note }));
     } finally {
       held?.release();
@@ -1569,15 +1614,18 @@ export function apiRoutes(router: Router<Handler>): void {
     return json(created.value, 201);
   });
 
-  router.add("GET", "/api/v1/repos/:owner/:name", (ctx) => {
+  router.add("GET", "/api/v1/repos/:owner/:name", async (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
     if (!repo) return notFound();
     const facts = timePhase(ctx.request, "counts", () => repoJson(ctx, repo));
     const audience = timePhase(ctx.request, "audience", () => audienceFor(ctx.app.db, repo, ctx.auth.user));
+    const credited = performance.now();
+    const credit = await creditFacts(ctx.app, repo, ctx.auth.user);
+    notePhase(ctx.request, "credit", performance.now() - credited);
     const rendering = performance.now();
     const upstream = upstreamFacts(ctx.app.db, repo, ctx.auth.user);
-    const res = json({ ...facts, audience, upstream });
+    const res = json({ ...facts, audience, upstream, credit });
     notePhase(ctx.request, "render", performance.now() - rendering);
     return res;
   });
@@ -1651,13 +1699,18 @@ export function apiRoutes(router: Router<Handler>): void {
         ? { plansNeedNod: input.plansNeedNod }
         : {}),
     });
+    if (!updated.ok && updated.error === "origin_read_only") return apiError("origin_read_only", 409, "this repository mirrors a read-only origin, so it stays private to its owner; nothing was changed");
     if (!updated.ok) return respondAccess(updated.error, 422);
     // "Show where this came from" (#3293): an admin's, never an agent's.
     if (typeof input.showProvenance === "boolean") {
       const shown = showProvenance(ctx.app, ctx.auth.user, repo, input.showProvenance);
       if (!shown.ok) return respondAccess(shown.error, 422);
     }
-    return json(repoJson(ctx, updated.value));
+    // The line about who can see it moves with the setting, in this answer.
+    return json({
+      ...repoJson(ctx, updated.value),
+      audience: audienceFor(ctx.app.db, updated.value, ctx.auth.user),
+    });
   });
 
   router.add("DELETE", "/api/v1/repos/:owner/:name", async (ctx) => {
@@ -1670,6 +1723,24 @@ export function apiRoutes(router: Router<Handler>): void {
       return apiError("has_pulls", 409, "a pull request was sent from this repository, and that pull request needs it");
     if (!deleted.ok) return respondAccess(deleted.error, 500);
     return json({}, 200);
+  });
+
+  // Move a repository to another owner (#569): its old paths answer 308.
+  router.add("POST", "/api/v1/repos/:owner/:name/transfer", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const input = await body(ctx.request);
+    const newOwner = input.newOwner;
+    if (typeof newOwner !== "string" || newOwner.length === 0 || newOwner.length > 64)
+      return apiError("bad_new_owner", 422, "newOwner is an account or organisation name");
+    const moved = await transferRepository(ctx.app, ctx.auth.user, repo, newOwner);
+    if (!moved.ok) {
+      if (moved.error === "not_found") return notFound();
+      return apiError(moved.error, TRANSFER_STATUS[moved.error], TRANSFER_SAID[moved.error]);
+    }
+    return json(repoJson(ctx, moved.value));
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/events", (ctx) => {
@@ -2063,6 +2134,9 @@ export function apiRoutes(router: Router<Handler>): void {
 
   labelsRoutes(router);
   visionRoutes(router);
+  dataRoutes(router);
+  statementRoutes(router);
+  businessPlanRoutes(router);
   router.add(
     "PUT",
     "/api/v1/repos/:owner/:name/pulls/:number/labels",
@@ -2074,11 +2148,13 @@ export function apiRoutes(router: Router<Handler>): void {
   issueRoutes(router);
 
   reportRoutes(router);
+  startRoutes(router);
   appNoteRoutes(router);
   rollbackRoutes(router);
   takeBackRoutes(router);
   conversationConfirmRoutes(router);
   conversationTalkRoutes(router);
+  conversationBuildRoutes(router);
 
   // Which stage of the one flow each open issue is in, and what went live in
   // the last day (src/flow).
@@ -2165,10 +2241,20 @@ export function apiRoutes(router: Router<Handler>): void {
     const entries = await timePhaseAsync(ctx.request, "waves", () =>
       readWaves(repoDir(ctx.app.reposRoot, repo.ownerName, repo.name), repo.defaultBranch),
     );
+    // Sized over the pulls this viewer can read, as the page does.
     return timePhase(ctx.request, "render", () =>
       json({
         items: entries.flatMap((e) =>
-          e.ok ? [{ version: e.wave.version, date: e.wave.date, headline: e.wave.headline }] : [],
+          e.ok
+            ? [
+                {
+                  version: e.wave.version,
+                  date: e.wave.date,
+                  headline: e.wave.headline,
+                  ...waveSize(carriedPulls(ctx.app.db, pullRefs(e.wave), ctx.auth.user)),
+                },
+              ]
+            : [],
         ),
         next_cursor: null,
       }),
@@ -2338,6 +2424,25 @@ export function apiRoutes(router: Router<Handler>): void {
     }
     return new Response(text, { headers: { "content-type": "application/json", ...headers } });
   });
+  // The roadmap (#10303): the pillars in order, what is building, what landed,
+  // what is next and when each finishes. The page's own model; 404 where the
+  // repository names no pillars.
+  router.add("GET", "/api/v1/repos/:owner/:name/roadmap", (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const road = timePhase(ctx.request, "render", () =>
+      roadmapOf(ctx.app.db, repo, ctx.auth.user),
+    );
+    if (road === undefined) return notFound();
+    return new Response(JSON.stringify(road), {
+      headers: {
+        "content-type": "application/json",
+        "cache-control": "private, no-cache",
+        vary: "authorization, cookie",
+      },
+    });
+  });
   // What people asked of the crew in the repositories the caller can write —
   // by default what has nothing merged yet, oldest first — and what became of each (core/asked.ts, the /asked page).
   router.add("GET", "/api/v1/asked", (ctx) => {
@@ -2394,7 +2499,8 @@ export function apiRoutes(router: Router<Handler>): void {
           kind === "next" ||
           kind === "land" ||
           kind === "retry" ||
-          kind === "guard"
+          kind === "guard" ||
+          kind === "place"
             ? kind
             : undefined,
         limit,
@@ -2757,7 +2863,9 @@ export function apiRoutes(router: Router<Handler>): void {
         if (typeof merged.error !== "string")
           return merged.error.kind === "guarded"
             ? json({ error: "guarded", message: guardedRefusal(merged.error.paths), paths: merged.error.paths }, 409)
-            : json({ error: merged.error.kind }, 409);
+            : merged.error.kind === "team_review_required"
+              ? json({ error: merged.error.kind, message: teamHoldRefusal(merged.error.teams), teams: merged.error.teams }, 409)
+              : json({ error: merged.error.kind }, 409);
         return originAware(merged.error, 409);
       }
       return json({ merged: true, ...merged.value });
@@ -2867,7 +2975,8 @@ export function apiRoutes(router: Router<Handler>): void {
       const found = loadPull(ctx);
       if ("error" in found) return found.error;
       const items = pullLooks(ctx.app, found.repo, found.pull, ctx.auth.user);
-      return json({ items });
+      const fit = pullFit(ctx.app, found.repo, found.pull, ctx.auth.user);
+      return json({ items, fit });
     },
   );
 
@@ -3258,6 +3367,23 @@ export function apiRoutes(router: Router<Handler>): void {
     return timePhase(ctx.request, "render", () => json(paged(ops.value, limit, (op) => op.id)));
   });
 
+  // The rows a query line selects, as `/fleet` shows them (`fleet/rows.ts`).
+  router.add("GET", "/api/v1/fleet/rows", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const q = ctx.url.searchParams.get("q") ?? "";
+    if (q.length > 500) return apiError("invalid_query", 422, "q is over 500 characters");
+    if (q.trim() === "") return apiError("invalid_query", 422, "q is a fleet query line, like: repo autonomy:autonomous");
+    const view = timePhase(ctx.request, "rows", () => viewFleet(ctx.app.db, ctx.auth.user, q));
+    if (!view.ok) return apiError("invalid_query", 422, view.error);
+    const asked = ctx.url.searchParams.get("sort");
+    const sort = asked === null || asked === "" ? undefined : readSort(view.kind, asked);
+    if (asked !== null && asked !== "" && sort === undefined)
+      return apiError("invalid_sort", 422, "sort is a column of the kind, optionally led by -");
+    return timePhase(ctx.request, "render", () =>
+      json({ kind: view.kind, columns: COLUMNS[view.kind], items: sortRows(view.rows, sort) }),
+    );
+  });
+
   router.add("GET", "/api/v1/fleet/ops/:id", (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const op = timePhase(ctx.request, "op", () => getFleetOp(ctx.app, ctx.auth.user, ctx.params.id!));
@@ -3293,7 +3419,7 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/metrics", (ctx) => {
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
-    return new Response(egressMetrics(egressSnapshot(), egressTotals()) + forgeMetrics(ctx.app.db, appSources(ctx.app)), {
+    return new Response(egressMetrics(egressRowsFor(ctx.app), egressTotalsFor(ctx.app)) + forgeMetrics(ctx.app.db, appSources(ctx.app)), {
       headers: {
         "content-type": "text/plain; version=0.0.4; charset=utf-8",
         "cache-control": "no-store",
@@ -3305,9 +3431,11 @@ export function apiRoutes(router: Router<Handler>): void {
   // Explore (#607): the rows /explore shows, for the same one line.
   router.add("GET", "/api/v1/explore", async (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const line = ctx.url.searchParams.get("q") ?? "";
+    const line = exploreLineFrom((name) => ctx.url.searchParams.get(name));
     const { query, unknown } = readExploreLine(line);
     const suggest = exploreSuggestion(line);
+    if (unknown.length > 0)
+      return json({ error: "unknown_filter", message: exploreNote(unknown), ...(suggest === undefined ? {} : { suggest: suggest.line }) }, 400);
     const mine = runRepos(ctx.app, ctx.auth);
     // A run token is shown only the rows of its own repositories; the cut
     // and the cursor are made from those rows alone.
@@ -3343,7 +3471,7 @@ export function apiRoutes(router: Router<Handler>): void {
     );
     if (page === null)
       return apiError("invalid_cursor", 400, "cursor is the next_cursor of a page before");
-    const items = page.items;
+    const items = rowsWithWhy(ctx.app, query, page.items);
     return timePhase(ctx.request, "render", () => json({ query: exploreLine(query), ...(unknown.length === 0 ? {} : { note: exploreNote(unknown) }), ...(suggest === undefined ? {} : { suggest: suggest.line }), items, next_cursor: page.nextCursor }, 200, headers));
   });
 
@@ -3367,13 +3495,13 @@ export function apiRoutes(router: Router<Handler>): void {
     });
     if (!made.ok)
       return made.error.kind === "limit"
-        ? json(
-            {
-              error: "limit",
-              message: `at most ${COPIES_PER_DAY} copies a day; another after ${made.error.resetsAt}`,
-              resetsAt: made.error.resetsAt,
-            },
+        ? tryAgain(
+            "limit",
             429,
+            `at most ${COPIES_PER_DAY} copies a day; another after ${made.error.resetsAt}`,
+            (Date.parse(String(made.error.resetsAt)) - Date.now()) / 1000,
+            {},
+            { resetsAt: made.error.resetsAt },
           )
         : made.error.kind === "repository_limit"
         ? apiError("repository_limit", 403, made.error.message)
@@ -3469,7 +3597,11 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   forgeRoutes(router);
+  packRoutes(router);
   forgeViewRoutes(router);
+  economicsRoutes(router);
+  billingRoutes(router);
+  codesRoutes(router);
   releasesRoutes(router);
 
   router.add("GET", "/api/v1/apps", (ctx) => {
@@ -3503,6 +3635,7 @@ export function apiRoutes(router: Router<Handler>): void {
         ? { visibility: input.visibility }
         : {}),
       ...(typeof input.agent === "string" ? { agent: input.agent } : {}),
+      ...(typeof input.template === "string" && input.template !== "" ? { template: input.template } : {}),
       // Only a real boolean asks; like the other fields, anything else is ignored.
       ...(input.pick === true ? { pickAgent: true } : {}),
     };
@@ -3546,6 +3679,8 @@ export function apiRoutes(router: Router<Handler>): void {
             ctx.auth.user?.username ||
             "",
         );
+      // A template the caller cannot read answers as one that does not exist.
+      if (made.error === "no_such_template") return apiError("no_such_template", 404, TEMPLATE_ERRORS.no_such_template);
       return respondAccess(made.error, 422);
     }
     return json(
@@ -3665,12 +3800,14 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   appRoutes(router);
+  appPullsRoutes(router);
   buildRoutes(router);
   buildShotRoutes(router);
   buildCartRoutes(router);
   iterationRoutes(router);
 
   egressGrantRoutes(router);
+  printRoutes(router);
 
   promptRoutes(router);
 

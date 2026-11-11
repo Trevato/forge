@@ -25,11 +25,11 @@ function editHref(input: RenderInput): string | undefined {
 
 function brokenConfig(language: string, text: string, line: number, column: number, message: string): Html {
   const lines = text.split("\n");
-  return html`<div class="card" role="alert">
-      <p><strong>Not valid ${language}:</strong> ${message} at line ${String(line)}, column ${String(column)}.</p>
-      <p class="muted small">The form needs valid ${language}. Source shows the file highlighted.</p>
-    </div>
-    <pre class="card mono">${lines.map((l, i) => (i + 1 === line ? html`<mark>${l}</mark>\n` : `${l}\n`))}</pre>`;
+  return html`<p>Not valid ${language}: ${message} at line ${String(line)}, column ${String(column)}.
+      <span class="muted small">The form needs valid ${language}.</span></p>
+    <pre class="mono config-diff" tabindex="0" aria-label="Source">${lines.map((l, i) =>
+      i + 1 === line ? html`<mark data-op="del">${l}</mark>\n` : `${l}\n`,
+    )}</pre>`;
 }
 
 export function config(input: RenderInput): Rendered {
@@ -44,7 +44,7 @@ export function config(input: RenderInput): Rendered {
   if (countFields(parsed.value) > MAX_FIELDS)
     return {
       lines,
-      content: html`<div class="card"><p class="muted">This file has more than ${MAX_FIELDS.toLocaleString()} values, too many for a form. Source shows it whole.</p></div>`,
+      content: html`<p class="muted">This file has more than ${MAX_FIELDS.toLocaleString()} values, too many for a form. Source shows it whole.</p>`,
     };
   const edit = editHref(input);
   return {

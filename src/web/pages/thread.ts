@@ -95,7 +95,7 @@ export function originError(error: string): string | undefined {
     origin_protected:
       "The operator protects this repository at its origin, so nothing is pushed to it from here. Propose the change from your fork.",
     origin_paused:
-      "This connection is not verified yet, so writes through it are paused. Nothing was changed. Check it again under Settings → Origins.",
+      "This connection is not verified yet, so writes through it are paused. Nothing was changed. Check it again under Settings → Connected accounts.",
     origin_unreachable: "The origin could not be reached. Nothing was changed.",
   };
   return words[error];
@@ -123,12 +123,21 @@ export function threadContext(
   const issue =
     number === undefined ? undefined : getIssue(ctx.app.db, repo.id, number);
   // A sealed report is not there for anyone who may not see it (`core/sealed.ts`).
-  if (
-    !issue ||
-    issue.kind !== kind ||
-    !mayView(ctx.app.db, repo, issue, ctx.auth.user)
-  )
+  if (!issue || !mayView(ctx.app.db, repo, issue, ctx.auth.user))
     return notFoundPage(ctx);
+  if (issue.kind !== kind) {
+    // Issues and pulls share one number space: a read of the other kind's URL
+    // lands on it; a write still refuses.
+    const method = ctx.request.method;
+    if (method !== "GET" && method !== "HEAD") return notFoundPage(ctx);
+    const from = kind === "issue" ? "/issues/" : "/pulls/";
+    const to = kind === "issue" ? "/pulls/" : "/issues/";
+    const path = ctx.url.pathname;
+    const at = path.lastIndexOf(from);
+    if (at < 0) return notFoundPage(ctx);
+    const target = path.slice(0, at) + to + path.slice(at + from.length) + ctx.url.search;
+    return new Response(null, { status: 302, headers: { location: target } });
+  }
   return { repo, issue };
 }
 
@@ -297,10 +306,10 @@ export interface ConversationOptions {
  * the body as they stand, one form, one Save. Folded away until asked for,
  * since most visits read and few rewrite.
  */
-function editForm(issue: Issue, action: string): Html {
-  return html`<details class="tl-edit" id="edit">
+function editForm(issue: Issue, action: string, open: boolean): Html {
+  return html`<details class="tl-edit" id="edit"${open ? html` open` : null}>
     <summary class="muted small">${icon("pencil")} Edit</summary>
-    <form class="card comment-form mt" method="post" action="${action}">
+    <form class="mt" method="post" action="${action}">
       <label class="sr-only" for="edit-title">Title</label>
       <input
         class="input"
@@ -406,7 +415,7 @@ export function conversation(
   return {
     node: html`<div class="timeline" id="conversation">
       ${opening}${when(options.editAction, (action) =>
-        editForm(issue, action),
+        editForm(issue, action, ctx.url.searchParams.get("edit") === "1"),
       )}${planCard(ctx.app.db, issue)}${earlier}${shown.map((e) => e.node)}
     </div>`,
     lastCommentId: comments.length > 0 ? comments[comments.length - 1]!.id : "",
@@ -512,6 +521,9 @@ export interface ComposerOptions {
    * said on (`actions/tell.ts`). `rows` sizes it; one is a single line. */
   /** The page already has its one primary action; Comment steps down. */
   plainSend?: boolean;
+  /** Draw the box as a `card`: only the floating tell box (`tell_here.ts`), which
+   * sits over the page and needs its own ground. A thread's box is plain lines. */
+  boxed?: boolean;
   tell?: { from: string | null; rows?: number; page?: string; pull?: number; text?: string; ask?: boolean };
 }
 
@@ -584,7 +596,7 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
   const tell = o.tell;
   return html`${stateForm}
     <form
-      class="card comment-form"
+      class="${o.boxed ? "card comment-form" : "comment-form"}"
       method="post"
       action="${o.action}"
       data-box="${tell ? "Tell the crew" : "Write a comment"}"

@@ -7,8 +7,14 @@
  * A pattern that needs a parameter the seed cannot supply is named in
  * `UNSEEDED` with why — it is still requested, with a placeholder, so its
  * miss answers carry the floor too — and the list is checked both ways.
+ *
+ * The two passes run 32 requests in flight against the one server; the
+ * work is bounded by the route table, never by a clock (#10401, #7824).
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { mkdirSync } from "node:fs";
+import { envDataDir } from "../src/apps/data.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,13 +28,16 @@ import { createRun } from "../src/core/runs.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { buildApiRouter, buildRouter, serve, type Servers } from "../src/http/server.ts";
+import { startChatBuild } from "../src/core/chat_build.ts";
+import { createConversation } from "../src/core/conversations.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { pool } from "./helpers/sweep-clock.ts";
 
 quietLogs();
 
 /** Parameters the seed supplies; any other parameter makes a pattern unseeded. */
-const SEEDED = new Set(["owner", "name", "username", "number", "ref", "oid", "path", "env", "slug", "spec", "machine"]);
+const SEEDED = new Set(["owner", "name", "username", "number", "ref", "oid", "path", "env", "slug", "spec", "machine", "n"]);
 
 const ORIGIN = "needs a connected origin account and a mirror job; the seed connects none";
 const MIGRATE = "needs a migration job, which only an import creates";
@@ -53,8 +62,11 @@ const SHOT = "needs a pin with a picture kept by refs/shots; the seed pins nothi
 const CART = "the seed pins no build with a cart (test/build-cart.test.ts covers its headers)";
 const UNSEEDED: Record<string, string> = {
   "/:owner/-/teams/:team": ORG,
+  "/claim/start/:token": "needs a one-time start claim token, which the seed does not mint (test/start.test.ts covers it)",
   "/talk/:id": TALK,
+  "/docs/:file": "a file name of the documentation folder; the seed supplies no :file",
   "/bring/:id/:job": "needs a bring job of the signed-in person; the seed brings nothing",
+  "/fleet/ops/:id": FLEET,
   "/:owner/:name/bets/:id": BET,
   "/:owner/:name/builds/:label/cart": CART,
   "/:owner/:name/builds/:label/cart.png": CART,
@@ -122,6 +134,7 @@ const UNSEEDED: Record<string, string> = {
   "/settings/origins/:id/mirror/:job": ORIGIN,
   "/settings/origins/:id/repos": ORIGIN,
   "/settings/origins/flows/:id": ORIGIN,
+  "/settings/origins/flows/:id/stream": ORIGIN,
 };
 
 let dataDir = "";
@@ -154,11 +167,21 @@ beforeAll(async () => {
   const run = createRun(app.db, { repoId: repo.id, kind: "check", issueId: pull.value.id, commitOid: pull.value.headOid });
   const inserted = insertApp(app.db, { repoId: repo.id, slug: "notes", access: "public" });
   if (!inserted.ok) throw new Error(inserted.error);
+  // An app database for the data routes: data routes name the production env.
+  mkdirSync(envDataDir(dataDir, inserted.value.id, "production"), { recursive: true });
+  const appDb = new Database(join(envDataDir(dataDir, inserted.value.id, "production"), "app.db"));
+  appDb.exec("CREATE TABLE t (n INTEGER); INSERT INTO t VALUES (1)");
+  appDb.close();
   Object.assign(fill, {
     owner: "ada", name: "notes", username: "ada", ref: "main", oid: pull.value.headOid,
     path: "a.txt", env: "prod", slug: "notes", spec: "192", machine: "standard",
     issue: String(issue.value.number), pull: String(pull.value.number), run: run.id,
   });
+  // A conversation that builds, with the version its branch holds, for the build reads.
+  const talk = createConversation(app.db, ada.id);
+  if (!talk.ok) throw new Error(talk.error);
+  startChatBuild(app.db, talk.value.id, repo.id);
+  fill.conversation = talk.value.id;
   cookie = `forge_session=${createSession(app.db, ada.id).token}`;
 }, 30_000);
 
@@ -176,17 +199,22 @@ const getPatterns = (): string[] =>
 
 function pathFor(pattern: string): string {
   const number = pattern.includes("/pulls/") ? fill.pull : fill.issue;
-  const runId = pattern.includes("/runs/:id") ? fill.run : "x";
+  const runId = pattern.includes("/runs/:id") ? fill.run : pattern.includes("/conversations/:id/build") ? fill.conversation : "x";
+  if (pattern.includes("/build/versions/:n/")) fill.n = "1";
   return pattern
     .replace(/[:*]([a-z_]+)/g, (_, key: string) => {
       if (key === "number") return number!;
       if (key === "id") return runId!;
+      if (key === "env" && pattern.includes("/data/:env/")) return "production";
+      if (key === "file" && pattern.includes("/data/:env/:file/")) return "app.db";
       return SEEDED.has(key) ? fill[key]! : "x";
     });
 }
 
 const unseeded = (pattern: string): boolean =>
-  paramsOf(pattern).some((key) => !SEEDED.has(key) && !(key === "id" && pattern.includes("/runs/:id")));
+  paramsOf(pattern).some(
+    (key) => !SEEDED.has(key) && !(key === "id" && (pattern.includes("/runs/:id") || pattern.includes("/conversations/:id/build"))) && !(key === "file" && pattern.includes("/data/:env/:file/")),
+  );
 
 /**
  * `accept-encoding: identity` skips gzip, which only costs time here: the floor
@@ -206,9 +234,7 @@ async function floor(path: string, headers: Record<string, string>): Promise<str
 const allPaths = (): string[] => [...getPatterns().map(pathFor), "/no/such/path/at/all", "/api/v1/no-such-route"];
 
 async function missingFloor(headers: Record<string, string>): Promise<string[]> {
-  const missing: string[] = [];
-  for (const path of allPaths()) missing.push(...(await floor(path, headers)));
-  return missing;
+  return (await pool(allPaths(), (path) => floor(path, headers))).flat();
 }
 
 test("every GET route, and an unknown path, carries the floor signed out", async () => {

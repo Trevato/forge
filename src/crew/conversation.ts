@@ -19,11 +19,17 @@ import { chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { dailyLeft } from "../core/account_ceiling.ts";
+import { aboutContext } from "../core/talk_about.ts";
+import { buildTurnEnded } from "../actions/build_pull.ts";
+import { buildLead, chatBuildOf } from "../core/chat_build.ts";
+import { getRepoById } from "../core/repos.ts";
 import { appendTurn, getConversation, lastExchange, listTurns, openConversation, removeTurn, restoreTurns, setAsideFrom, setClaudeSession, type Conversation } from "../core/conversations.ts";
 import { attach, deliver, fileOwnedBy, NOTHING, release, type ConversationFile, type Delivery } from "../core/conversation_files.ts";
 import { carryWrites, forgetWrites, unended } from "../core/conversation_writes.ts";
 import { cancelHeld, WORDS_MAX } from "../core/fence.ts";
 import { thinkingOf } from "../core/talk_work.ts";
+import { contextOf } from "../core/conversation_cost.ts";
+import { memoryBrief } from "../core/talk_memory.ts";
 import { PLATFORM, pickSubscription, type Pick } from "../core/subscriptions.ts";
 import { getUserById } from "../core/users.ts";
 import { mintViaToken, VIA_TOKEN_MAX_MS } from "../core/via_token.ts";
@@ -288,6 +294,7 @@ export function say(
   files: readonly ConversationFile[] = [],
   during: During = "inject",
   conversationId?: string,
+  about?: string | null,
 ): Result<Said, SayRefusal> {
   const user = getUserById(app.db, userId);
   if (user === undefined) return err("unauthorized");
@@ -310,6 +317,13 @@ export function say(
     cancelHeld(app.db, `conversation:${conversation.id}`);
     return ok({ how: "interrupted" });
   }
+  // The subject rides with a new conversation's first message only (#10496), as fenced data the agent reads before the words.
+  const first = listTurns(app.db, userId, conversation.id, { limit: 1 });
+  const subject = about === undefined || about === null || !first.ok || first.value.length > 0 ? "" : aboutContext(app.db, about, user);
+  // A conversation that builds an app tells the agent where to work with every message (#11010).
+  const building = chatBuildOf(app.db, conversation.id);
+  const repo = building === undefined ? undefined : getRepoById(app.db, building.repoId);
+  const lead = (repo === undefined || building === undefined ? "" : buildLead(`${repo.ownerName}/${repo.name}`, building.branch, repo.defaultBranch)) + subject;
   const stored = appendTurn(app.db, userId, conversation.id, { role: "person", text });
   if (!stored.ok) return err("too_long");
   attach(app.db, files, stored.value.id);
@@ -327,10 +341,22 @@ export function say(
     if (steerRun(app, running, text + delivery.text)) return ok({ how: "steered" });
   }
   if (live.size >= (options.liveMax ?? TURNS_LIVE_MAX)) return refuse("busy");
-  const started = begin(app, options, conversation, text, 0, conversation.claudeSessionId || undefined, delivery);
+  // A thread that runs for days summarises itself when it fills (#11011): the next turn starts a fresh
+  // session whose context is the stored record and the person's memory.
+  const full = (contextOf(app.db, conversation.id)?.share ?? 0) >= CONTEXT_FULL && conversation.claudeSessionId !== "";
+  const started = full
+    ? begin(app, options, conversation, withHistory(app, conversation, text), 0, undefined, delivery, lead)
+    : begin(app, options, conversation, text, 0, conversation.claudeSessionId || undefined, delivery, lead);
   if (!started.ok) return refuse(started.error);
+  if (full) appendTurn(app.db, userId, conversation.id, { role: "agent", text: CONTEXT_RENEWED_LINE });
   return ok({ how: "started", done: started.value });
 }
+
+/** The share of the context window from which the next turn continues in a fresh session. */
+export const CONTEXT_FULL = 0.85;
+
+/** The one line a thread says when it continues in a fresh session. */
+export const CONTEXT_RENEWED_LINE = "This thread's context was nearly full, so I continue in a fresh session from its record and your standing rules.";
 
 export type RedoHow = "edit" | "regenerate" | "retry";
 export type RedoRefusal = SayRefusal | "running" | "nothing";
@@ -439,6 +465,7 @@ function begin(
   resumes: number,
   resumeSession: string | undefined,
   attached: Delivery = NOTHING,
+  lead = "",
 ): Result<Promise<void>, "no_account" | "resting" | "unauthorized"> {
   const userId = conversation.userId;
   const runId = id();
@@ -500,14 +527,14 @@ function begin(
           binary: options.binary,
           cwd,
           // Attachments go with the message itself, never with a resume.
-          prompt: resumes > 0 && session !== undefined ? RESUME_PROMPT : fresh + attached.text,
+          prompt: resumes > 0 && session !== undefined ? RESUME_PROMPT : lead + fresh + attached.text,
           images: resumes > 0 && session !== undefined ? [] : attached.images,
-          appendSystemPrompt: CONVERSATION_BRIEF,
+          appendSystemPrompt: [CONVERSATION_BRIEF, memoryBrief(app.db, userId)].filter((p) => p !== "").join(" "),
           model: options.model,
           budgetUsd: budget,
           resume: session,
           env: {
-            ...credentialEnv(picked),
+            ...credentialEnv(picked, app.config.dataDir),
             CLAUDE_CONFIG_DIR: configDir,
             FORGE_MCP_TOKEN: minted.value.token,
           },
@@ -599,7 +626,11 @@ function begin(
       if (stoppers.get(conversation.id)?.runId === runId) stoppers.delete(conversation.id);
       // A restart leaves the next message unsent (its turn would be cut again); anything else sends it.
       if (options.signal.aborted) queues.delete(conversation.id);
-      else drain(app, options, conversation);
+      else {
+        // A build's first version gives its branch the pull that previews it (#11010).
+        await buildTurnEnded(app, userId, conversation.id).catch((error: unknown) => app.log.warn("build pull failed", { error: String(error) }));
+        drain(app, options, conversation);
+      }
     }
   })();
   return ok(turn);

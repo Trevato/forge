@@ -5,5 +5,6 @@ export const route: Route = {
   path: "/api/v1/version",
   summary: "The API generation this forge answers, with software \"forge\": how another forge recognises it as an origin",
   auth: false,
+  role: "anonymous",
   refusals: {},
 };

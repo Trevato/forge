@@ -73,7 +73,7 @@ test("c connects another forge by address and token, and the list says what did 
   };
   try {
     await key("k");
-    await type("Connected origins");
+    await type("Connected accounts");
     await key("enter");
     expect(app.screen.toText()).toContain("Press c to connect one.");
     // A forge has no device sign-in: the terminal says so and points at the page.
@@ -85,6 +85,8 @@ test("c connects another forge by address and token, and the list says what did 
     expect(app.screen.toText()).toContain("Access token for");
     await type(friendToken);
     expect(app.screen.toText()).not.toContain(friendToken);
+    await key("enter");
+    expect(app.screen.toText()).toContain("Read-only?");
     await key("enter");
     for (let i = 0; i < 50 && listOrigins(mine.db, getUserByName(mine.db, "alice")!.id).length === 0; i++) await Bun.sleep(100);
     if (listOrigins(mine.db, getUserByName(mine.db, "alice")!.id).length === 0) throw new Error(`never came: still waiting while listOrigins(mine.db, getUserByName(mine.db, "alice")!.id).length === 0`);
@@ -121,12 +123,13 @@ test("a token the forge refuses connects nothing and says so", async () => {
   };
   try {
     await press("k", true);
-    await type("Connected origins");
+    await type("Connected accounts");
     await press("enter");
     await press("c");
     await type(friendServers.url);
     await press("enter");
     await type("forge_not_a_token");
+    await press("enter");
     await press("enter");
     for (let i = 0; i < 30 && !app.screen.toText().includes("refused"); i++) {
       await Bun.sleep(100);

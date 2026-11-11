@@ -9,11 +9,13 @@ import { crewOffInPreview } from "../../../crew/preview.ts";
 import { setSeatSlots, seatSlotsSaid } from "../../../actions/seat_slots.ts";
 import { checkSeatSlots, seatSlotsOf } from "../../../crew/seat_slots.ts";
 import { seatsOf } from "../../../crew/seats.ts";
+import { weekCard, WEEK_DAYS } from "../../../crew/week_card.ts";
+import { ADMIN_WORDS } from "../../../actions/admin_words.ts";
 import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
 export const tool: Tool = {
   name: "crew",
-  doc: "`{ repo, add?, remove?, dryRun? }`: without `add` or `remove`, the repository's crew as Settings › Crew reads it (`username`, `displayName`, `role`, and `config` for those who may see it) and `seats { auto, mode, seats[{ role, by, does, without?, state }] }`, the three seats and which are empty, `slots[{ role, slots, max, running, waiting, spentUsd, sharePct }]`, how much each may do at once now and today's spend (0 is paused, still on the crew), and `governor { slots, ceiling, held, why }`, the builders the governor allows now and why (`null` while the crew is off or for a reader who cannot write here); `seat` (planner, builder or reviewer) with `slots` (0 to 8, the planner 0 or 1) sets how much that seat may do at once, 0 pausing it, on the trail at once; `add` or `remove` (an agent's username) says what would change, planned first (`dryRun` is true unless `false`); applying is the repository's admin with an admin token, never an agent; refusals are `no_such_agent`, `not_an_agent`, `unverified`",
+  doc: "`{ kind: \"week\" }` (forge admin): `{ days, members[{ username, merged, returned, spentUsd, idle }] }`, the last 7 days per agent; otherwise `{ repo, add?, remove?, dryRun? }`: without `add` or `remove`, the repository's crew as Settings › Crew reads it (`username`, `displayName`, `role`, and `config` for those who may see it) and `seats { auto, mode, seats[{ role, by, does, without?, state }] }`, the three seats and which are empty, `slots[{ role, slots, max, running, waiting, spentUsd, sharePct }]`, how much each may do at once now and today's spend (0 is paused, still on the crew), and `governor { slots, ceiling, held, why }`, the builders the governor allows now and why (`null` while the crew is off or for a reader who cannot write here); `seat` (planner, builder or reviewer) with `slots` (0 to 8, the planner 0 or 1) sets how much that seat may do at once, 0 pausing it, on the trail at once; `add` or `remove` (an agent's username) says what would change, planned first (`dryRun` is true unless `false`); applying is the repository's admin with an admin token, never an agent; refusals are `no_such_agent`, `not_an_agent`, `unverified`",
   description: "List a repository's crew, or add or remove an agent. Plans first; admin token.",
   inputSchema: {
     type: "object",
@@ -22,6 +24,7 @@ export const tool: Tool = {
       add: { type: "string" },
       remove: { type: "string" },
       seat: { type: "string" },
+      kind: { type: "string" },
       slots: { type: "integer" },
       dryRun: { type: "boolean" },
     },
@@ -29,6 +32,11 @@ export const tool: Tool = {
   writes: true,
   dryByDefault: true,
   async run(ctx, user, args) {
+    if (args["kind"] !== undefined) {
+      if (args["kind"] !== "week") return bad("invalid", "`kind` is `week`");
+      if (user.isAdmin !== true) return bad("forbidden", ADMIN_WORDS.scorecard);
+      return good({ days: WEEK_DAYS, members: weekCard(ctx.app.db) });
+    }
     const repo = repoArg(ctx, user, args);
     if (isAnswer(repo)) return repo;
     const { app } = ctx;

@@ -129,11 +129,12 @@ describe("idleReason", () => {
     expect(idleReason(app, new Date())?.word).toBe("ceiling reached");
   });
 
-  test("an issue the dispatcher holds is not ready: a run in flight on the only one says nothing ready", () => {
+  test("an issue the dispatcher holds is not ready: a run in flight on the only one says none startable, not nothing ready", () => {
     const only = open("Held by a run");
     const run = createRun(app.db, { repoId: repo.id, kind: "agent", actorId: bot.id, reason: "review", issueId: only.id });
     set("UPDATE run SET state = 'running' WHERE id = ?1", run.id);
-    expect(idleReason(app, NOW)).toEqual({ word: "nothing ready", href: "/map" });
+    // The map still lists it as ready: "nothing ready" would be false.
+    expect(idleReason(app, NOW)).toEqual({ word: "none startable", href: "/map" });
   });
 
   test("the line says the word and the link", () => {

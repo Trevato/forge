@@ -93,7 +93,7 @@ export function originAppsScreen(f: Session, ctx: Ctx): Screen {
     }));
 
   const screen: Screen = {
-    title: "Origin apps",
+    title: "Connection apps",
     keys: [binding(["a"], "register one"), binding(["d"], "remove"), binding(["j", "k"], "move cursor")],
     render(area, s) {
       const c = ctx.theme.c;

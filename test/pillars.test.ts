@@ -391,7 +391,7 @@ describe("pillars", () => {
     expect(mcp.value.pillars).toEqual(data.pillars);
     expect(mcp.value.mergedByPillar).toEqual(data.mergedByPillar);
 
-    const page = await get("/alice/engine/map");
+    const page = await get("/alice/engine/map?view=graph");
     expect(page).toContain('id="map-pillars"');
     // Each pillar opens its milestone (#731).
     expect(page).toMatch(
@@ -576,7 +576,7 @@ describe("pillars", () => {
       limbs.value.limbs.find((l: any) => l.number === feed.number).askToLive,
     ).toBeNull();
 
-    const page = await get("/alice/engine/map");
+    const page = await get("/alice/engine/map?view=graph");
     expect(page).toContain("8.5h median");
     expect(page).toContain(`#${sandbox.number}`);
     expect(page).toMatch(/P1 Feed[\s\S]*?ask to live\s+—/);
@@ -610,7 +610,7 @@ describe("pillars", () => {
     seal(1);
     try {
       const sealedLink = `/issues/${sandbox.number}"`;
-      const guest = await (await fetch(`${base}/alice/engine/map`)).text();
+      const guest = await (await fetch(`${base}/alice/engine/map?view=graph`)).text();
       expect(guest).toContain("5h median");
       expect(guest).not.toContain(sealedLink);
       const data = await asBob("/api/v1/repos/alice/engine/map");
@@ -626,7 +626,7 @@ describe("pillars", () => {
         limbs.limbs.find((l: any) => l.number === trust.number).askToLive.slowest.number,
       ).toBe(parts[0]!.number);
       // A writer still sees it.
-      expect(await get("/alice/engine/map")).toContain(sealedLink);
+      expect(await get("/alice/engine/map?view=graph")).toContain(sealedLink);
       expect(
         (await api("/api/v1/repos/alice/engine/map")).mergedByPillar.counts[0].askToLive
           .slowest.number,
@@ -749,7 +749,7 @@ describe("pillars", () => {
             "the plan's own: a person closes it, the crew never picks it",
         });
       expect(data.counts).toMatchObject({ ready: 2, parked: 3 });
-      const page = await get("/alice/bare/map");
+      const page = await get("/alice/bare/map?view=graph");
       const listed = page.slice(
         page.indexOf("<h2>Ready now</h2>"),
         page.indexOf("</section>", page.indexOf("<h2>Ready now</h2>")),

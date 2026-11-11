@@ -109,6 +109,7 @@ function buildRow(base: string, n: BuildNode, canPreview: boolean, canDelete: bo
   const label = encodeURIComponent(n.pin.label);
   const note = n.pin.note === n.pin.label ? "" : `${n.pin.note} · `;
   return row({
+    nav: true,
     title: html`${when(n.edge === "concept", () => html`<span class="build-concept" title="Concept edge: parent set by hand, not by commit history">┄ </span>`)}<a class="mono" href="${own ? base : `/${n.from}`}/commit/${n.pin.oid}">${n.from === undefined ? null : html`<span class="muted">${n.from}:</span>`}${n.pin.label}</a>`,
     meta: html`${note}${n.pin.source} · ${n.pin.pinnedBy} · ${time(n.pin.pinnedAt)}`,
     data: { depth: String(Math.min(n.depth, 8)) },

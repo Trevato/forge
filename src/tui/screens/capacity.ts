@@ -2,19 +2,21 @@
  * The forge's capacity and guards in the terminal, a forge admin's who is a
  * person: each guard's live value and bounds, and `e` on a settable one asks
  * for a value, shows the plan (from → to) and changes it after a confirm,
- * through the same actions as MCP `capacity`. The actions decide who may.
+ * through the same actions as MCP `capacity`; a move of cells.egress to
+ * report asks why first, as the page does. The actions decide who may.
  */
 
 import type { SelfSwap } from "../../release/swap.ts";
-import { changeCapacity, listCapacity, type CapacityRow } from "../../actions/capacity.ts";
+import { DERIVED_WORDS, REASON_WORDS, changeCapacity, listCapacity, type CapacityRow } from "../../actions/capacity.ts";
 import { SETTING_WORDS } from "../../actions/setting_words.ts";
-import { CAPACITY, belowCeiling, validCapacity, type CapacityKey } from "../../core/capacity.ts";
+import { CAPACITY, belowCeiling, needsReason, validCapacity, type CapacityKey } from "../../core/capacity.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
 import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
+import { egressReportedLine } from "../../system/egress_line.ts";
 import { ListState, confirmScreen, drawList, later, promptScreen, type ListRow } from "./common.ts";
 
 /** Whether the palette offers the screen: a forge admin who is a person. */
@@ -28,8 +30,12 @@ export function boundsOf(key: CapacityKey): string {
 }
 
 /** What a refused change says, in its own words. */
-const refused = (error: "not_found" | "no_such_setting" | "invalid_value" | "no_credential"): string =>
-  error === "no_credential"
+const refused = (error: "not_found" | "no_such_setting" | "invalid_value" | "no_credential" | "derived" | "reason_required"): string =>
+  error === "reason_required"
+    ? REASON_WORDS
+    : error === "derived"
+    ? DERIVED_WORDS
+    : error === "no_credential"
     ? "Set a password or a passkey first: turning the edge off would lock you out"
     : error === "invalid_value"
       ? SETTING_WORDS.outOfRange
@@ -60,29 +66,40 @@ export function capacityScreen(f: Session, ctx: Ctx): Screen {
       const low = belowCeiling(f.app.db, r.key);
       return {
         title: `${r.label} (${r.key})`,
-        meta: `${shown(r.value)} · ${r.source} · takes ${boundsOf(r.key)}${r.source === "setting" ? ` · default ${shown(r.default)}` : ""}${low === null ? "" : ` · below ceiling ${low.ceiling}`}`,
+        meta: `${shown(r.value)} · ${r.source === "derived" ? "derived from Speed" : r.source} · takes ${boundsOf(r.key)}${r.source === "setting" ? ` · default ${shown(r.default)}` : ""}${low === null ? "" : ` · below ceiling ${low.ceiling}`}`,
         ...(low === null ? {} : { tone: "attn" as const }),
       };
     });
     // After the guards, so the cursor (bounded by the settings) never lands on it.
-    return [...guards, selfSwapRow(listed.value.selfSwap)];
+    const egress = egressReportedLine(f.app.db);
+    return [...guards, selfSwapRow(listed.value.selfSwap), ...(egress === null ? [] : [{ title: egress, tone: "attn" as const }])];
   };
 
-  const plan = (row: CapacityRow, typed: string): void => {
+  const plan = (row: CapacityRow, typed: string, reason = ""): void => {
     const to = typed === "" ? row.default : typed;
     later(ctx, () =>
       confirmScreen(ctx, screen, {
         title: "Capacity",
-        body: [`${row.key}: ${shown(row.value)} → ${shown(to)}`, "change it? y/n"],
+        body: [`${row.key}: ${shown(row.value)} → ${shown(to)}`, ...(reason === "" ? [] : [`why: ${reason}`]), "change it? y/n"],
         actions: [{ label: "y" }, { label: "n" }],
         selected: 1,
         onChoose: (choice) => {
           if (choice !== 0) return;
-          const done = changeCapacity(f.app, f.user, row.key, typed);
+          const done = changeCapacity(f.app, f.user, row.key, typed, reason);
           if (!done.ok) return ctx.toast(refused(done.error), "danger");
           ctx.toast(`${done.value.key}: ${shown(done.value.from)} → ${shown(done.value.to)}, from the next pick on.`, "success");
           ctx.invalidate();
         },
+      }),
+    );
+  };
+
+  const askWhy = (row: CapacityRow, value: string): void => {
+    void later(ctx, () =>
+      promptScreen(ctx, screen, {
+        title: row.label,
+        label: `Why set ${row.key} to ${value}? (kept with your name)`,
+        onSubmit: (why) => (why === "" ? REASON_WORDS : (plan(row, value, why), undefined)),
       }),
     );
   };
@@ -109,6 +126,8 @@ export function capacityScreen(f: Session, ctx: Ctx): Screen {
           onSubmit: (typed) => {
             const value = typed.trim();
             if (value !== "" && !validCapacity(row.key, value)) return SETTING_WORDS.outOfRange;
+            // A move to report says why, as the page asks (#10778); tightening never waits.
+            if (needsReason(row.key) && value === "report") return askWhy(row, value), undefined;
             return plan(row, value), undefined;
           },
         }),

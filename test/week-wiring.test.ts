@@ -19,7 +19,7 @@ import { recordUsage } from "../src/core/usage.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { driveRepo, repoPace } from "../src/crew/autonomy.ts";
 import { changeCapacity } from "../src/actions/capacity.ts";
-import { capacityDefault } from "../src/core/capacity.ts";
+import { capacityDefault, setCapacity } from "../src/core/capacity.ts";
 import { crewLineWords, forgetWeek, weekWords } from "../src/crew/week_read.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -83,6 +83,7 @@ beforeAll(async () => {
   const a = await seedAdmin(app, { username: "alice", email: "a@forge.test", password: "a-long-passphrase" });
   if (!a.ok) throw new Error("signup failed");
   alice = a.value;
+  setCapacity(app.db, "crew.concurrency", "4", alice.id); // pace floor follows Speed: half of 4 is 2
   const made = await createRepo(app, alice, { name: "svc", visibility: "private" });
   if (!made.ok) throw new Error(String(made.error));
   repo = made.value;
@@ -119,7 +120,7 @@ afterAll(async () => {
 beforeEach(() => forgetWeek());
 // A failed expectation must not leave the lowered crew concurrency for later tests.
 afterEach(() => {
-  changeCapacity(app, alice, "crew.concurrency", null);
+  changeCapacity(app, alice, "crew.concurrency", "4");
 });
 
 test("behind pace, with an idle slot and nothing startable, the tick releases the gated issue and says why", async () => {
@@ -195,6 +196,8 @@ test("Usage → Spend carries the same sentence, so pacing is not mistaken for t
     });
     const cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
     const spend = () => fetch(`${servers.url}/settings/spend`, { headers: { cookie } }).then((r) => r.text());
+    expect(changeCapacity(app, alice, "crew.concurrency", String(Number(capacityDefault("crew.concurrency")))).ok).toBe(true);
+    forgetWeek();
     expect(await spend()).not.toContain("below its ceiling");
     expect(changeCapacity(app, alice, "crew.concurrency", "1").ok).toBe(true);
     forgetWeek();
@@ -341,8 +344,11 @@ test("the terminal's home carries the crew line for the admin, the same words as
   week(70, 6);
   const words = crewLineWords(app, NOW)!;
   expect(words).toContain("30% of the week left, runs out");
+  // The terminal reads the clock when it draws, not NOW: the run-out minute may tick over in between.
+  const before = crewLineWords(app, new Date())!;
   const admin = await terminalFor(alice);
-  expect(admin).toContain(words);
+  const after = crewLineWords(app, new Date())!;
+  expect(admin.includes(before) || admin.includes(after)).toBe(true);
   expect(admin.split("30% of the week left").length - 1).toBe(1);
   const made = await createUser(app.db, { origin: "seed", trusted: true, username: "carol", email: "c@forge.test", password: "a-long-passphrase" });
   if (!made.ok) throw new Error(made.error);

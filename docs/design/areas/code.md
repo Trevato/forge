@@ -8,3 +8,9 @@
 - `.rail-facts`, `.rail-fact` — the facts in a repository's About rail (`aboutCard` in `src/web/pages/repo.ts`): a `dl` of label-over-value pairs, 12px apart, no rules between them, values wrapping anywhere. The rail is narrower than `.status-row`'s 168px label column, so it stacks instead.
 
 - `.card.bare` — a card with its frame taken off (`card({ extra: "bare" })`): no border, shadow, fill or padding, no rules between rows, head and foot as plain lines. The repository page's file listing, README, Following panel and fork line use it; the markup, and so every hook, stays the same.
+
+- `.moved-from` (#10109) — the one muted line "Moved from <old path> on <date>" under a repository head for 30 days after a move; the path wraps anywhere, so no sideways scroll at 390px.
+
+A font specimen (`render/font.ts`): `.font-view` sits in a bare card (`card({ extra: "bare" })`, no box of its own); `.font-name` its family heading, `.font-line` one line of sample text, and `.font-s`, `.font-m`, `.font-l` its three sizes. The small size is 14px; the larger two are display sizes, off the UI scale on purpose.
+
+An HTML file's preview (`render/html_preview.ts`): `.html-frame` is a bare sandboxed frame with its own hairline (no card around it) 80vh tall (480px at least, 60vh on a phone). The frame is `color-scheme: light`, so the page inside gets the white canvas it was written for in either theme.

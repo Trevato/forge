@@ -190,6 +190,15 @@ export const liveClientJs = /* js */ `
     return isApp && data && data.kind && data.kind.indexOf('run.') === 0 &&
       data.payload && data.payload.kind === 'deploy';
   }
+  // While a new app's head carries where it stands ([data-onboarding],
+  // apps/onboarding.ts), the crew's runs and its pulls opening, landing or
+  // closing move it too. Once live the row is gone, and so is this.
+  function movesOnboarding(data) {
+    return isApp && data && data.kind &&
+      !!document.querySelector('#app-head [data-onboarding]') &&
+      (data.kind.indexOf('run.') === 0 || data.kind === 'pull.opened' ||
+       data.kind === 'pull.merged' || data.kind === 'pull.closed');
+  }
   // 'app.serving' fires at the swap-in — the instant a preview answers —
   // which is seconds to half a minute before its tests (and so its
   // run.finished) are done. It carries no run.kind, so it is matched on its
@@ -286,7 +295,7 @@ export const liveClientJs = /* js */ `
       // it still offers the refresh. A run or a serving moves only the swap.
       if (data.kind !== 'pull.merged') return;
     }
-    if (isDeploy(data) || isServing(data)) { refreshApp(); return; }
+    if (isDeploy(data) || isServing(data) || movesOnboarding(data)) { refreshApp(); return; }
     if (relevant(data) && conv && (data.kind === thread + '.commented')) {
       appendNew();
     } else if (relevant(data) || !thread) {

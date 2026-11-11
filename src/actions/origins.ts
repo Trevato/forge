@@ -167,6 +167,8 @@ export interface ConnectInput {
   /** Set when the user picked a forge explicitly (GitHub Enterprise). */
   kind?: OriginKind;
   token: string;
+  /** Connect read-only: every write-through on its mirrors refuses. */
+  readOnly?: boolean;
 }
 
 /**
@@ -232,6 +234,7 @@ export async function connectOrigin(
     token: input.token.trim(),
     authKind: "pat",
     software: softwareOf(found.value.software),
+    ...(input.readOnly === true ? { readOnly: true } : {}),
   });
   if (!stored.ok) return stored;
   if (guard.value.checked) noteGuardPassed(app, stored.value.id);
@@ -362,6 +365,7 @@ function storeOrigin(
     refreshToken?: string;
     expiresAt?: string | null;
     software?: string;
+    readOnly?: boolean;
   },
 ): Result<Origin, "already_connected"> {
   // Connecting an account whose credential died is re-authorizing it: the
@@ -406,6 +410,7 @@ function storeOrigin(
       : { refreshToken: input.refreshToken }),
     ...(input.expiresAt === undefined ? {} : { expiresAt: input.expiresAt }),
     ...(input.software === undefined ? {} : { software: input.software }),
+    ...(input.readOnly === true ? { readOnly: true } : {}),
   });
   if (!created.ok) return created;
   // The payload names the host and the login and nothing else: an audit

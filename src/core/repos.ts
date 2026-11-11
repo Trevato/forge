@@ -5,6 +5,7 @@
  * repo. Deletion inverts the order — row first, directory second.
  */
 
+import { isPacksMirror } from "../packs/owner.ts";
 import { contributionForksSince, isContributionFork } from "./contribute.ts";
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
@@ -232,6 +233,9 @@ const SELECT = `
   SELECT repo.*, user.username AS owner_name, origin.kind AS origin_kind
   FROM repo JOIN user ON user.id = repo.owner_id
   LEFT JOIN origin ON origin.id = repo.origin_id`;
+
+/** The by-name match `getRepo` and `repoVisibility` share, so the two cannot drift. */
+const BY_NAME = "user.username = ?1 COLLATE NOCASE AND repo.name = ?2 COLLATE NOCASE";
 
 function toRepo(row: RepoRow): Repo {
   return {
@@ -711,14 +715,28 @@ const forksOfMany = (db: Database, ids: readonly string[]): Repo[] =>
         .map(toRepo);
 
 /** The visible forks of these parents, grouped by parent id: one query. */
-function visibleForksByParent(
+export function visibleForksByParent(
   db: Database,
   parents: readonly Repo[],
   viewer: User | undefined,
 ): Map<string, Repo[]> {
   const byParent = new Map<string, Repo[]>();
-  for (const fork of forksOfMany(db, parents.map((p) => p.id))) {
-    if (fork.forkParentId === null || !canRead(db, fork, viewer)) continue;
+  const forks = forksOfMany(db, parents.map((p) => p.id));
+  // One query says which owners stand; a public repo of one is readable by
+  // everyone (the first two rules of `canRead`), so only the rest ask again.
+  const standing = new Set(
+    forks.length === 0
+      ? []
+      : db
+          .query<{ id: string }, string[]>(
+            `SELECT repo.id AS id FROM repo WHERE repo.id IN (${forks.map(() => "?").join(",")}) AND ${OWNER_STANDING}`,
+          )
+          .all(...forks.map((f) => f.id))
+          .map((r) => r.id),
+  );
+  for (const fork of forks) {
+    const open = fork.visibility === "public" && standing.has(fork.id);
+    if (fork.forkParentId === null || !(open || canRead(db, fork, viewer))) continue;
     const siblings = byParent.get(fork.forkParentId) ?? [];
     siblings.push(fork);
     byParent.set(fork.forkParentId, siblings);
@@ -761,9 +779,20 @@ export function getRepo(
     .query<
       RepoRow,
       [string, string]
-    >(`${SELECT} WHERE user.username = ?1 COLLATE NOCASE AND repo.name = ?2 COLLATE NOCASE`)
+    >(`${SELECT} WHERE ${BY_NAME}`)
     .get(ownerName, name);
   return row ? toRepo(row) : undefined;
+}
+
+/** Only a repository's visibility, by owner and name: for a page that needs the answer, not the row. */
+export function repoVisibility(db: Database, ownerName: string, name: string): string | undefined {
+  return (
+    db
+      .query<{ visibility: string }, [string, string]>(
+        `SELECT repo.visibility FROM repo JOIN user ON user.id = repo.owner_id WHERE ${BY_NAME}`,
+      )
+      .get(ownerName, name)?.visibility ?? undefined
+  );
 }
 
 export function getRepoById(db: Database, repoId: string): Repo | undefined {
@@ -1021,6 +1050,8 @@ export async function deleteRepo(
   // still reported.
   const removed = await deleteRepoDir(dir);
   if (!removed.ok && present) return err("delete_failed");
+  // The doctor's rows carry `repo_id` without a foreign key (added columns on `maintenance_run`).
+  db.query("DELETE FROM maintenance_run WHERE duty = 'batch-doctor' AND repo_id = ?1").run(repo.id);
   db.query("DELETE FROM repo WHERE id = ?1").run(repo.id);
   forgetRepoCursors(db, repo.id);
   forgetListings(db);
@@ -1102,6 +1133,8 @@ export function canWrite(
   repo: Repo,
   user: User | undefined,
 ): boolean {
+  // A packs mirror is a copy of an upstream: only the follow, acting as its owner, moves it (#10530).
+  if (isPacksMirror(repo)) return user !== undefined && user.id === repo.ownerId;
   if (personalOrDirect(repo, user)) return true;
   return accessAllows(orgAccessFor(db, repo, user), "write");
 }
@@ -1294,7 +1327,7 @@ export const withoutArchived = (repos: readonly Repo[]): Repo[] =>
   repos.filter((repo) => repo.archivedAt === null);
 
 /** The one line said wherever the crew declines to start a run here. */
-export const ARCHIVED_WHY = "This repository is archived; wake it to start a run.";
+export const ARCHIVED_WHY = "This repository is archived; restore it to start a run.";
 
 /**
  * Update the mutable repo fields, leaving unspecified ones untouched.

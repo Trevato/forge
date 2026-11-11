@@ -197,7 +197,7 @@ test("an empty window is one sentence, not a card", async () => {
     expect(text).toContain("No requests in the last 15 minutes");
     expect(text).not.toContain("empty-title");
   }
-  expect(text).not.toContain('class="card empty"');
+  expect(text).not.toContain('class="empty"');
 });
 
 test("a deleted repository is named, with how; a private one only to who answers for it", async () => {

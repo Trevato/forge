@@ -87,11 +87,11 @@ describe("the new forge screen", () => {
   test("the screen and its plan promise no update that does not happen", () =>
     withScreen(admin, async ({ tui, terminal }) => {
       const form = tui.screen.toText();
-      expect(form).toContain("tell-me (default) tells the owner in their inbox");
+      expect(form).toContain("take-updates (default) takes new code in by itself");
       terminal.feed("kai\x10");
       await settleApp(tui);
       const text = form + tui.screen.toText();
-      expect(tui.screen.toText()).toContain("It follows this forge's code as tell-me: it tells the owner in their inbox");
+      expect(tui.screen.toText()).toContain("It follows this forge's code as take-updates: it takes new code in by itself");
       expect(text).not.toMatch(/recorded for now/i);
       expect(text).not.toMatch(/keeps? (itself )?up to date|updates itself|automatically/i);
     }));
@@ -173,13 +173,13 @@ describe("the new forge screen", () => {
       expect(tui.screen.toText()).toMatch(/https:\/\/zed--forge\.test\/claim#/);
     }));
 
-  test("the follow mode is a field: take-updates reaches parent.json", () =>
+  test("the follow mode is a field: tell-me reaches parent.json", () =>
     withScreen(admin, async ({ tui, terminal }) => {
       (app.config as { forgeRepo?: string }).forgeRepo = "alice/bakery";
       try {
-        terminal.feed("tuifollow" + "\t".repeat(8) + "take-updates\x10");
+        terminal.feed("tuifollow" + "\t".repeat(8) + "tell-me\x10");
         await settleApp(tui);
-        expect(tui.screen.toText()).toContain("take-updates");
+        expect(tui.screen.toText()).toContain("tell-me");
         terminal.feed("\r");
         await settleApp(tui);
         const docs = await Promise.all(
@@ -187,7 +187,7 @@ describe("the new forge screen", () => {
             Bun.file(join(dir, "children", d, "parent.json")).json().catch(() => undefined),
           ),
         );
-        expect(docs.find((d) => d?.name === "tuifollow")?.forgeCode?.mode).toBe("take-updates");
+        expect(docs.find((d) => d?.name === "tuifollow")?.forgeCode?.mode).toBe("tell-me");
       } finally {
         delete (app.config as { forgeRepo?: string }).forgeRepo;
       }

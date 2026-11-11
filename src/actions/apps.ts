@@ -6,6 +6,7 @@
  * the repository may look at it and open its environments.
  */
 
+import { getVariant } from "../core/variants.ts";
 import { pullDir } from "../core/pulls.ts";
 import { getIssue } from "../core/issues.ts";
 import { mayView } from "../core/sealed.ts";
@@ -23,8 +24,11 @@ import { appsRuntime, envsFor, type EnvStatus } from "../apps/runtime.ts";
 import { grantUrl, originFor, sideForViewer, sideReader } from "../apps/proxy.ts";
 import { plainLine } from "../apps/side.ts";
 import { scaffoldFiles } from "../apps/scaffold.ts";
+import type { FileWrite } from "../git/write.ts";
+import { TEMPLATE_ERRORS, templateFiles, type TemplateError } from "../apps/template_tip.ts";
 import {
   envBuild,
+  envVariant,
   isEnvName,
   previewEnv,
   type EnvName,
@@ -270,6 +274,8 @@ export interface NewAppInput {
    * also given.
    */
   pickAgent?: boolean;
+  /** `owner/name` of a repository the actor can read: its tip is copied instead of the starter app. */
+  template?: string;
 }
 
 export interface NewAppResult {
@@ -285,6 +291,7 @@ export type NewAppError =
   | CreateRepoActionError
   | CreateAppError
   | "scaffold_failed"
+  | TemplateError
   | "no_such_agent"
   | "not_a_builder"
   | "app_limit";
@@ -328,6 +335,17 @@ export async function newApp(
   )
     return err("slug_taken");
 
+  // Read the template before a repository exists to take back.
+  let starter: FileWrite[] | undefined;
+  if (input.template !== undefined && input.template !== "") {
+    const copied = await templateFiles(app, user.value, input.template, {
+      name: input.name,
+      description: input.description ?? "",
+    });
+    if (!copied.ok) return copied;
+    starter = copied.value;
+  }
+
   let mark = performance.now();
   const lap = (name: string): void => {
     const now = performance.now();
@@ -344,10 +362,12 @@ export async function newApp(
   if (!repo.ok) return repo;
   const committed = await commitToBranch(app, user.value, repo.value, {
     message: `Start ${input.name}`,
-    files: scaffoldFiles({
-      name: input.name,
-      description: input.description ?? "",
-    }),
+    files:
+      starter ??
+      scaffoldFiles({
+        name: input.name,
+        description: input.description ?? "",
+      }),
   });
   lap("scaffold");
   if (!committed.ok) {
@@ -462,6 +482,7 @@ export const NEW_APP_ERRORS: Record<string, string> = {
     "Another app already answers to that hostname. Pick another name.",
   already_app: "That repository is already an app.",
   scaffold_failed: "The starter app could not be committed.",
+  ...TEMPLATE_ERRORS,
   no_such_agent: NO_SUCH_AGENT,
   not_a_builder: "That agent is not a builder, so it cannot be handed a new app. Pick a builder.",
 };
@@ -772,6 +793,11 @@ async function commitFor(
   // serves is the one the runtime holds for it, while it is held.
   if (envBuild(env) !== undefined)
     return appsRuntime(app)?.envStatus(record, env)?.commitOid || undefined;
+  const variant = envVariant(env);
+  if (variant !== undefined) {
+    const row = getVariant(app.db, record.id, variant);
+    return row === undefined ? undefined : resolveOid(dir, `refs/heads/${row.branch}`);
+  }
   const pull = getPull(app.db, repo.id, Number(env.slice(5)));
   if (!pull || pull.state !== "open") return undefined;
   const at = await pullDir(app.db, app.reposRoot, repo, pull);

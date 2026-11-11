@@ -8,58 +8,52 @@
  * shape, so dropping `filesystem.denyRead` or flipping `enabled` fails here.
  * A sandbox cannot be made inside a sandbox, so where one cannot be made (a
  * crew run, a container that refuses user namespaces) the test is skipped,
- * with the reason on the console.
+ * naming itself and one cause on the console (`sandboxCause`: user
+ * namespaces refused, a mount denied, a missing binary, or the probe's own
+ * text); the forge's check runs it.
  *
  * Outside localhost is checked twice: directly (the sandbox has a network of
  * its own, so it must fail) and through the sandbox's proxy, which is the
  * only way out. The policy allows loopback as the forge's `host:port` alone
- * (`sandboxPolicy`), so the proxy refuses every other port.
+ * (`sandboxPolicy`), so the proxy refuses every other port. Through the
+ * proxy is a raw request to it, not `fetch`: srt puts 127.0.0.1 in NO_PROXY,
+ * which a client honours by going direct. `srt` is launched without proxy
+ * variables (`withoutParentProxy`), as the escape test is: it would chain
+ * through them, and the check host's egress proxy refuses loopback (#10709).
  *
  * Where a sandbox can be made, the runtime must be there too: a missing
- * `rg` or `srt` fails the test rather than skipping it.
+ * `srt` or pinned `rg` (`@vscode/ripgrep`; the check host has none on its
+ * PATH) fails the test rather than skipping it.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { rgPath } from "@vscode/ripgrep";
 import { claudeSettings } from "../src/crew/claude.ts";
 import { sandboxAvailable, sandboxPolicy } from "../src/crew/sandbox.ts";
+import { sandboxCause, skipReason } from "../src/crew/sandbox_cause.ts";
+import { runtimeSettings, withoutParentProxy } from "./helpers/srt.ts";
 
 const probe = await sandboxAvailable();
 const srt = join(import.meta.dir, "../node_modules/.bin/srt");
-const nestedReason = !probe.ok
-  ? `no sandbox can be made here (nested in a crew sandbox or user namespaces refused): ${probe.reason}`
-  : undefined;
-if (nestedReason !== undefined) console.warn(`skipped: ${nestedReason}`);
-else if (Bun.which("rg") === null || !existsSync(srt))
-  throw new Error(
-    "a sandbox can be made here but its runtime is missing: install ripgrep (rg) and run bun install",
-  );
+// One named cause (src/crew/sandbox_cause.ts), so the skip line tells a host
+// that cannot sandbox from a hole in the gate (#10745).
+const nestedReason = !probe.ok ? skipReason(sandboxCause(probe.reason)) : undefined;
+if (nestedReason !== undefined)
+  console.warn(`skipped: test/crew-sandbox-real.test.ts: ${nestedReason}`);
+else
+  for (const [binary, path] of [
+    ["srt", srt],
+    ["rg", rgPath],
+  ] as const)
+    if (!existsSync(path))
+      throw new Error(
+        `a sandbox can be made here but its runtime is not: ${sandboxCause(`missing binary: ${binary}`).words} (${path}): run bun install`,
+      );
 
 const CANARY = "the-canary-must-not-be-read";
-
-/**
- * Claude Code's sandbox settings as the runtime reads them. The gap from what
- * Claude Code receives: the runtime wants `deniedDomains`, `denyRead` and
- * `denyWrite` present (empty here), and `allowWrite` is the work directory
- * alone, where Claude Code adds its own write grants. Network and denyRead
- * are the generated ones, untouched.
- */
-function runtimeSettings(
-  sandbox: Record<string, any>,
-  workDir: string,
-): Record<string, unknown> {
-  return {
-    network: { deniedDomains: [], ...sandbox.network },
-    filesystem: {
-      denyRead: [],
-      denyWrite: [],
-      ...sandbox.filesystem,
-      allowWrite: [workDir, ...(sandbox.filesystem?.allowWrite ?? [])],
-    },
-  };
-}
 
 describe.skipIf(nestedReason !== undefined)("a real sandboxed shell", () => {
   let dataDir: string;
@@ -115,10 +109,39 @@ describe.skipIf(nestedReason !== undefined)("a real sandboxed shell", () => {
       `
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 const own = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("own") });
-const get = async (port: number, proxy?: string) => {
-  try { return await (await fetch("http://127.0.0.1:" + port + "/", { proxy })).text(); }
+const direct = async (port: number) => {
+  try { return await (await fetch("http://127.0.0.1:" + port + "/")).text(); }
   catch { return "refused"; }
 };
+// A raw request in the absolute form a proxy takes, so NO_PROXY cannot send
+// it direct: the body on a 2xx, "refused" on any other answer or none.
+const viaProxy = (port: number) =>
+  new Promise<string>((resolve) => {
+    const proxy = process.env.HTTP_PROXY;
+    if (!proxy) return resolve("refused");
+    const p = new URL(proxy);
+    const auth = p.username
+      ? "proxy-authorization: Basic " +
+        btoa(decodeURIComponent(p.username) + ":" + decodeURIComponent(p.password)) + "\\r\\n"
+      : "";
+    let bytes = "";
+    Bun.connect({
+      hostname: p.hostname,
+      port: Number(p.port),
+      socket: {
+        open(socket) {
+          socket.write("GET http://127.0.0.1:" + port + "/ HTTP/1.1\\r\\nhost: 127.0.0.1:" + port + "\\r\\n" + auth + "connection: close\\r\\n\\r\\n");
+        },
+        data(_socket, chunk) { bytes += new TextDecoder().decode(chunk); },
+        close() {
+          const at = bytes.indexOf("\\r\\n\\r\\n");
+          resolve(at >= 0 && / 2\\d\\d/.test(bytes.split("\\r\\n")[0] ?? "") ? bytes.slice(at + 4) : "refused");
+        },
+        error() { resolve("refused"); },
+        connectError() { resolve("refused"); },
+      },
+    }).catch(() => resolve("refused"));
+  });
 const leaks: string[] = [];
 const walk = (path: string) => {
   let stat;
@@ -131,10 +154,10 @@ const walk = (path: string) => {
 };
 for (const path of ${JSON.stringify(denied)}) walk(path);
 console.log(JSON.stringify({
-  own: await get(own.port),
-  outside: await get(${outside.port}),
-  forge: await get(${forge.port}, process.env.HTTP_PROXY),
-  viaProxy: await get(${outside.port}, process.env.HTTP_PROXY),
+  own: await direct(own.port),
+  outside: await direct(${outside.port}),
+  forge: await viaProxy(${forge.port}),
+  viaProxy: await viaProxy(${outside.port}),
   leaks,
 }));
 own.stop(true);
@@ -147,7 +170,13 @@ own.stop(true);
     writeFileSync(settings, JSON.stringify(runtimeSettings(real, work)));
     const proc = Bun.spawn(
       [srt, "--settings", settings, "-c", `'${process.execPath}' probe.ts`],
-      { cwd: work, stdin: "ignore", stdout: "pipe", stderr: "pipe" },
+      {
+        cwd: work,
+        env: withoutParentProxy(process.env),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      },
     );
     const [out, err, code] = await Promise.all([
       new Response(proc.stdout).text(),
@@ -227,7 +256,13 @@ console.log(JSON.stringify({ wrote, read, other }));
     writeFileSync(settings, JSON.stringify(runtimeSettings(real, work)));
     const proc = Bun.spawn(
       [srt, "--settings", settings, "-c", `'${process.execPath}' probe.ts`],
-      { cwd: work, stdin: "ignore", stdout: "pipe", stderr: "pipe" },
+      {
+        cwd: work,
+        env: withoutParentProxy(process.env),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      },
     );
     const [out, err, code] = await Promise.all([
       new Response(proc.stdout).text(),

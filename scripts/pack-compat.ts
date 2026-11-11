@@ -14,13 +14,21 @@ import { createApp } from "../src/app.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve } from "../src/http/server.ts";
-import { catalog } from "../src/packs/catalog.ts";
 import { deployPack } from "../src/packs/deploy.ts";
-import { realHands } from "./pack.ts";
+import { fetchPack, PACKS_FORGE, realHands } from "./pack.ts";
+import type { Pack } from "../src/packs/pack.ts";
 
-const { packs, problems } = catalog();
-let failed = problems.length;
-for (const p of problems) console.error(`✗ ${p}`);
+// The packs are forge repos (`packs/<name>`); the names come from the command line, else the two the forge starts with.
+const names = process.argv.slice(2).length > 0 ? process.argv.slice(2) : ["games", "business"];
+const packs: Pack[] = [];
+let failed = 0;
+for (const n of names) {
+  const got = await fetchPack(n, process.env.FORGE_PACKS_FROM ?? PACKS_FORGE);
+  if (typeof got === "string") {
+    failed++;
+    console.error(`✗ ${got}`);
+  } else packs.push(got);
+}
 
 for (const pack of packs) {
   const dataDir = await mkdtemp(join(tmpdir(), `pack-compat-${pack.name}-`));

@@ -5,6 +5,7 @@ import { assignIssue, openIssue } from "../src/actions/issues.ts";
 import { expectWork } from "./helpers/work.ts";
 import { statements } from "./helpers/statements.ts";
 import { snappyFixture, type SnappyFixture } from "../bench/snappy.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 let f: SnappyFixture;
 
@@ -25,7 +26,7 @@ afterAll(async () => {
 async function look(): Promise<{ phases: { name: string; ms: number }[] }> {
   const res = await fetch(`${f.base}/`, { headers: { cookie: f.ownerCookie } });
   await res.arrayBuffer();
-  const phases = (res.headers.get("server-timing") ?? "")
+  const phases = requestTiming(res)
     .split(", ")
     .map((p) => ({ name: p.split(";")[0]!, ms: Number(/dur=([\d.]+)/.exec(p)?.[1] ?? 0) }));
   return { phases };
@@ -39,7 +40,7 @@ test("the second look at home as the owner costs a bounded number of statements,
   expectWork(await statements(f.app.db, async () => void (await look())), { max: 70 });
   // The page's own total is the sum of named phases: nothing over 20 ms hides in "app" alone.
   // Every phase home.ts and the feed time: one missing here fails as a plain expect, which the gate's budget retry never re-runs.
-  const known = new Set(["app", "spawned", "steps", "session", "repos", "asked", "kpis", "vitals", "waiting", "panels", "feed", "settled", "visit", "since", "moving", "render"]);
+  const known = new Set(["app", "spawned", "steps", "session", "repos", "asked", "kpis", "vitals", "waiting", "held", "panels", "feed", "settled", "visit", "since", "moving", "render"]);
   for (const p of slow) expect(known.has(p.name)).toBe(true);
 });
 

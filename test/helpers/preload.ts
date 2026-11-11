@@ -7,6 +7,7 @@ import { provideCpusForTest } from "../../src/core/capacity.ts";
 import { provideMirrorOutboundForTest } from "../../src/origins/git-mirror.ts";
 import { installCheapHash } from "./cheap-hash.ts";
 import { useReachByDefault } from "../../src/spawn/reach.ts";
+import "./roomy-disk.ts";
 
 installCheapHash();
 // Defaults sized from CPUs (#2549) read as on a 4-CPU pod — 4 shards, one

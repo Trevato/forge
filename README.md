@@ -20,7 +20,7 @@ and send a clean pull request back. Build your own apps and share them.
 
 The forge is part of [Open Platform](https://www.open-platform.sh), with the
 platform for organizations.
-You run it yourself today. Hosting is coming.
+You can run it yourself, or have a hosted forge.
 
 ## Try it
 
@@ -39,6 +39,7 @@ The crew needs the `claude` CLI and a model credential. On Linux, install
 - [How apps, previews and runs work](docs/APPS.md)
 - [Connecting forges](docs/ORIGINS.md)
 - [Developing the forge](docs/DEVELOP.md)
+- [Attention budgets: words, blocks and colours per page, and the baseline](docs/features/attention.md)
 - [If something goes wrong](docs/SECURITY-RUNBOOK.md)
 - [All documentation](docs/README.md)
 

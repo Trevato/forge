@@ -66,7 +66,7 @@ export function peoplePage(ctx: Ctx): Response {
     const shown = apps.slice(0, 3).map((n) => html`<a href="/${p.username}/${n}">${n}</a>`);
     const standing = p.usdPerMonth === null ? "no allowance" : `$${p.usdPerMonth.toFixed(2)} a month`;
     return html`<tr>
-      <td>${userLink(p.username)}<div class="small muted">${count === 0 ? "No apps yet" : count === 1 ? "1 app" : `${count} apps`}${
+      <td>${userLink(p.username, { nav: true })}<div class="small muted">${count === 0 ? "No apps yet" : count === 1 ? "1 app" : `${count} apps`}${
         count === 0 ? "" : html`: ${shown.flatMap((a, i) => (i === 0 ? [a] : [", ", a]))}${count > 3 ? ` and ${count - 3} more` : ""}`
       }</div></td>
       <td>${badge(role, { tone: role === "guest" ? "default" : "success" })} <span class="small muted">${standing}</span></td>

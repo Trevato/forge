@@ -165,6 +165,10 @@ export function listEventsVisibleTo(
     params.push(options.afterId);
     where += ` AND ${afterEvent(params.length)}`;
   }
+  if (options.beforeId !== undefined) {
+    params.push(options.beforeId);
+    where += ` AND ${beforeEvent(params.length)}`;
+  }
   params.push(options.limit ?? 100);
   return db
     .query<EventRow, (string | number)[]>(
@@ -172,6 +176,30 @@ export function listEventsVisibleTo(
        WHERE ${where} ORDER BY event.seq DESC LIMIT ?${params.length}`,
     )
     .all(...params)
+    .map(toEvent);
+}
+
+/**
+ * The newest events of one kind addressed to a team this user is on
+ * (`payload.team`), from any repository: the caller owes the read check.
+ * The feed reads team waits this way (#10164) because its own window is
+ * cut by owner and org access, and a crew member who reads a private
+ * repository is not in it.
+ */
+export function listTeamEventsFor(
+  db: Database,
+  userId: string,
+  kind: string,
+  limit = 50,
+): ForgeEvent[] {
+  return db
+    .query<EventRow, [string, string, number]>(
+      `SELECT * FROM event
+       WHERE kind = ?2 AND repo_id IS NOT NULL
+         AND json_extract(payload, '$.team') IN (SELECT team_slug FROM crew_team_member WHERE user_id = ?1)
+       ORDER BY seq DESC LIMIT ?3`,
+    )
+    .all(userId, kind, limit)
     .map(toEvent);
 }
 

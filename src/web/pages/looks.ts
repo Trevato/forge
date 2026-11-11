@@ -34,7 +34,7 @@ import { mayFetchLook as mayFetchLookFor } from "../../looks/readable.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { loadRepo, repoBase } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
-import { card, disclosure, icon, sha, time } from "../ui.ts";
+import { disclosure, sha, time } from "../ui.ts";
 
 /** The newest picture at one width, when there is one. */
 export const pictured = (
@@ -115,7 +115,7 @@ export const mayFetchLook = (
 ): boolean => mayFetchLookFor(ctx.app, repo, record, look, ctx.auth.user);
 
 /**
- * The Look card on a pull: phone and desktop side by side, the commit
+ * The Look block on a pull: phone and desktop side by side, the commit
  * they are of, and a word when the head has moved since — or, honestly,
  * why there is no picture. More than one page in `app.looks` gets one
  * group per page, each labelled by its path, since each can be at a
@@ -132,7 +132,7 @@ export function lookCard(
   const base = repoBase(repo);
   const env = previewEnv(pull.number);
   // What this viewer may see: all of it for a writer; for a reader, only a
-  // phone or desktop picture taken as nobody (a public app's), and no card
+  // phone or desktop picture taken as nobody (a public app's), and no block
   // without one.
   const writer = canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user);
   const every = looksForEnv(ctx.app.db, record.id, env, "any").filter(
@@ -146,15 +146,18 @@ export function lookCard(
   if (!writer && looks.length === 0) return html``;
   const attached = looks.filter(isAttached).reverse();
   const taken = looks.filter((l) => !isAttached(l));
-  const head = html`${icon("eye")}
-    <h2>Look</h2>`;
+  // A block under an h2, the home page's language — not a card.
+  const block = (body: Html): Html =>
+    html`<section class="settings-block" id="look" data-look-block>
+      <h2>Look</h2>
+      ${body}
+    </section>`;
   if (taken.length === 0 && attached.length === 0) {
     if (pull.state !== "open" || pull.mergedAt !== null) return html``;
-    return card(
+    return block(
       html`<p class="muted small">
         No picture yet. One is taken when the preview comes up green.
       </p>`,
-      { head },
     );
   }
   // Home first, then the rest in the order the manifest is likeliest to
@@ -300,13 +303,12 @@ export function lookCard(
   const summary = line === undefined
     ? html``
     : html`<p class="muted small" data-pairs>${line}</p>`;
-  return card(
+  return block(
     html`<div class="stack">
       ${summary}${pages.map(group)}${when(attached.length > 0, () =>
         html`<div class="looks">${attached.map(person)}</div>`,
       )}
     </div>`,
-    { head },
   );
 }
 

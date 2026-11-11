@@ -5,14 +5,18 @@
  * who, when, from what to what. Anyone else gets the not-found page.
  */
 
+import { usdWords } from "../../spawn/credit.ts";
+import { worstCaseOf } from "../../spawn/included_credit.ts";
 import { QUOTA_INVALID } from "../../actions/admin_limits_words.ts";
 import { changeLimit, listLimits } from "../../actions/limits.ts";
 import { changeQuotas, readQuotas } from "../../actions/quotas.ts";
 import { inviteLink, list as listInviteLinks, mint as mintInviteLink, revoke as revokeInviteLink } from "../../actions/invites.ts";
 import { INVITE_NOT_OPEN } from "../../actions/sever_invite_words.ts";
 import { DEFAULT_DAYS, MAX_DAYS } from "../../core/invites.ts";
-import { changeSignup, readSignup } from "../../actions/signup.ts";
-import { SIGNUP_MODES } from "../../settings/signup.ts";
+import { changeAgentStart, changeBillingLinks, changeSignup, readAgentStart, readBillingLinks, readSignup } from "../../actions/signup.ts";
+import { BILLING_SIZES } from "../../settings/billing.ts";
+import { AGENT_START_MODES } from "../../settings/agent_start.ts";
+import { SIGNUP_MEANS, SIGNUP_MODES } from "../../settings/signup.ts";
 import { QUOTA_KEYS } from "../../settings/quotas.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
@@ -21,6 +25,7 @@ import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { btn, confirmAction, icon, row, time } from "../ui.ts";
+import { plansRow } from "../settings/plans.ts";
 import { accountSections } from "./origins.ts";
 
 // GET /admin/limits
@@ -30,6 +35,8 @@ export function limitsPage(ctx: Ctx): Response {
   if (!listed.ok) return notFoundPage(ctx);
   const quotas = timePhase(ctx.request, "quotas", () => readQuotas(ctx.app, ctx.auth.user));
   const signup = timePhase(ctx.request, "signup", () => readSignup(ctx.app, ctx.auth.user));
+  const agentStart = readAgentStart(ctx.app, ctx.auth.user);
+  const billing = readBillingLinks(ctx.app, ctx.auth.user);
   const invites = timePhase(ctx.request, "invites", () => listInviteLinks(ctx.app, ctx.auth.user));
   const rendering = performance.now();
   const { limits, changes } = listed.value;
@@ -122,16 +129,47 @@ export function limitsPage(ctx: Ctx): Response {
     }),
   );
   const signupRow = html`<div class="status-row">
-    <dt>Signup</dt>
+    <dt>New accounts</dt>
     <dd>
       <form class="row-fields" method="post" action="/admin/signup">
-        <select class="input mono" name="signup" aria-label="Who may sign up">
+        <select class="input mono" name="signup" aria-label="New accounts">
           ${SIGNUP_MODES.map(
             (m) => html`<option value="${m}" ${signup.ok && signup.value.signup === m ? "selected" : ""}>${m}</option>`,
           )}
         </select>
         ${btn("Save", { size: "sm", variant: "primary", label: "Save signup" })}
       </form>
+      <ul class="muted small" id="signup-means">
+        ${SIGNUP_MODES.map((m) => html`<li><strong>${m}</strong>: ${SIGNUP_MEANS[m]}</li>`)}
+      </ul>
+    </dd>
+    <dd class="status-act"></dd>
+  </div>`;
+  const agentStartRow = html`<div class="status-row">
+    <dt>Agents can start here</dt>
+    <dd>
+      <form class="row-fields" method="post" action="/admin/agent-start">
+        <select class="input mono" name="agent_start" aria-label="Agents can start here">
+          ${AGENT_START_MODES.map(
+            (m) => html`<option value="${m}" ${agentStart.ok && agentStart.value === m ? "selected" : ""}>${m === "code" ? "invite code" : m}</option>`,
+          )}
+        </select>
+        ${btn("Save", { size: "sm", variant: "primary", label: "Save agent start" })}
+      </form>
+    </dd>
+    <dd class="status-act"></dd>
+  </div>`;
+  const billingRow = html`<div class="status-row">
+    <dt>Buy links</dt>
+    <dd>
+      <form class="row-fields" method="post" action="/admin/billing-links">
+        ${BILLING_SIZES.map(
+          (z) => html`<label class="small">${z}
+            <input class="input mono" type="url" name="${z}" maxlength="300" placeholder="https://" value="${billing.ok ? (billing.value[z] ?? "") : ""}" /></label>`,
+        )}
+        ${btn("Save", { size: "sm", variant: "primary", label: "Save buy links" })}
+      </form>
+      <span class="muted small">One payment link per size. With any set, the home page offers paid forges; empty by default.</span>
     </dd>
     <dd class="status-act"></dd>
   </div>`;
@@ -177,10 +215,11 @@ export function limitsPage(ctx: Ctx): Response {
   const body = html`<p class="small muted mb">
       Every limit you can hit, and why. A change applies to the next request that meets it; nothing needs a restart.
     </p>
-    <dl class="status-rows">${signupRow}${inviteRow}${quotaRow}</dl>
+    <dl class="status-rows">${signupRow}${agentStartRow}${billingRow}${inviteRow}${quotaRow}${plansRow(ctx)}</dl>
     ${historyBlock("Invite links made", inviteRows)}
     <section class="settings-block mt">
       <h2>Limits</h2>
+      <p class="small muted mb" id="included-credit-worst">Worst case a day for the crew credit new forges come with: ${usdWords(worstCaseOf((k) => limits.find((l) => l.key === k)?.value ?? 0))} (new accounts an hour × 24 × forges a person may own × the credit).</p>
       <div class="table-scroll">
         <table class="table setting-table" data-dense>
           <caption class="sr-only">Limits, their values and how to change them</caption>
@@ -280,7 +319,43 @@ export async function signupSet(ctx: Ctx): Promise<Response> {
     "/admin/limits",
     changed.ok
       ? { message: "Signup saved." }
-      : { tone: "danger", message: "Signup is open, invite or closed." },
+      : { tone: "danger", message: "New accounts are open, request, invite or closed." },
+  );
+}
+
+// POST /admin/agent-start
+export async function agentStartSet(ctx: Ctx): Promise<Response> {
+  if (ctx.auth.user?.isAdmin !== true || ctx.auth.user.kind === "agent") return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const changed = changeAgentStart(ctx.app, ctx.auth.user, field(form, "agent_start"));
+  if (!changed.ok && changed.error === "not_found") return notFoundPage(ctx);
+  return flashTo(
+    ctx,
+    "/admin/limits",
+    changed.ok
+      ? { message: "Agent start saved." }
+      : { tone: "danger", message: "Agents can start here: open, invite code or off." },
+  );
+}
+
+// POST /admin/billing-links
+export async function billingLinksSet(ctx: Ctx): Promise<Response> {
+  if (ctx.auth.user?.isAdmin !== true || ctx.auth.user.kind === "agent") return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const changed = changeBillingLinks(
+    ctx.app,
+    ctx.auth.user,
+    Object.fromEntries(BILLING_SIZES.map((z) => [z, field(form, z)])),
+  );
+  if (!changed.ok && changed.error === "not_found") return notFoundPage(ctx);
+  return flashTo(
+    ctx,
+    "/admin/limits",
+    changed.ok
+      ? { message: "Buy links saved." }
+      : { tone: "danger", message: "Each buy link is an https address, or empty." },
   );
 }
 

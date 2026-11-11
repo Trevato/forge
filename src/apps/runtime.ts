@@ -14,6 +14,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { cellHides, grantsHere } from "../spawn/hosted-mark.ts";
 import { VERIFYING_NOTE } from "./env_phrase.ts";
 import { listEgressGrants } from "../core/egress_grants.ts";
 import { recordCarried } from "../core/carried.ts";
@@ -24,12 +25,13 @@ import { sshCommand } from "../ssh/command.ts";
 import { checkPreview } from "./preview_spec.ts";
 import { appHostSuffix } from "./host.ts";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { getAppByRepo, listApps, type AppRecord } from "../core/apps.ts";
 import { resolveAppEnv } from "../core/app_env.ts";
 import { featureVarsAt } from "./feature_env.ts";
+import { getVariant, listVariants, variantOfBranch } from "../core/variants.ts";
+import { readVariantValues } from "./variant_file.ts";
 import { mintAppToken, renewAppToken, revokeAppToken } from "./token.ts";
 import type { ForgeEvent } from "../core/events.ts";
 import { announceRun } from "../actions/runs.ts";
@@ -39,9 +41,12 @@ import { getPull, listPulls, type Pull } from "../core/pulls.ts";
 import { isContributionFork } from "../core/contribute.ts";
 import { pullMayRun } from "../core/pull_trust.ts";
 import { guestWaits } from "../origins/guest.ts";
-import { canEnterApp, getRepoById, type Repo } from "../core/repos.ts";
+import { canEnterApp, canWrite, getRepoById, type Repo } from "../core/repos.ts";
 import { runningLimitSentence } from "../settings/quotas.ts";
-import type { User } from "../core/users.ts";
+import { placeFor } from "../core/placement_policy.ts";
+import { recordPlacement } from "../core/decisions.ts";
+import { bodyTarget, CLOUD_BODY_CONFIGURED } from "../spawn/placement.ts";
+import { getUserById, type User } from "../core/users.ts";
 import {
   cancelRun,
   getRun,
@@ -73,7 +78,6 @@ import {
   openAwake,
   recordStorage,
   SAMPLE_SPAN_MS,
-  type Placement,
 } from "../core/meter.ts";
 import { dirBytes } from "./bytes.ts";
 import { BUSY_WORDS, busyReason, type BusyReason } from "./busy.ts";
@@ -85,6 +89,8 @@ import {
   appsRoot,
   buildEnv,
   envBuild,
+  envVariant,
+  variantEnv,
   envHostLabel,
   ensureEnvData,
   envDataDir,
@@ -98,9 +104,14 @@ import {
   type EnvName,
 } from "./data.ts";
 import { parseManifest, type AppManifest } from "./manifest.ts";
+import { heldManifest } from "../core/starts.ts";
 import { identityKey } from "./proxy.ts";
 import { noteReached } from "./egress_report.ts";
+import { cellHooks } from "./egress_refused.ts";
 import { egressSetting } from "../core/capacity.ts";
+import { policyAt } from "../core/slider.ts";
+import { getEconomics, getOwnedNodeLabel } from "../settings/economics.ts";
+import { asleepWords, sleepWindow, type WindowSource } from "./sleep_window.ts";
 import { noteProtection } from "../kernel/protection.ts";
 import { cellsAvailable, resolveLimits, type CellSpec } from "./contain.ts";
 import {
@@ -110,6 +121,7 @@ import {
   type StartError,
   type StartInput,
 } from "./process.ts";
+import { during } from "../perf/jobs.ts";
 
 const log = createLog("apps");
 
@@ -126,18 +138,26 @@ export interface RuntimeOptions {
   readonly concurrency?: number | undefined;
   /**
    * How long an environment serves nobody before its process is stopped
-   * and it sleeps, to be woken by the next request. A preview is looked at
-   * and forgotten; production is left alone for a day before it rests.
+   * and it sleeps, to be woken by the next request. Unset (the forge's
+   * own runtime) reads the profit slider's position on every sweep
+   * (`apps/sleep_window.ts`); set, it is fixed — tests and nothing else.
    */
   readonly sleepAfterMs?:
     | { readonly production: number; readonly preview: number }
     | undefined;
+  /**
+   * The sweep's clock; a test hands in one that runs ahead to prove a
+   * window of minutes without waiting minutes. @default Date.now
+   */
+  readonly clock?: (() => number) | undefined;
   /** How often the runtime looks for environments to put to sleep. */
   readonly sweepEveryMs?: number | undefined;
   /**
    * How long a pull may go without a push or a comment before its preview
    * is stopped (not removed: its row, data and pictures stay) and reads as
-   * asleep until someone asks for it. Unset or 0 keeps every preview warm.
+   * asleep until someone asks for it. Unset follows the profit slider
+   * (`policyAt(position).idlePullMs`, read each sweep; `null` is never);
+   * 0 keeps every preview warm.
    */
   readonly idlePullMs?: number | undefined;
   /**
@@ -151,8 +171,17 @@ export interface RuntimeOptions {
    * its own, so proving `app.example.com` needs no network in a test.
    */
   readonly dns?: DomainResolver | undefined;
-  /** Where this forge's processes run, as the meter records it. @default "owned" */
-  readonly placement?: Placement | undefined;
+  /**
+   * Whether a cloud body can take a burst (`spawn/placement.ts`). Without
+   * one every environment is placed on owned metal and a burst queues.
+   * @default CLOUD_BODY_CONFIGURED (none yet)
+   */
+  readonly cloudBody?: boolean | undefined;
+  /**
+   * How many environments owned metal holds, read at each placement.
+   * @default unbounded — no limit is known, so owned is never full
+   */
+  readonly ownedCapacity?: (() => number) | undefined;
   /** How often storage is sampled for the meter. @default one hour */
   readonly storageEveryMs?: number | undefined;
   /**
@@ -170,7 +199,10 @@ export type EnvState =
   | "asleep"
   | "failed";
 
-const SLEEP_AFTER_MS = { production: 24 * 3_600_000, preview: 30 * 60_000 };
+/** Idle windows before an environment sleeps: the profit slider's 50 (`core/slider.ts`). */
+export const SLEEP_AFTER_MS = { production: 24 * 3_600_000, preview: 30 * 60_000 };
+/** Days a quiet pull keeps its preview by default: the slider's 50 too. */
+export const IDLE_PULL_DAYS = 3;
 const SWEEP_EVERY_MS = 60_000;
 const BUSY_GRACE_MS = 45 * 60_000;
 
@@ -243,6 +275,8 @@ export interface EnvStatus {
    * person's words (`BUSY_WORDS`) — set only while the sweep is sparing it.
    */
   readonly busy?: string | undefined;
+  /** Production whose `forge.json` sets `app.always_on: true`: it never sleeps. */
+  readonly alwaysOn?: true | undefined;
   /**
    * Set while a preview is stopped because its pull went quiet: when it was
    * stopped, and the last touch (push, comment, wake) it was measured from.
@@ -282,6 +316,13 @@ interface Live {
  */
 const PUSH_REASONS: readonly string[] = ["push", "opened", "merge"];
 
+/**
+ * The deploy reasons that start the same commit again, even while it serves
+ * or is coming up: someone pressed redeploy, or the repository moved to
+ * another owner (#570) and what runs must start again as the new owner's.
+ */
+const AGAIN: ReadonlySet<string> = new Set(["redeploy", "moved"]);
+
 /** How long between two instants, in seconds to one decimal place: `3.4s`. */
 function elapsedSeconds(fromIso: string, toIso: string): string {
   return seconds(Date.parse(toIso) - Date.parse(fromIso));
@@ -299,6 +340,27 @@ function diedBeforeAnswering(error: StartError): boolean {
     error.stage === "start" &&
     /^exited with code \d+ before answering/.test(error.message)
   );
+}
+
+/**
+ * What is wrong with an app's `/`, if anything: the line naming the status
+ * when it answers 4xx or 5xx, `undefined` when it answers 200 or redirects.
+ * It asks the process on its own port, so a private app's access door never
+ * answers in its place: whatever status comes back is the app's own.
+ */
+export async function rootFault(port: number): Promise<string | undefined> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/`, {
+      signal: AbortSignal.timeout(5_000),
+      redirect: "manual",
+    });
+    await response.body?.cancel();
+    if (response.status >= 400)
+      return `/ answered ${response.status}; the app is up but has no page at its root`;
+  } catch {
+    // No answer is the health path's business, not this check's.
+  }
+  return undefined;
 }
 
 /** A running environment, as a terminal session needs it. */
@@ -411,7 +473,7 @@ export function envsFor(
  * pull number — a number, not a string, so `pull-10` follows `pull-9`.
  */
 const envRank = (env: EnvName): number =>
-  env === "production" ? -1 : (envPull(env) ?? 0);
+  env === "production" ? -1 : envVariant(env) !== undefined ? -0.5 : (envPull(env) ?? 0);
 const byEnv = (a: EnvStatus, b: EnvStatus): number => envRank(a.env) - envRank(b.env);
 
 export class AppsRuntime {
@@ -590,6 +652,9 @@ export class AppsRuntime {
         looks: state.live.manifest.looks,
         looksAsOwner: state.live.manifest.looksAsOwner,
         toolbar: state.live.manifest.toolbar,
+        ...(state.env === "production" && state.live.manifest.alwaysOn === true
+          ? { alwaysOn: true as const }
+          : {}),
         ...(state.live.deployStartedAt === null
           ? {}
           : { deployStartedAt: state.live.deployStartedAt }),
@@ -716,7 +781,7 @@ export class AppsRuntime {
     this.pruneDirs(known);
     await this.sampleStorage();
     this.sweeper = setInterval(
-      () => void this.sweep(),
+      () => void during("apps-sweep", () => this.sweep()),
       this.options.sweepEveryMs ?? SWEEP_EVERY_MS,
     );
   }
@@ -766,6 +831,15 @@ export class AppsRuntime {
     if (tip !== undefined && only !== "preview")
       this.requestDeploy(record, repo, "production", tip, reason);
     const open = new Set<EnvName>(["production"]);
+    // A variant is a branch kept running: it stays while its row does, whatever
+    // pulls are open (`core/variants.ts`).
+    for (const variant of listVariants(this.app.db, record.id)) {
+      const env = variantEnv(variant.label);
+      open.add(env);
+      if (only === "production") continue;
+      const tipOid = await resolveOid(dir, `refs/heads/${variant.branch}`);
+      if (tipOid !== undefined) this.requestDeploy(record, repo, env, tipOid, reason);
+    }
     // A build preview lives only in memory: one this forge is running stays,
     // and one an earlier life left on disk goes (`previewBuild`).
     for (const state of this.envs.values())
@@ -829,6 +903,15 @@ export class AppsRuntime {
 
   // ---- events ----
 
+  private pusherMayRunVariant(repo: Repo, actorId: string | null): boolean {
+    const who = actorId === null ? undefined : getUserById(this.app.db, actorId);
+    if (who === undefined || who.kind === "agent" || !canWrite(this.app.db, repo, who)) {
+      log.info("variant waits for a person who can write", { repo: repo.name });
+      return false;
+    }
+    return true;
+  }
+
   private async onEvent(event: ForgeEvent): Promise<void> {
     if (this.stopped || event.repoId === null) return;
     if (event.kind === "repo.deleted") {
@@ -870,6 +953,19 @@ export class AppsRuntime {
               event.actorId ?? undefined,
             );
           }
+          const variant = deleted ? undefined : variantOfBranch(this.app.db, record.id, branch);
+          // A variant runs with the app's sealed values and a copy of its data:
+          // a push to its branch redeploys only when a person who can write made it.
+          // An agent proposes; the writer's own "set values" deploys directly.
+          if (variant !== undefined && this.pusherMayRunVariant(repo, event.actorId))
+            this.requestDeploy(
+              record,
+              repo,
+              variantEnv(variant.label),
+              update.newOid,
+              "push",
+              event.actorId ?? undefined,
+            );
           // Every open pull whose head is this branch previews the new tip.
           for (const pull of listPulls(this.app.db, repo.id, { sealed: true,
             state: "open",
@@ -966,6 +1062,20 @@ export class AppsRuntime {
           );
         return;
       }
+      // A move (#570): a process started before it holds the old owner's
+      // token and limits, and a deploy in flight may have read the old
+      // place on disk. Each starts again at the commit it serves, under the
+      // new owner; an asleep one wakes as the new owner's anyway, and a
+      // queued one reads the repository when its turn comes.
+      case "repo.transferred": {
+        for (const state of this.envs.values()) {
+          if (state.app.id !== record.id) continue;
+          const commit = state.deploying?.run.commitOid ?? state.live?.commitOid;
+          if (commit === undefined || state.queued !== undefined) continue;
+          this.requestDeploy(record, repo, state.env, commit, "moved", event.actorId ?? undefined);
+        }
+        return;
+      }
       case "pull.closed":
       case "pull.merged": {
         const number = event.payload["number"];
@@ -1031,11 +1141,11 @@ export class AppsRuntime {
       state.queued === undefined &&
       reason !== "restart" &&
       reason !== "oom" &&
-      reason !== "redeploy"
+      !AGAIN.has(reason)
     ) {
       return undefined;
     }
-    if (state.deploying?.run.commitOid === commitOid && reason !== "redeploy") {
+    if (state.deploying?.run.commitOid === commitOid && !AGAIN.has(reason)) {
       return state.deploying.run;
     }
     const issue =
@@ -1099,6 +1209,20 @@ export class AppsRuntime {
     return { env, run };
   }
 
+  /**
+   * Start (or move) a variant's environment at its branch's tip, now: the
+   * ask that registers a variant, or saves its values. Nothing when the
+   * branch has no tip.
+   */
+  async deployVariant(record: AppRecord, repo: Repo, label: string, actorId?: string): Promise<Run | undefined> {
+    const variant = getVariant(this.app.db, record.id, label);
+    if (variant === undefined) return undefined;
+    const dir = repoDir(this.app.reposRoot, repo.ownerName, repo.name);
+    const tip = await resolveOid(dir, `refs/heads/${variant.branch}`);
+    if (tip === undefined) return undefined;
+    return this.requestDeploy(record, repo, variantEnv(label), tip, "variant", actorId);
+  }
+
   private pullIssueId(repo: Repo, env: EnvName): string | undefined {
     const pull = getPull(this.app.db, repo.id, Number(env.slice(5)));
     return pull?.id;
@@ -1147,9 +1271,13 @@ export class AppsRuntime {
 
   private async execute(
     state: Environment,
-    repo: Repo,
+    queued: Repo,
     run: Run,
   ): Promise<void> {
+    // The row as it is now, not as it was when the deploy was asked for: a
+    // move (#570) between the two gives the repository a new owner and a
+    // new place on disk, and a queued run follows it there.
+    let repo = getRepoById(this.app.db, queued.id) ?? queued;
     const claimed = claimRun(this.app.db, run.id);
     if (!claimed) return; // cancelled meanwhile
     const lease = holdLease(this.app.db, run.id);
@@ -1196,6 +1324,8 @@ export class AppsRuntime {
       .run(
         () => {
           clock.lap("turn");
+          // Read again after the wait for a permit: a move may land in it.
+          repo = getRepoById(this.app.db, repo.id) ?? repo;
           return this.bringUp(state, repo, run, write, abort.signal, clock);
         },
         { first: state.env === "production" },
@@ -1260,7 +1390,7 @@ export class AppsRuntime {
     state.live = live;
     this.awake(state, servingAt);
     state.asleep = undefined;
-    state.lastRequestAt = Date.now();
+    state.lastRequestAt = this.now();
     state.lastError = undefined;
     if (rested !== undefined && rested.dir !== live.dir)
       rmSync(rested.dir, { recursive: true, force: true });
@@ -1381,7 +1511,9 @@ export class AppsRuntime {
       readFileAt(bare, run.commitOid, "forge.json"),
       readFileAt(bare, run.commitOid, "package.json"),
     ]);
-    const manifest = parseManifest(forgeJson, packageJson);
+    const parsed = parseManifest(forgeJson, packageJson);
+    // An agent's unclaimed account runs small, with no host but the registries (#10912).
+    const manifest = parsed.ok ? { ...parsed, value: heldManifest(this.app.db, repo.ownerId, parsed.value) } : parsed;
     clock.lap("manifest");
     if (!manifest.ok) {
       return {
@@ -1445,7 +1577,7 @@ export class AppsRuntime {
       ssh: this.sshFor(state.app, state.env),
       // Read at start, never cached: a change is a redeploy, and the
       // process that comes up is the one that sees it.
-      ...this.secretsFor(repo, state.app.id, state.env, token.token),
+      ...this.secretsFor(repo, state.app.id, state.env, token.token, dir),
       feature: this.featureFor(repo, state.app.id, state.env, dir),
       log: write,
       warm,
@@ -1499,6 +1631,14 @@ export class AppsRuntime {
         error: `${started.error.stage}: ${started.error.message}`,
       };
     }
+    // The health path answered; the page people open must too.
+    const fault = await rootFault(started.value.handle.port);
+    if (fault !== undefined) {
+      await started.value.handle.stop();
+      revokeAppToken(this.app.db, token.id);
+      rmSync(dir, { recursive: true, force: true });
+      return { ok: false, error: `ready: ${fault}` };
+    }
     return {
       ok: true,
       value: {
@@ -1522,12 +1662,17 @@ export class AppsRuntime {
     if (!this.cells.ok) return undefined;
     const dataDir = this.app.config.dataDir;
     return {
-      hide: [dataDir, process.env["HOME"] ?? "", tmpdir()],
+      hide: cellHides(this.app),
       home: join(envDir(dataDir, record.id, env), "home"),
       onUndeclared: (host, port) =>
         noteReached(dataDir, record.repoId, host, port),
+      // Asked on every connection: an owner's Allow reaches the running cell.
+      // Said once per host: the first refusal is an event, the rest a count.
+      ...cellHooks(dataDir, record.repoId, env, (host, port) =>
+        this.app.bus.append({ kind: "app.egress.refused", repoId: record.repoId, payload: { host, port } }),
+      ),
       // Asked at every start: an admin's grant reaches the next cell.
-      granted: grantedFor(this.app.db, record.repoId),
+      granted: grantsHere(this.app, () => grantedFor(this.app.db, record.repoId)),
       // Likewise an admin's flip of the egress mode.
       egressMode: egressSetting(this.app.db),
       label: `app:${record.slug}/${env}`,
@@ -1581,6 +1726,8 @@ export class AppsRuntime {
               limits: resolveLimits("app", live.manifest.limits),
               terminal: true,
               onUndeclared: base.onUndeclared,
+              allowed: base.allowed,
+              onRefused: base.onRefused,
               egressMode: base.egressMode,
               label: base.label,
             },
@@ -1616,18 +1763,22 @@ export class AppsRuntime {
         }
         const delay = RESTART_BACKOFF_MS[state.restarts.length] ?? 30_000;
         state.restarts.push(now);
-        setTimeout(() => {
-          if (this.stopped) return;
-          const fresh = getRepoById(this.app.db, repo.id);
-          if (fresh)
-            this.requestDeploy(
-              state.app,
-              fresh,
-              state.env,
-              live.commitOid,
-              oom ? "oom" : "restart",
-            );
-        }, delay);
+        setTimeout(
+          () =>
+            during("apps-restart", () => {
+              if (this.stopped) return;
+              const fresh = getRepoById(this.app.db, repo.id);
+              if (fresh)
+                this.requestDeploy(
+                  state.app,
+                  fresh,
+                  state.env,
+                  live.commitOid,
+                  oom ? "oom" : "restart",
+                );
+            }),
+          delay,
+        );
       })
       .catch(() => {});
   }
@@ -1639,7 +1790,7 @@ export class AppsRuntime {
   touch(record: AppRecord, env: EnvName): void {
     const state = this.envs.get(key(record.id, env));
     if (state === undefined) return;
-    state.lastRequestAt = Date.now();
+    state.lastRequestAt = this.now();
     state.keptAwake = undefined;
   }
 
@@ -1656,7 +1807,7 @@ export class AppsRuntime {
       if (!held) return;
       held = false;
       state.openStreams--;
-      state.lastRequestAt = Date.now();
+      state.lastRequestAt = this.now();
     };
   }
 
@@ -1674,7 +1825,7 @@ export class AppsRuntime {
       if (!held) return;
       held = false;
       state.openRequests--;
-      state.lastRequestAt = Date.now();
+      state.lastRequestAt = this.now();
     };
   }
 
@@ -1708,14 +1859,18 @@ export class AppsRuntime {
     appId: string,
     env: EnvName,
     forgeToken: string,
+    dir?: string,
   ): { vars: Record<string, string>; forgeToken: string | undefined } {
     const number = envPull(env);
     const pull =
       number === undefined ? undefined : getPull(this.app.db, repo.id, number);
     if (pull !== undefined && guestWaits(this.app.db, pull))
       return { vars: {}, forgeToken: undefined };
+    // A variant's own values (`variant.json` on its branch) go over the
+    // app's defaults; they are plain settings, never secrets.
+    const own = dir !== undefined && envVariant(env) !== undefined ? readVariantValues(dir) : {};
     return {
-      vars: resolveAppEnv(this.app.db, this.app.config.dataDir, appId, env),
+      vars: { ...resolveAppEnv(this.app.db, this.app.config.dataDir, appId, env), ...own },
       forgeToken,
     };
   }
@@ -1740,7 +1895,7 @@ export class AppsRuntime {
     if (isContributionFork(this.app.db, repo.id)) return false;
     // Production is the default branch and a build preview a commit a writer asked to see
     // (`actions/build_preview.ts`): each is a writer's choice already.
-    if (env === "production" || envBuild(env) !== undefined)
+    if (env === "production" || envBuild(env) !== undefined || envVariant(env) !== undefined)
       return true;
     const number = envPull(env);
     const pull =
@@ -1809,7 +1964,7 @@ export class AppsRuntime {
         forgeUrl: this.options.forgeUrl,
         identityKey: identityKey(this.app.config.dataDir, record.id),
         ssh: this.sshFor(record, env),
-        ...this.secretsFor(repo, record.id, env, token.token),
+        ...this.secretsFor(repo, record.id, env, token.token, asleep.dir),
         feature: this.featureFor(repo, record.id, env, asleep.dir),
         log: write,
         signal: new AbortController().signal,
@@ -1846,7 +2001,7 @@ export class AppsRuntime {
       state.asleep = undefined;
       state.live = live;
       this.awake(state, now);
-      state.lastRequestAt = Date.now();
+      state.lastRequestAt = this.now();
       this.watch(state, repo, live);
       write("awake");
     })().finally(() => {
@@ -1879,6 +2034,7 @@ export class AppsRuntime {
     };
     const manifest = parseManifest(read("forge.json"), read("package.json"));
     if (!manifest.ok) return false;
+    const owner = getRepoById(this.app.db, record.repoId)?.ownerId;
     const state = this.envFor(record, env);
     if (state.live !== undefined || state.deploying !== undefined) return true;
     // The deploy that built this checkout, in an earlier life: its log is
@@ -1892,7 +2048,7 @@ export class AppsRuntime {
     state.asleep = {
       commitOid,
       dir,
-      manifest: manifest.value,
+      manifest: owner === undefined ? manifest.value : heldManifest(this.app.db, owner, manifest.value),
       runId: built?.id ?? "",
       since: new Date().toISOString(),
     };
@@ -1913,8 +2069,8 @@ export class AppsRuntime {
    * or someone is deciding it right now (a queued or running run on it).
    */
   private idleSince(repo: Repo, pull: Pull, env: EnvName): string | undefined {
-    const age = this.options.idlePullMs ?? 0;
-    if (age <= 0 || pull.state !== "open") return undefined;
+    const age = this.idlePullAge();
+    if (age === null || pull.state !== "open") return undefined;
     const now = Date.now();
     let last = Date.parse(pull.updatedAt);
     if (now - last < age) return undefined;
@@ -1965,7 +2121,7 @@ export class AppsRuntime {
 
   /** Stop the previews whose pulls have gone quiet; keep everything else. */
   private async hibernate(): Promise<void> {
-    if ((this.options.idlePullMs ?? 0) <= 0) return;
+    if (this.idlePullAge() === null) return;
     for (const state of [...this.envs.values()]) {
       const number = envPull(state.env);
       if (
@@ -2004,13 +2160,40 @@ export class AppsRuntime {
     }
   }
 
+  /**
+   * How long a pull may sit untouched before its preview stops; `null` is
+   * never. A fixed option wins (0 is off); unset follows the slider, read
+   * now — so moving it changes the next sweep, with no restart.
+   */
+  idlePullAge(): number | null {
+    const fixed = this.options.idlePullMs;
+    if (fixed !== undefined) return fixed > 0 ? fixed : null;
+    return policyAt(getEconomics(this.app.db).position).idlePullMs;
+  }
+
+  /** Where this sweep's idle windows come from: a fixed option, else the slider as it stands. */
+  private windowSource(): WindowSource {
+    const fixed = this.options.sleepAfterMs;
+    return fixed !== undefined
+      ? { kind: "fixed", sleepAfterMs: fixed }
+      : { kind: "slider", position: getEconomics(this.app.db).position };
+  }
+
+  /**
+   * The sweep's clock. Requests stamp `lastRequestAt` with it too, so a
+   * window measured by the sweep starts again at a request on the same clock.
+   */
+  private now(): number {
+    return this.options.clock?.() ?? Date.now();
+  }
+
   /** Stop what nobody has asked for lately, and keep it ready to wake. */
   private async sweep(): Promise<void> {
     if (this.stopped) return;
     await this.hibernate();
-    const after = this.options.sleepAfterMs ?? SLEEP_AFTER_MS;
+    const source = this.windowSource();
     const grace = this.options.busyGraceMs ?? BUSY_GRACE_MS;
-    const now = Date.now();
+    const now = this.now();
     this.metered(() => beatAwake(this.app.db, new Date(now).toISOString()));
     for (const state of this.envs.values()) {
       const live = state.live;
@@ -2026,8 +2209,13 @@ export class AppsRuntime {
         state.waking !== undefined
       )
         continue;
-      const limit =
-        state.env === "production" ? after.production : after.preview;
+      const window = sleepWindow(
+        source,
+        state.env === "production" || envVariant(state.env) !== undefined,
+        live.manifest.alwaysOn === true,
+      );
+      const limit = window.ms;
+      if (limit === null) continue;
       const last = state.lastRequestAt ?? Date.parse(live.since);
       if (now - last < limit) continue;
       // Idle by the clock; asked whether it is mid-work, and spared while
@@ -2062,7 +2250,7 @@ export class AppsRuntime {
           this.app.config.dataDir,
           live.runId,
           busy === undefined
-            ? `asleep: nothing asked for it in ${Math.round(limit / 60_000)} minutes; the next request wakes it`
+            ? asleepWords({ ms: limit, why: window.why })
             : `asleep: still busy ${Math.round(grace / 60_000)} minutes past its idle window, which is as long as busy keeps an app awake; the next request wakes it`,
         );
       log.info("asleep", { app: state.app.slug, env: state.env });
@@ -2099,16 +2287,43 @@ export class AppsRuntime {
     }
   }
 
-  /** The environment began serving: its awake interval opens, if not open. */
+  /**
+   * The environment began serving: its awake interval opens, if not open,
+   * placed by the policy (`core/placement_policy.ts`) and with that decision
+   * kept in the ledger, so cost knows which price applies and why.
+   */
   private awake(state: Environment, at: string): void {
-    this.metered(() =>
-      openAwake(this.app.db, {
+    this.metered(() => {
+      const db = this.app.db;
+      const service = state.live?.manifest.service ?? null;
+      const seen = {
+        ownedUsed: this.ownedUsed(state),
+        ownedCapacity: this.options.ownedCapacity?.() ?? Infinity,
+        spillAtOwnedUse: policyAt(getEconomics(db).position).spillAtOwnedUse,
+        alwaysOn: state.env === "production" || service?.alwaysOn === true,
+        preference: service?.placement ?? null,
+        cloudBody: this.options.cloudBody ?? CLOUD_BODY_CONFIGURED,
+      };
+      const placed = placeFor(seen);
+      const opened = openAwake(db, { repoId: state.app.repoId, env: state.env, placement: placed.where, at });
+      if (!opened) return;
+      recordPlacement(db, {
         repoId: state.app.repoId,
         env: state.env,
-        placement: this.options.placement ?? "owned",
-        at,
-      }),
-    );
+        where: placed.where,
+        reason: placed.reason,
+        // JSON has no Infinity: an unbounded capacity is kept as null.
+        seen: { ...seen, ownedCapacity: Number.isFinite(seen.ownedCapacity) ? seen.ownedCapacity : null },
+        target: bodyTarget(placed.where, getOwnedNodeLabel(db)),
+      });
+    });
+  }
+
+  /** Environments up on this forge now, `except` aside: what owned metal holds. */
+  private ownedUsed(except: Environment): number {
+    let n = 0;
+    for (const other of this.envs.values()) if (other !== except && other.live !== undefined) n++;
+    return n;
   }
 
   /** The environment stopped serving: its awake interval closes. */

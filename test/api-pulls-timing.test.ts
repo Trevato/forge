@@ -13,6 +13,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { expectWork, requestStatements } from "./helpers/work.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 quietLogs();
 
@@ -76,7 +77,7 @@ afterAll(async () => {
 async function phases(path: string): Promise<{ status: number; names: string[]; body: string }> {
   const res = await fetch(`${servers.url}${path}`, { headers: { cookie } });
   const body = await res.text();
-  const names = (res.headers.get("server-timing") ?? "").split(", ").map((p) => p.split(";")[0]!);
+  const names = requestTiming(res).split(", ").map((p) => p.split(";")[0]!);
   return { status: res.status, names: names.slice(names.indexOf("app") + 1), body };
 }
 

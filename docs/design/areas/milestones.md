@@ -25,3 +25,7 @@ a `ul.list.setting-list` with no `.card` around it, and a folded tail is a
 `details` under the rows, not a card foot. How far it is stands as a plain
 `#ms-progress` stack. No new component class; `limb.ts` and the re-plan page
 share the same rows.
+
+## Front door lines
+
+The few biggest open milestones on the home and an app's page are plain `row`s in a `ul.list.setting-list`, the same rows as the milestone list; the "Last moved in wave" line on a milestone is one such row. They paint nothing when nothing moved. No new component class.

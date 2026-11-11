@@ -20,6 +20,7 @@ import {
 import { linkEdgeLogin } from "../../core/edge_links.ts";
 import { activeEdgeToken, edgeIdentity } from "../../http/edge.ts";
 import { RateLimiter } from "../../core/ratelimit.ts";
+import { requestOf } from "../../core/requests.ts";
 import { createSession } from "../../core/sessions.ts";
 import { LAST_WAY_IN, removeOwnPasskey } from "../../actions/passkeys.ts";
 import { recoveryAccount, requestRecovery, spendRecoveryLink } from "../../actions/verify.ts";
@@ -197,7 +198,8 @@ export async function signinPasskey(ctx: Ctx): Promise<Response> {
   const found = findPasskey(ctx.app.db, str(data.id));
   if (!found) return no();
   const user = getUserById(ctx.app.db, found.userId);
-  if (!user || !isActive(user)) return no();
+  const waiting = user !== undefined && user.waitingAt !== null && user.suspendedAt === null && user.removedAt === null;
+  if (!user || (!isActive(user) && !waiting)) return no();
   const verified = await verifyAssertion(
     {
       clientDataJSON: str(data.clientDataJSON),
@@ -209,6 +211,9 @@ export async function signinPasskey(ctx: Ctx): Promise<Response> {
   );
   if (!verified.ok) return no();
   notePasskeyUsed(ctx.app.db, found.id, verified.signCount);
+  // A proven key on an account whose request has no yes yet starts no session (#10928).
+  if (waiting)
+    return json({ ok: true, waiting: true, next: requestOf(ctx.app.db, user.id)?.state === "declined" ? "/signup/requested?answer=declined" : "/signup/requested" }, 202);
   const session = createSession(ctx.app.db, user.id);
   return json(
     { ok: true, next: safeNext(ctx.url.searchParams.get("next")) ?? "/" },

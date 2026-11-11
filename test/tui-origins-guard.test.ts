@@ -68,7 +68,7 @@ describe("a paused origin in the terminal", () => {
     };
     try {
       await key("k", true);
-      for (const ch of "Connected origins") await key(ch);
+      for (const ch of "Connected accounts") await key(ch);
       await key("enter");
       expect(app.screen.toText()).toContain("writes paused");
       expect(app.screen.toText()).toContain("Press v to check again");

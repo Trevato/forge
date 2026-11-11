@@ -124,9 +124,9 @@ describe("home is the feed", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("the composer is a §5 card, and no .composer class remains", async () => {
+  test("the composer is a plain form (no card), and no .composer class remains", async () => {
     const text = await (await get("/feed", aliceCookie)).text();
-    expect(text).toMatch(/<form id="composer" class="card" method="post" action="\/tell">\s*<div class="card-body/);
+    expect(text).toMatch(/<form id="composer" class="stack" method="post" action="\/tell">/);
     expect(text).not.toContain('class="composer');
   });
 

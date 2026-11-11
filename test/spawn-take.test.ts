@@ -101,7 +101,23 @@ describe("taking the parent's code", () => {
 
   const pulls = () => listPulls(app.db, repo.id, { state: "open" }).filter((p) => p.headBranch === "forge/take-updates");
 
-  test("a fast-forward opens one pull and leaves main alone", async () => {
+  test("an untouched fork fast-forwards main within one check, and opens no pull", async () => {
+    const s = await checkUpstream(app, { remote: parent });
+    const tip = await git(parent, "rev-parse", "refs/heads/main");
+    expect(s?.taken).toEqual({ kind: "forwarded", commits: 1 });
+    expect(await main()).toBe(tip);
+    expect(pulls()).toHaveLength(0);
+    expect(s?.behind).toBe(0);
+    expect(taken()).toHaveLength(1);
+    expect(listEvents(app.db, { repoId: repo.id, kind: "push" }).some((e) => JSON.stringify(e.payload).includes(tip))).toBe(true);
+    expect(upstreamWords(s, s!.checkedAt)).toContain("1 commit from your parent was taken in");
+    await checkUpstream(app, { remote: parent });
+    expect(taken()).toHaveLength(1); // nothing new: nothing said again
+  });
+
+  test("a fork with commits of its own gets a pull, never an automatic merge", async () => {
+    await mine("own.txt", "own\n");
+    await theirs("p1.txt", "1\n");
     const before = await main();
     const s = await checkUpstream(app, { remote: parent });
     expect(pulls()).toHaveLength(1);
@@ -110,27 +126,23 @@ describe("taking the parent's code", () => {
     expect(p.authorId).toBe(kid.id);
     expect(s?.taken).toEqual({ kind: "pull", number: p.number, commits: 1 });
     expect(await main()).toBe(before);
-    expect(await git(child, "rev-parse", "refs/heads/forge/take-updates")).toBe(await git(parent, "rev-parse", "refs/heads/main"));
-    expect(taken()).toHaveLength(1);
+    expect(taken()).toHaveLength(2);
     expect(upstreamWords(s, s!.checkedAt)).toContain(`1 commit from your parent is in pull #${p.number}`);
   });
 
   test("a second fetch with one more commit updates the same pull", async () => {
     const before = await main();
     const first = pulls()[0]!;
-    await theirs("p1.txt", "1\n");
+    await theirs("p1b.txt", "1b\n");
     const s = await checkUpstream(app, { remote: parent });
     expect(pulls()).toHaveLength(1);
     expect(pulls()[0]!.number).toBe(first.number);
-    expect(pulls()[0]!.headOid).toBe(await git(parent, "rev-parse", "refs/heads/main"));
     expect(s?.taken).toEqual({ kind: "pull", number: first.number, commits: 2 });
     expect(await main()).toBe(before);
-    expect(taken()).toHaveLength(2);
+    expect(taken()).toHaveLength(3);
     const pushed = listEvents(app.db, { repoId: repo.id, kind: "pull.pushed" });
     expect(pushed).toHaveLength(1);
     expect(JSON.stringify(pushed[0]!.payload)).toContain(first.number.toString());
-    await checkUpstream(app, { remote: parent });
-    expect(taken()).toHaveLength(2); // nothing new: nothing said again
   });
 
   test("a clean merge goes on the branch, not on main", async () => {
@@ -198,6 +210,21 @@ describe("taking the parent's code", () => {
     const issues = listIssues(app.db, repo.id, { sealed: true }).filter((i) => i.title === "Take updates from root/forge");
     expect(issues).toHaveLength(1);
     expect(issues[0]!.body).toContain("a.txt");
-    expect(taken()).toHaveLength(4);
+    expect(taken()).toHaveLength(5);
+  });
+
+  test("a severed fork gets nothing", async () => {
+    await Bun.write(
+      join(app.config.dataDir, "parent.json"),
+      JSON.stringify({
+        upstream: "https://parent.test",
+        forgeCode: { repo: "kid/forge", upstream: "root/forge", mode: "take-updates", tip: "a".repeat(40), chain: [], severedAt: new Date().toISOString() },
+      }),
+    );
+    await theirs("p9.txt", "9\n");
+    const before = await main();
+    expect(await checkUpstream(app, { remote: parent })).toBeUndefined();
+    expect(await main()).toBe(before);
+    expect(taken()).toHaveLength(5);
   });
 });

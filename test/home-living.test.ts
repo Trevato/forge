@@ -190,8 +190,9 @@ describe("home", () => {
 
   test("a warm home costs a bounded number of statements, the two scans read once per write", async () => {
     await home(aliceCookie);
+    // Calm pass (#10298): home now also reads what waits on the owner, the last visit (a write) and the digest since: 3 more statements, bound raised 40 to 46.
     const warm = await requestStatements(app.db, `${servers.url}/`, { headers: { cookie: aliceCookie } });
-    expectWork(warm, { max: 40 });
+    expectWork(warm, { max: 46 });
     const scans = await statements(app.db, async () => void (await get("/live/moving", aliceCookie).then((r) => r.text())));
     const again = await statements(app.db, async () => void (await get("/live/moving", aliceCookie).then((r) => r.text())));
     expect(again).toBeLessThanOrEqual(scans);
@@ -230,5 +231,19 @@ describe("the feed page", () => {
     const moving = /<section aria-label="Being built">[\s\S]*?<\/section>/.exec(page)![0];
     expect(moving).toContain('<ul class="list">');
     expect(moving).not.toContain('class="card');
+  });
+});
+
+describe("home, calm pass (#10298)", () => {
+  test("what just shipped opens in place; being built stays in view", async () => {
+    const page = await home(aliceCookie);
+    expect(page).toMatch(/<details[^>]*class="disclosure[^>]*>\s*<summary[^>]*>Just shipped<\/summary>/);
+    expect(page).toMatch(/<h2 class="small muted">Being built<\/h2>/);
+  });
+
+  test("the figures open in place for the owner, and the held line no longer restates itself", async () => {
+    const page = await home(rootCookie);
+    expect(page).toMatch(/id="home-figures"[^>]*class="disclosure/);
+    expect(page).not.toContain("until you lift it");
   });
 });

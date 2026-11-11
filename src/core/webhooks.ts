@@ -19,7 +19,8 @@ import {
   type OutboundOptions,
 } from "../kernel/outbound.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import type { ForgeEvent } from "./events.ts";
+import { EventBus, type ForgeEvent } from "./events.ts";
+import { noteFailure } from "./webhook_streak.ts";
 
 const MAX_ATTEMPTS = 6;
 const DELIVER_TIMEOUT_MS = 10_000;
@@ -167,6 +168,9 @@ export function kindMatches(spec: string, kind: string): boolean {
  */
 export function enqueueForEvent(db: Database, event: ForgeEvent): number {
   if (event.repoId === null) return 0;
+  // The news that a hook is failing is for writers, not for hooks: sent to the
+  // failing one it would be one more doomed delivery in the streak it reports.
+  if (event.kind === "webhook.failing") return 0;
   // A hook's URL is somewhere else: nothing about a sealed report goes
   // there, not even that it moved (`sealed.ts`).
   if (eventSealed(db, event)) return 0;
@@ -300,7 +304,6 @@ interface DueRow {
   created_at: string;
 }
 
-/** Deliver all due pending deliveries. Returns how many were attempted. */
 /**
  * How long a claimed delivery is its sender's before another may try it:
  * well past the longest one send may take, so a claim never lapses while
@@ -309,11 +312,18 @@ interface DueRow {
 export const CLAIM_MS = 60_000;
 export { DELIVER_TIMEOUT_MS };
 
+/**
+ * Deliver all due pending deliveries. Returns how many were attempted.
+ * `bus` is optional only for one-shot callers (tests, scripts) with no live
+ * listeners: it then writes a bus of its own, which stores the event and wakes
+ * no one. The worker (`runDelivery`) always passes the forge's bus.
+ */
 export async function deliverDue(
   db: Database,
   log: Log,
   now = new Date(),
   outbound: OutboundOptions = {},
+  bus: EventBus = new EventBus(db),
 ): Promise<number> {
   const nowIso = now.toISOString();
   const events = db
@@ -365,7 +375,7 @@ export async function deliverDue(
       );
     if (claimed.changes !== 1) continue;
     try {
-      await deliverOne(db, log, row, now, outbound);
+      await deliverOne(db, log, row, now, outbound, bus);
     } catch (error) {
       // One malformed delivery must not take the batch with it. Without
       // this, a single unsendable row stops every delivery behind it — and
@@ -377,7 +387,7 @@ export async function deliverDue(
         delivery: row.id,
         error: String(error),
       });
-      backOff(db, log, row, 0, now);
+      backOff(db, log, row, 0, now, bus);
     }
   }
   return due.length;
@@ -394,6 +404,7 @@ async function deliverOne(
   row: DueRow,
   now: Date,
   outbound: OutboundOptions,
+  bus: EventBus,
 ): Promise<void> {
   // A ping's body is its payload as it stands: { kind, repo, hook, at }.
   const body =
@@ -440,6 +451,7 @@ async function deliverOne(
       db.query(
         `UPDATE ${tableOf(row)} SET state = 'failed', attempts = ?1, last_status = NULL, last_error = ?2 WHERE id = ?3`,
       ).run(attempt, error.message, row.id);
+      if (!row.ping) noteFailure(db, bus, row.webhook_id, error.message);
       return;
     }
     log.warn("webhook delivery error", {
@@ -455,7 +467,7 @@ async function deliverOne(
     ).run(attempt, status, row.id);
     return;
   }
-  backOff(db, log, row, status, now);
+  backOff(db, log, row, status, now, bus);
 }
 
 /** Record an attempt and schedule the next one — or give up. */
@@ -465,6 +477,7 @@ function backOff(
   row: DueRow,
   status: number,
   now: Date,
+  bus: EventBus,
 ): void {
   const attempt = row.attempts + 1;
   if (attempt >= MAX_ATTEMPTS) {
@@ -476,6 +489,13 @@ function backOff(
       attempts: attempt,
       status,
     });
+    if (!row.ping)
+      noteFailure(
+        db,
+        bus,
+        row.webhook_id,
+        status === 0 ? "no response" : `answered HTTP ${status}`,
+      );
     return;
   }
   // Exponential backoff: ~10s, 40s, 90s, … capped implicitly by attempt count.
@@ -591,11 +611,15 @@ const delivering = new WeakSet<Database>();
 /** For tests and for anyone who wants to know why nothing is being sent. */
 export const deliveryBusy = (db: Database): boolean => delivering.has(db);
 
-/** A never-throwing wrapper for the worker loop's fire-and-forget calls. */
-export function runDelivery(db: Database, log: Log): void {
+/**
+ * A never-throwing wrapper for the worker loop's fire-and-forget calls. The
+ * bus is required: it is the forge's own, so the `webhook.failing` event
+ * wakes live streams and not only the outbox.
+ */
+export function runDelivery(db: Database, log: Log, bus: EventBus): void {
   if (delivering.has(db)) return;
   delivering.add(db);
-  deliverDue(db, log)
+  deliverDue(db, log, new Date(), {}, bus)
     .catch((error) => {
       // The worker must survive any delivery batch failing — a thrown rejection
       // here would take the process down (a lesson paid for elsewhere).

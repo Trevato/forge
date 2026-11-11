@@ -19,6 +19,7 @@
  * can see, one lane each.
  */
 
+import { faceAt } from "../pixel.ts";
 import type { MapHold } from "../../crew/held.ts";
 import { sealedScope } from "../../core/sealed.ts";
 import type { Database } from "bun:sqlite";
@@ -51,7 +52,7 @@ import {
 import { liveRegionsJs } from "../client.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { btn, empty, row } from "../ui.ts";
+import { btn, disclosure, empty, row } from "../ui.ts";
 import {
   parkedTwice,
   struckOut,
@@ -75,6 +76,10 @@ import {
   type PillarView,
 } from "../../core/pillars.ts";
 import { askToLiveFor } from "../ask_to_live.ts";
+import { roadmapOf } from "../roadmap.ts";
+import { roadmapBody, roadmapCss } from "./roadmap.ts";
+import { cookieValue } from "../../http/context.ts";
+import { secureFor } from "../../http/cookie_secure.ts";
 
 /** Where a card's own link goes: dev's issue page, by default. */
 const devIssueHref = (base: string, number: number): string =>
@@ -708,6 +713,7 @@ function node(
   const number = `#${n.issue.number}`;
   const who = n.issue.assigneeName;
   const whoX = left + 9 + number.length * 6.4;
+  const face = who ? faceAt(who, whoX, bottom - 11, 14) : null;
   return html`<a
     class="map-node"
     data-state="${word}"
@@ -741,7 +747,14 @@ function node(
         : html`<tspan x="${left}" dy="16">${second}</tspan>`}
     </text>
     <text class="map-meta" x="${left}" y="${bottom}">${number}</text>
-    ${who
+    ${face !== null
+      ? html`<g class="map-who">
+          ${face}
+          <text class="map-who-n" x="${whoX + 19}" y="${bottom}"
+            >${trim(who ?? "", 11)}</text
+          >
+        </g>`
+      : who !== null
       ? html`<g class="map-who">
           <circle cx="${whoX + 7}" cy="${bottom - 4}" r="7" />
           <text class="map-who-i" x="${whoX + 7}" y="${bottom - 1}"
@@ -971,6 +984,7 @@ function rankedList(
                 href: issueHref(base, r.issue.number),
                 title: r.issue.title,
                 titleAttr: r.issue.title,
+                nav: true,
                 meta: html`#${r.issue.number} · ${say(r)}${first?.by.has(r.issue.id)
                   ? ` · first, by ${first.by.get(r.issue.id)}`
                   : ""}`,
@@ -1186,7 +1200,7 @@ export const mapCss = /* css */ `
 #lanes { margin-top: 16px; }
 #lanes li[data-autonomy="autonomous"] .row-title .badge { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 34%, transparent); }
 #lanes li[data-idle] .row-title { color: var(--muted-fg); }
-#lanes details > .card.empty { border: 0; border-top: 1px solid var(--border); border-radius: 0; }
+#lanes details > .empty { border-top: 1px solid var(--border); }
 #lanes details > .map-canvas { border: 0; border-top: 1px solid var(--border); border-radius: 0; }
 @media (prefers-reduced-motion: reduce) {
   .map-card, .map-title { transition: none; }
@@ -1378,11 +1392,83 @@ function openOnly(graph: Graph): Graph {
   };
 }
 
-/** GET /:owner/:name/map (`?done=1` draws the closed issues too) */
+/** A visit older than this is a new visit: what moved since is marked. */
+const VISIT_MS = 30 * 60_000;
+
+/**
+ * When the reader last looked, from their cookie `prev~cur`: `cur` is this
+ * visit's start, `prev` the one before it. A live swap (a fetch, not a
+ * navigation) never moves them, so what is marked stays marked.
+ */
+export function lastLooked(
+  header: string | undefined,
+  now: Date,
+  navigating: boolean,
+): { since: string | undefined; cookie: string | undefined } {
+  const [prev, cur] = (header ?? "").split("~");
+  const valid = (t: string | undefined): string | undefined =>
+    t !== undefined && /^\d{4}-\d\d-\d\dT[\d:.]+Z$/.test(t) ? t : undefined;
+  let p = valid(prev);
+  let c = valid(cur);
+  if (!navigating) return { since: p ?? c, cookie: undefined };
+  if (c === undefined) c = now.toISOString();
+  else if (now.getTime() - Date.parse(c) > VISIT_MS) {
+    p = c;
+    c = now.toISOString();
+  }
+  return { since: p, cookie: `${p ?? ""}~${c}` };
+}
+
+/** GET /:owner/:name/map (`?done=1` draws the closed issues too; `?view=graph` is the drawing) */
 export async function mapPage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
+  if (
+    ctx.url.searchParams.get("view") !== "graph" &&
+    ctx.url.searchParams.get("done") !== "1"
+  ) {
+    const name = `rm_${repo.ownerName}_${repo.name}`.replace(/[^A-Za-z0-9_]/g, "_");
+    const mode = ctx.request.headers.get("sec-fetch-mode");
+    const seen = lastLooked(
+      cookieValue(ctx.request, name),
+      new Date(),
+      mode === null || mode === "navigate",
+    );
+    const road = roadmapOf(ctx.app.db, repo, ctx.auth.user, {
+      ...(seen.since === undefined ? {} : { since: seen.since }),
+    });
+    if (road !== undefined) {
+      const base = repoBase(repo);
+      const response = page({
+        ctx,
+        title: `Roadmap · ${repo.name}`,
+        crumbs: crumbsFor(repo),
+        palette: repoPalette(ctx, repo),
+        body: html`${repoHeader(ctx, repo, "map")}
+          <div class="page-head mt">
+            <h1>Roadmap</h1>
+            <p class="muted small"><a href="${base}/map?view=graph">The graph</a> · <a href="${base}/space">The space</a></p>
+          </div>
+          <div
+            class="rm"
+            id="roadmap-live"
+            data-live="${LIVE_KINDS}"
+            data-live-repo="${repo.ownerName}/${repo.name}"
+          >
+            ${roadmapBody(base, road)}
+          </div>`,
+        styleCss: roadmapCss,
+        scriptJs: liveRegionsJs,
+      });
+      if (seen.cookie !== undefined)
+        response.headers.append(
+          "set-cookie",
+          `${name}=${seen.cookie}; Path=/; Max-Age=31536000; SameSite=Lax; HttpOnly${secureFor(ctx.url, ctx.app.config.url) ? "; Secure" : ""}`,
+        );
+      return response;
+    }
+  }
   const db = ctx.app.db;
   const studio = studioRecord(ctx, repo) !== undefined;
   const showDone = ctx.url.searchParams.get("done") === "1";
@@ -1420,13 +1506,13 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
   const body = html`${repoHeader(ctx, repo, "map")}
     <div class="page-head mt">
       <h1>Map</h1>
-      <p class="muted">
-        What waits for what. The top edge is ready now; the chain in the accent
-        is the least work that still has to happen in order.
-        <a href="${repoBase(repo)}/milestones">How far each milestone is</a>.
-        <a href="${repoBase(repo)}/next">Next up</a> is the one ranked list the crew builds from.
-      </p>
+      <span class="spacer"></span>
+      <a href="${repoBase(repo)}/space">Space</a><a href="${repoBase(repo)}/milestones">Milestones</a><a href="${repoBase(repo)}/next">Next up</a>
     </div>
+    ${disclosure("? How to read this", html`<div class="prose break" id="map-help">
+      <p>What waits for what. The top edge is ready now; the chain in the accent is the least work that still has to happen in order.</p>
+      <p>The first list is what nothing stands in front of; when it is empty, everything open waits for something. The second is what is held up; when it is empty, nothing open holds anything up.</p>
+    </div>`, { id: "map-more" })}
     <div
       class="map-wrap"
       id="map-live"
@@ -1455,7 +1541,7 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
                     ? "holds nothing up"
                     : `finishing it frees ${r.holdsUp}`
                 }`,
-              "Nothing is ready: everything open waits for something.",
+              "Nothing ready.",
               tellHref,
               {
                 writer:
@@ -1477,7 +1563,7 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
           blocked,
           (r) =>
             `${wordFor(r.issue, readySet, marks)} · ${pillarOf(r)}${r.waitsFor > 0 ? `waits for ${r.waitsFor} · ` : ""}holds up ${r.holdsUp}`,
-          "Nothing open holds anything up.",
+          "Nothing blocked.",
           tellHref,
         )}
       </aside>

@@ -1,5 +1,5 @@
 /**
- * The terminal's Origin apps screen (src/tui/screens/originapps.ts, #7291):
+ * The terminal's Connection apps screen (src/tui/screens/originapps.ts, #7291):
  * add, list without the secret, a bad host refused in the API's words, and
  * remove after a confirm. No frame and no log line holds the secret.
  */
@@ -18,7 +18,7 @@ import { settleApp } from "./helpers/tui.ts";
 
 const SECRET = "s3cr3t_Qw9zXv";
 const RIGHT = "\x1b[C";
-const open = [":", "Origin apps", "\r"];
+const open = [":", "Connection apps", "\r"];
 
 let dir: string;
 let app: App;

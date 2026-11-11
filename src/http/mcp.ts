@@ -29,8 +29,10 @@ import { page, signInHref } from "../web/layout.ts";
 import { html } from "../web/html.ts";
 import type { Router } from "./router.ts";
 import { clientBucket } from "./peer.ts";
+import { TOKEN_FREE_TOOLS } from "../core/mcp_card.ts";
 import { proofOf } from "./report_filer.ts";
 import { fileReport } from "../actions/reports.ts";
+import { START_HINT, START_WORDS, startBuilding } from "../actions/start.ts";
 import { REPORT_RECEIVED } from "../actions/report_words.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 import { everydayOf } from "../core/everyday.ts";
@@ -40,13 +42,30 @@ import { CONVERSATION_BRIEF } from "../crew/conversation_brief.ts";
 import { TOOLS } from "./mcp/tools.ts";
 
 const PROTOCOLS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
-/** Who answers: the forge, at the version its build stamped. */
+/** The tools/list entries for these tools, then `report`: what is served, and what docs/MCP.md measures. */
+export function toolEntries(tools: readonly (typeof TOOLS)[number][]) {
+  return [
+    ...tools.map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: lean(t.inputSchema),
+      // readOnlyHint defaults to false (MCP tool annotations), so only a
+      // read says so: 57 copies of the default were 2 KB of the 40 KB.
+      ...(t.writes ? {} : { annotations: { readOnlyHint: true } }),
+      ...(CARD_OF_TOOL[t.name] === undefined
+        ? {}
+        : { _meta: { ui: { resourceUri: CARD_URI(CARD_OF_TOOL[t.name]!) } } }),
+    })),
+    ...[REPORT_TOOL, START_TOOL].map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
+  ];
+}
+
 // One page of tools/list stays within this many bytes of tools; `nextCursor`
 // names the rest, so adding a tool never busts one response.
 export const TOOLS_PAGE_BYTES = 20_000;
 
+/** Who answers: the forge, at the version its build stamped. */
 const server = () => ({ name: "forge", version: running().version });
-
 
 /**
  * Said to an MCP client whose token belongs to a site admin (#596): it acts
@@ -125,24 +144,7 @@ function rpcOne(
     case "ping":
       return reply({});
     case "tools/list": {
-      const all = [
-        ...TOOLS.filter((t) => visible(t, ctx, user)).map((t) => ({
-          name: t.name,
-          description: t.description,
-          inputSchema: lean(t.inputSchema),
-          // readOnlyHint defaults to false (MCP tool annotations), so only a
-          // read says so: 57 copies of the default were 2 KB of the 40 KB.
-          ...(t.writes ? {} : { annotations: { readOnlyHint: true } }),
-          ...(CARD_OF_TOOL[t.name] === undefined
-            ? {}
-            : {
-                _meta: {
-                  ui: { resourceUri: CARD_URI(CARD_OF_TOOL[t.name]!) },
-                },
-              }),
-        })),
-        { name: REPORT_TOOL.name, description: REPORT_TOOL.description, inputSchema: REPORT_TOOL.inputSchema },
-      ];
+      const all = toolEntries(TOOLS.filter((t) => visible(t, ctx, user)));
       // The cursor is the name of the last tool of the page before, so a tool
       // added between two requests moves nothing.
       const cursor = params["cursor"];
@@ -276,7 +278,36 @@ export const REPORT_TOOL = {
   },
 } as const;
 
-/** The JSON-RPC answer to a `report` call, or undefined for any other message. */
+/**
+ * `start`, the other tool open without a token (#10912): an agent with only
+ * the forge's URL gets an account, a repository, its app and a token; the
+ * same call as `POST /api/v1/start` (`actions/start.ts`).
+ */
+export const START_TOOL = {
+  name: "start",
+  /** Its line in /llms.txt's `## MCP tools`; never sent to a client. */
+  doc: "`{ name, description? }`: an account, repo, live app and token; push to main to deploy; `claim` is for a person",
+  writes: true,
+  description: "Start building with no account: an account, a repo, a live app and a token in one call.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      name: { type: "string", maxLength: 40 },
+      description: { type: "string", maxLength: 2000 },
+      agent: { type: "string", maxLength: 64 },
+      code: { type: "string", maxLength: 100 },
+    },
+    required: ["name"],
+  },
+} as const;
+
+/** What a token-free tool does with its call: the JSON-RPC answer. One entry per name in TOKEN_FREE_TOOLS. */
+type FreeHandler = (ctx: Ctx, id: unknown, args: Args) => unknown;
+
+/** The gate picks its handler here, so a name listed in TOKEN_FREE_TOOLS without one is caught by a test. */
+export const TOKEN_FREE_HANDLERS: Readonly<Record<string, FreeHandler>> = { report: reportAnswer, start: startAnswer };
+
+/** The JSON-RPC answer to a token-free tool call, or undefined for any other message. */
 function reportCall(ctx: Ctx, message: unknown): unknown | undefined {
   const m =
     typeof message === "object" && message !== null
@@ -286,10 +317,15 @@ function reportCall(ctx: Ctx, message: unknown): unknown | undefined {
     typeof m["params"] === "object" && m["params"] !== null
       ? (m["params"] as Record<string, unknown>)
       : {};
+  const name = typeof params["name"] === "string" ? params["name"] : "";
+  const handler =
+    TOKEN_FREE_TOOLS.includes(name) && Object.hasOwn(TOKEN_FREE_HANDLERS, name)
+      ? TOKEN_FREE_HANDLERS[name]
+      : undefined;
   if (
     m["jsonrpc"] !== "2.0" ||
     m["method"] !== "tools/call" ||
-    params["name"] !== REPORT_TOOL.name ||
+    handler === undefined ||
     m["id"] === undefined
   )
     return undefined;
@@ -297,9 +333,13 @@ function reportCall(ctx: Ctx, message: unknown): unknown | undefined {
     typeof params["arguments"] === "object" && params["arguments"] !== null
       ? (params["arguments"] as Args)
       : {};
+  return handler(ctx, m["id"], args);
+}
+
+function reportAnswer(ctx: Ctx, id: unknown, args: Args): unknown {
   const text = (t: string, isError = false) => ({
     jsonrpc: "2.0",
-    id: m["id"],
+    id,
     result: { content: [{ type: "text", text: t }], ...(isError ? { isError } : {}) },
   });
   const [owner, name, ...rest] = str(args["repo"]).split("/");
@@ -341,11 +381,26 @@ function reportCall(ctx: Ctx, message: unknown): unknown | undefined {
   );
 }
 
+async function startAnswer(ctx: Ctx, id: unknown, args: Args): Promise<unknown> {
+  const text = (t: string, isError = false) => ({
+    jsonrpc: "2.0",
+    id,
+    result: { content: [{ type: "text", text: t }], ...(isError ? { isError } : {}) },
+  });
+  const started = await startBuilding(ctx.app, args, clientBucket(ctx.request), ctx.url.origin);
+  if (started.ok) return text(JSON.stringify(started.value));
+  const e = started.error;
+  return text(
+    `${e.error}: ${START_WORDS[e.error]}${e.retryAfter === undefined ? "" : ` (try again in ${e.retryAfter} seconds)`} ${START_HINT}`,
+    true,
+  );
+}
+
 const NOT_HERE = (allow: string): Response =>
   new Response(null, { status: 405, headers: { allow } });
 
 /** Every tool name the forge lists, admin-only ones included. */
-export const toolNames = (): string[] => [...TOOLS.map((t) => t.name), REPORT_TOOL.name];
+export const toolNames = (): string[] => [...TOOLS.map((t) => t.name), REPORT_TOOL.name, START_TOOL.name];
 
 /** What each tool declares about itself, for the test that walks them all. */
 export const toolRegistry = () =>
@@ -367,7 +422,7 @@ export function mcpRoutes(router: Router<Handler>): void {
     ) {
       const message: unknown = await body(ctx.request);
       const reported = reportCall(ctx, message);
-      if (reported !== undefined) return json(reported);
+      if (reported !== undefined) return json(await reported);
       const answer = await rpcOne(ctx, user, message);
       if (answer === undefined) return new Response(null, { status: 202 });
       return json(answer);
@@ -381,14 +436,15 @@ export function mcpRoutes(router: Router<Handler>): void {
         413,
       );
     const reported = reportCall(ctx, message);
-    if (reported !== undefined) return json(reported);
+    if (reported !== undefined) return json(await reported);
     // The refusal keeps the OAuth challenge a client starts from, and names
     // the one thing a stranger can do without signing in.
     return new Response(
       JSON.stringify({
         error: "unauthorized",
+        hint: "Send `Authorization: Bearer <token>` with a token you hold, then repeat the call; without one, only the `report` tool answers.",
         message:
-          "send a forge token: Authorization: Bearer <token>. Without one, the tool `report` (tools/call, name \"report\", arguments {repo, title, body?, page?, agent?}) files a problem report on a public repository; see /llms.txt",
+          "send a forge token: Authorization: Bearer <token>. Without one, the tool `start` (tools/call, name \"start\", arguments {name, description?, agent?}) makes you an account, a repo and a live app with a token; and the tool `report` (tools/call, name \"report\", arguments {repo, title, body?, page?, agent?}) files a problem report on a public repository; see /llms.txt",
         report: {
           method: "tools/call",
           name: "report",
@@ -408,11 +464,24 @@ export function mcpRoutes(router: Router<Handler>): void {
   // No server-to-client stream is offered: nothing to hold open, nothing
   // for a proxy to cut.
   // A browser (Accept names text/html) is told what this is; every other
-  // Accept, an MCP client's event-stream included, gets the bare 405.
+  // Accept, an MCP client's event-stream included, gets the 405 with a
+  // short text/plain explanation of how to connect.
   router.add("GET", "/mcp", (ctx) => {
-    if (!(ctx.request.headers.get("accept") ?? "").toLowerCase().includes("text/html"))
-      return NOT_HERE("POST");
     const origin = ctx.url.origin;
+    if (!(ctx.request.headers.get("accept") ?? "").toLowerCase().includes("text/html"))
+      return new Response(
+        [
+          "This is the forge's MCP endpoint.",
+          `It speaks JSON-RPC over POST: send POST ${origin}/mcp with Authorization: Bearer <token>.`,
+          `OAuth discovery: ${origin}/.well-known/oauth-protected-resource`,
+          "Docs: docs/MCP.md, and /llms.txt for what an agent can do here.",
+          "",
+        ].join("\n"),
+        {
+          status: 405,
+          headers: { allow: "POST", "content-type": "text/plain; charset=utf-8" },
+        },
+      );
     const res = page(
       {
         ctx,

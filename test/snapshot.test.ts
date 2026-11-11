@@ -6,7 +6,7 @@
  * data and can still open the variable. Then the store is pruned and the
  * restore refuses what it must.
  */
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import {
   existsSync,
   mkdirSync,
@@ -49,7 +49,27 @@ describe("a forge back from a snapshot", () => {
   let root: string;
   let app: App;
   let alice: User;
-  const store = () => dirStore(join(root, "store"));
+  let made = 0;
+  /** A directory under this block's root that no other test has used. */
+  const fresh = (what: string) => join(root, `${what}-${++made}`);
+  const NAME = "2026-09-22T08-00-00Z";
+  /** A store of its own holding one snapshot of the forge, taken at 08:00 on 22 Sep. */
+  const snapshotted = async () => {
+    const dir = fresh("store");
+    const store = dirStore(dir);
+    const manifest = await takeSnapshot(
+      {
+        db: app.db,
+        dataDir: app.config.dataDir,
+        reposRoot: app.reposRoot,
+        version: "t",
+        passphrase: PASS,
+      },
+      store,
+      new Date("2026-09-22T08:00:00Z"),
+    );
+    return { dir, store, manifest };
+  };
 
   beforeAll(async () => {
     root = mkdtempSync(join(tmpdir(), "forge-snapshot-"));
@@ -117,18 +137,8 @@ describe("a forge back from a snapshot", () => {
   });
 
   test("the snapshot holds what cannot be rebuilt, consistently, while the forge runs", async () => {
-    const manifest = await takeSnapshot(
-      {
-        db: app.db,
-        dataDir: app.config.dataDir,
-        reposRoot: app.reposRoot,
-        version: "t",
-        passphrase: PASS,
-      },
-      store(),
-      new Date("2026-09-22T08:00:00Z"),
-    );
-    expect(manifest.name).toBe("2026-09-22T08-00-00Z");
+    const { dir, store, manifest } = await snapshotted();
+    expect(manifest.name).toBe(NAME);
     expect(manifest.repos).toBe(1);
     expect(manifest.apps).toBe(1);
     const paths = manifest.files.map((f) => f.path);
@@ -145,7 +155,7 @@ describe("a forge back from a snapshot", () => {
       if (!f.startsWith("forge.db") && !f.includes("/"))
         expect(
           readFileSync(
-            join(root, "store", "snapshots", manifest.name, f),
+            join(dir, "snapshots", manifest.name, f),
           ).includes(rawKey),
         ).toBe(false);
     expect(paths).toContain("repos/alice/notes.bundle");
@@ -165,8 +175,7 @@ describe("a forge back from a snapshot", () => {
     const { Database } = await import("bun:sqlite");
     const copy = new Database(
       join(
-        root,
-        "store",
+        dir,
         "snapshots",
         manifest.name,
         "apps",
@@ -181,14 +190,15 @@ describe("a forge back from a snapshot", () => {
       n: 2,
     });
     copy.close();
-    expect((await listSnapshots(store())).map((m) => m.name)).toEqual([
+    expect((await listSnapshots(store)).map((m) => m.name)).toEqual([
       manifest.name,
     ]);
   });
 
   test("restored into an empty directory, a forge booted there is the same forge", async () => {
-    const back = join(root, "back");
-    const done = await restoreSnapshot(store(), "2026-09-22T08-00-00Z", back, {
+    const { store } = await snapshotted();
+    const back = fresh("back");
+    const done = await restoreSnapshot(store, NAME, back, {
       passphrase: PASS,
     });
     expect(done.repos).toBe(1);
@@ -234,8 +244,9 @@ describe("a forge back from a snapshot", () => {
   });
 
   test("without the passphrase repos restore and sealed values are reported by name", async () => {
-    const back = join(root, "back-nokey");
-    const done = await restoreSnapshot(store(), "2026-09-22T08-00-00Z", back);
+    const { store } = await snapshotted();
+    const back = fresh("back-nokey");
+    const done = await restoreSnapshot(store, NAME, back);
     expect(done.key).toBe("missing");
     expect(done.sealedMissing).toEqual(["SECRET_WORD (app notes)"]);
     expect(existsSync(join(back, "secret.key.wrapped"))).toBe(false);
@@ -254,9 +265,10 @@ describe("a forge back from a snapshot", () => {
   });
 
   test("a wrong passphrase refuses the restore and writes nothing", async () => {
-    const back = join(root, "back-wrong");
+    const { store } = await snapshotted();
+    const back = fresh("back-wrong");
     await expect(
-      restoreSnapshot(store(), "2026-09-22T08-00-00Z", back, {
+      restoreSnapshot(store, NAME, back, {
         passphrase: "not the one",
       }),
     ).rejects.toThrow("passphrase");
@@ -264,7 +276,7 @@ describe("a forge back from a snapshot", () => {
   });
 
   test("a snapshot taken without a passphrase carries no key at all", async () => {
-    const s = dirStore(join(root, "store-nokey"));
+    const s = dirStore(fresh("store-nokey"));
     const m = await takeSnapshot(
       {
         db: app.db,
@@ -290,19 +302,21 @@ describe("a forge back from a snapshot", () => {
   });
 
   test("a restore refuses a full directory and an unknown snapshot", async () => {
+    const { store } = await snapshotted();
+    const full = fresh("full");
+    mkdirSync(full, { recursive: true });
+    writeFileSync(join(full, "already.txt"), "here\n");
+    await expect(restoreSnapshot(store, NAME, full)).rejects.toThrow("not empty");
     await expect(
-      restoreSnapshot(store(), "2026-09-22T08-00-00Z", join(root, "back")),
-    ).rejects.toThrow("not empty");
-    await expect(
-      restoreSnapshot(store(), "2026-01-01T00-00-00Z", join(root, "nowhere")),
+      restoreSnapshot(store, "2026-01-01T00-00-00Z", fresh("nowhere")),
     ).rejects.toThrow("no snapshot");
     await expect(
-      restoreSnapshot(store(), "../etc", join(root, "nowhere")),
+      restoreSnapshot(store, "../etc", fresh("nowhere")),
     ).rejects.toThrow("not a snapshot name");
   });
 
   test("the store keeps the newest fourteen and no more", async () => {
-    const s = store();
+    const { store: s } = await snapshotted();
     for (let d = 1; d <= 16; d++)
       await s.put(
         `snapshots/2026-08-${String(d).padStart(2, "0")}T08-00-00Z/manifest.json`,
@@ -320,7 +334,7 @@ describe("a forge back from a snapshot", () => {
   });
 
   test("the service takes one on demand and knows when the night is", async () => {
-    const svc = startSnapshots(app, dirStore(join(root, "store2")), {
+    const svc = startSnapshots(app, dirStore(fresh("store")), {
       version: "t",
       nightly: false,
     });
@@ -355,7 +369,8 @@ describe("a forge back from a snapshot", () => {
         await fetch(`${servers.url}/settings/backups`, { headers: { cookie } })
       ).text();
       expect(none).toContain("No snapshots are taken");
-      const svc = startSnapshots(app, dirStore(join(root, "store")), {
+      const { store } = await snapshotted();
+      const svc = startSnapshots(app, store, {
         version: "t",
         nightly: false,
       });
@@ -365,7 +380,7 @@ describe("a forge back from a snapshot", () => {
             headers: { cookie },
           })
         ).text();
-        expect(listed).toContain("2026-09-22T08-00-00Z");
+        expect(listed).toContain(NAME);
         expect(listed).toContain("Snapshot now");
         // Off by default: the page says no key travels, and what that costs.
         expect(listed).toContain("Snapshots carry no key");
@@ -388,7 +403,7 @@ describe("a forge back from a snapshot", () => {
       } finally {
         await svc.stop();
       }
-      const wrapping = startSnapshots(app, dirStore(join(root, "store")), {
+      const wrapping = startSnapshots(app, store, {
         version: "t",
         nightly: false,
         passphrase: PASS,
@@ -417,14 +432,15 @@ describe("a forge back from a snapshot", () => {
 });
 
 describe("a snapshot's uploads", () => {
+  // Each test gets a forge of its own, so no test reads the logs another wrote.
   let root: string;
   let app: App;
-  beforeAll(() => {
+  beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "forge-snapshot-queue-"));
     app = createApp({ dataDir: join(root, "live"), port: 0 });
     mkdirSync(join(app.config.dataDir, "runs"), { recursive: true });
   });
-  afterAll(async () => {
+  afterEach(async () => {
     app.close();
     await rm(root, { recursive: true, force: true });
   });
@@ -455,6 +471,11 @@ describe("a snapshot's uploads", () => {
     return { store, seen };
   };
   const logsDir = () => join(app.config.dataDir, "runs");
+  /** Forty fresh run logs, new-00.log to new-39.log. */
+  const newLogs = () => {
+    for (let i = 0; i < 40; i++)
+      writeFileSync(join(logsDir(), `new-${String(i).padStart(2, "0")}.log`), "x");
+  };
   const old = (name: string, body: string, day: string) => {
     const file = join(logsDir(), name);
     writeFileSync(file, body);
@@ -463,8 +484,7 @@ describe("a snapshot's uploads", () => {
   };
 
   test("at most eight puts are in flight, and the manifest keeps its order", async () => {
-    for (let i = 0; i < 40; i++)
-      writeFileSync(join(logsDir(), `new-${String(i).padStart(2, "0")}.log`), "x");
+    newLogs();
     const { store, seen } = slowStore(15);
     const manifest = await takeSnapshot(forge(), store);
     expect(seen.peak).toBeGreaterThan(1);
@@ -501,6 +521,7 @@ describe("a snapshot's uploads", () => {
   }, 20_000);
 
   test("a failed put fails the snapshot and names its key", async () => {
+    newLogs();
     const { store } = slowStore(1, "runs/new-07.log");
     await expect(takeSnapshot(forge(), store)).rejects.toThrow(
       /could not put snapshots\/.*runs\/new-07\.log/,
@@ -508,6 +529,7 @@ describe("a snapshot's uploads", () => {
   }, 15_000);
 
   test("a slow store gets a progress line every so many objects", async () => {
+    newLogs();
     const { store } = slowStore(10);
     const lines: { objects: number; bytes: number }[] = [];
     await takeSnapshot(
@@ -533,6 +555,7 @@ describe("a snapshot's uploads", () => {
   });
 
   test("older run logs go up as one object a day and restore as the logs they were", async () => {
+    newLogs();
     old("a.log", "alpha\n", "2026-10-10");
     old("b.log", "beta\n", "2026-10-10");
     old("c.log", "gamma\n", "2026-10-11");
@@ -574,6 +597,7 @@ describe("a snapshot's uploads", () => {
   }, 15_000);
 
   test("the service shows a running snapshot's progress while it runs", async () => {
+    newLogs();
     const { store } = slowStore(40);
     const svc = startSnapshots(app, store, { version: "t", nightly: false });
     try {
@@ -597,6 +621,7 @@ describe("a snapshot's uploads", () => {
   }, 15_000);
 
   test("the service says how long the snapshot in flight has run, for the release keeper to wait on (#9653)", async () => {
+    newLogs();
     const { store } = slowStore(40);
     const svc = startSnapshots(app, store, { version: "t", nightly: false });
     try {
@@ -606,6 +631,20 @@ describe("a snapshot's uploads", () => {
       const ms = svc.takingMs();
       expect(ms).toBeGreaterThanOrEqual(0);
       await taking;
+      expect(svc.takingMs()).toBeUndefined();
+    } finally {
+      await svc.stop();
+    }
+  }, 15_000);
+
+  test("until the boot's look at the store is done, the service counts as taking, so no release lands in that gap", async () => {
+    const { store } = slowStore(0);
+    const svc = startSnapshots(app, store, { version: "t", snapshotCatchUpMs: 30, snapshotCheckMs: 60_000 });
+    try {
+      expect(svc.takingMs()).toBeGreaterThanOrEqual(0);
+      await Bun.sleep(400);
+      await svc.now().catch(() => {});
+      await Bun.sleep(50);
       expect(svc.takingMs()).toBeUndefined();
     } finally {
       await svc.stop();

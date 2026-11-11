@@ -13,6 +13,9 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { exploreParams } from "../src/actions/explore.ts";
+/** The href the page gives a line: separate parameters, `&` escaped as in markup. */
+const linkOf = (line: string): string => `/explore?${exploreParams(readExploreLine(line).query)}`.replace(/&/g, "&amp;");
 
 quietLogs();
 
@@ -62,9 +65,10 @@ describe("readExploreLine", () => {
     const s = await serve(a);
     try {
       const q = encodeURIComponent("owner:trevato updated:2y archived:maybe");
-      const body = (await (await fetch(`${s.url}/api/v1/explore?q=${q}`)).json()) as { note?: string; query: string };
-      expect(body.note).toBe("updated:2y is not a window — use 1d, 7d, 30d; archived:maybe is not an answer — use yes, no");
-      expect(body.query).toBe("owner:trevato");
+      const res = await fetch(`${s.url}/api/v1/explore?q=${q}`);
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { message: string };
+      expect(body.message).toBe("updated:2y is not a window — use 1d, 7d, 30d; archived:maybe is not an answer — use yes, no");
     } finally {
       await s.stop();
       a.db.close();
@@ -104,7 +108,7 @@ describe("the page and the API", () => {
     expect(out.split("is not a sort").length).toBe(2);
     expect(out).toContain("sort:bogus is not a sort — use score, forks, ships, likes, use, fresh, name");
     expect(out).not.toContain(encodeURIComponent("sort:bogus"));
-    expect(out).toContain(`href="/explore?q=${encodeURIComponent("kind:app garden")}"`);
+    expect(out).toContain(`href="${linkOf("kind:app garden")}"`);
   });
 
   test("the page says an updated:, archived: or owner: word once, escaped", async () => {
@@ -127,15 +131,14 @@ describe("the page and the API", () => {
     expect(out).not.toContain("<b>");
   });
 
-  test("the API answers a note in a field, not an error", async () => {
+  test("the API answers 400 naming the allowed words (#10387)", async () => {
     const res = await fetch(`${servers.url}/api/v1/explore?q=${encodeURIComponent("kind:nope")}`);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { note?: string; query: string; items: unknown[] };
-    expect(body.note).toContain("kind:nope is not a kind");
-    expect(body.query).toBe("");
-    expect(Array.isArray(body.items)).toBe(true);
-    const fine = (await (await fetch(`${servers.url}/api/v1/explore?q=kind:app`)).json()) as { note?: string };
-    expect(fine.note).toBeUndefined();
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("unknown_filter");
+    expect(body.message).toContain("kind:nope is not a kind — use app, person, forge");
+    const fine = await fetch(`${servers.url}/api/v1/explore?q=kind:app`);
+    expect(fine.status).toBe(200);
   });
 
   test("the MCP tool answers the same note", async () => {
@@ -152,13 +155,18 @@ describe("the page and the API", () => {
         },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "explore", arguments: { query } } }),
       });
-      return JSON.parse(((await res.json()) as any).result.content[0].text) as { note?: string };
+      const out = ((await res.json()) as any).result as { isError?: boolean; content: { text: string }[] };
+      return { isError: out.isError === true, text: out.content[0]!.text };
     };
-    expect((await call("sort:bogus")).note).toContain("sort:bogus is not a sort");
-    expect((await call("sort:forks")).note).toBeUndefined();
-    expect((await call("archived:maybe")).note).toBe("archived:maybe is not an answer — use yes, no");
-    expect((await call("updated:2y")).note).toBe("updated:2y is not a window — use 1d, 7d, 30d");
-    expect((await call("owner:a/b")).note).toBe("owner:a/b is not a name");
+    const sort = await call("sort:bogus");
+    expect(sort.isError).toBe(true);
+    expect(sort.text).toContain("unknown_filter: sort:bogus is not a sort — use score, forks, ships, likes, use, fresh, name");
+    const fine = await call("sort:forks");
+    expect(fine.isError).toBe(false);
+    expect(JSON.parse(fine.text)).toHaveProperty("items");
+    expect(await call("archived:maybe")).toEqual({ isError: true, text: "unknown_filter: archived:maybe is not an answer — use yes, no" });
+    expect(await call("updated:2y")).toEqual({ isError: true, text: "unknown_filter: updated:2y is not a window — use 1d, 7d, 30d" });
+    expect(await call("owner:a/b")).toEqual({ isError: true, text: "unknown_filter: owner:a/b is not a name" });
   });
 });
 
@@ -192,7 +200,7 @@ describe("did you mean", () => {
     try {
       const q = encodeURIComponent("garden sort:froks");
       const html = await (await fetch(`${s.url}/explore?q=${q}`)).text();
-      expect(html).toContain(`Did you mean <a href="/explore?q=${encodeURIComponent("garden sort:forks")}">sort:forks</a>?`);
+      expect(html).toContain(`Did you mean <a href="${linkOf("garden sort:forks")}">sort:forks</a>?`);
       const api = (await (await fetch(`${s.url}/api/v1/explore?q=${q}`)).json()) as { suggest?: string };
       expect(api.suggest).toBe("garden sort:forks");
       const none = (await (await fetch(`${s.url}/api/v1/explore?q=sort:zzzzzzzz`)).json()) as { suggest?: string };
@@ -203,9 +211,9 @@ describe("did you mean", () => {
       const { tool } = await import("../src/http/mcp/tools/explore.ts");
       const out = await tool.run({ app: a } as never, undefined as never, { q: "garden sort:froks" });
       expect(JSON.stringify(out)).toContain("garden sort:forks");
-      expect(JSON.stringify(out)).toContain("suggest");
+      expect(JSON.stringify(out)).toContain("did you mean");
       const quiet = await tool.run({ app: a } as never, undefined as never, { q: "garden sort:forks" });
-      expect(JSON.stringify(quiet)).not.toContain("suggest");
+      expect(JSON.stringify(quiet)).not.toContain("did you mean");
       const far = await tool.run({ app: a } as never, undefined as never, { q: "sort:zzzzzzzz" });
       expect(JSON.stringify(far)).not.toContain("suggest");
       expect(JSON.stringify(far)).toContain("is not a sort");

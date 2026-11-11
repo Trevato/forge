@@ -139,7 +139,7 @@ describe("a conflicting fork pull is combined on our side (#9012)", () => {
 
     expect(body).toContain("your side was dropped from the landed tree");
     expect(body).toContain("To get your side back");
-    expect(body).toContain("Checks run on the pull&#39;s head, not on this combined commit.");
+    expect(body).toContain("The checks line says which commit the check ran on.");
     expect(body).not.toContain("Stale: main has moved");
 
     // The terminal's pull screen says the same (#9012).
@@ -185,7 +185,10 @@ describe("a conflicting fork pull is combined on our side (#9012)", () => {
     await Bun.write(join(a, "four.txt"), "four\n");
     await git(["add", "."], a);
     await git(["commit", "-m", "alice's four"], a);
-    await git(["push", "origin", "main"], a);
+    // Moved past the hook (a push to main would recombine at once, #10040), so
+    // the preview stays built on the old main and the card must say so.
+    await git(["push", "origin", "main:refs/heads/four"], a);
+    await git(["update-ref", "refs/heads/main", await git(["rev-parse", "HEAD"], a)], bare);
     const stale = await (await call(`/alice/app/pulls/${number}`, alice)).text();
     expect(stale).toContain(`Stale: main has moved since ${aliceMain.slice(0, 10)}`);
     expect(await screenText()).toContain("Combined with main · stale");

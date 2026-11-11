@@ -80,6 +80,10 @@ export interface Finding {
   readonly fix?: string;
   /** A degraded finding: when its cause first opened. Same cause and time, same incident (#2553). */
   readonly incident?: string;
+  /** A degraded finding: when its newest span opened (#10291). */
+  readonly lastOpenedAt?: string;
+  /** A degraded finding whose spans have all closed: when the last one did. Absent while one is open (#10291). */
+  readonly endedAt?: string;
   /** The vitals cause a budget-breach or degraded finding reads. */
   readonly cause?: string;
 }
@@ -398,7 +402,10 @@ export function repeatedErrors(now: number): Finding[] {
  */
 export function degradedCauses(db: Database, now: number, forgeRepoId?: string, dataDir?: string): Finding[] {
   const from = now - DAY_MS;
-  const byCause = new Map<string, { sentence: string; href: string; first: number; opened: number; ms: number }>();
+  const byCause = new Map<
+    string,
+    { sentence: string; href: string; first: number; opened: number; lastOpened: number; ms: number; ended: number }
+  >();
   for (const s of spans(db, from, now)) {
     if (!ownCause(s.cause, forgeRepoId)) continue;
     const start = Math.max(s.openedAt, from);
@@ -410,7 +417,10 @@ export function degradedCauses(db: Database, now: number, forgeRepoId?: string, 
       href: s.href,
       first: seen?.first ?? start,
       opened: seen?.opened ?? s.openedAt,
+      lastOpened: s.openedAt,
       ms: (seen?.ms ?? 0) + Math.max(0, held),
+      // Infinity while any span is still open: the incident has not ended.
+      ended: Math.max(seen?.ended ?? -Infinity, s.closedAt ?? Infinity),
     });
   }
   const out: Finding[] = [];
@@ -432,6 +442,8 @@ export function degradedCauses(db: Database, now: number, forgeRepoId?: string, 
       kind: "defect",
       lookFor: `\`${cause}\` stays out of the degraded list for a day, or holds under ${DEGRADED_DAY_MS / 60_000} minutes.`,
       incident: new Date(d.opened).toISOString(),
+      lastOpenedAt: new Date(d.lastOpened).toISOString(),
+      ...(Number.isFinite(d.ended) ? { endedAt: new Date(d.ended).toISOString() } : {}),
       cause,
     });
   }
@@ -658,20 +670,26 @@ function labelFinding(app: App, repo: Repo, actor: User, issue: Issue, f: Findin
  * again: the fix is likely merged but not live. At most one comment a day.
  * One closed as dropped stays silent. True when
  * the incident is that one: the comments made (0 or 1), else undefined.
+ *
+ * The day's window clips an incident's early spans as it slides, which moves
+ * its first-open time; a finding whose newest span had opened by the time the
+ * sentinel last saw the closed issue's is still that incident. Ended, it is
+ * said nothing: it was filed, fixed and over (#10167, #10237, #10291 were one).
  */
 function continuesDone(app: App, repo: Repo, actor: User, f: Finding, evidence: string, at: string, now: number): 0 | 1 | undefined {
   const prior = app.db
-    .query<{ issue_id: string; commented_at: string | null }, [string, string]>(
-      `SELECT t.issue_id, t.commented_at FROM sentinel_finding t JOIN issue i ON i.id = t.issue_id
-        WHERE t.key = ?1 AND t.incident = ?2 AND i.state = 'closed'
-        ORDER BY t.first_seen DESC LIMIT 1`,
+    .query<{ issue_id: string; commented_at: string | null; same: number }, [string, string, string]>(
+      `SELECT t.issue_id, t.commented_at, t.incident IS ?2 AS same FROM sentinel_finding t JOIN issue i ON i.id = t.issue_id
+        WHERE t.key = ?1 AND i.state = 'closed' AND (t.incident = ?2 OR t.last_seen >= ?3)
+        ORDER BY same DESC, t.first_seen DESC LIMIT 1`,
     )
-    .get(f.key, f.incident ?? "");
+    .get(f.key, f.incident ?? "", f.lastOpenedAt ?? "\uffff");
   if (prior === null) return undefined;
   const issue = getIssueById(app.db, prior.issue_id);
   if (issue === undefined) return undefined;
   if (issue.closeReason === "dropped") return 0;
   if (issue.closeReason !== "done" && issue.closeReason !== "split") return undefined;
+  if (prior.same === 0 && f.endedAt !== undefined) return 0;
   if (prior.commented_at !== null && now - Date.parse(prior.commented_at) < DAY_MS) return 0;
   const minutes = f.evidence.find((e) => e.startsWith("total: "));
   const said = addComment(

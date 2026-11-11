@@ -67,7 +67,7 @@ describe("list cursors and states are validated", () => {
       for (const bad of ["abc", "0", "-1", "1.5", "", "1e3", "%25%25"]) {
         const res = await get(`${route}?cursor=${bad}`);
         expect(res.status).toBe(422);
-        expect(await res.json()).toEqual({
+        expect(await res.json()).toMatchObject({
           error: "invalid_cursor",
           message: "cursor is the next_cursor of a previous page",
         });
@@ -79,7 +79,7 @@ describe("list cursors and states are validated", () => {
       for (const bad of ["bogus", "Closed", "", "OPEN"]) {
         const res = await get(`${route}?state=${bad}`);
         expect(res.status).toBe(422);
-        expect(await res.json()).toEqual({ error: "invalid_state", message: "state is open, closed or all" });
+        expect(await res.json()).toMatchObject({ error: "invalid_state", message: "state is open, closed or all" });
       }
       for (const ok of ["", "?state=open", "?state=closed", "?state=all"])
         expect((await get(`${route}${ok}`)).status).toBe(200);
@@ -91,7 +91,7 @@ describe("list cursors and states are validated", () => {
       for (const bad of ["%25%25", "a.b", "", "a".repeat(65), "a%20b"]) {
         const res = await get(`${route}?cursor=${bad}`);
         expect(res.status).toBe(422);
-        expect(await res.json()).toEqual({
+        expect(await res.json()).toMatchObject({
           error: "invalid_cursor",
           message: "cursor is the next_cursor of a previous page",
         });

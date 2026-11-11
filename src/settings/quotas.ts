@@ -27,6 +27,29 @@ export function isQuotaKey(key: string): key is QuotaKey {
   return (QUOTA_KEYS as readonly string[]).includes(key);
 }
 
+/**
+ * What an account that came through a request (`core/requests.ts`) is held
+ * to when the admin has set no limit of their own: small, so that letting a
+ * stranger in costs little. Admins, existing members and guests who never
+ * asked are not in it; a stored quota is the admin's word and wins.
+ */
+export const NEWCOMER_QUOTAS: Quotas = {
+  repositories: 3,
+  apps: 2,
+  storage: 200,
+  previews: 1,
+  runs: 1,
+  checks: 1,
+};
+
+/** The limit on `key` for the account `ownerId`: the stored one, else the newcomer's, else none. */
+export function quotaOf(db: Database, key: QuotaKey, ownerId: string): number | null {
+  const stored = getQuota(db, key);
+  if (stored !== null) return stored;
+  const asked = db.query("SELECT 1 FROM account_request WHERE user_id = ?1 AND state = 'allowed'").get(ownerId);
+  return asked === null ? null : NEWCOMER_QUOTAS[key];
+}
+
 const storeKey = (key: QuotaKey): string => `quota.${key}`;
 
 /** A limit from untrusted input: a positive integer, or empty/null for none. */
@@ -75,7 +98,7 @@ export function repositoriesOwned(db: Database, ownerId: string): number {
 
 /** The sentence a refused creation says, or nothing when there is room. */
 export function repositoryLimitSentence(db: Database, ownerId: string): string | undefined {
-  const limit = getQuota(db, "repositories");
+  const limit = quotaOf(db, "repositories", ownerId);
   if (limit === null) return undefined;
   const owned = repositoriesOwned(db, ownerId);
   return owned >= limit ? `${owned} of ${limit} repositories` : undefined;
@@ -102,7 +125,7 @@ export function runningLimitSentence(
   ownerId: string,
   held: () => number,
 ): string | undefined {
-  const limit = getQuota(db, key);
+  const limit = quotaOf(db, key, ownerId);
   if (limit === null || exempt(db, ownerId)) return undefined;
   const n = held();
   return n >= limit ? `${n} of ${limit} ${noun}` : undefined;

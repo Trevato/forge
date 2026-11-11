@@ -173,3 +173,12 @@ export const portOf = (p: Pick<Pinned, "config">): string => {
 
 /** Where a pinned forge is served, once its droplet's address is known; empty before. */
 export const urlOf = (p: Pick<Pinned, "address" | "config">): string => (p.address === "" ? "" : `http://${p.address}:${portOf(p)}/`);
+
+/** When the newest `check` of this forge ran, from the event it recorded; undefined before the first (or once pruned). */
+export function lastCheckOf(db: Database, name: string): string | undefined {
+  return db
+    .query<{ created_at: string }, [string]>(
+      "SELECT created_at FROM event WHERE kind = 'pinned.check' AND json_extract(payload, '$.name') = ?1 ORDER BY seq DESC LIMIT 1",
+    )
+    .get(name)?.created_at;
+}

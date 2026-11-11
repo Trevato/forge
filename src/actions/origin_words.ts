@@ -1,6 +1,6 @@
 /**
  * What an origin's sync and disconnect say, in one place so the page in
- * Settings › Origins and the terminal's Connected origins say the same thing.
+ * Settings › Connected accounts and the terminal's Connected accounts screen say the same thing.
  */
 
 export const NO_SUCH_ORIGIN = "No such origin.";

@@ -21,6 +21,7 @@
  * ended from here.
  */
 
+import { UPSTREAM_REPO } from "../../core/upstream.ts";
 import { accountSignIns, endAccountSession } from "../../actions/signins.ts";
 import {
   CHANGE_PASSWORD_WORDS,
@@ -29,6 +30,9 @@ import {
   createToken,
   deleteToken,
 } from "../../actions/users.ts";
+import { claudeInstall } from "../../core/plugin_install.ts";
+import { offeredPluginRepo } from "../../core/mcp_card.ts";
+import { publicOrigin } from "../../core/public_origin.ts";
 import { withinPasswordCap } from "../../core/hash-gate.ts";
 import { listKeys } from "../../core/keys.ts";
 import { ADMIN_TOKEN_WORDS, type TokenScope } from "../../core/tokens.ts";
@@ -90,30 +94,54 @@ export function signInsOf(f: Session): SignIn[] {
   ];
 }
 
+/** Cut into rows of `width` characters: wrapped, never truncated, so a hand-copied line is the whole line. */
+function hardWrap(text: string, width: number): string[] {
+  const w = Math.max(1, width);
+  const rows: string[] = [];
+  for (let i = 0; i < text.length; i += w) rows.push(text.slice(i, i + w));
+  return rows;
+}
+
 /** The secret, alone on a screen; nothing keeps it once this is popped. */
-function secretScreen(ctx: Ctx, secret: string): Screen {
-  let copied = false;
+function secretScreen(ctx: Ctx, secret: string, install: string | null): Screen {
+  let copied = "";
   return {
-    title: "New token",
-    keys: [binding(["y"], "copy it"), binding(["esc", "q"], "done")],
+    title: "New access code",
+    keys: [
+      binding(["y"], "copy it"),
+      ...(install === null ? [] : [binding(["c"], "copy the plugin command")]),
+      binding(["esc", "q"], "done"),
+    ],
     render(area, s) {
       const c = ctx.theme.c;
-      s.text(area.x, area.y, truncate("copy it now, it is never shown again.", area.w), style(c.mutedFg, c.bg), area.x + area.w);
-      // Wrapped, never cut: a hand-copied secret must be the whole secret.
-      const width = Math.max(1, area.w);
-      const lines: string[] = [];
-      for (let i = 0; i < secret.length; i += width) lines.push(secret.slice(i, i + width));
-      lines.forEach((line, i) => s.text(area.x, area.y + 2 + i, line, style(c.fg, c.bg), area.x + area.w));
-      const foot = copied ? "Copied." : "y copies it, esc is done.";
-      s.text(area.x, area.y + 3 + lines.length, truncate(foot, area.w), style(c.mutedFg, c.bg), area.x + area.w);
+      const end = area.x + area.w;
+      const bottom = area.y + area.h;
+      s.text(area.x, area.y, truncate("copy it now, it is never shown again.", area.w), style(c.mutedFg, c.bg), end);
+      const lines = hardWrap(secret, area.w);
+      lines.forEach((line, i) => s.text(area.x, area.y + 2 + i, line, style(c.fg, c.bg), end));
+      const foot = copied === "" ? "y copies it, esc is done." : copied;
+      s.text(area.x, area.y + 3 + lines.length, truncate(foot, area.w), style(c.mutedFg, c.bg), end);
       if (lines.length > 1)
-        s.text(area.x, area.y + 4 + lines.length, truncate("It wraps; y copies it whole.", area.w), style(c.mutedFg, c.bg), area.x + area.w);
+        s.text(area.x, area.y + 4 + lines.length, truncate("It wraps; y copies it whole.", area.w), style(c.mutedFg, c.bg), end);
+      // The same one command Settings › Tokens offers, under the same gate; wrapped whole or not drawn.
+      if (install === null) return;
+      const top = area.y + 6 + lines.length;
+      const rows = hardWrap(install, area.w);
+      if (top + 1 + rows.length > bottom) {
+        if (top < bottom) s.text(area.x, top, truncate("Plugin command: c copies it.", area.w), style(c.mutedFg, c.bg), end);
+        return;
+      }
+      s.text(area.x, top, truncate("Claude Code plugin (c copies):", area.w), style(c.mutedFg, c.bg), end);
+      rows.forEach((row, i) => s.text(area.x, top + 1 + i, row, style(c.fg, c.bg), end));
     },
     key(e) {
       if (e.ctrl || e.alt) return true;
       if (e.key === "y") {
         ctx.copy(secret);
-        copied = true;
+        copied = "Copied.";
+      } else if (install !== null && e.key === "c") {
+        ctx.copy(install);
+        copied = "Copied the plugin command.";
       } else if (e.key === "esc" || e.key === "q") {
         ctx.pop();
       }
@@ -135,7 +163,7 @@ export function signInsScreen(f: Session, ctx: Ctx): Screen {
 
   const end = (picked: SignIn): void => {
     if (picked.kind === "terminal") {
-      note = "This terminal cannot be ended from here: disconnect, or remove its key in Settings → SSH keys.";
+      note = "This terminal cannot be ended from here: disconnect, or remove its key in Settings → Computer keys.";
       ctx.invalidate();
       return;
     }
@@ -182,14 +210,16 @@ export function signInsScreen(f: Session, ctx: Ctx): Screen {
       return;
     }
     note = `Made ${name} (${scope}).`;
-    ctx.push(secretScreen(ctx, made.value.token));
+    const repo = offeredPluginRepo(f.db, f.app.config.forgeRepo, UPSTREAM_REPO);
+    const origin = publicOrigin(f.app.config.url, `http://${f.app.config.host ?? "localhost"}:${f.app.config.port ?? 3000}`);
+    ctx.push(secretScreen(ctx, made.value.token, repo === undefined ? null : claudeInstall(origin)));
   };
 
   /** Asks admin to say it twice; a plain y mints. */
   const confirmAdmin = (name: string) =>
     later(ctx, () =>
       confirmScreen(ctx, screen, {
-        title: "Make an admin token",
+        title: "Make an admin access code",
         body: [`${name} will act as admin: y to make it, n to cancel.`],
         actions: [{ label: "Make it", variant: "danger" }, { label: "Cancel", variant: "ghost" }],
         yesNo: true,
@@ -204,7 +234,7 @@ export function signInsScreen(f: Session, ctx: Ctx): Screen {
   const askScope = (name: string, isAdmin: boolean) =>
     later(ctx, () =>
       promptScreen(ctx, screen, {
-        title: "Make a token",
+        title: "Make an access code",
         label: isAdmin ? "Scope: ro, rw or admin" : "Scope: ro or rw",
         value: "ro",
         onSubmit: (word) => {
@@ -219,7 +249,7 @@ export function signInsScreen(f: Session, ctx: Ctx): Screen {
 
   const askName = (isAdmin: boolean) =>
     promptScreen(ctx, screen, {
-      title: "Make a token",
+      title: "Make an access code",
       label: "Name",
       value: "token",
       onSubmit: (name) => {
@@ -290,7 +320,7 @@ export function signInsScreen(f: Session, ctx: Ctx): Screen {
     keys: [
       binding(["j", "k"], "move cursor"),
       binding(["d"], "sign a browser out or revoke a token"),
-      binding(["m"], "make a token"),
+      binding(["m"], "make an access code"),
       binding(["p"], "change your password"),
     ],
     render(area, s) {
@@ -304,7 +334,7 @@ export function signInsScreen(f: Session, ctx: Ctx): Screen {
             ? "Sign in to see where you are signed in."
             : f.user.kind === "agent"
               ? "Where you are signed in. d signs a browser out or revokes a token."
-              : "Where you are signed in. d signs a browser out or revokes a token, m makes a token, p changes your password.";
+              : "Where you are signed in. d signs a browser out or revokes a token, m makes an access code, p changes your password.";
       s.text(head!.x, head!.y, truncate(text, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       drawList(s, body!, c, state, rows(all));
     },

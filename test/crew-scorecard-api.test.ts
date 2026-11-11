@@ -109,7 +109,7 @@ describe("the crew scorecard over the API and MCP", () => {
     expect(smith.splits[0]).toMatchObject({ model: "", prompt: "", opened: 1, meanLandMs: null });
     expect(smith.splits[0].recent.opened).toBe(1);
     const idle = body.agents.find((a) => a.username === "idle");
-    expect(idle).toEqual({ username: "idle", all: null, recent: null, splits: [] });
+    expect(idle).toEqual({ username: "idle", all: null, recent: null, week: { merged: 0, returned: 0, cost: 0 }, splits: [] });
   });
 
   test("wastedDays rides on the API and the MCP tool", async () => {

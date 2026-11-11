@@ -101,8 +101,8 @@ The backup tile past 24 hours, or with none (`never`), takes the card's existing
 `data-tone="attn"` and says overdue in its label.
 The last three (`src/flow/reach.ts`, the `reach` board source's rows) are
 reporting browsers (`5 today`, `31 in 7 days`), accounts (`1 of 2`, seen today) and
-page speed (the slowest quarter's page load over 7 days, and `reacts in 180 ms`,
-the same for the delay after a tap), from the page-view beacon. Each links to
+page speed (the slowest quarter's page load over 7 days, and `LCP 2.4 s · INP 180 ms`,
+LCP and INP, the main content and a tap), from the page-view beacon. Each links to
 the Reach starting board (`/boards/reach`). The visitor hash rotates daily, so
 the 7-day reporting browsers is each day's distinct count summed.
 They count every repository, so only a site admin sees them, on both doors;
@@ -287,8 +287,11 @@ never, a private app never. Every door reads `frontJson` in
 Every repository page says, beside the Private/Public badge, who can see it in
 one sentence ("Private: only you and the crew."), and a writer's click goes to
 Settings. `GET /api/v1/repos/:owner/:name` returns the same words as
-`audience: { level, sentence }`, the MCP `repo` tool carries it too, and the
-terminal's About card (`I`) shows it. It gives counts, never names; site
+`audience: { level, who, sentence }` (`who` is `owner`, `members` or
+`anyone`), and so does a `PATCH` that changes its visibility, in the same
+answer. The MCP `repo` and `here` tools carry it too (`here` on a repository
+page, and on an app's link only for someone who may read the repository), and
+the terminal's About card (`I`) shows the sentence (`docs/features/visibility-line.md`). It gives counts, never names; site
 admins are not counted. All of them read `audienceFor` in `src/core/audience.ts`.
 
 ## Archive
@@ -297,16 +300,20 @@ An admin puts a repository away from **Settings → Archive**, with
 `PATCH /api/v1/repos/:owner/:name {"archived":true|false}` (admins only; anyone
 else gets 403), or in the terminal with `a` on the About card (`I`). The
 repository page and the card then say when it was archived, and an admin gets
-a Wake button or the same key to undo it. The archived list
-(`/apps?archived=1`) has a Wake button on each row its viewer administers, and
-returns to the list; the terminal wakes from the About card with the same key
+a Restore button or the same key to undo it. One tap from an app: an admin opens the app's page, presses Archive under
+the page, and confirms on the page that follows (`POST /:owner/:name/archive`,
+the same `updateRepoSettings` as the Settings form and the `archive` MCP tool).
+Production and previews stop, the app leaves home and `/apps`, and its address
+still answers. In the terminal the door is `a` on the About card. The archived list
+(`/apps?archived=1`) has a Restore button on each row its viewer administers, and
+returns to the list; the terminal restores from the About card with the same key
 (`src/tui/screens/about.ts`). Archiving twice keeps the first date.
 An archived repository starts no new crew run. Assigning an issue to an agent,
 queueing a run again, asking the crew to propose a resolution, redirecting a
-wave and converging a fork each answer "This repository is archived; wake it to
+wave and converging a fork each answer "This repository is archived; restore it to
 start a run."; the API answers 409 `archived`, and the terminal and MCP show
 the same line. The autonomy tick skips it. A run already going finishes, and
-Wake undoes all of it. Clone, push and links keep working, and the repository
+Restore undoes all of it. Clone, push and links keep working, and the repository
 page still answers.
 
 An archived repository leaves the web home's apps, the inbox (work assigned to
@@ -337,7 +344,7 @@ it (`undoFleetOp`). A non-admin has neither key.
 
 `docs/FLEET.md` is one change across many repositories, runs or issues: a
 query, a dry-run plan of every row before → after, a receipt, and undo.
-`archive` (true or false) archives or wakes many repositories; its undo is kept a day.
+`archive` (true or false) archives or restores many repositories; its undo is kept a day.
 
 ## Where it came from
 
@@ -385,7 +392,7 @@ measured slow.
 
 ## Search
 
-`/search` answers repositories and issues in full, and greps code repository by repository. A first search starts no new `git grep` after 30 ms (`codeBudgetMs` in the forge config; a soft stop, since the grep in flight still finishes, one batch of four) and shows what it has with one link, **More code results** (`?code=all`), that greps the rest. `GET /api/v1/search` applies the same budget and reports the cut as `moreCode`; `code=all` lifts it. MCP `search` does the same, and its `all` argument lifts it. The terminal palette greps everything.
+`/search` answers repositories and issues in full, and greps code repository by repository. A first search starts no new `git grep` after 30 ms (`codeBudgetMs` in the forge config; a soft stop, since the grep in flight still finishes, one batch of four) and shows what it has with one link, **More code results** (`?code=all`), that greps the rest. `GET /api/v1/search` applies the same budget and reports the cut as `moreCode`; `code=all` lifts it. MCP `search` does the same, and its `all` argument lifts it. The terminal palette greps everything. A one-letter query greps no code at all (`MIN_CODE_QUERY`, 2 characters): it would match every line, so the page, the API's `note` and MCP say code is searched for 2 or more characters when code was asked for (`kind=all` or `code`), and repositories and issues still answer it. The terminal palette shares the rule — one letter greps nothing and takes no guest slot — but prints no note: its sections simply show no code.
 
 The here-manifest (`GET /api/v1/here?path=…`) reads the same for guests and
 members. On `/explore` and `/search` it names the page's own read, `?q=` carried

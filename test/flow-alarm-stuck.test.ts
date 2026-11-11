@@ -99,7 +99,8 @@ describe("alarmStuck", () => {
     wall("h");
     const a = alarmStuck(app, NOW);
     expect(a.wall).toEqual(["anyone signed out could read pack records"]);
-    expect(a.says).toContain("waits for a person: anyone signed out could read pack records");
+    expect(a.says).toBe(`${a.repo}#${a.number} is approved and waits for a person to merge it.`);
+    expect(a.says.length).toBeLessThan(80);
   });
 
   test("an event 29 minutes ago does not fire", () => {

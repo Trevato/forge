@@ -8,6 +8,8 @@ rulebook: the invariants you must not break, and how to work here.
 
 **Read docs/VISION.md first: it says what the forge is for and the order of work.**
 
+**A pull that changes `src/actions`, `src/web`, `src/http`, `src/tui`, `src/feed`, `src/view`, `src/cli`, `src/boards`, `src/search`, `src/display`, `src/story` or `src/devices` needs a commit message line `Try: <what to open or call on the preview>`, or its check is red (`src/kernel/try_it.ts`).**
+
 **Done means reachable**, and the rest of what the forge holds to is in
 docs/PRINCIPLES.md with what enforces each; read it. This file does not repeat it. When
 something fights you, step up and understand the system before adding code — a

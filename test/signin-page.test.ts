@@ -90,16 +90,14 @@ describe("/signin", () => {
     expect(page).not.toContain(CLOSED);
   });
 
-  test("invite says the forge is invite-only", async () => {
-    const page = await signin("invite");
-    expect(page).toContain(INVITE);
-    expect(page).not.toContain(CLOSED);
-  });
-
-  test("closed says the forge is closed to new accounts", async () => {
-    const page = await signin("closed");
-    expect(page).toContain(CLOSED);
-    expect(page).not.toContain(INVITE);
+  test("invite and closed say it once: by invitation, linking /#yours", async () => {
+    for (const mode of ["invite", "closed"] as const) {
+      const page = await signin(mode);
+      expect(page).not.toContain(INVITE);
+      expect(page).not.toContain(CLOSED);
+      expect(page.split("are by invitation").length - 1).toBe(1);
+      expect(page).toContain('href="/#yours"');
+    }
   });
 });
 

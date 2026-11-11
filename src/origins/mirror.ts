@@ -147,7 +147,8 @@ export async function mirrorRepo(
   const created = await createRepo(app.db, app.reposRoot, {
     ownerId: actor.id,
     name: chosen,
-    visibility: remote.private ? "private" : "public",
+    // A read-only origin's mirror is private to its owner (#10520).
+    visibility: remote.private || origin.readOnly ? "private" : "public",
     description: remote.description,
     defaultBranch,
   });
