@@ -292,3 +292,41 @@ export function report(v: Verdict): string {
       : []),
   ].join("\n");
 }
+
+/** What a forge that did not come up, or went away, left to say why. */
+export interface ForgeGone {
+  readonly name: "old" | "new";
+  readonly pid: number;
+  readonly port: number;
+  /** Its exit status; null while it still runs or when a signal ended it. */
+  readonly exitCode: number | null;
+  readonly signal: string | null;
+  /** From its start to when it was given up on. */
+  readonly waitedMs: number;
+  /** Fresh ports it was started on after another process took its port. */
+  readonly portsLost: number;
+  /** What it wrote (stderr, else stdout); only the last lines are quoted. */
+  readonly output: string;
+  readonly log: string;
+}
+
+/** How many of a gone forge's last lines its error quotes. */
+export const OUTPUT_TAIL_LINES = 20;
+
+/**
+ * The error a gone forge raises: which process on which port, how it
+ * ended and how long it was waited for, and the end of what it said. The
+ * log files go with the check's tmpdir, so the error carries their tail.
+ */
+export function goneLine(g: ForgeGone): string {
+  const how =
+    g.exitCode !== null
+      ? `exited with code ${g.exitCode}`
+      : g.signal !== null
+        ? `was ended by ${g.signal}`
+        : "was still not ready";
+  const lost = g.portsLost === 0 ? "" : `, after losing ${g.portsLost} port${g.portsLost === 1 ? "" : "s"} to other processes`;
+  const tail = g.output.trimEnd().split("\n").slice(-OUTPUT_TAIL_LINES).join("\n");
+  const said = tail.trim() === "" ? `it wrote nothing; see ${g.log}` : `it wrote (${g.log}):\n${tail}`;
+  return `the ${g.name} forge (pid ${g.pid}, port ${g.port}) ${how} ${g.waitedMs} ms after it started${lost}; ${said}`;
+}
