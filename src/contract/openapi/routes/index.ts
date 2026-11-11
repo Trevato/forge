@@ -4,6 +4,7 @@ export { route as deleteApiV1AdminAccountsUsername } from "./deleteApiV1AdminAcc
 export { route as deleteApiV1AdminInvitesId } from "./deleteApiV1AdminInvitesId.ts";
 export { route as deleteApiV1AgentsUsername } from "./deleteApiV1AgentsUsername.ts";
 export { route as deleteApiV1BoardsSlug } from "./deleteApiV1BoardsSlug.ts";
+export { route as deleteApiV1CodesId } from "./deleteApiV1CodesId.ts";
 export { route as deleteApiV1ConversationFilesId } from "./deleteApiV1ConversationFilesId.ts";
 export { route as deleteApiV1ConversationQueueId } from "./deleteApiV1ConversationQueueId.ts";
 export { route as deleteApiV1FeaturesSlug } from "./deleteApiV1FeaturesSlug.ts";
@@ -66,6 +67,7 @@ export { route as getApiV1BoardsSlugPanelsId } from "./getApiV1BoardsSlugPanelsI
 export { route as getApiV1BoardsSources } from "./getApiV1BoardsSources.ts";
 export { route as getApiV1Changelog } from "./getApiV1Changelog.ts";
 export { route as getApiV1CloudAccounts } from "./getApiV1CloudAccounts.ts";
+export { route as getApiV1Codes } from "./getApiV1Codes.ts";
 export { route as getApiV1Contribute } from "./getApiV1Contribute.ts";
 export { route as getApiV1ConversationFilesId } from "./getApiV1ConversationFilesId.ts";
 export { route as getApiV1ConversationTurns } from "./getApiV1ConversationTurns.ts";
@@ -262,6 +264,7 @@ export { route as postApiV1AsksProposalIdVerb } from "./postApiV1AsksProposalIdV
 export { route as postApiV1BoardsPins } from "./postApiV1BoardsPins.ts";
 export { route as postApiV1BoardsQuery } from "./postApiV1BoardsQuery.ts";
 export { route as postApiV1Builds } from "./postApiV1Builds.ts";
+export { route as postApiV1Codes } from "./postApiV1Codes.ts";
 export { route as postApiV1ConversationConfirmsId } from "./postApiV1ConversationConfirmsId.ts";
 export { route as postApiV1ConversationFiles } from "./postApiV1ConversationFiles.ts";
 export { route as postApiV1ConversationMessages } from "./postApiV1ConversationMessages.ts";

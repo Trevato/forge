@@ -165,6 +165,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["audit", "Who can do what", "each app's doors from its contract.json: yes, own or no"],
     ["security-controls", "Security controls", "each safeguard, and when it was last tested"],
     ["billing", "Billing", "each forge's plan, and grant one by hand"],
+    ["codes", "Gift codes", "make a code that gives a plan for free, and revoke one"],
     ["archived", "Archived repositories", "put away, not gone: open one or restore it"],
     ["cloud", "Cloud accounts", "provider tokens, what they are used for, today's calls"],
     ["pinned", "Pinned forges", "deploy, update and roll back a forge on your cloud"],

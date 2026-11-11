@@ -66,6 +66,7 @@ const ALIAS: Readonly<Record<string, string>> = {
   returns: "billing",
   credit: "billing",
   spend: "billing",
+  codes: "billing",
   usage: "billing",
   forge: "forges",
   passport: "user",

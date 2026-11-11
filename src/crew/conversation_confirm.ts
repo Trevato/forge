@@ -109,7 +109,7 @@ export const ASKING: Readonly<Record<string, Asking>> = {
   app_deploy: { does: "redeploy or stop an app's production or preview" },
   stop: { does: "stop a crew run" },
   converge: { does: "have a fork's crew merge the parent's updates" },
-  forges: { does: "grant a forge a plan by hand", asks: (a) => a["plan"] !== undefined && a["dryRun"] === false },
+  forges: { does: "grant a forge a plan by hand, or make or revoke a gift code", asks: (a) => (a["plan"] !== undefined || a["code"] !== undefined || a["revoke"] !== undefined) && a["dryRun"] === false },
   origins: { does: "sync an origin or replace the internal hosts one may live on", asks: not("action", "list", "repos") },
   cloud_account: { does: "change a cloud account" },
   pinned_forge: { does: "deploy, update or roll back a pinned forge on the owner's cloud", asks: not("verb", "list") },

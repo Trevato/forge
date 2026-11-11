@@ -49,6 +49,8 @@ const UNREACHED: Record<string, { sites: number; why: string }> = {
   "src/web/pages/start_claim.ts": { sites: 1, why: "the claim of an agent's start needs a one-time token; same sessionCookie() as the walked doors; covered by test/start.test.ts" },
   "src/web/pages/signup-passkey.ts": { sites: 2, why: "sign-up by passkey needs an invite; same sessionCookie() as the walked doors" },
   "src/web/pages/map.ts": { sites: 1, why: "the map's last-looked cookie holds two timestamps, HttpOnly and Lax, and grants nothing; covered by test/roadmap.test.ts (name, HttpOnly, SameSite, no Secure over http)" },
+  "src/web/gift_cookie.ts": { sites: 1, why: "the gift code rides an HttpOnly, Lax cookie (Secure over https) and grants nothing by itself; covered by the gift code tests" },
+  "src/web/pages/new-forge.ts": { sites: 1, why: "appends dropGift(), the gift cookie's clearing line from src/web/gift_cookie.ts" },
   "src/web/pages/everyday.ts": { sites: 2, why: "the admin/everyday switch needs a paired account; same sessionCookie() as the walked doors" },
 };
 
@@ -232,6 +234,7 @@ const BUILDERS: Record<string, string> = {
   "cookie(": "src/apps/scaffold.ts, the scaffolded app's own `cookie`",
   clear: "src/http/rp.ts, `cookieHeader` with Max-Age 0",
   value: "src/apps/scaffold.ts, `redirectTo`'s cookies, each from `cookie`",
+  "dropGift(": "src/web/gift_cookie.ts, the gift cookie cleared with Max-Age 0",
   "o.cookie": "src/web/layout.ts, a page's cookie (the theme literal in src/web/pages/site.ts)",
 };
 

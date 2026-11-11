@@ -98,6 +98,8 @@ export interface SpawnDeps {
   /** The request that asked, for the same-origin check on this mutation. */
   readonly request: Request;
   readonly url: URL;
+  /** The plan was given by a gift code the caller has already claimed (`actions/codes.ts`): no admin, no payment. */
+  readonly gift?: boolean;
   /**
    * The child's own model key, when the spawner gives it one: an API key, or
    * a person's own setup-token under a budget (their choice), sealed in the child with the
@@ -285,7 +287,9 @@ async function make(
     const chosen = plan.plan === undefined ? undefined : getPlan(app.db, plan.plan);
     if (plan.plan !== undefined && chosen === undefined)
       return err({ kind: "invalid", field: "plan", reason: `${plan.plan} is not a plan this forge offers` });
-    if (chosen !== undefined && chosen.key !== FREE) {
+    if (chosen !== undefined && chosen.key !== FREE && deps.gift === true) {
+      // A redeemed gift code (`actions/codes.ts`) is what lends this plan: it asks no admin and no payment.
+    } else if (chosen !== undefined && chosen.key !== FREE) {
       if (owner === undefined) return err({ kind: "refused", reason: "plan", message: `the ${chosen.name} plan is for a signed-in person; sign in first` });
       if (!owner.isAdmin) return err({ kind: "refused", reason: "plan", message: PAID_PLAN_ADMIN_ONLY(chosen.name) });
       const many = planRefusal(app.config.dataDir, owner, chosen, FREE);

@@ -9,6 +9,7 @@
  */
 
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
+import { keepGift } from "../gift_cookie.ts";
 import { PASSWORD_TOO_LONG } from "../../core/hash-gate.ts";
 import { NOT_A_MEMBER } from "../../core/roles.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
@@ -213,6 +214,9 @@ export function terminalCard(ctx: Ctx): Html {
 // the feed (`studioHome`, #599), whatever the mode (#625).
 export async function home(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
+  // A gift link (`/?code=`) keeps the code in a cookie and opens the new-forge form, so the next address has no code in it (#11157).
+  const gift = ctx.url.searchParams.get("code");
+  if (gift !== null && gift !== "") return keepGift(gift.slice(0, 64), "/forges/new", ctx.url, ctx.app.config.url);
   const res = user === undefined ? await studioDoor(ctx) : await studioHome(ctx, user);
   // RFC 9727 §3: where an agent that knows only the origin finds the API catalog.
   res.headers.append("link", API_CATALOG_LINK);

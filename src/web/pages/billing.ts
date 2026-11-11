@@ -6,23 +6,84 @@
  */
 
 import { BILLING_WORDS, grantPlan, readBilling, type BillingError } from "../../actions/billing.ts";
+import { CODE_ERRORS, makeCode, readCodes, revoke, type CodeError } from "../../actions/codes.ts";
+import { publicOrigin } from "../../core/public_origin.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { SIZES } from "../../spawn/sizes.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
-import { html } from "../html.ts";
+import { html, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { btn } from "../ui.ts";
+import { btn, copyField, field as formField, selectField } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 const PATH = "/settings/billing";
 const words = (e: BillingError) => (e === "not_found" ? "Not found" : BILLING_WORDS[e]);
 
+/** A code just made: the plain code and its link, shown once and never kept. */
+interface Shown {
+  readonly code: string;
+  readonly link: string;
+}
+
+const day = (iso: string): string => iso.slice(0, 10);
+
+/** The Codes section: make one, copy it once, then one line per code with its one action. */
+function codesSection(ctx: Ctx, shown: Shown | undefined, values: Record<string, string>, error: string | undefined): Html | null {
+  const read = readCodes(ctx.app, ctx.auth.user);
+  if (!read.ok) return null;
+  const { codes, plans } = read.value;
+  const lines = codes.map((c) => {
+    const state = c.revokedAt !== undefined ? "revoked" : c.expiresAt !== undefined && Date.parse(c.expiresAt) <= Date.now() ? "expired" : c.used >= c.uses ? "used up" : "";
+    const who = c.redeemed.map((r) => `${r.forge} ${day(r.at)}`).join(", ");
+    const redeemed = c.redeemed.length === 0 ? "not redeemed yet" : `redeemed by ${who}`;
+    return html`<li class="row" data-code="${c.id}">
+      <dl class="row-fields">
+        <dt class="sr-only">Gives</dt>
+        <dd><span class="mono">${c.plan}</span> <span class="muted small">${c.note}${c.expiresAt === undefined ? "" : ` · until ${day(c.expiresAt)}`}</span></dd>
+        <dt class="sr-only">Used</dt>
+        <dd class="small">${c.used} of ${c.uses} used${state === "" ? "" : ` · ${state}`} · <span class="muted">${redeemed}</span></dd>
+      </dl>
+      ${c.revokedAt === undefined
+        ? html`<form method="post" action="${PATH}/codes/revoke">
+            <input type="hidden" name="id" value="${c.id}" />
+            ${btn("Stop this code working", { size: "sm", label: `Stop the code for ${c.note || c.plan} from working; forges already made keep their plan` })}
+          </form>`
+        : null}
+    </li>`;
+  });
+  return html`<section class="settings-block" id="codes">
+    <h2>Codes</h2>
+    ${error === undefined ? null : html`<p class="error" role="alert">${error}</p>`}
+    ${shown === undefined
+      ? null
+      : html`<div class="stack stack-tight" id="new-code" role="status">
+          <p class="small">Shown once. It is kept only as a hash; send the link.</p>
+          ${copyField("gift-code", shown.code, "The code", "Copy the code")}
+          ${copyField("gift-link", shown.link, "The link to send", "Copy the link")}
+        </div>`}
+    <form class="row-fields" method="post" action="${PATH}/codes" id="make-code">
+      ${selectField({ label: "Plan it gives", name: "plan", options: plans.map((p) => ({ value: p, label: p, selected: p === (values["plan"] ?? plans[0]) })) })}
+      ${formField({ label: "Uses", name: "uses", type: "number", value: values["uses"] ?? "1" })}
+      ${formField({ label: "Note", name: "note", value: values["note"] ?? "", hint: "For Mark" })}
+      ${formField({ label: "Expires", name: "expires", type: "date", value: values["expires"] ?? "" })}
+      ${btn("Make a code", { variant: "primary" })}
+    </form>
+    ${lines.length === 0 ? html`<p class="muted small">No code yet.</p>` : html`<ul class="list setting-list">${lines}</ul>`}
+  </section>`;
+}
+
+const codeWords = (e: CodeError): string => (e === "not_found" ? "Not found" : CODE_ERRORS[e]);
+
 // GET /settings/billing
 export function billingPage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   if (!ctx.auth.user) return signInFirst(ctx);
+  return billingView(ctx);
+}
+
+function billingView(ctx: Ctx, shown?: Shown, values: Record<string, string> = {}, error?: string, status = 200): Response {
   const read = readBilling(ctx.app, ctx.auth.user);
   if (!read.ok) return notFoundPage(ctx);
   const b = read.value;
@@ -46,15 +107,39 @@ export function billingPage(ctx: Ctx): Response {
       ${rows.length === 0
         ? html`<p class="muted">No forge has been sent from here.</p>`
         : html`<ul class="list setting-list">${rows}</ul>`}
-    </section>`;
+    </section>
+    ${codesSection(ctx, shown, values, error)}`;
   const response = page({
     ctx,
     title: "Billing",
     body: html`<div class="page-head"><h1>Billing</h1></div>
       ${settingsLayout(accountSections("billing", { admin: true }), body, "Account settings")}`,
-  });
+  }, status);
   notePhase(ctx.request, "render", performance.now() - rendering);
+  // A code just made is in this body only: never kept by a cache.
+  if (shown !== undefined) response.headers.set("cache-control", "no-store");
   return response;
+}
+
+// POST /settings/billing/codes
+export async function billingMakeCode(ctx: Ctx): Promise<Response> {
+  if (ctx.auth.user?.isAdmin !== true || ctx.auth.user.kind === "agent") return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const values = { plan: field(form, "plan"), uses: field(form, "uses"), note: field(form, "note"), expires: field(form, "expires") };
+  const made = makeCode(ctx.app, ctx.auth.user, values, publicOrigin(ctx.app.config.url, ctx.url.origin));
+  if (!made.ok) return made.error === "not_found" ? notFoundPage(ctx) : billingView(ctx, undefined, values, `${codeWords(made.error)}.`, 422);
+  return billingView(ctx, { code: made.value.code, link: made.value.link });
+}
+
+// POST /settings/billing/codes/revoke
+export async function billingRevokeCode(ctx: Ctx): Promise<Response> {
+  if (ctx.auth.user?.isAdmin !== true || ctx.auth.user.kind === "agent") return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const done = revoke(ctx.app, ctx.auth.user, field(form, "id"));
+  if (!done.ok && done.error === "not_found") return notFoundPage(ctx);
+  return flashTo(ctx, `${PATH}#codes`, done.ok ? { message: "Code revoked. Forges already made keep their plan." } : { tone: "danger", message: `${codeWords(done.error)}.` });
 }
 
 // POST /settings/billing/grant

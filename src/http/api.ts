@@ -351,6 +351,7 @@ import { forgeRoutes } from "./api/forges.ts";
 import { packRoutes } from "./api/packs.ts";
 import { forgeViewRoutes } from "./api/forge_view.ts";
 import { billingRoutes } from "./api/billing.ts";
+import { codesRoutes } from "./api/codes.ts";
 import { economicsRoutes } from "./api/economics.ts";
 import { releasesRoutes } from "./api/releases.ts";
 import { hookRoutes } from "./api/hooks.ts";
@@ -3587,6 +3588,7 @@ export function apiRoutes(router: Router<Handler>): void {
   forgeViewRoutes(router);
   economicsRoutes(router);
   billingRoutes(router);
+  codesRoutes(router);
   releasesRoutes(router);
 
   router.add("GET", "/api/v1/apps", (ctx) => {

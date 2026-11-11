@@ -112,7 +112,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `following` | — | Where a fork stands against what it follows: in step, behind, ahead, diverged | 243 |
 | `forge_proposals` | — | What this forge proposed to its parent; `reachable` false if it is silent | 245 |
 | `forge_view` | — | The forge as one picture: counts, apps, runs with stations, health | 189 |
-| `forges` | — | Forges sent from here (admin; a stage says when to resend), or one forge's plan to read or grant | 257 |
+| `forges` | — | Forges sent from here (admin; a stage says when to resend), or one forge's plan to read or grant | 336 |
 | `fork` | — | Fork a repository into your account; for a guest, a copy to send changes back from | 232 |
 | `fork_tree` | — | The fork tree around a repo: ancestors, siblings and descendants you may read | 397 |
 | `forks` | — | A repo's forks you may see, paged by limit and cursor (next_cursor), each with commits ahead and behind | 345 |

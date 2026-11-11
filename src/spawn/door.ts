@@ -37,6 +37,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { FREE, getPlan, getPlans, PAID_PLAN_ADMIN_ONLY } from "../settings/plans.ts";
+import { giftOf, REDEEM_WORDS, settleGift, unclaimGift } from "../actions/codes.ts";
+import { claimCode, CODE_WORDS, type Code } from "../billing/codes.ts";
 
 export interface Door {
   readonly status: number;
@@ -260,11 +262,21 @@ export async function spawnDoor(
   // A plan (`settings/plans.ts`) gives the child its size; read now, so an edit governs this spawn.
   let planKey: string | undefined;
   let size = raw["size"];
+  // A gift code (`actions/codes.ts`) names the plan itself: no admin, no payment, whatever the provider.
+  const giftIn = raw["code"];
+  let giftSeen: { plan: string } | undefined;
+  if (giftIn !== undefined && giftIn !== null && giftIn !== "") {
+    if (raw["plan"] !== undefined && raw["plan"] !== null && raw["plan"] !== "") return invalid("code", "a code gives its own plan; send the code or a plan, not both");
+    const seen = giftOf(ctx.app, ctx.request, giftIn);
+    if (!seen.ok) return seen.error === "slow_down" ? { status: 429, body: { error: "rate_limited", message: REDEEM_WORDS.slow_down } } : invalid("code", REDEEM_WORDS[seen.error]);
+    raw = { ...raw, plan: seen.value.plan };
+    giftSeen = { plan: seen.value.plan };
+  }
   if (raw["plan"] !== undefined && raw["plan"] !== null && raw["plan"] !== "") {
     const chosen = typeof raw["plan"] === "string" ? getPlan(db, raw["plan"]) : undefined;
     if (chosen === undefined) return invalid("plan", `must be one of ${getPlans(db).map((p) => p.key).join(", ")}`);
-    if (anon && chosen.key !== FREE) return invalid("plan", `the ${chosen.name} plan is for a signed-in person; sign in first`);
-    if (chosen.key !== FREE && user?.isAdmin !== true) return invalid("plan", PAID_PLAN_ADMIN_ONLY(chosen.name));
+    if (anon && chosen.key !== FREE && giftIn === undefined) return invalid("plan", `the ${chosen.name} plan is for a signed-in person; sign in first`);
+    if (chosen.key !== FREE && user?.isAdmin !== true && giftIn === undefined) return invalid("plan", PAID_PLAN_ADMIN_ONLY(chosen.name));
     if (size !== undefined && size !== null && size !== "" && size !== chosen.size)
       return invalid("size", `the ${chosen.name} plan is a ${chosen.size} forge; leave size out or send ${chosen.size}`);
     planKey = chosen.key;
@@ -299,6 +311,7 @@ export async function spawnDoor(
         plan: planned.value,
         // Who the child's first admin will be: the caller, or whoever claims it.
         firstAdmin: user?.username ?? null,
+        ...(giftSeen === undefined ? {} : { gift: giftSeen }),
         ...dryRun(planned.value, source),
         ...(planned.value.budgetUsd === null ? {} : { keyNote: KEY_BUDGET_NOTE }),
       },
@@ -316,14 +329,33 @@ export async function spawnDoor(
         },
       };
   }
+  // The use is spent just before the forge is made, in one statement; it goes back if no forge is made.
+  let gift: Code | undefined;
+  if (giftIn !== undefined && giftIn !== null && giftIn !== "") {
+    const claimed = claimCode(ctx.app.db, giftIn);
+    if (!claimed.ok) return invalid("code", CODE_WORDS[claimed.error]);
+    gift = claimed.value;
+  }
   const startedAt = Date.now();
-  const made = await spawnForge(ctx.app, user, input, source, {
-    placement: placementFor(ctx.app),
-    request: ctx.request,
-    url: ctx.url,
-    ...(typeof modelKey === "string" ? { modelKey } : {}),
-    ...(modelEndpoint === undefined ? {} : { modelEndpoint }),
-  });
+  // The use is given back unless the forge was made and the redemption recorded: a throw settles it too.
+  let settled = false;
+  let made: Awaited<ReturnType<typeof spawnForge>>;
+  try {
+    made = await spawnForge(ctx.app, user, input, source, {
+      ...(gift === undefined ? {} : { gift: true }),
+      placement: placementFor(ctx.app),
+      request: ctx.request,
+      url: ctx.url,
+      ...(typeof modelKey === "string" ? { modelKey } : {}),
+      ...(modelEndpoint === undefined ? {} : { modelEndpoint }),
+    });
+    if (made.ok && gift !== undefined && !made.value.existed) {
+      settleGift(ctx.app, gift, made.value.name);
+      settled = true;
+    }
+  } finally {
+    if (gift !== undefined && !settled) unclaimGift(ctx.app, gift);
+  }
   if (!made.ok) return spawnWords(made.error);
   if (anon && !made.value.existed) noteAnonSpawn(ctx.app.db, ctx.request);
   // Its apps come up now, so the first visit after a claim finds them awake.

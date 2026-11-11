@@ -15,6 +15,7 @@ import { listReposVisibleTo } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
+import { giftOf, REDEEM_WORDS } from "../../actions/codes.ts";
 import { quotaFull } from "../../spawn/quota.ts";
 import { childHost, childUrlOf, noRoom, spawnDoor, type Door } from "../../spawn/door.ts";
 import {
@@ -28,6 +29,7 @@ import {
 import { DEFAULT_SIZE, SIZES, sizesView } from "../../spawn/sizes.ts";
 import { DEFAULT_TEMPLATE, TEMPLATES, templateOf } from "../../spawn/templates.ts";
 import { FOLLOW_LABELS, FOLLOW_WORDS } from "../../spawn/follow_words.ts";
+import { dropGift, keepGift, keptGift } from "../gift_cookie.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, type Html } from "../html.ts";
@@ -48,6 +50,8 @@ interface Values {
   readonly modelEndpoint: string;
   readonly size: string;
   readonly template: string;
+  /** A gift code (`actions/codes.ts`): it names the plan, so no checkout and no card. */
+  readonly code: string;
   /** The last post carried a key: it is never sent back, so it is asked for again. */
   readonly hadKey: boolean;
 }
@@ -65,6 +69,7 @@ const EMPTY: Values = {
   modelEndpoint: "",
   size: DEFAULT_SIZE,
   template: DEFAULT_TEMPLATE,
+  code: "",
   hadKey: false,
 };
 
@@ -344,6 +349,7 @@ function formView(
             Never copied: ${LEFT_BEHIND.map(plainWords).join(", ")}. The child mints its own.
           </p>
         </details>
+        ${codeField(values.code, errors["code"])}
         <div class="form-actions">
           <button class="btn" type="submit" name="do" value="plan">
             See the plan
@@ -372,6 +378,7 @@ function planView(ctx: Ctx, user: User | undefined, values: Values, body: Record
       <ul class="mb">
         <li>A forge at <b>${address}</b>.</li>
         <li>Whoever opens the link becomes its admin.</li>
+        ${giftLine(body["gift"])}
         ${user === undefined
           ? null
           : html`<li>
@@ -397,6 +404,16 @@ function planView(ctx: Ctx, user: User | undefined, values: Values, body: Record
       ${typeof note === "string" ? html`<p class="small mt">${note}</p>` : null}
       <p class="mt">${btn("Spawn", { variant: "primary", form: "new-forge" })}</p>
     </section>`;
+}
+
+/** "A gift: a <plan> forge, free." */
+function giftWords(g: { plan: string }): string {
+  return `A gift: a ${g.plan} forge, free.`;
+}
+
+function giftLine(g: unknown): Html | null {
+  const gift = g as { plan?: unknown } | undefined;
+  return typeof gift?.plan === "string" ? html`<li><b>${giftWords({ plan: gift.plan })}</b></li>` : null;
 }
 
 /** The answer to a spawn: the link, once. */
@@ -462,10 +479,18 @@ export function newForgePage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const reads = readsFor(ctx, user);
   const rendering = performance.now();
+  // A code in the address moves to a cookie and out of the address (the log and history never hold it).
+  const inUrl = ctx.url.searchParams.get("code");
+  if (inUrl !== null && inUrl !== "") return keepGift(inUrl.slice(0, 64), "/forges/new", ctx.url, ctx.app.config.url);
+  // A link with a code arrives filled in, and says it is a gift, or plainly why not.
+  const code = keptGift(ctx.request);
+  const seen = code === "" ? undefined : giftOf(ctx.app, ctx.request, code);
+  const errors: Errors = seen !== undefined && !seen.ok ? { code: `${REDEEM_WORDS[seen.error]}.` } : {};
+  const gift = seen?.ok ? html`<p class="small" id="gift" role="status"><b>${giftWords(seen.value)}</b></p>` : null;
   const response = page({
     ctx,
     title: "New forge",
-    body: formView(ctx, user, { ...EMPTY, name: (ctx.url.searchParams.get("name") ?? "").slice(0, 38), ...fromPack(ctx, user) }, {}, null, reads),
+    body: formView(ctx, user, { ...EMPTY, code, name: (ctx.url.searchParams.get("name") ?? "").slice(0, 38), ...fromPack(ctx, user) }, errors, gift, reads),
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
@@ -491,6 +516,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     modelEndpoint: field(form, "modelEndpoint").trim(),
     size: field(form, "size").trim() || DEFAULT_SIZE,
     template: field(form, "template").trim() || DEFAULT_TEMPLATE,
+    code: field(form, "code").trim().slice(0, 64),
     hadKey: field(form, "modelKey").trim() !== "",
   };
   const key = field(form, "modelKey").trim();
@@ -510,6 +536,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     // Small is the default: it is not recorded, so the plan stays as it was.
     ...(values.size === DEFAULT_SIZE ? {} : { size: values.size }),
     ...(values.template === DEFAULT_TEMPLATE ? {} : { template: values.template }),
+    ...(values.code === "" ? {} : { code: values.code }),
     dryRun: planOnly,
   });
   if (door.status >= 400)
@@ -533,5 +560,13 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
   );
   // The link is in this body only: never kept by a cache.
   response.headers.set("cache-control", "no-store");
+  if (values.code !== "") response.headers.append("set-cookie", dropGift(ctx.url, ctx.app.config.url));
   return response;
+}
+
+/** The code is asked for only when one is in play: filled in from a link, or behind a quiet disclosure that needs no script. */
+function codeField(value: string, error: string | undefined): Html {
+  const input = formField({ label: "Gift code", name: "code", value, autocomplete: "off", ...(error ? { error } : {}) });
+  if (value !== "" || error) return input;
+  return html`<details><summary class="small">Have a code?</summary>${input}</details>`;
 }
