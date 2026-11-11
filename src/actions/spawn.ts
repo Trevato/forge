@@ -12,6 +12,7 @@
  * idempotent — and a finished one is answered, not made twice.
  */
 
+import { nameShapeVerdict, nameVerdict, type NameVerdict } from "../spawn/name_verdict.ts";
 import { readdirSync, readFileSync } from "node:fs";
 import { mkdir, readdir, rename } from "node:fs/promises";
 import { join } from "node:path";
@@ -152,6 +153,8 @@ const SAFE_ID = /^[A-Za-z0-9_-]{1,80}$/;
 /** The name the child's sealed model key goes by. */
 export const STARTER_KEY = "starter";
 const inFlight = new Set<string>();
+/** Whether a child of this name is being made right now. */
+export const beingMade = (name: string): boolean => inFlight.has(name);
 
 /** A failure the boards count: the step that broke (a fixed few), never its words. */
 function failed(app: App, deps: SpawnDeps, step: "place" | "copy" | "health", message: string) {
@@ -788,4 +791,13 @@ export function listChildrenNow(app: App): Child[] {
     if (ledger) out.push(childOf(app, ledger));
   }
   return out;
+}
+
+/**
+ * Whether Start my forge would take `name`: the web route's answer and the
+ * terminal's. Only a name that passes the shape is looked up in the ledger.
+ */
+export async function forgeNameVerdict(app: App, name: string): Promise<NameVerdict> {
+  const exists = nameShapeVerdict(name) === undefined && (beingMade(name) || (await childNamed(app, name)) !== undefined);
+  return nameVerdict(name, exists);
 }

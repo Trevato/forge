@@ -370,6 +370,7 @@ test("signed out, the palette offers sign-in and the public entries", () => {
     ["packs", "Forge packs", "premade forges to deploy, and how to help build their apps"],
     ["get-a-forge", "Get your own forge", "the plans, where to get a hosted forge, how to run one yourself"],
     ["start-forge", "Start my forge", "a free forge of your own; you choose a username and password next"],
+    ["forge-name", "Is a forge name free?", "ask whether Start my forge would take a name"],
     ["fleet", "Fleet rows", "the rows a fleet query line selects"],
     ["profile", "Open a profile", "username or org"],
     ["repo", "Open a repository", "owner/name"],

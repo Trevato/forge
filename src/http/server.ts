@@ -273,6 +273,7 @@ import {
   tellSubmit,
 } from "../web/studio/actions.ts";
 import { forgeReady } from "../web/pages/forge-ready.ts";
+import { forgeName } from "../web/pages/forge-name.ts";
 import { claimFragmentPage, claimOptions, claimSubmit } from "../web/pages/claim.ts";
 import { firstAdminOptions, firstAdminPage, firstAdminSubmit } from "../web/pages/first-admin.ts";
 import { familyPage } from "../web/pages/family.ts";
@@ -850,6 +851,7 @@ export function buildRouter(): Router<Handler> {
   // "+ New forge": the spawn door as a page, any signed-in person (spawn/door.ts).
   router.add("GET", "/forges", forgesPage);
   router.add("GET", "/family", familyPage);
+  router.add("GET", "/forges/name/:name", forgeName);
   router.add("POST", "/forges/:name/claim-link", forgeLinkSubmit);
   router.add("POST", "/forges/:name/revoke-link", forgeLinkRevoke);
   router.add("POST", "/forges/:name/undo-link", forgeLinkUndo);

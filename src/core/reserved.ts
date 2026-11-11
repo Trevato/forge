@@ -227,6 +227,9 @@ export function mixedScript(name: string): boolean {
 
 const SYSTEM = new Set(SYSTEM_NAMES.map(skeleton));
 
+/** Whether `name` is one of the forge's own words, by skeleton. */
+export const isSystemName = (name: string): boolean => SYSTEM.has(skeleton(name));
+
 /** Why a name is reserved: a system word, the crew's, or the owner's. */
 export type Reservation = "system" | "agent" | "owner" | "mixed";
 

@@ -34,7 +34,8 @@ export const MAX_BUDGET_USD = 1000;
 
 /** One line saying what a fresh app is. */
 export const MAX_FRESH_CHARS = 200;
-const NAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
+/** The shape of a forge's name, as the door takes it. */
+export const NAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
 const PLAN_KEY = /^[a-z][a-z0-9-]{0,19}$/;
 const APP_REF = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
 

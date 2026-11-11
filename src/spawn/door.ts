@@ -6,6 +6,7 @@
  * the caller says `false` — returns the plan and changes nothing.
  */
 
+import { nameShapeVerdict } from "./name_verdict.ts";
 import { linkRequestVisitor } from "../perf/visitor_link.ts";
 import { startWatch, probeOf, type Probe } from "./live.ts";
 import { firstProof, reachWords, settleChild } from "./reach.ts";
@@ -291,6 +292,12 @@ export async function spawnDoor(
       return invalid("size", `the ${chosen.name} plan is a ${chosen.size} forge; leave size out or send ${chosen.size}`);
     planKey = chosen.key;
     size = chosen.size;
+  }
+  // The same word the name field asks about, so a name it calls free is one the door takes.
+  // A bad shape is refused by the plan below, in the same words.
+  if (typeof raw["name"] === "string") {
+    const said = nameShapeVerdict(raw["name"]);
+    if (said?.verdict === "reserved") return invalid("name", said.why);
   }
   const input = {
     name: raw["name"],

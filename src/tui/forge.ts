@@ -20,6 +20,7 @@ import { dataCommand } from "./screens/data.ts";
 import { packsCommand } from "./screens/packs.ts";
 import { getForgeCommand } from "./screens/getforge.ts";
 import { startForgeCommand } from "./screens/startforge.ts";
+import { forgeNameCommand } from "./screens/forgename.ts";
 import { workCommand } from "./screens/work.ts";
 import { shellsScreen } from "./screens/shells.ts";
 import { forkTreeScreen } from "./screens/fork_tree.ts";
@@ -245,6 +246,7 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
       packsCommand(session, ctx),
       getForgeCommand(session, ctx),
       ...startForgeCommand(session, ctx),
+      ...forgeNameCommand(session, ctx),
       ...dataCommand(session, ctx),
       fleetCommand(session, ctx),
       {
