@@ -45,6 +45,7 @@ export type FileKind =
   | "makefile"
   | "dockerfile"
   | "workflow"
+  | "compose"
   | "sql"
   | "text"
   | "binary";
@@ -89,6 +90,7 @@ export const RENDER_CAP: Readonly<Record<FileKind, number>> = {
   makefile: 1 * MB,
   dockerfile: 1 * MB,
   workflow: 1 * MB,
+  compose: 1 * MB,
   sql: 1 * MB,
   text: 1 * MB,
   binary: 0,
@@ -231,6 +233,9 @@ const isDockerfileName = (path: string): boolean => /(^|\/)(Dockerfile|Container
 /** A GitHub Actions workflow: a `.yml` or `.yaml` directly under `.github/workflows/`. */
 const isWorkflowName = (path: string): boolean => /(^|\/)\.github\/workflows\/[^/]+\.ya?ml$/i.test(path);
 
+/** `compose.yaml|yml` and `docker-compose.yaml|yml`. */
+const isComposeName = (path: string): boolean => /(^|\/)(docker-)?compose\.ya?ml$/i.test(path);
+
 /** `lcov.info`: the name `lcov` and `bun test` write, whatever its extension. */
 const isLcovName = (path: string): boolean => /(^|\/)lcov\.info$/i.test(path);
 
@@ -306,6 +311,7 @@ export function fileKind(path: string, head: Uint8Array): FileKind {
   if (isMakefileName(path)) return "makefile";
   if (isDockerfileName(path)) return "dockerfile";
   if (isWorkflowName(path)) return "workflow";
+  if (isComposeName(path)) return "compose";
   return TEXTUAL[extension(path)] ?? "text";
 }
 
@@ -325,6 +331,7 @@ export function kindByName(path: string): FileKind {
   if (isMakefileName(path)) return "makefile";
   if (isDockerfileName(path)) return "dockerfile";
   if (isWorkflowName(path)) return "workflow";
+  if (isComposeName(path)) return "compose";
   return MEDIA[ext]?.kind ?? TEXTUAL[ext] ?? "text";
 }
 
