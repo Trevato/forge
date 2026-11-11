@@ -92,7 +92,7 @@ test("every readable node links, the viewer's own says you, a private fork is ab
 
 test("the terminal tree marks the viewer's own forks, not the asked one, as the page does", async () => {
   const { treeLines } = await import("../src/tui/screens/fork_tree.ts");
-  const node = (repo: string, parent: string | null, depth: number) => ({ repo, parent, depth, follow: "autonomous" as const });
+  const node = (repo: string, parent: string | null, depth: number) => ({ repo, parent, depth, follow: "autonomous" as const, word: "" });
   const tree = {
     root: "ann/yard",
     truncated: false,

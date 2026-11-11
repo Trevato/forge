@@ -41,7 +41,7 @@ import { FOLLOW_SWITCH_LABELS, followModeWords } from "../../actions/follow_word
 import type { ForkFollowMode } from "../../core/fork_follow.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { convergeWords, followModeOf, takeOrTell, takeWords } from "../../actions/follow.ts";
-import { FOLLOWS_NOTHING, proposeRefusalWords } from "../../actions/follow_words.ts";
+import { FOLLOW_WORD, FOLLOWS_NOTHING, proposeRefusalWords } from "../../actions/follow_words.ts";
 import { openProposal, proposeUpstream } from "../../actions/upstream.ts";
 import { proposesViaFork } from "../../origins/fork-route.ts";
 import { field, readForm } from "../form.ts";
@@ -64,6 +64,7 @@ export function lineageCard(lineage: Lineage, hereId: string, viewerId?: string)
       here ? badge("you are here", { variant: "outline" }) : null,
       // The viewer's own forks say "you" in words. aria-current stays on the one row being looked at.
       !here && viewerId !== undefined && n.repo.ownerId === viewerId ? badge("you", { variant: "outline" }) : null,
+      n.mode === undefined ? null : html`<span class="muted small">${FOLLOW_WORD[n.mode]}</span>`,
       n.relation === undefined ? null : relationBadge(n.relation),
     ].filter((t): t is Html => t !== null);
     return row({

@@ -20,7 +20,7 @@ import { Scroll } from "./common.ts";
 export function treeLines(tree: ForkTree | undefined, asked: string, width = 80, viewer?: string): string[] {
   if (tree === undefined) return ["Nothing to show."];
   const lines = tree.nodes.map((n) => {
-    const follow = n.follow === "autonomous" ? "" : `  ${n.follow}`;
+    const follow = n.word === "" ? "" : `  ${n.word}`;
     const you = n.repo !== asked && viewer !== undefined && n.repo.startsWith(`${viewer}/`) ? "  (you)" : "";
     return truncate(`${"  ".repeat(n.depth)}${n.repo === asked ? "* " : ""}${n.repo}${you}${follow}`, width);
   });

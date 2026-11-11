@@ -96,3 +96,35 @@ test("a fork the viewer may not read is not in the lineage, nor hinted at", asyn
   walk(lineage.root);
   expect(names).not.toContain("leaf0");
 });
+
+test("every fork in the tree carries how it follows, severed included, with no query per node (#11421)", async () => {
+  const { setForkFollowMode } = await import("../src/core/fork_follow.ts");
+  const { lineageCard } = await import("../src/web/pages/following.ts");
+  const { FOLLOW_WORD } = await import("../src/actions/follow_words.ts");
+  const leaf0 = getRepo(app.db, "u0", "leaf0")!;
+  const leaf1 = getRepo(app.db, "u1", "leaf1")!;
+  setForkFollowMode(app.db, leaf0.id, "dont-follow");
+  setForkFollowMode(app.db, leaf1.id, "take-updates");
+  const lineage = await lineageOf(app, chain[0]!, () => true);
+  const modes = new Map<string, string | undefined>();
+  const walk = (n: typeof lineage.root): void => {
+    modes.set(n.repo.name, n.mode);
+    n.children.forEach(walk);
+  };
+  walk(lineage.root);
+  expect(modes.get("r0")).toBeUndefined();
+  expect(modes.get("leaf0")).toBe("dont-follow");
+  expect(modes.get("leaf1")).toBe("take-updates");
+  expect(modes.get("leaf2")).toBe("tell-me");
+  expect(modes.get("r1")).toBe("tell-me");
+  const html = String(lineageCard(lineage, chain[0]!.id));
+  expect(html).toContain(">severed<");
+  expect(html).toContain(">follows<");
+  expect(html).toContain(">proposes<");
+  expect(FOLLOW_WORD["dont-follow"]).toBe("severed");
+  const big = await queriesDuring(() => lineageOf(app, chain[0]!, () => true));
+  const small = await queriesDuring(() => lineageOf(app, getRepo(app.db, "u0", "leaf0")!, () => true));
+  // The whole tree (32 forks) costs no more than a lone leaf's view of it: the modes are one query.
+  expect(big).toBeLessThanOrEqual(small);
+  expect(small).toBeLessThanOrEqual(4);
+});

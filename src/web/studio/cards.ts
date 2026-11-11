@@ -277,7 +277,7 @@ export function cardFor(
       rows.push({
         label: repo,
         ...(depth > 0 ? { depth } : {}),
-        value: FOLLOW_WORDS[text(n["follow"])] ?? "off",
+        value: text(n["word"]) || (FOLLOW_WORDS[text(n["follow"])] ?? "off"),
         ...(web(origin) && slugOf(repo) ? { link: `${origin}/${repo}` } : {}),
       });
     }

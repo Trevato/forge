@@ -13,7 +13,8 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { forkFollowModes } from "../core/fork_follow.ts";
+import { FOLLOW_WORD } from "./follow_words.ts";
+import { FORK_DEFAULT_MODE, forkFollowModes } from "../core/fork_follow.ts";
 import { canRead, forkParentFor, visibleForksByParent, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 
@@ -36,6 +37,8 @@ export interface TreeNode {
   /** Generations below the root; the root is 0. */
   readonly depth: number;
   readonly follow: TreeFollow;
+  /** The same fact in the one word every door says (`FOLLOW_WORD`); empty for the root. */
+  readonly word: string;
 }
 
 export interface ForkTree {
@@ -100,12 +103,16 @@ export function forkTree(
     level = next;
   }
   const modes = forkFollowModes(db, rows.slice(1).map((r) => r.repo.id));
-  const nodes: TreeNode[] = rows.map((r) => ({
-    repo: nameOf(r.repo),
-    parent: r.parent === null ? null : nameOf(r.parent),
-    depth: r.depth,
-    follow: r.parent === null ? "autonomous" : treeFollow(modes.get(r.repo.id)),
-  }));
+  const nodes: TreeNode[] = rows.map((r) => {
+    const mode = r.parent === null ? undefined : (modes.get(r.repo.id) ?? FORK_DEFAULT_MODE);
+    return {
+      repo: nameOf(r.repo),
+      parent: r.parent === null ? null : nameOf(r.parent),
+      depth: r.depth,
+      follow: r.parent === null ? "autonomous" : treeFollow(modes.get(r.repo.id)),
+      word: mode === undefined ? "" : FOLLOW_WORD[mode],
+    };
+  });
   return { root: nameOf(root), nodes, truncated };
 }
 

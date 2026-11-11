@@ -73,7 +73,7 @@ describe("MCP fork_tree card", () => {
     expect(rows.map((r: any) => r.depth ?? 0)).toEqual([0, 1, 2]);
     expect(SHELL_JS).toContain("paddingInlineStart");
     expect(rows[0].value).toBe("follows on its own");
-    expect(rows[1].value).toBe("offers updates");
+    expect(rows[1].value).toBe("proposes");
     expect(rows[2].link).toMatch(/\/dan\/app$/);
     expect(json.nodes.map((n: any) => n.repo)).toContain("dan/app");
   });

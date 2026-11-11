@@ -101,3 +101,10 @@ export function followStandingLine(
   const line = `${STANDING_LEADS[mode]} ${upstream ?? "its upstream"}`;
   return tookAt === null ? line : `${line} · last took ${agoWords(tookAt, now)}`;
 }
+
+/** How a fork follows its upstream in one word, for a tree node; a severed fork says so rather than saying nothing. */
+export const FOLLOW_WORD: Readonly<Record<ForkFollowMode, string>> = {
+  "take-updates": "follows",
+  "tell-me": "proposes",
+  "dont-follow": "severed",
+};

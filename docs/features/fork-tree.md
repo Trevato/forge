@@ -8,7 +8,8 @@ No git is read.
 ## Terminal
 
 Open the palette and choose **Fork tree of a repository**, then type `owner/name`. The repository you asked
-about is marked `*`, each generation is indented, and each fork says whether it `take-updates` or only `offers`.
+about is marked `*`, each generation is indented, and each fork says in one word how it follows its parent: `follows`, `proposes` or `severed` (`FOLLOW_WORD` in
+`src/actions/follow_words.ts`, the same word the fork's family tree on the web says).
 A repository you may not read answers "not found", as everywhere else.
 
 ## MCP
@@ -17,7 +18,7 @@ A repository you may not read answers "not found", as everywhere else.
 { "name": "fork_tree", "arguments": { "repo": "alice/app", "depth": 4, "limit": 200 } }
 ```
 
-Returns `{ root, nodes: [{ repo, parent, depth, follow }], truncated }`. `depth` is 1-8 (default 4) generations
+Returns `{ root, nodes: [{ repo, parent, depth, follow, word }], truncated }`; `word` is the one word above (empty for the root). `depth` is 1-8 (default 4) generations
 below the root; `limit` is 1-200 nodes (default 200). `truncated` is true when more exists than is shown.
 
 - The repository asked about is always in `nodes`, with its ancestors, even when it lies deeper than `depth` or
