@@ -319,10 +319,12 @@ export async function studioHome(
     steps !== undefined
   ) {
     const apps = await clientApps(ctx, user);
+    // Before the first tell the card is the one box and carries the key line and the composer.
+    const firstTell = steps.some((s) => s.key === "tell" && !s.done);
     const lean = html`<h1 class="sr-only">Home</h1>
-      ${firstSteps} ${address} ${crewKeyCard(ctx)} ${heldLine(ctx, user)} ${apps}
+      ${firstSteps} ${address} ${firstTell ? null : crewKeyCard(ctx)} ${heldLine(ctx, user)} ${apps}
       <div class="stack">
-        ${composer(ctx, user)}
+        ${firstTell ? null : composer(ctx, user)}
         <p class="small muted">
           <a href="/?all=1">Show everything</a>
         </p>
@@ -332,7 +334,7 @@ export async function studioHome(
       title: "Home",
       body: lean,
       // The everyday step makes its account with a passkey (#1890).
-      ...(firstSteps ? { scriptJs: passkeyJs } : {}),
+      ...(firstSteps && !firstTell ? { scriptJs: passkeyJs } : {}),
     });
   }
   // The client's first screen names its own phases (`clientApps`).

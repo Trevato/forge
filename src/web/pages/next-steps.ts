@@ -7,7 +7,9 @@
  * primary action. Make your everyday account carries the form itself (it
  * replaces #803's separate card here); open your apps lists them; tell the
  * crew something points at the composer just below. The card goes once
- * all three are done.
+ * all three are done. Before the first tell the card is one box, "What do you
+ * want built?", and one line on what pays for the crew; the everyday account is
+ * offered once a tell exists, never as a gate before it (#11173).
  */
 
 import { appCrew } from "../../core/app-crew.ts";
@@ -24,6 +26,10 @@ import { badge, btn, row } from "../ui.ts";
 import { tellHref } from "../studio/nouns.ts";
 import { everydayAsk } from "./everyday.ts";
 import { EVERYDAY_WHY } from "../../core/everyday.ts";
+import { crewNote } from "../studio/crew_key.ts";
+import { crewHasCredential } from "../../core/subscriptions.ts";
+import { FORGE_TARGET } from "../studio/feed.ts";
+import { COMPOSER_FIELDS, TELL_MAX } from "../share_target.ts";
 
 /** One line per app: the app is the row's title, the crew member and what they are doing its meta. */
 function crewAtWork(ctx: Ctx, repos: Awaited<ReturnType<typeof spawnedRepos>>): Html[] {
@@ -57,6 +63,20 @@ function stepBlock(step: NextStep, primary: boolean, body: Html | null): Html {
     ${!step.done && body ? html`<div class="step-body">${body}</div>` : null}`;
 }
 
+/** Before the first tell: one box, "say what you want built", and one line about what pays for the crew. */
+function firstTell(ctx: Ctx, user: User, crew: Html[]): Html {
+  return html`<section id="next-steps" data-first-tell>
+    <h2>What do you want built?</h2>
+    <form id="composer" class="stack" method="post" action="/tell">
+      <input type="hidden" name="${COMPOSER_FIELDS.app}" value="${FORGE_TARGET}" />
+      <textarea class="input" name="${COMPOSER_FIELDS.text}" rows="3" maxlength="${String(TELL_MAX)}" required placeholder="A weekly menu page for the bakery" aria-label="Your request" data-draft="${user.id}"></textarea>
+      <div class="bar">${btn("Tell the crew", { variant: "primary" })}</div>
+    </form>
+    <p class="small muted" id="crew-credit-note">${crewNote(ctx.app)}${crewHasCredential(ctx.app.db) || !ctx.auth.user?.isAdmin ? null : html` <a href="/settings/subscriptions">Add your own key</a>.`}</p>
+    ${crew.length > 0 ? html`<ul class="list">${crew}</ul>` : null}
+  </section>`;
+}
+
 /** The card, or nothing: not a spawned forge, not its owner, or every step done. */
 export async function nextStepsCard(
   ctx: Ctx,
@@ -66,6 +86,7 @@ export async function nextStepsCard(
   if (!steps || steps.every((s) => s.done)) return null;
   const repos = await spawnedRepos(ctx.app, user);
   const crew = crewAtWork(ctx, repos);
+  if (steps.some((s) => s.key === "tell" && !s.done)) return firstTell(ctx, user, crew);
   const primary = steps.find((s) => !s.done)?.key;
   const bodies: Record<NextStep["key"], Html | null> = {
     everyday: html`<p class="muted small">${EVERYDAY_WHY}</p>

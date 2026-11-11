@@ -52,6 +52,16 @@ export function crewCanRun(app: App): boolean {
 /** Whether the forge has a crew at all, so a line about it is true. */
 export const hasCrew = (app: App): boolean => listAgents(app.db).length > 0;
 
+/** What the crew runs on, in one sentence and no field: the first screen's line, said the same on the page and in the terminal. */
+export function crewNote(app: App): string {
+  if (crewHasCredential(app.db)) return "The crew works on this forge's included credit.";
+  const credit = includedCredit(app);
+  if (credit !== undefined && credit.leftUsd > 0)
+    return `The crew is building on ${usdWords(credit.leftUsd)} of ${usdWords(credit.capUsd)} included credit.`;
+  if (credit !== undefined) return "The included credit is spent; the crew needs a model key to go on.";
+  return "The crew needs a model key to start.";
+}
+
 const keyField = (): Html => html`<form class="stack" method="post" action="${KEY_ACTION}" id="crew-key-form">
   <div class="field">
     <label for="crew-key">Your Anthropic API key or Claude login</label>

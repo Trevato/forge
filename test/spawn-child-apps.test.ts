@@ -179,7 +179,7 @@ describe("a spawned child's apps", () => {
     expect(home).toContain("bakery");
     expect(home).not.toContain("No apps yet");
     expect(home).toContain("The crew needs a model key to start");
-    expect(home).toContain('action="/settings/crew/key"');
+    expect(home).toContain('href="/settings/subscriptions"');
     const appPage = await (
       await fetch(`${servers.url}/marias/bakery`, { headers: { cookie } })
     ).text();

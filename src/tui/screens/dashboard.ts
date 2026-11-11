@@ -25,6 +25,9 @@ import { coveredByVerdict, forgeVerdict, verdictLine } from "../../kernel/guard_
 import { clientAppRows, clientDoings, clientFinished, doingLine, finishedLine } from "../../core/client-apps.ts";
 import { appCrew } from "../../core/app-crew.ts";
 import { nextStepsFor } from "../../core/next-steps.ts";
+import { keepThought } from "../../actions/thought.ts";
+import { SAY_SOMETHING_WORDS } from "../../actions/tell_words.ts";
+import { crewNote } from "../../web/studio/crew_key.ts";
 import { agentsLine } from "../../web/studio/client_home.ts";
 import { lastVisit } from "../../core/home_visit.ts";
 import { sinceDigest } from "../../web/studio/since.ts";
@@ -130,6 +133,9 @@ import { local } from "./where.ts";
 import { signInScreen } from "./signin.ts";
 
 /** Rows the list keeps under the figures strip; below it the strip shows fewer figures. */
+/** The first line of a new forge's home, as the page's heading and its one box. */
+const FIRST_TELL_LINE = "What do you want built? t says it to the crew.";
+
 const FIGURES_ROOM = 6;
 
 /** The forge-wide daily ceiling, from config, for the spend figure; the data directory, for the backup's age. */
@@ -231,6 +237,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
    * name of the account used day to day. Nobody else gets the row.
    */
   let everyday: { line: string; asking: boolean } | undefined;
+  /** A new forge's owner before their first tell: the home is one line, "what do you want built", and the everyday offer waits. */
+  let firstTell = false;
   /** One line per fired flow alarm; an admin reads every repository, anyone else public ones alone. */
   let alarms: string[] = [];
   /** The panels this admin pinned to the web home, by title and board, in their order. */
@@ -276,9 +284,18 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
 
   const loadClientLines = async (): Promise<void> => {
     clientLines = [];
-    if (!f.user || (await nextStepsFor(f.app, f.user)) === undefined) return;
+    firstTell = false;
+    const steps = f.user ? await nextStepsFor(f.app, f.user) : undefined;
+    if (!f.user || steps === undefined) return;
     // A client's home never carries the forge-wide figures, on either door.
     figures = [];
+    firstTell = steps.some((s) => s.key === "tell" && !s.done);
+    everyday = everydayHead();
+    if (firstTell) {
+      clientLines = [FIRST_TELL_LINE, crewNote(f.app)];
+      ctx.invalidate();
+      return;
+    }
     const apps = await clientAppRows(f.app, f.user);
     clientRepoIds = new Set(apps.map((a) => a.repo.id));
     clientLive = new Map(apps.flatMap((a) => (a.live === undefined ? [] : [[a.repo.id, a.live] as const])));
@@ -319,7 +336,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   };
 
   const everydayHead = (): typeof everyday => {
-    if (f.user === undefined || !f.user.isAdmin || f.user.kind !== "user") return undefined;
+    if (f.user === undefined || !f.user.isAdmin || f.user.kind !== "user" || firstTell) return undefined;
     if (askForEveryday(f.db, f.user))
       return { line: `${EVERYDAY_WHY} E makes it on the web · K keeps using admin`, asking: true };
     const daily = everydayOf(f.db, f.user);
@@ -1016,7 +1033,11 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
           disabled: focus !== "machine" || pins.length === 0,
         }),
         binding(["C"], "decider", { disabled: !f.user }),
-        ...(clientLines.length > 0 ? [binding(["t"], "ask for something")] : []),
+        ...(firstTell
+          ? [binding(["t"], "say what you want built")]
+          : clientLines.length > 0
+            ? [binding(["t"], "ask for something")]
+            : []),
         ...(clientLive.size > 0 ? [binding(["o"], "open the app")] : []),
         binding(["n"], "new repo", { disabled: !f.signedIn }),
         binding(["M"], "migrate", { disabled: !f.signedIn }),
@@ -1262,6 +1283,23 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
           reload();
           ctx.toast(wanted ? "pinned" : "unpinned", "success");
         }
+        return true;
+      }
+      if (e.key === "t" && f.user && firstTell) {
+        ctx.push(
+          promptScreen(ctx, screen, {
+            title: "What do you want built?",
+            label: "Your request",
+            hint: "enter sends",
+            onSubmit: (said) => {
+              if (said.trim() === "") return SAY_SOMETHING_WORDS;
+              const kept = keepThought(f.app, f.user, said, "composer");
+              ctx.toast(kept.ok ? "Received." : "That could not be kept.", kept.ok ? "success" : "danger");
+              if (kept.ok) void loadClientLines().then(reload);
+              return undefined;
+            },
+          }),
+        );
         return true;
       }
       if (e.key === "t" && f.user && clientLines.length > 0) {
