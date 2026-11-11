@@ -92,6 +92,23 @@ describe("MCP releases card", () => {
     expect(res.structuredContent.card.rows[3].value).not.toContain("1 pull");
   });
 
+  test("the card is the last 10, each row linked to its pull, and escapes the link's fields", () => {
+    const items = Array.from({ length: 12 }, (_, n) => ({ sha: `s${n}`, version: null, pull: { repo: "o/r", number: n + 1 }, landed: "", proof: "proven" }));
+    const card = cardFor("releases", { items }, "https://f.test")!;
+    expect(card.rows.length).toBe(10);
+    expect(card.rows[0]!.link).toBe("https://f.test/o/r/pulls/1");
+    for (const repo of ["//evil", "a/..", "./x", "../x", "a/.", "a/b/c", "a b/c"]) {
+      const bad = cardFor("releases", { items: [{ sha: "a", pull: { repo, number: 1 }, landed: "", proof: "proven" }] }, "https://f.test")!;
+      expect(bad.rows[0]!.link).toBeUndefined();
+    }
+    expect(cardFor("releases", { items }, "https://f.test")!.status).toStartWith("last 10 of 12 · 10 proven");
+    const evil = `<img src=x onerror=alert(1)>`;
+    const hostile = cardFor("releases", { items: [{ sha: evil, version: evil, pull: { repo: "o/r", number: 1 }, landed: "", proof: evil }] }, "https://f.test")!;
+    expect(hostile.rows[0]!.label).toBe(evil);
+    expect(hostile.rows[0]!.value).toContain(evil);
+    expect(CARD_SHELL("release")).not.toContain(evil);
+  });
+
   test("proof words, one per branch", () => {
     expect(proofOf("rolled_back", true)).toBe("rolled back");
     expect(proofOf("rolled_back", false)).toBe("rolled back");

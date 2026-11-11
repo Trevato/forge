@@ -118,7 +118,7 @@ export const SEARCH_ROWS = 20;
 export const ISSUES_ROWS = 20;
 const ASKED_WORDS = 80;
 const ASKED_LIMIT = 20;
-const RELEASE_ROWS = 20;
+const RELEASE_ROWS = 10;
 /** A waiting row's words are cut to this many characters. */
 const SAYS_WORDS = 160;
 /** A board card shows this many panels, then counts the rest. */
@@ -133,6 +133,8 @@ const FOLLOW_WORDS: Readonly<Record<string, string>> = {
   "dont-follow": "off",
 };
 /** The forge's id shape (src/kernel/id.ts): 26 lowercase Crockford base32 characters. */
+/** A real `owner/name`: no empty, `.` or `..` segment, nothing that climbs out of the repository. */
+const REPO_SLUG = /^(?!\.{1,2}\/)(?!.*\/\.{1,2}$)[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 const RUN_ID = /^[0-9a-hjkmnp-tv-z]{26}$/;
 
 /** A run state as one glyph beside its word: a card is read at a glance. */
@@ -478,15 +480,21 @@ export function cardFor(
     // `releases` answers `{ items: [{ sha, version, pull?, landed, proof, live? }] }`; the shipped list has no `items`, so no card.
     const items = list(obj(value)["items"]).map(obj);
     if (!Array.isArray(obj(value)["items"])) return undefined;
-    const count = (w: string): number => items.filter((i) => i["proof"] === w).length;
-    status = `${items.length} kept · ${count("proven")} proven · ${count("unproven")} unproven · ${count("rolled back")} rolled back`;
-    for (const i of items.slice(0, RELEASE_ROWS)) {
+    const shown = items.slice(0, RELEASE_ROWS);
+    const count = (w: string): number => shown.filter((i) => i["proof"] === w).length;
+    status = `${items.length > shown.length ? `last ${shown.length} of ${items.length}` : `${items.length} kept`} · ${count("proven")} proven · ${count("unproven")} unproven · ${count("rolled back")} rolled back`;
+    for (const i of shown) {
       const p = obj(i["pull"]);
       const pull = text(p["number"]) === "" ? "" : `#${text(p["number"])} · `;
       const at = text(i["landed"]);
+      const repo = text(p["repo"]);
+      const path = `/${repo}/pulls/${text(p["number"])}`;
       rows.push({
         label: text(i["version"]) || text(i["sha"]),
         value: `${at === "" ? "" : `${timeAgo(at)} · `}${pull}${text(i["proof"])}`,
+        ...(web(origin) && REPO_SLUG.test(repo) && /^[1-9]\d*$/.test(text(p["number"])) && here(origin, path)
+          ? { link: origin + path }
+          : {}),
       });
     }
     return { kind, title: CARD_TITLE[kind], status, rows, actions };
