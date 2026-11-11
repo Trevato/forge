@@ -1,7 +1,7 @@
 /**
  * The page-load budget (#11320): the five pages people open first answer
  * under their median warm, on a seeded forge booted in-process and walked
- * signed in, and run no more SQL statements than `test/helpers/page_budget.ts`
+ * signed in, and run no more SQL statements than `src/perf/page_budget.ts`
  * allows.
  *
  * The count is the hard assertion and is judged first: it does not move with
@@ -20,7 +20,7 @@ import { getRepo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import {
-  PAGE_BUDGETS, countFinding, median, timeFinding, type PageBudget, type PageMeasure,
+  PAGE_BUDGETS, countFinding, median, pagePath, timeFinding, type PageBudget, type PageMeasure,
 } from "./helpers/page_budget.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { promote } from "./helpers/members.ts";
@@ -94,7 +94,7 @@ afterAll(() => {
 const INIT = (): RequestInit => ({ headers: { cookie }, redirect: "manual" });
 
 function url(b: PageBudget): string {
-  return `${servers.url}${b.pattern.replace(":owner", "alice").replace(":name", "notes")}`;
+  return `${servers.url}${pagePath(b, "alice", "notes")}`;
 }
 
 /** One request warms; then the fewest statements of `COUNTED` warm requests is the count, so a background tick's queries do not land on a page. */

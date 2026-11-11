@@ -1,34 +1,11 @@
 /**
- * The page-load budget (#11320): the pages people open first, each with the
- * median it answers in warm and the SQL statements one request of it may run.
- * Plain data, one line per page; `test/page-budget.test.ts` walks the table
- * in-process. It lives beside the test because only the test reads it.
- *
- * The statement count is the hard limit: it is the same on a loaded machine
- * as on an idle one, so an N+1 fails it every run. The median is the promise
- * people feel; a loaded check host can miss it, so the test measures it again
- * before it judges.
+ * The page-load budget's judging (#11320): the median, what one page
+ * measured, and the finding lines. The table itself is plain data in
+ * `src/perf/page_budget.ts` (#11360), re-exported here for the test.
  */
+import type { PageBudget } from "../../src/perf/page_budget.ts";
 
-export interface PageBudget {
-  /** What the page is, in words, for the failure line. */
-  readonly page: string;
-  /** The router pattern; `:owner` and `:name` are filled by the test. */
-  readonly pattern: string;
-  /** The median of 20 warm requests stays under this many ms. */
-  readonly medianMs: number;
-  /** One warm request runs at most this many SQL statements. */
-  readonly statements: number;
-}
-
-/** Statement limits are today's count, signed in, plus a little: lower them as pages get cheaper, raise one only on purpose. */
-export const PAGE_BUDGETS: readonly PageBudget[] = [
-  { page: "home", pattern: "/", medianMs: 50, statements: 46 },
-  { page: "explore", pattern: "/explore", medianMs: 50, statements: 18 },
-  { page: "map", pattern: "/map", medianMs: 50, statements: 21 },
-  { page: "an app page", pattern: "/:owner/:name", medianMs: 50, statements: 49 },
-  { page: "changelog", pattern: "/changelog", medianMs: 50, statements: 20 },
-];
+export { PAGE_BUDGETS, pagePath, type PageBudget } from "../../src/perf/page_budget.ts";
 
 /** The median of `xs` (the mean of the middle two for an even count); NaN for none. */
 export function median(xs: readonly number[]): number {
