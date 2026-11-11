@@ -3,7 +3,7 @@
  * forge they just made (#11202). The page is static and holds no claim code:
  * the code rides the fragment of this address (`#<code>`), which a server never
  * sees. A few lines of script read it, clear it from the address bar, poll
- * `/forges/<name>/ready` (capped), then go to the child's `/claim#<code>`.
+ * `/forges/<name>/ready` (capped), then go to the child's `/welcome#<code>`.
  */
 import { isChildName } from "../../core/proposal_token.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -39,7 +39,7 @@ export const WAITING_JS = /* js */ `
 export function forgeWaitingPage(ctx: Ctx): Response {
   const name = ctx.params.name ?? "";
   if (!isChildName(name)) return notFoundPage(ctx);
-  const claim = `${childUrlOf(ctx.app, name).replace(/\/+$/, "")}/claim`;
+  const claim = `${childUrlOf(ctx.app, name).replace(/\/+$/, "")}/welcome`;
   return page({
     ctx,
     title: "Making your forge",

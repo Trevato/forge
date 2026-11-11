@@ -16,7 +16,7 @@
 
 Budgets: at most three screens before the forge; the forge ready in under 20 s; the first crew activity in under 60 s; the change live within five minutes.
 
-Words a stranger is never shown on this path: subscription, autonomy, cell, child, claim. The list lives once, as `STRANGER_NEVER_SEES` in `src/design/first_five_minutes.ts` (with the budgets), for a test to import.
+Words a stranger is never shown on this path: subscription, autonomy, cell, child, claim, founder, autonomous, mode. The list lives once, as `STRANGER_NEVER_SEES` in `src/design/first_five_minutes.ts` (with the budgets), for a test to import.
 
 **The five rules of attention.** Every pass over a page follows them; the owner's time is the cost.
 Each has a real page as its pair. Enforced by rule 5: `test/attention.test.ts`.

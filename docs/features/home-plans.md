@@ -12,7 +12,7 @@ Where a visitor sees what a hosted forge is and how to get one (#11139).
 
 The plan's name, its price ("Free", or "$19 a month" from the plan's `priceUsd`), the machine it runs on (CPU, memory, disk) and its own sentence. A paid plan with a crew credit adds the credit after that sentence: "$5 of crew credit each month", from the plan's `creditUsd`. The words are `src/billing/plan_words.ts`, shared by both doors.
 
-A paid plan whose size has a [buy link](billing-links.md) also carries a "Get <plan>" link to it (on the web an anchor beside the price, in the terminal `Get <plan>: <link>`); the free plan never does, its way in is the one **Get a forge** button. When any plan carries a link, one line follows the plans on both doors: "Your forge is made after payment; an email with the link to open it arrives." (`AFTER_PAYMENT` in the same file).
+A paid plan whose size has a [buy link](billing-links.md) also carries a "Get <plan>" link to it (on the web an anchor beside the price, in the terminal `Get <plan>: <link>`); the free plan never does, its way in is the one **Get a forge** button. When any plan carries a link, one line follows the plans on both doors: "Your forge is made after payment. The link to open it is emailed to you, usually within a few hours." (`AFTER_PAYMENT` in the same file).
 
 Whether this forge takes new accounts is not said in this section: it is about getting a forge, not an account here.
 

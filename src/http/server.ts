@@ -275,7 +275,7 @@ import {
 } from "../web/studio/actions.ts";
 import { forgeReady } from "../web/pages/forge-ready.ts";
 import { forgeName } from "../web/pages/forge-name.ts";
-import { claimFragmentPage, claimOptions, claimSubmit } from "../web/pages/claim.ts";
+import { claimFragmentPage, claimOptions, claimSubmit, welcomePage, welcomeSubmit } from "../web/pages/claim.ts";
 import { firstAdminOptions, firstAdminPage, firstAdminSubmit } from "../web/pages/first-admin.ts";
 import { familyPage } from "../web/pages/family.ts";
 import { forgeLinkRevoke, forgeLinkSubmit, forgeLinkUndo, forgeRemoveConfirm, forgeRemoveSubmit, forgeStopSubmit,
@@ -848,6 +848,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/claim", claimFragmentPage);
   router.add("POST", "/claim", claimSubmit);
   router.add("POST", "/claim/options", claimOptions);
+  router.add("GET", "/welcome", welcomePage);
+  router.add("POST", "/welcome", welcomeSubmit);
   // The operator's first-admin code, redeemed with a passkey (core/first_admin.ts).
   router.add("GET", "/first-admin", firstAdminPage);
   router.add("POST", "/first-admin", firstAdminSubmit);

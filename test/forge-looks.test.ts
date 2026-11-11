@@ -48,6 +48,7 @@ const NOT_A_PAGE: Record<string, string> = {
   "/audit.csv": "a CSV download of /audit",
   "/maintenance": "no picture: the cap of 24 looks is spent; an admin's page, covered by test/maintenance.test.ts",
   "/claim": "answers 404 to an admin: it exists only for a link-holder",
+  "/welcome": "the account screen of a forge with no admin yet; answers 404 to an admin",
   "/first-admin": "the setup form for a forge with no admin yet",
   "/signin": "a sign-in form, not a page of the forge",
   "/signup": "a sign-up form, not a page of the forge",

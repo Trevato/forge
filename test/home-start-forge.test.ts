@@ -188,7 +188,7 @@ function runScript(js: string, els: Record<string, Fake>, answer: (url: string) 
   };
   g["setTimeout"] = (fn: () => void) => queueMicrotask(fn);
   const restore = () => Object.assign(g, saved);
-  new Function("document", `return ${js.replace(/\(document\)\s*$/, "")}`)(doc)(doc);
+  new Function("document", `return ${js.replace(/\(document\);?\s*$/, "")}`)(doc)(doc);
   return { asked, gone, restore };
 }
 const settle = async () => {

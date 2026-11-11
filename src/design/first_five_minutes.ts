@@ -6,7 +6,7 @@
  */
 
 /** Words never shown to a stranger on the first-five-minutes path. Closed: a change here is a change to the doc. */
-export const STRANGER_NEVER_SEES = ["subscription", "autonomy", "cell", "child", "claim"] as const;
+export const STRANGER_NEVER_SEES = ["subscription", "autonomy", "cell", "child", "claim", "founder", "autonomous", "mode"] as const;
 
 /** The budgets, in screens and seconds. */
 export const FIRST_FIVE_MINUTES = {
