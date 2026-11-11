@@ -82,7 +82,7 @@ import { pinnedPanels, pinnedSlot } from "./pinned.ts";
 import { isNavigation, lastVisit, noteVisit } from "../../core/home_visit.ts";
 import { sinceYouWere } from "./since.ts";
 import { homeTabs, unshippedAsks } from "./home_tabs.ts";
-import { crewKeyNote } from "./crew.ts";
+import { crewKeyCard } from "./crew_key.ts";
 import { everydayCard } from "../pages/everyday.ts";
 import { nextStepsCard, nextStepsOf } from "../pages/next-steps.ts";
 import { spawnedOrg } from "../../spawn/claim.ts";
@@ -319,7 +319,7 @@ export async function studioHome(
   ) {
     const apps = await clientApps(ctx, user);
     const lean = html`<h1 class="sr-only">Home</h1>
-      ${firstSteps} ${address} ${crewKeyNote(ctx)} ${heldLine(ctx, user)} ${apps}
+      ${firstSteps} ${address} ${crewKeyCard(ctx)} ${heldLine(ctx, user)} ${apps}
       <div class="stack">
         ${composer(ctx, user)}
         <p class="small muted">
@@ -422,7 +422,7 @@ export async function feedPage(ctx: Ctx): Promise<Response> {
         ${await regionOf("feed")}
       </div>
       <aside class="stack">
-        ${user.isAdmin || appRepos.length > 0 ? crewKeyNote(ctx) : null}
+        ${user.isAdmin || appRepos.length > 0 ? crewKeyCard(ctx) : null}
         ${appsRegion(ctx, user)}
         ${terminalCard(ctx)} ${downloadsCard(ctx, user)}
         ${orgsCard(ctx, user)}

@@ -41,6 +41,7 @@ import { openBeatDoor, parentLocal, type BeatDoor } from "../src/spawn/beat-door
 import { readCredit } from "../src/spawn/credit.ts";
 import { fundedEnv, fundingOf, fundingWords, refreshFunding } from "../src/spawn/funding.ts";
 import { listPriceUsd } from "../src/spawn/list_price.ts";
+import { setLimit } from "../src/settings/limits.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -105,6 +106,8 @@ describe("a parent funds a child's crew", () => {
     const alice = await createUser(parent.db, { origin: "seed", trusted: true, username: "alice", email: "a@x.test", password: "a-long-credit-passphrase", isAdmin: true });
     const bob = await createUser(parent.db, { origin: "seed", trusted: true, username: "bob", email: "b@x.test", password: "a-long-credit-passphrase" });
     if (!alice.ok || !bob.ok) throw new Error("users");
+    // These tests lend credit by hand: the credit a new forge comes with (#11154) is off here.
+    setLimit(parent.db, "spawn.included_credit_usd", 0, alice.value.id);
     adminRw = createToken(parent.db, alice.value.id, "rw", "rw").token;
     bobRw = createToken(parent.db, bob.value.id, "rw", "rw").token;
     const repo = await createRepo(parent, alice.value, { name: "bakery" });

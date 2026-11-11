@@ -5,6 +5,8 @@
  * who, when, from what to what. Anyone else gets the not-found page.
  */
 
+import { usdWords } from "../../spawn/credit.ts";
+import { worstCaseOf } from "../../spawn/included_credit.ts";
 import { QUOTA_INVALID } from "../../actions/admin_limits_words.ts";
 import { changeLimit, listLimits } from "../../actions/limits.ts";
 import { changeQuotas, readQuotas } from "../../actions/quotas.ts";
@@ -217,6 +219,7 @@ export function limitsPage(ctx: Ctx): Response {
     ${historyBlock("Invite links made", inviteRows)}
     <section class="settings-block mt">
       <h2>Limits</h2>
+      <p class="small muted mb" id="included-credit-worst">Worst case a day for the crew credit new forges come with: ${usdWords(worstCaseOf((k) => limits.find((l) => l.key === k)?.value ?? 0))} (new accounts an hour × 24 × forges a person may own × the credit).</p>
       <div class="table-scroll">
         <table class="table setting-table" data-dense>
           <caption class="sr-only">Limits, their values and how to change them</caption>

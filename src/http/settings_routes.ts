@@ -7,6 +7,7 @@
  * in the pattern list the usage page reads, so this module never imports it.
  */
 
+import { crewKeyAdd } from "../web/studio/crew_key.ts";
 import type { Handler } from "./context.ts";
 import type { Router } from "./router.ts";
 import { parentLinkStart } from "./rp.ts";
@@ -174,6 +175,7 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   // The crew: a forge admin's section, hidden from everyone else.
   router.add("GET", "/settings/subscriptions", subscriptionsPage);
   router.add("POST", "/settings/subscriptions", subscriptionAdd);
+  router.add("POST", "/settings/crew/key", crewKeyAdd);
   router.add("POST", "/settings/subscriptions/:id/delete", subscriptionDelete);
   router.add("POST", "/settings/subscriptions/:id/wake", subscriptionWake);
   router.add(

@@ -26,6 +26,7 @@ export type LimitKey =
   | "crew.concurrency"
   | "checks.concurrency"
   | "agent.budget_max_usd"
+  | "spawn.included_credit_usd"
   | "subscription.budget_max_usd"
   | "app.members_max"
   | "front.pinned_max"
@@ -94,6 +95,14 @@ export const LIMITS: Record<LimitKey, LimitDef> = {
     min: 1,
     max: 1_000_000,
     reason: "A crew member's per-run budget is spent unattended, so what one run may cost has a top.",
+  },
+  "spawn.included_credit_usd": {
+    label: "Crew credit a new forge comes with",
+    unit: "dollars",
+    default: 2,
+    min: 0,
+    max: 1_000,
+    reason: "A new forge's crew runs on this forge's model access until its owner adds a key; 0 turns it off. Worst case a day is the visitor limit times this.",
   },
   "subscription.budget_max_usd": {
     label: "Pool account budget ceiling",

@@ -12,6 +12,7 @@
  * 404 for everyone.
  */
 
+import { crewKeyCard } from "../studio/crew_key.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
 import { repositoryLimitMessage } from "../../actions/repos.ts";
 import { appLimitWords } from "../../actions/app_limit.ts";
@@ -328,6 +329,7 @@ function newAppForm(
     ${pageHead("New app", {
       sub: "Describe what it should do. You get a repository, a first issue, a crew member on it, a live app, and a preview for every change.",
     })}
+    ${crewKeyCard(ctx, true)}
     ${html`<form method="post" action="/apps/new">
         ${values.template
           ? formField({ label: "Copy of", name: "template", value: values.template, readonly: true, mono: true })

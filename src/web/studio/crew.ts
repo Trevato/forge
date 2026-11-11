@@ -30,7 +30,6 @@ import { listCrewRoles, type Agent, type CrewRole } from "../../core/agents.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { canAdmin, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import { seatsOf, type Seat } from "../../crew/seats.ts";
-import { crewHasCredential } from "../../core/subscriptions.ts";
 import { autonomyStatus } from "../../crew/autonomy.ts";
 import { governorSeen } from "../../crew/governed.ts";
 import { crewOffInPreview } from "../../crew/preview.ts";
@@ -414,19 +413,4 @@ export function settingsLead(ctx: Ctx, repo: Repo): Html {
     ${autonomyCard(ctx, repo, base, admin)}
     ${admin ? fileHoldsCard(ctx, repo, base) : null}
   </div>`;
-}
-
-/**
- * One sentence when the crew has no model credential, so it cannot start:
- * what is missing and where it is added — for the admin, a link to it; for
- * anyone else, who can. Nothing when the crew can run.
- */
-export function crewKeyNote(ctx: Ctx): Html | null {
-  if (crewHasCredential(ctx.app.db)) return null;
-  return html`<p class="small muted" id="crew-key-note" role="status">
-    ${icon("alert")} The crew cannot start work yet: it needs a subscription.
-    ${ctx.auth.user?.isAdmin
-      ? html`<a href="/settings/subscriptions">Add one in Subscriptions</a>.`
-      : "Ask this forge's admin to add one."}
-  </p>`;
 }

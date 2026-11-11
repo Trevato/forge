@@ -61,7 +61,7 @@ import { notesCard } from "./notes.ts";
 import { adapterCard } from "./adapter.ts";
 import { appPanels } from "./previews.ts";
 import { noCrewLine, pausedWords, servingHistory, type WordCtx } from "./words.ts";
-import { crewKeyNote } from "./crew.ts";
+import { crewKeyCard } from "./crew_key.ts";
 import {
   notePhase,
   takeSessionTime,
@@ -500,7 +500,7 @@ export async function studioApp(
       ? archivedParentLine(ctx, repo)
       : followingCard(ctx, repo, following)}
     <div id="app-head">${head}</div>
-    ${ownerFacts ? crewKeyNote(ctx) : null}
+    ${ownerFacts ? crewKeyCard(ctx, true) : null}
     <div class="stack">
       ${adapter}
       ${tellRegion}
@@ -520,7 +520,7 @@ export async function studioApp(
     <div id="app-head">${head}</div>
     ${askingLine(ctx, repo)}
     ${policy}
-    ${ownerFacts ? crewKeyNote(ctx) : null}
+    ${ownerFacts ? crewKeyCard(ctx, true) : null}
     ${ownerFacts
       ? egressNote(
           ctx.app.config.dataDir,

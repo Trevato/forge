@@ -39,6 +39,8 @@ import { runGit } from "../git/env.ts";
 import { repoDir } from "../git/repos.ts";
 import { commitFiles } from "../git/write.ts";
 import { adoptForgeCode, forkForgeCode } from "../spawn/forge_code.ts";
+import { lendIncludedCredit } from "../spawn/included_credit.ts";
+import { seedStarterCrew } from "../spawn/starter_crew.ts";
 import { birthFromTemplate, type TemplateMark } from "../spawn/template_birth.ts";
 import { sha256 } from "../kernel/hash.ts";
 import { secret } from "../kernel/id.ts";
@@ -324,6 +326,8 @@ async function make(
   const copied = await copyInto(app, owner, plan, ledger, deps.modelKey, deps.modelEndpoint);
   if (!copied.ok) return failed(app, deps, "copy", copied.error);
   const claimUrl = claimLink(liveChildUrl(app, plan.name), copied.value);
+  // A plan carries its own credit (grantPlanCredit); the included credit is for a spawn on no plan.
+  if (plan.plan === undefined) lendIncludedCredit(app, plan.name, childDirOf(app, ledger.bodyId), deps.modelKey !== undefined);
 
   grantPlanCredit(app, plan, ledger.bodyId);
   ledger.done = true;
@@ -502,6 +506,10 @@ async function copyInto(
         addCrew(child.db, repo.id, theirs.user.id, founder.id);
         setCrewRole(child.db, repo.id, theirs.user.id, role);
       }
+
+    // A forge with no crew of its own comes with a builder and a reviewer,
+    // seated on its apps with autonomy on (#11154).
+    await seedStarterCrew(child.db, org.id, founder.id);
 
     // The fork is the child's own source: its `forgeRepo`, and the crew seated on it.
     adoptForgeCode(child, org.username, founder.id);

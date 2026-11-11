@@ -18,6 +18,7 @@
  * so before anyone submits, and where to remove it.
  */
 
+import { crewCanRun, hasCrew } from "../studio/crew_key.ts";
 import { PASSWORD_TOO_LONG, withinPasswordCap } from "../../core/hash-gate.ts";
 import { givenEmail, MIN_SIGNUP_PASSWORD, noEmail } from "../../actions/users.ts";
 import type { Credential } from "../../auth/webauthn.ts";
@@ -152,8 +153,10 @@ function claimForm(
     ${pageHead("This forge is yours")}
     <section class="settings-block">
       <p class="mb">
-          ${spawned.org.username} was made for you, with its apps and a crew
-          ready to build them. Make your account to take it: this first account
+          ${spawned.org.username} was made for you, with its apps and
+          ${crewCanRun(ctx.app) && hasCrew(ctx.app)
+            ? "a crew ready to build them"
+            : "a crew that builds them once you add a model key"}. Make your account to take it: this first account
           is the forge's admin, so it can change everything here.
         </p>
         <p class="mb" id="claim-access">${accessSentence(spawned, spawner)}</p>

@@ -78,6 +78,7 @@ import {
 import { validPolishShare } from "../crew/polish_share.ts";
 import { removeInstallCache } from "../crew/workdir.ts";
 import type { SettingsChanged } from "../core/settings_changed.ts";
+import { seatStarterCrew } from "../spawn/starter_crew.ts";
 
 export interface CreateRepoInput {
   /** Owner name: the actor themselves (default) or an org they can write to. */
@@ -180,6 +181,7 @@ export async function createRepo(
   });
   if (!created.ok) return created;
   storageChanged(app, ownerId);
+  seatStarterCrew(app.db, created.value, user.value.id);
   app.bus.append({
     kind: "repo.created",
     repoId: created.value.id,
