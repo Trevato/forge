@@ -54,6 +54,7 @@ const NOT_A_PAGE: Record<string, string> = {
   "/verify": "answers 400 without the emailed code",
   "/logout": "a mutation, answers 404 to a GET",
   "/csp-report": "a mutation: where browsers report what the page policy blocked",
+  "/_funnel": "a mutation: the home page's beacon of funnel signals, POST only (#11259); covered by test/funnel.test.ts",
   "/theme": "a mutation, answers 404 to a GET",
   "/tell": "answers 404 to a GET",
   "/asks": "redirects to /#needs-you",

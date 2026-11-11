@@ -36,6 +36,7 @@ export { route as deleteApiV1UserPinsOwnerName } from "./deleteApiV1UserPinsOwne
 export { route as deleteApiV1UsersUsernameSessionsId } from "./deleteApiV1UsersUsernameSessionsId.ts";
 export { route as getApiV1 } from "./getApiV1.ts";
 export { route as getApiV1AdminAccounts } from "./getApiV1AdminAccounts.ts";
+export { route as getApiV1AdminBillingFunnel } from "./getApiV1AdminBillingFunnel.ts";
 export { route as getApiV1AdminCapacity } from "./getApiV1AdminCapacity.ts";
 export { route as getApiV1AdminCrawlers } from "./getApiV1AdminCrawlers.ts";
 export { route as getApiV1AdminDrills } from "./getApiV1AdminDrills.ts";

@@ -8,6 +8,7 @@
 
 import { crawlReport } from "../../perf/crawlers.ts";
 import { getAppById } from "../../core/apps.ts";
+import { FUNNEL_SCOPE, daysOf, funnelReport } from "../../perf/funnel.ts";
 import { probeViews } from "../../perf/views_probe.ts";
 import { kpiProbe } from "../../web/studio/kpi_probe.ts";
 import { MAX_SECONDS, sampleStacks } from "../../perf/sample.ts";
@@ -152,6 +153,14 @@ export function adminRoutes(router: Router<Handler>): void {
     return json(kpiProbe(ctx.app));
   });
 
+  // The selling funnel for the last `days` (`perf/funnel.ts`): the same figures as Settings → Billing.
+  router.add("GET", "/api/v1/admin/billing/funnel", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    return json(funnelReport(ctx.app.db, daysOf(ctx.url.searchParams.get("days"))), 200, { "cache-control": "private, no-cache" });
+  });
+
   // The traffic view's numbers, each counted again another way (`perf/views_probe.ts`).
   // `scope` is `forge` or an app's id; `number`, `dimension`+`key` and `steps` pick what to show.
   router.add("GET", "/api/v1/admin/traffic/probe", (ctx) => {
@@ -160,7 +169,7 @@ export function adminRoutes(router: Router<Handler>): void {
     if (denied) return denied;
     const q = ctx.url.searchParams;
     const scope = q.get("scope") ?? "forge";
-    if (scope !== "forge" && getAppById(ctx.app.db, scope) === undefined) return notFound();
+    if (scope !== "forge" && scope !== FUNNEL_SCOPE && getAppById(ctx.app.db, scope) === undefined) return notFound();
     const probed = probeViews(ctx.app.db, scope, q.get("window"), q.get("who") === "scrapers" ? "scrapers" : "people", Date.now(), {
       dimension: q.get("dimension"),
       key: q.get("key"),

@@ -14,6 +14,7 @@ import { SIZES } from "../../spawn/sizes.ts";
 import { BILLING_SIZES, parseBillingLinks } from "../../settings/billing.ts";
 import { getPlans } from "../../settings/plans.ts";
 import { changeBillingLinks, readBillingLinks } from "../../actions/signup.ts";
+import { funnelReport, type FunnelReport } from "../../perf/funnel.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
@@ -119,6 +120,19 @@ export async function billingSetLinks(ctx: Ctx): Promise<Response> {
   return billingView(ctx, undefined, {}, undefined, 422, { values: next, error });
 }
 
+/** Last 7 days, from visit to paid: one `dl` row per step with its share of the step before; clicks by plan and where they came from as rows under it. */
+function funnelRow(r: FunnelReport): Html {
+  const row = (label: string, value: string): Html => html`<div class="status-row"><dt>${label}</dt><dd>${value}</dd></div>`;
+  return html`<section class="settings-block" id="funnel">
+    <h2>Last 7 days: from visit to paid</h2>
+    <dl class="status-rows" data-funnel>
+      ${r.steps.map((s) => row(s.label, s.pct === null ? `${s.count}` : `${s.count} · ${s.pct}% of the step before`))}
+      ${r.clicks_by_plan.map((c) => row(`Clicked ${c.plan}`, `${c.count}`))}
+      ${r.referrers.map((x) => row(`Plan clicks from ${x.source}`, `${x.count}`))}
+    </dl>
+  </section>`;
+}
+
 // GET /settings/billing
 export function billingPage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -172,6 +186,7 @@ function billingView(ctx: Ctx, shown?: Shown, values: Record<string, string> = {
         ? html`<p class="muted">No forge has been sent from here.</p>`
         : html`<ul class="list setting-list">${rows}</ul>`}
     </section>
+    ${funnelRow(funnelReport(ctx.app.db, 7))}
     ${linksSection(ctx, links)}
     ${codesSection(ctx, shown, values, error)}`;
   const response = page({

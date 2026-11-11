@@ -15,7 +15,7 @@ export function plansRow(plans: readonly Plan[], links: BillingLinks = {}, price
   return html`<ul class="door-plans">${plans.map((p) => {
     const w = planWords(p, priced, links);
     return html`<li><strong>${w.name}</strong> <span class="muted">${w.price}</span>${
-      w.buy === undefined ? "" : html` <a href="${w.buy}" rel="noopener noreferrer" target="_blank">Pay for ${w.name}</a>`
+      w.buy === undefined ? "" : html` <a href="${w.buy}" data-plan="${w.name}" rel="noopener noreferrer" target="_blank">Pay for ${w.name}</a>`
     }<span class="muted small">${w.is}</span></li>`;
   })}</ul>`;
 }

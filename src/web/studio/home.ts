@@ -25,6 +25,7 @@ import { accountsClosedIn } from "../../core/users.ts";
 import { markTold, untoldAnswer } from "../../core/requests.ts";
 import { requestsCard } from "../requests_card.ts";
 import { plansRow } from "../plans_row.ts";
+import { freePlanName, funnelJs, noteHomeVisit } from "../funnel_door.ts";
 import { publicPlans } from "../../settings/plans.ts";
 import { getDoorSettings } from "../../settings/door.ts";
 import { GET_A_FORGE_PATH } from "../../billing/plan_words.ts";
@@ -772,6 +773,8 @@ export function studioDoor(ctx: Ctx): Response {
   // Render is what is left of the page once the shelf read is taken out.
   const rendering = performance.now();
   const visitor = ctx.auth.user === undefined;
+  // The funnel's first step: a stranger at the home (#11259), no SQL here.
+  if (visitor && ctx.url.pathname === "/" && ctx.request.method === "GET") noteHomeVisit(ctx);
   const admin = ctx.auth.user?.isAdmin === true && ctx.url.pathname === "/front";
   // A share sheet lands here with the shared words in the query; signing in
   // comes back to them rather than to a bare home, so they are not lost.
@@ -890,7 +893,7 @@ export function studioDoor(ctx: Ctx): Response {
           Hosted for you, or free and open source on a machine you keep.${accounts ? "" : mode === "invite" ? " New accounts on this forge are by invitation." : " This forge is not taking new accounts."}
         </p>
         ${plansRow(publicPlans(allPlans), links)}
-        <div class="bar">${btn("Get a forge", { href: GET_A_FORGE_PATH, variant: "primary", size: "lg" })}</div>
+        <div class="bar" data-plan="${freePlanName(allPlans)}">${btn("Get a forge", { href: GET_A_FORGE_PATH, variant: "primary", size: "lg" })}</div>
         <p class="door-support">Or run it yourself, free and open source: <a href="${FORGE_REPO}">read the step-by-step guide</a>.</p>
         <pre class="door-code"><code>git clone ${FORGE_REPO}.git
 cd forge
@@ -917,7 +920,7 @@ bun run src/main.ts</code></pre>
     title: "forge: software for what you're building, yours to keep",
     description: "Your own forge, with a private AI crew that builds your apps, games and business tools. Open source, and yours to keep.",
     body,
-    scriptJs: `${liveClientJs}\n${liveRegionsJs}`,
+    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${funnelJs}`,
     jsonLd: siteStructuredData(origin, running().version),
     ...(visitor
       ? {

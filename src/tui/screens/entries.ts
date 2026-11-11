@@ -35,6 +35,7 @@ import { entry as disks } from "./disks.ts";
 import { entry as domains } from "./domains.ts";
 import { entry as edgeOnly } from "./edgeonly.ts";
 import { entry as traffic } from "./trafficview.ts";
+import { entry as funnelEntry } from "./funnel.ts";
 import { entry as featureReview } from "./features.ts";
 import { entry as feed } from "./feed.ts";
 import { entry as featureFeed } from "./featurefeed.ts";
@@ -124,6 +125,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   access,
   edgeOnly,
   traffic,
+  funnelEntry,
   audit,
   securityControls,
   secrets,

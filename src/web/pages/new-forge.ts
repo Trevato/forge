@@ -33,6 +33,7 @@ import { dropGift, keepGift, keptGift } from "../gift_cookie.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, type Html } from "../html.ts";
+import { noteForgeMade } from "../funnel_door.ts";
 import { page } from "../layout.ts";
 import { pickList } from "../pick.ts";
 import { btn, field as formField, row, selectField } from "../ui.ts";
@@ -553,6 +554,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
       title: "New forge",
       body: formView(ctx, user, values, {}, planView(ctx, user, values, door.body), readsFor(ctx, user)),
     });
+  noteForgeMade(ctx);
   const response = page(
     { ctx, title: "New forge", body: madeView(door.body) },
     door.status,

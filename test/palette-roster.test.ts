@@ -164,6 +164,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["devices", "Devices", "LAN printers: model, state, supplies; declare or remove one"],
     ["edge-only-accounts", "Edge-only accounts", "who would be locked out if the platform edge sign-in went off"],
     ["traffic-sources", "Traffic sources", "where people come from and where they go, for the forge"],
+    ["from-visit-to-paid", "From visit to paid", "the last 7 days: home visits, plans seen, plan clicks, forges made, paid"],
     ["audit", "Who can do what", "each app's doors from its contract.json: yes, own or no"],
     ["security-controls", "Security controls", "each safeguard, and when it was last tested"],
     ["billing", "Billing", "each forge's plan, and grant one by hand"],

@@ -276,6 +276,7 @@ import { familyPage } from "../web/pages/family.ts";
 import { forgeLinkRevoke, forgeLinkSubmit, forgeLinkUndo, forgeRemoveConfirm, forgeRemoveSubmit, forgeStopSubmit,
   forgeOwnCodeSubmit, forgesPage } from "../web/pages/forges.ts";
 import { forgeItSubmit } from "../web/pages/forge-it.ts";
+import { funnelSubmit } from "./funnel.ts";
 import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
 import { notesOverrule, notesSave, notesView } from "../web/pages/notes.ts";
@@ -826,6 +827,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/sw.js", serviceWorker);
   // The page-view beacon's report (http/measure.ts): numbers only, no IP kept.
   router.add("POST", "/_measure", (ctx) => measureSubmit(ctx, routeOf));
+  router.add("POST", "/_funnel", funnelSubmit);
   // What a page's Content-Security-Policy blocked (http/csp_report.ts): counts only.
   router.add("POST", "/csp-report", cspReportSubmit);
   router.add("GET", "/", home);
