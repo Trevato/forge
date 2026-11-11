@@ -482,9 +482,31 @@ answers
 
 ## Cards, the contract and the plugins (#1116)
 
-- **Cards.** `apps`, `new_app`, `now`, `asks`, `milestones`, `releases`, `waves` (one wave), `map`, `feed`, `pull`, `pulls`, `runs` and `asked` name a `ui://` resource in
-  `_meta.ui.resourceUri` (MCP Apps, SEP-1865): `ui://forge/app`, `run`,
-  `asks`, `release`, `wave`, `map`, `feed`, `pull`, `pulls`, `runs`, `asked`. The Runs card (`runs`) is one row per run, newest first: glyph, kind, the issue or pull and its title, then the state as a word with how long it ran (or has been running), linked to the run page; failed runs lead the status line. The Plan card (`map`) shows one row per pillar with
+- **Cards.** Each tool below names a `ui://` resource in `_meta.ui.resourceUri` (MCP Apps, SEP-1865). `test/mcp-card-table.test.ts` keeps this table equal to the server's resource list.
+
+| Resource | Tool | Shows |
+| --- | --- | --- |
+| `ui://forge/app` | `apps`, `new_app` | Your apps, or the app just made: live or not, what is working, a Tell box. |
+| `ui://forge/run` | — | Legacy running-now list; `now` draws `crew` instead. |
+| `ui://forge/asks` | `asks`, `asks_act` | One row per waiting decision with its button; after a press, the receipt. |
+| `ui://forge/wave` | `waves` | One wave: headline, highlights with their why, pull numbers. |
+| `ui://forge/map` | `map` | The plan: per pillar ready, working and waiting counts, the first ready issues. |
+| `ui://forge/feed` | `feed` | The latest timeline items, how many are new. |
+| `ui://forge/pull` | `pull` | One pull: state, check, conflicts, head → base, preview link. |
+| `ui://forge/pulls` | `pulls` | A repository's pulls, one row each, with check state. |
+| `ui://forge/runs` | `runs` | Recent runs, newest first, linked to their logs. |
+| `ui://forge/asked` | `asked` | What people asked the crew for and where each ask stands. |
+| `ui://forge/explore` | `explore` | Apps and forges ranked by real metrics. |
+| `ui://forge/issue` | `issue` | One issue: title, state, assignee, labels, what it waits for. |
+| `ui://forge/flow` | `flow` | The pipeline: per stage counts, oldest waiting, the bottleneck. |
+| `ui://forge/scorecard` | `scorecard` | The crew's scorecard per agent (forge admin). |
+| `ui://forge/crew` | `now` | What the crew is doing right now, with Stop buttons. |
+| `ui://forge/board` | `boards` | One board's panels (person admins). |
+| `ui://forge/forks` | `fork_tree` | The fork tree around a repository, each row with how it follows. |
+| `ui://forge/milestones` | `milestones` | The milestones and how far each is. |
+| `ui://forge/release` | `releases` | Kept releases, newest first, each proven, unproven or rolled back. |
+
+  The Runs card (`runs`) is one row per run, newest first: glyph, kind, the issue or pull and its title, then the state as a word with how long it ran (or has been running), linked to the run page; failed runs lead the status line. The Plan card (`map`) shows one row per pillar with
   its ready, working and waiting counts, and the first five ready issues linked
   to their pages; it has no actions. The asks card (`ui://forge/asks`, drawn by `asks`) is one row per waiting decision:
   what, which repository, how long it has waited, and its one button on the row itself.
