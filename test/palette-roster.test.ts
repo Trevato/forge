@@ -118,6 +118,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["resilience", "Resilience", "where snapshots go and the mirror; each protection green, red or untested"],
     ["maintenance", "Maintenance", "prepare the forge for a power-off, check the drain, or end maintenance"],
     ["maintenance-runs", "Maintenance duty runs", "what each duty found, did and probed"],
+    ["maintenance-duties", "Pause or resume a maintenance duty", "switch a duty off, or on again after it paused itself"],
     ["crawlers", "Crawlers", "their share of answering time, and who was refused"],
     ["scrapes", "Scrapes", "what was read by repository, and groups in a running capture"],
     ["traffic", "Traffic", "who is using the forge's answering time, and the top readers"],

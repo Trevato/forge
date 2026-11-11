@@ -5,6 +5,7 @@
  */
 
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
+import { dutyStates, switchDuty } from "../../maintain/pause.ts";
 import { duties } from "../../maintenance/duties.ts";
 import { statusWithStandby } from "../../maintenance/standby.ts";
 import { ABOUT_TO_STOP_ROWS, prepare, resumeNow, status } from "../../maintenance/service.ts";
@@ -34,6 +35,12 @@ export async function maintenancePage(ctx: Ctx): Promise<Response> {
     <p id="maintenance-says">${s.says}</p>
     <dl id="maintenance-duties" class="status-rows">
       ${duties(ctx.app.config.dataDir).map((d) => fact(d.name, html`${d.detail}${d.overdue ? html` ${badge("overdue", { tone: "danger" })}` : null}`))}
+      ${dutyStates(ctx.app.db).map((d) =>
+        fact(d.name, html`${d.detail}
+          <form method="post" action="/maintenance/duties/${d.name}" class="inline">
+            <input type="hidden" name="paused" value="${d.paused ? "no" : "yes"}">${btn(d.paused ? "Resume" : "Pause", { variant: "outline" })}
+          </form>`),
+      )}
     </dl>
     ${s.phase === "idle" ? html`<p id="maintenance-standby" class="muted">${s.standby.says}</p>` : null}
     ${s.phase === "idle"
@@ -87,4 +94,15 @@ export async function maintenanceResume(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const r = resumeNow(ctx.app, ctx.auth.user);
   return flashTo(ctx, "/maintenance", r.ok ? { message: r.value.says } : { tone: "danger", message: r.error.says });
+}
+
+export async function maintenanceDuty(ctx: Ctx): Promise<Response> {
+  const denied = admin(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const want = formField(form, "paused");
+  if (want !== "yes" && want !== "no") return flashTo(ctx, "/maintenance", { tone: "danger", message: "paused is yes or no." });
+  const r = switchDuty(ctx.app.db, ctx.params["name"], want === "yes", ctx.auth.user!.username);
+  return flashTo(ctx, "/maintenance", r.ok ? { message: r.says } : { tone: "danger", message: r.says });
 }

@@ -8,6 +8,7 @@ import type { App } from "../app.ts";
 import { during } from "../perf/jobs.ts";
 import { clip, refusal, validName, type Duty } from "./duty.ts";
 import { duties as registered } from "./registry.ts";
+import { isPaused, pauseOnErrors } from "./pause.ts";
 import { lastStarted, prune, record } from "./runs.ts";
 
 export const TICK_MS = 60_000;
@@ -62,6 +63,7 @@ export function startMaintain(app: App, options: { duties?: readonly Duty[]; eve
     try {
       record(app.db, { duty: duty.name, started, finished: new Date(), findings, actions, outcome });
       prune(app.db, duty.name, options.keep ?? KEEP_PER_DUTY);
+      if (pauseOnErrors(app.db, duty.name)) app.log.error("maintenance duty paused after errors", { duty: duty.name });
     } catch (error) {
       app.log.error("maintenance run not recorded", { duty: duty.name, error: String(error) });
     }
@@ -71,7 +73,7 @@ export function startMaintain(app: App, options: { duties?: readonly Duty[]; eve
     for (const duty of list) {
       const last = lastStarted(app.db, duty.name);
       if (last !== undefined && now.getTime() - last < duty.intervalMs) continue;
-      if (running.has(duty.name)) continue;
+      if (running.has(duty.name) || isPaused(app.db, duty.name)) continue;
       await runOne(duty, now);
       // Duties take turns: the loop turns between one and the next.
       await new Promise((resolve) => setImmediate(resolve));

@@ -58,6 +58,7 @@ import { entry as loopStalls } from "./loopstalls.ts";
 import { entry as slowPagesEntry } from "./slowpages.ts";
 import { entry as maintenance } from "./maintenance.ts";
 import { entry as maintainRuns } from "./maintainruns.ts";
+import { entry as dutySwitch } from "./dutyswitch.ts";
 import { entry as mirrorPacksEntry } from "./mirrorpacks.ts";
 import { entry as packReposEntry } from "./packrepos.ts";
 import { modelCeilingEntry, modelGrantEntry } from "./model.ts";
@@ -119,6 +120,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   resilience,
   maintenance,
   maintainRuns,
+  dutySwitch,
   mirrorPacksEntry,
   packReposEntry,
   valves,
