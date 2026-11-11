@@ -43,6 +43,7 @@ import type { Ctx } from "../http/context.ts";
 import { notFound } from "../http/respond.ts";
 import { SHARE_TARGET } from "./share_target.ts";
 import { SITE_LINE } from "./site_line.ts";
+import { holds } from "./feeds.ts";
 import { mcpToolsSection } from "./llms_tools.ts";
 import { apiCatalog, cardsLine, DISCOVERY, mcpCard, offeredPlugins, mcpPointers, offeredPluginRepo, pluginSource } from "../core/mcp_card.ts";
 import { forgeDocument } from "../core/standards_index.ts";
@@ -111,30 +112,48 @@ export function securityTxt(ctx: Ctx): Response {
   );
 }
 
+/** A discovery document and its ETag, per kind and origin, made again only when its inputs read differently. */
+const discoveryBodies = new Map<string, { inputs: string; body: string; etag: string }>();
+
+/**
+ * Serve a public discovery document with an ETag: `inputs` names what the
+ * body reads (the plugin repo offered, the running build), so the body is
+ * made once per origin until that changes. A matching If-None-Match is a 304.
+ */
+function discovery(ctx: Ctx, kind: string, inputs: string, make: () => unknown, type: string, cache: string, pretty = false): Response {
+  const key = `${kind} ${ctx.url.origin}`;
+  let kept = discoveryBodies.get(key);
+  if (kept === undefined || kept.inputs !== inputs) {
+    const body = JSON.stringify(make(), null, pretty ? 2 : undefined);
+    const etag = `"${new Bun.CryptoHasher("sha256").update(body).digest("hex").slice(0, 32)}"`;
+    kept = { inputs, body, etag };
+    // Origins come from the Host header: keep a handful, not one per guess.
+    // The oldest goes first (a Map keeps insertion order), so junk hosts never flush the real ones at once.
+    discoveryBodies.delete(key);
+    if (discoveryBodies.size >= 48) discoveryBodies.delete(discoveryBodies.keys().next().value!);
+    discoveryBodies.set(key, kept);
+  }
+  const headers = { etag: kept.etag, "cache-control": cache, "access-control-allow-origin": "*" };
+  if (holds(ctx.request.headers.get("if-none-match"), kept.etag)) return new Response(null, { status: 304, headers });
+  return new Response(kept.body, { headers: { ...headers, "content-type": type } });
+}
+
 /** GET /.well-known/mcp.json — the MCP server card (a draft format; see docs/MCP.md). */
 export function mcpJson(ctx: Ctx): Response {
-  const res = text(JSON.stringify(mcpCard(ctx.url.origin, offeredPluginRepo(ctx.app.db, ctx.app.config.forgeRepo, UPSTREAM_REPO)), null, 2), "application/json");
-  res.headers.set("access-control-allow-origin", "*");
-  return res;
+  const repo = offeredPluginRepo(ctx.app.db, ctx.app.config.forgeRepo, UPSTREAM_REPO);
+  const now = running();
+  return discovery(ctx, "mcp", JSON.stringify([repo, now.version, now.commit]), () => mcpCard(ctx.url.origin, repo, now), "application/json", "public, max-age=3600", true);
 }
 
 /** GET /.well-known/api-catalog — RFC 9727: one linkset naming each API's description and docs. Anonymous. */
 export function apiCatalogJson(ctx: Ctx): Response {
-  const res = new Response(JSON.stringify(apiCatalog(ctx.url.origin)), {
-    headers: {
-      "content-type": 'application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"',
-      "cache-control": "public, max-age=300",
-      "access-control-allow-origin": "*",
-    },
-  });
-  return res;
+  return discovery(ctx, "api-catalog", "", () => apiCatalog(ctx.url.origin), 'application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"', "public, max-age=300");
 }
 
 /** GET /.well-known/forge — the standards this forge implements, by id and version (docs/standards/). */
-export function forgeJson(): Response {
-  const res = text(JSON.stringify(forgeDocument(running().version)), "application/json");
-  res.headers.set("access-control-allow-origin", "*");
-  return res;
+export function forgeJson(ctx: Ctx): Response {
+  const version = running().version;
+  return discovery(ctx, "forge", version, () => forgeDocument(version), "application/json", "public, max-age=3600");
 }
 
 /** GET /.well-known/change-password — where a password manager sends a person. */
