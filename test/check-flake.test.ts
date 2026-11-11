@@ -24,7 +24,7 @@ const report = (names: string[], file = "t/a.test.ts"): string[] => [
 
 test("one or two named failures can be re-run; more, or a hook, cannot", () => {
   const one = report(["grp > flaky"]);
-  expect(rerunnable(one, parseBunTestFailure(one))).toEqual([{ file: "t/a.test.ts", name: "grp > flaky" }]);
+  expect(rerunnable(one, parseBunTestFailure(one))).toEqual([{ file: "t/a.test.ts", name: "grp > flaky", ms: 1 }]);
   const three = report(["a", "b", "c"]);
   expect(rerunnable(three, parseBunTestFailure(three))).toBeUndefined();
   const hook = ["t/a.test.ts:", "(fail) t/a.test.ts > beforeEach (timeout)", " 1 pass", " 1 fail"];

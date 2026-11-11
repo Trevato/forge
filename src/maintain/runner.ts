@@ -43,7 +43,7 @@ export function startMaintain(app: App, options: { duties?: readonly Duty[]; eve
     let outcome = "ok";
     try {
       // The duty keeps its `running` slot until it really settles, so a timed-out duty never overlaps itself.
-      const work = Promise.resolve().then(() => duty.run({ db: app.db, now, app }));
+      const work = Promise.resolve().then(() => duty.run({ db: app.db, bus: app.bus, now, app }));
       work.then(() => running.delete(duty.name), () => running.delete(duty.name));
       let timer: ReturnType<typeof setTimeout> | undefined;
       const deadline = new Promise<never>((_, reject) => {

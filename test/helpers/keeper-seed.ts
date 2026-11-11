@@ -82,5 +82,5 @@ export async function seed(names: string[] = ["ada", "bo"]): Promise<Seed> {
 export async function runKeeper(s: Seed, now: Date, deps: import("../../src/maintain/duties/flow_keeper.ts").Deps & { withApp?: boolean } = {}) {
   const { flowKeeper } = await import("../../src/maintain/duties/flow_keeper.ts");
   const { withApp, ...rest } = deps;
-  return flowKeeper({ builders: () => undefined, ...(rest.vantages === undefined && !withApp ? { vantages: () => [] } : {}), ...rest }).run({ db: s.db, now, ...(withApp ? { app: s.app } : {}) });
+  return flowKeeper({ builders: () => undefined, ...(rest.vantages === undefined && !withApp ? { vantages: () => [] } : {}), ...rest }).run({ db: s.db, bus: s.app.bus, now, ...(withApp ? { app: s.app } : {}) });
 }
