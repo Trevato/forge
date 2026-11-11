@@ -42,6 +42,7 @@ import { field, readForm, type Form } from "../form.ts";
 import { liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
 import { fragment, page, redirect } from "../layout.ts";
+import { START_REFUSALS, startRefusalIn } from "../start_refusal.ts";
 import { siteStructuredData } from "../structured_data.ts";
 import { running } from "../../kernel/version.ts";
 import { homeMilestones } from "./milestone_lines.ts";
@@ -755,6 +756,9 @@ function agentPrompt(origin: string): string {
  * controls that decide it.
  */
 export function studioDoor(ctx: Ctx): Response {
+  // A refused start lands back here: one fixed sentence for why, and the name still in its field.
+  const refusal = startRefusalIn(ctx.url.searchParams.get("start"));
+  const keptName = refusal === undefined ? "" : (ctx.url.searchParams.get("name") ?? "").slice(0, 39);
   // The door draws what is in memory; a pack pushed since is picked up for the next visit.
   void refreshCatalogQuietly(ctx.app, 5_000);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -793,9 +797,11 @@ export function studioDoor(ctx: Ctx): Response {
         <div class="door-lead">
           <p class="door-support">Say what you need and an AI crew builds it in your own forge, free to try.</p>
           <form method="post" action="/forges/new" class="door-start" id="start-forge">
+            <input type="hidden" name="from" value="home" />
+            ${refusal === undefined ? null : html`<p class="error" id="start-refused">${START_REFUSALS[refusal]}</p>`}
             <div class="field">
               <label for="start-name">Forge name</label>
-              <input class="input" id="start-name" name="name" type="text" required autocomplete="off" autocapitalize="none" spellcheck="false" />
+              <input class="input" id="start-name" name="name" type="text" value="${keptName}" ${refusal === undefined ? null : html`aria-invalid="true" aria-describedby="start-refused"`} required autocomplete="off" autocapitalize="none" spellcheck="false" />
             </div>
             ${btn("Start my forge", { variant: "primary", size: "lg" })}
           </form>

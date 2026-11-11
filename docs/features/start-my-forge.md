@@ -9,3 +9,7 @@ A signed-out visitor starts their own forge from the home page, with no account 
 The field is a slug, so it turns off autocomplete and capitalisation on phones. The form is in `src/web/studio/home.ts`; its test is `test/home-start-forge.test.ts`.
 
 In the terminal, a guest's "Get your own forge" command prints the plans and the web address to start from; signed in, "New forge" spawns one.
+
+## When the door refuses
+
+The form carries `from=home`. If the door refuses a stranger's start (rate limit, name taken, bad or reserved name, no room), they get a 303 back to `/?start=<kind>&name=<name>` and the home page shows one fixed sentence (`src/web/start_refusal.ts`) above the field, with the name kept. Only a kind from a fixed list is read; the door's own message, codes and times are never shown. Tests: `test/home-start-forge.test.ts`.

@@ -34,7 +34,8 @@ import { notFoundPage, pageHead } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { noteForgeMade } from "../funnel_door.ts";
-import { page } from "../layout.ts";
+import { page, redirect } from "../layout.ts";
+import { startRefusalHref, startRefusalOf } from "../start_refusal.ts";
 import { pickList } from "../pick.ts";
 import { btn, field as formField, row, selectField } from "../ui.ts";
 
@@ -539,6 +540,11 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     ...(values.code === "" ? {} : { code: values.code }),
     dryRun: planOnly,
   });
+  // The home page's own form says it came from there: a refusal goes back to `/` with the name kept.
+  if (door.status >= 400 && user === undefined && field(form, "from") === "home" && door.status !== 401 && door.status !== 403) {
+    const kind = startRefusalOf(door);
+    return redirect(startRefusalHref(kind, values.name));
+  }
   if (door.status >= 400)
     return page(
       {
