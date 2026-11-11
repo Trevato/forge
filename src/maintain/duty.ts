@@ -23,6 +23,15 @@ export interface DutyResult {
   readonly findings: readonly Finding[];
   /** What the duty did about it, one line each. */
   readonly actions: readonly string[];
+  /** What the run spent, in dollars; counted against the duty's dollars per day. Default 0. */
+  readonly dollars?: number | undefined;
+}
+
+/** What a duty may use in a UTC day, and why that much; an admin's stored value replaces the numbers. */
+export interface DutyBudget {
+  readonly runsPerDay: number;
+  readonly dollarsPerDay: number;
+  readonly reason: string;
 }
 
 export interface DutyContext {
@@ -38,6 +47,7 @@ export interface Duty {
   /** Lowercase words and dashes; the row's `duty`. */
   readonly name: string;
   readonly intervalMs: number;
+  readonly budget: DutyBudget;
   readonly run: (ctx: DutyContext) => DutyResult | Promise<DutyResult>;
 }
 

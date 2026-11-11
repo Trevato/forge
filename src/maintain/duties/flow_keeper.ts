@@ -34,6 +34,7 @@ export function flowKeeper(deps: Deps = {}): Duty {
   return {
     name: "flow-keeper",
     intervalMs: 60_000,
+    budget: { runsPerDay: 1500, dollarsPerDay: 1, reason: "every minute is 1440 a day; it acts on pulls, so a loop is cut at a day" },
     async run({ db, now, app }) {
       const findings: Finding[] = [];
       const actions: string[] = [];

@@ -16,10 +16,10 @@ export interface RunRow {
 
 export function record(
   db: Database,
-  r: { duty: string; started: Date; finished: Date; findings: readonly Finding[]; actions: readonly string[]; outcome: string },
+  r: { duty: string; started: Date; finished: Date; findings: readonly Finding[]; actions: readonly string[]; outcome: string; dollars?: number },
 ): void {
   db.query(
-    "INSERT INTO maintenance_run (duty, started, finished, findings, actions, probes, outcome) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    "INSERT INTO maintenance_run (duty, started, finished, findings, actions, probes, outcome, dollars) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
   ).run(
     r.duty,
     r.started.toISOString(),
@@ -28,6 +28,7 @@ export function record(
     JSON.stringify(r.actions),
     JSON.stringify(r.findings.flatMap((f) => (f.probe ? [f.probe] : []))),
     r.outcome,
+    r.dollars ?? 0,
   );
 }
 
@@ -36,8 +37,9 @@ export function prune(db: Database, duty: string, keep: number): void {
   db.query("DELETE FROM maintenance_run WHERE duty = ?1 AND id NOT IN (SELECT id FROM maintenance_run WHERE duty = ?1 ORDER BY id DESC LIMIT ?2)").run(duty, keep);
 }
 
+/** When a duty last really started; a budget stop is not a start. */
 export function lastStarted(db: Database, duty: string): number | undefined {
-  const row = db.query("SELECT started FROM maintenance_run WHERE duty = ?1 ORDER BY id DESC LIMIT 1").get(duty) as
+  const row = db.query("SELECT started FROM maintenance_run WHERE duty = ?1 AND outcome NOT LIKE 'budget:%' ORDER BY id DESC LIMIT 1").get(duty) as
     | { started: string }
     | null;
   return row ? Date.parse(row.started) : undefined;

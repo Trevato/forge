@@ -8,6 +8,7 @@ const SQL = "SELECT COUNT(*) AS n FROM issue WHERE kind = 'pull' AND state = 'op
 export const duty: Duty = {
   name: "pulls-waiting",
   intervalMs: 3_600_000,
+  budget: { runsPerDay: 30, dollarsPerDay: 1, reason: "hourly is 24 a day; the rest is room for a catch-up, and it spends no money" },
   run({ db, now }) {
     const cutoff = new Date(now.getTime() - DAY_MS).toISOString();
     const n = (db.query(SQL).get(cutoff) as { n: number }).n;

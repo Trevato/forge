@@ -6,6 +6,7 @@
 
 import type { App } from "../app.ts";
 import { during } from "../perf/jobs.ts";
+import { overBudget, stoppedToday } from "./budget.ts";
 import { clip, refusal, validName, type Duty } from "./duty.ts";
 import { duties as registered } from "./registry.ts";
 import { isPaused, pauseOnErrors } from "./pause.ts";
@@ -42,6 +43,7 @@ export function startMaintain(app: App, options: { duties?: readonly Duty[]; eve
     let findings: Awaited<ReturnType<Duty["run"]>>["findings"] = [];
     let actions: readonly string[] = [];
     let outcome = "ok";
+    let dollars = 0;
     try {
       // The duty keeps its `running` slot until it really settles, so a timed-out duty never overlaps itself.
       const work = Promise.resolve().then(() => duty.run({ db: app.db, bus: app.bus, now, app }));
@@ -56,12 +58,13 @@ export function startMaintain(app: App, options: { duties?: readonly Duty[]; eve
       else {
         findings = result.findings;
         actions = result.actions.map(clip);
+        dollars = typeof result.dollars === "number" && Number.isFinite(result.dollars) && result.dollars > 0 ? result.dollars : 0;
       }
     } catch (error) {
       outcome = clip(`failed: ${error instanceof Error ? error.message : String(error)}`);
     }
     try {
-      record(app.db, { duty: duty.name, started, finished: new Date(), findings, actions, outcome });
+      record(app.db, { duty: duty.name, started, finished: new Date(), findings, actions, outcome, dollars });
       prune(app.db, duty.name, options.keep ?? KEEP_PER_DUTY);
       if (pauseOnErrors(app.db, duty.name)) app.log.error("maintenance duty paused after errors", { duty: duty.name });
     } catch (error) {
@@ -74,6 +77,12 @@ export function startMaintain(app: App, options: { duties?: readonly Duty[]; eve
       const last = lastStarted(app.db, duty.name);
       if (last !== undefined && now.getTime() - last < duty.intervalMs) continue;
       if (running.has(duty.name) || isPaused(app.db, duty.name)) continue;
+      const stop = overBudget(app.db, duty, now);
+      if (stop !== undefined) {
+        // Said once a day per budget: the row names which one the duty stopped at.
+        if (!stoppedToday(app.db, duty.name, stop, now)) record(app.db, { duty: duty.name, started: now, finished: now, findings: [], actions: [], outcome: stop });
+        continue;
+      }
       await runOne(duty, now);
       // Duties take turns: the loop turns between one and the next.
       await new Promise((resolve) => setImmediate(resolve));

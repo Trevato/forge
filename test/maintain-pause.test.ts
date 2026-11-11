@@ -13,6 +13,7 @@ import { duties } from "../src/maintain/registry.ts";
 import { startMaintain } from "../src/maintain/runner.ts";
 import { dutySwitchScreen, entry as switchEntry, flipDuty } from "../src/tui/screens/dutyswitch.ts";
 import { quietLogs } from "./helpers/globals.ts";
+const ROOMY = { runsPerDay: 100000, dollarsPerDay: 10000, reason: "test" };
 
 quietLogs();
 let root = "";
@@ -134,7 +135,7 @@ test("the terminal switch is offered to an admin person only and flips the duty 
 test("a paused duty does not run; three errors in a row pause it saying the last error; resume starts the count again", async () => {
   app.db.exec("DELETE FROM maintenance_run; DELETE FROM maintenance_duty_state");
   let calls = 0;
-  const bad: Duty = { name: "t-bad", intervalMs: 1, run: () => { calls++; throw new Error(`boom ${calls}`); } };
+  const bad: Duty = { name: "t-bad", intervalMs: 1, budget: ROOMY, run: () => { calls++; throw new Error(`boom ${calls}`); } };
   const m = startMaintain(app, { duties: [bad], everyMs: 1e9 });
   m.stop();
   const t = (i: number) => new Date(Date.UTC(2026, 10, 11, 0, 0, i));
@@ -161,7 +162,7 @@ test("a paused duty does not run; three errors in a row pause it saying the last
 test("an ok run in between keeps the count from reaching three", async () => {
   app.db.exec("DELETE FROM maintenance_run; DELETE FROM maintenance_duty_state");
   let n = 0;
-  const flaky: Duty = { name: "t-flaky", intervalMs: 1, run: () => { if (++n === 3) return { findings: [], actions: [] }; throw new Error("x"); } };
+  const flaky: Duty = { name: "t-flaky", intervalMs: 1, budget: ROOMY, run: () => { if (++n === 3) return { findings: [], actions: [] }; throw new Error("x"); } };
   const m = startMaintain(app, { duties: [flaky], everyMs: 1e9 });
   m.stop();
   for (let i = 1; i <= 5; i++) await m.tick(new Date(Date.UTC(2026, 10, 11, 0, 0, i)));

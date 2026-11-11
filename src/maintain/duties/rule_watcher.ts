@@ -19,6 +19,7 @@ function reposOf(db: Database): Map<string, Pick<Repo, "id" | "ownerId">> {
 export const duty: Duty = {
   name: "rule-watcher",
   intervalMs: 15 * 60_000,
+  budget: { runsPerDay: 120, dollarsPerDay: 1, reason: "every 15 minutes is 96 a day; the rest is room for a catch-up, and it spends no money" },
   run({ db, bus, now }) {
     const w: Watch = { db, bus, repos: reposOf(db), now };
     // The runner records this run after it returns, so the last start on record is the previous run's.

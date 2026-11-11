@@ -15,6 +15,7 @@ import { field as formField, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { badge, btn, field } from "../ui.ts";
+import { budgetOfRow } from "./maintenance_budgets.ts";
 
 function admin(ctx: Ctx): Response | undefined {
   if (!ctx.auth.user) return signInFirst(ctx);
@@ -36,10 +37,10 @@ export async function maintenancePage(ctx: Ctx): Promise<Response> {
     <dl id="maintenance-duties" class="status-rows">
       ${duties(ctx.app.config.dataDir).map((d) => fact(d.name, html`${d.detail}${d.overdue ? html` ${badge("overdue", { tone: "danger" })}` : null}`))}
       ${dutyStates(ctx.app.db).map((d) =>
-        fact(d.name, html`${d.detail}
+        html`${fact(d.name, html`${d.detail}
           <form method="post" action="/maintenance/duties/${d.name}" class="inline">
             <input type="hidden" name="paused" value="${d.paused ? "no" : "yes"}">${btn(d.paused ? "Resume" : "Pause", { variant: "outline" })}
-          </form>`),
+          </form>`)}${budgetOfRow(ctx.app, d.name)}`,
       )}
     </dl>
     ${s.phase === "idle" ? html`<p id="maintenance-standby" class="muted">${s.standby.says}</p>` : null}

@@ -32,6 +32,7 @@ import { pipelinePage } from "../web/pages/pipeline.ts";
 import { adminDataPage, appDataPage, dataPage } from "../web/pages/data.ts";
 import { fleetAct, fleetReceipt, fleetUndo } from "../web/pages/fleet-ops.ts";
 import { maintenanceDuty, maintenancePage, maintenancePrepare, maintenanceResume } from "../web/pages/maintenance.ts";
+import { maintenanceBudget } from "../web/pages/maintenance_budgets.ts";
 import { nightlyOutputPage, resiliencePage } from "../web/pages/resilience.ts";
 import { agentStartSet, billingLinksSet, limitsPage, limitsSet, quotasSet, signupSet, inviteMint, inviteRevoke } from "../web/pages/admin-limits.ts";
 import { pricingPage } from "../web/pricing.ts";
@@ -996,6 +997,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/maintenance", maintenancePage);
   router.add("POST", "/maintenance/prepare", maintenancePrepare);
   router.add("POST", "/maintenance/resume", maintenanceResume);
+  router.add("POST", "/maintenance/budget", maintenanceBudget);
   router.add("POST", "/maintenance/duties/:name", maintenanceDuty);
   router.add("GET", "/resilience/nightly/:job", nightlyOutputPage);
   // A selection's spend and runs over time; literal, above /:owner.
