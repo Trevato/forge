@@ -35,7 +35,6 @@ import { maintenanceDuty, maintenancePage, maintenancePrepare, maintenanceResume
 import { maintenanceBudget } from "../web/pages/maintenance_budgets.ts";
 import { nightlyOutputPage, resiliencePage } from "../web/pages/resilience.ts";
 import { agentStartSet, billingLinksSet, limitsPage, limitsSet, quotasSet, signupSet, inviteMint, inviteRevoke } from "../web/pages/admin-limits.ts";
-import { pricingPage } from "../web/pricing.ts";
 import { plansSet } from "../web/settings/plans.ts";
 import { allFlowsPage } from "../web/pages/flows-all.ts";
 import { measureSubmit } from "./measure.ts";
@@ -281,6 +280,7 @@ import { forgeLinkRevoke, forgeLinkSubmit, forgeLinkUndo, forgeRemoveConfirm, fo
   forgeOwnCodeSubmit, forgesPage } from "../web/pages/forges.ts";
 import { forgeItSubmit } from "../web/pages/forge-it.ts";
 import { funnelSubmit } from "./funnel.ts";
+import { pricingDone, pricingOrder, pricingPage, resendPage, resendSubmit } from "../web/pages/pricing.ts";
 import { forgeWaitingPage } from "../web/pages/forge-waiting.ts";
 import { startForgeSubmit } from "../web/pages/start-forge.ts";
 import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
@@ -858,6 +858,11 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/forges/:name/remove", forgeRemoveConfirm);
   router.add("POST", "/forges/:name/remove", forgeRemoveSubmit);
   router.add("GET", "/forges/:name/ready", forgeReady);
+  router.add("GET", "/pricing", pricingPage);
+  router.add("POST", "/pricing/order", pricingOrder);
+  router.add("GET", "/pricing/done", pricingDone);
+  router.add("GET", "/pricing/resend", resendPage);
+  router.add("POST", "/pricing/resend", resendSubmit);
   router.add("GET", "/forges/:name/waiting", forgeWaitingPage);
   router.add("GET", "/forges/new", newForgePage);
   router.add("POST", "/forges/new", newForgeSubmit);
@@ -1021,7 +1026,6 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/live/moving", liveMovingFragment);
   router.add("GET", "/live/chips", liveChipsFragment);
   router.add("GET", "/feed", feedPage);
-  router.add("GET", "/pricing", pricingPage);
   // The home's late regions, each drawn alone (#7660).
   for (const name of HOME_REGIONS) router.add("GET", `/live/home/${name}`, (ctx) => liveHomeFragment(ctx, name));
   // Whether a hostname is an app's verified domain — what Caddy's

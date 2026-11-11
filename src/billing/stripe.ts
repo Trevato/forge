@@ -63,7 +63,34 @@ export function formBody(data: { [k: string]: Value }): string {
   return parts.join("&");
 }
 
+export interface CheckoutRequest {
+  readonly orderId: string;
+  readonly forge: string;
+  readonly plan: string;
+  readonly planName: string;
+  readonly priceUsd: number;
+  readonly email: string;
+  readonly successUrl: string;
+  readonly cancelUrl: string;
+  /** Unix seconds after which the checkout cannot be paid (Stripe: 30 minutes to 24 hours from now). */
+  readonly expiresAt?: number;
+}
+
+export interface CheckoutSession {
+  readonly id: string;
+  readonly url: string;
+}
+
+/** What the provider says of a session: paid or not, and who is billed. */
+export interface CheckoutState {
+  readonly paid: boolean;
+  readonly customer: string;
+  readonly subscription: string;
+}
+
 export interface StripeClient {
+  createCheckout(req: CheckoutRequest): Promise<Result<CheckoutSession, StripeError>>;
+  getCheckout(sessionId: string): Promise<Result<CheckoutState, StripeError>>;
   addWebhook(url: string): Promise<Result<{ id: string; secret: string }, StripeError>>;
   removeWebhook(id: string): Promise<Result<true, StripeError>>;
   /** The subscription as Stripe has it now. */
@@ -112,6 +139,36 @@ export function stripeClient(key: string, fetchFn: typeof fetch = fetch): Stripe
   const missing = (what: string): StripeError => ({ kind: "rejected", status: 502, message: `Stripe's answer had no ${what}.` });
 
   return {
+    async createCheckout(req) {
+      const r = await call("POST", "/v1/checkout/sessions", {
+        mode: "subscription",
+        success_url: req.successUrl,
+        cancel_url: req.cancelUrl,
+        customer_email: req.email,
+        client_reference_id: req.orderId,
+        ...(req.expiresAt === undefined ? {} : { expires_at: req.expiresAt }),
+        line_items: [{
+          quantity: 1,
+          price_data: {
+            currency: "usd",
+            unit_amount: Math.round(req.priceUsd * 100),
+            recurring: { interval: "month" },
+            product_data: { name: `${req.planName} forge` },
+          },
+        }],
+        metadata: { order: req.orderId, forge: req.forge, plan: req.plan },
+      }, req.orderId);
+      if (!r.ok) return r;
+      const id = str(r.value, "id"), url = str(r.value, "url");
+      return id && url ? ok({ id, url }) : err(missing("checkout address"));
+    },
+    async getCheckout(sessionId) {
+      if (!/^cs_[A-Za-z0-9_]{1,200}$/.test(sessionId)) return err({ kind: "rejected", status: 400, message: "That is not a checkout session id." });
+      const r = await call("GET", `/v1/checkout/sessions/${sessionId}`);
+      if (!r.ok) return r;
+      const paid = r.value["payment_status"] === "paid" || r.value["payment_status"] === "no_payment_required";
+      return ok({ paid, customer: str(r.value, "customer"), subscription: str(r.value, "subscription") });
+    },
     async addWebhook(url) {
       const r = await call("POST", "/v1/webhook_endpoints", { url, enabled_events: [...WEBHOOK_EVENTS] },
         // fresh per attempt: Stripe replays an answer for a repeated key for 24h, and a reconnect must not get a deleted endpoint back

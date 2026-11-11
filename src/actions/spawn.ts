@@ -288,7 +288,7 @@ async function make(
     if (plan.plan !== undefined && chosen === undefined)
       return err({ kind: "invalid", field: "plan", reason: `${plan.plan} is not a plan this forge offers` });
     if (chosen !== undefined && chosen.key !== FREE && deps.gift === true) {
-      // A redeemed gift code (`actions/codes.ts`) is what lends this plan: it asks no admin and no payment.
+      // A redeemed gift code (`actions/codes.ts`) or a paid order (`actions/order.ts`) is what lends this plan: it asks no admin.
     } else if (chosen !== undefined && chosen.key !== FREE) {
       if (owner === undefined) return err({ kind: "refused", reason: "plan", message: `the ${chosen.name} plan is for a signed-in person; sign in first` });
       if (!owner.isAdmin) return err({ kind: "refused", reason: "plan", message: PAID_PLAN_ADMIN_ONLY(chosen.name) });
@@ -677,6 +677,20 @@ export async function reissueClaim(
   const user = requireUser(actor);
   if (!user.ok) return err({ kind: "unauthorized" });
   if (!user.value.isAdmin) return err({ kind: "forbidden" });
+  const made = await reissueClaimFor(app, name);
+  if (made.ok) app.bus.append({ kind: "forge.claim_reissued", actorId: user.value.id, payload: { name } });
+  return made;
+}
+
+/**
+ * A new claim link for an unclaimed child, with no actor: the caller has
+ * already decided who may have it (an admin above; the buyer of the forge in
+ * `actions/order.ts`). The old link stops working.
+ */
+export async function reissueClaimFor(
+  app: App,
+  name: string,
+): Promise<Result<{ readonly name: string; readonly claimUrl: string }, SpawnError | { readonly kind: "not_found" }>> {
   const ledger = /^[a-z0-9-]{1,39}$/.test(name) ? await readLedger(app, name) : undefined;
   if (!ledger || !ledger.done) return err({ kind: "not_found" });
   const child = createApp({ dataDir: childDirOf(app, ledger.bodyId) });
@@ -686,7 +700,6 @@ export async function reissueClaim(
     if (hasAdmin(child.db))
       return err({ kind: "refused", reason: "claimed", message: `${name} is already claimed; ask its owner to invite you` });
     const token = mintClaim(child.db, spawned.org.id);
-    app.bus.append({ kind: "forge.claim_reissued", actorId: user.value.id, payload: { name } });
     return ok({ name, claimUrl: claimLink(liveChildUrl(app, name), token) });
   } finally {
     child.close();

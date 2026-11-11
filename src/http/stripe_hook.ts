@@ -13,6 +13,7 @@
  */
 
 import type { App } from "../app.ts";
+import { settleSession } from "../actions/order.ts";
 import { bindCheckout } from "../billing/checkout_completed.ts";
 import { openWebhookSecret } from "../billing/connection.ts";
 import { syncSubscription } from "../billing/sync.ts";
@@ -119,6 +120,14 @@ export async function stripeHook(ctx: Ctx): Promise<Response> {
     if (stored.changes === 1 && type === "checkout.session.completed") bindCheckout(app, event);
     return stored.changes === 1;
   })();
+  // A paid checkout that is one of our orders makes its forge (once, whoever sees the payment first), then binds it to the customer.
+  if (fresh && type === "checkout.session.completed") {
+    const session = (event as { data?: { object?: unknown } }).data?.object;
+    if (session !== null && typeof session === "object") {
+      const settled = await settleSession(app, session as Parameters<typeof settleSession>[1]);
+      if (settled?.state === "spawned") bindCheckout(app, event);
+    }
+  }
   if (fresh && (type.startsWith("customer.subscription.") || type.startsWith("invoice."))) {
     try {
       await syncSubscription(app, subscriptionIdOf(event));

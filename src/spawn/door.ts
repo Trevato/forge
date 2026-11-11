@@ -181,12 +181,15 @@ export async function spawnDoor(
   ctx: Ctx,
   user: User | undefined,
   raw: Record<string, unknown>,
+  /** `paid`: the plan was bought (`actions/order.ts`), so a paid plan needs no admin and a stranger's rate limits do not apply. */
+  opts: { readonly paid?: boolean } = {},
 ): Promise<Door> {
+  const paid = opts.paid === true;
   const anon = user === undefined;
   if (!anon && user.kind !== "user") return spawnWords({ kind: "forbidden" });
   // A plan is free of children but not of work — it reads every catalog
   // app it names — so a stranger's are counted per address and per forge.
-  if (anon) {
+  if (anon && !paid) {
     const verdict = takeDoor(ctx.app, "plan", ctx.request);
     if (!verdict.allowed)
       return {
@@ -282,8 +285,8 @@ export async function spawnDoor(
   if (raw["plan"] !== undefined && raw["plan"] !== null && raw["plan"] !== "") {
     const chosen = typeof raw["plan"] === "string" ? getPlan(db, raw["plan"]) : undefined;
     if (chosen === undefined) return invalid("plan", `must be one of ${getPlans(db).map((p) => p.key).join(", ")}`);
-    if (anon && chosen.key !== FREE && giftIn === undefined) return invalid("plan", `the ${chosen.name} plan is for a signed-in person; sign in first`);
-    if (chosen.key !== FREE && user?.isAdmin !== true && giftIn === undefined) return invalid("plan", PAID_PLAN_ADMIN_ONLY(chosen.name));
+    if (anon && chosen.key !== FREE && giftIn === undefined && !paid) return invalid("plan", `the ${chosen.name} plan is for a signed-in person; sign in first`);
+    if (chosen.key !== FREE && user?.isAdmin !== true && giftIn === undefined && !paid) return invalid("plan", PAID_PLAN_ADMIN_ONLY(chosen.name));
     if (size !== undefined && size !== null && size !== "" && size !== chosen.size)
       return invalid("size", `the ${chosen.name} plan is a ${chosen.size} forge; leave size out or send ${chosen.size}`);
     planKey = chosen.key;
@@ -325,7 +328,7 @@ export async function spawnDoor(
     };
   }
   // A stranger may start only a few children a day; the plan above is free.
-  if (anon) {
+  if (anon && !paid) {
     const limit = checkAnonSpawn(ctx.app.db, ctx.request);
     if (!limit.allowed)
       return {
@@ -349,7 +352,7 @@ export async function spawnDoor(
   let made: Awaited<ReturnType<typeof spawnForge>>;
   try {
     made = await spawnForge(ctx.app, user, input, source, {
-      ...(gift === undefined ? {} : { gift: true }),
+      ...(gift === undefined && !paid ? {} : { gift: true }),
       placement: placementFor(ctx.app),
       request: ctx.request,
       url: ctx.url,
@@ -364,9 +367,9 @@ export async function spawnDoor(
     if (gift !== undefined && !settled) unclaimGift(ctx.app, gift);
   }
   if (!made.ok) return spawnWords(made.error);
-  if (anon && !made.value.existed) noteAnonSpawn(ctx.app.db, ctx.request);
+  if (anon && !paid && !made.value.existed) noteAnonSpawn(ctx.app.db, ctx.request);
   // The visitor who started (or was given) this forge becomes someone, on the host's side (#11265).
-  if (!made.value.existed) linkRequestVisitor(ctx.app, ctx.request, made.value.name, gift === undefined ? "started" : "paid");
+  if (!made.value.existed && !paid) linkRequestVisitor(ctx.app, ctx.request, made.value.name, gift === undefined ? "started" : "paid");
   // Its apps come up now, so the first visit after a claim finds them awake.
   if (!made.value.existed) {
     void bootHostedChild(ctx.app, made.value.name);

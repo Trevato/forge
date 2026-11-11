@@ -7,6 +7,9 @@
 
 import { ledBlock } from "./visitors.ts";
 import { BILLING_WORDS, STRIPE_WORDS, connectStripe, disconnectStripe, grantPlan, readBilling, saveSigningSecret, type BillingError, type StripeWords } from "../../actions/billing.ts";
+import { retryOrder } from "../../actions/order.ts";
+import { REFUND_URL } from "../../billing/checkout.ts";
+import { failedOrders } from "../../billing/orders.ts";
 import { CODE_ERRORS, makeCode, readCodes, revoke, type CodeError } from "../../actions/codes.ts";
 import { publicOrigin } from "../../core/public_origin.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
@@ -186,7 +189,21 @@ function billingView(ctx: Ctx, shown?: Shown, values: Record<string, string> = {
             ${btn("Connect")}
           </form>`}
     </section>`;
-  const body = html`${stripe}<section class="settings-block">
+  const failed = failedOrders(ctx.app.db);
+  const orders = failed.length === 0 ? null : html`<section class="settings-block" id="orders" data-orders>
+      <h2>Paid, not made</h2>
+      <p class="muted small">These buyers paid and their forge could not be made. Retry the spawn, or pay them back at the provider.</p>
+      <ul class="list setting-list">${failed.map((o) => html`<li class="row">
+        <form class="row-fields" method="post" action="${PATH}/orders/retry">
+          <input type="hidden" name="id" value="${o.id}" />
+          <span class="mono">${o.name}</span>
+          <span class="muted small">${o.plan} · ${o.email} · ${o.reason}</span>
+          ${btn("Retry")}
+          <a href="${REFUND_URL}" rel="noopener noreferrer" target="_blank">Refund at provider</a>
+        </form>
+      </li>`)}</ul>
+    </section>`;
+  const body = html`${stripe}${orders}<section class="settings-block">
       <h2>Plans</h2>
       <p class="muted small">Choose the plan each forge is on.</p>
       ${rows.length === 0
@@ -270,4 +287,14 @@ export async function stripeDisconnect(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const r = await disconnectStripe(ctx.app, ctx.auth.user);
   return back(ctx, r.ok ? { ok: true, message: "Stripe is disconnected." } : r);
+}
+
+// POST /settings/billing/orders/retry — an admin who is a person retries a paid order whose forge was not made.
+export async function orderRetry(ctx: Ctx): Promise<Response> {
+  if (!isPerson(ctx)) return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const r = await retryOrder(ctx.app, ctx.auth.user, field(form, "id"));
+  if (!r.ok) return r.error === "not_found" ? notFoundPage(ctx) : flashTo(ctx, PATH, { tone: "danger", message: "That order is not waiting for a retry." });
+  return flashTo(ctx, PATH, r.value.state === "spawned" ? { message: `${r.value.name} is made.` } : { tone: "danger", message: `${r.value.name} still could not be made: ${r.value.reason}.` });
 }

@@ -732,6 +732,7 @@ function footer(ctx: Ctx, own?: Html): Html {
         >`}
     <span class="spacer"></span>
     <a href="/docs">Docs</a>
+    <a href="/pricing">Pricing</a>
     <a href="/changelog">Changelog</a>
     <a href="/api">API</a>
     ${ctx.auth.user !== undefined && ctx.auth.user.kind !== "org"

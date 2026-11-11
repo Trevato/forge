@@ -49,6 +49,9 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 
 - `/` — `pages/site.ts` (`home`, studio mode in `studio/home.ts`) · where I am, what needs me · `/front` (same page for anyone), `/board`, `/asks` · colours 3 in `site.ts`, 7 in `studio/home.ts`.
 - `/front` — `studio/home.ts` (`studioDoor`) · the signed-out door, and the site admin's controls over it · `/` for a signed-out reader · colours 7.
+- `/pricing` — `pages/pricing.ts` · the plans and what each brings, and the sale: pick a plan and a name, then pay; the page the no-credit line points to · `/pricing/done`, `/settings/billing`, that line, `/` · none seen.
+- `/pricing/done` — `pages/pricing.ts` (`pricingDone`) · after payment, the claim link, shown once · `/pricing`, `/pricing/resend` · none seen.
+- `/pricing/resend` — `pages/pricing.ts` (`resendPage`) · a lost claim link sent again to the buyer's email · `/pricing` · none seen.
 - `/explore` — `studio/explore.ts` · browse what the forge holds · `/search`, `/apps` · colours 2.
 - `/board` — `pages/board.ts` (1,231 lines) · every app the viewer can see, with a wall mode · `/boards` (saved queries as panels), `/flow`, `/` · colour 1, sizes 6.
 - `/board/returns` — `pages/returns.ts` · what the window's dollars bought · `/settings/subscriptions` spend tables, `/settings/usage` · none seen.
@@ -94,7 +97,6 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/family` — `pages/family.ts` · parent, this forge and children as a tree · `/forges` (the same children) · colour 1.
 - `/claim` — `pages/claim.ts` · claim a forge that was sent to me · none · colour 1.
 - `/privacy` — `pages/privacy.ts` · what the forge keeps about a visitor, three plain lines, open to anyone · none · none seen.
-- `/pricing` — `pricing.ts` · the plans and what each brings, the page the no-credit line points to · that line, `/` · none seen.
 - `/first-admin` — `pages/first-admin.ts` · the first person becomes admin · none · none seen.
 - `/fleet/graph` — `pages/fleet-graph.ts` · the fleet as a graph · `/family`, `/forges` · none seen.
 - `/fleet` — `pages/fleet.ts` · the rows a fleet query line selects, as a table · `/fleet/graph` · none seen.
