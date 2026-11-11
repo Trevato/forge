@@ -70,7 +70,7 @@ export function agentsPage(ctx: Ctx): Response {
     description:
       "What this forge is and how an AI assistant can help you use it: build one of its public apps, report a problem, or get a forge of your own.",
     body: html`${pageHead("For AI assistants", {
-        sub: html`What this forge is. Plain text: <a href="/llms.txt">/llms.txt</a>`,
+        sub: html`People start at <a href="/">home</a>. Assistants: <a href="/llms.txt">/llms.txt</a>`,
       })}
       <section class="stack" aria-labelledby="agent-forge-h">
         <h2 id="agent-forge-h">Get a forge of your own</h2>

@@ -44,6 +44,19 @@ export function getSignup(db: Database): SignupMode {
   return parsed.ok ? parsed.value : SIGNUP_DEFAULT;
 }
 
+/** The mode last read or written per database: the header asks on every anonymous page, and only the writers below change it. */
+const known = new WeakMap<Database, SignupMode>();
+
+/** `getSignup` without a query once known; every write here forgets it. */
+export function signupModeKnown(db: Database): SignupMode {
+  let mode = known.get(db);
+  if (mode === undefined) {
+    mode = getSignup(db);
+    known.set(db, mode);
+  }
+  return mode;
+}
+
 /** The actor kept for the value a new forge starts with. */
 export const FRESH_ACTOR = "fresh";
 
@@ -57,6 +70,7 @@ export const FRESH_ACTOR = "fresh";
 export function seedSignup(db: Database, fresh: boolean): void {
   if (!fresh) return;
   const stored = db.query("SELECT 1 FROM forge_setting WHERE key = ?1").get(STORE_KEY);
+  known.delete(db);
   if (stored === null) writeSetting(db, STORE_KEY, "invite", SIGNUP_DEFAULT, "invite", FRESH_ACTOR);
 }
 
@@ -65,6 +79,7 @@ export function setSignup(db: Database, value: SignupMode, actorId: string): voi
   const from = getSignup(db);
   if (from === value) return;
   writeSetting(db, STORE_KEY, value, from, value, actorId);
+  known.delete(db);
 }
 
 /** `FORGE_SIGNUP` from the environment: unset is no opinion, a bad value is a message. */

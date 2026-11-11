@@ -28,6 +28,8 @@ import {
   listReposVisibleTo,
 } from "../core/repos.ts";
 import { mayDirectCrew } from "../crew/direct.ts";
+import { signupModeKnown } from "../settings/signup.ts";
+import { parentIssuerOf } from "../core/federation.ts";
 import type { User } from "../core/users.ts";
 import type { Ctx } from "../http/context.ts";
 import { activeEdgeToken, edgeLoginUrl, edgeLogoutUrl, edgeStrangerLogin } from "../http/edge.ts";
@@ -630,6 +632,21 @@ export function signInHref(ctx: Ctx): string {
   return token === undefined ? "/signin" : edgeLoginUrl(ctx.url.pathname + ctx.url.search);
 }
 
+/**
+ * Where an anonymous visitor's "Sign up" leads on the top forge: `/signup`
+ * while signup there is open, the home page's form (`/`) while it is closed.
+ * Undefined where the button is not offered: behind a platform edge, or on a
+ * forge that has a parent (its people come in through it).
+ */
+export function signUpHref(ctx: Ctx): string | undefined {
+  if (ctx.auth.user !== undefined) return undefined;
+  // The token is read from config first: no edge, no query.
+  if (ctx.app.config.edgeToken !== undefined && activeEdgeToken(ctx.app) !== undefined) return undefined;
+  if (parentIssuerOf(ctx.app.config) !== undefined) return undefined;
+  const mode = signupModeKnown(ctx.app.db);
+  return mode === "open" || mode === "request" ? "/signup" : "/";
+}
+
 /** The Talk button; the count of confirms waiting on the viewer's yes is asked only here, where the button renders. */
 function talkButton(ctx: Ctx, user: User, about?: string): Html {
   const waiting = waitingCount(ctx, user);
@@ -684,7 +701,7 @@ function topbar(
                   : { label: "Sign out", post: "/logout", icon: "signOut" },
                 about,
               )}`
-          : html`${guestMenu(ctx, theme)}${btn("Sign in", {
+          : html`${guestMenu(ctx, theme)}${when(signUpHref(ctx), (href) => btn("Sign up", { href }))}${btn("Sign in", {
               href: signInHref(ctx),
             })}`}`}
       </span>
