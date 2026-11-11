@@ -7,7 +7,7 @@
  */
 
 import {
-  explore,
+  explorePage as readPage,
   exploreLine,
   exploreLineFrom,
   exploreParams,
@@ -152,7 +152,14 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
   const note = exploreNote(unknown);
   const suggestion = exploreSuggestion(line);
   const ranking = performance.now();
-  const rows = await explore(ctx.app, ctx.auth.user, query);
+  // A cursor that is not one for this query (junk, over-long, another sort) shows the first page.
+  const asked = ctx.url.searchParams.get("cursor");
+  const after = asked === null ? null : await readPage(ctx.app, ctx.auth.user, query, asked);
+  const returned = asked !== null && after === null;
+  const page0 = after ?? (await readPage(ctx.app, ctx.auth.user, query, null));
+  const here = href(query);
+  const rows = page0?.items ?? [];
+  const more = page0?.nextCursor ?? null;
   const weights = frontWeights(ctx.app.db);
   notePhase(ctx.request, "read", performance.now() - ranking);
   const rendering = performance.now();
@@ -196,6 +203,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
       />
       ${btn("Go", { size: "sm" })}
     </form>
+    ${returned ? html`<p class="muted mb" role="status">That page link is not one for this list, so this is the first page.</p>` : html``}
     ${note === "" ? html`` : html`<p class="muted mb" role="status">${note}${
           suggestion === undefined
             ? html``
@@ -238,7 +246,9 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
       : card(html`<ul class="list">${rows.map((r) => rowHtml(r, ctx.auth.user !== undefined, query, now, weights))}</ul>`, {
           pad: false,
           extra: "bare",
-        })}</div>`;
+        })}${more === null
+        ? html``
+        : html`<div class="explore-more">${btn("More results", { href: `${here}${here.includes("?") ? "&" : "?"}cursor=${encodeURIComponent(more)}`, variant: "outline", extra: "explore-more-link" })}</div>`}</div>`;
   const drawn = page({ ctx, title: "Explore", body, feed: { href: "/explore.atom", title: "Explore" } });
   // An unknown filter is a 400 here as on the API and the MCP; the page still draws the note and the results.
   const response = unknown.length === 0 ? drawn : new Response(drawn.body, { status: 400, headers: drawn.headers });

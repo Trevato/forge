@@ -49,6 +49,12 @@ The three return the same ordered rows (`test/explore-parity.test.ts`; the URL f
 
 An unknown filter word is refused the same way everywhere: `400` from the API (`{ "error": "unknown_filter", "message": "sort:bogus is not a sort — use score, forks, …", "suggest"? }`), an `unknown_filter` error from the MCP tool, and `400` on the page, which still draws the note, the did-you-mean link and the results. This replaces the earlier note-only answer (#7595).
 
+## Paging (#11376)
+
+A list holds 60 rows a page. When there are more, `/explore` ends with a full-width **More results** button, a plain link to the same view (kind, sort, since, owner, archived and the words) plus `cursor=…`; the last page has none, and it works without JavaScript. A cursor belongs to one sort: one that is malformed, over 400 characters or made under another sort shows the first page with a one-line note, never an error. `GET /api/v1/explore` returns `next_cursor` and takes `?cursor=`, and the MCP `explore` tool takes and returns the same cursor.
+
+The terminal's explore lines show the first page only: it has no way to page yet (a known gap). Narrow the line (`owner:`, `updated:`, more words) to reach what is past the first 60.
+
 ## Make it yours on an app row
 An app's row carries `action: { do: "make_it_yours", label: "Make it yours" }` exactly when `copyable` is true (`MAKE_IT_YOURS` in `actions/explore.ts`).
 `label` is the page button's text and `do` is the name of the MCP tool that forks; it plans unless called with `dryRun: false`.
