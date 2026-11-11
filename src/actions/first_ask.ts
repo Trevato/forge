@@ -11,9 +11,10 @@ import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { newAppFromSentence, NEW_APP_ERRORS } from "./apps.ts";
 import { updateRepoSettings } from "./repos.ts";
-import { NOT_TOLD_WORDS, SAY_SOMETHING_WORDS } from "./tell_words.ts";
+import { FORGE_REPO_WORDS, NOT_TOLD_WORDS, SAY_SOMETHING_WORDS } from "./tell_words.ts";
 import { FROM_WORDS, TOO_LONG_WORDS, tell, type TellError, type Told } from "./tell.ts";
 import { parseFrom } from "./tell_from.ts";
+import { deriveAppName } from "../web/pages/apps-name.ts";
 import { requireVerified } from "./verify.ts";
 import { MAX_BODY } from "../core/issues.ts";
 import { DIRECTION_NOTE } from "../crew/direct.ts";
@@ -33,6 +34,12 @@ export type FirstAskError = { readonly words: string };
 /** The note a person is given when the app was made and filed but autonomy could not be turned on. */
 export const AUTONOMY_FAILED_WORDS = "The app is made, but the crew could not be set to start on it by itself. Turn on autonomy in its settings.";
 
+/** Whether the app this sentence would be named from is the forge's own repository. */
+function resolvesToForgeRepo(app: App, actor: User, sentence: string): boolean {
+  const name = deriveAppName(sentence);
+  return name !== undefined && app.config.forgeRepo?.toLowerCase() === `${actor.username}/${name}`.toLowerCase();
+}
+
 export async function firstAsk(
   app: App,
   actor: User | undefined,
@@ -49,6 +56,8 @@ export async function firstAsk(
   if (actor === undefined || actor.kind === "org") return err({ words: DIRECTION_NOTE });
   if (!requireVerified(app, actor).ok) return err({ words: "Verify your email first." });
   if (from !== null && typeof parseFrom(from) !== "string") return err({ words: FROM_WORDS });
+  // The forge's own repository is never an ask's target: refused before any app exists.
+  if (resolvesToForgeRepo(app, actor, text)) return err({ words: FORGE_REPO_WORDS });
   // An empty description: the issue the tell files is the one issue of the ask.
   const made = await newAppFromSentence(app, actor, { sentence: text, description: "" });
   if (!made.ok) return err({ words: NEW_APP_ERRORS[made.code] ?? NOT_TOLD_WORDS });
