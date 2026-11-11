@@ -1763,18 +1763,22 @@ export class AppsRuntime {
         }
         const delay = RESTART_BACKOFF_MS[state.restarts.length] ?? 30_000;
         state.restarts.push(now);
-        setTimeout(() => {
-          if (this.stopped) return;
-          const fresh = getRepoById(this.app.db, repo.id);
-          if (fresh)
-            this.requestDeploy(
-              state.app,
-              fresh,
-              state.env,
-              live.commitOid,
-              oom ? "oom" : "restart",
-            );
-        }, delay);
+        setTimeout(
+          () =>
+            during("apps-restart", () => {
+              if (this.stopped) return;
+              const fresh = getRepoById(this.app.db, repo.id);
+              if (fresh)
+                this.requestDeploy(
+                  state.app,
+                  fresh,
+                  state.env,
+                  live.commitOid,
+                  oom ? "oom" : "restart",
+                );
+            }),
+          delay,
+        );
       })
       .catch(() => {});
   }

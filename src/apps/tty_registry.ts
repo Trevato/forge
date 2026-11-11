@@ -10,6 +10,7 @@
  */
 
 import type { App } from "../app.ts";
+import { during } from "../perf/jobs.ts";
 
 export interface AppTtyEntry {
   readonly id: string;
@@ -76,9 +77,10 @@ export function openAppTty(app: App, open: OpenAppTty): AppTtyHandle {
     hangup: open.hangup,
     ended: false,
     timer: setInterval(
-      () => {
-        if (idleFor(entry, open.idleMs())) stop(app, entry);
-      },
+      () =>
+        during("app-tty-idle", () => {
+          if (idleFor(entry, open.idleMs())) stop(app, entry);
+        }),
       Math.max(10, Math.min(open.idleMs(), open.checkMs ?? CHECK_MS)),
     ),
   };

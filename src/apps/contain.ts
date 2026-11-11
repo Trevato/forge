@@ -403,10 +403,14 @@ async function tryOnce(extra: readonly string[] = []): Promise<Verdict> {
       ],
       { stdin: "ignore", stdout: "ignore", stderr: "pipe" },
     );
-    const timer = setTimeout(() => {
-      timedOut = true;
-      proc.kill("SIGKILL");
-    }, PROBE_TIMEOUT_MS);
+    const timer = setTimeout(
+      () =>
+        during("cell-probe-deadline", () => {
+          timedOut = true;
+          proc.kill("SIGKILL");
+        }),
+      PROBE_TIMEOUT_MS,
+    );
     const [text, code] = await Promise.all([
       new Response(proc.stderr).text(),
       proc.exited,
@@ -952,13 +956,17 @@ export function killTree(root: number): void {
       // already gone
     }
   }
-  setTimeout(() => {
-    try {
-      process.kill(root, "SIGKILL");
-    } catch {
-      // gone, as it should be
-    }
-  }, 1_000).unref();
+  setTimeout(
+    () =>
+      during("cell-kill-root", () => {
+        try {
+          process.kill(root, "SIGKILL");
+        } catch {
+          // gone, as it should be
+        }
+      }),
+    1_000,
+  ).unref();
 }
 
 /** Send `signal` to every process under `root`, not `root` (bubblewrap) itself. */

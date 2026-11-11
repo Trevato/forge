@@ -17,6 +17,7 @@
  * the `access` MCP tool).
  */
 
+import { during } from "../perf/jobs.ts";
 import {
   appendFileSync,
   mkdirSync,
@@ -270,7 +271,7 @@ export function recordAccess(
     for (const q of pending.values()) count += q.lines.length;
     if (count >= FLUSH_LINES) flushAccess(at);
     else if (timer === undefined) {
-      timer = setTimeout(() => flushAccess(), FLUSH_MS);
+      timer = setTimeout(() => during("access-flush", flushAccess), FLUSH_MS);
       timer.unref();
     }
   } catch {

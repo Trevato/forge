@@ -7,6 +7,7 @@
  * What a routine says is deterministic (`routine_report.ts`): no model, no spend.
  */
 
+import { during } from "../perf/jobs.ts";
 import type { App } from "../app.ts";
 import { appendTurn, getConversation, listConversations, newConversation, renameConversation, type Conversation } from "../core/conversations.ts";
 import { due, listRoutines, markRan, ROUTINE_NAMES, type RoutineKind } from "../core/talk_routines.ts";
@@ -78,7 +79,7 @@ export function startRoutines(app: App, signal: AbortSignal): () => void {
   const loop = (wait: number): void => {
     timer = setTimeout(() => {
       if (signal.aborted) return;
-      void runDue(app, new Date()).finally(() => loop(60_000));
+      void during("routines", () => runDue(app, new Date())).finally(() => loop(60_000));
     }, wait);
     timer.unref();
   };

@@ -5,6 +5,7 @@
  * figures of its own and reads "shared". Plain data in, plain data out.
  */
 
+import { during } from "../perf/jobs.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { diskBytes, cellCounters } from "../apps/contain.ts";
@@ -41,13 +42,17 @@ function diskOf(dir: string, now: number): number | undefined {
   const kept = disks.get(dir);
   if ((kept === undefined || now - kept.at >= DISK_FRESH_MS) && !walking.has(dir)) {
     walking.add(dir);
-    setTimeout(() => {
-      try {
-        disks.set(dir, { at: Date.now(), bytes: diskBytes([dir]) });
-      } finally {
-        walking.delete(dir);
-      }
-    }, 0).unref();
+    setTimeout(
+      () =>
+        during("disk-walk", () => {
+          try {
+            disks.set(dir, { at: Date.now(), bytes: diskBytes([dir]) });
+          } finally {
+            walking.delete(dir);
+          }
+        }),
+      0,
+    ).unref();
   }
   return kept?.bytes;
 }

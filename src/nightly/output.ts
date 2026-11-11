@@ -13,6 +13,7 @@
  * the issues themselves are the truth. Plain data.
  */
 
+import { during } from "../perf/jobs.ts";
 import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
 import { appendFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -60,7 +61,7 @@ export function startOutput(dataDir: string, name: string): Output {
     waiting += text;
     if (waiting.length >= FLUSH_BYTES) void flush();
     else if (timer === undefined) {
-      timer = setTimeout(() => void flush(), FLUSH_MS);
+      timer = setTimeout(() => void during("nightly-output-flush", flush), FLUSH_MS);
       timer.unref?.();
     }
   };

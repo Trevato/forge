@@ -6,16 +6,12 @@
  * The scan reads src/ — not the browser files under src/web, src/web/vendor
  * or the terminal UI in src/tui — as syntax, so a timer written inside a
  * template string (the toolbar's browser script, a scaffolded app) is text,
- * not a timer. Every `setInterval(` callback, and every `setTimeout(` callback
- * in the files #11117 names, must do its work inside `during`: be a `during`
- * call (behind `void`, `&&`, `.catch`, `.finally` or `.then(() => during(…))`),
- * or a body of such calls with only guards (`if (stopped) return;`), plain
- * flag writes and `try` around them; else it must be one occurrence on the
- * allow-list below, with its reason.
- *
- * `setTimeout` is read only in the named files: elsewhere in src/ it is a
- * one-shot deadline or a delay (over a hundred of them), not a loop, and
- * wrapping each would put a ring slot per request into the job watch.
+ * not a timer. Every `setInterval(` and `setTimeout(` callback in every file
+ * must do its work inside `during`: be a `during` call (behind `void`, `&&`,
+ * `.catch`, `.finally` or `.then(() => during(…))`), or a body of such calls
+ * with only guards (`if (stopped) return;`), plain flag writes, counter bumps,
+ * `set.delete(x)` and `try` around them; else it must be one occurrence on the
+ * allow-list below, with its reason (#11167).
  */
 
 import { describe, expect, test } from "bun:test";
@@ -30,25 +26,6 @@ const SRC = join(ROOT, "src");
 const SKIPPED_DIRS = new Set(["src/tui", "src/web/vendor"]);
 const isBrowserFile = (path: string): boolean =>
   path.startsWith("src/web/") && /(^|[-_/])client\.ts$/.test(path);
-
-/** The files #11117 names: their `setTimeout`s are read as well. */
-const NAMED = new Set([
-  "src/perf/views_store.ts",
-  "src/perf/traffic_store.ts",
-  "src/perf/reads.ts",
-  "src/perf/duty.ts",
-  "src/perf/github_traffic.ts",
-  "src/apps/contain.ts",
-  "src/apps/runtime.ts",
-  "src/apps/toolbar.ts",
-  "src/apps/presence.ts",
-  "src/apps/egress.ts",
-  "src/apps/scaffold.ts",
-  "src/apps/tty_registry.ts",
-  "src/system/live.ts",
-  "src/runs/lease.ts",
-  "src/snapshot/snapshot.ts",
-]);
 
 type Call = "setInterval" | "setTimeout";
 
@@ -67,17 +44,113 @@ interface Allowed {
  */
 const PER_CONNECTION = "one per open connection: wrapped, a burst of them evicts the real jobs from the 256-span ring";
 
+/** A one-shot whose callback only settles the promise a caller awaits: the work after the await runs in that caller. */
+const SLEEP = "a sleep: it only resolves the promise its caller awaits, and the caller's work after the await is the caller's job";
+/** A one-shot that rejects, aborts or stops one call in flight: no work of its own. */
+const DEADLINE = "a one-shot deadline on one call in flight: it settles, aborts or stops that call and does no work of its own";
+/** A one-shot that signals one child process. */
+const KILL = "a kill deadline on one child process: it sends a signal, nothing runs on the loop";
+
+const allow = (call: Call, why: string, at: readonly (readonly [string, string])[]): Allowed[] =>
+  at.map(([file, starts]) => ({ file, call, starts, why }));
+
+/**
+ * Each entry names one timer (an entry listed twice names two alike). The one-shots are
+ * many but of three kinds — a sleep, a deadline on one call, a kill on one child — and none
+ * does work on the loop: a span around each would only fill the ring with nothing.
+ */
 const ALLOWED: readonly Allowed[] = [
-  { file: "src/http/sse.ts", call: "setInterval", starts: "() => write(", why: `SSE heartbeat, ${PER_CONNECTION}` },
-  { file: "src/web/pages/talk.ts", call: "setInterval", starts: "tick", why: `a talk stream's poll, ${PER_CONNECTION}` },
-  { file: "src/machines/shell.ts", call: "setInterval", starts: "() => { if (idle(session", why: `a shell session's idle check, ${PER_CONNECTION}` },
-  { file: "src/apps/tty_registry.ts", call: "setInterval", starts: "() => { if (idleFor(entry", why: `an app terminal's idle check, ${PER_CONNECTION}` },
-  { file: "src/git/progress.ts", call: "setInterval", starts: "() => { slices.push(current)", why: `a git fetch's stall check, ${PER_CONNECTION}` },
-  { file: "src/git/capped-fetch.ts", call: "setInterval", starts: "() => { void newBytes()", why: `a capped fetch's size check, ${PER_CONNECTION}` },
-  { file: "src/apps/toolbar.ts", call: "setTimeout", starts: "resolve", why: "a one-shot deadline on reading one page, not a loop" },
-  { file: "src/apps/contain.ts", call: "setTimeout", starts: "() => { timedOut = true;", why: "a one-shot deadline on the sandbox probe, not a loop" },
-  { file: "src/apps/contain.ts", call: "setTimeout", starts: "() => { try { process.kill(root", why: "a one-shot kill a second after the tree's, not a loop" },
-  { file: "src/apps/runtime.ts", call: "setTimeout", starts: "() => { if (this.stopped) return;", why: "a one-shot restart after backoff; the deploy it asks for is its own job" },
+  ...allow("setInterval", `SSE heartbeat, ${PER_CONNECTION}`, [["src/http/sse.ts", "() => write("]]),
+  ...allow("setInterval", `a talk stream's poll, ${PER_CONNECTION}`, [["src/web/pages/talk.ts", "tick"]]),
+  ...allow("setInterval", `a shell session's idle check, ${PER_CONNECTION}`, [["src/machines/shell.ts", "() => { if (idle(session"]]),
+  ...allow("setInterval", `a git fetch's stall check, ${PER_CONNECTION}`, [["src/git/progress.ts", "() => { slices.push(current)"]]),
+  ...allow("setInterval", `a capped fetch's size check, ${PER_CONNECTION}`, [["src/git/capped-fetch.ts", "() => { void newBytes()"]]),
+  ...allow("setTimeout", `a device-flow stream's poll, ${PER_CONNECTION}`, [
+    ["src/http/flow_stream.ts", "() => void step()"],
+    ["src/http/flow_stream.ts", "() => void step()"],
+    ["src/http/flow_stream.ts", "() => { emit(\"flow.settled\""],
+  ]),
+  ...allow("setTimeout", `a shell session's resize debounce, ${PER_CONNECTION}`, [["src/machines/shell.ts", "() => session.size === resize"]]),
+  ...allow("setTimeout", `an ssh login's auth deadline, ${PER_CONNECTION}`, [["src/ssh/server.ts", "() => { this.transport.disconnect("]]),
+  ...allow("setTimeout", `a media stream's idle deadline, ${PER_CONNECTION}`, [["src/git/read.ts", "() => { finish(); controller.error("]]),
+  ...allow("setTimeout", `a git upload's idle deadline, ${PER_CONNECTION}`, [["src/git/smart-http.ts", "stop"]]),
+  ...allow("setTimeout", "the loop-lag meter's own tick: it measures how late the loop runs, and a span around it would count that lateness as its own work", [["src/kernel/loop_lag.ts", "() => { // Early"]]),
+  ...allow("setTimeout", "the next slice of a sliced flow computation: one span per slice would fill the 256-span ring in one refresh", [["src/system/flow_cache.ts", "fn"]]),
+  ...allow("setTimeout", "the release prover's scheduler seam: its caller passes a callback already inside during(\"release-prove\")", [["src/release/prove.ts", "fn"]]),
+  ...allow("setTimeout", "track() only holds the round's promise; the round itself runs inside during(\"probes\")", [["src/contract/probes.ts", "() => { void track(during("]]),
+  ...allow("setTimeout", "clears a perf capture after its window: five field writes", [["src/perf/capture.ts", "drop"]]),
+  ...allow("setTimeout", "clears an image loader's in-flight flag: one comparison and one write", [["src/web/og/raster.ts", "() => loading === mine"]]),
+  ...allow("setTimeout", "retries removing one emptied cgroup directory: one rmdir", [["src/apps/cgroup.ts", "() => removeDir(dir"]]),
+  ...allow("setTimeout", SLEEP, [
+    ["src/kernel/breathe.ts", "done"],
+    ["src/maintenance/checks.ts", "done"],
+    ["src/chaos/faults.ts", "r"],
+    ["src/perf/sample.ts", "r"],
+    ["src/cluster/jobs.ts", "r"],
+    ["src/release/serving.ts", "r"],
+    ["src/apps/holding.ts", "resolve"],
+    ["src/checks/service.ts", "resolve"],
+    ["src/checks/install.ts", "() => { signal.removeEventListener("],
+    ["src/origins/providers/forgejo.ts", "resolve"],
+    ["src/origins/providers/github.ts", "resolve"],
+    ["src/origins/operator.ts", "resolve"],
+    ["src/origins/fork-route.ts", "resolve"],
+    ["src/origins/hook.ts", "resolve"],
+    ["src/origins/mirror.ts", "resolve"],
+    ["src/core/pulls.ts", "resolve"],
+    ["src/core/search.ts", "resolve"],
+    ["src/spawn/reach.ts", "done"],
+    ["src/spawn/live.ts", "done"],
+    ["src/crew/network.ts", "done"],
+    ["src/crew/dispatch.ts", "resolve"],
+    ["src/crew/workdir.ts", "resolve"],
+    ["src/cli/commands/sync.ts", "resolve"],
+    ["src/cli/commands/talk.ts", "resolve"],
+  ]),
+  ...allow("setTimeout", DEADLINE, [
+    ["src/apps/toolbar.ts", "resolve"],
+    ["src/looks/capture.ts", "() => reject("],
+    ["src/actions/search.ts", "() => resolve(\"timeout\")"],
+    ["src/checks/service.ts", "() => { overran = true; budget.abort(); }"],
+    ["src/kernel/mail.ts", "() => finish(false)"],
+    ["src/apps/domains.ts", "() => reject("],
+    ["src/apps/preview_spec.ts", "() => { stop.abort(); reject("],
+    ["src/apps/process.ts", "() => { why ="],
+    ["src/data/query.ts", "() => done({ ok: false, error: \"timeout\""],
+    ["src/web/code_rows_pool.ts", "() => { waiting.delete(id); resolve(undefined); }"],
+    ["src/snapshot/drill.ts", "() => reject("],
+    ["src/snapshot/store.ts", "() => reject("],
+    ["src/snapshot/lanes.ts", "() => reject("],
+    ["src/release/devtools.ts", "() => { if (pending.delete(n))"],
+    ["src/release/devtools.ts", "() => { waiting.set(event"],
+    ["src/release/prove.ts", "() => resolve(\"hung\")"],
+    ["src/crew/dispatch.ts", "() => resolve(\"late\")"],
+    ["src/crew/first_look.ts", "() => resolve(undefined)"],
+    ["src/crew/plan.ts", "() => resolve(undefined)"],
+    ["src/crew/decide.ts", "() => abort.abort()"],
+    ["src/crew/runner.ts", "() => { overran = true; controller.abort(); }"],
+    ["src/crew/claude.ts", "() => { input.log("],
+    ["src/crew/claude.ts", "() => { why = \"timeout\"; stopChild(); }"],
+    ["src/display/known.ts", "() => resolve(undefined)"],
+  ]),
+  ...allow("setTimeout", KILL, [
+    ["src/checks/install.ts", "stop"],
+    ["src/apps/process.ts", "() => { if (proc.exitCode === null"],
+    ["src/release/launch.ts", "() => child.kill(\"SIGKILL\")"],
+    ["src/release/checkout.ts", "() => proc.kill(\"SIGKILL\")"],
+    ["src/crew/sandbox.ts", "() => proc.kill(\"SIGKILL\")"],
+    ["src/crew/workdir.ts", "() => { timedOut = true; proc.kill(\"SIGKILL\"); }"],
+    ["src/crew/plan.ts", "() => { try { proc.kill(\"SIGKILL\"); }"],
+    ["src/crew/runner.ts", "() => proc.kill(\"SIGKILL\")"],
+    ["src/crew/claude.ts", "() => { if (proc.exitCode === null && proc.signalCode === null) { input"],
+    ["src/crew/claude.ts", "() => { if (proc.exitCode === null && proc.signalCode === null) signal"],
+    ["src/crew/claude.ts", "() => proc.kill(\"SIGKILL\")"],
+    ["src/git/env.ts", "() => proc.kill(\"SIGKILL\")"],
+    ["src/git/env.ts", "() => { timedOut = true; proc.kill(\"SIGKILL\"); }"],
+    ["src/git/progress.ts", "() => { stop(); kill(); }"],
+    ["src/git/progress.ts", "kill"],
+    ["src/git/local.ts", "() => proc.kill(\"SIGKILL\")"],
+  ]),
 ];
 
 function sources(dir: string, out: string[] = []): string[] {
@@ -92,14 +165,18 @@ function sources(dir: string, out: string[] = []): string[] {
 }
 
 /** The first argument of each `call(` in `text`: its text, whitespace collapsed, and whether its work runs inside `during`. */
-export function callbacks(text: string, call: Call): { callback: string; named: boolean }[] {
+export function callbacks(text: string, call: Call): { callback: string; named: boolean; line: number }[] {
   const source = ts.createSourceFile("x.ts", text, ts.ScriptTarget.Latest, true);
-  const found: { callback: string; named: boolean }[] = [];
+  const found: { callback: string; named: boolean; line: number }[] = [];
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === call) {
       const first = node.arguments[0];
       if (first !== undefined)
-        found.push({ callback: first.getText(source).replace(/\s+/g, " ").trim(), named: isNamed(first) });
+        found.push({
+          callback: first.getText(source).replace(/\s+/g, " ").trim(),
+          named: isNamed(first),
+          line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1,
+        });
     }
     ts.forEachChild(node, visit);
   };
@@ -126,6 +203,7 @@ function isDuring(expr: ts.Expression): boolean {
 
 /** A statement that does no work of its own: a guard that returns, or a flag set to a plain value. */
 function isInert(st: ts.Statement): boolean {
+  if (ts.isExpressionStatement(st) && isBookkeeping(st.expression)) return true;
   if (ts.isIfStatement(st))
     return st.elseStatement === undefined &&
       (ts.isReturnStatement(st.thenStatement) && st.thenStatement.expression === undefined ||
@@ -133,6 +211,14 @@ function isInert(st: ts.Statement): boolean {
   if (!ts.isExpressionStatement(st) || !ts.isBinaryExpression(st.expression)) return false;
   const { operatorToken, right } = st.expression;
   return operatorToken.kind === ts.SyntaxKind.EqualsToken && (ts.isLiteralExpression(right) || right.kind === ts.SyntaxKind.TrueKeyword || right.kind === ts.SyntaxKind.FalseKeyword || ts.isIdentifier(right));
+}
+
+/** A counter bump (`looks++`) or a timer forgetting itself (`timers.delete(timer)`): no work of its own. */
+function isBookkeeping(expr: ts.Expression): boolean {
+  if (ts.isPostfixUnaryExpression(expr) || ts.isPrefixUnaryExpression(expr))
+    return ts.isIdentifier(expr.operand) && (expr.operator === ts.SyntaxKind.PlusPlusToken || expr.operator === ts.SyntaxKind.MinusMinusToken);
+  return ts.isCallExpression(expr) && ts.isPropertyAccessExpression(expr.expression) && expr.expression.name.text === "delete" &&
+    ts.isIdentifier(expr.expression.expression) && expr.arguments.length === 1 && ts.isIdentifier(expr.arguments[0]!);
 }
 
 /** Every statement is inert or a `during` (a `try` counts by its block), and at least one is a `during`. */
@@ -158,13 +244,22 @@ function isNamed(node: ts.Node): boolean {
 export const isWrapped = (text: string): boolean => callbacks(text, "setInterval")[0]?.named ?? false;
 
 /** Each timer callback the scan reads, with the file and call it came from. */
-function timers(): { file: string; call: Call; callback: string; named: boolean }[] {
-  const out: { file: string; call: Call; callback: string; named: boolean }[] = [];
+interface Timer {
+  file: string;
+  line: number;
+  call: Call;
+  callback: string;
+  named: boolean;
+}
+let scanned: Timer[] | undefined;
+/** The scan is read once per run: every test below shares it. */
+const timers = (): Timer[] => (scanned ??= scan());
+function scan(): Timer[] {
+  const out: Timer[] = [];
   for (const file of sources(SRC)) {
     const text = readFileSync(join(ROOT, file), "utf8");
     if (!/\bset(Interval|Timeout)\(/.test(text)) continue;
-    const calls: Call[] = NAMED.has(file) ? ["setInterval", "setTimeout"] : ["setInterval"];
-    for (const call of calls) for (const { callback, named } of callbacks(text, call)) out.push({ file, call, callback, named });
+    for (const call of ["setInterval", "setTimeout"] as const) for (const c of callbacks(text, call)) out.push({ file, call, ...c });
   }
   return out;
 }
@@ -192,6 +287,9 @@ describe("background timers run inside during", () => {
     expect(named(`() => { if (x) f(); else return; during("a", g); }`)).toBe(false);
     expect(named(`() => { if (!stopped) during("a", f); }`)).toBe(true);
     expect(named(`tick`)).toBe(false);
+    expect(named(`() => { timers.delete(timer); if (!stopped) void during("a", f); }`)).toBe(true);
+    expect(named(`() => { looks++; busy = busy.then(() => during("a", f)); }`)).toBe(true);
+    expect(named(`() => { timers.delete(f()); during("a", g); }`)).toBe(false);
   });
 
   test("a setInterval inside a template string is page text, not a timer", () => {
@@ -201,15 +299,49 @@ describe("background timers run inside during", () => {
   test("every server-side timer callback is wrapped in during or allowed by name", () => {
     const unnamed = timers()
       .filter((t) => !t.named && !ALLOWED.some((a) => matches(a, t)))
-      .map((t) => `${t.file}: ${t.call}(${t.callback.slice(0, 60)}`);
+      .map((t) => `${t.file}:${t.line}: ${t.call}(${t.callback.slice(0, 60)}`);
     expect(unnamed).toEqual([]);
+  });
+
+  test("the tty idle check, the cell probe deadline and root kill, and the app restart each run inside during (#11167)", () => {
+    const all = timers();
+    const wrapped = (file: string, name: string) =>
+      all.filter((t) => t.file === file && t.named && t.callback.includes(`during("${name}"`)).length;
+    expect(wrapped("src/apps/tty_registry.ts", "app-tty-idle")).toBe(1);
+    expect(wrapped("src/apps/contain.ts", "cell-probe-deadline")).toBe(1);
+    expect(wrapped("src/apps/contain.ts", "cell-kill-root")).toBe(1);
+    expect(wrapped("src/apps/runtime.ts", "apps-restart")).toBe(1);
+  });
+
+  test("setTimeout is read in every server file, not only the ones #11117 named (#11167)", () => {
+    const all = timers();
+    const wrapped = (file: string, name: string) =>
+      all.filter((t) => t.file === file && t.call === "setTimeout" && t.named && t.callback.includes(`during("${name}"`)).length;
+    expect(wrapped("src/core/route_timing.ts", "route-timing-flush")).toBe(1);
+    expect(wrapped("src/core/usage_count.ts", "usage-count-flush")).toBe(1);
+    expect(wrapped("src/http/access_log.ts", "access-flush")).toBe(1);
+    expect(wrapped("src/apps/egress_refused.ts", "egress-refused-flush")).toBe(1);
+    expect(wrapped("src/nightly/output.ts", "nightly-output-flush")).toBe(1);
+    expect(wrapped("src/web/studio/home_cache.ts", "home-refresh")).toBe(1);
+    expect(wrapped("src/web/studio/home_last.ts", "home-last")).toBe(1);
+    expect(wrapped("src/spawn/usage.ts", "disk-walk")).toBe(1);
+    expect(wrapped("src/snapshot/bucket.ts", "bucket-watch")).toBe(1);
+    expect(wrapped("src/crew/routines.ts", "routines")).toBe(1);
+    expect(wrapped("src/crew/early.ts", "early-watch")).toBe(1);
+    expect(all.filter((t) => t.file === "src/release/prove.ts" && t.callback.includes(`during("release-prove"`)).length).toBe(0);
+    expect(readFileSync(join(ROOT, "src/release/prove.ts"), "utf8")).toContain(`schedule(() => void during("release-prove", tick)`);
+  });
+
+  test("a failure names the file and line", () => {
+    expect(callbacks("\n\nsetInterval(tick, 5);", "setInterval")[0]?.line).toBe(3);
   });
 
   test("each allowed entry names exactly one timer, and says why", () => {
     const all = timers();
     for (const a of ALLOWED) {
       expect(a.why.length).toBeGreaterThan(10);
-      expect({ ...a, found: all.filter((t) => matches(a, t)).length }).toEqual({ ...a, found: 1 });
+      const listed = ALLOWED.filter((b) => b.file === a.file && b.call === a.call && b.starts === a.starts).length;
+      expect({ ...a, found: all.filter((t) => matches(a, t)).length }).toEqual({ ...a, found: listed });
     }
   });
 });
