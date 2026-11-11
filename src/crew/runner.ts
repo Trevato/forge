@@ -88,6 +88,7 @@ import {
   checkSummary,
   claimRun,
   finishRun,
+  getRun,
   lastAgentRun,
   noteRunProgress,
   setRunBase,
@@ -121,6 +122,7 @@ import { createLog, redactValues } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { holdLease } from "../runs/lease.ts";
 import { appendRunLog, readRunLog } from "../runs/log.ts";
+import { cancelledLine } from "../runs/cancelled.ts";
 import {
   branchFor,
   issueOfBranch,
@@ -409,16 +411,21 @@ export async function executeAgentRun(
   try {
     return await runClaimed(app, run, options, watch, began);
   } finally {
-    // The log's last line, on every path that started: where the time went.
+    // The log's last line, on every path that started: where the time went
+    // (and after it, for a run a person cancelled, who did).
     // A step an early return cut short still owns the time it held.
     if (began.inHarness) watch.lap("harness");
     if (began.inWrapUp) watch.lap("wrap-up");
-    if (began.claimed)
+    if (began.claimed) {
       appendRunLog(
         app.config.dataDir,
         run.id,
         watch.line("run ended", "the run started"),
       );
+      // A run a person cancelled says so, and who, after it (#11229).
+      const cancelled = cancelledLine(getRun(app.db, run.id));
+      if (cancelled !== undefined) appendRunLog(app.config.dataDir, run.id, cancelled);
+    }
   }
 }
 

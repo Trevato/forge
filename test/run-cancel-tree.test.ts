@@ -167,6 +167,10 @@ describe.skipIf(process.platform !== "linux")("a cancelled check", () => {
     const ended = readRunLog(dataDir, run.id).lines.filter((l) => l.startsWith("cancel ended "));
     expect(ended).toHaveLength(1);
     expect(Number(/^cancel ended (\d+) process/.exec(ended[0]!)?.[1])).toBeGreaterThanOrEqual(pids.length);
+    // And it ends with one line saying it was cancelled, and by whom (#11229).
+    const lines = readRunLog(dataDir, run.id).lines;
+    expect(lines.filter((l) => l === "cancelled by alice")).toHaveLength(1);
+    expect(lines.at(-1)).toBe("cancelled by alice");
   }, 45_000);
 });
 

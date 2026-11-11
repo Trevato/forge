@@ -69,6 +69,12 @@ if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
 printf '%s\\n' "$@" > "${argsFile}"
 IFS= read -r first; printf '%s\\n' "$first" > "${promptFile}"
 echo '{"type":"system","subtype":"init","session_id":"fake-1","model":"fake"}'
+if grep -q SPAWN-TREE "${promptFile}"; then
+echo $$ > "${dataDir}/tree.agent"
+sh -c 'echo $$ > "${dataDir}/tree.child"; sleep 300 & echo $! > "${dataDir}/tree.grand.tmp"; mv "${dataDir}/tree.grand.tmp" "${dataDir}/tree.grand"; wait' &
+sleep 300
+exit 0
+fi
 if grep -q LIMIT-ME "${promptFile}" && [ ! -f PAUSED.md ]; then
 echo "half-done" > PAUSED.md
 echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"You\u2019ve hit your session limit \u00b7 resets 7:20am (UTC)","total_cost_usd":0.02,"num_turns":2,"session_id":"fake-1","terminal_reason":"api_error"}'

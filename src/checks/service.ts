@@ -88,6 +88,7 @@ import { transact } from "../kernel/db.ts";
 import { createLog } from "../kernel/log.ts";
 import { holdLease, STALE_AFTER_MS } from "../runs/lease.ts";
 import { appendRunLog } from "../runs/log.ts";
+import { cancelledLine } from "../runs/cancelled.ts";
 import { trackRun, untrackRun } from "../runs/stoppable.ts";
 import { runningLimitSentence, runningRuns } from "../settings/quotas.ts";
 import { exportTree, readFileAt } from "../apps/checkout.ts";
@@ -826,8 +827,10 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       }
       // Ended from outside while it ran: its pull landed or closed, and
       // the row says so. That is not this check failing.
-      if (!outcome.ok && getRun(app.db, run.id)?.state === "cancelled") {
-        write(`superseded: ${getRun(app.db, run.id)?.summary ?? "cancelled"}`);
+      // A person's cancel ends the log with who cancelled it (#11229).
+      const row = getRun(app.db, run.id);
+      if (!outcome.ok && row?.state === "cancelled") {
+        write(cancelledLine(row) ?? `superseded: ${row.summary}`);
         return;
       }
       if (!outcome.ok && stopped && signal.aborted) {
