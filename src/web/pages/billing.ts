@@ -11,6 +11,9 @@ import { publicOrigin } from "../../core/public_origin.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { SIZES } from "../../spawn/sizes.ts";
+import { BILLING_SIZES, parseBillingLinks } from "../../settings/billing.ts";
+import { getPlans } from "../../settings/plans.ts";
+import { changeBillingLinks, readBillingLinks } from "../../actions/signup.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
@@ -76,6 +79,46 @@ function codesSection(ctx: Ctx, shown: Shown | undefined, values: Record<string,
 
 const codeWords = (e: CodeError): string => (e === "not_found" ? "Not found" : CODE_ERRORS[e]);
 
+/** The Payment links section: one https field per size a paid plan sits on, saved in one submit. */
+function linksSection(ctx: Ctx, retry?: { values: Record<string, string>; error: string }): Html | null {
+  const links = readBillingLinks(ctx.app, ctx.auth.user);
+  if (!links.ok) return null;
+  const paid = getPlans(ctx.app.db).filter((p) => p.priceUsd > 0);
+  const fields = BILLING_SIZES.map((z) => {
+    const named = paid.filter((p) => p.size === z).map((p) => p.name).join(", ");
+    return { size: z, named };
+  }).filter((f) => f.named !== "" || links.value[f.size] !== undefined);
+  return html`<section class="settings-block" id="links">
+    <h2>Payment links</h2>
+    <p class="muted small">Where a buyer pays for each paid plan. With any set, the home page offers paid forges; empty clears one.</p>
+    ${retry === undefined ? null : html`<p class="error" role="alert">${retry.error}</p>`}
+    <form class="stack" method="post" action="${PATH}/links">
+      ${fields.map((f) =>
+        formField({ label: `${f.named === "" ? f.size : f.named} (${f.size})`, name: f.size, type: "url", value: retry?.values[f.size] ?? links.value[f.size] ?? "", hint: "https://" }),
+      )}
+      ${btn("Save payment links", { variant: "primary" })}
+    </form>
+  </section>`;
+}
+
+// POST /settings/billing/links
+export async function billingSetLinks(ctx: Ctx): Promise<Response> {
+  if (ctx.auth.user?.isAdmin !== true || ctx.auth.user.kind === "agent") return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const current = readBillingLinks(ctx.app, ctx.auth.user);
+  const next: Record<string, string> = current.ok ? { ...current.value } : {};
+  // Only the fields the form carries change; a size without a field keeps its link.
+  for (const z of BILLING_SIZES) if (form.has(z)) next[z] = field(form, z);
+  const changed = changeBillingLinks(ctx.app, ctx.auth.user, next);
+  if (!changed.ok && changed.error === "not_found") return notFoundPage(ctx);
+  if (changed.ok) return flashTo(ctx, `${PATH}#links`, { message: "Payment links saved." });
+  // Name the sizes refused, and show the form again with what was typed.
+  const refused = BILLING_SIZES.filter((z) => !parseBillingLinks({ [z]: next[z] }).ok);
+  const error = `${refused.join(" and ")}: each payment link is an https address with no spaces, or empty. Nothing was saved.`;
+  return billingView(ctx, undefined, {}, undefined, 422, { values: next, error });
+}
+
 // GET /settings/billing
 export function billingPage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -83,7 +126,7 @@ export function billingPage(ctx: Ctx): Response {
   return billingView(ctx);
 }
 
-function billingView(ctx: Ctx, shown?: Shown, values: Record<string, string> = {}, error?: string, status = 200): Response {
+function billingView(ctx: Ctx, shown?: Shown, values: Record<string, string> = {}, error?: string, status = 200, links?: { values: Record<string, string>; error: string }): Response {
   const read = readBilling(ctx.app, ctx.auth.user);
   if (!read.ok) return notFoundPage(ctx);
   const b = read.value;
@@ -129,6 +172,7 @@ function billingView(ctx: Ctx, shown?: Shown, values: Record<string, string> = {
         ? html`<p class="muted">No forge has been sent from here.</p>`
         : html`<ul class="list setting-list">${rows}</ul>`}
     </section>
+    ${linksSection(ctx, links)}
     ${codesSection(ctx, shown, values, error)}`;
   const response = page({
     ctx,

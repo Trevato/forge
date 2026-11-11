@@ -184,3 +184,55 @@ test("MCP signup: billingLinks plans first, needs an admin token to apply, and a
   expect((await tool(adminToken, {})).value.billingLinks).toEqual(LINKS);
   await patch(adminToken, { billingLinks: {} });
 });
+
+const links = (cookie: string, fields: Record<string, string>) =>
+  fetch(`${servers.url}/settings/billing/links`, {
+    method: "POST",
+    headers: { cookie, origin: servers.url, accept: "text/html" },
+    body: new URLSearchParams(fields),
+    redirect: "manual",
+  });
+
+test("Settings → Billing: set three links, the home shows them; clear, the home is as before", async () => {
+  const page = await (await fetch(`${servers.url}/settings/billing`, { headers: { cookie: adminCookie } })).text();
+  expect(page).toContain("Payment links");
+  for (const z of ["small", "medium", "large"]) expect(page).toContain(`name="${z}"`);
+  expect((await links(memberCookie, LINKS)).status).toBe(404);
+  const bad = await links(adminCookie, { ...LINKS, large: "http://nope.test" });
+  expect(bad.status).toBe(422);
+  const badPage = await bad.text();
+  expect(badPage).toContain("large: each payment link is an https address");
+  expect(badPage).not.toContain("small and");
+  // What was typed stays in the form.
+  expect(badPage).toContain('value="http://nope.test"');
+  expect(badPage).toContain(`value="${LINKS.small}"`);
+  expect(getBillingLinks(app.db)).toEqual({});
+  expect((await links(adminCookie, LINKS)).status).toBe(303);
+  const text = await home();
+  expect(text.match(/Get a forge/g)).toHaveLength(3);
+  for (const u of Object.values(LINKS)) expect(text).toContain(`href="${u}"`);
+  expect(text).not.toContain("Hosted forges are");
+  await links(adminCookie, { small: "", medium: "", large: "" });
+  const none = await home();
+  expect(none).toContain("Hosted forges are");
+  expect(none).not.toContain("Get a forge");
+});
+
+test("PUT /api/v1/admin/billing/links replaces the links; a member and a bad link are refused; the spec names it", async () => {
+  const put = (token: string, links: unknown) =>
+    fetch(`${servers.url}/api/v1/admin/billing/links`, {
+      method: "PUT",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ links }),
+    });
+  expect((await put(memberToken, LINKS)).status).toBe(403);
+  expect((await put(adminToken, { small: "http://x.test" })).status).toBe(422);
+  const ok = await put(adminToken, LINKS);
+  expect(ok.status).toBe(200);
+  expect(((await ok.json()) as { links: unknown }).links).toEqual(LINKS);
+  expect(getBillingLinks(app.db)).toEqual(LINKS);
+  await put(adminToken, {});
+  expect(getBillingLinks(app.db)).toEqual({});
+  const spec = await (await fetch(`${servers.url}/api/v1/openapi.json`)).text();
+  expect(spec).toContain("/api/v1/admin/billing/links");
+});

@@ -268,6 +268,17 @@ export function adminRoutes(router: Router<Handler>): void {
     return apiError("invalid_plans", 422, changed.error.invalid);
   });
 
+  // The payment links (`settings/billing.ts`): the whole object is replaced; the REST twin of MCP `signup` with billingLinks.
+  router.add("PUT", "/api/v1/admin/billing/links", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const set = changeBillingLinks(ctx.app, ctx.auth.user, input["links"]);
+    if (set.ok) return json({ links: set.value });
+    if (set.error === "not_found") return notFound();
+    return apiError(set.error, 422, BILLING_WORDS);
+  });
+
   // Per-account quotas (`settings/quotas.ts`), key by key: the REST twin of MCP `quotas`.
   router.add("GET", "/api/v1/admin/quotas", (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));

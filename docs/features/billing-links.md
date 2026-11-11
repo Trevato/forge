@@ -6,7 +6,8 @@ Where a buyer pays for a hosted forge (#11149). One https link per size (small, 
 
 - Web: `/admin/limits`, the **Buy links** row; one address per size, empty clears it.
 - Terminal: the palette entry **Buy links**; enter on a size asks for its address.
-- API: `PATCH /api/v1/admin/settings` with `{"billingLinks": {"small": "https://…"}}` (admin token); `GET` on the same path reads them.
+- Web: `/settings/billing`, the **Payment links** section; one field per size, saved in one submit.
+- API: `PUT /api/v1/admin/billing/links` with `{"links": {...}}` (admin token), or `PATCH /api/v1/admin/settings` with `{"billingLinks": {"small": "https://…"}}` (admin token); `GET` on the same path reads them.
 - MCP: the `signup` tool with `billingLinks`; it plans first, send `dryRun: false` with an admin token to apply. Without `mode` or `billingLinks` it reads them.
 
 An address is https, at most 300 bytes, with no credentials, spaces or quotes. Only a forge admin who is a person may read or change them; each change is kept with who and when.

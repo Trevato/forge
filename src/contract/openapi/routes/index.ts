@@ -376,6 +376,7 @@ export { route as postApiV1UserOriginsOauth } from "./postApiV1UserOriginsOauth.
 export { route as postApiV1UserPassword } from "./postApiV1UserPassword.ts";
 export { route as postApiV1Users } from "./postApiV1Users.ts";
 export { route as postMcp } from "./postMcp.ts";
+export { route as putApiV1AdminBillingLinks } from "./putApiV1AdminBillingLinks.ts";
 export { route as putApiV1AdminCapacityKey } from "./putApiV1AdminCapacityKey.ts";
 export { route as putApiV1AdminLimitsKey } from "./putApiV1AdminLimitsKey.ts";
 export { route as putApiV1AdminMachinesMachineDisksDevice } from "./putApiV1AdminMachinesMachineDisksDevice.ts";
