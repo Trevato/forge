@@ -18,6 +18,7 @@ import { parseFrom } from "./tell_from.ts";
 import { deriveAppName } from "../web/pages/apps-name.ts";
 import { requireVerified } from "./verify.ts";
 import { MAX_BODY } from "../core/issues.ts";
+import { recordRefusal } from "../core/first_ask_refusals.ts";
 import { DIRECTION_NOTE } from "../crew/direct.ts";
 
 export interface FirstAsk {
@@ -49,19 +50,24 @@ export async function firstAsk(
   from: string | null = null,
 ): Promise<Result<FirstAsk, FirstAskError>> {
   const text = said.trim();
-  if (text === "") return err({ words: SAY_SOMETHING_WORDS });
+  /** A refusal: kept as one row, and its words returned unchanged. */
+  const refuse = (words: string): Result<FirstAsk, FirstAskError> => {
+    recordRefusal(app.db, { actorId: actor?.id ?? null, ask: text, words }, Date.now());
+    return err({ words });
+  };
+  if (text === "") return refuse(SAY_SOMETHING_WORDS);
   // Everything the tell could refuse is asked before the app exists, so a
   // refused ask leaves nothing behind and a retry makes no second app. The
   // new app's owner is the actor, who may direct the crew on it.
-  if (text.length > MAX_BODY) return err({ words: TOO_LONG_WORDS });
-  if (actor === undefined || actor.kind === "org") return err({ words: DIRECTION_NOTE });
-  if (!requireVerified(app, actor).ok) return err({ words: "Verify your email first." });
-  if (from !== null && typeof parseFrom(from) !== "string") return err({ words: FROM_WORDS });
+  if (text.length > MAX_BODY) return refuse(TOO_LONG_WORDS);
+  if (actor === undefined || actor.kind === "org") return refuse(DIRECTION_NOTE);
+  if (!requireVerified(app, actor).ok) return refuse("Verify your email first.");
+  if (from !== null && typeof parseFrom(from) !== "string") return refuse(FROM_WORDS);
   // The forge's own repository is never an ask's target: refused before any app exists.
-  if (resolvesToForgeRepo(app, actor, text)) return err({ words: FORGE_REPO_WORDS });
+  if (resolvesToForgeRepo(app, actor, text)) return refuse(FORGE_REPO_WORDS);
   // An empty description: the issue the tell files is the one issue of the ask.
   const made = await newAppFromSentence(app, actor, { sentence: text, description: "" });
-  if (!made.ok) return err({ words: NEW_APP_ERRORS[made.code] ?? NOT_TOLD_WORDS });
+  if (!made.ok) return refuse(NEW_APP_ERRORS[made.code] ?? NOT_TOLD_WORDS);
   let repo = made.repo;
   let autonomyFailed = false;
   if (crewCanRun) {
