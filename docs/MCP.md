@@ -97,7 +97,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `egress_grants` | — | Private destinations and grants: list, grant or revoke (site admin) | 289 |
 | `email_verify` | — | Send yourself a new verification link | 126 |
 | `events` | — | Repository events | 259 |
-| `explore` | — | The apps, people (and, for an admin, forges) you can see, ranked | 573 |
+| `explore` | — | The apps, people (and, for an admin, forges) you can see, ranked | 641 |
 | `family` | — | The forge that sent this one and, for a site admin, those it sent, with state, version | 205 |
 | `features` | — | Apps absorbed as forge features: list, read, absorb or un-absorb, change typed settings | 357 |
 | `feed` | — | Your ranked home timeline; `cursor` pages; saved filter applies | 562 |
@@ -282,6 +282,19 @@ each the figures on the team's page from `teamMetrics` in
 `plannerToBuilderMs`, `builderToReviewerMs`, `reworkRate`, `conflictRate`,
 `costPerShippedUsd`, `shipped`, `parallelism` and `slots`; a figure with
 nothing to measure is `null`. Only an org admin reads them, as the page.
+
+`explore` with `{ kind: "tree", app: "owner/name" }` is another (#11377): the
+app's fork chain as plain rows, `{ app, upstream, forks, truncated }`, each row
+`{ repo, follows, standing, updatedAt }`. `upstream` is the chain above the app,
+nearest first, ending at the highest ancestor you may read; `forks` are its
+direct forks (at most 60). `follows` is the Following card's line
+(`followModeWords`: "Follows x automatically", "Proposes updates from x",
+"Does not follow x"; "This repository follows nothing." at the top),
+`standing` the forks page's drift words ("2 ahead · 0 behind", or "standing
+unknown"), `updatedAt` its "pushed" time. Nothing records when a fork last took
+updates, so the last move of its default branch stands for it. A fork you
+cannot read is not a row (`src/actions/fork_tree_rows.ts`);
+`test/mcp-tree.test.ts` holds the words to the page.
 
 `system` with `{ kind: "csp" }` is another (#10906): the last 24 hours of
 Content-Security-Policy violations browsers reported to `/csp-report`,

@@ -1,9 +1,10 @@
 import { explorePage, exploreLine, exploreLineFrom, EXPLORE_PARAMS, exploreNote, exploreSuggestion, readExploreLine } from "../../../actions/explore.ts";
-import { bad, good, type Tool, str } from "../shared.ts";
+import { forkTreeRows } from "../../../actions/fork_tree_rows.ts";
+import { bad, good, type Tool, str, repoArg, isAnswer } from "../shared.ts";
 
 export const tool: Tool = {
   name: "explore",
-  doc: "`{ q?, cursor? }` (`query` is the same, `q` wins): the apps and people you can see, ranked, with their numbers; `kind:` `sort:` `updated:` `owner:` `archived:` and words in one line; each also as its own argument (`since` = `updated`); page on with `cursor`",
+  doc: "`{ kind: tree, app }`: `{ app, upstream, forks, truncated }`, rows `{ repo, follows, standing, updatedAt }` for the app, the chain above it (nearest first) and its direct forks, in the words of the forks page, only what you may read; else `{ q?, cursor? }` (`query` is the same, `q` wins): the apps and people you can see, ranked, with their numbers; `kind:` `sort:` `updated:` `owner:` `archived:` and words in one line; each also as its own argument (`since` = `updated`); page on with `cursor`",
   description:
     "The apps, people (and, for an admin, forges) you can see, ranked.",
   inputSchema: {
@@ -21,6 +22,7 @@ export const tool: Tool = {
       },
       ...Object.fromEntries(EXPLORE_PARAMS.map((k) => [k, { type: "string", maxLength: 100 }])),
       since: { type: "string", maxLength: 100 },
+      app: { type: "string", maxLength: 200, description: "owner/name, with kind: tree" },
       cursor: {
         type: "string",
       },
@@ -28,6 +30,10 @@ export const tool: Tool = {
   },
   writes: false,
   async run(ctx, user, args) {
+    if (str(args["kind"]) === "tree") {
+      const repo = repoArg(ctx, user, { repo: args["app"] });
+      return isAnswer(repo) ? repo : good(await forkTreeRows(ctx.app, repo, user));
+    }
     const q = str(args["q"]);
     const line = exploreLineFrom((name) => (name === "q" ? (q !== "" ? q : str(args["query"])) : str(args[name])));
     const { query, unknown } = readExploreLine(line);
