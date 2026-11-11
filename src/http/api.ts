@@ -291,7 +291,7 @@ import { blobForRender, commitLog, listRefs, listTree, refTip } from "../git/rea
 import { repoDir } from "../git/repos.ts";
 import { holds, weakEtag } from "./etag.ts";
 import { carriedPulls, pullPath } from "../story/wave_pulls.ts";
-import { pullRefs, readWave, readWaves } from "../story/waves.ts";
+import { pullRefs, readWave, readWaves, waveSize } from "../story/waves.ts";
 import { originForRepo, type OriginRepoRow } from "../core/origins.ts";
 import { subscribe as subscribeJob, type MirrorJob } from "../origins/jobs.ts";
 import type { Origin } from "../origins/types.ts";
@@ -2240,10 +2240,20 @@ export function apiRoutes(router: Router<Handler>): void {
     const entries = await timePhaseAsync(ctx.request, "waves", () =>
       readWaves(repoDir(ctx.app.reposRoot, repo.ownerName, repo.name), repo.defaultBranch),
     );
+    // Sized over the pulls this viewer can read, as the page does.
     return timePhase(ctx.request, "render", () =>
       json({
         items: entries.flatMap((e) =>
-          e.ok ? [{ version: e.wave.version, date: e.wave.date, headline: e.wave.headline }] : [],
+          e.ok
+            ? [
+                {
+                  version: e.wave.version,
+                  date: e.wave.date,
+                  headline: e.wave.headline,
+                  ...waveSize(carriedPulls(ctx.app.db, pullRefs(e.wave), ctx.auth.user)),
+                },
+              ]
+            : [],
         ),
         next_cursor: null,
       }),

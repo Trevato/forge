@@ -16,7 +16,7 @@ import type { Ctx } from "../../http/context.ts";
 import { VERSION, type Wave } from "../../story/wave.ts";
 import { movedWithPulls, waveProgress } from "../../story/wave_moved.ts";
 import { carriedPulls, pullPath } from "../../story/wave_pulls.ts";
-import { fromWave, pullRefs, readWave, readWaves } from "../../story/waves.ts";
+import { fromWave, pullRefs, readWave, readWaves, sizeWords, waveSize } from "../../story/waves.ts";
 import { NO_WAVES } from "../../story/words.ts";
 import { loadRepo, notFoundPage, repoBase, scopeHeader } from "../chrome.ts";
 import { escapeHtml, html } from "../html.ts";
@@ -37,20 +37,15 @@ export const WAVES_CSS = `[data-waves] { overflow-wrap: anywhere; }
 const WHAT_A_WAVE =
   "A wave is a release note in waves/<version>.md that names its highlights and the pulls merged since the last one.";
 
-/** A wave's row title: `<version> · <date> · <headline> · N pulls`, N being the pulls this viewer can see. */
-export function waveLine(w: Wave, visible: number): string {
-  return `${w.version} · ${w.date} · ${w.headline} · ${visible} ${visible === 1 ? "pull" : "pulls"}`;
-}
-
 /** One wave on the list: its headline, the first highlight's why as the one sentence under it, and version, date and pull count as a muted trail. */
-export function waveRow(w: Wave, href: string, visible: number) {
+export function waveRow(w: Wave, href: string, size: { pulls: number; apps: number }) {
   const why = w.highlights[0]?.why;
   return row({
     href,
     nav: true,
     title: w.headline,
     ...(why === undefined || why === "" ? {} : { meta: html`${why}` }),
-    trail: html`<span class="muted small">${w.version} · ${w.date} · ${visible} ${visible === 1 ? "pull" : "pulls"}</span>`,
+    trail: html`<span class="muted small">${w.version} · ${w.date} · <span data-wave-size>${sizeWords(size)}</span></span>`,
   });
 }
 
@@ -76,7 +71,7 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
           e.wave,
           fileHref(e.file),
           // The wave's own page lists these same pulls, so the two agree.
-          carriedPulls(ctx.app.db, pullRefs(e.wave), ctx.auth.user).length,
+          waveSize(carriedPulls(ctx.app.db, pullRefs(e.wave), ctx.auth.user)),
         )
       : row({
           href: fileHref(e.file),
@@ -232,7 +227,7 @@ export async function wavePage(ctx: Ctx): Promise<Response> {
 
   const content = entry.ok
     ? html`<h1>${entry.wave.headline}</h1>
-        <p class="muted">${entry.wave.version} · ${entry.wave.date}</p>
+        <p class="muted">${entry.wave.version} · ${entry.wave.date} · <span data-wave-size>${sizeWords(waveSize(carried))}</span></p>
         ${line === ""
           ? ""
           : html`<p class="muted" data-wave-progress>${line}</p>`}

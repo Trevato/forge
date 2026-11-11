@@ -22,3 +22,7 @@ When a wave's pulls closed issues under a milestone, the wave opens as its headl
 3. Esc (or `q`) on the pull returns to the wave, and again to the list.
 
 Only pulls the viewer may read are listed, and Enter re-checks that before opening one. The walk is tested in `test/story-walk.test.ts` and `test/tui-waves.test.ts`.
+
+## A wave's size
+
+Each wave says how big it is in plain numbers, such as `7 changes in 3 apps`: on the list row, under the headline on the wave's page, on the terminal's waves list and at the top of a wave there, and as `pulls` and `apps` on each item of `GET /api/v1/repos/<owner>/<repo>/waves`. The numbers count only the pulls you can read, once each, so a guest is not told how many private pulls a wave holds.

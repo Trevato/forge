@@ -164,6 +164,25 @@ export function pullRefs(wave: Wave): PullRef[] {
   return out;
 }
 
+/**
+ * How big a wave is for one viewer: the pulls they can see, once each, and the
+ * distinct repositories (apps) those sit in. Takes the visible pulls (what
+ * `carriedPulls` returns), never the whole wave, so a hidden pull is not counted.
+ */
+export function waveSize(refs: readonly { owner: string; name: string }[]): { pulls: number; apps: number } {
+  return { pulls: refs.length, apps: new Set(refs.map((r) => `${r.owner}/${r.name}`)).size };
+}
+
+/** `7 changes in 3 apps`; `1 change in 1 app`. Numbers only, so nothing here needs escaping. */
+export function sizeWords(size: { pulls: number; apps: number }): string {
+  return `${size.pulls} ${size.pulls === 1 ? "change" : "changes"} in ${size.apps} ${size.apps === 1 ? "app" : "apps"}`;
+}
+
+/** A wave's one-line title, on the terminal's list: `<version> · <date> · <headline> · N changes in M apps`, counted over what this viewer can see. */
+export function waveLine(w: Wave, size: { pulls: number; apps: number }): string {
+  return `${w.version} · ${w.date} · ${w.headline} · ${sizeWords(size)}`;
+}
+
 /** Unreadable files tried before giving up on finding the newest good wave. */
 const LATEST_TRIES = 5;
 
