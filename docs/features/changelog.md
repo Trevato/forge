@@ -6,6 +6,10 @@ The terminal's palette has `Changelog`, the same read for anyone, a guest includ
 
 One bounded `git log` read, cached per head oid; Server-Timing names `releases` and `render`.
 
+## How close each open milestone is (#11409)
+
+`/changelog` opens with one line per open milestone of the forge's own repository: its name (linked to its milestone page), `N of M done` and a progress bar. A deferred or closed milestone is left out, and the block is absent when none is open or when the reader may not open the repository (a guest on a private one). The terminal's Changelog screen shows the same lines above the releases (name, `N of M done`, at most five), under the same read check. Both read `nearMilestones` in `web/pages/milestones_near.ts`; the page's `ETag` includes them.
+
 ## What went live (#7672)
 
 `/changelog` lists the pulls merged into a default branch, newest first, grouped by UTC day: title, link, repository, when it landed. A pull to the forge's own repository (`FORGE_REPO`) counts only once the running commit (`FORGE_COMMIT`, the one `/api/v1/health` reports; the default branch head for a forge run from source) contains its merge commit, asked of git with `merge-base --is-ancestor` and kept while live. Landed but not yet contained shows above as "On its way". A pull to any other public repository is live when it lands. The top line says the live version and commit and how many shipped today. `?repo=all` or `?repo=owner/name` filters; the forge's own repository is the default.

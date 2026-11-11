@@ -15,8 +15,10 @@ import { newestLive, secondsWords } from "../../keeper/landed.ts";
 import { dayHeading, dayOf, daysJs, shippedToday } from "../../release/days.ts";
 import { chosenRepo, readLandings, type Landing, type Landings } from "../../release/landings.ts";
 import { gather, plainTitle, type Gathered } from "../../story/gather.ts";
+import { milestoneHref, progress } from "./milestones.ts";
+import { nearMilestones, nearWords, type Near } from "./milestones_near.ts";
 import { liveRegionsJs } from "../client.ts";
-import { pageHead } from "../chrome.ts";
+import { pageHead, repoBase } from "../chrome.ts";
 import { changelogTag, holds } from "../feeds.ts";
 import { EDGE_FRESH, EDGE_STALE, EDGE_VARY } from "../../http/edge_cache.ts";
 import { json, securityFloor } from "../../http/respond.ts";
@@ -28,6 +30,19 @@ import { badge, row, seg, sha, time, timeAgo } from "../ui.ts";
 
 /** Where the live client looks: a merge lands, or production serves a commit. */
 const LIVE = "pull.merged,app.serving";
+/** How close each open milestone is, above the waves: absent when there are none. */
+function nearBlock(base: string, near: readonly Near[]): Html | null {
+  if (near.length === 0) return null;
+  return html`<ul class="list setting-list" id="milestones-near" aria-label="Open milestones">${near.map((m) =>
+    row({
+      nav: true,
+      title: html`<a href="${milestoneHref(base, m.number)}">${m.name}</a>`,
+      meta: progress(m.done, m.total, `${m.name}: ${m.done} of ${m.total} done`),
+      trail: html`${nearWords(m)}`,
+    }),
+  )}</ul>`;
+}
+
 /** Other repositories offered as filters: more than this is a search, not a chip. */
 const FILTERS = 6;
 
@@ -192,6 +207,9 @@ export async function changelogPage(ctx: Ctx): Promise<Response> {
   const ownRepo = landed.own === undefined ? undefined : getRepo(ctx.app.db, ...(landed.own.split("/") as [string, string]));
   const readable = ownRepo !== undefined && canRead(ctx.app.db, ownRepo, ctx.auth.user);
   const { read, bets, bet } = withBets(ctx, landed, readable ? ownRepo : undefined);
+  // The forge's own repository, even before anything has landed in it.
+  const planned = nearMilestones(ctx.app, landed.own ?? ctx.app.config.forgeRepo, ctx.auth.user);
+  const near = planned?.near ?? [];
   const everything = [...read.onItsWay, ...read.live];
   const choice = chosenRepo(new URL(ctx.request.url).searchParams.get("repo"), everything, read.own);
   const others = [...new Set(everything.map((l) => l.repo))].filter((r) => r !== read.own).slice(0, FILTERS);
@@ -199,7 +217,7 @@ export async function changelogPage(ctx: Ctx): Promise<Response> {
   // a match answers 304 without building the page.
   const toLive = newestLive(ctx.app.db);
   const flashed = readFlash(ctx.request) !== undefined;
-  const tag = flashed ? undefined : changelogTag(read.version, everything, [choice, bet, read.commit, read.live.map((l) => `${l.repo}#${l.number}`), readable, toLive ?? null, everything.map((l) => timeAgo(l.at)), new Date().toISOString().slice(0, 10), ctx.auth.user?.id ?? null, ctx.auth.user?.isAdmin === true, ctx.theme ?? null]);
+  const tag = flashed ? undefined : changelogTag(read.version, everything, [choice, bet, read.commit, read.live.map((l) => `${l.repo}#${l.number}`), readable, toLive ?? null, everything.map((l) => timeAgo(l.at)), new Date().toISOString().slice(0, 10), ctx.auth.user?.id ?? null, ctx.auth.user?.isAdmin === true, ctx.theme ?? null, near]);
   const keep = tag === undefined ? undefined : cacheHeaders(ctx, tag);
   if (keep !== undefined && keep.matched) return keep.response;
   const rendering = performance.now();
@@ -215,7 +233,7 @@ export async function changelogPage(ctx: Ctx): Promise<Response> {
           { label: "Every bet", href: "/changelog", current: bet === "" },
           ...bets.map((b) => ({ label: b, href: `/changelog?bet=${encodeURIComponent(b)}`, current: bet === b })),
         ]);
-  const body = html`${pageHead("Changelog", { sub: "What went live, as it happens." })}${filters}${betFilters}
+  const body = html`${pageHead("Changelog", { sub: "What went live, as it happens." })}${nearBlock(planned === undefined ? "" : repoBase(planned.repo), near)}${filters}${betFilters}
     <div id="shipped" data-live="${LIVE}" aria-live="polite">${shippedRegion(read, choice, new Date(), "UTC", toLive, readable)}</div>`;
   const response = page({ ctx, title: "Changelog", body, feed: { href: "/changelog.atom", title: "Changelog" }, json: { href: `/api/v1/changelog${choice === read.own ? "" : `?repo=${encodeURIComponent(choice)}`}`, title: "Changelog (JSON)" }, scriptJs: `${liveRegionsJs}\n${localDaysJs}` });
   notePhase(ctx.request, "render", performance.now() - rendering);
