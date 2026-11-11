@@ -1,4 +1,5 @@
 [
+  "src/billing/signature.ts",
   "src/crew/governor_log.ts",
   "src/design/first_five_minutes.ts",
   "src/flow/alarm_unproposed.ts",

@@ -72,6 +72,7 @@ const ALLOWED: readonly Allowed[] = [
   ]),
   ...allow("setTimeout", `a shell session's resize debounce, ${PER_CONNECTION}`, [["src/machines/shell.ts", "() => session.size === resize"]]),
   ...allow("setTimeout", `an ssh login's auth deadline, ${PER_CONNECTION}`, [["src/ssh/server.ts", "() => { this.transport.disconnect("]]),
+  ...allow("setTimeout", "a maintenance duty's deadline on one call: it rejects a promise and does no work on the loop", [["src/maintain/runner.ts", "() => reject(new Error(\"timed out\"))"]]),
   ...allow("setTimeout", `a media stream's idle deadline, ${PER_CONNECTION}`, [["src/git/read.ts", "() => { finish(); controller.error("]]),
   ...allow("setTimeout", `a git upload's idle deadline, ${PER_CONNECTION}`, [["src/git/smart-http.ts", "stop"]]),
   ...allow("setTimeout", "the loop-lag meter's own tick: it measures how late the loop runs, and a span around it would count that lateness as its own work", [["src/kernel/loop_lag.ts", "() => { // Early"]]),
