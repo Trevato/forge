@@ -102,7 +102,7 @@ test("above the fold the page is the form and three steps; the whole guide is be
   expect(inside).toContain(guideHtml(plain).toString());
   for (const sentence of [
     "Give claim.url to the person who takes it over. Unclaimed: asleep in 7 days, archived in 30.",
-    "free within limits while hosting is not sold",
+    "Or a hosted one, plans on",
     "It sleeps when idle and wakes on its next page load, push or API call; the person brings their own model credential, or its crew stays off.",
   ]) {
     expect(plain).toContain(sentence);

@@ -9,13 +9,12 @@
 import type { Database } from "bun:sqlite";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { SIZES, type Size } from "../spawn/sizes.ts";
-import { SIGNUP_DEFAULT, parseSignup, type SignupMode } from "./signup.ts";
 import { writeSetting } from "./limits.ts";
 
 export const BILLING_SIZES = ["small", "medium", "large"] as const satisfies readonly Size[];
 export type BillingLinks = Partial<Record<Size, string>>;
 
-const STORE_KEY = "billing.links";
+export const BILLING_LINKS_KEY = "billing.links";
 const MAX_URL = 300;
 
 export const BILLING_WORDS = "billing links are an object of small, medium and large, each an https URL or empty";
@@ -50,11 +49,12 @@ export function parseBillingLinks(raw: unknown): Result<BillingLinks, "invalid_b
 export function getBillingLinks(db: Database): BillingLinks {
   const row = db
     .query<{ value: string }, [string]>("SELECT value FROM forge_setting WHERE key = ?1")
-    .get(STORE_KEY);
+    .get(BILLING_LINKS_KEY);
   return row === null ? {} : decodeLinks(row.value);
 }
 
-function decodeLinks(raw: string): BillingLinks {
+/** A stored links value as links; anything that does not parse reads as none. */
+export function decodeLinks(raw: string): BillingLinks {
   try {
     const parsed = parseBillingLinks(JSON.parse(raw));
     return parsed.ok ? parsed.value : {};
@@ -71,26 +71,7 @@ export function setBillingLinks(db: Database, value: BillingLinks, actorId: stri
   const from = ENCODE(getBillingLinks(db));
   const to = ENCODE(value);
   if (from === to) return;
-  writeSetting(db, STORE_KEY, to === "{}" ? null : to, from, to, actorId);
-}
-
-/**
- * Who may sign up and the buy links, in one query: the home page needs both
- * and each read is a statement on a page held to a statement budget.
- */
-export function getSignupAndLinks(db: Database): { mode: SignupMode; links: BillingLinks } {
-  let mode: SignupMode = SIGNUP_DEFAULT;
-  let links: BillingLinks = {};
-  const rows = db
-    .query<{ key: string; value: string }, [string, string]>("SELECT key, value FROM forge_setting WHERE key IN (?1, ?2)")
-    .all("signup", STORE_KEY);
-  for (const row of rows) {
-    if (row.key === "signup") {
-      const m = parseSignup(row.value);
-      if (m.ok) mode = m.value;
-    } else links = decodeLinks(row.value);
-  }
-  return { mode, links };
+  writeSetting(db, BILLING_LINKS_KEY, to === "{}" ? null : to, from, to, actorId);
 }
 
 /** The size in plain words, from the one table of sizes: "1 CPU, 2 GB memory, 2 GB disk". */

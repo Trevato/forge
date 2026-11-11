@@ -1,7 +1,8 @@
 /**
  * The bridge to paid hosting (#11149): `billing.links` is empty by default and
- * the anonymous home reads as it did; with links set, `#yours` shows one row
- * a plan, each button opening its link, and "coming" and "not sold" are gone.
+ * the anonymous home shows the plans with no pay link; with links set, each
+ * paid plan whose size has a link carries a plain "Pay for <plan>" link to it,
+ * beside the home's one "Get a forge" button (#11139).
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -72,12 +73,13 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-test("no links by default: the home says hosted forges are coming and shows no plan", async () => {
+test("no links by default: the home shows the plans, one button and no pay link", async () => {
   expect(getBillingLinks(app.db)).toEqual({});
   const text = await home();
-  expect(text).toContain("Hosted forges are");
-  expect(text).not.toContain("Get a forge");
-  expect(await guide()).toContain("while hosting is not sold");
+  expect(text).not.toContain("Hosted forges are");
+  expect(text).not.toContain("Pay for");
+  expect(text.match(/>Get a forge</g)).toHaveLength(1);
+  expect(await guide()).not.toContain("while hosting is not sold");
 });
 
 test("only http(s) addresses without credentials, only the three sizes", () => {
@@ -106,43 +108,38 @@ test("a bad link is refused and nothing is kept", async () => {
   expect(getBillingLinks(app.db)).toEqual({});
 });
 
-test("with three links the home shows three rows, each a button to its link", async () => {
+const yours = (text: string): string => text.slice(text.indexOf('id="yours"'), text.indexOf('class="door-org"'));
+const payAnchors = (section: string): string[] => [...section.matchAll(/<a\s[^>]*>Pay for [^<]*<\/a\s*>/g)].map((m) => m[0]);
+
+test("with three links each paid plan carries a pay link; the button stays one", async () => {
   const res = await patch(adminToken, { billingLinks: LINKS });
   expect(res.status).toBe(200);
   const read = (await (await fetch(`${servers.url}/api/v1/admin/settings`, { headers: { authorization: `Bearer ${adminToken}` } })).json()) as { billingLinks: unknown };
   expect(read.billingLinks).toEqual(LINKS);
-  const text = await home();
-  const section = text.slice(text.indexOf('id="plans"'), text.indexOf("Read the step-by-step guide"));
-  const anchors = [...section.matchAll(/<a\s[^>]*>Get a forge<\/a\s*>/g)].map((m) => m[0]);
+  const section = yours(await home());
+  const anchors = payAnchors(section);
   expect(anchors).toHaveLength(3);
   for (const [i, size] of (["small", "medium", "large"] as const).entries()) {
     expect(anchors[i]).toContain(`href="${LINKS[size]}"`);
     expect(anchors[i]).toContain("noopener");
     expect(section).toContain(sizeWords(size));
   }
-  expect(section).toContain("$19 a month, with $5 of crew credit");
-  expect(section).toContain("$49 a month, with $15 of crew credit");
-  expect(section).toContain("$149 a month, with $50 of crew credit");
-  expect(section).toContain("Your forge is made after payment; the link to claim it arrives by email, usually within a few hours.");
-  expect(text).not.toContain("Hosted forges are");
-  expect(await guide()).not.toContain("while hosting is not sold");
+  expect(section.match(/>Get a forge</g)).toHaveLength(1);
+  expect(section).not.toContain("Pay for Free");
 });
 
-test("a size without a link has no row; clearing every link restores the page", async () => {
+test("a size without a link has no pay link; clearing every link restores the page", async () => {
   await patch(adminToken, { billingLinks: { medium: LINKS.medium } });
-  const one = await home();
-  expect(one.match(/Get a forge/g)).toHaveLength(1);
-  expect(one).toContain("$49 a month");
-  expect(one).not.toContain("$19 a month");
+  const one = payAnchors(yours(await home()));
+  expect(one).toHaveLength(1);
+  expect(one[0]).toContain(LINKS.medium);
   await patch(adminToken, { billingLinks: {} });
   // three real changes so far (set, narrowed, cleared); the refused ones kept nothing
   const kept = app.db
     .query<{ n: number }, []>("SELECT count(*) AS n FROM forge_setting_change WHERE key = 'billing.links'")
     .get();
   expect(kept?.n).toBe(3);
-  const none = await home();
-  expect(none).toContain("Hosted forges are");
-  expect(none).not.toContain("Get a forge");
+  expect(payAnchors(yours(await home()))).toHaveLength(0);
 });
 
 const form = (cookie: string, fields: Record<string, string>, origin: string = servers.url) =>

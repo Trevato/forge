@@ -24,8 +24,10 @@ import { YOURE_IN_MESSAGE } from "../../actions/users.ts";
 import { accountsClosedIn } from "../../core/users.ts";
 import { markTold, untoldAnswer } from "../../core/requests.ts";
 import { requestsCard } from "../requests_card.ts";
-import { getSignupAndLinks, BILLING_SIZES, sizeWords } from "../../settings/billing.ts";
-import { getPlans } from "../../settings/plans.ts";
+import { plansRow } from "../plans_row.ts";
+import { publicPlans } from "../../settings/plans.ts";
+import { getDoorSettings } from "../../settings/door.ts";
+import { GET_A_FORGE_PATH } from "../../billing/plan_words.ts";
 import { appsForRepos } from "../../core/apps.ts";
 import { WEIGHT_MAX, WEIGHT_NAMES } from "../../core/front.ts";
 import { LOOK_SIZES } from "../../core/looks.ts";
@@ -88,7 +90,6 @@ import { nextStepsCard, nextStepsOf } from "../pages/next-steps.ts";
 import { spawnedOrg } from "../../spawn/claim.ts";
 import { clientApps } from "./client_home.ts";
 import { passkeyJs } from "../passkey-client.ts";
-import { SITE_LINE } from "../site_line.ts";
 
 /** The events that can change what is on you. */
 const ON_YOU_LIVE =
@@ -759,7 +760,7 @@ export function studioDoor(ctx: Ctx): Response {
   const featured = front.featured;
   const all = [...(featured === undefined ? [] : [featured]), ...front.shelf];
   const made = all.slice(0, Math.max(DOOR_TILES, all.filter((e) => e.pinned).length));
-  const { mode, links } = getSignupAndLinks(ctx.app.db);
+  const { mode, plans: allPlans, links } = getDoorSettings(ctx.app.db);
   const accounts = !accountsClosedIn(ctx.app.db, mode);
   timePhase(ctx.request, "tiles", () => {
     tiles = made.map((e, at) =>
@@ -777,10 +778,6 @@ export function studioDoor(ctx: Ctx): Response {
   const ssh = sshCommand(ctx.app);
   const signup = offersSignup(ctx) && accounts;
   // Closed is a door with nothing behind it; invite still lands an invite link's holder.
-  // The plans setting is read only when a link is set: no link, no extra statement on the home.
-  const priced = BILLING_SIZES.some((z) => links[z] !== undefined) ? getPlans(ctx.app.db).filter((p) => p.priceUsd > 0) : [];
-  const plans = BILLING_SIZES.filter((z) => links[z] !== undefined && priced.some((p) => p.size === z));
-  const planOf = (z: (typeof BILLING_SIZES)[number]) => priced.find((p) => p.size === z)!;
   const origin = (ctx.app.config.url ?? ctx.url.origin).replace(/\/$/, "");
   const prompt = agentPrompt(origin);
   const asked = encodeURIComponent(prompt);
@@ -880,27 +877,15 @@ export function studioDoor(ctx: Ctx): Response {
 
     <div class="door-section">${homeMilestones(ctx)}</div>
 
-    <section class="door-section door-split" id="yours">
+    <section class="door-section" id="yours">
       <div class="stack">
         <h2>Get your own forge</h2>
         <p class="door-support">
-          ${SITE_LINE} Free and open source. Run it on your own computer or server today.${plans.length > 0 ? "" : " Hosted forges are coming."}${accounts ? "" : mode === "invite" ? " New accounts on this forge are by invitation." : " This forge is not taking new accounts."}
+          Hosted for you, or free and open source on a machine you keep.${accounts ? "" : mode === "invite" ? " New accounts on this forge are by invitation." : " This forge is not taking new accounts."}
         </p>
-        ${when(plans.length > 0, () => html`<div class="stack-tight" id="plans">
-          <ul class="list">
-            ${plans.map((z) =>
-              row({
-                title: html`<strong>${z[0]!.toUpperCase()}${z.slice(1)}</strong> <span class="muted small">${sizeWords(z)}</span>`,
-                meta: html`$${String(planOf(z).priceUsd)} a month, with $${String(planOf(z).creditUsd)} of crew credit`,
-                trail: btn("Get a forge", { href: links[z]!, external: true, size: "sm", variant: "primary" }),
-              }),
-            )}
-          </ul>
-          <p class="muted small">Your forge is made after payment; the link to claim it arrives by email, usually within a few hours.</p>
-        </div>`)}
-        <div class="bar">${btn("Read the step-by-step guide", { href: `${FORGE_REPO}`, size: "lg" })}</div>
-      </div>
-      <div class="stack">
+        ${plansRow(publicPlans(allPlans), links)}
+        <div class="bar">${btn("Get a forge", { href: GET_A_FORGE_PATH, variant: "primary", size: "lg" })}</div>
+        <p class="door-support">Or run it yourself, free and open source: <a href="${FORGE_REPO}">read the step-by-step guide</a>.</p>
         <pre class="door-code"><code>git clone ${FORGE_REPO}.git
 cd forge
 bun install

@@ -18,6 +18,7 @@ import { sourceFor } from "../view/source.ts";
 import { fleetCommand } from "./screens/fleet.ts";
 import { dataCommand } from "./screens/data.ts";
 import { packsCommand } from "./screens/packs.ts";
+import { getForgeCommand } from "./screens/getforge.ts";
 import { workCommand } from "./screens/work.ts";
 import { shellsScreen } from "./screens/shells.ts";
 import { forkTreeScreen } from "./screens/fork_tree.ts";
@@ -241,6 +242,7 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         run: () => openOnWeb(session, ctx, "/explore.atom", "The explore feed"),
       },
       packsCommand(session, ctx),
+      getForgeCommand(session, ctx),
       ...dataCommand(session, ctx),
       fleetCommand(session, ctx),
       {

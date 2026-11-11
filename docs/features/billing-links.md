@@ -13,8 +13,4 @@ An address is https, at most 300 bytes, with no credentials, spaces or quotes. O
 
 ## What the home shows
 
-With no links, the signed-out home says "Hosted forges are coming." and nothing is sold. With any link set, the home's **Get your own forge** section lists one row per size that has a link: the size's CPU, memory and disk, the monthly price and crew credit, and a **Get a forge** button to the link. "Hosted forges are coming" goes. The prices come from `src/settings/plans.ts`; the buyer is told the forge is made after payment and the claim link arrives by email.
-
-## What llms.txt changes
-
-The "Get your own forge" line says hosted forges are free within limits "while hosting is not sold" when no link is set; with any link set it says paid plans are on the home page and the other way is free within limits.
+The signed-out home's **Get your own forge** lists every plan ([plans on the home](home-plans.md)) and one **Get a forge** button to `/forges/new`. A paid plan whose size has a link also carries a plain **Pay for <plan>** link to it (opened in a new tab, `noopener`); the free plan never does, and no link adds a second button. The terminal's **Get your own forge** prints the same link as `Pay: <address>`.

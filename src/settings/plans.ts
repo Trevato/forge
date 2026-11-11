@@ -100,18 +100,23 @@ export function parsePlans(raw: unknown): Result<Plan[], string> {
   return ok(plans);
 }
 
-/** The plans in force now, read on every use. */
-export function getPlans(db: Database): Plan[] {
-  const row = db.query<{ value: string }, [string]>("SELECT value FROM forge_setting WHERE key = ?1").get(PLANS_KEY);
-  if (row !== null) {
+/** A stored plans value as plans; anything that does not parse reads as the defaults. */
+export function decodePlans(raw: string | undefined): Plan[] {
+  if (raw !== undefined) {
     try {
-      const parsed = parsePlans(JSON.parse(row.value));
+      const parsed = parsePlans(JSON.parse(raw));
       if (parsed.ok) return parsed.value;
     } catch {
       // a hand-edited value reads as the defaults
     }
   }
   return DEFAULT_PLANS.map((p) => ({ ...p }));
+}
+
+/** The plans in force now, read on every use. */
+export function getPlans(db: Database): Plan[] {
+  const row = db.query<{ value: string }, [string]>("SELECT value FROM forge_setting WHERE key = ?1").get(PLANS_KEY);
+  return decodePlans(row?.value);
 }
 
 export function getPlan(db: Database, key: string): Plan | undefined {
