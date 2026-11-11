@@ -119,7 +119,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `front_page` | — | The stranger's front page; admin sets `pinned`/`hidden`/`weights` | 457 |
 | `health` | — | How this forge is: version, commit, draining or not, rollout, incidents | 190 |
 | `held` | — | What the Later gate holds, and one proposed pass over it | 270 |
-| `here` | — | What you may do on a forge page; given an app's link, what its /__forge/ door shows | 242 |
+| `here` | — | What you may do on a forge page; given an app's link, what its /__forge/ door shows | 237 |
 | `hold` | — | Hold a pull (`why`) or `release` it; or `path`: hold new work on a file | 522 |
 | `hooks` | `list`, `add`, `remove`, `deliveries`, `ping`, `pause`, `resume`, `redeliver` | List, add (`url`, `secret`, `kinds`) or remove (`id`) webhooks; admins | 494 |
 | `invites` | `list`, `revoke` | Open invites; `id` revokes | 206 |
@@ -370,6 +370,7 @@ longer sentences:
 - `tell.from`: a path on this forge the issue links to, like `/alice/notes/pulls/3`. `tell.context`: where this was told from, for the builder.
 - `spawn.reveal`, `claim_link.reveal`: put the live claim link in the answer (default false); it is a secret, only when its person reads it. `spawn.fresh`: a fresh app beside the copied ones. `spawn.followMode`: `tell-me` (default) tells the owner in their inbox when this forge's code moves; `take-updates` opens a pull with the new code, and a person merges it. `spawn.size`: recorded only, not enforced. `spawn.keepAccess`: stay an owner once claimed.
 - `commits.ref`: branch, tag or commit; the default branch when absent. `report.page`: the http(s) address where the problem was seen. `plan.issues.pillar`: the pillar served, as `"P0"` or `"P0 Trust"`; `later: true` means no pillar and needs `why`.
+- `here.url`: none means the forge's own page. On `/` or `/settings` this forge's admin also gets `plan: { text, manage? }`, the Plan row's words and its manage-billing address; no plan notice or not an admin, no `plan` key.
 - `explore.q`: words, plus `kind:app|person|forge` and `sort:score|forks|ships|likes|use|fresh|name`, `updated:1d|7d|30d` (only what moved in that window), `owner:name` and `archived:yes`. `since` is another name for `updated`. `query` is the same argument; `q` wins when both are given. Each of `kind`, `sort`, `updated`, `owner`, `archived` is also its own argument (and a query parameter on `/explore` and `/api/v1/explore`); it wins over the same key in `q`.
 - `archive.repos`: several repositories, as `owner/name`, to archive in one operation.
 - `milestones.issue`: the number of an issue that waits for others; the limbs when absent. `watch.issue` is the same number; `watch.watch` false stops watching, anything else watches.
