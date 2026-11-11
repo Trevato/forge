@@ -29,3 +29,9 @@ test("NOT_YET_DESCRIBED is sorted and names registered routes", () => {
   const all = new Set(registered());
   expect(NOT_YET_DESCRIBED.filter((r) => !all.has(r))).toEqual([]);
 });
+
+test("every registered /api/v1 route has a row with a summary an agent can read", () => {
+  const rows = new Map(ROUTES.map((r) => [`${r.method.toUpperCase()} ${norm(r.path)}`, r.summary]));
+  const bare = registered().filter((r) => !NOT_YET_DESCRIBED.includes(r) && (rows.get(r) ?? "").trim().length < 10);
+  expect(bare, `routes whose OpenAPI summary is empty or a stub:\n${bare.join("\n")}`).toEqual([]);
+});
