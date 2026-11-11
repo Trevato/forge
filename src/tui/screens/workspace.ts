@@ -61,6 +61,7 @@ import { gcodeFacts, parseGcode } from "../../web/render/gcode.ts";
 import { gpxFacts, parseGpx } from "../../web/render/gpx.ts";
 import { CASE_CAP, parseJunit } from "../../web/render/junit.ts";
 import { parseOpenApi } from "../../web/render/openapi.ts";
+import { parseSql } from "../../web/render/sql.ts";
 import { RESULT_CAP, parseSarif } from "../../web/render/sarif.ts";
 import { RECORD_CAP, parseLcov, worstFirst, type Ratio } from "../../web/render/lcov.ts";
 import { EVENT_CAP, parseIcs } from "../../web/render/ics.ts";
@@ -468,6 +469,24 @@ function openapiTable(text: string, path: string): Table | string | null {
   return { header: ["Tag", "Method", "Path", "Summary"], rows, more: parsed.more, delimiter: ",", columns: 4 };
 }
 
+/** A `.sql` file by name. */
+function isSqlPath(path: string): boolean {
+  return kindByName(path) === "sql";
+}
+
+/** A SQL file as a table: a row per column of each CREATE TABLE, one row per other statement; the reason when it is not drawn. Shares the web's parser. */
+function sqlTable(source: string): Table | string {
+  const doc = parseSql(source);
+  if (doc === null) return "not drawn as a schema: this file holds no SQL statements to draw";
+  const dash = (v: string): string => (v === "" ? "-" : v);
+  const rows = doc.statements.flatMap((s) =>
+    s.kind === "other"
+      ? [["-", s.line, "-", "-", "-", "-"]]
+      : s.columns.map((c) => [s.name, c.name, dash(c.type), c.notNull ? "NOT NULL" : "-", c.primaryKey ? "PRIMARY KEY" : "-", dash(c.default)]),
+  );
+  return { header: ["Table", "Column", "Type", "Null", "Key", "Default"], rows, more: doc.total - doc.statements.length, delimiter: ",", columns: 6 };
+}
+
 /** A JUnit report, by the web's own rule (file name, or root element). */
 function isJunitPath(path: string, source: Uint8Array): boolean {
   return /\.xml$/i.test(path) && fileKind(path, source.subarray(0, 4096)) === "junit";
@@ -721,6 +740,11 @@ class Tab {
     } else if (api !== null) {
       this.table = typeof api === "string" ? null : api;
       this.fault = typeof api === "string" ? api : "";
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isSqlPath(this.path)) {
+      const schema = sqlTable(new TextDecoder().decode(source));
+      this.table = typeof schema === "string" ? null : schema;
+      this.fault = typeof schema === "string" ? schema : "";
       if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isJunitPath(this.path, source)) {
       const results = junitTable(new TextDecoder().decode(source));

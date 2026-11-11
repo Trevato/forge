@@ -616,6 +616,27 @@ describe("the terminal workspace", () => {
     }
   });
 
+  test("a .sql file opens as its columns, and s shows the source", async () => {
+    const made = await createRepo(forge, alice, { name: "sqlrepo", visibility: "public", description: "db" });
+    if (!made.ok) throw new Error("repo failed");
+    const sql = "CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT NOT NULL);\nCREATE INDEX idx ON users(email);";
+    await commitToBranch(forge, alice, made.value, { message: "seed", files: [{ path: "db/schema.sql", content: sql }] });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "sqlrepo");
+      await openFile(h, "db/schema.sql");
+      expect(h.text()).toContain("users");
+      expect(h.text()).toContain("PRIMARY KEY");
+      expect(h.text()).toContain("NOT NULL");
+      expect(h.text()).toContain("CREATE INDEX idx");
+      await h.press("s");
+      expect(h.text()).toContain("CREATE TABLE users");
+    } finally {
+      h.stop();
+    }
+  });
+
   test("a JUnit report opens as its totals and failing cases, sharing the web parser", async () => {
     const made = await createRepo(forge, alice, { name: "junitrepo", visibility: "public", description: "tests" });
     if (!made.ok) throw new Error("repo failed");

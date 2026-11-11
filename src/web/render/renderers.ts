@@ -11,6 +11,7 @@ import { audio } from "./audio.ts";
 import { config } from "./config.ts";
 import { isFormConfig } from "./config-format.ts";
 import { envView } from "./env.ts";
+import { sqlView } from "./sql.ts";
 import { eml } from "./eml.ts";
 import { csv } from "./csv.ts";
 import { geojson } from "./geojson.ts";
@@ -100,6 +101,7 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
   lcov,
   junit,
   env: envView,
+  sql: sqlView,
   openapi,
   mail: eml,
   archive,

@@ -47,3 +47,7 @@ A .zip, .tar or .tar.gz is drawn by `src/web/render/archive-view.ts` as the exis
 ## OpenAPI operations (openapi.json, *.openapi.yaml)
 
 `src/web/render/openapi.ts` draws one `h3` per tag and under it one existing `.table` (`data-dense`) of method, path, summary and a `deprecated` mark; the cap line is a `muted small` paragraph. `.openapi-view` is only a hook on the wrapper and has no rule. How it works: `docs/features/file-openapi.md`.
+
+## SQL schema (*.sql)
+
+`src/web/render/sql.ts` draws, per statement, either an `h3` with the table name and one existing `.table` (`data-dense`) of its columns, or a one-row `.table` with the statement's first line. `.sql-view` is only a hook on the wrapper and has no rule. How it works: `docs/features/file-sql.md`.

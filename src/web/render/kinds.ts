@@ -42,6 +42,7 @@ export type FileKind =
   | "junit"
   | "env"
   | "openapi"
+  | "sql"
   | "text"
   | "binary";
 
@@ -82,6 +83,7 @@ export const RENDER_CAP: Readonly<Record<FileKind, number>> = {
   junit: 5 * MB,
   env: 1 * MB,
   openapi: 1 * MB,
+  sql: 1 * MB,
   text: 1 * MB,
   binary: 0,
 };
@@ -205,6 +207,7 @@ const TEXTUAL: Readonly<Record<string, FileKind>> = {
   gco: "gcode",
   sarif: "sarif",
   lcov: "lcov",
+  sql: "sql",
 };
 
 /** The three example names; a plain `.env` is never one. */
