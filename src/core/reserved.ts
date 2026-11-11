@@ -35,6 +35,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "crew",
   "agent",
   "agents",
+  "privacy",
   "bot",
   "steward",
   "anonymous",

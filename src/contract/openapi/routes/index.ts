@@ -55,6 +55,7 @@ export { route as getApiV1AdminShield } from "./getApiV1AdminShield.ts";
 export { route as getApiV1AdminSubscriptions } from "./getApiV1AdminSubscriptions.ts";
 export { route as getApiV1AdminTeams } from "./getApiV1AdminTeams.ts";
 export { route as getApiV1AdminTrafficProbe } from "./getApiV1AdminTrafficProbe.ts";
+export { route as getApiV1AdminTrafficVisitors } from "./getApiV1AdminTrafficVisitors.ts";
 export { route as getApiV1Agents } from "./getApiV1Agents.ts";
 export { route as getApiV1AgentsUsername } from "./getApiV1AgentsUsername.ts";
 export { route as getApiV1AppTemplates } from "./getApiV1AppTemplates.ts";

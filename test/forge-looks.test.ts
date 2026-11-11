@@ -73,6 +73,7 @@ const NOT_A_PAGE: Record<string, string> = {
   "/displays": "a list of displays behind sign-in; its slot is not pictured; covered by test/displays-list.test.ts",
   "/search": "a search box; its slot went to the preview seed's /next as its owner (#8866)",
   "/contribute": "a static page about how to help; its slot went to the preview seed's /bets as its owner (#8866)",
+  "/privacy": "three static lines on what the forge keeps about a visitor (#11265); covered by test/visitors.test.ts",
   "/migrate": "an import form, nothing to picture until a job runs; the look slot went to /repos",
 };
 

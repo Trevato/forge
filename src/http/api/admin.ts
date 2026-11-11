@@ -10,6 +10,8 @@ import { crawlReport } from "../../perf/crawlers.ts";
 import { getAppById } from "../../core/apps.ts";
 import { FUNNEL_SCOPE, daysOf, funnelReport } from "../../perf/funnel.ts";
 import { probeViews } from "../../perf/views_probe.ts";
+import { daysOf as visitorDaysOf, probeVisitors, visitorsReport } from "../../perf/visitor_report.ts";
+import { getReturning } from "../../settings/returning.ts";
 import { kpiProbe } from "../../web/studio/kpi_probe.ts";
 import { MAX_SECONDS, sampleStacks } from "../../perf/sample.ts";
 import { listAccounts, removeAccount, retireAndRemoveAccount, retirementPlan, suspendAccount, unsuspendAccount, verifyAccount } from "../../actions/accounts.ts";
@@ -177,6 +179,44 @@ export function adminRoutes(router: Router<Handler>): void {
     });
     const only = q.get("number");
     return json(only === null ? probed : { ...probed, numbers: probed.numbers.filter((n) => n.id === only) });
+  });
+
+  // Who comes back (`perf/visitor_report.ts`, #11265): the same figures as the Traffic page.
+  router.add("GET", "/api/v1/admin/traffic/visitors", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    const now = Date.now();
+    const days = visitorDaysOf(ctx.url.searchParams.get("days"));
+    const r = visitorsReport(ctx.app.db, days, now);
+    return json({
+      as_of: new Date(now).toISOString(),
+      enabled: getReturning(ctx.app.db),
+      days: r.days,
+      per_day: r.perDay.map((d) => ({
+        day: d.day,
+        new_cookie: d.newCookie,
+        returning_cookie: d.returningCookie,
+        new_probable: d.newProbable,
+        returning_probable: d.returningProbable,
+      })),
+      new_visitors: r.newVisitors,
+      returning_visitors: r.returningVisitors,
+      returning: r.returning.map((v) => ({
+        id: v.id,
+        probable: v.probable,
+        visits: v.visits,
+        days_seen: v.daysSeen,
+        first_seen: v.firstSeen,
+        last_seen: v.lastSeen,
+        first_ref: v.firstRef,
+        last_ref: v.lastRef,
+        step: v.step,
+        forge: v.forge,
+      })),
+      led: r.led.map((l) => ({ forge: l.forge, id: l.id, probable: l.probable, step: l.step, first_ref: l.firstRef, visits: l.visits })),
+      probe: probeVisitors(ctx.app.db, days, now, r),
+    });
   });
 
   // The forge's capacity (`core/capacity.ts`): read and changed live by an

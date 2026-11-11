@@ -49,6 +49,9 @@ const UNREACHED: Record<string, { sites: number; why: string }> = {
   "src/web/pages/start_claim.ts": { sites: 1, why: "the claim of an agent's start needs a one-time token; same sessionCookie() as the walked doors; covered by test/start.test.ts" },
   "src/web/pages/signup-passkey.ts": { sites: 2, why: "sign-up by passkey needs an invite; same sessionCookie() as the walked doors" },
   "src/web/pages/map.ts": { sites: 1, why: "the map's last-looked cookie holds two timestamps, HttpOnly and Lax, and grants nothing; covered by test/roadmap.test.ts (name, HttpOnly, SameSite, no Secure over http)" },
+  "src/http/measure.ts": { sites: 1, why: "the page-view beacon answers with the visitor cookie line from src/http/visitor.ts; HttpOnly, Lax, Secure over https from cookieLine; covered by test/visitors.test.ts" },
+  "src/http/visitor.ts": { sites: 1, why: "the doc comment's mention of the Set-Cookie line it returns; covered by test/visitors.test.ts" },
+  "src/perf/visitor_id.ts": { sites: 1, why: "cookieLine itself, the Set-Cookie line for forge_visitor: HttpOnly, SameSite=Lax, Secure over https; covered by test/visitors.test.ts" },
   "src/web/gift_cookie.ts": { sites: 1, why: "the gift code rides an HttpOnly, Lax cookie (Secure over https) and grants nothing by itself; covered by the gift code tests" },
   "src/web/pages/new-forge.ts": { sites: 1, why: "appends dropGift(), the gift cookie's clearing line from src/web/gift_cookie.ts" },
   "src/web/pages/everyday.ts": { sites: 2, why: "the admin/everyday switch needs a paired account; same sessionCookie() as the walked doors" },
@@ -234,6 +237,7 @@ const BUILDERS: Record<string, string> = {
   "cookie(": "src/apps/scaffold.ts, the scaffolded app's own `cookie`",
   clear: "src/http/rp.ts, `cookieHeader` with Max-Age 0",
   value: "src/apps/scaffold.ts, `redirectTo`'s cookies, each from `cookie`",
+  cookie: "src/http/measure.ts, the line `trackVisitor` returns, built by `cookieLine` in src/perf/visitor_id.ts",
   "dropGift(": "src/web/gift_cookie.ts, the gift cookie cleared with Max-Age 0",
   "o.cookie": "src/web/layout.ts, a page's cookie (the theme literal in src/web/pages/site.ts)",
 };

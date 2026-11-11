@@ -6,6 +6,7 @@
  * the caller says `false` — returns the plan and changes nothing.
  */
 
+import { linkRequestVisitor } from "../perf/visitor_link.ts";
 import { startWatch, probeOf, type Probe } from "./live.ts";
 import { firstProof, reachWords, settleChild } from "./reach.ts";
 import { reissueClaim, spawnForge, type SpawnError } from "../actions/spawn.ts";
@@ -364,6 +365,8 @@ export async function spawnDoor(
   }
   if (!made.ok) return spawnWords(made.error);
   if (anon && !made.value.existed) noteAnonSpawn(ctx.app.db, ctx.request);
+  // The visitor who started (or was given) this forge becomes someone, on the host's side (#11265).
+  if (!made.value.existed) linkRequestVisitor(ctx.app, ctx.request, made.value.name, gift === undefined ? "started" : "paid");
   // Its apps come up now, so the first visit after a claim finds them awake.
   if (!made.value.existed) {
     void bootHostedChild(ctx.app, made.value.name);

@@ -26,6 +26,7 @@ import { spendPage } from "../web/pages/spend-tab.ts";
 import { securityControlsPage } from "../web/pages/security_controls.ts";
 import { securityPage, securityShieldSet } from "../web/pages/security.ts";
 import { trafficPage } from "../web/pages/traffic.ts";
+import { returningSet } from "../web/pages/visitors.ts";
 import { sourcesPage } from "../web/pages/sources.ts";
 import { requestAct } from "../web/requests_card.ts";
 import { captureStart, captureStop, networksImport, scrapesExport, scrapesPage } from "../web/pages/scrapes.ts";
@@ -235,6 +236,7 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("GET", "/settings/usage", (ctx) => usagePage(ctx, knownPatterns));
   router.add("GET", "/settings/spend", spendPage);
   router.add("GET", "/settings/traffic", trafficPage);
+  router.add("POST", "/settings/traffic/returning", returningSet);
   router.add("GET", "/settings/traffic/sources", sourcesPage);
   router.add("GET", "/settings/traffic/scrapes", scrapesPage);
   router.add("GET", "/settings/traffic/scrapes/export", scrapesExport);

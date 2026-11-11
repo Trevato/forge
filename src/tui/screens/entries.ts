@@ -79,6 +79,7 @@ import { entry as scorecard } from "./scorecard.ts";
 import { entry as weekcard } from "./weekcard.ts";
 import { entry as scrapes } from "./scrapes.ts";
 import { entry as trafficScreenEntry } from "./traffic.ts";
+import { entry as returningEntry } from "./returning.ts";
 import { entry as securityControls } from "./controls.ts";
 import { entry as secrets } from "./secrets.ts";
 import { entry as sentinel } from "./sentinel.ts";
@@ -151,6 +152,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   flowsAll,
   scrapes,
   trafficScreenEntry,
+  returningEntry,
   teams,
   orgTeams,
   orgGrants,

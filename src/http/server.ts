@@ -17,6 +17,7 @@ import {
 import { secureFor } from "./cookie_secure.ts";
 import { refusedByDatabase, shownRefusal } from "./refusal.ts";
 import { NOT_A_MEMBER } from "../core/roles.ts";
+import { privacyPage } from "../web/pages/privacy.ts";
 import { startClaimAccountSubmit, startClaimPage, startClaimSubmit } from "../web/pages/start_claim.ts";
 import { signupOptions, signupPasskey } from "../web/pages/signup-passkey.ts";
 import { toolbarComment, toolbarPage } from "../web/studio/toolbar.ts";
@@ -942,6 +943,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/audit", auditPage);
   router.add("GET", "/releases", releasesPage);
   // The forge's own documentation: a redirect built from configuration only.
+  router.add("GET", "/privacy", privacyPage);
   router.add("GET", "/docs", docsFolder);
   router.add("GET", "/docs/:file", docsFile);
   router.add("GET", "/changelog", changelogPage);

@@ -5,6 +5,7 @@
  * Anyone else gets the not-found page.
  */
 
+import { ledBlock } from "./visitors.ts";
 import { BILLING_WORDS, STRIPE_WORDS, connectStripe, disconnectStripe, grantPlan, readBilling, saveSigningSecret, type BillingError, type StripeWords } from "../../actions/billing.ts";
 import { CODE_ERRORS, makeCode, readCodes, revoke, type CodeError } from "../../actions/codes.ts";
 import { publicOrigin } from "../../core/public_origin.ts";
@@ -186,6 +187,7 @@ function billingView(ctx: Ctx, shown?: Shown, values: Record<string, string> = {
         ? html`<p class="muted">No forge has been sent from here.</p>`
         : html`<ul class="list setting-list">${rows}</ul>`}
     </section>
+    ${ledBlock(ctx)}
     ${funnelRow(funnelReport(ctx.app.db, 7))}
     ${linksSection(ctx, links)}
     ${codesSection(ctx, shown, values, error)}`;
