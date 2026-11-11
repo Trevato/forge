@@ -73,13 +73,15 @@ const read = async (path: string): Promise<string> => {
   return res.text();
 };
 
-for (const path of ["/", "/board", "/system", "/apps"]) {
+for (const path of ["/", "/board", "/map", "/system", "/apps"]) {
   test(`${path} draws no alert above its content because of a setting`, async () => {
     const html = await read(path);
     expect(html).toContain("<main");
     // The scan must reach real content: it ends after `<main`, not at it.
     expect(aboveContent(html).length).toBeGreaterThan(html.indexOf("<main"));
-    expect(aboveContent(html).match(ALERT) ?? []).toEqual([]);
+    // A failure names the page and the offending element's class.
+    const found = (aboveContent(html).match(ALERT) ?? []).map((tag) => `${path}: ${tag.match(/class="([^"]*)"/)?.[1] ?? tag}`);
+    expect(found).toEqual([]);
   });
 }
 
