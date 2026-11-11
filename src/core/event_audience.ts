@@ -220,6 +220,10 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind.startsWith("clog.") ||
     // What the throughput keeper did to lift a brake is the owner's too (`flow/keeper.ts`).
     kind.startsWith("keeper.") ||
+    // The flow keeper's acts on pulls, lulls and forge-down are the owner's too (`maintain/keeper/`, #7556).
+    kind.startsWith("keeper_") ||
+    kind === "forge_down" ||
+    kind === "forge_up" ||
     // Who is trusted to fold in, and the switch that stops it, are the owner's (`actions/trusted_sources.ts`).
     kind.startsWith("trust.") ||
     kind.startsWith("foldin.") ||

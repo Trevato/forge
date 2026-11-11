@@ -43,7 +43,7 @@ interface PullRow {
   head_branch: string;
   head_oid: string;
 }
-interface Last {
+export interface Last {
   at: string;
   what: string;
 }
@@ -52,7 +52,7 @@ interface Last {
 const later = (a: Last | undefined, b: Last): Last =>
   a === undefined || b.at > a.at ? b : a;
 
-function lastEvent(db: Database, p: PullRow): Last | undefined {
+export function lastEvent(db: Database, p: Pick<PullRow, "id" | "repo_id" | "head_repo_id" | "head_branch">): Last | undefined {
   let last: Last | undefined;
   const review = db
     .query<{ at: string }, [string]>(
