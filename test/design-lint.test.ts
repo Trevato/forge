@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { areaFiles, classesIn, compare, compareQuiet, quiet, scanQuiet, scanCards, countFile, designText, documentedClasses, locate, loneSentenceCards, registeredClasses, scan, sectionLinks, webCss } from "../scripts/design-lint.ts";
+import { areaFiles, classesIn, compare, compareQuiet, quiet, scanQuiet, scanCards, scanStranger, strangerWords, STRANGER_FILES, countFile, designText, documentedClasses, locate, loneSentenceCards, registeredClasses, scan, sectionLinks, webCss } from "../scripts/design-lint.ts";
 
 /** A DESIGN.md in miniature: the §5 table, a §5d register, and a §6 that names a class too. */
 const DESIGN = [
@@ -284,5 +284,29 @@ describe("design check: a card around one sentence (#11190, principle 7)", () =>
   test("no page draws one", () => {
     const bad = scanCards(".");
     expect(bad).toEqual([]);
+  });
+});
+
+describe("the stranger's words (#11458)", () => {
+  test("a builder that says a banned word in visible text is named with its line", () => {
+    const src = [
+      "export const page = () => html`<main>",
+      '  <a href="/claim" title="your claim" class="claim-link">Open</a>',
+      "  <p>Your child forge is ready.</p>",
+      "  <p>${claimUrl} Check your subscription.</p>",
+      "</main>`;",
+      '// a claim in a comment is not read',
+      'export const note = "Autonomy is off here";',
+      'const key = `claim:${ip}`;',
+    ].join("\n");
+    expect(strangerWords(src).map((w) => [w.line, w.word.toLowerCase()])).toEqual([[3, "child"], [4, "subscription"], [7, "autonomy"]]);
+  });
+  test("only visible text counts: attributes, routes, scripts and styles do not", () => {
+    const src = "const a = html`<a href=\"/claim\" aria-label=\"claim\">Open</a><style>.claim { color: red; }</style><script>fetch('/claim')</script>`;\nconst b = \"/claim\";";
+    expect(strangerWords(src)).toEqual([]);
+  });
+  test("the stranger-path builders on main are clean", () => {
+    expect(STRANGER_FILES.length).toBe(4);
+    expect(scanStranger(process.cwd())).toEqual([]);
   });
 });
