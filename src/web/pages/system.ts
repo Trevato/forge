@@ -400,7 +400,7 @@ export async function systemPage(ctx: Ctx): Promise<Response> {
     <section class="settings-block"><h2>Processes</h2>
       <div class="js-only small muted">Sort by <button class="btn" data-size="sm" type="button" data-sort="cpu" aria-pressed="true"><kbd>c</kbd> CPU</button>
         <button class="btn" data-size="sm" type="button" data-sort="mem" aria-pressed="false"><kbd>m</kbd> memory</button></div>
-      <div id="sys-procs">${at("sys-procs")}</div></section>
+      <div id="sys-procs" data-live-hold>${at("sys-procs")}</div></section>
     ${featuresSection(timePhase(ctx.request, "features", () => featureHealth(ctx.app, reader)))}
     ${lagSection(lagMinutes.readings())}
     <div id="sys-stalls">${stallSection(stalls, worstStallsTable(worst, nowMono, Date.now()))}</div>

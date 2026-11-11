@@ -33,3 +33,7 @@ The `Speculation-Rules` header points at one hashed rules file: prefetch, modera
 ## Not done
 
 Streaming the body in chunks (the render is one string today); purge by event; the pages other than home, explore and a repository's front page measure the same budgets as a mechanical follow-up. Before/after numbers from #7559 are not producible from this sandbox.
+
+## Live regions that keep the reader's place
+
+A page that patches a region from an event stream (`/system`, `web/system-live.ts`) swaps its `innerHTML`, which resets scroll and drops focus. A region marked `data-live-hold` is swapped by noting the scroll of its `.table-scroll` box and of itself and the focused element (found again by a key: the row's group and first cell, the tag, its place in the row), then restoring all three after the page's own re-sort. When the focused row is gone from the new sample (its process ended), focus falls back to the same control in the first row of the same group, then to the first control of that tag in the region; it is never dropped to the page. A region without the marker is replaced as before. Today only `#sys-procs` carries it.
