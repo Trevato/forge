@@ -646,7 +646,7 @@ printf '%s\\n' '{"is_error":false,"result":"{\\"summary\\":\\"Build it\\",\\"che
     const row = app.db
       .query<{ value_enc: string }, []>("SELECT value_enc FROM app_env")
       .get();
-    expect(row?.value_enc).toStartWith("v1:");
+    expect(row?.value_enc).toStartWith("v2:");
     expect(row?.value_enc).not.toContain(secret);
     const event = app.db
       .query<

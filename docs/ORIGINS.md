@@ -1056,8 +1056,18 @@ carries token material, a `state`, or a `code`.
 - **The guard's window is a day.** An account that gains push rights to a
   protected repository keeps its credential until the next refresh or the
   next daily sweep, whichever is first.
-- **Key rotation is not built.** The sealed blob carries a `v1` version tag
-  so it can be, but losing `secret.key` today means reconnecting the origins.
+- **Key rotation keeps one key behind.** A sealed value is
+  `v2:<keyid>:<iv>:<ciphertext>`, keyid the first 8 hex of SHA-256 of the key
+  that sealed it. To rotate, move `secret.key` to `secret.key.old` (keep it
+  0600 — the forge refuses either file wider than that) and restart: a fresh
+  `secret.key` is minted, new values seal under it, and `open` uses whichever
+  key a value names. Values from before the format change (`v1:<iv>:<ct>`)
+  name no key and try the current key, then the old one. Nothing re-seals old
+  values yet, so `secret.key.old` must stay until every token has been
+  rewritten (reconnecting an origin does it); delete it and those values come
+  back `bad_key`, as losing `secret.key` did before. A snapshot carries only
+  `secret.key`, and the HMAC keys derived from it (passports, visitor links)
+  change with it.
 - **DNS rebinding is not closed.** The SSRF policy checks address _literals_;
   a hostname that resolves into a private range still gets through, because
   pinning the resolved address needs a connect hook Bun's `fetch` does not

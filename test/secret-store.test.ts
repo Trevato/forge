@@ -93,7 +93,7 @@ describe("forge-level secrets", () => {
     const set = setSecret(app.db, dataDir, "forge", "", "CF_TOKEN", "s3cret-1");
     expect(set.ok).toBe(true);
     const sealed = stored("CF_TOKEN", "forge")!;
-    expect(sealed).toStartWith("v1:");
+    expect(sealed).toStartWith("v2:");
     expect(sealed).not.toContain("s3cret-1");
     const right = open(dataDir, sealed, "secret:forge:CF_TOKEN");
     expect(right.ok && right.value).toBe("s3cret-1");

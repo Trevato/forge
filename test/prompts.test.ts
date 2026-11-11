@@ -596,7 +596,7 @@ describe("prompts from Instagram", () => {
       >("SELECT token_enc FROM prompt_source WHERE id = ?1")
       .get(sourceId)!;
     expect(row.token_enc).not.toContain(TOKEN);
-    expect(row.token_enc.startsWith("v1:")).toBe(true);
+    expect(row.token_enc.startsWith("v2:")).toBe(true);
     expect(openPromptToken(app.db, dataDir, sourceId)).toEqual({
       ok: true,
       value: TOKEN,

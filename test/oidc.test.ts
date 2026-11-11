@@ -91,7 +91,7 @@ describe("oidc keys", () => {
     const rows = db.query<{ private_jwk: string }, []>("SELECT private_jwk FROM oidc_key").all();
     expect(rows.length).toBe(1);
     for (const r of rows) {
-      expect(r.private_jwk.startsWith("v1:")).toBe(true);
+      expect(r.private_jwk.startsWith("v2:")).toBe(true);
       expect(r.private_jwk).not.toContain('"d"');
       expect(() => JSON.parse(r.private_jwk)).toThrow();
     }
