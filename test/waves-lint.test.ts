@@ -1,32 +1,23 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { isKnownRecord, parseRecords } from "../src/story/records.ts";
 import { parseWave } from "../src/story/wave.ts";
 
 const root = join(import.meta.dir, "..");
 const dir = join(root, "waves");
 
 /**
- * The records a test can open offline: every `#N` in the git history's
- * subjects and bodies (pulls land as "(#N)" or "Merge pull request #N"). Issues
- * and pulls that never left a commit are not there, so these two real pulls,
- * found on the forge, are named by hand until the forge's records are readable
- * offline (see the follow-up issue).
+ * The records a test can open offline: every issue and pull number on the
+ * forge, exported to test/fixtures/forge-records.txt (`bun scripts/export-records.ts`
+ * refreshes it). A number above the export's highest cannot be disproved
+ * offline, so it passes; only gaps below the highest are checkable.
  */
-const NOT_IN_HISTORY = [6232, 6964];
-function recordedNumbers(): Set<number> | null {
-  const git = (args: string[]) => Bun.spawnSync(["git", ...args], { cwd: root, stdout: "pipe", stderr: "ignore" });
-  if (git(["rev-parse", "--is-shallow-repository"]).stdout.toString().trim() !== "false") return null;
-  const log = git(["log", "--format=%s%n%b"]);
-  if (log.exitCode !== 0) return null;
-  const out = new Set<number>(NOT_IN_HISTORY);
-  for (const m of log.stdout.toString().matchAll(/#(\d+)/g)) out.add(Number(m[1]));
-  return out;
-}
-const records = recordedNumbers();
+const records = parseRecords(readFileSync(join(root, "test/fixtures/forge-records.txt"), "utf8"));
+const recordsMax = Math.max(...records);
 
 /** Every problem with one wave's text, each naming `file`. Pure. */
-function lintWave(file: string, text: string, known: ReadonlySet<number>): string[] {
+function lintWave(file: string, text: string, known: ReadonlySet<number>, max = Math.max(...known)): string[] {
   const parsed = parseWave(file, text);
   if (!parsed.ok) return [parsed.error.message];
   const w = parsed.value;
@@ -43,7 +34,7 @@ function lintWave(file: string, text: string, known: ReadonlySet<number>): strin
     else if (title !== url) bad(`link text #${title ?? "?"} does not match ${p.url}`);
     else {
       listed.add(Number(url));
-      if (!known.has(Number(url))) bad(`#${url} is in no record of this repository`);
+      if (!isKnownRecord(known, max, Number(url))) bad(`#${url} is in no record of this repository`);
     }
   }
   for (const h of w.highlights)
@@ -52,10 +43,10 @@ function lintWave(file: string, text: string, known: ReadonlySet<number>): strin
   return out;
 }
 
-test.skipIf(records === null)("every wave in waves/ is a title, a milestone, a summary and links that resolve", () => {
+test("every wave in waves/ is a title, a milestone, a summary and links that resolve", () => {
   const files = readdirSync(dir).filter((f) => f.endsWith(".md"));
   expect(files.length).toBeGreaterThan(0);
-  const problems = files.flatMap((f) => lintWave(f, readFileSync(join(dir, f), "utf8"), records!));
+  const problems = files.flatMap((f) => lintWave(f, readFileSync(join(dir, f), "utf8"), records));
   expect(problems).toEqual([]);
 });
 
@@ -86,4 +77,12 @@ test("lintWave names the file for each fault", () => {
   expect(lintWave("1.0.0.md", good.replace("(#1)", "(#9)"), K)[0]).toContain("cites #9");
   expect(lintWave("1.0.0.md", good.replace("/pulls/1", "/pulls/2"), K)[0]).toContain("does not match");
   expect(lintWave("1.0.0.md", good.replace("/pulls/1", "/x/1"), K)[0]).toContain("not an issue or pull");
+});
+
+test("a number above the export passes, a gap below it does not", () => {
+  const withGap = new Set([1, 3]);
+  expect(lintWave("1.0.0.md", good.replaceAll("#1", "#2").replace("/pulls/1", "/pulls/2"), withGap)[0]).toContain("in no record");
+  expect(lintWave("1.0.0.md", good.replaceAll("#1", "#9").replace("/pulls/1", "/pulls/9"), withGap)).toEqual([]);
+  expect(records.has(6232) && records.has(6964)).toBe(true);
+  expect(recordsMax).toBeGreaterThan(11000);
 });
