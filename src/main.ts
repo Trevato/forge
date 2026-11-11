@@ -4,6 +4,7 @@
  * environment-only — a handful of variables, all with sane defaults.
  */
 
+import { sweepEntitlements } from "./billing/sync.ts";
 import { sweepStarts } from "./actions/start_sweep.ts";
 import { scanNightly } from "./checks/scan.ts";
 import { nightlyDue } from "./checks/scan_store.ts";
@@ -697,6 +698,9 @@ const staleTimer = setInterval(() => void during("asks", tickAsks), 120_000);
 // archived after a month (`actions/start_sweep.ts`, #10912): hourly, and on boot.
 const startsTimer = setInterval(() => during("starts", () => void sweepStarts(app)), 3_600_000);
 during("starts", () => void sweepStarts(app));
+// Every paid entitlement is re-read from Stripe once a day, so a missed webhook heals (#11247).
+const entitlementTimer = setInterval(() => void during("entitlements", () => sweepEntitlements(app)), 86_400_000);
+void during("entitlements", () => sweepEntitlements(app));
 void during("asks", tickAsks);
 
 // Every start is counted, and one that follows a process that never said
@@ -925,6 +929,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
   clearInterval(syncTimer);
   clearInterval(staleTimer);
   clearInterval(startsTimer);
+  clearInterval(entitlementTimer);
   clearInterval(followTimer);
   stopClogTick();
   stopKeeper();

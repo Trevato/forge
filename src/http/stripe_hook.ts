@@ -13,12 +13,10 @@
  */
 
 import type { App } from "../app.ts";
-import { listChildrenNow } from "../actions/spawn.ts";
 import { bindCheckout } from "../billing/checkout_completed.ts";
-import { openKey, openWebhookSecret } from "../billing/connection.ts";
-import { getStored, putEntitlement } from "../billing/store.ts";
-import { stripeClient } from "../billing/stripe.ts";
-import { entitlementFrom, subscriptionIdOf } from "../billing/subscription.ts";
+import { openWebhookSecret } from "../billing/connection.ts";
+import { syncSubscription } from "../billing/sync.ts";
+import { subscriptionIdOf } from "../billing/subscription.ts";
 import { verifyStripeSignature } from "../billing/signature.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
 import type { Ctx } from "./context.ts";
@@ -52,49 +50,6 @@ const bucketsOf = (app: App, perClient = PER_CLIENT, wholeForge = WHOLE_FORGE): 
 export function setStripeHookCaps(app: App, perClient: number, wholeForge: number): void {
   limits.delete(app);
   bucketsOf(app, perClient, wholeForge);
-}
-
-const fetches = new WeakMap<App, typeof fetch>();
-/** Replace the fetch this app's hook reads Stripe with; for tests. */
-export function setStripeHookFetch(app: App, f: typeof fetch | undefined): void {
-  if (f === undefined) fetches.delete(app);
-  else fetches.set(app, f);
-}
-
-const chains = new Map<string, Promise<void>>();
-/** Run `job` after every earlier job for the same key finished, so read and write are one critical section. */
-function serialised(key: string, job: () => Promise<void>): Promise<void> {
-  const run = (chains.get(key) ?? Promise.resolve()).then(job, job);
-  const tail = run.catch(() => {});
-  chains.set(key, tail);
-  void tail.then(() => {
-    if (chains.get(key) === tail) chains.delete(key);
-  });
-  return run;
-}
-
-/**
- * Write the entitlement from the subscription as Stripe has it now, never from
- * the event's body. Reads and writes for one subscription run one at a time, so
- * the last write is always from the last read. Stripe unreachable or refusing
- * leaves the entitlement as it was (and is audited): the hook still answers
- * 200, so Stripe does not retry into a stale read.
- */
-async function syncSubscription(app: App, event: unknown): Promise<void> {
-  const id = subscriptionIdOf(event);
-  const opened = openKey(app.db, app.config.dataDir, app.bus, undefined);
-  if (id === undefined || opened === undefined) return;
-  await serialised(id, async () => {
-    const read = await stripeClient(opened.key, fetches.get(app) ?? fetch).getSubscription(id);
-    if (!read.ok) {
-      app.bus.append({ kind: "billing.sync_failed", payload: { subscription: id, reason: read.error.kind } });
-      return;
-    }
-    const put = entitlementFrom(app.db, read.value);
-    if (put === undefined) return;
-    const size = listChildrenNow(app).find((c) => c.name === put.forge)?.size ?? getStored(app.db, put.forge)?.plan ?? "small";
-    putEntitlement(app.db, put, size, "stripe");
-  });
 }
 
 const answer = (status: number, headers?: Record<string, string>): Response =>
@@ -166,7 +121,7 @@ export async function stripeHook(ctx: Ctx): Promise<Response> {
   })();
   if (fresh && (type.startsWith("customer.subscription.") || type.startsWith("invoice."))) {
     try {
-      await syncSubscription(app, event);
+      await syncSubscription(app, subscriptionIdOf(event));
     } catch (cause) {
       // never let a read of Stripe turn into a retry storm; the audit says it failed
       app.bus.append({ kind: "billing.sync_failed", payload: { event: e.id, reason: cause instanceof Error ? cause.name : "error" } });

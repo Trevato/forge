@@ -8,7 +8,8 @@ import { createApp, type App } from "../src/app.ts";
 import { sealKey, sealWebhook } from "../src/billing/connection.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { getStored } from "../src/billing/store.ts";
-import { refusedCount, setStripeHookCaps, setStripeHookFetch } from "../src/http/stripe_hook.ts";
+import { refusedCount, setStripeHookCaps } from "../src/http/stripe_hook.ts";
+import { setStripeFetch } from "../src/billing/sync.ts";
 
 const secret = "whsec_hook_test_secret";
 let dir: string;
@@ -145,13 +146,13 @@ describe("POST /hooks/stripe", () => {
       JSON.stringify({ id, type, data: { object: type.startsWith("invoice.") ? { id: "in_1", subscription: "sub_1", status } : { id: "sub_1", status } } });
     const deliver = async (body: string) => (await post(body, await sign(body))).status;
     beforeAll(() => {
-      setStripeHookFetch(app, (async (url: string) => {
+      setStripeFetch(app, (async (url: string) => {
         calls.push(String(url));
         if (down) throw new Error("offline");
         return new Response(JSON.stringify(sub()), { status: 200 });
       }) as unknown as typeof fetch);
     });
-    afterAll(() => setStripeHookFetch(app, undefined));
+    afterAll(() => setStripeFetch(app, undefined));
 
     test("events in reverse order end on what Stripe says now, not on the event bodies", async () => {
       calls = [];
@@ -190,7 +191,7 @@ describe("POST /hooks/stripe", () => {
 
     test("deliveries for one subscription are serialised: a slow older read cannot land last", async () => {
       const gates: Array<(status: string) => void> = [];
-      setStripeHookFetch(app, (async () =>
+      setStripeFetch(app, (async () =>
         new Promise<Response>((resolve) => {
           gates.push((status) => resolve(new Response(JSON.stringify({ ...sub(), status }), { status: 200 })));
         })) as unknown as typeof fetch);
@@ -208,7 +209,7 @@ describe("POST /hooks/stripe", () => {
     });
 
     test("a failed read is audited", async () => {
-      setStripeHookFetch(app, (async () => { throw new Error("offline"); }) as unknown as typeof fetch);
+      setStripeFetch(app, (async () => { throw new Error("offline"); }) as unknown as typeof fetch);
       expect(await deliver(ev("evt_f1", "invoice.paid", "paid"))).toBe(200);
       const n = app.db.query<{ n: number }, []>("SELECT count(*) n FROM event WHERE kind = 'billing.sync_failed'").get()?.n ?? 0;
       expect(n).toBeGreaterThan(0);
