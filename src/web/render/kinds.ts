@@ -42,6 +42,7 @@ export type FileKind =
   | "junit"
   | "env"
   | "openapi"
+  | "package"
   | "makefile"
   | "dockerfile"
   | "workflow"
@@ -87,6 +88,7 @@ export const RENDER_CAP: Readonly<Record<FileKind, number>> = {
   junit: 5 * MB,
   env: 1 * MB,
   openapi: 1 * MB,
+  package: 1 * MB,
   makefile: 1 * MB,
   dockerfile: 1 * MB,
   workflow: 1 * MB,
@@ -225,6 +227,9 @@ export const isEnvExample = (path: string): boolean =>
 /** `openapi.json|yaml|yml` and `*.openapi.*`: the name of an OpenAPI document; its content decides whether it is drawn as one. */
 const isOpenApiName = (path: string): boolean => /(^|\/|\.)openapi\.(json|ya?ml)$/i.test(path);
 
+/** A manifest is named exactly `package.json`; `package-lock.json` and the rest stay config. */
+const isPackageName = (path: string): boolean => /(^|\/)package\.json$/.test(path);
+
 /** `Makefile`, `GNUmakefile` and `*.mk`, by name. */
 const isMakefileName = (path: string): boolean => /(^|\/)(makefile|gnumakefile|[^/]+\.mk)$/i.test(path);
 /** `Dockerfile`, `Containerfile` and `*.Dockerfile`, in any case. */
@@ -308,6 +313,7 @@ export function fileKind(path: string, head: Uint8Array): FileKind {
   if (isEnvExample(path)) return "env";
   if (isJunit(path, head)) return "junit";
   if (isOpenApiName(path)) return "openapi";
+  if (isPackageName(path)) return "package";
   if (isMakefileName(path)) return "makefile";
   if (isDockerfileName(path)) return "dockerfile";
   if (isWorkflowName(path)) return "workflow";
@@ -328,6 +334,7 @@ export function kindByName(path: string): FileKind {
   if (isLcovName(path)) return "lcov";
   if (isEnvExample(path)) return "env";
   if (isOpenApiName(path)) return "openapi";
+  if (isPackageName(path)) return "package";
   if (isMakefileName(path)) return "makefile";
   if (isDockerfileName(path)) return "dockerfile";
   if (isWorkflowName(path)) return "workflow";

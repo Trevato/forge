@@ -719,6 +719,24 @@ describe("the terminal workspace", () => {
     }
   });
 
+  test("a package.json opens as rows of scripts and dependencies, and s flips to the source", async () => {
+    const made = await createRepo(forge, alice, { name: "pkgrepo", visibility: "public", description: "tests" });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, { message: "seed", files: [{ path: "package.json", content: '{"name":"demo","scripts":{"test":"bun test"},"dependencies":{"hono":"^4.0.0"}}' }] });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "pkgrepo");
+      await openFile(h, "package.json");
+      expect(h.text()).toContain("Dependencies");
+      expect(h.text()).toContain("^4.0.0");
+      await h.press("s");
+      expect(h.text()).toContain('"name":"demo"');
+    } finally {
+      h.stop();
+    }
+  });
+
   test("a JUnit-named file that is not a report opens as source and says why", async () => {
     const made = await createRepo(forge, alice, { name: "badjunit", visibility: "public", description: "tests" });
     if (!made.ok) throw new Error("repo failed");

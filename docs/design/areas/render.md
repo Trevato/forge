@@ -44,6 +44,10 @@ A .zip, .tar or .tar.gz is drawn by `src/web/render/archive-view.ts` as the exis
 
 `src/web/render/env.ts` draws one existing `.table` (`data-dense`): name, example, comment, with group headings as full-width `th` rows. `.env-view` is only a hook on the wrapper and has no rule. How it works: `docs/features/file-env.md`.
 
+## Package manifest (package.json)
+
+`src/web/render/package-json.ts` draws an `h2`, a `muted small` facts line, then per section an `h3` and one existing `.table` (`data-dense`) in a `.table-scroll`; commands and ranges are `code.break`. `.package-view` is only a hook and has no rule. How it works: `docs/features/file-package-json.md`.
+
 ## OpenAPI operations (openapi.json, *.openapi.yaml)
 
 `src/web/render/openapi.ts` draws one `h3` per tag and under it one existing `.table` (`data-dense`) of method, path, summary and a `deprecated` mark; the cap line is a `muted small` paragraph. `.openapi-view` is only a hook on the wrapper and has no rule. How it works: `docs/features/file-openapi.md`.

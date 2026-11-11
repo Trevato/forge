@@ -27,7 +27,7 @@ describe("openapi", () => {
       expect(fileKind(p, enc("{}"))).toBe("openapi");
       expect(kindByName(p)).toBe("openapi");
     }
-    expect(fileKind("package.json", enc("{}"))).toBe("config");
+    expect(fileKind("tsconfig.json", enc("{}"))).toBe("config");
     expect(fileKind("myopenapi.json", enc("{}"))).toBe("config");
     expect(RENDERERS.openapi).toBe(openapi);
   });

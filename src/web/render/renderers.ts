@@ -29,6 +29,7 @@ import { makefile } from "./makefile.ts";
 import { markdown } from "./markdown.ts";
 import { model3d } from "./model3d.ts";
 import { notebook } from "./notebook.ts";
+import { packageJson, readPackage } from "./package-json.ts";
 import { patch } from "./patch.ts";
 import { pdf } from "./pdf.ts";
 import { dockerfile } from "./dockerfile.ts";
@@ -107,6 +108,7 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
   env: envView,
   sql: sqlView,
   openapi,
+  package: packageJson,
   makefile,
   dockerfile,
   workflow,
@@ -159,10 +161,12 @@ export function rendererFor(
   // A kind may draw only some of its files: `config` draws JSON, YAML and
   // TOML as a form, and leaves the rest (INI, .env …) their source.
   // A log with no escape in it keeps the source view, exactly as plain text.
-  const render =
-    (kind === "config" && !isFormConfig(path)) || (kind === "log" && blob.kind !== "too_large" && !hasEscape(blob.body))
-      ? undefined
-      : renderers[kind];
+  // A package.json that is no manifest (malformed, or nothing to list) too.
+  const declined =
+    (kind === "config" && !isFormConfig(path)) ||
+    (kind === "log" && blob.kind !== "too_large" && !hasEscape(blob.body)) ||
+    (kind === "package" && blob.kind !== "too_large" && readPackage(blob.body) === undefined);
+  const render = declined ? undefined : renderers[kind];
   if (render === undefined) return undefined;
   return { render, body: blob.kind === "too_large" ? NO_BYTES : blob.body };
 }

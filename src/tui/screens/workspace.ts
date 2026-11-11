@@ -69,6 +69,7 @@ import { RECORD_CAP, parseLcov, worstFirst, type Ratio } from "../../web/render/
 import { EVENT_CAP, parseIcs } from "../../web/render/ics.ts";
 import { fileSize } from "../../web/ui.ts";
 import { parseEml } from "../../web/render/eml-parse.ts";
+import { parsePackage, ROW_CAP as PKG_ROW_CAP } from "../../web/render/package-json.ts";
 import { parseEnv, ROW_CAP as ENV_ROW_CAP } from "../../web/render/env.ts";
 import { CARD_CAP, parseVcf } from "../../web/render/vcf-parse.ts";
 import { CUE_CAP, parseSubtitles } from "../../web/render/subtitles.ts";
@@ -388,6 +389,22 @@ function envTable(source: string): Table | null {
     rows.push([r.name, dash(r.value), dash(r.comment)]);
   }
   return { header: ["Name", "Example", "Comment"], rows, more: doc.total - doc.rows.length, delimiter: ",", columns: 3 };
+}
+
+/** A `package.json` as Section/Name/Value rows; null when it is not a JSON object. Shares the web's parser. */
+function packageTable(source: string): Table | null {
+  const doc = parsePackage(source);
+  if (doc === undefined) return null;
+  const rows: string[][] = [];
+  if (doc.name !== "") rows.push(["package", doc.name, doc.version]);
+  if (doc.facts.length > 0) rows.push(["facts", doc.facts.join(" · "), ""]);
+  let more = 0;
+  for (const s of doc.sections) {
+    for (const [k, v] of s.rows.slice(0, PKG_ROW_CAP)) rows.push([s.title, k, v]);
+    more += s.total - s.rows.length;
+  }
+  if (rows.length === 0) return null;
+  return { header: ["Section", "Name", "Value"], rows, more, delimiter: ",", columns: 3 };
 }
 
 /** `.eml`: a message, drawn as rows of its headers, body and attachments. */
@@ -769,6 +786,9 @@ class Tab {
       if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isEnvExample(this.path)) {
       this.table = envTable(new TextDecoder().decode(source));
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (kindByName(this.path) === "package") {
+      this.table = packageTable(new TextDecoder().decode(source));
       if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isEmlPath(this.path)) {
       this.table = emlTable(source);
