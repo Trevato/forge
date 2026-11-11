@@ -21,6 +21,7 @@ const make = (tag: string): El => ({
   textContent: "",
   attrs: {} as Record<string, string>,
   setAttribute(k: string, v: string) { this.attrs[k] = v; },
+  removeAttribute(k: string) { delete this.attrs[k]; },
   appendChild(c: El) { this.children.push(c); return c; },
   addEventListener(t: string, f: (e?: any) => void) { (this.listeners[t] ??= []).push(f); },
   focus() {},

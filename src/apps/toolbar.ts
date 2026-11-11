@@ -14,7 +14,7 @@
 import { staticResponse } from "../web/asset.ts";
 import { sha256 } from "../kernel/hash.ts";
 import { CHECK_WORDS, type PillCheck } from "./pill_check.ts";
-import { NOTE_EMPTY, NOTE_FAILED } from "./note_words.ts";
+import { NOTE_EMPTY, NOTE_FAILED, NOTE_OFFLINE, NOTE_WAIT } from "./note_words.ts";
 
 /** What the panel says about a preview's freshness (#9111): the pill's words, in one table. */
 export const FRESHNESS_WORDS = {
@@ -308,7 +308,7 @@ const toolbarSource = `(function () {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ text: text, page: location.href, viewport: window.innerWidth + "x" + window.innerHeight, errors: errs.slice(-5) })
       })
-        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (r) { return r.json().catch(function () { return null; }).then(function (j) { return { ok: r.ok, s: r.status, w: r.headers.get("retry-after"), j: j }; }); })
         .then(function (a) {
           if (!a.ok || !blob || !a.j || !a.j.note || !a.j.note.id) return { a: a, pic: false };
           return call("/__forge/note/picture?note=" + encodeURIComponent(a.j.note.id), {
@@ -329,9 +329,9 @@ const toolbarSource = `(function () {
           filed(a.j && a.j.note);
           refresh(true);
         }
-        else tellSay.textContent = a.j && a.j.message ? a.j.message : ${JSON.stringify(NOTE_FAILED)};
+        else tellSay.textContent = a.s === 429 && +a.w > 0 ? ${JSON.stringify(NOTE_WAIT[0])} + Math.ceil(+a.w) + ${JSON.stringify(NOTE_WAIT[1])} : a.j && a.j.message ? a.j.message : ${JSON.stringify(NOTE_FAILED)};
       })
-      .catch(function () { idle(); tellSay.textContent = ${JSON.stringify(NOTE_FAILED)}; });
+      .catch(function () { idle(); tellSay.textContent = navigator.onLine === false ? ${JSON.stringify(NOTE_OFFLINE)} : ${JSON.stringify(NOTE_FAILED)}; });
   });
   var poll = 0;
   function watch(open) {
