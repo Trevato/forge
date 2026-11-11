@@ -23,21 +23,20 @@ import type { Ctx } from "../../http/context.ts";
 import { html, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { badge, btn, row } from "../ui.ts";
-import { tellHref } from "../studio/nouns.ts";
 import { everydayAsk } from "./everyday.ts";
 import { EVERYDAY_WHY } from "../../core/everyday.ts";
 import { crewFirstLine } from "../studio/crew_key.ts";
 import { FORGE_TARGET } from "../studio/feed.ts";
 import { COMPOSER_FIELDS, TELL_MAX } from "../share_target.ts";
 
-/** One line per app: the app is the row's title, the crew member and what they are doing its meta. */
-function crewAtWork(ctx: Ctx, repos: Awaited<ReturnType<typeof spawnedRepos>>): Html[] {
+/** One line per app, "<name> is <doing what>" as the row's title and the app its meta; with nobody on it, the app is the title. */
+export function crewAtWork(ctx: Ctx, repos: Awaited<ReturnType<typeof spawnedRepos>>): Html[] {
   return appCrew(ctx.app.db, repos).map((c) => {
     const href = `/${c.repo.ownerName}/${c.repo.name}`;
     return row({
-      href: c.issueNumber === null ? href : tellHref(href, c.issueNumber),
-      title: c.repo.name,
-      meta: html`${c.says}`,
+      href,
+      title: html`${c.who === null ? c.repo.name : c.says}`,
+      meta: html`${c.who === null ? c.says : c.repo.name}`,
     });
   });
 }

@@ -215,7 +215,7 @@ describe("the first login to a spawned forge", () => {
     expect(steps(home)).toEqual({ everyday: undefined, apps: undefined, tell: undefined });
     // The crew at work and its direction are still on the first screen.
     expect(home).toContain("atlas is ready to work toward Run Maria");
-    expect(home).toMatch(/href="\/marias\/bakery\/issues\/\d+"[^>]*>[\s\S]*?atlas is ready/);
+    expect(home).toMatch(/href="\/marias\/bakery\/?"[^>]*>[\s\S]*?atlas is ready/);
     expect(home).toContain('href="/marias/bakery"');
   });
 
@@ -273,7 +273,7 @@ describe("the first login to a spawned forge", () => {
     });
     child.db.query("UPDATE run SET state = 'running' WHERE id = ?1").run(run.id);
     const home = await page(owner);
-    expect(home).toMatch(/class="row-title"[^>]*>bakery<\/span\s*>\s*<span class="row-meta">atlas is working toward Run Maria(?:'|&#39;|&#x27;)s bakery\.?</);
+    expect(home).toMatch(/class="row-title"[^>]*>atlas is working toward Run Maria(?:'|&#39;|&#x27;)s bakery\.?<\/span\s*>\s*<span class="row-meta">bakery</);
     expect(home.slice(home.indexOf("id=\"next-steps\""), home.indexOf("</section>"))).not.toContain("Direction:");
     expect(home).toMatch(/class="row-title"[^>]*>spare<\/span\s*>\s*<span class="row-meta">nobody is on it yet</);
     // A direction closed or unassigned is nobody on it, too.
