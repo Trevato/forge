@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { WATCH, cellCounters, watchLabelled } from "./contain.ts";
+import { WATCH, cellCounters, watchLabelled } from "../src/apps/contain.ts";
 
 test("watchLabelled lists a plain process tree under its label until unwatched", async () => {
   const child = Bun.spawn(["sleep", "5"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });

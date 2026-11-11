@@ -196,6 +196,19 @@ export async function pinRefusal(cwd: string = process.cwd()): Promise<string[]>
   return [...edits, ...landed, ...missing];
 }
 
+/**
+ * A `*.test.ts` under `src/` (vendor excepted) is outside every gate plan,
+ * since `presentTests` reads only `test/` (#11222): name each, and where it goes.
+ */
+export function strayTestRefusal(root = "."): string[] {
+  const src = join(root, "src");
+  if (!existsSync(src)) return [];
+  return (readdirSync(src, { recursive: true }) as string[])
+    .filter((f) => f.endsWith(".test.ts") && !f.split("/").includes("vendor"))
+    .sort()
+    .map((f) => `src/${f}: a test outside test/ never runs in the gate; move it to test/`);
+}
+
 /** Review findings that repeated (#8888): see `src/kernel/review_rules.ts`. */
 export function reviewRefusal(root = "."): string[] {
   // Loaded by `require` so `treeGate`, which loads this file alone, never needs it.
@@ -266,7 +279,7 @@ export async function directionRefusal(cwd: string = process.cwd()): Promise<str
 // `bun scripts/gate.ts`: the audit alone, first in `forge.json`'s check, so
 // a stale exclusion fails in under a second — not after install and tsc.
 if (import.meta.main) {
-  const refusal = [...gateRefusal(presentTests()), ...(await pinRefusal()), ...(await tryItRefusal()), ...(await bothDoorsRefusal()), ...(await directionRefusal()), ...reviewRefusal()];
+  const refusal = [...gateRefusal(presentTests()), ...(await pinRefusal()), ...(await tryItRefusal()), ...(await bothDoorsRefusal()), ...(await directionRefusal()), ...strayTestRefusal(), ...reviewRefusal()];
   for (const line of refusal) console.error(`gate: ${line}`);
   process.exit(refusal.length === 0 ? 0 : 2);
 }
