@@ -15,7 +15,10 @@
  * lost answer in a release's proof says little, two in a row fail it (#9334, #9482).
  * An answer slow on the probe's clock whose `Server-Timing` says the forge
  * itself spent `SLOW_MS` or less is the road to the public edge, not the
- * release, and passes (#9022); a hang still fails.
+ * release, and passes (#9022); a hang, no answer within `ANSWER_MS`, still
+ * fails. The hang's line sat at twice `SLOW_MS` until #11250: a repository
+ * home answering in 2.1 s was then cut off before its `Server-Timing` could
+ * say whose time it was, and failed 0.7.531 for 13 minutes as a hang.
  *
  * The running forge proves each new version with it (`release/prove.ts`), so
  * it lives here: the image ships src/ and nothing else (#2652).
@@ -37,6 +40,8 @@ export const WATCH_POLL_MS = 1_000;
 export const SLOW_MS = 1_000;
 /** The pause before a slow or lost first load is asked again: a boot's stall is seconds, a slow release stays slow (#10993). */
 export const SETTLE_MS = 3_000;
+/** How long an ask waits before it is a hang: past `SLOW_MS` an answer is slow, and its `Server-Timing` judges it (#11250). */
+export const ANSWER_MS = 10_000;
 /** One repository's home, for the heavy-page load. */
 export const REPO_HOME = "/trevato/forge";
 /** The heaviest pages; `/boards` is fetched with the token. */
@@ -71,6 +76,8 @@ export interface Heavy {
   slowMs?: number;
   /** How long a slow first load waits before it is asked again, so a stall that follows the boot has passed (#10993). @default SETTLE_MS */
   settleMs?: number;
+  /** How long an ask waits before it is a hang rather than a slow answer. @default ANSWER_MS */
+  answerMs?: number;
   /** The repository whose home is loaded; unset, `REPO_HOME` is tried and a 404 there is skipped. */
   repo?: string;
   /** Every `/healthz` answer in the watch must carry this `X-Forge-Version`. */
@@ -89,7 +96,7 @@ export interface Failure {
   slow?: boolean;
   /** The check failed only because a 200 answered with no body: a lost answer, retried like a slow one (#9358). */
   empty?: boolean;
-  /** The check failed only because no answer came within twice the slowest allowed: retried like a slow one (#9482). */
+  /** The check failed only because no answer came within `ANSWER_MS`: retried like a slow one (#9482, #11250). */
   hung?: boolean;
 }
 
@@ -178,18 +185,19 @@ async function waitForVersion(root: URL, version: string, waitMs: number, pollMs
 /** Loads each of `HEAVY_PAGES`, then polls `/healthz` for the window; the first failure, or null. */
 async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globalThis.fetch, anonymousBoard: boolean): Promise<Failure | null> {
   const slowMs = heavy.slowMs ?? SLOW_MS;
+  const answerMs = Math.max(heavy.answerMs ?? ANSWER_MS, slowMs);
   const headers: Record<string, string> = { "user-agent": AGENTS["desktop"]! };
   const pages = HEAVY_PAGES.map((p) => (p === REPO_HOME && heavy.repo ? heavy.repo : p));
   /** Is `url` whole when asked with no encoding: the way to tell the edge's encoding from the forge's answer (#10889). */
   const unencodedBody = async (url: string): Promise<boolean> => {
     try {
-      const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(slowMs * 2), headers: { ...headers, "accept-encoding": "identity" } });
+      const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(answerMs), headers: { ...headers, "accept-encoding": "identity" } });
       return res.status === 200 && (await res.text()).trim() !== "";
     } catch {
       return false;
     }
   };
-  // An answer between `slowMs` and twice it is slow; none by then is a hang.
+  // An answer between `slowMs` and `answerMs` is slow, judged by the forge's own time; none by then is a hang.
   const once = async (path: string): Promise<{ failure: Failure | null; slow: boolean; hung?: boolean; empty?: boolean }> => {
     const url = new URL(path, root).href;
     const started = performance.now();
@@ -197,13 +205,14 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
     const gone = (why: string, status: number | string = "error") => ({ failure: failureFor(why, status), slow: false });
     try {
       const auth: Record<string, string> = path === "/boards" && token ? { authorization: `Bearer ${token}` } : {};
-      const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(slowMs * 2), headers: { ...headers, ...(path === "/healthz" ? heavy.probe : {}), ...auth } });
+      const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(answerMs), headers: { ...headers, ...(path === "/healthz" ? heavy.probe : {}), ...auth } });
       const body = await res.text();
       const took = Math.round(performance.now() - started);
       if (took > slowMs) {
         // The forge's own time says whether the release was slow or the way to it was (#9022).
         const own = forgeMs(res);
-        if (own === undefined || own > slowMs) return { failure: { ...failureFor(`${path} took ${took} ms, over ${slowMs} ms`, res.status), slow: true }, slow: true };
+        const whose = own === undefined ? "" : `, the forge ${Math.round(own)} ms of it`;
+        if (own === undefined || own > slowMs) return { failure: { ...failureFor(`${path} took ${took} ms, over ${slowMs} ms${whose}`, res.status), slow: true }, slow: true };
         console.warn(`smoke: ${path} took ${took} ms, the forge ${Math.round(own)} ms of it; the rest was the network`);
       }
       if (path === REPO_HOME && !heavy.repo && res.status === 404) return { failure: null, slow: false };
@@ -223,7 +232,7 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
       }
       return { failure: null, slow: false };
     } catch (error) {
-      const lost = gone(`${path} did not answer within ${slowMs * 2} ms (${error})`);
+      const lost = gone(`${path} did not answer within ${answerMs} ms (${error})`);
       return { failure: { ...lost.failure, hung: true }, slow: false, hung: true };
     }
   };

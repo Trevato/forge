@@ -27,7 +27,7 @@ function forge(boardsMs: number, seen: string[] = [], over: (path: string) => Re
   return `http://127.0.0.1:${server.port}`;
 }
 
-const heavy = { watchMs: 300, pollMs: 50, slowMs: 200, settleMs: 0 };
+const heavy = { watchMs: 300, pollMs: 50, slowMs: 200, settleMs: 0, answerMs: 400 };
 
 test("a healthy forge passes the heavy pages and the /healthz watch", async () => {
   const seen: string[] = [];
@@ -129,6 +129,22 @@ test("a hang is a failure whatever Server-Timing would have said", async () => {
   const quick = (p: string) => (p === "/explore" ? new Response("page", { headers: { "server-timing": "app;dur=5.0" } }) : undefined);
   const failures = await smoke(forge(0, [], quick, (p, hit) => (p === "/explore" && hit <= 2 ? 2_000 : 0)), "t", { heavy });
   expect(failures.some((f) => f.url.endsWith("/explore") && f.why.includes("did not answer"))).toBe(true);
+});
+
+test("an answer past twice the slow line but before the hang line is judged by its Server-Timing, not failed as a hang (#11250)", async () => {
+  // 0.7.531: /trevato/forge was cut off at 2000 ms, before its Server-Timing could say whose time it was.
+  const quick = (p: string) => (p === "/explore" ? new Response("page", { headers: { "server-timing": "app;dur=5.0" } }) : undefined);
+  const failures = await smoke(forge(0, [], quick, (p) => (p === "/explore" ? 500 : 0)), "t", { heavy: { ...heavy, answerMs: 2_000 } });
+  expect(failures).toEqual([]);
+});
+
+test("a slow answer whose forge was slow names the forge's own time (#11250)", async () => {
+  const slowOwn = (p: string) => (p === "/explore" ? new Response("page", { headers: { "server-timing": "app;dur=450.0" } }) : undefined);
+  const failures = await smoke(forge(0, [], slowOwn, (p) => (p === "/explore" ? 500 : 0)), "t", { heavy: { ...heavy, answerMs: 2_000 } });
+  const f = failures.find((x) => x.url.endsWith("/explore"));
+  expect(f?.slow).toBe(true);
+  expect(f?.hung).toBeUndefined();
+  expect(f?.why).toContain("the forge 450 ms of it");
 });
 
 test("forgeMs reads the app entry of Server-Timing, and nothing when there is none", () => {
