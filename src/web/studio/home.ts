@@ -896,7 +896,7 @@ export function studioDoor(ctx: Ctx): Response {
       <div class="stack">
         <h2>Get your own forge</h2>
         <p class="door-support">
-          Hosted for you, or free and open source on a machine you keep.${accounts ? "" : mode === "invite" ? " New accounts on this forge are by invitation." : " This forge is not taking new accounts."}
+          Hosted for you, or free and open source on a machine you keep.
         </p>
         ${plansRow(publicPlans(allPlans), links)}
         <div class="bar" data-plan="${freePlanName(allPlans)}">${btn("Get a forge", { href: GET_A_FORGE_PATH, variant: "primary", size: "lg" })}</div>
@@ -919,6 +919,7 @@ bun run src/main.ts</code></pre>
       Running this for a team? <a href="https://www.open-platform.sh/#platform">The Platform</a> runs on your own cloud, and
       <a href="https://www.espodev.com">EspoDev</a> delivers enterprise implementations.
     </p>
+    ${accounts ? "" : html`<p class="muted small">${mode === "invite" ? "New accounts on this forge are by invitation." : "This forge is not taking new accounts."}</p>`}
     ${when(admin, () => html`<div class="door-section front-admin">${frontControls(ctx, front)}</div>`)}
   </div>`;
   const res = page({

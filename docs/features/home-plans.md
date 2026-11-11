@@ -10,20 +10,13 @@ Where a visitor sees what a hosted forge is and how to get one (#11139).
 
 ## What a plan line says
 
-The plan's name, its price, the machine it runs on (CPU, memory, disk) and its own sentence. The words are `src/billing/plan_words.ts`, shared by both doors. A plan whose size has a [buy link](billing-links.md) also shows "Pay for <plan>".
+The plan's name, its price ("Free", or "$19 a month" from the plan's `priceUsd`), the machine it runs on (CPU, memory, disk) and its own sentence. A paid plan with a crew credit adds the credit after that sentence: "$5 of crew credit each month", from the plan's `creditUsd`. The words are `src/billing/plan_words.ts`, shared by both doors.
+
+A paid plan whose size has a [buy link](billing-links.md) also carries a "Get <plan>" link to it (on the web an anchor beside the price, in the terminal `Get <plan>: <link>`); the free plan never does, its way in is the one **Get a forge** button. When any plan carries a link, one line follows the plans on both doors: "Your forge is made after payment; an email with the link to open it arrives." (`AFTER_PAYMENT` in the same file).
+
+Whether this forge takes new accounts is not said in this section: it is about getting a forge, not an account here.
 
 The plans themselves are the forge's plans setting (`src/settings/plans.ts`; edit them at `/admin/limits`, the palette's *Plans*, or MCP `limits`).
-
-## FORGE_BILLING_PROVIDER
-
-Which payment provider the forge sells through, read on every request (no restart needed):
-
-| value | what the plans show |
-| --- | --- |
-| `stripe` | each paid plan's monthly price, e.g. "$19 a month"; the free plan reads "Free" |
-| unset, `none`, or anything else | no price: a paid plan reads "Paid", the free plan "Free" |
-
-It only changes what is shown; it charges nothing by itself.
 
 ## Cost
 

@@ -1,7 +1,7 @@
 /**
  * The bridge to paid hosting (#11149): `billing.links` is empty by default and
  * the anonymous home shows the plans with no pay link; with links set, each
- * paid plan whose size has a link carries a plain "Pay for <plan>" link to it,
+ * paid plan whose size has a link carries a plain "Get <plan>" link to it,
  * beside the home's one "Get a forge" button (#11139).
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
@@ -109,7 +109,7 @@ test("a bad link is refused and nothing is kept", async () => {
 });
 
 const yours = (text: string): string => text.slice(text.indexOf('id="yours"'), text.indexOf('class="door-org"'));
-const payAnchors = (section: string): string[] => [...section.matchAll(/<a\s[^>]*>Pay for [^<]*<\/a\s*>/g)].map((m) => m[0]);
+const payAnchors = (section: string): string[] => [...section.matchAll(/<a\s[^>]*href="https:[^>]*>Get [^<]*<\/a\s*>/g)].map((m) => m[0]);
 
 test("with three links each paid plan carries a pay link; the button stays one", async () => {
   const res = await patch(adminToken, { billingLinks: LINKS });
@@ -125,7 +125,7 @@ test("with three links each paid plan carries a pay link; the button stays one",
     expect(section).toContain(sizeWords(size));
   }
   expect(section.match(/>Get a forge</g)).toHaveLength(1);
-  expect(section).not.toContain("Pay for Free");
+  expect(section).not.toContain("Pay for");
 });
 
 test("a size without a link has no pay link; clearing every link restores the page", async () => {

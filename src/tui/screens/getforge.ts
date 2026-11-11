@@ -1,14 +1,12 @@
 /**
  * "Get your own forge" in the terminal: the home page's `#yours` for anyone,
- * guests included. Every plan with its price (or "Paid" while
- * `FORGE_BILLING_PROVIDER` is not `stripe`), what it is, its buy link when
+ * guests included. Every plan with its price, what it is, its buy link when
  * one is set, then where to get a hosted forge and how to run one yourself.
  * The words are `billing/plan_words.ts`, the same the web row prints; the
  * settings are read in one statement as the home reads them.
  */
 
-import { billingProvider } from "../../billing/provider.ts";
-import { GET_A_FORGE_PATH, planWords } from "../../billing/plan_words.ts";
+import { AFTER_PAYMENT, GET_A_FORGE_PATH, planWords } from "../../billing/plan_words.ts";
 import { UPSTREAM_REPO } from "../../core/upstream.ts";
 import { getDoorSettings } from "../../settings/door.ts";
 import { publicPlans } from "../../settings/plans.ts";
@@ -21,23 +19,22 @@ import type { Session } from "../session.ts";
 import { Scroll } from "./common.ts";
 
 /** The screen as text lines, read fresh on every draw. */
-export function getForgeLines(app: App, width = 80, priced = billingProvider() === "stripe"): string[] {
+export function getForgeLines(app: App, width = 80): string[] {
   const w = Math.max(20, width);
   const { plans, links } = getDoorSettings(app.db);
   const origin = (app.config.url ?? "").replace(/\/$/, "");
+  const words = publicPlans(plans).map((p) => planWords(p, links));
   return [
     "Get your own forge",
     ...wrap("Hosted for you, or free and open source on a machine you keep.", w),
     "",
     "Plans",
-    ...publicPlans(plans).flatMap((p) => {
-      const words = planWords(p, priced, links);
-      return [
-        `  ${words.name}  ${words.price}`,
-        ...wrap(words.is, w - 4).map((l) => `    ${l}`),
-        ...(words.buy === undefined ? [] : [`    Pay: ${words.buy}`]),
-      ];
-    }),
+    ...words.flatMap((p) => [
+      `  ${p.name}  ${p.price}`,
+      ...wrap(p.is, w - 4).map((l) => `    ${l}`),
+      ...(p.buy === undefined ? [] : [`    Get ${p.name}: ${p.buy}`]),
+    ]),
+    ...(words.some((p) => p.buy !== undefined) ? ["", ...wrap(AFTER_PAYMENT, w)] : []),
     "",
     `Get a forge: ${origin}${GET_A_FORGE_PATH}`,
     "",
