@@ -33,6 +33,12 @@ const toolbarSource = `(function () {
   var fo = "";
   try { fo = new URL((me.dataset || {}).forge || "").origin; } catch (e) {}
   var home = fo ? fo + "/" : "/";
+  // Back to the forge page the visitor left: only a referrer on the forge's own origin counts.
+  var back = home;
+  try {
+    var ref = new URL(document.referrer);
+    if (fo && ref.origin === fo && (ref.protocol === "https:" || ref.protocol === "http:")) back = ref.origin + ref.pathname + ref.search;
+  } catch (e) {}
   var host = document.createElement("div");
   host.id = "forge-toolbar";
   host.style.cssText = "all:initial;position:fixed;z-index:2147483647";
@@ -112,7 +118,7 @@ const toolbarSource = `(function () {
   link.style.cssText = LS;
   var hasHome = false;
   try {
-    var target = new URL(home);
+    var target = new URL(back);
     if (target.origin === fo) { link.href = target.href; hasHome = true; }
   } catch (e) {}
   // Tell the builders: one box, one button, no account. The note goes to

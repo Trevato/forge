@@ -233,7 +233,12 @@ under 24 KB (`test/toolbar-budget.test.ts` holds it), since it loads on every ap
 
 The forge pill on an app's pages says where you are: its accessible name reads
 `notes, production` or `notes, preview of pull #7`, and pressing it opens a
-panel with the app, the environment, and a link home. The pull's title is shown
+panel with the app, the environment, and a Home link. When the visitor arrived
+through the forge's `Open the app` redirect, which lets the full address of the
+forge page through (`Referrer-Policy: no-referrer-when-downgrade`, so that page's
+path and query reach the app), Home returns to that page; a referrer from any
+other origin is ignored, and with none Home goes to the forge's `/`. Tab reaches
+it and Enter follows it. The pull's title is shown
 only to people who may read the pull. A tap outside the open panel, or Escape,
 closes it. When a crew run is working on the app (production) or on the preview's
 pull, the panel also says `scout is working on this` and links the run; it asks

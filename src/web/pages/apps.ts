@@ -814,6 +814,14 @@ function appsOpenResponse(ctx: Ctx): Response {
   });
 }
 
+/**
+ * Opening an app is the one place a forge page's address leaves the forge:
+ * the app's pill reads it to take the visitor back to that page (#11295).
+ * `origin-when-cross-origin` would send only the origin, so the redirect
+ * says `no-referrer-when-downgrade`: the full address, https to https only.
+ */
+const LEAVING_POLICY = "no-referrer-when-downgrade";
+
 export function appOpen(ctx: Ctx): Response {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
@@ -822,7 +830,7 @@ export function appOpen(ctx: Ctx): Response {
   const record = env === "production" ? getAppByRepo(ctx.app.db, repo.id) : undefined;
   const shown = record === undefined ? undefined : shownProduction(ctx.app, repo, appsRuntime(ctx.app)?.urlFor(record, "production"));
   if (shown?.copy !== undefined && shown.url !== undefined)
-    return new Response(null, { status: 302, headers: { location: shown.url, "cache-control": "no-store" } });
+    return new Response(null, { status: 302, headers: { location: shown.url, "cache-control": "no-store", "referrer-policy": LEAVING_POLICY } });
   const link = openEnvUrl(ctx.app, ctx.auth.user, repo, env);
   if (!link.ok) {
     if (link.error === "unauthorized") return signInFirst(ctx);
@@ -835,7 +843,7 @@ export function appOpen(ctx: Ctx): Response {
   }
   return new Response(null, {
     status: 302,
-    headers: { location: link.value, "cache-control": "no-store" },
+    headers: { location: link.value, "cache-control": "no-store", "referrer-policy": LEAVING_POLICY },
   });
 }
 

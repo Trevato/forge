@@ -449,6 +449,13 @@ printf '%s\\n' '{"is_error":false,"result":"{\\"summary\\":\\"Build it\\",\\"che
     expect((await api("/api/v1/repos/alice/opened/app/nope/open")).status).toBe(
       422,
     );
+    // The forge's own redirect lets the page's address reach the app (the pill's Home link, #11295).
+    const hop = await fetch(`${servers.url}/alice/opened/app/production/open`, {
+      redirect: "manual",
+      headers: { authorization: `Bearer ${rw}` },
+    });
+    expect(hop.status).toBe(302);
+    expect(hop.headers.get("referrer-policy")).toBe("no-referrer-when-downgrade");
 
     const patched = await api("/api/v1/repos/alice/opened/app", {
       method: "PATCH",
