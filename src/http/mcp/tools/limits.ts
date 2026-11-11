@@ -9,7 +9,7 @@ export const tool: Tool = {
   name: "limits",
   doc: "`{ key?, value?, plans?, dryRun? }` (forge admin): every limit the forge's owner can hit, with its value, default and bounds; with `key` and `value` (`\"\"` restores the default), planned first (`dryRun` is true unless `false`); a value out of bounds is refused, applying needs an admin-scope token; the answer lists the plans; `plans`, a list of `{ key, name, says, size, priceUsd, creditUsd, forges }`, replaces them",
   description:
-    "Every limit the owner can hit, value and bounds. `key`, `value` (\"\" restores) plan.",
+    "Every limit the owner can hit. `key`+`value` (\"\" restores) plans.",
   inputSchema: {
     type: "object",
     properties: {

@@ -26,7 +26,7 @@ export const tool: Tool = {
       },
       fresh: {
         type: "string",
-        description: "One line: a new app to start.",
+        description: "A new app, one line.",
       },
       followMode: {
         type: "string",
@@ -40,11 +40,11 @@ export const tool: Tool = {
       },
       plan: {
         type: "string",
-        description: "Plan key: size and credit. Paid: admin only.",
+        description: "Plan key; paid: admin.",
       },
       template: {
         type: "string",
-        description: "An id from `templates`.",
+        description: "From `templates`.",
       },
       keepAccess: {
         type: "boolean",

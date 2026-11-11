@@ -13,7 +13,7 @@ export const tool: Tool = {
       q: {
         type: "string",
         maxLength: 200,
-        description: "kind: sort: updated:7d owner: archived:. Unknown word: error",
+        description: "kind: sort: updated: owner: archived:. Unknown word: error",
       },
       query: {
         type: "string",
@@ -22,7 +22,7 @@ export const tool: Tool = {
       },
       ...Object.fromEntries(EXPLORE_PARAMS.map((k) => [k, { type: "string", maxLength: 100 }])),
       since: { type: "string", maxLength: 100 },
-      app: { type: "string", maxLength: 200, description: "owner/name, with kind: tree" },
+      app: { type: "string", maxLength: 200, description: "With kind: tree" },
       cursor: {
         type: "string",
       },
