@@ -209,6 +209,19 @@ export function strayTestRefusal(root = "."): string[] {
     .map((f) => `src/${f}: a test outside test/ never runs in the gate; move it to test/`);
 }
 
+/**
+ * No call path from the billing webhook deletes a forge, an app or a child
+ * (#11392): the walk in `src/kernel/destroy_reach.ts`, named here so it runs
+ * in the check's first second as well as in `test/billing-never-deletes.test.ts`.
+ */
+export function billingDeletesRefusal(root = "."): string[] {
+  const { destroyReachRefusal } = require("../src/kernel/destroy_reach.ts") as typeof import("../src/kernel/destroy_reach.ts");
+  // A fixture repository (the gate's own tests) holds no walk at all and has nothing to check.
+  // A tree that has the walk but not the webhook is the real one after a move: refused, not passed.
+  if (!existsSync(join(root, "src/kernel/destroy_reach.ts"))) return [];
+  return destroyReachRefusal(root);
+}
+
 /** Review findings that repeated (#8888): see `src/kernel/review_rules.ts`. */
 export function reviewRefusal(root = "."): string[] {
   // Loaded by `require` so `treeGate`, which loads this file alone, never needs it.
@@ -279,7 +292,7 @@ export async function directionRefusal(cwd: string = process.cwd()): Promise<str
 // `bun scripts/gate.ts`: the audit alone, first in `forge.json`'s check, so
 // a stale exclusion fails in under a second — not after install and tsc.
 if (import.meta.main) {
-  const refusal = [...gateRefusal(presentTests()), ...(await pinRefusal()), ...(await tryItRefusal()), ...(await bothDoorsRefusal()), ...(await directionRefusal()), ...strayTestRefusal(), ...reviewRefusal()];
+  const refusal = [...gateRefusal(presentTests()), ...(await pinRefusal()), ...(await tryItRefusal()), ...(await bothDoorsRefusal()), ...(await directionRefusal()), ...strayTestRefusal(), ...reviewRefusal(), ...billingDeletesRefusal()];
   for (const line of refusal) console.error(`gate: ${line}`);
   process.exit(refusal.length === 0 ? 0 : 2);
 }
