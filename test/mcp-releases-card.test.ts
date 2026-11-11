@@ -82,6 +82,38 @@ describe("MCP releases card", () => {
     expect(card.status).toBe("4 kept · 1 proven · 2 unproven · 1 rolled back");
   });
 
+  test("releases with {} and with {shipped:true} each carry their card: 10 rows at most, newest first, each pull row linked", async () => {
+    const plain = await rpc("tools/call", { name: "releases", arguments: {} });
+    const items = JSON.parse(plain.content[0].text).items as any[];
+    const card = plain.structuredContent.card;
+    expect(card.kind).toBe("release");
+    expect(card.rows.length).toBeLessThanOrEqual(10);
+    const landed = items.map((i) => i.landed as string);
+    expect(landed).toEqual([...landed].sort().reverse());
+    expect(items.some((i) => !i.pull)).toBe(true);
+    items.forEach((i, n) => {
+      expect(card.rows[n].label).toBe(i.version ?? i.sha);
+      // a release with a pull links to it; one with none is unlinked, on purpose
+      if (i.pull) expect(card.rows[n].link).toBe(`${servers.url}/${i.pull.repo}/pulls/${i.pull.number}`);
+      else expect(card.rows[n].link).toBeUndefined();
+    });
+    expect(items.filter((i) => i.pull).length).toBeGreaterThan(0);
+    const shipped = await rpc("tools/call", { name: "releases", arguments: { shipped: true } });
+    const json = JSON.parse(shipped.content[0].text);
+    const sc = shipped.structuredContent.card;
+    expect(sc.kind).toBe("releases");
+    expect(sc.rows.length).toBeLessThanOrEqual(10);
+    const ats = json.live.map((l: any) => l.at as string);
+    expect(ats).toEqual([...ats].sort().reverse());
+    const expected = [...json.live.map((l: any) => [l, false]), ...json.onItsWay.map((l: any) => [l, true])].slice(0, 10);
+    expect(sc.rows.length).toBe(expected.length);
+    expected.forEach(([l, way]: any, n: number) => {
+      expect(sc.rows[n].label).toBe(`#${l.number} ${l.title}`);
+      expect(sc.rows[n].link).toBe(`${servers.url}/${l.repo}/pulls/${l.number}`);
+      expect(sc.rows[n].value === "on its way").toBe(way);
+    });
+  });
+
   test("the card's pull is the one the releases page names, not a count", async () => {
     const answer = releasesAnswer(app, undefined);
     expect(answer.ok).toBe(false);
