@@ -270,6 +270,7 @@ const UNTIMED: Record<string, string> = {
   "snapshot-journal": "inside a running snapshot upload: writes its journal; nightly, I/O",
   "snapshot-report": "inside a running snapshot upload: logs its progress; nightly",
   "system-live": "reads /proc and the cgroup roots for the system page while someone watches it",
+  entitlements: "reads each paid subscription from Stripe: network, daily, and the fixture has no entitlements",
   traffic: "a closure in createTrafficWriter over its in-memory minute ledger; follow-up",
 };
 
