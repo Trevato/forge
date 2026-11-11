@@ -613,6 +613,12 @@ describe("search: one query, four sources", () => {
     // prevent; a SEARCH (with or without a sort) is the pass.
     expect(details.some((d) => /^SCAN\b.*\bissue\b/.test(d))).toBe(false);
     expect(details.some((d) => /^SEARCH\b.*\bissue\b/.test(d))).toBe(true);
+    // One walk a repository, newest first by `issue_repo_updated`, each cut at
+    // the limit: a query matching every title reads `limit` rows a repository,
+    // not every row it has (#11168).
+    const walks = details.filter((d) => /^SEARCH issue\b/.test(d));
+    expect(walks.length).toBe(repos.length);
+    for (const d of walks) expect(d).toBe("SEARCH issue USING INDEX issue_repo_updated (repo_id=?)");
   });
 
   test("bob's own view is bounded the same way", () => {
