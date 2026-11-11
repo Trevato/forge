@@ -225,7 +225,7 @@ const FLOOR_POLICY =
  * camera, a microphone, a location, a payment or a device (#2917).
  */
 const PERMISSIONS_POLICY =
-  "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), hid=(), bluetooth=(), interest-cohort=()";
+  "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), hid=(), bluetooth=()";
 
 /**
  * Once a browser has reached the forge over https, it never again asks over
