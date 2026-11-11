@@ -187,6 +187,8 @@ export function feedCard(
 
 /** The composer's app value for "the forge": no app, so no slash to collide with one. */
 export const FORGE_TARGET = "forge";
+/** The first-tell form's target: "a new app", made from the ask. */
+export const NEW_APP_TARGET = "new-app";
 
 /** How many thoughts stand at the top of the feed. */
 const THOUGHTS_SHOWN = 3;

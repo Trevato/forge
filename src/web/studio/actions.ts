@@ -34,7 +34,8 @@ import { isLocalPath } from "../flash.ts";
 import { html } from "../html.ts";
 import { flashOrJson, flashTo, page } from "../layout.ts";
 import { crewCanRun, NO_CREDIT_WORDS } from "./crew_key.ts";
-import { FORGE_TARGET } from "./feed.ts";
+import { FORGE_TARGET, NEW_APP_TARGET } from "./feed.ts";
+import { AUTONOMY_FAILED_WORDS, firstAsk } from "../../actions/first_ask.ts";
 import { changeHref } from "./nouns.ts";
 
 /** A merge refusal in a person's words. */
@@ -73,7 +74,20 @@ async function tellFrom(
       tone: "danger",
       message: SAY_SOMETHING_WORDS,
     });
-  const told = await tell(ctx.app, ctx.auth.user, repo, text, 1, from);
+  return toldAnswer(ctx, repo, form, back, from, await tell(ctx.app, ctx.auth.user, repo, text, 1, from), onTold);
+}
+
+/** The answer to one tell, however it was made: refused as the crew's direction says, or told. */
+function toldAnswer(
+  ctx: Ctx,
+  repo: Repo,
+  form: Form,
+  back: string,
+  from: string | null,
+  told: Awaited<ReturnType<typeof tell>>,
+  onTold: () => void,
+  note = "",
+): Promise<Response> | Response {
   if (!told.ok && told.error === "body_too_long")
     return flashOrJson(ctx, back, {
       tone: "danger",
@@ -98,6 +112,7 @@ async function tellFrom(
   const at = { href: `${repoBase(repo)}/issues/${told.value.issue.number}` };
   // "Build" never silently does nothing: with no credit the person is told, with the way forward.
   if (!crewCanRun(ctx.app)) return flashOrJson(ctx, back, noCreditFlash(ctx), at);
+  if (note !== "") return flashOrJson(ctx, back, { tone: "attn", message: note }, at);
   if (routed === undefined)
     return flashOrJson(
       ctx,
@@ -219,6 +234,14 @@ export async function composerSubmit(ctx: Ctx): Promise<Response> {
 
 async function composerTell(ctx: Ctx, form: Form, target: string, home: string, onTold: () => void): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
+  // The first ask of a new forge: one app made from the ask, the ask filed there (the terminal's first ask still keeps a thought).
+  if (target === NEW_APP_TARGET) {
+    const from = parseFrom(field(form, "from") || undefined) ?? null;
+    const first = await firstAsk(ctx.app, ctx.auth.user, field(form, COMPOSER_FIELDS.text), crewCanRun(ctx.app), from);
+    if (!first.ok) return flashOrJson(ctx, home, { tone: "danger", message: first.error.words });
+    const { repo, told, autonomyFailed } = first.value;
+    return toldAnswer(ctx, repo, form, repoBase(repo), from, told, onTold, autonomyFailed ? AUTONOMY_FAILED_WORDS : "");
+  }
   // "the forge" is no app: the words are kept as a thought, exactly as typed.
   if (target === FORGE_TARGET) {
     if (field(form, COMPOSER_FIELDS.text).trim() === "")

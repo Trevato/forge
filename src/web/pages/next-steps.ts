@@ -26,7 +26,7 @@ import { badge, btn, row } from "../ui.ts";
 import { everydayAsk } from "./everyday.ts";
 import { EVERYDAY_WHY } from "../../core/everyday.ts";
 import { crewFirstLine } from "../studio/crew_key.ts";
-import { FORGE_TARGET } from "../studio/feed.ts";
+import { NEW_APP_TARGET } from "../studio/feed.ts";
 import { COMPOSER_FIELDS, TELL_MAX } from "../share_target.ts";
 
 /** One line per app, "<name> is <doing what>" as the row's title and the app its meta; with nobody on it, the app is the title. */
@@ -66,7 +66,7 @@ function firstTell(ctx: Ctx, user: User, crew: Html[]): Html {
   return html`<section id="next-steps" data-first-tell>
     <h2>What do you want built?</h2>
     <form id="composer" class="stack" method="post" action="/tell">
-      <input type="hidden" name="${COMPOSER_FIELDS.app}" value="${FORGE_TARGET}" />
+      <input type="hidden" name="${COMPOSER_FIELDS.app}" value="${NEW_APP_TARGET}" />
       <textarea class="input" name="${COMPOSER_FIELDS.text}" rows="3" maxlength="${String(TELL_MAX)}" required placeholder="A weekly menu page for the bakery" aria-label="Your request" data-draft="${user.id}"></textarea>
       <div class="bar">${btn("Tell the crew", { variant: "primary" })}</div>
     </form>

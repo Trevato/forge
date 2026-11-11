@@ -9,3 +9,5 @@ A hosted forge is made with a crew: a `builder` and a `reviewer`, seated on ever
 **Included credit** is the on-ramp. When no key was handed over, the host lends the new forge `spawn.included_credit_usd` dollars (default 2, once; 0 turns it off) through the child credit (`src/spawn/included_credit.ts`). The crew runs on the host's model door up to that amount; past it the door answers 402 and the forge says: add your own key to keep building, or wait for next month. The forge never holds the host's key, only a capped bearer. Settings → Limits shows the worst case a day: new accounts an hour × 24 × forges a person may own × the credit.
 
 Try: open `/` on a new forge, paste a key, write one ask.
+
+The first ask on a new forge makes a new app named from it and files the ask there as an issue (target `new-app`), startable by a builder when the crew can run.
