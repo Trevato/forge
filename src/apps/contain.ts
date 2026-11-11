@@ -1118,6 +1118,53 @@ function processTable(): {
   return { rows, children };
 }
 
+/**
+ * The process of `tree` that has spent the most CPU (its utime + stime +
+ * cutime + cstime, in clock ticks, from `/proc/<pid>/stat`), or undefined
+ * when none has spent any: who to name when a cell is stopped for CPU
+ * (#11509). Its whole life's ticks, not the window's: a per-pid sample on
+ * every tick would cost every watched tree, every second, for a line that
+ * is written once.
+ */
+export function busiest(
+  tree: readonly number[],
+  ticksOf: (pid: number) => number,
+): { pid: number; ticks: number } | undefined {
+  let top: { pid: number; ticks: number } | undefined;
+  for (const pid of tree) {
+    const ticks = ticksOf(pid);
+    if (ticks > 0 && (top === undefined || ticks > top.ticks)) top = { pid, ticks };
+  }
+  return top;
+}
+
+/**
+ * Why a cell was stopped for CPU: cores = Δticks / CLK_TCK / Δseconds over
+ * the window, against its limit, and the busiest process when there is
+ * one (its CPU seconds = ticks / CLK_TCK, over its life).
+ */
+export function cpuBreach(
+  cores: number,
+  seconds: number,
+  cpus: number,
+  top: { pid: number; ticks: number; name: string } | undefined,
+): string {
+  const why = `used ${cores.toFixed(1)} cores for ${Math.round(seconds)}s, over its limit of ${cpus}`;
+  if (top === undefined) return why;
+  const spent = Math.round(top.ticks / CLK_TCK);
+  return `${why}; the busiest process is ${top.name} (pid ${top.pid}, ${spent}s of CPU)`;
+}
+
+/** A process's command name, printable and short, or "?" once it is gone. */
+function commandName(pid: number): string {
+  try {
+    const name = readFileSync(`/proc/${pid}/comm`, "utf8").trim().replace(/[^\x20-\x7e]/g, "?");
+    return name === "" ? "?" : name.slice(0, 32);
+  } catch {
+    return "?";
+  }
+}
+
 function residentKiB(pid: number): number {
   try {
     const status = readFileSync(`/proc/${pid}/status`, "utf8");
@@ -1200,8 +1247,10 @@ function tick(): void {
       const cores =
         (ticks - oldest.ticks) / CLK_TCK / ((now - oldest.at) / 1000);
       if (cores > limits.cpus) {
+        // Read only now, at the stop: no tick pays for naming a process.
+        const top = busiest(tree, (pid) => rows.get(pid)?.ticks ?? 0);
         entry.breach(
-          `used ${cores.toFixed(1)} cores for ${Math.round((now - oldest.at) / 1000)}s, over its limit of ${limits.cpus}`,
+          cpuBreach(cores, (now - oldest.at) / 1000, limits.cpus, top === undefined ? undefined : { ...top, name: commandName(top.pid) }),
         );
         continue;
       }

@@ -358,6 +358,16 @@ function within<T>(work: Promise<T>, deadline: number, what: string): Promise<T>
   return Promise.race([work, late]).finally(() => clearTimeout(timer));
 }
 
+/**
+ * What runs the browser at the lowest CPU priority, given where `nice` is
+ * (or null where there is none): a picture is housekeeping, and must never
+ * take the cores an app or the forge's requests need (#11509). Without
+ * `nice` the browser runs as it is.
+ */
+export function lowPriority(nice: string | null): string[] {
+  return nice === null ? [] : [nice, "-n", "19"];
+}
+
 async function shoot(
   binary: string,
   input: LookInput,
@@ -369,6 +379,7 @@ async function shoot(
   rmSync(input.out, { force: true });
   const proc = Bun.spawn(
     [
+      ...lowPriority(Bun.which("nice")),
       binary,
       "--headless=new",
       // The forge runs as one unprivileged user with no user namespaces

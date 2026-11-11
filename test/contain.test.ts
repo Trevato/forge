@@ -840,7 +840,7 @@ describe.skipIf(noCells)("cells: limits stop a step, and say which", () => {
     expect(result.ok).toBe(false);
     if (!result.ok)
       expect(result.error).toMatch(
-        /^check stopped: it used [\d.]+ cores for \d+s, over its limit of 0\.02$/,
+        /^check stopped: it used [\d.]+ cores for \d+s, over its limit of 0\.02; the busiest process is \S+ \(pid \d+, \d+s of CPU\)$/,
       );
   }, 30_000);
 
