@@ -203,6 +203,8 @@ export interface FakeState {
   conditionalHits: number;
   /** Refuse the next write with this message. */
   refuseWrite: string;
+  /** Refuse (422) a review posted with `comments` inside it; a bare verdict goes through. */
+  refuseReviewComments?: boolean;
   /** Forgejo webhooks as created, keyed `owner/name`. */
   hooks: Map<string, Record<string, unknown>[]>;
   /**
@@ -904,6 +906,8 @@ function route(
     if (suffix === "/reviews" && method === "POST") {
       if (state.refuseWrite !== "") return refuse(state);
       const input = parse(bodyText);
+      if (state.refuseReviewComments && Array.isArray(input.comments))
+        return jsonResponse({ message: "comments: unexpected" }, 422);
       const created: FakeReviewState = {
         id: state.nextId++,
         issueNumber: number,

@@ -1049,10 +1049,6 @@ carries token material, a `state`, or a `code`.
 - **Contributing needs a workbench.** `contribute` mirrors your fork (and, on
   the push-rights path, the upstream) if it is not mirrored already, so the
   first contribution to a large repository pays for a clone and an import.
-- **A review's line comments do not travel with its verdict.** Submitting a
-  review through the origin sends the state and the body; anchored comments
-  are still posted one at a time. Both forges accept comments inside the
-  review payload, which is the obvious next step.
 - **The guard's window is a day.** An account that gains push rights to a
   protected repository keeps its credential until the next refresh or the
   next daily sweep, whichever is first.
