@@ -58,6 +58,7 @@ import { detectLanguage, highlightLines } from "../../web/highlight.ts";
 import { MAX_COLUMNS, parseCsv, type Table } from "../../text/csv.ts";
 import { parseGeoJson, propertyRows } from "../../web/render/geojson.ts";
 import { gcodeFacts, parseGcode } from "../../web/render/gcode.ts";
+import { parseHar, ROW_CAP as HAR_ROW_CAP, duration as harDuration } from "../../web/render/har.ts";
 import { gpxFacts, parseGpx } from "../../web/render/gpx.ts";
 import { CASE_CAP, parseJunit } from "../../web/render/junit.ts";
 import { parseOpenApi } from "../../web/render/openapi.ts";
@@ -441,6 +442,31 @@ function gpxTable(source: string, path: string): Table | null {
   return { header: ["Fact", "Value"], rows, more: 0, delimiter: ",", columns: 2 };
 }
 
+/** `.har`: a browser's captured session, drawn as a table of its requests. */
+function isHarPath(path: string): boolean {
+  return /\.har$/i.test(path);
+}
+
+/** The requests of a HAR as a table; null when the file is not one. Shares the web's parser and row cap. */
+export function harTable(source: string): Table | null {
+  const parsed = parseHar(source);
+  if ("error" in parsed || parsed.entries.length === 0) return null;
+  const shown = parsed.entries.slice(0, HAR_ROW_CAP);
+  return {
+    header: ["Method", "Status", "URL", "Size", "Time"],
+    rows: shown.map((e) => [
+      e.method,
+      e.status === 0 ? "-" : String(e.status),
+      e.url,
+      e.bytes === undefined ? "-" : fileSize(e.bytes),
+      harDuration(e.ms),
+    ]),
+    more: parsed.entries.length - shown.length,
+    delimiter: ",",
+    columns: 5,
+  };
+}
+
 /** `.sarif`: a scanner's findings, drawn as a table of level, rule, location and message. */
 function isSarifPath(path: string): boolean {
   return /\.sarif$/i.test(path);
@@ -821,6 +847,9 @@ class Tab {
       if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isGpxPath(this.path)) {
       this.table = gpxTable(new TextDecoder().decode(source), this.path);
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isHarPath(this.path)) {
+      this.table = harTable(new TextDecoder().decode(source));
       if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isSarifPath(this.path)) {
       const findings = sarifTable(new TextDecoder().decode(source));

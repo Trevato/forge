@@ -18,6 +18,7 @@ import { csv } from "./csv.ts";
 import { geojson } from "./geojson.ts";
 import { gcode } from "./gcode.ts";
 import { gpx } from "./gpx.ts";
+import { har } from "./har.ts";
 import { font } from "./font.ts";
 import { ics } from "./ics.ts";
 import { junit } from "./junit.ts";
@@ -99,6 +100,7 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
   log,
   subtitles,
   gpx,
+  har,
   gcode,
   geojson,
   calendar: ics,

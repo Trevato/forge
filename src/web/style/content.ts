@@ -519,6 +519,9 @@ form.inline { display: inline; margin-left: auto; }
 .gpx-view { margin: 0; }
 .gpx-view svg { display: block; max-width: 100%; height: auto; margin: 0 auto; color: var(--fg); }
 .gpx-view .status-rows { margin-top: 12px; }
+.har-view { overflow-x: auto; }
+.har-view .har-bar { display: block; width: 100%; height: 10px; margin-top: 4px; color: var(--muted-fg); }
+.har-view .har-url { overflow-wrap: anywhere; min-width: 200px; }
 .gj-view { margin: 0; }
 .gj-view svg { display: block; max-width: 100%; height: auto; margin: 0 auto; color: var(--fg); }
 .gj-table { overflow-x: auto; max-width: 100%; }

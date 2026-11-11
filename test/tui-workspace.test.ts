@@ -825,6 +825,41 @@ describe("the terminal workspace", () => {
     }
   });
 
+  test("a .har opens as its requests table, sharing the web parser, and s flips to the source", async () => {
+    const made = await createRepo(forge, alice, { name: "captures", visibility: "public", description: "har" });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, {
+      message: "seed",
+      files: [
+        {
+          path: "s.har",
+          content: JSON.stringify({
+            log: { entries: [{ startedDateTime: "2026-01-01T00:00:00Z", time: 1230, request: { method: "post", url: "https://example.test/api" }, response: { status: 201, content: { size: 2048 } } }] },
+          }),
+        },
+        { path: "bad.har", content: '{"log": {"entries": [1, ' },
+      ],
+    });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "captures");
+      // A malformed HAR is not a table: the workspace shows its source as it stands.
+      await openFile(h, "bad.har");
+      expect(h.text()).toContain('{"log": {"entries": [1,');
+      expect(h.text()).not.toContain("Method");
+      await openFile(h, "s.har");
+      expect(h.text()).toContain("POST");
+      expect(h.text()).toContain("201");
+      expect(h.text()).toContain("https://example.test/api");
+      expect(h.text()).toContain("1.23 s");
+      await h.press("s");
+      expect(h.text()).toContain("startedDateTime");
+    } finally {
+      h.stop();
+    }
+  });
+
   test("tables: search, edit, the caps in the status line, a ; file, and s on a broken one", async () => {
     const made = await createRepo(forge, alice, {
       name: "sheets",
