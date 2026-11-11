@@ -170,8 +170,24 @@ describe("tell the crew from the pill", () => {
     });
     expect(res.status).toBe(200);
     const issue = listIssues(app.db, repoId, {}).find((i) => i.title === "Bigger button")!;
-    expect(issue.body).toContain("- page: https://notes-pull-3.apps.test/b");
-    expect(issue.body).toContain("- pull: #3");
+    expect(issue.body).toContain("- from preview of #3, page /b");
+    expect(issue.body).not.toContain("- page:");
+    expect(issue.body).not.toContain("- pull:");
+  });
+
+  test("a hostile page path is encoded in the filed line, and a hostile pull is refused", async () => {
+    const res = await post({
+      text: "Hostile path",
+      page: "https://notes-pull-3.apps.test/x)[evil](https://e.test)*<b>",
+      pull: "3",
+    });
+    expect(res.status).toBe(200);
+    const issue = listIssues(app.db, repoId, {}).find((i) => i.title === "Hostile path")!;
+    const line = issue.body.split("\n").find((l) => l.startsWith("- from preview"))!;
+    expect(line).not.toMatch(/[()\[\]*<>]/);
+    const before = told().length;
+    expect((await post({ text: "x", page: "https://a.test/", pull: "3; drop" })).status).toBe(303);
+    expect(told().length).toBe(before);
   });
 
   test("a bad page or pull opens nothing", async () => {

@@ -116,7 +116,7 @@ export async function tellFromPage(
     ctx.toast(NOT_TOLD_FROM_WORDS, "danger");
     return;
   }
-  const answer = tellAnswer(await tell(f.app, f.user, repo, `${said}${contextNote(where)}`));
+  const answer = tellAnswer(await tell(f.app, f.user, repo, `${said}${contextNote(where, { preview: true })}`));
   ctx.toast(answer.text, answer.tone);
 }
 

@@ -282,8 +282,8 @@ describe("toolbar actions", () => {
       pull: String(pullNumber),
     });
     const two = listIssues(app.db, repoId, {}).find((i) => i.title === "Page tell preview")!;
-    expect(two.body).toContain("- page: https://notes.example.test/b");
-    expect(two.body).toContain(`- pull: #${pullNumber}`);
+    expect(two.body).toContain(`- from preview of #${pullNumber}, page /b`);
+    expect(two.body).not.toContain("- pull:");
   });
 
   test("an off-origin or over-long page is dropped from the form, and escaped", async () => {

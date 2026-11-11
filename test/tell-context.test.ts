@@ -12,3 +12,17 @@ test("a page without a fragment is kept as it was", () => {
     page: "https://app.example.test/a",
   });
 });
+
+test("only a door that asked for a preview's pull says 'from preview'", () => {
+  const where = parseContext({ page: "https://n.apps.test/a?x=1", pull: 7 }) ?? undefined;
+  const plain = contextNote(where);
+  expect(plain).not.toContain("from preview");
+  expect(plain).toContain("- page: https://n.apps.test/a?x=1");
+  expect(plain).toContain("- pull: #7");
+  const said = contextNote(where, { preview: true });
+  expect(said).toContain("- from preview of #7, page /a");
+  expect(said).not.toContain("- page:");
+  expect(said).not.toContain("- pull:");
+  // A preview with no pull is no preview.
+  expect(contextNote(parseContext({ page: "https://n.apps.test/a" }) ?? undefined, { preview: true })).toContain("- page:");
+});

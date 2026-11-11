@@ -174,7 +174,7 @@ async function tellFromPage(ctx: Ctx, repo: Repo, form: Form): Promise<Response>
     return flashTo(ctx, back, { tone: "danger", message: NOT_TOLD_FROM_WORDS });
   const text = field(form, "text").trim();
   if (text === "") return flashTo(ctx, back, { tone: "danger", message: SAY_SOMETHING_WORDS });
-  const told = await tell(ctx.app, ctx.auth.user, repo, `${text}${contextNote(where)}`);
+  const told = await tell(ctx.app, ctx.auth.user, repo, `${text}${contextNote(where, { preview: true })}`);
   if (!told.ok)
     return flashTo(ctx, back, {
       tone: "danger",

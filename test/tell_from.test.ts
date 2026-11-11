@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { setIssueState } from "../src/actions/issues.ts";
 import { createRepo } from "../src/actions/repos.ts";
-import { parseFrom } from "../src/actions/tell_from.ts";
+import { parseFrom, previewLine } from "../src/actions/tell_from.ts";
 import { tell } from "../src/actions/tell.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
 import { getIssue, listIssues } from "../src/core/issues.ts";
@@ -175,5 +175,25 @@ describe("tell from a page, through the box", () => {
     });
     expect(evil.headers.get("location")).not.toContain("evil.example");
     close(listIssues(app.db, repo.id, {}).map((i) => i.number));
+  });
+});
+
+describe("previewLine", () => {
+  test("says the pull and the path, nothing else", () => {
+    expect(previewLine(7, "https://n-pull-7.apps.test/a/b?token=x#h")).toBe("from preview of #7, page /a/b");
+  });
+  test("no pull or no page is no line", () => {
+    expect(previewLine(undefined, "https://a.test/")).toBe("");
+    expect(previewLine(3, undefined)).toBe("");
+    expect(previewLine(3, "not a url")).toBe("");
+  });
+  test("a hostile path cannot carry markup", () => {
+    const l = previewLine(3, "https://a.test/x)[y](http://e.test)*_`<i>");
+    expect(l).not.toMatch(/[()\[\]*`<>]/);
+    expect(l.startsWith("from preview of #3, page /x%29")).toBe(true);
+  });
+  test("a hostile from value is refused", () => {
+    expect(parseFrom("//evil.test")).toBeUndefined();
+    expect(parseFrom("/a)[b](c)")).toBeUndefined();
   });
 });
