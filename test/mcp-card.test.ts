@@ -25,6 +25,13 @@ describe("the MCP server card", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
+  test("/llms.txt carries the cards line, counted from the card the server serves", async () => {
+    const card = (await (await fetch(`${base}/.well-known/mcp.json`)).json()) as any;
+    const text = await (await fetch(`${base}/llms.txt`)).text();
+    expect(text).toContain("_meta.ui.resourceUri");
+    expect(text).toContain(`(${card.cards.length} cards;`);
+  });
+
   test("names the server, endpoint, sign-in and the tokenless tool, each true", async () => {
     const res = await fetch(`${base}/.well-known/mcp.json`);
     expect(res.status).toBe(200);
@@ -86,5 +93,23 @@ describe("the MCP server card", () => {
   test("/llms.txt links the card", async () => {
     const txt = await (await fetch(`${base}/llms.txt`)).text();
     expect(txt).toContain(`${base}/.well-known/mcp.json`);
+  });
+});
+
+describe("the cards the server card names", () => {
+  test("every tool in CARD_OF_TOOL is listed under its card's resource", async () => {
+    const { CARD_OF_TOOL, CARD_URI } = await import("../src/web/studio/cards.ts");
+    const card = mcpCard("https://x", undefined, running({}));
+    for (const [tool, kind] of Object.entries(CARD_OF_TOOL)) {
+      const entry = card.cards.find((c) => c.resource === CARD_URI(kind));
+      expect(entry?.tools).toContain(tool);
+    }
+    expect(card.cards.flatMap((c) => c.tools).length).toBe(Object.keys(CARD_OF_TOOL).length);
+  });
+
+  test("/llms.txt says results carry cards and how many", async () => {
+    const { cardsLine, cardList } = await import("../src/core/mcp_card.ts");
+    expect(cardsLine()).toContain("_meta.ui.resourceUri");
+    expect(cardsLine()).toContain(`${cardList().length} cards`);
   });
 });

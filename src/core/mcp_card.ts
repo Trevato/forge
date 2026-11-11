@@ -11,6 +11,7 @@ import { claudeInstall, opencodeInstall, pluginSource } from "./plugin_install.t
 import { running, type Running } from "../kernel/version.ts";
 import { forgeSource } from "../settings/forge_source.ts";
 import { repoVisibility } from "./repos.ts";
+import { CARD_OF_TOOL, CARD_URI } from "../web/studio/cards.ts";
 
 /** The endpoint and the protected-resource metadata that names how to sign in. */
 export function mcpPointers(origin: string): { url: string; oauth: string } {
@@ -115,6 +116,26 @@ export function offeredPlugins(repo: string | undefined): readonly HarnessPlugin
 }
 
 /**
+ * The MCP Apps cards (SEP-1865) a harness can draw, one `{ resource, tools }`
+ * per `ui://` resource, read from `CARD_OF_TOOL` so the card and /llms.txt
+ * cannot drift from what `tools/list` advertises.
+ */
+export function cardList(): { resource: string; tools: string[] }[] {
+  const byResource = new Map<string, string[]>();
+  for (const [tool, kind] of Object.entries(CARD_OF_TOOL)) {
+    const uri = CARD_URI(kind);
+    byResource.set(uri, [...(byResource.get(uri) ?? []), tool]);
+  }
+  return [...byResource].map(([resource, tools]) => ({ resource, tools }));
+}
+
+/** The one /llms.txt line that says tool results carry cards, and how many. */
+export function cardsLine(): string {
+  const n = cardList().length;
+  return `Tool results carry MCP Apps cards: a tool listed with _meta.ui.resourceUri points at a ui:// resource a harness can draw (${n} cards; the list is "cards" in the server card).`;
+}
+
+/**
  * The server card. The format is still a draft, so only what we can keep
  * true is named: who answers, where, over what transport, how to sign in,
  * and the one tool that needs no token.
@@ -131,6 +152,7 @@ export function mcpCard(origin: string, repo: string | undefined, now: Running =
     documentation: `${origin}${DISCOVERY.docs}`,
     openapi: `${origin}${DISCOVERY.openapi}`,
     tokenFreeTools: [...TOKEN_FREE_TOOLS],
+    cards: cardList(),
     plugins: offeredPlugins(repo).map((p) => ({
       harness: p.harness,
       path: p.path,

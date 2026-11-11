@@ -44,7 +44,7 @@ import { notFound } from "../http/respond.ts";
 import { SHARE_TARGET } from "./share_target.ts";
 import { SITE_LINE } from "./site_line.ts";
 import { mcpToolsSection } from "./llms_tools.ts";
-import { apiCatalog, DISCOVERY, mcpCard, offeredPlugins, mcpPointers, offeredPluginRepo, pluginSource } from "../core/mcp_card.ts";
+import { apiCatalog, cardsLine, DISCOVERY, mcpCard, offeredPlugins, mcpPointers, offeredPluginRepo, pluginSource } from "../core/mcp_card.ts";
 import { forgeDocument } from "../core/standards_index.ts";
 import { TAGS } from "../contract/served.ts";
 import { running } from "../kernel/version.ts";
@@ -483,6 +483,8 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
       `- OpenAPI: GET ${o}${DISCOVERY.openapi}, or one slice with ?tag= (${TAGS.join(", ")})`,
       "",
       ...mcpToolsSection(o, signedIn),
+      cardsLine(),
+      "",
       "## Public repositories",
       "",
       // Names and addresses only: a description is whatever its owner
