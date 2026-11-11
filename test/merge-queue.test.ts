@@ -704,6 +704,7 @@ describe("the merge queue", () => {
     expect(hold!.why).toContain("goes red");
     const [run] = doctorRuns(app.db, repo.id);
     expect(run).toMatchObject({ culprit: pull.number, class: "functional", action: "held" });
+    expect(doctorRuns(app.db, repo.id)).toHaveLength(1);
     expect(listComments(app.db, pull.id).at(-1)!.body).toContain("bun test ./test/red.test.ts");
   });
 
@@ -715,7 +716,15 @@ describe("the merge queue", () => {
     const red = pulls[2]!;
     expect(latestDecision(app.db, red.id, "land")?.answer).toBe("red");
     expect(getHold(app.db, red.id)).toBeUndefined();
-    expect(doctorRuns(app.db, repo.id)).toEqual([]);
+    // No single culprit yet: recorded as a recheck with its members (#11262), never held.
+    const runs = doctorRuns(app.db, repo.id);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ culprit: red.number, action: "recheck" });
+    expect(runs[0]!.batch).toMatch(new RegExp(`^[0-9a-f]{12}:${red.headOid.slice(0, 12)}\\+#${pulls[0]!.number},#${pulls[1]!.number}$`));
+    // The re-gate alone is a first red on a new base with nothing landed ahead, or a reproduced one: neither adds a recheck row.
+    age(red);
+    await sweepGreen(app, repo);
+    expect(doctorRuns(app.db, repo.id).filter((r) => r.action === "recheck")).toHaveLength(1);
   });
 
   test("a red that reproduces on the re-gate stays red, told once", async () => {

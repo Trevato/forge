@@ -115,6 +115,27 @@ function record(app: App, repo: Repo, pull: Pull, batch: string, d: Diagnosis, a
     .run(DUTY, repo.id, RUNS_KEPT);
 }
 
+/**
+ * A red the queue's search narrowed to one pull but found on top of pulls of
+ * its candidate that landed first (`together`): red alone or only with them,
+ * so no culprit is proven and nothing is held. The class, the test and the
+ * members are recorded, and the re-gate that carries the pull alone decides
+ * the hold (`treatRed`).
+ */
+export function noteRed(app: App, repo: Repo, pull: Pull, red: Red, baseOid: string, together: readonly number[]): void {
+  if (together.length === 0) return;
+  const members = together.map((n) => `#${n}`).join(",");
+  const batch = `${baseOid.slice(0, 12)}:${pull.headOid.slice(0, 12)}+${members}`;
+  // A flapping batch is red on the same head with the same members again and
+  // again: one row per (pull, head, members), so it cannot push the rows that
+  // record real holds out of the `RUNS_KEPT` newest.
+  const seen = app.db
+    .query(`SELECT 1 FROM maintenance_run WHERE duty = ?1 AND repo_id = ?2 AND culprit = ?3 AND action = 'recheck' AND batch LIKE ?4 LIMIT 1`)
+    .get(DUTY, repo.id, pull.number, `%:${pull.headOid.slice(0, 12)}+${members}`);
+  if (seen) return;
+  record(app, repo, pull, batch, cleaned(classify(red.reason, red.tests)), "recheck");
+}
+
 /** Treat one red the queue's re-gate handed back, the pull alone on its merge. `by` acts. */
 export function treatRed(app: App, repo: Repo, by: User, pull: Pull, red: Red, baseOid: string): DoctorAction {
   const batch = `${baseOid.slice(0, 12)}:${pull.headOid.slice(0, 12)}`;

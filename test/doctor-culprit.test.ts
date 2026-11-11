@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { deleteRepo } from "../src/actions/repos.ts";
-import { doctorRuns, HOLD_PREFIX, isDoctorHold, RUNS_KEPT, treatRed } from "../src/checks/doctor.ts";
+import { doctorRuns, HOLD_PREFIX, isDoctorHold, noteRed, RUNS_KEPT, treatRed } from "../src/checks/doctor.ts";
 import { getHold } from "../src/core/holds.ts";
 import { listComments } from "../src/core/issues.ts";
 import { doctorWorld, redFor, type Doctor } from "./helpers/doctor.ts";
@@ -75,6 +75,29 @@ describe("the batch doctor and a red culprit", () => {
       expect(doctorRuns(other.app.db, other.repo.id).length).toBe(0);
     } finally {
       await other.close();
+    }
+  });
+});
+
+describe("the batch doctor and a red with no single culprit", () => {
+  test("a red on top of landed pulls is classed and recorded with its members, and not held", async () => {
+    const w = await doctorWorld("together");
+    try {
+      const pull = await w.pull("mix.ts");
+      noteRed(w.app, w.repo, pull, redFor("mixes", "test/mix.test.ts", "error: boom"), "a".repeat(40), [7, 9]);
+      expect(getHold(w.app.db, pull.id)).toBeUndefined();
+      const [run] = doctorRuns(w.app.db, w.repo.id);
+      expect(run).toMatchObject({ culprit: pull.number, class: "functional", action: "recheck" });
+      expect(run!.batch).toEndWith("+#7,#9");
+      noteRed(w.app, w.repo, pull, redFor("mixes", "test/mix.test.ts", "error: boom"), "a".repeat(40), []);
+      expect(doctorRuns(w.app.db, w.repo.id)).toHaveLength(1);
+      // The same head and members again is one row; other members are another.
+      noteRed(w.app, w.repo, pull, redFor("mixes", "test/mix.test.ts", "error: boom"), "b".repeat(40), [7, 9]);
+      expect(doctorRuns(w.app.db, w.repo.id)).toHaveLength(1);
+      noteRed(w.app, w.repo, pull, redFor("mixes", "test/mix.test.ts", "error: boom"), "b".repeat(40), [7]);
+      expect(doctorRuns(w.app.db, w.repo.id)).toHaveLength(2);
+    } finally {
+      await w.close();
     }
   });
 });

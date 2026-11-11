@@ -12,7 +12,7 @@
  * repository's origin.
  */
 
-import { treatRed } from "../checks/doctor.ts";
+import { noteRed, treatRed } from "../checks/doctor.ts";
 import { tickBets } from "../actions/bets.ts";
 import { betsInUse } from "../core/bets.ts";
 import { onlyListDocs, resolveListConflicts } from "../actions/list-conflicts.ts";
@@ -2199,6 +2199,8 @@ async function admit(
       if (!again) addComment(app, by, repo, getIssueById(app.db, pull.id) ?? pull, clashSaid(red.comment, together));
       // A red that reproduces on the re-gate is the code's: only then is it the doctor's to hold.
       if (again) treatRed(app, repo, by, pull, red, baseOid);
+      // Red only on top of pulls that landed first: no single culprit yet, so the class is recorded and the re-gate alone decides.
+      else noteRed(app, repo, pull, red, baseOid, together);
     },
   });
 }
