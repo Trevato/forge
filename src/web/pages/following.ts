@@ -54,13 +54,16 @@ import { disconnectedOn } from "./frozen.ts";
  * The family as a tree: nested lists, so the nesting a sighted reader sees
  * as indentation is the nesting a screen reader announces, and a phone
  * never has to scroll sideways to follow it. The repository being looked at
- * is marked, and every fork carries its standing against its own parent.
+ * is marked "you are here", the viewer's other forks say "you", and every
+ * fork carries its standing against its own parent.
  */
-export function lineageCard(lineage: Lineage, hereId: string): Html {
+export function lineageCard(lineage: Lineage, hereId: string, viewerId?: string): Html {
   const node = (n: LineageNode, depth: number): Html => {
     const here = n.repo.id === hereId;
     const trail = [
       here ? badge("you are here", { variant: "outline" }) : null,
+      // The viewer's own forks say "you" in words. aria-current stays on the one row being looked at.
+      !here && viewerId !== undefined && n.repo.ownerId === viewerId ? badge("you", { variant: "outline" }) : null,
       n.relation === undefined ? null : relationBadge(n.relation),
     ].filter((t): t is Html => t !== null);
     return row({

@@ -196,7 +196,7 @@ export async function forksPage(ctx: Ctx): Promise<Response> {
         })
       : html`${forkRanking(ranked, new Map(tree.map((n) => [n.repo.id, n])))}
           <h3 class="mt">The family, by who follows whom</h3>
-          ${lineageCard(lineage, repo.id)}`}`;
+          ${lineageCard(lineage, repo.id, ctx.auth.user?.id)}`}`;
   const res = page({
     ctx,
     title: `Forks · ${repo.ownerName}/${repo.name}`,
