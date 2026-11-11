@@ -681,6 +681,29 @@ describe("the terminal workspace", () => {
     }
   });
 
+  test("a .graphql file opens as its types, roots first, and s shows the source", async () => {
+    const made = await createRepo(forge, alice, { name: "gqlrepo", visibility: "public", description: "api" });
+    if (!made.ok) throw new Error("repo failed");
+    const gql = 'type User @key(fields: "id") { id: ID! }\ntype Query { user(id: ID!): User }\nscalar Date';
+    await commitToBranch(forge, alice, made.value, { message: "seed", files: [{ path: "api/schema.graphql", content: gql }] });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "gqlrepo");
+      await openFile(h, "api/schema.graphql");
+      const text = h.text();
+      expect(text).toContain("type Query");
+      expect(text).toContain("user");
+      expect(text).toContain("ID!");
+      expect(text).toContain("scalar Date");
+      expect(text.indexOf("type Query")).toBeLessThan(text.indexOf("type User"));
+      await h.press("s");
+      expect(h.text()).toContain("type Query {");
+    } finally {
+      h.stop();
+    }
+  });
+
   test("a JUnit report opens as its totals and failing cases, sharing the web parser", async () => {
     const made = await createRepo(forge, alice, { name: "junitrepo", visibility: "public", description: "tests" });
     if (!made.ok) throw new Error("repo failed");

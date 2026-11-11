@@ -48,6 +48,7 @@ export type FileKind =
   | "workflow"
   | "compose"
   | "sql"
+  | "graphql"
   | "text"
   | "binary";
 
@@ -94,6 +95,7 @@ export const RENDER_CAP: Readonly<Record<FileKind, number>> = {
   workflow: 1 * MB,
   compose: 1 * MB,
   sql: 1 * MB,
+  graphql: 1 * MB,
   text: 1 * MB,
   binary: 0,
 };
@@ -218,6 +220,8 @@ const TEXTUAL: Readonly<Record<string, FileKind>> = {
   sarif: "sarif",
   lcov: "lcov",
   sql: "sql",
+  graphql: "graphql",
+  gql: "graphql",
 };
 
 /** The three example names; a plain `.env` is never one. */

@@ -63,6 +63,7 @@ import { CASE_CAP, parseJunit } from "../../web/render/junit.ts";
 import { parseOpenApi } from "../../web/render/openapi.ts";
 import { parseDockerfile } from "../../web/render/dockerfile.ts";
 import { parseWorkflow } from "../../web/render/workflow.ts";
+import { parseGraphql } from "../../web/render/graphql.ts";
 import { parseSql } from "../../web/render/sql.ts";
 import { RESULT_CAP, parseSarif } from "../../web/render/sarif.ts";
 import { RECORD_CAP, parseLcov, worstFirst, type Ratio } from "../../web/render/lcov.ts";
@@ -553,6 +554,31 @@ function sqlTable(source: string): Table | string {
   return { header: ["Table", "Column", "Type", "Null", "Key", "Default"], rows, more: doc.total - doc.statements.length, delimiter: ",", columns: 6 };
 }
 
+/** A `.graphql` or `.gql` file by name. */
+function isGraphqlPath(path: string): boolean {
+  return kindByName(path) === "graphql";
+}
+
+/**
+ * A GraphQL schema as a table: a row per field or enum value of each block (roots first), one row
+ * per other definition; the reason when it is not drawn. Shares the web's parser.
+ */
+function graphqlTable(source: string): Table | string {
+  const doc = parseGraphql(source);
+  if (doc === null) return "not drawn as a schema: this file holds no type, input, interface or enum to draw";
+  const dash = (v: string): string => (v === "" ? "-" : v);
+  const rows = doc.blocks.flatMap((b) =>
+    b.kind === "other"
+      ? [["-", b.text, "-", "-", "-"]]
+      : [
+          ...(b.header === "" ? [] : [[`${b.extend ? "extend " : ""}${b.kind} ${b.name}`, "-", "-", "-", b.header]]),
+          ...b.fields.map((f) => [`${b.extend ? "extend " : ""}${b.kind} ${b.name}`, f.name, dash(f.args), dash(f.type), dash(f.note)]),
+          ...(b.fields.length === 0 && b.header === "" ? [[`${b.kind} ${b.name}`, "-", "-", "-", "-"]] : []),
+        ],
+  );
+  return { header: ["Block", "Field", "Arguments", "Type", "Directives"], rows, more: doc.total - doc.blocks.length, delimiter: ",", columns: 5 };
+}
+
 /** A JUnit report, by the web's own rule (file name, or root element). */
 function isJunitPath(path: string, source: Uint8Array): boolean {
   return /\.xml$/i.test(path) && fileKind(path, source.subarray(0, 4096)) === "junit";
@@ -822,6 +848,11 @@ class Tab {
       if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isSqlPath(this.path)) {
       const schema = sqlTable(new TextDecoder().decode(source));
+      this.table = typeof schema === "string" ? null : schema;
+      this.fault = typeof schema === "string" ? schema : "";
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isGraphqlPath(this.path)) {
+      const schema = graphqlTable(new TextDecoder().decode(source));
       this.table = typeof schema === "string" ? null : schema;
       this.fault = typeof schema === "string" ? schema : "";
       if (this.table !== null) this.grid = layoutTable(this.table);
