@@ -788,11 +788,15 @@ export function studioDoor(ctx: Ctx): Response {
       <h1>Software for what you're building.<br /><span class="muted">Yours to keep.</span></h1>
       <div class="door-under">
         <div class="door-lead">
-          <p class="door-support">Say what you need. An AI crew builds it, for a business or a game studio.</p>
-          <div class="bar">
-            ${btn("Get your own forge", { href: "#yours", variant: "primary", size: "lg" })}
-            ${when(made.length > 0, () => btn("See what it built", { href: "#made", size: "lg" }))}
-          </div>
+          <p class="door-support">Say what you need and an AI crew builds it in your own forge, free to try.</p>
+          <form method="post" action="/forges/new" class="door-start" id="start-forge">
+            <div class="field">
+              <label for="start-name">Forge name</label>
+              <input class="input" id="start-name" name="name" type="text" required autocomplete="off" autocapitalize="none" spellcheck="false" />
+            </div>
+            ${btn("Start my forge", { variant: "primary", size: "lg" })}
+          </form>
+          ${when(made.length > 0, () => html`<div class="bar">${btn("See what it built", { href: "#made", size: "lg" })}</div>`)}
           <div class="door-agent">
             <p>
               Have an AI assistant? Give it this:

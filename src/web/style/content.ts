@@ -260,6 +260,8 @@ form.inline { display: inline; margin-left: auto; }
 .door-under { display: grid; gap: 56px; margin-top: 28px; }
 .door-lead { display: flex; flex-direction: column; align-items: flex-start; gap: 24px; min-width: 0; }
 .door-lead .bar { gap: 8px; flex-wrap: wrap; }
+.door-start { width: 100%; max-width: 28rem; }
+.door-start .btn { width: 100%; }
 .door-agent { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 520px; font-size: 13px; color: var(--muted-fg); }
 .door-agent a { margin-left: 8px; color: var(--fg); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border-strong); }
 /* On the input's own tinted ground the muted color falls short of AA; the words are the thing to copy. */
