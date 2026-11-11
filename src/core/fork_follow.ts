@@ -1,7 +1,7 @@
 /** How a plain fork follows its parent: one row per fork that chose; none means the default. */
 
 import type { Database } from "bun:sqlite";
-import { DEFAULT_MODE, FOLLOW_MODES } from "../spawn/chain.ts";
+import { FOLLOW_MODES, type FollowMode } from "../spawn/chain.ts";
 
 /**
  * A plain fork's modes: the chain's two, and `dont-follow` (#608), which a
@@ -13,9 +13,12 @@ export type ForkFollowMode = (typeof FORK_FOLLOW_MODES)[number];
 export const isForkFollowMode = (v: unknown): v is ForkFollowMode =>
   typeof v === "string" && (FORK_FOLLOW_MODES as readonly string[]).includes(v);
 
+/** A plain fork still proposes by default; only a spawned forge takes updates. */
+export const FORK_DEFAULT_MODE: FollowMode = "tell-me";
+
 export function forkFollowMode(db: Database, repoId: string): ForkFollowMode {
   const row = db.query<{ mode: ForkFollowMode }, [string]>("SELECT mode FROM fork_follow WHERE repo_id = ?1").get(repoId);
-  return row?.mode ?? DEFAULT_MODE;
+  return row?.mode ?? FORK_DEFAULT_MODE;
 }
 
 export function setForkFollowMode(db: Database, repoId: string, mode: ForkFollowMode): void {
@@ -24,7 +27,7 @@ export function setForkFollowMode(db: Database, repoId: string, mode: ForkFollow
   ).run(repoId, mode);
 }
 
-/** The stored modes of these repos in one query; a repo with none stored is absent (it follows `DEFAULT_MODE`). */
+/** The stored modes of these repos in one query; a repo with none stored is absent (it follows `FORK_DEFAULT_MODE`). */
 export function forkFollowModes(db: Database, repoIds: readonly string[]): Map<string, ForkFollowMode> {
   if (repoIds.length === 0) return new Map();
   const rows = db

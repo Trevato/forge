@@ -70,7 +70,7 @@ export interface SpawnInput {
   readonly budgetUsd?: unknown;
   /** One line describing a fresh app to start in the child, beside the forked ones; optional. */
   readonly fresh?: unknown;
-  /** How the child follows the forge's code: `tell-me` (default) or `take-updates`. */
+  /** How the child follows the forge's code: `take-updates` (default) or `tell-me`. */
   readonly followMode?: unknown;
   /** How big the child is: `small`, `medium` or `large`; optional. */
   readonly size?: unknown;
@@ -116,7 +116,7 @@ export interface SpawnPlan {
   readonly forWhom?: string;
   /** A fresh app, present only when asked for. */
   readonly fresh?: PlannedFresh;
-  /** How the child follows its parent's forge code; absent means `tell-me`. */
+  /** How the child follows its parent's forge code; absent means `take-updates`. */
   readonly followMode?: FollowMode;
   /** The child's size, present only when chosen. */
   readonly size?: Size;

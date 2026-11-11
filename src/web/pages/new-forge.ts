@@ -59,7 +59,7 @@ const EMPTY: Values = {
   apps: [],
   crew: [],
   fresh: "",
-  followMode: "tell-me",
+  followMode: "take-updates",
   keepAccess: false,
   budgetUsd: "",
   modelEndpoint: "",
@@ -248,22 +248,22 @@ function formView(
             <input
               type="radio"
               name="followMode"
-              value="tell-me"
-              ${values.followMode !== "take-updates" ? html`checked` : null}
+              value="take-updates"
+              ${values.followMode !== "tell-me" ? html`checked` : null}
             />
             <span
-              >${FOLLOW_LABELS["tell-me"]} <span class="muted small">${FOLLOW_WORDS["tell-me"]}</span></span
+              >${FOLLOW_LABELS["take-updates"]} <span class="muted small">${FOLLOW_WORDS["take-updates"]}</span></span
             >
           </label>
           <label class="check">
             <input
               type="radio"
               name="followMode"
-              value="take-updates"
-              ${values.followMode === "take-updates" ? html`checked` : null}
+              value="tell-me"
+              ${values.followMode === "tell-me" ? html`checked` : null}
             />
             <span
-              >${FOLLOW_LABELS["take-updates"]} <span class="muted small">${FOLLOW_WORDS["take-updates"]}</span></span
+              >${FOLLOW_LABELS["tell-me"]} <span class="muted small">${FOLLOW_WORDS["tell-me"]}</span></span
             >
           </label>
           ${errors["followMode"]
@@ -485,7 +485,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     apps: all(form, "apps"),
     crew: all(form, "crew"),
     fresh: field(form, "fresh").trim(),
-    followMode: field(form, "followMode").trim() || "tell-me",
+    followMode: field(form, "followMode").trim() || "take-updates",
     keepAccess: asBool(form, "keepAccess"),
     budgetUsd: field(form, "budgetUsd").trim(),
     modelEndpoint: field(form, "modelEndpoint").trim(),

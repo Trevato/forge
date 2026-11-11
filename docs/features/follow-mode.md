@@ -3,7 +3,7 @@
 A fork follows its upstream in one of three modes, said in one line on its page:
 
 - **Follows ann/yard automatically** (`take-updates`): new code is merged as it lands; a conflict goes to the crew.
-- **Proposes updates from ann/yard** (`tell-me`, the default): a fork with nothing of its own still moves along; one with work of its own is told, and takes updates when its owner chooses.
+- **Takes updates from ann/yard** (`take-updates`, the default for a new forge): a fork with no commits of its own fast-forwards by itself; one with commits of its own gets a pull to merge. A plain fork defaults to `tell-me`: its owner is told and chooses.
 - **Does not follow ann/yard** (`dont-follow`, #608): nothing is fast-forwarded, merged or announced, and the crew is never asked to converge. The fork can still offer its changes up.
 
 The line shows only on a fork, to anyone who can see the page.

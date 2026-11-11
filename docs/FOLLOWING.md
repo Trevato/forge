@@ -184,8 +184,8 @@ there is landing it upstream.
 the API.
 
 A fork across forges (#1085): a spawned forge's `<org>/forge` follows its
-parent's forge code in the mode the spawner chose, `tell-me` (default) or
-`take-updates`; `/:owner/forge/following` shows the chain to the root and
+parent's forge code in the mode the spawner chose, `take-updates` (default) or
+`tell-me`; `/:owner/forge/following` shows the chain to the root and
 the owner's **Sever**, which cuts the link and deletes nothing (the page
 and the parent's `/family` say "follows nothing since …"). `docs/SPAWN.md`
 has the shape. A **conflict** on **Take updates** is a tell for the crew:
@@ -256,8 +256,8 @@ the default branch is pushed to `child/<name>/<branch>-<tip>` at the parent,
 and the pull opens there, titled by the change that landed last and naming it
 (`org/forge#7`). Asking again for the same tip returns the pull already made.
 
-The repository's admin changes how the forge follows its parent (`tell-me` or
-`take-updates`) from the radio form on the same page, with `PATCH
+The repository's admin changes how the forge follows its parent (`take-updates` or
+`tell-me`) from the radio form on the same page, with `PATCH
 /api/v1/forge/following {"mode"}`, with the MCP `follow_mode` tool, or by pressing `m` on the chain screen in the terminal. The
 record in `parent.json` is rewritten atomically and a `forge.follow_mode` event
 is appended. A non-admin is refused (403), a value outside the two modes is

@@ -197,7 +197,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `signup` | — | Sign-ups: open (default); invite lets in only a person with an open invite link; closed refuses every new account | 324 |
 | `sizes` | — | A child forge's sizes: small, medium and large, each with CPU, memory and disk | 196 |
 | `snapshot_now` | — | Take a snapshot now, as Backups does (admin) | 133 |
-| `spawn` | — | Spawn a child forge | 910 |
+| `spawn` | — | Spawn a child forge | 908 |
 | `spend` | — | Report what your session spent outside forge runs: who, model, tokens or dollars, issue | 470 |
 | `ssh_keys` | `list`, `add`, `remove` | Your SSH keys; add: key, remove: id | 250 |
 | `steer` | — | Say a word to one crew run by its id | 224 |

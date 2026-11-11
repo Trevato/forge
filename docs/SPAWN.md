@@ -95,8 +95,8 @@ reads child → parent → … → root.
 `parent.json` keeps `forgeCode`: `repo`, `upstream`, `mode`, `tip` (the
 upstream's tip at birth) and `chain` (the ancestors' hops, copied from the
 parent's own `parent.json`, so a grandchild reads the whole chain offline).
-The spawner chooses `followMode` in the spawn input: `tell-me` (default) or
-`take-updates`; it is part of the plan. `/:owner/forge/following` on the
+The spawner chooses `followMode` in the spawn input: `take-updates` (default) or
+`tell-me`; it is part of the plan. A plain fork (not a spawned forge) defaults to `tell-me`. `/:owner/forge/following` on the
 child shows the chain, root first, one line per hop with its mode and how
 many commits of its own it had when the next hop was born (the last hop is
 counted now). What the modes do is in
@@ -125,7 +125,7 @@ learned (the parent's tip, how far behind the child is) is kept in
 The owner's `followMode` decides what happens when the parent has new commits:
 
 - `tell-me` sends one inbox card per new tip, listing its commits.
-- `take-updates` opens one pull from the branch `forge/take-updates`
+- `take-updates` (the default) fast-forwards main when the fork has no commits of its own; otherwise it opens one pull from the branch `forge/take-updates`
   (`TAKE_BRANCH`) holding the parent's code, and updates that same pull when
   the parent moves again. The pull carries the check like any other.
 
@@ -142,7 +142,7 @@ leaves. The page and the parent's tree then say it follows nothing since
 the date.
 
 A spawned forge's own code is a fork of its parent's (`<org>/forge`, chosen
-`followMode` `tell-me` or `take-updates`; in `take-updates` the hourly check puts what the parent gained in a pull.
+`followMode` `take-updates` (default) or `tell-me`; in `take-updates` the hourly check fast-forwards a fork with no commits of its own, and puts what the parent gained in a pull when the fork has its own.
  Once an hour, and
 on demand, a forge that follows and has not severed fetches its parent's code into
 `refs/upstream/*` of its own `<org>/forge` (no branch of the fork moves) and keeps
@@ -150,10 +150,10 @@ on demand, a forge that follows and has not severed fetches its parent's code in
 the count shows on the chain page, in the terminal's **Chain** (`c` checks now), and as
 `upstream` in the API and MCP payloads. `POST /:owner/forge/following/check` (a writer,
 same-origin) checks on demand; a fetch is cut at 60 s and a failure is recorded, not
-thrown. In `take-updates` the check then puts `refs/upstream/HEAD` (a fast-forward, or a clean merge commit) on the
+thrown. In `take-updates` the check first fast-forwards main itself when the fork has no commits of its own (compare-and-swap, so a push in between wins). Otherwise it puts `refs/upstream/HEAD` (a fast-forward, or a clean merge commit) on the
 fork's `forge/take-updates` branch and opens one pull, "Take updates from <parent>", into main, or updates
 that pull when it is open (`spawn/take.ts`); the fork's check runs on it like on any pull and a person merges it.
-Main is never moved, so nothing deploys by itself. It is recorded as `taken` in `upstream.json` (the chain line
+Main is moved only by that untouched-fork fast-forward; a fork with its own commits gets the pull and a person merges it. It is recorded as `taken` in `upstream.json` (the chain line
 reads "N commits from your parent are in pull #P") and as a `forge.updates_taken` event; a pull closed unmerged
 is not reopened until the parent moves again. `forge/take-updates` belongs to the check: a commit a person pushes there is overwritten by the next check that finds something different to put on it (open a branch of your own to build on it). On a conflict nothing changes and one open issue,
 "Take updates from <parent>", names the files. In `tell-me`, a new parent tip makes one inbox card for the owner (an issue on the fork assigned to them, "Your parent forge has N new commits", linking the chain page); `toldTip` in `upstream.json` keeps it to one per tip, and `take-updates` or a severed link makes none. Its chain
