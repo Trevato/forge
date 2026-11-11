@@ -115,7 +115,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `forges` | — | Forges sent from here (admin; a stage says when to resend), or one forge's plan to read or grant | 336 |
 | `fork` | — | Fork a repository into your account; for a guest, a copy to send changes back from | 232 |
 | `fork_tree` | — | The fork tree around a repo: ancestors, siblings and descendants you may read | 397 |
-| `forks` | — | A repo's forks you may see, paged by limit and cursor (next_cursor), each with commits ahead and behind | 345 |
+| `forks` | `chain` | A repo's forks you may see, paged by limit and cursor (next_cursor), each with commits ahead and behind | 387 |
 | `front_page` | — | The stranger's front page; admin sets `pinned`/`hidden`/`weights` | 457 |
 | `health` | — | How this forge is: version, commit, draining or not, rollout, incidents | 190 |
 | `held` | — | What the Later gate holds, and one proposed pass over it | 319 |
@@ -295,6 +295,15 @@ unknown"), `updatedAt` its "pushed" time. Nothing records when a fork last took
 updates, so the last move of its default branch stands for it. A fork you
 cannot read is not a row (`src/actions/fork_tree_rows.ts`);
 `test/mcp-tree.test.ts` holds the words to the page.
+
+`forks` with `{ repo, kind: "chain" }` is another (#11432): one fork's own
+lineage, `{ chain, severed, truncated }`, rows `{ role, repo, follows, page }` in
+the order grandparent, parent, this fork, children (at most 20). `follows` is the
+fork tree page's line (`followModeWords`); a fork cut loose by severing says
+"Severed from its upstream." and the chain stops there (`severed: true`); a
+repository you cannot read is left out, never named. `page` is the path of its
+page. Not the whole tree (`fork_tree`, `explore` `kind: tree`);
+`src/actions/fork_chain.ts`, `test/mcp-forks-chain.test.ts`.
 
 `system` with `{ kind: "csp" }` is another (#10906): the last 24 hours of
 Content-Security-Policy violations browsers reported to `/csp-report`,
