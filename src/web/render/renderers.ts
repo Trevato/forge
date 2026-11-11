@@ -32,6 +32,7 @@ import { notebook } from "./notebook.ts";
 import { patch } from "./patch.ts";
 import { pdf } from "./pdf.ts";
 import { dockerfile } from "./dockerfile.ts";
+import { workflow } from "./workflow.ts";
 import { openapi } from "./openapi.ts";
 import { lcov } from "./lcov.ts";
 import { sarif } from "./sarif.ts";
@@ -107,6 +108,7 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
   openapi,
   makefile,
   dockerfile,
+  workflow,
   mail: eml,
   archive,
   font,

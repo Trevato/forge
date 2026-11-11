@@ -52,6 +52,10 @@ A .zip, .tar or .tar.gz is drawn by `src/web/render/archive-view.ts` as the exis
 
 `src/web/render/dockerfile.ts` draws one `section` per stage: an `h3` with the image, `small` paragraphs for exposed ports and ENV names, then one existing `.table` (`data-dense`) of keyword and arguments. `.dockerfile-view` is only a hook on the wrapper and has no rule. How it works: `docs/features/file-dockerfile.md`.
 
+## GitHub Actions workflow (.github/workflows/*.yml)
+
+`src/web/render/workflow.ts` draws a lead line with the triggers, then one `section` per job: an `h3` with the job, one existing `dl.status-rows` of its runner, needs and matrix, and one existing `.table` (`data-dense`) of its steps. `.workflow-view` is only a hook on the wrapper and has no rule. How it works: `docs/features/file-workflow.md`.
+
 ## SQL schema (*.sql)
 
 `src/web/render/sql.ts` draws, per statement, either an `h3` with the table name and one existing `.table` (`data-dense`) of its columns, or a one-row `.table` with the statement's first line. `.sql-view` is only a hook on the wrapper and has no rule. How it works: `docs/features/file-sql.md`.

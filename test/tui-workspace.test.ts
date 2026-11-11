@@ -639,6 +639,27 @@ describe("the terminal workspace", () => {
     }
   });
 
+  test("a workflow opens as its jobs, a broken one says why, and s shows the source", async () => {
+    const made = await createRepo(forge, alice, { name: "flowdoc", visibility: "public", description: "ci" });
+    if (!made.ok) throw new Error("repo failed");
+    const wf = "on: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n  ship:\n    needs: build\n    runs-on: ubuntu-latest\n    steps:\n      - run: bun test\n";
+    await commitToBranch(forge, alice, made.value, { message: "seed", files: [{ path: ".github/workflows/ci.yml", content: wf }, { path: ".github/workflows/bad.yml", content: "a: [\n" }] });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "flowdoc");
+      await openFile(h, ".github/workflows/ci.yml");
+      expect(h.text()).toContain("runs-on");
+      expect(h.text()).toContain("needs");
+      expect(h.text()).toContain("actions/checkout@v4");
+      expect(h.text()).toContain("bun test");
+      await h.press("s");
+      expect(h.text()).toContain("runs-on: ubuntu-latest");
+    } finally {
+      h.stop();
+    }
+  });
+
   test("a .sql file opens as its columns, and s shows the source", async () => {
     const made = await createRepo(forge, alice, { name: "sqlrepo", visibility: "public", description: "db" });
     if (!made.ok) throw new Error("repo failed");

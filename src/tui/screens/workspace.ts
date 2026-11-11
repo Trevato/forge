@@ -62,6 +62,7 @@ import { gpxFacts, parseGpx } from "../../web/render/gpx.ts";
 import { CASE_CAP, parseJunit } from "../../web/render/junit.ts";
 import { parseOpenApi } from "../../web/render/openapi.ts";
 import { parseDockerfile } from "../../web/render/dockerfile.ts";
+import { parseWorkflow } from "../../web/render/workflow.ts";
 import { parseSql } from "../../web/render/sql.ts";
 import { RESULT_CAP, parseSarif } from "../../web/render/sarif.ts";
 import { RECORD_CAP, parseLcov, worstFirst, type Ratio } from "../../web/render/lcov.ts";
@@ -493,6 +494,30 @@ function dockerfileTable(source: string): Table | string {
   return { header: ["Stage", "Instruction", "Arguments"], rows, more: parsed.total - parsed.shown, delimiter: ",", columns: 3 };
 }
 
+/** A GitHub Actions workflow by file name. */
+function isWorkflowPath(path: string): boolean {
+  return kindByName(path) === "workflow";
+}
+
+/**
+ * A workflow as a table: the triggers, then per job its runner, needs and matrix, then one row
+ * per step; the web's reason when it is not drawn. Shares the web's parser.
+ */
+function workflowTable(source: string): Table | string {
+  const parsed = parseWorkflow(source);
+  if ("error" in parsed) return `not drawn as a workflow: ${parsed.error}`;
+  const rows: string[][] = [["-", "on", parsed.triggers.join(" ")]];
+  let more = parsed.jobsTotal - parsed.jobs.length;
+  for (const j of parsed.jobs) {
+    if (j.runsOn !== "") rows.push([j.id, "runs-on", j.runsOn]);
+    if (j.needs.length > 0) rows.push([j.id, "needs", j.needs.join(" ")]);
+    if (j.matrix.length > 0) rows.push([j.id, "matrix", j.matrix.join("; ")]);
+    for (const s of j.steps) rows.push([j.id, s.kind === "" ? "step" : s.kind, [s.name, s.does].filter((t) => t !== "").join(": ").replace(/\s+/g, " ")]);
+    more += j.stepsTotal - j.steps.length;
+  }
+  return { header: ["Job", "Kind", "Value"], rows, more, delimiter: ",", columns: 3 };
+}
+
 /** A `.sql` file by name. */
 function isSqlPath(path: string): boolean {
   return kindByName(path) === "sql";
@@ -769,6 +794,11 @@ class Tab {
       const build = dockerfileTable(new TextDecoder().decode(source));
       this.table = typeof build === "string" ? null : build;
       this.fault = typeof build === "string" ? build : "";
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isWorkflowPath(this.path)) {
+      const flow = workflowTable(new TextDecoder().decode(source));
+      this.table = typeof flow === "string" ? null : flow;
+      this.fault = typeof flow === "string" ? flow : "";
       if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isSqlPath(this.path)) {
       const schema = sqlTable(new TextDecoder().decode(source));

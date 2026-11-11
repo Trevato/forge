@@ -44,6 +44,7 @@ export type FileKind =
   | "openapi"
   | "makefile"
   | "dockerfile"
+  | "workflow"
   | "sql"
   | "text"
   | "binary";
@@ -87,6 +88,7 @@ export const RENDER_CAP: Readonly<Record<FileKind, number>> = {
   openapi: 1 * MB,
   makefile: 1 * MB,
   dockerfile: 1 * MB,
+  workflow: 1 * MB,
   sql: 1 * MB,
   text: 1 * MB,
   binary: 0,
@@ -226,6 +228,9 @@ const isMakefileName = (path: string): boolean => /(^|\/)(makefile|gnumakefile|[
 /** `Dockerfile`, `Containerfile` and `*.Dockerfile`, in any case. */
 const isDockerfileName = (path: string): boolean => /(^|\/)(Dockerfile|Containerfile|[^/]+\.Dockerfile)$/i.test(path);
 
+/** A GitHub Actions workflow: a `.yml` or `.yaml` directly under `.github/workflows/`. */
+const isWorkflowName = (path: string): boolean => /(^|\/)\.github\/workflows\/[^/]+\.ya?ml$/i.test(path);
+
 /** `lcov.info`: the name `lcov` and `bun test` write, whatever its extension. */
 const isLcovName = (path: string): boolean => /(^|\/)lcov\.info$/i.test(path);
 
@@ -300,6 +305,7 @@ export function fileKind(path: string, head: Uint8Array): FileKind {
   if (isOpenApiName(path)) return "openapi";
   if (isMakefileName(path)) return "makefile";
   if (isDockerfileName(path)) return "dockerfile";
+  if (isWorkflowName(path)) return "workflow";
   return TEXTUAL[extension(path)] ?? "text";
 }
 
@@ -318,6 +324,7 @@ export function kindByName(path: string): FileKind {
   if (isOpenApiName(path)) return "openapi";
   if (isMakefileName(path)) return "makefile";
   if (isDockerfileName(path)) return "dockerfile";
+  if (isWorkflowName(path)) return "workflow";
   return MEDIA[ext]?.kind ?? TEXTUAL[ext] ?? "text";
 }
 

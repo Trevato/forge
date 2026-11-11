@@ -32,6 +32,7 @@ export interface Document {
   range: [number, number, number];
   errors: YAMLError[];
   warnings: YAMLError[];
+  toJS(options?: { maxAliasCount?: number }): unknown;
   getIn(path: readonly (string | number)[], keepScalar?: boolean): unknown;
   setIn(path: readonly (string | number)[], value: unknown): void;
   deleteIn(path: readonly (string | number)[]): boolean;
