@@ -9,6 +9,7 @@
  */
 
 import type { App } from "../app.ts";
+import { tellPlan } from "../billing/notice.ts";
 import {
   CODE_WORDS, MAX_NOTE, MAX_USES, insertCode, listCodes, lookupCode, noteRedeemed,
   releaseCode, revokeCode, takeTry, type Code, type CodeRefusal, type Listed,
@@ -112,5 +113,6 @@ export function settleGift(app: App, code: Code, forge: string): void {
   const size = getPlan(app.db, code.plan)?.size ?? "small";
   noteRedeemed(app.db, code.id, forge);
   putEntitlement(app.db, { forge, plan: code.plan, status: "active", source: `code:${code.id}`, provider: "none" }, size, "");
+  tellPlan(app, forge);
   app.bus.append({ kind: "billing.code.redeem", payload: { id: code.id, forge, plan: code.plan } });
 }

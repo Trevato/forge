@@ -7,6 +7,7 @@
  */
 
 import type { App } from "../app.ts";
+import { tellPlan } from "../billing/notice.ts";
 import { changesOf, entitlementOf, putEntitlement, type EntitlementChange } from "../billing/store.ts";
 import type { Entitlement } from "../billing/types.ts";
 import type { User } from "../core/users.ts";
@@ -87,6 +88,7 @@ export function grantPlan(app: App, actor: User | undefined, forge: unknown, pla
   const { from, to } = planned.value;
   const size = listChildrenNow(app).find((c) => c.name === to.forge)?.size ?? from.plan;
   const entitlement = putEntitlement(app.db, { forge: to.forge, plan: to.plan, status: "active", source: "granted", provider: "none" }, size, who.id);
+  tellPlan(app, to.forge);
   app.bus.append({ kind: "billing.plan", actorId: who.id, payload: { forge: to.forge, from: from.plan, to: to.plan, source: "granted" } });
   return ok({ entitlement, changes: changesOf(app.db, to.forge) });
 }

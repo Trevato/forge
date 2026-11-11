@@ -20,7 +20,7 @@ const MAX_URL = 300;
 export const BILLING_WORDS = "billing links are an object of small, medium and large, each an https URL or empty";
 
 /** One https URL with no credentials and no spaces, or the empty string. */
-function parseLink(raw: unknown): string | undefined {
+export function parseLink(raw: unknown): string | undefined {
   if (raw === null || raw === "") return "";
   if (typeof raw !== "string") return undefined;
   const s = raw.trim();
@@ -79,4 +79,22 @@ export function sizeWords(size: Size): string {
   const s = SIZES[size];
   const gb = (mib: number): string => `${mib / 1024} GB`;
   return `${s.cpu} ${s.cpu === 1 ? "CPU" : "CPUs"}, ${gb(s.memoryMiB)} memory, ${gb(s.diskMiB)} disk`;
+}
+
+export const PORTAL_URL_KEY = "billing.portal_url";
+export const PORTAL_WORDS = "the billing portal address is one https URL with no spaces, or empty";
+
+/** The provider's customer-portal sign-in, one https URL the host sets; "" when none. */
+export function getPortalUrl(db: Database): string {
+  const row = db.query<{ value: string }, [string]>("SELECT value FROM forge_setting WHERE key = ?1").get(PORTAL_URL_KEY);
+  return row === null ? "" : (parseLink(row.value) ?? "");
+}
+
+/** Keep the portal URL (validated, empty clears it) with who changed it; the same value again keeps nothing. */
+export function setPortalUrl(db: Database, raw: unknown, actorId: string): Result<string, "invalid_portal_url"> {
+  const link = parseLink(raw);
+  if (link === undefined) return err("invalid_portal_url");
+  const from = getPortalUrl(db);
+  if (from !== link) writeSetting(db, PORTAL_URL_KEY, link === "" ? null : link, from, link, actorId);
+  return ok(link);
 }

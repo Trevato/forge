@@ -15,9 +15,9 @@ import { publicOrigin } from "../../core/public_origin.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { SIZES } from "../../spawn/sizes.ts";
-import { BILLING_SIZES, parseBillingLinks } from "../../settings/billing.ts";
+import { BILLING_SIZES, getPortalUrl, PORTAL_WORDS, parseBillingLinks } from "../../settings/billing.ts";
 import { getPlans } from "../../settings/plans.ts";
-import { changeBillingLinks, readBillingLinks } from "../../actions/signup.ts";
+import { changeBillingLinks, changePortalUrl, readBillingLinks } from "../../actions/signup.ts";
 import { funnelReport, type FunnelReport } from "../../perf/funnel.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
@@ -106,6 +106,32 @@ function linksSection(ctx: Ctx, retry?: { values: Record<string, string>; error:
   </section>`;
 }
 
+/** The one billing-portal address every paying forge's Plan row links to. */
+function portalSection(ctx: Ctx, retry?: { value: string; error: string }): Html | null {
+  if (ctx.auth.user?.isAdmin !== true || ctx.auth.user.kind === "agent") return null;
+  return html`<section class="settings-block" id="portal">
+    <h2>Billing portal</h2>
+    <p class="muted small">Stripe's customer-portal sign-in. A forge that pays through Stripe links its owner here to change a card; empty shows no link.</p>
+    ${retry === undefined ? null : html`<p class="error" role="alert">${retry.error}</p>`}
+    <form class="stack" method="post" action="${PATH}/portal">
+      ${formField({ label: "Portal sign-in address", name: "portal_url", type: "url", value: retry?.value ?? getPortalUrl(ctx.app.db), hint: "https://billing.stripe.com/p/login/…" })}
+      ${btn("Save portal address", { variant: "primary" })}
+    </form>
+  </section>`;
+}
+
+// POST /settings/billing/portal
+export async function billingSetPortal(ctx: Ctx): Promise<Response> {
+  if (ctx.auth.user?.isAdmin !== true || ctx.auth.user.kind === "agent") return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const value = field(form, "portal_url");
+  const changed = changePortalUrl(ctx.app, ctx.auth.user, value);
+  if (!changed.ok && changed.error === "not_found") return notFoundPage(ctx);
+  if (changed.ok) return flashTo(ctx, `${PATH}#portal`, { message: "Billing portal address saved." });
+  return billingView(ctx, undefined, {}, undefined, 422, undefined, { value, error: `${PORTAL_WORDS}. Nothing was saved.` });
+}
+
 // POST /settings/billing/links
 export async function billingSetLinks(ctx: Ctx): Promise<Response> {
   if (ctx.auth.user?.isAdmin !== true || ctx.auth.user.kind === "agent") return notFoundPage(ctx);
@@ -144,7 +170,7 @@ export function billingPage(ctx: Ctx): Response {
   return billingView(ctx);
 }
 
-function billingView(ctx: Ctx, shown?: Shown, values: Record<string, string> = {}, error?: string, status = 200, links?: { values: Record<string, string>; error: string }): Response {
+function billingView(ctx: Ctx, shown?: Shown, values: Record<string, string> = {}, error?: string, status = 200, links?: { values: Record<string, string>; error: string }, portal?: { value: string; error: string }): Response {
   const read = readBilling(ctx.app, ctx.auth.user);
   if (!read.ok) return notFoundPage(ctx);
   const b = read.value;
@@ -213,6 +239,7 @@ function billingView(ctx: Ctx, shown?: Shown, values: Record<string, string> = {
     ${ledBlock(ctx)}
     ${funnelRow(funnelReport(ctx.app.db, 7))}
     ${linksSection(ctx, links)}
+    ${portalSection(ctx, portal)}
     ${codesSection(ctx, shown, values, error)}`;
   const response = page({
     ctx,

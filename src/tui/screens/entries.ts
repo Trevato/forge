@@ -50,6 +50,7 @@ import { entry as homePins } from "./home_pins.ts";
 import { entry as claimStart } from "./claim_start.ts";
 import { entry as invites } from "./invites.ts";
 import { entry as billingLinks } from "./billinglinks.ts";
+import { entry as planRow } from "./planrow.ts";
 import { entry as limits } from "./limits.ts";
 import { entry as plans } from "./plans.ts";
 import { entry as economics } from "./economics.ts";
@@ -162,6 +163,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   archived,
   invites,
   billingLinks,
+  planRow,
   claimStart,
   requests,
   bulk,

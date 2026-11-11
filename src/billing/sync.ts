@@ -10,6 +10,7 @@
 
 import type { App } from "../app.ts";
 import { listChildrenNow } from "../actions/spawn.ts";
+import { tellPlan } from "./notice.ts";
 import { openKey } from "./connection.ts";
 import { getStored, putEntitlement } from "./store.ts";
 import { stripeClient, type StripeError } from "./stripe.ts";
@@ -50,6 +51,7 @@ export async function syncSubscription(app: App, id: string | undefined): Promis
     if (put === undefined) return;
     const size = listChildrenNow(app).find((c) => c.name === put.forge)?.size ?? getStored(app.db, put.forge)?.plan ?? "small";
     putEntitlement(app.db, put, size, "stripe");
+    tellPlan(app, put.forge);
   });
   return failed;
 }

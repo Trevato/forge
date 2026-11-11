@@ -62,6 +62,7 @@ import {
 import { accountSections } from "./origins.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
+import { planRow } from "../plan_row.ts";
 import { flashTo, page } from "../layout.ts";
 import { readFlash } from "../flash.ts";
 import {
@@ -519,7 +520,7 @@ export function accountPage(ctx: Ctx): Response {
     ctx,
     "profile",
     "Settings",
-    html`${pair}${profile}${edge}${parent}${notify}`,
+    html`${planRow(ctx.app.config.dataDir, parentIssuerOf(ctx.app.config), user.isAdmin === true)}${pair}${profile}${edge}${parent}${notify}`,
     200,
     // The everyday form makes its account with a passkey (#1890).
     pair ? passkeyJs : undefined,

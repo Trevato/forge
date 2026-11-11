@@ -8,6 +8,7 @@
  */
 
 import type { App } from "../app.ts";
+import { tellPlan } from "./notice.ts";
 import { listChildrenNow } from "../actions/spawn.ts";
 import { parseSize } from "../spawn/sizes.ts";
 import { entitlementOf, putEntitlement } from "./store.ts";
@@ -41,6 +42,7 @@ export function bindCheckout(app: App, event: unknown): boolean {
     child.size,
     "",
   );
+  tellPlan(app, forge);
   app.bus.append({ kind: "billing.plan", payload: { forge, to: plan, source: "stripe" } });
   return true;
 }

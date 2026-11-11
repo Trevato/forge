@@ -14,7 +14,8 @@ import {
 } from "../settings/signup.ts";
 import { getAgentStart, parseAgentStart, setAgentStart, type AgentStartMode } from "../settings/agent_start.ts";
 import { forgeSource, parseForgeSource, setForgeSource, storedForgeSource } from "../settings/forge_source.ts";
-import { getBillingLinks, parseBillingLinks, setBillingLinks, type BillingLinks } from "../settings/billing.ts";
+import { tellAll } from "../billing/notice.ts";
+import { getBillingLinks, parseBillingLinks, setBillingLinks, setPortalUrl, type BillingLinks } from "../settings/billing.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
@@ -109,4 +110,13 @@ export function changeBillingLinks(
   if (!links.ok) return links;
   setBillingLinks(app.db, links.value, who.value.id);
   return ok(links.value);
+}
+
+/** The billing portal address (`settings/billing.ts`) and every forge told it, for a forge admin who is a person. */
+export function changePortalUrl(app: App, actor: User | undefined, raw: unknown): Result<string, "not_found" | "invalid_portal_url"> {
+  const who = admin(actor);
+  if (!who.ok) return who;
+  const set = setPortalUrl(app.db, raw, who.value.id);
+  if (set.ok) tellAll(app);
+  return set;
 }

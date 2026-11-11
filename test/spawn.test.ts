@@ -93,6 +93,8 @@ describe("spawnForge", () => {
       // The plan's included credit, lent once (#11154).
       credit: { capUsd: 2, spentUsd: 0, token: expect.stringMatching(/^kid\./) },
     });
+    // Its own plan, told once when it was made (#11141): a file of its own, never parent.json.
+    expect(JSON.parse(await Bun.file(join(child, "plan.json")).text())).toMatchObject({ name: "Small", size: "small", status: "active" });
   });
 
   test("no secret arrives", async () => {

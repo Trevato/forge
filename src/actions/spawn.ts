@@ -17,6 +17,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { mkdir, readdir, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { createApp, type App } from "../app.ts";
+import { tellPlan } from "../billing/notice.ts";
 import {
   addCrew,
   BRIEF_MAX,
@@ -339,6 +340,7 @@ async function make(
   grantPlanCredit(app, plan, ledger.bodyId);
   ledger.done = true;
   await writeLedger(app, ledger);
+  tellPlan(app, plan.name);
   app.bus.append({
     kind: "forge.spawned",
     actorId: owner?.id,
