@@ -107,6 +107,14 @@ export function refusedCount(app: App, kind: "bad" | "stale"): number {
   );
 }
 
+/** The newest event kept, and the signatures refused on this UTC day: what the admin Billing page says. */
+export function hookSummary(app: App, now = new Date()): { last: { type: string; at: string } | undefined; refusedToday: number } {
+  const last = app.db.query<{ type: string; at: string }, []>("SELECT type, at FROM stripe_event ORDER BY at DESC LIMIT 1").get() ?? undefined;
+  const refusedToday =
+    app.db.query<{ n: number }, [string]>("SELECT COALESCE(SUM(n), 0) AS n FROM stripe_hook_refused WHERE day = ?1").get(now.toISOString().slice(0, 10))?.n ?? 0;
+  return { last, refusedToday };
+}
+
 function countRefused(app: App, kind: "bad" | "stale", now: Date): void {
   const row = app.db
     .query<{ n: number }, [string, string]>(

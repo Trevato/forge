@@ -41,11 +41,14 @@ export function billingScreen(f: Session, ctx: Ctx): Screen {
       state.clamp(rows.length);
       const sc = readBilling(f.app, f.user);
       const stripe = sc.ok && sc.value.stripe ? `Stripe ${sc.value.stripe.mode}, ${sc.value.stripe.signed ? "signed" : "no signing secret"}` : "Stripe not connected";
+      const ev = sc.ok ? sc.value.events : undefined;
+      const events = ev === undefined ? "" : `Last event: ${ev.last === undefined ? "No event yet" : `${ev.last.type} ${ev.last.at.slice(0, 16).replace("T", " ")} UTC`}. Refused today: ${ev.refusedToday}`;
       if (rows.length === 0) {
-        emptyState(s, area, c, { title: "No forge has been sent from here.", body: note === "" ? `Billing has nothing to grant yet. ${stripe}.` : note });
+        emptyState(s, area, c, { title: "No forge has been sent from here.", body: note === "" ? `Billing has nothing to grant yet. ${stripe}. ${events}.` : note });
         return;
       }
-      const [head, body] = split(area, "v", [len(1), fill(1)]);
+      const [head, evHead, body] = split(area, "v", [len(1), len(1), fill(1)]);
+      s.text(evHead!.x, evHead!.y, truncate(events, evHead!.w), style(c.mutedFg, c.bg), evHead!.x + evHead!.w);
       const line = note === "" ? `${stripe} (c connect, w secret, x disconnect)` : note;
       s.text(head!.x, head!.y, truncate(line, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       drawList(s, body!, c, state, rows);

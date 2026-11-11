@@ -158,3 +158,21 @@ test("a bad key typed into the connect prompt is refused in words; a non-admin c
   expect(bobs.tui.screen.toText()).not.toContain("Remove the webhook");
   bobs.tui.stop?.();
 });
+
+test("the terminal Billing screen shows the last Stripe event and refusals to an admin, and nothing to a non-admin", async () => {
+  const now = new Date().toISOString();
+  app.db.query("INSERT OR IGNORE INTO stripe_event (id, type, at) VALUES ('evt_tui', 'invoice.paid', ?1)").run(now);
+  app.db.query("INSERT OR IGNORE INTO stripe_hook_refused (day, kind, n) VALUES (?1, 'bad', 2)").run(now.slice(0, 10));
+  const mine = open(alice);
+  mine.tui.ctx.push(billingScreen(mine.session, mine.tui.ctx));
+  await settleApp(mine.tui);
+  expect(mine.tui.screen.toText()).toContain("Last event: invoice.paid");
+  expect(mine.tui.screen.toText()).toContain("Refused today: 2");
+  mine.tui.stop?.();
+  const bobs = open(bob);
+  bobs.tui.ctx.push(billingScreen(bobs.session, bobs.tui.ctx));
+  await settleApp(bobs.tui);
+  expect(bobs.tui.screen.toText()).not.toContain("invoice.paid");
+  expect(bobs.tui.screen.toText()).not.toContain("Refused today");
+  bobs.tui.stop?.();
+});

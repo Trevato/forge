@@ -12,6 +12,7 @@ import type { Entitlement } from "../billing/types.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { connectionOf, forget, openKey, sealKey, sealWebhook, type Connection } from "../billing/connection.ts";
+import { hookSummary } from "../http/stripe_hook.ts";
 import { isStripeKey, stripeClient, type StripeError } from "../billing/stripe.ts";
 import { publicOrigin } from "../core/public_origin.ts";
 import { holdValues } from "../kernel/log.ts";
@@ -41,6 +42,8 @@ export interface BillingView {
   readonly forges: readonly (Entitlement & { size: string })[];
   /** The Stripe connection (mode, whether events are signed), never the key. */
   readonly stripe: Connection | undefined;
+  /** The newest Stripe event kept and the signatures refused on this UTC day. */
+  readonly events: ReturnType<typeof hookSummary>;
 }
 
 const admin = (a: User | undefined): Result<User, "not_found"> => (a?.isAdmin === true && a.kind !== "agent" ? ok(a) : err("not_found"));
@@ -51,6 +54,7 @@ export function readBilling(app: App, actor: User | undefined): Result<BillingVi
   return ok({
     forges: listChildrenNow(app).map((c) => ({ ...entitlementOf(app.db, c.name, c.size), size: c.size })),
     stripe: connectionOf(app.db),
+    events: hookSummary(app),
   });
 }
 

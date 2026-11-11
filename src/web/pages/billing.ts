@@ -160,8 +160,14 @@ function billingView(ctx: Ctx, shown?: Shown, values: Record<string, string> = {
   );
   const rendering = performance.now();
   const s = b.stripe;
+  const hook = b.events;
+  const hookRows = html`<dl class="status-rows" data-stripe-events>
+      <div class="status-row"><dt>Last event</dt><dd>${hook.last === undefined ? "No event yet" : html`<span class="mono">${hook.last.type}</span> <time datetime="${hook.last.at}">${hook.last.at.slice(0, 16).replace("T", " ")} UTC</time>`}</dd></div>
+      <div class="status-row"><dt>Refused today</dt><dd>${hook.refusedToday}</dd></div>
+    </dl>`;
   const stripe = html`<section class="settings-block">
       <h2>Provider</h2>
+      ${hookRows}
       ${s
         ? html`<dl class="status-rows">
               <div class="status-row"><dt>Stripe</dt><dd data-mode="${s.mode}">${s.mode}</dd></div>

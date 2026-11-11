@@ -141,4 +141,27 @@ describe("billing seam", () => {
     expect(text).toContain('data-forge="kid"');
     expect((await send("GET", "/settings/billing", bob)).status).toBe(404);
   });
+
+  test("the Billing page says the last Stripe event and the refused signatures, or that none came", async () => {
+    const before = await (await send("GET", "/settings/billing", admin)).text();
+    expect(before).toContain("No event yet");
+    expect(before).toContain("<dt>Refused today</dt><dd>0</dd>");
+    const now = new Date().toISOString();
+    app.db.query("INSERT INTO stripe_event (id, type, at) VALUES ('evt_page', 'invoice.paid', ?1)").run(now);
+    app.db.query("INSERT INTO stripe_hook_refused (day, kind, n) VALUES (?1, 'bad', 1)").run(now.slice(0, 10));
+    const after = await (await send("GET", "/settings/billing", admin)).text();
+    expect(after).toContain("invoice.paid");
+    expect(after).toContain(now.slice(0, 16).replace("T", " "));
+    expect(after).toContain("<dt>Refused today</dt><dd>1</dd>");
+    expect(after).not.toContain("No event yet");
+    expect(after).toContain("<dt>Refused today</dt>");
+  });
+
+  test("a non-admin gets 404 and no event data on the Billing page", async () => {
+    const res = await send("GET", "/settings/billing", bob);
+    expect(res.status).toBe(404);
+    const text = await res.text();
+    expect(text).not.toContain("invoice.paid");
+    expect(text).not.toContain("Refused today");
+  });
 });
