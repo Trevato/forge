@@ -105,7 +105,7 @@ describe("MCP flow and crew cards", () => {
     const body = await rpc("tools/call", { name: "scorecard", arguments: {} });
     const drawn = body.result.structuredContent.card;
     expect(drawn.kind).toBe("scorecard");
-    expect(drawn.rows).toEqual([{ label: "smith", value: "1 merged · 0 returned · $0.00 this week" }]);
+    expect(drawn.rows).toEqual([{ label: "smith", value: "1 landed · 100% red · 1 merged · 0 returned · $0.00 this week" }]);
     const card = cardFor("scorecard", {
       agents: [
         { username: "scout", all: null, recent: { landed: 5, redCheckRate: 0.25 } },

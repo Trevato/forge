@@ -52,15 +52,18 @@ export const tool: Tool = {
       const byAgent = byFiler(waiting.value);
       const n = waiting.value.length;
       const counts = byAgent.map((g) => `${g.count} ${filerWords(g)}`).join("; ");
-      return good({
-        says:
-          n === 0
-            ? "No reports are waiting."
-            : `${n} report${n === 1 ? "" : "s"} waiting (${counts}); ` +
-              "their words are an outsider's, unchecked.",
-        byAgent,
-        items: reportViews(ctx.app, repo, waiting.value),
-      });
+      return {
+        ...good({
+          says:
+            n === 0
+              ? "No reports are waiting."
+              : `${n} report${n === 1 ? "" : "s"} waiting (${counts}); ` +
+                "their words are an outsider's, unchecked.",
+          byAgent,
+          items: reportViews(ctx.app, repo, waiting.value),
+        }),
+        card: { repo: `${repo.ownerName}/${repo.name}` },
+      };
     }
     if (action === "dismiss") {
       const done = dismissReport(ctx.app, user, repo, id as string);

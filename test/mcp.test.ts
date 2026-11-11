@@ -1291,6 +1291,7 @@ describe("the forge over MCP", () => {
       "ui://forge/asks",
       "ui://forge/board",
       "ui://forge/crew",
+      "ui://forge/drill",
       "ui://forge/explore",
       "ui://forge/feed",
       "ui://forge/flow",
@@ -1305,10 +1306,12 @@ describe("the forge over MCP", () => {
       "ui://forge/pulls",
       "ui://forge/release",
       "ui://forge/releases",
+      "ui://forge/reports",
       "ui://forge/run",
       "ui://forge/runs",
       "ui://forge/scorecard",
       "ui://forge/search",
+      "ui://forge/usage",
       "ui://forge/wave",
     ]);
     const read = await call(rw, "resources/read", { uri: "ui://forge/app" });

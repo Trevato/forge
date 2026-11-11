@@ -11,7 +11,7 @@ import { html, raw } from "../html.ts";
 import { timeAgo } from "../ui.ts";
 import { span, STAGE_LABEL, verdict, type PipelineKey, type PipelineStage } from "../../flow/pipeline.ts";
 
-export type CardKind = "app" | "run" | "asks" | "wave" | "map" | "feed" | "pull" | "pulls" | "runs" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones" | "release" | "releases" | "search" | "issues" | "forges" | "held";
+export type CardKind = "app" | "run" | "asks" | "wave" | "map" | "feed" | "pull" | "pulls" | "runs" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones" | "release" | "releases" | "search" | "issues" | "forges" | "held" | "drill" | "reports" | "usage";
 
 export interface CardRow {
   readonly label: string;
@@ -44,7 +44,7 @@ const here = (origin: string, path: string): boolean => origin !== "" && /^\/(?!
 
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "asks", "wave", "map", "feed", "pull", "pulls", "runs", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones", "release", "releases", "search", "issues", "held", "forges"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "asks", "wave", "map", "feed", "pull", "pulls", "runs", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones", "release", "releases", "search", "issues", "held", "forges", "drill", "reports", "usage"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
@@ -74,6 +74,9 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   issues: "issues",
   forges: "forges",
   held: "held",
+  restore_drill: "drill",
+  reports: "reports",
+  usage: "usage",
 };
 
 const CARD_TITLE: Readonly<Record<CardKind, string>> = {
@@ -101,6 +104,9 @@ const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   issues: "Issues",
   forges: "Forges you sent",
   held: "Later",
+  drill: "Restore drill",
+  reports: "Reports",
+  usage: "Spend",
 };
 
 type Obj = Record<string, unknown>;
@@ -124,6 +130,8 @@ const PULLS_LIMIT = 20;
 export const SEARCH_ROWS = 20;
 export const ISSUES_ROWS = 20;
 const HELD_ROWS = 40;
+const REPORT_ROWS = 30;
+const USAGE_ROWS = 20;
 const ASKED_WORDS = 80;
 const ASKED_LIMIT = 20;
 const RELEASE_ROWS = 10;
@@ -296,6 +304,52 @@ export function cardFor(
       actions.push({ label: `Close ${approve.length} done`, tool: "held", args: { app: slug, apply: approve, digest: text(v["digest"]) } });
     return { kind, title: CARD_TITLE[kind], status: text(v["says"]), rows, actions };
   }
+  if (kind === "drill") {
+    // `restore_drill` answers `{ verdict: green | red | none, failedStep?, says }`; `extra.at` is when it ran.
+    const v = obj(value);
+    const word = text(v["verdict"]);
+    if (word !== "green" && word !== "red" && word !== "none") return undefined;
+    rows.push({ label: "Verdict", value: word });
+    if (word === "red" && text(v["failedStep"]) !== "") rows.push({ label: "Failed step", value: text(v["failedStep"]) });
+    const at = text(extra["at"]);
+    if (at !== "" && !Number.isNaN(Date.parse(at))) rows.push({ label: "When", value: timeAgo(at) });
+    return { kind, title: CARD_TITLE[kind], status: text(v["says"]), rows, actions };
+  }
+  if (kind === "reports") {
+    // The reports list answers `{ says, byAgent, items: [{ title, state, filedBy }] }`; an accept or dismiss has no `items`.
+    const v = obj(value);
+    if (!Array.isArray(v["items"])) return undefined;
+    const slug = text(extra["repo"]);
+    const link = web(origin) && slugOf(slug) && here(origin, `/${slug}/reports`) ? { link: `${origin}/${slug}/reports` } : {};
+    const items = v["items"].map(obj);
+    for (const r of items.slice(0, REPORT_ROWS))
+      rows.push({ label: text(r["title"]) || "(untitled)", value: `${text(r["state"])} · ${text(r["filedBy"])}`, ...link });
+    if (items.length > REPORT_ROWS) rows.push({ label: "More", value: `${items.length - REPORT_ROWS} more not shown` });
+    return { kind, title: CARD_TITLE[kind], status: text(v["says"]), rows, actions };
+  }
+  if (kind === "usage") {
+    // Two answers: a repo's `{ app, days, total, byAgent }`, or the forge's `{ today, last24h, subscriptions }`.
+    const v = obj(value);
+    const span = (s: Obj): string =>
+      `${Number(s["runs"]) || 0} runs · $${(Number(s["costUsd"]) || 0).toFixed(2)} · ${(Number(s["tokensIn"]) || 0) + (Number(s["tokensOut"]) || 0)} tokens`;
+    if (Array.isArray(v["byAgent"]) && text(v["app"]) !== "") {
+      rows.push({ label: "Total", value: span(obj(v["total"])) });
+      const agents = v["byAgent"].map(obj);
+      for (const a of agents.slice(0, USAGE_ROWS)) rows.push({ label: text(a["agent"]) || "no agent", value: span(a), depth: 1 });
+      if (agents.length > USAGE_ROWS) rows.push({ label: "More", value: `${agents.length - USAGE_ROWS} more not shown` });
+      return { kind, title: CARD_TITLE[kind], status: `${text(v["app"])} · ${text(v["days"])} days`, rows, actions };
+    }
+    if (!Array.isArray(v["subscriptions"])) return undefined;
+    rows.push({ label: "Today", value: span(obj(v["today"])) });
+    rows.push({ label: "Last 24 hours", value: span(obj(v["last24h"])) });
+    const subs = v["subscriptions"].map(obj);
+    for (const s of subs.slice(0, USAGE_ROWS)) {
+      const room = list(s["headroom"]).map(obj).map((h) => `${text(h["window"])} ${h["pct"] === null ? "?" : `${text(h["pct"])}%`}`).join(" · ");
+      rows.push({ label: text(s["subscription"]), value: `${span(obj(s["today"]))} today${room === "" ? "" : ` · headroom ${room}`}`, depth: 1 });
+    }
+    if (subs.length > USAGE_ROWS) rows.push({ label: "More", value: `${subs.length - USAGE_ROWS} more not shown` });
+    return { kind, title: CARD_TITLE[kind], status: `${Number(v["apps"]) || 0} apps`, rows, actions };
+  }
   if (tool === "forks" || (tool === "explore" && Array.isArray(obj(value)["upstream"]))) {
     // Each answer has its own helper; the card kind stays the tool's (`forks` or `explore`).
     const v = obj(value);
@@ -394,7 +448,10 @@ export function cardFor(
     const crewStatus = `${week} landed this week`;
     for (const a of agents.slice(0, LIMIT)) {
       const w = obj(a["week"]);
-      const wk = `${Number(w["merged"]) || 0} merged · ${Number(w["returned"]) || 0} returned · $${(Number(w["cost"]) || 0).toFixed(2)} this week`;
+      const all = obj(a["all"]);
+      const red = typeof all["redCheckRate"] === "number" ? ` · ${Math.round((all["redCheckRate"] as number) * 100)}% red` : "";
+      const landed = a["all"] === null ? "" : `${Number(all["landed"]) || 0} landed${red} · `;
+      const wk = `${landed}${Number(w["merged"]) || 0} merged · ${Number(w["returned"]) || 0} returned · $${(Number(w["cost"]) || 0).toFixed(2)} this week`;
       rows.push({ label: text(a["username"]), value: wk });
     }
     // The card shows LIMIT agents; the rest are counted, never dropped silently.

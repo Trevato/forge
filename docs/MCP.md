@@ -179,8 +179,8 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `repo` | — | One repository you can read, as GET /api/v1/repos/:owner/:name | 223 |
 | `repo_labels` | — | Repo labels: list (default), create, update, remove (admin token) | 351 |
 | `repo_settings` | — | Read, change or move (newOwner) a repo: PATCH /api/v1/repos/:owner/:name (admin); mirrorPacks mirrors the packs' upstreams | 444 |
-| `reports` | `accept`, `dismiss` | Outsiders' reports; `id`+`action`: accept or dismiss | 258 |
-| `restore_drill` | — | Drill-restore the newest snapshot | 123 |
+| `reports` | `accept`, `dismiss` | Outsiders' reports; `id`+`action`: accept or dismiss | 310 |
+| `restore_drill` | — | Drill-restore the newest snapshot | 173 |
 | `returns` | — | What crew tokens bought in `days` (1–90, default 7): dollars, runs, landed, cost/change | 284 |
 | `review` | — | Approve a pull, or request changes (`reason` required); your own pull is refused | 350 |
 | `rollback` | — | Plan, then apply, a rollback to a kept release (admin) | 209 |
@@ -222,7 +222,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `tokens` | — | Your API tokens, no secrets | 146 |
 | `trail` | — | A migrated repository's source and forks; `shown` shows or hides them (admin) | 258 |
 | `upstream` | — | Read, set (`enabled`) or `check` the upstream a repository follows | 302 |
-| `usage` | — | Crew spend: with `repo`, `days` (1–90) by agent, issue; without, today, last24h, headroom % | 295 |
+| `usage` | — | Crew spend: with `repo`, `days` (1–90) by agent, issue; without, today, last24h, headroom % | 345 |
 | `valves` | — | The week's pipes and valves; with `repo` and `level`, turns a valve (plans first) | 269 |
 | `variant` | — | Like or dislike a pull among its variants; a later vote replaces; dislike closes it | 349 |
 | `vision` | — | VISION.md: purpose, order, rules | 235 |
@@ -527,7 +527,7 @@ answers
 | `ui://forge/explore` | `explore` | Apps, people and forges ranked, at most 20: name, kind, the numbers (and likes or ship time when sorted by them), linked; only what you may see. With `kind: tree`: upstream, this and fork rows, each with how it follows and linked to its repository. |
 | `ui://forge/issue` | `issue` | One issue: title, state, assignee, labels, what it waits for. |
 | `ui://forge/flow` | `flow` | The pipeline: per stage counts, oldest waiting, the bottleneck. |
-| `ui://forge/scorecard` | `scorecard` | The crew's scorecard per agent (forge admin). |
+| `ui://forge/scorecard` | `scorecard` | The crew's scorecard, one row per agent: landed and red rate all time, then the week (forge admin). |
 | `ui://forge/crew` | `now` | What the crew is doing right now, with Stop buttons. |
 | `ui://forge/board` | `boards` | One board's panels (person admins). |
 | `ui://forge/forks` | `fork_tree`, `forks` | The fork tree around a repository, each row with how it follows; `forks` a row per fork with its commits ahead and behind, `kind: chain` its chain (a severed chain says so); each linked to the repository, at most 30 and one More row. |
@@ -538,6 +538,9 @@ answers
 | `ui://forge/releases` | `releases` with `shipped` | What shipped: one linked row per landing, the live version, what is on its way. |
 | `ui://forge/forges` | `forges` (listing, admin) | Forges you sent: one linked row each, whom it is for and its stage in words (sent, opened, signed in, last tell); a link unopened for 3 days says `resend` and comes first. |
 | `ui://forge/held` | `held` | What waits on a person: themes, one row each, and one button that closes the done ones. |
+| `ui://forge/drill` | `restore_drill` | The drill: verdict in one word (green, red, none), the failed step, and when it ran. |
+| `ui://forge/reports` | `reports` (listing) | Waiting reports from outsiders: one row each, its state and who filed it, linked to the repository's reports. |
+| `ui://forge/usage` | `usage` | The window's figures as rows: runs, cost and tokens, by agent for a repo, or today and last 24 hours with each account's headroom. |
 
   The Runs card (`runs`) is one row per run, newest first: glyph, kind, the issue or pull and its title, then the state as a word with how long it ran (or has been running), linked to the run page; failed runs lead the status line. The Plan card (`map`) shows one row per pillar with
   its ready, working and waiting counts, and the first five ready issues linked
