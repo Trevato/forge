@@ -229,17 +229,58 @@ export interface Verdict {
   readonly problem: string | null;
 }
 
+/** What the rehearsal saw of one forge when it judged: where it ran and what it said. */
+export interface ForgeSeen {
+  readonly port: number;
+  /** Fresh ports it was started on after losing one (`kernel/port.ts`). */
+  readonly portsLost: number;
+  /** How long it was waited for: the new one from its start, the old one from its SIGTERM. */
+  readonly waitedMs: number;
+  /** What it wrote (stderr, else stdout); only the end is quoted. */
+  readonly output: string;
+}
+
+/** How many of a forge's last lines a verdict quotes, and how long that quote may be. */
+export const PROBLEM_TAIL_LINES = 5;
+export const PROBLEM_TAIL_CHARS = 400;
+
+/**
+ * One forge, as a verdict names it: its port, the ports it lost, the wait
+ * and the end of its stderr, on one line so `report` keeps its shape.
+ */
+export function seenLine(name: "old" | "new", s: ForgeSeen): string {
+  const lines = s.output
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "")
+    .slice(-PROBLEM_TAIL_LINES);
+  let tail = lines.join(" | ");
+  if (tail.length > PROBLEM_TAIL_CHARS) tail = `…${tail.slice(-(PROBLEM_TAIL_CHARS - 1))}`;
+  const said = tail === "" ? "it wrote nothing" : `it last wrote: ${tail}`;
+  return `the ${name} forge on port ${s.port}, ${s.portsLost} port${s.portsLost === 1 ? "" : "s"} lost, waited ${s.waitedMs} ms; ${said}`;
+}
+
 /**
  * Zero refusals over a roll that happened. A rehearsal in which the new
- * forge never joined, or the old one never left, rolled nothing and says so.
+ * forge never joined, or the old one never left, rolled nothing and says
+ * so, naming that forge's port, lost ports, wait and last words when the
+ * rehearsal saw them.
  */
-export function judge(tally: Tally, timeline: Timeline): Verdict {
+export function judge(
+  tally: Tally,
+  timeline: Timeline,
+  seen: Partial<Readonly<Record<"old" | "new", ForgeSeen>>> = {},
+): Verdict {
   const refused = refusals(tally);
+  const naming = (sentence: string, name: "old" | "new"): string => {
+    const s = seen[name];
+    return s === undefined ? sentence : `${sentence}: ${seenLine(name, s)}`;
+  };
   const problem =
     timeline.newInRotationMs === null
-      ? "the new forge never became ready"
+      ? naming("the new forge never became ready", "new")
       : timeline.oldExitMs === null
-        ? "the old forge did not exit"
+        ? naming("the old forge did not exit", "old")
         : tally.requests === 0
           ? "no request was sent"
           : null;

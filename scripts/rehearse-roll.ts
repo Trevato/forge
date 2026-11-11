@@ -26,6 +26,7 @@ import { freePort, lostPort, PORT_RETRIES } from "../src/kernel/port.ts";
 import {
   count,
   emptyTally,
+  type ForgeSeen,
   goneLine,
   judge,
   parseArgs,
@@ -268,7 +269,17 @@ export async function rehearse(
       await Promise.race([old.proc.exited, Bun.sleep(args.lingerS * 1000 + 30_000)]);
       if (old.proc.exitCode !== null) timeline.oldExitMs = Date.now() - termAt;
     }
-    return { ...judge(tally, timeline), logs };
+    // What each forge left, so a roll that rolled nothing names where and why.
+    const seenOf = async (f: Forge | undefined, since: number | null): Promise<ForgeSeen | undefined> =>
+      f === undefined
+        ? undefined
+        : { port: f.port, portsLost: f.portsLost, waitedMs: Date.now() - (since ?? f.startedAt), output: await said(f) };
+    const seen: Partial<Record<Forge["name"], ForgeSeen>> = {};
+    const oldSeen = await seenOf(forges.find((f) => f.name === "old"), termAt);
+    const newSeen = await seenOf(forges.find((f) => f.name === "new"), null);
+    if (oldSeen !== undefined) seen.old = oldSeen;
+    if (newSeen !== undefined) seen.new = newSeen;
+    return { ...judge(tally, timeline, seen), logs };
   } finally {
     for (const f of forges) if (f.proc.exitCode === null) f.proc.kill("SIGKILL");
     await Promise.all(forges.map((f) => f.proc.exited));

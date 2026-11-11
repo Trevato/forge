@@ -15,6 +15,8 @@ import {
   emptyTally,
   goneLine,
   OUTPUT_TAIL_LINES,
+  PROBLEM_TAIL_CHARS,
+  PROBLEM_TAIL_LINES,
   isRefusal,
   judge,
   missLine,
@@ -148,6 +150,45 @@ describe("the verdict", () => {
     );
     expect(judge(t, { ...rolled, oldExitMs: null }).ok).toBe(false);
     expect(judge(emptyTally(), rolled).problem).toBe("no request was sent");
+  });
+});
+
+describe("a rehearsal that rolled nothing names the forge, its port and the wait", () => {
+  const rolled = { newInRotationMs: 2100, oldOutOfRotationMs: 300, oldExitMs: 5200 };
+  const t = emptyTally();
+  count(t, "old", 200);
+  const stderr = Array.from({ length: 30 }, (_, i) => `line ${i}`).join("\n") + "\n";
+  const seen = {
+    old: { port: 39001, portsLost: 0, waitedMs: 30500, output: "draining\n" },
+    new: { port: 39002, portsLost: 2, waitedMs: 28000, output: stderr },
+  };
+
+  test("a new forge that never joined: its port, ports lost, wait and last lines", () => {
+    const p = judge(t, { ...rolled, newInRotationMs: null, oldExitMs: null }, seen).problem;
+    expect(p).toBe(
+      "the new forge never became ready: the new forge on port 39002, 2 ports lost, waited 28000 ms; " +
+        "it last wrote: line 25 | line 26 | line 27 | line 28 | line 29",
+    );
+    expect(p).not.toContain("39001");
+  });
+
+  test("an old forge that never exited: its port and the wait since its SIGTERM", () => {
+    const v = judge(t, { ...rolled, oldExitMs: null }, seen);
+    expect(v.ok).toBe(false);
+    expect(v.problem).toBe(
+      "the old forge did not exit: the old forge on port 39001, 0 ports lost, waited 30500 ms; it last wrote: draining",
+    );
+    // One line, so report's first line carries all of it.
+    expect(report(v).split("\n")[0]).toBe(`no verdict: ${v.problem}`);
+  });
+
+  test("the quoted stderr is cut short, and silence is said", () => {
+    const long = { ...seen.new, output: `${"x".repeat(2000)}\n`.repeat(PROBLEM_TAIL_LINES + 3) };
+    const p = judge(t, { ...rolled, newInRotationMs: null }, { new: long }).problem ?? "";
+    expect(p.length).toBeLessThan(PROBLEM_TAIL_CHARS + 200);
+    expect(p).toContain("it last wrote: …x");
+    const quiet = judge(t, { ...rolled, newInRotationMs: null }, { new: { ...long, output: "" } });
+    expect(quiet.problem).toEndWith("waited 28000 ms; it wrote nothing");
   });
 });
 
