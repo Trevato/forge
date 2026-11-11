@@ -16,6 +16,10 @@
 
 The page's tabs are Best, Forks, Shipped, Liked, Use and Fresh; a row shows `N likes` when N > 0, on the web and in the terminal.
 
+## Why a row ranks where it does (#11296)
+
+Each row's meta line starts with one phrase for the signal that most explains its place: `12 forks`, `3 shipped this month`, `2 likes`, `shipped today`, `in use`. On a named sort it is that sort's signal; on `score` it is the largest term of the score, weighed as the ranking weighs them (`frontScore` at the forge's front weights, and `LIKE_WEIGHT` for likes; a tie goes to forks, ships, likes, freshness, use). `whyOf` in `actions/explore.ts` reads it from the row's numbers, with no query. The number the phrase says is left out of the rest of the line, so nothing is said twice. The terminal's explorer lines (`/` then `kind:` or `sort:`) show the same phrase first and drop the same duplicate. A row with nothing to say has no phrase; `sort:name` has none.
+
 ## How likes count
 
 A like is a `feed_like` row (one per person and post, `src/feed/likes.ts`). An app's count is the likes on posts about its repository, read only for repositories the viewer may read: a private app's likes are never in a public row, and a stranger never sees the private app at all. A person's count is the sum over the apps shown to the viewer.

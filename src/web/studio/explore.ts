@@ -14,10 +14,13 @@ import {
   exploreNote,
   exploreSuggestion,
   MAKE_IT_YOURS,
+  whyOf,
   readExploreLine,
   type ExploreQuery,
   type ExploreRow,
+  type WhySignal,
 } from "../../actions/explore.ts";
+import { frontWeights, type FrontWeights } from "../../core/front.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { activeEdgeToken, edgeLoginUrl } from "../../http/edge.ts";
@@ -37,14 +40,15 @@ const href = (query: ExploreQuery): string => {
  * read as a figure ("3085.9 h") that says nothing to a visitor. They still
  * weigh in the ranking (`core/front.ts`).
  */
-function numbers(row: ExploreRow): { apps: string; rest: Html } {
+function numbers(row: ExploreRow, said: WhySignal | undefined): { apps: string; rest: Html } {
   const n = row.numbers;
+  // What the row's reason already says is not said again beside it.
   const rest = [
-    n.forks > 0 ? `${n.forks} fork${n.forks === 1 ? "" : "s"}` : "",
-    n.likes > 0 ? `${n.likes} like${n.likes === 1 ? "" : "s"}` : "",
-    n.ships > 0 ? `${n.ships} shipped this month` : "",
+    n.forks > 0 && said !== "forks" ? `${n.forks} fork${n.forks === 1 ? "" : "s"}` : "",
+    n.likes > 0 && said !== "likes" ? `${n.likes} like${n.likes === 1 ? "" : "s"}` : "",
+    n.ships > 0 && said !== "ships" ? `${n.ships} shipped this month` : "",
   ];
-  const shipped = row.shippedAt === null ? null : html`shipped ${time(row.shippedAt)}`;
+  const shipped = row.shippedAt === null || said === "fresh" ? null : html`shipped ${time(row.shippedAt)}`;
   const restText = rest.filter((p) => p !== "").map((p) => html`${p}`);
   if (shipped !== null) restText.push(shipped);
   return {
@@ -53,12 +57,14 @@ function numbers(row: ExploreRow): { apps: string; rest: Html } {
   };
 }
 
-function rowHtml(row: ExploreRow, signedIn: boolean): Html {
-  const { apps, rest } = numbers(row);
+function rowHtml(row: ExploreRow, signedIn: boolean, query: ExploreQuery, now: number, weights: FrontWeights): Html {
+  const why = whyOf(row, query.sort, now, weights);
+  const { apps, rest } = numbers(row, why?.signal);
   // One tap from a person to their apps; with none, the count is plain text.
   const theirs = href({ kind: "app", sort: "score", text: "", archived: false, updated: "all", owner: row.name });
   const count = apps === "" ? html`` : row.numbers.apps > 0 ? html`<a href="${theirs}">${apps}</a>` : html`${apps}`;
   const parts = [
+    why === undefined ? html`` : why.signal === "fresh" && row.shippedAt !== null ? html`shipped ${time(row.shippedAt)}` : html`${why.text}`,
     row.description === "" ? html`` : html`${row.description}`,
     count,
     rest,
@@ -147,8 +153,10 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
   const suggestion = exploreSuggestion(line);
   const ranking = performance.now();
   const rows = await explore(ctx.app, ctx.auth.user, query);
+  const weights = frontWeights(ctx.app.db);
   notePhase(ctx.request, "read", performance.now() - ranking);
   const rendering = performance.now();
+  const now = Date.now();
   const kinds = [
     { label: "All", kind: "all" as const },
     { label: "Apps", kind: "app" as const },
@@ -227,7 +235,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
     </div>
     ${rows.length === 0
       ? emptyState(ctx, query)
-      : card(html`<ul class="list">${rows.map((r) => rowHtml(r, ctx.auth.user !== undefined))}</ul>`, {
+      : card(html`<ul class="list">${rows.map((r) => rowHtml(r, ctx.auth.user !== undefined, query, now, weights))}</ul>`, {
           pad: false,
           extra: "bare",
         })}</div>`;

@@ -14,7 +14,8 @@
  * whole of this screen's design.
  */
 
-import { exploreLine, isExploreLine, exploreNote, exploreSuggestion, explorePage, parseExploreQuery, readExploreLine, type ExploreRow } from "../../actions/explore.ts";
+import { DEFAULT_WEIGHTS, frontWeights, type FrontWeights } from "../../core/front.ts";
+import { exploreLine, isExploreLine, exploreNote, exploreSuggestion, explorePage, parseExploreQuery, readExploreLine, whyOf, type ExploreRow } from "../../actions/explore.ts";
 import { protectionNotice } from "../../kernel/protection.ts";
 import { holdWords, plannerHold } from "../../crew/autonomy.ts";
 import { governorSeen } from "../../crew/governed.ts";
@@ -250,6 +251,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
    */
   let explored: { line: string; rows: readonly ExploreRow[] } | undefined;
   let askedLine = "";
+  /** The forge's front weights, read once per ranked line so the reasons agree with the order. */
+  let exploredWeights: FrontWeights = DEFAULT_WEIGHTS;
   const exploring = (): boolean => isExploreLine(filter.query);
   const exploredRows = (): readonly ExploreRow[] => (exploring() ? (explored?.rows ?? []) : []);
   const syncExplore = (): void => {
@@ -269,6 +272,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       // A newer line was typed while this one was ranked; its answer wins.
       if (askedLine !== line) return;
       const rows = page?.items ?? [];
+      exploredWeights = frontWeights(f.app.db);
       explored = { line, rows };
       at("repos").clamp(rows.length);
       ctx.invalidate();
@@ -1449,13 +1453,17 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** A row's numbers as the page says them; nothing that is zero. */
   function numbersOf(row: ExploreRow): string {
     const n = row.numbers;
+    // The row's reason first, as the page says it; its numbers are not said again.
+    const why = whyOf(row, parseExploreQuery(explored?.line ?? "").sort, Date.now(), exploredWeights);
+    const said = why?.signal;
     return metaOf(
+      why?.text ?? "",
       row.kind === "person" ? plural(n.apps, "app") : "",
-      n.forks > 0 ? plural(n.forks, "fork") : "",
-      n.likes > 0 ? plural(n.likes, "like") : "",
-      n.ships > 0 ? `${n.ships} shipped this month` : "",
-      n.awakeHours > 0 ? `${n.awakeHours} h in use` : "",
-      row.shippedAt !== null ? `shipped ${ago(row.shippedAt)}` : "",
+      n.forks > 0 && said !== "forks" ? plural(n.forks, "fork") : "",
+      n.likes > 0 && said !== "likes" ? plural(n.likes, "like") : "",
+      n.ships > 0 && said !== "ships" ? `${n.ships} shipped this month` : "",
+      n.awakeHours > 0 && said !== "use" ? `${n.awakeHours} h in use` : "",
+      row.shippedAt !== null && said !== "fresh" ? `shipped ${ago(row.shippedAt)}` : "",
     );
   }
 

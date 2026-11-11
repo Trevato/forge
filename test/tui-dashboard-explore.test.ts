@@ -185,3 +185,9 @@ test("sort:likes lists the apps by likes and each row says how many", async () =
   expect(text).toContain("2 likes");
   expect(text.indexOf("alice/ant")).toBeLessThan(text.indexOf("alice/zed"));
 });
+
+test("each explorer line starts with why it ranks there, and does not say that number again", async () => {
+  const text = await typed("kind:app sort:forks");
+  expect(text).toContain("2 forks");
+  expect(text.match(/2 forks/g)?.length).toBe(1);
+});

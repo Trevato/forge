@@ -20,10 +20,13 @@ import type { App } from "../app.ts";
 import { appsForRepos } from "../core/apps.ts";
 import { markOf, type Mark } from "../core/marks.ts";
 import {
+  DEFAULT_WEIGHTS,
   frontScore,
   frontSignals,
   frontWeights,
+  SIGNAL_DAYS,
   type FrontSignals,
+  type FrontWeights,
 } from "../core/front.ts";
 import { isSafeName } from "../git/guard.ts";
 import { canEnterApp, listReposVisibleTo, type Repo } from "../core/repos.ts";
@@ -281,6 +284,60 @@ export function exploreLine(query: ExploreQuery): string {
   ]
     .filter((p) => p !== "")
     .join(" ");
+}
+
+const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
+
+/** How long ago a row last shipped, in words; "" when it never did. */
+function shippedWords(shippedAt: string | null, now: number): string {
+  if (shippedAt === null) return "";
+  const days = Math.floor((now - Date.parse(shippedAt)) / 86_400_000);
+  if (!Number.isFinite(days)) return "";
+  if (days < 1) return "shipped today";
+  if (days === 1) return "shipped yesterday";
+  return `shipped ${days} days ago`;
+}
+
+/** The signals a row can rank by; a row line that says one need not say it twice. */
+export type WhySignal = "forks" | "ships" | "likes" | "fresh" | "use";
+
+/**
+ * The one signal that most explains a row's place, and its phrase, from the
+ * numbers the ranking already holds (no query). A named sort says its own
+ * signal; the default weighs each as the score does (`frontScore`'s terms at
+ * the forge's `weights`, `LIKE_WEIGHT` for likes) and says the largest; a tie
+ * goes to forks, then ships, likes, freshness, use. Undefined when the row has none.
+ */
+export function whyOf(
+  row: ExploreRow,
+  sort: ExploreSort,
+  now: number,
+  weights: FrontWeights = DEFAULT_WEIGHTS,
+): { signal: WhySignal; text: string } | undefined {
+  const n = row.numbers;
+  const text: Record<WhySignal, string> = {
+    forks: n.forks > 0 ? plural(n.forks, "fork", "forks") : "",
+    ships: n.ships > 0 ? `${n.ships} shipped this month` : "",
+    likes: n.likes > 0 ? plural(n.likes, "like", "likes") : "",
+    fresh: shippedWords(row.shippedAt, now),
+    use: n.awakeHours > 0 ? "in use" : "",
+  };
+  if (sort === "name") return undefined;
+  if (sort !== "score") {
+    const signal: WhySignal = sort;
+    return text[signal] === "" ? undefined : { signal, text: text[signal] };
+  }
+  const days = row.shippedAt === null ? Infinity : Math.max(0, (now - Date.parse(row.shippedAt)) / 86_400_000);
+  const weighed: [WhySignal, number][] = [
+    ["forks", weights.forks * Math.log1p(n.forks)],
+    ["ships", weights.ships * Math.log1p(n.ships)],
+    ["likes", LIKE_WEIGHT * Math.log1p(n.likes)],
+    ["fresh", weights.fresh * Math.max(0, 1 - days / SIGNAL_DAYS)],
+    ["use", weights.use * Math.log1p(n.awakeHours)],
+  ];
+  let best: [WhySignal, number] | undefined;
+  for (const w of weighed) if (w[1] > 0 && text[w[0]] !== "" && (best === undefined || w[1] > best[1])) best = w;
+  return best === undefined ? undefined : { signal: best[0], text: text[best[0]] };
 }
 
 /** The one fork action an app row offers: the page's button and the MCP row's `action` say these words. */
@@ -589,7 +646,7 @@ function rank(
 }
 
 /** What a like adds to the score sort: modest next to forks (3) and ships (2). */
-const LIKE_WEIGHT = 0.5;
+export const LIKE_WEIGHT = 0.5;
 
 /** Likes on posts about each repository; the caller passes only repositories the viewer may read. */
 function likesByRepo(db: Database, repoIds: readonly string[]): Map<string, number> {
