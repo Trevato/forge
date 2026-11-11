@@ -11,6 +11,7 @@ import { createUser } from "../src/core/users.ts";
 import { startCrew } from "../src/crew/dispatch.ts";
 import { turnValve } from "../src/flow/valve_store.ts";
 import { serve } from "../src/http/server.ts";
+import { setQuota } from "../src/settings/quotas.ts";
 import { HELD_FRESH_MS, heldRuns, noteHeld } from "../src/runs/held.ts";
 import { QUEUE_WAIT_MAX_MS, vitals } from "../src/kernel/vitals.ts";
 
@@ -184,6 +185,62 @@ test("with the real dispatcher, a run queued behind its issue's running run is h
     expect(sentence).toContain("1 queued, 1 of 1 slots running");
     expect(sentence).toContain("held on purpose: 1 by its own issue's run still going.");
   } finally {
+    await crew.stop();
+    servers.stop();
+  }
+});
+
+test("with the real dispatcher and every slot taken, a run an account limit holds is still named, not counted as waiting for a slot (#11518)", async () => {
+  app.db.query("DELETE FROM run").run();
+  const servers = await serve(app);
+  const fake = join(dataDir, "fake-claude-3");
+  writeFileSync(fake, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi\nexit 1\n`);
+  chmodSync(fake, 0o755);
+  app.db.query("DELETE FROM flow_valve WHERE repo_id = ?1").run(repoId);
+  // Another account's repository, with no limit: its run waits for the slot.
+  const other = await createUser(app.db, {
+    origin: "seed",
+    trusted: true,
+    username: "slotwaiter",
+    email: "slotwaiter@forge.local",
+    password: "a-good-passphrase",
+  });
+  if (!other.ok) throw new Error(String(other.error));
+  const otherRepo = crypto.randomUUID();
+  app.db
+    .query("INSERT INTO repo (id, owner_id, name, visibility, created_at) VALUES (?1, ?2, 'waits', 'private', ?3)")
+    .run(otherRepo, other.value.id, new Date().toISOString());
+  // The holder's account may run one at a time, and one runs: it takes the only slot.
+  setQuota(app.db, "runs", 1, ownerId);
+  const running = createRun(app.db, { repoId, kind: "agent" });
+  app.db
+    .query("UPDATE run SET state = 'running', started_at = ?1, heartbeat_at = ?1 WHERE id = ?2")
+    .run(new Date().toISOString(), running.id);
+  const ahead = createRun(app.db, { repoId: otherRepo, kind: "agent" });
+  const limited = createRun(app.db, { repoId, kind: "agent" });
+  const earlier = new Date(Date.now() - 3 * QUEUE_WAIT_MAX_MS).toISOString();
+  const hourAgo = new Date(Date.now() - 2 * QUEUE_WAIT_MAX_MS).toISOString();
+  app.db.query("UPDATE run SET created_at = ?1 WHERE id = ?2").run(earlier, ahead.id);
+  app.db.query("UPDATE run SET created_at = ?1 WHERE id = ?2").run(hourAgo, limited.id);
+  const crew = await startCrew(app, {
+    forgeUrl: servers.url,
+    localUrl: servers.url,
+    binary: fake,
+    concurrency: 1,
+    budgetUsd: 1,
+    runTimeoutMs: 60_000,
+    tickMs: 600_000,
+  });
+  try {
+    // The pass stops starting at `ahead` (no slot), and still reads `limited` past it.
+    expect(heldRuns(app.db).get(ahead.id)).toBeUndefined();
+    expect(heldRuns(app.db).get(limited.id)).toBe("limit");
+    await crew.stop();
+    const sentence = agentQueue(Date.now())?.sentence ?? "";
+    expect(sentence).toContain("1 queued, 1 of 1 slots running");
+    expect(sentence).toContain("held on purpose: 1 by an account limit.");
+  } finally {
+    setQuota(app.db, "runs", null, ownerId);
     await crew.stop();
     servers.stop();
   }

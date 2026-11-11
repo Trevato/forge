@@ -45,6 +45,8 @@ import {
   type LookInput,
 } from "../src/looks/capture.ts";
 import { startLooks, type LooksHandle } from "../src/looks/service.ts";
+import type { BackoffClock } from "../src/looks/backoff.ts";
+import { setLogLevel } from "../src/kernel/log.ts";
 
 quietLogs();
 
@@ -110,6 +112,26 @@ describe("the look", () => {
           ? { lcp: [{ startTime: 3100, size: 10 }] }
           : { layoutShift: [{ startTime: 100, value: 0.3 }] },
     });
+  };
+
+  // The backoff's clock: real time, but a retry runs only when a test
+  // fires it, so a wait of minutes is a line of the test (#11509).
+  const scheduled: { ms: number; fn: () => void }[] = [];
+  const clock: BackoffClock = {
+    now: () => Date.now(),
+    after(ms, fn) {
+      const entry = { ms, fn };
+      scheduled.push(entry);
+      return () => {
+        const at = scheduled.indexOf(entry);
+        if (at !== -1) scheduled.splice(at, 1);
+      };
+    },
+  };
+  /** Run a waiting retry now, as its wait ending would. */
+  const fire = (entry: { ms: number; fn: () => void }): void => {
+    scheduled.splice(scheduled.indexOf(entry), 1);
+    entry.fn();
   };
 
   const web = (path: string, cookie = "") =>
@@ -256,7 +278,7 @@ describe("the look", () => {
       concurrency: 8,
     });
     await runtime.start();
-    looks = startLooks(app, { localUrl: servers.url, capture: fake });
+    looks = startLooks(app, { localUrl: servers.url, capture: fake, clock });
     const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -640,10 +662,50 @@ describe("the look", () => {
     });
     if (!moved.ok) throw new Error(JSON.stringify(moved.error));
     const third = moved.value.commitOid;
+    const callsBefore = callsAt(env).length;
+    const waitsBefore = new Set(scheduled);
     expect(
       (await settled((r) => r.env === env && r.commitOid === third)).state,
     ).toBe("ok");
     const rows = await pictured(env, third);
+    await looks.idle();
+    // #11509: a page that gives no picture is tried once, not once per
+    // kind, and the next try waits out its backoff.
+    expect(callsAt(env).length - callsBefore).toBe(1);
+    expect(rows).toHaveLength(3);
+    const waits = () => scheduled.filter((s) => !waitsBefore.has(s));
+    expect(waits().map((w) => w.ms)).toEqual([30_000]);
+    // An event for the same head inside the wait is not a reason to try sooner.
+    const serving = () =>
+      app.bus.append({ kind: "app.serving", repoId: repo.id, payload: { env, commitOid: third } });
+    serving();
+    await looks.idle();
+    expect(callsAt(env).length - callsBefore).toBe(1);
+    // Each wait ending is one more try, and the next wait is longer.
+    for (const [tries, next] of [[2, 120_000], [3, 600_000]] as const) {
+      fire(waits()[0]!);
+      await looks.idle();
+      expect(callsAt(env).length - callsBefore).toBe(tries);
+      expect(waits().map((w) => w.ms)).toEqual([next]);
+    }
+    // After the last wait the fourth try fails too: one line, and no more.
+    const warned: string[] = [];
+    const warn = console.warn;
+    console.warn = (line: string) => warned.push(String(line));
+    setLogLevel("warn");
+    try {
+      fire(waits()[0]!);
+      await looks.idle();
+    } finally {
+      setLogLevel("error");
+      console.warn = warn;
+    }
+    expect(callsAt(env).length - callsBefore).toBe(4);
+    expect(waits()).toEqual([]);
+    expect(warned.filter((l) => l.includes("look given up"))).toHaveLength(1);
+    serving();
+    await looks.idle();
+    expect(callsAt(env).length - callsBefore).toBe(4);
     for (const look of rows) {
       expect(look.error).toBe("the browser fell over");
       expect(look.path).toBe("");
@@ -681,6 +743,7 @@ describe("the look", () => {
     // Invariant: NO_BROWSER is recorded for the check as "no browser" per look, words only, and leaves the check's state alone.
     const env = `pull-${unpictured.pull.number}`;
     modes.set(helloHost(env), "nobrowser");
+    const waitsBefore = scheduled.length;
     const moved = await commitToBranch(app, alice, repo, {
       branch: "second",
       message: "No browser",
@@ -697,6 +760,9 @@ describe("the look", () => {
       (await settled((r) => r.env === env && r.commitOid === moved.value.commitOid)).state,
     ).toBe("ok");
     await pictured(env, moved.value.commitOid);
+    await looks.idle();
+    // No browser is not the app's fault, and no wait would bring one: it is not retried.
+    expect(scheduled).toHaveLength(waitsBefore);
     const got = await until(() => {
       const read = readLooks(dataDir, check);
       return read.length === 2 ? read : undefined;

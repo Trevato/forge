@@ -10,7 +10,8 @@ import type { Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { newAppFromSentence, NEW_APP_ERRORS } from "./apps.ts";
-import { updateRepoSettings } from "./repos.ts";
+import { getRepoById } from "../core/repos.ts";
+import { seatFirstAskCrew } from "../spawn/starter_crew.ts";
 import { FORGE_REPO_WORDS, NOT_TOLD_WORDS, SAY_SOMETHING_WORDS } from "./tell_words.ts";
 import { FROM_WORDS, TOO_LONG_WORDS, tell, type TellError, type Told } from "./tell.ts";
 import { parseFrom } from "./tell_from.ts";
@@ -64,10 +65,9 @@ export async function firstAsk(
   let repo = made.repo;
   let autonomyFailed = false;
   if (crewCanRun) {
-    const on = await updateRepoSettings(app, actor, repo, { autonomy: "autonomous" });
-    if (on.ok) {
-      repo = on.value;
-    } else autonomyFailed = true;
+    // A builder and a reviewer seated and autonomy on as the asker, so the next tick starts the ask (#11508).
+    if (await seatFirstAskCrew(app.db, repo, actor.id)) repo = getRepoById(app.db, repo.id) ?? repo;
+    else autonomyFailed = true;
   }
   const told = await tell(app, actor, repo, text, 1, from);
   return ok({ repo, autonomyFailed, told });

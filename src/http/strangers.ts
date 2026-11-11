@@ -23,7 +23,7 @@ import { transferGate } from "../git/env.ts";
 import { bucketOf, clientBucket } from "./peer.ts";
 
 /** A door a stranger is counted at, each with its own minute. */
-export type Door = "api" | "git" | "code" | "plan";
+export type Door = "api" | "git" | "code" | "plan" | "pay";
 
 export interface StrangerLimits {
   /** Requests per minute through each door, per client address. */
@@ -59,8 +59,8 @@ export interface StrangerLimits {
 }
 
 export const STRANGER_LIMITS: StrangerLimits = {
-  perAddress: { api: 600, git: 60, code: 10, plan: 10 },
-  forge: { api: 6000, git: 600, code: 60, plan: 60 },
+  perAddress: { api: 600, git: 60, code: 10, plan: 10, pay: 5 },
+  forge: { api: 6000, git: 600, code: 60, plan: 60, pay: 60 },
   transfersPerAddress: 4,
   transferShare: 0.5,
   transferTimeoutMs: 7_200_000,

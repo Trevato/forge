@@ -9,7 +9,7 @@ import { found, type Finding } from "../hunt/finding.ts";
 import type { Database } from "bun:sqlite";
 import { dayOf } from "./day.ts";
 import { budgetFor, gitBudgetFor, PAGE_BUDGET } from "./budgets.ts";
-import { percentile, summarize, WINDOW_MS, type PerfRecord } from "./record.ts";
+import { percentile, summarize, WINDOW_MS, type PerfRecord, type RouteStat } from "./record.ts";
 
 export { WINDOW_MS };
 export const MIN_REQUESTS = 20;
@@ -18,6 +18,25 @@ export const MIN_REQUESTS = 20;
 const CACHE_PHASE = /(cache|kpis|panel|vitals)/;
 /** `app`, `db` and `route` wrap the others; the blame goes to a part. */
 const WRAPPERS = new Set(["app", "db", "route", "compress"]);
+
+/** The phase the blame goes to: the slowest part of a route's p95, never a wrapper; undefined when there is none. */
+export function slowestPhase(stat: RouteStat): RouteStat["phases"][number] | undefined {
+  return stat.phases.find((p) => !WRAPPERS.has(p.name));
+}
+
+export type SlowRoute = { route: string; p95Ms: number; budgetMs: number; n: number; slowestPhase: string | null };
+
+/** The `limit` budgeted routes furthest over their p95 budget (ratio p95 / budget) in the window ending at `now`; routes with no budget are left out. */
+export function slowestRoutes(record: PerfRecord, now: number, limit = 10): SlowRoute[] {
+  const rows = record.patterns().flatMap((route) => {
+    const stat = summarize(record.traffic(route, now - WINDOW_MS));
+    if (stat === null) return [];
+    const budget = budgetFor(route);
+    if (budget === undefined) return [];
+    return [{ over: stat.p95 / budget.p95Ms, row: { route, p95Ms: Math.round(stat.p95 * 10) / 10, budgetMs: budget.p95Ms, n: stat.n, slowestPhase: slowestPhase(stat)?.name ?? null } }];
+  });
+  return rows.sort((a, b) => b.over - a.over).slice(0, limit).map((r) => r.row);
+}
 
 export function evaluate(record: PerfRecord, now: number): Finding[] {
   const out: Finding[] = [];
@@ -29,7 +48,7 @@ export function evaluate(record: PerfRecord, now: number): Finding[] {
     if (stat === null || stat.n < MIN_REQUESTS || stat.p95 <= budget.p95Ms) continue;
     // Over budget "for 15 min": the route must have been watched most of the window.
     if (now - (record.first(pattern) ?? now) < WINDOW_MS * 0.9) continue;
-    const slow = stat.phases.find((p) => !WRAPPERS.has(p.name));
+    const slow = slowestPhase(stat);
     const phase = slow?.name ?? "app";
     const lines = [
       `Budget: ${budget.words} (${budget.p95Ms} ms).`,

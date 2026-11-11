@@ -31,6 +31,8 @@ import { floorRefusal } from "./disk_floor.ts";
 import { limitValue } from "../settings/limits.ts";
 import { awakeRefusal, idleAfterMs, WakeRate } from "./sleep.ts";
 import { wakingResponse } from "../web/pages/waking.ts";
+import { lapsedResponse, payAgainRoute, PAY_AGAIN_PATH } from "../web/pages/lapsed.ts";
+import { lapseFor, type Lapse } from "../billing/lapse.ts";
 import { takeDoor } from "../http/strangers.ts";
 import { vouched } from "./vouch.ts";
 import { during } from "../perf/jobs.ts";
@@ -256,6 +258,25 @@ export async function sleepChild(parent: App, name: string): Promise<boolean> {
   return true;
 }
 
+/** A child's lapse when its billing is `none`: it sleeps and does not wake until paid (#11393); else undefined. */
+export function lapsedNone(parent: App, name: string): Extract<Lapse, { state: "none" }> | undefined {
+  const lapse = lapseFor(parent.db, name);
+  return lapse.state === "none" ? lapse : undefined;
+}
+
+/** Put to sleep, through `sleepChild`, every awake child whose billing is `none`. Answers the names. */
+export async function sleepLapsed(parent: App): Promise<string[]> {
+  const names = new Set<string>([...(touched.get(parent)?.values() ?? [])].map((m) => m.name));
+  for (const c of cellChildren(parent).list()) names.add(c.name);
+  const asleep: string[] = [];
+  for (const name of names) {
+    if (lapsedNone(parent, name) === undefined || !(await sleepChild(parent, name))) continue;
+    parent.log.warn("child forge asleep", { name, why: "billing is none" });
+    asleep.push(name);
+  }
+  return asleep;
+}
+
 /** Whether a child is awake: open in this process or running in a cell. */
 export function childAwake(parent: App, name: string): boolean {
   const ledger = readLedgerSync(parent, name);
@@ -283,7 +304,10 @@ async function closeOne(parent: App, cache: Map<string, App>, bodyId: string, ch
 function keepSweeping(parent: App): void {
   if (sweepers.has(parent)) return;
   const every = Math.max(1000, Math.min(60_000, Math.floor(idleAfterMs() / 4)));
-  const timer = setInterval(() => void during("spawn-idle", () => sleepIdleChildren(parent)).catch(() => {}), every);
+  const timer = setInterval(() => void during("spawn-idle", async () => {
+    await sleepLapsed(parent);
+    await sleepIdleChildren(parent);
+  }).catch(() => {}), every);
   timer.unref?.();
   sweepers.set(parent, timer);
 }
@@ -340,6 +364,12 @@ export function wakeGate(parent: App, request: Request): Response | undefined {
     if (isAwakeBody(parent, ledger.bodyId)) void sleepChild(parent, name).catch(() => {});
     return refusedResponse(floor);
   }
+  // Billing `none`: asleep now and answered with why, never woken until paid (#11393).
+  const lapsed = lapsedNone(parent, name);
+  if (lapsed !== undefined) {
+    if (isAwakeBody(parent, ledger.bodyId)) void sleepChild(parent, name).catch(() => {});
+    return lapsedResponse(parent, request, name, lapsed);
+  }
   const known = carriesCredentials(parent, ledger.bodyId, request);
   if (isAwakeBody(parent, ledger.bodyId)) {
     if (known) {
@@ -372,6 +402,16 @@ export function wakeGate(parent: App, request: Request): Response | undefined {
   reserved.set(ledger.bodyId, Date.now());
   touch(parent, ledger);
   return undefined;
+}
+
+/** POST to a lapsed forge's address: the button to pay again. Undefined for anything else. */
+export async function payAgainGate(parent: App, request: Request): Promise<Response | undefined> {
+  if (request.method !== "POST" || new URL(request.url).pathname !== PAY_AGAIN_PATH) return undefined;
+  const name = parseHostedChildName(request.headers.get("host") ?? "", childHost(parent));
+  if (name === undefined) return undefined;
+  const ledger = readLedgerSync(parent, name);
+  if (ledger === undefined || !ledger.done || lapsedNone(parent, name) === undefined) return undefined;
+  return payAgainRoute(parent, request, name);
 }
 
 /** Drop every hosted child App this parent has open (call when the parent stops). */
@@ -601,6 +641,11 @@ export async function resolveHostedChildApp(
     if (!CHILD_NAME.test(name)) continue;
     const ledger = readLedgerSync(parent, name);
     if (ledger === undefined || !ledger.done) continue;
+    // Billing `none`: its apps do not answer, awake or not, until paid (#11393).
+    if (lapsedNone(parent, name) !== undefined) {
+      if (isAwakeBody(parent, ledger.bodyId)) void sleepChild(parent, name).catch(() => {});
+      return { refused: `${name} is asleep because its subscription ended and was not paid again` };
+    }
     if (!isAwakeBody(parent, ledger.bodyId)) {
       const refused = startRefused(parent, ledger);
       if (refused !== undefined) return { refused };

@@ -18,6 +18,7 @@ import { entry as dotfiles } from "./dotfiles.ts";
 import { entry as devices } from "./devices.ts";
 import { entry as bets } from "./bets.ts";
 import { entry as billing } from "./billing.ts";
+import { entry as lapsed } from "./lapsed.ts";
 import { entry as codes } from "./codes.ts";
 import { entry as boards } from "./boards.ts";
 import { entry as drift } from "./drift.ts";
@@ -56,6 +57,7 @@ import { entry as plans } from "./plans.ts";
 import { entry as economics } from "./economics.ts";
 import { entry as money } from "./money.ts";
 import { entry as loopStalls } from "./loopstalls.ts";
+import { entry as waiting } from "./waiting.ts";
 import { entry as slowPagesEntry } from "./slowpages.ts";
 import { entry as maintenance } from "./maintenance.ts";
 import { entry as maintainRuns } from "./maintainruns.ts";
@@ -118,6 +120,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   homePins,
   system,
   loopStalls,
+  waiting,
   slowPagesEntry,
   telemetry,
   resilience,
@@ -149,6 +152,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   economics,
   money,
   billing,
+  lapsed,
   codes,
   appTemplates,
   devices,

@@ -87,7 +87,8 @@ const toolbarSource = `(function () {
   }
   if (d.app) line(d.app, true);
   if (d.env === "production") line("production");
-  var LS = "color:#8ab4ff;text-decoration:none;display:flex;align-items:center;min-height:44px";
+  var LC = "#8ab4ff";
+  var LS = "color:" + LC + ";text-decoration:none;display:flex;align-items:center;min-height:44px";
   var pullHref = "";
   // The pull this preview shows, one tap away: built from the script's own origin, never from page text.
   if (d.env !== "production" && /^\\d{1,9}$/.test(d.pull || "") && /^[\\w.-]+\\/[\\w.-]+$/.test(d.repo || "")) {
@@ -112,6 +113,27 @@ const toolbarSource = `(function () {
     : d.deploying ? W.deploying
     : d.behind ? W.behind : "";
   if (freshness) line(freshness);
+  // Which commit this page is serving and since when: the forge's record, set as text.
+  var ago = function (iso) {
+    var t = Date.parse(iso || "");
+    if (!(t > 0)) return "";
+    var m = Math.max(0, Math.floor((Date.now() - t) / 60000));
+    return m < 1 ? "just now" : m < 60 ? m + " min ago" : m < 1440 ? Math.floor(m / 60) + " h ago" : Math.floor(m / 1440) + " d ago";
+  };
+  var liveAgo = "";
+  if (/^[0-9a-f]{7,64}$/.test(d.commit || "") && (liveAgo = ago(d.live))) {
+    var sv = document.createElement("div");
+    sv.style.cssText = "overflow-wrap:anywhere;opacity:.85";
+    var part = function (t) { var sp = document.createElement("span"); sp.textContent = t; sv.appendChild(sp); };
+    part("Serving ");
+    var short = d.commit.slice(0, 7), cl = null;
+    if (/^[\\w.-]+\\/[\\w.-]+$/.test(d.repo || "") && fo) {
+      try { cl = document.createElement("a"); cl.href = new URL("/" + d.repo + "/commit/" + d.commit, fo).href; cl.rel = "noopener"; cl.style.color = LC; cl.textContent = short; } catch (e) { cl = null; }
+    }
+    if (cl) sv.appendChild(cl); else part(short);
+    part(", live " + liveAgo);
+    panel.appendChild(sv);
+  }
   var link = document.createElement("a");
   link.textContent = "Home";
   link.rel = "noopener";
@@ -396,6 +418,18 @@ const toolbarSource = `(function () {
             crew.appendChild(ta);
           }
         }
+        // Make it yours: the forge's own fork page, on its origin; it asks a
+        // signed-out reader to sign in and returns to itself.
+        if (typeof c.yours === "string") {
+          var y = new URL(c.yours);
+          if (y.origin === forge) {
+            var ya = document.createElement("a");
+            ya.textContent = "Make it yours";
+            ya.href = y.href;
+            ya.style.cssText = LS;
+            crew.appendChild(ya);
+          }
+        }
         // The other side: origin plus this path as text, so "//" cannot leave it.
         var sd = c.side;
         if (sd && typeof sd.label === "string" && typeof sd.url === "string") {
@@ -638,6 +672,8 @@ export type PillWhere = {
   deploying?: boolean;
   /** The newest check of the pull's head, a key of `CHECK_WORDS`. */
   check?: PillCheck;
+  /** The commit the environment is serving and the instant it went live, from the forge's own record. */
+  serving?: { oid: string; at: string };
 };
 
 /** `text` safe inside a double-quoted HTML attribute. */
@@ -687,6 +723,8 @@ export function toolbarTag(
           ["title", where.title],
           ["state", where.state],
           ["check", where.check],
+          ["commit", where.serving?.oid],
+          ["live", where.serving?.at],
           ["behind", where.behind === true ? "1" : undefined],
           ["deploying", where.deploying === true ? "1" : undefined],
         ]

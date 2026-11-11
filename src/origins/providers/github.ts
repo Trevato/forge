@@ -29,6 +29,7 @@ import type {
   RemoteReview,
   RemoteMilestone,
   RemoteReviewState,
+  ReviewLine,
   RemoteTreeEntry,
   TokenReach,
   RepoWalk,
@@ -62,6 +63,7 @@ import {
   labelNames,
   linkNext,
   pathSegments,
+  postReview,
   seg,
   sortEntries,
   splitFullName,
@@ -611,6 +613,7 @@ export class GitHubProvider implements Provider {
     input: {
       state: "approved" | "changes_requested" | "commented";
       body: string;
+      comments?: readonly ReviewLine[];
     },
   ): Promise<ProviderResult<RemoteReviewState>> {
     const named = splitFullName(fullName);
@@ -623,16 +626,23 @@ export class GitHubProvider implements Provider {
         : input.state === "changes_requested"
           ? "REQUEST_CHANGES"
           : "COMMENT";
-    const result = await this.api.call({
-      path: `/repos/${seg(named.owner)}/${seg(named.name)}/pulls/${number}/reviews`,
-      method: "POST",
-      body: { event, body: input.body },
-    });
+    const lines = (input.comments ?? []).map((l) => ({
+      path: l.path,
+      line: l.line,
+      side: l.side === "old" ? "LEFT" : "RIGHT",
+      body: l.body,
+    }));
+    const result = await postReview(
+      this.api,
+      `/repos/${seg(named.owner)}/${seg(named.name)}/pulls/${number}/reviews`,
+      { event, body: input.body },
+      lines,
+    );
     if (!result.ok) return result;
     const state = toReviewState(result.value.data);
     return state === undefined
       ? fail("invalid_response", NO_REVIEW)
-      : succeed(state);
+      : succeed({ ...state, carried: result.value.carried });
   }
 
   async createIssue(

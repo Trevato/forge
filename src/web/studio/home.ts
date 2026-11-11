@@ -90,7 +90,7 @@ import { sinceYouWere } from "./since.ts";
 import { homeTabs, unshippedAsks } from "./home_tabs.ts";
 import { crewKeyCard } from "./crew_key.ts";
 import { everydayCard } from "../pages/everyday.ts";
-import { nextStepsCard, nextStepsOf } from "../pages/next-steps.ts";
+import { firstAskJs, nextStepsCard, nextStepsOf } from "../pages/next-steps.ts";
 import { spawnedOrg } from "../../spawn/claim.ts";
 import { clientApps } from "./client_home.ts";
 import { passkeyJs } from "../passkey-client.ts";
@@ -338,7 +338,7 @@ export async function studioHome(
       title: "Home",
       body: lean,
       // The everyday step makes its account with a passkey (#1890).
-      ...(firstSteps && !firstTell ? { scriptJs: passkeyJs } : {}),
+      ...(firstSteps ? { scriptJs: firstTell ? firstAskJs : passkeyJs } : {}),
     });
   }
   // The client's first screen names its own phases (`clientApps`).

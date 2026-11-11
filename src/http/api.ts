@@ -63,6 +63,7 @@ import { receiveBeat, SIGNATURE_HEADER } from "../spawn/heartbeat.ts";
 import { takeOrTell } from "../actions/follow.ts";
 import { noteRead, telemetryReader, type Reader } from "../actions/telemetry.ts";
 import { flowCopy, flowEtag, flowMaxAge } from "../system/flow_cache.ts";
+import { readHours, routeHours } from "../perf/history.ts";
 import { countRead } from "../system/telemetry_reads.ts";
 import { historyFor, sourcesOut, systemWithReaders, welcome } from "../system/telemetry.ts";
 import { weekCard, WEEK_DAYS } from "../crew/week_card.ts";
@@ -1351,6 +1352,19 @@ export function apiRoutes(router: Router<Handler>): void {
     const card = timePhase(ctx.request, "scorecard", () => readScorecards(ctx.app, ctx.auth.user));
     if (!card) return apiError("forbidden", 403, ADMIN_WORDS.scorecard);
     return timePhase(ctx.request, "render", () => json(card));
+  });
+
+  // Route p50/p95 by the hour, kept 7 days (`perf/history.ts`); admin.
+  router.add("GET", "/api/v1/telemetry/routes", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const denied = requireScope(ctx, "ro");
+    if (denied) return denied;
+    if (!ctx.auth.user) return unauthorized();
+    if (ctx.auth.user.isAdmin !== true) return forbidden();
+    const hours = readHours(ctx.url.searchParams.get("hours"));
+    if (hours === null) return apiError("invalid_hours", 400, "hours is a whole number from 1 to 168");
+    const rows = timePhase(ctx.request, "read", () => routeHours(ctx.app.db, hours));
+    return timePhase(ctx.request, "render", () => json({ hours, rows }));
   });
 
   // The week's line per crew member (`crew/week_card.ts`); as MCP `crew` with kind "week".

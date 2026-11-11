@@ -87,12 +87,15 @@ const keyField = (): Html => html`<form class="stack" method="post" action="${KE
 
 /** What the crew runs on, said once, with the field when a key would change anything (`compact`: a line and a link, no field). */
 export function crewKeyCard(ctx: Ctx, compact = false): Html | null {
+  // Credit left is something to run on: the card never asks for a key then, in any form (#11508).
   if (crewHasCredential(ctx.app.db)) return null;
   const admin = ctx.auth.user?.isAdmin === true;
   // On a repository page: one line and a link, the field lives on the home page.
-  if (compact)
+  if (compact) {
+    if (crewCanRun(ctx.app)) return null;
     return html`<p class="small muted" id="crew-key-note" role="status">${icon("alert")} The crew needs a model key to start.
       ${admin ? html`<a href="/#crew-key-note">Add one on the home page</a>.` : "Ask this forge's admin to add one."}</p>`;
+  }
   const credit = includedCredit(ctx.app);
   if (credit !== undefined && credit.leftUsd > 0)
     return html`<section class="settings-block" id="crew-key-note" role="status">

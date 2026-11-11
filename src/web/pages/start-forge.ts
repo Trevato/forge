@@ -32,7 +32,7 @@ if(!/^[a-z0-9][a-z0-9-]*$/.test(n)){say("Use lowercase letters, digits and dashe
 t=setTimeout(function(){fetch("/forges/name/"+encodeURIComponent(n),{credentials:"omit"}).then(function(r){
 return r.status===200?r.json():null}).then(function(j){
 if(q!==k||!j)return;say(j.verdict==="free"?n+" is free.":j.verdict==="taken"?n+" is taken. Try another.":typeof j.why==="string"?j.why:"")}).catch(function(){})},300)})
-})(document)`;
+})(document);`;
 
 /** Waits for the forge, then goes to its claim page; after a minute and a half the link is still there. */
 export const startWaitJs = `(function(d){
@@ -45,7 +45,7 @@ if(j&&j.ready===true){location.replace(u);return}throw 0}).catch(function(){
 if(++tries>60){s.textContent=n+" is taking longer than usual. Use the link to open it.";return}
 setTimeout(poll,1500)})}
 poll()
-})(document)`;
+})(document);`;
 
 /** A forge name the fuller form may be given: 1 to 39 lowercase letters, digits and inner dashes. */
 const SLUG = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;

@@ -90,3 +90,19 @@ test("a slow route is filed as a bug, so its clock runs from the filing (#8856)"
   const issue = listIssues(app.db, repo.id, { state: "open" }).find((i) => i.title === "/ is over its budget: kpis")!;
   expect(labelsFor(app.db, issue.id).map((l) => l.name)).toEqual(["bug"]);
 });
+
+test("the watcher folds each tick into its hour's row, driven without timers (#11477)", () => {
+  app.db.query("DELETE FROM route_hour").run();
+  let t = now;
+  const rec = slow();
+  const stop = startPerfWatcher(app, rec, () => t, 3_600_000);
+  const rows = () => app.db.query<{ hour: number; n: number }, []>("SELECT hour, n FROM route_hour ORDER BY hour").all();
+  stop.tick();
+  expect(rows().length).toBe(1);
+  const first = rows()[0]!;
+  t += 60_000;
+  rec.add("/", { at: t - 1000, ms: 9, signedIn: false, phases: [] });
+  stop.tick();
+  expect(rows()).toEqual([{ hour: first.hour, n: first.n + 1 }]); // same hour: the row grows
+  stop();
+});

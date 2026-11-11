@@ -9,9 +9,11 @@ import { listIssues, MAX_BODY } from "../src/core/issues.ts";
 import { TOO_LONG_WORDS } from "../src/actions/tell.ts";
 import { FORGE_REPO_WORDS, SAY_SOMETHING_WORDS } from "../src/actions/tell_words.ts";
 import { listReposOwnedBy } from "../src/core/repos.ts";
+import { autonomyStatus } from "../src/crew/autonomy.ts";
+import { listCrewRoles } from "../src/core/agents.ts";
 import { recentThoughts } from "../src/core/thoughts.ts";
 import { fundingOf, keepFunding } from "../src/spawn/funding.ts";
-import { crewCanRun } from "../src/web/studio/crew_key.ts";
+import { crewCanRun, crewKeyCard } from "../src/web/studio/crew_key.ts";
 import { getUserByName } from "../src/core/users.ts";
 import { deriveAppName } from "../src/web/pages/apps-name.ts";
 import { claimedForge, type ClaimedForge } from "./helpers/claimed-forge.ts";
@@ -50,6 +52,14 @@ test("the first tell makes one app, files one open issue on it, keeps no thought
   // The forge's included credit lets the crew run: the new app starts autonomous (box 2).
   expect(crewCanRun(forge.child)).toBe(true);
   expect(repo.autonomy).toBe("autonomous");
+  // Autonomy is on as the asker and a builder and reviewer are seated: the tick does not pause (#11508).
+  expect(repo.autonomyBy).toBe(maria.id);
+  expect(autonomyStatus(forge.child, repo).paused).toBeNull();
+  expect(listCrewRoles(db, repo.id).map((c) => c.role).sort()).toEqual(["builder", "reviewer"]);
+  // With credit left the app's page asks for no key and says nobody is missing.
+  const page = await (await fetch(`${forge.base}/maria/${repo.name}`, { headers: { cookie: forge.owner } })).text();
+  expect(page).not.toContain("needs a model key");
+  expect(page).not.toContain("Nobody on the crew yet");
   expect(recentThoughts(db, maria.id, 10).length).toBe(0);
 });
 
@@ -108,5 +118,33 @@ test("an ask that would name the forge's own repository is refused and makes no 
   } finally {
     if (before === undefined) delete forge.child.config.forgeRepo;
     else forge.child.config.forgeRepo = before;
+  }
+});
+
+const cardCtx = (admin: boolean) =>
+  ({ app: forge.child, auth: { user: { isAdmin: admin } } }) as unknown as Parameters<typeof crewKeyCard>[0];
+
+test("an app's page never asks for a key while included credit is left (#11508)", () => {
+  expect(crewCanRun(forge.child)).toBe(true);
+  for (const admin of [true, false]) expect(crewKeyCard(cardCtx(admin), true)).toBeNull();
+});
+
+test("with credit left the home card, not the app's page, still offers the key to an admin only", () => {
+  expect(String(crewKeyCard(cardCtx(true), false))).toContain("crew-key-form");
+  expect(String(crewKeyCard(cardCtx(false), false))).not.toContain("crew-key-form");
+});
+
+test("with the credit spent an app's page says a key is needed, with the link for an admin only", () => {
+  const dir = forge.child.config.dataDir;
+  const funding = fundingOf(dir)!;
+  keepFunding(dir, { token: funding.token, capUsd: 2, spentUsd: 2 });
+  try {
+    expect(String(crewKeyCard(cardCtx(true), true))).toContain("needs a model key");
+    expect(String(crewKeyCard(cardCtx(true), true))).toContain("/#crew-key-note");
+    const person = String(crewKeyCard(cardCtx(false), true));
+    expect(person).toContain("needs a model key");
+    expect(person).not.toContain("/#crew-key-note");
+  } finally {
+    keepFunding(dir, funding);
   }
 });

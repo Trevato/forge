@@ -96,6 +96,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/forges/new` — `pages/new-forge.ts` · send a new forge · none · colour 1.
 - `/family` — `pages/family.ts` · parent, this forge and children as a tree · `/forges` (the same children) · colour 1.
 - `/claim` — `pages/claim.ts` · claim a forge that was sent to me · none · colour 1.
+- `/welcome` — `pages/claim.ts` (`welcomePage`) · the account screen of a forge you just started: make your account · none · none seen.
 - `/privacy` — `pages/privacy.ts` · what the forge keeps about a visitor, three plain lines, open to anyone · none · none seen.
 - `/first-admin` — `pages/first-admin.ts` · the first person becomes admin · none · none seen.
 - `/fleet/graph` — `pages/fleet-graph.ts` · the fleet as a graph · `/family`, `/forges` · none seen.

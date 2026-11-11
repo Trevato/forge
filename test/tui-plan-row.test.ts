@@ -63,7 +63,7 @@ test("an admin reads the plan line and sets the portal; a bad address keeps noth
   const h = boot("alice");
   await h.open();
   expect(h.text()).toContain("Medium");
-  expect(h.text()).toContain("Past due, sleeps 2030-");
+  expect(h.text()).toContain("Payment due — paused on ");
   await h.press("enter");
   for (const ch of "http://insecure.test") await h.press(ch);
   await h.press("enter");

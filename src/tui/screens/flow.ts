@@ -58,6 +58,19 @@ import { dialog } from "../ui/widgets.ts";
 import { live } from "../../system/live.ts";
 import { confirmScreen } from "./common.ts";
 import { duplicateLines } from "./system.ts";
+import type { HandoverLists, Named } from "../../flow/handover_read.ts";
+
+/** The hand-over lists as dialog lines: only lists with rows; the rebase rows are numbered, and the number is the key that updates one. */
+export function handoverLines(l: HandoverLists, inner: number): string[] {
+  const list = (title: string, rows: readonly Named[], num = false): string[] =>
+    rows.length === 0 ? [] : ["", title, ...rows.map((n, i) => truncate(`  ${num ? `${String(i + 1)} ` : ""}${n.repo} #${String(n.number)}`, inner))];
+  const out = [
+    ...list("Handed to a person in the last 24 h:", l.handed),
+    ...list("One review round from a hand-over:", l.near),
+    ...list("Bring up to date first (press the number):", l.rebase, true),
+  ];
+  return out.length === 0 ? [] : ["", "Where the crew gives up", ...out.slice(1)];
+}
 
 const WIDTH = 64;
 
@@ -288,14 +301,26 @@ export function flowScreen(
   lines: readonly string[],
   /** The keeper's open question (a site admin's); `answer` presses its one button and says what happened. */
   keeper?: { ask: KeeperAsk; answer: () => { done: boolean; message: string } },
+  /** The hand-over lists (a person-admin's): read when the screen opens; a digit presses that rebase row's update, as `updateSubmit` does. */
+  handover?: { read: () => Promise<HandoverLists>; update: (n: Named) => { ok: boolean; says: string } },
 ): Screen {
+  let lists: HandoverLists | undefined;
   const self: Screen = {
     title: "Flow",
-    keys: [binding(["enter", "esc", "q"], "close"), ...(keeper?.ask ? [binding(["l"], keeper.ask.button.toLowerCase())] : [])],
+    keys: [
+      binding(["enter", "esc", "q"], "close"),
+      ...(keeper?.ask ? [binding(["l"], keeper.ask.button.toLowerCase())] : []),
+      ...(handover ? [binding(["1", "2", "3", "4", "5"], "bring a pull up to date")] : []),
+    ],
+    async load() {
+      if (handover === undefined) return;
+      lists = await handover.read();
+      ctx.invalidate();
+    },
     render(area, s) {
       const buttons = dialog(s, area, ctx.theme.c, {
         title: "Flow",
-        body: lines,
+        body: [...lines, ...(lists ? handoverLines(lists, WIDTH - 8) : [])],
         actions: [{ label: "Close" }],
         selected: 0,
         width: WIDTH,
@@ -304,7 +329,13 @@ export function flowScreen(
     },
     key(e) {
       if (e.key === "enter" || e.key === "esc" || e.key === "q") ctx.pop();
-      else if (e.key === "l" && keeper)
+      else if (handover && lists && /^[1-5]$/.test(e.key)) {
+        const n = lists.rebase[Number(e.key) - 1];
+        if (n !== undefined) {
+          const r = handover.update(n);
+          ctx.toast(r.says, r.ok ? "success" : "danger");
+        }
+      } else if (e.key === "l" && keeper)
         ctx.push(
           confirmScreen(ctx, self, {
             title: keeper.ask.button,

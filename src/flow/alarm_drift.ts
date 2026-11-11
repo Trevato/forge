@@ -10,7 +10,7 @@ import { existsSync } from "node:fs";
 
 import type { App } from "../app.ts";
 import { runGit } from "../git/env.ts";
-import { isSafeOid, isSafeRef } from "../git/guard.ts";
+import { isSafeName, isSafeOid, isSafeRef } from "../git/guard.ts";
 import { repoDir } from "../git/repos.ts";
 import { span } from "./pipeline.ts";
 
@@ -127,7 +127,9 @@ export async function readDrifts(
         WHERE i.kind = 'pull' AND i.state = 'open' AND p.merged_at IS NULL
           AND (?1 = 0 OR r.visibility = 'public')`,
     )
-    .all(publicOnly ? 1 : 0);
+    .all(publicOnly ? 1 : 0)
+    // A repository whose name cannot name a directory has no git to read: skip it, never fail the others.
+    .filter((r) => isSafeName(r.owner) && isSafeName(r.name));
   const tips = new Map<string, Promise<string | null>>();
   const tipOf = (dir: string, branch: string) => {
     const k = `${dir}\0${branch}`;

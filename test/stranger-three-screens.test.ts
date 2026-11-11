@@ -105,7 +105,7 @@ test("the waiting page is static and never contains the code", async () => {
   expect(page.status).toBe(200);
   const body = await page.text();
   expect(body).not.toContain("/claim#");
-  expect(body).toContain('data-claim="https://walker--forge.test/claim"');
+  expect(body).toContain('data-claim="https://walker--forge.test/welcome"');
   expect((await fetch(`${parentServers.url}/forges/Bad_Name/waiting`)).status).toBe(404);
 });
 

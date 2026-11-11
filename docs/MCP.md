@@ -55,7 +55,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `app_members` | — | People a private app names, who may enter it and its previews | 297 |
 | `app_notes` | `hide`, `ban`, `unban` | Notes from an app's forge button and banned senders; hide a note, ban or unban its sender | 306 |
 | `apps` | — | Apps you can see: live or not, where served, how each runs, what works | 343 |
-| `archive` | — | Archive or wake a repository (`archived`) | 332 |
+| `archive` | — | Archive or wake a repository (`archived`) | 380 |
 | `asked` | — | What people asked the crew for: unmerged by default, oldest first | 372 |
 | `asks` | — | What waits on you, most important first; saved filter applies | 453 |
 | `asks_act` | `dismiss`, `decline`, `mute`, `listen`, `undo`, `ship`, `close`, `replan` | Decide asks (`items`): dismiss, ship, close (`reason`), mute, replan; `listen` (`repo`) unmutes; `undo` (`operation`) | 535 |
@@ -115,7 +115,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `forges` | — | Forges sent from here (admin; a stage says when to resend), or one forge's plan to read or grant | 387 |
 | `fork` | — | Fork a repository into your account; for a guest, a copy to send changes back from | 232 |
 | `fork_tree` | — | The fork tree around a repo: ancestors, siblings and descendants you may read | 397 |
-| `forks` | `chain` | A repo's forks you may see, paged by limit and cursor (next_cursor), each with commits ahead and behind | 387 |
+| `forks` | `chain` | A repo's forks you may see, paged by limit and cursor (next_cursor), each with commits ahead and behind | 437 |
 | `front_page` | — | The stranger's front page; admin sets `pinned`/`hidden`/`weights` | 457 |
 | `health` | — | How this forge is: version, commit, draining or not, rollout, incidents | 190 |
 | `held` | — | What the Later gate holds, and one proposed pass over it | 319 |
@@ -179,8 +179,8 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `repo` | — | One repository you can read, as GET /api/v1/repos/:owner/:name | 223 |
 | `repo_labels` | — | Repo labels: list (default), create, update, remove (admin token) | 351 |
 | `repo_settings` | — | Read, change or move (newOwner) a repo: PATCH /api/v1/repos/:owner/:name (admin); mirrorPacks mirrors the packs' upstreams | 444 |
-| `reports` | `accept`, `dismiss` | Outsiders' reports; `id`+`action`: accept or dismiss | 258 |
-| `restore_drill` | — | Drill-restore the newest snapshot | 123 |
+| `reports` | `accept`, `dismiss` | Outsiders' reports; `id`+`action`: accept or dismiss | 310 |
+| `restore_drill` | — | Drill-restore the newest snapshot | 173 |
 | `returns` | — | What crew tokens bought in `days` (1–90, default 7): dollars, runs, landed, cost/change | 284 |
 | `review` | — | Approve a pull, or request changes (`reason` required); your own pull is refused | 350 |
 | `rollback` | — | Plan, then apply, a rollback to a kept release (admin) | 209 |
@@ -209,7 +209,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `subscription_wake` | — | Admin: wake a resting subscription | 168 |
 | `subscriptions` | — | Claude accounts: scopes, budgets | 158 |
 | `sync` | — | Sync a mirror now; `originId` reconnects it | 197 |
-| `system` | `csp` | The forge machine now: CPU, memory, disk, network | 277 |
+| `system` | `csp`, `routes` | The forge machine now: CPU, memory, disk, network | 286 |
 | `take_back` | — | Open the pull that undoes a shipped pull | 219 |
 | `take_updates` | — | Take the parent forge's updates into a fork | 176 |
 | `teams` | — | Crew teams for person admins: charter, dial (0–100) and member agents | 338 |
@@ -222,7 +222,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `tokens` | — | Your API tokens, no secrets | 146 |
 | `trail` | — | A migrated repository's source and forks; `shown` shows or hides them (admin) | 258 |
 | `upstream` | — | Read, set (`enabled`) or `check` the upstream a repository follows | 302 |
-| `usage` | — | Crew spend: with `repo`, `days` (1–90) by agent, issue; without, today, last24h, headroom % | 295 |
+| `usage` | — | Crew spend: with `repo`, `days` (1–90) by agent, issue; without, today, last24h, headroom % | 345 |
 | `valves` | — | The week's pipes and valves; with `repo` and `level`, turns a valve (plans first) | 269 |
 | `variant` | — | Like or dislike a pull among its variants; a later vote replaces; dislike closes it | 349 |
 | `vision` | — | VISION.md: purpose, order, rules | 235 |
@@ -313,6 +313,11 @@ hour inside the 24) on, `newest`
 the blocked host counted last, read by `violationsByDirective` in
 `src/http/csp_report.ts` as the security page reads its week. A forge admin
 only; anyone else is `forbidden`.
+
+`system` with `{ kind: "routes" }` (#11476): up to 10 budgeted routes as
+`{ route, p95Ms, budgetMs, n, slowestPhase }` over the watcher's 15-minute
+record, the most over budget first; route patterns only. An admin or an agent
+granted `telemetry:read`.
 
 `flow` with `{ q, action }` is the fleet's write door (#450): the plan
 `POST /api/v1/fleet/ops` answers for a dry run, `{ dryRun: true, query, kind,
@@ -519,13 +524,13 @@ answers
 | `ui://forge/pulls` | `pulls` | Pulls, at most 20: `#N title`, state, check and review word, each linked. |
 | `ui://forge/runs` | `runs` | Recent runs, newest first, linked to their logs. |
 | `ui://forge/asked` | `asked` | What people asked the crew for and where each ask stands. |
-| `ui://forge/explore` | `explore` | Apps, people and forges ranked, at most 20: name, kind, the numbers (and likes or ship time when sorted by them), linked; only what you may see. |
+| `ui://forge/explore` | `explore` | Apps, people and forges ranked, at most 20: name, kind, the numbers (and likes or ship time when sorted by them), linked; only what you may see. With `kind: tree`: upstream, this and fork rows, each with how it follows and linked to its repository. |
 | `ui://forge/issue` | `issue` | One issue: title, state, assignee, labels, what it waits for. |
 | `ui://forge/flow` | `flow` | The pipeline: per stage counts, oldest waiting, the bottleneck. |
-| `ui://forge/scorecard` | `scorecard` | The crew's scorecard per agent (forge admin). |
+| `ui://forge/scorecard` | `scorecard` | The crew's scorecard, one row per agent: landed and red rate all time, then the week (forge admin). |
 | `ui://forge/crew` | `now` | What the crew is doing right now, with Stop buttons. |
 | `ui://forge/board` | `boards` | One board's panels (person admins). |
-| `ui://forge/forks` | `fork_tree` | The fork tree around a repository, each row with how it follows. |
+| `ui://forge/forks` | `fork_tree`, `forks` | The fork tree around a repository, each row with how it follows; `forks` a row per fork with its commits ahead and behind, `kind: chain` its chain (a severed chain says so); each linked to the repository, at most 30 and one More row. |
 | `ui://forge/milestones` | `milestones` | The milestones and how far each is. |
 | `ui://forge/search` | `search` | The query on top, one row per hit (repository, issue, pull, code) with its kind, title and link. |
 | `ui://forge/issues` | `issues` | A repository's issues, one row each: state, pillar, what it waits on, `untrusted` when an outsider wrote it. |
@@ -533,6 +538,9 @@ answers
 | `ui://forge/releases` | `releases` with `shipped` | What shipped: one linked row per landing, the live version, what is on its way. |
 | `ui://forge/forges` | `forges` (listing, admin) | Forges you sent: one linked row each, whom it is for and its stage in words (sent, opened, signed in, last tell); a link unopened for 3 days says `resend` and comes first. |
 | `ui://forge/held` | `held` | What waits on a person: themes, one row each, and one button that closes the done ones. |
+| `ui://forge/drill` | `restore_drill` | The drill: verdict in one word (green, red, none), the failed step, and when it ran. |
+| `ui://forge/reports` | `reports` (listing) | Waiting reports from outsiders: one row each, its state and who filed it, linked to the repository's reports. |
+| `ui://forge/usage` | `usage` | The window's figures as rows: runs, cost and tokens, by agent for a repo, or today and last 24 hours with each account's headroom. |
 
   The Runs card (`runs`) is one row per run, newest first: glyph, kind, the issue or pull and its title, then the state as a word with how long it ran (or has been running), linked to the run page; failed runs lead the status line. The Plan card (`map`) shows one row per pillar with
   its ready, working and waiting counts, and the first five ready issues linked
@@ -598,8 +606,8 @@ answers
   too but unfiltered: it skips the filter holds, so a hot-file issue is
   startable there and not in the repository's own map.
 - **Plugins.** `plugins/opencode` and `plugins/claude-code` register this
-  server and add a `forge` command (new, tell, status, decide, plan, preview,
-  pulls, runs, log, asked). They hold no logic. The Claude Code plugin has two
+  server and add a `forge` command (new, tell, status, decide, archive, undo, plan,
+  preview, pulls, runs, log, asked, waves, held, forks). They hold no logic. The Claude Code plugin has two
   entries: `forge` sends no Authorization header, so Claude Code signs in
   through the OAuth flow (the default); `forge-token` sends `FORGE_TOKEN` as a
   bearer, for scripts.

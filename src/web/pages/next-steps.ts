@@ -61,6 +61,20 @@ function stepBlock(step: NextStep, primary: boolean, body: Html | null): Html {
     ${!step.done && body ? html`<div class="step-body">${body}</div>` : null}`;
 }
 
+/** Enter sends the first ask; Shift+Enter (or composing text) makes a newline. */
+export const firstAskJs = /* js */ `
+(function () {
+  var box = document.querySelector("#composer textarea");
+  if (!box || !box.form) return;
+  box.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
+    e.preventDefault();
+    if (box.value.trim() === "") return;
+    if (box.form.requestSubmit) box.form.requestSubmit(); else box.form.submit();
+  });
+})();
+`;
+
 /** Before the first tell: one box, "say what you want built", and one line about what pays for the crew. */
 function firstTell(ctx: Ctx, user: User, crew: Html[]): Html {
   return html`<section id="next-steps" data-first-tell>

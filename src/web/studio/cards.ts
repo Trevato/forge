@@ -11,7 +11,7 @@ import { html, raw } from "../html.ts";
 import { timeAgo } from "../ui.ts";
 import { span, STAGE_LABEL, verdict, type PipelineKey, type PipelineStage } from "../../flow/pipeline.ts";
 
-export type CardKind = "app" | "run" | "asks" | "wave" | "map" | "feed" | "pull" | "pulls" | "runs" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones" | "release" | "releases" | "search" | "issues" | "forges" | "held";
+export type CardKind = "app" | "run" | "asks" | "wave" | "map" | "feed" | "pull" | "pulls" | "runs" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones" | "release" | "releases" | "search" | "issues" | "forges" | "held" | "drill" | "reports" | "usage";
 
 export interface CardRow {
   readonly label: string;
@@ -44,7 +44,7 @@ const here = (origin: string, path: string): boolean => origin !== "" && /^\/(?!
 
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "asks", "wave", "map", "feed", "pull", "pulls", "runs", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones", "release", "releases", "search", "issues", "held", "forges"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "asks", "wave", "map", "feed", "pull", "pulls", "runs", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones", "release", "releases", "search", "issues", "held", "forges", "drill", "reports", "usage"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
@@ -59,7 +59,9 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   map: "map",
   feed: "feed",
   explore: "explore",
+  forks: "forks",
   new_app: "app",
+  archive: "app",
   pull: "pull",
   pulls: "pulls",
   asked: "asked",
@@ -72,6 +74,9 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   issues: "issues",
   forges: "forges",
   held: "held",
+  restore_drill: "drill",
+  reports: "reports",
+  usage: "usage",
 };
 
 const CARD_TITLE: Readonly<Record<CardKind, string>> = {
@@ -99,6 +104,9 @@ const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   issues: "Issues",
   forges: "Forges you sent",
   held: "Later",
+  drill: "Restore drill",
+  reports: "Reports",
+  usage: "Spend",
 };
 
 type Obj = Record<string, unknown>;
@@ -122,6 +130,8 @@ const PULLS_LIMIT = 20;
 export const SEARCH_ROWS = 20;
 export const ISSUES_ROWS = 20;
 const HELD_ROWS = 40;
+const REPORT_ROWS = 30;
+const USAGE_ROWS = 20;
 const ASKED_WORDS = 80;
 const ASKED_LIMIT = 20;
 const RELEASE_ROWS = 10;
@@ -175,6 +185,34 @@ const crewWords = (crew: unknown): string => {
 const previewWords = (previews: unknown): string =>
   list(previews).map(obj).filter((p) => web(text(p["url"]))).slice(0, 3)
     .map((p) => ` · pull #${text(p["pull"])} ${text(p["url"])}`).join("");
+
+type LinkOf = (repo: string) => { link?: string };
+type Drawn = { rows: CardRow[]; status: string };
+
+/** `forks` page `{ parent, forks: [{ repo, ahead, behind }] }`: a row per fork with its standing. */
+function forksPageRows(v: Obj, at: LinkOf): Drawn {
+  const forks = list(v["forks"]).map(obj);
+  const rows = forks.map((f): CardRow => {
+    const known = Number.isInteger(f["ahead"]) && Number.isInteger(f["behind"]);
+    return { label: text(f["repo"]), value: known ? `${text(f["ahead"])} ahead · ${text(f["behind"])} behind` : "standing unknown", ...at(text(f["repo"])) };
+  });
+  return { rows, status: `${forks.length} fork${forks.length === 1 ? "" : "s"}${text(v["parent"]) === "" ? "" : ` of ${text(v["parent"])}`}` };
+}
+
+/** `forks` with `kind: chain` `{ chain: [{ role, repo, follows }], severed }`: a row per link; a severed chain says so. */
+function forkChainRows(v: Obj, at: LinkOf): Drawn {
+  const chain = list(v["chain"]).map(obj);
+  const rows = chain.map((c): CardRow => ({ label: text(c["repo"]), value: `${text(c["role"])} · ${text(c["follows"])}`, ...at(text(c["repo"])) }));
+  if (v["severed"] === true) rows.push({ label: "Severed", value: "a link above is cut; the chain stops here" });
+  return { rows, status: `${chain.length} in the chain${v["severed"] === true ? " · severed" : ""}` };
+}
+
+/** `explore` with `kind: tree` `{ app, upstream, forks }`: upstream from the top, then this, then its forks. */
+function exploreTreeRows(v: Obj, at: LinkOf): Drawn {
+  const row = (r: Obj, role: string): CardRow => ({ label: text(r["repo"]), value: [role, text(r["follows"]), text(r["standing"])].filter((x) => x !== "").join(" · "), ...at(text(r["repo"])) });
+  const rows = [...list(v["upstream"]).map(obj).reverse().map((r) => row(r, "upstream")), row(obj(v["app"]), "this"), ...list(v["forks"]).map(obj).map((r) => row(r, "fork"))];
+  return { rows, status: `${rows.length} repositor${rows.length === 1 ? "y" : "ies"} around ${text(obj(v["app"])["repo"])}` };
+}
 
 /** The card for a tool's answer, or nothing when the answer has no card. */
 export function cardFor(
@@ -266,6 +304,65 @@ export function cardFor(
       actions.push({ label: `Close ${approve.length} done`, tool: "held", args: { app: slug, apply: approve, digest: text(v["digest"]) } });
     return { kind, title: CARD_TITLE[kind], status: text(v["says"]), rows, actions };
   }
+  if (kind === "drill") {
+    // `restore_drill` answers `{ verdict: green | red | none, failedStep?, says }`; `extra.at` is when it ran.
+    const v = obj(value);
+    const word = text(v["verdict"]);
+    if (word !== "green" && word !== "red" && word !== "none") return undefined;
+    rows.push({ label: "Verdict", value: word });
+    if (word === "red" && text(v["failedStep"]) !== "") rows.push({ label: "Failed step", value: text(v["failedStep"]) });
+    const at = text(extra["at"]);
+    if (at !== "" && !Number.isNaN(Date.parse(at))) rows.push({ label: "When", value: timeAgo(at) });
+    return { kind, title: CARD_TITLE[kind], status: text(v["says"]), rows, actions };
+  }
+  if (kind === "reports") {
+    // The reports list answers `{ says, byAgent, items: [{ title, state, filedBy }] }`; an accept or dismiss has no `items`.
+    const v = obj(value);
+    if (!Array.isArray(v["items"])) return undefined;
+    const slug = text(extra["repo"]);
+    const link = web(origin) && slugOf(slug) && here(origin, `/${slug}/reports`) ? { link: `${origin}/${slug}/reports` } : {};
+    const items = v["items"].map(obj);
+    for (const r of items.slice(0, REPORT_ROWS))
+      rows.push({ label: text(r["title"]) || "(untitled)", value: `${text(r["state"])} · ${text(r["filedBy"])}`, ...link });
+    if (items.length > REPORT_ROWS) rows.push({ label: "More", value: `${items.length - REPORT_ROWS} more not shown` });
+    return { kind, title: CARD_TITLE[kind], status: text(v["says"]), rows, actions };
+  }
+  if (kind === "usage") {
+    // Two answers: a repo's `{ app, days, total, byAgent }`, or the forge's `{ today, last24h, subscriptions }`.
+    const v = obj(value);
+    const span = (s: Obj): string =>
+      `${Number(s["runs"]) || 0} runs · $${(Number(s["costUsd"]) || 0).toFixed(2)} · ${(Number(s["tokensIn"]) || 0) + (Number(s["tokensOut"]) || 0)} tokens`;
+    if (Array.isArray(v["byAgent"]) && text(v["app"]) !== "") {
+      rows.push({ label: "Total", value: span(obj(v["total"])) });
+      const agents = v["byAgent"].map(obj);
+      for (const a of agents.slice(0, USAGE_ROWS)) rows.push({ label: text(a["agent"]) || "no agent", value: span(a), depth: 1 });
+      if (agents.length > USAGE_ROWS) rows.push({ label: "More", value: `${agents.length - USAGE_ROWS} more not shown` });
+      return { kind, title: CARD_TITLE[kind], status: `${text(v["app"])} · ${text(v["days"])} days`, rows, actions };
+    }
+    if (!Array.isArray(v["subscriptions"])) return undefined;
+    rows.push({ label: "Today", value: span(obj(v["today"])) });
+    rows.push({ label: "Last 24 hours", value: span(obj(v["last24h"])) });
+    const subs = v["subscriptions"].map(obj);
+    for (const s of subs.slice(0, USAGE_ROWS)) {
+      const room = list(s["headroom"]).map(obj).map((h) => `${text(h["window"])} ${h["pct"] === null ? "?" : `${text(h["pct"])}%`}`).join(" · ");
+      rows.push({ label: text(s["subscription"]), value: `${span(obj(s["today"]))} today${room === "" ? "" : ` · headroom ${room}`}`, depth: 1 });
+    }
+    if (subs.length > USAGE_ROWS) rows.push({ label: "More", value: `${subs.length - USAGE_ROWS} more not shown` });
+    return { kind, title: CARD_TITLE[kind], status: `${Number(v["apps"]) || 0} apps`, rows, actions };
+  }
+  if (tool === "forks" || (tool === "explore" && Array.isArray(obj(value)["upstream"]))) {
+    // Each answer has its own helper; the card kind stays the tool's (`forks` or `explore`).
+    const v = obj(value);
+    const at = (repo: string): { link?: string } => (web(origin) && slugOf(repo) ? { link: `${origin}/${repo}` } : {});
+    const drawn = tool === "explore" ? exploreTreeRows(v, at) : Array.isArray(v["chain"]) ? forkChainRows(v, at) : Array.isArray(v["forks"]) ? forksPageRows(v, at) : undefined;
+    if (drawn === undefined) return undefined;
+    rows.push(...drawn.rows.slice(0, FORK_ROWS));
+    const left = drawn.rows.length - FORK_ROWS;
+    const paged = v["truncated"] === true || (typeof v["next_cursor"] === "string" && v["next_cursor"] !== "");
+    if (left > 0 || paged)
+      rows.push({ label: "More", value: [left > 0 ? `${left} more not shown` : "", paged ? "more forks exist; page on with the tool" : ""].filter((x) => x !== "").join("; ") });
+    return { kind, title: CARD_TITLE[kind], status: drawn.status, rows, actions };
+  }
   if (kind === "forks") {
     // `fork_tree` answers `{ root, nodes: [{ repo, parent, depth, follow }], truncated }`; a repo with no readable tree has no card.
     const v = obj(value);
@@ -351,7 +448,10 @@ export function cardFor(
     const crewStatus = `${week} landed this week`;
     for (const a of agents.slice(0, LIMIT)) {
       const w = obj(a["week"]);
-      const wk = `${Number(w["merged"]) || 0} merged · ${Number(w["returned"]) || 0} returned · $${(Number(w["cost"]) || 0).toFixed(2)} this week`;
+      const all = obj(a["all"]);
+      const red = typeof all["redCheckRate"] === "number" ? ` · ${Math.round((all["redCheckRate"] as number) * 100)}% red` : "";
+      const landed = a["all"] === null ? "" : `${Number(all["landed"]) || 0} landed${red} · `;
+      const wk = `${landed}${Number(w["merged"]) || 0} merged · ${Number(w["returned"]) || 0} returned · $${(Number(w["cost"]) || 0).toFixed(2)} this week`;
       rows.push({ label: text(a["username"]), value: wk });
     }
     // The card shows LIMIT agents; the rest are counted, never dropped silently.
@@ -378,6 +478,49 @@ export function cardFor(
     if (repo !== "")
       actions.push({ label: `Tell ${repo}`, tool: "tell", args: { repo, context: {} }, words: true });
     return { kind, title: "New app", status, rows, actions };
+  }
+  if (tool === "archive") {
+    const v = obj(value);
+    const dry = v["dryRun"] === true;
+    const target = v["archived"] === true;
+    if (Array.isArray(v["rows"])) {
+      // A bulk answer: one card, one row per repository.
+      const found = v["rows"].map(obj);
+      for (const r of found.slice(0, LIMIT))
+        rows.push({
+          label: text(r["repo"]),
+          value: [text(r["outcome"]), text(r["reason"])].filter((x) => x !== "").join(" · "),
+          ...(web(origin) && REPO_SLUG.test(text(r["repo"])) ? { link: `${origin}/${text(r["repo"])}` } : {}),
+        });
+      if (found.length > LIMIT) rows.push({ label: "More", value: `${found.length - LIMIT} more not shown` });
+      const verb = target ? "archive" : "wake";
+      status = dry ? `plan: would ${verb} ${found.length} · nothing changed` : `${target ? "archived" : "woken"} ${found.length}`;
+      const first = found.map((r) => text(r["repo"])).find((n) => REPO_SLUG.test(n));
+      const names = found
+        .filter((r) => text(r["outcome"]) !== "refused")
+        .map((r) => text(r["repo"]))
+        .filter((n) => REPO_SLUG.test(n));
+      if (dry && names.length > 0)
+        actions.push({ label: `${target ? "Archive" : "Wake"} ${names.length}`, tool: "archive", args: { repos: names, archived: target, dryRun: false } });
+      else if (!dry && first !== undefined && text(v["operation"]) !== "")
+        actions.push({ label: "Undo", tool: "limb", args: { action: "undo", operation: text(v["operation"]), app: first } });
+      return { kind, title: "Archive", status, rows, actions };
+    }
+    const repo = text(v["repo"]);
+    if (repo === "" || typeof v["archived"] !== "boolean") return undefined;
+    const since = text(v["since"]);
+    const now = v["archived"] === true;
+    status = dry && v["was"] !== undefined
+      ? `plan: would ${target ? "archive" : "wake"} · nothing changed`
+      : now ? "archived" : "awake";
+    rows.push({ label: "App", value: repo, ...(web(origin) && REPO_SLUG.test(repo) ? { link: `${origin}/${repo}` } : {}) });
+    if (since !== "" && now && !(dry && v["was"] !== undefined)) rows.push({ label: "Archived", value: timeAgo(since) });
+    if (REPO_SLUG.test(repo)) {
+      if (dry && v["was"] !== undefined)
+        actions.push({ label: target ? "Archive it" : "Wake it", tool: "archive", args: { repo, archived: target, dryRun: false } });
+      else if (now) actions.push({ label: "Wake it", tool: "archive", args: { repo, archived: false, dryRun: false } });
+    }
+    return { kind, title: "Archive", status, rows, actions };
   }
   if (kind === "pull") {
     const p = obj(value);

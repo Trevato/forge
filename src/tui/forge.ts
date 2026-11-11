@@ -77,6 +77,9 @@ import { capacityScreen, mayCapacity } from "./screens/capacity.ts";
 import { crawlersScreen } from "./screens/crawlers.ts";
 import { forgeCeiling } from "../flow/ceiling.ts";
 import { flowLines, flowScreen } from "./screens/flow.ts";
+import { askUpdate, mayDrift } from "./screens/drift.ts";
+import { readHandoverLists } from "../flow/handover_read.ts";
+import { readDrifts } from "../flow/alarm_drift.ts";
 import { readHeld } from "../flow/held.ts";
 import { answerKeeper, readKeeper } from "../flow/keeper.ts";
 import { readVerified } from "../flow/verified.ts";
@@ -497,7 +500,10 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               readVerified(session.app, flowReader.kind === "owner"),
               keeper,
               session.app.config.dataDir,
-            ), keeper.ask && user ? { ask: keeper.ask, answer: () => answerKeeper(session.app, keeper.ask!.id, user.id) } : undefined));
+            ), keeper.ask && user ? { ask: keeper.ask, answer: () => answerKeeper(session.app, keeper.ask!.id, user.id) } : undefined,
+            mayDrift(session)
+              ? { read: async () => readHandoverLists(session.db, await readDrifts(session.app), Date.now()), update: (n) => askUpdate(session, n) }
+              : undefined));
         },
       });
     // The forge's capacity and guards, as MCP `capacity` gates them: a forge admin who is a person.

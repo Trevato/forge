@@ -86,7 +86,7 @@ afterAll(async () => {
 });
 
 test("without `archived` it says how the repository is; with it, it plans first", async () => {
-  expect((await mcp(tok["mallory"]!, { repo: "acme/svc" })).value).toEqual({ archived: false });
+  expect((await mcp(tok["mallory"]!, { repo: "acme/svc" })).value).toEqual({ archived: false, repo: "acme/svc", since: null });
   const planned = await mcp(tok["founder"]!, { repo: "acme/svc", archived: true });
   expect(planned.value).toMatchObject({ dryRun: true, archived: true, was: false });
   expect(archived()).toBe(false);

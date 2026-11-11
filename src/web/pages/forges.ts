@@ -7,7 +7,7 @@
  */
 
 import type { Ctx } from "../../http/context.ts";
-import { ATTENTION_WORDS, firstScreenOf, CLAIM_WORDS, claimState, clientRows, creditWords, runningWords, spendWords, type ClientRow } from "../../spawn/clients.ts";
+import { ATTENTION_WORDS, firstScreenOf, CLAIM_WORDS, claimState, clientRows, creditWords, graceWords, runningWords, spendWords, type ClientRow } from "../../spawn/clients.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
@@ -56,6 +56,7 @@ export function forgeRow(r: ClientRow, now: number): Html {
     runningNote(r),
     spendNote(r),
     creditWords(r) === null ? null : html`<span data-credit>${creditWords(r)}</span>`,
+    graceWords(r) === null ? null : html`<span data-grace>${graceWords(r)}</span>`,
     r.stage === null
       ? null
       : html`<span data-stage="${r.stage.key}"${r.stage.resend ? html` data-resend` : null}>${r.stage.words}${r.stage.at === null ? null : html` ${time(r.stage.at)}`}</span>`,

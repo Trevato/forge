@@ -15,6 +15,7 @@ import type { App } from "../app.ts";
 import { childDirOf, listChildrenNow } from "../actions/spawn.ts";
 import { getPortalUrl, parseLink } from "../settings/billing.ts";
 import { getPlan } from "../settings/plans.ts";
+import { lapseFor } from "./lapse.ts";
 import { entitlementOf, getStored } from "./store.ts";
 import type { EntitlementStatus } from "./types.ts";
 
@@ -81,6 +82,9 @@ export function tellPlan(app: App, forge: string): boolean {
     const e = entitlementOf(app.db, forge, child.size);
     const plan = getPlan(app.db, e.plan);
     const portal = getPortalUrl(app.db);
+    // In grace the forge is told the day it pauses (the end of grace), not the provider's period end.
+    const lapse = e.status === "grace" ? lapseFor(app.db, forge) : undefined;
+    const periodEnd = lapse?.state === "grace" ? Math.floor(lapse.graceUntil / 1000) : e.periodEnd;
     const paysAtProvider = getStored(app.db, forge)?.provider === "stripe";
     return keepNotice(childDirOf(app, child.bodyId), {
       name: plan?.name ?? e.plan,
@@ -88,7 +92,7 @@ export function tellPlan(app: App, forge: string): boolean {
       priceUsd: plan?.priceUsd ?? 0,
       creditUsd: plan?.creditUsd ?? 0,
       status: e.status,
-      ...(e.periodEnd === undefined ? {} : { periodEnd: e.periodEnd }),
+      ...(periodEnd === undefined ? {} : { periodEnd }),
       ...(paysAtProvider && portal !== "" ? { portalUrl: portal } : {}),
     });
   } catch {

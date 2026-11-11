@@ -95,6 +95,7 @@ function dead(
   state: Exclude<ClaimState["state"], "ok">,
   sender?: string,
   endedAt?: string,
+  own = false,
 ): Response {
   const ask = sender === undefined ? "whoever sent it" : sender;
   const says = {
@@ -124,6 +125,14 @@ function dead(
       text: "Someone has already made this forge theirs. If it was you, sign in.",
     },
   }[state];
+  // The person who started this forge themselves has no sender to ask.
+  const mine: Partial<Record<typeof state, string>> = {
+    unknown: "The link may have been cut short or replaced. Start the forge again from the home page.",
+    used: "Each link works once. If it was you, sign in with the account you made. Otherwise start a forge of your own from the home page.",
+    expired: "Your link stopped working. Start the forge again from the home page.",
+    revoked: "This link has ended. Start the forge again from the home page.",
+  };
+  if (own) says.text = mine[state] ?? says.text;
   return page(
     {
       ctx,
@@ -185,7 +194,9 @@ function claimForm(
   values: Values,
   errors: Errors,
   expiresAt?: string,
+  own = false,
 ): Html {
+  if (own) return welcomeForm(values, errors);
   return html`<div class="narrow">
     ${pageHead("This forge is yours")}
     <section class="settings-block">
@@ -263,6 +274,50 @@ function claimForm(
   </div>`;
 }
 
+/** The screen for the person who started this forge themselves: a username and a password, nothing about anyone else. */
+function welcomeForm(values: Values, errors: Errors): Html {
+  return html`<div class="narrow">
+    ${pageHead("Make your account")}
+    <section class="settings-block">
+      <p class="mb">Choose a username and a password. This account is yours alone, and you are the admin of this forge.</p>
+      <form method="post" action="/welcome">
+        <div id="claim-token-field">
+          ${formField({
+            label: "Link code",
+            name: "token",
+            value: values.token ?? "",
+            required: true,
+            hint: "The part of your link after the #. Opening the link fills it in.",
+          })}
+        </div>
+        ${formField({
+          label: "Username",
+          name: "username",
+          value: values.username ?? "",
+          autocomplete: "username",
+          required: true,
+          autofocus: true,
+          hint: "Letters, digits, dots and dashes.",
+          pattern: "[A-Za-z0-9][A-Za-z0-9._-]*",
+          ...(errors.username ? { error: errors.username } : {}),
+        })}
+        ${formField({
+          label: "Password",
+          name: "password",
+          type: "password",
+          autocomplete: "new-password",
+          minlength: MIN_SIGNUP_PASSWORD,
+          hint: `At least ${MIN_SIGNUP_PASSWORD} characters.`,
+          ...(errors.password ? { error: errors.password } : {}),
+        })}
+        <div class="form-actions">
+          <button type="submit" class="btn" data-variant="primary">Done</button>
+        </div>
+      </form>
+    </section>
+  </div>`;
+}
+
 /**
  * The fragment link's page script: take the claim code from `#…` into the
  * form and drop it from the address bar, so it is never in a request line,
@@ -284,10 +339,14 @@ const fragmentJs = /* js */ `
 
 // GET /claim — the form for a fragment link: the code arrives in the
 // browser only, so nothing is known or spent here until the form posts it.
-export async function claimFragmentPage(ctx: Ctx): Promise<Response> {
+export const claimFragmentPage = (ctx: Ctx): Promise<Response> => fragmentPage(ctx, false);
+/** GET /welcome — the same, for the person who started the forge. */
+export const welcomePage = (ctx: Ctx): Promise<Response> => fragmentPage(ctx, true);
+
+async function fragmentPage(ctx: Ctx, own: boolean): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const spawned = await timePhaseAsync(ctx.request, "spawned", () => spawnedOrg(ctx.app));
-  if (spawned === undefined) return timePhase(ctx.request, "render", () => dead(ctx, "unknown"));
+  if (spawned === undefined) return timePhase(ctx.request, "render", () => dead(ctx, "unknown", undefined, undefined, own));
   const { spawner } = timePhase(ctx.request, "owners", () => owners(ctx, spawned));
   // The forge has one link at a time, so its state says nothing about any
   // particular code: a stale or made-up code only ever meets "unknown" on the POST.
@@ -296,15 +355,16 @@ export async function claimFragmentPage(ctx: Ctx): Promise<Response> {
     return dead(
       ctx,
       link.state === "used" ? "used" : link.revokedAt !== null ? "revoked" : "expired",
-      spawner?.username,
+      own ? undefined : spawner?.username,
       link.expiresAt,
+      own,
     );
   const rendering = performance.now();
   const response = page({
     ctx,
-    title: "This forge is yours",
-    body: claimForm(ctx, spawned, spawner, {}, {}, link?.expiresAt),
-    scriptJs: fragmentJs + passkeyJs,
+    title: own ? "Make your account" : "This forge is yours",
+    body: claimForm(ctx, spawned, spawner, {}, {}, link?.expiresAt, own),
+    scriptJs: own ? fragmentJs : fragmentJs + passkeyJs,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
@@ -365,11 +425,15 @@ export async function claimOptions(ctx: Ctx): Promise<Response> {
 }
 
 // POST /claim — make the account, burn the link, sign the person in.
-export async function claimSubmit(ctx: Ctx): Promise<Response> {
+export const claimSubmit = (ctx: Ctx): Promise<Response> => submit(ctx, false);
+/** POST /welcome — the same, for the person who started the forge. */
+export const welcomeSubmit = (ctx: Ctx): Promise<Response> => submit(ctx, true);
+
+async function submit(ctx: Ctx, own: boolean): Promise<Response> {
   const form = await readForm(ctx);
   if (form instanceof Response) return form;
   const spawned = await spawnedOrg(ctx.app);
-  if (spawned === undefined) return dead(ctx, "unknown");
+  if (spawned === undefined) return dead(ctx, "unknown", undefined, undefined, own);
   const orgId = spawned.org.id;
   // From the form's body — never from the path or a query string, which
   // proxies and logs would keep.
@@ -377,7 +441,7 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
   const before = readClaim(ctx.app.db, orgId, token);
   const { spawner } = owners(ctx, spawned);
   if (before.state !== "ok")
-    return dead(ctx, before.state, spawner?.username, linkOf(ctx.app.db)?.expiresAt);
+    return dead(ctx, before.state, own ? undefined : spawner?.username, linkOf(ctx.app.db)?.expiresAt, own);
 
   const values = {
     username: field(form, "username"),
@@ -388,9 +452,9 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
     page(
       {
         ctx,
-        title: "This forge is yours",
-        body: claimForm(ctx, spawned, spawner, values, e, linkOf(ctx.app.db)?.expiresAt),
-        scriptJs: passkeyJs,
+        title: own ? "Make your account" : "This forge is yours",
+        body: claimForm(ctx, spawned, spawner, values, e, linkOf(ctx.app.db)?.expiresAt, own),
+        scriptJs: own ? fragmentJs : passkeyJs,
       },
       422,
     );
@@ -417,7 +481,7 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
     founder === undefined || credential !== undefined ? "" : await Bun.password.hash(password, "argon2id");
   // Spent first, in one statement: of two people on one link, one wins.
   const spent = burnClaim(ctx.app.db, orgId, token);
-  if (spent.state !== "ok") return dead(ctx, spent.state);
+  if (spent.state !== "ok") return dead(ctx, spent.state, undefined, undefined, own);
   if (founder !== undefined) {
     const taken = takeFounder(ctx.app.db, founder.id, {
       hash: founderHash,

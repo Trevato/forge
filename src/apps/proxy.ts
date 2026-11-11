@@ -51,7 +51,7 @@ import {
   type EnvName,
 } from "./data.ts";
 import type { AppsRuntime, EnvStatus } from "./runtime.ts";
-import { crewNow, tellLink } from "./crew.ts";
+import { crewNow, tellLink, yoursLink } from "./crew.ts";
 import { sideOf, type Side } from "./side.ts";
 import { feedback, mintProof } from "./feedback.ts";
 import { clientBucket } from "../http/peer.ts";
@@ -557,6 +557,11 @@ export function pillWhere(
   // An app's access is not its repository's: the name goes only to a reader.
   const reads = canRead(db, repo, user);
   if (reads) where.repo = `${repo.ownerName}/${repo.name}`;
+  // What the forge's own record says is running here, for a reader of the repository only.
+  const live = reads ? runtime.envStatus?.(target.app, target.env) : undefined;
+  const liveAt = live?.servingAt ?? live?.since;
+  if (live?.state === "running" && live.commitOid !== "" && liveAt !== undefined)
+    where.serving = { oid: live.commitOid, at: liveAt };
   const number = /^pull-(\d+)$/.exec(target.env)?.[1];
   if (number === undefined) return where;
   where.pull = Number(number);
@@ -1038,6 +1043,10 @@ export async function proxyApp(
       target.app,
       signed?.who?.id,
     );
+    const yours =
+      sealedPull(runtime, target) !== undefined
+        ? undefined
+        : yoursLink(runtime.app.db, runtime.options.forgeUrl, target.app, signed?.who?.id);
     const side =
       signed?.who === undefined
         ? null
@@ -1046,6 +1055,7 @@ export async function proxyApp(
       JSON.stringify({
         ...crew,
         ...(tell === undefined ? {} : { tell }),
+        ...(yours === undefined ? {} : { yours }),
         ...(side === null ? {} : { side }),
       }),
     );

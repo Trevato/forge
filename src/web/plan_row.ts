@@ -1,11 +1,12 @@
 /**
  * The Plan row in a forge's settings (#11141), one `dl` row for its admins: the
- * plan's name and size, the crew credit used this month, and the status (past
- * due says the date it sleeps). Everything is what the host told this forge
- * (`billing/notice.ts`) and its own funding file; nothing is asked of the
- * host. "Manage billing" is the provider's portal sign-in, shown only when
- * the host set one and this forge pays through it; "Change size" is the
- * host's /pricing.
+ * plan's name and size, the crew credit used this month, and the status (in
+ * grace, "Payment due — paused on <day> · Pay"). Everything is what the host
+ * told this forge (`billing/notice.ts`) and its own funding file; nothing is
+ * asked of the host. "Manage billing" is the provider's portal sign-in, shown
+ * only when the host set one and this forge pays through it, and not in grace,
+ * where Pay takes its place; "Change size" is the host's /pricing, dropped
+ * when Pay already points there.
  */
 
 import { noticeOf, type PlanNotice } from "../billing/notice.ts";
@@ -15,11 +16,16 @@ import { sizeWords } from "../settings/billing.ts";
 import { isSize } from "../spawn/sizes.ts";
 import { html, type Html } from "./html.ts";
 
-const day = (secs: number): string => new Date(secs * 1000).toISOString().slice(0, 10);
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "18 Nov", in UTC. */
+export const dayWords = (secs: number): string => {
+  const d = new Date(secs * 1000);
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
+};
 
-/** "Active", or "Past due, sleeps 2026-12-01". */
+/** "Active", or "Payment due — paused on 18 Nov". */
 export function statusWords(n: Pick<PlanNotice, "status" | "periodEnd">): string {
-  if (n.status === "grace") return n.periodEnd === undefined ? "Past due" : `Past due, sleeps ${day(n.periodEnd)}`;
+  if (n.status === "grace") return n.periodEnd === undefined ? "Payment due" : `Payment due — paused on ${dayWords(n.periodEnd)}`;
   return n.status === "none" ? "No active plan" : "Active";
 }
 
@@ -38,8 +44,16 @@ export function planRow(dataDir: string, parentOrigin: string | undefined, admin
   if (!admin) return null;
   const line = planLine(dataDir);
   if (line === undefined) return null;
-  const portal = noticeOf(dataDir)?.portalUrl;
+  const n = noticeOf(dataDir);
+  const portal = n?.portalUrl;
+  // In grace the one link that matters is Pay: the provider's portal, else the host's pricing page.
+  const pay = n?.status === "grace" ? (portal ?? (parentOrigin === undefined ? undefined : `${parentOrigin}/pricing`)) : undefined;
   return html`<dl class="status-rows"><div class="status-row"><dt>Plan</dt><dd>${line}${
-    portal === undefined ? "" : html` <a href="${portal}" rel="noopener noreferrer" target="_blank">Manage billing</a>`
-  }${parentOrigin === undefined ? "" : html` <a href="${parentOrigin}/pricing">Change size</a>`}</dd></div></dl>`;
+    pay === undefined ? "" : html` · <a href="${pay}" rel="noopener noreferrer">Pay</a>`
+  }${
+    portal === undefined || pay !== undefined ? "" : html` <a href="${portal}" rel="noopener noreferrer" target="_blank">Manage billing</a>`
+  }${
+    // One link per place: when Pay already goes to the host's pricing page, Change size would repeat it.
+    parentOrigin === undefined || pay === `${parentOrigin}/pricing` ? "" : html` <a href="${parentOrigin}/pricing">Change size</a>`
+  }</dd></div></dl>`;
 }

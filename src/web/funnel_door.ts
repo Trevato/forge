@@ -43,4 +43,4 @@ function p(o){n.sendBeacon("/_funnel",JSON.stringify(o))}
 var l=d.querySelector(".door-plans");
 if(l&&window.IntersectionObserver){var io=new IntersectionObserver(function(e){e.some(function(x){return x.isIntersecting})&&(io.disconnect(),p({step:"plans"}))});io.observe(l)}
 d.addEventListener("click",function(e){var t=e.target,k=t&&t.closest&&t.closest("[data-plan]");k&&p({step:"click",plan:k.getAttribute("data-plan")})},true)
-})(navigator,document)`;
+})(navigator,document);`;

@@ -133,6 +133,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "feed",
   "review",
   "claim",
+  "welcome",
   "first-admin",
   "forges",
   // the forge's own nouns, and the platform's name

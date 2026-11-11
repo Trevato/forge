@@ -11,6 +11,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { CARD_OF_TOOL } from "../src/web/studio/cards.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -52,4 +53,17 @@ test("docs/MCP.md has a table row for exactly the cards the server lists", async
   for (const m of doc.matchAll(/^\| `(ui:\/\/forge\/[a-z-]+)` \|/gm)) described.add(m[1]!);
   expect([...drawn].filter((u) => !described.has(u)).sort()).toEqual([]);
   expect([...described].filter((u) => !drawn.has(u)).sort()).toEqual([]);
+});
+
+test("each tool a card row names without a qualifier draws that card", async () => {
+  const doc = await readFile(join(import.meta.dir, "..", "docs", "MCP.md"), "utf8");
+  const wrong: string[] = [];
+  for (const m of doc.matchAll(/^\| `ui:\/\/forge\/([a-z-]+)` \| ([^|]+) \|/gm)) {
+    for (const item of m[2]!.split(",").map((x) => x.trim())) {
+      const plain = /^`([a-z_]+)`$/.exec(item);
+      if (plain && CARD_OF_TOOL[plain[1]!] !== undefined && CARD_OF_TOOL[plain[1]!] !== m[1]) wrong.push(`${plain[1]} → ${m[1]}`);
+      if (/^`explore` with `kind: tree`/.test(item) && m[1] !== "explore") wrong.push(`explore tree → ${m[1]}`);
+    }
+  }
+  expect(wrong).toEqual([]);
 });

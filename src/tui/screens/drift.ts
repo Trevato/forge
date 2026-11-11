@@ -10,6 +10,7 @@
 import { bringUpToDate } from "../../crew/autonomy.ts";
 import { driftingPulls, readDrifts, type DriftingPull } from "../../flow/alarm_drift.ts";
 import { getPull } from "../../core/pulls.ts";
+import { mayView } from "../../core/sealed.ts";
 import { canWrite, getRepo } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -25,11 +26,11 @@ export function driftRows(pulls: readonly DriftingPull[]): ListRow[] {
 }
 
 /** Ask the pull's agent, as the route does; the words the toast says. */
-export function askUpdate(f: Session, p: DriftingPull): { ok: boolean; says: string } {
+export function askUpdate(f: Session, p: { readonly repo: string; readonly number: number }): { ok: boolean; says: string } {
   const [owner = "", name = ""] = p.repo.split("/");
   const repo = getRepo(f.db, owner, name);
   const pull = repo ? getPull(f.db, repo.id, p.number) : undefined;
-  if (!repo || !pull) return { ok: false, says: "That pull is gone." };
+  if (!repo || !pull || !mayView(f.db, repo, pull, f.user)) return { ok: false, says: "That pull is gone." };
   if (!canWrite(f.db, repo, f.user)) return { ok: false, says: "Only someone who can write here brings a pull up to date." };
   const who = pull.state === "open" && pull.mergedAt === null ? bringUpToDate(f.app, repo, pull, []) : undefined;
   return who === undefined

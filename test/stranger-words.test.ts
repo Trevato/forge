@@ -100,6 +100,7 @@ describe("a stranger's way to their own forge", () => {
       ["the new-forge form (/forges/new)", await get(servers.url, "/forges/new")],
       ["the start claim screen (/claim/start/:token)", await get(servers.url, `/claim/start/${token}`)],
       ["the claim screen of a new forge (/claim)", await get(fresh.base, "/claim")],
+      ["the account screen of a new forge (/welcome)", await get(fresh.base, "/welcome")],
       ["the plan step, leaving (/forges/new)", await plan(false)],
       ["the plan step, keeping access (/forges/new)", await plan(true)],
       ["the first-login next steps (/)", await get(claimed.base, "/", claimed.owner)],

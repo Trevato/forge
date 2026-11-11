@@ -79,6 +79,7 @@ const ALLOWED: readonly Allowed[] = [
   ...allow("setTimeout", "the next slice of a sliced flow computation: one span per slice would fill the 256-span ring in one refresh", [["src/system/flow_cache.ts", "fn"]]),
   ...allow("setTimeout", "the release prover's scheduler seam: its caller passes a callback already inside during(\"release-prove\")", [["src/release/prove.ts", "fn"]]),
   ...allow("setTimeout", "track() only holds the round's promise; the round itself runs inside during(\"probes\")", [["src/contract/probes.ts", "() => { void track(during("]]),
+  ...allow("setTimeout", "a failed look's backoff step: its callback only puts the look back on the queue, and the queue's drain does the work", [["src/looks/backoff.ts", "fn"]]),
   ...allow("setTimeout", "clears a perf capture after its window: five field writes", [["src/perf/capture.ts", "drop"]]),
   ...allow("setTimeout", "clears an image loader's in-flight flag: one comparison and one write", [["src/web/og/raster.ts", "() => loading === mine"]]),
   ...allow("setTimeout", "retries removing one emptied cgroup directory: one rmdir", [["src/apps/cgroup.ts", "() => removeDir(dir"]]),

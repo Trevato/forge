@@ -210,7 +210,7 @@ export const NO_PREFETCH_PATHS = [
   "/assets/*", "/api/*", "/_plat/*", "/_measure*", "/_script-error", "/mcp*", "/oauth/*", "/sw.js",
   "/*/*/raw/*", "/*/*/media/*", "/*/*/archive/*", "/*/*/app/*/open",
   "/logout*", "/signout*", "/sign-out*", "/signin*", "/sign-in*", "/login*",
-  "/claim*", "/first-admin*", "/verify*", "/go/*", "/-/*", "/apps/open*",
+  "/claim*", "/welcome*", "/first-admin*", "/verify*", "/go/*", "/-/*", "/apps/open*",
   "/settings/*", "/home/*", "/*/-/*",
 ];
 
