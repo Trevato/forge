@@ -4,7 +4,8 @@
  * issue in the forge's own repository, opened by its owner. A title already
  * open is not filed twice, and neither is a key this process has filed. A
  * slow route or subcommand is a defect: filed with its kind's labels, a `bug`
- * on its clock (#8856).
+ * on its clock (#8856). Each tick it also folds the new samples into the hour's p50 and p95
+ * per route in `route_hour` (`history.ts`, #11477).
  */
 
 import type { App } from "../app.ts";
@@ -17,6 +18,7 @@ import { createGitRecord } from "./git.ts";
 import type { PerfRecord } from "./record.ts";
 import { evaluate, evaluateGit, fresh } from "./watch.ts";
 import { during } from "./jobs.ts";
+import { createHourLedger } from "./history.ts";
 
 export const TICK_MS = 60_000;
 
@@ -26,9 +28,17 @@ export function startPerfWatcher(
   now: () => number = Date.now,
   everyMs = TICK_MS,
   gitRecord: PerfRecord = createGitRecord(),
-): () => void {
+): (() => void) & { tick: () => void } {
+  const ledger = createHourLedger();
   const filed = new Set<string>();
   const tick = (): void => {
+    try {
+      // Each tick folds the new samples into their own hour's row, off the request path (#11477).
+      ledger.note(record, now());
+      ledger.write(app.db, now());
+    } catch (error) {
+      app.log.warn("route history write failed", { error: String(error) });
+    }
     try {
       const slug = app.config.forgeRepo;
       if (slug === undefined) return;
@@ -49,5 +59,5 @@ export function startPerfWatcher(
   };
   const timer = setInterval(() => during("perf-watcher", tick), everyMs);
   timer.unref();
-  return () => clearInterval(timer);
+  return Object.assign(() => clearInterval(timer), { tick });
 }

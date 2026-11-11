@@ -190,6 +190,7 @@ export { route as getApiV1SecretsScope } from "./getApiV1SecretsScope.ts";
 export { route as getApiV1TelemetryFlow } from "./getApiV1TelemetryFlow.ts";
 export { route as getApiV1TelemetryHistory } from "./getApiV1TelemetryHistory.ts";
 export { route as getApiV1TelemetryHome } from "./getApiV1TelemetryHome.ts";
+export { route as getApiV1TelemetryRoutes } from "./getApiV1TelemetryRoutes.ts";
 export { route as getApiV1TelemetrySources } from "./getApiV1TelemetrySources.ts";
 export { route as getApiV1TelemetrySystem } from "./getApiV1TelemetrySystem.ts";
 export { route as getApiV1Tokens } from "./getApiV1Tokens.ts";
