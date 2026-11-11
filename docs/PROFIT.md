@@ -114,3 +114,14 @@ forge's cost is the apps' costs plus the box's unowned share. How to read it: `d
   constant.
 - Billing produces a statement, with no payment processor. A person can
   check every line by hand.
+
+## Billing
+
+Billing records each forge's plan, `src/billing/`, with no SDK and no
+dependency: a store with one row per forge (plan, status, period end, payer,
+provider, the provider's ids) whose every change is kept. No payment
+processor is written; every forge is free within its plan and an admin grants
+plans by hand (`PUT /api/v1/forges/{name}/plan`, the Billing page, the
+terminal, the MCP `forges` tool). A forge with no row is active on the plan
+its size names. Nothing reads a plan to limit a forge yet. How to use it:
+`docs/features/billing.md`.

@@ -105,6 +105,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/admin/limits` — `pages/admin-limits.ts` · every limit with value, default and reason · `/settings/capacity` (also a numbers-you-can-change page) · none seen.
 - `/admin/flows` — `pages/flows-all.ts` · every repository's flow lines with state and last moved, by kind and stale · `/:owner/:name/flows` · none seen.
 - `/admin/data` — `pages/data.ts` · the forge's own database: tables, rows, read-only SQL, secrets masked · `/data` (the Forge data button) · none seen; shares its body (`pages/data_view.ts`) with `/data` and `/:owner/:name/data`.
+- `/settings/billing` — `pages/billing.ts` · each forge's plan, granted by hand · `/settings/economics` · none seen.
 - `/settings/economics` — `pages/economics.ts` · the profit slider's position and the margin, with the policy in words · `/admin/limits`, `/settings/capacity` · none seen.
 - `/settings/capacity` — `pages/capacity.ts` · how many runs and checks go at once · `/admin/limits`, `/settings/usage` · none seen.
 - `/settings/usage` — `pages/usage.ts` · route patterns by use, unused first · `/settings/telemetry`, `/board/returns` · none seen. Not about cost, despite the name.

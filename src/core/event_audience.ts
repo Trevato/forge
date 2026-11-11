@@ -236,6 +236,8 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind.startsWith("pinned.") ||
     // Which of a person's connected accounts a mirror syncs through is too.
     kind.startsWith("origin.") ||
+    // A forge's plan and the billing provider are the admins' books (#11134).
+    kind.startsWith("billing.") ||
     // A declared LAN device names the owner's own network (#10567).
     kind.startsWith("device.") ||
     kind === "repo.settings_updated" ||
