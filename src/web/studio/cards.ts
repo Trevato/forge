@@ -11,7 +11,7 @@ import { html, raw } from "../html.ts";
 import { timeAgo } from "../ui.ts";
 import { span, STAGE_LABEL, verdict, type PipelineKey, type PipelineStage } from "../../flow/pipeline.ts";
 
-export type CardKind = "app" | "run" | "asks" | "wave" | "map" | "feed" | "pull" | "pulls" | "runs" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones" | "release" | "releases" | "search" | "issues";
+export type CardKind = "app" | "run" | "asks" | "wave" | "map" | "feed" | "pull" | "pulls" | "runs" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones" | "release" | "releases" | "search" | "issues" | "held";
 
 export interface CardRow {
   readonly label: string;
@@ -44,7 +44,7 @@ const here = (origin: string, path: string): boolean => origin !== "" && /^\/(?!
 
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "asks", "wave", "map", "feed", "pull", "pulls", "runs", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones", "release", "releases", "search", "issues"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "asks", "wave", "map", "feed", "pull", "pulls", "runs", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones", "release", "releases", "search", "issues", "held"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
@@ -70,6 +70,7 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   fork_tree: "forks",
   search: "search",
   issues: "issues",
+  held: "held",
 };
 
 const CARD_TITLE: Readonly<Record<CardKind, string>> = {
@@ -95,6 +96,7 @@ const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   releases: "Shipped",
   search: "Search",
   issues: "Issues",
+  held: "Later",
 };
 
 type Obj = Record<string, unknown>;
@@ -117,6 +119,7 @@ const EXPLORE_ROWS = 20;
 const PULLS_LIMIT = 20;
 export const SEARCH_ROWS = 20;
 export const ISSUES_ROWS = 20;
+const HELD_ROWS = 40;
 const ASKED_WORDS = 80;
 const ASKED_LIMIT = 20;
 const RELEASE_ROWS = 10;
@@ -224,6 +227,40 @@ export function cardFor(
       rows.push({ label: text(p["title"]), value: values[i] ?? "no data" });
     if (panels.length > BOARD_PANELS) rows.push({ label: "More", value: `${panels.length - BOARD_PANELS} more` });
     return { kind, title: text(v["title"]), status: `${panels.length} panel${panels.length === 1 ? "" : "s"} · ${text(v["range"])}`, rows, actions };
+  }
+  if (kind === "held") {
+    // `held` read answers `{ says, themes: [{ theme, issues: [{ number, title, reason }] }], approve, digest }`;
+    // the repo comes in `extra`. An apply's answer has no `themes`, so no card.
+    const v = obj(value);
+    if (!Array.isArray(v["themes"])) return undefined;
+    const slug = text(extra["repo"]);
+    let shown = 0;
+    let total = 0;
+    const seen = new Set<number>();
+    for (const t of v["themes"].map(obj)) {
+      const issues = list(t["issues"]).map(obj);
+      rows.push({ label: text(t["theme"]), value: `${issues.length} held` });
+      for (const i of issues) {
+        total++;
+        if (shown >= HELD_ROWS) continue;
+        shown++;
+        const n = text(i["number"]);
+        seen.add(Number(n));
+        const path = `/${slug}/issues/${n}`;
+        rows.push({
+          label: `#${n} ${text(i["title"])}`.trim(),
+          value: i["reason"] === "done" ? "done" : "",
+          depth: 1,
+          ...(web(origin) && slugOf(slug) && /^[1-9]\d*$/.test(n) && here(origin, path) ? { link: origin + path } : {}),
+        });
+      }
+    }
+    if (total > shown) rows.push({ label: "More", value: `${total - shown} more not shown` });
+    // The button closes only what the card shows: a person never presses it for issues they cannot see.
+    const approve = list(v["approve"]).filter((n): n is number => Number.isInteger(n) && (n as number) > 0 && seen.has(n as number));
+    if (approve.length > 0 && slugOf(slug) && text(v["digest"]) !== "")
+      actions.push({ label: `Close ${approve.length} done`, tool: "held", args: { app: slug, apply: approve, digest: text(v["digest"]) } });
+    return { kind, title: CARD_TITLE[kind], status: text(v["says"]), rows, actions };
   }
   if (kind === "forks") {
     // `fork_tree` answers `{ root, nodes: [{ repo, parent, depth, follow }], truncated }`; a repo with no readable tree has no card.

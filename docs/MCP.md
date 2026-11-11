@@ -118,7 +118,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `forks` | — | A repo's forks you may see, paged by limit and cursor (next_cursor), each with commits ahead and behind | 345 |
 | `front_page` | — | The stranger's front page; admin sets `pinned`/`hidden`/`weights` | 457 |
 | `health` | — | How this forge is: version, commit, draining or not, rollout, incidents | 190 |
-| `held` | — | What the Later gate holds, and one proposed pass over it | 270 |
+| `held` | — | What the Later gate holds, and one proposed pass over it | 319 |
 | `here` | — | What you may do on a forge page; given an app's link, what its /__forge/ door shows | 237 |
 | `hold` | — | Hold a pull (`why`) or `release` it; or `path`: hold new work on a file | 522 |
 | `hooks` | `list`, `add`, `remove`, `deliveries`, `ping`, `pause`, `resume`, `redeliver` | List, add (`url`, `secret`, `kinds`) or remove (`id`) webhooks; admins | 494 |
@@ -522,6 +522,7 @@ answers
 | `ui://forge/issues` | `issues` | A repository's issues, one row each: state, pillar, what it waits on, `untrusted` when an outsider wrote it. |
 | `ui://forge/release` | `releases` | Kept releases, the last 10 newest first, each proven, unproven or rolled back, linked to its pull. |
 | `ui://forge/releases` | `releases` with `shipped` | What shipped: one linked row per landing, the live version, what is on its way. |
+| `ui://forge/held` | `held` | What waits on a person: themes, one row each, and one button that closes the done ones. |
 
   The Runs card (`runs`) is one row per run, newest first: glyph, kind, the issue or pull and its title, then the state as a word with how long it ran (or has been running), linked to the run page; failed runs lead the status line. The Plan card (`map`) shows one row per pillar with
   its ready, working and waiting counts, and the first five ready issues linked
