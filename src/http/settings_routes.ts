@@ -8,6 +8,7 @@
  */
 
 import { crewKeyAdd } from "../web/studio/crew_key.ts";
+import { crewBudgetsSave } from "../web/studio/crew_budgets.ts";
 import type { Handler } from "./context.ts";
 import type { Router } from "./router.ts";
 import { parentLinkStart } from "./rp.ts";
@@ -177,6 +178,7 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("GET", "/settings/subscriptions", subscriptionsPage);
   router.add("POST", "/settings/subscriptions", subscriptionAdd);
   router.add("POST", "/settings/crew/key", crewKeyAdd);
+  router.add("POST", "/settings/crew/budgets", crewBudgetsSave);
   router.add("POST", "/settings/subscriptions/:id/delete", subscriptionDelete);
   router.add("POST", "/settings/subscriptions/:id/wake", subscriptionWake);
   router.add(

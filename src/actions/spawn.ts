@@ -205,6 +205,30 @@ async function writeLedger(app: App, ledger: Ledger): Promise<void> {
   await rename(`${path}.tmp`, path);
 }
 
+/**
+ * The child's founder account: the spawner's own name, or a placeholder
+ * for a stranger's child (`copyInto`).
+ */
+export const founderNameOf = (owner: User | undefined): string => owner?.username ?? "founder";
+
+/**
+ * A child whose organisation would take its founder's name can't be made:
+ * the founder is created first and holds the name, so the organisation
+ * would fail `name_taken` after the body was placed. Said here, so the
+ * dry run refuses what the spawn would fail on.
+ */
+export function founderClash(
+  plan: { readonly name: string; readonly org: string },
+  owner: User | undefined,
+): { field: "name" | "org"; reason: string } | undefined {
+  const founder = founderNameOf(owner);
+  if (plan.org.toLowerCase() !== founder.toLowerCase()) return undefined;
+  return {
+    field: plan.org === plan.name ? "name" : "org",
+    reason: `${plan.org} is the name of the child's founder account (${owner === undefined ? "a stranger's child starts with one" : "yours"}); its organisation needs another name`,
+  };
+}
+
 export async function spawnForge(
   app: App,
   actor: User | undefined,
@@ -228,6 +252,9 @@ export async function spawnForge(
   const planned = planSpawn(input, source);
   if (!planned.ok) return err({ kind: "invalid", ...planned.error });
   const plan = planned.value;
+  // Before anything is placed: a clash would leave a half-made child.
+  const clash = founderClash(plan, owner);
+  if (clash !== undefined) return err({ kind: "invalid", ...clash });
 
   const names = new Set<string>();
   for (const a of plan.apps) {
@@ -395,7 +422,7 @@ async function copyInto(
     // The founder is a name only: no password, no email worth mailing. The
     // child's first boot hands the account to a person (#422). A stranger's
     // child gets a placeholder; the claim names the real admin.
-    const founderName = owner?.username ?? "founder";
+    const founderName = founderNameOf(owner);
     const founder =
       getUserByName(child.db, founderName) ??
       (await (async () => {

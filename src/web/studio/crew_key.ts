@@ -12,6 +12,7 @@ import { join } from "node:path";
 import type { App } from "../../app.ts";
 import { listAgents } from "../../core/agents.ts";
 import { saveCrewKey } from "../../actions/crew_key.ts";
+import { wokeWords } from "../../crew/wake.ts";
 import { crewHasCredential } from "../../core/subscriptions.ts";
 import { leftUsd, usdWords } from "../../spawn/credit.ts";
 import { fundingOf } from "../../spawn/funding.ts";
@@ -52,9 +53,13 @@ export function crewCanRun(app: App): boolean {
 /** Whether the forge has a crew at all, so a line about it is true. */
 export const hasCrew = (app: App): boolean => listAgents(app.db).length > 0;
 
+/** Said once where a forge of its own runs on its own key. */
+const OWN_KEY_NOTE = "The crew works on this forge's own model key; the host's included credit is not drawn on.";
+
 /** What the crew runs on, in one sentence and no field: the first screen's line, said the same on the page and in the terminal. */
 export function crewNote(app: App): string {
-  if (crewHasCredential(app.db)) return "The crew works on this forge's included credit.";
+  if (crewHasCredential(app.db))
+    return isHostedForge(app) ? OWN_KEY_NOTE : "The crew works on this forge's own model key.";
   const credit = includedCredit(app);
   if (credit !== undefined && credit.leftUsd > 0)
     return `The crew is building on ${usdWords(credit.leftUsd)} of ${usdWords(credit.capUsd)} included credit.`;
@@ -85,10 +90,16 @@ const keyField = (): Html => html`<form class="stack" method="post" action="${KE
   <div>${btn("Save key", { variant: "primary", size: "sm", icon: "key" })}</div>
 </form>`;
 
+/** On a forge of its own that has its own key: which one is paying, so nobody wonders whether the host's credit is drawn on. */
+function payingCard(app: App, compact: boolean): Html | null {
+  if (compact || !isHostedForge(app)) return null;
+  return html`<p class="small muted" id="crew-key-note" role="status">${icon("key")} ${OWN_KEY_NOTE}</p>`;
+}
+
 /** What the crew runs on, said once, with the field when a key would change anything (`compact`: a line and a link, no field). */
 export function crewKeyCard(ctx: Ctx, compact = false): Html | null {
   // Credit left is something to run on: the card never asks for a key then, in any form (#11508).
-  if (crewHasCredential(ctx.app.db)) return null;
+  if (crewHasCredential(ctx.app.db)) return payingCard(ctx.app, compact);
   const admin = ctx.auth.user?.isAdmin === true;
   // On a repository page: one line and a link, the field lives on the home page.
   if (compact) {
@@ -125,5 +136,5 @@ export async function crewKeyAdd(ctx: Ctx): Promise<Response> {
     return saved.error === "not_found"
       ? notFoundPage(ctx)
       : flashTo(ctx, "/", { tone: "danger", message: "That key could not be saved. Check that it is the whole key and try again." });
-  return flashTo(ctx, "/", { message: "Key saved. The crew can work now." });
+  return flashTo(ctx, "/", { message: `Key saved. The crew can work now. ${wokeWords(saved.woken)}`.trim() });
 }

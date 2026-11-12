@@ -11,7 +11,6 @@
  * what the forge has.
  */
 
-import type { Database } from "bun:sqlite";
 import { isStrangerPull } from "./stranger.ts";
 import { noteMeasure } from "../core/measure.ts";
 import { capacityEnv } from "../core/capacity.ts";
@@ -156,6 +155,7 @@ import { laterGate } from "./later.ts";
 import { MERGES_CLEAN_NOW, mergesCleanNow } from "./clean_now.ts";
 import { handedLimbs } from "./handed_limbs.ts";
 import { parkedTwice } from "./parks.ts";
+import { budgetLimit, budgetVerdict, cutOffBy, isOwnForge, NO_ACCOUNT_SAID, NO_KEY_SAID } from "./forge_budget.ts";
 import { boxesOf, landedBoxes } from "./box_pass.ts";
 import { reviewRange } from "./review_range.ts";
 import { heldNow, stuckOf } from "./held.ts";
@@ -269,13 +269,18 @@ export function steerRun(app: App, runId: string, text: string): boolean {
 }
 
 /** What a refused run says: an org is named with the page where an admin grants it; a person keeps the plain words. */
-function noGrantSaid(db: Database, ownerId: string, ownerName: string): string {
+function noGrantSaid(app: App, ownerId: string, ownerName: string): string {
+  const db = app.db;
+  // A forge that is its owner's own, or a repository its admin owns, has no
+  // one else to ask: the key is theirs to add (#11515).
+  if (isOwnForge(app) || getUserById(db, ownerId)?.isAdmin === true)
+    return NO_KEY_SAID;
   const org = db
     .query<{ kind: string }, [string]>("SELECT kind FROM user WHERE id = ?1")
     .get(ownerId)?.kind === "org";
   return org
     ? `the account \`${ownerName}\` has no model grant; an admin can grant one at /settings/accounts/${ownerName}`
-    : "This repository has no model account: ask an admin to grant one";
+    : NO_ACCOUNT_SAID;
 }
 
 /**
@@ -1332,7 +1337,12 @@ async function work(
     };
     // What this run may spend at most; on a budgeted account the pick
     // reserves it (or what is left, if less) against the account's budget.
-    const ownBudget = agent.budgetUsd > 0 ? agent.budgetUsd : options.budgetUsd;
+    const ownBudget =
+      agent.budgetUsd > 0
+        ? agent.budgetUsd
+        : isOwnForge(app)
+          ? budgetLimit(app.db, "run")
+          : options.budgetUsd;
     const picked = pickSubscription(
       app.db,
       app.config.dataDir,
@@ -1373,7 +1383,7 @@ async function work(
     ) {
       const said =
         grantCap === undefined
-          ? noGrantSaid(app.db, repo.ownerId, repo.ownerName)
+          ? noGrantSaid(app, repo.ownerId, repo.ownerName)
           : "This month's model grant is spent: an admin can raise it";
       write(said);
       return { state: "failed", summary: said };
@@ -1400,6 +1410,12 @@ async function work(
     if (!ceiling.ok) {
       write(ceiling.said);
       return { state: "failed", summary: ceiling.said };
+    }
+    // The owner's own limits on a forge that is theirs (`forge_budget.ts`).
+    const own = budgetVerdict(app, ceiling.capUsd ?? wanted, new Date(), run.id);
+    if (own !== undefined && !own.ok) {
+      write(own.said);
+      return { state: "failed", summary: own.said };
     }
     meter.ceilingOwner = repo.ownerId;
     if (picked.kind === "ready") {
@@ -1437,7 +1453,7 @@ async function work(
     // The budget in two parts: the work, and a reserve for landing it. An
     // agent cut off mid-task otherwise leaves a tree the forge commits blind
     // and a pull whose description is the error.
-    const budget = Math.min(ceiling.capUsd ?? Infinity, wanted);
+    const budget = Math.min(ceiling.capUsd ?? Infinity, wanted, own?.ok === true ? own.capUsd : Infinity);
     const reserve = wrapUpReserve(budget);
     // Asked again for every invocation (`crew/sandbox.ts`): an agent made
     // since the last one is denied from this one on.
@@ -1876,7 +1892,9 @@ async function work(
       state: result.ok || landed.pushed ? "ok" : "failed",
       summary: outage
         ? `network unreachable after ${MAX_PAUSES} pauses; nothing to land (${result.reason})`
-        : landed.summary + (result.ok ? "" : ` (${result.reason})`),
+        : landed.summary +
+          (result.ok ? "" : ` (${result.reason})`) +
+          cutOffBy(app.db, own, stoppedAt !== undefined),
       resumesAt: limitLifts,
       sessionId: result.sessionId,
       costUsd: result.costUsd,

@@ -215,7 +215,7 @@ export function nextPage(ctx: Ctx): Response {
       : null}</p>
     ${all
       ? null
-      : rest > 0 || next.notNowTotal > 0
+      : rest > 0 || next.notNowTotal > 0 || next.unlisted > 0
         ? html`<p class="mt">
             <a href="${base}/next?all=1">${[
               rest > 0 ? `${rest} more ready` : null,
@@ -225,6 +225,9 @@ export function nextPage(ctx: Ctx): Response {
               .join(" · ")}: open the rest</a>
           </p>`
         : null}
+    ${next.unlisted > 0
+      ? html`<p class="muted small mt">${String(next.unlisted)} more open issues are not listed here; the queue API pages through them.</p>`
+      : null}
     ${all && next.notNow.length > 0
       ? html`<section class="stack-tight mt">
           <h2>Not now</h2><ul class="list setting-list">

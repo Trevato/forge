@@ -6,12 +6,12 @@
  */
 
 import { readFileAt } from "./checkout.ts";
-import { memoryCeilingSource, POD_MEMORY_FILE, POD_MEMORY_SHARE, resolveLimits, type Limits } from "./contain.ts";
+import { memoryCeilingSource, OWN_SIZE_SHARE, POD_MEMORY_FILE, POD_MEMORY_SHARE, resolveLimits, type CeilingFrom, type Limits } from "./contain.ts";
 import { parseCheck } from "./manifest.ts";
 
 interface Held {
   readonly limits: Limits;
-  readonly from: "env" | "pod" | "default";
+  readonly from: CeilingFrom;
 }
 
 const held = new Map<string, Held>();
@@ -33,7 +33,7 @@ export function usePodMemoryFile(path: string): () => void {
  */
 function cellLimits(declared: number | undefined): Held {
   const env = process.env["FORGE_CELL_MEMORY_MAX_MIB"];
-  const key = `${podFile}|${env ?? ""}|${declared ?? ""}`;
+  const key = `${podFile}|${env ?? ""}|${process.env["FORGE_CELL_SIZE"] ?? ""}|${declared ?? ""}`;
   let kept = held.get(key);
   if (!kept) {
     kept = {
@@ -47,12 +47,14 @@ function cellLimits(declared: number | undefined): Held {
 }
 
 /** Where the ceiling a cut was held to comes from, in words. */
-export function ceilingWords(from: "env" | "pod" | "default"): string {
+export function ceilingWords(from: CeilingFrom): string {
   return from === "env"
     ? "the machine's ceiling, FORGE_CELL_MEMORY_MAX_MIB"
-    : from === "pod"
-      ? `${Math.round(POD_MEMORY_SHARE * 100)}% of the pod's memory.max`
-      : "the machine's default ceiling; the pod states no memory limit";
+    : from === "size"
+      ? `${Math.round(OWN_SIZE_SHARE * 100)}% of this child forge's own size`
+      : from === "pod"
+        ? `${Math.round(POD_MEMORY_SHARE * 100)}% of the pod's memory.max`
+        : "the machine's default ceiling; the pod states no memory limit";
 }
 
 /** The sentence for a declared memory; with none declared it says the default holds. Only validated numbers enter it. */

@@ -174,7 +174,7 @@ describe("a new forge's starter crew", () => {
     const owners = listTeams(child.db, getUserByName(child.db, "maria")!.id).find((t) => t.name === OWNERS_TEAM)!;
     const founder = listTeamMembers(child.db, owners.id)[0]!;
     const saved = await saveCrewKey(child, { ...founder, isAdmin: true, kind: "user" }, "  sk-ant-api03-abcdefghij  ");
-    expect(saved).toEqual({ ok: true });
+    expect(saved).toEqual({ ok: true, woken: 0 });
     const subs = listSubscriptions(child.db);
     expect(subs.map((x) => x.name)).toEqual(["my-key"]);
     const org = getUserByName(child.db, "maria")!;

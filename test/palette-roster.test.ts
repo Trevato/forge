@@ -113,6 +113,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["system", "System", "the machine now: CPU, memory, disks, processes"],
     ["pulls-to-land", "Pulls to land", "approved pulls, stale crew pulls, unproposed work"],
     ["valves", "Valves", "the week's budget as a valve per repository; turn one and the crew obeys"],
+    ["refused-asks", "Refused first asks", "the last 20 first asks turned away"],
     ["disks", "Disks", "machines' disk readings: 30-day write rate and projected rated-TBW date"],
     ["telemetry", "Telemetry", "which agents may read flow and system; enter flips the grant"],
     ["stalls", "Main-thread stalls", "the last hour's stall ms by route"],

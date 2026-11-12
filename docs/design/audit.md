@@ -93,6 +93,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 ### Forges (the family)
 
 - `/forges` — `pages/forges.ts` · the forges this one sent, as a client list · `/family` · colour 1.
+- `/forges/refused` — `pages/forges-refused.ts` · the last 20 first asks the forge refused, with its words; an admin's only · `/system` · none seen; reuses the list and muted text.
 - `/forges/new` — `pages/new-forge.ts` · send a new forge · none · colour 1.
 - `/family` — `pages/family.ts` · parent, this forge and children as a tree · `/forges` (the same children) · colour 1.
 - `/claim` — `pages/claim.ts` · claim a forge that was sent to me · none · colour 1.

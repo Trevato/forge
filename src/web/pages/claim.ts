@@ -43,10 +43,12 @@ import { createSession } from "../../core/sessions.ts";
 import { createUser, discardFreshUser, getUserByName, type User } from "../../core/users.ts";
 import {
   burnClaim,
+  founderToTake,
   linkOf,
   handOver,
   readClaim,
   spawnedOrg,
+  takeFounder,
   unburnClaim,
   type ClaimState,
   type Spawned,
@@ -174,6 +176,17 @@ function accessSentence(spawned: Spawned, spawner: User | undefined): string {
     : `Once you open it as yours, only you can see its private work: ${who}, who made it, no longer has access unless you invite them back.`;
 }
 
+/**
+ * Where the claim would take over the spawn-made founder (`founderToTake`),
+ * the page says so: claiming under the spawner's name becomes their account
+ * here, with what the spawn made under it. Deliberate, and never silent.
+ */
+function takeover(ctx: Ctx, spawned: Spawned, spawner: User | undefined): Html | null {
+  if (spawner === undefined || founderToTake(ctx.app, spawned, spawner.username) === undefined)
+    return null;
+  return html`<p class="mb" id="claim-takeover">Open it as ${spawner.username} and you will take over ${spawner.username}'s account on this forge, with everything already made under it.</p>`;
+}
+
 function claimForm(
   ctx: Ctx,
   spawned: Spawned,
@@ -201,6 +214,7 @@ function claimForm(
               (${relativeWords(Date.parse(expiresAt) - Date.now())}). After that, ask
               ${spawner?.username ?? "whoever sent it"} to send you a new one.</p>`}
         <p class="mb" id="claim-access">${accessSentence(spawned, spawner)}</p>
+        ${takeover(ctx, spawned, spawner)}
         <form method="post" action="/claim">
           <div id="claim-token-field">
             ${formField({
@@ -360,11 +374,19 @@ async function fragmentPage(ctx: Ctx, own: boolean): Promise<Response> {
  * Whether a name and address are fit for the first admin; else the words.
  * The address is optional unless a passkey is being made.
  */
-function problems(ctx: Ctx, username: string, email: string, needEmail: boolean): Errors {
+function problems(
+  ctx: Ctx,
+  spawned: Spawned,
+  username: string,
+  email: string,
+  needEmail: boolean,
+): Errors {
   const errors: Errors = {};
   if (!USERNAME.test(username))
     errors.username = "Usernames are letters, digits, dots, dashes.";
-  else if (getUserByName(ctx.app.db, username))
+  // The spawn-made founder holds the spawner's own name; the claim may take
+  // it over (`founderToTake`), so it is not "taken" to the claimant.
+  else if (getUserByName(ctx.app.db, username) && founderToTake(ctx.app, spawned, username) === undefined)
     errors.username = USERNAME_TAKEN;
   if (email !== "" ? !givenEmail(email) : needEmail)
     errors.email = "That does not look like an email address.";
@@ -396,7 +418,7 @@ export async function claimOptions(ctx: Ctx): Promise<Response> {
   const state = readClaim(ctx.app.db, spawned.org.id, str(data.token)).state;
   if (state !== "ok") return refuse(state === "unknown" ? 404 : 410, LINK_REFUSED[state]);
   const username = str(data.username).trim();
-  const bad = problems(ctx, username, str(data.email).trim(), true);
+  const bad = problems(ctx, spawned, username, str(data.email).trim(), true);
   const first = bad.username ?? bad.email;
   if (first !== undefined) return refuse(422, first);
   return json(makeOptions(ctx, "claim", username));
@@ -438,7 +460,7 @@ async function submit(ctx: Ctx, own: boolean): Promise<Response> {
     );
   const password = typeof form.get("password") === "string" ? (form.get("password") as string) : "";
   const withKey = field(form, "attestationObject") !== "";
-  const errors = problems(ctx, values.username, values.email.trim(), withKey);
+  const errors = problems(ctx, spawned, values.username, values.email.trim(), withKey);
   if (!withKey && password.length < MIN_SIGNUP_PASSWORD)
     errors.password = `Passwords need at least ${MIN_SIGNUP_PASSWORD} characters.`;
   else if (!withinPasswordCap(password)) errors.password = PASSWORD_TOO_LONG;
@@ -451,12 +473,34 @@ async function submit(ctx: Ctx, own: boolean): Promise<Response> {
     credential = key.value;
   }
 
+  const email = values.email.trim() === "" ? noEmail(values.username) : values.email.trim();
+  // Hashed before the link is spent: nothing is awaited between the burn
+  // and the takeover.
+  const founder = founderToTake(ctx.app, spawned, values.username);
+  const founderHash =
+    founder === undefined || credential !== undefined ? "" : await Bun.password.hash(password, "argon2id");
   // Spent first, in one statement: of two people on one link, one wins.
   const spent = burnClaim(ctx.app.db, orgId, token);
   if (spent.state !== "ok") return dead(ctx, spent.state, undefined, undefined, own);
+  if (founder !== undefined) {
+    const taken = takeFounder(ctx.app.db, founder.id, {
+      hash: founderHash,
+      email,
+      ...(credential === undefined ? {} : { credential }),
+    });
+    if (taken !== "ok") {
+      unburnClaim(ctx.app.db, orgId, token);
+      return again(
+        taken === "email_taken"
+          ? { email: EMAIL_TAKEN_MESSAGE }
+          : { username: USERNAME_TAKEN },
+      );
+    }
+    return claimed(ctx, spawned, founder);
+  }
   const made = await createUser(ctx.app.db, {
     username: values.username,
-    email: values.email.trim() === "" ? noEmail(values.username) : values.email.trim(),
+    email,
     ...(credential === undefined ? { password } : {}),
     isAdmin: true,
     // The one-time claim link the owner handed out is the proof.
@@ -478,14 +522,19 @@ async function submit(ctx: Ctx, own: boolean): Promise<Response> {
     unburnClaim(ctx.app.db, orgId, token);
     return again({ passkey: PASSKEY_WORDS.taken });
   }
+  return claimed(ctx, spawned, made.value);
+}
+
+/** The claimant is in: an owner, signed in, sent home. */
+function claimed(ctx: Ctx, spawned: Spawned, user: User): Response {
   // As the page said: unless the spawner kept access, they leave now.
-  handOver(ctx.app.db, spawned, made.value.id);
+  handOver(ctx.app.db, spawned, user.id);
   ctx.app.log.info("forge claimed", {
     org: spawned.org.username,
-    user: made.value.username,
+    user: user.username,
     spawnerKeeps: spawned.keepAccess,
   });
-  const session = createSession(ctx.app.db, made.value.id);
+  const session = createSession(ctx.app.db, user.id);
   // Home: where the crew's work shows (its first-login screen is #600).
   return redirect(
     "/",

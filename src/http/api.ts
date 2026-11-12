@@ -32,6 +32,8 @@ import { drillVerdict } from "../kernel/domain_drill.ts";
 import { DOMAINS } from "../kernel/domains.ts";
 import { readBounded } from "./limits.ts";
 import { askCheck } from "../checks/again.ts";
+import { nextUp, queueJson } from "../core/next_up.ts";
+import { notStartable } from "../crew/not_startable.ts";
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { crewNow } from "../actions/crew_now.ts";
 import { readScorecards } from "../actions/scorecard.ts";
@@ -441,6 +443,10 @@ export async function respondTake(ctx: Ctx, repo: Repo): Promise<Response> {
   }
   return json(took.value);
 }
+
+/** GET /queue: rows per page by default, and the most one request may ask for. */
+const QUEUE_PAGE = 100;
+const QUEUE_PAGE_MAX = 200;
 
 /** The 401 a stranger gets where an account is needed but a report is not. */
 export function reportInstead(ctx: Ctx, repo: Repo): Response {
@@ -2394,6 +2400,31 @@ export function apiRoutes(router: Router<Handler>): void {
       return json({ dryRun: false, ...op.value }, 201);
     },
   );
+  // The queue as data (#11618): every open issue in the order the dispatcher starts them.
+  router.add("GET", "/api/v1/repos/:owner/:name/queue", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const scope = sealedScope(ctx.app.db, repo, ctx.auth.user);
+    const next = nextUp(ctx.app.db, repo, scope, (ready) => notStartable(ctx.app, repo, ready, scope));
+    const total = next.rows.length + next.unlisted;
+    const bound = (name: string, fallback: number, max: number): number | undefined => {
+      const raw = ctx.url.searchParams.get(name);
+      if (raw === null) return fallback;
+      return /^[0-9]{1,6}$/.test(raw) && Number(raw) <= max ? Number(raw) : undefined;
+    };
+    const limit = bound("limit", QUEUE_PAGE, QUEUE_PAGE_MAX);
+    const offset = bound("offset", 0, 1_000_000);
+    if (limit === undefined || limit < 1 || offset === undefined)
+      return apiError("bad_page", 422, `limit is 1 to ${QUEUE_PAGE_MAX} and offset is 0 or more`);
+    return json({
+      queue: queueJson(next.rows).slice(offset, offset + limit),
+      total,
+      limit,
+      offset,
+      notNow: next.notNowTotal,
+    });
+  });
   // The map as data: ready now, blocked on, the critical path, every edge,
   // and where the crew is. `issues` and `edges` hold the open ones unless
   // `?done=1`.

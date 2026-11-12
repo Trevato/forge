@@ -27,7 +27,7 @@ const rows = (out: string, title: string): number => {
   return list.match(/<li>/g)?.length ?? 0;
 };
 
-const NOW = Date.parse("2026-11-11T12:00:00Z");
+const NOW = Date.now(); // /flow reads the real clock, so a fixed date ages out of its one-day window
 const ago = (h: number) => new Date(NOW - h * 3_600_000).toISOString();
 
 let app: App;

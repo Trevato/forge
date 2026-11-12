@@ -19,6 +19,7 @@ const brief = (r: NextRow, week?: WeekView) => ({
   roleWhy: r.roleWhy,
   onIt: r.onIt,
   why: r.why,
+  state: r.state,
 });
 
 export const tool: Tool = {
@@ -56,7 +57,7 @@ export const tool: Tool = {
     return good({
       projection: week.sentence,
       next: (all ? next.rows : next.rows.slice(0, TOP)).map((r) => brief(r, week)),
-      more: all ? 0 : Math.max(0, next.rows.length - TOP),
+      more: (all ? 0 : Math.max(0, next.rows.length - TOP)) + next.unlisted,
       notNow: next.notNowTotal,
       ...(all ? { notNowRows: next.notNow.map((r) => brief(r)) } : {}),
     });

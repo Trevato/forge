@@ -11,7 +11,7 @@
 
 import { getPack, resolveRepos } from "../../packs/curated.ts";
 import { listAgents } from "../../core/agents.ts";
-import { listReposVisibleTo } from "../../core/repos.ts";
+import { listReposToTake } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
@@ -99,7 +99,7 @@ interface Reads {
   readonly full: string | undefined;
   /** Why even a small forge would pass the host's child quota; the form still draws. */
   readonly quota: string | undefined;
-  readonly repos: ReturnType<typeof listReposVisibleTo>;
+  readonly repos: ReturnType<typeof listReposToTake>;
   readonly crew: ReturnType<typeof listAgents>;
 }
 
@@ -107,10 +107,10 @@ function readsFor(ctx: Ctx, user: User | undefined): Reads {
   const full = timePhase(ctx.request, "room", () => noRoom(ctx.app));
   if (full) return { full, quota: undefined, repos: [], crew: [] };
   const quota = quotaFull(ctx.app.config.dataDir);
-  // A stranger sees only public repositories, and no crew: nothing private
-  // travels to a child they have not claimed.
+  // Each repository once, as its source, and public only; a stranger sees
+  // none and no crew: nothing private travels to a child they have not claimed.
   const repos = timePhase(ctx.request, "repos", () =>
-    listReposVisibleTo(ctx.app.db, user, { limit: 200 }),
+    listReposToTake(ctx.app.db, user, 200),
   );
   const crew =
     user === undefined
@@ -252,6 +252,7 @@ function formView(
               legend: "Apps to fork, with their history",
               name: "apps",
               noun: "repositories",
+              plainUpTo: 10,
               items: repos.map((r) => ({
                 value: `${r.ownerName}/${r.name}`,
                 label: `${r.ownerName}/${r.name}`,

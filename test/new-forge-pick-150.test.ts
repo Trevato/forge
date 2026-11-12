@@ -28,7 +28,7 @@ beforeAll(async () => {
   });
   if (!u.ok) throw new Error("user");
   for (let i = 0; i < 150; i++) {
-    const r = await createRepo(app, u.value, { name: `app${i}` });
+    const r = await createRepo(app, u.value, { name: `app${i}`, visibility: "public" });
     if (!r.ok) throw new Error("repo");
   }
   servers = await serve(app);
