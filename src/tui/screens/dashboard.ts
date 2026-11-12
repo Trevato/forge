@@ -249,7 +249,11 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
    * A search line with `kind:` or `sort:` is the explorer's (#7325): the rows
    * `/explore` ranks, answered by the same action, for the line last settled.
    */
-  let explored: { line: string; rows: readonly ExploreRow[]; total: number } | undefined;
+  let explored:
+    | { line: string; rows: readonly ExploreRow[]; total: number; next: string | null; note: string }
+    | undefined;
+  /** Whether a next page is being fetched, so a held `n` asks once. */
+  let paging = false;
   let askedLine = "";
   /** The forge's front weights, read once per ranked line so the reasons agree with the order. */
   let exploredWeights: FrontWeights = DEFAULT_WEIGHTS;
@@ -273,9 +277,54 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       if (askedLine !== line) return;
       const rows = page?.items ?? [];
       exploredWeights = frontWeights(f.app.db);
-      explored = { line, rows, total: page?.total ?? 0 };
+      explored = { line, rows, total: page?.total ?? 0, next: page?.nextCursor ?? null, note: "" };
       at("repos").clamp(rows.length);
       ctx.invalidate();
+    });
+  };
+  /**
+   * `n` on an explorer line: the next page, appended. The cursor belongs to
+   * the line it came from (it lives in `explored`, which a new line drops); one
+   * the forge refuses gives the first page again with a plain line.
+   */
+  const morePage = (): void => {
+    const here = explored;
+    if (here === undefined || here.next === null || paging) return;
+    const query = parseExploreQuery(filter.query);
+    const cursor = here.next;
+    paging = true;
+    runAsync(ctx, async () => {
+      try {
+        let page: Awaited<ReturnType<typeof explorePage>>;
+        try {
+          page = await explorePage(f.app, f.user, query, cursor);
+        } catch {
+          // A failed read is not a refusal: the pages already shown stay, and `n` tries again.
+          if (askedLine !== here.line || explored !== here) return;
+          explored = { ...here, note: "could not fetch more results — n to retry" };
+          ctx.invalidate();
+          return;
+        }
+        if (askedLine !== here.line || explored !== here) return;
+        if (page === null) {
+          // The forge refused the cursor: start again from the first page.
+          const first = await explorePage(f.app, f.user, query, null).catch(() => null);
+          if (askedLine !== here.line || explored !== here) return;
+          explored = {
+            line: here.line,
+            rows: first?.items ?? here.rows,
+            total: first?.total ?? here.total,
+            next: first?.nextCursor ?? null,
+            note: "that page is no longer there — showing the first page",
+          };
+          at("repos").clamp(explored.rows.length);
+        } else {
+          explored = { ...here, rows: [...here.rows, ...page.items], total: page.total, next: page.nextCursor, note: "" };
+        }
+        ctx.invalidate();
+      } finally {
+        paging = false;
+      }
     });
   };
   /** One cursor per pane: moving in one must never move another. */
@@ -1043,7 +1092,9 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
             ? [binding(["t"], "ask for something")]
             : []),
         ...(clientLive.size > 0 ? [binding(["o"], "open the app")] : []),
-        binding(["n"], "new repo", { disabled: !f.signedIn }),
+        ...(exploring() && explored?.next != null
+          ? [binding(["n"], "more results")]
+          : [binding(["n"], "new repo", { disabled: !f.signedIn })]),
         binding(["M"], "migrate", { disabled: !f.signedIn }),
         binding(["A"], "account", { disabled: !f.signedIn }),
         binding(["s"], "sign in", { disabled: f.signedIn }),
@@ -1319,6 +1370,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         if (live) ctx.push(linkScreen(ctx, live, screen));
         return true;
       }
+      if (e.key === "n" && exploring() && explored?.next != null) return morePage(), true;
       if (e.key === "n" && f.signedIn) {
         ctx.push(newRepoScreen(f, ctx));
         return true;
@@ -1470,6 +1522,12 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   function drawExplored(s: Surface, r: Rect, c: Tokens): void {
     const rows = exploredRows();
     const on = focus === "repos";
+    const tail = [explored?.note ?? "", explored?.next != null ? "more results — n" : ""].filter((x) => x !== "").join(" · ");
+    if (tail !== "" && r.h >= 2) {
+      const [body, line] = split(r, "v", [fill(1), len(1)]);
+      s.text(line!.x, line!.y, truncate(tail, line!.w), style(c.attn, c.bg), line!.x + line!.w);
+      r = body!;
+    }
     if (rows.length === 0) {
       emptyState(s, r, c, {
         title: explored === undefined ? "Ranking…" : `Nothing matches ${explored.line}`,
