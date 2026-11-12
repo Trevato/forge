@@ -54,6 +54,8 @@ import type { Proposal } from "../../core/proposals.ts";
 import type { App } from "../../app.ts";
 import {
   applyAsksBulk,
+  doneLine,
+  inDoneMinute,
   BULK_MAX,
   latestUndoable,
   previewAsksBulk,
@@ -201,6 +203,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** The rows marked for one verb, by issue id. */
   const marked = new Set<string>();
   let lastSet: Operation | undefined;
+  /** The decision's Done line, as the page keeps it for a minute (`doneLine`). */
+  let doneSet: ReturnType<typeof doneLine>;
   /** What Home and /review count: live asks waiting on the viewer, and the stale ones folded apart. */
   let waitingSet: ReviewSet | undefined;
   /** The repositories marked for archiving, by id; only ones the viewer administers. */
@@ -436,6 +440,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     for (const id of [...marked])
       if (!onYou.some((item) => item.issue.id === id)) marked.delete(id);
     lastSet = f.user ? latestUndoable(f.app, f.user) : undefined;
+    doneSet = f.user ? doneLine(f.app, f.user) : undefined;
     const now = new Date();
     holds = new Map(
       all.flatMap((repo) => {
@@ -1501,7 +1506,10 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       parts.push(
         `${silenced.size} ${silenced.size === 1 ? "repository" : "repositories"} muted · L listen again`,
       );
-    if (lastSet !== undefined) parts.push(`u undo ${lastSet.verb}`);
+    // The minute's Done line leads the undo, the page's words and gate; after the minute the day's undo stays.
+    const doneNow = doneSet !== undefined && inDoneMinute(doneSet.operation.createdAt) ? doneSet : undefined;
+    if (doneNow !== undefined && !doneNow.undo) parts.push(doneNow.line);
+    else if (lastSet !== undefined) parts.push(`${doneNow === undefined ? "" : `${doneNow.line} · `}u undo ${lastSet.verb}`);
     if (asideWaves.length > 0) parts.push(`${asideWaves.length} ${asideWaves.length === 1 ? "wave" : "waves"} put aside · B bring back`);
     return parts.length > 0 ? parts.join(" · ") : undefined;
   }
