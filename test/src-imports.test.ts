@@ -1,3 +1,4 @@
+// @tree-scan: lists the repository through a walk it hands a rooted path.
 /**
  * The image ships `src/` and nothing else (Dockerfile): a module under src/
  * that imports from scripts/ or test/ boots from the repository and crashes

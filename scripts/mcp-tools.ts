@@ -11,6 +11,8 @@
  *
  * `test/mcp-tools.test.ts` runs the check, so a pull that adds a tool file
  * without running this goes red with the command to run.
+ *
+ * @tree-scan: lists src/http/mcp/tools/ through a parameter's default.
  */
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

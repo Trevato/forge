@@ -20,7 +20,7 @@
 import { readFileSync } from "node:fs";
 import { GATE_FILE, gateListAdds, handedImpact, needsFull } from "../src/checks/impact.ts";
 import { fastSet, duration } from "../src/checks/tiers.ts";
-import { importsReader, readImpact } from "./tier-input.ts";
+import { importsReader, readImpact, scansIn } from "./tier-input.ts";
 import { CHECK_CACHE } from "../src/checks/cache.ts";
 import { gateFiles } from "./gate.ts";
 import { overlayTimes, parseTimes } from "./shards.ts";
@@ -174,6 +174,7 @@ function main(): number {
     ...(gateAdds === undefined ? {} : { gateAdds }),
     tests,
     imports,
+    scans: scansIn(tests, imports),
     times: loadTimes(),
   });
   const out = report(plan, needsFull(changed, gateAdds), args.format);

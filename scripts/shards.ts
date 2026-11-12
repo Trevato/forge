@@ -559,14 +559,30 @@ const FAILED = /^\(fail\) /;
  * would not load) yields none.
  */
 export function failingFiles(output: string): string[] {
-  const found: string[] = [];
+  return [...failingTests(output).keys()];
+}
+
+/** `(fail) a > b [1.20ms]` → `a > b`. */
+const testName = (line: string): string => line.replace(FAILED, "").replace(/\s+\[[\d.]+m?s\]\s*$/, "").trim();
+
+/**
+ * The failing tests of one `bun test` report, by file, each file's names in
+ * report order: what {@link failingFiles} names, with which of its tests
+ * failed. The closing summary repeats them under no file and is not read.
+ */
+export function failingTests(output: string): Map<string, string[]> {
+  const found = new Map<string, string[]>();
   let current: string | undefined;
   for (const line of output.split("\n")) {
     const header = HEADER.exec(line);
     if (header) current = header[1]!;
     else if (isSummaryLine(line)) current = undefined;
-    else if (FAILED.test(line) && current !== undefined && !found.includes(current))
-      found.push(current);
+    else if (FAILED.test(line) && current !== undefined) {
+      const names = found.get(current) ?? [];
+      const name = testName(line);
+      if (!names.includes(name)) names.push(name);
+      found.set(current, names);
+    }
   }
   return found;
 }

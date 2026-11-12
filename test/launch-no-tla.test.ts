@@ -1,3 +1,4 @@
+// @tree-scan: lists the repository through a walk it hands a rooted path.
 /**
  * 0.7.283 did not boot on real data: a lazy require() of the crew's flow-label dispatcher reached a module
  * graph that awaits at its top, and Bun refuses to require() that. Lazy loads in src/ use import(), never require().

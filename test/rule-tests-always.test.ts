@@ -2,6 +2,8 @@
  * The repo-wide rule tests run in every pull's fast tier (#7138): a pull
  * that only adds a test file holding a raw ms budget is red on its own
  * check, and the check's summary names the rule and the line.
+ *
+ * @tree-scan: lists the gate through `gateFiles()`.
  */
 
 import { afterAll, describe, expect, test } from "bun:test";

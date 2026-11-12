@@ -1,3 +1,4 @@
+// @tree-scan: lists the repository through a walk it hands a rooted path.
 // Every destructive button asks first. A `btn(..., { variant: "danger" })`
 // inside a plain `<form method="post">` deletes on one click; new ones should
 // go through `confirmAction` from src/web/ui.ts, which links to /-/confirm.

@@ -8,6 +8,8 @@
  *
  * `test/openapi-routes.test.ts` runs the same comparison, so a pull that adds
  * a route file without running this goes red with the command to run.
+ *
+ * @tree-scan: lists src/contract/openapi/routes/ through a parameter's default.
  */
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

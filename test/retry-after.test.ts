@@ -1,3 +1,4 @@
+// @tree-scan: lists the repository through a walk it hands a rooted path.
 /**
  * Every 429 and 503 the HTTP layer answers says for how long (#10762).
  * Part one reads src/http per site: a status literal must sit in a `tryAgain`

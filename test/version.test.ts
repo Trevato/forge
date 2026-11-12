@@ -1,3 +1,4 @@
+// @tree-scan: lists the repository through a walk it hands a rooted path.
 /**
  * The forge reports the version it is running (#756).
  *

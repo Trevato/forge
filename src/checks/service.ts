@@ -61,6 +61,7 @@ import { readLearned } from "./learned.ts";
 import { keepCache, restoreCache } from "./cache.ts";
 import { MAX_FILED, clearedFiles, fileOrderDependent } from "./order_dependent.ts";
 import { parseBunTestFailure } from "./bun-test.ts";
+import { clearedIn } from "./base_red.ts";
 import { recordCrashFlakes, passedAlone, recordFlakes, rerunCommand, rerunnable, pullOwnsRed } from "./flake.ts";
 import { diskRecovered, withDisk } from "./disk_red.ts";
 import { scratchEnv } from "./disk_full.ts";
@@ -867,7 +868,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         state: outcome.ok ? "ok" : "failed",
         summary: outcome.ok
           ? outcome.proven === undefined
-            ? `check passed in ${seconds}s`
+            ? `check passed in ${seconds}s${outcome.cleared === undefined ? "" : `; ${outcome.cleared}`}`
             : `already proven green by ${outcome.proven}`
           : `check failed: ${outcome.error}`,
         ...(outcome.ok
@@ -904,7 +905,13 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     write: (line: string) => void,
     signal: AbortSignal,
   ): Promise<
-    | { ok: true; proven?: string; passed?: readonly string[] }
+    | {
+        ok: true;
+        proven?: string;
+        passed?: readonly string[];
+        /** A red it cleared as main's (#10304): `base_red.ts`'s words, kept in the summary. */
+        cleared?: string;
+      }
     | { ok: false; error: string; detail?: CheckDetail | undefined; infrastructure?: boolean; passed?: readonly string[] }
   > {
     const bare = await runDir(app.db, app.reposRoot, repo, run.issueId);
@@ -983,7 +990,13 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   async function runTier(
     x: Execution,
   ): Promise<
-    | { ok: true; proven?: string; passed?: readonly string[] }
+    | {
+        ok: true;
+        proven?: string;
+        passed?: readonly string[];
+        /** A red it cleared as main's (#10304): `base_red.ts`'s words, kept in the summary. */
+        cleared?: string;
+      }
     | {
         ok: false;
         error: string;
@@ -1480,7 +1493,12 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         }
       }
       if (key !== undefined) recordProven(app.db, key, x.id);
-      return wholeVerify ? { ok: true, passed: passedFiles(checkLines) } : { ok: true };
+      const cleared = clearedIn(checkLines);
+      return {
+        ok: true,
+        ...(wholeVerify ? { passed: passedFiles(checkLines) } : {}),
+        ...(cleared === undefined ? {} : { cleared }),
+      };
     } finally {
       if (existsSync(dir)) await removeRunDir(dir);
       await removeRunDir(home);

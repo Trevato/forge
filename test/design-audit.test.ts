@@ -3,6 +3,8 @@
  * route the router does not have (#2709). The router is read as text: the
  * static GET paths in src/http/server.ts and settings_routes.ts, less the
  * ones that are not pages.
+ *
+ * @tree-scan: reads docs/design/audit.md and the router as text.
  */
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";

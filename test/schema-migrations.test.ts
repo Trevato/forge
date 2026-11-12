@@ -7,6 +7,8 @@
  * twice, a branch whose migration was renumbered by its rebase, and a branch
  * that adds a table the data already has. A failure names its statement in
  * one line, which is what the deploy's summary on the pull shows.
+ *
+ * @tree-scan: reads every migration and its pin.
  */
 
 import { afterAll, describe, expect, test } from "bun:test";

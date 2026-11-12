@@ -53,8 +53,8 @@
  */
 
 import { availableParallelism, setPriority, tmpdir, totalmem } from "node:os";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { resolveLimits } from "../src/apps/contain.ts";
 import {
   formatTimes,
@@ -75,6 +75,7 @@ import {
   weigher,
   besideOthers,
   failingFiles,
+  failingTests,
   onlyTestFailures,
   crashedOutside,
   quoteCrash,
@@ -84,13 +85,14 @@ import {
 import { gateFiles, gateRefusal, presentTests } from "./gate.ts";
 import { cgroupMemory, summaryLines } from "./gate-summary.ts";
 import { GATE_FILE, executedFiles, formatImpact, gateListAdds, handedImpact, mergeImpact, parseImpact } from "../src/checks/impact.ts";
-import { importsReader, readImpact } from "./tier-input.ts";
+import { importsReader, readImpact, scansIn } from "./tier-input.ts";
 import { shardHome, spaceLine } from "../src/checks/disk_full.ts";
 import { fastSet, duration } from "../src/checks/tiers.ts";
 import { CHECK_CACHE } from "../src/checks/cache.ts";
 import { parseCheck } from "../src/apps/manifest.ts";
 import { FLAKY_ALONE, onlyFiles } from "../src/checks/verify.ts";
 import { crashFlakeLine } from "../src/checks/flake.ts";
+import { askBase, baseVerdict, type OnBase } from "../src/checks/base_red.ts";
 
 const TIMES = new URL("./test-times.json", import.meta.url).pathname;
 // The forge hands the map over in the checkout (`src/checks/impact-store.ts`):
@@ -270,6 +272,8 @@ if (gate || tier === "fast") {
 }
 const GATE = gateFiles();
 let files = [...(gate || tier === "fast" ? GATE : []), ...split.files];
+// The fast tier's diff, for asking its base about a red (#10304).
+let changed: string[] = [];
 if (tier === "fast") {
   const diff = Bun.spawnSync(
     ["git", "diff", "--name-only", "--no-renames", diffArg.value!],
@@ -279,7 +283,7 @@ if (tier === "fast") {
     console.error(`test-shards: git diff failed: ${diff.stderr.toString()}`);
     process.exit(2);
   }
-  const changed = diff.stdout.toString().split("\n").filter((f) => f !== "");
+  changed = diff.stdout.toString().split("\n").filter((f) => f !== "");
   let gateAdds: string[] | undefined;
   if (changed.includes(GATE_FILE)) {
     const gateDiff = Bun.spawnSync(
@@ -296,6 +300,7 @@ if (tier === "fast") {
     ...(gateAdds === undefined ? {} : { gateAdds }),
     tests: files,
     imports,
+    scans: scansIn(files, imports),
     times: loadTimes(),
     learned: (learnedArg.value ?? "").split(",").filter((f) => f !== ""),
   });
@@ -759,4 +764,89 @@ if (timed)
       times: results.map((result) => ({ file: result.files[0]!, seconds: result.seconds })),
     }).join("\n")}`,
   );
-process.exit(ending.code);
+
+/**
+ * The red test files of this run, each with the tests in it that failed;
+ * `undefined` when a red names no file or no test (a crash, a load error).
+ */
+function redTests(results: readonly Timed[]): Map<string, string[]> | undefined {
+  const red = new Map<string, string[]>();
+  const plain = (file: string): string => file.replace(/^\.\//, "");
+  for (const result of results) {
+    if (result.code === 0) continue;
+    const named = onlyTestFailures(result.output) ? failingTests(result.output) : new Map<string, string[]>();
+    if (named.size === 0) return undefined;
+    for (const [file, tests] of named) red.set(plain(file), [...(red.get(plain(file)) ?? []), ...tests]);
+  }
+  return red;
+}
+
+/**
+ * Each file run alone on the tree of `base`, in a worktree on the shard
+ * disk that shares this checkout's node_modules; removed however it ends.
+ */
+async function runOnBase(asked: readonly string[], base: string): Promise<Map<string, OnBase>> {
+  const did = new Map<string, OnBase>();
+  const home = shardHome(process.env, tmpdir());
+  const tree = join(home, "base");
+  const git = (args: string[]): boolean =>
+    Bun.spawnSync(["git", ...args], { stdin: "ignore", stdout: "ignore", stderr: "pipe" }).exitCode === 0;
+  try {
+    if (!git(["worktree", "add", "--detach", tree, base])) {
+      console.log(`test-shards: could not check out ${base} to ask it about the red`);
+      return did;
+    }
+    if (existsSync("node_modules")) symlinkSync(resolve("node_modules"), join(tree, "node_modules"));
+    const env: Record<string, string | undefined> = { ...process.env };
+    const scratch = { tmp: join(home, "tmp"), data: join(home, "data") };
+    env["TMPDIR"] = scratch.tmp;
+    env["FORGE_APP_DATA"] = scratch.data;
+    delete env["NODE_OPTIONS"];
+    for (const file of asked) {
+      if (!existsSync(join(tree, file))) {
+        did.set(file, { did: "absent" });
+        continue;
+      }
+      mkdirSync(scratch.tmp, { recursive: true });
+      mkdirSync(scratch.data, { recursive: true });
+      const child = Bun.spawn(["bun", "test", ...flags, `./${file}`], {
+        cwd: tree,
+        env,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      children.add(child);
+      const output: string[] = [];
+      await Promise.all([drain(child.stdout, output), drain(child.stderr, output)]);
+      const report = output.join("");
+      if ((await child.exited) === 0) did.set(file, { did: "green" });
+      else {
+        // A crash or load error names no test: nothing to compare the pull's red with.
+        const named = onlyTestFailures(report) ? failingTests(report) : new Map<string, string[]>();
+        did.set(file, { did: "red", failing: [...named.values()].flat() });
+      }
+      children.delete(child);
+      rmSync(scratch.data, { recursive: true, force: true });
+    }
+  } finally {
+    git(["worktree", "remove", "--force", tree]);
+    rmSync(home, { recursive: true, force: true });
+  }
+  return did;
+}
+
+// A fast tier red only on tests main's own tree fails too is main's red,
+// not this pull's (#10304): said, and not counted against it.
+let code = ending.code;
+if (code !== 0 && tier === "fast" && range !== undefined && only === undefined) {
+  const red = redTests(results);
+  const asked = askBase({ red, changed });
+  if (red !== undefined && asked !== undefined) {
+    console.log(`\ntest-shards: asking main at ${range[0]} about ${asked.join(", ")}`);
+    const verdict = baseVerdict(red, await runOnBase(asked, range[0]!), range[0]!);
+    for (const line of verdict.lines) console.log(`test-shards: ${line}`);
+    if (verdict.cleared) code = 0;
+  }
+}
+process.exit(code);

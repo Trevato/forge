@@ -7,6 +7,7 @@
 import { readFileSync } from "node:fs";
 import { importsOf } from "../src/checks/tiers.ts";
 import { parseImpact } from "../src/checks/impact.ts";
+import { treeScans } from "../src/checks/scans.ts";
 
 /** A file's relative imports as candidate paths (an extensionless one also as `.ts`); `[]` when unreadable. Memoised. */
 export function importsReader(): (file: string) => string[] {
@@ -44,4 +45,22 @@ export function readImpact(
     // no map yet
   }
   return undefined;
+}
+
+/** The gate's tests that read the tree (`src/checks/scans.ts`), read from the working tree. */
+export function scansIn(
+  tests: readonly string[],
+  imports: (file: string) => readonly string[],
+): Map<string, string> {
+  return treeScans(
+    tests,
+    (file) => {
+      try {
+        return readFileSync(file, "utf8");
+      } catch {
+        return undefined;
+      }
+    },
+    imports,
+  );
 }

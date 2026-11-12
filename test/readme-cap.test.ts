@@ -1,6 +1,8 @@
 /**
  * README.md stops growing (#6380): a feature's how-to goes in its own file
  * under docs/features/, so pulls stop colliding on one append-only page.
+ *
+ * @tree-scan: reads README.md and docs/features/README.md.
  */
 
 import { expect, test } from "bun:test";

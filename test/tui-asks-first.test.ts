@@ -1,3 +1,4 @@
+// @tree-scan: lists the repository through a walk it hands a rooted path.
 // Every terminal key that deletes, removes, revokes, stops or detaches asks
 // first, as test/danger-buttons.test.ts holds the web to. A call to one of the
 // destructive actions below passes when it sits inside an `onChoose` or

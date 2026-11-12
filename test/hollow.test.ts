@@ -3,6 +3,8 @@
  * nothing that runs reaches, or a screen no page links to, is named by
  * `scripts/hollow.ts` unless `scripts/hollow-allow.ts` lists it under an
  * owning issue.
+ *
+ * @tree-scan: `scripts/hollow.ts` reads the whole of src/ through the gate.
  */
 
 import { describe, expect, test } from "bun:test";

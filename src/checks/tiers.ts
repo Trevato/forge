@@ -20,7 +20,10 @@ export const QUICK_SECONDS = 1;
 export const FAST_BUDGET_SECONDS = 5 * 60;
 
 /**
- * The repo-wide rule tests (#7138): each reads every test file, every
+ * The repo-wide rule tests (#7138), the floor that needs no tree to read
+ * (`outside_diff.ts` judges by it from a run's log alone). Every other test
+ * that reads the tree is found by what it reads (`scans.ts`, #10304), so a
+ * new scan needs no line here. Each reads every test file, every
  * migration or the whole README, so no diff "touches" them by coverage,
  * import or name, yet any file can break them. They run in every fast
  * tier, whatever else the diff holds (a diff of only the check's own
@@ -111,6 +114,8 @@ export interface FastInput {
   readonly learned?: readonly string[];
   /** Measured: the `src/**` files each test executed (`scripts/test-impact.json`). */
   readonly impact?: Impact;
+  /** The tests that read the tree, with why (`treeScans`, #10304): every diff can break one. */
+  readonly scans?: ReadonlyMap<string, string>;
 }
 
 export interface FastPlan {
@@ -127,7 +132,8 @@ export interface FastPlan {
 /**
  * The fast tier for a diff: a changed test; a test importing a changed file
  * directly or through up to two hops of source; a test whose name matches a
- * changed source path; every repo-wide rule test; whatever the pull
+ * changed source path; every repo-wide rule test and every tree scan
+ * (`scans.ts`); whatever the pull
  * learned; and every test known to take under a second. A test with no recorded time is not known to be quick, so it runs only when
  * something above picks it.
  */
@@ -176,8 +182,10 @@ export function fastSet(input: FastInput): FastPlan {
   const changed = new Set(diffed);
   for (const file of changed) take(file, "changed");
   // The check's own tables can break no rule: a diff of only those runs none (#3579).
-  if (diffed.some((f) => !f.endsWith("test-times.json") && !f.endsWith("test-impact.json")))
+  if (diffed.some((f) => !f.endsWith("test-times.json") && !f.endsWith("test-impact.json"))) {
     for (const test of RULE_TESTS) take(test, "repo-wide rule");
+    for (const [test, why] of input.scans ?? []) take(test, `tree scan: ${why}`);
+  }
   // What a guess looks for. A test the map has measured already answered
   // for every change the map can see, by what it executes; it is guessed
   // only against the changes the map cannot see, so one unreached file

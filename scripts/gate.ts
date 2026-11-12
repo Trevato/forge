@@ -18,6 +18,9 @@
  *
  * The excluded files are not unseen: the forge's nightly job (`src/nightly/`)
  * runs `outsideFiles` nightly and files a `Red:` issue for each that fails (#812).
+ *
+ * @not-a-tree-scan: most of its importers judge its rules on fixtures; a
+ * test that lists the gate's files through it says `@tree-scan` itself.
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";

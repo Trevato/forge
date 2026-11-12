@@ -1,4 +1,5 @@
 // A `*.test.ts` under `src/` is outside every gate plan, so the gate refuses it by name (#11222).
+// @tree-scan: asks the gate about this repository's own tree.
 import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

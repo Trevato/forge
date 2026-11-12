@@ -4,6 +4,8 @@
  * starts the tree on a scratch data directory and wants `/api/v1/health` to
  * answer as the stamped version. 0.7.166's image crashed at import; a tree
  * that does the same is refused here, naming the error.
+ *
+ * @tree-scan: copies all of src/ and boots the copy.
  */
 
 import { afterAll, beforeAll, expect, test } from "bun:test";

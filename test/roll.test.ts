@@ -1,3 +1,4 @@
+// @tree-scan: lists the repository through a walk it hands a rooted path.
 /**
  * The roll recipe's surge check (#1588): can a surge pod schedule beside the
  * running forge, and if not, how much headroom it lacks. Every number below

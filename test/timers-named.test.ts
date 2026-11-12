@@ -1,3 +1,4 @@
+// @tree-scan: lists the repository through a walk it hands a rooted path.
 /**
  * Every server-side background timer names its job (#11117): a loop stall is
  * blamed only on work run inside `during` (`src/perf/jobs.ts`), so a timer

@@ -1,3 +1,4 @@
+// @tree-scan: lists the repository through a walk it hands a rooted path.
 /**
  * How long each background job holds the loop (#11118): one fixture with a busy forge's
  * volume (thousands of issues and pulls, tens of thousands of runs, comments and events)
@@ -246,6 +247,7 @@ const UNTIMED: Record<string, string> = {
   "release-behind": "reads the forge's own release tags with git; needs FORGE_REPO and its repository",
   "release-keeper": "cluster only (FORGE_RELEASE_KEEPER=on): talks to the cluster's API",
   "roll-probe": "cluster only (FORGE_RELEASE_KEEPER=on): one HTTP probe",
+  "spawn-due-wake": "one child's wake when its paused run falls due; the fixture has no children",
   "apps-sweep": "AppsRuntime's sweep over running app processes; the fixture has no apps",
   "cell-watch": "watches running app cells' cgroups; needs cells, skipped in this sandbox mode",
   "cell-probe-deadline": "a cell's start probe running out of time: needs cells, skipped in this sandbox mode",

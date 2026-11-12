@@ -3,6 +3,8 @@
  * stdio nobody drains leaks native memory in a long-lived Bun server. Every
  * Bun.spawn / spawnSync in src/ either ignores its unused streams or is
  * listed here with the reason it reads each pipe to its end.
+ *
+ * @tree-scan: reads every file under src/.
  */
 
 import { expect, test } from "bun:test";

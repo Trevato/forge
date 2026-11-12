@@ -1,3 +1,4 @@
+// @tree-scan: lists the repository through a walk it hands a rooted path.
 /**
  * Every response leaves through a listener, so the floor is proven at the
  * listeners (#10949). A `new Response(` anywhere in src/ — html, text, a

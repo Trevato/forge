@@ -3,6 +3,9 @@
  * it, and it spawns `bun test`, so each costs a few hundred milliseconds.
  * The pure parts it is built from (`scripts/shards.ts`) are proved in
  * test/shards.test.ts, which stays fast because it spawns nothing.
+ *
+ * @not-a-tree-scan: it lists only its own temporary directories, and what
+ * it takes from scripts/gate.ts does not read the tree.
  */
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";

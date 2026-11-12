@@ -105,12 +105,34 @@ map has never seen fall back to the import-hop guess, and a change to
 everything. With no map yet the line says `by imports (no impact map)`.
 
 A test that reads the whole tree — every test file, every migration, the
-README — is reached by no diff, yet any file can break it. Those are
-`RULE_TESTS` in `src/checks/tiers.ts`, and every fast tier runs them
-whatever else the diff holds (#7138) — a diff of only the timing or impact table breaks no rule and runs none; a new rule of that kind goes on the list. Write
-the rule with `breaches()` from `test/helpers/rule.ts`: one red test per
-breach, named `path:line: …`, so the check's summary names the rule and
-the line.
+README — is reached by no diff, yet any file can break it, so every fast
+tier runs it whatever else the diff holds (#7138) — a diff of only the
+timing or impact table breaks no rule and runs none. Such a test says
+`@tree-scan` in its header comment (`src/checks/scans.ts`, #10304); that
+mark is the contract. The plain cases are found without it: a test whose
+source, or a `scripts/` module it imports, lists the repository (a `Glob`,
+`git ls-files`, a `readdir` handed the root or a name bound to it). A
+walk's parameter is not inferred, so a test that walks through one
+declares itself. One the reading mistakes for a scan (it lists only its
+own temp directories) says `@not-a-tree-scan` and why. `RULE_TESTS` in
+`src/checks/tiers.ts` is the floor the forge reads without a tree; a new
+scan needs no line there. Together the scans may cost half the fast
+tier's budget (`test/tree-scans.test.ts`).
+
+Write the rule with `breaches()` from `test/helpers/rule.ts`: one red test
+per breach, named `path:line: …`, so the check's summary names the rule
+and the line.
+
+A fast tier red only on test files the pull did not change is asked of
+main: each is run once more on the base's tree, and when it is red there
+too with the same tests the log says `… is red on main at <base> too: not
+counted against this pull` and the check is green
+(`src/checks/base_red.ts`). The pull's check summary keeps it — `check
+passed in 40s; red on main at abcdef0, not this pull's: test/a.test.ts` —
+so the masked red is seen on the pull's page after the log is gone. Main's
+red itself is recorded by main's own checks: the red-main hold
+(`src/checks/red_main.ts`) and its vitals card, and the revert the forge
+proposes (`src/checks/revert_red.ts`).
 
 Before you push, ask what the fast tier would run for your change:
 `files=$(bun scripts/fast.ts) && bun test $files`. `bun scripts/fast.ts

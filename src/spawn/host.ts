@@ -233,13 +233,17 @@ function wakeWhenDue(parent: App, ledger: ChildLedger, at: number, now = Date.no
   const was = wakes.get(ledger.bodyId);
   if (was !== undefined) clearTimeout(was);
   const mine = wakes;
-  const timer = setTimeout(() => {
+  const due = async (): Promise<void> => {
     if (mine.get(ledger.bodyId) === timer) mine.delete(ledger.bodyId);
     if (Date.now() < at) return wakeWhenDue(parent, ledger, at);
-    void wakeDue(parent, ledger.name).catch((error: unknown) =>
+    await wakeDue(parent, ledger.name).catch((error: unknown) =>
       parent.log.warn("child forge not woken for its run", { name: ledger.name, error: String(error) }),
     );
-  }, Math.min(TIMER_MAX_MS, Math.max(0, at - now)));
+  };
+  const timer = setTimeout(
+    () => void during("spawn-due-wake", due).catch(() => {}),
+    Math.min(TIMER_MAX_MS, Math.max(0, at - now)),
+  );
   timer.unref?.();
   wakes.set(ledger.bodyId, timer);
 }

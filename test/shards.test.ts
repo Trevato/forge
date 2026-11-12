@@ -4,6 +4,8 @@
  * red run whose tail names every failing test from every shard. Pure: it
  * spawns nothing, so it stays fast; the runner end to end is
  * test/shards-run.test.ts.
+ *
+ * @tree-scan: splits the real gate (`gateFiles()`) once.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -16,6 +18,7 @@ import {
   CRASH_RERUNS,
   quoteCrash,
   failingFiles,
+  failingTests,
   onlyTestFailures,
   WORKER_MEMORY_BYTES,
   CELL_CPU_SHARE,
@@ -726,6 +729,30 @@ describe("failingFiles", () => {
   test("a report that names no failing test names no file", () => {
     expect(failingFiles("test/a.test.ts:\nerror: cannot load\n")).toEqual([]);
     expect(failingFiles("(fail) before any header")).toEqual([]);
+  });
+});
+
+describe("failingTests", () => {
+  test("names each file's failing tests without their timing, not the summary's repeats", () => {
+    const report = [
+      "test/b.test.ts:",
+      "(pass) fine [0.1ms]",
+      "(fail) outer > one [0.12ms]",
+      "(fail) two [1.50s]",
+      "test/c.test.ts:",
+      "(fail) three",
+      "2 tests failed:",
+      "(fail) outer > one [0.12ms]",
+      " 1 pass",
+      " 3 fail",
+      "Ran 4 tests across 2 files. [9.00ms]",
+    ].join("\n");
+    expect(failingTests(report)).toEqual(
+      new Map([
+        ["test/b.test.ts", ["outer > one", "two"]],
+        ["test/c.test.ts", ["three"]],
+      ]),
+    );
   });
 });
 
