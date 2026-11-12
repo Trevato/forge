@@ -23,6 +23,7 @@ Write the answers in the migration issue; names of secrets, never values.
 `forge.json` says, and declare `schedules` for its jobs.
 The forge's store is `bun:sqlite`; a Postgres app is ported (the crew's work)
 or keeps an external Postgres reached by an egress entry. The pull says which.
+The decision and both paths are in docs/APPS.md, "What is deliberately not here".
 
 ## 3. Copy the data (person runs, crew writes the script)
 Dump with `pg_dump`, load, then compare per-table row counts and a per-table
@@ -50,7 +51,7 @@ counts. The old copy stays until that has passed.
 
 ## What the forge lacks (each is an issue)
 - A database import for an app (`migrate` has no data path): upload a dump, load it, report counts and checksums. (#11697)
-- A Postgres app has no home here: no managed Postgres, only per-app `bun:sqlite`. (#11698)
+- ~~A Postgres app has no home here.~~ Decided, not built: no managed Postgres; port to `bun:sqlite` or keep an external one by `egress` (docs/APPS.md). (#11698)
 - A file and upload copy with a manifest compared on both ends. (#11699)
 - A custom domain for an app with certificate issuance, and a one-step revert of it. (#11700)
 - Per-app encrypted backup with a restore proof (`docs/features/backup-truth.md` covers the forge's own, not an app's). (#11701)

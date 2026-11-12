@@ -105,7 +105,8 @@ https://forge.example/trevato/forge.git main && systemctl restart forge`
   forge.
 - **Postgres and object storage per app.** Forge apps keep SQLite under
   `FORGE_APP_DATA`; an app that needs a bucket needs the forge to hand it
-  one, which it does not yet.
+  one, which it does not yet. Postgres is decided against: see
+  `APPS.md`, "What is deliberately not here".
 - **Dashboards.** No Prometheus, no Grafana. The forge's own pages —
   Crew, the audit, the ledger — are the observability it has; a
   `/metrics` for the forge itself is a small addition if wanted.

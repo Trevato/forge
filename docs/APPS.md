@@ -1884,6 +1884,33 @@ by the hour.
 
 ## What is deliberately not here
 
+**A managed Postgres per app.** Decided (#11698): the forge does not run
+one. An app's state is `bun:sqlite` under `FORGE_APP_DATA` because that is
+what makes production data, preview data, backup and restore one directory
+each, with no second process to run, secure, upgrade or restore. A managed
+Postgres would add a server, credentials per app, a network path out of the
+cell and a backup of its own, for apps that are one process on one box. The
+way for a Postgres app is a documented port, in this order:
+
+1. **Port to `bun:sqlite`** (the default). Keep the schema's tables and
+   constraints, replace Postgres-only types (`jsonb` becomes `TEXT` with
+   `json_*`, `timestamptz` an ISO-8601 or epoch `INTEGER`, `serial` an
+   `INTEGER PRIMARY KEY`, arrays a child table), move queries behind one
+   module, and prove it with characterization tests run on both sides before
+   the switch. Load the dump through a script that reads the `pg_dump --data-only
+   --inserts` output and compares per-table counts and checksums.
+2. **Keep an external Postgres** only when the port is not worth it
+   (extensions such as PostGIS, data too large for one file). Declare its
+   host in `forge.json` `egress`; the connection string is an app secret set
+   by name in the app's settings, never in the repository. A preview then
+   shares or lacks that database: point previews at a scratch database, never
+   at production. The forge does not back it up; its owner does.
+
+Writes are single-process and WAL mode carries the release overlap, so an app
+that needs many writers across machines is the case for option 2, not a
+reason to build a database service into the forge. If many apps hit option 2,
+reopen this with the count.
+
 Containers. A cell (rule 9) is namespaces and a watch, not an image: an
 app runs the machine's own `bun` and tools, read-only, and its limits are
 enforced by stopping it, not by throttling it — a container cannot create
