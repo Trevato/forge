@@ -7,6 +7,8 @@ import { createApp, type App } from "../src/app.ts";
 import { createRepo, moveArchived } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { id } from "../src/kernel/id.ts";
+import { repoDir } from "../src/git/repos.ts";
+import { forgetLive, readLandings } from "../src/release/landings.ts";
 import { homeTruth, idleReason } from "../src/system/home_truth.ts";
 
 test("idleReason says nothing when every slot runs, even over the ceiling", () => {
@@ -80,4 +82,61 @@ test("homeTruth with nothing waiting has no oldest time", () => {
 test("homeTruth carries the idle reason beside the builders", () => {
   const t = homeTruth(app, owner, now);
   expect(t.builders.idle).toBe(idleReason(t.builders, t.spend));
+});
+
+// #11676: live is the commit this process runs, beside main's head and the gap between them.
+test("homeTruth names the running commit apart from main's head, and how far behind it stands", async () => {
+  const saved = { commit: process.env.FORGE_COMMIT, version: process.env.FORGE_VERSION, repo: app.config.forgeRepo };
+  try {
+    const made = await createRepo(app.db, app.reposRoot, { ownerId: owner.id, name: "forge", visibility: "public", description: "forge" });
+    if (!made.ok) throw new Error(made.error);
+    const repo = made.value;
+    const dir = repoDir(app.reposRoot, owner.username, "forge");
+    const git = (...args: string[]) =>
+      Bun.spawnSync(["git", ...args], {
+        cwd: dir,
+        env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" },
+      }).stdout.toString().trim();
+    const TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+    const a = git("commit-tree", TREE, "-m", "a");
+    const b = git("commit-tree", TREE, "-p", a, "-m", "b");
+    const c = git("commit-tree", TREE, "-p", b, "-m", "c");
+    git("update-ref", `refs/heads/${repo.defaultBranch}`, c);
+    let n = 0;
+    const merge = (oid: string, minutesAgo: number) => {
+      const at = new Date(Date.now() - minutesAgo * 60_000).toISOString();
+      const number = ++n;
+      const issueId = id();
+      app.db.query(`INSERT INTO issue (id, repo_id, number, kind, title, body, author_id, state, created_at, updated_at) VALUES (?1, ?2, ?3, 'pull', 'P', '', ?4, 'closed', ?5, ?5)`).run(issueId, repo.id, number, owner.id, at);
+      app.db.query(`INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, head_repo_id, merged_at, merged_oid) VALUES (?1, ?2, ?3, '', '', ?4, ?5, ?6)`).run(issueId, repo.defaultBranch, `b/${number}`, repo.id, at, oid);
+    };
+    merge(a, 30);
+    merge(b, 20);
+    merge(c, 10);
+    (app.config as { forgeRepo?: string }).forgeRepo = `${owner.username}/forge`;
+    process.env.FORGE_VERSION = "1.2.3";
+
+    process.env.FORGE_COMMIT = a;
+    forgetLive();
+    await readLandings(app);
+    const behind = homeTruth(app, owner, now);
+    expect(behind.live).toEqual({ sha: a, version: "1.2.3" });
+    expect(behind.main).toEqual({ sha: c });
+    expect(behind.behind).toEqual({ commits: 2, pulls: 2 });
+
+    process.env.FORGE_COMMIT = c;
+    await readLandings(app);
+    const even = homeTruth(app, owner, now);
+    expect(even.live).toEqual({ sha: c, version: "1.2.3" });
+    expect(even.main).toEqual({ sha: c });
+    expect(even.behind).toEqual({ commits: 0, pulls: 0 });
+  } finally {
+    for (const [k, v] of [["FORGE_COMMIT", saved.commit], ["FORGE_VERSION", saved.version]] as const) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    if (saved.repo === undefined) delete (app.config as { forgeRepo?: string }).forgeRepo;
+    else (app.config as { forgeRepo?: string }).forgeRepo = saved.repo;
+    forgetLive();
+  }
 });

@@ -18,6 +18,7 @@ import { getRepo, type Repo } from "../core/repos.ts";
 import { buildersOf, type Builders } from "../git/coauthors.ts";
 import { runGit } from "../git/env.ts";
 import { repoDir } from "../git/repos.ts";
+import { readTip } from "../git/tip.ts";
 import { running } from "../kernel/version.ts";
 
 export interface Landing {
@@ -92,12 +93,16 @@ interface LiveState {
   readonly at: number;
   /** The running commit these were asked of. */
   readonly commit: string;
+  /** The tip of the forge's own default branch as the last read found it, read from the ref files. */
+  readonly head?: string;
+  /** Commits in `head` and not in `commit` (`git rev-list --count commit..head`), asked once per pair. */
+  readonly ahead?: number;
 }
 let kept: LiveState | undefined;
 
 /** Keep what the running commit contains; a test says it directly. */
-export function keepLive(own: string, oids: Iterable<string>, at: number): void {
-  kept = { own, oids: new Set(oids), misses: new Set(), at, commit: "" };
+export function keepLive(own: string, oids: Iterable<string>, at: number, gap?: { commit: string; head: string; ahead: number }): void {
+  kept = { own, oids: new Set(oids), misses: new Set(), at, commit: gap?.commit ?? "", ...(gap === undefined ? {} : { head: gap.head, ahead: gap.ahead }) };
 }
 
 /** Forget it, so the alarm is silent until the next read. */
@@ -210,7 +215,39 @@ async function askLive(app: App, rows: readonly MergedRow[]): Promise<void> {
   // Misses are kept only for the merged rows still listed.
   const listed = new Set(rows.map((r) => r.oid));
   for (const o of misses) if (!listed.has(o)) misses.delete(o);
-  kept = { own: named, oids, misses, at, commit };
+  // How far main runs ahead of the running commit (#11676): the tip from the ref
+  // files, the count asked of git only when the pair changed since the last read.
+  const tip = await readTip(dir, `refs/heads/${repo.defaultBranch}`);
+  let ahead: number | undefined;
+  if (tip === commit) ahead = 0;
+  else if (tip !== undefined && before?.head === tip && before.ahead !== undefined) ahead = before.ahead;
+  else if (tip !== undefined) {
+    const n = await runGit(["rev-list", "--count", `${commit}..${tip}`], { cwd: dir });
+    const v = n.ok ? Number(n.value.trim()) : NaN;
+    if (Number.isSafeInteger(v) && v >= 0) ahead = v;
+  }
+  kept = { own: named, oids, misses, at, commit, ...(tip === undefined ? {} : { head: tip }), ...(ahead === undefined ? {} : { ahead }) };
+}
+
+export interface MainGap {
+  /** The head of the forge's own default branch. */
+  readonly main: { readonly sha: string };
+  /** What main holds that the running commit does not: commits, and merged pulls on their way. */
+  readonly behind: { readonly commits: number; readonly pulls: number };
+}
+
+/**
+ * How far production stands behind main, from what the last read kept: no
+ * git, one query. Undefined until a read found the forge's own main.
+ */
+export function mainGap(db: Database): MainGap | undefined {
+  const k = kept;
+  if (k === undefined || k.head === undefined) return undefined;
+  if (k.head === k.commit) return { main: { sha: k.head }, behind: { commits: 0, pulls: 0 } };
+  const own = k.own.toLowerCase();
+  const pulls = split(mergedRows(db), k).onItsWay.filter((l) => l.repo.toLowerCase() === own).length;
+  // A count not yet asked for this pair is at least the pulls on their way.
+  return { main: { sha: k.head }, behind: { commits: k.ahead ?? pulls, pulls } };
 }
 
 /** Who built the forge's own landed commits, by `repo#number`. */

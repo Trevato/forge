@@ -17,7 +17,7 @@ The five facts, and where the truth comes from:
 
 | Fact | Truth | `stated` when the page says | `wrong` when |
 | --- | --- | --- | --- |
-| landed and released | `GET /api/v1/telemetry/home`: landings in 24 h, the live version | `N changes in 24 h` and the live short sha | N differs |
+| landed and released | `GET /api/v1/telemetry/home`: landings in 24 h, the live version (the running commit; `main` and `behind` beside it) | `N changes in 24 h` and the live short sha | N differs |
 | waiting on the owner | the same: the home's own ask list | `N waiting on you` (or nothing at zero) | N differs, or a line at zero |
 | builders idle and why | the same: running of slots, and the reason (ceiling reached, no slots, no ready work) | the right `N of M` and the reason | `N of M` differs |
 | spend against the forge cap | the same: spent today and the daily ceiling | `$X of $Y` | X or Y differs, or `no ceiling` while one is set |

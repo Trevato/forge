@@ -10,6 +10,8 @@ import { listReposVisibleTo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { forgeCeiling } from "../flow/ceiling.ts";
 import { readKpis } from "../flow/kpis.ts";
+import { running } from "../kernel/version.ts";
+import { mainGap } from "../release/landings.ts";
 import { waitingOn } from "../web/studio/asks.ts";
 
 /** Why builders are not all busy, in words; null when every slot runs. */
@@ -24,9 +26,14 @@ export function homeTruth(app: App, user: User, now: Date = new Date()) {
   const k = readKpis(app.db, now, { ceilingUsd: forgeCeiling(app.config) });
   const asks = waitingOn(app.db, user, listReposVisibleTo(app.db, user, { limit: 200, withoutArchived: true }));
   const oldest = asks.reduce<string | null>((o, a) => (o === null || Date.parse(a.since) < Date.parse(o) ? a.since : o), null);
+  // What runs is the process's own stamp, never main's head (#11676); main and the gap beside it.
+  const r = running();
+  const gap = mainGap(app.db);
   return {
     landed: k.landed,
-    live: k.live,
+    live: r.commit === null ? null : { sha: r.commit, version: r.version },
+    main: gap?.main ?? null,
+    behind: gap?.behind ?? null,
     builders: { ...k.builders, idle: idleReason(k.builders, k.spend) },
     spend: k.spend,
     waiting: { count: asks.length, oldestAt: oldest },
