@@ -13,7 +13,8 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { forkFollowModes } from "../core/fork_follow.ts";
+import { FOLLOW_WORD } from "./follow_words.ts";
+import { FORK_DEFAULT_MODE, forkFollowModes } from "../core/fork_follow.ts";
 import { canRead, forkParentFor, visibleForksByParent, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 
@@ -24,8 +25,11 @@ export const MAX_DEPTH = 8;
 /** The most nodes any call returns; past it `truncated` is true. A page of a tree, not a crawl. */
 export const MAX_NODES = 200;
 
-/** How a node follows its parent: `offers` is the stored `tell-me`; the root of what is visible follows nothing. */
-export type TreeFollow = "take-updates" | "offers" | "autonomous";
+/**
+ * How a node follows its parent: `offers` is the stored `tell-me`, `dont-follow` a fork
+ * that chose to follow nothing; the root of what is visible follows nothing.
+ */
+export type TreeFollow = "take-updates" | "offers" | "dont-follow" | "autonomous";
 
 export interface TreeNode {
   readonly repo: string;
@@ -33,6 +37,8 @@ export interface TreeNode {
   /** Generations below the root; the root is 0. */
   readonly depth: number;
   readonly follow: TreeFollow;
+  /** The same fact in the one word every door says (`FOLLOW_WORD`); empty for the root. */
+  readonly word: string;
 }
 
 export interface ForkTree {
@@ -97,11 +103,19 @@ export function forkTree(
     level = next;
   }
   const modes = forkFollowModes(db, rows.slice(1).map((r) => r.repo.id));
-  const nodes: TreeNode[] = rows.map((r) => ({
-    repo: nameOf(r.repo),
-    parent: r.parent === null ? null : nameOf(r.parent),
-    depth: r.depth,
-    follow: r.parent === null ? "autonomous" : modes.get(r.repo.id) === "take-updates" ? "take-updates" : "offers",
-  }));
+  const nodes: TreeNode[] = rows.map((r) => {
+    const mode = r.parent === null ? undefined : (modes.get(r.repo.id) ?? FORK_DEFAULT_MODE);
+    return {
+      repo: nameOf(r.repo),
+      parent: r.parent === null ? null : nameOf(r.parent),
+      depth: r.depth,
+      follow: r.parent === null ? "autonomous" : treeFollow(modes.get(r.repo.id)),
+      word: mode === undefined ? "" : FOLLOW_WORD[mode],
+    };
+  });
   return { root: nameOf(root), nodes, truncated };
 }
+
+/** A stored mode as the tree names it: `tell-me`, stored or by default, is `offers`. */
+const treeFollow = (mode: string | undefined): TreeFollow =>
+  mode === "take-updates" || mode === "dont-follow" ? mode : "offers";

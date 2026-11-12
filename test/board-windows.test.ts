@@ -250,7 +250,8 @@ describe("efficiency and standing, grouped", () => {
   });
 
   test("the batch agrees with each account read alone, in three statements however many", async () => {
-    const repoId = repos.one!;
+    // Its own repository and accounts, so no other test's rows reach it.
+    const repoId = seedRepo("batch");
     const now = new Date("2026-10-02T12:00:00.000Z");
     const a = account();
     const b = account();

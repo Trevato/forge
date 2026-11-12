@@ -22,6 +22,27 @@ export const SIZES: Readonly<Record<Size, SizeLimits>> = {
   large: { cpu: 4, memoryMiB: 8192, diskMiB: 40960 },
 };
 
+/**
+ * A child's disk bandwidth, held by the kernel (`io.max` on the device under
+ * the forge's data, `apps/cgroup.ts`): bytes and operations a second, read
+ * and write. One child's install or checkout cannot starve the forge's own
+ * database or its neighbours' of the disk; io.weight only orders a queue.
+ */
+export interface SizeIo {
+  readonly rbps: number;
+  readonly wbps: number;
+  readonly riops: number;
+  readonly wiops: number;
+}
+
+const MiB = 1024 * 1024;
+
+export const SIZE_IO: Readonly<Record<Size, SizeIo>> = {
+  small: { rbps: 50 * MiB, wbps: 25 * MiB, riops: 1000, wiops: 500 },
+  medium: { rbps: 100 * MiB, wbps: 50 * MiB, riops: 2000, wiops: 1000 },
+  large: { rbps: 200 * MiB, wbps: 100 * MiB, riops: 4000, wiops: 2000 },
+};
+
 /** A size, or one sentence saying which are allowed. */
 export function parseSize(v: unknown): Result<Size, string> {
   if (typeof v === "string" && Object.hasOwn(SIZES, v)) return ok(v as Size);

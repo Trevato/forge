@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/fleet/rows",
   summary: "The rows a fleet query line selects, as /fleet shows them, only those the caller may read; answers { kind, columns, items }",
   auth: false,
+  role: "anonymous",
   query: { q: "string", sort: "string" },
   refusals: {
     invalid_query: "q is empty, over 500 characters, or does not parse; the reason is the message (422)",

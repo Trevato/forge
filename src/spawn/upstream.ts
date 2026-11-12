@@ -68,6 +68,8 @@ export async function upstreamState(app: App): Promise<UpstreamState | undefined
 function readTaken(v: unknown): { taken?: Taken } {
   if (typeof v !== "object" || v === null) return {};
   const t = v as Record<string, unknown>;
+  if (t["kind"] === "forwarded" && typeof t["commits"] === "number")
+    return { taken: { kind: "forwarded", commits: t["commits"] } };
   if (t["kind"] === "pull" && typeof t["number"] === "number" && typeof t["commits"] === "number")
     return { taken: { kind: "pull", number: t["number"], commits: t["commits"] } };
   if (t["kind"] === "conflict" && Array.isArray(t["files"]))
@@ -221,6 +223,8 @@ export function upstreamWords(s: UpstreamState | undefined, now = Date.now()): s
   const mins = Math.max(0, Math.floor((now - s.checkedAt) / 60_000));
   const when = mins < 1 ? "just now" : mins < 60 ? `${mins} min ago` : `${Math.floor(mins / 60)} h ago`;
   if (s.error !== "") return `could not check your parent: ${s.error} (${when})`;
+  if (s.taken?.kind === "forwarded")
+    return `${s.taken.commits} commit${s.taken.commits === 1 ? "" : "s"} from your parent ${s.taken.commits === 1 ? "was" : "were"} taken in (checked ${when})`;
   if (s.taken?.kind === "pull")
     return `${s.taken.commits} commit${s.taken.commits === 1 ? "" : "s"} from your parent ${s.taken.commits === 1 ? "is" : "are"} in pull #${s.taken.number} (checked ${when})`;
   if (s.taken?.kind === "conflict")

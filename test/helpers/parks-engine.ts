@@ -15,6 +15,7 @@ import { createUser, getUserByName } from "../../src/core/users.ts";
 import { serve } from "../../src/http/server.ts";
 import { settleAgentRun } from "../../src/crew/autonomy.ts";
 import { interruptedSummary } from "../../src/crew/interrupted.ts";
+import "./roomy-disk.ts";
 
 /**
  * One forge with alice's `engine` on its own: atlas plans, mason builds.

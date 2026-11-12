@@ -309,6 +309,24 @@ describe("the terminal workspace", () => {
     }
   });
 
+  test("a .html file opens as its source: the page preview is a web-only door", async () => {
+    const made = await createRepo(forge, alice, { name: "pages", visibility: "public", description: "pages" });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, {
+      message: "seed",
+      files: [{ path: "index.html", content: "<h1>hello page</h1>\n" }],
+    });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "pages");
+      await openFile(h, "index.html");
+      expect(h.text()).toContain("<h1>hello page</h1>");
+    } finally {
+      h.stop();
+    }
+  });
+
   test("a .patch opens as the diff a pull shows, v flips to the source, a non-diff stays text", async () => {
     const made = await createRepo(forge, alice, {
       name: "patches",
@@ -449,6 +467,34 @@ describe("the terminal workspace", () => {
     }
   });
 
+  test("an .eml opens as its header rows and body, and s flips to the source", async () => {
+    const made = await createRepo(forge, alice, { name: "mail", visibility: "public", description: "mail" });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, {
+      message: "seed",
+      files: [
+        {
+          path: "note.eml",
+          content: `From: Ada <ada@example.com>\r\nSubject: Hello there\r\nDate: Mon, 1 Jan 2026 10:00:00 +0000\r\nContent-Type: multipart/mixed; boundary=BB\r\n\r\n--BB\r\nContent-Type: text/plain\r\n\r\nBody line one\r\n--BB\r\nContent-Type: application/pdf; name="r.pdf"\r\nContent-Transfer-Encoding: base64\r\n\r\n${Buffer.from("x".repeat(2048)).toString("base64")}\r\n--BB--\r\n`,
+        },
+      ],
+    });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "mail");
+      await openFile(h, "note.eml");
+      expect(h.text()).toContain("Subject");
+      expect(h.text()).toContain("Hello there");
+      expect(h.text()).toContain("Body line one");
+      expect(h.text()).toContain("2.0 KB");
+      await h.press("s");
+      expect(h.text()).toContain("From: Ada");
+    } finally {
+      h.stop();
+    }
+  });
+
   test("a .gpx opens as its facts, sharing the web parser, and s flips to the source", async () => {
     const made = await createRepo(forge, alice, {
       name: "tracks",
@@ -482,6 +528,275 @@ describe("the terminal workspace", () => {
     }
   });
 
+  test("a .sarif opens as its findings, sharing the web parser, and s flips to the source", async () => {
+    const made = await createRepo(forge, alice, { name: "scans", visibility: "public", description: "findings" });
+    if (!made.ok) throw new Error("repo failed");
+    const sarif = JSON.stringify({
+      version: "2.1.0",
+      runs: [{ tool: { driver: { name: "CodeQL" } }, results: [{ ruleId: "js/xss", level: "error", message: { text: "tainted value" }, locations: [{ physicalLocation: { artifactLocation: { uri: "src/a.ts" }, region: { startLine: 12 } } }] }] }],
+    });
+    await commitToBranch(forge, alice, made.value, { message: "seed", files: [{ path: "scan.sarif", content: sarif }] });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "scans");
+      await openFile(h, "scan.sarif");
+      expect(h.text()).toContain("js/xss");
+      expect(h.text()).toContain("src/a.ts:12");
+      expect(h.text()).toContain("1 finding");
+      await h.press("s");
+      expect(h.text()).toContain("runs");
+    } finally {
+      h.stop();
+    }
+  });
+
+  test("a .sarif that is not SARIF opens as source and the status line says why", async () => {
+    const made = await createRepo(forge, alice, { name: "badscans", visibility: "public", description: "findings" });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, { message: "seed", files: [{ path: "scan.sarif", content: '{"version":"2.1.0"}' }] });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "badscans");
+      await openFile(h, "scan.sarif");
+      expect(h.text()).toContain('"version"');
+      expect(h.text()).toContain("not drawn as findings: it has no `runs` array");
+    } finally {
+      h.stop();
+    }
+  });
+
+  test("an lcov.info opens as coverage per file, worst first, and a broken one says why", async () => {
+    const made = await createRepo(forge, alice, { name: "covered", visibility: "public", description: "coverage" });
+    if (!made.ok) throw new Error("repo failed");
+    const info = "SF:src/good.ts\nLF:10\nLH:10\nend_of_record\nSF:src/bad.ts\nLF:4\nLH:1\nFNF:2\nFNH:1\nend_of_record\n";
+    await commitToBranch(forge, alice, made.value, { message: "seed", files: [{ path: "lcov.info", content: info }, { path: "sub/lcov.info", content: "SF:x\n" }] });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "covered");
+      await openFile(h, "lcov.info");
+      expect(h.text()).toContain("1/4 25.0%");
+      expect(h.text()).toContain("2 files");
+      expect(h.text().indexOf("src/bad.ts")).toBeLessThan(h.text().indexOf("src/good.ts"));
+    } finally {
+      h.stop();
+    }
+    const broken = boot();
+    try {
+      await broken.settle();
+      await open(broken, "covered");
+      await openFile(broken, "sub/lcov.info");
+      expect(broken.text()).toContain("SF:x");
+      expect(broken.text()).toContain("not drawn as coverage: the record for x has no end_of_record");
+    } finally {
+      broken.stop();
+    }
+  });
+
+  test("an openapi.json opens as its operations, and s shows the source", async () => {
+    const made = await createRepo(forge, alice, { name: "apidoc", visibility: "public", description: "api" });
+    if (!made.ok) throw new Error("repo failed");
+    const spec = JSON.stringify({ openapi: "3.0.0", paths: { "/pets": { get: { tags: ["pets"], summary: "List pets" } }, "/old": { post: { summary: "Gone", deprecated: true } } } });
+    await commitToBranch(forge, alice, made.value, { message: "seed", files: [{ path: "openapi.json", content: spec }] });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "apidoc");
+      await openFile(h, "openapi.json");
+      expect(h.text()).toContain("/pets");
+      expect(h.text()).toContain("List pets");
+      expect(h.text()).toContain("Gone (deprecated)");
+      expect(h.text()).toContain("2 operations");
+      await h.press("s");
+      expect(h.text()).toContain('"openapi":"3.0.0"');
+    } finally {
+      h.stop();
+    }
+  });
+
+  test("a Dockerfile opens as its stages, and s shows the source", async () => {
+    const made = await createRepo(forge, alice, { name: "dockerdoc", visibility: "public", description: "build" });
+    if (!made.ok) throw new Error("repo failed");
+    const df = "FROM oven/bun:1 AS build\nEXPOSE 3000\nENV TOKEN=abc\nRUN <<EOF\nbun install\nEOF\nFROM scratch\nCOPY --from=build /app /app\n";
+    await commitToBranch(forge, alice, made.value, { message: "seed", files: [{ path: "Dockerfile", content: df }, { path: "sub/Containerfile", content: "RUN x\n" }] });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "dockerdoc");
+      await openFile(h, "Dockerfile");
+      expect(h.text()).toContain("oven/bun:1 as build");
+      expect(h.text()).toContain("3000");
+      expect(h.text()).toContain("TOKEN");
+      expect(h.text()).not.toContain("abc");
+      expect(h.text()).toContain("COPY");
+      expect(h.text()).toContain("instructions");
+      await h.press("s");
+      expect(h.text()).toContain("TOKEN=abc");
+    } finally {
+      h.stop();
+    }
+  });
+
+  test("a workflow opens as its jobs, a broken one says why, and s shows the source", async () => {
+    const made = await createRepo(forge, alice, { name: "flowdoc", visibility: "public", description: "ci" });
+    if (!made.ok) throw new Error("repo failed");
+    const wf = "on: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n  ship:\n    needs: build\n    runs-on: ubuntu-latest\n    steps:\n      - run: bun test\n";
+    await commitToBranch(forge, alice, made.value, { message: "seed", files: [{ path: ".github/workflows/ci.yml", content: wf }, { path: ".github/workflows/bad.yml", content: "a: [\n" }] });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "flowdoc");
+      await openFile(h, ".github/workflows/ci.yml");
+      expect(h.text()).toContain("runs-on");
+      expect(h.text()).toContain("needs");
+      expect(h.text()).toContain("actions/checkout@v4");
+      expect(h.text()).toContain("bun test");
+      await h.press("s");
+      expect(h.text()).toContain("runs-on: ubuntu-latest");
+    } finally {
+      h.stop();
+    }
+  });
+
+  test("a .sql file opens as its columns, and s shows the source", async () => {
+    const made = await createRepo(forge, alice, { name: "sqlrepo", visibility: "public", description: "db" });
+    if (!made.ok) throw new Error("repo failed");
+    const sql = "CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT NOT NULL);\nCREATE INDEX idx ON users(email);";
+    await commitToBranch(forge, alice, made.value, { message: "seed", files: [{ path: "db/schema.sql", content: sql }] });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "sqlrepo");
+      await openFile(h, "db/schema.sql");
+      expect(h.text()).toContain("users");
+      expect(h.text()).toContain("PRIMARY KEY");
+      expect(h.text()).toContain("NOT NULL");
+      expect(h.text()).toContain("CREATE INDEX idx");
+      await h.press("s");
+      expect(h.text()).toContain("CREATE TABLE users");
+    } finally {
+      h.stop();
+    }
+  });
+
+  test("a .graphql file opens as its types, roots first, and s shows the source", async () => {
+    const made = await createRepo(forge, alice, { name: "gqlrepo", visibility: "public", description: "api" });
+    if (!made.ok) throw new Error("repo failed");
+    const gql = 'type User @key(fields: "id") { id: ID! }\ntype Query { user(id: ID!): User }\nscalar Date';
+    await commitToBranch(forge, alice, made.value, { message: "seed", files: [{ path: "api/schema.graphql", content: gql }] });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "gqlrepo");
+      await openFile(h, "api/schema.graphql");
+      const text = h.text();
+      expect(text).toContain("type Query");
+      expect(text).toContain("user");
+      expect(text).toContain("ID!");
+      expect(text).toContain("scalar Date");
+      expect(text.indexOf("type Query")).toBeLessThan(text.indexOf("type User"));
+      await h.press("s");
+      expect(h.text()).toContain("type Query {");
+    } finally {
+      h.stop();
+    }
+  });
+
+  test("a JUnit report opens as its totals and failing cases, sharing the web parser", async () => {
+    const made = await createRepo(forge, alice, { name: "junitrepo", visibility: "public", description: "tests" });
+    if (!made.ok) throw new Error("repo failed");
+    const xml = '<testsuite name="s"><testcase classname="m.A" name="ok"/><testcase classname="m.A" name="bad"><failure message="expected 1 got 2"/></testcase></testsuite>';
+    await commitToBranch(forge, alice, made.value, { message: "seed", files: [{ path: "TEST-a.xml", content: xml }, { path: "TEST-b.xml", content: "<nope" }] });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "junitrepo");
+      await openFile(h, "TEST-a.xml");
+      expect(h.text()).toContain("1 of 2 tests fail");
+      expect(h.text()).toContain("m.A › bad");
+      expect(h.text()).toContain("expected 1 got 2");
+      expect(h.text()).toContain("1 failing case");
+    } finally {
+      h.stop();
+    }
+  });
+
+  test("a .env.example opens as a table with secrets masked, and s flips to the source", async () => {
+    const made = await createRepo(forge, alice, { name: "envrepo", visibility: "public", description: "tests" });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, { message: "seed", files: [{ path: ".env.example", content: "# Port to listen on\nPORT=3000\nAPI_KEY=sk-live-abc\n" }] });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "envrepo");
+      await openFile(h, ".env.example");
+      expect(h.text()).toContain("Port to listen on");
+      expect(h.text()).toContain("•••");
+      expect(h.text()).not.toContain("sk-live-abc");
+      await h.press("s");
+      expect(h.text()).toContain("API_KEY=sk-live-abc");
+    } finally {
+      h.stop();
+    }
+  });
+
+  test("a package.json opens as rows of scripts and dependencies, and s flips to the source", async () => {
+    const made = await createRepo(forge, alice, { name: "pkgrepo", visibility: "public", description: "tests" });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, { message: "seed", files: [{ path: "package.json", content: '{"name":"demo","scripts":{"test":"bun test"},"dependencies":{"hono":"^4.0.0"}}' }] });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "pkgrepo");
+      await openFile(h, "package.json");
+      expect(h.text()).toContain("Dependencies");
+      expect(h.text()).toContain("^4.0.0");
+      await h.press("s");
+      expect(h.text()).toContain('"name":"demo"');
+    } finally {
+      h.stop();
+    }
+  });
+
+  test("a JUnit-named file that is not a report opens as source and says why", async () => {
+    const made = await createRepo(forge, alice, { name: "badjunit", visibility: "public", description: "tests" });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, { message: "seed", files: [{ path: "TEST-b.xml", content: "<root/>" }] });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "badjunit");
+      await openFile(h, "TEST-b.xml");
+      expect(h.text()).toContain("not drawn as test results");
+    } finally {
+      h.stop();
+    }
+  });
+
+  test("a .gcode opens as its facts, sharing the web parser, and s flips to the source", async () => {
+    const made = await createRepo(forge, alice, { name: "prints3d", visibility: "public", description: "slices" });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, {
+      message: "seed",
+      files: [{ path: "cube.gcode", content: "G21\nG90\nM82\nG92 E0\nG1 Z0.2\nG1 X10 Y0 E1\nG1 X10 Y10 E2\nG1 Z0.4\nG1 X0 Y10 E3\n" }],
+    });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "prints3d");
+      await openFile(h, "cube.gcode");
+      expect(h.text()).toContain("Layers");
+      expect(h.text()).toContain("Bounding box");
+      expect(h.text()).toContain("3 mm");
+      await h.press("s");
+      expect(h.text()).toContain("G1 X10 Y0 E1");
+    } finally {
+      h.stop();
+    }
+  });
+
   test("a .geojson opens as its features table, sharing the web parser, and s flips to the source", async () => {
     const made = await createRepo(forge, alice, { name: "places", visibility: "public", description: "geo" });
     if (!made.ok) throw new Error("repo failed");
@@ -505,6 +820,41 @@ describe("the terminal workspace", () => {
       expect(h.text()).toContain("1 feature");
       await h.press("s");
       expect(h.text()).toContain("FeatureCollection");
+    } finally {
+      h.stop();
+    }
+  });
+
+  test("a .har opens as its requests table, sharing the web parser, and s flips to the source", async () => {
+    const made = await createRepo(forge, alice, { name: "captures", visibility: "public", description: "har" });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, {
+      message: "seed",
+      files: [
+        {
+          path: "s.har",
+          content: JSON.stringify({
+            log: { entries: [{ startedDateTime: "2026-01-01T00:00:00Z", time: 1230, request: { method: "post", url: "https://example.test/api" }, response: { status: 201, content: { size: 2048 } } }] },
+          }),
+        },
+        { path: "bad.har", content: '{"log": {"entries": [1, ' },
+      ],
+    });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "captures");
+      // A malformed HAR is not a table: the workspace shows its source as it stands.
+      await openFile(h, "bad.har");
+      expect(h.text()).toContain('{"log": {"entries": [1,');
+      expect(h.text()).not.toContain("Method");
+      await openFile(h, "s.har");
+      expect(h.text()).toContain("POST");
+      expect(h.text()).toContain("201");
+      expect(h.text()).toContain("https://example.test/api");
+      expect(h.text()).toContain("1.23 s");
+      await h.press("s");
+      expect(h.text()).toContain("startedDateTime");
     } finally {
       h.stop();
     }

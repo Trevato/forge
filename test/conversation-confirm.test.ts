@@ -120,7 +120,7 @@ describe("the one list of what asks first", () => {
   // Writes that do not ask first, on purpose: each reads, plans, or only changes the caller's own
   // settings and can be put back. A new `writes: true` tool is on neither list until someone decides.
   const NOT_ASKED = new Set([
-    "access", "account_verify", "app_members", "app_notes", "asks_act", "asks_decide", "asks_proposal", "asks_undecide", "atlas",
+    "access", "account_requests", "account_verify", "app_members", "app_notes", "asks_act", "asks_decide", "asks_proposal", "asks_undecide", "atlas",
     "assign", "attach_look", "bet", "board_pins", "board_write", "branches", "capacity", "valves", "cloud_accounts", "close", "confirm_wait",
     "crew", "decisions_by", "detach", "economics", "edit", "email_verify", "feed_chips", "feed_dismiss", "feed_like", "flag_set", "flag_winner",
     "follow_mode", "fork", "front_page", "hold", "issue_teams", "keep_plan", "knobs", "labels", "lift", "limb", "maintenance", "make_it_yours", "map", "merge", "new_app",

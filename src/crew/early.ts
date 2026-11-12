@@ -10,6 +10,7 @@
  * its head and fills it in (`fillPull`); it never opens a second.
  */
 
+import { during } from "../perf/jobs.ts";
 import { openPull } from "../actions/pulls.ts";
 import { editIssue, addComment, setIssueState } from "../actions/issues.ts";
 import type { App } from "../app.ts";
@@ -163,7 +164,7 @@ export function watchForPull(input: EarlyInput): EarlyPull {
       () => {
         looks++;
         busy = busy
-          .then(tick)
+          .then(() => during("early-watch", tick))
           .catch(() => undefined)
           .then(schedule);
       },

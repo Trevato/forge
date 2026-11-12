@@ -6,4 +6,5 @@ export const route: Route = {
   summary:
     "Pause this webhook: no new event is queued for it, and what is queued waits (admin scope); answers { id, active: false }, 404 unless you administer the repository and the hook is its own",
   auth: true,
+  role: "member",
 };

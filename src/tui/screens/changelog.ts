@@ -8,6 +8,7 @@
 import { gather, plainTitle } from "../../story/gather.ts";
 import { forgeChangelog, type ReleaseEntry } from "../../release/changelog.ts";
 import { readLandings } from "../../release/landings.ts";
+import { nearMilestones, nearWords, type Near } from "../../web/pages/milestones_near.ts";
 import { sourceFor } from "../../view/source.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -33,6 +34,12 @@ export function changelogRows(entries: readonly ReleaseEntry[]): ListRow[] {
       e.pulls.map((p) => `#${p.number} ${plainTitle(p.title)}`.trim()).join("; "),
     ),
   }));
+}
+
+/** The open milestones as lines above the releases: "name  N of M done", at most `MOST` of them. */
+const MOST = 5;
+export function nearLines(near: readonly Near[]): string[] {
+  return near.slice(0, MOST).map((m) => `${m.name}  ${nearWords(m)}`);
 }
 
 type Repo = { owner: string; name: string };
@@ -89,6 +96,7 @@ export function changelogScreen(f: Session, ctx: Ctx): Screen {
   let loaded = false;
   let repoRef: Repo | undefined;
   let credits = new Map<number, string>();
+  let near: string[] = [];
   const shown = (): ReleaseEntry[] => entries.filter((e) => releaseMatches(filter, e));
   return {
     title: "Changelog",
@@ -111,6 +119,7 @@ export function changelogScreen(f: Session, ctx: Ctx): Screen {
           if (words !== "" && l.repo.toLowerCase() === repoName) credits.set(l.number, words);
         }
       }
+      near = nearLines(nearMilestones(f.app, f.app.config.forgeRepo, f.user)?.near ?? []);
       state.clamp(entries.length);
       loaded = true;
       ctx.invalidate();
@@ -125,7 +134,8 @@ export function changelogScreen(f: Session, ctx: Ctx): Screen {
         return;
       }
       const list = shown();
-      const [head, box, body] = split(area, "v", [len(1), len(filter.on ? 1 : 0), fill(1)]);
+      const [head, ms, box, body] = split(area, "v", [len(1), len(near.length), len(filter.on ? 1 : 0), fill(1)]);
+      near.forEach((line, i) => s.text(ms!.x, ms!.y + i, truncate(line, ms!.w), style(c.fg, c.bg), ms!.x + ms!.w));
       const count = filter.query === "" ? `${entries.length} releases` : `${list.length} of ${entries.length} releases match`;
       s.text(head!.x, head!.y, truncate(count, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       ctx.setCursor(filter.on ? filter.render(s, box!, c, "find a version or pull") : null);

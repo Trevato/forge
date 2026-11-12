@@ -93,8 +93,7 @@ describe("tell the crew in the terminal", () => {
     const text = await palette(alice, keys);
     expect(text).toContain("Nobody is on the crew to take it yet");
     const issue = listIssues(app.db, repo.id, {}).find((i) => i.title === "move the button")!;
-    expect(issue.body).toContain("- page: https://notes.apps.test/a");
-    expect(issue.body).toContain("- pull: #7");
+    expect(issue.body).toContain("- from preview of #7, page /a");
     expect(await palette(bob, [":", "from a page"])).not.toContain("Tell the crew from a page");
   });
 

@@ -1,5 +1,6 @@
 /**
- * The terminal's fleet graph (#8048): `f` on Usage opens it; with usage seeded in two
+ * The terminal's fleet graph (#8048): `f` on Usage opens it (on a repository's
+ * Usage, that repository alone); with usage seeded in two
  * repositories the screen names both and their totals are `readFleetGraph`'s; `w` moves
  * between 24 h and 14 d; an empty ledger, or a viewer who may not see the spend, reads
  * "Nothing spent in this window."
@@ -124,14 +125,16 @@ test("someone who may not see the spend gets nothing: the action's rule", () => 
   expect(graph.windows[0].totals.costUsd).toEqual([]);
 });
 
-test("f does nothing on a repository's Usage", async () => {
+test("f on a repository's Usage opens the graph on that repository alone (#578)", async () => {
   const h = boot("alice");
   await h.openRepoUsage("alice/mill");
   expect(h.text()).toContain("Usage · alice/mill");
-  expect(h.text()).not.toContain("fleet graph");
+  expect(h.text()).toContain("fleet graph");
   await h.key("f");
-  expect(h.text()).toContain("Usage · alice/mill");
-  expect(h.text()).not.toContain("over 24 h");
+  const one = h.text();
+  expect(one).toContain("Fleet graph · alice/mill");
+  expect(one).toContain("$3.50");
+  expect(one).not.toContain("alice/kiln");
   h.stop();
 });
 

@@ -87,7 +87,7 @@ describe("reserved names", () => {
     ] as const) {
       const res = await signup(name);
       expect(res.status).toBe(422);
-      expect(await res.json()).toEqual({ error });
+      expect(await res.json()).toMatchObject({ error });
       // No person account was made: the name still answers only to the agent.
       expect(getUserByName(app.db, name)?.kind ?? "none").not.toBe("user");
     }
@@ -101,7 +101,7 @@ describe("reserved names", () => {
     ] as const) {
       const res = await signup(name);
       expect(res.status).toBe(422);
-      expect(await res.json()).toEqual({ error });
+      expect(await res.json()).toMatchObject({ error });
     }
   });
 
@@ -118,7 +118,7 @@ describe("reserved names", () => {
     ]) {
       const res = await signup(name);
       expect(res.status).toBe(422);
-      expect(await res.json()).toEqual({ error: "username_reserved" });
+      expect(await res.json()).toMatchObject({ error: "username_reserved" });
     }
   });
 
@@ -257,7 +257,7 @@ describe("reserved names", () => {
     for (const name of ["trevato-official", "scout-bot", "torque-crew"]) {
       const res = await signup(name);
       expect(res.status).toBe(422);
-      expect(await res.json()).toEqual({ error: "username_reserved" });
+      expect(await res.json()).toMatchObject({ error: "username_reserved" });
     }
     expect((await signup("scout-finch")).status).toBe(201);
   });
@@ -268,7 +268,7 @@ describe("reserved names", () => {
     for (const name of ["trevato2", "trevato007", "trevatoo", "trevatoofficial", "realtrevato", "scoutbot", "botscout", "torquecrew2"]) {
       const res = await signup(name);
       expect([name, res.status]).toEqual([name, 422]);
-      expect(await res.json()).toEqual({ error: "username_reserved" });
+      expect(await res.json()).toMatchObject({ error: "username_reserved" });
     }
     const ada = getUserByName(app.db, "ada")!;
     for (const displayName of ["Trevato2", "ScoutBot", "trevatoo"]) {

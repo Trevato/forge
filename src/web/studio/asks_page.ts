@@ -353,14 +353,13 @@ function rowCard(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Ht
   );
 }
 
-const forgeCard = (d: Degraded): Html =>
-  card(html`<p><a href="${d.href}">${needLine(d)}</a></p>`, {
-    tone: "danger",
-    head: html`${icon("shield")}
-      <h2>The forge</h2>
-      <span class="spacer"></span>
-      ${btn("Health", { href: "/api/v1/health", size: "sm" })}`,
-  });
+/** The forge is degraded: an alert line, marked in the danger tone, under its head; Health on its own row so it never wraps into the sentence. */
+export const forgeCard = (d: Degraded): Html =>
+  html`<section class="stack">
+    <h2>The forge</h2>
+    <p role="alert"><span class="dot" data-tone="danger" aria-hidden="true"></span> <a href="${d.href}">${needLine(d)}</a></p>
+    <div class="bar">${btn("Health", { href: "/api/v1/health", size: "sm" })}</div>
+  </section>`;
 
 /** What sits above the asks after a bulk step: a preview to confirm, a receipt, or why nothing was done. */
 export interface AsksTop {
@@ -627,10 +626,7 @@ const bulkCard = (head: string, body: Html, foot: Html | null): Html =>
   });
 
 const nothingDone = (message: string): AsksTop => ({
-  banner: card(html`<p>Nothing done: ${message}.</p>`, {
-    id: "asks-bulk-result",
-    tone: "danger",
-  }),
+  banner: html`<p id="asks-bulk-result" role="alert">Nothing done: ${message}.</p>`,
 });
 
 /** The receipt of a bulk action on asks, for the person who acted; nothing for anyone else. */

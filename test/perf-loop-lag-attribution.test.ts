@@ -21,3 +21,13 @@ test("a stall with no request running says so", () => {
   expect(s.routes).toEqual([]);
   expect(stallLine(s)).toContain("no request");
 });
+test("clear forgets requests, totals and the hour", () => {
+  const w = createLoopWatch(250);
+  w.finished("/boards", 1000, 2000);
+  expect(w.stalled(500, 1500)!.routes).toEqual(["/boards"]);
+  expect(w.tally(2000).total).toHaveLength(1);
+  expect(w.tally(2000).hour).toHaveLength(1);
+  w.clear();
+  expect(w.tally(2000)).toEqual({ total: [], hour: [] });
+  expect(w.stalled(500, 1500)!.routes).toEqual([]);
+});

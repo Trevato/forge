@@ -227,6 +227,11 @@ export function quarantine(
   reason = "flaky: red in one hunt run and green in another",
 ): string {
   const start = source.indexOf("export const EXCLUDED");
+  // An empty quarantine is written on one line; open it so an entry can be added.
+  const empty = /(export const EXCLUDED[^=\n]*= \[)\];/.exec(source);
+  if (empty && empty.index === start) {
+    source = source.replace(empty[0], `${empty[1]}\n];`);
+  }
   const end = source.indexOf("\n];", start);
   if (start === -1 || end === -1) return source;
   if (source.slice(start, end).includes(`file: ${JSON.stringify(file)}`)) return source;

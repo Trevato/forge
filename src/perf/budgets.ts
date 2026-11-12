@@ -12,6 +12,8 @@ export const BUDGETS: readonly Budget[] = [
   { pattern: "/", words: "home p95 under 800 ms warm", p95Ms: 800 },
   { pattern: "/boards", words: "boards p95 under 800 ms warm", p95Ms: 800 },
   { pattern: "/explore", words: "explore p95 under 800 ms warm", p95Ms: 800 },
+  // The `read` phase of /explore's Server-Timing (#10946): a phase of that route, not a route; its p95 is the same read's.
+  { pattern: "/explore#read", words: "the ranked explore read over 200 repositories p95 under 50 ms", p95Ms: 50 },
   { pattern: "/api/v1/health", words: "health p95 under 100 ms", p95Ms: 100 },
   { pattern: "/:owner/:name", words: "repo page p95 under 800 ms warm", p95Ms: 800 },
   { pattern: "/:owner/:name/*", words: "repo sub-page p95 under 1000 ms warm", p95Ms: 1000 },
@@ -45,3 +47,6 @@ export function gitBudgetFor(key: string): Budget {
 
 /** What a real visitor's page is held to (#10536): the browser's time to first byte at p95, and its largest paint at p95. */
 export const PAGE_BUDGET = { serverP95Ms: 150, paintP95Ms: 1000 } as const;
+
+/** The ranked read behind /explore, /api/v1/explore and the MCP `explore` tool, as registered in BUDGETS. */
+export const EXPLORE_READ_BUDGET: Budget = budgetFor("/explore#read")!;

@@ -5,6 +5,7 @@ export const route: Route = {
   path: `${REPO}/pulls/{number}/review-states`,
   summary: "Submit a verdict on a pull (rw scope); answers 201 with the review; `comments` are line comments posted with it; a crew reviewer's approval may tick or leave boxes of the issues the pull closes (`ticks`, `left`)",
   auth: true,
+  role: "member",
   status: 201,
   body: { state: "string", body: "string", comments: "array", ticks: "array", left: "array" },
   refusals: {

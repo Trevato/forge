@@ -6,8 +6,8 @@
  */
 import { mayViewId } from "../core/sealed.ts";
 import { getIssueById, listOpenAgentPullsVisibleTo } from "../core/issues.ts";
-import { waitsForPerson } from "../crew/review.ts";
-import { getPull } from "../core/pulls.ts";
+import { reviewWaitsFor } from "../crew/review.ts";
+import { joinMany } from "../core/pulls.ts";
 import { ownerFactRepoIds } from "../core/repos.ts";
 import { reviewSays } from "../crew/review_says.ts";
 import { reviewerPaused } from "../crew/reviewer_paused.ts";
@@ -56,29 +56,36 @@ export function crewNow(ctx: Pick<Ctx, "app">, user: User) {
   }));
   // An agent's green pull that waits for a person's review (#597): no
   // reviewer on the crew, or one that lapsed — with its age, never silent.
-  const ownRepos = repos.filter((r) => owned.has(r.id));
-  const reviewWaits = listOpenAgentPullsVisibleTo(ctx.app.db, user, 200)
-    .filter((i) => ownRepos.some((r) => r.id === i.repoId))
-    .flatMap((issue) => {
-      const pull = getPull(ctx.app.db, issue.repoId, issue.number);
-      const repo = byId.get(issue.repoId);
-      const wait = pull && repo ? waitsForPerson(ctx.app.db, repo.id, pull) : undefined;
-      return wait === undefined || repo === undefined
-        ? []
-        : [
-            {
-              run: null,
-              app: `${repo.ownerName}/${repo.name}`,
-              who: "you",
-              on: `#${issue.number} ${issue.title}`,
-              why: "review",
-              state: "waiting for your review",
-              says: reviewSays(wait, reviewerPaused(repo)),
-              since: wait.since,
-              costUsd: 0,
-            },
-          ];
-    });
+  // Read for the whole set at once (#11119): the pull rows in one `IN`, and
+  // `reviewWaitsFor` reads holds, verdicts, hand-overs and reviewers once
+  // for every pull, where one pull at a time was ~11 statements a pull,
+  // 2,200 for the 200 this lists, on every forge-view build.
+  const pulls = joinMany(
+    ctx.app.db,
+    listOpenAgentPullsVisibleTo(ctx.app.db, user, 200).filter((i) => owned.has(i.repoId)),
+  ).flatMap((pull) => {
+    const repo = byId.get(pull.repoId);
+    return repo === undefined ? [] : [{ repo, pull }];
+  });
+  const waits = reviewWaitsFor(ctx.app.db, pulls);
+  const reviewWaits = pulls.flatMap(({ repo, pull }) => {
+    const wait = waits.get(pull.id)?.person;
+    return wait === undefined
+      ? []
+      : [
+          {
+            run: null,
+            app: `${repo.ownerName}/${repo.name}`,
+            who: "you",
+            on: `#${pull.number} ${pull.title}`,
+            why: "review",
+            state: "waiting for your review",
+            says: reviewSays(wait, reviewerPaused(repo)),
+            since: wait.since,
+            costUsd: 0,
+          },
+        ];
+  });
   return [
     ...waiting,
     ...reviewWaits,

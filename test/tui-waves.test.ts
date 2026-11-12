@@ -170,7 +170,7 @@ describe("waves in the terminal", () => {
     const h = await open(alice, pub, ["enter"]);
     h.stop();
     expect(h.text).toContain("Tenth");
-    expect(h.text).toContain("0.10.0  2026-02-01");
+    expect(h.text).toContain("0.10.0  2026-02-01  0 changes in 0 apps");
     expect(h.text).toContain("Thing 1 - because");
     expect(h.text).toContain("No pulls to show here.");
   });
@@ -186,6 +186,23 @@ describe("waves in the terminal", () => {
     expect(outsider.text).toContain("Shown work");
     expect(outsider.text).not.toContain("Secret work");
     expect(outsider.text).not.toContain("/alice/priv/pulls/");
+  });
+
+  test("a wave's size counts only the pulls the viewer can see, on the list row and the wave's header", async () => {
+    const ownerList = await open(alice, mix);
+    ownerList.stop();
+    expect(ownerList.text).toContain("0.1.0 · 2026-03-05 · Mixed · 2 changes in 2 apps");
+    const owner = await open(alice, mix, ["enter"]);
+    owner.stop();
+    expect(owner.text).toContain("0.1.0  2026-03-05  2 changes in 2 apps");
+    const outsider = await open(bob, mix, ["enter"]);
+    outsider.stop();
+    expect(outsider.text).toContain("1 change in 1 app");
+    expect(outsider.text).not.toContain("2 changes");
+    // The list row, before Enter, says the same.
+    const list = await open(bob, mix);
+    list.stop();
+    expect(list.text).toContain("0.1.0 · 2026-03-05 · Mixed · 1 change in 1 app");
   });
 
   test("the wave leads to its pulls and back: pick, open the pull, back returns to the wave", async () => {
@@ -229,6 +246,9 @@ describe("waves in the terminal", () => {
     owner.stop();
     expect(owner.text).toContain("Moved");
     expect(owner.text).toContain("Open goal - 1 of 2 done");
+    // the progress line under the date, and the pull under the milestone it moved
+    expect(owner.text).toContain("Open goal: 1 of 2 done");
+    expect(owner.text).toMatch(/milestones\/\d+\n\s+#\d+ Part A work/);
     expect(owner.text).toContain(`/alice/ms/milestones/${goal.number}`);
     expect(owner.text).not.toContain("Hidden goal");
     const outsider = await open(bob, repo, ["enter"]);
@@ -242,6 +262,14 @@ describe("waves in the terminal", () => {
     h.stop();
     expect(h.text).toContain("broken.md");
     expect(h.text).toContain("Not a wave:");
+  });
+
+  test("a wave opens with the same sentence as the page, under the headline", () => {
+    const entry = { ok: true as const, file: "1.0.0.md", wave: { version: "1.0.0", date: "2026-01-01", headline: "Head", highlights: [], pulls: [] } };
+    const lines = waveLines(entry, [{ owner: "o", name: "r", number: 1, title: "Add \u001b[2Jsearch", mergedAt: "2026-01-01", state: "closed" }]);
+    expect(lines[0]).toBe("Head");
+    expect(lines[1]).toBe("This wave landed Add [2Jsearch.");
+    expect(waveLines(entry, [])[1]).toBe("No pull in this wave has landed yet.");
   });
 
   test("wave text carries no escape or control characters", () => {

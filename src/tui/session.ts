@@ -133,7 +133,7 @@ export class Session {
       password,
       source: this.identity.remoteAddress,
     });
-    if (!verified.ok) return err(verified.error.reason);
+    if (!verified.ok) return err(verified.error.reason === "waiting" ? "bad_credentials" : verified.error.reason);
     return this.adopt(verified.value);
   }
 

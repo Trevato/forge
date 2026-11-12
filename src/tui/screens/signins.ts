@@ -21,6 +21,7 @@
  * ended from here.
  */
 
+import { UPSTREAM_REPO } from "../../core/upstream.ts";
 import { accountSignIns, endAccountSession } from "../../actions/signins.ts";
 import {
   CHANGE_PASSWORD_WORDS,
@@ -29,7 +30,8 @@ import {
   createToken,
   deleteToken,
 } from "../../actions/users.ts";
-import { marketplaceLines, offeredPluginRepo } from "../../core/mcp_card.ts";
+import { claudeInstall } from "../../core/plugin_install.ts";
+import { offeredPluginRepo } from "../../core/mcp_card.ts";
 import { publicOrigin } from "../../core/public_origin.ts";
 import { withinPasswordCap } from "../../core/hash-gate.ts";
 import { listKeys } from "../../core/keys.ts";
@@ -101,13 +103,13 @@ function hardWrap(text: string, width: number): string[] {
 }
 
 /** The secret, alone on a screen; nothing keeps it once this is popped. */
-function secretScreen(ctx: Ctx, secret: string, market: { add: string; install: string } | null): Screen {
+function secretScreen(ctx: Ctx, secret: string, install: string | null): Screen {
   let copied = "";
   return {
     title: "New access code",
     keys: [
       binding(["y"], "copy it"),
-      ...(market === null ? [] : [binding(["a"], "copy the marketplace line"), binding(["i"], "copy the install line")]),
+      ...(install === null ? [] : [binding(["c"], "copy the plugin command")]),
       binding(["esc", "q"], "done"),
     ],
     render(area, s) {
@@ -121,30 +123,25 @@ function secretScreen(ctx: Ctx, secret: string, market: { add: string; install: 
       s.text(area.x, area.y + 3 + lines.length, truncate(foot, area.w), style(c.mutedFg, c.bg), end);
       if (lines.length > 1)
         s.text(area.x, area.y + 4 + lines.length, truncate("It wraps; y copies it whole.", area.w), style(c.mutedFg, c.bg), end);
-      // The same marketplace lines Settings › Tokens offers, under the same gate; wrapped whole or not drawn.
-      if (market === null) return;
+      // The same one command Settings › Tokens offers, under the same gate; wrapped whole or not drawn.
+      if (install === null) return;
       const top = area.y + 6 + lines.length;
-      const add = hardWrap(market.add, area.w);
-      const install = hardWrap(market.install, area.w);
-      const head = "Claude Code plugin (a, i copy):";
-      if (top + 1 + add.length + install.length > bottom) {
-        if (top < bottom) s.text(area.x, top, truncate("Plugin lines: a and i copy them.", area.w), style(c.mutedFg, c.bg), end);
+      const rows = hardWrap(install, area.w);
+      if (top + 1 + rows.length > bottom) {
+        if (top < bottom) s.text(area.x, top, truncate("Plugin command: c copies it.", area.w), style(c.mutedFg, c.bg), end);
         return;
       }
-      s.text(area.x, top, truncate(head, area.w), style(c.mutedFg, c.bg), end);
-      [...add, ...install].forEach((row, i) => s.text(area.x, top + 1 + i, row, style(c.fg, c.bg), end));
+      s.text(area.x, top, truncate("Claude Code plugin (c copies):", area.w), style(c.mutedFg, c.bg), end);
+      rows.forEach((row, i) => s.text(area.x, top + 1 + i, row, style(c.fg, c.bg), end));
     },
     key(e) {
       if (e.ctrl || e.alt) return true;
       if (e.key === "y") {
         ctx.copy(secret);
         copied = "Copied.";
-      } else if (market !== null && e.key === "a") {
-        ctx.copy(market.add);
-        copied = "Copied the marketplace line.";
-      } else if (market !== null && e.key === "i") {
-        ctx.copy(market.install);
-        copied = "Copied the install line.";
+      } else if (install !== null && e.key === "c") {
+        ctx.copy(install);
+        copied = "Copied the plugin command.";
       } else if (e.key === "esc" || e.key === "q") {
         ctx.pop();
       }
@@ -213,9 +210,9 @@ export function signInsScreen(f: Session, ctx: Ctx): Screen {
       return;
     }
     note = `Made ${name} (${scope}).`;
-    const repo = offeredPluginRepo(f.db, f.app.config.forgeRepo);
+    const repo = offeredPluginRepo(f.db, f.app.config.forgeRepo, UPSTREAM_REPO);
     const origin = publicOrigin(f.app.config.url, `http://${f.app.config.host ?? "localhost"}:${f.app.config.port ?? 3000}`);
-    ctx.push(secretScreen(ctx, made.value.token, repo === undefined ? null : marketplaceLines(origin, repo)));
+    ctx.push(secretScreen(ctx, made.value.token, repo === undefined ? null : claudeInstall(origin)));
   };
 
   /** Asks admin to say it twice; a plain y mints. */

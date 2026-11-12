@@ -17,7 +17,7 @@ test("the description names every verb the command handles", async () => {
   const md = await Bun.file(`${dir}/commands/forge.md`).text();
   const list = md.match(/^description: Talk to your forge: (.*)$/m)![1] as string;
   const verbs = list.split(",").map((v) => v.trim());
-  expect(verbs.length).toBe(10);
+  expect(verbs.length).toBe(15);
   for (const v of verbs) expect(plugin.description).toContain(v);
 });
 

@@ -16,6 +16,7 @@ export const route: Route = {
   path: "/api/v1/apps",
   summary: "Make an app (named by `name`, or derived from `sentence` alone; `name` wins when both are given): a repository, its app and a first issue; answers 201 with { repo, app, issue }",
   auth: true,
+  role: "member",
   status: 201,
   body: APP_BODY,
   refusals: APP_REFUSALS,

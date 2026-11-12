@@ -65,7 +65,7 @@ afterAll(async () => {
 test("severing a repository that follows nothing answers the module's sentence at both doors", async () => {
   const res = await api("POST", "/repos/ada/lib/following/sever");
   expect(res.status).toBe(404);
-  expect(await res.json()).toEqual({ error: "not_following", message: FAMILY_WORDS.not_following });
+  expect(await res.json()).toMatchObject({ error: "not_following", message: FAMILY_WORDS.not_following });
   const mcp = await mcpTool(servers.url, token, "sever", { repo: "ada/lib" });
   expect(mcp.error).toBe(`not_following: ${FAMILY_WORDS.not_following}`);
 });
@@ -73,7 +73,7 @@ test("severing a repository that follows nothing answers the module's sentence a
 test("showing a trail on a repository never migrated answers the module's sentence at both doors", async () => {
   const res = await api("PATCH", "/repos/ada/lib", { showProvenance: true });
   expect(res.status).toBe(422);
-  expect(await res.json()).toEqual({ error: "no_provenance", message: FAMILY_WORDS.no_provenance });
+  expect(await res.json()).toMatchObject({ error: "no_provenance", message: FAMILY_WORDS.no_provenance });
   const mcp = await mcpTool(servers.url, token, "trail", { repo: "ada/lib", shown: true, dryRun: false });
   expect(mcp.error).toBe(`no_provenance: ${FAMILY_WORDS.no_provenance}`);
 });

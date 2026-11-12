@@ -58,6 +58,7 @@ import { updateRepoSettings } from "../../actions/repos.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { nameFrame, notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { appVitals, shiftText, speedText as ms, type AppVitals } from "../../apps/vitals.ts";
+import { relayWaitWords } from "../../apps/relay_wait.ts";
 import type { PreviewData } from "../../apps/data.ts";
 import {
   getAppByRepo,
@@ -90,11 +91,13 @@ import { settingsLead, teamJs } from "../studio/crew.ts";
 import { pageTitle } from "../studio/nouns.ts";
 import { appHref } from "./apps.ts";
 import { field, readForm, type Form } from "../form.ts";
-import { html, when, type Html } from "../html.ts";
+import { html, raw, when, type Html } from "../html.ts";
+import { settingLine, toggleLine } from "../setting_line.ts";
 import { NOT_CHANGED } from "../edit_words.ts";
 import { STOP_APP } from "../danger_words.ts";
 import { icon } from "../icons.ts";
 import { flashTo, page, redirect } from "../layout.ts";
+import { helpAsked, pageHelp } from "../page_help.ts";
 import type { Flash } from "../flash.ts";
 import {
   badge,
@@ -278,101 +281,38 @@ export async function settingsPage(
   // sends them back unchanged, as that one does the gates below.
   const body = html`<section class="settings-block">
     <h2>Branch and gates</h2>
-    <p class="muted">
-      Where the repository opens, and what must hold before a change lands on it.
-    </p>
     <form method="post" action="${base}/settings">
       <input type="hidden" name="card" value="gates" />
-      ${selectField({
-        label: "Default branch",
-        name: "defaultBranch",
-        hint: "Where the repository opens, and what a bare clone checks out.",
-        options: branches.map((b) => ({
-          value: b,
-          label: b,
-          selected: b === repo.defaultBranch,
-        })),
-      })}
-      <div class="field">
-        <label class="check">
-          <input
-            type="checkbox"
-            name="protect"
-            ${repo.protectDefault ? html`checked` : null}
-          />
-          <span
-            >Protect the default branch — no force-push, no deletion, and only
-            its admins push it; everyone else lands through a pull. Enforced
-            by the pre-receive hook, so it holds for every client.</span
-          >
-        </label>
-      </div>
-      <div class="field">
-        <label class="check">
-          <input
-            type="checkbox"
-            name="requireReview"
-            ${repo.requireReview ? html`checked` : null}
-          />
-          <span
-            >Require an approving review before merging — of the commit that is
-            head <em>now</em>, so a push after an approval dismisses it. Refused
-            in the merge itself, not just hidden on the button.</span
-          >
-        </label>
-      </div>
-      <div class="field">
-        <label class="check">
-          <input
-            type="checkbox"
-            name="requireChecks"
-            ${repo.requireChecks ? html`checked` : null}
-          />
-          <span
-            >Require a passing deploy before merging — the check is the pull
-            request's preview coming up at the commit that is head <em>now</em>.
-            Read live inside the merge, like the review.</span
-          >
-        </label>
-      </div>
-      <div class="field">
-        <input type="hidden" name="crewOutsidersShown" value="1" />
-        <label class="check">
-          <input
-            type="checkbox"
-            name="crewOutsiders"
-            ${repo.crewOutsiders ? html`checked` : null}
-          />
-          <span
-            >Outsiders may trigger the crew — anyone signed in who can read
-            this repository starts and steers runs by commenting, on your
-            budget. Off, only people who can write here direct the crew;
-            anyone else's words stay on the thread. Turning it on or off is
-            recorded in the activity.</span
-          >
-        </label>
-      </div>
-      <div class="field">
-        <input type="hidden" name="polishShareShown" value="1" />
-        <label for="polish-share">Polish share</label>
+      ${settingLine("defaultBranch", html`<label for="f-defaultBranch">Default branch</label>
+        <select class="input" id="f-defaultBranch" name="defaultBranch" aria-describedby="why-defaultBranch">
+          ${branches.map(
+            (b) =>
+              html`<option value="${b}" ${b === repo.defaultBranch ? raw("selected") : null}>${b}</option>`,
+          )}
+        </select>`, "Where the repository opens, and what a bare clone checks out.")}
+      ${toggleLine("protect", "Protect the default branch", repo.protectDefault,
+        "No force-push, no deletion, and only its admins push it; everyone else lands through a pull. Enforced by the pre-receive hook, so it holds for every client.")}
+      ${toggleLine("requireReview", "Require an approving review", repo.requireReview,
+        html`Of the commit that is head <em>now</em>, so a push after an approval dismisses it. Refused in the merge itself, not just hidden on the button.`)}
+      ${toggleLine("requireChecks", "Require a passing deploy", repo.requireChecks,
+        html`The check is the pull request's preview coming up at the commit that is head <em>now</em>. Read live inside the merge, like the review.`)}
+      ${toggleLine("crewOutsiders", "Outsiders may trigger the crew", repo.crewOutsiders,
+        "Anyone signed in who can read this repository starts and steers runs by commenting, on your budget. Off, only people who can write here direct the crew; anyone else's words stay on the thread. Turning it on or off is recorded in the activity.",
+        "crewOutsidersShown")}
+      ${settingLine("polishShare", html`<input type="hidden" name="polishShareShown" value="1" />
+        <label for="polish-share">Polish share, percent (0 to ${String(POLISH_SHARE_MAX)})</label>
         <input
-          class="input mono"
+          class="input input-num mono"
           id="polish-share"
-          type="number"
           name="polishShare"
+          type="number"
           min="0"
           max="${String(POLISH_SHARE_MAX)}"
           step="1"
           value="${String(repo.polishShare)}"
           inputmode="numeric"
-        />
-        <p class="hint">
-          Percent of the week's agent spend that polish may take, 0 to ${String(POLISH_SHARE_MAX)}
-          (starts at ${String(POLISH_SHARE_DEFAULT)}) — so small fixes get steady attention without crowding out the plan.
-          Over it, the crew stops picking issues labelled polish or in the small-fixes lane until the week catches up; the
-          <a href="${base}/week">week</a> shows where it stands.
-        </p>
-      </div>
+          aria-describedby="why-polishShare"
+        />`, html`Percent of the week's agent spend that polish may take, 0 to ${String(POLISH_SHARE_MAX)} (starts at ${String(POLISH_SHARE_DEFAULT)}). Over it, the crew stops picking issues labelled polish or in the small-fixes lane until the week catches up; the <a href="${base}/week">week</a> shows where it stands.`)}
       ${cellMemory === undefined
         ? null
         : html`<div class="field"><p class="hint" data-check-memory>${
@@ -391,12 +331,6 @@ export async function settingsPage(
   const wave = html`<section class="settings-block">
     <h2>Cut a wave</h2>
     <form method="post" action="${base}/settings/wave">
-      <p class="muted">
-        Opens a pull that adds the next <code>waves/&lt;version&gt;.md</code>,
-        listing every pull merged since the last wave. The headline and
-        highlights are left as TODO for you to write.
-        <a href="${base}/waves">See the waves so far</a>.
-      </p>
       <div class="form-actions">${btn("Cut a wave", { variant: "primary" })}</div>
     </form>
   </section>`;
@@ -406,13 +340,9 @@ export async function settingsPage(
     <h2>Archive</h2>
     <form method="post" action="${base}/settings/archive">
       <input type="hidden" name="archived" value="${repo.archivedAt === null ? "1" : "0"}" />
-      <p class="muted">
-        ${repo.archivedAt === null
-          ? "Put a finished repository away without deleting it. Its page says when it was archived; links, clone and push keep working."
-          : html`Archived on ${repo.archivedAt.slice(0, 10)}. Wake it to take the label off.`}
-      </p>
+      ${repo.archivedAt === null ? null : html`<p class="muted small">Archived on ${repo.archivedAt.slice(0, 10)}.</p>`}
       <div class="form-actions">
-        ${btn(repo.archivedAt === null ? "Archive" : "Wake", {
+        ${btn(repo.archivedAt === null ? "Archive" : "Restore", {
           variant: "primary",
         })}
       </div>
@@ -420,12 +350,9 @@ export async function settingsPage(
   </section>`;
   const move = html`<section class="settings-block" id="move">
     <h2>Move to another owner</h2>
+    <p class="muted small">Hands the repository to someone else.</p>
     <form method="get" action="/-/confirm">
       <input type="hidden" name="to" value="${base}/settings/transfer" />
-      <p class="muted">
-        Give the repository to an account or organisation you can create
-        repositories under.
-      </p>
       ${formField({
         label: "New owner",
         name: "owner",
@@ -449,9 +376,7 @@ export async function settingsPage(
       : html`<section class="settings-block">
           <h2>Mirror</h2>
           <p class="muted" data-mirror-line>${mirrorLine(held)}</p>
-            <p class="muted small">
-              Stopping leaves ${held.fullName} as it is; nothing more is pushed.
-            </p>
+            <p class="muted small">Stopping leaves ${held.fullName} as it is; nothing more is pushed.</p>
             <div class="form-actions">
               ${confirmAction({
                 action: `${base}/settings/mirror/stop`,
@@ -459,12 +384,22 @@ export async function settingsPage(
               })}
             </div>
         </section>`;
+  const trailHelp = getProvenance(ctx.app.db, repo.id);
+  const help = pageHelp(
+    [
+      ["Cut a wave", html`Opens a pull that adds the next <code>waves/&lt;version&gt;.md</code>, listing every pull merged since the last wave. The headline and highlights are left as TODO for you to write. <a href="${base}/waves">See the waves so far</a>.`],
+      ["Archive", "Puts a finished repository away without deleting it. Its page says when it was archived; links, clone and push keep working. Restore takes the label off."],
+      ["Move to another owner", "Gives the repository to an account or organisation you can create repositories under. You are asked to confirm before it moves."],
+      ...(trailHelp === undefined ? [] : ([["Where this came from", "Where this repository was migrated from. Shown, it appears under the repository's name and in the API. Hidden, nobody else sees it, but the record is kept, so you can show it again."]] as const)),
+    ],
+    helpAsked(ctx.request.url),
+  );
   const response = settingsPageResponse(
     ctx,
     repo,
     "general",
     "Settings",
-    html`${lead}${mirror ? html`<div class="mt">${mirror}</div>` : null}<div class="mt">${body}</div>${trail
+    html`${help}${lead}${mirror ? html`<div class="mt">${mirror}</div>` : null}<div class="mt">${body}</div>${trail
       ? html`<div class="mt">${trail}</div>`
       : null}${upstream ? html`<div class="mt">${upstream}</div>` : null}${sources ? html`<div class="mt">${sources}</div>` : null}<div class="mt">${wave}</div><div class="mt">${archive}</div><div class="mt">${move}</div>${proposals
       ? html`<div class="mt">${proposals}</div>`
@@ -545,14 +480,26 @@ function samePath(ctx: Ctx, to: string | undefined): string | undefined {
 }
 
 /**
- * POST /:owner/:name/settings/archive — archive or wake. The state asked
+ * POST /:owner/:name/settings/archive — archive or restore. The state asked
  * for travels in the form, so a double submit is idempotent.
  */
 export async function archiveSubmit(ctx: Ctx): Promise<Response> {
+  return archiveWith(ctx, undefined);
+}
+
+/**
+ * POST /:owner/:name/archive — the one-tap Archive, reached only through
+ * `/-/confirm`: the form there carries no field, so the answer is fixed here.
+ */
+export async function archiveConfirmed(ctx: Ctx): Promise<Response> {
+  return archiveWith(ctx, "1");
+}
+
+async function archiveWith(ctx: Ctx, fixed: "1" | undefined): Promise<Response> {
   const gate = await adminForm(ctx);
   if (gate instanceof Response) return gate;
   const { repo, form } = gate;
-  const asked = field(form, "archived");
+  const asked = fixed ?? field(form, "archived");
   if (asked !== "0" && asked !== "1")
     return flashTo(ctx, `${repoBase(repo)}/settings`, {
       tone: "danger",
@@ -571,7 +518,7 @@ export async function archiveSubmit(ctx: Ctx): Promise<Response> {
     ctx,
     back,
     updated.ok
-      ? { message: archived ? "Archived." : "Awake again." }
+      ? { message: archived ? "Archived." : "Restored." }
       : { tone: "danger", message: NOT_CHANGED },
   );
 }
@@ -612,7 +559,13 @@ function provenanceCard(ctx: Ctx, repo: Repo): Html | null {
     <h2>Show where this came from</h2>
     <form method="post" action="${base}/settings/provenance">
       <input type="hidden" name="shown" value="${trail.shown ? "0" : "1"}" />
-      <p class="muted">
+      <p class="muted small">${trail.shown ? "Shown under the repository's name." : "Hidden; the record is kept."}</p>
+      <div class="form-actions">
+        ${btn(trail.shown ? "Hide where this came from" : "Show where this came from", {
+          variant: "outline",
+        })}
+      </div>
+      <p class="muted small mt">
         Migrated from
         <a href="${trail.sourceUrl}" rel="noopener noreferrer"
           >${sourceLabel(trail.sourceUrl)}</a
@@ -624,15 +577,7 @@ function provenanceCard(ctx: Ctx, repo: Repo): Html | null {
               >`,
         )}
         on ${trail.migratedAt.slice(0, 10)}.
-        ${trail.shown
-          ? "Shown under the repository's name on every page and in the API. Hiding it keeps the record, so it can come back."
-          : "Hidden: nobody else sees it, on a page or in the API. The record is kept."}
       </p>
-      <div class="form-actions">
-        ${btn(trail.shown ? "Hide where this came from" : "Show where this came from", {
-          variant: "outline",
-        })}
-      </div>
     </form>
   </section>`;
 }
@@ -815,7 +760,16 @@ function appSettingsView(
   const vitals = timePhase(ctx.request, "vitals", () =>
     appVitals(ctx.app.db, record.id),
   );
-  return html`${form}
+  const help = pageHelp(
+    [
+      ["Visitors and speed", "Counted by the beacon, with no address kept; the 7 day figure adds the days up."],
+      ["Environment", "What the app reads at start-up; values are write-only, and one set for production only or previews only wins there over one set everywhere."],
+      ["Who may enter", "Named people may open the app and its previews, and nothing else: not the code, the crew, the settings or the terminal. Removing a name shuts them out at once. What the app itself shows them is the app's to decide: it runs with your read-only token, so anything it shows visitors from the forge, they see too."],
+      ["Domains", html`Serve the app at a name of your own — <span class="mono">app.example.com</span>, or an apex. Add it, publish the two records it shows, and press Check now. The forge serves the app there as soon as the record is verified; the app itself learns its new address at its next deploy.`],
+    ],
+    helpAsked(ctx.request.url),
+  );
+  return html`${help}${form}
     ${when(listed?.ok === true, () => html`<div class="mt">${appMembersView(base, values.access, named)}</div>`)}
     <div class="mt">${appVisitorsView(vitals)}</div>
     <div class="mt">${statement}</div>
@@ -860,10 +814,7 @@ export function appVisitorsView(v: AppVitals): Html {
   );
   return html`<section class="settings-block" id="visitors">
     <h2>Visitors and speed</h2>
-    <p class="muted small mb">
-      Counted by the beacon, with no address kept; the 7 day figure adds
-      the days up. <a href="app/traffic">Where visitors come from</a>
-    </p>
+    <p class="small mb"><a href="app/traffic">Where visitors come from</a></p>
       <dl class="stats">
         <div><dt>Visitors today</dt><dd>${v.today}</dd></div>
         <div><dt>Visitors, 7 days</dt><dd>${v.week}</dd></div>
@@ -872,6 +823,7 @@ export function appVisitorsView(v: AppVitals): Html {
         <div><dt>p75 LCP</dt><dd>${ms(v.lcpP75)}</dd></div>
         <div><dt>p75 INP</dt><dd>${ms(v.inpP75)}</dd></div>
         <div><dt>p75 CLS</dt><dd>${shiftText(v.clsP75)}</dd></div>
+        ${v.wait === undefined ? "" : html`<div><dt>Slowest wait, 10 min</dt><dd>${relayWaitWords(v.wait)}</dd></div>`}
       </dl>
       ${spark ? html`<div class="bar muted">${spark}</div>` : html`<p class="muted small mt">No load reports in the last 30 days</p>`}
   </section>`;
@@ -904,10 +856,6 @@ export function appEnvView(base: string, names: AppEnvName[]): Html {
   );
   return html`<section class="settings-block" id="environment">
     <h2>Environment</h2>
-    <p class="muted small">
-      What the app reads at start-up; values are write-only, and one set
-      for production only or previews only wins there over one set everywhere.
-    </p>
       ${when(
         rows.length > 0,
         () =>
@@ -981,11 +929,7 @@ function appMembersView(
         >
 ${named.join("\n")}</textarea
         >
-        <p class="hint">
-          ${access === "private"
-            ? "They may open the app and its previews, and nothing else: not the code, the crew, the settings or the terminal. Removing a name shuts them out at once. What the app itself shows them is the app's to decide: it runs with your read-only token, so anything it shows visitors from the forge, they see too."
-            : "The app is public, so anyone may open it now; these names matter once it is private."}
-        </p>
+        ${access === "private" ? null : html`<p class="hint">The app is public, so anyone may open it now; these names matter once it is private.</p>`}
       </div>
       <div class="form-actions">${btn("Save people", { variant: "primary" })}</div>
     </form>
@@ -1032,11 +976,6 @@ function appDomainsView(
   );
   return html`<section class="settings-block" id="domains">
     <h2>${icon("globe")} Domains</h2>
-        <p class="muted small mb">
-          Serve the app at a name of your own —
-          <span class="mono">app.example.com</span>, or an apex. Add it, publish
-          the two records it shows, and press Check now.
-        </p>
       ${when(
         rows.length > 0,
         () =>
@@ -1049,12 +988,7 @@ function appDomainsView(
               Nothing is serving apps on this forge, so a domain would have
               nowhere to point.
             </p>`
-        : html`<p class="muted small mb">
-              The forge serves the app there as soon as the record is
-              verified. The app itself learns its new address at its next
-              deploy.
-            </p>
-            <form
+        : html`<form
               class="edit-row"
               method="post"
               action="${base}/settings/app/domains"

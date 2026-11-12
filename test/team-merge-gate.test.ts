@@ -140,7 +140,7 @@ describe("a named team's review gates the merge", () => {
       body: "{}",
     });
     expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ error: "team_review_required", message: SENTENCE, teams: ["Design"] });
+    expect(await res.json()).toMatchObject({ error: "team_review_required", message: SENTENCE, teams: ["Design"] });
     expect(fresh(pull).mergedAt).toBeNull();
   });
 

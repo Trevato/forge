@@ -232,7 +232,7 @@ describe("what the open web expects", () => {
       expect(res.headers.get("content-security-policy")).not.toBeNull();
       const j = (await res.json()) as Record<string, unknown>;
       expect(Object.keys(j).sort()).toEqual(["commit", "here", "llms", "mcp", "name", "oauth", "openapi", "version"]);
-      expect(j["openapi"]).toBe(`${base}/api/v1/openapi.json`);
+      expect(j["openapi"]).toBe(`${base}/contract/openapi.json`);
       expect(j["mcp"]).toBe(`${base}/mcp`);
       expect(j["oauth"]).toBe(`${base}/.well-known/oauth-protected-resource`);
       expect(j["llms"]).toBe(`${base}/llms.txt`);
@@ -277,8 +277,8 @@ describe("what the open web expects", () => {
     expect(section).toContain(`${base}/mcp`);
     expect(section).toContain(`${base}/.well-known/oauth-protected-resource`);
     expect(section).toContain("streamable HTTP");
-    // trevato/forge is not here, so no install line is printed that could not work.
-    expect(section).toContain("Harness plugins: not offered here (no public source)");
+    // trevato/forge is not here, so the lines come from the public upstream.
+    expect(section).toContain("Claude Code plugin (source https://forge.open-platform.sh/trevato/forge.git");
     expect(section).not.toContain("needs that repository to be public");
   });
 

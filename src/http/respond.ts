@@ -28,10 +28,48 @@ export function json(
     if (typeof data === "object" && data !== null && !Array.isArray(data) && !("retryAfter" in data))
       data = { ...data, retryAfter: wait };
   }
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "content-type": "application/json", ...headers },
-  });
+  data = withHint(data, status);
+  // The floor is laid here as well as at the server's one door (#10949): a
+  // JSON answer carried by a path that skips the door — the internal
+  // listener, a test calling a handler — still leaves inert.
+  return securityFloor(
+    new Response(JSON.stringify(data), {
+      status,
+      headers: { "content-type": "application/json", ...headers },
+    }),
+  );
+}
+
+/**
+ * One plain sentence on what to do next, per refusal. Fixed words only: they
+ * never echo a request's text, and `not_found` reads the same for a missing
+ * and a private resource, so a hint cannot say which it was.
+ */
+const HINTS: Record<number, string> = {
+  401: "Send `Authorization: Bearer <token>` with a token you hold, then repeat the call.",
+  403: "Use a token or account with the scope or role this route needs (the message names it), or ask the owner for it.",
+  404: "Check the path and ids against GET /contract/openapi.json, or list the parent collection to find the right one.",
+  409: "The resource changed or already exists: read its current state with a GET, then repeat the call with what you see.",
+  422: "A field failed validation: fix the one the message names (see the route's body in GET /contract/openapi.json) and send again.",
+};
+const HINTS_BY_CODE: Record<string, string> = {
+  held: "This pull is on hold: ask the person who placed the hold to release it, then repeat the call.",
+  review_required: "This pull needs an approving review first: ask a reviewer, read GET its reviews to see what is missing, then repeat the call.",
+  checks_required: "The pull's head needs a passing check or deploy first: push a fix or wait for the check, then repeat the call.",
+  invalid: "A field failed validation: fix the field the message names (see the route's body in GET /contract/openapi.json) and send the whole body again.",
+  not_admin: "This route is for administrators only: use an administrator's token; a different scope will not help.",
+  forbidden: "Your token's scope or your role on this resource does not allow this: a read-only (`ro`) token cannot write, so mint an `rw` token, or ask an owner for the role the message names.",
+  no_route: "No route matches this path: pick one from GET /contract/openapi.json and check the spelling.",
+};
+
+/** Every 401, 403, 404, 409 and 422 error body carries `hint`; a site's own is kept. */
+export function withHint(data: unknown, status: number): unknown {
+  const fallback = HINTS[status];
+  if (fallback === undefined || typeof data !== "object" || data === null || Array.isArray(data)) return data;
+  const body = data as Record<string, unknown>;
+  if (typeof body.error !== "string") return data;
+  if (typeof body.hint === "string" && body.hint.trim() !== "") return data;
+  return { ...body, hint: HINTS_BY_CODE[body.error] ?? fallback };
 }
 
 /**
@@ -187,7 +225,7 @@ const FLOOR_POLICY =
  * camera, a microphone, a location, a payment or a device (#2917).
  */
 const PERMISSIONS_POLICY =
-  "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), hid=(), bluetooth=(), interest-cohort=()";
+  "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), hid=(), bluetooth=()";
 
 /**
  * Once a browser has reached the forge over https, it never again asks over
@@ -225,6 +263,10 @@ export function securityFloor(response: Response): Response {
       headers.set("strict-transport-security", HSTS);
     if (!headers.has("cross-origin-opener-policy"))
       headers.set("cross-origin-opener-policy", "same-origin");
+    // No other site loads this as a subresource unless the answer said so
+    // (the public set in corp.ts says `cross-origin` before this runs).
+    if (!headers.has("cross-origin-resource-policy"))
+      headers.set("cross-origin-resource-policy", "same-origin");
     // What left decides, not what was asked for: an HTML body writes the
     // only policy that can name its own nonce, and `default-src 'none'`
     // over a page would strip it of its stylesheet.
@@ -306,12 +348,30 @@ function asObject(bytes: Uint8Array): Record<string, unknown> {
  * A JSON object body, at most \`BODY_MAX\` bytes for a signed-in caller and
  * \`STRANGER_MAX\` for anyone else (\`http/limits.ts\`) — a route reads its
  * body before it asks who is calling, so the cap cannot wait for that. Past
- * the cap, or malformed, \`{}\`; an over-limit body closes its connection.
+ * the cap it throws \`BodyTooLarge\` (answered 413) and the connection closes;
+ * malformed, \`{}\`.
  */
 export async function body(request: Request): Promise<Record<string, unknown>> {
   const bytes = await readBounded(request, bodyCapFor(request));
-  return bytes === "too_large" ? {} : asObject(bytes);
+  if (bytes === "too_large") throw new BodyTooLarge(bodyCapFor(request));
+  return asObject(bytes);
 }
+
+/**
+ * A body past its cap, thrown by \`body\` so the handler stops before it acts
+ * on nothing: read as \`{}\`, an oversize issue answered 422 for a missing
+ * title, and a route with defaults would have acted on none (#10949). The
+ * server's door answers it 413 (\`http/server.ts\`, \`failure\`).
+ */
+export class BodyTooLarge extends Error {
+  constructor(readonly max: number) {
+    super(`body over ${max} bytes`);
+  }
+}
+
+/** The 413 a \`BodyTooLarge\` is answered with. */
+export const bodyTooLarge = (error: BodyTooLarge): Response =>
+  apiError("too_large", 413, `at most ${error.max} bytes`);
 
 /**
  * A JSON object body kept to at most \`max\` bytes, for a route a stranger

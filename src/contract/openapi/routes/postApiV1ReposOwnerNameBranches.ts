@@ -6,6 +6,7 @@ export const route: Route = {
   summary:
     "Create a branch (rw scope), from `from` or the default branch; answers 201 with the branch",
   auth: true,
+  role: "member",
   status: 201,
   body: { name: "string", from: "string" },
   refusals: {

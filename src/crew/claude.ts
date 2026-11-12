@@ -19,6 +19,7 @@ import { openRunCell, type RunLimits } from "./run-cell.ts";
 import { watchLabelled } from "../apps/contain.ts";
 import { childEnv, pump } from "../apps/process.ts";
 import { endedLine, liveTree } from "../runs/ended.ts";
+import { CANCEL_GRACE_MS } from "../runs/grace.ts";
 import { spellings, stripForgeDirs } from "../runs/paths.ts";
 import type { SandboxPolicy } from "./sandbox.ts";
 
@@ -473,7 +474,7 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
       if (proc.exitCode === null && proc.signalCode === null)
         signalGroup("SIGKILL");
       stopReading.abort();
-    }, 5_000).unref();
+    }, CANCEL_GRACE_MS).unref();
   };
   const timer = setTimeout(() => {
     why = "timeout";

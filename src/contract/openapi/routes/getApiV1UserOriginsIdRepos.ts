@@ -9,6 +9,7 @@ export const route: Route = {
   path: "/api/v1/user/origins/{id}/repos",
   summary: "With `group` (yours, shared, public), one live, searched page `{ items, next_cursor }` of that group. Without it, list the repositories an origin holds, from the cache unless `refresh=1` asks the origin again (a failed refresh falls back to the cache); pass an item's fullName to POST /api/v1/migrate as { source: { originId, fullName } }; the account only",
   auth: true,
+  role: "member",
   query: { refresh: "string", group: "string", q: "string", cursor: "string" },
   refusals: {
     unauthorized: U,

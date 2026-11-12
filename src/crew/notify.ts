@@ -22,6 +22,7 @@
 
 import { blockedLines } from "../actions/egress_refused.ts";
 import { newAccountLines } from "../actions/accounts.ts";
+import { requestLines } from "../actions/requests.ts";
 import { mailCeilingLines } from "../actions/mail.ts";
 import { forgetOnboarding, onboardedLines } from "../apps/onboarding.ts";
 import type { Database } from "bun:sqlite";
@@ -299,7 +300,7 @@ export function alarmLines(
   fired?: readonly FiredAlarm[],
 ): { id: string; line: string; items: readonly string[]; link: string }[] {
   if (!user.isAdmin || user.kind !== "user") return [];
-  const alarms = fired ?? [...firedAlarms(app.db, new Date(now), { ceilingUsd: forgeCeiling(app.config) }), ...reachAlarms(app)];
+  const alarms = fired ?? [...firedAlarms(app.db, new Date(now), { ceilingUsd: forgeCeiling(app.config), dataDir: app.config.dataDir }), ...reachAlarms(app)];
   return alarms.map((a) => {
     const id = `alarm:${a.key}@${a.since}`;
     return { id, line: a.says, items: [id], link: a.href };
@@ -501,6 +502,7 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
     // to itself.
     const asks: { line: string; items: readonly string[]; link?: string }[] = [
       ...askLinesFor(app.db, user).map((a) => ({ line: a.line, items: a.items })),
+      ...requestLines(app.db, user),
       ...newAccountLines(app.db, user, now()),
       ...landedLines(app.db, user, now()),
       ...mailCeilingLines(app, user, now()),

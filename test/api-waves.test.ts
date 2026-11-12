@@ -123,8 +123,8 @@ test("the list is newest first by version, not by name", async () => {
   expect(got.status).toBe(200);
   expect(JSON.parse(got.body)).toEqual({
     items: [
-      { version: "0.10.0", date: "2026-02-01", headline: "Tenth" },
-      { version: "0.9.0", date: "2026-01-01", headline: "Ninth" },
+      { version: "0.10.0", date: "2026-02-01", headline: "Tenth", pulls: 0, apps: 0 },
+      { version: "0.9.0", date: "2026-01-01", headline: "Ninth", pulls: 0, apps: 0 },
     ],
     next_cursor: null,
   });
@@ -149,6 +149,13 @@ test("a wave's pulls are the page's: the owner sees the private one, an outsider
   expect(outsider.body).toContain("Shown work");
   expect(outsider.body).not.toContain("Secret work");
   expect(outsider.body).not.toContain("/alice/hid/pulls/");
+});
+
+test("the list sizes a wave over the pulls the viewer can see, so hidden ones and apps are not counted", async () => {
+  const sizeOf = async (cookie?: string) =>
+    JSON.parse((await get("/api/v1/repos/alice/mix/waves", cookie)).body).items.find((i: { version: string }) => i.version === "0.1.0");
+  expect(await sizeOf()).toMatchObject({ pulls: 2, apps: 2 });
+  expect(await sizeOf(bobCookie)).toMatchObject({ pulls: 1, apps: 1 });
 });
 
 test("an unknown or malformed version is 404", async () => {

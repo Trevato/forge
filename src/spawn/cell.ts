@@ -20,8 +20,12 @@ import { childEnv, freePort } from "../apps/process.ts";
 import { childDirOf } from "../actions/spawn.ts";
 import { openBeatDoor, parentLocal, type BeatDoor } from "./beat-door.ts";
 import { hostedPlacement, parentOrigin, childPublicUrl, type BodyStore, type Placement } from "./placement.ts";
-import { SIZES, type Size } from "./sizes.ts";
-import { childModelHosts, childRegistryHosts } from "../core/capacity.ts";
+import { SIZE_IO, SIZES, type Size } from "./sizes.ts";
+import { floorRefusal } from "./disk_floor.ts";
+import { CGROUP_DIR_ENV, SIZE_ENV } from "./usage.ts";
+import { childModelHosts, childPaymentHosts, childRegistryHosts } from "../core/capacity.ts";
+import { liveChildDisk, type ChildDisk } from "./disk_mount.ts";
+import { oneAtATime, sourcesFor, startFirstThatWorks, useTree, type CodeSource } from "./own_code.ts";
 
 export const CELL_PREFIX = "cell-";
 export const ownsBody = (bodyId: string): boolean => bodyId.startsWith(CELL_PREFIX);
@@ -85,6 +89,9 @@ function alive(pid: number): boolean {
   }
 }
 
+/** A forge started within this long is not put to sleep by the idle sweep (#11155). */
+export const NEW_FORGE_MS = 10 * 60_000;
+
 /** After a child fails to start, requests are answered 503 at once for this long. */
 export const START_BACKOFF_MS = 30_000;
 
@@ -111,14 +118,28 @@ export function cellSpecFor(input: {
   size: Size;
   port: number;
   label: string;
+  /** The child's name: its cell's hostname. */
+  name?: string;
   /** The model provider hosts an admin let children reach (`children.modelEgress`); none by default. */
   modelHosts?: readonly string[];
   /** The package registry an admin let children reach (`children.registryEgress`); none by default. */
   registryHosts?: readonly string[];
+  /** The payment hosts children may reach (`children.paymentEgress`): a ceiling only an app declaring the host passes. */
+  paymentHosts?: readonly string[];
+  /**
+   * The child's writable space as found (`spawn/disk_mount.ts`). A filesystem
+   * of its own is named among the binds by its real path (bwrap binds
+   * recursively, and `openCell` binds a path once), so a data directory
+   * reached through a symlink still writes to it; with none, the cell is
+   * what it always was.
+   */
+  disk?: ChildDisk;
+  /** A checked copy of the child's own forge code, when it runs that (`own_code.ts`); the parent's code is revealed either way, for its dependencies. */
+  ownRoot?: string;
 }): CellSpec {
   return {
     dir: input.dir,
-    writable: [],
+    writable: input.disk?.own === true ? [input.disk.path] : [],
     home: join(input.dir, ".home"),
     // The parent's data and home are what a child must not see: the home holds
     // the parent crew's sessions and model login, and the child runs as the
@@ -126,8 +147,8 @@ export function cellSpecFor(input: {
     // data and is bound back, deepest last.
     hide: [input.parentDataDir, input.parentHome ?? process.env["HOME"] ?? "", tmpdir()].filter((path) => path !== ""),
     // The forge's own code may live under the parent's data (a release checkout).
-    reveal: [CODE],
-    egress: [...(input.modelHosts ?? []), ...(input.registryHosts ?? [])],
+    reveal: input.ownRoot === undefined ? [CODE] : [CODE, input.ownRoot],
+    egress: [...(input.modelHosts ?? []), ...(input.registryHosts ?? []), ...(input.paymentHosts ?? [])],
     // A child's cell is held to this list whatever cells.egress says: report
     // mode is for apps still declaring hosts, not for a whole forge.
     egressMode: "enforce",
@@ -140,19 +161,30 @@ export function cellSpecFor(input: {
     // A forge is busy in bursts (a check's shards, an install): the kernel
     // holds it to its cores; the watch stopping it killed the check with it.
     cpuQuota: true,
+    // Its disk bandwidth too, on the data volume: one child's install
+    // cannot starve the forge's database of the disk (#10854).
+    io: SIZE_IO[input.size],
     listen: input.port,
     label: input.label,
+    // Its shell's prompt names the child, never the parent's pod (#10850).
+    hostname: input.name,
   };
 }
 
-/** The child forge's environment: short, explicit, and its own. */
-export function cellEnv(input: { port: number; dataDir: string; url: string; parentPort?: number }): Record<string, string> {
+/**
+ * The child forge's environment: short, explicit, and its own. Its size and
+ * its cgroup's directory (when the kernel holds the caps) let it read its own
+ * use against its size (`selfUse`, `spawn/usage.ts`; #10853).
+ */
+export function cellEnv(input: { port: number; dataDir: string; url: string; parentPort?: number; size?: Size; cgroupDir?: string }): Record<string, string> {
   const env = childEnv({
     PORT: String(input.port),
     FORGE_HOST: "127.0.0.1",
     FORGE_APP_URL: input.url,
     FORGE_APP_DATA: input.dataDir,
     NODE_ENV: "production",
+    ...(input.size === undefined ? {} : { [SIZE_ENV]: input.size }),
+    ...(input.cgroupDir === undefined ? {} : { [CGROUP_DIR_ENV]: input.cgroupDir }),
     ...(input.parentPort === undefined ? {} : { FORGE_PARENT_LOCAL: parentLocal(input.parentPort) }),
   });
   delete env["USER"];
@@ -200,10 +232,38 @@ export function cellChildren(parent: App): CellChildren {
   return r;
 }
 
-async function answers(port: number, gone: Promise<unknown>): Promise<boolean> {
+/** Starts a child and resolves once it answers; undefined (with `fail` told why) when it does not. */
+export type Launcher = (input: { bodyId: string; name: string; size: Size }, fail: (why: string) => void) => Promise<CellChild | undefined>;
+
+/** Probes a starting child gets, 100 ms apart: about a minute for a slow first boot. */
+export const START_PROBES = 600;
+
+/** Whether a forge started at `startedAt` is still inside its first ten minutes at `now`. */
+export const isNewForge = (startedAt: number | undefined, now: number): boolean => startedAt !== undefined && now - startedAt < NEW_FORGE_MS;
+
+/**
+ * Wait for a just-spawned child to answer on `port`. One that never does is
+ * asked to go as a sleep is (SIGTERM first, `stopGently`), so a slow first
+ * boot is not also written down as a crash; `silent` hears it before the stop.
+ */
+export async function firstAnswer(
+  child: { readonly pid: number; readonly exited: Promise<unknown> },
+  port: number,
+  silent: () => void = () => {},
+  probes = START_PROBES,
+  graceMs = STOP_GRACE_MS,
+): Promise<boolean> {
+  if (await answers(port, child.exited, probes)) return true;
+  silent();
+  await stopGently(child, graceMs);
+  return false;
+}
+
+/** True once something answers on `port`; false when `gone` settles first or the probes run out. */
+export async function answers(port: number, gone: Promise<unknown>, probes = START_PROBES): Promise<boolean> {
   let over = false;
   void gone.then(() => (over = true));
-  for (let i = 0; i < 300 && !over; i++) {
+  for (let i = 0; i < probes && !over; i++) {
     try {
       await fetch(`http://127.0.0.1:${port}/`, { redirect: "manual", signal: AbortSignal.timeout(500) });
       return true;
@@ -214,42 +274,61 @@ async function answers(port: number, gone: Promise<unknown>): Promise<boolean> {
   return false;
 }
 
-function makeRegistry(parent: App): CellChildren {
-  const held = new Map<string, Held>();
+/**
+ * The cell a child forge is launched in, from what the parent holds now: its
+ * egress settings and its data directory as found (`liveChildDisk`), so a
+ * child with a filesystem of its own has it bound. `mountinfo` is this
+ * process's unless a test passes its own.
+ */
+export function launchSpecFor(
+  parent: App,
+  input: { readonly bodyId: string; readonly name: string; readonly size: Size },
+  at: { readonly port: number; readonly parentPort: number },
+  mountinfo?: string,
+  ownRoot?: string,
+): CellSpec {
+  return cellSpecFor({
+    dir: childDirOf(parent, input.bodyId),
+    parentDataDir: parent.config.dataDir,
+    parentUrl: parentOrigin(parent.config),
+    url: childPublicUrl(input.name, parentOrigin(parent.config)),
+    parentPort: at.parentPort,
+    size: input.size,
+    port: at.port,
+    label: `forge:${input.name}`,
+    name: input.name,
+    modelHosts: childModelHosts(parent.db),
+    registryHosts: childRegistryHosts(parent.db),
+    paymentHosts: childPaymentHosts(parent.db),
+    disk: liveChildDisk(parent.config.dataDir, input.bodyId, mountinfo),
+    ...(ownRoot === undefined ? {} : { ownRoot }),
+  });
+}
+
+/** A registry of its own, not the parent's: tests pass a launcher in place of a cell's. */
+export function makeRegistry(parent: App, launcher?: Launcher): CellChildren {
+  const held = new Map<string, CellChild>();
   const starting = new Map<string, Promise<CellChild | undefined>>();
   /** When a start last failed: a broken child is not relaunched on every request. */
   const failed = new Map<string, { at: number; why: string }>();
   /** Held once it answers, never before: a start in flight is in `starting`. */
   /** When a request last reached each running child, ms. */
   const seen = new Map<string, number>();
+  /** When each running child was started: a new forge is not slept in its first ten minutes. */
+  const startedAt = new Map<string, number>();
   /** Requests under way, by body id. */
   const busy = new Map<string, number>();
 
-  const launch = async (input: { bodyId: string; name: string; size: Size }): Promise<CellChild | undefined> => {
-    const cells = await cellsAvailable();
-    if (!cells.ok) {
-      parent.log.warn("child cell not started", { name: input.name, reason: cells.reason });
-      failed.set(input.bodyId, { at: Date.now(), why: cells.reason });
-      return undefined;
-    }
+  const failOf = (bodyId: string) => (why: string): void => void failed.set(bodyId, { at: Date.now(), why });
+  const startOn = async (input: { bodyId: string; name: string; size: Size }, source: CodeSource): Promise<{ child: CellChild } | { why: string }> => {
     const recent: string[] = [];
+    let why: string | undefined;
     const port = freePort();
     const dir = childDirOf(parent, input.bodyId);
     const url = childPublicUrl(input.name, parentOrigin(parent.config));
     const door = openBeatDoor(parent);
     const parentPort = door.port;
-    const spec = cellSpecFor({
-      dir,
-      parentDataDir: parent.config.dataDir,
-      parentUrl: parentOrigin(parent.config),
-      url,
-      parentPort,
-      size: input.size,
-      port,
-      label: `forge:${input.name}`,
-      modelHosts: childModelHosts(parent.db),
-      registryHosts: childRegistryHosts(parent.db),
-    });
+    const spec = launchSpecFor(parent, input, { port, parentPort }, undefined, source.kind === "parent" ? undefined : source.root);
     const heard = childLog((line) => parent.log.info("child forge", { name: input.name, line }));
     const log = (raw: string): void => {
       const line = plainLine(raw);
@@ -257,17 +336,20 @@ function makeRegistry(parent: App): CellChildren {
       if (recent.length > 5) recent.shift();
       heard(line);
     };
+    // Its tree is not pruned while this cell may read it.
+    const release = source.kind === "parent" ? () => {} : useTree(source.root);
     let cell: Cell;
     try {
       cell = openCell(spec, log);
     } catch (error) {
       door.close();
+      release();
       throw error;
     }
-    const command = `exec ${JSON.stringify(process.execPath)} ${JSON.stringify(MAIN)}`;
+    const command = `exec ${JSON.stringify(process.execPath)} ${JSON.stringify(source.main)}`;
     const proc = Bun.spawn(cell.argv(command), {
-      cwd: dirname(MAIN),
-      env: cell.env(cellEnv({ port, dataDir: dir, url, parentPort })),
+      cwd: dirname(source.main),
+      env: cell.env(cellEnv({ port, dataDir: dir, url, parentPort, size: input.size, ...(cell.cgroupDir === undefined ? {} : { cgroupDir: cell.cgroupDir }) })),
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
@@ -277,7 +359,7 @@ function makeRegistry(parent: App): CellChildren {
       if (why !== undefined) parent.log.warn("child forge stopped", { name: input.name, why });
       cell.close();
       door.close();
-      if (held.get(input.bodyId)?.proc === proc) held.delete(input.bodyId);
+      release();
       if (why !== undefined) recent.push(why);
       return code;
     });
@@ -285,15 +367,49 @@ function makeRegistry(parent: App): CellChildren {
     void drain(proc.stdout, log);
     void drain(proc.stderr, log);
     const child: Held = { ...input, port, limits: spec.limits, pid: proc.pid, exited, cell, proc, door };
-    if (!(await answers(port, exited))) {
-      const why = `its cell did not come up: ${recent.slice(-3).join(" | ") || "no output"}`.slice(0, 400);
+    const up = await firstAnswer(child, port, () => {
+      why = `its cell did not come up: ${recent.slice(-3).join(" | ") || "no output"}`.slice(0, 400);
       parent.log.warn("child forge did not answer", { name: input.name, why });
-      failed.set(input.bodyId, { at: Date.now(), why });
-      killTree(proc.pid);
+    });
+    return up ? { child } : { why: why ?? "its cell did not come up" };
+  };
+  const launchInCell: Launcher = async (input, fail) => {
+    // Below the disk floor no child cell starts, a sleeping one included (#10850).
+    const floor = floorRefusal(parent.config.dataDir);
+    if (floor !== undefined) {
+      parent.log.warn("child cell not started", { name: input.name, reason: floor });
+      fail(floor);
       return undefined;
     }
+    const cells = await cellsAvailable();
+    if (!cells.ok) {
+      parent.log.warn("child cell not started", { name: input.name, reason: cells.reason });
+      fail(cells.reason);
+      return undefined;
+    }
+    // The parent decides what the cell runs: its own code, the last that came up, or the parent's (`own_code.ts`).
+    const started = await oneAtATime(parent, input.name, async () => {
+      const sources = await sourcesFor(parent, { name: input.name, childDir: childDirOf(parent, input.bodyId) }, { main: MAIN, root: CODE });
+      return startFirstThatWorks(parent, input.name, sources, (source) => startOn(input, source));
+    });
+    if ("why" in started) {
+      fail(started.why);
+      return undefined;
+    }
+    return started.child;
+  };
+  const launch = async (input: { bodyId: string; name: string; size: Size }): Promise<CellChild | undefined> => {
+    const child = await (launcher ?? launchInCell)(input, failOf(input.bodyId));
+    if (child === undefined) return undefined;
     held.set(input.bodyId, child);
     seen.set(input.bodyId, Date.now());
+    startedAt.set(input.bodyId, Date.now());
+    void child.exited.then(() => {
+      if (held.get(input.bodyId) === child) {
+        held.delete(input.bodyId);
+        startedAt.delete(input.bodyId);
+      }
+    });
     return child;
   };
 
@@ -325,6 +441,7 @@ function makeRegistry(parent: App): CellChildren {
       const child = held.get(bodyId);
       if (child === undefined) return;
       held.delete(bodyId);
+      startedAt.delete(bodyId);
       await stopGently(child);
     },
     get: (bodyId) => held.get(bodyId),
@@ -347,6 +464,7 @@ function makeRegistry(parent: App): CellChildren {
     async sleepIdle(idleMs, now = Date.now()) {
       const asleep: string[] = [];
       for (const child of [...held.values()]) {
+        if (isNewForge(startedAt.get(child.bodyId), now)) continue;
         if (now - (seen.get(child.bodyId) ?? now) < idleMs || (busy.get(child.bodyId) ?? 0) > 0) continue;
         if (crewAtWork(childDirOf(parent, child.bodyId))) continue;
         asleep.push(child.name);
@@ -470,7 +588,7 @@ export async function forward(
 /**
  * Carry a websocket handshake to the child's loopback port: the child's side
  * is opened first, and only then is the visitor's answered, as `proxyApp`
- * does for an app (`apps/proxy.ts`). Frames then go through `appWebSocket`,
+ * does for an app (`apps/proxy.ts`). Frames then go through `appWebSocketWith`,
  * the forge's one pump. `undefined` means the request became a socket.
  */
 export async function forwardSocket(

@@ -29,7 +29,7 @@ describe("the first-login page of a spawned forge, in plain words", () => {
 
   test("the owner's first page has no jargon", async () => {
     const html = await (await fetch(url("/"), { headers: { cookie: owner } })).text();
-    expect(mainOf(html)).toContain("Your next steps");
+    expect(mainOf(html)).toContain("What do you want built?");
     expect(jargonIn(html)).toEqual([]);
   });
 
@@ -42,6 +42,14 @@ describe("the first-login page of a spawned forge, in plain words", () => {
     expect(res.status).toBe(303);
     const daily = (res.headers.get("set-cookie") ?? "").split(";")[0]!;
     const html = await (await fetch(url("/"), { headers: { cookie: daily } })).text();
+    expect(mainOf(html)).toContain("What do you want built?");
+    expect(jargonIn(html)).toEqual([]);
+  });
+
+  test("after the first tell, the steps card has no jargon either", async () => {
+    const told = await forge.post(owner, "/marias/bakery/tell", { text: "Add a weekly menu page." });
+    expect(told.status).toBeLessThan(400);
+    const html = await (await fetch(url("/"), { headers: { cookie: owner } })).text();
     expect(mainOf(html)).toContain("Your next steps");
     expect(jargonIn(html)).toEqual([]);
   });

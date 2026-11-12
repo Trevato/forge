@@ -7,16 +7,22 @@
  */
 
 import {
-  explore,
+  explorePage as readPage,
   exploreLine,
+  exploreCount,
+  exploreFiltered,
   exploreLineFrom,
   exploreParams,
   exploreNote,
   exploreSuggestion,
+  MAKE_IT_YOURS,
+  whyOf,
   readExploreLine,
   type ExploreQuery,
   type ExploreRow,
+  type WhySignal,
 } from "../../actions/explore.ts";
+import { frontWeights, type FrontWeights } from "../../core/front.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { activeEdgeToken, edgeLoginUrl } from "../../http/edge.ts";
@@ -36,14 +42,15 @@ const href = (query: ExploreQuery): string => {
  * read as a figure ("3085.9 h") that says nothing to a visitor. They still
  * weigh in the ranking (`core/front.ts`).
  */
-function numbers(row: ExploreRow): { apps: string; rest: Html } {
+function numbers(row: ExploreRow, said: WhySignal | undefined): { apps: string; rest: Html } {
   const n = row.numbers;
+  // What the row's reason already says is not said again beside it.
   const rest = [
-    n.forks > 0 ? `${n.forks} fork${n.forks === 1 ? "" : "s"}` : "",
-    n.likes > 0 ? `${n.likes} like${n.likes === 1 ? "" : "s"}` : "",
-    n.ships > 0 ? `${n.ships} shipped this month` : "",
+    n.forks > 0 && said !== "forks" ? `${n.forks} fork${n.forks === 1 ? "" : "s"}` : "",
+    n.likes > 0 && said !== "likes" ? `${n.likes} like${n.likes === 1 ? "" : "s"}` : "",
+    n.ships > 0 && said !== "ships" ? `${n.ships} shipped this month` : "",
   ];
-  const shipped = row.shippedAt === null ? null : html`shipped ${time(row.shippedAt)}`;
+  const shipped = row.shippedAt === null || said === "fresh" ? null : html`shipped ${time(row.shippedAt)}`;
   const restText = rest.filter((p) => p !== "").map((p) => html`${p}`);
   if (shipped !== null) restText.push(shipped);
   return {
@@ -52,12 +59,14 @@ function numbers(row: ExploreRow): { apps: string; rest: Html } {
   };
 }
 
-function rowHtml(row: ExploreRow, signedIn: boolean): Html {
-  const { apps, rest } = numbers(row);
+function rowHtml(row: ExploreRow, signedIn: boolean, query: ExploreQuery, now: number, weights: FrontWeights): Html {
+  const why = whyOf(row, query.sort, now, weights);
+  const { apps, rest } = numbers(row, why?.signal);
   // One tap from a person to their apps; with none, the count is plain text.
   const theirs = href({ kind: "app", sort: "score", text: "", archived: false, updated: "all", owner: row.name });
   const count = apps === "" ? html`` : row.numbers.apps > 0 ? html`<a href="${theirs}">${apps}</a>` : html`${apps}`;
   const parts = [
+    why === undefined ? html`` : why.signal === "fresh" && row.shippedAt !== null ? html`shipped ${time(row.shippedAt)}` : html`${why.text}`,
     row.description === "" ? html`` : html`${row.description}`,
     count,
     rest,
@@ -71,9 +80,9 @@ function rowHtml(row: ExploreRow, signedIn: boolean): Html {
           trail: signedIn
             ? html`<form method="post" action="/${row.repo.owner}/${row.repo.name}/make-it-yours" data-make-it-yours>
                 <input type="hidden" name="receipt" value="1" />
-                ${btn("Make it yours", { size: "sm", icon: "fork" })}
+                ${btn(MAKE_IT_YOURS.label, { size: "sm", icon: "fork" })}
               </form>`
-            : btn("Make it yours", {
+            : btn(MAKE_IT_YOURS.label, {
                 href: `/${row.repo.owner}/${row.repo.name}/make-it-yours?receipt=1`,
                 size: "sm",
                 icon: "fork",
@@ -137,6 +146,33 @@ function emptyState(ctx: Ctx, query: ExploreQuery): Html {
   });
 }
 
+/** What the filter's terms are, for a link that takes one away: the owner too, which `terms` leaves to the line. */
+function removable(query: ExploreQuery): { term: string; without: ExploreQuery }[] {
+  const out = terms(query).filter((t) => !t.term.startsWith("sort:"));
+  if (query.owner !== undefined) {
+    const { owner: _owner, ...rest } = query;
+    out.push({ term: `owner:${query.owner}`, without: rest });
+  }
+  return out;
+}
+
+/**
+ * How much is left, and the way back. A fixed-height line, so the list never
+ * moves. Unfiltered and empty it is silent: "Nothing public yet" says it.
+ * A miss names each filter that can be dropped, beside Clear filters.
+ */
+function countLine(query: ExploreQuery, total: number): Html {
+  const on = exploreFiltered(query);
+  if (total === 0 && !on) return html``;
+  const drops =
+    total === 0
+      ? removable(query).map((t) => html` · <a href="${href(t.without)}">Drop ${shorten(t.term)}</a>`)
+      : [];
+  return html`<span class="muted" role="status" data-hits>${exploreCount(query, total)}${drops}${
+    on ? html` · <a href="/explore" data-clear-filters>Clear filters</a>` : html``
+  }</span>`;
+}
+
 // GET /explore
 export async function explorePage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -145,9 +181,18 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
   const note = exploreNote(unknown);
   const suggestion = exploreSuggestion(line);
   const ranking = performance.now();
-  const rows = await explore(ctx.app, ctx.auth.user, query);
-  notePhase(ctx.request, "rank", performance.now() - ranking);
+  // A cursor that is not one for this query (junk, over-long, another sort) shows the first page.
+  const asked = ctx.url.searchParams.get("cursor");
+  const after = asked === null ? null : await readPage(ctx.app, ctx.auth.user, query, asked);
+  const returned = asked !== null && after === null;
+  const page0 = after ?? (await readPage(ctx.app, ctx.auth.user, query, null));
+  const here = href(query);
+  const rows = page0?.items ?? [];
+  const more = page0?.nextCursor ?? null;
+  const weights = frontWeights(ctx.app.db);
+  notePhase(ctx.request, "read", performance.now() - ranking);
   const rendering = performance.now();
+  const now = Date.now();
   const kinds = [
     { label: "All", kind: "all" as const },
     { label: "Apps", kind: "app" as const },
@@ -172,7 +217,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
     { label: "This month", updated: "30d" as const },
   ];
   const body = html`<div data-explore>${pageHead("Explore", {
-      sub: "Apps and their makers, ranked by forks, ships, use and how lately — the numbers on every row.",
+      sub: "Apps and their makers, ranked by forks, ships, use and recency.",
     })}
     <form method="get" action="/explore" class="bar mb">
       <input
@@ -187,6 +232,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
       />
       ${btn("Go", { size: "sm" })}
     </form>
+    ${returned ? html`<p class="muted mb" role="status">That page link is not one for this list, so this is the first page.</p>` : html``}
     ${note === "" ? html`` : html`<p class="muted mb" role="status">${note}${
           suggestion === undefined
             ? html``
@@ -223,16 +269,19 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
         aria-pressed="${query.archived ? "true" : "false"}"
         >Show archived</a
       >
+      ${countLine(query, page0?.total ?? 0)}
     </div>
     ${rows.length === 0
       ? emptyState(ctx, query)
-      : card(html`<ul class="list">${rows.map((r) => rowHtml(r, ctx.auth.user !== undefined))}</ul>`, {
+      : card(html`<ul class="list">${rows.map((r) => rowHtml(r, ctx.auth.user !== undefined, query, now, weights))}</ul>`, {
           pad: false,
           extra: "bare",
-        })}</div>`;
-  const drawn = page({ ctx, title: "Explore", body });
-  // An unknown filter is a 422 here as on the API and the MCP; the page still draws the note and the results.
-  const response = unknown.length === 0 ? drawn : new Response(drawn.body, { status: 422, headers: drawn.headers });
+        })}${more === null
+        ? html``
+        : html`<div class="explore-more">${btn("More results", { href: `${here}${here.includes("?") ? "&" : "?"}cursor=${encodeURIComponent(more)}`, variant: "outline", extra: "explore-more-link" })}</div>`}</div>`;
+  const drawn = page({ ctx, title: "Explore", body, feed: { href: "/explore.atom", title: "Explore" } });
+  // An unknown filter is a 400 here as on the API and the MCP; the page still draws the note and the results.
+  const response = unknown.length === 0 ? drawn : new Response(drawn.body, { status: 400, headers: drawn.headers });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
 }

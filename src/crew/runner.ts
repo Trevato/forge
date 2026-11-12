@@ -87,6 +87,7 @@ import {
   checkSummary,
   claimRun,
   finishRun,
+  getRun,
   lastAgentRun,
   noteRunProgress,
   setRunBase,
@@ -120,6 +121,7 @@ import { createLog, redactValues } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { holdLease } from "../runs/lease.ts";
 import { appendRunLog, readRunLog } from "../runs/log.ts";
+import { cancelledLine } from "../runs/cancelled.ts";
 import {
   branchFor,
   issueOfBranch,
@@ -153,6 +155,7 @@ import { laterGate } from "./later.ts";
 import { MERGES_CLEAN_NOW, mergesCleanNow } from "./clean_now.ts";
 import { handedLimbs } from "./handed_limbs.ts";
 import { parkedTwice } from "./parks.ts";
+import { budgetLimit, budgetVerdict, cutOffBy, isOwnForge, NO_ACCOUNT_SAID, NO_KEY_SAID } from "./forge_budget.ts";
 import { boxesOf, landedBoxes } from "./box_pass.ts";
 import { reviewRange } from "./review_range.ts";
 import { heldNow, stuckOf } from "./held.ts";
@@ -197,6 +200,7 @@ import {
   skipsFeedback,
 } from "./guard.ts";
 import { passportEnv } from "./passport_env.ts";
+import { fundedEnv } from "../spawn/funding.ts";
 
 const log = createLog("crew");
 
@@ -262,6 +266,21 @@ export function steerRun(app: App, runId: string, text: string): boolean {
     `you: ${text.replace(/\s*\n\s*/g, " ")}`,
   );
   return send(text);
+}
+
+/** What a refused run says: an org is named with the page where an admin grants it; a person keeps the plain words. */
+function noGrantSaid(app: App, ownerId: string, ownerName: string): string {
+  const db = app.db;
+  // A forge that is its owner's own, or a repository its admin owns, has no
+  // one else to ask: the key is theirs to add (#11515).
+  if (isOwnForge(app) || getUserById(db, ownerId)?.isAdmin === true)
+    return NO_KEY_SAID;
+  const org = db
+    .query<{ kind: string }, [string]>("SELECT kind FROM user WHERE id = ?1")
+    .get(ownerId)?.kind === "org";
+  return org
+    ? `the account \`${ownerName}\` has no model grant; an admin can grant one at /settings/accounts/${ownerName}`
+    : NO_ACCOUNT_SAID;
 }
 
 /**
@@ -397,16 +416,21 @@ export async function executeAgentRun(
   try {
     return await runClaimed(app, run, options, watch, began);
   } finally {
-    // The log's last line, on every path that started: where the time went.
+    // The log's last line, on every path that started: where the time went
+    // (and after it, for a run a person cancelled, who did).
     // A step an early return cut short still owns the time it held.
     if (began.inHarness) watch.lap("harness");
     if (began.inWrapUp) watch.lap("wrap-up");
-    if (began.claimed)
+    if (began.claimed) {
       appendRunLog(
         app.config.dataDir,
         run.id,
         watch.line("run ended", "the run started"),
       );
+      // A run a person cancelled says so, and who, after it (#11229).
+      const cancelled = cancelledLine(getRun(app.db, run.id));
+      if (cancelled !== undefined) appendRunLog(app.config.dataDir, run.id, cancelled);
+    }
   }
 }
 
@@ -1313,7 +1337,12 @@ async function work(
     };
     // What this run may spend at most; on a budgeted account the pick
     // reserves it (or what is left, if less) against the account's budget.
-    const ownBudget = agent.budgetUsd > 0 ? agent.budgetUsd : options.budgetUsd;
+    const ownBudget =
+      agent.budgetUsd > 0
+        ? agent.budgetUsd
+        : isOwnForge(app)
+          ? budgetLimit(app.db, "run")
+          : options.budgetUsd;
     const picked = pickSubscription(
       app.db,
       app.config.dataDir,
@@ -1354,7 +1383,7 @@ async function work(
     ) {
       const said =
         grantCap === undefined
-          ? "This repository has no model account: ask an admin to grant one"
+          ? noGrantSaid(app, repo.ownerId, repo.ownerName)
           : "This month's model grant is spent: an admin can raise it";
       write(said);
       return { state: "failed", summary: said };
@@ -1382,6 +1411,12 @@ async function work(
       write(ceiling.said);
       return { state: "failed", summary: ceiling.said };
     }
+    // The owner's own limits on a forge that is theirs (`forge_budget.ts`).
+    const own = budgetVerdict(app, ceiling.capUsd ?? wanted, new Date(), run.id);
+    if (own !== undefined && !own.ok) {
+      write(own.said);
+      return { state: "failed", summary: own.said };
+    }
     meter.ceilingOwner = repo.ownerId;
     if (picked.kind === "ready") {
       write(`subscription: ${picked.subscription.name}`);
@@ -1408,7 +1443,7 @@ async function work(
       FORGE_URL: options.forgeUrl,
       FORGE_TOKEN: token.token,
       ...passportEnv(app.config.dataDir),
-      ...credentialEnv(picked),
+      ...credentialEnv(picked, app.config.dataDir),
       ...grant.env,
       ...machineEnv(machine),
       ...(options.configDir === undefined
@@ -1418,7 +1453,7 @@ async function work(
     // The budget in two parts: the work, and a reserve for landing it. An
     // agent cut off mid-task otherwise leaves a tree the forge commits blind
     // and a pull whose description is the error.
-    const budget = Math.min(ceiling.capUsd ?? Infinity, wanted);
+    const budget = Math.min(ceiling.capUsd ?? Infinity, wanted, own?.ok === true ? own.capUsd : Infinity);
     const reserve = wrapUpReserve(budget);
     // Asked again for every invocation (`crew/sandbox.ts`): an agent made
     // since the last one is denied from this one on.
@@ -1857,7 +1892,9 @@ async function work(
       state: result.ok || landed.pushed ? "ok" : "failed",
       summary: outage
         ? `network unreachable after ${MAX_PAUSES} pauses; nothing to land (${result.reason})`
-        : landed.summary + (result.ok ? "" : ` (${result.reason})`),
+        : landed.summary +
+          (result.ok ? "" : ` (${result.reason})`) +
+          cutOffBy(app.db, own, stoppedAt !== undefined),
       resumesAt: limitLifts,
       sessionId: result.sessionId,
       costUsd: result.costUsd,
@@ -2340,8 +2377,12 @@ function redactResult<T extends { result: string }>(r: T): T {
  * the account has one), or — with nothing granted — whatever the forge
  * itself was started with.
  */
-export function credentialEnv(picked: Pick): Record<string, string> {
+export function credentialEnv(picked: Pick, dataDir?: string): Record<string, string> {
   if (picked.kind === "ready") return credentialEnvOf(picked);
+  // A forge its parent funds (#10484): with no account of its own, the crew calls the model through the parent.
+  // "none" reaches here only under an owner's grant (an org's, #10991), which is the forge's account too.
+  const lent = (picked.kind === "env" || picked.kind === "none") && dataDir !== undefined ? fundedEnv(dataDir) : undefined;
+  if (lent !== undefined) return lent;
   const own: Record<string, string> = {};
   for (const name of [
     "ANTHROPIC_API_KEY",

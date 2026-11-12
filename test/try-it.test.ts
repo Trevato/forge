@@ -26,6 +26,39 @@ test("a Try line answers it; a thin one does not", () => {
   expect(tryItProblems(changes, ["Fix b\n\nTry: it"])).toHaveLength(1);
 });
 
+test("a hollow Try line is no line, and the feed, view and cli dirs are surfaces", () => {
+  const changes = [ch("M", "src/feed/a.ts")];
+  expect(tryItProblems(changes, ["Fix\n\nTry: n/a, internal change only"])).toHaveLength(1);
+  expect(tryItProblems(changes, ["Fix\n\nTry: did not run it on the preview"])).toHaveLength(1);
+  expect(tryItProblems(changes, ["Fix\n\nTry: open / on the preview and see the new row"])).toEqual([]);
+  expect(surfaceChanged([ch("M", "src/view/a.ts"), ch("A", "src/cli/b.ts")])).toHaveLength(2);
+});
+
+test("a legitimate Try line is never mistaken for a hollow one", () => {
+  const changes = [ch("M", "src/feed/a.ts")];
+  for (const line of [
+    "Try: todo list: open /todos on the preview",
+    "Try: todo list page, open /todos",
+    "Try: nothing-found state: open /x on the preview",
+    "Try: see diff view at /review on the preview",
+    "Try: none-selected state: open /x and press j",
+  ])
+    expect(tryItProblems(changes, [`Fix\n\n${line}`])).toEqual([]);
+});
+
+test("each Try line is judged alone: a real one wins over a hollow one, and other lines are not read", () => {
+  const changes = [ch("M", "src/feed/a.ts")];
+  expect(tryItProblems(changes, ["Fix\n\nTry: open /x on the preview and see the row\nTry: n/a"])).toEqual([]);
+  expect(tryItProblems(changes, ["Fix\n\nTry: open /x on the preview and see the row\nI did nothing else here."])).toEqual([]);
+  expect(tryItProblems(changes, ["Fix\n\nnothing to try here, honestly\nTry: n/a"])).toHaveLength(1);
+});
+
+test("every surface dir is a surface", () => {
+  for (const d of ["actions", "web", "http", "tui", "feed", "view", "cli", "boards", "search", "display", "story", "devices"])
+    expect(surfaceChanged([ch("M", `src/${d}/x.ts`)])).toEqual([`src/${d}/x.ts`]);
+  expect(surfaceChanged([ch("M", "src/kernel/x.ts")])).toEqual([]);
+});
+
 test("a pull that changes no surface is never asked", () => {
   expect(tryItProblems([ch("M", "src/core/x.ts")], ["Fix x"])).toEqual([]);
 });

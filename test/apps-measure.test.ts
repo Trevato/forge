@@ -17,6 +17,7 @@ import { appVisitors } from "../src/actions/apps.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { appVitals, recordAppVital } from "../src/apps/vitals.ts";
+import { clearRelayWaits, noteRelayWait } from "../src/apps/relay_wait.ts";
 import { deleteApp, getAppByRepo } from "../src/core/apps.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -173,6 +174,25 @@ describe("a report through the proxy", () => {
     const asAlice = await get(createToken(app.db, owner.id, "r", "ro").token);
     expect(await asAlice.json()).toMatchObject({ vitals: { today: 1 } });
     expect(((await (await get(createToken(app.db, owner.id, "r2", "ro").token)).json()) as { vitals: { loadDays: unknown[] } }).vitals.loadDays).toHaveLength(30);
+  });
+
+  test("the API's vitals carry the slowest relayed wait and whose it was (#10858)", async () => {
+    const owner = (await import("../src/core/users.ts")).getUserByName(app.db, "alice")!;
+    const get = async () =>
+      (await (
+        await fetch(`${servers.url}/api/v1/repos/alice/notes/app`, {
+          headers: { authorization: `Bearer ${createToken(app.db, owner.id, "wait", "ro").token}` },
+        })
+      ).json()) as { vitals: Record<string, unknown> };
+    clearRelayWaits();
+    expect((await get()).vitals).not.toHaveProperty("wait");
+    // 820 ms to headers, 600 ms of it the forge's loop: the forge's wait.
+    noteRelayWait(ids.notes!, 820, 600);
+    try {
+      expect((await get()).vitals.wait).toMatchObject({ ttfbMs: 820, lagMs: 600, forge: true });
+    } finally {
+      clearRelayWaits();
+    }
   });
 
   test("a sealed pull's preview refuses an anonymous report and stores nothing", async () => {

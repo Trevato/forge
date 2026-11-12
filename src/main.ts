@@ -4,6 +4,8 @@
  * environment-only — a handful of variables, all with sane defaults.
  */
 
+import { sweepEntitlements } from "./billing/sync.ts";
+import { sweepStarts } from "./actions/start_sweep.ts";
 import { scanNightly } from "./checks/scan.ts";
 import { nightlyDue } from "./checks/scan_store.ts";
 import { runModelReview } from "./actions/model_review.ts";
@@ -18,6 +20,8 @@ import { parentUrlProblem } from "./core/parent_releases.ts";
 import { releaseEnv } from "./release/env.ts";
 import { createApp } from "./app.ts";
 import { readOnlyFrom } from "./http/read_only.ts";
+import { warmDisplays } from "./display/known.ts";
+import { warmSearch } from "./search/warm.ts";
 import { warmFlow } from "./system/flow_cache.ts";
 import { backfillCarried } from "./core/carried.ts";
 import { refreshCatalogQuietly } from "./packs/catalog.ts";
@@ -28,6 +32,7 @@ import { offerStartingBoards } from "./actions/boards.ts";
 import { syncAllPillars } from "./actions/pillars.ts";
 import { bootHostedChildren, childAwake } from "./spawn/host.ts";
 import { stopCellChildren } from "./spawn/cell.ts";
+import { backfillChildren } from "./spawn/forge_code_backfill.ts";
 import { firstBoot } from "./spawn/first-boot.ts";
 import { previewIdentityKey } from "./spawn/preview-owner.ts";
 import { PREVIEW_ADMIN, seedPreview } from "./spawn/preview-seed.ts";
@@ -55,9 +60,11 @@ import { VERIFY_EVERY_MS } from "./checks/verify.ts";
 import { RED_HOLD_MS } from "./checks/red_main.ts";
 import { stopQueue } from "./checks/queue.ts";
 import { startLooks } from "./looks/service.ts";
+import { startMaintain } from "./maintain/runner.ts";
 import { startMirrorOut } from "./origins/mirror-out.ts";
 import { startMirrorPulls } from "./origins/mirror-pulls.ts";
 import { startProbes } from "./contract/probes.ts";
+import { startRoutines } from "./crew/routines.ts";
 import { startNightly } from "./nightly/service.ts";
 import { startSnapshots } from "./snapshot/service.ts";
 import { resolveDestination } from "./snapshot/destination.ts";
@@ -103,7 +110,7 @@ import { watchStalls } from "./kernel/loop_lag.ts";
 import { startPerfWatcher, TICK_MS } from "./perf/duty.ts";
 import { during } from "./perf/jobs.ts";
 import { stallLine } from "./perf/loop.ts";
-import { bootStall, gitRecord, loopWatch, perfRecord } from "./perf/live.ts";
+import { bootStall, gitRecord, lagMinutes, loopWatch, perfRecord, stallBlame } from "./perf/live.ts";
 import { timeStatements } from "./kernel/slow_sql.ts";
 import { waitForPeer } from "./runs/peer.ts";
 import { closeStaleSessions } from "./machines/shell.ts";
@@ -235,8 +242,11 @@ if (parentProblem !== null) {
 const loopLog = createLog("loop");
 watchStalls(loopLog, undefined, undefined, undefined, (late, at) => {
   bootStall.note(late, at);
+  lagMinutes.note(late, at);
   const stall = loopWatch.stalled(late, at);
-  if (stall !== null) loopLog.warn(stallLine(stall));
+  if (stall === null) return;
+  loopLog.warn(stallLine(stall));
+  stallBlame.note(stall);
 });
 
 const previewKey = previewIdentityKey(process.env);
@@ -440,6 +450,12 @@ if (apps && presence) warmBehind(app.log, presence, () => apps.startingCount());
 void backfillCarried(app.db, app.reposRoot).catch((error) =>
   app.log.error("could not backfill what deploys carried", { error: String(error) }),
 );
+// Children born before each came with its own source get it (#10989).
+void backfillChildren(app)
+  .then((done) => {
+    if (Object.keys(done).length > 0) app.log.info("forge-code backfill", { done: JSON.stringify(done) });
+  })
+  .catch((error) => app.log.error("could not backfill children's forge code", { error: String(error) }));
 // A forge still draining on this database keeps writing for its gates and
 // runs; starting ours beside it stalls the listener behind its write lock
 // (#6957). The listener answers meanwhile; a signal now stops what is up.
@@ -488,6 +504,8 @@ const mirrorPulls = startMirrorPulls(app);
 // The look: a picture of every environment that comes up green, taken
 // through this forge's own listener.
 const looks = appsOn ? startLooks(app, { localUrl: servers.url }) : undefined;
+// Maintenance duties (src/maintain): each runs on its interval and leaves a row.
+const maintain = startMaintain(app);
 // Is it so: the forge knocks on every door of an app with a contract after
 // each production deploy and once a night, and compares with the table.
 const probes = apps === undefined ? undefined : startProbes(app, apps);
@@ -556,6 +574,7 @@ if (crew !== undefined) {
     signal: conversationsStop.signal,
   };
   configureConversation(app, conversation);
+  startRoutines(app, conversationsStop.signal);
   for (const turn of resumeInterrupted(app, conversation))
     turn.catch((error: unknown) => app.log.error("resumed conversation turn crashed", { error: String(error) }));
 }
@@ -564,6 +583,10 @@ if (crew !== undefined) {
 void bootHostedChildren(app);
 // The pipeline answer is filled in slices behind the listener, so no read computes it (#8978).
 void warmFlow(app);
+// Every repository's display read behind the listener, so /displays never pays the cold read (#11007).
+void warmDisplays(app).catch(() => undefined);
+// The release probe's search, grepped once behind the listener so the first visit reads the cache (#11059).
+void warmSearch(app);
 // A spawned child's first boot: its direction, opened once for its planner
 // (spawn/first-boot.ts). A forge that was not spawned is untouched.
 await firstBoot(app);
@@ -671,6 +694,13 @@ const followTimer = setInterval(
   60_000,
 );
 const staleTimer = setInterval(() => void during("asks", tickAsks), 120_000);
+// Accounts an agent started and nobody claimed sleep after a week and are
+// archived after a month (`actions/start_sweep.ts`, #10912): hourly, and on boot.
+const startsTimer = setInterval(() => during("starts", () => void sweepStarts(app)), 3_600_000);
+during("starts", () => void sweepStarts(app));
+// Every paid entitlement is re-read from Stripe once a day, so a missed webhook heals (#11247).
+const entitlementTimer = setInterval(() => void during("entitlements", () => sweepEntitlements(app)), 86_400_000);
+void during("entitlements", () => sweepEntitlements(app));
 void during("asks", tickAsks);
 
 // Every start is counted, and one that follows a process that never said
@@ -898,6 +928,8 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
   clearInterval(reachTimer);
   clearInterval(syncTimer);
   clearInterval(staleTimer);
+  clearInterval(startsTimer);
+  clearInterval(entitlementTimer);
   clearInterval(followTimer);
   stopClogTick();
   stopKeeper();
@@ -930,6 +962,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
     mirrorOut(),
     mirrorPulls(),
     looks?.stop(),
+    maintain.stop(),
     probes?.stop(),
     nightly?.stop(),
     snapshots.stop(),

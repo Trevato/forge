@@ -476,15 +476,19 @@ describe("the pill's keyboard and touch behaviour", () => {
 
 
     test("on a preview with a repo the pull line links to the pull; otherwise it is plain text", () => {
-      const a = tree({ app: "notes", repo: "alice/notes", pull: "12" }).lines.find((l) => l.textContent === "Preview of pull #12")!;
+      const a = tree({ app: "notes", repo: "alice/notes", pull: "12" }).lines.find((l) => l.textContent === "preview \u00b7 #12")!;
       expect(a.tag).toBe("a");
       expect(a.href).toBe("https://forge.test/alice/notes/pulls/12");
       expect(a.style.cssText).toContain("min-height:44px");
       const prod = tree({ app: "notes", repo: "alice/notes", env: "production", pull: "12" });
-      expect(prod.lines.some((l) => l.textContent.includes("Preview"))).toBe(false);
+      expect(prod.lines.some((l) => l.textContent.startsWith("preview \u00b7"))).toBe(false);
+      expect(prod.lines.some((l) => l.textContent === "production")).toBe(true);
+      // An unknown environment with no pull draws no environment line at all.
+      const unknown = tree({ app: "notes", repo: "alice/notes", env: "staging" });
+      expect(unknown.lines.some((l) => l.textContent === "production" || l.textContent.startsWith("preview"))).toBe(false);
       for (const bad of [{ pull: "12x" }, { pull: "../1" }, { pull: "1234567890" }, { repo: "" }]) {
         const t = tree({ app: "notes", repo: "alice/notes", pull: "12", ...bad });
-        const l = t.lines.find((x) => x.textContent.startsWith("Preview of pull"))!;
+        const l = t.lines.find((x) => x.textContent.startsWith("preview \u00b7"))!;
         expect(l.tag === "a").toBe(false);
       }
     });

@@ -112,6 +112,8 @@ which line it stops at.
 - **key** — restoring the secret key, opened with the passphrase. Likely the
   passphrase is missing or wrong. Check `FORGE_SNAPSHOT_PASSPHRASE`.
 
+Replacing a leaked `secret.key`: docs/features/rotate-secret-key.md.
+
 ## What a snapshot does NOT hold
 
 - Sealed values, unless the passphrase was set: they stay sealed and are set

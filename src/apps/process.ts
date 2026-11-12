@@ -19,10 +19,12 @@ import { isReservedAppEnvName } from "../core/app_env.ts";
 import { isFeatureVarName } from "./feature_env.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { endedLine, liveTree } from "../runs/ended.ts";
+import { CANCEL_GRACE_MS, graceKillLine } from "../runs/grace.ts";
 import { spellings, stripForgeDirs } from "../runs/paths.ts";
 import { seconds } from "./timing.ts";
 import { toolchainUse, type ToolchainUse } from "./toolchain.ts";
 import { notFoundHint, shellCommand } from "./run_command.ts";
+import { floorRefusal } from "../spawn/disk_floor.ts";
 import { cellInstall, meteredInstall, prefillInstallCache, withLock } from "../checks/install.ts";
 import {
   commandPid,
@@ -332,6 +334,14 @@ export async function runStep(
     build?: Limits | undefined;
   },
 ): Promise<Result<void, string>> {
+  // Below the parent's disk floor no step's cell starts: it would write into the last room (#10873).
+  if (options.cell !== undefined) {
+    const floor = floorRefusal(options.cwd);
+    if (floor !== undefined) {
+      options.log(`${name} not started: ${floor}`);
+      return err(floor);
+    }
+  }
   options.log(`$ ${command}`);
   // A step is background work: the forge's own pages outrank it (#3319).
   const cell: Cell | undefined =
@@ -381,11 +391,24 @@ export async function runStep(
     kill();
     stopReading.abort();
   }, timeoutMs);
+  // A cancel asks first: SIGTERM to the group (or to the tree inside a
+  // cell), then SIGKILL once the grace has run out, if the leader is still
+  // up. While the grace lasts, the pipes stay open, so the step's last
+  // words reach the log.
+  let graceTimer: ReturnType<typeof setTimeout> | undefined;
   const onAbort = (): void => {
     why = `${name} cancelled`;
     options.log(endedLine(liveTree(proc.pid).length));
-    kill();
-    stopReading.abort();
+    if (cell === undefined) signalGroup(proc.pid, "SIGTERM");
+    else signalTree(proc.pid, "SIGTERM");
+    graceTimer = setTimeout(() => {
+      if (proc.exitCode === null && proc.signalCode === null) {
+        options.log(graceKillLine());
+        if (cell === undefined) signalGroup(proc.pid, "SIGKILL");
+        else killTree(proc.pid);
+      }
+      stopReading.abort();
+    }, CANCEL_GRACE_MS);
   };
   if (options.signal.aborted) onAbort();
   else options.signal.addEventListener("abort", onAbort, { once: true });
@@ -415,6 +438,7 @@ export async function runStep(
     return ok();
   } finally {
     clearTimeout(timer);
+    clearTimeout(graceTimer);
     options.signal.removeEventListener("abort", onAbort);
     cell?.close();
   }
@@ -535,6 +559,12 @@ export async function startProcess(
   input: StartInput,
 ): Promise<Result<StartedProcess, StartError>> {
   const { manifest, log } = input;
+  // Below the parent's disk floor no app starts, contained or not (#10873).
+  const floor = floorRefusal(input.dataDir);
+  if (floor !== undefined) {
+    log(`not started: ${floor}`);
+    return err({ stage: "start", message: floor });
+  }
   const scratch = input.cell?.home ?? input.dir;
   const used = toolchainUse(manifest.toolchain, scratch);
   if (!used.ok) return err({ stage: "install", message: used.error });

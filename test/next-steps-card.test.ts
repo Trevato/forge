@@ -5,9 +5,12 @@
  * second account.
  */
 
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createSession } from "../src/core/sessions.ts";
-import { createUser } from "../src/core/users.ts";
+import { nextStepsFor } from "../src/core/next-steps.ts";
+import { createUser, getUserByName } from "../src/core/users.ts";
 import { claimedForge, PASSWORD, type ClaimedForge } from "./helpers/claimed-forge.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { passkeyFields } from "./helpers/passkey.ts";
@@ -51,10 +54,116 @@ describe("the next-steps card of a spawned forge", () => {
   const keys = (html: string) =>
     [...cardOf(html).matchAll(/data-step="(\w+)"/g)].map((m) => m[1]);
 
+  test("the first screen leads with the tell box; the passkey form is not shown before it", async () => {
+    const home = await page(owner);
+    const main = home.slice(home.indexOf("<main"), home.indexOf("</main>"));
+    const forms = [...main.matchAll(/<form[^>]*>/g)].map((m) => m[0]);
+    expect(forms[0]).toContain('id="composer"');
+    expect(forms[0]).toContain('action="/tell"');
+    expect(forms.filter((f) => f.includes('action="/tell"')).length).toBe(1);
+    expect(main).not.toContain("/settings/everyday");
+    expect(main).not.toContain("There is no password");
+    expect(main.match(/data-variant="primary"/g)?.length).toBe(1);
+    expect(keys(home)).toEqual([]);
+  });
+
+  test("the first screen is one form whatever the crew runs on: a line, and for an admin a link, never the key field", async () => {
+    const file = join(forge.child.config.dataDir, "parent.json");
+    const before = readFileSync(file, "utf8");
+    const lines: Record<string, string> = {
+      "": "The crew cannot build until you",
+      credit: "included credit.",
+    };
+    try {
+      for (const [mode, said] of Object.entries(lines)) {
+        const doc = JSON.parse(before);
+        if (mode === "") delete doc.credit;
+        writeFileSync(file, JSON.stringify(doc));
+        const home = await page(owner);
+        const main = home.slice(home.indexOf("<main"), home.indexOf("</main>"));
+        expect(main).toContain(said);
+        if (mode === "") {
+          // No credit: the two ways forward, once, each a link.
+          expect(main).toContain('href="/settings/subscriptions"');
+          expect(main).toContain('href="/pricing"');
+          expect(main.match(/cannot build/g)?.length).toBe(1);
+        } else {
+          // Credit: the next step instead.
+          expect(main).toContain("Next:");
+          expect(main).toContain('href="/apps/new"');
+          expect(main).toContain('href="/new"');
+          expect(main).not.toContain("cannot build");
+        }
+        expect(main).not.toContain('action="/settings/crew/key"');
+        expect(main).not.toContain('type="password"');
+        expect([...main.matchAll(/<form[^>]*>/g)].length).toBe(1);
+        expect(main.match(/data-variant="primary"/g)?.length).toBe(1);
+      }
+    } finally {
+      writeFileSync(file, before);
+    }
+  });
+
+  test("with no credit a tell is kept and says the crew cannot build yet, with the way forward; with credit it does not", async () => {
+    const file = join(forge.child.config.dataDir, "parent.json");
+    const before = readFileSync(file, "utf8");
+    const flashOf = (res: Response) => decodeURIComponent(res.headers.get("set-cookie") ?? "");
+    try {
+      const doc = JSON.parse(before);
+      delete doc.credit;
+      writeFileSync(file, JSON.stringify(doc));
+      const none = await post(owner, "/marias/bakery/tell", { text: "Add a contact page." });
+      expect(none.status).toBeLessThan(400);
+      expect(flashOf(none)).toContain("cannot build until you add a model key or pick a plan");
+      expect(flashOf(none)).toContain("/settings/subscriptions");
+      writeFileSync(file, before);
+      const funded = await post(owner, "/marias/bakery/tell", { text: "Add a gallery page." });
+      expect(flashOf(funded)).not.toContain("cannot build");
+    } finally {
+      writeFileSync(file, before);
+    }
+  });
+
+  test("the first screen's own box (app=forge) with no credit says the crew cannot build, with the link; with credit it says Received", async () => {
+    const file = join(forge.child.config.dataDir, "parent.json");
+    const before = readFileSync(file, "utf8");
+    const flashOf = (res: Response) => decodeURIComponent(res.headers.get("set-cookie") ?? "");
+    try {
+      const doc = JSON.parse(before);
+      delete doc.credit;
+      writeFileSync(file, JSON.stringify(doc));
+      const none = await post(owner, "/tell", { app: "forge", text: "A shop for my bakery." });
+      expect(none.status).toBeLessThan(400);
+      expect(flashOf(none)).toContain("cannot build until you add a model key or pick a plan");
+      expect(flashOf(none)).toContain("/settings/subscriptions");
+      writeFileSync(file, before);
+      const funded = await post(owner, "/tell", { app: "forge", text: "A shop for my bakery." });
+      expect(flashOf(funded)).toContain("Received.");
+      expect(flashOf(funded)).not.toContain("cannot build");
+    } finally {
+      writeFileSync(file, before);
+    }
+  });
+
+  test("/pricing answers, signed out, with the plans", async () => {
+    const res = await fetch(url("/pricing"));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('id="pricing"');
+  });
+
+  test("the tell box sends a tell, and the everyday offer appears once one exists", async () => {
+    const told = await post(owner, "/marias/bakery/tell", { text: "Add a weekly menu page." });
+    expect(told.status).toBeLessThan(400);
+    const home = await page(owner);
+    const main = home.slice(home.indexOf("<main"), home.indexOf("</main>"));
+    expect(main).toContain('action="/settings/everyday"');
+    expect(main).toContain("There is no password");
+  });
+
   test("the admin's first home carries exactly three steps, in order, none done", async () => {
     const home = await page(owner);
     expect(keys(home)).toEqual(["everyday", "apps", "tell"]);
-    expect(steps(home)).toEqual({ everyday: "no", apps: "no", tell: "no" });
+    expect(steps(home)).toEqual({ everyday: "no", apps: "no", tell: "yes" });
     const titles = ["Make your everyday account", "Open your apps", "Tell the crew something"];
     const at = titles.map((t) => cardOf(home).indexOf(t));
     expect(at.every((n) => n >= 0)).toBe(true);
@@ -80,7 +189,6 @@ describe("the next-steps card of a spawned forge", () => {
     const apps = [...card.matchAll(/href="(\/[^"#]+)"/g)].map((m) => m[1]!).filter((h) => h.startsWith("/marias/"));
     expect(apps).toContain("/marias/bakery");
     // Tell the crew: the card points at the composer, which must be on the page.
-    expect(card).toContain('href="#composer"');
     expect(home).toContain('id="composer"');
     // Make your everyday account: the form lives in the card, which posts to a route only (no GET page); settings answers.
     expect(card).toContain('action="/settings/everyday"');
@@ -120,8 +228,10 @@ describe("the next-steps card of a spawned forge", () => {
     });
     expect(res.status).toBe(303);
     const daily = (res.headers.get("set-cookie") ?? "").split(";")[0]!;
-    expect(steps(await page(owner)).everyday).toBe("yes");
-    expect(steps(await page(daily)).everyday).toBe("yes");
-    expect(keys(await page(owner))).toEqual(["everyday", "apps", "tell"]);
+    // The earlier tests told the crew and opened an app: with the account made, every step is done and the card is gone.
+    const user = getUserByName(forge.child.db, "maria")!;
+    expect((await nextStepsFor(forge.child, user))?.map((x) => x.done)).toEqual([true, true, true]);
+    expect(await page(owner)).not.toContain(CARD);
+    expect(await page(daily)).not.toContain(CARD);
   });
 });

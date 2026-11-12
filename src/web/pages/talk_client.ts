@@ -2,10 +2,34 @@
  * The /talk page's own stylesheet and script (#7652), kept apart from the
  * page so each is one idea. The script is static code, never built from
  * user text; every turn it draws arrives as markup the server escaped.
+ *
+ * Why the script is shaped as it is (kept here, out of the bytes it ships):
+ * - Copy buttons are drawn by the script, not the server: without the script
+ *   they would do nothing.
+ * - While a reply streams the composer stays open: Send queues the message,
+ *   Steer stops the answer and sends it at once, Stop only stops. Escape stops too.
+ * - Queued messages are drawn by the server (they are the same on every tab);
+ *   Cancel is its form, done in place.
+ * - Attachments are chosen, pasted or dropped; each is stored at once and shown
+ *   as a chip until it is sent or removed.
+ * - The pane's tabs (Chat / Preview on a phone; Preview, Code, Diff) are links
+ *   the server draws; the script follows them in place, so a reply streaming
+ *   beside the pane and the words in the composer are kept.
  */
 
 export const talkCss = /* css */ `
 .talk { display: grid; grid-template-rows: auto 1fr auto; gap: 0.75rem; max-width: min(48rem, 100%); margin: 0 auto; min-width: 0; }
+.talk-shell, .talk-pane { display: grid; gap: 0.75rem; min-width: 0; align-content: start; }
+.talk-frame { width: 100%; height: calc(100dvh - 12rem); border: 0; }
+@media (min-width: 64rem) {
+  .talk-shell { grid-template-columns: 14rem minmax(0, 1fr) minmax(0, 1.2fr); height: calc(100dvh - 7rem); }
+  .talk-tabs { display: none; }
+  .talk-side, .talk-pane, .talk { overflow-y: auto; max-height: 100%; max-width: none; margin: 0; }
+  .talk-pane { border-left: 1px solid var(--border); padding-left: 0.75rem; }
+}
+@media (max-width: 63.99rem) {
+  [data-pane]:not([data-pane="chat"]) :is(.talk, .talk-side), [data-pane="chat"] .talk-pane { display: none; }
+}
 .talk-log { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.625rem; min-width: 0; align-content: start; min-height: 40dvh; }
 .talk-turn { min-width: 0; max-width: 100%; overflow-wrap: anywhere; word-break: break-word; }
 .talk-turn p { margin: 0 0 8px; }
@@ -116,7 +140,6 @@ if (root) {
     try { await navigator.clipboard.writeText(src.textContent); c.textContent = "Copied"; say("Copied."); } catch (_) { say("Copy is not allowed here."); }
     setTimeout(() => { c.textContent = "Copy"; }, 1500);
   });
-  // Copy buttons are drawn here, not by the server: without the script they would do nothing.
   const decorate = (scope) => {
     scope.querySelectorAll(".talk-body pre:not([data-c])").forEach((pre) => {
       pre.dataset.c = "1";
@@ -147,8 +170,6 @@ if (root) {
       return false;
     }
   };
-  // While a reply streams the composer stays open: Send queues the message, Steer stops the
-  // answer and sends it at once, Stop only stops. Escape stops too.
   const action = form.querySelector(".bar button.btn:not([data-stop]):not([data-steer])");
   const stopBtn = form.querySelector("[data-stop]");
   const steerBtn = form.querySelector("[data-steer]");
@@ -170,7 +191,6 @@ if (root) {
   stopBtn.addEventListener("click", stop);
   steerBtn.addEventListener("click", () => form.requestSubmit(steerBtn));
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && answering) { e.preventDefault(); stop(); } });
-  // Queued messages are drawn by the server (they are the same on every tab); Cancel is its form, done in place.
   log.addEventListener("submit", async (e) => {
     const f = e.target.closest("form[data-unqueue]");
     if (!f) return;
@@ -209,6 +229,7 @@ if (root) {
     source.addEventListener("running", () => { dropActs(); mode(true); say("The forge is answering…"); });
     source.addEventListener("done", (e) => {
       mode(false); dropActs(); say(""); source.close(); source = null;
+      document.querySelectorAll("[data-frame]").forEach((f) => { f.src = f.src; });
       const o = JSON.parse(e.data), c = root.querySelector("[data-context]");
       for (const k of o.costs || []) { const li = document.getElementById(k.id); if (li && !li.querySelector(".talk-cost")) li.insertAdjacentHTML("beforeend", k.html); }
       if (o.context && c) { c.hidden = false; c.textContent = o.context; }
@@ -226,7 +247,6 @@ if (root) {
       else say("Lost the connection. Reload to see the rest.");
     };
   };
-  // Attachments are chosen, pasted or dropped here; each is stored at once and shown as a chip until it is sent or removed.
   const chips = form.querySelector("[data-chips]");
   const picker = form.querySelector("[data-pick]");
   const attachLabel = form.querySelector("[data-attach]");
@@ -334,5 +354,19 @@ if (root) {
   });
   toEnd(true);
   if (root.dataset.running === "1" && !paged) follow();
+  document.addEventListener("click", async (e) => {
+    const a = e.target.closest("[data-shell] :is(.talk-tabs, .talk-pane nav) a"), shell = a && a.closest("[data-shell]");
+    if (!a || e.metaKey || e.ctrlKey || e.shiftKey) return;
+    e.preventDefault();
+    const href = a.getAttribute("href");
+    a.parentNode.querySelectorAll("a").forEach((x) => x === a ? x.setAttribute("aria-current", "page") : x.removeAttribute("aria-current"));
+    if (a.closest(".talk-tabs")) { shell.dataset.pane = href.slice(6); return; }
+    try {
+      const t = document.createElement("template");
+      t.innerHTML = await (await fetch(href)).text();
+      const p = t.content.querySelector(".talk-pane");
+      if (p) shell.querySelector(".talk-pane").replaceWith(p);
+    } catch (_) { say("Could not load that; no connection."); }
+  });
 }
 `;

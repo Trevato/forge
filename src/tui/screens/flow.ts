@@ -16,11 +16,13 @@
  * then how long each main has gone unverified after landing (`flow/verified.ts`, #7786);
  * then one line for the full-suite report's open issues (`checks/report.ts`, #7780);
  * the red batches the queue named (`flow/culprits.ts`, #7639, as MCP `flow` carries them as `redBatches`);
+ * the clog sentence, the test failing on many pulls and the pulls on the same files (`flow/clog_view.ts`, #11454, an admin's);
  * last, the duplicate lines (`duplicateLines`).
  * Read-only; Enter, Esc or q closes it.
  */
 
 import type { Database } from "bun:sqlite";
+import { doctorRuns, type DoctorRun } from "../../checks/doctor.ts";
 import { recentGates, type KeptResult } from "../../checks/gate_result.ts";
 import { reportLine } from "../../checks/report.ts";
 import { HOLDS } from "../../crew/held.ts";
@@ -32,9 +34,10 @@ import { keeperLine, type KeeperAsk, type KeeperRead } from "../../flow/keeper.t
 import { verifiedSays, type VerifiedRow } from "../../flow/verified.ts";
 import { conflictedSays, rebaseLaneSays } from "../../flow/conflicted.ts";
 import { IDLE_LIMIT, type IdlePull } from "../../flow/idle_pulls.ts";
+import { MERGE_QUEUE_HELP } from "../../flow/help.ts";
 import { pileSays } from "../../flow/pile.ts";
 import { panelFigures } from "../../flow/panel_cache.ts";
-import { readPipeline, readStepStats, STAGE_LABEL, statWords, verdict } from "../../flow/pipeline.ts";
+import { readPipeline, readStepStats, STAGE_HOLDS, STAGE_LABEL, statWords, verdict } from "../../flow/pipeline.ts";
 import { parkedSays } from "../../flow/parked.ts";
 import { firedAlarms } from "../../flow/alarms.ts";
 import { readVitals, vitalsFor, vitalsLine } from "../../flow/vitals.ts";
@@ -42,6 +45,7 @@ import type { LeadTime } from "../../flow/lead_time.ts";
 import { buildYieldSays } from "../../flow/build_yield.ts";
 import { reviewLatencySays } from "../../flow/review_latency.ts";
 import type { Opener } from "../../flow/openers.ts";
+import { clogViewLines, readClogView } from "../../flow/clog_view.ts";
 import { clogLines, readClog } from "../../flow/clog_read.ts";
 import { readRepeats } from "../../flow/repeats.ts";
 import { readVerdicts } from "../../flow/culprits.ts";
@@ -56,6 +60,19 @@ import { dialog } from "../ui/widgets.ts";
 import { live } from "../../system/live.ts";
 import { confirmScreen } from "./common.ts";
 import { duplicateLines } from "./system.ts";
+import type { HandoverLists, Named } from "../../flow/handover_read.ts";
+
+/** The hand-over lists as dialog lines: only lists with rows; the rebase rows are numbered, and the number is the key that updates one. */
+export function handoverLines(l: HandoverLists, inner: number): string[] {
+  const list = (title: string, rows: readonly Named[], num = false): string[] =>
+    rows.length === 0 ? [] : ["", title, ...rows.map((n, i) => truncate(`  ${num ? `${String(i + 1)} ` : ""}${n.repo} #${String(n.number)}`, inner))];
+  const out = [
+    ...list("Handed to a person in the last 24 h:", l.handed),
+    ...list("One review round from a hand-over:", l.near),
+    ...list("Bring up to date first (press the number):", l.rebase, true),
+  ];
+  return out.length === 0 ? [] : ["", "Where the crew gives up", ...out.slice(1)];
+}
 
 const WIDTH = 64;
 
@@ -74,6 +91,8 @@ export function flowLines(
   verified?: readonly VerifiedRow[],
   /** The keeper's cause and last act (`readKeeper`, already cut to what the reader may see). */
   keeper?: KeeperRead,
+  /** Where the backup outcome files are kept; without it the off-box backup alarm cannot be read (the terminal passes the app's). */
+  dataDir: string | null = null,
 ): string[] {
   const stages = readPipeline(db, now);
   const flow = readThroughput(db, stages.map((s) => s.key), now);
@@ -100,7 +119,8 @@ export function flowLines(
     "",
     ...wrap(vitalsLine(vitalsFor(readVitals(db, now, agent !== undefined), agent === undefined)), inner),
     ...(agent === undefined ? clogLines(readClog(db, now), now.getTime()).flatMap((l) => wrap(l, inner)) : []),
-    ...firedAlarms(db, now, { publicOnly: agent !== undefined, ceilingUsd }).flatMap((a) => wrap(a.says, inner)),
+    ...(agent === undefined ? clogViewLines(readClogView(db, now), inner, wrap) : []),
+    ...firedAlarms(db, now, { publicOnly: agent !== undefined, ceilingUsd, dataDir }).flatMap((a) => wrap(a.says, inner)),
     "",
     ...wrap(parkedSays(fig.parked), inner),
     "",
@@ -110,6 +130,7 @@ export function flowLines(
     ...wrap(leadTimeSays(fig.lead), inner),
     ...wrap(buildYieldSays(fig.yielded), inner),
     ...wrap(reviewLatencySays(fig.latency), inner),
+    ...(fig.declined.says === "" ? [] : wrap(fig.declined.says, inner)),
     ...openerLines(fig.openers, inner),
     "",
     `${pad("Out", 12)} ${pad("last hour", 9, "right")} ${pad("24 h", 5, "right")}`,
@@ -129,6 +150,7 @@ export function flowLines(
           return [
             `${pad(truncate(q.repo, 15), 15)} ${pad(String(q.queued), 6, "right")} ${pad(String(q.gating), 6, "right")} ${pad(String(q.gates), 5, "right")} ${pad(String(q.landedHour), 9, "right")} ${pad(q.approvedToLanded === null ? "—" : String(q.approvedToLanded), 12, "right")}`,
             ...gateLines(id === undefined ? [] : recentGates(db, id, GATES_SHOWN), now.getTime(), inner),
+            ...doctorLines(id === undefined ? [] : doctorRuns(db, id, DOCTOR_SHOWN), now.getTime(), inner),
           ];
         })),
     ...(red.length === 0
@@ -150,6 +172,10 @@ export function flowLines(
     ...wrap(reportLine(db), inner),
     "",
     ...duplicateLines(dups, inner),
+    "",
+    "Help (the web's /boards?help):",
+    ...wrap(`Stages: ${stages.map((x) => `${STAGE_LABEL[x.key]}: ${STAGE_HOLDS[x.key]}`).join("; ")}.`, inner),
+    ...wrap(`Merge queue: ${MERGE_QUEUE_HELP}`, inner),
   ];
 }
 
@@ -205,6 +231,17 @@ export function gateLines(gates: readonly KeptResult[], now: number, inner: numb
         ? ""
         : ` · ${first.name}${first.file === undefined ? "" : ` (${first.file})`}${first.flaky ? " flaky" : ""}`;
     return truncate(`  ${pulls} ${STATE_WORD[g.state]} · ${ago(Date.parse(g.finishedAt), now)}${test}`, inner);
+  });
+}
+
+/** The doctor's acts shown under a repository's gates. */
+const DOCTOR_SHOWN = 3;
+
+/** One indented line per batch-doctor act (#7555), newest first: `doctor #14 held · functional · how long ago · the error line`; none when it has not acted. */
+export function doctorLines(runs: readonly DoctorRun[], now: number, inner: number): string[] {
+  return runs.map((r) => {
+    const pull = r.sealed || r.culprit === null ? "a sealed pull" : `#${r.culprit}`;
+    return truncate(`  doctor ${pull} ${r.action} · ${r.class} · ${ago(Date.parse(r.at), now)}${r.probe === "" ? "" : ` · ${r.probe}`}`, inner);
   });
 }
 
@@ -267,14 +304,26 @@ export function flowScreen(
   lines: readonly string[],
   /** The keeper's open question (a site admin's); `answer` presses its one button and says what happened. */
   keeper?: { ask: KeeperAsk; answer: () => { done: boolean; message: string } },
+  /** The hand-over lists (a person-admin's): read when the screen opens; a digit presses that rebase row's update, as `updateSubmit` does. */
+  handover?: { read: () => Promise<HandoverLists>; update: (n: Named) => { ok: boolean; says: string } },
 ): Screen {
+  let lists: HandoverLists | undefined;
   const self: Screen = {
     title: "Flow",
-    keys: [binding(["enter", "esc", "q"], "close"), ...(keeper?.ask ? [binding(["l"], keeper.ask.button.toLowerCase())] : [])],
+    keys: [
+      binding(["enter", "esc", "q"], "close"),
+      ...(keeper?.ask ? [binding(["l"], keeper.ask.button.toLowerCase())] : []),
+      ...(handover ? [binding(["1", "2", "3", "4", "5"], "bring a pull up to date")] : []),
+    ],
+    async load() {
+      if (handover === undefined) return;
+      lists = await handover.read();
+      ctx.invalidate();
+    },
     render(area, s) {
       const buttons = dialog(s, area, ctx.theme.c, {
         title: "Flow",
-        body: lines,
+        body: [...lines, ...(lists ? handoverLines(lists, WIDTH - 8) : [])],
         actions: [{ label: "Close" }],
         selected: 0,
         width: WIDTH,
@@ -283,7 +332,13 @@ export function flowScreen(
     },
     key(e) {
       if (e.key === "enter" || e.key === "esc" || e.key === "q") ctx.pop();
-      else if (e.key === "l" && keeper)
+      else if (handover && lists && /^[1-5]$/.test(e.key)) {
+        const n = lists.rebase[Number(e.key) - 1];
+        if (n !== undefined) {
+          const r = handover.update(n);
+          ctx.toast(r.says, r.ok ? "success" : "danger");
+        }
+      } else if (e.key === "l" && keeper)
         ctx.push(
           confirmScreen(ctx, self, {
             title: keeper.ask.button,

@@ -5,6 +5,7 @@ export const route: Route = {
   path: `${REPO}/pulls/{number}/checks`,
   summary: "Ask for a check again at the pull's head as it is now (rw scope, a writer's); answers 202 with { run }",
   auth: true,
+  role: "member",
   status: 202,
   reply: { run: "object" },
   refusals: {

@@ -6,4 +6,5 @@ export const route: Route = {
   summary:
     "Queue one signed `ping` delivery { kind, repo, hook, at } to this webhook only (admin scope); answers 202 { id } of the delivery, 429 past 3 a minute per hook",
   auth: true,
+  role: "member",
 };

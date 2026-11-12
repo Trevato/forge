@@ -3,7 +3,9 @@
  * sparkline row per series (`FLEET_GRAPH_MAX_SERIES` at most, the rest folded
  * as "N others"), over the last 24 hours by hour or 14 days by day, `w`
  * toggling. It reads `readFleetGraph`, the page's, CSV's and API's own data,
- * so who may see spend is that action's rule, never this screen's.
+ * so who may see spend is that action's rule, never this screen's. Opened
+ * from a repository's Usage it holds that repository alone, as the web's
+ * Graph button on an app's page does (`/fleet/graph?repo=`, #578).
  */
 
 import { FLEET_GRAPH_MAX_SERIES, readFleetGraph, type FleetWindow, type FleetWindowName } from "../../actions/fleet-graph.ts";
@@ -52,13 +54,13 @@ export function fleetLines(w: FleetWindow, labels: readonly string[], width: num
   return { runs: rows("runs", (n) => `${n} ${n === 1 ? "run" : "runs"}`), spend: rows("costUsd", usd) };
 }
 
-export function fleetGraphScreen(f: Session, ctx: Ctx): Screen {
+export function fleetGraphScreen(f: Session, ctx: Ctx, asked: readonly string[] | null = null): Screen {
   let which: FleetWindowName = "24h";
   // Read once when the screen opens; a frame or a key never re-runs the ledger scan.
-  const graph = f.user === undefined ? undefined : readFleetGraph(f.app, f.user, null);
+  const graph = f.user === undefined ? undefined : readFleetGraph(f.app, f.user, asked);
   const labels = (graph?.series ?? []).slice(0, FLEET_GRAPH_MAX_SERIES).map((s) => s.label);
   return {
-    title: "Fleet graph",
+    title: asked === null ? "Fleet graph" : `Fleet graph · ${asked.join(", ")}`,
     keys: [binding(["w"], "24 h / 14 d")],
     render(area, s) {
       const c = ctx.theme.c;

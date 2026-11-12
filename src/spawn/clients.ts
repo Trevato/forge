@@ -9,16 +9,20 @@
  * list never waits on, or fails for, one forge that is down.
  */
 
+import { liveChildDisk, readMountinfo, type ChildDisk } from "./disk_mount.ts";
 import type { App } from "../app.ts";
 import { childDirOf, listChildren, statusTokenOf, type Child } from "../actions/spawn.ts";
 import { timingSafeEqual } from "node:crypto";
 import { sha256 } from "../kernel/hash.ts";
+import { creditView, usdWords } from "./credit.ts";
 import type { ChildAppsSummary } from "./child-apps.ts";
 import { childAwake, hostedChildApps } from "./host.ts";
 import { hasAdmin, linkOf, spawnedOrg, type LinkInfo, type LinkState } from "./claim.ts";
 import { lastHeard, type Beat } from "./heartbeat.ts";
 import { reachOf, reachWords, type ChildReach } from "./reach.ts";
 import type { Size } from "./sizes.ts";
+import { firstScreenLine } from "../core/next-steps.ts";
+import { lapseFor } from "../billing/lapse.ts";
 import { forgeUse, type ForgeUse } from "./usage.ts";
 
 /** What a spawned forge says about itself to anyone: nothing more. */
@@ -50,16 +54,25 @@ export interface ClientRow {
   readonly link: LinkInfo | null;
   /** Why this forge needs its owner now; null when it does not. */
   readonly attention: Attention | null;
+  /** Where the sent link stands, in four plain states; null while it is being made or the child did not answer. */
+  readonly stage: Stage | null;
   /** Dollars the child's crew spent today, from its last heartbeat; null when it has not said. */
   readonly spendTodayUsd: number | null;
   /** The child's forge cap in dollars; null when none or unsaid. */
   readonly ceilingUsd: number | null;
+  /** The dollars this forge lends it on its own model credential, and what it has spent; null when none is lent. */
+  readonly creditCapUsd?: number | null;
+  readonly creditSpentUsd?: number | null;
   /** Its size (`spawn/sizes.ts`). */
   readonly size: Size;
   /** What it uses against that size: its cell's reading, or "shared" when it is hosted here. */
   readonly use: ForgeUse;
+  /** Whether its data is a filesystem of its own, and that filesystem's size (`spawn/disk_mount.ts`). */
+  readonly disk: ChildDisk;
   /** When its last heartbeat reached this forge, ISO; null when none has. */
   readonly lastHeartbeatAt: string | null;
+  /** Epoch ms its grace for a late payment ends; absent when it is not in grace. */
+  readonly graceUntil?: number;
   /** The first step its person has not taken, read from the child's heartbeat. */
   readonly nextStep: NextStep;
 }
@@ -137,7 +150,8 @@ function linkOfBody(v: unknown): LinkInfo | null {
   if (typeof v !== "object" || v === null) return null;
   const { state, revokedAt } = v as Record<string, unknown>;
   if (!LINK_STATES.includes(state as LinkState)) return null;
-  return { state: state as LinkState, revokedAt: typeof revokedAt === "string" && !Number.isNaN(Date.parse(revokedAt)) ? revokedAt : null };
+  const iso = (x: unknown): string | null => (typeof x === "string" && !Number.isNaN(Date.parse(x)) ? x : null);
+  return { state: state as LinkState, revokedAt: iso(revokedAt), usedAt: iso((v as Record<string, unknown>)["usedAt"]) };
 }
 
 async function probe(app: App, child: Child): Promise<ForgeState | undefined> {
@@ -216,6 +230,8 @@ export async function clientRows(app: App): Promise<ClientRow[]> {
     }),
   );
   const beats = await Promise.all(children.map((c) => lastHeard(app, c.name)));
+  // One read of the mount table for every row.
+  const mountinfo = children.length === 0 ? "" : readMountinfo();
   return orderRows(
     children.map((c, i) => ({
       name: c.name,
@@ -231,8 +247,11 @@ export async function clientRows(app: App): Promise<ClientRow[]> {
       reach: reachOf(app, c.name) ?? null,
       spendTodayUsd: beats[i]?.beat.spendTodayUsd ?? null,
       ceilingUsd: beats[i]?.beat.ceilingUsd ?? null,
+      ...creditView(app, c.name),
+      ...graceView(app, c.name, now),
       size: c.size,
       use: forgeUse(c, childDirOf(app, c.bodyId)),
+      disk: liveChildDisk(app.config.dataDir, c.bodyId, mountinfo),
       lastHeartbeatAt: beats[i] === undefined ? null : new Date(beats[i]!.receivedAt).toISOString(),
       link: states[i]?.link ?? null,
       nextStep: nextStepOf(states[i]?.claimed ?? null, beats[i]?.beat),
@@ -270,11 +289,57 @@ export function attentionOf(r: ClientRow, now: number): Attention | null {
   return null;
 }
 
+export type StageKey = "sent" | "opened" | "signedin" | "tell";
+
+/** Where a sent link stands, the time that changed, and whether it is time to send it again. */
+export interface Stage {
+  readonly key: StageKey;
+  /** The plain words, the same on the page, the terminal and the MCP answer. */
+  readonly words: string;
+  /** When it changed, ISO; null when the child did not say. */
+  readonly at: string | null;
+  /** True when the link has gone unopened for three days: the one action is to resend it. */
+  readonly resend: boolean;
+}
+
+export const STAGE_WORDS: Record<StageKey, string> = {
+  sent: "Sent",
+  opened: "Opened",
+  signedin: "Signed in",
+  tell: "Last tell",
+};
+
+export const STALE_WORDS = "Not opened in 3 days";
+
+/**
+ * Sent, opened, signed in, told: read from what is already kept (the
+ * ledger's send time, the link's spent time, the claim, the last tell in the
+ * child's heartbeat). The heartbeat carries only the latest tell, so the last stage says "Last tell", never "First".
+ */
+export function stageOf(r: Omit<ClientRow, "attention" | "stage">, now: number): Stage | null {
+  if (!r.made || r.claimed === null) return null;
+  const at = (...xs: (string | null | undefined)[]): string | null => xs.find((x) => typeof x === "string") ?? null;
+  const make = (key: StageKey, when: string | null, resend = false): Stage => ({
+    key,
+    words: resend ? STALE_WORDS : STAGE_WORDS[key],
+    at: when,
+    resend,
+  });
+  if (r.claimed) {
+    return r.nextStep.lastTellAt !== null
+      ? make("tell", r.nextStep.lastTellAt)
+      : make("signedin", at(r.link?.usedAt));
+  }
+  if (r.link?.state === "used") return make("opened", at(r.link.usedAt));
+  const sent = r.sentAt === null ? NaN : Date.parse(r.sentAt);
+  return make("sent", r.sentAt, !Number.isNaN(sent) && now - sent > UNCLAIMED_MS);
+}
+
 /** Rows that need the owner first, by reason; then by last activity, newest first. */
-export function orderRows(rows: readonly Omit<ClientRow, "attention">[], now: number): ClientRow[] {
+export function orderRows(rows: readonly Omit<ClientRow, "attention" | "stage">[], now: number): ClientRow[] {
   const tier = (a: Attention | null) => (a === null ? ATTENTION_ORDER.length : ATTENTION_ORDER.indexOf(a));
   return rows
-    .map((r) => ({ ...r, attention: attentionOf(r as ClientRow, now) }))
+    .map((r) => ({ ...r, attention: attentionOf(r as ClientRow, now), stage: stageOf(r as ClientRow, now) }))
     .sort(
       (a, b) =>
         tier(a.attention) - tier(b.attention) ||
@@ -297,6 +362,11 @@ export function claimState(r: ClientRow): keyof typeof CLAIM_WORDS {
   return r.claimed === null ? "unknown" : r.claimed ? "yes" : "no";
 }
 
+/** What the recipient will see first, while they have not claimed it; null once they have (the page and the terminal share it). */
+export function firstScreenOf(r: ClientRow): string | null {
+  return claimState(r) === "no" ? firstScreenLine(r.apps) : null;
+}
+
 /** "3 apps running", or which one is not and why; null when none are run here. */
 export function runningWords(r: ClientRow): string | null {
   const unreachable = reachWords(r.reach);
@@ -309,6 +379,11 @@ export function runningWords(r: ClientRow): string | null {
 }
 
 const money = (n: number): string => (Number.isInteger(n) ? String(n) : n.toFixed(2));
+
+/** "$3.20 of $200 lent"; null when this forge lends the child nothing. */
+export function creditWords(r: Pick<ClientRow, "creditCapUsd" | "creditSpentUsd">): string | null {
+  return r.creditCapUsd === null || r.creditCapUsd === undefined ? null : `${usdWords(r.creditSpentUsd ?? 0)} of ${usdWords(r.creditCapUsd)} lent`;
+}
 
 /**
  * "$3.20 of $10 today", with "ceiling reached" at the cap; `warn` from 80%.
@@ -323,4 +398,18 @@ export function spendWords(r: ClientRow): { words: string; warn: boolean } | nul
   return share >= 1
     ? { words: `${base} · ceiling reached`, warn: true }
     : { words: base, warn: share >= 0.8 };
+}
+
+/** "grace until 2026-11-18" for a forge whose payment is late, as /forges and the terminal say it; null otherwise. */
+export function graceWords(r: Pick<ClientRow, "graceUntil">): string | null {
+  return r.graceUntil === undefined ? null : `grace until ${new Date(r.graceUntil).toISOString().slice(0, 10)}`;
+}
+
+function graceView(app: App, forge: string, now: number): { graceUntil?: number } {
+  try {
+    const l = lapseFor(app.db, forge, now);
+    return l.state === "grace" ? { graceUntil: l.graceUntil } : {};
+  } catch {
+    return {};
+  }
 }

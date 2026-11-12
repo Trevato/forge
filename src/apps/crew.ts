@@ -11,7 +11,7 @@ import type { AppRecord } from "../core/apps.ts";
 import { mayDirectCrew } from "../crew/direct.ts";
 import { timePhase } from "../core/route_timing.ts";
 import { getIssue } from "../core/issues.ts";
-import { canRead, getRepoById } from "../core/repos.ts";
+import { canRead, canWrite, getRepoById } from "../core/repos.ts";
 import { workingAgentRuns } from "../core/runs.ts";
 import { mayView, mayViewId } from "../core/sealed.ts";
 import { getUserById, isActive } from "../core/users.ts";
@@ -91,4 +91,27 @@ export function tellLink(
   if (viewer === undefined || !isActive(viewer) || repo === undefined) return undefined;
   if (!canRead(db, repo, viewer) || !mayDirectCrew(db, repo, viewer)) return undefined;
   return new URL(`/${repo.ownerName}/${repo.name}/tell`, forgeUrl).href;
+}
+
+/**
+ * The forge's own "Make it yours" page for a public app, for a reader who is
+ * not on its crew: signed out they meet the page's sign-in, which returns to
+ * it. Nothing for a member of the repository, or when the app is not public.
+ * The viewer comes from the app's own grant, never from the client's word.
+ */
+export function yoursLink(
+  db: Database,
+  forgeUrl: string,
+  app: AppRecord,
+  viewerId: string | undefined,
+): string | undefined {
+  if (app.access !== "public") return undefined;
+  const repo = getRepoById(db, app.repoId);
+  if (repo === undefined || repo.visibility !== "public") return undefined;
+  if (viewerId !== undefined) {
+    const viewer = getUserById(db, viewerId);
+    if (viewer === undefined || !isActive(viewer)) return undefined;
+    if (canWrite(db, repo, viewer)) return undefined;
+  }
+  return new URL(`/${repo.ownerName}/${repo.name}/make-it-yours`, forgeUrl).href;
 }

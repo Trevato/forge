@@ -15,17 +15,34 @@ import { newestLive, secondsWords } from "../../keeper/landed.ts";
 import { dayHeading, dayOf, daysJs, shippedToday } from "../../release/days.ts";
 import { chosenRepo, readLandings, type Landing, type Landings } from "../../release/landings.ts";
 import { gather, plainTitle, type Gathered } from "../../story/gather.ts";
+import { milestoneHref, progress } from "./milestones.ts";
+import { nearMilestones, nearWords, type Near } from "./milestones_near.ts";
 import { liveRegionsJs } from "../client.ts";
-import { pageHead } from "../chrome.ts";
+import { pageHead, repoBase } from "../chrome.ts";
 import { changelogTag, holds } from "../feeds.ts";
-import { json } from "../../http/respond.ts";
+import { EDGE_FRESH, EDGE_STALE, EDGE_VARY } from "../../http/edge_cache.ts";
+import { json, securityFloor } from "../../http/respond.ts";
+import { readFlash } from "../flash.ts";
 import { shippedAnswer } from "../../release/answer.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { badge, row, seg, sha, time } from "../ui.ts";
+import { badge, row, seg, sha, time, timeAgo } from "../ui.ts";
 
 /** Where the live client looks: a merge lands, or production serves a commit. */
 const LIVE = "pull.merged,app.serving";
+/** How close each open milestone is, above the waves: absent when there are none. */
+function nearBlock(base: string, near: readonly Near[]): Html | null {
+  if (near.length === 0) return null;
+  return html`<ul class="list setting-list" id="milestones-near" aria-label="Open milestones">${near.map((m) =>
+    row({
+      nav: true,
+      title: html`<a href="${milestoneHref(base, m.number)}">${m.name}</a>`,
+      meta: progress(m.done, m.total, `${m.name}: ${m.done} of ${m.total} done`),
+      trail: html`${nearWords(m)}`,
+    }),
+  )}</ul>`;
+}
+
 /** Other repositories offered as filters: more than this is a search, not a chip. */
 const FILTERS = 6;
 
@@ -187,13 +204,23 @@ function renderRegion(
 export async function changelogPage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const landed = await timePhaseAsync(ctx.request, "releases", () => readLandings(ctx.app));
-  const rendering = performance.now();
   const ownRepo = landed.own === undefined ? undefined : getRepo(ctx.app.db, ...(landed.own.split("/") as [string, string]));
   const readable = ownRepo !== undefined && canRead(ctx.app.db, ownRepo, ctx.auth.user);
   const { read, bets, bet } = withBets(ctx, landed, readable ? ownRepo : undefined);
+  // The forge's own repository, even before anything has landed in it.
+  const planned = nearMilestones(ctx.app, landed.own ?? ctx.app.config.forgeRepo, ctx.auth.user);
+  const near = planned?.near ?? [];
   const everything = [...read.onItsWay, ...read.live];
   const choice = chosenRepo(new URL(ctx.request.url).searchParams.get("repo"), everything, read.own);
   const others = [...new Set(everything.map((l) => l.repo))].filter((r) => r !== read.own).slice(0, FILTERS);
+  // The tag comes from what the page would say, before any of it is rendered:
+  // a match answers 304 without building the page.
+  const toLive = newestLive(ctx.app.db);
+  const flashed = readFlash(ctx.request) !== undefined;
+  const tag = flashed ? undefined : changelogTag(read.version, everything, [choice, bet, read.commit, read.live.map((l) => `${l.repo}#${l.number}`), readable, toLive ?? null, everything.map((l) => timeAgo(l.at)), new Date().toISOString().slice(0, 10), ctx.auth.user?.id ?? null, ctx.auth.user?.isAdmin === true, ctx.theme ?? null, near]);
+  const keep = tag === undefined ? undefined : cacheHeaders(ctx, tag);
+  if (keep !== undefined && keep.matched) return keep.response;
+  const rendering = performance.now();
   const filters = seg([
     ...(read.own === undefined ? [] : [{ label: "This forge", href: "/changelog", current: choice === read.own }]),
     { label: "Everything", href: "/changelog?repo=all", current: choice === "all" },
@@ -206,11 +233,37 @@ export async function changelogPage(ctx: Ctx): Promise<Response> {
           { label: "Every bet", href: "/changelog", current: bet === "" },
           ...bets.map((b) => ({ label: b, href: `/changelog?bet=${encodeURIComponent(b)}`, current: bet === b })),
         ]);
-  const body = html`${pageHead("Changelog", { sub: "What went live, as it happens." })}${filters}${betFilters}
-    <div id="shipped" data-live="${LIVE}" aria-live="polite">${shippedRegion(read, choice, new Date(), "UTC", newestLive(ctx.app.db), readable)}</div>`;
+  const body = html`${pageHead("Changelog", { sub: "What went live, as it happens." })}${nearBlock(planned === undefined ? "" : repoBase(planned.repo), near)}${filters}${betFilters}${read.own !== undefined && readable ? html`<p class="small"><a href="/${read.own}/waves" data-waves-link>Read it by wave</a></p>` : null}
+    <div id="shipped" data-live="${LIVE}" aria-live="polite">${shippedRegion(read, choice, new Date(), "UTC", toLive, readable)}</div>`;
   const response = page({ ctx, title: "Changelog", body, feed: { href: "/changelog.atom", title: "Changelog" }, json: { href: `/api/v1/changelog${choice === read.own ? "" : `?repo=${encodeURIComponent(choice)}`}`, title: "Changelog (JSON)" }, scriptJs: `${liveRegionsJs}\n${localDaysJs}` });
   notePhase(ctx.request, "render", performance.now() - rendering);
-  return response;
+  if (keep === undefined) return response;
+  const headers = new Headers(response.headers);
+  for (const [k, v] of keep.headers) headers.set(k, v);
+  return new Response(response.body, { status: response.status, headers });
+}
+
+/**
+ * What a tagged answer says about caching, and whether the reader already
+ * holds it. The tag is of what the page shows (release, rows, filter, each
+ * row's "5m ago" wording, who reads), so it dies when the page would change
+ * and not before. A match is a 304 without rendering. Only a request carrying
+ * no identity at all may be kept by a shared cache; any other answer is
+ * `private`. A page that shows a flash is never tagged (the caller skips it).
+ */
+function cacheHeaders(ctx: Ctx, etag: string): { matched: boolean; response: Response; headers: Headers } | undefined {
+  if (ctx.request.method !== "GET" && ctx.request.method !== "HEAD") return undefined;
+  const h = ctx.request.headers;
+  const anonymous = !h.has("cookie") && !h.has("authorization") && !h.has("x-plat-user") && !h.has("x-plat-edge-token") && ctx.auth.user === undefined;
+  const headers = new Headers({ etag });
+  if (anonymous) {
+    headers.set("cache-control", `public, max-age=0, s-maxage=${EDGE_FRESH}, stale-while-revalidate=${EDGE_STALE}`);
+    headers.set("vary", EDGE_VARY);
+  } else headers.set("cache-control", "private, no-cache");
+  const matched = holds(h.get("if-none-match"), etag);
+  // The 304 carries the floor headers; the stored copy keeps the CSP it came with.
+  const response = matched ? securityFloor(new Response(null, { status: 304, headers: new Headers(headers) })) : new Response(null);
+  return { matched, response, headers };
 }
 
 // GET /api/v1/changelog?repo=all|owner/name: the page's rows as JSON, public repositories only.

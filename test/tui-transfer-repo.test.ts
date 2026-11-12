@@ -69,10 +69,14 @@ function open(user: User, at: Repo, nested = false) {
 /** Open the delete prompt from the palette once its row has drawn. */
 async function prompt(h: ReturnType<typeof open>): Promise<void> {
   await h.feed(":", ..."Move this");
-  for (let i = 0; i < 100 && !h.text().includes("old links answer"); i++)
-    await new Promise<void>((r) => setTimeout(r, 10)), await h.feed();
-  if (!h.text().includes("old links answer")) throw new Error(`never came: still waiting while !h.text().includes("old links answer")`);
+  await until(h, () => h.text().includes("old links answer"), "the palette row");
   await h.feed("enter");
+}
+
+/** Wait, feeding nothing, until `done` holds: a loaded shard draws late, so give it 5 s. */
+async function until(h: ReturnType<typeof open>, done: () => boolean, what: string): Promise<void> {
+  for (let i = 0; i < 500 && !done(); i++) await new Promise<void>((r) => setTimeout(r, 10)), await h.feed();
+  if (!done()) throw new Error(`never came: ${what}`);
 }
 
 async function mkRepo(owner: string | undefined, name: string): Promise<Repo> {
@@ -118,6 +122,7 @@ describe("move a repository in the terminal", () => {
     await prompt(h);
     expect(h.text()).toContain("alice/wander");
     await h.feed(..."lab", "enter");
+    await until(h, () => h.text().includes("moved alice/wander"), "the move's receipt");
     expect(getRepoById(app.db, repo.id)?.ownerName).toBe("lab");
     expect(h.text()).toContain("moved alice/wander to lab/wander");
     h.stop();

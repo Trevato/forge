@@ -6,6 +6,7 @@ export const route: Route = {
   summary:
     "Sign in with a username and password: answers 201 with the account { id, username, displayName, isAdmin, commitEmail } and sets the HttpOnly forge_session cookie; refused from another origin with 403 forbidden",
   auth: false,
+  role: "anonymous",
   status: 201,
   body: { username: "string", password: "string" },
   refusals: {

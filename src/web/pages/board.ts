@@ -5,7 +5,9 @@
  * change cost over the week — each a live region that swaps itself when a
  * matching event lands. A site admin also gets two strips above them: the
  * forge's health, and each subscription's windows; whoever owns an app gets
- * a line for each thing its crew waits on them for. Nothing on it
+ * a line for each thing its crew waits on them for. A site admin's board
+ * opens on the money line: this month's cost, revenue and gap, and thirty
+ * days of them drawn (`studio/money_line.ts`). Nothing on it
  * needs a click, and everything on it links somewhere. It reads the same
  * tables as the studio and adds no state of its own — nor words: every
  * run, change and decision on it is worded by `runWord`/`pullWord`/
@@ -50,6 +52,7 @@ import {
 } from "../../core/subscriptions.ts";
 import { readSpend } from "../../actions/spend.ts";
 import { spendView } from "./spend.ts";
+import { narrowedGraphHref } from "../fleet-graph.ts";
 import type { HandContext } from "../../crew/handover.ts";
 import { forgeHealth, rolloutLine } from "../../kernel/guard.ts";
 import { coveredByVerdict, forgeVerdict, verdictLine } from "../../kernel/guard_verdict.ts";
@@ -104,6 +107,8 @@ import {
   tokenCount,
 } from "../ui.ts";
 import { noteLine } from "../studio/note.ts";
+import { readForgeMoney } from "../../actions/money.ts";
+import { forgeMoneyLine } from "../studio/money_line.ts";
 import { tellWord } from "../studio/tell.ts";
 import { voiceFor } from "../studio/voice.ts";
 import { repoDir } from "../../git/repos.ts";
@@ -264,6 +269,7 @@ export async function boardPage(ctx: Ctx): Promise<Response> {
   const repos = scope.repos;
   const wall = ctx.url.searchParams.has("wall");
   const forge = timePhase(rq, "forge", () => forgeNotes(ctx));
+  const money = timePhase(rq, "money", () => moneyStrip(ctx));
   const declined = timePhase(rq, "declined", () => declinedNotes(ctx, scope));
   const review = timePhase(rq, "review", () => reviewNotes(ctx, scope));
   const asks = timePhase(rq, "asks", () => asksStrip(ctx));
@@ -300,6 +306,7 @@ export async function boardPage(ctx: Ctx): Promise<Response> {
       >
       <time class="num small muted" id="board-clock"></time>
     </header>
+    ${money}
     ${boardNotes(forge, declined, review)}
     <div class="board-grid">
       ${workingNow} ${landedNow} ${decidedNow}
@@ -400,6 +407,16 @@ export function bigRedirect(ctx: Ctx): Response {
 }
 
 // ---- the forge ----
+
+/**
+ * The money line (#510): this month's cost, revenue and gap with thirty
+ * days drawn beside it, for whoever may read Settings → Economics. Nobody
+ * else pays for the reads.
+ */
+function moneyStrip(ctx: Ctx): Html | null {
+  const money = readForgeMoney(ctx.app, ctx.auth.user);
+  return money.ok ? forgeMoneyLine(money.value) : null;
+}
 
 /**
  * The forge's health as notes, for a site admin only: each thing that needs
@@ -506,9 +523,9 @@ function returnsStrip(ctx: Ctx, scope: BoardScope): Html | null {
   // The crew spends on every repository, app or not: the whole of the
   // viewer's own unless `?apps=` narrows the board.
   const apps = ctx.url.searchParams.get("apps");
-  const ids = apps
-    ? scope.repos.filter((r) => scope.ownerFacts.has(r.id)).map((r) => r.id)
-    : returnsRepos(ctx.app, user).map((r) => r.id);
+  // One list for the money and the graph's link, so the two never disagree.
+  const owned = apps ? scope.repos.filter((r) => scope.ownerFacts.has(r.id)) : [];
+  const ids = apps ? owned.map((r) => r.id) : returnsRepos(ctx.app, user).map((r) => r.id);
   if (ids.length === 0) return null;
   const now = Date.now();
   const r = tokenReturns(ctx.app.db, ids, {
@@ -518,7 +535,13 @@ function returnsStrip(ctx: Ctx, scope: BoardScope): Html | null {
   if (r.spent.runs === 0) return null;
   const ask = readThroughput(ctx.app.db, [], new Date(now)).medianAskToLiveMs;
   const href = `/board/returns${apps ? `?apps=${encodeURIComponent(apps)}` : ""}`;
-  return html`<a class="muted small" id="returns-line" href="${href}"
+  // The graph of the same money, narrowed as the board is (#578).
+  const graph = narrowedGraphHref(
+    apps !== null && apps !== "",
+    owned.map((r) => `${r.ownerName}/${r.name}`),
+  );
+  return html`<span id="returns"
+    ><a class="muted small" id="returns-line" href="${href}"
     >Tokens, ${ASKS_WINDOW_DAYS} days: <b>${usd(r.spent.usd)}</b> → <b>${r.landed}</b> landed
     ${r.onLanded.perChange.changes === 0
       ? null
@@ -527,6 +550,7 @@ function returnsStrip(ctx: Ctx, scope: BoardScope): Html | null {
     · <b>${usd(r.landedNothing.open.usd)}</b> still open${
       ask === null ? null : html` · median ask→live <b>${hoursSpan(ask)}</b> (24 h)`
     }</a
+    >${graph === null ? null : html`<a id="returns-graph" href="${graph}">Fleet graph</a>`}</span
   >`;
 }
 

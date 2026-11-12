@@ -168,6 +168,20 @@ unset FORGE_TOKEN
 
 **One person is locked out:** an admin tells them to use `/recover`, or turns the edge back on (Settings → Capacity) while the person adds a passkey, then runs the dry run again.
 
+## Another site embeds the forge's answers
+
+Every answer the forge writes carries `Cross-Origin-Resource-Policy: same-origin` (set by `securityFloor` in `src/http/respond.ts`). A browser then refuses to load a page, an API answer or an error into another site as an image, script or other no-cors subresource. Without it, another site could pull a signed-in person's private answer into its own process and read it with a Spectre-class attack.
+
+A short public set says `cross-origin` on purpose (`src/http/corp.ts`), because it is meant to be fetched from elsewhere and holds nothing private:
+
+- `/assets/*`, `/icons/*`, `/favicon.ico` and the apple-touch icons: the same bytes for everyone.
+- `/robots.txt`, `/llms.txt`, `/sitemap.xml`, `/manifest.webmanifest` and `/.well-known/*`: read by crawlers, agents and browsers.
+- Feeds (`*.atom`) and share cards (`/og/*`): read by feed readers and link previews. These are `cross-origin` only when the request carried no cookie or token. Asked for with a session, they may hold what only that person can see, so they stay `same-origin`. A cross-site embed sends no session cookie, because the cookie is `SameSite=Lax`.
+
+An error (status 400 or above) on a public path stays `same-origin`.
+
+**A link preview or feed reader breaks:** check the header with `curl -sI https://<forge>/og/site.png | grep -i cross-origin-resource`. It should say `cross-origin`. If a new public path needs it, add it to `src/http/corp.ts` and to `test/corp.test.ts`.
+
 ## After any of these
 
 Write down what happened, when and what you changed, in an issue on the forge once it's calm. Then check Settings → Security again. Each section shows when it was last checked.

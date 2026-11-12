@@ -245,7 +245,7 @@ describe("pages", () => {
     expect(cmd).toBeLessThan(page.indexOf("What it brings"));
     const list = await (await fetch(`${servers.url}/packs`)).text();
     expect(list).toContain('class="list"');
-    expect(list).not.toMatch(/class="card[" ]/);
+    expect(list).not.toMatch(/class="card[" ]/); // curated packs are a heading and rows, not cards (#11006)
     expect(list).toContain('class="row"');
   });
 });

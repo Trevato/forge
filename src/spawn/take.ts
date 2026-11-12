@@ -1,11 +1,12 @@
 /**
  * Taking the parent's code, for a forge that follows in `take-updates`
  * mode. Once the hourly fetch has put the parent's tip at
- * `refs/upstream/HEAD`, this puts a fast-forward, or a merge commit when git
- * merges the two without conflict, on one branch, `forge/take-updates`, and
+ * `refs/upstream/HEAD`, a fork the owner has not changed (its default branch
+ * is an ancestor of the parent's) is fast-forwarded in place. Otherwise this
+ * puts a merge commit, when git merges the two without conflict, on one branch, `forge/take-updates`, and
  * opens one pull from it into the default branch (or updates the one already
- * open). The fork's check runs on it like on any pull; a person merges it.
- * It never moves the default branch, and production follows that branch.
+ * open). The fork's check runs on it like on any pull.
+ * That pull never moves the default branch; a person merges it.
  * A conflict changes nothing; it opens (or finds) one issue naming the files.
  */
 
@@ -26,6 +27,7 @@ import type { ForgeLink } from "./chain.ts";
 /** What the last check did with the parent's new commits; absent when it did nothing. */
 export type Taken =
   | { readonly kind: "pull"; readonly number: number; readonly commits: number }
+  | { readonly kind: "forwarded"; readonly commits: number }
   | { readonly kind: "conflict"; readonly files: readonly string[]; readonly issue: number | null };
 
 export const takeTitle = (upstream: string): string => `Take updates from ${upstream}`;
@@ -119,6 +121,27 @@ export async function takeFromParent(app: App, link: ForgeLink): Promise<Taken |
   if (base === undefined || base === up) return undefined; // the parent has nothing we lack
   const count = await runGit(["rev-list", "--count", `${head}..${up}`], { cwd: dir });
   const commits = count.ok ? Number(count.value.trim()) || 0 : 0;
+
+  // A forge that takes updates and whose owner has not changed the repository:
+  // the parent's code is a pure fast-forward, with nothing of theirs to review it against.
+  // A forge that only tells (and is pressed to take) still gets the pull.
+  if (base === head && link.mode === "take-updates") {
+    const ref = `refs/heads/${branch}`;
+    // Compare-and-swap: a push to the branch since `head` was read wins, and the next check looks again.
+    if (!(await runGit(["update-ref", ref, up, head], { cwd: dir })).ok) return undefined;
+    app.bus.append({
+      kind: "push",
+      repoId: repo.id,
+      actorId: owner.id,
+      payload: { updates: [{ ref, oldOid: head, newOid: up }], followed: link.upstream },
+    });
+    app.bus.append({
+      kind: "forge.updates_taken",
+      repoId: repo.id,
+      payload: { repo: link.repo, upstream: link.upstream, from: head, to: up, commits, pull: null },
+    });
+    return { kind: "forwarded", commits };
+  }
 
   const had = await resolveOid(dir, `refs/heads/${TAKE_BRANCH}`);
   let to = up;

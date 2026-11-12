@@ -18,9 +18,11 @@ export const tool: Tool = {
       return good({ verdict: "none", says: "This forge has no snapshots to drill." });
     try {
       const d = await svc.drill();
-      return d.verdict === "green"
-        ? good({ verdict: "green", says: "The drill restored green." })
-        : good({ verdict: "red", failedStep: d.failedStep, says: `The drill failed at ${d.failedStep}.` });
+      const answer =
+        d.verdict === "green"
+          ? good({ verdict: "green", says: "The drill restored green." })
+          : good({ verdict: "red", failedStep: d.failedStep, says: `The drill failed at ${d.failedStep}.` });
+      return { ...answer, card: { at: d.at } };
     } catch (error) {
       return good({ verdict: "none", says: `The drill could not run: ${String(error)}` });
     }

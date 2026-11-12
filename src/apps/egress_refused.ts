@@ -11,6 +11,7 @@
  * which the proxy asks on every connection.
  */
 
+import { during } from "../perf/jobs.ts";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { isIP } from "node:net";
 import { join } from "node:path";
@@ -119,7 +120,7 @@ function save(dataDir: string, repoId: string, now: boolean): void {
   b.dirty = true;
   if (now) return flushBook(dataDir, repoId);
   if (b.timer !== undefined) return;
-  b.timer = setTimeout(() => flushBook(dataDir, repoId), FLUSH_MS);
+  b.timer = setTimeout(() => during("egress-refused-flush", () => flushBook(dataDir, repoId)), FLUSH_MS);
   b.timer.unref?.();
 }
 

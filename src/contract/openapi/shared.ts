@@ -12,12 +12,23 @@ export type QueryType = string | { readonly type: "integer"; readonly min?: numb
 /** A `limit` from 1 to `max`, the constant its handler uses; no `max` when the handler has no upper bound. */
 export const limitTo = (max?: number): QueryType => (max === undefined ? { type: "integer", min: 1 } : { type: "integer", min: 1, max });
 
+export type Role = "anonymous" | "member" | "admin";
+
 export interface Route {
   readonly method: "get" | "post" | "put" | "patch" | "delete";
   readonly path: string;
   readonly summary: string;
-  /** Whether it needs a token; reads of public things do not. */
+  /** Whether it takes a bearer token; reads of public things do not, nor do the routes a session or password alone may call. */
   readonly auth: boolean;
+  /**
+   * The account role that may call it, published as `x-role`: `anonymous` (no
+   * account at all; `auth` is false), `member` (any signed-in account, though the
+   * summary may add a token scope or a repository right, or say it takes a
+   * browser session or password and not a token, with `auth` false) or `admin`
+   * (a site admin only).
+   * Required, so a new route cannot leave it out.
+   */
+  readonly role: Role;
   /** A JSON body's fields, when it takes one. */
   readonly body?: Readonly<Record<string, string>>;
   /** The query parameters its handler reads, by name and type; an integer may carry the bounds its handler enforces. */

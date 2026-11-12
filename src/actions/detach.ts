@@ -16,6 +16,7 @@ import { detachFork, hasAlternates, repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireRepoAdmin } from "./access.ts";
+import { DETACH_STAYS, DETACH_STOPS } from "./detach_words.ts";
 
 const log = createLog("detach");
 
@@ -130,7 +131,7 @@ function failureLine(stderr: string): string {
 /** The plan in one sentence, for the terminal's confirm and the MCP. */
 export function detachPlanWords(plan: DetachPlan): string {
   const parent = plan.parent ?? "its parent";
-  return `${plan.borrows ? `Copies every object it borrows from ${parent} into its own store, drops the link, then forgets` : `Borrows nothing from ${parent}; forgets`} the parent: no updates to take, nothing to propose upstream. There is no undo.`;
+  return `${plan.borrows ? `Copies every object it borrows from ${parent} into its own store, drops the link, then forgets` : `Borrows nothing from ${parent}; forgets`} the parent. ${DETACH_STAYS} ${DETACH_STOPS} There is no undo.`;
 }
 
 /** Where a detach stands, in words; null when none is under way or failed. */

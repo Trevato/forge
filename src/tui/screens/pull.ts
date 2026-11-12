@@ -72,6 +72,7 @@ import { checkWords } from "../../checks/summary.ts";
 import { oneLine } from "../../checks/words.ts";
 import { resolveOid } from "../../git/merge.ts";
 import { nextOfPull, type Next } from "../../flow/next_actor.ts";
+import { landingLine } from "../../flow/landing_line.ts";
 import { stepLine, stepOfPull, type PathStep } from "../../flow/path.ts";
 import { fromKeptFork } from "../../core/landing_kind.ts";
 import { getPull, pullDir, variantSiblings, type MergePullError, type Pull } from "../../core/pulls.ts";
@@ -258,6 +259,8 @@ export function pullScreen(
   let next: Next | null = null;
   /** Which of check, review, land, live the pull is at; the page's step line. */
   let step: PathStep | null = null;
+  /** Where an approved open pull stands in the landing queue; the page's line under its path (#10860). */
+  let landing: string | null = null;
   /** Where each team the issue names stands; empty when it names none. */
   let teams: TeamVerdict[] = [];
   /** The named teams `mergePull` would refuse for (`team_review_required`), by name. */
@@ -410,6 +413,8 @@ export function pullScreen(
             },
             next,
           );
+    landing =
+      row === undefined || repo === undefined || repo.origin != null ? null : (landingLine(f.db, row, repo.id)?.says ?? null);
     checkProgress = runningProgress(f.app.config.dataDir, check);
     const spec =
       repo === undefined || !isApp
@@ -1237,7 +1242,7 @@ export function pullScreen(
         x1,
         head!.y + 1,
         truncate(
-          ` ${facts?.mergedAt != null ? "merged" : issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)}${guestWaiting() ? ` · ${repo !== undefined && crewFilters(repo) ? GUEST_NOTE_FILTERED : GUEST_NOTE}` : ""}${assignedText(issueRow, ctx.icons)}${facts?.proposal ? ` · ${proposedByText(facts.proposal)}` : ""}${hold === undefined ? "" : ` · held by ${hold.heldByName}: ${hold.why}`}${step === null ? "" : ` · step: ${stepLine(step)}`}${next === null ? "" : ` · next: ${next.who}, ${next.why}`}`,
+          ` ${facts?.mergedAt != null ? "merged" : issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)}${guestWaiting() ? ` · ${repo !== undefined && crewFilters(repo) ? GUEST_NOTE_FILTERED : GUEST_NOTE}` : ""}${assignedText(issueRow, ctx.icons)}${facts?.proposal ? ` · ${proposedByText(facts.proposal)}` : ""}${hold === undefined ? "" : ` · held by ${hold.heldByName}: ${hold.why}`}${step === null ? "" : ` · step: ${stepLine(step)}`}${landing === null ? "" : ` · ${landing}`}${next === null ? "" : ` · next: ${next.who}, ${next.why}`}`,
           Math.max(0, edge - x1),
         ),
         style(c.mutedFg, c.bg),

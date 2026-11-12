@@ -8,6 +8,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { detachJob, detachPlanWords } from "../src/actions/detach.ts";
+import { listEvents } from "../src/core/events.ts";
+import { eventVerb } from "../src/design/activity.ts";
 import { createRepo, forkRepo, type Repo } from "../src/core/repos.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { commitFiles } from "../src/git/write.ts";
@@ -83,3 +86,38 @@ test("the confirm page is a heading, a sentence and a form, not a box (#9860)", 
   expect(body).not.toContain('class="card');
   expect(body).toMatch(new RegExp(`<form method="post" action="${to}"`));
 });
+
+test("the plan words say what stays and what stops, for the terminal and the MCP (#11338)", () => {
+  for (const borrows of [true, false]) {
+    const words = detachPlanWords({ parent: "a/b", borrows, dryRun: true });
+    expect(words).toContain("The code and its history stay");
+    expect(words).toContain("Updates from the parent and offers to it stop.");
+  }
+});
+
+test("the confirm and the Danger zone say what stays and what stops; the history receipts the severing (#11338)", async () => {
+  const base = `/${fork.ownerName}/${fork.name}`;
+  const to = `${base}/settings/detach`;
+  const danger = await (await fetch(`${servers.url}${base}/settings/danger`, { headers: { cookie } })).text();
+  expect(danger).toContain("The code and its history stay");
+  expect(danger).toContain("Updates from the parent and offers to it stop.");
+  const body = await (await fetch(`${servers.url}/-/confirm?to=${encodeURIComponent(to)}`, { headers: { cookie } })).text();
+  expect(body).toContain("The code and its history stay");
+  expect(body).toContain("Updates from the parent and offers to it stop.");
+  expect(body).toContain("recorded in this repository");
+
+  const post = await fetch(`${servers.url}${to}`, {
+    method: "POST",
+    headers: { cookie, origin: servers.url },
+    redirect: "manual",
+  });
+  expect(post.status).toBe(303);
+  const flash = decodeURIComponent(post.headers.get("set-cookie") ?? "").replace(/\+/g, " ");
+  expect(flash).toContain("The repack runs on its own; the history records it when it lands.");
+  await detachJob(fork.id)?.done;
+  const events = listEvents(app.db, { repoId: fork.id, kind: "repo.detached", limit: 5 });
+  expect(events).toHaveLength(1);
+  expect(eventVerb(events[0]!)).toBe(
+    "severed a fork from its upstream: code and history kept, updates and offers stopped",
+  );
+}, 30_000);

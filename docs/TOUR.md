@@ -300,16 +300,20 @@ An admin puts a repository away from **Settings → Archive**, with
 `PATCH /api/v1/repos/:owner/:name {"archived":true|false}` (admins only; anyone
 else gets 403), or in the terminal with `a` on the About card (`I`). The
 repository page and the card then say when it was archived, and an admin gets
-a Wake button or the same key to undo it. The archived list
-(`/apps?archived=1`) has a Wake button on each row its viewer administers, and
-returns to the list; the terminal wakes from the About card with the same key
+a Restore button or the same key to undo it. One tap from an app: an admin opens the app's page, presses Archive under
+the page, and confirms on the page that follows (`POST /:owner/:name/archive`,
+the same `updateRepoSettings` as the Settings form and the `archive` MCP tool).
+Production and previews stop, the app leaves home and `/apps`, and its address
+still answers. In the terminal the door is `a` on the About card. The archived list
+(`/apps?archived=1`) has a Restore button on each row its viewer administers, and
+returns to the list; the terminal restores from the About card with the same key
 (`src/tui/screens/about.ts`). Archiving twice keeps the first date.
 An archived repository starts no new crew run. Assigning an issue to an agent,
 queueing a run again, asking the crew to propose a resolution, redirecting a
-wave and converging a fork each answer "This repository is archived; wake it to
+wave and converging a fork each answer "This repository is archived; restore it to
 start a run."; the API answers 409 `archived`, and the terminal and MCP show
 the same line. The autonomy tick skips it. A run already going finishes, and
-Wake undoes all of it. Clone, push and links keep working, and the repository
+Restore undoes all of it. Clone, push and links keep working, and the repository
 page still answers.
 
 An archived repository leaves the web home's apps, the inbox (work assigned to
@@ -340,7 +344,7 @@ it (`undoFleetOp`). A non-admin has neither key.
 
 `docs/FLEET.md` is one change across many repositories, runs or issues: a
 query, a dry-run plan of every row before → after, a receipt, and undo.
-`archive` (true or false) archives or wakes many repositories; its undo is kept a day.
+`archive` (true or false) archives or restores many repositories; its undo is kept a day.
 
 ## Where it came from
 
@@ -388,7 +392,7 @@ measured slow.
 
 ## Search
 
-`/search` answers repositories and issues in full, and greps code repository by repository. A first search starts no new `git grep` after 30 ms (`codeBudgetMs` in the forge config; a soft stop, since the grep in flight still finishes, one batch of four) and shows what it has with one link, **More code results** (`?code=all`), that greps the rest. `GET /api/v1/search` applies the same budget and reports the cut as `moreCode`; `code=all` lifts it. MCP `search` does the same, and its `all` argument lifts it. The terminal palette greps everything.
+`/search` answers repositories and issues in full, and greps code repository by repository. A first search starts no new `git grep` after 30 ms (`codeBudgetMs` in the forge config; a soft stop, since the grep in flight still finishes, one batch of four) and shows what it has with one link, **More code results** (`?code=all`), that greps the rest. `GET /api/v1/search` applies the same budget and reports the cut as `moreCode`; `code=all` lifts it. MCP `search` does the same, and its `all` argument lifts it. The terminal palette greps everything. A one-letter query greps no code at all (`MIN_CODE_QUERY`, 2 characters): it would match every line, so the page, the API's `note` and MCP say code is searched for 2 or more characters when code was asked for (`kind=all` or `code`), and repositories and issues still answer it. The terminal palette shares the rule — one letter greps nothing and takes no guest slot — but prints no note: its sections simply show no code.
 
 The here-manifest (`GET /api/v1/here?path=…`) reads the same for guests and
 members. On `/explore` and `/search` it names the page's own read, `?q=` carried

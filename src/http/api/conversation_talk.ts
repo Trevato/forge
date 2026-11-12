@@ -242,7 +242,7 @@ const ID = /^[0-9a-z]{1,40}$/;
 const TITLE_WORDS = `title is text of at most ${TITLE_MAX} characters, on one line`;
 
 /** The person a change is for: signed in, same-origin, and not on a read-only token. */
-function mayChange(ctx: Parameters<Handler>[0]): User | Response {
+export function mayChange(ctx: Parameters<Handler>[0]): User | Response {
   const user = ctx.auth.user;
   if (user === undefined) return unauthorized();
   if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();

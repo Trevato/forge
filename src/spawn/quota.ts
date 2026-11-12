@@ -8,6 +8,7 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { floorRefusal } from "./disk_floor.ts";
 import { DEFAULT_SIZE, isSize, SIZES, type Size, type SizeLimits } from "./sizes.ts";
 
 interface Axis {
@@ -61,6 +62,9 @@ export function quotaRefusal(
   size: Size,
   env: Record<string, string | undefined> = process.env,
 ): string | undefined {
+  // The host's own floor comes first, declared limits or not (#10850).
+  const floor = floorRefusal(dataDir);
+  if (floor !== undefined) return floor;
   const limits = AXES.map((a) => ({ a, max: limitOf(env, a.env) })).filter((l) => l.max !== undefined);
   if (limits.length === 0) return undefined;
   const held = heldByChildren(dataDir);

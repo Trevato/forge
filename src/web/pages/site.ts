@@ -9,6 +9,7 @@
  */
 
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
+import { keepGift } from "../gift_cookie.ts";
 import { PASSWORD_TOO_LONG } from "../../core/hash-gate.ts";
 import { NOT_A_MEMBER } from "../../core/roles.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
@@ -18,14 +19,17 @@ import { verifyEmail } from "../../actions/verify.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
 import { createRepo, repositoryLimitMessage, resolveOwner } from "../../actions/repos.ts";
 import { REPO_INIT_FAILED, REPO_NAME_RULES } from "../../actions/repo_words.ts";
+import { NOTE_MAX, requestOf } from "../../core/requests.ts";
+import { DECLINED_MESSAGE, REQUEST_IN_MESSAGE, STILL_WAITING_MESSAGE } from "../../actions/users.ts";
 import { HUMAN_CHECK_MESSAGE, INVITE_SPENT_MESSAGE, PASSKEY_REQUIRED_MESSAGE, SIGNUP_CLOSED_MESSAGE, signUp, signupClosed } from "../../actions/users.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
 import { listPins } from "../../core/pins.ts";
 import { getReposByIds } from "../../core/repos.ts";
 import { createSession } from "../../core/sessions.ts";
-import { hasAnyUser, verifyPasswordThrottled, type User } from "../../core/users.ts";
+import { getUserByName, hasAnyUser, verifyPasswordThrottled, type User } from "../../core/users.ts";
 import { isThemeName } from "../../design/themes.ts";
 import { cookieValue, crossOrigin, type Ctx } from "../../http/context.ts";
+import { API_CATALOG_LINK } from "../../core/mcp_card.ts";
 import { studioDoor, studioHome } from "../studio/home.ts";
 import { parentIssuerOf } from "../../core/federation.ts";
 import { activeEdgeToken, edgeIdentity, edgeLoginUrl, edgeStrangerLogin } from "../../http/edge.ts";
@@ -210,8 +214,13 @@ export function terminalCard(ctx: Ctx): Html {
 // the feed (`studioHome`, #599), whatever the mode (#625).
 export async function home(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
-  if (user === undefined) return studioDoor(ctx);
-  return await studioHome(ctx, user);
+  // A gift link (`/?code=`) keeps the code in a cookie and opens the new-forge form, so the next address has no code in it (#11157).
+  const gift = ctx.url.searchParams.get("code");
+  if (gift !== null && gift !== "") return keepGift(gift.slice(0, 64), "/forges/new", ctx.url, ctx.app.config.url);
+  const res = user === undefined ? await studioDoor(ctx) : await studioHome(ctx, user);
+  // RFC 9727 §3: where an agent that knows only the origin finds the API catalog.
+  res.headers.append("link", API_CATALOG_LINK);
+  return res;
 }
 
 // ---- authentication ----
@@ -231,8 +240,9 @@ interface AuthErrors {
 /** What `/signin` says about new accounts in each signup mode; open says nothing. */
 const SIGNUP_SENTENCES: Record<SignupMode, string | undefined> = {
   open: undefined,
-  invite: "This forge is invite-only: new accounts need an invite link.",
-  closed: "This forge is closed to new accounts.",
+  request: "New accounts here start after someone who runs the forge allows them.",
+  invite: undefined,
+  closed: undefined,
 };
 
 /**
@@ -306,7 +316,8 @@ function authForm(
       <button type="button" id="passkey-signin" class="btn" data-variant="primary" data-size="lg">Sign in with a passkey</button>
       ${passkeyNote("passkey-signin-note")}
     </div>
-    ${when(mode === undefined ? undefined : SIGNUP_SENTENCES[mode], (said) => html`<p class="muted small mb" id="signup-mode">${said}</p>`)}`,
+    ${when(mode === undefined ? undefined : SIGNUP_SENTENCES[mode], (said) => html`<p class="muted small mb" id="signup-mode">${said}</p>`)}
+    ${when(mode === "invite" || mode === "closed" ? mode : undefined, () => byInvitationLine())}`,
   );
 
   const body = html`${unknownLink}
@@ -382,6 +393,17 @@ function authForm(
         </div>`,
       )}
       ${when(
+        kind === "signup" && getSignup(ctx.app.db) === "request",
+        () => formField({
+          label: "What do you want to build?",
+          name: "note",
+          type: "textarea",
+          rows: 3,
+          maxlength: NOTE_MAX,
+          hint: "Optional. A line or two helps whoever looks at your request.",
+        }),
+      )}
+      ${when(
         errors.human,
         (message) => html`<p class="error mb" role="alert">${message}</p>`,
       )}
@@ -398,7 +420,7 @@ function authForm(
           ? html`<button type="button" id="passkey-signup" class="btn" data-variant="primary">Create account with a passkey</button>`
           : kind === "signin"
             ? html`<button type="submit" class="btn" data-variant="outline" data-passkey="on" hidden>Sign in</button><button type="submit" class="btn" data-variant="primary" data-passkey="off">Sign in</button>`
-            : btn("Create account", { variant: "primary" })}
+            : btn(kind === "signup" && getSignup(ctx.app.db) === "request" ? "Ask for an account" : "Create account", { variant: "primary" })}
         <span class="spacer"></span>
         ${kind === "signin"
           ? // A closed forge has no door to point at: the sentence above says so.
@@ -423,7 +445,7 @@ function authForm(
   const claimable =
     existsSync(join(ctx.app.config.dataDir, "parent.json")) && unowned;
   return html`<div class="narrow">
-    ${pageHead(kind === "signin" ? "Sign in" : "Create your account")}
+    ${pageHead(kind === "signin" ? "Sign in" : getSignup(ctx.app.db) === "request" ? "Ask for an account" : "Create your account")}
     ${when(
       kind === "signup",
       () => html`<p class="mb" id="signup-you-get">${SIGNUP_YOU_GET} <a href="/forges/new">${SIGNUP_OWN_FORGE}</a></p>`,
@@ -465,6 +487,11 @@ function siteKey(ctx: Ctx): string | undefined {
 export function inviteOf(ctx: Ctx): string | undefined {
   const token = ctx.url.searchParams.get("invite") ?? "";
   return token === "" ? undefined : token;
+}
+
+/** The one place the forge says its accounts are closed: `/signin` (and `/signup` through its own message), never the home page (#11325). */
+function byInvitationLine(): Html {
+  return html`<p class="small mb" id="by-invitation">Accounts on this forge are by invitation. <a href="/#yours">Start your own forge instead.</a></p>`;
 }
 
 /** The whole of `/signup` while the forge makes no new accounts: a sentence, no form. */
@@ -555,6 +582,11 @@ export async function signinSubmit(ctx: Ctx): Promise<Response> {
     response.headers.set("retry-after", String(wait));
     return response;
   }
+  if (!verified.ok && verified.error.reason === "waiting") {
+    const mine = getUserByName(ctx.app.db, verified.error.username);
+    const declined = mine !== undefined && requestOf(ctx.app.db, mine.id)?.state === "declined";
+    return requestPage(ctx, declined ? DECLINED_MESSAGE : STILL_WAITING_MESSAGE, declined ? "Not this time" : "Your request is waiting");
+  }
   if (!verified.ok) {
     return page(
       {
@@ -578,6 +610,34 @@ export async function signinSubmit(ctx: Ctx): Promise<Response> {
     safeNext(ctx.url.searchParams.get("next")) ?? "/",
     sessionCookie(session.token, session.expiresAt, ctx.url, ctx.app.config.url),
   );
+}
+
+/** What a person whose request is in, waiting or declined is shown: a sentence, no owner's name. */
+export function requestPage(ctx: Ctx, said: string, title = "Your request is in", status = 200): Response {
+  return page(
+    {
+      ctx,
+      title,
+      body: html`<div class="narrow stack" id="request-state">
+        ${pageHead(title)}
+        <p>${said}</p>
+        <div class="form-actions">
+          ${btn("Sign in", { href: "/signin", variant: "outline" })}
+          ${btn("Get your own forge", { href: "/#yours", variant: "ghost" })}
+        </div>
+      </div>`,
+    },
+    status,
+  );
+}
+
+// GET /signup/requested — where a request lands: no session, nothing to act on yet.
+export function requestedPage(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  return timePhase(ctx.request, "render", () =>
+    ctx.url.searchParams.get("answer") === "declined"
+      ? requestPage(ctx, DECLINED_MESSAGE, "Not this time")
+      : requestPage(ctx, REQUEST_IN_MESSAGE));
 }
 
 // GET /verify?token= — the link in a verification email.
@@ -673,6 +733,7 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
       email,
       password: field(form, "password"),
       humanToken: field(form, "cf-turnstile-response"),
+      note: field(form, "note"),
     },
     { slot, invite: inviteOf(ctx), address: clientAddress(ctx.request) },
   );
@@ -702,6 +763,8 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
       422,
     );
   }
+  // A request that waits has no session to start: it lands on the page that says so.
+  if (created.value.waitingAt !== null) return redirect("/signup/requested");
   const session = createSession(ctx.app.db, created.value.id);
   return redirect(
     safeNext(ctx.url.searchParams.get("next")) ?? "/",

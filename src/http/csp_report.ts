@@ -8,7 +8,8 @@
  * At most 8 KB, a known content type, a known shape; anything else is a 4xx
  * and stores nothing. Only three things are kept: the directive, the blocked
  * host (never a path or query string) and the page's path, as one count per
- * UTC day. Rows a day are bounded (`DAY_ROWS`, the rest fold into one), and
+ * UTC hour (`day` holds `YYYY-MM-DDTHH`), so a window's sum holds only its own
+ * hours. Rows a day are bounded (`DAY_ROWS`, the rest fold into one), and
  * days past `KEEP_DAYS` are dropped as new ones arrive. Anonymous callers are
  * limited per client and per forge like the page-view beacon. Always 204.
  */
@@ -121,33 +122,61 @@ export function parseCspReport(body: string): Violation[] | "malformed" {
   return got === undefined ? "malformed" : [got];
 }
 
-/** Count one violation on its UTC day; past `DAY_ROWS` distinct rows a day, the rest share one. */
+/** The UTC hour bucket a time falls in: `2026-11-10T14`. */
+const hourOf = (ms: number): string => new Date(ms).toISOString().slice(0, 13);
+
+/** Count one violation in its UTC hour; past `DAY_ROWS` distinct rows a UTC day, the rest share one. */
 export function recordViolation(db: Database, v: Violation, now: Date = new Date()): void {
-  const day = now.toISOString().slice(0, 10);
-  const bump = db.query<unknown, [string, string, string, string]>(
-    "UPDATE csp_violation SET n = n + 1 WHERE day = ?1 AND directive = ?2 AND blocked = ?3 AND path = ?4",
+  const seen = now.getTime();
+  const hour = hourOf(seen);
+  const day = hour.slice(0, 10);
+  const bump = db.query<unknown, [string, string, string, string, number]>(
+    "UPDATE csp_violation SET n = n + 1, seen = ?5 WHERE day = ?1 AND directive = ?2 AND blocked = ?3 AND path = ?4",
   );
-  if (bump.run(day, v.directive, v.blocked, v.path).changes > 0) return;
-  const rows = db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM csp_violation WHERE day = ?1").get(day)?.n ?? 0;
+  if (bump.run(hour, v.directive, v.blocked, v.path, seen).changes > 0) return;
+  const rows =
+    db.query<{ n: number }, [string, string]>("SELECT COUNT(*) AS n FROM csp_violation WHERE day >= ?1 AND day <= ?2").get(`${day}T00`, `${day}T23`)?.n ?? 0;
   const key = rows < DAY_ROWS ? v : { directive: v.directive, blocked: OVERFLOW, path: "" };
   db.query(
-    `INSERT INTO csp_violation (day, directive, blocked, path, n) VALUES (?1, ?2, ?3, ?4, 1)
-      ON CONFLICT (day, directive, blocked, path) DO UPDATE SET n = n + 1`,
-  ).run(day, key.directive, key.blocked, key.path);
+    `INSERT INTO csp_violation (day, directive, blocked, path, n, seen) VALUES (?1, ?2, ?3, ?4, 1, ?5)
+      ON CONFLICT (day, directive, blocked, path) DO UPDATE SET n = n + 1, seen = ?5`,
+  ).run(hour, key.directive, key.blocked, key.path, seen);
   if (rows === 0) {
-    const cutoff = new Date(now.getTime() - KEEP_DAYS * 86_400_000).toISOString().slice(0, 10);
+    const cutoff = new Date(seen - KEEP_DAYS * 86_400_000).toISOString().slice(0, 10);
     db.query("DELETE FROM csp_violation WHERE day < ?1").run(cutoff);
   }
 }
 
-/** Violations over the last `days` UTC days (today included), per directive, most first. */
-export function violationsByDirective(db: Database, days = 7, now: Date = new Date()): { directive: string; n: number }[] {
-  const since = new Date(now.getTime() - (days - 1) * 86_400_000).toISOString().slice(0, 10);
+export interface DirectiveCount {
+  readonly directive: string;
+  readonly n: number;
+  /** The blocked host (or keyword) counted most recently under this directive. */
+  readonly newest: string;
+}
+
+/** The start of the first whole UTC hour inside the last `hours`: what a window's counts reach back to. */
+export function windowStart(hours: number, now: Date = new Date()): Date {
+  return new Date(Math.ceil((now.getTime() - hours * 3_600_000) / 3_600_000) * 3_600_000);
+}
+
+/**
+ * Violations counted in the last `hours`, per directive, most first, with the
+ * newest blocked host. Only hour buckets that start inside the window count
+ * (from `windowStart`), so `n` never includes a report older than `hours`; it
+ * may leave out up to the window's first partial hour. Rows from before hourly
+ * buckets (`day` a bare date) are not read. The security page reads a week, the
+ * terminal too, and MCP `system` `{ kind: "csp" }` a day.
+ */
+export function violationsByDirective(db: Database, hours = 7 * 24, now: Date = new Date()): DirectiveCount[] {
+  const from = hourOf(windowStart(hours, now).getTime());
+  // SQLite takes a bare column from the row MAX() chose: `blocked` is the newest's.
   return db
-    .query<{ directive: string; n: number }, [string]>(
-      "SELECT directive, SUM(n) AS n FROM csp_violation WHERE day >= ?1 GROUP BY directive ORDER BY n DESC, directive",
+    .query<{ directive: string; n: number; newest: string }, [string]>(
+      `SELECT directive, SUM(n) AS n, blocked AS newest, MAX(seen) AS last FROM csp_violation
+        WHERE day >= ?1 AND length(day) = 13 GROUP BY directive ORDER BY n DESC, directive`,
     )
-    .all(since);
+    .all(from)
+    .map((r) => ({ directive: r.directive, n: r.n, newest: r.newest }));
 }
 
 export async function cspReportSubmit(ctx: Ctx): Promise<Response> {

@@ -6,6 +6,7 @@ export const route: Route = {
   path: "/api/v1/admin/limits/{key}",
   summary: `Change one limit live, or send value null to take it back to its default (a person admin's token, admin scope); {key} is one of ${LIMIT_KEYS.join(", ")}; answers the changed limit`,
   auth: true,
+  role: "admin",
   body: { value: "integer or null" },
   refusals: {
     not_found: "the token is not a person who administers the forge (404)",

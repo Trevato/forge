@@ -20,6 +20,8 @@ export interface PickOptions {
   readonly error?: string | undefined;
   /** The noun in "3 of 150 repositories picked". */
   readonly noun?: string;
+  /** With this many items or fewer the box shows them all, with no filter or chips. */
+  readonly plainUpTo?: number;
 }
 
 export const pickCount = (picked: number, total: number, noun: string): string =>
@@ -27,8 +29,9 @@ export const pickCount = (picked: number, total: number, noun: string): string =
 
 export function pickList(o: PickOptions): Html {
   const noun = o.noun ?? "options";
+  const plain = o.plainUpTo !== undefined && o.items.length <= o.plainUpTo;
   const picked = o.items.filter((i) => o.chosen.includes(i.value)).length;
-  return html`<fieldset class="field pick" data-pick="${noun}" ${o.error ? html`data-invalid aria-describedby="f-${o.name}-err"` : null}>
+  return html`<fieldset class="field pick" data-pick="${noun}" ${plain ? html`data-pick-plain` : null} ${o.error ? html`data-invalid aria-describedby="f-${o.name}-err"` : null}>
     <legend>${o.legend}</legend>
     <div class="pick-bar" data-pick-bar hidden>
       <span class="pick-chips" data-pick-chips></span>
@@ -80,6 +83,7 @@ export const pickCss = /* css */ `
 }
 .pick-list .check { display: flex; padding: 3px 0; }
 .pick-list [hidden] { display: none; }
+.pick[data-pick-plain] .pick-list { max-height: none; overflow-y: visible; }
 .pick-count { margin: 6px 0 0; }
 `;
 
@@ -97,7 +101,7 @@ export const pickJs = /* js */ `
     var last = -1;
     var noun = root.getAttribute('data-pick');
     var items = all(root.querySelectorAll('[data-pick-item]'));
-    bar.hidden = false;
+    bar.hidden = root.hasAttribute('data-pick-plain');
     function box(it) { return it.querySelector('input'); }
     function text(it) { return it.textContent.trim(); }
     function visible() { return items.filter(function (it) { return !it.hidden; }); }

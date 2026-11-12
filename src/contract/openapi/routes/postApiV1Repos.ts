@@ -6,6 +6,7 @@ export const route: Route = {
   summary:
     "Make a repository under you or an organisation you can write to (rw scope; an agent owns none); `visibility` is public, anything else private; answers 201 with the repository",
   auth: true,
+  role: "member",
   status: 201,
   body: { name: "string", owner: "string", visibility: "string", description: "string" },
   refusals: {

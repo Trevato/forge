@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/admin/accounts/{username}/suspend",
   summary: "Suspend an account, undone by unsuspend (admin scope); answers { username, suspendedAt }",
   auth: true,
+  role: "admin",
   body: { confirm: "boolean" },
   refusals: {
     not_allowed: "an admin cannot suspend themselves, another admin or an agent (422)",

@@ -139,7 +139,7 @@ test("the archived list wakes an app in place, and ignores a return address off 
   expect(list).toContain('action="/alice/shelved/settings/archive"');
   expect(list).toContain('name="to" value="/apps?archived=1"');
   // Each button names its app, so a screen reader can tell the Wakes apart.
-  expect(list).toMatch(/Wake<span class="sr-only"> alice\/shelved<\/span>/);
+  expect(list).toMatch(/Restore<span class="sr-only"> alice\/shelved<\/span>/);
   const post = (to: string, headers: Record<string, string> = { origin: servers.url }) =>
     fetch(`${servers.url}/alice/shelved/settings/archive`, {
       method: "POST",
@@ -175,4 +175,32 @@ test("a viewer who does not administer an archived app gets no Wake button", asy
   expect(anon).toContain('<a href="/alice/openshelf" class="row"');
   expect(anon).not.toContain("settings/archive");
   expect((await get("/apps?archived=1")).body).toContain("/alice/openshelf/settings/archive");
+});
+
+test("one tap: the app's page offers Archive through the confirm page, which archives and Restore undoes", async () => {
+  const page = await get("/alice/keeper");
+  expect(page.body).toContain("/-/confirm?to=%2Falice%2Fkeeper%2Farchive");
+  const confirm = await get("/-/confirm?to=%2Falice%2Fkeeper%2Farchive");
+  expect(confirm.status).toBe(200);
+  expect(confirm.body).toContain('action="/alice/keeper/archive"');
+  const post = (headers: Record<string, string>) =>
+    fetch(`${servers.url}/alice/keeper/archive`, { method: "POST", headers: { cookie, ...headers }, redirect: "manual" });
+  expect((await post({ origin: "https://evil.example" })).status).toBeGreaterThanOrEqual(400);
+  expect(getRepo(app.db, "alice", "keeper")!.archivedAt).toBeNull();
+  expect((await post({ origin: servers.url })).status).toBe(303);
+  expect(getRepo(app.db, "alice", "keeper")!.archivedAt).not.toBeNull();
+  expect((await get("/apps")).body).not.toContain(ROW_KEEPER);
+  expect((await get("/apps?archived=1")).body).toContain(ROW_KEEPER);
+  expect((await get("/alice/keeper")).status).toBe(200);
+  // Restore is the button's own route: the same form the archived list draws.
+  const restore = await fetch(`${servers.url}/alice/keeper/settings/archive`, {
+    method: "POST",
+    headers: { cookie, origin: servers.url },
+    body: new URLSearchParams({ archived: "0", to: "/apps?archived=1" }),
+    redirect: "manual",
+  });
+  expect(restore.status).toBe(303);
+  expect(getRepo(app.db, "alice", "keeper")!.archivedAt).toBeNull();
+  expect((await get("/apps")).body).toContain(ROW_KEEPER);
+  expect((await get("/apps?archived=1")).body).not.toContain(ROW_KEEPER);
 });

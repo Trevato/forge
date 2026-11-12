@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/user/origins/{id}/fork",
   summary: "Fork a repository at its origin, then mirror the fork as a job; answers 202 with { remote, existed, job, mirroredAs }",
   auth: true,
+  role: "member",
   body: { fullName: "string" },
   status: 202,
   refusals: {

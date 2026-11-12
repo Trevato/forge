@@ -17,6 +17,8 @@ import {
 import { secureFor } from "./cookie_secure.ts";
 import { refusedByDatabase, shownRefusal } from "./refusal.ts";
 import { NOT_A_MEMBER } from "../core/roles.ts";
+import { privacyPage } from "../web/pages/privacy.ts";
+import { startClaimAccountSubmit, startClaimPage, startClaimSubmit } from "../web/pages/start_claim.ts";
 import { signupOptions, signupPasskey } from "../web/pages/signup-passkey.ts";
 import { toolbarComment, toolbarPage } from "../web/studio/toolbar.ts";
 import { TOOLBAR_NAME, toolbarResponse } from "../apps/toolbar.ts";
@@ -29,12 +31,16 @@ import { contributePage } from "../web/pages/contribute.ts";
 import { pipelinePage } from "../web/pages/pipeline.ts";
 import { adminDataPage, appDataPage, dataPage } from "../web/pages/data.ts";
 import { fleetAct, fleetReceipt, fleetUndo } from "../web/pages/fleet-ops.ts";
-import { maintenancePage, maintenancePrepare, maintenanceResume } from "../web/pages/maintenance.ts";
+import { maintenanceDuty, maintenancePage, maintenancePrepare, maintenanceResume } from "../web/pages/maintenance.ts";
+import { maintenanceBudget } from "../web/pages/maintenance_budgets.ts";
 import { nightlyOutputPage, resiliencePage } from "../web/pages/resilience.ts";
-import { limitsPage, limitsSet, quotasSet, signupSet, inviteMint, inviteRevoke } from "../web/pages/admin-limits.ts";
+import { agentStartSet, billingLinksSet, limitsPage, limitsSet, quotasSet, signupSet, inviteMint, inviteRevoke } from "../web/pages/admin-limits.ts";
+import { plansSet } from "../web/settings/plans.ts";
 import { allFlowsPage } from "../web/pages/flows-all.ts";
 import { measureSubmit } from "./measure.ts";
 import { cspReportSubmit } from "./csp_report.ts";
+import { scriptErrorSubmit } from "./script_errors.ts";
+import { stripeHook } from "./stripe_hook.ts";
 import { settingsRoutes } from "./settings_routes.ts";
 import { pluginRoutes } from "./plugin_routes.ts";
 import { pinnedRoutes } from "./pinned_routes.ts";
@@ -140,10 +146,12 @@ import {
   signinPage,
   signinSubmit,
   signupPage,
+  requestedPage,
   signupSubmit,
   verifyPage,
   themeSubmit,
 } from "../web/pages/site.ts";
+import { talkBuild, talkPublish, talkRestore } from "../web/talk_build.ts";
 import { talkAgainSend, talkArchive, talkConfirm, talkNew, talkQueueCancel, talkRename, talkSend, talkStream, talkView } from "../web/pages/talk.ts";
 import {
   recoverFinish,
@@ -158,13 +166,14 @@ import { confirmPage, searchPage } from "../web/pages/search.ts";
 import { chainPage, checkSubmit, modeSubmit, proposeParentSubmit, severSubmit, takeSubmit } from "../web/pages/chain.ts";
 import { followingSubmit } from "../web/pages/following.ts";
 import { reconnectSubmit } from "../web/pages/frozen.ts";
-import { activityAtom, changelogAtom } from "../web/feeds.ts";
+import { activityAtom, changelogAtom, exploreAtom } from "../web/feeds.ts";
 import { auditCsv, auditPage, auditProbeSubmit } from "../web/pages/audit.ts";
 import { apiPage, appApiPage } from "../web/pages/api.ts";
 import { flowsCheck, flowsPage, flowsProbe, flowsUpdate } from "../web/pages/flows.ts";
 import { findingAccept, findingsPage } from "../web/pages/findings.ts";
 import { betAct, betPage, betPropose, betsPage } from "../web/pages/bets.ts";
 import { changelogJson, changelogPage } from "../web/pages/changelog.ts";
+import { docsFile, docsFolder } from "../web/pages/docs_link.ts";
 import { releaseHoldSubmit, liftSubmit, releasesPage, rollbackSubmit } from "../web/pages/releases.ts";
 import {
   changePassword,
@@ -175,6 +184,7 @@ import {
   releasesJson,
   robotsTxt,
   securityTxt,
+  apiCatalogJson,
   mcpJson,
   forgeJson,
   sitemapXml,
@@ -239,6 +249,10 @@ import { firstSubmit } from "../web/pages/first.ts";
 import { nextPage, nextSubmit } from "../web/pages/next.ts";
 import { weekPage, weekSubmit } from "../web/pages/week.ts";
 import {
+  appMilestonesFragment,
+  liveMilestonesFragment,
+} from "../web/studio/milestone_lines.ts";
+import {
   milestonePage,
   milestonesPage,
   milestoneWatch,
@@ -252,17 +266,26 @@ import {
 import {
   saySubmit,
   shipSubmit,
+  updateSubmit,
   takeBackSubmit,
   holdSubmit,
   releaseSubmit,
   composerSubmit,
   tellSubmit,
 } from "../web/studio/actions.ts";
-import { claimFragmentPage, claimOptions, claimSubmit } from "../web/pages/claim.ts";
+import { forgeReady } from "../web/pages/forge-ready.ts";
+import { forgeName } from "../web/pages/forge-name.ts";
+import { claimFragmentPage, claimOptions, claimSubmit, welcomePage, welcomeSubmit } from "../web/pages/claim.ts";
 import { firstAdminOptions, firstAdminPage, firstAdminSubmit } from "../web/pages/first-admin.ts";
 import { familyPage } from "../web/pages/family.ts";
-import { forgeLinkRevoke, forgeLinkSubmit, forgeLinkUndo, forgeRemoveConfirm, forgeRemoveSubmit, forgeStopSubmit, forgesPage } from "../web/pages/forges.ts";
+import { forgeLinkRevoke, forgeLinkSubmit, forgeLinkUndo, forgeRemoveConfirm, forgeRemoveSubmit, forgeStopSubmit,
+  forgeOwnCodeSubmit, forgesPage } from "../web/pages/forges.ts";
+import { forgesRefusedPage } from "../web/pages/forges-refused.ts";
 import { forgeItSubmit } from "../web/pages/forge-it.ts";
+import { funnelSubmit } from "./funnel.ts";
+import { pricingDone, pricingOrder, pricingPage, resendPage, resendSubmit } from "../web/pages/pricing.ts";
+import { forgeWaitingPage } from "../web/pages/forge-waiting.ts";
+import { startForgeSubmit } from "../web/pages/start-forge.ts";
 import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
 import { notesOverrule, notesSave, notesView } from "../web/pages/notes.ts";
@@ -288,7 +311,7 @@ import { HOME_REGIONS } from "../web/studio/home_last.ts";
 import { serviceWorker } from "../web/sw.ts";
 import { explorePage } from "../web/studio/explore.ts";
 import { isPacksMirror, MIRROR_PUSH_REFUSED } from "../packs/owner.ts";
-import { packPage, packsMirror, packsPage } from "../web/pages/packs.ts";
+import { packEdit, packNew, packPage, packRepos, packsMirror, packsPage } from "../web/pages/packs.ts";
 import {
   makeItYoursPage,
   makeItYoursReceipt,
@@ -309,7 +332,7 @@ import { appNowFragment } from "../web/studio/now.ts";
 import { appStateFragment } from "../web/studio/previews.ts";
 import { changesList, tellsList } from "../web/studio/lists.ts";
 import { dependencySubmit } from "../web/pages/thread.ts";
-import { flowPage, suggestionTake, valveSet } from "../web/pages/flow.ts";
+import { backupRetry, flowPage, suggestionTake, valveSet } from "../web/pages/flow.ts";
 import { heldApply, heldPage, liftHoldSubmit } from "../web/pages/gate.ts";
 import {
   assigneeSubmit,
@@ -393,6 +416,7 @@ import {
   settingsUpdate,
   waveCut,
   archiveSubmit,
+  archiveConfirmed,
   transferSubmit,
   provenanceSubmit,
   mirrorStop,
@@ -476,9 +500,10 @@ import { viaGate } from "./via_gate.ts";
 import { checksRecheckRoutes } from "./checks_recheck.ts";
 import { feedRoutes } from "./feed.ts";
 import type { Database } from "bun:sqlite";
-import { mcpRoutes, REPORT_TOOL } from "./mcp.ts";
+import { mcpRoutes, REPORT_TOOL, START_TOOL } from "./mcp.ts";
 import { TOOLS } from "./mcp/tools.ts";
 import { setMcpTools } from "../web/llms_tools.ts";
+import { resourcePolicy } from "./corp.ts";
 import { agentsPage } from "../web/pages/agents.ts";
 import { openapiRoute } from "../contract/served.ts";
 import { createUsageCounter, type UsageCounter } from "../core/usage_count.ts";
@@ -495,7 +520,7 @@ import {
   takeDbTime,
   type RouteTiming,
 } from "../core/route_timing.ts";
-import { captureStore, loopWatch, perfRecord, readLedger } from "../perf/live.ts";
+import { captureStore, inFlight, loopWatch, perfRecord, readLedger, stallBlame } from "../perf/live.ts";
 import { during } from "../perf/jobs.ts";
 import { classOf, countryOf, repoOf, signatureOf } from "../perf/traffic.ts";
 import { createTrafficWriter } from "../perf/traffic_store.ts";
@@ -507,7 +532,7 @@ import { statementPage } from "../web/pages/statement.ts";
 import { createViewWriter } from "../perf/views_store.ts";
 import { createReadWriter, readOf } from "../perf/reads.ts";
 import { parseServerTiming } from "../perf/record.ts";
-import { currentLoopLag, startLoopWorst } from "../perf/loop_worst.ts";
+import { currentLoopLag, LAG_WINDOW_MS, startLoopWorst } from "../perf/loop_worst.ts";
 import { methodOf, noteUsage, roleOf, surfaceOf, takeUsage } from "./usage_tag.ts";
 import { bearerChallenge, oauthRoutes } from "./oauth.ts";
 import { flushAccess, recordAccess } from "./access_log.ts";
@@ -540,6 +565,8 @@ import {
   prefersHtml,
   prefersJson,
   securityFloor,
+  BodyTooLarge,
+  bodyTooLarge,
   privateWhenSignedIn,
   tooManyAttempts,
   tryAgain,
@@ -562,7 +589,7 @@ import { appsRuntime } from "../apps/runtime.ts";
 import { holdAppHost } from "../apps/holding.ts";
 import { isArcadeHost, serveArcade } from "../arcade/host.ts";
 import {
-  appWebSocket,
+  appWebSocketWith,
   type AppSocket,
   isWebSocketHandshake,
   proxyApp,
@@ -578,8 +605,10 @@ import {
   hostedChildOpen,
   resolveHostedChild,
   resolveHostedChildApp,
+  refusedResponse,
   socketToCell,
   wakeGate,
+  payAgainGate,
   watchHostedChildClose,
 } from "../spawn/host.ts";
 import { getVerifiedDomain } from "../core/domains.ts";
@@ -747,6 +776,7 @@ export function buildRouter(): Router<Handler> {
   // What the open web expects of a site, from the forge's own facts.
   router.add("GET", "/.well-known/security.txt", securityTxt);
   router.add("GET", "/.well-known/mcp.json", mcpJson);
+  router.add("GET", "/.well-known/api-catalog", apiCatalogJson);
   router.add("GET", "/.well-known/forge", forgeJson);
   router.add("GET", "/llms.txt", llmsTxt);
   // The same words as a page, for an assistant whose reader takes only HTML.
@@ -807,36 +837,58 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/sw.js", serviceWorker);
   // The page-view beacon's report (http/measure.ts): numbers only, no IP kept.
   router.add("POST", "/_measure", (ctx) => measureSubmit(ctx, routeOf));
+  // An uncaught script error the beacon saw (http/script_errors.ts): counts only.
+  router.add("POST", "/_script-error", (ctx) => scriptErrorSubmit(ctx, routeOf));
+  router.add("POST", "/_funnel", funnelSubmit);
   // What a page's Content-Security-Policy blocked (http/csp_report.ts): counts only.
   router.add("POST", "/csp-report", cspReportSubmit);
+  // Stripe's signed events (http/stripe_hook.ts): public, no cookie read, each event id once.
+  router.add("POST", "/hooks/stripe", stripeHook);
   router.add("GET", "/", home);
   // A spawned child's claim link: GET shows, POST takes it (spawn/claim.ts).
   router.add("GET", "/claim", claimFragmentPage);
   router.add("POST", "/claim", claimSubmit);
   router.add("POST", "/claim/options", claimOptions);
+  router.add("GET", "/welcome", welcomePage);
+  router.add("POST", "/welcome", welcomeSubmit);
   // The operator's first-admin code, redeemed with a passkey (core/first_admin.ts).
   router.add("GET", "/first-admin", firstAdminPage);
   router.add("POST", "/first-admin", firstAdminSubmit);
   router.add("POST", "/first-admin/options", firstAdminOptions);
   // "+ New forge": the spawn door as a page, any signed-in person (spawn/door.ts).
   router.add("GET", "/forges", forgesPage);
+  router.add("GET", "/forges/refused", forgesRefusedPage);
   router.add("GET", "/family", familyPage);
+  router.add("GET", "/forges/name/:name", forgeName);
   router.add("POST", "/forges/:name/claim-link", forgeLinkSubmit);
   router.add("POST", "/forges/:name/revoke-link", forgeLinkRevoke);
   router.add("POST", "/forges/:name/undo-link", forgeLinkUndo);
   router.add("POST", "/forges/:name/stop", forgeStopSubmit);
+  router.add("POST", "/forges/:name/own-code", forgeOwnCodeSubmit);
   router.add("GET", "/forges/:name/remove", forgeRemoveConfirm);
   router.add("POST", "/forges/:name/remove", forgeRemoveSubmit);
+  router.add("GET", "/forges/:name/ready", forgeReady);
+  router.add("GET", "/pricing", pricingPage);
+  router.add("POST", "/pricing/order", pricingOrder);
+  router.add("GET", "/pricing/done", pricingDone);
+  router.add("GET", "/pricing/resend", resendPage);
+  router.add("POST", "/pricing/resend", resendSubmit);
+  router.add("GET", "/forges/:name/waiting", forgeWaitingPage);
   router.add("GET", "/forges/new", newForgePage);
   router.add("POST", "/forges/new", newForgeSubmit);
+  router.add("POST", "/forges/start", startForgeSubmit);
   // The front page as a stranger sees it, for anyone; a site admin there
   // also gets the controls that decide it (#686).
   router.add("GET", "/front", studioDoor);
   // Apps and people ranked by real numbers, narrowed in one line (#607).
   router.add("GET", "/explore", explorePage);
+  router.add("GET", "/explore.atom", exploreAtom);
   // Forge packs: premade forges to deploy, and the way to help build their apps.
   router.add("GET", "/packs", packsPage);
   router.add("POST", "/packs/mirror", packsMirror);
+  router.add("POST", "/packs/new", packNew);
+  router.add("POST", "/packs/:name/edit", packEdit);
+  router.add("POST", "/packs/:name/repos", packRepos);
   router.add("GET", "/packs/:name", packPage);
   router.add("POST", "/front", frontUpdate);
   router.add("POST", "/home/archive", homeArchive);
@@ -857,6 +909,10 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/signin/parent", parentStart);
   router.add("GET", "/signin/parent/callback", parentCallback);
   router.add("GET", "/signup", signupPage);
+  router.add("GET", "/claim/start/:token", startClaimPage);
+  router.add("POST", "/claim/start/:token", startClaimSubmit);
+  router.add("POST", "/claim/start/:token/account", startClaimAccountSubmit);
+  router.add("GET", "/signup/requested", requestedPage);
   router.add("GET", "/verify", verifyPage);
   router.add("POST", "/signup", signupSubmit);
   router.add("POST", "/logout", logoutSubmit);
@@ -907,6 +963,10 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/now/:stage", nowPage);
   router.add("GET", "/audit", auditPage);
   router.add("GET", "/releases", releasesPage);
+  // The forge's own documentation: a redirect built from configuration only.
+  router.add("GET", "/privacy", privacyPage);
+  router.add("GET", "/docs", docsFolder);
+  router.add("GET", "/docs/:file", docsFile);
   router.add("GET", "/changelog", changelogPage);
   router.add("GET", "/changelog.atom", changelogAtom);
   router.add("GET", "/:owner/:name/api", appApiPage);
@@ -934,6 +994,7 @@ export function buildRouter(): Router<Handler> {
   // /flow is the week's valves (#8698); a query string is an old pipeline drill, which went to /boards.
   router.add("GET", "/flow", flowPage);
   router.add("POST", "/flow/valve", valveSet);
+  router.add("POST", "/flow/backup/retry", backupRetry);
   router.add("POST", "/flow/suggestion", suggestionTake);
   router.add("GET", "/system", systemPage);
   router.add("GET", "/system/stream", systemStream);
@@ -953,6 +1014,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/maintenance", maintenancePage);
   router.add("POST", "/maintenance/prepare", maintenancePrepare);
   router.add("POST", "/maintenance/resume", maintenanceResume);
+  router.add("POST", "/maintenance/budget", maintenanceBudget);
+  router.add("POST", "/maintenance/duties/:name", maintenanceDuty);
   router.add("GET", "/resilience/nightly/:job", nightlyOutputPage);
   // A selection's spend and runs over time; literal, above /:owner.
   router.add("GET", "/fleet", fleetPage);
@@ -969,6 +1032,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/live/on-you", liveOnYouFragment);
   router.add("GET", "/live/client-apps", liveClientAppsFragment);
   router.add("GET", "/live/feed", liveFeedFragment);
+  router.add("GET", "/live/milestones", liveMilestonesFragment);
   router.add("GET", "/live/moving", liveMovingFragment);
   router.add("GET", "/live/chips", liveChipsFragment);
   router.add("GET", "/feed", feedPage);
@@ -996,10 +1060,13 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/talk/queue/:id/cancel", talkQueueCancel);
   router.add("POST", "/talk/confirm/:id", talkConfirm);
   router.add("POST", "/talk/new", talkNew);
+  router.add("POST", "/talk/build", talkBuild);
   router.add("GET", "/talk/:id", talkView);
   router.add("POST", "/talk/:id", talkSend);
   router.add("POST", "/talk/:id/rename", talkRename);
   router.add("POST", "/talk/:id/archive", talkArchive);
+  router.add("POST", "/talk/:id/build/restore", talkRestore);
+  router.add("POST", "/talk/:id/build/publish", talkPublish);
   router.add("POST", "/talk/:id/again/:how", talkAgainSend);
   router.add("POST", "/signin/passkey/options", signinOptions);
   router.add("POST", "/signin/passkey", signinPasskey);
@@ -1024,7 +1091,10 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/admin/flows", allFlowsPage);
   router.add("POST", "/admin/limits", limitsSet);
   router.add("POST", "/admin/quotas", quotasSet);
+  router.add("POST", "/admin/plans", plansSet);
   router.add("POST", "/admin/signup", signupSet);
+  router.add("POST", "/admin/agent-start", agentStartSet);
+  router.add("POST", "/admin/billing-links", billingLinksSet);
   router.add("POST", "/admin/invites", inviteMint);
   router.add("POST", "/admin/invites/:id/revoke", inviteRevoke);
 
@@ -1139,7 +1209,7 @@ export function buildRouter(): Router<Handler> {
   // reclaim a path under `/api/`.
   // The forge as an MCP server: the studio's verbs for an assistant.
   mcpRoutes(router);
-  setMcpTools(TOOLS, [REPORT_TOOL]);
+  setMcpTools(TOOLS, [REPORT_TOOL, START_TOOL]);
   // The public API as OpenAPI, for any client that reads it.
   openapiRoute(router);
   oauthRoutes(router);
@@ -1194,6 +1264,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/feed/like", likeSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/checks", pullChecksSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/ship", shipSubmit);
+  router.add("POST", "/:owner/:name/pulls/:number/update", updateSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/say", saySubmit);
   router.add("POST", "/:owner/:name/pulls/:number/take-back", takeBackSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/hold", holdSubmit);
@@ -1321,6 +1392,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/app/state", appStateFragment);
   // "Now" on the same page, alone: the region's own address.
   router.add("GET", "/:owner/:name/app/now", appNowFragment);
+  router.add("GET", "/:owner/:name/app/milestones", appMilestonesFragment);
   router.add("GET", "/:owner/:name/app/answers", appAnswersFragment);
   router.add("GET", "/:owner/:name/app/:env/open", appOpen);
   // Where a private app sends a person who arrived by its link.
@@ -1472,6 +1544,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/settings", settingsUpdate);
   router.add("POST", "/:owner/:name/settings/wave", waveCut);
   router.add("POST", "/:owner/:name/settings/archive", archiveSubmit);
+  router.add("POST", "/:owner/:name/archive", archiveConfirmed);
   router.add("POST", "/:owner/:name/settings/transfer", transferSubmit);
   router.add("POST", "/:owner/:name/settings/provenance", provenanceSubmit);
   router.add("POST", "/:owner/:name/settings/mirror/stop", mirrorStop);
@@ -2172,6 +2245,7 @@ export interface Servers {
  * when a database trigger refused, else a 500 that says nothing of the fault.
  */
 function failure(app: App, error: unknown): Response {
+  if (error instanceof BodyTooLarge) return securityFloor(bodyTooLarge(error));
   const refused = refusedByDatabase(error);
   if (refused !== undefined) {
     const shown = shownRefusal(refused);
@@ -2256,24 +2330,8 @@ function serveInternal(app: App): InternalListener {
   const onPort = portInsteadOfSocket();
   const internal = Bun.serve({
     ...(onPort ? { hostname: "127.0.0.1", port: 0 } : { unix: app.socketPath }),
-    fetch(request) {
-      // The socket's file mode used to be the only door check; a loopback
-      // port has none, so every internal request proves the boot secret.
-      if (!hookCallerAllowed(app, request)) {
-        const path = new URL(request.url).pathname;
-        if (noteRefusedInternal(request.method, path, Date.now(), app.signals.refused))
-          app.log.warn("internal call refused: no boot secret", {
-            method: request.method,
-            path: path.slice(0, 120),
-          });
-        return new Response("forbidden", { status: 403 });
-      }
-      const url = new URL(request.url);
-      if (request.method === "POST" && url.pathname === "/internal/hook") {
-        return handleHook(app, request);
-      }
-      return new Response("not found", { status: 404 });
-    },
+    // Only hooks call here, but the floor holds on every listener (#10949).
+    fetch: async (request) => securityFloor(await answerInternal(app, request)),
   });
   if (onPort) app.hookAddress.current = tcpAddress(internal.port ?? 0);
   return {
@@ -2283,6 +2341,26 @@ function serveInternal(app: App): InternalListener {
       rmSync(app.socketPath, { force: true });
     },
   };
+}
+
+/** The internal listener's answer: a hook, with the boot secret, or nothing. */
+async function answerInternal(app: App, request: Request): Promise<Response> {
+  // The socket's file mode used to be the only door check; a loopback
+  // port has none, so every internal request proves the boot secret.
+  if (!hookCallerAllowed(app, request)) {
+    const path = new URL(request.url).pathname;
+    if (noteRefusedInternal(request.method, path, Date.now(), app.signals.refused))
+      app.log.warn("internal call refused: no boot secret", {
+        method: request.method,
+        path: path.slice(0, 120),
+      });
+    return new Response("forbidden", { status: 403 });
+  }
+  const url = new URL(request.url);
+  if (request.method === "POST" && url.pathname === "/internal/hook") {
+    return handleHook(app, request);
+  }
+  return new Response("not found", { status: 404 });
 }
 
 /**
@@ -2415,8 +2493,10 @@ export async function serve(app: App): Promise<Servers> {
     finishedStrangerDeep(owner, request);
     try {
       const header = serverTiming(ms, takeDbTime(request), takePhases(request));
-      // `lag` is the loop's, not this request's: kept out of the record's phases.
-      response.headers.set("server-timing", withLag(header, currentLoopLag()));
+      // `lag` is the loop's, not this request's: kept out of the record's
+      // phases, and told only to an admin (#11112): how loaded the forge is
+      // is not a stranger's to read. /system reads it server-side.
+      response.headers.set("server-timing", tag.role === "admin" ? withLag(header, currentLoopLag()) : header);
       const end = performance.now();
       const family = familyOf(request.headers.get("user-agent") ?? "");
       perfRecord.add(
@@ -2494,7 +2574,7 @@ export async function serve(app: App): Promise<Servers> {
           if (url.pathname.startsWith("/api/v1/"))
             response.headers.set("www-authenticate", bearerChallenge(url.origin, request));
         }
-        const done = await compress(request, response).then(securityFloor).then((r) => privateWhenSignedIn(request, r));
+        const done = await compress(request, response).then((r) => securityFloor(resourcePolicy(request, r))).then((r) => privateWhenSignedIn(request, r));
         if (namesFrame(request)) notePhase(request, "compress", performance.now() - compressing);
         return done;
       },
@@ -2571,6 +2651,7 @@ export async function serve(app: App): Promise<Servers> {
       if (hit === "unknown")
         return securityFloor(new Response("not found", { status: 404 }));
       if (hit !== undefined) {
+        if ("refused" in hit) return securityFloor(refusedResponse(hit.refused));
         if ("cell" in hit) return fromCell(hit.cell);
         notePeer(request, server.requestIP(request)?.address, trust);
         return proxyApp(hit.runtime, request, hit.target, server);
@@ -2579,6 +2660,8 @@ export async function serve(app: App): Promise<Servers> {
       // child's own App before the parent's pages. Ingress routes the label
       // here; forge terminates Host routing in-process.
       {
+        const paying = await payAgainGate(app, request);
+        if (paying !== undefined) return securityFloor(paying);
         const gated = wakeGate(app, request);
         if (gated !== undefined) return securityFloor(gated);
         const child = await resolveHostedChild(app, request);
@@ -2682,8 +2765,9 @@ export async function serve(app: App): Promise<Servers> {
     maxRequestBodySize: REQUEST_MAX,
     // The only sockets the forge holds are an app's, carried through the
     // proxy; its own live surfaces are SSE (`sse.ts`) and stay so.
-    websocket: withShells(appWebSocket),
-    fetch: handle,
+    websocket: withShells(appWebSocketWith(app.config.wsMaxMessage)),
+    // Open until it is answered, so a stall while it runs names it (#11478).
+    fetch: (request, server) => inFlight.during(request, performance.now(), () => handle(request, server)),
     // A last resort: `handle` answers a throw itself, so it is counted.
     error: (error) => failure(app, error),
   });
@@ -2787,6 +2871,7 @@ async function answerGet(
       () => app.db.query("select 1").get(),
       app.log,
       wantsJson ? currentLoopLag() : undefined,
+      wantsJson ? (stallBlame.worst(performance.now(), LAG_WINDOW_MS, 1)[0]?.what ?? null) : null,
     );
     noteDbTime(request, performance.now() - dbStart);
     // The release proof learns which release answered, old pod or new; a

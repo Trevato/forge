@@ -47,12 +47,13 @@ describe("a new issue from any page", () => {
   });
 
   test("c and Shift C open the door from the page, and the help names each case", () => {
-    expect(shellJs).toContain("e.key === 'C') openNewIssue(e)");
-    expect(shellJs).toContain("if (focusBox()) { seq.length = 0; e.preventDefault(); } else openNewIssue(e);");
+    expect(shellJs).toContain("['c', 'C'], openNewIssue]");
+    expect(shellJs).toContain("['C'], openNewIssue]");
+    expect(shellJs).toContain("['c'], function (e) { if (focusBox()) e.preventDefault(); else openNewIssue(e); }]");
     expect(shellJs).toContain("'/new/issue?from=' + encodeURIComponent(p)");
     // A page with its own box (or its own c) shows Shift C alone; any other, both keys.
     expect(shellJs).toContain("var ownC = pageBox() || doc.querySelector('[data-shortcut=\"c\"]');");
-    expect(shellJs).toContain("ownC ? 'Shift C' : 'c / Shift C', 'New issue from this page'");
+    expect(shellJs).toContain("ownC ? ['Shift C', 'New issue from this page', ['C'], openNewIssue] : ['c / Shift C'");
     expect(shellJs).toContain("out.push(['c', doc.querySelector('[data-box]')");
   });
 

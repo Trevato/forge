@@ -8,13 +8,16 @@
  * a push no pull carried gets one issue. A red whose files were already red
  * at the verification before it was named there and starts nothing.
  *
+ * A later green verification that ran every file such an issue names
+ * closes it as done (#11395), unless a person has commented on it.
+ *
  * Called by the checks service with the way it asks for a run; the answer
  * is the lines for the finished run's log.
  */
 
 import type { App } from "../app.ts";
 import { revertPull } from "../actions/revert.ts";
-import { createIssue } from "../core/issues.ts";
+import { addComment, createIssue, setIssueState } from "../core/issues.ts";
 import { getPull, type Pull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
 import { getRun, type Run } from "../core/runs.ts";
@@ -40,6 +43,9 @@ export type Ask = (repo: Repo, env: string, commitOid: string, reason: string) =
 const FILED_BY = "_Filed by the forge's verification after landing, not written by a person._";
 
 const short = (oid: string): string => oid.slice(0, 7);
+
+/** How every issue this module files is titled. */
+const TITLE_PREFIX = "Red after landing: ";
 
 
 /** The last green verification before run `below`. */
@@ -153,7 +159,7 @@ async function name(app: App, repo: Repo, red: Run, culprit: string, green: stri
       ? `culprit #${pull.number} (${short(culprit)}): proposed its revert, #${made.value.number}`
       : `culprit #${pull.number} (${short(culprit)}): the revert could not be proposed (${made.error})`;
   }
-  const title = `Red after landing: ${short(culprit)} broke ${files[0] ?? "main"}`;
+  const title = `${TITLE_PREFIX}${short(culprit)} broke ${files[0] ?? "main"}`;
   return `culprit ${short(culprit)}, landed by no pull: ${fileOnce(
     app,
     repo,
@@ -168,7 +174,7 @@ function unbisected(app: App, repo: Repo, red: Run, why: string): string {
   return `not bisected (${why}): ${fileOnce(
     app,
     repo,
-    `Red after landing: ${files[0] ?? "main"} fails on ${repo.defaultBranch}`,
+    `${TITLE_PREFIX}${files[0] ?? "main"} fails on ${repo.defaultBranch}`,
     `${FILED_BY}\n\nMain's verification ${red.id} is red at ${short(red.commitOid)}: ${redSays(red)}, failing alone too. The forge did not name the landing that broke it: ${why}.\n\nFiles: ${files.join(", ")}`,
   )}`;
 }
@@ -208,4 +214,52 @@ export async function afterVerify(app: App, repo: Repo, run: Run, ask: Ask): Pro
         `bisect: trying ${short(step.commit)}, ${range.length} commit(s) since ${short(green.commitOid)}, ` +
           `at most ${maxSteps(range.length)} step(s); run ${asked.id}`,
       ];
+}
+
+/** The files an issue's closing `Files:` line names; empty when it has none. */
+function filesNamed(body: string): string[] {
+  const line = /\nFiles: ([^\n]+)$/.exec(body);
+  return line === null ? [] : line[1]!.split(",").map((f) => f.trim()).filter(Boolean);
+}
+
+/**
+ * The lines for a green verification's log: one per open 'Red after
+ * landing' issue this module filed before `run` was asked for, whose every
+ * named file `run` printed passing (`verify.ts` `passedFiles`), commented on
+ * and closed as done (#11395). An issue a person (any account not an agent)
+ * has commented on stays open: the comment is their ask. Only an issue the
+ * forge filed is closed: its title, the owner as author and its opening line.
+ */
+export function closeOnGreen(app: App, repo: Repo, run: Run, passed: readonly string[]): string[] {
+  if (run.env !== VERIFY_ENV || run.state !== "ok" || passed.length === 0) return [];
+  const open = app.db
+    .query<{ id: string; number: number; title: string; body: string }, [string, string, string, string]>(
+      `SELECT issue.id, issue.number, issue.title, issue.body FROM issue
+        WHERE issue.repo_id = ?1 AND issue.kind = 'issue' AND issue.state = 'open'
+          AND issue.author_id = ?2 AND issue.title LIKE ?3 AND issue.created_at < ?4
+          AND NOT EXISTS (SELECT 1 FROM comment JOIN user ON user.id = comment.author_id
+                           WHERE comment.issue_id = issue.id AND user.is_agent = 0)
+        ORDER BY issue.number`,
+    )
+    .all(repo.id, repo.ownerId, `${TITLE_PREFIX}%`, run.createdAt);
+  const where = `verification ${run.id} at ${short(run.commitOid)}`;
+  const lines: string[] = [];
+  for (const issue of open) {
+    if (!issue.title.startsWith(TITLE_PREFIX) || !issue.body.startsWith(FILED_BY)) continue;
+    const files = filesNamed(issue.body);
+    if (files.length === 0 || !files.every((f) => passed.includes(f))) continue;
+    const body = `Green again: main's ${where} ran and passed ${files.map((f) => `\`${f}\``).join(", ")}.`;
+    const noted = addComment(app.db, { issueId: issue.id, authorId: repo.ownerId, body });
+    if (noted.ok)
+      app.bus.append({
+        kind: "issue.commented",
+        repoId: repo.id,
+        actorId: repo.ownerId,
+        payload: { number: issue.number, body, commentId: noted.value.id },
+      });
+    if (setIssueState(app.db, issue.id, "closed", "done") === undefined) continue;
+    app.bus.append({ kind: "issue.closed", repoId: repo.id, actorId: repo.ownerId, payload: { number: issue.number } });
+    lines.push(`culprit: closed #${issue.number}, ${files.join(", ")} green again`);
+  }
+  return lines;
 }

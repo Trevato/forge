@@ -71,7 +71,7 @@ describe("the chain of forges", () => {
     });
     if (!c.ok) throw new Error("commit");
 
-    const a = await spawn(root, alice.value, "kid", "root.test", "take-updates");
+    const a = await spawn(root, alice.value, "kid", "root.test");
     if (!a.ok) throw new Error(JSON.stringify(a.error));
     child = createApp({ dataDir: childDirOf(root, a.value.bodyId), url: "https://kid.test", port: 0 });
     // The child's owner changes their forge all they want.
@@ -84,7 +84,7 @@ describe("the chain of forges", () => {
     if (!own.ok) throw new Error("own commit");
 
     const founder = getUserByName(child.db, "alice")!;
-    const b = await spawn(child, founder, "tot", "kid.test");
+    const b = await spawn(child, founder, "tot", "kid.test", "tell-me");
     if (!b.ok) throw new Error(JSON.stringify(b.error));
     grand = createApp({ dataDir: childDirOf(child, b.value.bodyId), port: 0 });
     servers = await serve(grand);
@@ -100,13 +100,15 @@ describe("the chain of forges", () => {
     await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
-  test("followMode is validated and defaults to tell-me", () => {
+  test("followMode is validated and defaults to take-updates", () => {
     const base = { name: "x", org: "x", apps: [], carryBriefs: false, carrySubscriptions: false };
     expect(planSpawn(base, source).ok).toBe(true);
     const bad = planSpawn({ ...base, followMode: "yolo" }, source);
     expect(bad.ok).toBe(false);
-    const grandLink = planSpawn({ ...base, followMode: "tell-me" }, source);
-    expect(grandLink.ok && grandLink.value.followMode).toBeUndefined();
+    const taking = planSpawn({ ...base, followMode: "take-updates" }, source);
+    expect(taking.ok && taking.value.followMode).toBeUndefined();
+    const telling = planSpawn({ ...base, followMode: "tell-me" }, source);
+    expect(telling.ok && telling.value.followMode).toBe("tell-me");
   });
 
   test("the child carries a fork of the parent's forge code in the chosen mode", async () => {
@@ -118,7 +120,7 @@ describe("the chain of forges", () => {
     expect(getRepo(child.db, "kid", "forge")).toBeDefined();
   });
 
-  test("the grandchild's fork names the child's forge, mode tell-me by default", async () => {
+  test("the grandchild's fork names the child's forge, mode as chosen", async () => {
     const link = await forgeLinkOf(grand);
     expect(link?.upstream).toBe("kid/forge");
     expect(link?.mode).toBe("tell-me");

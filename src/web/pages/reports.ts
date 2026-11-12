@@ -12,6 +12,11 @@ import {
   waitingReports,
 } from "../../actions/reports.ts";
 import {
+  REPORT_WHERE_REPLY,
+  REPORT_WHO_READS,
+  reportTooFast,
+} from "../../actions/report_words.ts";
+import {
   BODY_MAX,
   OUTSIDE_TITLE,
   REQUEST_MAX,
@@ -19,6 +24,7 @@ import {
   byFiler,
   filerWords,
   outsideWords,
+  reportStanding,
   type FiledBy,
   type Report,
 } from "../../core/reports.ts";
@@ -84,10 +90,13 @@ function reportForm(
         <h1 class="mt">Report a problem</h1>
         <div class="narrow-wide mt">
           <p>
-            Tell the people who keep ${repo.ownerName}/${repo.name} that
-            something is wrong. You need no account. A person reads it first;
-            nothing acts on it before they do.
+            Tell the maintainers of ${repo.ownerName}/${repo.name} that
+            something is wrong. You need no account.
           </p>
+          <ul class="hint" id="report-next">
+            <li>${REPORT_WHO_READS}</li>
+            <li>${REPORT_WHERE_REPLY}</li>
+          </ul>
           ${ctx.auth.user
             ? html`<p class="hint">
                 Sent as @${ctx.auth.user.username}: the people who keep it see
@@ -146,7 +155,10 @@ export function reportPage(ctx: Ctx): Response {
 }
 
 function reportBody(ctx: Ctx, repo: Repo): Response {
-  if (ctx.url.searchParams.get("sent") === "1")
+  const sentId = ctx.url.searchParams.get("sent");
+  if (sentId !== null && sentId !== "") {
+    const standing = reportStanding(ctx.app.db, repo.id, sentId.slice(0, 64));
+    const base = repoBase(repo);
     return page({
       ctx,
       title: `Report sent · ${repo.ownerName}/${repo.name}`,
@@ -157,9 +169,15 @@ function reportBody(ctx: Ctx, repo: Repo): Response {
       })}
       <section class="settings-block">
         <h1>Report sent</h1>
-        <p>A person who keeps this repository will read it.</p>
+        ${standing?.state === "accepted" && standing.issue !== null
+          ? html`<p>A person read it and opened
+              <a href="${base}/issues/${standing.issue}">an issue</a> from it.</p>`
+          : standing?.state === "dismissed"
+            ? html`<p>A person read it and closed it without an issue.</p>`
+            : html`<p>Not read yet. Keep this link and look again.</p>`}
       </section>`,
     });
+  }
   return reportForm(ctx, repo, {
     title: "",
     body: "",
@@ -204,7 +222,10 @@ export async function reportSubmit(ctx: Ctx): Promise<Response> {
     clientBucket(ctx.request),
     proofOf(ctx),
   );
-  if (filed.ok) return flashTo(ctx, sent, { message: "Report sent." });
+  if (filed.ok)
+    return flashTo(ctx, `${repoBase(repo)}/report?sent=${filed.value.id}`, {
+      message: "Report sent.",
+    });
   const refusal = filed.error;
   if (refusal.error === "not_found") return notFoundPage(ctx);
   if (refusal.error === "rate_limited") {
@@ -213,7 +234,7 @@ export async function reportSubmit(ctx: Ctx): Promise<Response> {
       repo,
       values,
       {
-        message: `Too many reports just now. Try again in ${refusal.retryAfter} seconds.`,
+        message: reportTooFast(refusal.retryAfter),
       },
       429,
     );

@@ -78,6 +78,7 @@ import {
 import { validPolishShare } from "../crew/polish_share.ts";
 import { removeInstallCache } from "../crew/workdir.ts";
 import type { SettingsChanged } from "../core/settings_changed.ts";
+import { seatStarterCrew } from "../spawn/starter_crew.ts";
 
 export interface CreateRepoInput {
   /** Owner name: the actor themselves (default) or an org they can write to. */
@@ -180,6 +181,7 @@ export async function createRepo(
   });
   if (!created.ok) return created;
   storageChanged(app, ownerId);
+  seatStarterCrew(app.db, created.value, user.value.id);
   app.bus.append({
     kind: "repo.created",
     repoId: created.value.id,
@@ -340,7 +342,7 @@ function inTurn<T>(app: App, repoId: string, work: () => Promise<T>): Promise<T>
 }
 
 /**
- * Archive (true) or wake (false), and act on it only if this call moved the
+ * Archive (true) or restore (false), and act on it only if this call moved the
  * repository (`moveArchived`). The write and its effect take one turn per
  * repository, so a Wake asked while an Archive is still stopping the app
  * starts it after that stop, not before it. True when this call moved it.
@@ -543,7 +545,7 @@ export interface ArchiveAnswer {
 }
 
 /**
- * Archive (true) or wake (false) a repository, for the MCP: the same
+ * Archive (true) or restore (false) a repository, for the MCP: the same
  * `updateRepoSettings` the API's PATCH goes through. A repository admin's,
  * never an agent's; a dry run answers what would change and changes nothing.
  */

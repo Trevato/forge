@@ -63,10 +63,10 @@ describe("forkTree", () => {
     expect(t.root).toBe("alice/app");
     expect(t.truncated).toBe(false);
     const by = Object.fromEntries(t.nodes.map((n) => [n.repo, n]));
-    expect(by["alice/app"]).toEqual({ repo: "alice/app", parent: null, depth: 0, follow: "autonomous" });
-    expect(by["bob/app"]).toEqual({ repo: "bob/app", parent: "alice/app", depth: 1, follow: "offers" });
+    expect(by["alice/app"]).toEqual({ repo: "alice/app", parent: null, depth: 0, follow: "autonomous", word: "" });
+    expect(by["bob/app"]).toEqual({ repo: "bob/app", parent: "alice/app", depth: 1, follow: "offers", word: "proposes" });
     expect(by["carol/app"]!.parent).toBe("alice/app");
-    expect(by["dan/app"]).toEqual({ repo: "dan/app", parent: "bob/app", depth: 2, follow: "take-updates" });
+    expect(by["dan/app"]).toEqual({ repo: "dan/app", parent: "bob/app", depth: 2, follow: "take-updates", word: "follows" });
   });
 
   test("a stranger and the owner of a private fork get different lists, and the stranger's has no trace", () => {
@@ -146,7 +146,10 @@ describe("the terminal screen", () => {
     const { treeLines } = await import("../src/tui/screens/fork_tree.ts");
     const lines = treeLines(forkTree(app.db, org, users["dan"]!), "bob/app");
     expect(lines).toContain("alice/app");
-    expect(lines).toContain("  * bob/app  offers");
+    expect(lines).toContain("  * bob/app  proposes");
+    const own = treeLines(forkTree(app.db, person, users["dan"]!), "dan/app");
+    expect(own).toContain("    * dan/app  follows");
+    expect(lines.join("\n")).not.toContain("offers");
     expect(lines.join("\n")).not.toContain("secret");
     expect(treeLines(forkTree(app.db, hidden, users["dan"]!), "erin/secret")).toEqual(["Nothing to show."]);
   });

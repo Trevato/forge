@@ -43,7 +43,7 @@ import { readTips } from "../git/tips.ts";
 import { repoDir } from "../git/repos.ts";
 import { combine } from "../git/combined.ts";
 import { fromKeptFork } from "./landing_kind.ts";
-import { forkFollowMode } from "./fork_follow.ts";
+import { forkFollowMode, forkFollowModes, FORK_DEFAULT_MODE, type ForkFollowMode } from "./fork_follow.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
@@ -109,7 +109,9 @@ export function follow(forge: Following): () => void {
       }),
     );
     if (moved.some((m) => m.ref === `refs/heads/${repo.defaultBranch}`))
-      for (const fork of listForks(forge.db, repo.id))
+      for (const fork of listForks(forge.db, repo.id)) {
+        // A fork that chose not to follow (#608) is neither moved nor told.
+        if (forkFollowMode(forge.db, fork.id) === "dont-follow") continue;
         fastForwardFork(forge, fork, repo, actor)
           .then(async (followed) => {
             // A fork with work of its own cannot be moved; it is told the
@@ -140,6 +142,7 @@ export function follow(forge: Following): () => void {
               error: String(error),
             }),
           );
+      }
   });
 }
 
@@ -570,6 +573,8 @@ export interface LineageNode {
   readonly repo: Repo;
   /** Against this node's parent; absent on the root, and past the budget. */
   readonly relation: ForkRelation | undefined;
+  /** How it follows its parent, as stored (a fork that never chose has the default); absent on the root. */
+  readonly mode?: ForkFollowMode;
   readonly children: readonly LineageNode[];
 }
 
@@ -618,6 +623,7 @@ export async function lineageOf(
   interface Draft {
     repo: Repo;
     relation: ForkRelation | undefined;
+    mode?: ForkFollowMode;
     children: Draft[];
   }
   const root: Draft = { repo: top, relation: undefined, children: [] };
@@ -657,5 +663,16 @@ export async function lineageOf(
   // the bound is not hinted at, any more than one inside it is shown.
   if (level.some((n) => forksOf(n.repo.id).some(mayRead)))
     truncated = true;
+  // The follow modes of every fork in the tree, in one query.
+  const drafts: Draft[] = [];
+  const walk = (d: Draft): void => {
+    for (const c of d.children) {
+      drafts.push(c);
+      walk(c);
+    }
+  };
+  walk(root);
+  const modes = forkFollowModes(forge.db, drafts.map((d) => d.repo.id));
+  for (const d of drafts) d.mode = modes.get(d.repo.id) ?? FORK_DEFAULT_MODE;
   return { root, size, truncated };
 }

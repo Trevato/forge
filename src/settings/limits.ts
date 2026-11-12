@@ -26,6 +26,7 @@ export type LimitKey =
   | "crew.concurrency"
   | "checks.concurrency"
   | "agent.budget_max_usd"
+  | "spawn.included_credit_usd"
   | "subscription.budget_max_usd"
   | "app.members_max"
   | "front.pinned_max"
@@ -48,10 +49,13 @@ export type LimitKey =
   | "guest.fork_storage_mb"
   | "guest.cooldown_minutes"
   | "api.anonymous_per_source"
+  | "report.per_source"
   | "model_review.auto"
   | "model_review.min_landed"
   | "model_review.slack_pct"
-  | "shell_idle_minutes";
+  | "shell_idle_minutes"
+  | "billing.grace_days"
+  | "billing.retention_days";
 
 export interface LimitDef {
   readonly label: string;
@@ -94,6 +98,14 @@ export const LIMITS: Record<LimitKey, LimitDef> = {
     min: 1,
     max: 1_000_000,
     reason: "A crew member's per-run budget is spent unattended, so what one run may cost has a top.",
+  },
+  "spawn.included_credit_usd": {
+    label: "Crew credit a new forge comes with",
+    unit: "dollars",
+    default: 2,
+    min: 0,
+    max: 1_000,
+    reason: "A new forge's crew runs on this forge's model access until its owner adds a key; 0 turns it off. Worst case a day is the visitor limit times this.",
   },
   "subscription.budget_max_usd": {
     label: "Pool account budget ceiling",
@@ -271,6 +283,14 @@ export const LIMITS: Record<LimitKey, LimitDef> = {
     max: 100_000,
     reason: "A token's reads are counted by the token; a stranger's have no token to count, so one source reading without one has a ceiling of its own.",
   },
+  "report.per_source": {
+    label: "Reports from outside per source a minute",
+    unit: "reports",
+    default: 5,
+    min: 1,
+    max: 1_000,
+    reason: "Anyone may file a report with no account, so one address cannot flood the people who read them; the sixth in a minute waits.",
+  },
   "model_review.auto": {
     label: "Weekly model review applies a cheaper model on its own",
     unit: "0 asks first, 1 applies",
@@ -302,6 +322,22 @@ export const LIMITS: Record<LimitKey, LimitDef> = {
     min: 5,
     max: 1440,
     reason: "A shell nobody types in and that prints nothing holds a process and memory for no reason; one that prints, like a build, is never stopped.",
+  },
+  "billing.grace_days": {
+    label: "Days a forge keeps working after its payment fails",
+    unit: "days",
+    default: 7,
+    min: 0,
+    max: 90,
+    reason: "A card that fails is usually fixed within days, so a lapse is not felt at once; past this the forge's billing reads as none.",
+  },
+  "billing.retention_days": {
+    label: "Days a lapsed forge keeps its data",
+    unit: "days",
+    default: 30,
+    min: 1,
+    max: 365,
+    reason: "A forge that lapsed may come back, so its data waits this long before anything is allowed to remove it; paying again makes it active at once.",
   },
 };
 
@@ -389,6 +425,31 @@ export function limitState(
     return { value: limitValue(db, key), isSet: limitIsSet(db, key), defaultValue: limitDefault(db, key) };
   const set = stored(db, key);
   return { value: set ?? LIMITS[key].default, isSet: set !== undefined, defaultValue: LIMITS[key].default };
+}
+
+/** `limitState` for every limit with one read of the stored settings, not one per limit. */
+export function limitStates(
+  db: Database,
+  keys: readonly LimitKey[],
+): Map<LimitKey, { value: number; isSet: boolean; defaultValue: number }> {
+  const rows = new Map(
+    db
+      .query<{ key: string; value: string }, []>("SELECT key, value FROM forge_setting WHERE key LIKE 'limit.%'")
+      .all()
+      .map((r) => [r.key, r.value]),
+  );
+  const out = new Map<LimitKey, { value: number; isSet: boolean; defaultValue: number }>();
+  for (const key of keys) {
+    if (capacityKey(key) !== undefined) {
+      out.set(key, limitState(db, key));
+      continue;
+    }
+    const raw = rows.get(storeKey(key));
+    const n = raw !== undefined && /^\d+$/.test(raw) ? Number(raw) : NaN;
+    const set = validLimit(key, n) ? n : undefined;
+    out.set(key, { value: set ?? LIMITS[key].default, isSet: set !== undefined, defaultValue: LIMITS[key].default });
+  }
+  return out;
 }
 
 export type LimitError = {

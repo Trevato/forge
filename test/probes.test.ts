@@ -2,6 +2,11 @@
  * The probe as a service: a production deploy is followed by a knock, a
  * mismatch opens one issue and keeps it single, and the first clean probe
  * after closes it. The nightly round is the same knock for every app.
+ *
+ * The doors are asked by a scripted prober (`startProbes`' `knock` seam):
+ * what the running app answers is `probe.test.ts`'s business; here the
+ * verdict is whatever the test says, so it is the same every run and in
+ * every order. Each test owns its own app.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -9,9 +14,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { newApp } from "../src/actions/apps.ts";
-import { commitToBranch } from "../src/actions/repos.ts";
-import { AppsRuntime } from "../src/apps/runtime.ts";
-import { scaffoldFiles } from "../src/apps/scaffold.ts";
+import type { AppsRuntime } from "../src/apps/runtime.ts";
+import type { Probed } from "../src/contract/probe.ts";
 import {
   PROBE_ISSUE_TITLE,
   latestProbes,
@@ -23,50 +27,60 @@ import {
 } from "../src/contract/probes.ts";
 import type { AppRecord } from "../src/core/apps.ts";
 import { listIssues } from "../src/core/issues.ts";
-import { getRepoById, type Repo } from "../src/core/repos.ts";
-import { listRuns } from "../src/core/runs.ts";
+import type { Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
-import { serve, type Servers } from "../src/http/server.ts";
+
+const SAID = "note.delete as anon: the table says no, the app said 404";
 
 describe("the probe follows deploys and keeps one issue", () => {
   let dataDir: string;
   let app: App;
-  let servers: Servers;
-  let runtime: AppsRuntime;
   let probes: ProbesHandle;
   let alice: User;
-  let repo: Repo;
-  let record: AppRecord;
+  /** What the doors of each app say, by app id: the test sets it. */
+  const answers = new Map<string, "ok" | "mismatch">();
 
-  const until = async (what: () => boolean, ms = 90_000): Promise<void> => {
+  const until = async (what: () => boolean, ms = 10_000): Promise<void> => {
     const start = Date.now();
     while (!what()) {
       if (Date.now() - start > ms) throw new Error("not in time");
-      await Bun.sleep(100);
+      await Bun.sleep(50);
     }
   };
-  const deployedAfter = (since: string) =>
-    until(() => {
-      const run = listRuns(app.db, repo.id, { kind: "deploy", limit: 20 }).find(
-        (r) => r.env === "production" && r.createdAt > since,
-      );
-      return run !== undefined && run.state === "ok";
+  const made = async (name: string): Promise<{ repo: Repo; record: AppRecord }> => {
+    const out = await newApp(app, alice, { name, visibility: "public" });
+    if (!out.ok) throw new Error(String(out.error));
+    return { repo: out.value.repo, record: out.value.app };
+  };
+  /** A production deploy finished green, as the runtime says it. */
+  const deployed = (repo: Repo): void => {
+    app.bus.append({
+      kind: "run.finished",
+      repoId: repo.id,
+      payload: { kind: "deploy", state: "ok", env: "production" },
     });
-  const probesSoFar = () => listProbes(app.db, record.id).length;
+  };
+  const probesOf = (record: AppRecord) => listProbes(app.db, record.id);
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-probes-"));
     app = createApp({ dataDir, port: 0 });
-    servers = await serve(app);
-    runtime = new AppsRuntime(app, {
-      domain: "apps.test",
-      scheme: "http",
-      publicPort: servers.port,
-      forgeUrl: servers.url,
-      concurrency: 1,
+    // No app ever runs: the prober below answers for its doors.
+    const runtime = {} as AppsRuntime;
+    probes = startProbes(app, runtime, {
+      nightly: false,
+      knock: async (input): Promise<Probed> => {
+        const verdict = answers.get(input.record.id) ?? "ok";
+        return {
+          repo: input.repo,
+          commitOid: input.repo.id,
+          at: new Date().toISOString(),
+          verdict,
+          knocks: [],
+          said: verdict === "mismatch" ? [SAID] : [],
+        };
+      },
     });
-    await runtime.start();
-    probes = startProbes(app, runtime, { nightly: false });
     const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -75,103 +89,60 @@ describe("the probe follows deploys and keeps one issue", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const made = await newApp(app, alice, { name: "notes", visibility: "public" });
-    if (!made.ok) throw new Error(String(made.error));
-    repo = made.value.repo;
-    record = made.value.app;
-    await deployedAfter("");
-  }, 150_000);
+  }, 30_000);
 
   afterAll(async () => {
     await probes.stop();
-    await runtime.stop();
-    servers.stop();
     app.close();
     await rm(dataDir, { recursive: true, force: true });
   });
 
   test("a production deploy is followed by a knock, and a clean app has no issue", async () => {
-    await until(() => probesSoFar() >= 1, 30_000);
+    const { repo, record } = await made("clean");
+    answers.set(record.id, "ok");
+    deployed(repo);
+    await until(() => probesOf(record).length >= 1);
     const latest = latestProbes(app.db, [record.id]).get(record.id)!;
     expect(latest.verdict).toBe("ok");
     expect(latest.said).toEqual([]);
     expect(probeIssue(app, repo)).toBeUndefined();
-  }, 60_000);
+  }, 15_000);
 
   test("a disobeying deploy opens one issue; a second probe does not double it", async () => {
-    const files = new Map(
-      scaffoldFiles({ name: "notes", description: "" }).map((f) => [f.path, f.content]),
-    );
-    const actions = files.get("src/actions.ts") as string;
-    const broken = actions.replace(
-      'if (permit(who, "note", verb, row) !== "yes")',
-      'if (verb !== "delete" && permit(who, "note", verb, row) !== "yes")',
-    );
-    expect(broken).not.toBe(actions);
-    // The door asks the same table before the action does, so the rule is
-    // written there too: a hand-written rule has to open both to be heard.
-    const door = files.get("src/security.ts") as string;
-    const opened = door.replace(
-      ": !mayKnock(who, found.resource, found.verb);",
-      ': found.verb !== "delete" && !mayKnock(who, found.resource, found.verb);',
-    );
-    expect(opened).not.toBe(door);
-    const before = probesSoFar();
-    const since = new Date().toISOString();
-    await Bun.sleep(5);
-    const wrote = await commitToBranch(app, alice, repo, {
-      message: "a hand-written rule, and the tests that knew better",
-      files: [
-        { path: "src/actions.ts", content: broken },
-        { path: "src/security.ts", content: opened },
-        { path: "src/contract.test.ts", content: null },
-        { path: "src/actions.test.ts", content: null },
-        { path: "src/server.test.ts", content: null },
-        { path: "src/audit.test.ts", content: null },
-      ],
-    });
-    expect(wrote.ok).toBe(true);
-    await deployedAfter(since);
-    await until(() => probesSoFar() > before, 30_000);
+    const { repo, record } = await made("broken");
+    answers.set(record.id, "mismatch");
+    deployed(repo);
+    await until(() => probesOf(record).length >= 1);
     const latest = latestProbes(app.db, [record.id]).get(record.id)!;
     expect(latest.verdict).toBe("mismatch");
     const issue = probeIssue(app, repo);
     expect(issue).toBeDefined();
     expect(issue!.title).toBe(PROBE_ISSUE_TITLE);
-    expect(issue!.body).toContain("note.delete as anon: the table says no, the app said 404");
+    expect(issue!.body).toContain(SAID);
     expect(issue!.authorId).toBe(alice.id);
 
     // A round knocks again: still one issue.
     const rows = await probes.round();
-    expect(rows.map((r) => r.verdict)).toEqual(["mismatch"]);
+    expect(rows.filter((r) => r.appId === record.id).map((r) => r.verdict)).toEqual([
+      "mismatch",
+    ]);
     expect(
       listIssues(app.db, repo.id, { state: "open", limit: 50 }).filter(
         (i) => i.title === PROBE_ISSUE_TITLE,
       ),
     ).toHaveLength(1);
-  }, 150_000);
+  }, 15_000);
 
   test("the first clean probe after closes the issue", async () => {
-    const files = new Map(
-      scaffoldFiles({ name: "notes", description: "" }).map((f) => [f.path, f.content]),
-    );
-    const before = probesSoFar();
-    const since = new Date().toISOString();
-    await Bun.sleep(5);
-    const wrote = await commitToBranch(app, alice, repo, {
-      message: "the door obeys again",
-      files: [
-        { path: "src/actions.ts", content: files.get("src/actions.ts") as string },
-        { path: "src/security.ts", content: files.get("src/security.ts") as string },
-        { path: "src/contract.test.ts", content: files.get("src/contract.test.ts") as string },
-        { path: "src/actions.test.ts", content: files.get("src/actions.test.ts") as string },
-        { path: "src/server.test.ts", content: files.get("src/server.test.ts") as string },
-        { path: "src/audit.test.ts", content: files.get("src/audit.test.ts") as string },
-      ],
-    });
-    expect(wrote.ok).toBe(true);
-    await deployedAfter(since);
-    await until(() => probesSoFar() > before, 30_000);
+    const { repo, record } = await made("mended");
+    answers.set(record.id, "mismatch");
+    await probes.round();
+    expect(probeIssue(app, repo)).toBeDefined();
+
+    // The door obeys again, and the deploy that says so is knocked on.
+    answers.set(record.id, "ok");
+    deployed(repo);
+    await until(() => probesOf(record).length >= 2);
     expect(latestProbes(app.db, [record.id]).get(record.id)!.verdict).toBe("ok");
     expect(probeIssue(app, repo)).toBeUndefined();
     const closed = listIssues(app.db, repo.id, { state: "closed", limit: 50 }).find(
@@ -179,14 +150,8 @@ describe("the probe follows deploys and keeps one issue", () => {
     );
     expect(closed).toBeDefined();
     // The history is rows, newest first.
-    expect(listProbes(app.db, record.id).map((r) => r.verdict)).toEqual([
-      "ok",
-      "mismatch",
-      "mismatch",
-      "ok",
-    ]);
-    expect(getRepoById(app.db, repo.id)).toBeDefined();
-  }, 150_000);
+    expect(probesOf(record).map((r) => r.verdict)).toEqual(["ok", "mismatch"]);
+  }, 15_000);
 
   test("the nightly round is scheduled for the next 09:00 UTC", () => {
     const at = Date.UTC(2026, 8, 21, 8, 59, 0);

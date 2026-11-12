@@ -11,6 +11,7 @@
  */
 
 import { GO_MATCH_JS, goPagesData } from "./go_pages.ts";
+import { keyDecisionJs } from "./key_decision.ts";
 import { actNowJs } from "./act_now.ts";
 import { pickJs } from "./pick.ts";
 import { imageViewJs } from "./render/image.ts";
@@ -62,34 +63,23 @@ const modalJs = /* js */ `
 `;
 
 /**
- * The device-code page's only enhancement: submit the "check again" form on
- * the interval the provider asked for, and reload when the flow stops being
- * pending. Everything it does is something the page already offers a button
- * for, and the poll route answers JSON only because it was asked to — the
- * same POST from a plain form gets a redirect.
+ * The device-code page's only enhancement: listen on the page's own stream
+ * (`data-stream` on the "check again" form) and re-read the page when the
+ * forge says the flow has left pending. The forge does the asking of the
+ * provider (`src/http/flow_stream.ts`); this loops on nothing. Without script
+ * the form's button and a reload still re-poll.
  *
- * Shipped per page (`PageOptions.scriptJs`) rather than in the shell: a page
- * with no connect in flight should carry none of it.
+ * Shipped per page (`PageOptions.scriptJs`) rather than in the shell.
  */
 export const pollJs = /* js */ `
 (function () {
-  var form = document.querySelector('form[data-poll]');
-  if (!form) return;
-  var every = Number(form.getAttribute('data-poll') || 0);
-  if (!every) return;
-  var tries = 0;
-  function ask() {
-    if (tries++ > 200) return;
-    fetch(form.getAttribute('action') || location.href, {
-      method: 'POST',
-      headers: { accept: 'application/json' },
-      body: new FormData(form),
-    }).then(function (r) { return r.json(); }).then(function (out) {
-      if (out && out.status && out.status !== 'pending') { location.reload(); return; }
-      window.setTimeout(ask, every * 1000);
-    }, function () { window.setTimeout(ask, every * 1000); });
-  }
-  window.setTimeout(ask, every * 1000);
+  var form = document.querySelector('form[data-stream]');
+  if (!form || typeof EventSource === 'undefined') return;
+  var source = new EventSource(form.getAttribute('data-stream'));
+  source.addEventListener('flow.settled', function () {
+    source.close();
+    location.reload();
+  });
 })();
 `;
 
@@ -1470,6 +1460,7 @@ const shellCore = /* js */ `
   });
 
   // ---- keyboard: sequences from the DOM, so the help can never drift ----
+  ${keyDecisionJs}
   var seq = []; var last = 0;
   function rows() { return Array.prototype.slice.call(doc.querySelectorAll('[data-nav]')); }
   function move(step) {
@@ -1561,30 +1552,21 @@ const shellCore = /* js */ `
   window.addEventListener('blur', function () { hints(false); });
   doc.addEventListener('keydown', function (e) {
     var t = e.target;
-    // Inside an open dialog the dialog owns the keys; none of these apply.
-    if (t && t.closest && t.closest('dialog[open]')) return;
-    // The palette is one chord away from anywhere, a field included.
-    if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === 'k' || e.key === 'K')) {
-      e.preventDefault();
-      openPalette();
-      return;
-    }
-    if (t && t.matches && t.matches('input, textarea, select, [contenteditable]')) {
-      if (e.key === 'Escape') { e.preventDefault(); t.blur(); }
-      // Cmd/Ctrl+Enter sends the form a box belongs to, and only a form that
-      // asked for it (\`data-submit-key\`): the button's own submit, with its
-      // validation. Plain Enter stays a newline.
-      else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && t.form && t.form.hasAttribute('data-submit-key')) {
-        e.preventDefault();
-        if (t.form.requestSubmit) t.form.requestSubmit(); else t.form.submit();
-      }
-      return;
-    }
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
-    if (e.key === 'Escape' && e.defaultPrevented) return;
-    if (e.key === 'Escape' && escClosedHints) { escClosedHints = false; e.preventDefault(); return; }
-    if (e.key === 'Escape' && leaveToList()) { e.preventDefault(); return; }
-    if (Date.now() - last > 1200) seq.length = 0;
+    var chord = (e.metaKey || e.ctrlKey) && !e.altKey ? rowForKey('Mod+' + (e.key === 'K' ? 'k' : e.key)) : null;
+    // The decision is key_decision.ts: a dialog owns its keys, a chord
+    // answers from anywhere, a field keeps its typing, a held modifier is
+    // the browser's.
+    var what = decideKey({
+      ctrl: e.ctrlKey, meta: e.metaKey, alt: e.altKey, key: e.key, hasChord: !!chord,
+      inDialog: !!(t && t.closest && t.closest('dialog[open]')),
+      inField: !!(t && t.matches && t.matches('input, textarea, select, [contenteditable]')),
+    });
+    if (what === 'chord') { chord[3](e); return; }
+    if (what === 'blur') { e.preventDefault(); t.blur(); return; }
+    if (what !== 'key') return;
+    var row = rowForKey(e.key);
+    if (e.key === 'Escape') { if (row) row[3](e); return; }
+    if (Date.now() - last > 1000) seq.length = 0;
     last = Date.now();
     seq.push(e.key);
     if (seq.length > 2) seq.splice(0, seq.length - 2);
@@ -1598,39 +1580,58 @@ const shellCore = /* js */ `
       if (after) after.focus();
       return;
     }
-    if (e.key === 'j') { seq.length = 0; e.preventDefault(); move(1); }
-    else if (e.key === 'k') { seq.length = 0; e.preventDefault(); move(-1); }
-    else if (e.key === 'o' || e.key === 'Enter') { seq.length = 0; openFocused(); }
-    else if (e.key === 'c') {
-      if (focusBox()) { seq.length = 0; e.preventDefault(); } else openNewIssue(e);
-    } else if (e.key === 'C') openNewIssue(e);
-    else if (e.key === '/') {
-      var box = doc.querySelector('[data-search-input]');
-      if (box) { seq.length = 0; e.preventDefault(); box.focus(); box.select(); }
-    } else if (e.key === '?') {
-      seq.length = 0; e.preventDefault();
-      // One press, one sheet: the help opens at once (Option still lays the keys over the page).
-      hints(false); openHelp();
+    // \`g\` then a letter: a page from the one list (go_pages.ts), only if this viewer may open it.
+    if (seq.length === 2 && seq[0] === 'g') {
+      var gp = gotoPages().filter(function (p) { return p[3] !== '' && p[3] === e.key; })[0];
+      if (gp) { seq.length = 0; e.preventDefault(); location.assign(gp[1]); return; }
     }
-    else if (e.key === ':') { seq.length = 0; e.preventDefault(); openGoto(); }
+    if (row) { seq.length = 0; row[3](e); }
   });
 
   // ---- help overlay, generated from the shortcuts actually on the page ----
+  // One table: the sheet lists its rows and the keydown handler runs them.
+  // A row is [shown, what it does, the e.key values it answers, its action];
+  // a chord is written 'Mod+<key>' (Cmd or Ctrl) and is read ahead of the field guard.
+  function submitBox(f) { if (f.requestSubmit) f.requestSubmit(); else f.submit(); }
   var STATIC_KEYS = [
-    ['j / k', 'Move between rows'], ['o or Enter', 'Open the focused row'],
-    ['/', 'Focus search'], ['Cmd/Ctrl K', 'Jump to anywhere'], [':', 'Go to a page by name'], ['?', 'This help'],
-    ['Esc', 'Leave a box, close a menu or dialog'],
+    ['j / k', 'Move between rows', ['j', 'k'], function (e) { e.preventDefault(); move(e.key === 'j' ? 1 : -1); }],
+    ['o or Enter', 'Open the focused row', ['o', 'Enter'], openFocused],
+    ['/', 'Focus search', ['/'], function (e) {
+      var box = doc.querySelector('[data-search-input]');
+      if (box) { e.preventDefault(); box.focus(); box.select(); }
+    }],
+    ['Cmd/Ctrl K', 'Jump to anywhere', ['Mod+k'], function (e) { e.preventDefault(); openPalette(); }],
+    [':', 'Go to a page by name', [':'], function (e) { e.preventDefault(); openGoto(); }],
+    ['?', 'This help', ['?'], function (e) { e.preventDefault(); hints(false); openHelp(); }],
+    ['Esc', 'Leave a box, close a menu or dialog', ['Escape'], function (e) {
+      if (e.defaultPrevented) return;
+      if (escClosedHints) { escClosedHints = false; e.preventDefault(); return; }
+      if (leaveToList()) e.preventDefault();
+    }],
   ];
+  // The keys a page row may answer: only these cost a look at the page.
+  var PAGE_KEYS = ['c', 'C', 'Mod+Enter'];
+  function answers(r, k) { return r[2].indexOf(k) >= 0; }
+  function rowForKey(k) {
+    var row = STATIC_KEYS.filter(function (r) { return answers(r, k); })[0];
+    if (row || PAGE_KEYS.indexOf(k) < 0) return row;
+    return pageKeys().filter(function (r) { return answers(r, k); })[0];
+  }
   // The rows a page earns by what it carries: a box to type in, a form
   // that sends on Cmd/Ctrl+Enter.
   function pageKeys() {
     var out = [];
-    if (pageBox() && !doc.querySelector('[data-shortcut="c"]')) out.push(['c', doc.querySelector('[data-box]').getAttribute('data-box') || 'Write here']);
+    if (pageBox() && !doc.querySelector('[data-shortcut="c"]')) out.push(['c', doc.querySelector('[data-box]').getAttribute('data-box') || 'Write here', ['c'], function (e) { if (focusBox()) e.preventDefault(); else openNewIssue(e); }]);
     // A page that keeps c for its own box shows Shift C alone; any other
     // page opens the new issue on either.
     var ownC = pageBox() || doc.querySelector('[data-shortcut="c"]');
-    out.push([ownC ? 'Shift C' : 'c / Shift C', 'New issue from this page']);
-    if (doc.querySelector('form[data-submit-key]')) out.push(['Cmd/Ctrl Enter', 'Submit the box you are typing in']);
+    out.push(ownC ? ['Shift C', 'New issue from this page', ['C'], openNewIssue] : ['c / Shift C', 'New issue from this page', ['c', 'C'], openNewIssue]);
+    // Only a form that asked for it (\`data-submit-key\`) is sent: the button's own
+    // submit, with its validation. Plain Enter stays a newline.
+    if (doc.querySelector('form[data-submit-key]')) out.push(['Cmd/Ctrl Enter', 'Submit the box you are typing in', ['Mod+Enter'], function (e) {
+      var f = e.target && e.target.form;
+      if (f && f.hasAttribute('data-submit-key')) { e.preventDefault(); submitBox(f); }
+    }]);
     return out;
   }
   // Built with DOM nodes, never innerHTML: every string below is page text,
@@ -1675,6 +1676,8 @@ const shellCore = /* js */ `
       var pl = doc.createElement('td'); pl.textContent = 'Pages: ' + names.join(', ');
       pr.appendChild(pk); pr.appendChild(pl); tbody.appendChild(pr);
     }
+    // The \`g\` jumps, read from the same list: one row per page this viewer may open by key.
+    gotoPages().forEach(function (p) { if (p[3] !== '') tbody.appendChild(keyRow('g ' + p[3], 'Go to ' + p[0])); });
     table.appendChild(tbody);
     if (body) { body.textContent = ''; body.appendChild(table); }
     openModal(dlg);
@@ -1707,6 +1710,16 @@ const shellCore = /* js */ `
   var RECENT_KEY = 'forge.palette.recent';
   var RECENT_MAX = 50;  // entries kept
   var RECENT_SHOWN = 8; // entries listed while the box is empty
+  var VISITS_KEY = 'forge.palette.visits';
+  var VISITS_MAX = 5;   // rows in the Recent group while the box is empty (visits, then picked)
+  // Pages visited: paths only, never titles; each load records its page once.
+  function readVisits() {
+    try { var v = JSON.parse(window.localStorage.getItem(VISITS_KEY) || '[]'); return Array.isArray(v) ? v : []; } catch (_) { return []; }
+  }
+  try {
+    var seenRows = (function () { try { return JSON.parse(doc.getElementById('palette-index').textContent).items || []; } catch (_) { return []; } })();
+    window.localStorage.setItem(VISITS_KEY, JSON.stringify(visitLoad(readVisits(), window.location.pathname, seenRows, VISITS_MAX + 1)));
+  } catch (_) {}
   var index = null;
   function loadIndex() {
     if (index) return index;
@@ -1953,8 +1966,11 @@ const shellCore = /* js */ `
       return r;
     });
     var tellApp = (loadIndex().tell || {}).app;
-    var recent = frecencyOrder(readRecent(), Date.now()).slice(0, RECENT_SHOWN).map(function (r) { return { t: r.t, h: r.h, g: 'Recent', d: r.g }; });
-    var recentHrefs = recent.map(function (r) { return r.h; });
+    // Storage is read once per opening, not per keystroke.
+    var openedAt = Date.now();
+    var visits = readVisits();
+    var uses = readRecent();
+    var recentHrefs = frecencyOrder(uses, openedAt).slice(0, RECENT_SHOWN).map(function (r) { return r.h; });
     var served = [];       // rows the server found, for the query servedFor
     var servedFor = '';
     var pending = false;   // a server answer is on its way
@@ -2021,7 +2037,7 @@ const shellCore = /* js */ `
     function render(keep) {
       armed = null;
       var q = input.value.trim();
-      var pool = (q === '' ? recent : []).concat(items, q.length >= 2 ? served : []);
+      var pool = palettePool(q, items, served, visits, uses, window.location.pathname, openedAt, VISITS_MAX);
       // "#123" on a repository's page: that number, built here from the page's own path (the server read no issue for it).
       var hereBase = loadIndex().here;
       var num = /^#(\\d+)$/.exec(q);
@@ -2390,7 +2406,9 @@ export const liveRegionsJs = /* js */ `
     var t = /<time\\b[^>]*>[^<]*<\\/time>/g;
     return a.replace(t, '') === b.replace(t, '');
   }
-  function swap(fresh, ids) {
+  // data-live-hold: a reader inside the region keeps their place.
+  function holdRegion(r) { var b = r.hasAttribute('data-live-hold') && r.getBoundingClientRect(); return b && b.top < 0 && b.bottom > 0; }
+  function swap(fresh, ids, src) {
     ids.forEach(function (id) {
       var mine = document.getElementById(id);
       var theirs = fresh.getElementById(id);
@@ -2409,6 +2427,7 @@ export const liveRegionsJs = /* js */ `
       var typed = Array.prototype.some.call(mine.querySelectorAll('input.input, textarea'), function (i) { return i.value !== ''; });
       if (typed) return;
       if (same(mine.innerHTML, theirs.innerHTML)) return;
+      if (holdRegion(mine)) { delete tags[src]; mine.dispatchEvent(new CustomEvent('forge:held', { bubbles: true, detail: { html: theirs.innerHTML } })); return; }
       // A disclosure the reader opened stays open across the swap.
       var opened = Array.prototype.map.call(mine.querySelectorAll('details[id][open]'), function (d) { return d.id; });
       mine.innerHTML = theirs.innerHTML;
@@ -2443,7 +2462,7 @@ export const liveRegionsJs = /* js */ `
           holder.innerHTML = text;
           var stamped = holder.content.querySelector('[data-etag]');
           if (stamped) tags[src] = '"' + stamped.getAttribute('data-etag') + '"';
-          swap(holder.content, ids);
+          swap(holder.content, ids, src);
           return;
         }
         // Parse a copy without the page's own style element: the swap only
@@ -2457,7 +2476,7 @@ export const liveRegionsJs = /* js */ `
         var theirSprite = fresh.querySelector('.sprite');
         var mySprite = document.querySelector('.sprite');
         if (theirSprite && mySprite) mySprite.replaceWith(theirSprite);
-        swap(fresh, ids);
+        swap(fresh, ids, src);
       })
       .catch(function () {});
   }

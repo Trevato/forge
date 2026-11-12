@@ -14,7 +14,12 @@
  * to show or log. Once: the admin remembers that it was seeded.
  */
 
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { keepNotice, noticeOf } from "../billing/notice.ts";
+import { putEntitlement } from "../billing/store.ts";
+import { join } from "node:path";
 import type { App } from "../app.ts";
+import { createOrg } from "../core/orgs.ts";
 import type { Ctx } from "../http/context.ts";
 import type { Issue } from "../core/issues.ts";
 import { getRepo, type Repo } from "../core/repos.ts";
@@ -45,7 +50,7 @@ import { getAgentByName } from "../core/agents.ts";
 import { createSession, destroySession } from "../core/sessions.ts";
 import { createToken, listTokens } from "../core/tokens.ts";
 import { recordUsage } from "../core/usage.ts";
-import { getUserSetting, setUserSetting } from "../core/settings.ts";
+import { PREVIEW_SEEDED, getUserSetting, setUserSetting } from "../core/settings.ts";
 import { createUser, getUserByName, type User } from "../core/users.ts";
 import { diskSummary, recordReading } from "../machines/disk_readings.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -66,6 +71,8 @@ import {
   PREVIEW_MOVED_OWNER,
   PREVIEW_MOVED_PAGE,
   PREVIEW_MOVE_PAGE,
+  PREVIEW_NEWCOMER,
+  PREVIEW_NEWCOMER_ORG,
   PREVIEW_REPO,
   PREVIEW_SETTINGS_PAGES,
 } from "./preview-looks.ts";
@@ -206,7 +213,7 @@ export const PREVIEW_LANDING_TITLE = `The changelog wraps a long landing title o
 const PREVIEW_BOARD = "preview";
 const PREVIEW_AGENT = "preview-agent";
 const PREVIEW_TOKEN = "preview fake token, not a credential";
-const SEEDED = "preview_seeded";
+const SEEDED = PREVIEW_SEEDED;
 const CONFIG_SEEDED = "preview_config_seeded";
 const SETTINGS_SEEDED = "preview_settings_seeded";
 
@@ -221,6 +228,70 @@ export function isPreviewEnv(env: Env = process.env): boolean {
 export function previewAdmin(app: App): User | undefined {
   const user = getUserByName(app.db, PREVIEW_ADMIN);
   return user?.isAdmin === true && user.kind !== "agent" ? user : undefined;
+}
+
+/** The newcomer, when this forge has one. */
+export function previewNewcomer(app: App): User | undefined {
+  const user = getUserByName(app.db, PREVIEW_NEWCOMER);
+  return user?.isAdmin === true && user.kind === "user" ? user : undefined;
+}
+
+/**
+ * The person of a spawned forge who has claimed it and told the crew nothing
+ * (#11285): the preview is given a `parent.json` naming a seeded organisation,
+ * so it reads as spawned, and an admin who has made no tell. Their home is
+ * then the first-login card at "What do you want built?". Idempotent; only a
+ * preview reaches it (`seedPreview` refuses anything else). The refusal says
+ * what the page lacked.
+ */
+async function seedNewcomer(app: App): Promise<Result<void, string>> {
+  let created = false;
+  let person = getUserByName(app.db, PREVIEW_NEWCOMER);
+  if (person === undefined) {
+    const made = await createUser(app.db, {
+      origin: "seed",
+      trusted: true,
+      isAdmin: true,
+      allowReserved: true,
+      username: PREVIEW_NEWCOMER,
+      email: `${PREVIEW_NEWCOMER}@preview.invalid`,
+    });
+    if (!made.ok) return err(`the preview newcomer: ${made.error}`);
+    person = made.value;
+    created = true;
+  }
+  if (!person.isAdmin || person.kind !== "user") return err("the preview newcomer's name is someone else's");
+  if (getUserByName(app.db, PREVIEW_NEWCOMER_ORG) === undefined) {
+    const org = createOrg(app.db, PREVIEW_NEWCOMER_ORG, person.id, { allowReserved: true });
+    if (!org.ok) return err(`the preview newcomer's organisation: ${org.error}`);
+    created = true;
+  }
+  const file = join(app.config.dataDir, "parent.json");
+  if (!existsSync(file)) {
+    await Bun.write(file, JSON.stringify({ org: PREVIEW_NEWCOMER_ORG }));
+    created = true;
+  }
+  // The self-check builds a whole server: only when the newcomer was just made.
+  if (!created) return ok(undefined);
+  const http = forgeHttp(app);
+  const session = createSession(app.db, person.id);
+  try {
+    const res = await http.handle(new Request("http://localhost/", { headers: { cookie: `forge_session=${session.token}` } }));
+    return checkFirstTell(res.status, await res.text());
+  } finally {
+    destroySession(app.db, session.token);
+    http.close();
+  }
+}
+
+/** Whether a newcomer's home answered 200 with the one box and no passkey form above it. */
+export function checkFirstTell(status: number, body: string): Result<void, string> {
+  if (status !== 200) return err(`the newcomer's home answered ${String(status)}`);
+  const box = body.indexOf("What do you want built?");
+  if (box < 0) return err("the newcomer's home lacks \"What do you want built?\"");
+  const passkey = body.search(/passkey/i);
+  if (passkey >= 0 && passkey < box) return err("the newcomer's home has a passkey form above the box");
+  return ok(undefined);
 }
 
 /**
@@ -256,7 +327,11 @@ export async function seedPreview(
     const disks = await seedDisks(app, admin);
     if (!disks.ok) return disks;
     const files = await seedConfigFiles(app, admin);
-    return files.ok ? ok({ seeded: false }) : files;
+    if (!files.ok) return files;
+    const newcomer = await seedNewcomer(app);
+    if (!newcomer.ok) return newcomer;
+    seedGrace(app);
+    return ok({ seeded: false });
   }
   const world = await seedWorld(app, admin);
   if (!world.ok) return world;
@@ -268,7 +343,43 @@ export async function seedPreview(
   const disks = await seedDisks(app, admin);
   if (!disks.ok) return disks;
   const files = await seedConfigFiles(app, admin);
-  return files.ok ? ok({ seeded: true }) : files;
+  if (!files.ok) return files;
+  const newcomer = await seedNewcomer(app);
+  if (!newcomer.ok) return newcomer;
+  seedGrace(app);
+  return ok({ seeded: true });
+}
+
+/** The client forge the preview's operator view shows in grace. */
+export const PREVIEW_GRACE_CLIENT = "preview-grace-client";
+
+/**
+ * A forge in grace, so the forge's looks picture the Plan row of /settings
+ * and the grace words of the operator's /forges row (#11549). Only a preview
+ * reaches it. The forge's own `plan.json` (never `parent.json`) tells it
+ * payment is late, and one client forge holds a late entitlement. Written
+ * only where absent, so it is once and a reboot changes nothing.
+ */
+function seedGrace(app: App): void {
+  const dir = app.config.dataDir;
+  if (noticeOf(dir) === undefined) {
+    keepNotice(dir, {
+      name: "Medium",
+      size: "medium",
+      priceUsd: 49,
+      creditUsd: 10,
+      status: "grace",
+      periodEnd: Math.floor(Date.now() / 1000) + 5 * 86_400,
+    });
+  }
+  const record = join(dir, "spawn", `${PREVIEW_GRACE_CLIENT}.json`);
+  if (existsSync(record)) return;
+  mkdirSync(join(dir, "spawn"), { recursive: true });
+  writeFileSync(
+    record,
+    JSON.stringify({ name: PREVIEW_GRACE_CLIENT, bodyId: "body-preview-grace", done: true, size: "small", org: PREVIEW_GRACE_CLIENT, apps: [] }),
+  );
+  putEntitlement(app.db, { forge: PREVIEW_GRACE_CLIENT, plan: "medium", status: "grace", periodEnd: Math.floor(Date.now() / 1000), provider: "stripe", customerId: "cus_preview", subscriptionId: "sub_preview", source: "stripe" }, "small", "");
 }
 
 /**

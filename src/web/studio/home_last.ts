@@ -11,6 +11,7 @@
  * The variant is built by `homeVariant` from the few query parameters home
  * reads, validated, so the keys a client can make are bounded.
  */
+import { during } from "../../perf/jobs.ts";
 import type { Database } from "bun:sqlite";
 import { notePhase } from "../../core/route_timing.ts";
 import { forgetAll, recall, remember } from "../../core/region_memory.ts";
@@ -78,17 +79,19 @@ export async function homeRegion(
       drawing.set(key, Number.MAX_SAFE_INTEGER);
       // Read when the redraw is decided, not when the timer fires: a write that lands in between must leave the copy stale, not current.
       const before = stamp;
-      setTimeout(() => {
-        void (async () => {
-          try {
-            remember(db, viewerId, name, variant, (await draw()).text, before, access);
-          } catch {
-            // The page's own swap asks again and shows the failure.
-          } finally {
-            drawing.set(key, Date.now());
-          }
-        })();
-      }, 0);
+      setTimeout(
+        () =>
+          void during("home-last", async () => {
+            try {
+              remember(db, viewerId, name, variant, (await draw()).text, before, access);
+            } catch {
+              // The page's own swap asks again and shows the failure.
+            } finally {
+              drawing.set(key, Date.now());
+            }
+          }),
+        0,
+      );
     }
     notePhase(request, name, performance.now() - started, true);
     return wrap(had.html, !current);

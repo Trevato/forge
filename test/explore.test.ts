@@ -237,6 +237,8 @@ describe("explore", () => {
     const page = await (await fetch(`${base}/explore?q=${encodeURIComponent("kind:app sort:ships")}`)).text();
     expect(page).toContain('value="kind:app sort:ships"');
     expect(page.indexOf('href="/bob/busy"')).toBeLessThan(page.indexOf('href="/alice/loved"'));
+    expect(page).toContain("shipped this month");
+    expect(page).not.toContain("data-why");
     expect(page).toContain("Make it yours");
     expect(page).not.toContain("alice/secret");
     const signedIn = await (

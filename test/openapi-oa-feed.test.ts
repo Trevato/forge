@@ -10,7 +10,7 @@ import { tokenFor } from "./helpers/tokens.ts";
 import { openapi } from "../src/contract/openapi.ts";
 
 test("both writes are in the document with the refusals they answer", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   for (const [path, codes] of [
     ["/api/v1/feed/interactions", ["invalid_item", "invalid_kind", "not_found"]],
     ["/api/v1/share", ["invalid_item", "invalid_target", "not_found"]],

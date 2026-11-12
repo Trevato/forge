@@ -134,6 +134,40 @@ export function heldByPerson(dataDir: string, ownerId: string): number {
 
 const MB = 1_000_000;
 
+/** How many forges this person holds on plan `key`; a ledger that names no plan is on the free one. */
+export function ownedOnPlan(dataDir: string, ownerId: string, key: string, free: string): number {
+  let n = 0;
+  let files: string[] = [];
+  try {
+    files = readdirSync(join(dataDir, "spawn"));
+  } catch {
+    return 0;
+  }
+  for (const f of files) {
+    if (!f.endsWith(".json")) continue;
+    try {
+      const l = JSON.parse(readFileSync(join(dataDir, "spawn", f), "utf8")) as { ownerId?: unknown; plan?: unknown };
+      if (l.ownerId === ownerId && (typeof l.plan === "string" ? l.plan : free) === key) n++;
+    } catch {
+      // a damaged ledger counts for no one
+    }
+  }
+  return n;
+}
+
+/**
+ * Why this person may not make another forge on a paid plan, or undefined:
+ * the plan's own count, not the free one (`personRefusal`). Site admins are
+ * not limited.
+ */
+export function planRefusal(dataDir: string, owner: { id: string; isAdmin: boolean }, plan: { key: string; name: string; forges: number }, free: string): string | undefined {
+  if (owner.isAdmin) return undefined;
+  const has = ownedOnPlan(dataDir, owner.id, plan.key, free);
+  return has >= plan.forges
+    ? `you already have ${has} ${has === 1 ? "forge" : "forges"} on the ${plan.name} plan, the most one person may have (${plan.forges}); remove one first`
+    : undefined;
+}
+
 /**
  * Why this person may not make another forge, or undefined: one sentence
  * naming the limit (set in admin limits) and what they use. Site admins are

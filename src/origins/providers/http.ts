@@ -788,3 +788,29 @@ export function readmeEntry(
   }
   return files.find((e) => e.name.toLowerCase().startsWith("readme."));
 }
+
+/**
+ * Post a review with its line comments inside it, in one call. An origin
+ * that refuses the payload (a 4xx that is not about who we are, nor about
+ * the pull's existence) is asked again with the verdict alone, so a shape
+ * it dislikes never costs the verdict: `carried` says which one it took.
+ */
+export async function postReview(
+  api: ApiClient,
+  path: string,
+  review: { event: string; body: string },
+  lines: readonly Record<string, unknown>[],
+): Promise<ProviderResult<{ data: unknown; carried: number }>> {
+  if (lines.length > 0) {
+    const whole = await api.call({
+      path,
+      method: "POST",
+      body: { ...review, comments: lines },
+    });
+    if (whole.ok) return succeed({ data: whole.value.data, carried: lines.length });
+    if (whole.error.error !== "invalid_response") return whole;
+  }
+  const bare = await api.call({ path, method: "POST", body: review });
+  if (!bare.ok) return bare;
+  return succeed({ data: bare.value.data, carried: 0 });
+}

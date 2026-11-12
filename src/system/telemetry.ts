@@ -16,6 +16,7 @@ import { readTalkTurns, talkTurnsWords } from "../flow/talk_turns.ts";
 import { readTalkResumes, talkResumesWords } from "../flow/talk_resumes.ts";
 import { readVitals, vitalsFor, vitalsLine, vitalsMisses } from "../flow/vitals.ts";
 import { parkedSays, readParked } from "../flow/parked.ts";
+import { readDeclines } from "../flow/declines.ts";
 import { readKeeper } from "../flow/keeper.ts";
 import { readPipeline, readStepStats, statWords, verdict } from "../flow/pipeline.ts";
 import { type QueueReading, readQueues } from "../flow/queue.ts";
@@ -113,8 +114,10 @@ function flowBody(x: {
     redBatches: x.redBatches,
     // Findings reviewers repeated, proposed as checks and retired, beside review comments per pull (#8716).
     reviewRepeats: x.reviewRepeats,
+    // Declined build runs of the last 24 h by reason, each with the runs behind it.
+    declines: readDeclines(app.db, now, reader.kind === "agent"),
     // The four alarms (#5930) that are firing now; empty when none is.
-    alarms: firedAlarms(app.db, now, { publicOnly: reader.kind === "agent" }),
+    alarms: firedAlarms(app.db, now, { publicOnly: reader.kind === "agent", dataDir: app.config.dataDir }),
     // Review runs in flight per reviewer, cut to public repositories for an agent (#4733).
     reviewing: { says: reviewingSays(busy), reviewers: busy },
     conflicted: { says: conflictedSays(conflicted, now.getTime()), pulls: conflicted },

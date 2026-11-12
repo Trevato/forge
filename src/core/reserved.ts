@@ -35,6 +35,8 @@ export const SYSTEM_NAMES: readonly string[] = [
   "crew",
   "agent",
   "agents",
+  "privacy",
+  "pricing",
   "bot",
   "steward",
   "anonymous",
@@ -80,6 +82,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "front",
   "go",
   "home",
+  "hooks",
   "icons",
   "live",
   "login",
@@ -117,6 +120,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "releases",
   "releases.json",
   "changelog.atom",
+  "explore.atom",
   "sw.js",
   "tell",
   "talk",
@@ -129,6 +133,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "feed",
   "review",
   "claim",
+  "welcome",
   "first-admin",
   "forges",
   // the forge's own nouns, and the platform's name
@@ -222,6 +227,9 @@ export function mixedScript(name: string): boolean {
 }
 
 const SYSTEM = new Set(SYSTEM_NAMES.map(skeleton));
+
+/** Whether `name` is one of the forge's own words, by skeleton. */
+export const isSystemName = (name: string): boolean => SYSTEM.has(skeleton(name));
 
 /** Why a name is reserved: a system word, the crew's, or the owner's. */
 export type Reservation = "system" | "agent" | "owner" | "mixed";

@@ -3,17 +3,18 @@ import { pullsWaitingOn } from "../../../actions/issue_teams.ts";
 import { requireOrgAdmin } from "../../../actions/access.ts";
 import { isTeamRole, TEAM_ROLES } from "../../../core/agents.ts";
 import { getOrg, listTeamMemberRoles, listTeamMembers, listTeams, type Permission } from "../../../core/orgs.ts";
+import { teamWindows } from "../../../core/team-metrics.ts";
 import { good, bad, type Tool } from "../shared.ts";
 
 export const tool: Tool = {
   name: "org_teams",
-  doc: "`{ org, action, team, user?, permission?, role? }` (admin-scope token, an org owner): `create` a team (`permission` read, write or admin; read by default), `add_member` a `user` with an optional `role` (planner, builder, reviewer or member; setting it on someone already there changes their role), list its `members` with their roles, `remove_member` a `user` (with `role`, only that role comes off and they stay a member; without it they leave the team), or `remove` the team; with `waiting: true` (and no action) the open pulls the crew team (slug or name) still holds, `{ items: [{ repo, number, title, since }] }` oldest first, at most 50, only repositories you may read — the same list as the terminal's crew-teams screen (`w`); crew teams are forge-wide, so `org` only has to exist; the same as `/api/v1/orgs/:org/teams` and its `members`",
+  doc: "`{ org, action, team, user?, permission?, role? }` (admin-scope token, an org owner): `create` a team (`permission` read, write or admin; read by default), `add_member` a `user` with an optional `role` (planner, builder, reviewer or member; setting it on someone already there changes their role), list its `members` with their roles, its `metrics` (`{ day, week }`, the figures on its page), `remove_member` a `user` (with `role`, only that role comes off and they stay a member; without it they leave the team), or `remove` the team; with `waiting: true` (and no action) the open pulls the crew team (slug or name) still holds, `{ items: [{ repo, number, title, since }] }` oldest first, at most 50, only repositories you may read — the same list as the terminal's crew-teams screen (`w`); crew teams are forge-wide, so `org` only has to exist; the same as `/api/v1/orgs/:org/teams` and its `members`",
   description: "An org's teams: create, add member with a role, list members, remove.",
   inputSchema: {
     type: "object",
     properties: {
       org: { type: "string", maxLength: 64 },
-      action: { type: "string", enum: ["create", "add_member", "members", "remove_member", "remove"] },
+      action: { type: "string", enum: ["create", "add_member", "members", "metrics", "remove_member", "remove"] },
       team: { type: "string", maxLength: 64 },
       user: { type: "string", maxLength: 64 },
       permission: { type: "string", enum: ["read", "write", "admin"], description: "create" },
@@ -72,10 +73,14 @@ export const tool: Tool = {
         listTeamMemberRoles(ctx.app.db, team.id).map((m) => ({ user: m.user.username, role: m.role })),
       );
     }
+    if (action === "metrics") {
+      if (!requireOrgAdmin(ctx.app, user, org).ok) return bad("not_found", "no such team");
+      return good(teamWindows(ctx.app.db, team.id, Date.now()));
+    }
     if (action === "remove") {
       const gone = deleteTeam(ctx.app, user, org, team);
       return gone.ok ? good({ removed: team.name }) : bad(gone.error, gone.error);
     }
-    return bad("invalid", "action is create, add_member, remove_member, members or remove");
+    return bad("invalid", "action is create, add_member, remove_member, members, metrics or remove");
   },
 };

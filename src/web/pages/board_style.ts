@@ -11,9 +11,13 @@ export const boardCss = /* css */ `
 .board { --pad: clamp(16px, 2.2vw, 32px); display: flex; flex-direction: column; min-height: 100dvh; }
 .board > header, .board > .stack { padding: 12px var(--pad) 0; }
 .board > #notes { padding: 8px var(--pad) 0; }
+.board > .money-line { padding: 8px var(--pad) 0; }
 #notes ul { list-style: none; margin: 4px 0 0; padding: 0; max-height: 30dvh; overflow: auto; }
 #notes li > * { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-height: 44px; overflow-wrap: anywhere; }
 #notes li > a { display: block; padding-block: 12px; min-height: 0; }
+/* The spend line's way to the fleet graph: a 44px target beside it, wrapping under it on a phone. */
+#returns { display: flex; flex-wrap: wrap; align-items: center; column-gap: 12px; }
+#returns-graph { display: inline-flex; align-items: center; min-height: 44px; padding-inline: 8px; }
 .board #board-live { display: inline-flex; align-items: center; }
 .board #board-clock { min-width: 5ch; text-align: right; }
 .board [data-started] { min-width: 7ch; text-align: right; }

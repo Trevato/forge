@@ -123,6 +123,15 @@ export function aboutScreen(
   // The team card's button: the first agent not yet on the crew, in the first empty seat.
   const emptySeat = () =>
     repo === undefined ? undefined : seatsOf(f.db, repo, crewOffInPreview()).seats.find((x) => x.by.length === 0);
+  // The Maintainers seat: the first agent that declares it and is not yet on the crew.
+  const nextMaintainer = () =>
+    repo === undefined
+      ? undefined
+      : (() => {
+          const held = new Set(listCrewRoles(f.db, repo.id).filter((c) => c.role === "maintainer").map((c) => c.agent.user.id));
+          return listAgents(f.db).find((a) => a.roles.includes("maintainer") && !held.has(a.user.id));
+        })();
+  const mayMaintain = (): boolean => may() && f.user?.kind !== "agent" && nextMaintainer() !== undefined;
   const mayFill = (): boolean => may() && f.user?.kind !== "agent" && emptySeat() !== undefined;
   const checking = (): boolean =>
     repo !== undefined && followShown(f.app, repo, f.user)?.enabled === true;
@@ -132,6 +141,7 @@ export function aboutScreen(
     ...movingRow(f, repo),
     ...outsidersRow(repo),
     ...seatRows(f, repo),
+    ...maintainerRows(f, repo),
     ...aboutFacts(f, src, facts, ref, repo),
     ...paceRows(f, repo),
     ...trailRows(f, repo),
@@ -201,7 +211,7 @@ export function aboutScreen(
           ? [
               binding(
                 ["a"],
-                repo?.archivedAt === null ? "archive" : "wake",
+                repo?.archivedAt === null ? "archive" : "restore",
               ),
             ]
           : []),
@@ -250,6 +260,7 @@ export function aboutScreen(
               ),
             ]),
         ...(mayFill() ? [binding(["p"], `fill ${emptySeat()!.role}`)] : []),
+        ...(mayMaintain() ? [binding(["m"], "add maintainer")] : []),
         binding(["esc"], "close"),
       ];
     },
@@ -358,6 +369,16 @@ export function aboutScreen(
         if (done.ok) {
           rows = factRows();
           ctx.toast(`${agent.user.username} is on ${seat.role}`, "success");
+        } else ctx.toast("that could not be changed", "danger");
+        ctx.invalidate();
+        return true;
+      }
+      if (e.key === "m" && repo !== undefined && mayMaintain()) {
+        const agent = nextMaintainer()!;
+        const done = addToCrew(f.app, f.user, repo, agent.user.username, "maintainer");
+        if (done.ok) {
+          rows = factRows();
+          ctx.toast(`${agent.user.username} is a maintainer`, "success");
         } else ctx.toast("that could not be changed", "danger");
         ctx.invalidate();
         return true;
@@ -485,7 +506,7 @@ export function aboutScreen(
           if (done.ok) {
             repo = getRepoById(f.db, done.value.id) ?? done.value;
             rows = factRows();
-            ctx.toast(waking ? "awake again" : "archived", "success");
+            ctx.toast(waking ? "restored" : "archived", "success");
           } else ctx.toast("that could not be changed", "danger");
           ctx.invalidate();
         });
@@ -733,6 +754,13 @@ export function seatRows(f: Session, repo: Repo | undefined): [string, string][]
         ? `empty. No ${x.role}: ${x.without}.`
         : "open seat",
   ]);
+}
+
+/** The Maintainers seat: who holds it, or that none does; it holds no pillar, so an empty one costs nothing. */
+export function maintainerRows(f: Session, repo: Repo | undefined): [string, string][] {
+  if (repo === undefined) return [];
+  const names = listCrewRoles(f.db, repo.id).filter((c) => c.role === "maintainer").map((c) => c.agent.user.username);
+  return [["Maintainer", names.length > 0 ? names.join(", ") : "open seat"]];
 }
 
 /** Who may direct the crew, in `OUTSIDERS_NOTE`'s words; every reader sees it. */

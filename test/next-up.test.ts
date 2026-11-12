@@ -90,7 +90,8 @@ describe("Next up", () => {
 
   test("with nothing ranked, the list is the ready order, and the gated issue is not now", () => {
     const next = nextUp(app.db, repo);
-    expect(next.rows.map((r) => r.issue.number)).toEqual(picked());
+    // Every open issue is listed (#11618): the one that waits sits last, after what can start.
+    expect(next.rows.map((r) => r.issue.number)).toEqual([...picked(), n.wait!]);
     expect(next.rows.map((r) => r.issue.number)).not.toContain(n.far!);
     expect(next.notNow.map((r) => r.issue.number)).toEqual([n.far!]);
     expect(next.notNow[0]!.why).toContain("behind the Later gate");

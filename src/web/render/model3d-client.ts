@@ -35,6 +35,7 @@ import {
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { REFUSED_URI, withinModelDir } from "./gltf-uri.ts";
+import { parse3mf } from "./threemf.ts";
 import { bounds, parseObj, parseStl, sizeText, type Bounds } from "./mesh.ts";
 
 /**
@@ -93,14 +94,16 @@ function soup(positions: Float32Array): Mesh {
 async function load(src: string, format: string): Promise<Loaded> {
   const response = await fetch(src, { credentials: "same-origin" });
   if (!response.ok) throw new Error(`the file answered ${response.status}`);
-  if (format === "stl" || format === "obj") {
+  if (format === "stl" || format === "obj" || format === "3mf") {
     const parsed =
-      format === "stl"
-        ? parseStl(new Uint8Array(await response.arrayBuffer()))
-        : parseObj(await response.text());
+      format === "obj"
+        ? parseObj(await response.text())
+        : format === "3mf"
+          ? await parse3mf(new Uint8Array(await response.arrayBuffer()))
+          : parseStl(new Uint8Array(await response.arrayBuffer()));
     const mesh = soup(parsed.positions);
     // A printed part is modelled Z-up; three.js stands Y-up.
-    if (format === "stl") mesh.rotation.x = -Math.PI / 2;
+    if (format === "stl" || format === "3mf") mesh.rotation.x = -Math.PI / 2;
     return { object: mesh, triangles: parsed.triangles, box: bounds(parsed.positions) };
   }
   // glTF: binary, or JSON whose buffers sit beside it on the media route.

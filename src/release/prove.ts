@@ -26,6 +26,7 @@ import { smoke, type Failure, type Heavy } from "./smoke.ts";
 import { UNSTAMPED } from "../kernel/version.ts";
 import { ownProbeHeaders } from "../kernel/probe.ts";
 import type { Log } from "../kernel/log.ts";
+import { during } from "../perf/jobs.ts";
 
 /** How long the public URL has to answer as the new version. */
 export const GIVE_UP_MS = 10 * 60_000;
@@ -250,7 +251,7 @@ export function startProving(
   // True from a proof's start until it settles: a proof is never started over one still running.
   let running = false;
   const next = (): void => {
-    if (!stopped) cancel = schedule(() => void tick(), everyMs);
+    if (!stopped) cancel = schedule(() => void during("release-prove", tick), everyMs);
   };
   const tick = async (): Promise<void> => {
     if (running) {

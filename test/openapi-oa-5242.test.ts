@@ -23,7 +23,7 @@ const WANT: readonly (readonly [string, string, string])[] = [
 ];
 
 test("each path and method is served, with a refusal code the route answers", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   for (const [path, m, code] of WANT) {
     const op = doc.paths[path]?.[m];
     expect(op, `${m} ${path}`).toBeDefined();

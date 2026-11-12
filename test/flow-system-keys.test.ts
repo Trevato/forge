@@ -26,7 +26,7 @@ for (const path of ["/flow", "/system"]) {
     expect(shellSrc(await get("/boards"))).toBe(src);
     expect(html).not.toContain("openHelp");
     const js = await (await fetch(`${f.base}${src}`)).text();
-    expect(js).toContain("e.key === '?'");
+    expect(js).toContain("['?'], function (e)");
     expect(js).toContain("help-dialog");
   });
 }

@@ -10,6 +10,7 @@ import { serve } from "../src/http/server.ts";
 import { usePlacement, useProbe } from "../src/spawn/door.ts";
 import { bootHostedChild } from "../src/spawn/host.ts";
 import { ok } from "../src/kernel/result.ts";
+import { setLimit } from "../src/settings/limits.ts";
 
 let dir = "";
 let app: ReturnType<typeof createApp>;
@@ -44,6 +45,24 @@ afterAll(async () => {
 
 const main = (page: string): string => page.slice(page.indexOf("<main"), page.indexOf("</main>"));
 const boxed = ['class="card', "card-body"];
+
+test("the hosting line says the crew starts on the included credit only when there is some", async () => {
+  const say = async () => {
+    const page = main(await (await fetch(servers.url + "/forges/new", { headers: auth })).text());
+    const line = /<p class="muted small" id="hosting-terms">([^]*?)<\/p>/.exec(page)?.[1] ?? "";
+    expect(line.split("Free within limits").length - 1).toBe(1);
+    return line;
+  };
+  const id = app.db.query<{ id: string }, []>("SELECT id FROM user LIMIT 1").get()!.id;
+  setLimit(app.db, "spawn.included_credit_usd", 3, id);
+  expect(await say()).toBe(
+    "Free within limits: it sleeps when idle, and its crew starts on the included $3 of credit, and you can add your AI account key later.",
+  );
+  setLimit(app.db, "spawn.included_credit_usd", 0, id);
+  expect(await say()).toBe(
+    "Free within limits: it sleeps when idle, and its crew starts once you add your AI account.",
+  );
+});
 
 test("the form is a headed section, not a card", async () => {
   const page = main(await (await fetch(servers.url + "/forges/new", { headers: auth })).text());

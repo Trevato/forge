@@ -12,6 +12,7 @@
  * 404 for everyone.
  */
 
+import { crewKeyCard } from "../studio/crew_key.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
 import { repositoryLimitMessage } from "../../actions/repos.ts";
 import { appLimitWords } from "../../actions/app_limit.ts";
@@ -147,8 +148,8 @@ export function archivedAppCount(ctx: Ctx): number {
   ).size;
 }
 
-/** The archived list's Wake: a small form under each row the viewer administers. */
-function wakeForms(ctx: Ctx, repos: readonly Repo[]): Map<string, Html> {
+/** The archived list's Restore: a small form under each row the viewer administers. */
+function restoreForms(ctx: Ctx, repos: readonly Repo[]): Map<string, Html> {
   const out = new Map<string, Html>();
   for (const repo of repos) {
     if (!canAdmin(ctx.app.db, repo, ctx.auth.user)) continue;
@@ -158,7 +159,7 @@ function wakeForms(ctx: Ctx, repos: readonly Repo[]): Map<string, Html> {
         <form method="post" action="${repoBase(repo)}/settings/archive">
           <input type="hidden" name="archived" value="0" />
           <input type="hidden" name="to" value="/apps?archived=1" />
-          ${btn(html`Wake<span class="sr-only"> ${repo.ownerName}/${repo.name}</span>`)}
+          ${btn(html`Restore<span class="sr-only"> ${repo.ownerName}/${repo.name}</span>`)}
         </form>
       </li>`,
     );
@@ -225,7 +226,7 @@ export async function appsList(ctx: Ctx): Promise<Response> {
             },
           ])}
         </div>`;
-  const wake = archivedView ? wakeForms(ctx, shown.map((e) => e.repo)) : undefined;
+  const wake = archivedView ? restoreForms(ctx, shown.map((e) => e.repo)) : undefined;
   const rows = await timePhaseAsync(ctx.request, "shelf", () =>
     shelfRows(
       ctx,
@@ -328,6 +329,7 @@ function newAppForm(
     ${pageHead("New app", {
       sub: "Describe what it should do. You get a repository, a first issue, a crew member on it, a live app, and a preview for every change.",
     })}
+    ${crewKeyCard(ctx, true)}
     ${html`<form method="post" action="/apps/new">
         ${values.template
           ? formField({ label: "Copy of", name: "template", value: values.template, readonly: true, mono: true })
@@ -812,6 +814,14 @@ function appsOpenResponse(ctx: Ctx): Response {
   });
 }
 
+/**
+ * Opening an app is the one place a forge page's address leaves the forge:
+ * the app's pill reads it to take the visitor back to that page (#11295).
+ * `origin-when-cross-origin` would send only the origin, so the redirect
+ * says `no-referrer-when-downgrade`: the full address, https to https only.
+ */
+const LEAVING_POLICY = "no-referrer-when-downgrade";
+
 export function appOpen(ctx: Ctx): Response {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
@@ -820,7 +830,7 @@ export function appOpen(ctx: Ctx): Response {
   const record = env === "production" ? getAppByRepo(ctx.app.db, repo.id) : undefined;
   const shown = record === undefined ? undefined : shownProduction(ctx.app, repo, appsRuntime(ctx.app)?.urlFor(record, "production"));
   if (shown?.copy !== undefined && shown.url !== undefined)
-    return new Response(null, { status: 302, headers: { location: shown.url, "cache-control": "no-store" } });
+    return new Response(null, { status: 302, headers: { location: shown.url, "cache-control": "no-store", "referrer-policy": LEAVING_POLICY } });
   const link = openEnvUrl(ctx.app, ctx.auth.user, repo, env);
   if (!link.ok) {
     if (link.error === "unauthorized") return signInFirst(ctx);
@@ -833,7 +843,7 @@ export function appOpen(ctx: Ctx): Response {
   }
   return new Response(null, {
     status: 302,
-    headers: { location: link.value, "cache-control": "no-store" },
+    headers: { location: link.value, "cache-control": "no-store", "referrer-policy": LEAVING_POLICY },
   });
 }
 

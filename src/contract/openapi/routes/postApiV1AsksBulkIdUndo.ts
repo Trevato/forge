@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/asks/bulk/{id}/undo",
   summary: "Undo a bulk action on asks by its operation id (rw scope); answers 201 with the undoing operation",
   auth: true,
+  role: "member",
   status: 201,
   refusals: {
     not_found: "no such asks operation here",

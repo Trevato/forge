@@ -19,8 +19,13 @@ import { eventActor, eventVerb } from "../design/activity.ts";
 import { audienceFilter } from "../core/event_audience.ts";
 import { listEvents, type ForgeEvent } from "../core/events.ts";
 import { getIssuesByRef } from "../core/issues.ts";
-import { canRead, forkParentFor, getRepo } from "../core/repos.ts";
+import { canRead, forkParentFor, getRepo, repoDatesFor } from "../core/repos.ts";
+import { explore, type ExploreQuery, type ExploreRow } from "../actions/explore.ts";
 import { getUsersByIds } from "../core/users.ts";
+import { pullRefs, readWaves, wavePath } from "../story/waves.ts";
+import type { Wave } from "../story/wave.ts";
+import { refTip } from "../git/read.ts";
+import { repoDir } from "../git/repos.ts";
 import { shippedAnswer } from "../release/answer.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../core/route_timing.ts";
 import type { Ctx } from "../http/context.ts";
@@ -195,6 +200,35 @@ ${entries.join("\n")}
 
 const CHANGELOG_ENTRIES = 30;
 
+/** Waves by the forge repository's default-branch tip, so the common request reads no files. */
+const waveCache = new Map<string, Wave[]>();
+
+/**
+ * The forge's own waves, newest first, and the tip they were read at (the
+ * part of the feed's tag that the waves own). A repository with no waves, or
+ * any failure reading them, is no waves: the feed falls back, never errors.
+ */
+async function ownWaves(ctx: Ctx): Promise<{ tip: string; waves: Wave[] }> {
+  try {
+    const [owner = "", name = ""] = (ctx.app.config.forgeRepo ?? "").split("/");
+    const repo = owner && name ? getRepo(ctx.app.db, owner, name) : undefined;
+    if (repo === undefined || repo.visibility !== "public") return { tip: "", waves: [] };
+    const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
+    const tip = (await refTip(dir, `refs/heads/${repo.defaultBranch}`)) ?? "";
+    if (tip === "") return { tip, waves: [] };
+    const key = `${dir}@${tip}`;
+    let waves = waveCache.get(key);
+    if (waves === undefined) {
+      waves = (await readWaves(dir, repo.defaultBranch)).flatMap((e) => (e.ok ? [e.wave] : []));
+      if (waveCache.size > 8) waveCache.clear();
+      waveCache.set(key, waves);
+    }
+    return { tip, waves };
+  } catch {
+    return { tip: "", waves: [] };
+  }
+}
+
 /**
  * The weak tag of a changelog answer: the live version, the rows' repo,
  * number, title and time, and `scope` (the chosen repo, the viewer when the
@@ -219,17 +253,40 @@ export async function changelogAtom(ctx: Ctx): Promise<Response> {
   const answer = await timePhaseAsync(ctx.request, "releases", () => shippedAnswer(ctx.app));
   const origin = ctx.url.origin;
   const live = answer.live.slice(0, CHANGELOG_ENTRIES);
-  const etag = changelogTag(answer.version, live);
+  const { tip, waves } = await timePhaseAsync(ctx.request, "waves", () => ownWaves(ctx));
+  const [ownerName = "", repoName = ""] = (ctx.app.config.forgeRepo ?? "").split("/");
+  const etag = changelogTag(answer.version, live, [tip]);
   const headers = { etag, "cache-control": "public, max-age=300" };
   if (holds(ctx.request.headers.get("if-none-match"), etag)) return new Response(null, { status: 304, headers });
-  const entries = live.map((l) => {
+  const waveOf = new Map<string, Wave>();
+  for (const w of waves)
+    for (const r of pullRefs(w)) {
+      const k = `${r.owner}/${r.name}#${r.number}`;
+      if (!waveOf.has(k)) waveOf.set(k, w);
+    }
+  const told = new Set<string>();
+  const entries = live.flatMap((l) => {
+    const wave = waveOf.get(`${l.repo}#${l.number}`);
+    if (wave !== undefined) {
+      // One entry per wave, at its newest landing: the story is told once.
+      if (told.has(wave.version)) return [];
+      told.add(wave.version);
+      const summary = wave.highlights.map((h) => `${h.title.trim()}: ${h.why.trim()}`).join(" · ");
+      return [`  <entry>
+    <id>urn:forge:wave:${xml(`${ownerName}/${repoName}@${wave.version}`)}</id>
+    <title>${xml(wave.headline.trim())}</title>
+    <updated>${xml(stamp(l.at))}</updated>
+    <link rel="alternate" type="text/html" href="${xml(`${origin}${wavePath(ownerName, repoName, wave.version)}`)}"/>
+    <summary>${xml(summary)}</summary>
+  </entry>`];
+    }
     const link = `${origin}/${l.repo}/pulls/${l.number}`;
-    return `  <entry>
+    return [`  <entry>
     <id>urn:forge:landing:${xml(l.repo)}#${l.number}</id>
     <title>${xml(`Went live: ${plainTitle(l.title)}`)}</title>
     <updated>${xml(stamp(l.at))}</updated>
     <link rel="alternate" type="text/html" href="${xml(link)}"/>
-  </entry>`;
+  </entry>`];
   });
   const updated = live[0]?.at ?? STARTED;
   const body = `<?xml version="1.0" encoding="utf-8"?>
@@ -245,5 +302,72 @@ export async function changelogAtom(ctx: Ctx): Promise<Response> {
 ${entries.join("\n")}
 </feed>
 `;
+  return new Response(body, { headers: { ...headers, "content-type": "application/atom+xml; charset=utf-8" } });
+}
+
+const EXPLORE_ENTRIES = 30;
+
+/** The list /explore opens on, for a stranger: ranked public apps, put-away ones left out. */
+export const EXPLORE_FEED_QUERY: ExploreQuery = { kind: "app", sort: "score", text: "", archived: false, updated: "all" };
+
+/** A plain-words summary of one ranked app: what it is, then the numbers that are not zero. */
+export function exploreSummary(row: ExploreRow): string {
+  const n = row.numbers;
+  const facts = [
+    n.forks > 0 ? `${n.forks} fork${n.forks === 1 ? "" : "s"}` : "",
+    n.likes > 0 ? `${n.likes} like${n.likes === 1 ? "" : "s"}` : "",
+    n.ships > 0 ? `${n.ships} shipped this month` : "",
+  ].filter((f) => f !== "");
+  const what = row.description === "" ? `${row.name}, an app on the forge.` : row.description;
+  return facts.length === 0 ? what : `${what} ${facts.join(", ")}.`;
+}
+
+/**
+ * `GET /explore.atom`: the apps /explore ranks first for a stranger (read
+ * through the page's own `explore`, never a second query), the newest-made
+ * first, at most 30. Private and archived apps are not in that list, so they
+ * cannot be in this feed.
+ */
+export async function exploreAtom(ctx: Ctx): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const origin = ctx.url.origin;
+  const rows = (await timePhaseAsync(ctx.request, "read", () => explore(ctx.app, undefined, EXPLORE_FEED_QUERY)))
+    .filter((r) => r.repo !== undefined)
+    .slice(0, EXPLORE_ENTRIES);
+  const renderStart = performance.now();
+  const made = rows.map((row) => {
+    const repo = getRepo(ctx.app.db, row.repo!.owner, row.repo!.name);
+    return { row, repo };
+  });
+  const dates = repoDatesFor(ctx.app.db, made.flatMap((m) => (m.repo === undefined ? [] : [m.repo.id])));
+  const dated = made
+    .map((m) => ({ ...m, at: (m.repo === undefined ? undefined : dates.get(m.repo.id)?.createdAt) ?? STARTED }))
+    .sort((a, b) => Date.parse(stamp(b.at)) - Date.parse(stamp(a.at)));
+  const etag = `W/"${Bun.hash(JSON.stringify(dated.map((m) => [m.row.url, m.row.description, m.row.numbers, m.at]))).toString(36)}"`;
+  const headers = { etag, "cache-control": "public, max-age=300" };
+  if (holds(ctx.request.headers.get("if-none-match"), etag)) return new Response(null, { status: 304, headers });
+  const entries = dated.map(({ row, at }) => `  <entry>
+    <id>urn:forge:app:${xml(`${row.repo!.owner}/${row.repo!.name}`)}</id>
+    <title>${xml(row.name)}</title>
+    <updated>${xml(stamp(at))}</updated>
+    <author><name>${xml(row.repo!.owner)}</name></author>
+    <link rel="alternate" type="text/html" href="${xml(`${origin}${row.url}`)}"/>
+    <summary>${xml(exploreSummary(row))}</summary>
+  </entry>`);
+  const updated = dated[0]?.at ?? STARTED;
+  const body = `<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <id>${xml(origin)}/explore.atom</id>
+  <title>Explore</title>
+  <subtitle>Apps rising and newly made</subtitle>
+  <author><name>forge</name></author>
+  <updated>${xml(stamp(updated))}</updated>
+  <link rel="self" type="application/atom+xml" href="${xml(origin)}/explore.atom"/>
+  <link rel="alternate" type="text/html" href="${xml(origin)}/explore"/>
+  <generator>forge</generator>
+${entries.join("\n")}
+</feed>
+`;
+  notePhase(ctx.request, "render", performance.now() - renderStart);
   return new Response(body, { headers: { ...headers, "content-type": "application/atom+xml; charset=utf-8" } });
 }

@@ -255,10 +255,10 @@ describe("a spawned child's first boot", () => {
     }
   });
 
-  test("a made-up code says it is not a claim link", async () => {
+  test("a made-up code says it is not a forge link", async () => {
     const res = await claim("x".repeat(43), maria);
     expect(res.status).toBe(404);
-    expect(await res.text()).toContain("not a claim link");
+    expect(await res.text()).toContain("not a forge link");
     expect(getUserByName(child.db, "maria")).toBeUndefined();
   });
 

@@ -87,10 +87,12 @@ import {
 } from "./explorer.ts";
 import { accountOnly, hostLabel, originIcon } from "./origins.ts";
 import { refSetFrom } from "./refs.ts";
+import { kindByName, needsPaths } from "../render/kinds.ts";
 import { stageRow, stageStateFor } from "../stage-row.ts";
 import {
   blobView,
   codePage,
+  pathsAt,
   renderBlob,
   renderCode,
   rawResponse,
@@ -508,10 +510,12 @@ export async function browseBlob(ctx: Ctx): Promise<Response> {
   const blob = await scope.source.blob(ref, path);
   if (!blob.ok) return notFoundPage(ctx);
   const refs = await refSetFrom(scope.source);
+  const exists = needsPaths(kindByName(path)) ? await pathsAt(scope, ref) : undefined;
   const pane = renderBlob(scope, {
     refs,
     ref,
     path,
+    ...(exists !== undefined ? { exists } : {}),
     blob: blob.value,
     view: blobView(ctx.url.searchParams.get("view")),
     all: ctx.url.searchParams.get("all") === "1",

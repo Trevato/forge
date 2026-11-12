@@ -13,7 +13,7 @@
 
 import type { App } from "../app.ts";
 import { listCrewRoles } from "../core/agents.ts";
-import { listAutonomousRepos } from "../core/repos.ts";
+import { listAutonomousRepos, type Repo } from "../core/repos.ts";
 import { listActive } from "../core/runs.ts";
 import { standings } from "../core/standing.ts";
 import { grantedAccounts } from "../core/subscriptions.ts";
@@ -25,6 +25,25 @@ import { pace } from "./pacing.ts";
 export interface IdleReason {
   readonly word: string;
   readonly href: string;
+}
+
+/** The ceiling or the subscriptions, when one of them is why this repository starts nothing; null when neither is. */
+export function whatBlocks(app: App, repo: Repo, now: Date): IdleReason | null {
+  const { db } = app;
+  if (atCeiling(repo, spentToday(db, repo.id, now))) return { word: "ceiling reached", href: "/meter" };
+
+  const granted = grantedAccounts(db, repo.id, repo.ownerId);
+  if (granted.length > 0) {
+    const stand = standings(db, granted.map((a) => a.id), now);
+    const accounts = granted.flatMap((a) => {
+      const s = stand.get(a.id);
+      return s === undefined ? [] : [{ name: a.name, standing: s }];
+    });
+    // Whether a window has room does not depend on what a run costs.
+    if (pace(accounts, repo.autonomySlots, 1, now).slots === 0)
+      return { word: "no subscription with headroom", href: "/subscriptions" };
+  }
+  return null;
 }
 
 /** Why no builder is starting anything now; null while a builder slot is busy or something can start. */
@@ -39,19 +58,8 @@ export function idleReason(app: App, now: Date): IdleReason | null {
     const active = listActive(db, "agent").filter((r) => r.repoId === repo.id);
     if (slottedRuns(active, crew).length >= repo.autonomySlots) return null;
 
-    if (atCeiling(repo, spentToday(db, repo.id, now))) return { word: "ceiling reached", href: "/meter" };
-
-    const granted = grantedAccounts(db, repo.id, repo.ownerId);
-    if (granted.length > 0) {
-      const stand = standings(db, granted.map((a) => a.id), now);
-      const accounts = granted.flatMap((a) => {
-        const s = stand.get(a.id);
-        return s === undefined ? [] : [{ name: a.name, standing: s }];
-      });
-      // Whether a window has room does not depend on what a run costs.
-      if (pace(accounts, repo.autonomySlots, 1, now).slots === 0)
-        return { word: "no subscription with headroom", href: "/subscriptions" };
-    }
+    const blocked = whatBlocks(app, repo, now);
+    if (blocked !== null) return blocked;
 
     const held = heldNow(app, repo);
     if (held.startable.length > 0) return null;

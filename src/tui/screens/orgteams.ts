@@ -8,7 +8,8 @@
  * `requireOrgAdmin`) adds a person with `a` and removes the member under the
  * cursor with `d` after a y/n (#8125), and sets the role of the member
  * under the cursor with `r` (#571: planner, builder, reviewer or member, the
- * seat a write team gives an agent on the org's crew), through the same actions
+ * seat a write team gives an agent on the org's crew), and opens its figures,
+ * how fast it ships, with `m` (#572, `teamfigures.ts`), through the same actions
  * `POST /:owner/-/teams/:team/add` and `/remove` call, in the page's words.
  * On the list, an admin of the selected team's organization makes a team with
  * `n` (a name, then read, write or admin) and deletes the selected team with
@@ -45,6 +46,7 @@ import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
 import { ListState, confirmScreen, drawList, later, pickerScreen, promptScreen, type ListRow } from "./common.ts";
 import type { PaletteEntry } from "./entries.ts";
+import { teamFiguresScreen } from "./teamfigures.ts";
 
 /** One line of the list: a team of an organization, with its member count. */
 type Line = { readonly org: User; readonly team: Team; readonly members: number };
@@ -90,7 +92,7 @@ function teamMembersScreen(ctx: Ctx, f: Session, org: User, team: Team, changed:
   const screen: Screen = {
     title: `${org.username} / ${team.name}`,
     keys: admin
-      ? [binding(["j", "k"], "move cursor"), binding(["a"], "add"), binding(["r"], "role"), binding(["d"], "remove")]
+      ? [binding(["j", "k"], "move cursor"), binding(["a"], "add"), binding(["r"], "role"), binding(["d"], "remove"), binding(["m"], "figures")]
       : [binding(["j", "k"], "move cursor")],
     render(area, s) {
       drawList(s, area, ctx.theme.c, state, rows);
@@ -114,6 +116,10 @@ function teamMembersScreen(ctx: Ctx, f: Session, org: User, team: Team, changed:
             },
           }),
         );
+        return true;
+      }
+      if (e.key === "m") {
+        ctx.push(teamFiguresScreen(ctx, f, org, team));
         return true;
       }
       if (e.key === "r") {

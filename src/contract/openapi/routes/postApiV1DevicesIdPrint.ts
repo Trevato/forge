@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/devices/{id}/print",
   summary: "Print the PDF in the request body on a device the app was granted (the app's own token); answers 200 with the job",
   auth: true,
+  role: "member",
   refusals: {
     forbidden: "403: the app holds no grant on this device",
     rate_limited: "429: the app started more than 10 prints in a minute, or has 2 in flight",

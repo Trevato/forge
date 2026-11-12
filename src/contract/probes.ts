@@ -21,7 +21,7 @@ import { openIssue, setIssueState } from "../actions/issues.ts";
 import { id as newId } from "../kernel/id.ts";
 import { createLog } from "../kernel/log.ts";
 import { audit } from "./audit.ts";
-import { probe, type Knock, type Probed } from "./probe.ts";
+import { probe, type Knock, type ProbeInput, type Probed } from "./probe.ts";
 import { during } from "../perf/jobs.ts";
 
 const log = createLog("probes");
@@ -113,6 +113,9 @@ export function probeIssue(app: App, repo: Repo) {
   );
 }
 
+/** What asks the doors: the real probe, unless a test hands in its own verdicts. */
+export type Prober = (input: ProbeInput) => Promise<Probed | undefined>;
+
 /**
  * Knock on one app now, keep the row, and open or close its issue. Returns
  * undefined for an app with no sound contract: there is nothing to compare
@@ -122,11 +125,12 @@ export async function probeApp(
   app: App,
   runtime: AppsRuntime,
   record: AppRecord,
+  knock: Prober = probe,
 ): Promise<ProbeRow | undefined> {
   const repo = getRepoById(app.db, record.repoId);
   if (repo === undefined) return undefined;
   const audited = await audit(app.reposRoot, repo);
-  const probed = await probe({
+  const probed = await knock({
     runtime,
     dataDir: app.config.dataDir,
     record,
@@ -193,7 +197,11 @@ export function untilNightly(now = Date.now()): number {
 export function startProbes(
   app: App,
   runtime: AppsRuntime,
-  options: { readonly nightly?: boolean } = {},
+  options: {
+    readonly nightly?: boolean;
+    /** The seam: a test's prober answers in place of the running app's doors. */
+    readonly knock?: Prober;
+  } = {},
 ): ProbesHandle {
   let stopped = false;
   const inFlight = new Set<Promise<unknown>>();
@@ -205,7 +213,7 @@ export function startProbes(
   };
   const one = (record: AppRecord): Promise<ProbeRow | undefined> =>
     track(
-      probeApp(app, runtime, record).catch((error) => {
+      probeApp(app, runtime, record, options.knock).catch((error) => {
         log.error("probe failed", { app: record.slug, error: String(error) });
         return undefined;
       }),

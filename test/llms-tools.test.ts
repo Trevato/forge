@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { REPORT_TOOL } from "../src/http/mcp.ts";
+import { REPORT_TOOL, START_TOOL } from "../src/http/mcp.ts";
 import { TOOLS } from "../src/http/mcp/tools.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
@@ -45,9 +45,9 @@ describe("/llms.txt MCP tools", () => {
     expect(start).toBeGreaterThan(-1);
     const end = lines.findIndex((l, i) => i > start && l.startsWith("## "));
     const listed = lines.slice(start + 1, end).filter((l) => l.startsWith("- "));
-    const expected = [...TOOLS, REPORT_TOOL].map((t: Listed) => {
+    const expected = [...TOOLS, REPORT_TOOL, START_TOOL].map((t: Listed) => {
       const admin = t.adminOnly === true || t.needsAdminScope === true ? " (admin)" : "";
-      return `- ${t.name}: ${(t.doc ?? t.description).replace(/\s+/g, " ").trim()}${admin}${t.writes ? " (writes)" : ""}${t.name === "report" ? " (no account)" : ""}`;
+      return `- ${t.name}: ${(t.doc ?? t.description).replace(/\s+/g, " ").trim()}${admin}${t.writes ? " (writes)" : ""}${t.name === "report" || t.name === "start" ? " (no account)" : ""}`;
     });
     expect(listed).toEqual(expected);
     expect(TOOLS.some((t) => t.writes)).toBe(true);

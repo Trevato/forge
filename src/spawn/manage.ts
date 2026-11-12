@@ -13,6 +13,7 @@ import { restoreClaim, revokeClaim, spawnedOrg } from "./claim.ts";
 import { forgetHeard } from "./clients.ts";
 import { sleepChild } from "./host.ts";
 import { CHILD_NAME } from "./placement.ts";
+import { switchOwnCode } from "./own_code.ts";
 
 export type Managed = { readonly ok: true; readonly says: string } | { readonly ok: false; readonly says: string };
 
@@ -68,4 +69,17 @@ export async function changeLink(
     ok: true,
     says: act === "revoke" ? `The link for ${name} has ended. You can undo this for a minute.` : `The link for ${name} is open again.`,
   };
+}
+
+/**
+ * Switch a child between its parent's code and its own forge repository's
+ * main (#11144). A running child is put to sleep so its next visitor wakes it
+ * on the new code; a hosted one is refused, with the reason.
+ */
+export async function ownCode(app: App, name: string, on: boolean): Promise<Managed> {
+  const child = await find(app, name);
+  if (child === undefined) return { ok: false, says: `no forge named ${name}` };
+  const switched = switchOwnCode(app, { name, placement: child.placement, childDir: childDirOf(app, child.bodyId), on });
+  if (switched.ok) await sleepChild(app, name);
+  return switched;
 }

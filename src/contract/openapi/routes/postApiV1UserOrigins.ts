@@ -8,6 +8,7 @@ export const route: Route = {
   path: "/api/v1/user/origins",
   summary: "Connect a forge with a personal access token; answers 201 with the origin and `reattached`, the frozen mirrors this brought back and the ones it could not, each with its reason; `host` is a name (github), a host or a URL and defaults to `kind`; the account only (session, password or admin-scope token); the token is stored sealed and never read back",
   auth: true,
+  role: "member",
   status: 201,
   body: { kind: "string", host: "string", token: "string" },
   refusals: {

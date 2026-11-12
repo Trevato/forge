@@ -18,6 +18,7 @@ import { btn, disclosure, row, timeAgo } from "../ui.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { NowStage } from "../../flow/now_rows.ts";
 import { nowHref } from "../pages/now.ts";
+import type { Repo } from "../../core/repos.ts";
 import { writableAppsOf } from "./asks.ts";
 import { FORGE_TARGET } from "./feed.ts";
 import { COMPOSER_FIELDS, TELL_MAX, sharedDraft, shareToken } from "../share_target.ts";
@@ -127,8 +128,8 @@ export function tellBox(ctx: Ctx, user: User): Html {
 }
 
 /** Your apps as chips, each a link to the app, and a plus for a new one. */
-export function appChips(ctx: Ctx, user: User): Html {
-  const { repos } = writableAppsOf(ctx, user);
+export function appChips(ctx: Ctx, user: User, apps?: readonly Repo[]): Html {
+  const repos = apps ?? writableAppsOf(ctx, user).repos;
   return html`<section aria-label="Your apps" id="live-chips" data-live="app.serving,app.stopped,app.created,app.deleted" data-live-src="/live/chips">
     <h2 class="small muted">Your apps</h2>
     <p class="bar small">

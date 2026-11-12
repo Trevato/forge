@@ -12,6 +12,7 @@
  * repository's origin.
  */
 
+import { noteRed, treatRed } from "../checks/doctor.ts";
 import { tickBets } from "../actions/bets.ts";
 import { betsInUse } from "../core/bets.ts";
 import { onlyListDocs, resolveListConflicts } from "../actions/list-conflicts.ts";
@@ -142,7 +143,7 @@ import { approvedOnHead, finishApproved, finishFields } from "./finishing.ts";
 import { recheckRedApproved } from "./red_approved.ts";
 import { sweepStaleReds } from "./stale_reds.ts";
 import { sweepStranded } from "./stranded.ts";
-import { parkPull, strikeNote } from "./park_pull.ts";
+import { parkPull, parkPullTold, strikeNote } from "./park_pull.ts";
 import { keepVerdict } from "../flow/culprits.ts";
 import { sweepRepeats } from "./repeat_checks.ts";
 import { breathe } from "../kernel/breathe.ts";
@@ -157,7 +158,7 @@ import { bootCounts } from "../kernel/boots.ts";
 
 const log = createLog("autonomy");
 
-export { parkPull };
+export { parkPull, parkPullTold };
 
 export const AUTONOMY_TICK_MS = 60_000;
 /**
@@ -2196,6 +2197,10 @@ async function admit(
       });
       addLearned(app.config.dataDir, pull.id, red.learn);
       if (!again) addComment(app, by, repo, getIssueById(app.db, pull.id) ?? pull, clashSaid(red.comment, together));
+      // A red that reproduces on the re-gate is the code's: only then is it the doctor's to hold.
+      if (again) treatRed(app, repo, by, pull, red, baseOid);
+      // Red only on top of pulls that landed first: no single culprit yet, so the class is recorded and the re-gate alone decides.
+      else noteRed(app, repo, pull, red, baseOid, together);
     },
   });
 }

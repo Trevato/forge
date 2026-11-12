@@ -106,3 +106,48 @@ test("results are in the server's HTML with every script stripped", async () => 
   expect(hrefs).not.toContain("/alice/plain-repo");
   expect(hrefs.some((h) => h.startsWith("/alice/plain-repo/blob/"))).toBe(true);
 });
+
+/** The release probe's `/search?q=a` (#11120): one letter greps no code, says so, and is bounded work. */
+test("a one-letter query greps nothing, says why, and runs a bounded number of statements", async () => {
+  const anon = (path: string) => fetch(servers.url + path);
+  for (const ask of [get, anon]) {
+    const ran = grepCount();
+    const res = await ask("/search?q=a");
+    const html = await res.text();
+    expect(res.status).toBe(200);
+    expectWork(grepCount() - ran, { max: 0 });
+    expect(html).toContain("data-code-short");
+    expect(html).toContain("Code is searched for 2 or more characters");
+    // Repositories and issues still answer the one letter.
+    expect(html).toContain("/alice/flux-engine");
+  }
+  const ran = grepCount();
+  expectWork(await requestStatements(app.db, servers.url + "/search?q=a", { headers: { authorization: `Bearer ${bearer}` } }), { max: STATEMENT_CEILING });
+  expectWork(await requestStatements(app.db, servers.url + "/search?q=a"), { max: STATEMENT_CEILING });
+  expectWork(grepCount() - ran, { max: 0 });
+  // Asking for code alone says the same, and a repo-scoped kind does not.
+  expect(await (await get("/search?q=a&kind=code")).text()).toContain("data-code-short");
+  expect(await (await get("/search?q=a&kind=repos")).text()).not.toContain("data-code-short");
+});
+
+test("two letters and more still grep the code", async () => {
+  const html = await (await get("/search?q=fl")).text();
+  expect(html).not.toContain("data-code-short");
+  expect(html).toContain("src/flux.ts");
+});
+
+test("the API and the MCP search tool answer one letter the same: no code, and a note", async () => {
+  const ran = grepCount();
+  const api = (await (await get("/api/v1/search?q=a")).json()) as { code: unknown[]; note?: string; repos: unknown[] };
+  expect(api.code).toEqual([]);
+  expect(api.note).toContain("2 or more characters");
+  expect(api.repos.length).toBeGreaterThan(0);
+  const res = await fetch(`${servers.url}/mcp`, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${bearer}` },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "search", arguments: { q: "a" } } }),
+  });
+  const text = await res.text();
+  expect(text).toContain("2 or more characters");
+  expectWork(grepCount() - ran, { max: 0 });
+});

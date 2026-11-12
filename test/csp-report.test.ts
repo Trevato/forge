@@ -47,7 +47,7 @@ describe("POST /csp-report", () => {
     expect((await send(body)).status).toBe(204);
     expect((await send(body)).status).toBe(204);
     expect(rows()).toEqual([
-      { day: new Date().toISOString().slice(0, 10), directive: "script-src-elem", blocked: "evil.example:8443", path: "/alice/secret/issues", n: 2 },
+      { day: new Date().toISOString().slice(0, 13), directive: "script-src-elem", blocked: "evil.example:8443", path: "/alice/secret/issues", n: 2 },
     ]);
   });
 
@@ -105,9 +105,9 @@ describe("the security page", () => {
     expect(await page()).not.toContain('id="csp"');
     const now = new Date();
     recordViolation(app.db, { directive: "img-src", blocked: "x.example", path: "/" }, now);
-    recordViolation(app.db, { directive: "img-src", blocked: "y.example", path: "/a" }, now);
+    recordViolation(app.db, { directive: "img-src", blocked: "y.example", path: "/a" }, new Date(now.getTime() + 1));
     recordViolation(app.db, { directive: "frame-src", blocked: "z.example", path: "/" }, new Date(now.getTime() - 10 * 86_400_000));
-    expect(violationsByDirective(app.db, 7, now)).toEqual([{ directive: "img-src", n: 2 }]);
+    expect(violationsByDirective(app.db, 7 * 24, new Date(now.getTime() + 1))).toEqual([{ directive: "img-src", n: 2, newest: "y.example" }]);
     const html = await page();
     expect(html).toContain('id="csp"');
     expect(html).toMatch(/<span class="mono">img-src<\/span> 2/);

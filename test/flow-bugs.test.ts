@@ -58,7 +58,7 @@ describe("bug clock", () => {
     expect(a.fired).toBe(true);
     expect(a.says).toContain("and 1 more");
     expect(countBugs(app.db, NOW)).toEqual({ open: 4, overdue: 2 });
-    const fired = firedAlarms(app.db, NOW).filter((x) => x.key === "bug_clock");
+    const fired = firedAlarms(app.db, NOW, { dataDir: null }).filter((x) => x.key === "bug_clock");
     expect(fired).toHaveLength(1);
     expect(fired[0]!.href).toMatch(/^\/alice\/r\/issues\/\d+$/);
   });

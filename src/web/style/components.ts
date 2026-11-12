@@ -131,6 +131,25 @@ select.input {
   display: block; font-size: 13px; font-weight: 550; margin: 0 0 6px; color: var(--fg);
 }
 .field .hint { display: block; font-size: 12.5px; color: var(--muted-fg); margin-top: 6px; overflow-wrap: anywhere; }
+/* A setting as one line (#10999): name, control, and the mark that opens its
+   reason. The mark is a small bordered button; open, the reason takes a line
+   of its own under the row. */
+.setting-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.setting-line > label:not(.check) { margin: 0; }
+.setting-line > select.input { width: auto; max-width: 100%; flex: 0 1 14rem; }
+.setting-line > .check { flex: 0 1 auto; }
+.setting-line > details.why { margin: 0; }
+.setting-line > details.why[open] { flex-basis: 100%; }
+.why > summary {
+  list-style: none; cursor: pointer; display: inline-grid; place-items: center;
+  width: 28px; height: 28px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--card); color: var(--muted-fg);
+}
+.why > summary::-webkit-details-marker { display: none; }
+.why > summary:hover, .why[open] > summary { border-color: var(--border-strong); color: var(--fg); }
+.why > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.why > p { margin: 6px 0 0; font-size: 12.5px; color: var(--muted-fg); overflow-wrap: anywhere; }
+@media (pointer: coarse) { .why > summary { width: 44px; height: 44px; } }
 .field .error { display: block; font-size: 12.5px; color: var(--danger); margin-top: 6px; font-weight: 500; overflow-wrap: anywhere; }
 .field[data-invalid] > label { color: var(--danger); }
 /* A group of checks is one field: the legend reads as a label, no frame. */
@@ -731,6 +750,10 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 }
 .disclosure[open] > summary::before { transform: rotate(90deg); }
 .disclosure > summary:hover { color: var(--accent); }
+/* A page's "? Help" (page_help.ts): a 44px target a thumb can hit, and a ring a keyboard can see. */
+.disclosure[data-page-help] > summary { width: fit-content; min-width: 44px; }
+.disclosure[data-page-help] > summary::before { content: none; }
+.disclosure[data-page-help] > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius); }
 
 /* ---- topbar search (always a real form, so JS-off still searches) ---- */
 .topbar-search {
@@ -804,10 +827,13 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
   padding: 6px; scrollbar-width: thin;
 }
 .palette-group + .palette-group { margin-top: 4px; }
+/* Headings and details are text people read (a recent page's detail says
+   where it was), so they take --muted-fg: --faint is 2.3:1 on the selected
+   row in light. The icon alone stays faint. */
 .palette-heading {
   padding: 8px 10px 4px;
   font-size: var(--fs-min); font-weight: 600; letter-spacing: .08em;
-  text-transform: uppercase; color: var(--faint);
+  text-transform: uppercase; color: var(--muted-fg);
 }
 .palette-item {
   display: flex; align-items: center; gap: 10px; width: 100%;
@@ -821,11 +847,13 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .palette-item .cat {
   flex: none; max-width: 45%; margin-left: auto;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 12.5px; color: var(--faint);
+  font-size: 12.5px; color: var(--muted-fg);
 }
 /* One highlight. The pointer moves it (the script listens) rather than
    painting a second one under the cursor; the finder keeps plain hover. */
 .palette-item[aria-selected="true"], .finder .palette-item:hover { background: var(--muted); }
+/* --muted-fg is 4.40:1 on that highlight in light; the detail takes --fg there. */
+.palette-item[aria-selected="true"] .cat { color: var(--fg); }
 .palette-foot {
   display: flex; align-items: center; gap: 10px; padding: 8px 14px;
   border-top: 1px solid var(--border); font-size: 12.5px; color: var(--faint);
@@ -1104,6 +1132,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 @media (forced-colors: active) {
   .input:focus-visible, .palette .palette-input:focus-visible { outline: 2px solid Highlight; outline-offset: 1px; }
   .color-field:focus-within { outline: 2px solid Highlight; outline-offset: 1px; }
+  .disclosure[data-page-help] > summary:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
 }
 
 /* Asked for less motion, the page keeps every state and loses the movement.

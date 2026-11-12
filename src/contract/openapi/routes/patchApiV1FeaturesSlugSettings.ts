@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/features/{slug}/settings",
   summary: "Change an absorbed app's settings, `{ settings: { name: value } }` (a site admin's admin scope token): every value is checked against its declared type first, and one that does not fit changes nothing; the app restarts reading each as FORGE_SETTING_<NAME>; answers the feature",
   auth: true,
+  role: "admin",
   body: { settings: "object" },
   refusals: {
     not_found: "no such app, or one you may not read",

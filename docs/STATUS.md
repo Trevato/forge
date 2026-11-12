@@ -26,6 +26,9 @@ cannot confirm. A package registry is not shipped yet.
   to its last 512 KB at render gets no catch-up read. The page says
   "Reconnecting" while the connection is down.
 
+- **Wave format** (`test/waves-lint.test.ts`): `version` equals the file name, `date`, and a one-sentence `headline` (no `. `/`! `/`? ` followed by text, so "v0. 7" fails); no `TODO`.
+  Every `#N` is linked as `[#N …](…/pulls/N)` and must appear in git history (or the test's short named list).
+
 - **Cut a wave**: Settings → *Cut a wave* (repository admins, same-origin
   POST) opens a pull
   adding `waves/<next>.md`, listing the pulls merged since the last wave and

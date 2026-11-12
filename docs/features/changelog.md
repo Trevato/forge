@@ -6,6 +6,10 @@ The terminal's palette has `Changelog`, the same read for anyone, a guest includ
 
 One bounded `git log` read, cached per head oid; Server-Timing names `releases` and `render`.
 
+## How close each open milestone is (#11409)
+
+`/changelog` opens with one line per open milestone of the forge's own repository: its name (linked to its milestone page), `N of M done` and a progress bar. A deferred or closed milestone is left out, and the block is absent when none is open or when the reader may not open the repository (a guest on a private one). The terminal's Changelog screen shows the same lines above the releases (name, `N of M done`, at most five), under the same read check. Both read `nearMilestones` in `web/pages/milestones_near.ts`; the page's `ETag` includes them.
+
 ## What went live (#7672)
 
 `/changelog` lists the pulls merged into a default branch, newest first, grouped by UTC day: title, link, repository, when it landed. A pull to the forge's own repository (`FORGE_REPO`) counts only once the running commit (`FORGE_COMMIT`, the one `/api/v1/health` reports; the default branch head for a forge run from source) contains its merge commit, asked of git with `merge-base --is-ancestor` and kept while live. Landed but not yet contained shows above as "On its way". A pull to any other public repository is live when it lands. The top line says the live version and commit and how many shipped today. `?repo=all` or `?repo=owner/name` filters; the forge's own repository is the default.
@@ -26,6 +30,6 @@ A squash keeps the people behind its commits: the landed message carries every d
 
 ## As a feed (#8213)
 
-`GET /changelog.atom` is the same list as an Atom feed, public, for a feed reader. It holds the newest 50 live landings of the forge's own repository (`FORGE_REPO`, public only), one entry each titled `Went live: <title>` and linked to its pull; what has landed but is not yet live is left out. The 50 is the feed's own cap (`CHANGELOG_ENTRIES` in `web/feeds.ts`); the page and `/api/v1/changelog` are not capped. It is cached for five minutes (`cache-control: public, max-age=300`) and carries a weak `ETag`, so a reader that sends `If-None-Match` gets a 304. The page links it with `rel="alternate"`.
+`GET /changelog.atom` is the same list as an Atom feed, public, for a feed reader. It holds the newest 50 live landings of the forge's own repository (`FORGE_REPO`, public only), one entry each titled `Went live: <title>` and linked to its pull; what has landed but is not yet live is left out. A landing a wave covers collapses into one entry per wave (not per release or per landing): the wave's headline is the title, its highlights the summary, the link goes to the wave's page, and the entry is dated at the wave's newest landing. Waves are read from the forge repository's default branch, so the `ETag` moves with that branch's tip as well as with the list. The tip is read on every request, the 304 path included; the five-minute cache is what keeps git off the hot path. The 50 is the feed's own cap (`CHANGELOG_ENTRIES` in `web/feeds.ts`); the page and `/api/v1/changelog` are not capped. It is cached for five minutes (`cache-control: public, max-age=300`) and carries a weak `ETag`, so a reader that sends `If-None-Match` gets a 304. The page links it with `rel="alternate"`.
 
 An agent reads the same data as JSON, not Atom: MCP `releases` with `{shipped: true}` or `GET /api/v1/changelog` (see above). The terminal has no screen for the feed, since a feed is for a reader program; its Changelog screen is the release-commit view.

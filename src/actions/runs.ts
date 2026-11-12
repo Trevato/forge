@@ -39,6 +39,7 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { readRunLog, readRunLogTail, runLogPath } from "../runs/log.ts";
 import { shownStates, type ShownState } from "../runs/state.ts";
 import { firstErrorLine } from "../runs/error_line.ts";
+import { cancelledBy } from "../runs/cancelled.ts";
 import { requireReader, requireWriter, type AccessError } from "./access.ts";
 
 /** What a run event carries: enough for a surface to render the card. */
@@ -350,7 +351,7 @@ export function cancelRepoRun(
   const cancelled = markCancelled(
     app.db,
     runId,
-    `cancelled by ${writer.value.username}`,
+    cancelledBy(writer.value.username),
   );
   if (!cancelled) return err("finished");
   // The row says cancelled first, so the run's own end leaves it so; the

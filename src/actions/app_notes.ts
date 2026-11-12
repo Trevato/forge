@@ -143,7 +143,7 @@ export function statusOf(app: App, repo: Repo, number: number): { status: NoteSt
 }
 
 /** What the crew and the repository's writers said on a note's issue; anyone else's comment stays on the forge. */
-function repliesTo(app: App, repo: Repo, issueId: string): NoteReply[] {
+function repliesTo(app: App, repo: Repo, issueId: string, keepOutsiders = false): (NoteReply & { untrusted?: true })[] {
   const standing = new Map<string, boolean>();
   const speaks = (id: string): boolean => {
     let yes = standing.get(id);
@@ -155,8 +155,12 @@ function repliesTo(app: App, repo: Repo, issueId: string): NoteReply[] {
     return yes;
   };
   return listComments(app.db, issueId, { kind: "comment" })
-    .filter((c) => speaks(c.authorId))
-    .map((c) => ({ by: c.authorName, at: c.createdAt, text: c.body }));
+    .flatMap((c) => {
+      const reply = { by: c.authorName, at: c.createdAt, text: c.body };
+      if (speaks(c.authorId)) return [reply];
+      // The owner's list keeps an outsider's words, flagged; the sender's button never shows them.
+      return keepOutsiders ? [{ ...reply, untrusted: true as const }] : [];
+    });
 }
 
 function view(app: App, repo: Repo, forgeUrl: string | undefined, viewer: User | undefined, note: AppNote): NoteView | undefined {
@@ -341,6 +345,27 @@ export interface OwnerNote {
   readonly page: string;
   readonly at: string;
   readonly banned: boolean;
+  /**
+   * The issue's latest comments, oldest first: the crew's and writers' as the button shows them, an
+   * outsider's flagged `untrusted`. At most `OWNER_REPLIES`, each body cut to `OWNER_REPLY_CHARS`;
+   * the studio card and the terminal leave them out on purpose (the thread stays on the issue), MCP and the API carry them.
+   */
+  readonly replies: readonly { by: string; body: string; at: string; untrusted?: true }[];
+  /** How many earlier comments `replies` leaves out. */
+  readonly earlierReplies: number;
+}
+
+/** Outsiders write these words: the owner's list carries only the latest few, each cut short. */
+export const OWNER_REPLIES = 10;
+export const OWNER_REPLY_CHARS = 1000;
+
+/** A body cut to `OWNER_REPLY_CHARS`, never splitting a surrogate pair, marked with an ellipsis. */
+function clip(body: string): string {
+  if (body.length <= OWNER_REPLY_CHARS) return body;
+  let cut = body.slice(0, OWNER_REPLY_CHARS);
+  const last = cut.charCodeAt(cut.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
+  return `${cut}…`;
 }
 
 /** The page a note was sent from, read back from the fenced line the issue holds. */
@@ -352,6 +377,8 @@ function pageOf(body: string): string {
 function ownerView(app: App, repo: Repo, n: AppNote, banned: boolean): OwnerNote | undefined {
   const issue = getIssue(app.db, repo.id, n.issueNumber);
   if (issue === undefined) return undefined;
+  const all = repliesTo(app, repo, issue.id, true);
+  const latest = all.slice(-OWNER_REPLIES);
   return {
     id: n.id,
     by: n.name,
@@ -360,6 +387,8 @@ function ownerView(app: App, repo: Repo, n: AppNote, banned: boolean): OwnerNote
     page: pageOf(issue.body),
     at: n.createdAt,
     banned,
+    replies: latest.map(({ text, ...r }) => ({ ...r, body: clip(text) })),
+    earlierReplies: all.length - latest.length,
   };
 }
 

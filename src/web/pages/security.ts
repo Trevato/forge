@@ -15,6 +15,7 @@ import { backupOverdue, trafficAttention, TRAFFIC_WORDS } from "../../flow/kpi_w
 import { readBackup } from "../../flow/kpis.ts";
 import type { Ctx } from "../../http/context.ts";
 import { violationsByDirective } from "../../http/csp_report.ts";
+import { scriptErrorCounts } from "../../http/script_errors.ts";
 import { perfRecord } from "../../perf/live.ts";
 import { getSignup } from "../../settings/signup.ts";
 import { trafficHistory } from "../../perf/traffic_store.ts";
@@ -240,13 +241,27 @@ function reportRow(dataDir: string, nowMs: number): Html {
 
 /** What browsers said the Content-Security-Policy blocked this week, by directive; nothing when nothing was. */
 function cspRow(db: Database, nowMs: number): Html | null {
-  const week = violationsByDirective(db, 7, new Date(nowMs));
+  const week = violationsByDirective(db, 7 * 24, new Date(nowMs));
   if (week.length === 0) return null;
   return statusRow(
     "Blocked by the page policy, 7 days",
     html`${week.map((w, i) => html`${i > 0 ? ", " : ""}<span class="mono">${w.directive}</span> ${w.n}`)}`,
     null,
     "csp",
+  );
+}
+
+/** Uncaught script errors browsers reported this week: page, where, message, count, last seen; nothing when none. */
+function scriptErrorRow(db: Database, nowMs: number): Html | null {
+  const rows = scriptErrorCounts(db, 7 * 24, new Date(nowMs));
+  if (rows.length === 0) return null;
+  return statusRow(
+    "Script errors on pages, 7 days",
+    html`<ul class="plain">${rows.map(
+      (r) => html`<li><span class="mono">${r.page}</span> <span class="mono">${r.where}</span> ${r.message} <span class="muted">${r.n}×, ${time(r.last)}</span></li>`,
+    )}</ul>`,
+    null,
+    "script-errors",
   );
 }
 
@@ -297,6 +312,7 @@ export function securityPage(ctx: Ctx): Response {
       )}
       ${reportRow(dataDir, nowMs)}
       ${cspRow(db, nowMs)}
+      ${scriptErrorRow(db, nowMs)}
       ${statusRow("Admin accounts", html`${admins.map((a, i) => html`${i > 0 ? ", " : ""}${a.username}${a.is_agent === 1 ? " (agent)" : ""}${a.suspended_at === null ? "" : " (suspended)"}`)}`)}
       ${statusRow("Admin-scope tokens", none(adminTokens.length, adminTokens.length === 1 ? "token" : "tokens"))}
       ${statusRow(`Keys and tokens added, ${WINDOW_DAYS} days`, none(added.length, "added"))}

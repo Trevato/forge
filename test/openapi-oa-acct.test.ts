@@ -13,18 +13,18 @@ const WANT: readonly (readonly [string, string])[] = [
 ];
 
 test("each admin account and invite route is in the served document", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   for (const [method, path] of WANT) expect(doc.paths[path]?.[method], `${method} ${path}`).toBeDefined();
 });
 
 test("the invite row says the link is shown once", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   expect(doc.paths["/api/v1/admin/invites"].post.summary).toContain("shown once");
   expect(doc.paths["/api/v1/admin/invites"].post.security).toBeDefined();
 });
 
 test("the password and email-verify rows carry their bodies and refusals", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const password = doc.paths["/api/v1/user/password"]?.post;
   const verify = doc.paths["/api/v1/user/email/verify"]?.post;
   expect(Object.keys(password.requestBody.content["application/json"].schema.properties).sort()).toEqual(["current", "next"]);

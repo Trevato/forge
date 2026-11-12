@@ -6,6 +6,8 @@
  * the crew is actually there, in words, before anyone assigns anything.
  */
 
+import { budgetsCard } from "../studio/crew_budgets.ts";
+import { fundingOf, fundingWords } from "../../spawn/funding.ts";
 import {
   createAgent,
   deleteAgent,
@@ -54,6 +56,7 @@ import { listAutonomousRepos, type Repo } from "../../core/repos.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
+import { helpAsked, pageHelp } from "../page_help.ts";
 import { flashTo, page } from "../layout.ts";
 import {
   btn,
@@ -142,8 +145,10 @@ export function crewReadiness(ctx: Ctx): Html {
   if (!crew.ready)
     return html`<div class="toast" data-tone="danger" role="alert">${icon("alert")}<div class="toast-body">The crew cannot run: ${crew.detail}. Agents can be
         created, but nothing picks up their work until this is fixed.</div></div>`;
-  return html`<p class="muted small mb">
-    ${icon("check")} ${crew.detail} is ready to run the crew.
+  const funded = fundingOf(ctx.app.config.dataDir);
+  // A word and a glyph; a forge its parent funds says so on the same line (#10484).
+  return html`<p class="mb">
+    ${icon("check")} <strong>Ready</strong> <span class="muted">${crew.detail}</span>${funded === undefined ? null : html` <span class="muted" data-funded>${fundingWords(funded)}</span>`}
   </p>
   ${when(
     !crew.sandbox.enforced,
@@ -171,7 +176,7 @@ const agentErrors = (ctx: Ctx): Record<string, string> => ({
   email_taken: USERNAME_TAKEN,
   invalid_model: `A model is up to ${MODEL_MAX} characters with no spaces.`,
   brief_too_long: `A brief is at most ${BRIEF_MAX} characters.`,
-  invalid_roles: "Pick at least one job: planner, builder or reviewer.",
+  invalid_roles: "Pick at least one job: planner, builder, reviewer or maintainer.",
   role_held: "That agent still holds a seat it would lose on a repository. Move it there first, under Settings → Crew.",
   invalid_budget: `A budget is a number of dollars between 0 and ${limitValue(ctx.app.db, "agent.budget_max_usd")}.`,
 });
@@ -185,7 +190,6 @@ function agentFields(values: AgentValues, error?: string): Html {
       label: m.label,
       selected: m.id === values.model,
     })),
-    hint: "An alias names the newest of its line, so the choice does not age.",
     ...(error !== undefined && error.startsWith("A model") ? { error } : {}),
   })}
   ${uiField({
@@ -382,12 +386,6 @@ function scorecardCard(
     </div>`,
     {
       title: "Scorecard",
-      note: html`Over the pulls each agent opened, and each team's members pooled (an
-          agent on two teams counts in both), in the last ${RECENT_DAYS} days
-          and over all time: review rounds are change requests per landed pull, red checks
-          the share of finished checks that failed; reverts (the landed pulls
-          a merged pull took back) and time to land (the mean from opening to
-          merge) are all time.`,
     },
   );
 }
@@ -541,11 +539,7 @@ function modelReviewCard(ctx: Ctx): Html {
     n === null ? html`<td class="num muted">—</td>` : html`<td class="num">${f(n)}</td>`;
   const asked = r.changes.filter((c) => c.state === "asked");
   return panel(
-    html`<p class="muted small">At most one change of model per agent a week, to the cheapest that holds its quality.
-        A step up always asks; a step down ${r.limits.auto ? "applies on its own" : "asks too"} (Settings → Limits).
-        Under ${r.limits.minLanded} landed changes nothing. A week after a change the result is reported, and the
-        change undone if quality fell. An ask nobody answers lapses after two weeks.</p>
-      <div class="table-scroll">
+    html`<div class="table-scroll">
         <table class="table" id="model-review">
           <thead>
             <tr><th>Agent</th><th>Model</th><th>Landed</th><th>Per landed</th><th>Red</th><th>Rework</th><th>Reverts</th><th>Hard</th></tr>
@@ -624,7 +618,6 @@ function modelReviewCard(ctx: Ctx): Html {
       </div>`,
     {
       title: "Model review",
-      note: html`Weekly, from the last ${r.windowDays} days of the ledger`,
     },
   );
 }
@@ -661,7 +654,15 @@ function crewView(
   const usernameError =
     error !== undefined && /username/i.test(error) ? error : undefined;
   const handover = crewHandover(ctx.app.db);
+  const review = readReview(ctx.app);
   return html`${crewReadiness(ctx)}
+  ${pageHelp([
+    ["Knobs", "Dials for the crew; a change applies on the next pump."],
+    ["New agent", "The username is its handle: the author on the pull requests it opens, and the first half of its branch names. The display name is shown beside it. A model alias names the newest of its line, so the choice does not age."],
+    ["Scorecard", `Over the pulls each agent opened, and each team's members pooled (an agent on two teams counts in both), in the last ${RECENT_DAYS} days and over all time: review rounds are change requests per landed pull, red checks the share of finished checks that failed; reverts (the landed pulls a merged pull took back) and time to land (the mean from opening to merge) are all time.`],
+    ["Model review", `At most one change of model per agent a week, to the cheapest that holds its quality. A step up always asks; a step down ${review.limits.auto ? "applies on its own" : "asks too"} (Settings → Limits). Under ${review.limits.minLanded} landed changes nothing. A week after a change the result is reported, and the change undone if quality fell. An ask nobody answers lapses after two weeks. Weekly, from the last ${review.windowDays} days of the ledger.`],
+  ], helpAsked(ctx.request.url))}
+  ${budgetsCard(ctx)}
   ${knobsCard(ctx)}
   ${when(spending.length > 0, () =>
     spendingCard(spending, forgeCeiling(ctx.app.config) ?? undefined),
@@ -788,14 +789,12 @@ function crewView(
         value: values.username,
         required: true,
         pattern: "[A-Za-z0-9][A-Za-z0-9._-]*",
-        hint: "Its handle: the author on the pull requests it opens, and the first half of its branch names.",
         ...(usernameError ? { error: usernameError } : {}),
       })}
       ${uiField({
-        label: "Display name",
+        label: "Display name (optional)",
         name: "displayName",
         value: values.displayName,
-        hint: "Optional. Shown beside the username.",
       })}
       ${agentFields(values, usernameError === undefined ? error : undefined)}
       <div class="form-actions">
@@ -1057,7 +1056,8 @@ function agentView(agent: Agent, values: AgentValues, error?: string): Html {
   const at = `/settings/crew/${encodeURIComponent(agent.user.username)}`;
   return html`<section class="settings-block">
       <h2>Settings</h2>
-      <p class="muted small">added ${time(agent.createdAt)}</p>
+      <span class="muted small">added ${time(agent.createdAt)}</span>
+      ${pageHelp([["Model", "An alias names the newest of its line, so the choice does not age."]])}
       <form method="post" action="${at}">
         <div class="field">
           <label for="f-username">Username</label>

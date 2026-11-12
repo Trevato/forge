@@ -72,7 +72,7 @@ Children report in; the parent never reaches in. Every ten minutes a spawned chi
 
 ## Callers
 
-`POST /api/v1/forges {name, apps[], crew[], direction?, keepAccess?, modelKey?, budgetUsd?, size?, template?, dryRun}` (rw token, admin only) and the MCP `spawn` tool share `src/spawn/door.ts`. `size` is `small` (default), `medium` or `large`; anything else is a 422 on `size`. It is recorded in the plan, the ledger, `parent.json` and `GET /api/v1/forges`, but not enforced yet: it limits nothing. `dryRun` is true unless it is `false`: the answer is the plan, what is left behind, and `firstAdmin` (the caller's username, or `null` for an anonymous plan, where whoever claims the child becomes its admin), and nothing is made. `GET /api/v1/forges` lists the ledger's children. The child's org is its name; `crew` names the agents whose briefs travel. Errors: 401 unauthorized, 403 forbidden / cross_origin, 422 invalid, 409 refused / exists, 500 failed — each with one sentence. The MCP lets an `ro` token plan, never make.
+`POST /api/v1/forges {name, apps[], crew[], direction?, keepAccess?, modelKey?, budgetUsd?, size?, template?, dryRun}` (rw token; a person who is signed in, and a paid plan only from an admin, a gift code, or a paid order below) and the MCP `spawn` tool share `src/spawn/door.ts`. `size` is `small` (default), `medium` or `large`; anything else is a 422 on `size`. It is recorded in the plan, the ledger, `parent.json` and `GET /api/v1/forges`, but not enforced yet: it limits nothing. `dryRun` is true unless it is `false`: the answer is the plan, what is left behind, and `firstAdmin` (the caller's username, or `null` for an anonymous plan, where whoever claims the child becomes its admin), and nothing is made. `GET /api/v1/forges` lists the ledger's children. The child's org is its name; `crew` names the agents whose briefs travel. Errors: 401 unauthorized, 403 forbidden / cross_origin, 422 invalid, 409 refused / exists, 500 failed — each with one sentence. The MCP lets an `ro` token plan, never make.
 
 A spawn may also name a `size`: `small`, `medium` or `large` (`src/spawn/sizes.ts` maps each to CPU, memory and disk). It is recorded in the plan only when given, so a plan without one hashes as it always did, and an unknown size is a 422 on `size`. The New forge page and the terminal form both offer it, small preselected and not sent; the page shows a refusal beside the select, linked with `aria-describedby`. Nothing enforces the limits yet, and the table's numbers are provisional. `GET /api/v1/forges/sizes` (no sign-in, ETag, cached for 5 minutes) and the MCP tool `sizes` give the same answer — each size's CPU, memory and disk, read from that table, and one sentence on what it is for — so a page or an agent offering a size reads it there.
 
@@ -95,8 +95,8 @@ reads child → parent → … → root.
 `parent.json` keeps `forgeCode`: `repo`, `upstream`, `mode`, `tip` (the
 upstream's tip at birth) and `chain` (the ancestors' hops, copied from the
 parent's own `parent.json`, so a grandchild reads the whole chain offline).
-The spawner chooses `followMode` in the spawn input: `tell-me` (default) or
-`take-updates`; it is part of the plan. `/:owner/forge/following` on the
+The spawner chooses `followMode` in the spawn input: `take-updates` (default) or
+`tell-me`; it is part of the plan. A plain fork (not a spawned forge) defaults to `tell-me`. `/:owner/forge/following` on the
 child shows the chain, root first, one line per hop with its mode and how
 many commits of its own it had when the next hop was born (the last hop is
 counted now). What the modes do is in
@@ -125,7 +125,7 @@ learned (the parent's tip, how far behind the child is) is kept in
 The owner's `followMode` decides what happens when the parent has new commits:
 
 - `tell-me` sends one inbox card per new tip, listing its commits.
-- `take-updates` opens one pull from the branch `forge/take-updates`
+- `take-updates` (the default) fast-forwards main when the fork has no commits of its own; otherwise it opens one pull from the branch `forge/take-updates`
   (`TAKE_BRANCH`) holding the parent's code, and updates that same pull when
   the parent moves again. The pull carries the check like any other.
 
@@ -142,7 +142,7 @@ leaves. The page and the parent's tree then say it follows nothing since
 the date.
 
 A spawned forge's own code is a fork of its parent's (`<org>/forge`, chosen
-`followMode` `tell-me` or `take-updates`; in `take-updates` the hourly check puts what the parent gained in a pull.
+`followMode` `take-updates` (default) or `tell-me`; in `take-updates` the hourly check fast-forwards a fork with no commits of its own, and puts what the parent gained in a pull when the fork has its own.
  Once an hour, and
 on demand, a forge that follows and has not severed fetches its parent's code into
 `refs/upstream/*` of its own `<org>/forge` (no branch of the fork moves) and keeps
@@ -150,10 +150,10 @@ on demand, a forge that follows and has not severed fetches its parent's code in
 the count shows on the chain page, in the terminal's **Chain** (`c` checks now), and as
 `upstream` in the API and MCP payloads. `POST /:owner/forge/following/check` (a writer,
 same-origin) checks on demand; a fetch is cut at 60 s and a failure is recorded, not
-thrown. In `take-updates` the check then puts `refs/upstream/HEAD` (a fast-forward, or a clean merge commit) on the
+thrown. In `take-updates` the check first fast-forwards main itself when the fork has no commits of its own (compare-and-swap, so a push in between wins). Otherwise it puts `refs/upstream/HEAD` (a fast-forward, or a clean merge commit) on the
 fork's `forge/take-updates` branch and opens one pull, "Take updates from <parent>", into main, or updates
 that pull when it is open (`spawn/take.ts`); the fork's check runs on it like on any pull and a person merges it.
-Main is never moved, so nothing deploys by itself. It is recorded as `taken` in `upstream.json` (the chain line
+Main is moved only by that untouched-fork fast-forward; a fork with its own commits gets the pull and a person merges it. It is recorded as `taken` in `upstream.json` (the chain line
 reads "N commits from your parent are in pull #P") and as a `forge.updates_taken` event; a pull closed unmerged
 is not reopened until the parent moves again. `forge/take-updates` belongs to the check: a commit a person pushes there is overwritten by the next check that finds something different to put on it (open a branch of your own to build on it). On a conflict nothing changes and one open issue,
 "Take updates from <parent>", names the files. In `tell-me`, a new parent tip makes one inbox card for the owner (an issue on the fork assigned to them, "Your parent forge has N new commits", linking the chain page); `toldTip` in `upstream.json` keeps it to one per tip, and `take-updates` or a severed link makes none. Its chain
@@ -196,3 +196,13 @@ ledger (`spawn/sizes.ts`). **Unset means no quota.** A spawn that would pass a
 declared limit is a 409 `refused` with one sentence naming it, and the New
 forge page shows that sentence above the form when even a small forge would
 not fit (`spawn/quota.ts`).
+
+## The paid path: `/pricing`
+
+A visitor with no account buys a forge. `GET /pricing` (public) lists the plans from the setting with their size, price and crew credit. A paid plan's button posts the forge's name and an email to `POST /pricing/order`, which checks the name is free (not a user, a child, a reserved word or another order's hold), writes an **order** (`forge_order`: name, plan, email, state `pending`) that holds the name for 30 minutes, and redirects to the provider's checkout. The buyer's ticket is an HttpOnly cookie scoped to `/pricing`; only its hash is kept.
+
+When the order turns paid (the `checkout.session.completed` webhook, or `/pricing/done` asking the provider for the session, whichever is first) one `UPDATE … WHERE state = 'pending'` wins and goes on: `spawnDoor(..., { paid: true })` makes the forge on that plan, the entitlement is written, the order is `spawned`. A second delivery finds the order moved and changes nothing.
+
+`/pricing/done` waits for the spawn, then mints a fresh claim link and shows it once, as `/forges/new` does; when mail is configured it is also mailed to the order's email. `/pricing/resend` re-sends a new link (the old one stops) to the order's own email only, and answers the same whether or not an order matched.
+
+A paid order whose spawn fails (no capacity, a name taken in a race) becomes `failed`: a `billing.order_failed` event, the `paid_order` flow alarm, and a plain page to the buyer. On Settings → Billing an admin sees "Paid, not made" with **Retry** and a link to the provider's dashboard to refund. With no provider connected the paid plans show their size and say "ask the operator". Agents are refused as buyers.

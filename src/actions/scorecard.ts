@@ -17,6 +17,7 @@ import { wastedDays, type WastedDay } from "../core/wasted_days.ts";
 import { listAgents } from "../core/agents.ts";
 import { keeperDays, type KeeperDay } from "../flow/keeper_rate.ts";
 import type { User } from "../core/users.ts";
+import { weekCard } from "../crew/week_card.ts";
 
 export interface AgentScorecard {
   readonly username: string;
@@ -24,6 +25,8 @@ export interface AgentScorecard {
   readonly all: Scorecard | null;
   /** The last `RECENT_DAYS`; null when it opened none in that time. */
   readonly recent: Scorecard | null;
+  /** The last 7 days, the same line /crew shows: merged, returned, cost in USD. */
+  readonly week: { readonly merged: number; readonly returned: number; readonly cost: number };
   readonly splits: readonly (Scorecard & {
     readonly model: string;
     readonly prompt: string;
@@ -57,6 +60,7 @@ export function readScorecards(
   const recent = crewScorecards(app.db, window);
   const splits = crewScorecardSplits(app.db);
   const recentSplits = crewScorecardSplits(app.db, window);
+  const week = new Map(weekCard(app.db).map((l) => [l.username, l]));
   const key = (p: SplitScorecard) => `${p.model}\u0000${p.promptVersion}`;
   return {
     modelDays: modelDays(app.db),
@@ -69,10 +73,16 @@ export function readScorecards(
       const lately = new Map((recentSplits.get(id) ?? []).map((p) => [key(p), p]));
       const a = all.get(id);
       const r = recent.get(id);
+      const w = week.get(agent.user.username);
       return {
         username: agent.user.username,
         all: a === undefined ? null : figures(a),
         recent: r === undefined ? null : figures(r),
+        week: {
+          merged: w?.merged ?? 0,
+          returned: w?.returned ?? 0,
+          cost: w?.spentUsd ?? 0,
+        },
         splits: (splits.get(id) ?? []).map((p) => {
           const l = lately.get(key(p));
           return {

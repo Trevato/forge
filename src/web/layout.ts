@@ -28,6 +28,8 @@ import {
   listReposVisibleTo,
 } from "../core/repos.ts";
 import { mayDirectCrew } from "../crew/direct.ts";
+import { signupModeKnown } from "../settings/signup.ts";
+import { parentIssuerOf } from "../core/federation.ts";
 import type { User } from "../core/users.ts";
 import type { Ctx } from "../http/context.ts";
 import { activeEdgeToken, edgeLoginUrl, edgeLogoutUrl, edgeStrangerLogin } from "../http/edge.ts";
@@ -169,6 +171,11 @@ export interface PageOptions {
    * blob page of a PDF asks; no other page's policy changes.
    */
   objectSrc?: boolean;
+  /**
+   * The page frames an HTML file from the media route in a sandboxed
+   * `<iframe>` (`frame-src 'self'`). Only the blob page of an HTML file asks.
+   */
+  frameSelf?: boolean;
   /**
    * The page sets a font file in the font itself (`render/font.ts`): the
    * browser may load a font from this origin (`font-src 'self'`). Only the
@@ -588,6 +595,7 @@ function overlays(): Html {
       <div class="dialog-head"><h2 id="help-title">Keyboard shortcuts</h2></div>
       <div class="dialog-body" data-help-body></div>
       <div class="dialog-foot">
+        <a class="btn" data-variant="link" href="/docs">Docs</a>
         <form method="dialog">
           <button class="btn" type="submit">Close</button>
         </form>
@@ -622,6 +630,21 @@ export function signInHref(ctx: Ctx): string {
   const token = activeEdgeToken(ctx.app);
   if (edgeStrangerLogin(ctx.request, token, ctx.auth.user) !== undefined) return "/signup";
   return token === undefined ? "/signin" : edgeLoginUrl(ctx.url.pathname + ctx.url.search);
+}
+
+/**
+ * Where an anonymous visitor's "Sign up" leads on the top forge: `/signup`
+ * while signup there is open, the home page's form (`/`) while it is closed.
+ * Undefined where the button is not offered: behind a platform edge, or on a
+ * forge that has a parent (its people come in through it).
+ */
+export function signUpHref(ctx: Ctx): string | undefined {
+  if (ctx.auth.user !== undefined) return undefined;
+  // The token is read from config first: no edge, no query.
+  if (ctx.app.config.edgeToken !== undefined && activeEdgeToken(ctx.app) !== undefined) return undefined;
+  if (parentIssuerOf(ctx.app.config) !== undefined) return undefined;
+  const mode = signupModeKnown(ctx.app.db);
+  return mode === "open" || mode === "request" ? "/signup" : "/";
 }
 
 /** The Talk button; the count of confirms waiting on the viewer's yes is asked only here, where the button renders. */
@@ -678,7 +701,7 @@ function topbar(
                   : { label: "Sign out", post: "/logout", icon: "signOut" },
                 about,
               )}`
-          : html`${guestMenu(ctx, theme)}${btn("Sign in", {
+          : html`${guestMenu(ctx, theme)}${when(signUpHref(ctx), (href) => btn("Sign up", { href }))}${btn("Sign in", {
               href: signInHref(ctx),
             })}`}`}
       </span>
@@ -708,6 +731,8 @@ function footer(ctx: Ctx, own?: Html): Html {
           >${reduced}</span
         >`}
     <span class="spacer"></span>
+    <a href="/docs">Docs</a>
+    <a href="/pricing">Pricing</a>
     <a href="/changelog">Changelog</a>
     <a href="/api">API</a>
     ${ctx.auth.user !== undefined && ctx.auth.user.kind !== "org"
@@ -939,8 +964,9 @@ const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
 const BARE_ORIGIN = /^https?:\/\/[a-z0-9.-]+(?::\d{1,5})?$/i;
 
 /** The `frame-src` directive (with its trailing space), or nothing when the page frames nothing. */
-export function frameSources(options: Pick<PageOptions, "turnstile" | "frameSrc">): string {
+export function frameSources(options: Pick<PageOptions, "turnstile" | "frameSrc" | "frameSelf">): string {
   const origins = [
+    ...(options.frameSelf ? ["'self'"] : []),
     ...(options.turnstile ? [TURNSTILE_ORIGIN] : []),
     ...(options.frameSrc !== undefined && BARE_ORIGIN.test(options.frameSrc) ? [options.frameSrc] : []),
   ];

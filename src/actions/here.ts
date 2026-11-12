@@ -16,6 +16,7 @@ import { audienceFor } from "../core/audience.ts";
 import { lacks } from "../core/roles.ts";
 import { activeEdgeToken } from "../http/edge.ts";
 import { sshTellCommand } from "../ssh/command.ts";
+import { getAgentStart } from "../settings/agent_start.ts";
 import { mcpPointers, TOKEN_FREE_TOOLS } from "../core/mcp_card.ts";
 import type { App } from "../app.ts";
 import { appsRuntime } from "../apps/runtime.ts";
@@ -331,6 +332,16 @@ function forgeActions(
       http: "GET /api/v1/changelog",
       mcp: "releases",
     },
+    ...(getAgentStart(app.db) === "off"
+      ? []
+      : [
+          {
+            do: "start building with no account",
+            http: "POST /api/v1/start",
+            mcp: "start",
+            ...tokenFree("start"),
+          },
+        ]),
     {
       do: "read the HTTP contract",
       http: "GET /contract/openapi.json",

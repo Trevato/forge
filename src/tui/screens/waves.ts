@@ -8,12 +8,12 @@
 import { cutWaveFor, planCutFor } from "../../actions/cut_wave.ts";
 import { canRead, getRepo } from "../../core/repos.ts";
 import { VERSION } from "../../story/wave.ts";
-import { movedForViewer, type MovedMilestone } from "../../story/wave_moved.ts";
+import { movedWithPulls, waveProgress, type MovedMilestone } from "../../story/wave_moved.ts";
 import { milestonePath, planNow } from "../../story/wave_plan.ts";
 import { repoBase } from "../../web/chrome.ts";
 import { carriedPulls, pullPath, type CarriedPull } from "../../story/wave_pulls.ts";
-import { pullRefs, readWave, readWaves, type WaveEntry } from "../../story/waves.ts";
-import { NO_WAVES } from "../../story/words.ts";
+import { pullRefs, readWave, readWaves, sizeWords, waveLine, waveSize, type WaveEntry } from "../../story/waves.ts";
+import { NO_WAVES, waveSentence } from "../../story/words.ts";
 import type { RepoSource } from "../../view/source.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -26,12 +26,12 @@ import { ListState, Scroll, confirmScreen, drawList, drawLines, hitList, plural,
 import { pullScreen } from "./pull.ts";
 import { local, localRepo, sourceName, whereRows, whereStrip } from "./where.ts";
 
-/** One line per wave, as the screen draws it. */
-export function waveRows(entries: WaveEntry[]) {
+/** One line per wave, as the screen draws it, sized as the page sizes it: `sizeOf` counts the pulls this viewer can see. */
+export function waveRows(entries: WaveEntry[], sizeOf: (e: WaveEntry & { ok: true }) => { pulls: number; apps: number }) {
   return entries.map((e) =>
     e.ok
       ? {
-          title: `${e.wave.version} · ${e.wave.date} · ${e.wave.headline}`,
+          title: plain(waveLine(e.wave, sizeOf(e))),
           secondary: "",
           meta: "",
         }
@@ -45,7 +45,7 @@ const plain = (s: string): string =>
   s.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]+/g, " ");
 
 /** A moved milestone with the path that opens it. */
-export type MovedLine = MovedMilestone & { path: string };
+export type MovedLine = MovedMilestone & { path: string; pulls?: number[] };
 
 /** One wave as lines of plain text: headline, version and date, highlights with why, then the pulls the viewer may see. */
 export function waveLines(
@@ -59,7 +59,10 @@ export function waveLines(
   const w = entry.wave;
   return [
     plain(w.headline),
-    `${plain(w.version)}  ${plain(w.date)}`,
+    plain(waveSentence(pulls.filter((p) => p.mergedAt !== null).map((p) => p.title))),
+    // Sized over `pulls`, the ones this viewer may see, as the page's header is.
+    `${plain(w.version)}  ${plain(w.date)}  ${sizeWords(waveSize(pulls))}`,
+    ...(moved.length === 0 ? [] : [plain(waveProgress(moved))]),
     "",
     "Highlights",
     ...w.highlights.map((h) => `  ${plain(h.title)} - ${plain(h.why)}`),
@@ -71,6 +74,10 @@ export function waveLines(
           ...moved.flatMap((m) => [
             `  ${plain(m.title)} - ${m.done} of ${m.total} done`,
             `    ${plain(m.path)}`,
+            ...(m.pulls ?? []).flatMap((n) => {
+              const p = pulls.find((x) => x.number === n);
+              return p === undefined ? [] : [`    #${p.number} ${plain(p.title)}`];
+            }),
           ]),
           "",
         ]),
@@ -152,6 +159,8 @@ function waveScreen(
 export function wavesScreen(f: Session, ctx: Ctx, src: RepoSource): Screen {
   const repo = localRepo(src);
   let entries: WaveEntry[] = [];
+  /** Each wave's size by file, counted once per load with the page's gate on each pull. */
+  let sizes = new Map<string, { pulls: number; apps: number }>();
   let loaded = false;
   const state = new ListState();
 
@@ -170,7 +179,7 @@ export function wavesScreen(f: Session, ctx: Ctx, src: RepoSource): Screen {
       const pulls = one.ok ? carriedPulls(f.db, pullRefs(one.wave), f.user) : [];
       // Same list as the page, from the same function, with the same gate.
       const moved = one.ok
-        ? movedForViewer({
+        ? movedWithPulls({
             db: f.db,
             repo,
             refs: pullRefs(one.wave),
@@ -189,6 +198,9 @@ export function wavesScreen(f: Session, ctx: Ctx, src: RepoSource): Screen {
       repo !== undefined && canRead(f.db, repo, f.user)
         ? await readWaves(f.dir(repo), repo.defaultBranch)
         : [];
+    sizes = new Map(
+      entries.flatMap((e) => (e.ok ? [[e.file, waveSize(carriedPulls(f.db, pullRefs(e.wave), f.user))] as const] : [])),
+    );
     loaded = true;
     ctx.invalidate();
   };
@@ -274,7 +286,7 @@ export function wavesScreen(f: Session, ctx: Ctx, src: RepoSource): Screen {
         });
         return;
       }
-      const rows = waveRows(entries);
+      const rows = waveRows(entries, (e) => sizes.get(e.file) ?? { pulls: 0, apps: 0 });
       drawList(s, body!, c, state, rows);
       hitList(ctx, body!, state, rows.length, { open: openAt });
     },

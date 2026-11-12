@@ -13,27 +13,29 @@ export interface GoPage {
   readonly who: "all" | "user" | "admin";
   /** Present when the Cmd/Ctrl K palette also lists it as a "Go to" row, in its longer wording. */
   readonly palette?: string;
+  /** The letter that follows `g` to jump here from any page (`g e` Explore). One letter, once. */
+  readonly key?: string;
 }
 
 export const GO_PAGES: readonly GoPage[] = [
-  { name: "Home", href: "/", who: "all", palette: "Home" },
+  { name: "Home", href: "/", who: "all", key: "h", palette: "Home" },
   { name: "Apps", href: "/apps", who: "all", palette: "Apps" },
-  { name: "Explore", href: "/explore", who: "all", palette: "Explore" },
+  { name: "Explore", href: "/explore", who: "all", key: "e", palette: "Explore" },
   { name: "Packs", href: "/packs", who: "all", palette: "Forge packs" },
   { name: "Front page", href: "/front", who: "all", palette: "Front page" },
   { name: "Search", href: "/search", who: "all", palette: "Search" },
   { name: "Feed", href: "/feed", who: "user" },
   { name: "Board", href: "/board", who: "user" },
   { name: "Boards", href: "/boards", who: "user" },
-  { name: "Flow", href: "/flow", who: "user" },
-  { name: "Asks", href: "/asks", who: "user" },
+  { name: "Flow", href: "/flow", who: "user", key: "f" },
+  { name: "Asks", href: "/asks", who: "user", key: "q" },
   { name: "Asked", href: "/asked", who: "user", palette: "What you asked for" },
   { name: "Notes", href: "/notes", who: "user", palette: "Notes" },
-  { name: "Talk", href: "/talk", who: "user", palette: "Talk to the forge" },
+  { name: "Talk", href: "/talk", who: "user", key: "t", palette: "Talk to the forge" },
   { name: "Map", href: "/map", who: "user", palette: "Map" },
   { name: "Displays", href: "/displays", who: "user", palette: "Displays" },
   { name: "Settings", href: "/settings", who: "user" },
-  { name: "System", href: "/system", who: "admin" },
+  { name: "System", href: "/system", who: "admin", key: "s" },
   { name: "Releases", href: "/releases", who: "admin" },
   { name: "Forges", href: "/forges", who: "admin" },
   { name: "Family", href: "/family", who: "admin" },
@@ -52,9 +54,9 @@ export function goLevel(viewer: { signedIn: boolean; admin: boolean }): 0 | 1 | 
   return !viewer.signedIn ? 0 : viewer.admin ? 2 : 1;
 }
 
-/** The list as the keys script carries it: [name, href, level needed]. */
-export function goPagesData(): [string, string, number][] {
-  return GO_PAGES.map((p) => [p.name, p.href, p.who === "all" ? 0 : p.who === "user" ? 1 : 2]);
+/** The list as the keys script carries it: [name, href, level needed, the letter after `g` or ""]. */
+export function goPagesData(): [string, string, number, string][] {
+  return GO_PAGES.map((p) => [p.name, p.href, p.who === "all" ? 0 : p.who === "user" ? 1 : 2, p.key ?? ""]);
 }
 
 /** The Cmd/Ctrl K palette's "Go to" rows, in list order, and which of them a stranger may see. */

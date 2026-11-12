@@ -7,7 +7,7 @@ import { answerFromCell, closeHostedChildren, resolveHostedChild } from "../src/
 import { createApp } from "../src/app.ts";
 import { childEnv } from "../src/apps/process.ts";
 import { watchedLimits } from "../src/apps/contain.ts";
-import { childLog, plainLine, cellChildren, crewAtWork, stopCellChildren, stopGently, cellEnv, cellLimits, cellPlacement, cellSpecFor, forward, ownsBody } from "../src/spawn/cell.ts";
+import { childLog, plainLine, cellChildren, crewAtWork, stopCellChildren, stopGently, cellEnv, cellLimits, cellPlacement, cellSpecFor, forward, launchSpecFor, ownsBody } from "../src/spawn/cell.ts";
 import { fallbackPlacement, hostedPlacement, memoryBodies } from "../src/spawn/placement.ts";
 import type { SpawnPlan } from "../src/spawn/plan.ts";
 import { SIZES } from "../src/spawn/sizes.ts";
@@ -17,7 +17,7 @@ import { portInsteadOfSocket } from "../src/git/hook-address.ts";
 import { missing } from "./helpers/tools.ts";
 import { resultLine } from "./helpers/result-line.ts";
 import { hostAllowed } from "../src/apps/egress.ts";
-import { childModelHosts, childRegistryHosts, setCapacity } from "../src/core/capacity.ts";
+import { childModelHosts, childPaymentHosts, childRegistryHosts, setCapacity } from "../src/core/capacity.ts";
 import { openBeatDoor, parentLocal } from "../src/spawn/beat-door.ts";
 import { lastHeard, sendBeat } from "../src/spawn/heartbeat.ts";
 import { failedWith } from "./helpers/machine-note.ts";
@@ -417,7 +417,7 @@ describe("a child that will not start", () => {
 const cellTools = process.platform === "linux" && !portInsteadOfSocket() && !missing("bwrap", "socat");
 
 describe("a real child forge", () => {
-  test.skipIf(!cellTools)("boots in its own forge:<name> cell and answers / through the forward; its first request does not wait for it", async () => {
+  test.skipIf(!cellTools)("boots in its own forge:<name> cell and answers / through the forward; its first request is held until it is up", async () => {
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== "FORGE_CELLS") env[k] = v;
     const proc = Bun.spawn([process.execPath, join(import.meta.dir, "helpers", "real-child-forge.ts")], { env, stdout: "pipe", stderr: "pipe" });
@@ -435,8 +435,7 @@ describe("a real child forge", () => {
     }
     // The child's own reason and the machine's disk and load, not a bare mismatch.
     if (seen["failure"] !== null || seen["health"] !== 200) throw new Error(failedWith("the child forge did not come up in its cell", { seen, out: out.slice(-1500) }, errText));
-    expect(seen["first"]).toBe(503);
-    expect(seen["firstMs"] as number).toBeLessThan(1_000);
+    expect(seen["first"]).toBe(200);
     expect(seen["limits"]).toEqual({ memoryMiB: 2048, cpus: 1, diskMiB: 2048 });
     expect(seen["root"] as number).toBeLessThan(400);
     expect(seen["health"]).toBe(200);
@@ -536,5 +535,37 @@ describe("a child forge told to go", () => {
     await stopGently({ pid: proc.pid, exited: proc.exited }, 400);
     expect(Date.now() - started).toBeGreaterThanOrEqual(400);
     expect(proc.signalCode).toBe("SIGKILL");
+  });
+});
+
+describe("a child forge's apps reaching a payment provider", () => {
+  test("api.stripe.com on 443 alone by default, enforced even in report mode, closed by off", () => {
+    const app = createApp({ dataDir: join(tmp, "payment-egress"), url: "https://f.test" });
+    try {
+      expect(childPaymentHosts(app.db)).toEqual(["api.stripe.com:443"]);
+      setCapacity(app.db, "cells.egress", "report", "system");
+      const spec = cellSpecFor({ dir: "/d/c", parentDataDir: "/d", parentUrl: "https://f.test", size: "small", port: 4100, label: "forge:kid", paymentHosts: childPaymentHosts(app.db) });
+      expect(spec.egressMode).toBe("enforce");
+      expect(hostAllowed(spec.egress, "api.stripe.com", 443)).toBe(true);
+      expect(hostAllowed(spec.egress, "api.stripe.com", 80)).toBe(false);
+      expect(hostAllowed(spec.egress, "evil.api.stripe.com", 443)).toBe(false);
+      expect(hostAllowed(spec.egress, "example.com", 443)).toBe(false);
+      setCapacity(app.db, "children.paymentEgress", "off", "system");
+      expect(childPaymentHosts(app.db)).toEqual([]);
+    } finally {
+      app.close();
+    }
+  });
+  test("the launch path carries the setting: Stripe in the child's egress by default, gone once off", () => {
+    const app = createApp({ dataDir: join(tmp, "payment-launch"), url: "https://f.test" });
+    try {
+      const input = { bodyId: "cell-pay1", name: "kid", size: "small" } as const;
+      const at = { port: 4100, parentPort: 4101 };
+      expect(launchSpecFor(app, input, at, "").egress).toContain("api.stripe.com:443");
+      setCapacity(app.db, "children.paymentEgress", "off", "system");
+      expect(launchSpecFor(app, input, at, "").egress).not.toContain("api.stripe.com:443");
+    } finally {
+      app.close();
+    }
   });
 });

@@ -100,6 +100,11 @@ export function createConversation(db: Database, userId: string): Result<Convers
   }).immediate();
 }
 
+/** Take back a conversation that was made and never used (a failed start); its turns and build go with it. */
+export function dropConversation(db: Database, userId: string, conversationId: string): void {
+  db.query("DELETE FROM conversation WHERE id = ?1 AND user_id = ?2").run(conversationId, userId);
+}
+
 /** Start a new, empty conversation. */
 export function newConversation(db: Database, userId: string): Conversation {
   const now = new Date().toISOString();

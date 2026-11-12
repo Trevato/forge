@@ -6,6 +6,8 @@
  * the tell as a plain block the issue shows and the agent reads.
  */
 
+import { previewLine } from "./tell_from.ts";
+
 export interface TellContext {
   readonly page?: string;
   readonly pull?: number;
@@ -124,12 +126,20 @@ export function parseContext(v: unknown): TellContext | undefined | null {
   return out;
 }
 
-/** The block appended to a tell; empty when there is nothing to say. */
-export function contextNote(c: TellContext | undefined): string {
+/**
+ * The block appended to a tell; empty when there is nothing to say. `preview`
+ * is said only by a door that asked for a preview's pull (the forge toolbar,
+ * the terminal's "from a page"); then one line, "from preview of #N, page
+ * /x", takes the place of the page and pull lines. Any other door (MCP, API)
+ * keeps the plain page and pull, so no door claims a preview it did not see.
+ */
+export function contextNote(c: TellContext | undefined, opts: { preview?: boolean } = {}): string {
   if (c === undefined) return "";
+  const preview = opts.preview === true ? previewLine(c.pull, c.page) : "";
   const lines = [
-    c.page === undefined ? "" : `- page: ${c.page}`,
-    c.pull === undefined ? "" : `- pull: #${c.pull}`,
+    preview !== "" ? `- ${preview}` : "",
+    preview !== "" || c.page === undefined ? "" : `- page: ${c.page}`,
+    preview !== "" || c.pull === undefined ? "" : `- pull: #${c.pull}`,
     c.run === undefined ? "" : `- run: ${c.run}`,
     c.commit === undefined ? "" : `- commit: ${c.commit}`,
     c.said === undefined || c.said === ""

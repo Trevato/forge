@@ -6,6 +6,7 @@ export const route: Route = {
   summary:
     "Run one read-only SELECT or WITH on a database (read-only connection, 5 s, at most 1,000 rows, secret columns masked): { columns, rows, truncated }; reads only, so a read-scope token suffices; needs a token",
   auth: true,
+  role: "member",
   body: { sql: "string" },
   refusals: {
     invalid_sql: "sql is not one SELECT or WITH statement, or SQLite refused it (422)",

@@ -8,6 +8,7 @@ export const route: Route = {
   summary:
     "Take an app as your own: a fork with its app; a dry run (the default, ro scope) answers the plan, dryRun false (rw scope) answers 201 with the plan and `url`",
   auth: true,
+  role: "member",
   body: { dryRun: "boolean", name: "string", visibility: "string" },
   refusals: {
     invalid: `422: ${VISIBILITY_WORDS}`,

@@ -186,6 +186,19 @@ How each part proves itself to the next, today.
 Gaps: edge → pod and runner → forge ride a shared secret, not a per-call
 signature; child → parent has no credential.
 
+## A child forge running its own code (#11144)
+
+A cell child's owner may switch it from the parent's code to its own `<org>/forge` main (`spawn/own_code.ts`). The code is then the child's author's, so treat it as hostile code in a cell, the same as any app.
+
+What it cannot reach: the cell's memory, CPU, disk and I/O limits, its sandbox and its egress list are the same as with the parent's code, and nothing in the child's repository is read to make them. The parent's data, home and temporary directory are hidden; only the parent's code and the one checkout (a tree, with no `.git`) are revealed, read-only. Its `forge.json` is not run by the parent: the parent refuses a repository or tree over 256 MB or 50,000 files and any symbolic link in the tree, checks that `src/main.ts` parses and `forge.json` is JSON, and never executes the child's code outside the cell. What the parent records about a failed start is fixed wording; no text from the child's files reaches the rollback row or the `forge.rolled_back` event.
+
+What it can reach: everything a child forge can reach, no more: its own data directory, the parent's heartbeat door and public address, the hosts the admin allowed for models, registry and payment. It can lie in what it serves and in its heartbeat, and can break itself: a start that fails to answer within the deadline rolls back to the last commit that came up, then to the parent's code, and the owner's `/forges` page shows a Rolled back row saying so. A commit that failed is not tried again until main moves. A child that comes up and breaks later is not rolled back; the owner switches it off. Hosted children run inside the parent's process and cannot turn this on.
+
+- The cell limits, sandbox, egress list and hidden parent paths are built by the
+  parent from outside, never read from the child's repository, so a child's own
+  code is held exactly like any app.
+  Test: `test/own-code.test.ts`
+
 ## Honeypots (later)
 
 A `kind: "honeypot"` app, a decoy that records what touches it, is not built.

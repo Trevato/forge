@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { adminOpenapi } from "./helpers/openapi-doc.ts";
 
 let dataDir: string;
 let app: App;
@@ -23,7 +24,7 @@ afterAll(async () => {
 });
 
 test("the served document has the password and email verify routes", async () => {
-  const res = await fetch(`${servers.url}/contract/openapi.json`);
+  const res = await adminOpenapi(app, servers.url, "/contract/openapi.json");
   expect(res.status).toBe(200);
   const doc = (await res.json()) as any;
   const password = doc.paths["/api/v1/user/password"]?.post;

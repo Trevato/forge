@@ -12,7 +12,9 @@ import { redHref, redMain } from "../checks/red_main.ts";
 import { getRepo } from "../core/repos.ts";
 import { ownRepoPath } from "../kernel/own_repo.ts";
 import { bugClockAlarm } from "./bugs.ts";
+import { alarmBackup } from "./alarm_backup.ts";
 import { alarmFromApp } from "./alarm_from_app.ts";
+import { alarmPaidOrder } from "./alarm_paid_order.ts";
 import { alarmIdleCrew } from "./alarm_idle_crew.ts";
 import { noReleaseAlarm } from "./alarm_no_release.ts";
 import { redMainAlarm } from "./alarm_red_main.ts";
@@ -21,7 +23,7 @@ import { alarmSilent } from "./alarm_silent.ts";
 import { alarmStuck } from "./alarm_stuck.ts";
 
 export interface FiredAlarm {
-  readonly key: "landing_stopped" | "red_main" | "stuck" | "idle_crew" | "no_release" | "bug_clock" | "silent" | "repeat" | "from_app" | "unreachable";
+  readonly key: "landing_stopped" | "red_main" | "stuck" | "idle_crew" | "no_release" | "bug_clock" | "silent" | "repeat" | "from_app" | "unreachable" | "backup" | "paid_order";
   readonly says: string;
   readonly since: string;
   /** A same-origin path to the item the alarm names. */
@@ -38,7 +40,8 @@ function redMainHref(db: Database): string {
 export function firedAlarms(
   db: Database,
   now: Date,
-  opts: { readonly publicOnly?: boolean; readonly ceilingUsd?: number | null } = {},
+  /** `dataDir` is required so a caller cannot forget it and lose the backup alarm; `null` says there is none to read (a unit over a bare db). */
+  opts: { readonly dataDir: string | null; readonly publicOnly?: boolean; readonly ceilingUsd?: number | null },
 ): FiredAlarm[] {
   const out: FiredAlarm[] = [];
   const [owner, name] = ownRepoPath().split("/");
@@ -58,6 +61,10 @@ export function firedAlarms(
     if (repeat.fired) out.push({ key: "repeat", says: repeat.says, since: repeat.since!, href: `/${repeat.repo}/issues/${repeat.number}` });
     const fromApp = alarmFromApp(db, now);
     if (fromApp.fired) out.push({ key: "from_app", says: fromApp.says, since: fromApp.since!, href: `/${fromApp.repo}/issues/${fromApp.number}` });
+    const backup = opts.dataDir === null ? undefined : alarmBackup(opts.dataDir, now);
+    if (backup?.fired) out.push({ key: "backup", says: backup.says, since: backup.since!, href: "/flow" });
+    const paidOrder = alarmPaidOrder(db);
+    if (paidOrder.fired) out.push({ key: "paid_order", says: paidOrder.says, since: paidOrder.since!, href: "/settings/billing" });
     const idle = alarmIdleCrew(db, now, { ceilingUsd: opts.ceilingUsd ?? null });
     if (idle.fired) out.push({ key: "idle_crew", says: idle.says, since: idle.since!, href: "/boards" });
   }

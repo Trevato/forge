@@ -32,6 +32,8 @@ import { drillVerdict } from "../kernel/domain_drill.ts";
 import { DOMAINS } from "../kernel/domains.ts";
 import { readBounded } from "./limits.ts";
 import { askCheck } from "../checks/again.ts";
+import { nextUp, queueJson } from "../core/next_up.ts";
+import { notStartable } from "../crew/not_startable.ts";
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { crewNow } from "../actions/crew_now.ts";
 import { readScorecards } from "../actions/scorecard.ts";
@@ -63,6 +65,7 @@ import { receiveBeat, SIGNATURE_HEADER } from "../spawn/heartbeat.ts";
 import { takeOrTell } from "../actions/follow.ts";
 import { noteRead, telemetryReader, type Reader } from "../actions/telemetry.ts";
 import { flowCopy, flowEtag, flowMaxAge } from "../system/flow_cache.ts";
+import { readHours, routeHours } from "../perf/history.ts";
 import { countRead } from "../system/telemetry_reads.ts";
 import { historyFor, sourcesOut, systemWithReaders, welcome } from "../system/telemetry.ts";
 import { weekCard, WEEK_DAYS } from "../crew/week_card.ts";
@@ -127,10 +130,12 @@ import {
   PASSKEY_REQUIRED_MESSAGE,
   signUp,
   SIGNUP_CLOSED_MESSAGE,
+  REQUEST_IN_MESSAGE,
 } from "../actions/users.ts";
 import { OFFSET_LIMIT_MAX, offsetPage, offsetQuery } from "./offset_page.ts";
 import { EVENTS_LIMIT_MAX, eventsLimit, eventsPage, validEventsCursor, validEventsKind } from "../core/events_page.ts";
 import { audienceFor } from "../core/audience.ts";
+import { creditFacts } from "../actions/credit_facts.ts";
 import {
   forkParentFor,
   getReposByIds,
@@ -170,7 +175,7 @@ import {
   canWrite,
   getRepoById,
 } from "../core/repos.ts";
-import { cleanQuery, CODE_BUDGET_MS, searchKind, searchNote } from "../core/search.ts";
+import { CODE_BUDGET_MS, greppable, searchKind, searchNote } from "../core/search.ts";
 import { strangerCodeSearch } from "./strangers.ts";
 import {
   isReviewState,
@@ -193,7 +198,7 @@ import { isPinned } from "../core/pins.ts";
 import { diffCommit } from "../git/diff.ts";
 import { runGit } from "../git/env.ts";
 import { appLimitWords, appsOwnedBy } from "../actions/app_limit.ts";
-import { getQuota } from "../settings/quotas.ts";
+import { getQuota, quotaOf } from "../settings/quotas.ts";
 import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
 import { compareBranches, listBranchRows } from "../git/branches.ts";
 import {
@@ -289,7 +294,7 @@ import { blobForRender, commitLog, listRefs, listTree, refTip } from "../git/rea
 import { repoDir } from "../git/repos.ts";
 import { holds, weakEtag } from "./etag.ts";
 import { carriedPulls, pullPath } from "../story/wave_pulls.ts";
-import { pullRefs, readWave, readWaves } from "../story/waves.ts";
+import { pullRefs, readWave, readWaves, waveSize } from "../story/waves.ts";
 import { originForRepo, type OriginRepoRow } from "../core/origins.ts";
 import { subscribe as subscribeJob, type MirrorJob } from "../origins/jobs.ts";
 import type { Origin } from "../origins/types.ts";
@@ -332,6 +337,7 @@ import {
 } from "./respond.ts";
 import {
   explorePage,
+  rowsWithWhy,
   cursorFits,
   type ExploreRow,
   exploreLine,
@@ -346,7 +352,10 @@ import { passportRoutes } from "./passport_edge.ts";
 import { egressGrantRoutes } from "./api/egress_grants.ts";
 import { printRoutes } from "./api/print.ts";
 import { forgeRoutes } from "./api/forges.ts";
+import { packRoutes } from "./api/packs.ts";
 import { forgeViewRoutes } from "./api/forge_view.ts";
+import { billingRoutes } from "./api/billing.ts";
+import { codesRoutes } from "./api/codes.ts";
 import { economicsRoutes } from "./api/economics.ts";
 import { releasesRoutes } from "./api/releases.ts";
 import { hookRoutes } from "./api/hooks.ts";
@@ -364,6 +373,7 @@ import { businessPlanRoutes } from "./api/business_plan.ts";
 import { tokenRoutes } from "./api/tokens.ts";
 import { accountAdmin, adminRoutes } from "./api/admin.ts";
 import { maintenanceRoutes } from "./api/maintenance.ts";
+import { maintenanceRunsRoutes } from "./api/maintenance_runs.ts";
 import { diskReadingRoutes } from "./api/disk_readings.ts";
 import { TEMPLATE_ERRORS } from "../apps/template_tip.ts";
 import { flagsRoutes } from "./api/flags.ts";
@@ -380,10 +390,12 @@ import { buildCartRoutes } from "./api/build_cart.ts";
 import { iterationRoutes } from "./api/iterations.ts";
 import { appNoteRoutes } from "./api/app_notes.ts";
 import { reportRoutes } from "./api/reports.ts";
+import { startRoutes } from "./api/start.ts";
 import { rollbackRoutes } from "./api/rollback.ts";
 import { takeBackRoutes } from "./api/take_back.ts";
 import { conversationConfirmRoutes } from "./api/conversation_confirms.ts";
 import { conversationTalkRoutes } from "./api/conversation_talk.ts";
+import { conversationBuildRoutes } from "./api/conversation_build.ts";
 import { orgRoutes } from "./api/orgs.ts";
 import { promptRoutes } from "./api/prompts.ts";
 import { cloudRoutes } from "./api/cloud.ts";
@@ -431,6 +443,10 @@ export async function respondTake(ctx: Ctx, repo: Repo): Promise<Response> {
   }
   return json(took.value);
 }
+
+/** GET /queue: rows per page by default, and the most one request may ask for. */
+const QUEUE_PAGE = 100;
+const QUEUE_PAGE_MAX = 200;
 
 /** The 401 a stranger gets where an account is needed but a report is not. */
 export function reportInstead(ctx: Ctx, repo: Repo): Response {
@@ -1099,7 +1115,7 @@ export function positiveInt(raw: string | undefined): number | undefined {
 /** 403 naming the limit and the count, for an account at its app limit. */
 export function appLimitResponse(ctx: Ctx, ownerName: string): Response {
   const owner = getUserByName(ctx.app.db, ownerName);
-  const limit = getQuota(ctx.app.db, "apps");
+  const limit = owner ? quotaOf(ctx.app.db, "apps", owner.id) : getQuota(ctx.app.db, "apps");
   return json(
     {
       error: "app_limit",
@@ -1192,6 +1208,9 @@ export function apiRoutes(router: Router<Handler>): void {
         email: str(input.email),
         password: str(input.password),
         humanToken: str(input.turnstile_token),
+        // Where the ask comes from (a forge or an agent) and what they want to build.
+        note: str(input.note),
+        source: str(input.from),
       },
       {
         slot,
@@ -1206,6 +1225,8 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!created.ok && created.error === "human_check")
       return apiError("human_check", 422, HUMAN_CHECK_MESSAGE);
     if (!created.ok) return json({ error: created.error }, 422);
+    // Signup is `request`: the account waits for an admin, and acts as nothing yet.
+    if (created.value.waitingAt !== null) return json({ state: "waiting", username: created.value.username, message: REQUEST_IN_MESSAGE }, 202);
     return json(publicUser(created.value), 201);
   });
 
@@ -1248,6 +1269,7 @@ export function apiRoutes(router: Router<Handler>): void {
   forgeOriginRoutes(router);
   adminRoutes(router);
   maintenanceRoutes(router);
+  maintenanceRunsRoutes(router);
   diskReadingRoutes(router);
   flagsRoutes(router);
   appTemplateRoutes(router);
@@ -1336,6 +1358,19 @@ export function apiRoutes(router: Router<Handler>): void {
     const card = timePhase(ctx.request, "scorecard", () => readScorecards(ctx.app, ctx.auth.user));
     if (!card) return apiError("forbidden", 403, ADMIN_WORDS.scorecard);
     return timePhase(ctx.request, "render", () => json(card));
+  });
+
+  // Route p50/p95 by the hour, kept 7 days (`perf/history.ts`); admin.
+  router.add("GET", "/api/v1/telemetry/routes", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const denied = requireScope(ctx, "ro");
+    if (denied) return denied;
+    if (!ctx.auth.user) return unauthorized();
+    if (ctx.auth.user.isAdmin !== true) return forbidden();
+    const hours = readHours(ctx.url.searchParams.get("hours"));
+    if (hours === null) return apiError("invalid_hours", 400, "hours is a whole number from 1 to 168");
+    const rows = timePhase(ctx.request, "read", () => routeHours(ctx.app.db, hours));
+    return timePhase(ctx.request, "render", () => json({ hours, rows }));
   });
 
   // The week's line per crew member (`crew/week_card.ts`); as MCP `crew` with kind "week".
@@ -1524,7 +1559,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const greps =
       ctx.auth.user === undefined &&
       (kind === "code" || kind === "all") &&
-      cleanQuery(query) !== "";
+      greppable(query);
     const held = greps ? strangerCodeSearch(ctx.app, ctx.request) : undefined;
     if (held !== undefined && !held.allowed) {
       return tryAgain("rate_limited", 429, `${held.why}; sign in, or retry in ${retryAfterOf(held.retryAfter)}s`, held.retryAfter);
@@ -1545,7 +1580,7 @@ export function apiRoutes(router: Router<Handler>): void {
       const found = await (mine === undefined
         ? search(ctx.app, ctx.auth.user, timed)
         : searchWithin(ctx.app, ctx.auth.user, mine, timed));
-      const note = searchNote(q.get("q"));
+      const note = searchNote(q.get("q"), kind);
       return timePhase(ctx.request, "render", () => json(note === undefined ? found : { ...found, note }));
     } finally {
       held?.release();
@@ -1599,15 +1634,18 @@ export function apiRoutes(router: Router<Handler>): void {
     return json(created.value, 201);
   });
 
-  router.add("GET", "/api/v1/repos/:owner/:name", (ctx) => {
+  router.add("GET", "/api/v1/repos/:owner/:name", async (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
     if (!repo) return notFound();
     const facts = timePhase(ctx.request, "counts", () => repoJson(ctx, repo));
     const audience = timePhase(ctx.request, "audience", () => audienceFor(ctx.app.db, repo, ctx.auth.user));
+    const credited = performance.now();
+    const credit = await creditFacts(ctx.app, repo, ctx.auth.user);
+    notePhase(ctx.request, "credit", performance.now() - credited);
     const rendering = performance.now();
     const upstream = upstreamFacts(ctx.app.db, repo, ctx.auth.user);
-    const res = json({ ...facts, audience, upstream });
+    const res = json({ ...facts, audience, upstream, credit });
     notePhase(ctx.request, "render", performance.now() - rendering);
     return res;
   });
@@ -2130,11 +2168,13 @@ export function apiRoutes(router: Router<Handler>): void {
   issueRoutes(router);
 
   reportRoutes(router);
+  startRoutes(router);
   appNoteRoutes(router);
   rollbackRoutes(router);
   takeBackRoutes(router);
   conversationConfirmRoutes(router);
   conversationTalkRoutes(router);
+  conversationBuildRoutes(router);
 
   // Which stage of the one flow each open issue is in, and what went live in
   // the last day (src/flow).
@@ -2221,10 +2261,20 @@ export function apiRoutes(router: Router<Handler>): void {
     const entries = await timePhaseAsync(ctx.request, "waves", () =>
       readWaves(repoDir(ctx.app.reposRoot, repo.ownerName, repo.name), repo.defaultBranch),
     );
+    // Sized over the pulls this viewer can read, as the page does.
     return timePhase(ctx.request, "render", () =>
       json({
         items: entries.flatMap((e) =>
-          e.ok ? [{ version: e.wave.version, date: e.wave.date, headline: e.wave.headline }] : [],
+          e.ok
+            ? [
+                {
+                  version: e.wave.version,
+                  date: e.wave.date,
+                  headline: e.wave.headline,
+                  ...waveSize(carriedPulls(ctx.app.db, pullRefs(e.wave), ctx.auth.user)),
+                },
+              ]
+            : [],
         ),
         next_cursor: null,
       }),
@@ -2350,6 +2400,31 @@ export function apiRoutes(router: Router<Handler>): void {
       return json({ dryRun: false, ...op.value }, 201);
     },
   );
+  // The queue as data (#11618): every open issue in the order the dispatcher starts them.
+  router.add("GET", "/api/v1/repos/:owner/:name/queue", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const scope = sealedScope(ctx.app.db, repo, ctx.auth.user);
+    const next = nextUp(ctx.app.db, repo, scope, (ready) => notStartable(ctx.app, repo, ready, scope));
+    const total = next.rows.length + next.unlisted;
+    const bound = (name: string, fallback: number, max: number): number | undefined => {
+      const raw = ctx.url.searchParams.get(name);
+      if (raw === null) return fallback;
+      return /^[0-9]{1,6}$/.test(raw) && Number(raw) <= max ? Number(raw) : undefined;
+    };
+    const limit = bound("limit", QUEUE_PAGE, QUEUE_PAGE_MAX);
+    const offset = bound("offset", 0, 1_000_000);
+    if (limit === undefined || limit < 1 || offset === undefined)
+      return apiError("bad_page", 422, `limit is 1 to ${QUEUE_PAGE_MAX} and offset is 0 or more`);
+    return json({
+      queue: queueJson(next.rows).slice(offset, offset + limit),
+      total,
+      limit,
+      offset,
+      notNow: next.notNowTotal,
+    });
+  });
   // The map as data: ready now, blocked on, the critical path, every edge,
   // and where the crew is. `issues` and `edges` hold the open ones unless
   // `?done=1`.
@@ -3405,7 +3480,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const { query, unknown } = readExploreLine(line);
     const suggest = exploreSuggestion(line);
     if (unknown.length > 0)
-      return json({ error: "unknown_filter", message: exploreNote(unknown), ...(suggest === undefined ? {} : { suggest: suggest.line }) }, 422);
+      return json({ error: "unknown_filter", message: exploreNote(unknown), ...(suggest === undefined ? {} : { suggest: suggest.line }) }, 400);
     const mine = runRepos(ctx.app, ctx.auth);
     // A run token is shown only the rows of its own repositories; the cut
     // and the cursor are made from those rows alone.
@@ -3441,7 +3516,7 @@ export function apiRoutes(router: Router<Handler>): void {
     );
     if (page === null)
       return apiError("invalid_cursor", 400, "cursor is the next_cursor of a page before");
-    const items = page.items;
+    const items = rowsWithWhy(ctx.app, query, page.items);
     return timePhase(ctx.request, "render", () => json({ query: exploreLine(query), ...(unknown.length === 0 ? {} : { note: exploreNote(unknown) }), ...(suggest === undefined ? {} : { suggest: suggest.line }), items, next_cursor: page.nextCursor }, 200, headers));
   });
 
@@ -3567,8 +3642,11 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   forgeRoutes(router);
+  packRoutes(router);
   forgeViewRoutes(router);
   economicsRoutes(router);
+  billingRoutes(router);
+  codesRoutes(router);
   releasesRoutes(router);
 
   router.add("GET", "/api/v1/apps", (ctx) => {

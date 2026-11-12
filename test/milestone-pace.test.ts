@@ -88,7 +88,7 @@ const ctxFor = (number: number): Ctx =>
 
 /** The page's pace line and the MCP's data, both at NOW. */
 async function both(top: Issue) {
-  const html = await milestonePage(ctxFor(top.number), NOW).text();
+  const html = await (await milestonePage(ctxFor(top.number), NOW)).text();
   const line = /id="ms-pace"[\s\S]*?<span>([^<]*)<\/span>\s*<\/div>/.exec(html)?.[1];
   const data = (await milestoneData(ctxFor(top.number), repo, top.number, NOW))!;
   return { html, line, data };

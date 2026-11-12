@@ -13,12 +13,16 @@ import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import { Scroll } from "./common.ts";
 
-/** The tree as text lines, `asked` marked with `*`; two spaces per generation. */
-export function treeLines(tree: ForkTree | undefined, asked: string, width = 80): string[] {
+/**
+ * The tree as text lines, `asked` marked with `*`, the viewer's own forks
+ * with `(you)`; two spaces per generation.
+ */
+export function treeLines(tree: ForkTree | undefined, asked: string, width = 80, viewer?: string): string[] {
   if (tree === undefined) return ["Nothing to show."];
   const lines = tree.nodes.map((n) => {
-    const follow = n.follow === "autonomous" ? "" : `  ${n.follow}`;
-    return truncate(`${"  ".repeat(n.depth)}${n.repo === asked ? "* " : ""}${n.repo}${follow}`, width);
+    const follow = n.word === "" ? "" : `  ${n.word}`;
+    const you = n.repo !== asked && viewer !== undefined && n.repo.startsWith(`${viewer}/`) ? "  (you)" : "";
+    return truncate(`${"  ".repeat(n.depth)}${n.repo === asked ? "* " : ""}${n.repo}${you}${follow}`, width);
   });
   if (tree.truncated) lines.push("", "More forks exist than are shown.");
   return lines;
@@ -32,7 +36,7 @@ export function forkTreeScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     keys: [binding(["j", "k"], "scroll"), binding(["esc"], "back")],
     render(area, s) {
       const c = ctx.theme.c;
-      lines = treeLines(forkTree(f.db, repo, f.user), `${repo.ownerName}/${repo.name}`, area.w - 4);
+      lines = treeLines(forkTree(f.db, repo, f.user), `${repo.ownerName}/${repo.name}`, area.w - 4, f.user?.username);
       const from = scroll.window(area.h, lines.length);
       for (let i = 0; i < area.h; i++) {
         const line = lines[from + i];

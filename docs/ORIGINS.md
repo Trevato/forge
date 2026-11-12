@@ -101,7 +101,8 @@ is "No such origin."). Which
 way in you get is a property of the forge, not a preference:
 
 - **GitHub** — a device code. The forge shows a short code and a URL; you type
-  the code on whatever device has a browser, and the forge does the polling. Setting
+  the code on whatever device has a browser, and the forge does the polling (once per
+  flow however many tabs wait; the page is told over a stream and reloads once). Setting
   it up is three steps, once, for everyone on the forge:
   1. Create an OAuth App at <https://github.com/settings/developers>. Name it
      anything, set the homepage to your forge's URL, set the authorization
@@ -1048,15 +1049,23 @@ carries token material, a `state`, or a `code`.
 - **Contributing needs a workbench.** `contribute` mirrors your fork (and, on
   the push-rights path, the upstream) if it is not mirrored already, so the
   first contribution to a large repository pays for a clone and an import.
-- **A review's line comments do not travel with its verdict.** Submitting a
-  review through the origin sends the state and the body; anchored comments
-  are still posted one at a time. Both forges accept comments inside the
-  review payload, which is the obvious next step.
 - **The guard's window is a day.** An account that gains push rights to a
   protected repository keeps its credential until the next refresh or the
   next daily sweep, whichever is first.
-- **Key rotation is not built.** The sealed blob carries a `v1` version tag
-  so it can be, but losing `secret.key` today means reconnecting the origins.
+- **Key rotation keeps one key behind.** A sealed value is
+  `v2:<keyid>:<iv>:<ciphertext>`, keyid the first 8 hex of SHA-256 of the key
+  that sealed it. To rotate, move `secret.key` to `secret.key.old` (keep it
+  0600 — the forge refuses either file wider than that) and restart: a fresh
+  `secret.key` is minted, new values seal under it, and `open` uses whichever
+  key a value names. Values from before the format change (`v1:<iv>:<ct>`)
+  name no key and try the current key, then the old one.
+  `bun scripts/rotate-secret-key.ts --apply` (forge stopped) re-seals every
+  sealed column under the newest key in one transaction and says how many it
+  moved per table — see docs/RECOVERY.md, "Rotating the secret key". Until it
+  has run, `secret.key.old` must stay; delete it before then and the values it
+  sealed come back `bad_key`, as losing `secret.key` did before. A snapshot
+  carries only `secret.key`, and the HMAC keys derived from it (passports, visitor links)
+  change with it.
 - **DNS rebinding is not closed.** The SSRF policy checks address _literals_;
   a hostname that resolves into a private range still gets through, because
   pinning the resolved address needs a connect hook Bun's `fetch` does not

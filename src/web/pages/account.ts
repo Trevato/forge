@@ -9,6 +9,7 @@
  * has been read once.
  */
 
+import { UPSTREAM_REPO } from "../../core/upstream.ts";
 import { resendVerification } from "../../actions/verify.ts";
 import { clientAddress } from "../../http/peer.ts";
 import { emailVerified } from "../../core/verify.ts";
@@ -43,12 +44,12 @@ import {
 import { endAccountSession } from "../../actions/signins.ts";
 import { listSessions, type SessionInfo } from "../../core/sessions.ts";
 import { ADMIN_TOKEN_WORDS, type TokenScope } from "../../core/tokens.ts";
-import { opencodeInstall } from "../../http/plugin_routes.ts";
+import { claudeInstall, opencodeInstall } from "../../core/plugin_install.ts";
 import type { CommitEmail, User } from "../../core/users.ts";
 import { isStandInEmail } from "../../core/users.ts";
 import { cookieValue, isAccountItself, type Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
-import { marketplaceLines, offeredPluginRepo } from "../../core/mcp_card.ts";
+import { offeredPluginRepo } from "../../core/mcp_card.ts";
 import { publicOrigin } from "../../core/public_origin.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import {
@@ -61,6 +62,7 @@ import {
 import { accountSections } from "./origins.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
+import { planRow } from "../plan_row.ts";
 import { flashTo, page } from "../layout.ts";
 import { readFlash } from "../flash.ts";
 import {
@@ -518,7 +520,7 @@ export function accountPage(ctx: Ctx): Response {
     ctx,
     "profile",
     "Settings",
-    html`${pair}${profile}${edge}${parent}${notify}`,
+    html`${planRow(ctx.app.config.dataDir, parentIssuerOf(ctx.app.config), user.isAdmin === true)}${pair}${profile}${edge}${parent}${notify}`,
     200,
     // The everyday form makes its account with a passkey (#1890).
     pair ? passkeyJs : undefined,
@@ -718,8 +720,8 @@ export function connectCard(ctx: Ctx, token: string | undefined): Html {
   const url = publicOrigin(ctx.app.config.url, ctx.url.origin);
   const env = `FORGE_URL=${url} FORGE_TOKEN=${token ?? "<token>"}`;
   // The plugin marketplace is the forge's configured source, offered only while anyone can clone it.
-  const repo = offeredPluginRepo(ctx.app.db, ctx.app.config.forgeRepo);
-  const market = repo === undefined ? null : marketplaceLines(url, repo);
+  const repo = offeredPluginRepo(ctx.app.db, ctx.app.config.forgeRepo, UPSTREAM_REPO);
+  const market = repo !== undefined;
   const clone = copyField("connect-claude", `${env} claude --plugin-dir plugins/claude-code`, "Claude Code command", "Copy command");
   return block(
     "Connect your harness",
@@ -730,8 +732,7 @@ export function connectCard(ctx: Ctx, token: string | undefined): Html {
       <p class="small">Claude Code</p>
       <p class="muted small mb">Start it with only FORGE_URL and sign in through /mcp (the forge server): nothing to copy. For scripts, use this command and the forge-token server, which sends the token.</p>
       ${market
-        ? html`${copyField("connect-claude-add", market.add, "Add the marketplace", "Copy command")}
-          ${copyField("connect-claude-install", market.install, "Install the plugin", "Copy command")}
+        ? html`${copyField("connect-claude-install", claudeInstall(url), "Install the plugin (one command)", "Copy command")}
           <p class="muted small mb">From a clone</p>`
         : null}
       ${clone}

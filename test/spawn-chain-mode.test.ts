@@ -112,6 +112,9 @@ describe("choosing how a forge follows its parent", () => {
     expect((await form(cookie, "yolo")).status).toBe(303);
     expect((await tool(readerTok, { repo: "kid/forge", mode: "take-updates" })).error).toBe(true);
     expect((await tool(ownerTok, { repo: "kid/forge", mode: "yolo" })).error).toBe(true);
+    // Not following is a plain fork's mode; a spawned forge severs instead (#608).
+    expect((await patch(ownerTok, { mode: "dont-follow" })).status).toBe(422);
+    expect((await tool(ownerTok, { repo: "kid/forge", mode: "dont-follow" })).error).toBe(true);
     const cross = await fetch(`${servers.url}/kid/forge/following/mode`, {
       method: "POST",
       headers: { cookie, origin: "https://evil.test" },
@@ -123,20 +126,20 @@ describe("choosing how a forge follows its parent", () => {
   });
 
   test("the owner changes it from the page, the API and MCP; the page shows it", async () => {
-    expect((await forgeLinkOf(child))?.mode).toBe("tell-me");
+    expect((await forgeLinkOf(child))?.mode).toBe("take-updates");
     const page = async () => (await (await fetch(`${servers.url}/kid/forge/following`, { headers: { cookie } })).text()).replace(/\s+/g, " ");
     const html = await page();
     expect(html).toContain('action="/kid/forge/following/mode"');
-    expect(html).toMatch(/value="tell-me" checked/);
+    expect(html).toMatch(/value="take-updates" checked/);
     expect(html).not.toContain("<script>");
     // Rows and headings, not boxes.
     expect(html).not.toContain('class="card');
     expect(html).toContain('<ul class="list" aria-label="Forges, root first">');
     expect(html).toContain("<h2");
 
-    expect((await form(cookie, "take-updates")).status).toBe(303);
-    expect((await forgeLinkOf(child))?.mode).toBe("take-updates");
-    expect(await page()).toMatch(/value="take-updates" checked/);
+    expect((await form(cookie, "tell-me")).status).toBe(303);
+    expect((await forgeLinkOf(child))?.mode).toBe("tell-me");
+    expect(await page()).toMatch(/value="tell-me" checked/);
 
     const res = await patch(ownerTok, { mode: "tell-me" });
     expect(res.status).toBe(200);

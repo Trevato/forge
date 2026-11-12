@@ -7,7 +7,7 @@
  */
 
 import type { Ctx } from "../../http/context.ts";
-import { ATTENTION_WORDS, CLAIM_WORDS, claimState, clientRows, runningWords, spendWords, type ClientRow } from "../../spawn/clients.ts";
+import { ATTENTION_WORDS, firstScreenOf, CLAIM_WORDS, claimState, clientRows, creditWords, graceWords, runningWords, spendWords, type ClientRow } from "../../spawn/clients.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
@@ -18,8 +18,10 @@ import { readForm } from "../form.ts";
 import { badge, btn, row, time } from "../ui.ts";
 import { noRoom } from "../../spawn/door.ts";
 import { sizeWords, useWords } from "../../spawn/usage.ts";
+import { diskWords } from "../../spawn/disk_mount.ts";
 import { listChildren } from "../../actions/spawn.ts";
-import { removeForge, stopForge, type Managed } from "../../spawn/manage.ts";
+import { ownCode, removeForge, stopForge, type Managed } from "../../spawn/manage.ts";
+import { readOwnCode } from "../../spawn/own_code.ts";
 import { claimLinkBody } from "./new-forge.ts";
 
 
@@ -42,7 +44,7 @@ function spendNote(r: ClientRow): Html | null {
     : html`<span data-spend="ok">${s.words}</span>`;
 }
 
-function forgeRow(r: ClientRow, now: number): Html {
+export function forgeRow(r: ClientRow, now: number): Html {
   const state = claimState(r);
   const meta = [
     r.for === null ? null : html`for ${r.for}`,
@@ -50,9 +52,14 @@ function forgeRow(r: ClientRow, now: number): Html {
     state === "unknown" ? html`it did not answer just now` : null,
     r.made ? badge(r.awake === true ? "awake" : "asleep", r.awake === true ? { tone: "success" } : { variant: "outline" }) : null,
     r.made ? html`${sizeWords(r.size)}` : null,
+    r.made ? html`<span data-disk="${r.disk.own ? "own" : "shared"}">${diskWords(r.disk)}</span>` : null,
     runningNote(r),
     spendNote(r),
-    r.sentAt === null ? null : html`sent ${time(r.sentAt)}`,
+    creditWords(r) === null ? null : html`<span data-credit>${creditWords(r)}</span>`,
+    graceWords(r) === null ? null : html`<span data-grace>${graceWords(r)}</span>`,
+    r.stage === null
+      ? null
+      : html`<span data-stage="${r.stage.key}"${r.stage.resend ? html` data-resend` : null}>${r.stage.words}${r.stage.at === null ? null : html` ${time(r.stage.at)}`}</span>`,
     r.lastActivityAt === null
       ? null
       : html`last activity ${time(r.lastActivityAt)}`,
@@ -66,26 +73,25 @@ function forgeRow(r: ClientRow, now: number): Html {
     // Enter opens the row's first link, the forge's name.
     nav: true,
     data: { forge: r.name, claimed: state },
-    ...(r.reach === null
-      ? {}
-      : {
-          // One row per public address; the word in the trail, not a colour, says which failed.
-          children: r.reach.proofs.map((p) =>
-            row({
-              title: html`<a href="${p.url}">${p.url.replace(/^https?:\/\//, "")}</a>`,
-              meta: html`${p.says}`,
-              trail: badge(p.ok ? "reachable" : "not reachable", p.ok ? { tone: "success" as const } : { tone: "attn" as const }),
-              data: { proof: p.ok ? "ok" : "failed" },
-            }),
-          ),
+    children: [
+      ...(firstScreenOf(r) === null ? [] : [row({ title: html`${firstScreenOf(r)}`, data: { "first-screen": "" } })]),
+      ...(r.reach?.proofs ?? []).map((p) =>
+        // One row per public address; the word in the trail, not a colour, says which failed.
+        row({
+          title: html`<a href="${p.url}">${p.url.replace(/^https?:\/\//, "")}</a>`,
+          meta: html`${p.says}`,
+          trail: badge(p.ok ? "reachable" : "not reachable", p.ok ? { tone: "success" as const } : { tone: "attn" as const }),
+          data: { proof: p.ok ? "ok" : "failed" },
         }),
+      ),
+    ],
     trail: html`${r.attention === null
         ? null
         : html`<span data-attention="${r.attention}">${badge(ATTENTION_WORDS[r.attention], { tone: "attn" })}</span>`}${badge(CLAIM_WORDS[state], {
         ...(state === "yes" ? { tone: "success" as const } : { variant: "outline" as const }),
       })}${state === "no"
         ? html`<form method="post" action="/forges/${r.name}/claim-link">
-            ${btn("Send a fresh link", { size: "sm", title: "A new claim link; the old one stops working" })}
+            ${btn(r.stage?.resend === true ? "Resend" : "Send a fresh link", { size: "sm", title: "A new claim link; the old one stops working" })}
           </form>`
         : null}${r.link === null
         ? null
@@ -172,6 +178,7 @@ export async function forgesPage(ctx: Ctx): Promise<Response> {
                 ${rows.map((r) => forgeRow(r, Date.now()))}
               </ul>
             </section>`}
+      ${await ownCodeSection(ctx)}
       <p class="mt"><a href="/fleet/graph">Fleet graph</a></p>
     </div>`,
   });
@@ -197,7 +204,7 @@ export async function forgeLinkSubmit(ctx: Ctx): Promise<Response> {
         ${pageHead(typeof link === "string" ? `A fresh link for ${name}` : `No fresh link for ${name}`)}
         <section class="settings-block">
           ${typeof link === "string"
-            ? claimLinkBody(link)
+            ? claimLinkBody(link, true)
             : html`<p>${String(door.body["message"] ?? "")}</p>
                 <p class="mt">${btn("Forges you sent", { href: "/forges", size: "sm" })}</p>`}
         </section>
@@ -293,4 +300,62 @@ export async function forgeRemoveConfirm(ctx: Ctx): Promise<Response> {
   });
   response.headers.set("cache-control", "no-store");
   return response;
+}
+
+const CODE_WORDS = {
+  on: "will run its own code from its next start.",
+  off: "will run this forge's code from its next start.",
+  refused: "stays on this forge's code: only a forge in its own cell, with a forge repository, can run its own.",
+} as const;
+
+/** What `/forges?code=…&forge=…` says after the switch: fixed words, and only for a forge in the list. */
+function codeReceipt(ctx: Ctx, names: readonly string[]): Html | null {
+  const name = ctx.url.searchParams.get("forge") ?? "";
+  const code = ctx.url.searchParams.get("code") ?? "";
+  if (!names.includes(name) || !(code in CODE_WORDS)) return null;
+  return html`<p role="status" class="muted" data-receipt>${name} ${CODE_WORDS[code as keyof typeof CODE_WORDS]}</p>`;
+}
+
+/** Each forge's code, one row each: whose code it runs, the switch, and the last rollback. */
+async function ownCodeSection(ctx: Ctx): Promise<Html | null> {
+  const children = (await listChildren(ctx.app)).filter((c) => c.done);
+  if (children.length === 0) return null;
+  return html`<section class="settings-block" id="forge-code">
+    <h2>Forge code</h2>
+    ${codeReceipt(ctx, children.map((c) => c.name))}
+    <dl class="status-rows">
+      ${children.map((c) => {
+        const own = readOwnCode(ctx.app, c.name);
+        const rb = own.rolledBack;
+        const state = html`${own.on ? "Its own code" : "This forge's code"}${rb === undefined
+          ? null
+          : html`<br /><span data-rolled-back>${badge("Rolled back", { tone: "attn" })} ${time(rb.at)}${rb.commit === "" ? null : html` from ${rb.commit}`}: ${rb.why}. Ran ${rb.to === "last-good" ? "its last good commit" : "this forge's code"}.</span>`}`;
+        const action =
+          c.placement === "cell"
+            ? html`<form method="post" action="/forges/${c.name}/own-code" class="inline">
+                <input type="hidden" name="on" value="${own.on ? "off" : "on"}" />
+                ${btn(own.on ? "Use this forge's code" : "Use its own code", { size: "sm", variant: "ghost" })}
+              </form>`
+            : html`<span class="muted small">Shares this forge's process</span>`;
+        return html`<div class="status-row" data-own-code="${own.on ? "on" : "off"}">
+          <dt>${c.name}</dt>
+          <dd>${state}</dd>
+          <dd class="status-act">${action}</dd>
+        </div>`;
+      })}
+    </dl>
+  </section>`;
+}
+
+// POST /forges/:name/own-code — the owner's switch: `on` is "on" or "off"; then back to the list, with a receipt.
+export async function forgeOwnCodeSubmit(ctx: Ctx): Promise<Response> {
+  const user = ctx.auth.user;
+  if (!user?.isAdmin) return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const want = form.get("on");
+  if (want !== "on" && want !== "off") return notFoundPage(ctx);
+  const name = ctx.params["name"] ?? "";
+  const done = await ownCode(ctx.app, name, want === "on");
+  return redirect(`/forges?code=${done.ok ? want : "refused"}&forge=${encodeURIComponent(name)}#forge-code`);
 }

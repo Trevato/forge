@@ -2,11 +2,8 @@
  * #7756: the Fork tree test, on the web, on one forge. A person looks at a
  * fork's page and sees its parent and its child as a tree, chooses how it
  * follows, and offers its own commit up in one POST from the offer page.
- *
- * The mode step is covered only for the forge's own code: the follow modes
- * exist nowhere else, so the middle fork is made that repository by hand.
- * A plain in-forge fork offers no mode choice; that step is missing, and is
- * #7796.
+ * A plain in-forge fork chooses among three modes on its page and its forks
+ * page (#7796, #608).
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -20,7 +17,8 @@ import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { forkFollowMode } from "../src/core/fork_follow.ts";
 import { listEvents } from "../src/core/events.ts";
-import { followModeSaid } from "../src/actions/follow.ts";
+import { createToken } from "../src/core/tokens.ts";
+import { followModeSaid, setFollowMode } from "../src/actions/follow.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -181,6 +179,63 @@ describe("the fork tree, on one forge", () => {
     expect(followModeSaid(undefined, "tell-me")).toContain("Proposes updates from its parent.");
   });
 
+  test("the forks page lets the fork's owner choose any of three modes, and not a reader (#608)", async () => {
+    const cookie = await signIn("bea");
+    const forks = await (await get("/bea/yard/forks", cookie)).text();
+    expect(forks).toContain('id="following"');
+    expect(forks).toContain("data-follow-mode=");
+    // The card on its own forks page does not link back to it.
+    expect(forks).not.toContain("forks follow this one");
+    const now = forkFollowMode(app.db, middle.id);
+    const others = (["take-updates", "tell-me", "dont-follow"] as const).filter((m) => m !== now);
+    for (const m of others) expect(forks).toContain(`following%2Fmode%2F${m}"`);
+    expect(forks).not.toContain(`following%2Fmode%2F${now}"`);
+
+    const reader = await (await get("/bea/yard/forks", await signIn("cal"))).text();
+    expect(reader).not.toContain('id="following"');
+    expect(reader).toContain('aria-label="Forks, by who follows whom"');
+
+    const confirm = await (await get("/-/confirm?to=%2Fbea%2Fyard%2Ffollowing%2Fmode%2Fdont-follow", cookie)).text();
+    expect(confirm).toContain("Does not follow ann/yard?");
+    expect(confirm).toContain("the crew is never asked to converge");
+    const changed = await post("/bea/yard/following/mode/dont-follow", cookie, {});
+    expect(changed.status).toBe(303);
+    expect(forkFollowMode(app.db, middle.id)).toBe("dont-follow");
+    const after = await (await get("/bea/yard/forks", cookie)).text();
+    expect(after).toContain("Does not follow ann/yard");
+    expect(after).toContain("Follow automatically");
+    expect(after).toContain("Only propose updates");
+    expect(after).not.toContain("Stop following");
+    must(await setFollowMode(app, bea, middle, "tell-me"));
+  });
+
+  test("MCP: following returns the mode, follow_mode sets any of the three; a stranger is refused (#608)", async () => {
+    let id = 1;
+    const call = async (who: User, name: string, args: unknown) => {
+      const res = await fetch(`${servers.url}/mcp`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          authorization: `Bearer ${createToken(app.db, who.id, "t", "rw").token}`,
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: id++, method: "tools/call", params: { name, arguments: args } }),
+      });
+      const j = (await res.json()) as any;
+      return { error: j.result.isError === true, text: String(j.result.content[0].text) };
+    };
+    const set = await call(bea, "follow_mode", { repo: "bea/yard", mode: "dont-follow" });
+    expect(set.error).toBe(false);
+    expect(JSON.parse(set.text).mode).toBe("dont-follow");
+    const read = await call(bea, "following", { repo: "bea/yard" });
+    expect(JSON.parse(read.text).mode).toBe("dont-follow");
+    const tree = await call(bea, "fork_tree", { repo: "bea/yard" });
+    expect(JSON.parse(tree.text).nodes.find((n: { repo: string }) => n.repo === "bea/yard").follow).toBe("dont-follow");
+    expect((await call(cal, "follow_mode", { repo: "bea/yard", mode: "take-updates" })).error).toBe(true);
+    expect(forkFollowMode(app.db, middle.id)).toBe("dont-follow");
+    must(await setFollowMode(app, bea, middle, "tell-me"));
+  });
+
   test("one POST from the offer page opens exactly one pull on the parent", async () => {
     const cookie = await signIn("bea");
     const fork = getRepo(app.db, "bea", "yard")!;
@@ -190,12 +245,17 @@ describe("the fork tree, on one forge", () => {
         files: [{ path: "mine.txt", content: "m\n" }],
       }),
     );
-    // The door is the Following card's "Propose upstream" form: read its
+    // The door is the Following card's "Offer this change" form: read its
     // action and fields off the page, then send exactly that.
     const home = await (await get("/bea/yard", cookie)).text();
     const formTag = home.match(/<form method="post" action="([^"]+)">\s*<input type="hidden" name="do" value="propose"/);
     expect(formTag).not.toBeNull();
-    expect(home).toContain("Propose upstream");
+    expect(home).toContain("Offer this change");
+    // The forks page carries the same card for its owner (#608): the
+    // offer, and the tree saying the fork is one ahead.
+    const forks = await (await get("/bea/yard/forks", cookie)).text();
+    expect(forks).toContain("Offer this change");
+    expect(forks.slice(forks.indexOf('aria-label="Forks, by who follows whom"'))).toContain("1 ahead");
     const sent = await post(formTag![1]!, cookie, { do: "propose" });
     expect(sent.status).toBe(303);
     expect(sent.headers.get("location")).toBe("/ann/yard/pulls/1");

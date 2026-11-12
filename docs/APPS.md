@@ -111,7 +111,8 @@ Under the box, four starter sentences are plain links (no script):
   `POST /:owner/:name/app/notes` on the forge's origin (`web/studio/notes.ts`). The same moderation is an API for
   agents and scripts (`http/api/app_notes.ts`): `GET /api/v1/repos/:owner/:name/app/notes`
   answers `{ notes, banned }`, and `POST …/app/notes/:id/hide`, `…/ban` and
-  `…/unban` each answer the note. They need an `rw` token (or a same-origin
+  `…/unban` each answer the note; each note carries its issue's `replies`
+  (see docs/features/notes.md). They need an `rw` token (or a same-origin
   session) and admin rights on the repository; anyone else gets `forbidden`.
   Limits count the socket's client (`http/peer.ts`, with its trusted-proxy
   rule), never a header the client wrote, and all three are checked before any
@@ -228,11 +229,16 @@ touch) and it snaps to the nearest corner on release; with the pill focused, the
 arrow keys walk it from corner to corner. The corner is kept in the browser's
 `localStorage` for that app's host (bottom-right until then), and the panel opens
 toward the inside of the screen, bounded to it at phone width. The script stays
-under a 10 KB budget (a test holds it), since it loads on every app page.
+under 24 KB (`test/toolbar-budget.test.ts` holds it), since it loads on every app page.
 
 The forge pill on an app's pages says where you are: its accessible name reads
 `notes, production` or `notes, preview of pull #7`, and pressing it opens a
-panel with the app, the environment, and a link home. The pull's title is shown
+panel with the app, the environment, and a Home link. When the visitor arrived
+through the forge's `Open the app` redirect, which lets the full address of the
+forge page through (`Referrer-Policy: no-referrer-when-downgrade`, so that page's
+path and query reach the app), Home returns to that page; a referrer from any
+other origin is ignored, and with none Home goes to the forge's `/`. Tab reaches
+it and Enter follows it. The pull's title is shown
 only to people who may read the pull. A tap outside the open panel, or Escape,
 closes it. When a crew run is working on the app (production) or on the preview's
 pull, the panel also says `scout is working on this` and links the run; it asks
@@ -272,7 +278,11 @@ clock, so a loop busy with something else lands in it), `forge-body` (reading a 
 `forge-rewrite` (pill injection with that read, when it ran). Big `forge-wake`
 is a cold start, big `forge-ttfb` is the app or its listener — unless
 `forge-lag` is more than half of `forge-ttfb`, when the wait was the forge's,
-not the app's (`forgeWaited` in `src/perf/loop_worst.ts`) — big `forge-body`
+not the app's (`forgeWaited` in `src/perf/loop_worst.ts`), and a signed-in
+forge admin also gets `forge-stall;desc="<pattern>";dur=<ms>`, up to three, naming
+the route pattern or `job:<name>` that held the loop, longest first (that copy is
+`cache-control: private, no-store`; nobody else gets `forge-stall`;
+`docs/features/app-slowest-wait.md`) — big `forge-body`
 is an app slow to finish its page; if all are small, the time went before the
 request reached the forge. The forge opens no second socket to time the
 connect: it would take a backlog slot in the very case it is meant to find.
@@ -583,7 +593,11 @@ Two more fields say what the app's code may use (rule 9):
 names, or `*.` for every name below one, at most 32, each reachable on 80
 and 443 — `db.example.com:5432` names one other port instead. Without it an app
 reaches the forge and nothing else; install, test and check steps also
-reach `registry.npmjs.org`. `limits` (MiB, cores, MiB) default to 512 MiB,
+reach `registry.npmjs.org`. In a child forge the cell is held to a ceiling
+(parent's model, registry and payment settings): `api.stripe.com` on 443
+(`children.paymentEgress`, on by default) is reachable there only by an app
+whose `forge.json` `egress` names it; an app that does not, and the child's
+crew sandbox, cannot reach it. `limits` (MiB, cores, MiB) default to 512 MiB,
 1 core and 1 GiB for an app and 2 GiB, 2 cores and 4 GiB for a step, and
 are capped by the machine (`FORGE_CELL_MEMORY_MAX_MIB`, default 4096; the
 number of cores; `FORGE_CELL_DISK_MAX_MIB`, default 16384). A cell's `/tmp`
@@ -621,6 +635,24 @@ its cell before a tick of the watch, and the forge's process table is
 never exhausted (#10518). Crew runs get no process cap, as before.
 /system says beside the memory line who holds the process count, and why
 when it is the watch alone.
+
+Every cell also starts under kernel rlimits, with or without a cgroup: its
+first shell sets, soft and hard, `RLIMIT_FSIZE` to the cell's disk (a small
+child forge: 2048 MiB, so `fallocate -l 50G` or a runaway `dd` fails at
+once with SIGXFSZ), `RLIMIT_NOFILE` 8192 and `RLIMIT_NPROC` 4096 tasks,
+counted per user namespace (`cellRlimits`, `RLIMIT_LINE` in
+`apps/contain.ts`). The file cap bounds one file, not their sum: the total
+is the watch's disk walk until a child's writable space is a filesystem of
+its own (#10850). A cell's hostname is its own: a child forge's cell
+answers `uname -n` with the child's name, a machine shell with the
+machine's, anything else with `cell`, never the pod's — where the host
+lets bwrap set it: the cell probe asks once (`hostnameArgs`), and a host
+that refuses `sethostname` runs its cells under the pod's name rather
+than not at all.
+
+The parent keeps 15% of its own volume (`spawn/disk_floor.ts`): below it
+no child forge is made or started (a sleeping one stays asleep), the New
+forge page and menu say why, and vitals carries the `disk-floor` line.
 
 On a Kubernetes pod the forge is usually not at a cgroup namespace root
 (`/proc/self/cgroup` is not `0::/`) and `/sys/fs/cgroup` is read-only, so
@@ -1239,6 +1271,31 @@ budget), and `issue.assignee_id`. The current deployment of each environment is 
 memory only: a process is not state, and a restart rebuilds every
 environment from the default branch and the open pulls, exactly as
 `core/reconcile.ts` rebuilds the index from git.
+
+### A child forge's own filesystem
+
+How to read the line and turn the guard on: [docs/features/child-filesystem.md](features/child-filesystem.md).
+
+A child forge (`/forges`) keeps everything it writes under
+`<data>/children/<body id>`. The forge reads `/proc/self/mountinfo` to tell
+whether that directory is a filesystem of its own, a mount whose mount point
+is exactly that path, and reads its size with `statfs`: blocks × block size
+in bytes, and its inodes (`src/spawn/disk_mount.ts`). The forge mounts
+nothing itself. Making the filesystem is the platform's job (#10851).
+
+- **On its own filesystem**, writing past its size fails with ENOSPC inside
+  the child, and the parent's free space does not change. Its cell binds that
+  filesystem by its real path (`cellSpecFor`). On the shared disk, only the
+  cell's disk watch stops a child, and only after it has written too much.
+- **The child's line** on `/forges` and on the terminal's forges screen says
+  `own filesystem, N GiB` (GiB = 2^30 bytes, to one place) or `shared disk`.
+- **`children.ownFilesystem`** (Settings → Capacity, or the `capacity` MCP
+  tool with `key: "children.ownFilesystem"`) is `off` by default. When it is
+  `on`, the forge refuses to start a child with no filesystem of its own,
+  whether that child runs in a cell or in this forge's process. The refusal is
+  a 503 with one plain line naming the child and saying why. Its pages and its
+  apps answer with that line, and the boot skips the child and logs the same
+  line. A child that is already running is not stopped.
 
 ## Runs
 

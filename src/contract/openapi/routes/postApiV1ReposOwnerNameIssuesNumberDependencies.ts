@@ -6,6 +6,7 @@ export const route: Route = {
   path: `${REPO}/issues/{number}/dependencies`,
   summary: "Make an issue wait for another (rw scope); answers 201 with { issue, blockedBy }",
   auth: true,
+  role: "member",
   status: 201,
   body: { blockedBy: "integer" },
   refusals: {

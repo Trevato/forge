@@ -20,6 +20,17 @@ the text wrap and gives the control a place that is always visible. Use `.row-ac
   `src/web/style/components.ts`.
 - `.record-value` — a DNS record's value on an app's domain row (`.setting-list` row meta): monospace, wraps instead of ellipsizing, and `user-select: all` so one click selects the whole value to copy.
 
+## A setting as one line (#10999)
+
+A repository's Branch and gates form (`settingsPage()` in `src/web/pages/settings.ts`) shows each setting as one line:
+its name, its control (the checkbox, select or number is the value) and a mark that opens its reason. Built by
+`settingLine()` and `toggleLine()` in `src/web/setting_line.ts`; styled in `src/web/style/components.ts`.
+
+- `.setting-line` — the `.field` row: a wrapping flex line of label, control and mark, at desktop and 390 px alike.
+- `.why` — the `<details>` holding a setting's reason. Its summary is the help mark drawn as a small bordered round
+  button (28px, 44px on touch), named "Why" for a screen reader and a tooltip; open, the reason takes the full width
+  under the row.
+
 ## Labels
 
 Each label is a `row()` in a `.setting-list`: its chip is the title, `N open` the meta, and a `.row-fields` form (name,

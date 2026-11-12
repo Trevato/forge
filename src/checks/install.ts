@@ -18,9 +18,10 @@
 
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { meterEgress } from "../apps/egress.ts";
 import { dirname, join } from "node:path";
+import { meterEgress } from "../apps/egress.ts";
 import { formatBytes } from "../core/storage.ts";
+import { noteInstall } from "../efficiency/installs.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { fillable } from "./fillable.ts";
 import { lend } from "./install_evict.ts";
@@ -85,6 +86,7 @@ export async function meteredInstall<T>(
     if (options.fetched === true) write(installFetchedLine(fetched));
     const missed = npmMissLine(meter.npm());
     if (missed !== undefined) write(missed);
+    noteInstall(missed !== undefined); // the hit-rate counter the efficiency watcher reads (#7558)
   }
 }
 

@@ -21,6 +21,8 @@ export const content = /* css */ `
 @media (max-width: 640px) {
   .repo-head p.muted.small a { display: inline-block; padding: 12px 0; min-height: 44px; box-sizing: border-box; }
 }
+/* The by-wave link under the changelog filters: a thumb-sized target, no new class. */
+a[data-waves-link] { display: inline-flex; align-items: center; min-height: 44px; }
 .repo-head p.muted.small { margin-top: 4px; text-wrap: pretty; }
 .repo-head .tabs, .repo-head .repo-nav { margin-top: 12px; }
 .repo-nav { display: flex; align-items: flex-start; gap: 4px; border-bottom: 1px solid var(--border); }
@@ -225,6 +227,26 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .fg-s5 { fill: var(--series-5); color: var(--series-5); }
 .fg-s6 { fill: var(--series-6); color: var(--series-6); }
 .fg-s7 { fill: var(--series-7); color: var(--series-7); }
+/* The money line (studio/money_line.ts, #510, #11056, #11102): the
+   slider's word ("spend: balanced") is the board's one link to Settings →
+   Economics, in the accent; the gap takes the warning tint for a loss and
+   the text colour otherwise. The accent on --bg holds 4.5:1 in every theme
+   (test/themes.test.ts), so the small text reads. The word never breaks
+   inside itself, so the line wraps between its parts. Two rows of 24px,
+   the first wrapping once on a phone, so the reserved height is the real
+   one; the chart a fixed box, so nothing shifts when the figures arrive. */
+.money-gap[data-sign="down"] { color: var(--attn); }
+.money-spend { color: var(--accent); white-space: nowrap; }
+.money-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
+.money-line > p { margin: 0; line-height: 24px; min-height: 48px; }
+.money-line > p > span { display: block; }
+@media (max-width: 480px) { .money-line > p { min-height: 72px; } }
+.money-chart { display: block; width: 240px; height: 48px; flex: none; }
+.money-chart polyline { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.money-cost { stroke: var(--muted-fg); }
+.money-revenue { stroke: var(--fg); }
+.money-band [data-sign="up"] { fill: color-mix(in srgb, var(--fg) 10%, transparent); }
+.money-band [data-sign="down"] { fill: color-mix(in srgb, var(--attn) 22%, transparent); }
 .restore-command { margin: 8px 0 0; padding: 8px 10px; font-size: 12.5px; white-space: pre-wrap; word-break: break-all; background: var(--muted); border-radius: var(--radius); }
 form.inline { display: inline; margin-left: auto; }
 
@@ -240,6 +262,12 @@ form.inline { display: inline; margin-left: auto; }
 .door-under { display: grid; gap: 56px; margin-top: 28px; }
 .door-lead { display: flex; flex-direction: column; align-items: flex-start; gap: 24px; min-width: 0; }
 .door-lead .bar { gap: 8px; flex-wrap: wrap; }
+.door-start { width: 100%; max-width: 28rem; }
+.door-start .btn { width: 100%; }
+[data-hits] { line-height: 24px; }
+.explore-more { margin-top: 12px; }
+.explore-more .btn { width: 100%; min-height: 44px; }
+.door-says { min-height: 1lh; margin: 6px 0 0; }
 .door-agent { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 520px; font-size: 13px; color: var(--muted-fg); }
 .door-agent a { margin-left: 8px; color: var(--fg); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border-strong); }
 /* On the input's own tinted ground the muted color falls short of AA; the words are the thing to copy. */
@@ -276,6 +304,8 @@ form.inline { display: inline; margin-left: auto; }
 .door-steps p, .door-points dd { margin: 0; font-size: 15px; line-height: 1.55; color: var(--muted-fg); text-wrap: pretty; }
 .door-split { display: grid; gap: 32px; }
 .door-split > * { min-width: 0; }
+.door-plans { list-style: none; margin: 0; padding: 0; border-bottom: 1px solid var(--border); }
+.door-plans li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; padding: 10px 0; }
 .door-pulse { margin: 72px 0 0; }
 .door-pulse svg { display: block; width: 100%; height: clamp(72px, 10vw, 120px); fill: var(--fg); }
 .door-pulse-quiet { fill: var(--border-strong); }
@@ -342,6 +372,7 @@ form.inline { display: inline; margin-left: auto; }
 .bar > .menu { flex: 0 1 auto; min-width: 0; max-width: 100%; }
 .bar > .menu > summary { max-width: 100%; min-width: 0; }
 .bar > .menu > summary .truncate { min-width: 0; }
+.prose img { max-width: 100%; height: auto; }
 .prose pre, .prose table { max-width: 100%; overflow-x: auto; }
 .prose table { display: block; }
 
@@ -474,6 +505,9 @@ form.inline { display: inline; margin-left: auto; }
 .media-pane .media-player { display: block; width: 100%; max-width: 100%; }
 .media-pane video.media-player { height: auto; max-height: 80vh; background: var(--muted); border-radius: var(--radius-sm); }
 
+/* An HTML file's page in a sandboxed frame: one hairline, a fixed height, so nothing shifts. */
+.html-frame { display: block; width: 100%; height: 80vh; min-height: 480px; border: 1px solid var(--border); border-radius: var(--radius-sm); color-scheme: light; }
+@media (max-width: 600px) { .html-frame { height: 60vh; min-height: 360px; } }
 /* A PDF in the browser's own viewer: a fixed frame, so nothing shifts. */
 .pdf-view { overflow: hidden; }
 .pdf-frame { display: block; width: 100%; height: 80vh; min-height: 480px; border: 0; }
@@ -487,6 +521,9 @@ form.inline { display: inline; margin-left: auto; }
 .gpx-view { margin: 0; }
 .gpx-view svg { display: block; max-width: 100%; height: auto; margin: 0 auto; color: var(--fg); }
 .gpx-view .status-rows { margin-top: 12px; }
+.har-view { overflow-x: auto; }
+.har-view .har-bar { display: block; width: 100%; height: 10px; margin-top: 4px; color: var(--muted-fg); }
+.har-view .har-url { overflow-wrap: anywhere; min-width: 200px; }
 .gj-view { margin: 0; }
 .gj-view svg { display: block; max-width: 100%; height: auto; margin: 0 auto; color: var(--fg); }
 .gj-table { overflow-x: auto; max-width: 100%; }

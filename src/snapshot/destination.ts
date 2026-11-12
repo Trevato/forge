@@ -98,7 +98,8 @@ export function scrubReason(target: S3Target | undefined, error: unknown): strin
   let reason = error instanceof Error ? error.message : String(error);
   for (const secret of target ? [target.accessKeyId, target.secretAccessKey] : [])
     if (secret) reason = reason.split(secret).join("…");
-  return reason.slice(0, 200);
+  // One line: a store's message may end in a newline or carry an empty name between spaces.
+  return reason.replace(/\s+/g, " ").trim().slice(0, 200);
 }
 
 /** Does this target answer? One sentence either way, never a key in it. */

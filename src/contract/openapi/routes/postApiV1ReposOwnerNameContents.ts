@@ -6,6 +6,7 @@ export const route: Route = {
   summary:
     "Commit files to a branch without git (rw scope): files is [{ path, content }]; answers 201 with the commit",
   auth: true,
+  role: "member",
   status: 201,
   body: { branch: "string", base: "string", message: "string", files: "array" },
   refusals: {

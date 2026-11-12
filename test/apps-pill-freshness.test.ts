@@ -269,14 +269,14 @@ describe("the pill's script draws the freshness line", () => {
     ];
     for (const [extra, said] of cases) {
       const lines = panelLines({ ...base, ...extra });
-      expect(lines.slice(0, 4)).toEqual(["site", "Preview of pull #7", "Add a thing", said]);
+      expect(lines.slice(0, 4)).toEqual(["site", "preview \u00b7 #7", "Add a thing", said]);
       expect(lines.filter((l) => words.includes(l as never))).toEqual([said]);
     }
   });
 
   test("the line follows the pull when there is no title", () => {
     const lines = panelLines({ ...base, title: "", state: "merged" });
-    expect(lines.slice(0, 3)).toEqual(["site", "Preview of pull #7", FRESHNESS_WORDS.merged]);
+    expect(lines.slice(0, 3)).toEqual(["site", "preview \u00b7 #7", FRESHNESS_WORDS.merged]);
   });
 
   test("merged and closed win over deploying and behind; deploying wins over behind", () => {
@@ -290,7 +290,7 @@ describe("the pill's script draws the freshness line", () => {
     expect(panelLines({ ...base, state: "open" }).filter((l) => words.includes(l as never))).toEqual([]);
     expect(panelLines({ ...base }).filter((l) => words.includes(l as never))).toEqual([]);
     const prod = panelLines({ app: "site", repo: "alice/site", env: "production" });
-    expect(prod.slice(0, 2)).toEqual(["site", "Production"]);
+    expect(prod.slice(0, 2)).toEqual(["site", "production"]);
     expect(prod.filter((l) => words.includes(l as never))).toEqual([]);
   });
 });

@@ -172,7 +172,7 @@ describe("guard_new_accounts", () => {
       body: JSON.stringify({ name: "api-blocked" }),
     });
     expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({
+    expect(await res.json()).toMatchObject({
       error: "refused",
       message: NEW_ACCOUNT_GUARD_MESSAGE,
     });

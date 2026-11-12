@@ -27,7 +27,7 @@ function forge(boardsMs: number, seen: string[] = [], over: (path: string) => Re
   return `http://127.0.0.1:${server.port}`;
 }
 
-const heavy = { watchMs: 300, pollMs: 50, slowMs: 200 };
+const heavy = { watchMs: 300, pollMs: 50, slowMs: 200, settleMs: 0, answerMs: 400 };
 
 test("a healthy forge passes the heavy pages and the /healthz watch", async () => {
   const seen: string[] = [];
@@ -131,6 +131,22 @@ test("a hang is a failure whatever Server-Timing would have said", async () => {
   expect(failures.some((f) => f.url.endsWith("/explore") && f.why.includes("did not answer"))).toBe(true);
 });
 
+test("an answer past twice the slow line but before the hang line is judged by its Server-Timing, not failed as a hang (#11250)", async () => {
+  // 0.7.531: /trevato/forge was cut off at 2000 ms, before its Server-Timing could say whose time it was.
+  const quick = (p: string) => (p === "/explore" ? new Response("page", { headers: { "server-timing": "app;dur=5.0" } }) : undefined);
+  const failures = await smoke(forge(0, [], quick, (p) => (p === "/explore" ? 500 : 0)), "t", { heavy: { ...heavy, answerMs: 2_000 } });
+  expect(failures).toEqual([]);
+});
+
+test("a slow answer whose forge was slow names the forge's own time (#11250)", async () => {
+  const slowOwn = (p: string) => (p === "/explore" ? new Response("page", { headers: { "server-timing": "app;dur=450.0" } }) : undefined);
+  const failures = await smoke(forge(0, [], slowOwn, (p) => (p === "/explore" ? 500 : 0)), "t", { heavy: { ...heavy, answerMs: 2_000 } });
+  const f = failures.find((x) => x.url.endsWith("/explore"));
+  expect(f?.slow).toBe(true);
+  expect(f?.hung).toBeUndefined();
+  expect(f?.why).toContain("the forge 450 ms of it");
+});
+
 test("forgeMs reads the app entry of Server-Timing, and nothing when there is none", () => {
   expect(forgeMs(new Response("", { headers: { "server-timing": "db;dur=2.5, app;dur=7.6, render;dur=2.4" } }))).toBe(7.6);
   expect(forgeMs(new Response("", { headers: { "server-timing": "render;dur=2.4" } }))).toBeUndefined();
@@ -201,4 +217,56 @@ test("an empty 200 with no forge or edge headers says so, pointing past the forg
   // Called directly: a real server adds a content-length of its own to any body.
   expect(emptyEvidence(new Response(""))).toBe(" (no forge or edge headers)");
   expect(emptyEvidence(new Response("", { headers: { "x-forge-version": "v1" } }))).toBe(" (x-forge-version: v1)");
+});
+
+test("an empty body under a content-encoding that is whole unencoded passes: the edge's encoding lost it (#10889)", async () => {
+  const asked: string[] = [];
+  const edge = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      const path = new URL(req.url).pathname;
+      const enc = req.headers.get("accept-encoding") ?? "";
+      asked.push(`${path}:${enc}`);
+      if (path === "/") return new Response('<link rel="stylesheet" href="/a.css">', { headers: { "content-type": "text/html" } });
+      if (path === "/a.css") return new Response("body{margin:0}", { headers: { "content-type": "text/css" } });
+      if (path === "/sw.js") return new Response("if (r.mode === 'navigate') { e.respondWith(fetch(r)); return; }", { headers: { "content-type": "text/javascript" } });
+      if (path === "/explore" && enc !== "identity") return new Response("", { headers: { "content-encoding": "zstd" } });
+      return new Response("page " + path, { headers: { "x-forge-version": "v1" } });
+    },
+  });
+  const failures = await smoke(`http://127.0.0.1:${edge.port}`, "t", { heavy });
+  expect(failures.filter((f) => f.why.includes("empty body"))).toEqual([]);
+  await edge.stop(true);
+  expect(asked.some((a) => a === "/explore:identity")).toBe(true);
+});
+
+test("an empty body under a content-encoding that is empty unencoded too still fails (#10889)", async () => {
+  const edge = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      const path = new URL(req.url).pathname;
+      if (path === "/") return new Response('<link rel="stylesheet" href="/a.css">', { headers: { "content-type": "text/html" } });
+      if (path === "/a.css") return new Response("body{margin:0}", { headers: { "content-type": "text/css" } });
+      if (path === "/sw.js") return new Response("if (r.mode === 'navigate') { e.respondWith(fetch(r)); return; }", { headers: { "content-type": "text/javascript" } });
+      if (path === "/explore") return new Response(req.headers.get("accept-encoding") === "identity" ? "  " : "", { headers: { "content-encoding": "zstd" } });
+      return new Response("page " + path, { headers: { "x-forge-version": "v1" } });
+    },
+  });
+  const failures = await smoke(`http://127.0.0.1:${edge.port}`, "t", { heavy });
+  await edge.stop(true);
+  expect(failures.some((f) => f.url.endsWith("/explore") && f.why.includes("empty body"))).toBe(true);
+});
+
+test("a first load slow for a moment, then quick after the settle pause, passes (#10993)", async () => {
+  // A stall right after the boot: every /explore answer within the first 500 ms is slow, so an immediate retry is slow too.
+  const born = performance.now();
+  const stall = (p: string) => (p === "/explore" && performance.now() - born < 500 ? 300 : 0);
+  const impatient = await smoke(forge(0, [], () => undefined, stall), "t", { heavy });
+  expect(impatient.some((f) => f.url.endsWith("/explore") && f.why.includes("took"))).toBe(true);
+  const born2 = performance.now();
+  const stall2 = (p: string) => (p === "/explore" && performance.now() - born2 < 500 ? 300 : 0);
+  const settled = await smoke(forge(0, [], () => undefined, stall2), "t", { heavy: { ...heavy, settleMs: 300 } });
+  expect(settled).toEqual([]);
 });

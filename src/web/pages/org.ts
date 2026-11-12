@@ -42,6 +42,7 @@ import {
 } from "../../core/orgs.ts";
 import { appsForRepos } from "../../core/apps.ts";
 import { isTeamRole, TEAM_ROLES } from "../../core/agents.ts";
+import { metricsRows, teamWindows } from "../../core/team-metrics.ts";
 import { LIST_LIMIT_MAX } from "../../core/issues.ts";
 import { listReposByOwner, type Repo } from "../../core/repos.ts";
 import { getUserByName, hiddenFrom, type User } from "../../core/users.ts";
@@ -587,6 +588,9 @@ export function teamPage(ctx: Ctx): Response {
   const members = timePhase(ctx.request, "members", () =>
     listTeamMemberRoles(ctx.app.db, team.id).map(({ user, role }) => ({ ...user, role })),
   );
+  const figures = timePhase(ctx.request, "metrics", () =>
+    teamWindows(ctx.app.db, team.id, Date.now()),
+  );
   const rendering = performance.now();
   const teamBase = `/${org.username}/-/teams/${team.id}`;
   // The last owner may not be removed: an org must keep an admin.
@@ -596,6 +600,18 @@ export function teamPage(ctx: Ctx): Response {
     lead: icon("users"),
     sub: html`${badge(team.permission)} on every repository ${org.username} owns`,
   })}
+  <section class="settings-block">
+    <h2>How fast this team turns issues into shipped changes, and what each costs</h2>
+    ${([
+      ["24 h", figures.day],
+      ["7 d", figures.week],
+    ] as const).map(
+      ([label, m]) => html`<h3>${label}</h3>
+        <dl class="status-rows">
+          ${metricsRows(m).map((r) => html`<div class="status-row"><dt>${r.label}</dt><dd>${r.value}</dd></div>`)}
+        </dl>`,
+    )}
+  </section>
   <section class="settings-block">
     <h2>Members</h2>
     ${members.length === 0

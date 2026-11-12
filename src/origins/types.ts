@@ -174,6 +174,16 @@ export interface RemoteReviewState {
   readonly commitOid: string;
   readonly createdAt: string;
   readonly htmlUrl: string;
+  /** How many line comments the origin took inside this review (`submitReview` only). */
+  readonly carried?: number;
+}
+
+/** A line comment bound for an origin, inside the review that carries it. */
+export interface ReviewLine {
+  readonly path: string;
+  readonly line: number;
+  readonly side: "old" | "new";
+  readonly body: string;
 }
 
 /** How a pull's check stands on its origin, for the head named. */
@@ -511,6 +521,8 @@ export interface Provider {
     input: {
       state: "approved" | "changes_requested" | "commented";
       body: string;
+      /** Sent inside the review; an origin that refuses them gets the verdict alone. */
+      comments?: readonly ReviewLine[];
     },
   ): Promise<ProviderResult<RemoteReviewState>>;
   /**

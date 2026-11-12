@@ -13,7 +13,8 @@
 
 import { staticResponse } from "../web/asset.ts";
 import { sha256 } from "../kernel/hash.ts";
-import { NOTE_EMPTY, NOTE_FAILED } from "./note_words.ts";
+import { CHECK_WORDS, type PillCheck } from "./pill_check.ts";
+import { NOTE_EMPTY, NOTE_FAILED, NOTE_OFFLINE, NOTE_WAIT } from "./note_words.ts";
 
 /** What the panel says about a preview's freshness (#9111): the pill's words, in one table. */
 export const FRESHNESS_WORDS = {
@@ -32,6 +33,12 @@ const toolbarSource = `(function () {
   var fo = "";
   try { fo = new URL((me.dataset || {}).forge || "").origin; } catch (e) {}
   var home = fo ? fo + "/" : "/";
+  // Back to the forge page the visitor left: only a referrer on the forge's own origin counts.
+  var back = home;
+  try {
+    var ref = new URL(document.referrer);
+    if (fo && ref.origin === fo && (ref.protocol === "https:" || ref.protocol === "http:")) back = ref.origin + ref.pathname + ref.search;
+  } catch (e) {}
   var host = document.createElement("div");
   host.id = "forge-toolbar";
   host.style.cssText = "all:initial;position:fixed;z-index:2147483647";
@@ -79,8 +86,9 @@ const toolbarSource = `(function () {
     panel.appendChild(el);
   }
   if (d.app) line(d.app, true);
-  if (d.env === "production") line("Production");
-  var LS = "color:#8ab4ff;text-decoration:none;display:flex;align-items:center;min-height:44px";
+  if (d.env === "production") line("production");
+  var LC = "#8ab4ff";
+  var LS = "color:" + LC + ";text-decoration:none;display:flex;align-items:center;min-height:44px";
   var pullHref = "";
   // The pull this preview shows, one tap away: built from the script's own origin, never from page text.
   if (d.env !== "production" && /^\\d{1,9}$/.test(d.pull || "") && /^[\\w.-]+\\/[\\w.-]+$/.test(d.repo || "")) {
@@ -89,13 +97,15 @@ const toolbarSource = `(function () {
   if (d.env === "production") {}
   else if (pullHref) {
     var pl = document.createElement("a");
-    pl.textContent = "Preview of pull #" + d.pull;
+    pl.textContent = "preview \\u00b7 #" + d.pull;
     pl.href = pullHref;
     pl.rel = "noopener";
     pl.style.cssText = LS;
     panel.appendChild(pl);
-  } else if (d.pull) line("Preview of pull #" + d.pull);
+  } else if (d.pull) line("preview \\u00b7 #" + d.pull);
   if (d.title) line(d.title);
+  var CW = ${JSON.stringify(CHECK_WORDS)};
+  if (d.env !== "production" && d.check && Object.prototype.hasOwnProperty.call(CW, d.check)) line(CW[d.check]);
   // Whether this is the pull as it stands now; an open, current preview says nothing.
   var W = ${JSON.stringify(FRESHNESS_WORDS)};
   var freshness = d.state === "merged" ? W.merged
@@ -103,13 +113,34 @@ const toolbarSource = `(function () {
     : d.deploying ? W.deploying
     : d.behind ? W.behind : "";
   if (freshness) line(freshness);
+  // Which commit this page is serving and since when: the forge's record, set as text.
+  var ago = function (iso) {
+    var t = Date.parse(iso || "");
+    if (!(t > 0)) return "";
+    var m = Math.max(0, Math.floor((Date.now() - t) / 60000));
+    return m < 1 ? "just now" : m < 60 ? m + " min ago" : m < 1440 ? Math.floor(m / 60) + " h ago" : Math.floor(m / 1440) + " d ago";
+  };
+  var liveAgo = "";
+  if (/^[0-9a-f]{7,64}$/.test(d.commit || "") && (liveAgo = ago(d.live))) {
+    var sv = document.createElement("div");
+    sv.style.cssText = "overflow-wrap:anywhere;opacity:.85";
+    var part = function (t) { var sp = document.createElement("span"); sp.textContent = t; sv.appendChild(sp); };
+    part("Serving ");
+    var short = d.commit.slice(0, 7), cl = null;
+    if (/^[\\w.-]+\\/[\\w.-]+$/.test(d.repo || "") && fo) {
+      try { cl = document.createElement("a"); cl.href = new URL("/" + d.repo + "/commit/" + d.commit, fo).href; cl.rel = "noopener"; cl.style.color = LC; cl.textContent = short; } catch (e) { cl = null; }
+    }
+    if (cl) sv.appendChild(cl); else part(short);
+    part(", live " + liveAgo);
+    panel.appendChild(sv);
+  }
   var link = document.createElement("a");
   link.textContent = "Home";
   link.rel = "noopener";
   link.style.cssText = LS;
   var hasHome = false;
   try {
-    var target = new URL(home);
+    var target = new URL(back);
     if (target.origin === fo) { link.href = target.href; hasHome = true; }
   } catch (e) {}
   // Tell the builders: one box, one button, no account. The note goes to
@@ -305,7 +336,7 @@ const toolbarSource = `(function () {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ text: text, page: location.href, viewport: window.innerWidth + "x" + window.innerHeight, errors: errs.slice(-5) })
       })
-        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (r) { return r.json().catch(function () { return null; }).then(function (j) { return { ok: r.ok, s: r.status, w: r.headers.get("retry-after"), j: j }; }); })
         .then(function (a) {
           if (!a.ok || !blob || !a.j || !a.j.note || !a.j.note.id) return { a: a, pic: false };
           return call("/__forge/note/picture?note=" + encodeURIComponent(a.j.note.id), {
@@ -326,9 +357,9 @@ const toolbarSource = `(function () {
           filed(a.j && a.j.note);
           refresh(true);
         }
-        else tellSay.textContent = a.j && a.j.message ? a.j.message : ${JSON.stringify(NOTE_FAILED)};
+        else tellSay.textContent = a.s === 429 && +a.w > 0 ? ${JSON.stringify(NOTE_WAIT[0])} + Math.ceil(+a.w) + ${JSON.stringify(NOTE_WAIT[1])} : a.j && a.j.message ? a.j.message : ${JSON.stringify(NOTE_FAILED)};
       })
-      .catch(function () { idle(); tellSay.textContent = ${JSON.stringify(NOTE_FAILED)}; });
+      .catch(function () { idle(); tellSay.textContent = navigator.onLine === false ? ${JSON.stringify(NOTE_OFFLINE)} : ${JSON.stringify(NOTE_FAILED)}; });
   });
   var poll = 0;
   function watch(open) {
@@ -385,6 +416,18 @@ const toolbarSource = `(function () {
             ta.href = t.href;
             ta.style.cssText = LS;
             crew.appendChild(ta);
+          }
+        }
+        // Make it yours: the forge's own fork page, on its origin; it asks a
+        // signed-out reader to sign in and returns to itself.
+        if (typeof c.yours === "string") {
+          var y = new URL(c.yours);
+          if (y.origin === forge) {
+            var ya = document.createElement("a");
+            ya.textContent = "Make it yours";
+            ya.href = y.href;
+            ya.style.cssText = LS;
+            crew.appendChild(ya);
           }
         }
         // The other side: origin plus this path as text, so "//" cannot leave it.
@@ -627,6 +670,10 @@ export type PillWhere = {
   behind?: boolean;
   /** A newer commit is being deployed now. */
   deploying?: boolean;
+  /** The newest check of the pull's head, a key of `CHECK_WORDS`. */
+  check?: PillCheck;
+  /** The commit the environment is serving and the instant it went live, from the forge's own record. */
+  serving?: { oid: string; at: string };
 };
 
 /** `text` safe inside a double-quoted HTML attribute. */
@@ -675,6 +722,9 @@ export function toolbarTag(
           ["pull", where.pull === undefined ? undefined : String(where.pull)],
           ["title", where.title],
           ["state", where.state],
+          ["check", where.check],
+          ["commit", where.serving?.oid],
+          ["live", where.serving?.at],
           ["behind", where.behind === true ? "1" : undefined],
           ["deploying", where.deploying === true ? "1" : undefined],
         ]

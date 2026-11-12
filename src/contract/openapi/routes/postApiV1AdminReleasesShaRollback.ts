@@ -6,6 +6,7 @@ export const route: Route = {
   summary:
     "Plan, then roll the forge back to a kept release (admin scope, a person who may write the forge's repository); `dryRun` true (the default) answers { from?, to, allowed, message? } and changes nothing, false swaps and answers { from?, to, rolledBack } before this process drains; `from` is the live commit, left out when it is not known",
   auth: true,
+  role: "admin",
   body: { dryRun: "boolean" },
   reply: { dryRun: "boolean", from: "string", to: "string", allowed: "boolean", message: "string", rolledBack: "boolean" },
   refusals: {

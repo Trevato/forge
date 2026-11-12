@@ -8,7 +8,10 @@
 
 import { crawlReport } from "../../perf/crawlers.ts";
 import { getAppById } from "../../core/apps.ts";
+import { FUNNEL_SCOPE, daysOf, funnelReport } from "../../perf/funnel.ts";
 import { probeViews } from "../../perf/views_probe.ts";
+import { daysOf as visitorDaysOf, probeVisitors, visitorsReport } from "../../perf/visitor_report.ts";
+import { getReturning } from "../../settings/returning.ts";
 import { kpiProbe } from "../../web/studio/kpi_probe.ts";
 import { MAX_SECONDS, sampleStacks } from "../../perf/sample.ts";
 import { listAccounts, removeAccount, retireAndRemoveAccount, retirementPlan, suspendAccount, unsuspendAccount, verifyAccount } from "../../actions/accounts.ts";
@@ -17,13 +20,16 @@ import { DERIVED_WORDS, REASON_WORDS, changeCapacity, edgeOffDryRun, listCapacit
 import { changeShield, lastShieldChange, shieldState } from "../../actions/shield.ts";
 import { inviteLink, list as listInviteLinks, mint as mintInviteLink, revoke as revokeInviteLink } from "../../actions/invites.ts";
 import { changeLimit, listLimits } from "../../actions/limits.ts";
+import { changePlans } from "../../actions/plans.ts";
 import { setAccountCeilings, setAccountGrant } from "../../actions/model_grant.ts";
 import { checkPinned, deployPinned, pinnedForges, rollbackPinned, updatePinned } from "../../actions/pinned.ts";
 import { TARGETS } from "../../cloud/targets.ts";
 import { changeQuotas, readQuotas } from "../../actions/quotas.ts";
+import { allowRequest, declineRequest, listRequests } from "../../actions/requests.ts";
 import { setRole } from "../../actions/roles.ts";
 import { SETTING_WORDS } from "../../actions/setting_words.ts";
-import { changeForgeSource, changeSignup, readForgeSource, readSignup } from "../../actions/signup.ts";
+import { BILLING_WORDS } from "../../settings/billing.ts";
+import { changeBillingLinks, changeForgeSource, changeSignup, readBillingLinks, readForgeSource, readSignup } from "../../actions/signup.ts";
 import { SPEND_WORDS } from "../../actions/spend_words.ts";
 import { TEAM_SAYS, changeTeam, readTeams } from "../../actions/teams.ts";
 import { SIGNUP_WORDS } from "../../core/arg_words.ts";
@@ -149,6 +155,14 @@ export function adminRoutes(router: Router<Handler>): void {
     return json(kpiProbe(ctx.app));
   });
 
+  // The selling funnel for the last `days` (`perf/funnel.ts`): the same figures as Settings → Billing.
+  router.add("GET", "/api/v1/admin/billing/funnel", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    return json(funnelReport(ctx.app.db, daysOf(ctx.url.searchParams.get("days"))), 200, { "cache-control": "private, no-cache" });
+  });
+
   // The traffic view's numbers, each counted again another way (`perf/views_probe.ts`).
   // `scope` is `forge` or an app's id; `number`, `dimension`+`key` and `steps` pick what to show.
   router.add("GET", "/api/v1/admin/traffic/probe", (ctx) => {
@@ -157,7 +171,7 @@ export function adminRoutes(router: Router<Handler>): void {
     if (denied) return denied;
     const q = ctx.url.searchParams;
     const scope = q.get("scope") ?? "forge";
-    if (scope !== "forge" && getAppById(ctx.app.db, scope) === undefined) return notFound();
+    if (scope !== "forge" && scope !== FUNNEL_SCOPE && getAppById(ctx.app.db, scope) === undefined) return notFound();
     const probed = probeViews(ctx.app.db, scope, q.get("window"), q.get("who") === "scrapers" ? "scrapers" : "people", Date.now(), {
       dimension: q.get("dimension"),
       key: q.get("key"),
@@ -165,6 +179,44 @@ export function adminRoutes(router: Router<Handler>): void {
     });
     const only = q.get("number");
     return json(only === null ? probed : { ...probed, numbers: probed.numbers.filter((n) => n.id === only) });
+  });
+
+  // Who comes back (`perf/visitor_report.ts`, #11265): the same figures as the Traffic page.
+  router.add("GET", "/api/v1/admin/traffic/visitors", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    const now = Date.now();
+    const days = visitorDaysOf(ctx.url.searchParams.get("days"));
+    const r = visitorsReport(ctx.app.db, days, now);
+    return json({
+      as_of: new Date(now).toISOString(),
+      enabled: getReturning(ctx.app.db),
+      days: r.days,
+      per_day: r.perDay.map((d) => ({
+        day: d.day,
+        new_cookie: d.newCookie,
+        returning_cookie: d.returningCookie,
+        new_probable: d.newProbable,
+        returning_probable: d.returningProbable,
+      })),
+      new_visitors: r.newVisitors,
+      returning_visitors: r.returningVisitors,
+      returning: r.returning.map((v) => ({
+        id: v.id,
+        probable: v.probable,
+        visits: v.visits,
+        days_seen: v.daysSeen,
+        first_seen: v.firstSeen,
+        last_seen: v.lastSeen,
+        first_ref: v.firstRef,
+        last_ref: v.lastRef,
+        step: v.step,
+        forge: v.forge,
+      })),
+      led: r.led.map((l) => ({ forge: l.forge, id: l.id, probable: l.probable, step: l.step, first_ref: l.firstRef, visits: l.visits })),
+      probe: probeVisitors(ctx.app.db, days, now, r),
+    });
   });
 
   // The forge's capacity (`core/capacity.ts`): read and changed live by an
@@ -254,6 +306,28 @@ export function adminRoutes(router: Router<Handler>): void {
     );
   });
 
+  // The plans (`settings/plans.ts`): the whole list is replaced; GET is the public /api/v1/plans.
+  router.add("PUT", "/api/v1/admin/plans", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const changed = changePlans(ctx.app, ctx.auth.user, input["plans"]);
+    if (changed.ok) return json({ items: changed.value });
+    if (changed.error === "not_found") return notFound();
+    return apiError("invalid_plans", 422, changed.error.invalid);
+  });
+
+  // The payment links (`settings/billing.ts`): the whole object is replaced; the REST twin of MCP `signup` with billingLinks.
+  router.add("PUT", "/api/v1/admin/billing/links", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const set = changeBillingLinks(ctx.app, ctx.auth.user, input["links"]);
+    if (set.ok) return json({ links: set.value });
+    if (set.error === "not_found") return notFound();
+    return apiError(set.error, 422, BILLING_WORDS);
+  });
+
   // Per-account quotas (`settings/quotas.ts`), key by key: the REST twin of MCP `quotas`.
   router.add("GET", "/api/v1/admin/quotas", (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -314,14 +388,15 @@ export function adminRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
-    const { read, signup, source } = timePhase(ctx.request, "settings", () => ({
+    const { read, signup, source, billing } = timePhase(ctx.request, "settings", () => ({
+      billing: readBillingLinks(ctx.app, ctx.auth.user),
       read: readQuotas(ctx.app, ctx.auth.user),
       signup: readSignup(ctx.app, ctx.auth.user),
       source: readForgeSource(ctx.app, ctx.auth.user),
     }));
     return timePhase(ctx.request, "render", () =>
-      read.ok && signup.ok && source.ok
-        ? json({ ...read.value, ...signup.value, ...source.value, signupChanges: signup.value.changes, changes: read.value.changes })
+      read.ok && signup.ok && source.ok && billing.ok
+        ? json({ billingLinks: billing.value, ...read.value, ...signup.value, ...source.value, signupChanges: signup.value.changes, changes: read.value.changes })
         : notFound());
   });
 
@@ -329,8 +404,14 @@ export function adminRoutes(router: Router<Handler>): void {
     const denied = accountAdmin(ctx, "admin");
     if (denied) return denied;
     const input = await body(ctx.request);
-    const sent = [input.signup, input.quotas, input.forgeRepo].filter((v) => v !== undefined).length;
-    if (sent > 1) return apiError("invalid_body", 422, "send one of signup, quotas or forgeRepo");
+    const sent = [input.signup, input.quotas, input.forgeRepo, input.billingLinks].filter((v) => v !== undefined).length;
+    if (sent > 1) return apiError("invalid_body", 422, "send one of signup, quotas, forgeRepo or billingLinks");
+    if (input.billingLinks !== undefined) {
+      const set = changeBillingLinks(ctx.app, ctx.auth.user, input.billingLinks);
+      if (set.ok) return json({ billingLinks: set.value });
+      if (set.error === "not_found") return notFound();
+      return apiError(set.error, 422, BILLING_WORDS);
+    }
     if (input.forgeRepo !== undefined) {
       const set = changeForgeSource(ctx.app, ctx.auth.user, input.forgeRepo);
       if (set.ok) return json({ forgeRepo: set.value });
@@ -434,6 +515,24 @@ export function adminRoutes(router: Router<Handler>): void {
         ? apiError("not_allowed", 422, "a grant is for a person who is not an admin")
         : notFound();
   });
+
+  // Strangers waiting for an account (#10928), and the answer to each.
+  router.add("GET", "/api/v1/admin/requests", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    const listed = listRequests(ctx.app, ctx.auth.user);
+    return listed.ok ? json({ items: listed.value, next_cursor: null }) : notFound();
+  });
+  const answerRequest = (act: "allow" | "decline"): Handler => (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const done = (act === "allow" ? allowRequest : declineRequest)(ctx.app, ctx.auth.user, ctx.params.username!);
+    if (done.ok) return json(done.value);
+    return done.error === "not_waiting" ? apiError("not_waiting", 409, "that request is not waiting") : notFound();
+  };
+  router.add("POST", "/api/v1/admin/requests/:username/allow", answerRequest("allow"));
+  router.add("POST", "/api/v1/admin/requests/:username/decline", answerRequest("decline"));
 
   // Every person and their role.
   router.add("GET", "/api/v1/admin/people", (ctx) => {

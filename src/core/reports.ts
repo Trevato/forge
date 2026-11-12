@@ -317,3 +317,15 @@ export function undecideReport(db: Database, reportId: string): void {
       WHERE id = ?1 AND issue_number IS NULL`,
   ).run(reportId);
 }
+
+/** Where a report stands, for the link its filer was given: state and issue, never words. */
+export function reportStanding(
+  db: Database,
+  repoId: string,
+  reportId: string,
+): { state: ReportState; issue: number | null } | undefined {
+  const row = db
+    .query("SELECT state, issue_number AS issue FROM report WHERE repo_id = ?1 AND id = ?2")
+    .get(repoId, reportId) as { state: ReportState; issue: number | null } | null;
+  return row ?? undefined;
+}

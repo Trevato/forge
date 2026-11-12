@@ -22,8 +22,11 @@ import { proveAll } from "./helpers/verified.ts";
 import { useLive, type Live } from "../src/system/live.ts";
 import type { SystemView } from "../src/system/view.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { freshStallState } from "./helpers/stall-state.ts";
 
 quietLogs();
+// /system draws the process's stall watch and telemetry readers; start from a clean one.
+freshStallState();
 
 const BUDGET = "docs/design/attention-budget.json";
 type Budget = Record<string, Record<string, Attention>>;
@@ -89,6 +92,7 @@ beforeAll(async () => {
     issue: `${r}/issues/${issue.value.number}`, "issues list": `${r}/issues`, "pulls list": `${r}/pulls`,
     runs: `${r}/runs`, run: `${r}/runs/${run.id}`, settings: "/settings",
     search: "/search", "search results": "/search?q=forge", map: "/map", flow: "/flow", system: "/system",
+    explore: "/explore", changelog: "/changelog", boards: "/boards", forges: "/forges", crew: `${r}/settings/crew`,
   };
   for (const [name, path] of Object.entries(paths)) {
     const res = await fetch(`${servers.url}${path}`, { headers: { cookie }, redirect: "follow" });

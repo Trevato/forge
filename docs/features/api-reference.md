@@ -23,3 +23,5 @@ path parameter runs it as the person at the terminal and shows the status, time,
 A list the contract gives a `cursor` pages by it: `?page=` or `?offset=` on one is a 400 `invalid_query` ("This list pages by cursor: pass next_cursor as ?cursor="), answered by one guard in `src/http/cursor_lists.ts` before any handler runs, and named in the document as the route's 400.
 
 The root, `GET /api/v1`, names the OpenAPI, MCP, OAuth and llms.txt URLs with no account: [the API root](api-root.md).
+
+**Roles.** Every operation in the document carries `x-role`: `anonymous` (no account at all), `member` (any signed-in account; the summary adds a token scope or a repository right where one applies, or says the route takes a browser session or the password and refuses a bearer token, as the token routes do) or `admin` (a site admin only). It is a required field of each route row (`role` in `src/contract/openapi/shared.ts`'s `Route`), so a new route cannot leave it out; `test/openapi-drift.test.ts` pins the routes easy to misread, and the same test fails when a route is described but not routed or routed but not described.

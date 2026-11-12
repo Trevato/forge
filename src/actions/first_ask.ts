@@ -1,0 +1,80 @@
+/**
+ * The first ask of a new forge (#11342): one sentence makes a new app named
+ * from it, turns the crew loose on it when the crew can run, and files the
+ * sentence there as the app's one issue. The page calls
+ * this.
+ */
+
+import type { App } from "../app.ts";
+import type { Repo } from "../core/repos.ts";
+import type { User } from "../core/users.ts";
+import { err, ok, type Result } from "../kernel/result.ts";
+import { newAppFromSentence, NEW_APP_ERRORS } from "./apps.ts";
+import { getRepoById } from "../core/repos.ts";
+import { seatFirstAskCrew } from "../spawn/starter_crew.ts";
+import { FORGE_REPO_WORDS, NOT_TOLD_WORDS, SAY_SOMETHING_WORDS } from "./tell_words.ts";
+import { FROM_WORDS, TOO_LONG_WORDS, tell, type TellError, type Told } from "./tell.ts";
+import { parseFrom } from "./tell_from.ts";
+import { deriveAppName } from "../web/pages/apps-name.ts";
+import { requireVerified } from "./verify.ts";
+import { MAX_BODY } from "../core/issues.ts";
+import { recordRefusal } from "../core/first_ask_refusals.ts";
+import { DIRECTION_NOTE } from "../crew/direct.ts";
+
+export interface FirstAsk {
+  /** The app made from the ask. */
+  readonly repo: Repo;
+  /** True when the crew could run but autonomy could not be set: the ask is filed on an app a builder will not start by itself. */
+  readonly autonomyFailed: boolean;
+  /** The ask's own tell, refused or told. */
+  readonly told: Result<Told, TellError>;
+}
+
+/** What a failed first ask says, in words: the empty sentence, or why no app could be made. */
+export type FirstAskError = { readonly words: string };
+
+/** The note a person is given when the app was made and filed but autonomy could not be turned on. */
+export const AUTONOMY_FAILED_WORDS = "The app is made, but the crew could not be set to start on it by itself. Turn on autonomy in its settings.";
+
+/** Whether the app this sentence would be named from is the forge's own repository. */
+function resolvesToForgeRepo(app: App, actor: User, sentence: string): boolean {
+  const name = deriveAppName(sentence);
+  return name !== undefined && app.config.forgeRepo?.toLowerCase() === `${actor.username}/${name}`.toLowerCase();
+}
+
+export async function firstAsk(
+  app: App,
+  actor: User | undefined,
+  said: string,
+  crewCanRun: boolean,
+  from: string | null = null,
+): Promise<Result<FirstAsk, FirstAskError>> {
+  const text = said.trim();
+  /** A refusal: kept as one row, and its words returned unchanged. */
+  const refuse = (words: string): Result<FirstAsk, FirstAskError> => {
+    recordRefusal(app.db, { actorId: actor?.id ?? null, ask: text, words }, Date.now());
+    return err({ words });
+  };
+  if (text === "") return refuse(SAY_SOMETHING_WORDS);
+  // Everything the tell could refuse is asked before the app exists, so a
+  // refused ask leaves nothing behind and a retry makes no second app. The
+  // new app's owner is the actor, who may direct the crew on it.
+  if (text.length > MAX_BODY) return refuse(TOO_LONG_WORDS);
+  if (actor === undefined || actor.kind === "org") return refuse(DIRECTION_NOTE);
+  if (!requireVerified(app, actor).ok) return refuse("Verify your email first.");
+  if (from !== null && typeof parseFrom(from) !== "string") return refuse(FROM_WORDS);
+  // The forge's own repository is never an ask's target: refused before any app exists.
+  if (resolvesToForgeRepo(app, actor, text)) return refuse(FORGE_REPO_WORDS);
+  // An empty description: the issue the tell files is the one issue of the ask.
+  const made = await newAppFromSentence(app, actor, { sentence: text, description: "" });
+  if (!made.ok) return refuse(NEW_APP_ERRORS[made.code] ?? NOT_TOLD_WORDS);
+  let repo = made.repo;
+  let autonomyFailed = false;
+  if (crewCanRun) {
+    // A builder and a reviewer seated and autonomy on as the asker, so the next tick starts the ask (#11508).
+    if (await seatFirstAskCrew(app.db, repo, actor.id)) repo = getRepoById(app.db, repo.id) ?? repo;
+    else autonomyFailed = true;
+  }
+  const told = await tell(app, actor, repo, text, 1, from);
+  return ok({ repo, autonomyFailed, told });
+}

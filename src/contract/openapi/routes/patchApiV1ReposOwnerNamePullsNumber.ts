@@ -5,6 +5,7 @@ export const route: Route = {
   path: `${REPO}/pulls/{number}`,
   summary: "Edit a pull's title or body and open or close it (rw scope); answers the pull",
   auth: true,
+  role: "member",
   body: { title: "string", body: "string", state: "string" },
   refusals: {
     invalid_text: "`title` or `body` is not a string (422)",

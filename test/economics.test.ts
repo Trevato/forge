@@ -15,7 +15,7 @@ import { createAgent } from "../src/actions/crew.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { economicsChanges, getEconomics, getOwnedNodeLabel, getPrices } from "../src/settings/economics.ts";
+import { economicsChanges, getEconomics, getEconomicsAll, getOwnedNodeLabel, getPrices } from "../src/settings/economics.ts";
 
 describe("economics", () => {
   let dataDir: string;
@@ -232,6 +232,28 @@ describe("economics", () => {
     const listed = await (await fetch(`${servers.url}/settings/economics`, { headers: { cookie: await login("alice") } })).text();
     expect(listed).toContain('name="awakePriceHourUsd"');
     expect(listed).toContain('value="0.30"');
+  });
+
+  test("getEconomicsAll reads all eight numbers in one statement, each exactly as its point read does (#510)", () => {
+    // A hand-edited value out of range reads as the default, as `stored` reads it.
+    app.db.query("INSERT OR REPLACE INTO forge_setting (key, value, updated_by, updated_at) VALUES ('economics.owned_slots', '99999999', ?1, ?2)").run(alice.id, new Date().toISOString());
+    let statements = 0;
+    const query = app.db.query.bind(app.db);
+    app.db.query = ((sql: string) => {
+      statements++;
+      return query(sql);
+    }) as typeof app.db.query;
+    let all: ReturnType<typeof getEconomicsAll>;
+    try {
+      all = getEconomicsAll(app.db);
+    } finally {
+      app.db.query = query;
+    }
+    expect(statements).toBe(1);
+    expect(all.prices).toEqual(getPrices(app.db));
+    expect(all.economics).toEqual(getEconomics(app.db));
+    expect(all.prices.ownedSlots).toBe(0);
+    expect(all.prices.awakePriceHourCents).toBe(12);
   });
 
   test("the owned-node label is a setting: shown with the queue line, set by API and form, validated (#509)", async () => {

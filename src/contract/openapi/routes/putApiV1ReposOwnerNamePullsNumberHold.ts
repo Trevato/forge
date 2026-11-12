@@ -6,6 +6,7 @@ export const route: Route = {
   summary:
     "Hold an open pull (with until green, the forge releases it when a check passes on the pull's head) with one line that says why, so no rule reviews or lands it until it is released; a person who writes the repository holds, never an agent (rw scope); answers `{ held: true, hold }`",
   auth: true,
+  role: "member",
   body: { why: "string", until: "string" },
   refusals: {
     forbidden: "you are an agent, or you cannot write the repository (403)",

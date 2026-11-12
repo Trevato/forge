@@ -10,6 +10,7 @@
  * that was never meant to be confirmed.
  */
 
+import { DETACH_STAYS, DETACH_STOPS } from "../../actions/detach_words.ts";
 import { DISCONNECT_DETAIL } from "../../actions/origin_words.ts";
 import { strangerCodeSearch } from "../../http/strangers.ts";
 import { search } from "../../actions/search.ts";
@@ -19,11 +20,13 @@ import { openLabelCounts } from "../../core/issues.ts";
 import { getPull } from "../../core/pulls.ts";
 import { canAdmin, canWrite, enterableApps, forkParentFor, getRepo } from "../../core/repos.ts";
 import { followModeWords, followSwitchPreview } from "../../actions/follow_words.ts";
-import type { FollowMode } from "../../spawn/chain.ts";
+import type { ForkFollowMode } from "../../core/fork_follow.ts";
 import { getMirrorTarget } from "../../core/migrate_mirror.ts";
 import {
   cleanQuery,
   CODE_BUDGET_MS,
+  CODE_TOO_SHORT,
+  greppable,
   searchKind,
   type CodeHit,
   type IssueHit,
@@ -341,11 +344,11 @@ async function find(
 ): Promise<{ found: SearchResults; busy?: number }> {
   // A stranger's code search takes a slot of its own (`http/strangers.ts`);
   // refused, the page still answers with everything but the code, and says so.
-  // The same test as the API's: a blank or stop-word query greps nothing.
+  // The same test as the API's: a blank or one-letter query greps nothing.
   const greps =
     ctx.auth.user === undefined &&
     (a.kind === "code" || a.kind === "all") &&
-    cleanQuery(a.query) !== "";
+    greppable(a.query);
   const held = greps
     ? timePhase(ctx.request, "gate", () => strangerCodeSearch(ctx.app, ctx.request))
     : undefined;
@@ -518,6 +521,10 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
       </p>`,
   )}
   ${when(
+    (a.kind === "code" || a.kind === "all") && !greppable(a.query),
+    () => html`<p class="muted small" role="status" data-code-short>${CODE_TOO_SHORT}</p>`,
+  )}
+  ${when(
     found.codeSkipped,
     () =>
       html`<p class="muted small" role="status" data-code-skipped>
@@ -565,6 +572,16 @@ const DESTRUCTIVE: {
   describe: (m: RegExpMatchArray, ctx: Ctx) => Destructive;
 }[] = [
   {
+    pattern: /^\/([^/]+)\/([^/]+)\/archive$/,
+    describe: (m) => ({
+      verb: "Archive",
+      title: `Archive ${m[1]}/${m[2]}?`,
+      detail:
+        "Its process stops and it leaves home and the apps list. Its data and git stay, its address still answers, and Restore on the Archived list starts it again.",
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/delete$/,
     describe: (m) => ({
       verb: DELETE_REPO,
@@ -590,8 +607,7 @@ const DESTRUCTIVE: {
     describe: (m) => ({
       verb: "Detach from parent",
       title: `Detach ${m[1]}/${m[2]} from its parent?`,
-      detail:
-        "Every object it borrows is copied into its own store and the link is dropped: no updates to take, nothing to propose upstream. Branches, history, issues and pulls stay. There is no undo.",
+      detail: `Every object it borrows is copied into its own store and the link is dropped. ${DETACH_STAYS} ${DETACH_STOPS} It is recorded in this repository's history. There is no undo.`,
       phrase: "",
     }),
   },
@@ -904,9 +920,9 @@ const DESTRUCTIVE: {
     },
   },
   {
-    pattern: /^\/([^/]+)\/([^/]+)\/following\/mode\/(tell-me|take-updates)$/,
+    pattern: /^\/([^/]+)\/([^/]+)\/following\/mode\/(tell-me|take-updates|dont-follow)$/,
     describe: (m, ctx) => {
-      const mode = m[3] as FollowMode;
+      const mode = m[3] as ForkFollowMode;
       const repo = getRepo(ctx.app.db, m[1]!, m[2]!);
       const parent = repo && canWrite(ctx.app.db, repo, ctx.auth.user) ? forkParentFor(ctx.app.db, repo, ctx.auth.user) : undefined;
       const upstream = parent === undefined ? "its parent" : `${parent.ownerName}/${parent.name}`;

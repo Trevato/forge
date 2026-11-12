@@ -110,6 +110,9 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "forge.spawned",
   "forge.removed",
   "forge.stopped",
+  "forge.own_code_on",
+  "forge.own_code_off",
+  "forge.rolled_back",
   "forge.claim_reissued",
   "forge.claim_revoked",
   "forge.claim_restored",
@@ -133,6 +136,8 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "issue.teams",
   "account.role_set",
   "account.email_verified",
+  "account.allowed",
+  "account.declined",
   "account.recovered",
   "limb.replan",
   "limb.replan_taken_back",
@@ -177,6 +182,10 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "traffic.capture_started",
   "traffic.networks_imported",
   "crew.governed",
+  // Starts by an agent with only the URL (#10912): the forge owner hears them.
+  "start.made",
+  "start.claimed",
+  "start.swept",
 ]);
 
 /**
@@ -211,6 +220,10 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind.startsWith("clog.") ||
     // What the throughput keeper did to lift a brake is the owner's too (`flow/keeper.ts`).
     kind.startsWith("keeper.") ||
+    // The flow keeper's acts on pulls, lulls and forge-down are the owner's too (`maintain/keeper/`, #7556).
+    kind.startsWith("keeper_") ||
+    kind === "forge_down" ||
+    kind === "forge_up" ||
     // Who is trusted to fold in, and the switch that stops it, are the owner's (`actions/trusted_sources.ts`).
     kind.startsWith("trust.") ||
     kind.startsWith("foldin.") ||
@@ -230,6 +243,8 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind.startsWith("pinned.") ||
     // Which of a person's connected accounts a mirror syncs through is too.
     kind.startsWith("origin.") ||
+    // A forge's plan and the billing provider are the admins' books (#11134).
+    kind.startsWith("billing.") ||
     // A declared LAN device names the owner's own network (#10567).
     kind.startsWith("device.") ||
     kind === "repo.settings_updated" ||
@@ -250,7 +265,9 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind === "repo.file_held" ||
     kind === "repo.file_released" ||
     // Which repositories New app offers is the admins' choice (`actions/app_templates.ts`).
-    kind.startsWith("app_template.")
+    kind.startsWith("app_template.") ||
+    // What a parent lends a child's crew, by name and dollar, is the admins' business (`actions/child_credit.ts`, #10484).
+    kind === "forge.credit_set"
   )
     return "admins";
   // A broken adapter sync is for those who may write the repository (`apps/pull.ts`).

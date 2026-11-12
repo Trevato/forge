@@ -22,11 +22,11 @@ export const GIVE_UP_MS = 10 * 60_000;
 export type Probe = () => Promise<boolean>;
 
 /** A probe of `<url>/healthz`: true on a 200, false on anything else. Never throws. */
-export function probeOf(url: string): Probe {
+export function probeOf(url: string, timeoutMs = 2000): Probe {
   return async () => {
     try {
       const res = await fetch(`${url.replace(/\/+$/, "")}/healthz`, {
-        signal: AbortSignal.timeout(2000),
+        signal: AbortSignal.timeout(timeoutMs),
         redirect: "manual",
       });
       await res.body?.cancel();

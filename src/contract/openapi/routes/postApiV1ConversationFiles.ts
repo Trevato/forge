@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/conversation/files",
   summary: "Attach one file to the signed-in person's next /talk message: the raw bytes as the body, its name url-encoded in the x-file-name header. Its type is what its bytes are (PNG, JPEG, GIF or WebP image up to 5 MB, or a UTF-8 text file up to 100 KB), never what the request says; send its id in `files` to /api/v1/conversation/messages",
   auth: true,
+  role: "member",
   status: 201,
   reply: { id: "string", name: "string", type: "string", size: "integer" },
   refusals: {

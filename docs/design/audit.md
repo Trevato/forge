@@ -49,6 +49,9 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 
 - `/` — `pages/site.ts` (`home`, studio mode in `studio/home.ts`) · where I am, what needs me · `/front` (same page for anyone), `/board`, `/asks` · colours 3 in `site.ts`, 7 in `studio/home.ts`.
 - `/front` — `studio/home.ts` (`studioDoor`) · the signed-out door, and the site admin's controls over it · `/` for a signed-out reader · colours 7.
+- `/pricing` — `pages/pricing.ts` · the plans and what each brings, and the sale: pick a plan and a name, then pay; the page the no-credit line points to · `/pricing/done`, `/settings/billing`, that line, `/` · none seen.
+- `/pricing/done` — `pages/pricing.ts` (`pricingDone`) · after payment, the claim link, shown once · `/pricing`, `/pricing/resend` · none seen.
+- `/pricing/resend` — `pages/pricing.ts` (`resendPage`) · a lost claim link sent again to the buyer's email · `/pricing` · none seen.
 - `/explore` — `studio/explore.ts` · browse what the forge holds · `/search`, `/apps` · colours 2.
 - `/board` — `pages/board.ts` (1,231 lines) · every app the viewer can see, with a wall mode · `/boards` (saved queries as panels), `/flow`, `/` · colour 1, sizes 6.
 - `/board/returns` — `pages/returns.ts` · what the window's dollars bought · `/settings/subscriptions` spend tables, `/settings/usage` · none seen.
@@ -90,9 +93,12 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 ### Forges (the family)
 
 - `/forges` — `pages/forges.ts` · the forges this one sent, as a client list · `/family` · colour 1.
+- `/forges/refused` — `pages/forges-refused.ts` · the last 20 first asks the forge refused, with its words; an admin's only · `/system` · none seen; reuses the list and muted text.
 - `/forges/new` — `pages/new-forge.ts` · send a new forge · none · colour 1.
 - `/family` — `pages/family.ts` · parent, this forge and children as a tree · `/forges` (the same children) · colour 1.
 - `/claim` — `pages/claim.ts` · claim a forge that was sent to me · none · colour 1.
+- `/welcome` — `pages/claim.ts` (`welcomePage`) · the account screen of a forge you just started: make your account · none · none seen.
+- `/privacy` — `pages/privacy.ts` · what the forge keeps about a visitor, three plain lines, open to anyone · none · none seen.
 - `/first-admin` — `pages/first-admin.ts` · the first person becomes admin · none · none seen.
 - `/fleet/graph` — `pages/fleet-graph.ts` · the fleet as a graph · `/family`, `/forges` · none seen.
 - `/fleet` — `pages/fleet.ts` · the rows a fleet query line selects, as a table · `/fleet/graph` · none seen.
@@ -105,6 +111,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/admin/limits` — `pages/admin-limits.ts` · every limit with value, default and reason · `/settings/capacity` (also a numbers-you-can-change page) · none seen.
 - `/admin/flows` — `pages/flows-all.ts` · every repository's flow lines with state and last moved, by kind and stale · `/:owner/:name/flows` · none seen.
 - `/admin/data` — `pages/data.ts` · the forge's own database: tables, rows, read-only SQL, secrets masked · `/data` (the Forge data button) · none seen; shares its body (`pages/data_view.ts`) with `/data` and `/:owner/:name/data`.
+- `/settings/billing` — `pages/billing.ts` · each forge's plan, granted by hand · `/settings/economics` · none seen.
 - `/settings/economics` — `pages/economics.ts` · the profit slider's position and the margin, with the policy in words · `/admin/limits`, `/settings/capacity` · none seen.
 - `/settings/capacity` — `pages/capacity.ts` · how many runs and checks go at once · `/admin/limits`, `/settings/usage` · none seen.
 - `/settings/usage` — `pages/usage.ts` · route patterns by use, unused first · `/settings/telemetry`, `/board/returns` · none seen. Not about cost, despite the name.
@@ -121,6 +128,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/settings/cloud` — `pages/cloud.ts` · cloud provider connection · none · none seen.
 - `/settings/cloud/audit` — `pages/cloud.ts` · what the cloud connection did · `/audit` (different subject, same word) · none seen.
 - `/settings/access` — `pages/access.ts` · who may reach the forge · `/settings/people`, `/settings/accounts` · none seen.
+- `/settings/captain` — `pages/captain.ts` · what Talk remembers and the check-ins it posts · `/talk` · none seen.
 
 ### Sign-in and account
 
@@ -130,6 +138,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/login` — `http/server.ts` (`signinAlias`) · the address people type to sign in · it is `/signin`, keeping a same-origin `next` · none (308, no page of its own).
 - `/sign-in` — `http/server.ts` (`signinAlias`) · the same, hyphenated · it is `/signin` · none (308, no page of its own).
 - `/signup` — `pages/site.ts` · make an account · `/signup` passkey flow (`signup-passkey.ts`) · colours 3 (file).
+- `/signup/requested` — `pages/site.ts` · what a stranger whose request waits is told · `/signin` · colours 3 (file).
 - `/verify` — `pages/site.ts` · confirm an email address · none · colours 3 (file).
 - `/recover` — `pages/passkeys.ts` · get back in without a password · `/settings/passkeys` · none seen.
 - `/settings` — `pages/account.ts` · my account · the rest of settings · colour 1.

@@ -6,12 +6,14 @@
  * selected open one after a confirm (`y` revokes, `n` or esc keeps it). Both go through the actions, so the gate is theirs: an
  * admin who is a person; anyone else sees nothing and mints nothing. The top
  * line says who may sign up now, as MCP `signup` does; `s` picks open, invite
- * or closed, shows from → to and changes it only after a confirm.
+ * or closed, shows from → to and changes it only after a confirm; `a` does the
+ * same for who may start an agent here (open, code or off, `Agents can start here`).
  */
 
 import { inviteLink, list, mint, revoke } from "../../actions/invites.ts";
 import { INVITE_NOT_OPEN } from "../../actions/sever_invite_words.ts";
-import { changeSignup, readSignup } from "../../actions/signup.ts";
+import { changeAgentStart, changeSignup, readAgentStart, readSignup } from "../../actions/signup.ts";
+import { AGENT_START_MODES, type AgentStartMode } from "../../settings/agent_start.ts";
 import { SIGNUP_MODES, type SignupMode } from "../../settings/signup.ts";
 import { DEFAULT_DAYS, MAX_DAYS, type Invite } from "../../core/invites.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -71,6 +73,27 @@ export function invitesScreen(f: Session, ctx: Ctx): Screen {
     );
   };
 
+  const agentStart = () => readAgentStart(f.app, f.user);
+
+  const planAgentStart = (to: AgentStartMode): void => {
+    const now = agentStart();
+    if (!now.ok || now.value === to) return;
+    const from = now.value;
+    ctx.push(
+      confirmScreen(ctx, screen, {
+        title: "Agents can start here",
+        body: [`Would set agent start from ${from} to ${to}.`],
+        actions: [{ label: "Change" }, { label: "Cancel" }],
+        onChoose: (i) => {
+          if (i !== 0) return;
+          const changed = changeAgentStart(f.app, f.user, to);
+          note = changed.ok ? `agent start: ${from} → ${changed.value}.` : "You cannot change agent start.";
+          ctx.invalidate();
+        },
+      }),
+    );
+  };
+
   const rows = (): ListRow[] =>
     items().map((i) => ({
       title: i.id,
@@ -86,7 +109,7 @@ export function invitesScreen(f: Session, ctx: Ctx): Screen {
         binding(["j", "k"], "move cursor"),
         binding(["m"], "make a link"),
         binding(["x"], "revoke"),
-        ...(signup().ok ? [binding(["s"], "who may sign up")] : []),
+        ...(signup().ok ? [binding(["s"], "who may sign up"), binding(["a"], "agents can start here")] : []),
       ];
     },
     render(area, s) {
@@ -95,7 +118,7 @@ export function invitesScreen(f: Session, ctx: Ctx): Screen {
       const sg = signup();
       const [top, head, body] = split(area, "v", [len(sg.ok ? 1 : 0), len(1), fill(1)]);
       if (sg.ok)
-        s.text(top!.x, top!.y, truncate(`signup: ${sg.value.signup}. s changes it.`, top!.w), style(c.fg, c.bg), top!.x + top!.w);
+        s.text(top!.x, top!.y, truncate(`signup: ${sg.value.signup}. s changes it; a, who may start an agent (${agentStart().ok ? (agentStart() as { value: string }).value : ""}).`, top!.w), style(c.fg, c.bg), top!.x + top!.w);
       const text =
         note !== ""
           ? note
@@ -151,6 +174,20 @@ export function invitesScreen(f: Session, ctx: Ctx): Screen {
               ...(m === now.value.signup ? { hint: "now" } : {}),
             })),
             onPick: ([m]) => plan(m as SignupMode),
+          }),
+        );
+      } else if (e.key === "a") {
+        const now = agentStart();
+        if (!now.ok) return false;
+        ctx.push(
+          pickerScreen(ctx, screen, {
+            title: "Agents can start here",
+            items: AGENT_START_MODES.map((m) => ({
+              id: m,
+              label: m,
+              ...(m === now.value ? { hint: "now" } : {}),
+            })),
+            onPick: ([m]) => planAgentStart(m as AgentStartMode),
           }),
         );
       } else return false;

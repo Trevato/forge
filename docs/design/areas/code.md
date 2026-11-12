@@ -12,3 +12,5 @@
 - `.moved-from` (#10109) — the one muted line "Moved from <old path> on <date>" under a repository head for 30 days after a move; the path wraps anywhere, so no sideways scroll at 390px.
 
 A font specimen (`render/font.ts`): `.font-view` sits in a bare card (`card({ extra: "bare" })`, no box of its own); `.font-name` its family heading, `.font-line` one line of sample text, and `.font-s`, `.font-m`, `.font-l` its three sizes. The small size is 14px; the larger two are display sizes, off the UI scale on purpose.
+
+An HTML file's preview (`render/html_preview.ts`): `.html-frame` is a bare sandboxed frame with its own hairline (no card around it) 80vh tall (480px at least, 60vh on a phone). The frame is `color-scheme: light`, so the page inside gets the white canvas it was written for in either theme.

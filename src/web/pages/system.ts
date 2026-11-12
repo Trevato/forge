@@ -12,10 +12,16 @@
  * Between them, the main-thread stalls of the last hour by route (#9016),
  * read once at first paint from the loop watch: the top routes plus
  * /api/v1/telemetry/flow always, as /metrics exports them.
+ * Just above the stalls, the last 20 minutes' worst loop lag against the
+ * 100 ms bar (#11220, `perf/lag_minutes.ts`), each minute over it named.
  * Then the in-process caches that answer strangers' code pages (#9514), each
  * with its entries, bytes held beside its cap, and hits and misses: together
  * they may hold ~128 MB, so what they hold is shown where memory is.
+ * A child forge in a cell shows its own size and its use against it, one
+ * line each for memory, CPU and disk; a parent lists each child's use
+ * against its size (#10853, `spawn/usage.ts`).
  */
+import { mayReadRefusals } from "../../core/first_ask_refusals.ts";
 import { canSeeMemory, memoryHours } from "../../boards/memory.ts";
 import { telemetryReader } from "../../actions/telemetry.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -27,8 +33,10 @@ import { live } from "../../system/live.ts";
 import { readerPaces, type ReaderPace } from "../../system/telemetry_reads.ts";
 import { slowPageLine, slowPages, type SlowPage } from "../../perf/watch.ts";
 import { stallHour } from "../../metrics/stalls.ts";
-import type { RouteStall } from "../../perf/loop.ts";
-import { loopWatch } from "../../perf/live.ts";
+import { HOUR_MS, type RouteStall } from "../../perf/loop.ts";
+import { lagMinutes, loopWatch, stallBlame } from "../../perf/live.ts";
+import { LAG_BAR_MS, LAG_READINGS, overBar, type LagReading } from "../../perf/lag_minutes.ts";
+import { WORST_STALLS, type BlamedStall } from "../../perf/stall_blame.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html, raw, type Html } from "../html.ts";
@@ -39,7 +47,9 @@ import { KEPT_PAGE_BYTES, keptPageStats } from "./kept_page.ts";
 import { COLUMN_BYTES, PARTS_BYTES, keptPartsStats, treeCacheStats } from "./tree_cache.ts";
 import { featureHealth, type FeatureHealth } from "../../system/feature_health.ts";
 import { egressReportedLine } from "../../system/egress_line.ts";
-import { badge, chartBox, meter, pill, row } from "../ui.ts";
+import { badge, chartBox, disclosure, meter, pill, row, time } from "../ui.ts";
+import { childDirOf, listChildren } from "../../actions/spawn.ts";
+import { childrenUse, realSelf, selfUse, shareOf, sizeWords, useWords, type ChildUseRow, type SelfUse } from "../../spawn/usage.ts";
 
 /** A group's memory, and a cell's beside its cap and who holds the cap. */
 const memoryOf = (g: { rssBytes: number; capBytes: number | null; capBy: "kernel" | "watch" | null }): Html =>
@@ -66,6 +76,49 @@ const meterRow = (name: string, value: number | null, max: number, figure: strin
 /** A name and one figure, no bar: load, a disk's I/O, a link's rates. */
 const figureRow = (name: string, figure: string, data: Record<string, string> = {}): Html =>
   row({ title: name, trail: html`<span class="mono">${figure}</span>`, data });
+
+/** This forge's own size and use when it is a child in a cell (#10853); nothing on any other forge. */
+export function selfSection(self: SelfUse | null): Html {
+  if (self === null) return html``;
+  const { use, size } = self;
+  const w = useWords(use);
+  return html`<section class="settings-block" id="sys-self" data-size="${size}" data-from="${self.from}"><h2>This forge's size: ${size}</h2>
+    <ul class="list" aria-label="This forge's use against its size">
+      ${meterRow("memory", use.memoryMiB, use.limits.memoryMiB, w.memory)}
+      ${meterRow("cpu", use.cores, use.limits.cpu, use.cores === null ? `measuring · ${w.cpu}` : w.cpu)}
+      ${meterRow("disk", use.diskMiB, use.limits.diskMiB, w.disk)}
+    </ul>
+    </section>`;
+}
+
+/** What this forge's own size section leaves to the page's `?`: who set the size and what is measured. */
+export const selfHelp = (self: SelfUse | null): Html | null =>
+  self === null ? null : html`<p id="sys-self-help">Size is set by the forge that made this one. ${self.from === "process" ? "Memory and CPU count this process alone. " : ""}Disk is measured every 30 seconds.</p>`;
+
+/** What a child row says beside its meter: a cell's three figures, or why there are none. */
+const childSaid = (r: ChildUseRow): string => {
+  if (r.use.kind === "shared") return "shared with this forge";
+  if (r.use.kind === "idle") return "not running";
+  const w = useWords(r.use);
+  return `memory ${w.memory} · cpu ${w.cpu} · disk ${w.disk}`;
+};
+
+/** Each child this forge made, its use against its size (#10853); nothing when it made none. */
+export function childrenSection(rows: readonly ChildUseRow[]): Html {
+  if (rows.length === 0) return html``;
+  return html`<section class="settings-block" id="sys-children"><h2>Child forges</h2>
+    <ul class="list" aria-label="Each child forge's use against its size">${rows.map((r) => {
+      const said = childSaid(r);
+      const share = r.use.kind === "cell" ? shareOf(r.use.memoryMiB, r.use.limits.memoryMiB) : null;
+      return row({
+        title: /^https?:\/\//.test(r.url) ? html`<a href="${r.url}">${r.name}</a>` : r.name,
+        titleAttr: r.name,
+        meta: html`${share === null ? null : html`${meter(share, `${r.name} memory`, share >= 85 ? "attn" : undefined)} `}<span class="mono small">${said}</span>`,
+        trail: html`<span class="mono small">${sizeWords(r.size)}</span>`,
+        data: { child: r.name, use: r.use.kind },
+      });
+    })}</ul></section>`;
+}
 
 /** Processes grouped forge, crew, check, app, host; the client re-sorts them by CPU or memory (`system-live.ts`). */
 const KIND_ORDER = ["forge", "crew", "check", "app", "host"] as const;
@@ -97,7 +150,7 @@ function memorySection(ctx: Ctx): Html {
   const series = (title: string, pick: (h: (typeof hours)[number]) => number) =>
     html`<div><h3 class="small">${title}</h3>${chartBox("line", hours.map((h) => ({ label: hhmm(h.at).slice(11), value: pick(h) / 1_048_576 })), title)}</div>`;
   return html`<section class="settings-block" id="sys-memory"><h2>Forge memory</h2>${hours.length === 0
-    ? html`<p class="muted">No samples yet: the forge samples its memory every minute, so the first hour appears shortly.</p>`
+    ? html`<p class="muted">No samples yet.</p>`
     : html`<div class="plots">${series("RSS (MiB, hourly mean)", (h) => h.rssMean)}${series("JS heap (MiB, hourly mean)", (h) => h.heapMean)}</div>
         <div class="table-scroll"><table class="table" aria-label="Forge memory by hour">
           <thead><tr><th scope="col">Hour (UTC)</th><th scope="col" class="num">RSS mean</th><th scope="col" class="num">RSS max</th><th scope="col" class="num">Heap mean</th><th scope="col" class="num">Heap max</th></tr></thead>
@@ -127,11 +180,10 @@ export const pageCaches = (): CacheRow[] => [
 /** `pageCaches`' rows as a table; the hit rate is hits over hits and misses since the process started. */
 export function cachesSection(rows: readonly CacheRow[]): Html {
   const rate = (r: CacheRow) => (r.hits + r.misses === 0 ? "—" : `${((100 * r.hits) / (r.hits + r.misses)).toFixed(1)}%`);
-  return html`<section class="settings-block"><h2>Code page caches</h2>
-    <p class="small muted">Counts since this process started.</p>
+  return html`<section class="settings-block"><h2>Code page caches, since start</h2>
       <div class="table-scroll"><table class="table" aria-label="Code page caches">
-        <thead><tr><th scope="col">Cache</th><th scope="col">Holds</th><th scope="col" class="num">Entries</th><th scope="col" class="num">Bytes</th><th scope="col" class="num">Cap</th><th scope="col" class="num">Hits</th><th scope="col" class="num">Misses</th><th scope="col" class="num">Hit rate</th></tr></thead>
-        <tbody>${rows.map((r) => html`<tr data-cache="${r.name}" data-bytes="${String(r.bytes)}"><td>${r.name}</td><td class="small muted">${r.holds}</td><td class="num mono">${String(r.entries)}</td><td class="num mono">${mib(r.bytes)}</td><td class="num mono">${mib(r.capBytes)}</td><td class="num mono">${String(r.hits)}</td><td class="num mono">${String(r.misses)}</td><td class="num mono">${rate(r)}</td></tr>`)}</tbody>
+        <thead><tr><th scope="col">Cache</th><th scope="col" class="num">Entries</th><th scope="col" class="num">Bytes</th><th scope="col" class="num">Cap</th><th scope="col" class="num">Hits</th><th scope="col" class="num">Misses</th><th scope="col" class="num">Hit rate</th></tr></thead>
+        <tbody>${rows.map((r) => html`<tr data-cache="${r.name}" data-bytes="${String(r.bytes)}"><td>${r.name}</td><td class="num mono">${String(r.entries)}</td><td class="num mono">${mib(r.bytes)}</td><td class="num mono">${mib(r.capBytes)}</td><td class="num mono">${String(r.hits)}</td><td class="num mono">${String(r.misses)}</td><td class="num mono">${rate(r)}</td></tr>`)}</tbody>
       </table></div></section>`;
 }
 
@@ -153,15 +205,53 @@ export function featuresSection(rows: readonly FeatureHealth[]): Html {
 }
 
 /** The last hour's stalls by route, most milliseconds first; the rows are `stallHour`'s. */
-export function stallSection(rows: readonly RouteStall[]): Html {
-  return html`<section class="settings-block"><h2>Main-thread stalls, last hour</h2>
-    <p class="small muted">Past 250 ms, as of this page's load; <code>/metrics</code> has the series.</p>${
+export function stallSection(rows: readonly RouteStall[], worst: Html = html``): Html {
+  return html`<section class="settings-block"><h2>Main-thread stalls, last hour</h2>${
     rows.length === 0
       ? html`<p class="muted">No stalls in the last hour.</p>`
       : html`<div class="table-scroll"><table class="table" aria-label="Main-thread stalls by route, last hour">
         <thead><tr><th scope="col">Route</th><th scope="col" class="num">Stall ms</th><th scope="col" class="num">Stalls</th></tr></thead>
         <tbody>${rows.map((r) => html`<tr data-route="${r.route}"><td class="mono">${r.route}</td><td class="num mono">${String(Math.round(r.ms))}</td><td class="num mono">${String(r.count)}</td></tr>`)}</tbody>
-      </table></div>`}</section>`;
+      </table></div>`}${worst}</section>`;
+}
+
+/** How many of the last hour's worst stalls the page lists (#11069); the terminal lists as many. */
+export { WORST_STALLS };
+
+/**
+ * The last hour's worst single stalls, each with what ran (#11069), drawn inside
+ * the stalls section and only when there is one, so a quiet /system reads as before.
+ * `at` is on the watcher's clock (`performance.now`); `nowMono`/`nowWall` are one
+ * instant on it and on the wall clock, so a stall's wall time is `nowWall − (nowMono − at)`.
+ */
+export function worstStallsTable(rows: readonly BlamedStall[], nowMono: number, nowWall: number): Html {
+  if (rows.length === 0) return html``;
+  return html`<h3 id="sys-worst-stalls">Worst single stalls</h3><div class="table-scroll"><table class="table" aria-label="Worst single stalls, last hour">
+        <thead><tr><th scope="col">What ran</th><th scope="col" class="num">ms</th><th scope="col">When</th></tr></thead>
+        <tbody>${rows.map((r) => html`<tr data-what="${r.what}"><td class="mono">${r.what}</td><td class="num mono">${String(Math.round(r.ms))}</td><td>${time(new Date(nowWall - (nowMono - r.at)).toISOString())}</td></tr>`)}</tbody>
+      </table></div>`;
+}
+
+/**
+ * The last 20 minutes' worst loop lag against the 100 ms bar (#11220): how many
+ * are over it, then one row a minute, oldest first — its worst ms, and what its
+ * worst named stall ran under (`loopWorstWhat`'s name), or "not named" when no
+ * wake in it passed the 200 ms stall limit. A row over the bar is marked.
+ */
+export function lagSection(rows: readonly LagReading[]): Html {
+  const over = overBar(rows);
+  return html`<div id="sys-lag" data-readings="${String(rows.length)}" data-over="${String(over)}"><section class="settings-block"><h2>Loop lag, last ${String(LAG_READINGS)} minutes</h2>${
+    rows.length === 0
+      ? html`<p class="muted">No full minute measured yet.</p>`
+      : html`<div class="row-meta">${over === 0 ? badge(`all ${String(rows.length)} under ${String(LAG_BAR_MS)} ms`) : badge(`${String(over)} of ${String(rows.length)} over ${String(LAG_BAR_MS)} ms`, { tone: "danger" })}</div>
+        <div class="table-scroll"><table class="table" aria-label="Worst loop lag each minute against the ${String(LAG_BAR_MS)} ms bar">
+          <thead><tr><th scope="col">Minute</th><th scope="col" class="num">Worst ms</th><th scope="col">What ran</th></tr></thead>
+          <tbody>${rows.map((r) => {
+            const isOver = r.ms > LAG_BAR_MS;
+            return html`<tr data-lag-over="${isOver ? "1" : "0"}"><td>${time(new Date(r.at).toISOString())}</td><td class="num mono">${String(Math.round(r.ms))}${isOver ? html` ${badge("over", { tone: "danger" })}` : null}</td><td class="mono">${r.what ?? html`<span class="muted">not named</span>`}</td></tr>`;
+          })}</tbody>
+        </table></div>`
+  }</section></div>`;
 }
 
 const SLOW_TTL_MS = 5000;
@@ -201,7 +291,7 @@ export function readersSection(rows: readonly ReaderPace[]): Html {
 export function regions(v: SystemView): Record<string, string> {
   const dup: Html =
     v.duplicates.length === 0
-      ? html`<p id="duplicates" data-count="0" class="muted">No test file is running in more than one check.</p>`
+      ? html`<p id="duplicates" data-count="0" class="muted">✓ no repeated tests</p>`
       : html`<p id="duplicates" data-count="${String(v.duplicates.length)}">
             <strong>${String(v.duplicates.length)} test file${v.duplicates.length === 1 ? " is" : "s are"}
             running in more than one check at once:</strong>
@@ -252,7 +342,7 @@ export function systemStream(ctx: Ctx): Response {
 }
 
 // GET /system
-export function systemPage(ctx: Ctx): Response {
+export async function systemPage(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const reader = timePhase(ctx.request, "reader", () => telemetryReader(ctx.app, ctx.auth.user!));
@@ -261,46 +351,61 @@ export function systemPage(ctx: Ctx): Response {
   const [holder, pids] = timePhase(ctx.request, "caps", () => [memoryCapHolder(), processCapHolder()] as const);
   const caps: Html =
     holder.by === "kernel"
-      ? html`<p class="small" id="cell-caps" data-by="kernel">Each cell's memory is capped by the kernel (its own cgroup's <code>memory.max</code>): a cell over it is killed alone.</p>`
-      : html`<p class="small" id="cell-caps" data-by="watch">Each cell's memory is watched once a second and the cell stopped over its cap; the kernel does not cap it (${holder.reason}).</p>`;
+      ? html`<p id="cell-caps" data-by="kernel">Each cell's memory is capped by the kernel (its own cgroup's <code>memory.max</code>): a cell over it is killed alone.</p>`
+      : html`<p id="cell-caps" data-by="watch">Each cell's memory is watched once a second and the cell stopped over its cap; the kernel does not cap it (${holder.reason}).</p>`;
   const processCaps: Html =
     pids.by === "kernel"
-      ? html`<p class="small" id="cell-pids" data-by="kernel">Each cell's processes are capped by the kernel at ${PROCESSES_MAX} (its cgroup's <code>pids.max</code>; not a crew run's): a fork past it fails inside that cell.</p>`
-      : html`<p class="small" id="cell-pids" data-by="watch">Each cell's processes are counted once a second and the cell stopped past ${PROCESSES_MAX}; the kernel does not cap them (${pids.reason}).</p>`;
+      ? html`<p id="cell-pids" data-by="kernel">Each cell's processes are capped by the kernel at ${PROCESSES_MAX} (its cgroup's <code>pids.max</code>; not a crew run's): a fork past it fails inside that cell.</p>`
+      : html`<p id="cell-pids" data-by="watch">Each cell's processes are counted once a second and the cell stopped past ${PROCESSES_MAX}; the kernel does not cap them (${pids.reason}).</p>`;
+  // The two caps as a word each beside the machine's figures; the sentences are in the `?`.
+  const capWords: Html = html`<div class="row-meta" id="cap-words">${pill(`cell memory: ${holder.by === "kernel" ? "kernel-capped" : "watched"}`)} ${pill(`cell processes: ${pids.by === "kernel" ? "kernel-capped" : "watched"}`)}</div>`;
   const egressSaid = egressReportedLine(ctx.app.db);
   const egressLine: Html | null =
     egressSaid === null ? null : html`<p class="small" id="egress-reported">${egressSaid} <a href="/settings/capacity">Capacity</a></p>`;
   const memory = memorySection(ctx);
+  // Size and children are the owner's to see, as the terminal's System command is (`canSeeMemory`).
+  const owner = canSeeMemory(ctx.auth.user);
+  const self = owner ? timePhase(ctx.request, "self", () => selfUse(realSelf(ctx.app.config.dataDir))) : null;
+  const children = owner ? childrenUse(await listChildren(ctx.app), (bodyId) => childDirOf(ctx.app, bodyId)) : [];
   const stalls = timePhase(ctx.request, "stalls", () => stallHour(loopWatch.tally(performance.now())));
+  const nowMono = performance.now();
+  const worst = stallBlame.worst(nowMono, HOUR_MS, WORST_STALLS);
   const rendering = performance.now();
   const r = regions(v);
   const at = (id: string): Html => raw(r[id]!);
+  const help = disclosure("? How to read this", html`<div class="prose break" id="sys-help">
+      <p>The machine now, updated in place about every 2 s over one event stream. Its history is on <a href="/boards">Boards</a> (the machine source).</p>
+      ${caps}${processCaps}${selfHelp(self)}
+      <p>Stalls are main-thread pauses past 200 ms, as of this page's load; <code>/metrics</code> has the series.</p>
+      <p>Cache counts are since this process started. What each cache holds:</p>
+      <ul>${pageCaches().map((c) => html`<li><strong>${c.name}</strong>: ${c.holds}</li>`)}</ul>
+      <p>The forge samples its memory every minute, so the first hour of its chart appears shortly after a start.</p>
+    </div>`, { id: "sys-more" });
   const body = html`<div class="page-head">
       <h1>System</h1>
-      <p class="muted">
-        The machine now, updated in place about every 2 s over one event
-        stream; <a href="/system?pause">pause</a>. Its history is on
-        <a href="/boards">Boards</a> (the machine source); the pipeline is on
-        <a href="/boards">Boards</a>.
-      </p>
+      <span class="spacer"></span><a href="/system?pause">pause</a>
     </div>
+    ${help}
+    ${mayReadRefusals(ctx.auth.user) ? html`<p class="small"><a href="/forges/refused">Refused first asks</a></p>` : null}
     <div id="sys-dup">${at("sys-dup")}</div>
     <section class="settings-block"><h2>Machine</h2>
       <div id="summary" class="row-meta">${at("summary")}</div>
         <ul class="list" id="cores" aria-label="Per-core CPU, percent, with its last readings">${at("cores")}</ul>
         <ul class="list" id="mem">${at("mem")}</ul>
-        ${caps}
-        ${processCaps}
+        ${capWords}
         ${egressLine}
         <p class="small mono" id="temps">${at("temps")}</p></section>
+    ${selfSection(self)}
+    ${childrenSection(children)}
     <section class="settings-block"><h2>Disks and network</h2>
       <ul class="list" id="sys-disks">${at("sys-disks")}</ul></section>
     <section class="settings-block"><h2>Processes</h2>
       <div class="js-only small muted">Sort by <button class="btn" data-size="sm" type="button" data-sort="cpu" aria-pressed="true"><kbd>c</kbd> CPU</button>
         <button class="btn" data-size="sm" type="button" data-sort="mem" aria-pressed="false"><kbd>m</kbd> memory</button></div>
-      <div id="sys-procs">${at("sys-procs")}</div></section>
+      <div id="sys-procs" data-live-hold>${at("sys-procs")}</div></section>
     ${featuresSection(timePhase(ctx.request, "features", () => featureHealth(ctx.app, reader)))}
-    <div id="sys-stalls">${stallSection(stalls)}</div>
+    ${lagSection(lagMinutes.readings())}
+    <div id="sys-stalls">${stallSection(stalls, worstStallsTable(worst, nowMono, Date.now()))}</div>
     <div id="sys-slow-pages">${slowPagesSection(timePhase(ctx.request, "slowpages", () => slowPagesCached(ctx.app.db)))}</div>
     <div id="sys-readers">${readersSection(readerPaces())}</div>
     <div id="sys-caches">${cachesSection(pageCaches())}</div>

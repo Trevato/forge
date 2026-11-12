@@ -20,10 +20,13 @@ import type { App } from "../app.ts";
 import { appsForRepos } from "../core/apps.ts";
 import { markOf, type Mark } from "../core/marks.ts";
 import {
+  DEFAULT_WEIGHTS,
   frontScore,
   frontSignals,
   frontWeights,
+  SIGNAL_DAYS,
   type FrontSignals,
+  type FrontWeights,
 } from "../core/front.ts";
 import { isSafeName } from "../git/guard.ts";
 import { canEnterApp, listReposVisibleTo, type Repo } from "../core/repos.ts";
@@ -106,7 +109,9 @@ export const EXPLORE_PARAMS = ["kind", "sort", "updated", "owner", "archived"] a
 export function exploreLineFrom(get: (name: string) => string | null | undefined): string {
   const given = new Map<string, string>();
   for (const key of EXPLORE_PARAMS) {
-    const value = (get(key) ?? "").replace(/\s+/g, "").slice(0, 100);
+    // `since` is the same window as `updated`, in the words the chips are shared in.
+    const raw = get(key) || (key === "updated" ? get("since") : "") || "";
+    const value = raw.replace(/\s+/g, "").slice(0, 100);
     if (value !== "") given.set(key, value);
   }
   // A parameter wins: the same key typed in `q` is dropped, not left to the reader's order.
@@ -122,7 +127,7 @@ export function exploreParams(query: ExploreQuery): string {
   const p = new URLSearchParams();
   if (query.kind !== "all") p.set("kind", query.kind);
   if (query.sort !== "score") p.set("sort", query.sort);
-  if (query.updated !== "all") p.set("updated", query.updated);
+  if (query.updated !== "all") p.set("since", query.updated);
   if (query.archived) p.set("archived", "yes");
   if (query.owner !== undefined) p.set("owner", query.owner);
   if (query.text !== "") p.set("q", query.text);
@@ -283,6 +288,63 @@ export function exploreLine(query: ExploreQuery): string {
     .join(" ");
 }
 
+const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
+
+/** How long ago a row last shipped, in words; "" when it never did. */
+function shippedWords(shippedAt: string | null, now: number): string {
+  if (shippedAt === null) return "";
+  const days = Math.floor((now - Date.parse(shippedAt)) / 86_400_000);
+  if (!Number.isFinite(days)) return "";
+  if (days < 1) return "shipped today";
+  if (days === 1) return "shipped yesterday";
+  return `shipped ${days} days ago`;
+}
+
+/** The signals a row can rank by; a row line that says one need not say it twice. */
+export type WhySignal = "forks" | "ships" | "likes" | "fresh" | "use";
+
+/**
+ * The one signal that most explains a row's place, and its phrase, from the
+ * numbers the ranking already holds (no query). A named sort says its own
+ * signal; the default weighs each as the score does (`frontScore`'s terms at
+ * the forge's `weights`, `LIKE_WEIGHT` for likes) and says the largest; a tie
+ * goes to forks, then ships, likes, freshness, use. Undefined when the row has none.
+ */
+export function whyOf(
+  row: ExploreRow,
+  sort: ExploreSort,
+  now: number,
+  weights: FrontWeights = DEFAULT_WEIGHTS,
+): { signal: WhySignal; text: string } | undefined {
+  const n = row.numbers;
+  const text: Record<WhySignal, string> = {
+    forks: n.forks > 0 ? plural(n.forks, "fork", "forks") : "",
+    ships: n.ships > 0 ? `${n.ships} shipped this month` : "",
+    likes: n.likes > 0 ? plural(n.likes, "like", "likes") : "",
+    fresh: shippedWords(row.shippedAt, now),
+    use: n.awakeHours > 0 ? "in use" : "",
+  };
+  if (sort === "name") return undefined;
+  if (sort !== "score") {
+    const signal: WhySignal = sort;
+    return text[signal] === "" ? undefined : { signal, text: text[signal] };
+  }
+  const days = row.shippedAt === null ? Infinity : Math.max(0, (now - Date.parse(row.shippedAt)) / 86_400_000);
+  const weighed: [WhySignal, number][] = [
+    ["forks", weights.forks * Math.log1p(n.forks)],
+    ["ships", weights.ships * Math.log1p(n.ships)],
+    ["likes", LIKE_WEIGHT * Math.log1p(n.likes)],
+    ["fresh", weights.fresh * Math.max(0, 1 - days / SIGNAL_DAYS)],
+    ["use", weights.use * Math.log1p(n.awakeHours)],
+  ];
+  let best: [WhySignal, number] | undefined;
+  for (const w of weighed) if (w[1] > 0 && text[w[0]] !== "" && (best === undefined || w[1] > best[1])) best = w;
+  return best === undefined ? undefined : { signal: best[0], text: text[best[0]] };
+}
+
+/** The one fork action an app row offers: the page's button and the MCP row's `action` say these words. */
+export const MAKE_IT_YOURS = { do: "make_it_yours", label: "Make it yours" } as const;
+
 export interface ExploreRow {
   readonly kind: ExploreKind;
   readonly name: string;
@@ -310,6 +372,25 @@ export interface ExploreRow {
    * private one they enter as its own. The same rules Make it yours checks.
    */
   readonly copyable?: boolean;
+  /** Present exactly when `copyable`: the action name (an MCP tool) and label the page shows. */
+  readonly action?: typeof MAKE_IT_YOURS;
+}
+
+const NOUNS = {
+  app: ["app", "apps"],
+  person: ["person", "people"],
+  forge: ["forge", "forges"],
+  all: ["result", "results"],
+} as const;
+
+/** True when the line narrows the list; the sort only orders it. */
+export const exploreFiltered = (q: ExploreQuery): boolean =>
+  q.kind !== "all" || q.text !== "" || q.archived || q.updated !== "all" || q.owner !== undefined;
+
+/** How much a filter leaves, in words: "2 apps", "1 app", "No apps match". One sentence for the page and the terminal. */
+export function exploreCount(query: ExploreQuery, total: number): string {
+  const noun = NOUNS[query.kind];
+  return total === 0 ? `No ${noun[1]} match` : `${total.toLocaleString("en-US")} ${noun[total === 1 ? 0 : 1]}`;
 }
 
 /**
@@ -338,10 +419,22 @@ export async function explore(
   return (await everything(app, viewer, query, now)).slice(0, ROWS);
 }
 
+/** The rows as the API and the MCP send them: each with its `why` line when the ranking has one to say (omitted otherwise). */
+export function rowsWithWhy(app: App, query: ExploreQuery, items: readonly ExploreRow[]): (ExploreRow & { why?: string })[] {
+  const weights = frontWeights(app.db);
+  const now = Date.now();
+  return items.map((row) => {
+    const why = whyOf(row, query.sort, now, weights);
+    return why === undefined ? row : { ...row, why: why.text };
+  });
+}
+
 export interface ExplorePage {
   readonly items: readonly ExploreRow[];
   /** Pass back as `cursor` for the page after; null on the last. */
   readonly nextCursor: string | null;
+  /** Every row the query leaves, whatever page this is. */
+  readonly total: number;
 }
 
 /**
@@ -369,6 +462,7 @@ export async function explorePage(
   return {
     items,
     nextCursor: rest.length > ROWS ? writeCursor(items[items.length - 1]!, query) : null,
+    total: rows.length,
   };
 }
 
@@ -512,6 +606,7 @@ function rank(
   const appRows: ExploreRow[] = appRepos.map((repo) => {
     const s = told(repo);
     const liked = likes.get(repo.id) ?? 0;
+    const canCopy = copyable(repo);
     return {
       kind: "app",
       name: `${repo.ownerName}/${repo.name}`,
@@ -527,7 +622,8 @@ function rank(
       shippedAt: s.shippedAt,
       score: frontScore(s, now, weights) + LIKE_WEIGHT * Math.log1p(liked),
       repo: { owner: repo.ownerName, name: repo.name },
-      copyable: copyable(repo),
+      copyable: canCopy,
+      ...(canCopy ? { action: MAKE_IT_YOURS } : {}),
     };
   });
 
@@ -582,7 +678,7 @@ function rank(
 }
 
 /** What a like adds to the score sort: modest next to forks (3) and ships (2). */
-const LIKE_WEIGHT = 0.5;
+export const LIKE_WEIGHT = 0.5;
 
 /** Likes on posts about each repository; the caller passes only repositories the viewer may read. */
 function likesByRepo(db: Database, repoIds: readonly string[]): Map<string, number> {

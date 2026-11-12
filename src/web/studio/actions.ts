@@ -22,7 +22,7 @@ import { mergePull } from "../../actions/pulls.ts";
 import { revertPull } from "../../actions/revert.ts";
 import { takeBackWords } from "../../actions/revert_words.ts";
 import { getPull } from "../../core/pulls.ts";
-import { canRead, getRepo, type Repo } from "../../core/repos.ts";
+import { canRead, canWrite, getRepo, type Repo } from "../../core/repos.ts";
 import { bringUpToDate } from "../../crew/autonomy.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, loadRepo, notFoundPage, pageHead, repoBase, signInFirst } from "../chrome.ts";
@@ -33,7 +33,9 @@ import { backTo, field, readForm, type Form } from "../form.ts";
 import { isLocalPath } from "../flash.ts";
 import { html } from "../html.ts";
 import { flashOrJson, flashTo, page } from "../layout.ts";
-import { FORGE_TARGET } from "./feed.ts";
+import { crewCanRun, NO_CREDIT_WORDS } from "./crew_key.ts";
+import { FORGE_TARGET, NEW_APP_TARGET } from "./feed.ts";
+import { AUTONOMY_FAILED_WORDS, firstAsk } from "../../actions/first_ask.ts";
 import { changeHref } from "./nouns.ts";
 
 /** A merge refusal in a person's words. */
@@ -72,7 +74,20 @@ async function tellFrom(
       tone: "danger",
       message: SAY_SOMETHING_WORDS,
     });
-  const told = await tell(ctx.app, ctx.auth.user, repo, text, 1, from);
+  return toldAnswer(ctx, repo, form, back, from, await tell(ctx.app, ctx.auth.user, repo, text, 1, from), onTold);
+}
+
+/** The answer to one tell, however it was made: refused as the crew's direction says, or told. */
+function toldAnswer(
+  ctx: Ctx,
+  repo: Repo,
+  form: Form,
+  back: string,
+  from: string | null,
+  told: Awaited<ReturnType<typeof tell>>,
+  onTold: () => void,
+  note = "",
+): Promise<Response> | Response {
   if (!told.ok && told.error === "body_too_long")
     return flashOrJson(ctx, back, {
       tone: "danger",
@@ -95,6 +110,9 @@ async function tellFrom(
   if (from === "/" && field(form, "ask") === "1") return flashOrJson(ctx, back, { message: SENT_WORDS });
   // The tell's own page, for a caller that asked for JSON (the palette's row).
   const at = { href: `${repoBase(repo)}/issues/${told.value.issue.number}` };
+  // "Build" never silently does nothing: with no credit the person is told, with the way forward.
+  if (!crewCanRun(ctx.app)) return flashOrJson(ctx, back, noCreditFlash(ctx), at);
+  if (note !== "") return flashOrJson(ctx, back, { tone: "attn", message: note }, at);
   if (routed === undefined)
     return flashOrJson(
       ctx,
@@ -113,6 +131,15 @@ async function tellFrom(
     },
     at,
   );
+}
+
+/** The flash for words kept while the crew has no credit: saved, the crew cannot build yet, and the way forward. */
+function noCreditFlash(ctx: Ctx): { tone: "attn"; message: string; link: { href: string; label: string } } {
+  return {
+    tone: "attn",
+    message: `Saved, but ${NO_CREDIT_WORDS.charAt(0).toLowerCase()}${NO_CREDIT_WORDS.slice(1)}`,
+    link: ctx.auth.user?.isAdmin === true ? { href: "/settings/subscriptions", label: "Add a model key" } : { href: "/pricing", label: "See the plans" },
+  };
 }
 
 /** POST /:owner/:name/tell  { text } — a sentence becomes work. */
@@ -147,7 +174,7 @@ async function tellFromPage(ctx: Ctx, repo: Repo, form: Form): Promise<Response>
     return flashTo(ctx, back, { tone: "danger", message: NOT_TOLD_FROM_WORDS });
   const text = field(form, "text").trim();
   if (text === "") return flashTo(ctx, back, { tone: "danger", message: SAY_SOMETHING_WORDS });
-  const told = await tell(ctx.app, ctx.auth.user, repo, `${text}${contextNote(where)}`);
+  const told = await tell(ctx.app, ctx.auth.user, repo, `${text}${contextNote(where, { preview: true })}`);
   if (!told.ok)
     return flashTo(ctx, back, {
       tone: "danger",
@@ -207,17 +234,26 @@ export async function composerSubmit(ctx: Ctx): Promise<Response> {
 
 async function composerTell(ctx: Ctx, form: Form, target: string, home: string, onTold: () => void): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
+  // The first ask of a new forge: one app made from the ask, the ask filed there (the terminal's first ask still keeps a thought).
+  if (target === NEW_APP_TARGET) {
+    const from = parseFrom(field(form, "from") || undefined) ?? null;
+    const first = await firstAsk(ctx.app, ctx.auth.user, field(form, COMPOSER_FIELDS.text), crewCanRun(ctx.app), from);
+    if (!first.ok) return flashOrJson(ctx, home, { tone: "danger", message: first.error.words });
+    const { repo, told, autonomyFailed } = first.value;
+    return toldAnswer(ctx, repo, form, repoBase(repo), from, told, onTold, autonomyFailed ? AUTONOMY_FAILED_WORDS : "");
+  }
   // "the forge" is no app: the words are kept as a thought, exactly as typed.
   if (target === FORGE_TARGET) {
     if (field(form, COMPOSER_FIELDS.text).trim() === "")
       return flashOrJson(ctx, home, { tone: "danger", message: SAY_SOMETHING_WORDS });
     const kept = keepThought(ctx.app, ctx.auth.user, field(form, COMPOSER_FIELDS.text), "composer");
     if (kept.ok) onTold();
+    // The first screen's Build: kept, and never silently nothing when the crew cannot run.
     return flashOrJson(
       ctx,
       home,
       kept.ok
-        ? { message: "Received." }
+        ? crewCanRun(ctx.app) ? { message: "Received." } : noCreditFlash(ctx)
         : {
             tone: "danger",
             message:
@@ -275,6 +311,28 @@ export async function shipSubmit(ctx: Ctx): Promise<Response> {
           tone: "danger" as const,
           message: `That could not ship: ${mergeWords(merged.error)}.`,
         }),
+  });
+}
+
+/** POST /:owner/:name/pulls/:number/update — ask the pull's agent to bring its branch up to date with main; nothing lands. A writer's. */
+export async function updateSubmit(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const base = repoBase(repo);
+  const number = Number(ctx.params.number);
+  const pull = Number.isInteger(number) ? getPull(ctx.app.db, repo.id, number) : undefined;
+  if (!pull || !mayView(ctx.app.db, repo, pull, ctx.auth.user)) return notFoundPage(ctx);
+  const back = backTo(form, changeHref(base, pull.number));
+  if (!canWrite(ctx.app.db, repo, ctx.auth.user))
+    return flashOrJson(ctx, back, { tone: "danger", message: "Only someone who can write here brings a pull up to date." });
+  const who = pull.state === "open" && pull.mergedAt === null ? bringUpToDate(ctx.app, repo, pull, []) : undefined;
+  return flashOrJson(ctx, back, {
+    ...(who === undefined
+      ? { tone: "danger" as const, message: "The crew could not take it now (closed, no agent, or it has already tried its limit); say what to do on the pull." }
+      : { message: `${who} is bringing #${pull.number} up to date with ${pull.baseBranch}.` }),
   });
 }
 

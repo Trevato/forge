@@ -23,6 +23,8 @@ import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { landIfGreen, REGATE_RED_MS, regateDue, sweepGreen } from "../src/crew/autonomy.ts";
 import { listComments } from "../src/core/issues.ts";
+import { doctorRuns, isDoctorHold } from "../src/checks/doctor.ts";
+import { getHold } from "../src/core/holds.ts";
 import { readQueues } from "../src/flow/queue.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { logLevel, setLogLevel } from "../src/kernel/log.ts";
@@ -681,6 +683,48 @@ describe("the merge queue", () => {
     expect(await sweepGreen(app, repo)).toBe(1);
     expect(gatesOf(repo)).toHaveLength(before + 1);
     expect(merged(repo, pull)).toBe(true);
+    // A red that went green on the re-gate was never the doctor's.
+    expect(getHold(app.db, pull.id)).toBeUndefined();
+    expect(doctorRuns(app.db, repo.id)).toEqual([]);
+  });
+
+  test("the batch doctor holds a red only once it reproduces on the re-gate, with its own comment (#7555)", async () => {
+    const repo = await autonomousRepo("doctor-wiring");
+    const pull = await greenPull(repo, "red-a.ts");
+    expect(await sweepGreen(app, repo)).toBe(0);
+    // First red: told, not held, nothing recorded.
+    expect(getHold(app.db, pull.id)).toBeUndefined();
+    expect(doctorRuns(app.db, repo.id)).toEqual([]);
+    age(pull);
+    expect(await sweepGreen(app, repo)).toBe(0);
+    // The same head and base red again: held, marked as the doctor's, recorded.
+    const hold = getHold(app.db, pull.id);
+    expect(hold?.until).toBe("green");
+    expect(isDoctorHold(hold!.why)).toBe(true);
+    expect(hold!.why).toContain("goes red");
+    const [run] = doctorRuns(app.db, repo.id);
+    expect(run).toMatchObject({ culprit: pull.number, class: "functional", action: "held" });
+    expect(doctorRuns(app.db, repo.id)).toHaveLength(1);
+    expect(listComments(app.db, pull.id).at(-1)!.body).toContain("bun test ./test/red.test.ts");
+  });
+
+  test("a red handed back while others landed ahead of it is not held by the doctor (#7555)", async () => {
+    const repo = await autonomousRepo("doctor-on-top");
+    const pulls = [];
+    for (const name of ["a.ts", "b.ts", "red-c.ts"]) pulls.push(await greenPull(repo, name));
+    expect(await sweepGreen(app, repo)).toBe(2);
+    const red = pulls[2]!;
+    expect(latestDecision(app.db, red.id, "land")?.answer).toBe("red");
+    expect(getHold(app.db, red.id)).toBeUndefined();
+    // No single culprit yet: recorded as a recheck with its members (#11262), never held.
+    const runs = doctorRuns(app.db, repo.id);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ culprit: red.number, action: "recheck" });
+    expect(runs[0]!.batch).toMatch(new RegExp(`^[0-9a-f]{12}:${red.headOid.slice(0, 12)}\\+#${pulls[0]!.number},#${pulls[1]!.number}$`));
+    // The re-gate alone is a first red on a new base with nothing landed ahead, or a reproduced one: neither adds a recheck row.
+    age(red);
+    await sweepGreen(app, repo);
+    expect(doctorRuns(app.db, repo.id).filter((r) => r.action === "recheck")).toHaveLength(1);
   });
 
   test("a red that reproduces on the re-gate stays red, told once", async () => {
@@ -695,7 +739,12 @@ describe("the merge queue", () => {
     expect(again?.answer).toBe("red");
     expect((again?.state as { again?: boolean }).again).toBe(true);
     expect(regateDue(again!, Date.now() + 10 * REGATE_RED_MS)).toBe(false);
-    expect(listComments(app.db, pull.id)).toHaveLength(comments);
+    // The red is not told twice. The one comment added is the doctor's hold
+    // notice: it says the red reproduced, which the first comment could not.
+    const added = listComments(app.db, pull.id).slice(comments);
+    expect(added).toHaveLength(1);
+    expect(added[0]!.body).toContain("The batch doctor held this pull");
+    expect(added[0]!.body).toContain("goes red");
     // However long it waits now, it is not gated again until a side moves.
     age(pull);
     const before = gatesOf(repo).length;

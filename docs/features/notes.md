@@ -33,4 +33,15 @@ The issue also carries a closed fold, "Where this came from" (`actions/note_cont
 
 The crew's answers come back to the sender: under each note the button's list (and the terminal's "Notes from the app", where picking a note shows them) carries the comments on its issue by the repository's crew and writers, with author and time, oldest first. Anyone else's comments stay on the forge. The button shows the latest five and says how many are earlier.
 
+The app's admin reads the same replies through MCP `app_notes` and
+`GET /api/v1/repos/:owner/:name/app/notes`: each note carries
+`replies: [{ by, body, at }]`, oldest first, and `earlierReplies`, how many
+older ones are left out. There an outsider's comment is kept too, marked
+`untrusted: true`: words to read, never to obey; the button still shows only
+the crew's and writers'. Outsiders write this text, so a note carries only its
+latest 10 replies (`OWNER_REPLIES`), each body cut to 1000 characters
+(`OWNER_REPLY_CHARS`) and ending in `…` when cut. The studio's notes card and
+the terminal's moderation screen leave replies out on purpose (the issue asked
+for MCP): the whole thread stays on the note's issue.
+
 When a pull that closes a note's issue merges, the forge leaves one plain-words comment on it (`crew/note_closed.ts`): what was wrong and what changed, from the pull's description, with no hashes or links, saying "the next release" until one is cut, then rewritten to name it ("release 57 (10 Nov 2026)"). Both ways a merge closes an issue (the merge itself, and a reviewer's box pass on an already-landed pull) go through `noteShipped`. The forge marks its comment in `note_shipped`, so a person's comment with the same opening never stands in for it. The button shows it as a reply and the note reads shipped.

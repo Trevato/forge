@@ -5,5 +5,6 @@ export const route: Route = {
   path: `${REPO}/runs/{id}/cancel`,
   summary: "Cancel a run that has not finished (needs rw scope and write access); answers the cancelled run",
   auth: true,
+  role: "member",
   refusals: { finished: "the run has already finished (409)" },
 };

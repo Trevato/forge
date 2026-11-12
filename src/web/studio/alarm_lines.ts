@@ -5,6 +5,7 @@
  * checked, because the words name private repositories.
  */
 import type { Database } from "bun:sqlite";
+import { alarmBackup } from "../../flow/alarm_backup.ts";
 import { firedAlarms, type FiredAlarm } from "../../flow/alarms.ts";
 import { writeStamp } from "../../core/write_clock.ts";
 import { Stamped } from "../../kernel/stamped.ts";
@@ -14,15 +15,17 @@ import { HOME_MAX_AGE_MS } from "./home_cache.ts";
 const caches = new WeakMap<Database, Stamped<FiredAlarm[]>>();
 
 /** Valid like the vitals: while the write clock holds, 30 seconds at most. */
-export function cachedAlarms(db: Database, now: Date, ceilingUsd: number | null): FiredAlarm[] {
+export function cachedAlarms(db: Database, now: Date, ceilingUsd: number | null, dataDir: string): FiredAlarm[] {
   const stamp = writeStamp(db);
-  if (stamp === undefined) return firedAlarms(db, now, { ceilingUsd });
+  if (stamp === undefined) return firedAlarms(db, now, { ceilingUsd, dataDir });
   let cache = caches.get(db);
   if (cache === undefined) {
-    cache = new Stamped<FiredAlarm[]>({ maxEntries: 2, maxAgeMs: HOME_MAX_AGE_MS });
+    cache = new Stamped<FiredAlarm[]>({ maxEntries: 8, maxAgeMs: HOME_MAX_AGE_MS });
     caches.set(db, cache);
   }
-  return cache.get("alarms", stamp, () => firedAlarms(db, now, { ceilingUsd }));
+  // The backup alarm reads files, not the db the stamp watches: its state is part of the key, so a cleared backup leaves Home at once.
+  const backup = alarmBackup(dataDir, now);
+  return cache.get(`alarms:${backup.fired ? backup.since : "-"}:${backup.cause ?? ""}`, stamp, () => firedAlarms(db, now, { ceilingUsd, dataDir }));
 }
 
 export function alarmLines(alarms: readonly FiredAlarm[]): Html {

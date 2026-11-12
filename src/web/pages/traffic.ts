@@ -32,6 +32,7 @@ import { page } from "../layout.ts";
 import { TRAFFIC_TONES, trafficColumns } from "../studio/kpi_row.ts";
 import { row, seg } from "../ui.ts";
 import { accountSections } from "./origins.ts";
+import { visitorsBlock } from "./visitors.ts";
 
 const CHART_W = 600;
 const CHART_H = 96;
@@ -192,7 +193,7 @@ export function trafficPage(ctx: Ctx): Response {
               })),
             )}
           </div>
-          ${body}`,
+          ${body}${visitorsBlock(ctx, now)}`,
         "Account settings",
       )}`,
   });

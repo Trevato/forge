@@ -102,11 +102,13 @@ export async function signupPasskey(ctx: Ctx): Promise<Response> {
   if (typeof slot === "number") return tooMany(slot);
   const created = await signUpWithPasskey(
     ctx.app,
-    { username, email, passkey: made, passkeyName: "Passkey", humanToken: str(data.humanToken) },
+    { username, email, passkey: made, passkeyName: "Passkey", humanToken: str(data.humanToken), note: str(data.note) },
     { slot, invite: inviteOf(ctx), address: clientAddress(ctx.request) },
   );
   if (!created.ok)
     return refuse(created.error === "human_check" ? 422 : created.error === "signup_closed" ? 403 : 409, WORDS[created.error] ?? "Sign-up did not work. Try again.");
+  // A request that waits starts no session: it lands on the page that says so.
+  if (created.value.waitingAt !== null) return json({ ok: true, waiting: true, next: "/signup/requested" }, 202);
   const session = createSession(ctx.app.db, created.value.id);
   return json(
     { ok: true, next: safeNext(ctx.url.searchParams.get("next")) ?? "/" },

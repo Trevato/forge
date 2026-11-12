@@ -65,7 +65,7 @@ describe("MCP flow and crew cards", () => {
 
   test("tools/list advertises both resources and both resources read", async () => {
     const tools: any[] = (await listVia((p) => rpc("tools/list", p))).result.tools;
-    for (const [name, kind] of [["flow", "flow"], ["scorecard", "crew"]] as const) {
+    for (const [name, kind] of [["flow", "flow"], ["scorecard", "scorecard"]] as const) {
       expect(tools.find((t) => t.name === name)._meta.ui.resourceUri).toBe(`ui://forge/${kind}`);
       const read = await rpc("resources/read", { uri: `ui://forge/${kind}` });
       expect(read.result.contents[0].text.length).toBeGreaterThan(0);
@@ -104,8 +104,8 @@ describe("MCP flow and crew cards", () => {
   test("scorecard carries the crew card, one row per agent, status the week's landed", async () => {
     const body = await rpc("tools/call", { name: "scorecard", arguments: {} });
     const drawn = body.result.structuredContent.card;
-    expect(drawn.kind).toBe("crew");
-    expect(drawn.rows).toEqual([{ label: "smith", value: "1 landed this month · 100% red" }]);
+    expect(drawn.kind).toBe("scorecard");
+    expect(drawn.rows).toEqual([{ label: "smith", value: "1 landed · 100% red · 1 merged · 0 returned · $0.00 this week" }]);
     const card = cardFor("scorecard", {
       agents: [
         { username: "scout", all: null, recent: { landed: 5, redCheckRate: 0.25 } },
@@ -115,8 +115,8 @@ describe("MCP flow and crew cards", () => {
     })!;
     expect(card.status).toBe("5 landed this week");
     expect(card.rows).toEqual([
-      { label: "scout", value: "5 landed this month · 25% red" },
-      { label: "<b>x</b>", value: "0 landed this month · no checks" },
+      { label: "scout", value: "0 merged · 0 returned · $0.00 this week" },
+      { label: "<b>x</b>", value: "0 merged · 0 returned · $0.00 this week" },
     ]);
   });
 

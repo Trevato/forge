@@ -16,7 +16,7 @@ export function apiRootBody(origin: string): Record<string, unknown> {
     name: "forge",
     version,
     commit,
-    openapi: `${origin}/api/v1/openapi.json`,
+    openapi: `${origin}/contract/openapi.json`,
     mcp: mcp.url,
     oauth: mcp.oauth,
     llms: `${origin}/llms.txt`,

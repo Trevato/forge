@@ -6,6 +6,7 @@ export const route: Route = {
   summary:
     "Accept a waiting report as an issue labelled outside (rw scope; a writer who is not on the crew); answers 201 with the issue; `title` rewords it, the marker stays",
   auth: true,
+  role: "member",
   status: 201,
   body: { title: "string" },
   refusals: {

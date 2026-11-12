@@ -87,6 +87,7 @@ import {
 } from "../ui.ts";
 
 export type AccountSection =
+  | "billing"
   | "adminflows"
   | "security"
   | "profile"
@@ -118,6 +119,7 @@ export type AccountSection =
   | "templates"
   | "features"
   | "packs"
+  | "captain"
   | "cloud";
 
 /**
@@ -149,10 +151,11 @@ const SECTION_ROWS: readonly (readonly [
   ["Account", "Confirms", "/settings/confirms", "check", (c) => c === "confirms", false],
   ["Crew and AI", "Model", "/settings/model", "key", (c) => c === "model", false],
   ["Crew and AI", "Crew", "/settings/crew", "bot", (c) => c === "crew", true],
+  ["Crew and AI", "Captain", "/settings/captain", "bot", (c) => c === "captain", true],
   ["Crew and AI", "Subscriptions", "/settings/subscriptions", "key", (c) => c === "subscriptions", true],
   ["Crew and AI", "Usage", "/settings/spend", "activity", (c) => USAGE.has(c), true],
   ["Connections", "Connected accounts", "/settings/origins", "globe", (c) => c === "origins", false],
-  ["Connections", "Cloud accounts", "/settings/cloud", "key", (c) => c === "cloud", true],
+  ["Connections", "Cloud", "/settings/cloud", "key", (c) => c === "cloud", true],
   ["Connections", "Secrets", "/settings/secrets", "lock", (c) => c === "secrets", true],
   ["Connections", "Devices", "/settings/devices", "globe", (c) => c === "devices", true],
   ["Security", "Security", "/settings/security", "lock", (c) => c === "security", true],
@@ -163,6 +166,7 @@ const SECTION_ROWS: readonly (readonly [
   ["This forge", "People", "/settings/people", "users", (c) => c === "people", true],
   ["This forge", "Limits", "/admin/limits", "activity", (c) => c === "limits", true],
   ["This forge", "Economics", "/settings/economics", "activity", (c) => c === "economics", true],
+  ["This forge", "Billing", "/settings/billing", "activity", (c) => c === "billing", true],
   ["This forge", "Flows", "/admin/flows", "activity", (c) => c === "adminflows", true],
   ["This forge", "Flags", "/settings/flags", "activity", (c) => c === "flags", true],
   ["This forge", "Templates", "/settings/app-templates", "rocket", (c) => c === "templates", true],

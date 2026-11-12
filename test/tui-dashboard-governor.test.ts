@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { createRepo, getRepo } from "../src/core/repos.ts";
 import type { User } from "../src/core/users.ts";
-import { governorSeen } from "../src/crew/governed.ts";
+import { announceGovernor, governorSeen } from "../src/crew/governed.ts";
 import { id } from "../src/kernel/id.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -65,9 +65,19 @@ test("a flooded repository's row says the governor's reason; one at its ceiling 
   }
   const g = governorSeen(forge, alice, repo, new Date())!;
   expect(g.held).toBe(true);
+  expect(g.says).toBe("");
   expect(g.why).toStartWith("Builders 4 → 1:");
   const screen = await firstScreen(alice);
   expect(screen).toContain(g.why);
   expect(screen).toContain("the calm one");
   expect(screen).not.toContain("the flooded one");
+});
+
+test("once the governor has changed the slots the row says the line (#11459)", async () => {
+  const repo = getRepo(forge.db, "alice", "flooded")!;
+  forge.db.run("INSERT INTO governor_last (repo_id, from_slots, to_slots, why, at) VALUES (?1, 4, 4, 'w', 0)", [repo.id]);
+  announceGovernor(forge, repo, new Date());
+  const g = governorSeen(forge, alice, repo, new Date())!;
+  expect(g.says).toStartWith("Builders 4 → 1 at ");
+  expect(await firstScreen(alice)).toContain(g.says.slice(0, 60));
 });

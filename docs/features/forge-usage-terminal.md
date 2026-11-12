@@ -8,4 +8,4 @@ Press `:` (or Ctrl-K), type `Usage` and press enter, with no repository named. A
 
 The spend is only of the apps you write: a member sees their own, an admin sees the forge's. A signed-out visitor is not offered the entry.
 
-Below the spend, an admin who is not an agent also sees every route, unused ones first; anyone else is told that list is an admin's. `[` and `]` move the Returns window, `f` opens the fleet graph. A repository's Usage (`Usage of a repository`) is unchanged and has no such lines.
+Below the spend, an admin who is not an agent also sees every route, unused ones first; anyone else is told that list is an admin's. `[` and `]` move the Returns window, `f` opens the fleet graph. A repository's Usage (`Usage of a repository`) has no such lines; its `f` opens the fleet graph on that repository alone.

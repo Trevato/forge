@@ -52,7 +52,7 @@ import {
 import { liveRegionsJs } from "../client.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { btn, empty, row } from "../ui.ts";
+import { btn, disclosure, empty, row } from "../ui.ts";
 import {
   parkedTwice,
   struckOut,
@@ -1506,14 +1506,13 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
   const body = html`${repoHeader(ctx, repo, "map")}
     <div class="page-head mt">
       <h1>Map</h1>
-      <p class="muted">
-        What waits for what. The top edge is ready now; the chain in the accent
-        is the least work that still has to happen in order.
-        <a href="${repoBase(repo)}/space">The same work as a space to move through</a>.
-        <a href="${repoBase(repo)}/milestones">How far each milestone is</a>.
-        <a href="${repoBase(repo)}/next">Next up</a> is the one ranked list the crew builds from.
-      </p>
+      <span class="spacer"></span>
+      <a href="${repoBase(repo)}/space">Space</a><a href="${repoBase(repo)}/milestones">Milestones</a><a href="${repoBase(repo)}/next">Next up</a>
     </div>
+    ${disclosure("? How to read this", html`<div class="prose break" id="map-help">
+      <p>What waits for what. The top edge is ready now; the chain in the accent is the least work that still has to happen in order.</p>
+      <p>The first list is what nothing stands in front of; when it is empty, everything open waits for something. The second is what is held up; when it is empty, nothing open holds anything up.</p>
+    </div>`, { id: "map-more" })}
     <div
       class="map-wrap"
       id="map-live"
@@ -1542,7 +1541,7 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
                     ? "holds nothing up"
                     : `finishing it frees ${r.holdsUp}`
                 }`,
-              "Nothing is ready: everything open waits for something.",
+              "Nothing ready.",
               tellHref,
               {
                 writer:
@@ -1564,7 +1563,7 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
           blocked,
           (r) =>
             `${wordFor(r.issue, readySet, marks)} · ${pillarOf(r)}${r.waitsFor > 0 ? `waits for ${r.waitsFor} · ` : ""}holds up ${r.holdsUp}`,
-          "Nothing open holds anything up.",
+          "Nothing blocked.",
           tellHref,
         )}
       </aside>

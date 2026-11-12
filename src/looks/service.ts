@@ -62,7 +62,7 @@ import { getPull } from "../core/pulls.ts";
 import { frontPicks } from "../core/front.ts";
 import { getRepoById } from "../core/repos.ts";
 import { getUserById } from "../core/users.ts";
-import { ownerLooksFor } from "../spawn/preview-looks.ts";
+import { ownerLooksFor, PREVIEW_NEWCOMER } from "../spawn/preview-looks.ts";
 import { thumbnail } from "../design/image/image.ts";
 import { decodePng, encodePng, pngHeader } from "../design/image/png.ts";
 import { createLog } from "../kernel/log.ts";
@@ -71,6 +71,7 @@ import { addCommitLook } from "../checks/looks.ts";
 import type { LookVitals } from "../checks/summary.ts";
 import { keepAsMain } from "./main_looks.ts";
 import { findChromium, isNoBrowser, takeLook, type Capture } from "./capture.ts";
+import { backoff, type BackoffClock } from "./backoff.ts";
 import { during } from "../perf/jobs.ts";
 
 const log = createLog("looks");
@@ -87,6 +88,8 @@ export interface LooksOptions {
    * while two agent runs are at their peak rather than being the straw.
    */
   readonly pressure?: (() => number | undefined) | undefined;
+  /** The clock a failed look's backoff waits on: the real one unless a test says otherwise. */
+  readonly clock?: BackoffClock | undefined;
 }
 
 /** The share of the memory limit in use, read from cgroup v2, if this is a container. */
@@ -147,6 +150,12 @@ const FIRST_SWEEP_MS = 60_000;
 const CAPTURE_TIMEOUT_MS = 20_000;
 /** How long the grant in the URL is good for — the browser uses it at once. */
 const GRANT_TTL_MS = 60_000;
+/**
+ * After a picture fails, the whole look waits this long before the next
+ * try, and gives up after the last (#11509): an app that is not answering
+ * must not have a browser opened on it every second.
+ */
+export const LOOK_BACKOFF_MS: readonly number[] = [30_000, 120_000, 600_000];
 
 export const looksRoot = (dataDir: string): string => join(dataDir, "looks");
 
@@ -221,6 +230,23 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
   let pump: Promise<void> = Promise.resolve();
   let pumping = false;
   let stopped = false;
+  /** Failed looks by app, environment and head: each waits out its backoff (#11509). */
+  const failures = backoff(LOOK_BACKOFF_MS, options.clock);
+  const failKey = (q: { appId: string; env: EnvName; commitOid: string }): string =>
+    `${q.appId}/${q.env}/${q.commitOid}`;
+
+  /** A look failed: try again after the next backoff, or give up with one line. */
+  function failed(item: Pending): void {
+    const verdict = failures.failed(failKey(item), () => {
+      if (!stopped) enqueue({ ...item, at: Date.now() });
+    });
+    if (!verdict.retry)
+      log.warn("look given up: the picture failed every time", {
+        app: item.appId,
+        env: item.env,
+        tries: verdict.tries,
+      });
+  }
 
   prune();
   // Production missing a picture at its head — one never taken, or a
@@ -301,6 +327,9 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
    * `run.finished` for the one deploy — is one entry, not two.
    */
   function enqueue(item: Pending): void {
+    // A head whose picture failed waits out its backoff: an event for it
+    // (a deploy announced twice, a sweep) is not a reason to try sooner.
+    if (failures.waiting(failKey(item))) return;
     const at = queue.findIndex(
       (q) => q.appId === item.appId && q.env === item.env,
     );
@@ -408,15 +437,33 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         ? undefined
         : { id: owner.id, name: owner.username, role: "admin" };
     const host = runtime.hostFor(record.slug, item.env);
+    const newcomer: GrantWho = { id: PREVIEW_NEWCOMER, name: PREVIEW_NEWCOMER, role: "admin" };
+    const isNewcomerLook = (page: string): boolean =>
+      ownerLooks.some((l) => l.page === page && l.as === "newcomer");
     let allOk = true;
+    let failedHere = false;
+    let verdict: string | undefined;
     for (const { page, kind, theme } of wanted) {
       if (stopped) return;
+      if (verdict !== undefined) {
+        recordLook(app.db, {
+          appId: item.appId,
+          env: item.env,
+          commitOid: item.commitOid,
+          page,
+          theme,
+          kind,
+          path: "",
+          error: verdict,
+        });
+        continue;
+      }
       const token = signGrant(
         dataDir,
         { app: record, env: item.env },
         GRANT_TTL_MS,
         Date.now(),
-        asNobody(kind, page) ? undefined : asOwner,
+        asNobody(kind, page) ? undefined : isNewcomerLook(page) ? newcomer : asOwner,
       );
       const url = `http://${host}:${port}/__forge/grant?t=${encodeURIComponent(token)}&to=${encodeURIComponent(page)}`;
       const path = lookPath(item.appId, item.env, item.commitOid, page, kind, theme);
@@ -488,6 +535,8 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
       } else {
         rmSync(staged, { force: true });
         allOk = false;
+        const noBrowser = isNoBrowser(taken.error);
+        failedHere = failedHere || !noBrowser;
         log.warn("no picture", {
           app: record.slug,
           env: item.env,
@@ -497,8 +546,14 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
           error: taken.error,
         });
         recordLook(app.db, { ...row, kind, path: "", error: taken.error });
+        // One failure is the verdict for this try: the other pictures
+        // would meet the same page, so they are filed with its reason
+        // and no browser is opened for them.
+        if (!noBrowser) verdict = taken.error;
       }
     }
+    if (failedHere) failed(item);
+    else failures.succeeded(failKey(item));
     // A full set at this head is the environment's look now; the pictures
     // of heads before it have nothing left to say.
     if (allOk)
@@ -612,6 +667,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
 
   /** An environment is gone: so are its pictures, waiting or taken. */
   function forget(appId: string, env: EnvName): void {
+    failures.forget(`${appId}/${env}/`);
     const at = queue.findIndex((q) => q.appId === appId && q.env === env);
     if (at !== -1) queue.splice(at, 1);
     deleteLooks(app.db, appId, env);
@@ -692,6 +748,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
       stopped = true;
       clearTimeout(firstSweep);
       clearInterval(sweeping);
+      failures.stop();
       unsubscribe();
       queue.length = 0;
       await pump;

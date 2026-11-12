@@ -157,8 +157,12 @@ describe("apps that are busy", () => {
   /** What the run log gained after `before`. */
   const since = (before: string): string => log().slice(before.length);
 
-  /** Put production to sleep and wake it, so each test starts rested. */
+  /**
+   * Put production to sleep and wake it, so each test starts rested. The
+   * clock comes back to the wall first: requests are stamped with it too.
+   */
   async function freshlyAwake(): Promise<void> {
+    ahead = 0;
     if (production().state !== "asleep") {
       await viaHost("/done");
       await viaHost("/answer");
@@ -268,8 +272,9 @@ describe("apps that are busy", () => {
       expect(now).toContain("its child processes are still working");
 
       // The child finishes; the next sweep finds nothing to wait for.
+      // Asking for /done was a request at this hour: a window past it, it sleeps.
       expect(await (await viaHost("/done")).text()).toBe("done");
-      await sweepAt(WINDOW + 60_000);
+      await sweepAt(2 * WINDOW + 2 * 60_000);
       await asleep();
       expect(production().busy).toBeUndefined();
     },
@@ -286,7 +291,8 @@ describe("apps that are busy", () => {
     expect(production().busy).toContain("a request is still waiting");
     await viaHost("/answer");
     expect(await (await response).text()).toBe("late");
-    await sweepAt(WINDOW + 60_000);
+    // Answered at this hour; a window past the answer, nothing holds it.
+    await sweepAt(2 * WINDOW + 2 * 60_000);
     await asleep();
   });
 
@@ -305,6 +311,9 @@ describe("apps that are busy", () => {
 
     abort.abort();
     await reader.cancel().catch(() => {});
+    // Closed at this hour; a window past the close, nothing holds it.
+    await until(() => (production().busy === undefined ? true : undefined), 10_000);
+    await sweepAt(2 * WINDOW + 2 * 60_000);
     await asleep();
   });
 

@@ -21,8 +21,9 @@ export interface StaleFold extends FoldablePull {
   readonly note: string | null;
 }
 
-export function staleFold(pulls: readonly FoldablePull[], now: Date): StaleFold[] {
-  const out: (StaleFold & { at: number })[] = [];
+/** Any extra fields on a pull (its repository, say) ride through to its fold. */
+export function staleFold<T extends FoldablePull>(pulls: readonly T[], now: Date): (T & StaleFold)[] {
+  const out: { at: number; fold: T & StaleFold }[] = [];
   for (const p of pulls) {
     if (p.approved) continue;
     const at = Date.parse(p.lastPushAt);
@@ -33,8 +34,8 @@ export function staleFold(pulls: readonly FoldablePull[], now: Date): StaleFold[
       p.issueNumber === null
         ? null
         : `Folded back: pull #${p.number} had no push for ${days} days; its branch \`${p.branch}\` keeps the work.`;
-    out.push({ ...p, days, note, at });
+    out.push({ at, fold: { ...p, days, note } });
   }
-  out.sort((a, b) => a.at - b.at || a.number - b.number);
-  return out.map(({ at: _at, ...rest }) => rest);
+  out.sort((a, b) => a.at - b.at || a.fold.number - b.fold.number);
+  return out.map((x) => x.fold);
 }

@@ -6,6 +6,7 @@ export const route: Route = {
   summary:
     "Make the forge's first admin with the operator's one-time code, no session or password: answers 201 with { user, scope, id, token, expiresAt, expiresIn }, the token shown once; scope is ro, rw or admin; expiresIn is whole seconds from 60 to a month (default a day); refused from another origin with 403 forbidden",
   auth: false,
+  role: "anonymous",
   status: 201,
   body: { code: "string", username: "string", email: "string", scope: "string", name: "string", expiresIn: "integer" },
   refusals: {

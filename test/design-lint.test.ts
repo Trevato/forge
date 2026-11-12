@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { areaFiles, classesIn, compare, compareQuiet, quiet, scanQuiet, countFile, designText, documentedClasses, locate, registeredClasses, scan, sectionLinks, webCss } from "../scripts/design-lint.ts";
+import { areaFiles, classesIn, compare, compareQuiet, quiet, scanQuiet, scanCards, scanStranger, strangerWords, STRANGER_FILES, countFile, designText, documentedClasses, locate, loneSentenceCards, registeredClasses, scan, sectionLinks, webCss } from "../scripts/design-lint.ts";
 
 /** A DESIGN.md in miniature: the §5 table, a §5d register, and a §6 that names a class too. */
 const DESIGN = [
@@ -256,4 +256,57 @@ describe("design check: the quiet-page rules (#8775)", () => {
     const debt = JSON.parse(readFileSync("docs/design/quiet-debt.json", "utf8"));
     expect(compareQuiet(debt, scanQuiet("."))).toEqual([]);
   }, 60_000);
+});
+
+describe("design check: a card around one sentence (#11190, principle 7)", () => {
+  test("flags a card that wraps one <p> or a bare line, not one holding a list or form", () => {
+    expect(loneSentenceCards("x = card(html`<p>Nothing yet.</p>`, { head });")).toHaveLength(1);
+    expect(loneSentenceCards("x = card(\n  html`Nothing yet.`,\n  { head });")).toHaveLength(1);
+    expect(loneSentenceCards("x = card(html`<p>a</p><ul class=\"list\"></ul>`);")).toEqual([]);
+    expect(loneSentenceCards("x = card(html`<form method=\"post\"><p>a</p></form>`);")).toEqual([]);
+    expect(loneSentenceCards("x = card(html`<dl><div><dt>a</dt><dd>b</dd></div></dl>`);")).toEqual([]);
+    expect(loneSentenceCards("function card(f, d) { return 1; } card(f, d);")).toEqual([]);
+  });
+
+  test("a listCard of one bare row is the same box; a row with a link or facts is a row", () => {
+    expect(loneSentenceCards("x = listCard([row({ title: `Nothing yet.` })], { head });")).toHaveLength(1);
+    expect(loneSentenceCards("x = listCard([row({ title: msg })]);")).toHaveLength(1);
+    expect(loneSentenceCards("x = listCard([row({ href: h, title: t })], { head });")).toEqual([]);
+    expect(loneSentenceCards("x = listCard([row({ title: t, meta: m, trail: b })]);")).toEqual([]);
+    expect(loneSentenceCards("x = listCard([row({ title: a }), row({ title: b })]);")).toEqual([]);
+    expect(loneSentenceCards("x = listCard(rows, { head });")).toEqual([]);
+  });
+
+  test("a template with a nested backtick is not examined (the scan reads flat text)", () => {
+    expect(loneSentenceCards("x = card(html`<p>${a ? `b` : `c`}</p>`, { head });")).toEqual([]);
+  });
+
+  test("no page draws one", () => {
+    const bad = scanCards(".");
+    expect(bad).toEqual([]);
+  });
+});
+
+describe("the stranger's words (#11458)", () => {
+  test("a builder that says a banned word in visible text is named with its line", () => {
+    const src = [
+      "export const page = () => html`<main>",
+      '  <a href="/claim" title="your claim" class="claim-link">Open</a>',
+      "  <p>Your child forge is ready.</p>",
+      "  <p>${claimUrl} Check your subscription.</p>",
+      "</main>`;",
+      '// a claim in a comment is not read',
+      'export const note = "Autonomy is off here";',
+      'const key = `claim:${ip}`;',
+    ].join("\n");
+    expect(strangerWords(src).map((w) => [w.line, w.word.toLowerCase()])).toEqual([[3, "child"], [4, "subscription"], [7, "autonomy"]]);
+  });
+  test("only visible text counts: attributes, routes, scripts and styles do not", () => {
+    const src = "const a = html`<a href=\"/claim\" aria-label=\"claim\">Open</a><style>.claim { color: red; }</style><script>fetch('/claim')</script>`;\nconst b = \"/claim\";";
+    expect(strangerWords(src)).toEqual([]);
+  });
+  test("the stranger-path builders on main are clean", () => {
+    expect(STRANGER_FILES.length).toBe(4);
+    expect(scanStranger(process.cwd())).toEqual([]);
+  });
 });

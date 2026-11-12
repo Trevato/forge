@@ -64,8 +64,10 @@ import {
   automaticRunsSince,
   cancelRun,
   createRun,
+  finishRun,
   getRun,
   leaseLapsed,
+  REQUEUED_SUMMARY,
   listActive,
   listQueued,
   PULL_STOPPED,
@@ -103,7 +105,7 @@ import {
   autonomyTick,
   landIfGreen,
   parkForBreaker,
-  parkPull,
+  parkPullTold,
   settleAgentRun,
   spentToday,
 } from "./autonomy.ts";
@@ -433,9 +435,11 @@ export function outsideSeat(
         ? "planner"
         : "builder";
   const held = crewRole(app.db, repo.id, agent.user.id);
-  // A pull assigned to its reviewer is asked for a look, a builder's for a fix: only a planner is outside.
-  if (reason !== "review" && issue.kind === "pull")
-    return (held ?? agent.roles[0]) === "planner";
+  // A pull assigned to its reviewer is asked for a look, a builder's for a fix: a planner and a maintainer are outside.
+  if (reason !== "review" && issue.kind === "pull") {
+    const own = held ?? agent.roles[0];
+    return own === "planner" || own === "maintainer";
+  }
   return held === undefined ? !agent.roles.includes(seat) : held !== seat;
 }
 
@@ -940,19 +944,27 @@ function answerRed(
   const since = lastHumanWord(app, issue, agent);
   if (automaticRunsSince(app.db, issue.id, since) >= CHECK_FAILED_LIMIT) {
     const pull = getPull(app.db, repo.id, issue.number);
-    if (
-      pull &&
-      parkPull(
-        app,
-        repo,
-        pull,
-        `the check stayed red through ${CHECK_FAILED_LIMIT} automatic tries`,
-      )
+    const waiting = () =>
+      log.info("check failed again; waiting for a person", {
+        issue: issue.number,
+      });
+    if (pull === undefined) return waiting();
+    parkPullTold(
+      app,
+      repo,
+      pull,
+      `the check stayed red through ${CHECK_FAILED_LIMIT} automatic tries`,
+      since,
     )
-      return;
-    log.info("check failed again; waiting for a person", {
-      issue: issue.number,
-    });
+      .then((parked) => {
+        if (!parked) waiting();
+      })
+      .catch((error) =>
+        log.error("parking a red pull failed", {
+          issue: issue.number,
+          error: String(error),
+        }),
+      );
     return;
   }
   const runId = payload["runId"];
@@ -1353,6 +1365,9 @@ function forgetWorkdir(app: App, repo: Repo, pull: Pull): void {
   });
 }
 
+/** What a run says when a restart cut it off a second time in a row. */
+export const STOPPED_TWICE = "stopped twice by its forge restarting; not tried again";
+
 /**
  * A run a dead forge left `running` was cut off with it: its lease has
  * lapsed. Each ends here as cancelled, and the same task goes back on the
@@ -1363,10 +1378,17 @@ function forgetWorkdir(app: App, repo: Repo, pull: Pull): void {
  * the task again itself when it stops. Runs at boot and on every tick: a
  * forge that fell and was back within the lease sees its runs lapse later.
  */
-function requeueInterrupted(app: App): void {
+export function requeueInterrupted(app: App): void {
   for (const run of listActive(app.db, "agent")) {
-    if (run.state === "running" && leaseLapsed(run, STALE_AFTER_MS))
-      requeue(app, run, "interrupted by a restart; queued again");
+    if (run.state !== "running" || !leaseLapsed(run, STALE_AFTER_MS)) continue;
+    // Queued by an interruption and cut off again: a forge stopped every
+    // 90 s would loop it until its credit is gone. Fail it, saying why.
+    if ((run.summary ?? "").startsWith(REQUEUED_SUMMARY)) {
+      finishRun(app.db, run.id, { state: "failed", summary: STOPPED_TWICE });
+      log.info("run failed, stopped twice", { run: run.id });
+      continue;
+    }
+    requeue(app, run, REQUEUED_SUMMARY);
   }
 }
 
@@ -1543,7 +1565,7 @@ export function startOrder(app: App): ReturnType<typeof gateQueue> {
 }
 
 /** Take queued runs, oldest first, up to the limit — one per issue at a time. */
-function pump(
+export function pump(
   app: App,
   options: CrewOptions,
   inFlight: Map<string, Promise<void>>,
@@ -1581,7 +1603,11 @@ function pump(
     noted.add(shut.id);
     appendRunLog(app.config.dataDir, shut.id, "queued, not started: its repository's valve is shut (/flow)");
   }
-  for (const [at, queued] of gated.order.entries()) {
+  // One week read per repository per pass: past the slots the loop still
+  // reads every queued run, to say which the pace or a limit holds (#11518).
+  const weeks = new Map<string, ReturnType<typeof weekFor>>();
+  const floor = paceFloor(app.db);
+  for (const queued of gated.order) {
     // One run per issue at a time: this one waits for its sibling, not for a slot.
     // A sibling that hangs is still caught: the running run goes stale on its
     // heartbeat or past NO_PROGRESS_MS and vitals names it under `stuck:`.
@@ -1603,13 +1629,6 @@ function pump(
       }
       continue;
     }
-    if (slots <= 0) {
-      // Out of slots: nothing more starts, but the runs behind this one that
-      // wait on a running sibling are still held by that, not by the slots.
-      for (const rest of gated.order.slice(at + 1))
-        if (rest.issueId !== null && runningIssues.has(rest.issueId)) held.set(rest.id, "issue");
-      break;
-    }
     // The week's pace holds every path that starts a run in an autonomous
     // repository: assigned, review, feedback and check runs as much as picks (#8873).
     if (home !== undefined && home.autonomy === "autonomous") {
@@ -1617,7 +1636,8 @@ function pump(
       const priorityGoing =
         (priorityIn.get(home.id) ?? 0) +
         active.filter((r) => r.state === "running" && r.repoId === home.id && isPriorityRun(app, r, priorityMemo)).length;
-      const paced = weekHold(weekFor(app, home, new Date()), home.autonomySlots, going - priorityGoing, isPriorityRun(app, fresh, priorityMemo) ? fresh.reason : "pick", priorityGoing, paceFloor(app.db));
+      if (!weeks.has(home.id)) weeks.set(home.id, weekFor(app, home, new Date()));
+      const paced = weekHold(weeks.get(home.id)!, home.autonomySlots, going - priorityGoing, isPriorityRun(app, fresh, priorityMemo) ? fresh.reason : "pick", priorityGoing, floor);
       if (paced !== null) {
         held.set(fresh.id, "pace");
         if (!noted.has(fresh.id)) {
@@ -1644,6 +1664,10 @@ function pump(
       }
       continue;
     }
+    // Out of slots: nothing more starts. The runs past this point are still
+    // read, so those a policy above holds are named for vitals, and only the
+    // rest count as waiting for a slot (#11518).
+    if (slots <= 0) continue;
     started.push(fresh.id);
     goingIn.set(fresh.repoId, (goingIn.get(fresh.repoId) ?? 0) + 1);
     if (isPriorityRun(app, fresh, priorityMemo)) priorityIn.set(fresh.repoId, (priorityIn.get(fresh.repoId) ?? 0) + 1);

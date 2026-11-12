@@ -20,7 +20,8 @@ import { err, ok, type Result } from "../kernel/result.ts";
 
 export const FOLLOW_MODES = ["tell-me", "take-updates"] as const;
 export type FollowMode = (typeof FOLLOW_MODES)[number];
-export const DEFAULT_MODE: FollowMode = "tell-me";
+/** What a new forge follows with; a link on disk with no mode is read as `tell-me`, as it always was. */
+export const DEFAULT_MODE: FollowMode = "take-updates";
 
 /** One forge in the chain, as recorded when the hop below it was made. */
 export interface Hop {
@@ -98,7 +99,7 @@ export async function forgeLinkOf(app: App): Promise<ForgeLink | undefined> {
   return {
     repo: l["repo"],
     upstream: l["upstream"],
-    mode: isMode(l["mode"]) ? l["mode"] : DEFAULT_MODE,
+    mode: isMode(l["mode"]) ? l["mode"] : "tell-me",
     tip: typeof l["tip"] === "string" && TIP.test(l["tip"]) ? l["tip"] : "",
     chain,
     ...(severedAt === undefined ? {} : { severedAt }),

@@ -24,7 +24,29 @@ export interface AppCrew {
 
 /** An issue title without the tracker's "Direction: " label. */
 function directionText(title: string): string {
-  return title.startsWith(DIRECTION_PREFIX) ? title.slice(DIRECTION_PREFIX.length).trim() : title.trim();
+  return plainWords(title.startsWith(DIRECTION_PREFIX) ? title.slice(DIRECTION_PREFIX.length) : title);
+}
+
+/** What only a developer reads: "#42", "PR 42", "pull request #42", "run #7", a run id, a numbered branch ("mason/12-menu-page"). */
+const IDENTIFIER =
+  "(?:(?:pull request|pull|PR|issue|run)\\s*#\\d+|#\\d+|\\brun[_-][0-9a-z]{6,}\\b|\\b[a-z][\\w.-]*\\/\\d+-[a-z0-9]+-[\\w./-]+)";
+/** Words that only introduce an identifier ("as in PR #42", "on mason/12-x"). */
+const INTRO = "(?:as in|as per|as seen in|see|see also|in|on|from|per|via|like|after|before|and|with|of|at|by|for|fixes|closes)";
+const CLAUSE = new RegExp(`(?:[\\s,;:\\u2013\\u2014-]*(?:\\b${INTRO}\\s+)*${IDENTIFIER})+`, "gi");
+
+/**
+ * Words for a client: each identifier goes with the clause that introduces it,
+ * so no fragment ("as in on") is left behind. A title that was mostly
+ * identifiers leaves too little to read and comes back empty; the caller says
+ * the app's name instead.
+ */
+export function plainWords(text: string): string {
+  const kept = text
+    .replace(CLAUSE, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/[\s,;:\u2013\u2014-]+$/, "")
+    .trim();
+  return kept !== text.trim() && kept.split(" ").length < 2 ? "" : kept;
 }
 
 /** For each of `repos`: who is on its direction and what they are doing now, or that nobody is. */
@@ -39,7 +61,7 @@ export function appCrew(db: Database, repos: readonly Repo[]): readonly AppCrew[
         "SELECT state FROM run WHERE issue_id = ?1 AND kind = 'agent' ORDER BY created_at DESC LIMIT 1",
       )
       .get(issue.id);
-    const goal = directionText(issue.title);
+    const goal = directionText(issue.title) || repo.name;
     const says =
       run?.state === "running"
         ? `${agent.username} is working toward ${goal}`

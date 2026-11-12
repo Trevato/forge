@@ -34,3 +34,24 @@ export function log(input: RenderInput): Rendered {
         : html``}`,
   };
 }
+
+/** A timestamp a log line may open with: `2026-01-02T03:04:05Z`, `[03:04:05.123]`. */
+const STAMP = /^\s*\[?(?:\d{4}-\d\d-\d\d[T ])?\d\d:\d\d:\d\d(?:[.,]\d+)?(?:Z|[+-]\d\d:?\d\d)?\]?[\s:|-]*/;
+const BARE = /^(ERROR|ERR|FATAL|CRITICAL|CRIT|PANIC|WARN|WARNING|DEBUG|TRACE)(?![A-Za-z0-9_])/;
+const BRACKET = /^[[(<](error|err|fatal|critical|crit|panic|warn|warning|debug|trace)[\])>]/i;
+const LOGFMT = /^(?:\S+=\S+\s+){0,4}level=(error|err|fatal|warn|warning|debug|trace)\b/i;
+
+/**
+ * The level a log line states in its first token (after an optional timestamp):
+ * `ERROR x`, `[warn] x`, `level=error x`. Prose that merely mentions a word
+ * ("no errors found", "0 failed") has none.
+ */
+export function logLevel(line: string): "error" | "warn" | "debug" | undefined {
+  const rest = line.replace(STAMP, "");
+  const word = BARE.exec(rest)?.[1] ?? BRACKET.exec(rest)?.[1] ?? LOGFMT.exec(line)?.[1];
+  if (word === undefined) return undefined;
+  const w = word.toLowerCase();
+  if (w.startsWith("warn")) return "warn";
+  if (w === "debug" || w === "trace") return "debug";
+  return "error";
+}

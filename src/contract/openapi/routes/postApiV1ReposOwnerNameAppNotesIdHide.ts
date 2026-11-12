@@ -5,6 +5,7 @@ export const route: Route = {
   path: `${REPO}/app/notes/{id}/hide`,
   summary: "Hide a note, closing its issue (rw scope; admin of the repository); answers the note",
   auth: true,
+  role: "member",
   refusals: {
     not_found: "no such repository, app or note",
     forbidden: "not an admin of the repository, or a read-only token",

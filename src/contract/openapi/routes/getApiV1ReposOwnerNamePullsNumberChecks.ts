@@ -5,5 +5,6 @@ export const route: Route = {
   path: `${REPO}/pulls/{number}/checks`,
   summary: "A pull's checks at its current head; answers { head, state, required, run, runs } with state `none` when no run exists",
   auth: false,
+  role: "anonymous",
   reply: { head: "string", state: "string", required: "boolean", run: "object", runs: "array" },
 };

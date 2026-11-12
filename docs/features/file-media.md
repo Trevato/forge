@@ -9,7 +9,7 @@ media type, for `<img>`, `<video>`, `<audio>`, `<object>` and `fetch()`.
 
 - **Types** come only from the allowlist in `src/web/render/kinds.ts`
   (png, jpeg, gif, webp, avif, bmp, ico, svg, pdf, mp3, ogg/oga, wav, flac,
-  m4a, aac, mp4, m4v, webm, mov, stl, glb). The extension proposes a type and
+  m4a, aac, mp4, m4v, webm, mov, stl, 3mf, glb). The extension proposes a type and
   the file's first bytes confirm it; a mismatch, or any other file, is
   `application/octet-stream`. Never HTML, never script.
 - **Headers:** `X-Content-Type-Options: nosniff` and
@@ -133,14 +133,21 @@ repository content only ever runs under the media route's sandbox. `render/markd
 
 ## 3D models
 
-An `.stl` (ASCII or binary), `.obj`, `.glb` or `.gltf` file's page shows the
+An `.stl` (ASCII or binary), `.obj`, `.3mf`, `.glb` or `.gltf` file's page shows the
 part, ready to turn (`src/web/render/model3d.ts`, #7335).
 
 - **Turn it:** drag to orbit, scroll or pinch to zoom, right-drag or two
   fingers to pan; with the view focused, the arrow keys pan.
 - **The head** says the triangle count and the bounding box in millimetres,
   in the file's own axes. STL and OBJ units are taken as millimetres; glTF
-  is metres by its spec, so its box is multiplied by 1000.
+  is metres by its spec, so its box is multiplied by 1000. A `.3mf` print
+  project takes its units from the model's `unit` attribute (millimetre by
+  default; micron, centimetre, inch, foot and metre are scaled to mm), and
+  is stood Z-up like an STL. Its build items and transforms are applied.
+  A 3MF is refused, with a sentence, Source and Download kept, when it is
+  zip64, has an encrypted entry, holds more than 5 million triangles, inflates
+  to more than 64 MB of XML (`INFLATE_LIMIT`), or is a production-extension
+  model whose objects live in other files (it names an object that is not there).
 - **Wireframe** and **Axes** toggle in the head. The camera fits the part,
   a grid sits under it, and every part wears one neutral material. An STL
   is stood Z-up, the way a printer reads it.

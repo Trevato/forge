@@ -20,7 +20,7 @@ and send a clean pull request back. Build your own apps and share them.
 
 The forge is part of [Open Platform](https://www.open-platform.sh), with the
 platform for organizations.
-You run it yourself today. Hosting is coming.
+You can run it yourself, or have a hosted forge.
 
 ## Try it
 

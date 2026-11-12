@@ -8,6 +8,7 @@ export const route: Route = {
   path: "/api/v1/user/origins/oauth",
   summary: "Start connecting a forge by OAuth without handing over a token; answers 201 with { flowId, flow, userCode, url, shortCode, intervalSecs, expiresAt }: flow `device` (GitHub: a person enters `userCode` at `url`) or `code` (Forgejo, Gitea: a person opens `url`); then poll GET /api/v1/user/origins/oauth/{id} with the flowId; the account only",
   auth: true,
+  role: "member",
   status: 201,
   body: { kind: "string", host: "string" },
   refusals: {

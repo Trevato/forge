@@ -191,6 +191,17 @@ export const SOURCES: Readonly<Record<string, Source>> = {
     time: "created_at",
     columns: { id: "text", kind: "text", repo_id: "text", actor_id: "text", created_at: "time" },
   },
+  // The efficiency watcher's hourly readings by cause (`efficiency/`, #7558).
+  efficiency: {
+    table: "efficiency_sample",
+    owner: "admin",
+    time: "hour",
+    columns: { cause: "text", hour: "time", value: "number" },
+    docs: {
+      cause: "npm-registry-bytes, egress-other-bytes, cpu-seconds or install-cache-hit-rate (0..1)",
+      value: "bytes received (or CPU-seconds, or share of installs that hit the cache) in the hour up to the reading",
+    },
+  },
   // What the machine used (`boards/sampler.ts`, kept by `boards/ring.ts`):
   // 15-s points for the last day, 5-min points before that, never both
   // for one moment.

@@ -627,7 +627,7 @@ describe("accounts: the owner sees, suspends and removes", () => {
         body: JSON.stringify({ name: "guarded" }),
       });
       expect(res.status).toBe(403);
-      expect(await res.json()).toEqual({
+      expect(await res.json()).toMatchObject({
         error: "refused",
         message: "forge: new repositories are paused here",
       });
@@ -659,7 +659,7 @@ describe("accounts: the owner sees, suspends and removes", () => {
         body: JSON.stringify({ name: "guarded-plain" }),
       });
       expect(res.status).toBe(403);
-      expect(await res.json()).toEqual({
+      expect(await res.json()).toMatchObject({
         error: "refused",
         message: "refused",
       });

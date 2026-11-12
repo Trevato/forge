@@ -663,7 +663,8 @@ describe("migrate", () => {
       shown: false,
     });
     const settings = await (await browser(aliceCookie, "/alice/hush/settings")).text();
-    expect(settings).toContain("Hidden: nobody else sees it");
+    expect(settings).toContain("Hidden; the record is kept.");
+    expect(settings.indexOf("nobody else sees it")).toBeGreaterThan(settings.indexOf("data-page-help"));
     expect(settings).not.toContain("Hide where this came from");
     expect(settings).toMatch(/<button[^>]*>\s*Show where this came from/);
 

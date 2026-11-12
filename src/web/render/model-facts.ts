@@ -3,14 +3,17 @@
  * says `3D model · STL` over `12 triangles · 20 × 20 × 20 mm` where the page draws
  * the part. Plain data in, plain data out.
  *
- * STL and OBJ go through the same parsers the browser runs (`mesh.ts`). A
- * glTF is not parsed into geometry: its JSON already says each primitive's
- * vertex count and each position accessor's bounds, so those are read, in
- * metres by the spec, before any node transform.
+ * A 3MF is read by `threemf.ts` (its XML, in millimetres). STL and OBJ go
+ * through the same parsers the browser runs (`mesh.ts`). A glTF is not parsed
+ * into geometry: its JSON already says each primitive's vertex count and each
+ * position accessor's bounds, so those are read, in metres by the spec, before
+ * any node transform.
  */
 
+import { inflateRawSync } from "node:zlib";
 import { kindByName } from "./kinds.ts";
 import { bounds, parseObj, parseStl, sizeText } from "./mesh.ts";
+import { INFLATE_LIMIT, locateModel, parseModelXml } from "./threemf.ts";
 
 /** Over this a model is named and sized, not read. */
 export const FACTS_CAP = 2_000_000;
@@ -51,6 +54,13 @@ export function modelFacts(path: string, bytes: Uint8Array | null, size: number)
 }
 
 function read(ext: string, bytes: Uint8Array): Facts {
+  if (ext === "3mf") {
+    // The zip's model XML, inflated under the same cap the viewer holds.
+    const entry = locateModel(bytes);
+    const xml = entry.method === 0 ? entry.data : inflateRawSync(entry.data, { maxOutputLength: INFLATE_LIMIT });
+    const mesh = parseModelXml(new TextDecoder().decode(xml));
+    return { triangles: mesh.triangles, size: bounds(mesh.positions).size };
+  }
   if (ext === "stl" || ext === "obj") {
     const mesh = ext === "stl" ? parseStl(bytes) : parseObj(new TextDecoder().decode(bytes));
     return { triangles: mesh.triangles, size: bounds(mesh.positions).size };

@@ -93,7 +93,7 @@ describe("a person's note from an app", () => {
     expect(unassigned.fired).toBe(true);
     expect(unassigned.says).toContain(`alice/shop#${n}`);
     expect(unassigned.says).toContain("unassigned");
-    expect(firedAlarms(app.db, new Date(at + 16 * MIN)).map((a) => a.key)).toContain("from_app");
+    expect(firedAlarms(app.db, new Date(at + 16 * MIN), { dataDir: null }).map((a) => a.key)).toContain("from_app");
     // Assigned: quiet until the hour.
     app.db.query("UPDATE issue SET assignee_id = ?3 WHERE repo_id = ?1 AND number = ?2").run(repo.id, n, builder.id);
     expect(alarmFromApp(app.db, new Date(at + 59 * MIN)).fired).toBe(false);

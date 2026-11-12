@@ -35,6 +35,9 @@ export interface Told {
   readonly variantGroup: string | null;
 }
 
+/** The longest title a tell keeps whole; a longer first line is cut and the body keeps it all. */
+export const TELL_TITLE_MAX = 80;
+
 /** The most tries one tell may ask for at once. */
 export const VARIANTS_MAX = 4;
 
@@ -100,7 +103,7 @@ export async function tell(
   }
   const firstLine = text.split(/\n/)[0]!.trim();
   const title =
-    firstLine.length <= 80 ? firstLine : `${firstLine.slice(0, 77).trimEnd()}…`;
+    firstLine.length <= TELL_TITLE_MAX ? firstLine : `${firstLine.slice(0, 77).trimEnd()}…`;
   // Several tries are several issues, each its own branch and pull, sharing
   // one group the pulls carry (`variant_group`).
   const many = variants > 1;

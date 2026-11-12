@@ -7,6 +7,7 @@ import { createApp, type App as Forge } from "../src/app.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { fitLines, forgeLines } from "../src/tui/screens/forges.ts";
+import { firstScreenLine } from "../src/core/next-steps.ts";
 import { runningWords, type ClientRow } from "../src/spawn/clients.ts";
 import type { TuiIdentity } from "../src/tui/session.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -20,6 +21,7 @@ const row = (over: Partial<ClientRow>): ClientRow => ({
   url: "https://maria.test",
   for: "Maria's bakery",
   apps: [],
+  stage: null,
   sentAt: null,
   made: true,
   claimed: false,
@@ -32,6 +34,7 @@ const row = (over: Partial<ClientRow>): ClientRow => ({
   ceilingUsd: null,
   size: "small",
   use: { kind: "shared" },
+  disk: { own: false, path: "/d/children/c" },
   lastHeartbeatAt: null,
   nextStep: { key: "unreported", words: "has not reported yet", lastTellAt: null },
   ...over,
@@ -111,6 +114,16 @@ describe("forges you sent in the terminal", () => {
     h.stop();
   });
 
+  test("o switches a forge's code; with no forge it says so", async () => {
+    const h = boot("alice");
+    await h.palette();
+    await h.enter();
+    expect(h.text()).toContain("own code or this forge's");
+    await h.press("o");
+    expect(h.text()).toContain("No forge to switch");
+    h.stop();
+  });
+
   test("a row says whether its link is open, ended, or can be undone; a used link says nothing", () => {
     const line = (link: ClientRow["link"]) => forgeLines([row({ link })])[0]![1];
     expect(line({ state: "open", revokedAt: null })).toContain("link open");
@@ -140,6 +153,7 @@ describe("forges you sent in the terminal", () => {
     const lines = forgeLines([row({ reach })]);
     expect(lines[0]![1]).toContain("Running, not reachable: deal answered 404, not by the app");
     expect(lines.slice(1).map(([, t]) => t.trim())).toEqual([
+      firstScreenLine([]),
       "reachable maria--forge.test/api/v1/forge: answered 200",
       "NOT REACHABLE deal--maria--forge.test/: answered 404, not by the app",
     ]);
@@ -172,15 +186,16 @@ describe("forges you sent in the terminal", () => {
     const up = { total: 3, running: 3, notRunning: [] };
     const down = { total: 2, running: 1, notRunning: [{ slug: "notes", why: "build failed" }] };
     expect(forgeLines([row({ running: up })])).toEqual([
-      ["maria", "asleep · for Maria's bakery · Not claimed yet · 3 apps running · has not reported yet · small · shared · no heartbeat yet"],
+      ["maria", "asleep · for Maria's bakery · Not claimed yet · 3 apps running · has not reported yet · small · shared · shared disk · no heartbeat yet"],
+      ["", `  ${firstScreenLine([])}`],
     ]);
     expect(forgeLines([row({ claimed: true, running: down, for: null })])).toEqual([
-      ["maria", "asleep · Claimed · 1 app running · notes: build failed · has not reported yet · small · shared · no heartbeat yet"],
+      ["maria", "asleep · Claimed · 1 app running · notes: build failed · has not reported yet · small · shared · shared disk · no heartbeat yet"],
     ]);
     expect(forgeLines([row({ claimed: null })])[0]![1]).toContain("Unknown");
     expect(forgeLines([row({ made: false })])[0]![1]).toContain("Still being made");
     expect(forgeLines([row({ attention: "down", claimed: true, for: null })])).toEqual([
-      ["maria", "asleep · App down · Claimed · has not reported yet · small · shared · no heartbeat yet"],
+      ["maria", "asleep · App down · Claimed · has not reported yet · small · shared · shared disk · no heartbeat yet"],
     ]);
     expect(forgeLines([row({})])[0]![1]).not.toMatch(/Not reporting|App down|Unclaimed/);
     expect(forgeLines([row({ nextStep: { key: "tell", words: "no tell yet", lastTellAt: null } })])[0]![1]).toContain("no tell yet");

@@ -5,6 +5,7 @@
  * disk reading is plain data, injected.
  */
 
+import { pullCloses } from "./helpers/pull-closes.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { App } from "../src/app.ts";
 import { announceRun } from "../src/actions/runs.ts";
@@ -149,7 +150,7 @@ describe("a red on a full check machine", () => {
     const before = cards()[0]!.sentence;
     const own = await spentPull();
     announceRun(app, failed(own, 300));
-    expect(open(own)).toBe(false);
+    await pullCloses(app, own);
     expect(cards()[0]!.sentence).toBe(before);
   });
 });

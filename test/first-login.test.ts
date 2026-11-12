@@ -200,30 +200,40 @@ describe("the first login to a spawned forge", () => {
     expect(await page(`forge_session=${session.token}`)).not.toContain(CARD);
   });
 
-  test("after the claim, the home shows the crew and its direction, and one card with three steps, none done", async () => {
+  test("the first screen is one box to say what to build; the passkey offer is not shown before it", async () => {
+    const home = await page(owner);
+    expect(home).toContain("What do you want built?");
+    const forms = [...home.matchAll(/<form[^>]*>/g)].map((m) => m[0]);
+    const main = home.slice(home.indexOf("<main"));
+    const mainForms = [...main.matchAll(/<form[^>]*>/g)].map((m) => m[0]);
+    expect(mainForms.length).toBeGreaterThan(0);
+    expect(mainForms[0]).toContain('id="composer"');
+    expect(mainForms[0]).toContain('action="/tell"');
+    expect(forms.some((f) => f.includes("/settings/everyday"))).toBe(false);
+    expect(main).not.toContain("There is no password");
+    expect(main).not.toContain("Make your everyday account");
+    expect(steps(home)).toEqual({ everyday: undefined, apps: undefined, tell: undefined });
+    // The crew at work and its direction are still on the first screen.
+    expect(home).toContain("atlas is ready to work toward Run Maria");
+    expect(home).toMatch(/href="\/marias\/bakery\/?"[^>]*>[\s\S]*?atlas is ready/);
+    expect(home).toContain('href="/marias/bakery"');
+  });
+
+  test("once a tell exists the card carries three steps, and the everyday offer comes after it", async () => {
+    const told = await post(owner, "/marias/bakery/tell", { text: "Add a weekly menu page." });
+    expect(told.status).toBeLessThan(400);
     const home = await page(owner);
     expect(home).toContain(CARD);
     expect(home).toContain("Make your everyday account");
     expect(home).toContain("Open your apps");
     expect(home).toContain("Tell the crew something");
-    expect(steps(home)).toEqual({ everyday: "no", apps: "no", tell: "no" });
-    expect(home).not.toMatch(/class="[^"]*\bsteps\b/);
-    // One card for the everyday account, not two: the steps card carries it.
+    expect(steps(home)).toEqual({ everyday: "no", apps: "no", tell: "yes" });
+    expect(home).toContain('action="/settings/everyday"');
     expect(home.split("Make your everyday account").length - 1).toBe(1);
-    // The planner and the direction it was given, under the studio's noun.
-    // No run has started (no model key), so it does not claim work under way.
-    expect(home).toContain("atlas is ready to work toward Run Maria");
-    expect(home).not.toContain("Direction: Run");
-    expect(home).not.toMatch(/Your (crew|apps)[^<]*:/);
-    expect(home).toMatch(/href="\/marias\/bakery\/issues\/\d+"[^>]*>[\s\S]*?atlas is ready/);
-    for (const old of ["next-step", "next-crew"]) expect(home).not.toContain(`class="${old}`);
-    expect(home).not.toMatch(/class="next-step/);
-    // A pending step's body is a block of its own, never inside the row's
-    // one-line, clipped `.row-meta`.
+    expect(home).not.toContain('data-first-tell');
+    expect(home).not.toMatch(/class="[^"]*\bsteps\b/);
     expect(home).not.toMatch(/data-step[\s\S]{0,400}row-meta/);
     expect(home).toMatch(/<div class="step-body">\s*<p class="muted small">/);
-    // Each app with its way in.
-    expect(home).toContain('href="/marias/bakery"');
   });
 
   test("the everyday account, made first, joins the client's org and sees the card part-way, every step one it can do", async () => {
@@ -236,7 +246,7 @@ describe("the first login to a spawned forge", () => {
     daily = (res.headers.get("set-cookie") ?? "").split(";")[0]!;
     expect(getUserByName(child.db, "maria-me")).toBeDefined();
     const home = await page(daily);
-    expect(steps(home)).toEqual({ everyday: "yes", apps: "no", tell: "no" });
+    expect(steps(home)).toEqual({ everyday: "yes", apps: "no", tell: "yes" });
     // It can read the client's own apps, and the crew line reads for it too.
     expect(home).toContain('href="/marias/bakery"');
     expect(home).not.toContain("Your apps arrive here");
@@ -263,7 +273,7 @@ describe("the first login to a spawned forge", () => {
     });
     child.db.query("UPDATE run SET state = 'running' WHERE id = ?1").run(run.id);
     const home = await page(owner);
-    expect(home).toMatch(/class="row-title"[^>]*>bakery<\/span\s*>\s*<span class="row-meta">atlas is working toward Run Maria(?:'|&#39;|&#x27;)s bakery\.?</);
+    expect(home).toMatch(/class="row-title"[^>]*>atlas is working toward Run Maria(?:'|&#39;|&#x27;)s bakery\.?<\/span\s*>\s*<span class="row-meta">bakery</);
     expect(home.slice(home.indexOf("id=\"next-steps\""), home.indexOf("</section>"))).not.toContain("Direction:");
     expect(home).toMatch(/class="row-title"[^>]*>spare<\/span\s*>\s*<span class="row-meta">nobody is on it yet</);
     // A direction closed or unassigned is nobody on it, too.
@@ -272,14 +282,6 @@ describe("the first login to a spawned forge", () => {
     child.db.query("UPDATE issue SET state = 'open', assignee_id = NULL WHERE id = ?1").run(bakery.direction_issue_id);
     expect(await page(owner)).toMatch(/class="row-title"[^>]*>bakery<\/span\s*>\s*<span class="row-meta">nobody is on it yet</);
     child.db.query("UPDATE issue SET assignee_id = ?2 WHERE id = ?1").run(bakery.direction_issue_id, atlasId);
-  });
-
-  test("the everyday account tells the crew something: the third step", async () => {
-    const told = await post(daily, "/marias/bakery/tell", {
-      text: "Add a weekly menu page.",
-    });
-    expect(told.status).toBeLessThan(400);
-    expect(steps(await page(daily))).toEqual({ everyday: "yes", apps: "no", tell: "yes" });
   });
 
   test("the everyday account opens an app: the second step, and the card is gone for both accounts", async () => {

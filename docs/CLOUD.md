@@ -18,8 +18,8 @@ Beside `forge.json`, at the root of the repository:
 { "uses": [{ "vendor": "s3", "use": "backup", "why": "off-machine copy of the encrypted snapshot" }] }
 ```
 
-- `vendor`: `cloudflare`, `fly`, `hetzner`, `s3`, `github`, `vercel`, `digitalocean` or `azure`.
-- `use`: `compute`, `storage`, `backup`, `dns` or `cdn`.
+- `vendor`: `cloudflare`, `fly`, `hetzner`, `s3`, `github`, `vercel`, `digitalocean`, `azure` or `stripe`.
+- `use`: `compute`, `storage`, `backup`, `dns`, `cdn` or `payments`. The forge declares `stripe`/`payments` for itself (`FORGE_STRIPE`): `api.stripe.com`, for connecting (its webhook endpoint), and nothing else.
 - `why`: one line, up to 300 characters.
 
 No file means no uses. A malformed file is refused with one sentence

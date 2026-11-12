@@ -66,7 +66,7 @@ describe("readExploreLine", () => {
     try {
       const q = encodeURIComponent("owner:trevato updated:2y archived:maybe");
       const res = await fetch(`${s.url}/api/v1/explore?q=${q}`);
-      expect(res.status).toBe(422);
+      expect(res.status).toBe(400);
       const body = (await res.json()) as { message: string };
       expect(body.message).toBe("updated:2y is not a window — use 1d, 7d, 30d; archived:maybe is not an answer — use yes, no");
     } finally {
@@ -131,9 +131,9 @@ describe("the page and the API", () => {
     expect(out).not.toContain("<b>");
   });
 
-  test("the API answers 422 naming the allowed words (#10387)", async () => {
+  test("the API answers 400 naming the allowed words (#10387)", async () => {
     const res = await fetch(`${servers.url}/api/v1/explore?q=${encodeURIComponent("kind:nope")}`);
-    expect(res.status).toBe(422);
+    expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string; message: string };
     expect(body.error).toBe("unknown_filter");
     expect(body.message).toContain("kind:nope is not a kind — use app, person, forge");

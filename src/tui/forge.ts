@@ -10,13 +10,18 @@
 
 import type { App as Forge } from "../app.ts";
 import { search } from "../actions/search.ts";
-import { cleanQuery } from "../core/search.ts";
+import { greppable } from "../core/search.ts";
 import { guestCodeSearch } from "../http/strangers.ts";
 import { canRead, getRepo, type Repo } from "../core/repos.ts";
+import { nearRepos } from "../core/near_repos.ts";
 import { sourceFor } from "../view/source.ts";
 import { fleetCommand } from "./screens/fleet.ts";
 import { dataCommand } from "./screens/data.ts";
 import { packsCommand } from "./screens/packs.ts";
+import { getForgeCommand } from "./screens/getforge.ts";
+import { startForgeCommand } from "./screens/startforge.ts";
+import { pricingCommand } from "./screens/pricing.ts";
+import { forgeNameCommand } from "./screens/forgename.ts";
 import { workCommand } from "./screens/work.ts";
 import { shellsScreen } from "./screens/shells.ts";
 import { forkTreeScreen } from "./screens/fork_tree.ts";
@@ -58,6 +63,7 @@ import { usageScreen } from "./screens/usage.ts";
 import { canScreen } from "./screens/can.ts";
 import { modelScreen } from "./screens/model.ts";
 import { notifyScreen } from "./screens/notify.ts";
+import { talkBuildScreen } from "./screens/talk_build.ts";
 import { talkChatsScreen } from "./screens/talk_chats.ts";
 import { sshKeysScreen } from "./screens/sshkeys.ts";
 import { passkeysScreen } from "./screens/passkeys.ts";
@@ -71,6 +77,9 @@ import { capacityScreen, mayCapacity } from "./screens/capacity.ts";
 import { crawlersScreen } from "./screens/crawlers.ts";
 import { forgeCeiling } from "../flow/ceiling.ts";
 import { flowLines, flowScreen } from "./screens/flow.ts";
+import { askUpdate, mayDrift } from "./screens/drift.ts";
+import { readHandoverLists } from "../flow/handover_read.ts";
+import { readDrifts } from "../flow/alarm_drift.ts";
 import { readHeld } from "../flow/held.ts";
 import { answerKeeper, readKeeper } from "../flow/keeper.ts";
 import { readVerified } from "../flow/verified.ts";
@@ -79,6 +88,7 @@ import { noteRead, telemetryReader } from "../actions/telemetry.ts";
 import { queuesFor, systemFor } from "../system/telemetry.ts";
 import { apiScreen } from "./screens/api.ts";
 import { changelogScreen } from "./screens/changelog.ts";
+import { docsScreen } from "./screens/docs.ts";
 import { keeperScreen } from "./screens/keeper.ts";
 import { releasesScreen } from "./screens/releases.ts";
 import { mayRead } from "../release/gate.ts";
@@ -229,7 +239,19 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "on the web",
         run: () => openOnWeb(session, ctx, "/explore", "The explorer"),
       },
+      {
+        // The same list as an Atom feed (#10967): the terminal hands over
+        // the feed's address, to copy into a reader.
+        id: "explore-feed",
+        title: "Explore feed",
+        hint: "Atom address",
+        run: () => openOnWeb(session, ctx, "/explore.atom", "The explore feed"),
+      },
       packsCommand(session, ctx),
+      getForgeCommand(session, ctx),
+      ...startForgeCommand(session, ctx),
+      pricingCommand(session, ctx),
+      ...forgeNameCommand(session, ctx),
       ...dataCommand(session, ctx),
       fleetCommand(session, ctx),
       {
@@ -262,8 +284,12 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               // The palette is a client like any other: a repo you cannot
               // read is "not found", indistinguishable from a typo. Without
               // this check the palette would be a way around `canRead`.
-              if (!repo || !canRead(session.db, repo, session.user))
-                return "not found";
+              if (!repo || !canRead(session.db, repo, session.user)) {
+                const near = owner && name ? nearRepos(session.db, session.user, owner, name) : [];
+                return near.length === 0
+                  ? "not found"
+                  : `not found — did you mean ${near.map((r) => `${r.ownerName}/${r.name}`).join(", ")}?`;
+              }
               // After the prompt has popped itself, or the pop takes the
               // screen just pushed instead (`later` in screens/common.ts).
               return Promise.resolve().then(() => {
@@ -400,6 +426,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "your talks with the forge's agent; n starts one, r renames, x archives",
         run: () => ctx.push(talkChatsScreen(session, ctx)),
       });
+    // One prompt builds an app; each turn is a version to diff, restore and publish (#11010).
+    if (session.signedIn && session.user?.kind !== "agent")
+      commands.push({
+        id: "build-app",
+        title: "Build an app",
+        hint: "say what to build; versions, diff, restore and publish. n starts one",
+        run: () => ctx.push(talkBuildScreen(session, ctx)),
+      });
     if (session.signedIn)
       commands.push({
         id: "ssh-keys",
@@ -465,7 +499,11 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               forgeCeiling(session.app.config),
               readVerified(session.app, flowReader.kind === "owner"),
               keeper,
-            ), keeper.ask && user ? { ask: keeper.ask, answer: () => answerKeeper(session.app, keeper.ask!.id, user.id) } : undefined));
+              session.app.config.dataDir,
+            ), keeper.ask && user ? { ask: keeper.ask, answer: () => answerKeeper(session.app, keeper.ask!.id, user.id) } : undefined,
+            mayDrift(session)
+              ? { read: async () => readHandoverLists(session.db, await readDrifts(session.app), Date.now()), update: (n) => askUpdate(session, n) }
+              : undefined));
         },
       });
     // The forge's capacity and guards, as MCP `capacity` gates them: a forge admin who is a person.
@@ -490,6 +528,13 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
       title: "API",
       hint: "the forge's endpoints; run a GET",
       run: () => ctx.push(apiScreen(session, ctx)),
+    });
+    // The forge's documentation, as /docs lists it: for anyone.
+    commands.push({
+      id: "docs",
+      title: "Docs",
+      hint: "the forge's documentation; Enter reads one",
+      run: () => ctx.push(docsScreen(ctx)),
     });
     // The last releases with their pulls, as /changelog shows them: for anyone.
     commands.push({
@@ -635,7 +680,8 @@ export function forgeSearch(session: Session): (ctx: Ctx) => PaletteSearch {
     // A guest is a stranger with a key: its search greps code under the same
     // limits as the page's and the API's (`http/strangers.ts`), counted
     // under its peer address. Refused, everything but the code is searched.
-    const greps = session.user === undefined && cleanQuery(query) !== "";
+    // A one-letter query greps nothing (#11120), so it takes no slot either.
+    const greps = session.user === undefined && greppable(query);
     const held = greps
       ? guestCodeSearch(session.app, session.identity.remoteAddress)
       : undefined;

@@ -104,6 +104,7 @@ import {
   type EnvName,
 } from "./data.ts";
 import { parseManifest, type AppManifest } from "./manifest.ts";
+import { heldManifest } from "../core/starts.ts";
 import { identityKey } from "./proxy.ts";
 import { noteReached } from "./egress_report.ts";
 import { cellHooks } from "./egress_refused.ts";
@@ -120,6 +121,7 @@ import {
   type StartError,
   type StartInput,
 } from "./process.ts";
+import { during } from "../perf/jobs.ts";
 
 const log = createLog("apps");
 
@@ -779,7 +781,7 @@ export class AppsRuntime {
     this.pruneDirs(known);
     await this.sampleStorage();
     this.sweeper = setInterval(
-      () => void this.sweep(),
+      () => void during("apps-sweep", () => this.sweep()),
       this.options.sweepEveryMs ?? SWEEP_EVERY_MS,
     );
   }
@@ -1388,7 +1390,7 @@ export class AppsRuntime {
     state.live = live;
     this.awake(state, servingAt);
     state.asleep = undefined;
-    state.lastRequestAt = Date.now();
+    state.lastRequestAt = this.now();
     state.lastError = undefined;
     if (rested !== undefined && rested.dir !== live.dir)
       rmSync(rested.dir, { recursive: true, force: true });
@@ -1509,7 +1511,9 @@ export class AppsRuntime {
       readFileAt(bare, run.commitOid, "forge.json"),
       readFileAt(bare, run.commitOid, "package.json"),
     ]);
-    const manifest = parseManifest(forgeJson, packageJson);
+    const parsed = parseManifest(forgeJson, packageJson);
+    // An agent's unclaimed account runs small, with no host but the registries (#10912).
+    const manifest = parsed.ok ? { ...parsed, value: heldManifest(this.app.db, repo.ownerId, parsed.value) } : parsed;
     clock.lap("manifest");
     if (!manifest.ok) {
       return {
@@ -1759,18 +1763,22 @@ export class AppsRuntime {
         }
         const delay = RESTART_BACKOFF_MS[state.restarts.length] ?? 30_000;
         state.restarts.push(now);
-        setTimeout(() => {
-          if (this.stopped) return;
-          const fresh = getRepoById(this.app.db, repo.id);
-          if (fresh)
-            this.requestDeploy(
-              state.app,
-              fresh,
-              state.env,
-              live.commitOid,
-              oom ? "oom" : "restart",
-            );
-        }, delay);
+        setTimeout(
+          () =>
+            during("apps-restart", () => {
+              if (this.stopped) return;
+              const fresh = getRepoById(this.app.db, repo.id);
+              if (fresh)
+                this.requestDeploy(
+                  state.app,
+                  fresh,
+                  state.env,
+                  live.commitOid,
+                  oom ? "oom" : "restart",
+                );
+            }),
+          delay,
+        );
       })
       .catch(() => {});
   }
@@ -1782,7 +1790,7 @@ export class AppsRuntime {
   touch(record: AppRecord, env: EnvName): void {
     const state = this.envs.get(key(record.id, env));
     if (state === undefined) return;
-    state.lastRequestAt = Date.now();
+    state.lastRequestAt = this.now();
     state.keptAwake = undefined;
   }
 
@@ -1799,7 +1807,7 @@ export class AppsRuntime {
       if (!held) return;
       held = false;
       state.openStreams--;
-      state.lastRequestAt = Date.now();
+      state.lastRequestAt = this.now();
     };
   }
 
@@ -1817,7 +1825,7 @@ export class AppsRuntime {
       if (!held) return;
       held = false;
       state.openRequests--;
-      state.lastRequestAt = Date.now();
+      state.lastRequestAt = this.now();
     };
   }
 
@@ -1993,7 +2001,7 @@ export class AppsRuntime {
       state.asleep = undefined;
       state.live = live;
       this.awake(state, now);
-      state.lastRequestAt = Date.now();
+      state.lastRequestAt = this.now();
       this.watch(state, repo, live);
       write("awake");
     })().finally(() => {
@@ -2026,6 +2034,7 @@ export class AppsRuntime {
     };
     const manifest = parseManifest(read("forge.json"), read("package.json"));
     if (!manifest.ok) return false;
+    const owner = getRepoById(this.app.db, record.repoId)?.ownerId;
     const state = this.envFor(record, env);
     if (state.live !== undefined || state.deploying !== undefined) return true;
     // The deploy that built this checkout, in an earlier life: its log is
@@ -2039,7 +2048,7 @@ export class AppsRuntime {
     state.asleep = {
       commitOid,
       dir,
-      manifest: manifest.value,
+      manifest: owner === undefined ? manifest.value : heldManifest(this.app.db, owner, manifest.value),
       runId: built?.id ?? "",
       since: new Date().toISOString(),
     };
@@ -2170,13 +2179,21 @@ export class AppsRuntime {
       : { kind: "slider", position: getEconomics(this.app.db).position };
   }
 
+  /**
+   * The sweep's clock. Requests stamp `lastRequestAt` with it too, so a
+   * window measured by the sweep starts again at a request on the same clock.
+   */
+  private now(): number {
+    return this.options.clock?.() ?? Date.now();
+  }
+
   /** Stop what nobody has asked for lately, and keep it ready to wake. */
   private async sweep(): Promise<void> {
     if (this.stopped) return;
     await this.hibernate();
     const source = this.windowSource();
     const grace = this.options.busyGraceMs ?? BUSY_GRACE_MS;
-    const now = this.options.clock?.() ?? Date.now();
+    const now = this.now();
     this.metered(() => beatAwake(this.app.db, new Date(now).toISOString()));
     for (const state of this.envs.values()) {
       const live = state.live;

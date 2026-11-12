@@ -199,8 +199,8 @@ describe("quarantine", () => {
   });
 
   test("a file excluded already is left alone", async () => {
-    const { EXCLUDED } = await import("../scripts/gate.ts");
-    expect(quarantine(source, EXCLUDED[0]!.file, 1)).toBe(source);
+    const once = quarantine(source, file, 1);
+    expect(quarantine(once, file, 2)).toBe(once);
     expect(quarantine("no list here", file, 1)).toBe("no list here");
   });
 });

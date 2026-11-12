@@ -18,6 +18,7 @@
  * with what strangers type. Not the forge's health: that is `kernel/vitals`.
  */
 
+import { during } from "../perf/jobs.ts";
 import type { Database } from "bun:sqlite";
 import { withoutWaiting } from "../kernel/db.ts";
 import { quietly } from "./write_clock.ts";
@@ -108,7 +109,7 @@ export function createRouteTiming(
     clear();
     timer = setTimeout(() => {
       try {
-        flush();
+        during("route-timing-flush", flush);
       } catch {
         // flush put the records back and rearmed the retry.
       }

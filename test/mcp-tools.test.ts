@@ -10,7 +10,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { indexText, toolFiles } from "../scripts/mcp-tools.ts";
-import { REPORT_TOOL, toolNames } from "../src/http/mcp.ts";
+import { REPORT_TOOL, START_TOOL, toolNames } from "../src/http/mcp.ts";
 import { byName } from "../src/http/mcp/shared.ts";
 import { TOOLS } from "../src/http/mcp/tools.ts";
 import { toolsSection } from "../src/web/llms_tools.ts";
@@ -43,7 +43,7 @@ describe("the gathered tools", () => {
   test("are the files, sorted, one each, and `report` beside them", () => {
     expect(TOOLS.map((t) => t.name)).toEqual(files);
     expect(files).not.toContain("report");
-    expect(toolNames()).toEqual([...files, "report"]);
+    expect(toolNames()).toEqual([...files, "report", "start"]);
   });
 
   test("the index is current: run `bun scripts/mcp-tools.ts`", () => {
@@ -66,12 +66,12 @@ describe("the gathered tools", () => {
 
 describe("the live tool list", () => {
   test("every tool's `doc` is its line in /llms.txt's tools section", () => {
-    const section = toolsSection([...TOOLS, REPORT_TOOL]);
-    for (const t of [...TOOLS, REPORT_TOOL]) {
+    const section = toolsSection([...TOOLS, REPORT_TOOL, START_TOOL]);
+    for (const t of [...TOOLS, REPORT_TOOL, START_TOOL]) {
       const line = section.find((l) => l.startsWith(`- ${t.name}: `));
       expect([t.name, line?.includes(t.doc ?? t.description) ?? false]).toEqual([t.name, true]);
     }
-    expect(section.filter((l) => l.startsWith("- ")).length).toBe(TOOLS.length + 1);
+    expect(section.filter((l) => l.startsWith("- ")).length).toBe(TOOLS.length + 2);
   });
 
   test("a pull adding a tool file and its index line needs no docs file", async () => {

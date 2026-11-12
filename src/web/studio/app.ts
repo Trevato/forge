@@ -10,6 +10,7 @@
  */
 
 import { appCardPath } from "../og/path.ts";
+import { fleetGraphHref } from "../fleet-graph.ts";
 import { sealedScope } from "../../core/sealed.ts";
 import { egressSetting } from "../../core/capacity.ts";
 import { egressNote } from "./egress.ts";
@@ -29,6 +30,7 @@ import {
 } from "../../core/runs.ts";
 import { autonomyStatus } from "../../crew/autonomy.ts";
 import { governorSeen } from "../../crew/governed.ts";
+import { governorRows } from "./governor_rows.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, repoBase, repoHeader, repoPalette } from "../chrome.ts";
@@ -53,13 +55,14 @@ import {
   row,
 } from "../ui.ts";
 import { answersRegion } from "./answers.ts";
+import { appMilestones } from "./milestone_lines.ts";
 import { nowCard, nowRegion } from "./now.ts";
 import { repoAsks } from "./asks.ts";
 import { notesCard } from "./notes.ts";
 import { adapterCard } from "./adapter.ts";
 import { appPanels } from "./previews.ts";
 import { noCrewLine, pausedWords, servingHistory, type WordCtx } from "./words.ts";
-import { crewKeyNote } from "./crew.ts";
+import { crewKeyCard } from "./crew_key.ts";
 import {
   notePhase,
   takeSessionTime,
@@ -67,6 +70,8 @@ import {
   timePhaseAsync,
 } from "../../core/route_timing.ts";
 import { noteAppOpened } from "../../core/next-steps.ts";
+import { readAppMoney } from "../../actions/money.ts";
+import { moneyRows } from "./money_line.ts";
 
 /**
  * What asks the viewer in this repository, muted or not: a mute quiets the
@@ -430,10 +435,7 @@ export async function studioApp(
                 </dd>
                 <dt>Slots</dt>
                 <dd>${autonomy.active} of ${autonomy.slots} in use</dd>
-                ${governor === undefined
-                  ? null
-                  : html`<dt>Governor</dt>
-                      <dd>${governor.why}</dd>`}
+                ${governorRows(governor)}
                 ${autonomy.paused
                   ? html`<dt>Paused</dt>
                       <dd>${pausedWords(autonomy.paused)}</dd>`
@@ -444,16 +446,33 @@ export async function studioApp(
           head: html`${icon("play")}
             <h2>On its own</h2>
             <span class="spacer"></span>
+            ${btn("Graph", {
+              href: fleetGraphHref([`${repo.ownerName}/${repo.name}`]),
+              size: "sm",
+              variant: "secondary",
+            })}
             ${btn("Change", { href: `${base}/settings`, size: "sm" })}`,
           extra: "about",
         },
       );
+  // This month's money (#510): the statement's total against what the app
+  // cost, for whoever may read its statement — the same numbers, one door.
+  const money = fresh ? null : timePhase(req, "money", () => readAppMoney(ctx.app, ctx.auth.user, repo));
+  const moneyCard =
+    money === null || !money.ok
+      ? null
+      : card(moneyRows(money.value, `${base}/settings/app/statement`), {
+          head: html`${icon("activity")}
+            <h2>This month</h2>`,
+          extra: "about",
+        });
   // The rest of the app's environment — its variables, hostname, access and
   // domains — is the admin's, on the app's settings page.
   // Issues, Pulls and the map are the head's own tabs; only what it lacks is here.
   const more = html`<p class="muted small">
     <a href="${base}/variants">Variants</a>
     ${when(canAdmin(db, repo, ctx.auth.user), () => html`<a href="${base}/settings/app">Environment settings</a>`)}
+    ${when(canAdmin(db, repo, ctx.auth.user), () => html`<a href="/-/confirm?to=${encodeURIComponent(`${base}/archive`)}">Archive</a>`)}
   </p>`;
 
   // An app that follows another says so before anything else: whether it
@@ -479,12 +498,13 @@ export async function studioApp(
       ? archivedParentLine(ctx, repo)
       : followingCard(ctx, repo, following)}
     <div id="app-head">${head}</div>
-    ${ownerFacts ? crewKeyNote(ctx) : null}
+    ${ownerFacts ? crewKeyCard(ctx, true) : null}
     <div class="stack">
       ${adapter}
       ${tellRegion}
       <div id="app-previews"></div>
       ${nowRegion(repo, now)}
+      ${appMilestones(ctx, repo)}
       ${more}
     </div>
     ${liveMount({ repo: base, app: true })}`
@@ -498,7 +518,7 @@ export async function studioApp(
     <div id="app-head">${head}</div>
     ${askingLine(ctx, repo)}
     ${policy}
-    ${ownerFacts ? crewKeyNote(ctx) : null}
+    ${ownerFacts ? crewKeyCard(ctx, true) : null}
     ${ownerFacts
       ? egressNote(
           ctx.app.config.dataDir,
@@ -513,10 +533,11 @@ export async function studioApp(
         ${tellRegion}
         <div id="app-previews">${previews}</div>
         ${nowRegion(repo, now)}
+        ${appMilestones(ctx, repo)}
         ${notesCard(ctx, repo, record)}
       </div>
       <aside class="stack">
-        ${adapter} ${crewCard} ${weekCard} ${ownCard} ${more}
+        ${adapter} ${crewCard} ${weekCard} ${moneyCard} ${ownCard} ${more}
       </aside>
     </div>
     ${liveMount({ repo: base, app: true })}`;

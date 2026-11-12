@@ -9,6 +9,7 @@
  */
 
 import { checkPatch, createAgent, deleteAgent, listAllAgents, updateAgent } from "../../actions/crew.ts";
+import { fundingOf, fundingWords } from "../../spawn/funding.ts";
 import { CREW_ROLES, type AgentPatch } from "../../core/agents.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -52,7 +53,9 @@ export function agentsScreen(f: Session, ctx: Ctx): Screen {
     render(area, s) {
       const c = ctx.theme.c;
       const [head, body] = split(area, "v", [len(1), fill(1)]);
-      const text = note !== "" ? note : allowed() ? "The crew's settings; each change asks first." : "Agents are set by a forge admin.";
+      const funded = fundingOf(f.app.config.dataDir);
+      const base = allowed() ? "The crew's settings; each change asks first." : "Agents are set by a forge admin.";
+      const text = note !== "" ? note : funded === undefined ? base : `${base} ${fundingWords(funded)}`;
       s.text(head!.x, head!.y, truncate(text, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       drawList(s, body!, c, state, rows());
     },

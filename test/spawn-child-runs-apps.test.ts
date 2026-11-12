@@ -44,6 +44,7 @@ describe("a hosted child's apps run in the parent", () => {
     if (hit === undefined) return new Response("not an app host", { status: 418 });
     if (hit === "unknown") return new Response("not found", { status: 404 });
     if ("cell" in hit) throw new Error("this child is hosted");
+    if ("refused" in hit) return new Response(hit.refused, { status: 503 });
     // The server is only for a websocket upgrade, which these requests are not.
     return (await proxyApp(hit.runtime, request, hit.target, {} as never))!;
   };

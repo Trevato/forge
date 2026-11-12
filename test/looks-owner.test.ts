@@ -341,7 +341,7 @@ describe("the forge's own owner looks, over the preview seed", () => {
     const waves = await asOwner(`${repoHome}/waves`);
     expect(waves).toContain(PREVIEW_WAVE);
     expect(waves).toContain(PREVIEW_WAVE_HEADLINE);
-    expect(waves).toContain("1 pull");
+    expect(waves).toContain("1 change in 1 app");
     const milestones = await asOwner(`${repoHome}/milestones`);
     expect(milestones).toContain("The home page says hello");
     expect(milestones).toContain("2 of 3 done");

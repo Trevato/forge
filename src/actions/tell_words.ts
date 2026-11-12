@@ -15,3 +15,6 @@ export const SAY_SOMETHING_WORDS = "Say something first.";
 
 /** A report that did not reach the issue list. */
 export const NOT_SENT_WORDS = "That could not be sent.";
+
+/** A first ask whose app would be the forge's own repository. */
+export const FORGE_REPO_WORDS = "That name is this forge's own repository. Ask again in other words and it makes a new app.";

@@ -25,6 +25,7 @@ import type { Repo } from "../../src/core/repos.ts";
 import { serve, type Servers } from "../../src/http/server.ts";
 import { listEvents } from "../../src/core/events.ts";
 import { promote } from "./members.ts";
+import "./roomy-disk.ts";
 
 /** A forge.json declaring `run` as the check, with no install step. */
 export const checkJson = (run: string, extra = ""): string =>

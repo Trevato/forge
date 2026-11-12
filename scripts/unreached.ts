@@ -21,6 +21,10 @@ export const ENTRIES = [
   "src/chaos/run.ts",
   "src/release/boot.ts",
   "src/git/hook-entry.ts",
+  // Run by hand: `bun run src/tui/gallery.ts` prints every widget.
+  "src/tui/gallery.ts",
+  // Bundled for the browser by Bun.build in src/web/asset.ts, named there by a template path.
+  "src/web/highlight-client.ts",
 ];
 
 /** Scripts the check and operators run, and the benches run at release, are callers too: their imports count. */

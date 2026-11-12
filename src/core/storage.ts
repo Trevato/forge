@@ -17,7 +17,7 @@ import { appsRoot } from "../apps/data.ts";
 import { dirBytes } from "../apps/bytes.ts";
 import { repoDir } from "../git/repos.ts";
 import { limitValue } from "../settings/limits.ts";
-import { getQuota } from "../settings/quotas.ts";
+import { getQuota, quotaOf } from "../settings/quotas.ts";
 import { contributionForksOf, isContributionFork } from "./contribute.ts";
 import type { Repo } from "./repos.ts";
 import type { User } from "./users.ts";
@@ -190,8 +190,8 @@ export function formatBytes(bytes: number): string {
 }
 
 /** The storage limit in bytes, or none. */
-export function storageLimitBytes(app: App): number | undefined {
-  const mb = getQuota(app.db, "storage");
+export function storageLimitBytes(app: App, ownerId?: string): number | undefined {
+  const mb = ownerId === undefined ? getQuota(app.db, "storage") : quotaOf(app.db, "storage", ownerId);
   return mb === null ? undefined : mb * BYTES_PER_MB;
 }
 
@@ -217,7 +217,7 @@ export async function storageRefusal(
     const guest = await contributionRefusal(app, ownerId, repo, user);
     if (guest !== undefined) return guest;
   }
-  const limit = storageLimitBytes(app);
+  const limit = storageLimitBytes(app, ownerId);
   if (limit === undefined || storageExempt(user)) return undefined;
   let used = await accountBytes(app, ownerId);
   // At the limit, look again: a repository deleted or data cleared since the
@@ -240,7 +240,7 @@ export const storageRefusedText = (used: string): string =>
 
 /** The sentence for a refusal just given, from the figure it was given on. */
 export function storageSentence(app: App, ownerId: string): string | undefined {
-  const limit = storageLimitBytes(app);
+  const limit = storageLimitBytes(app, ownerId);
   const used = cachedBytes(app, ownerId);
   return limit === undefined || used === undefined || used < limit
     ? undefined
@@ -259,7 +259,7 @@ export async function pushCap(
   repo?: Repo,
 ): Promise<Record<string, string>> {
   if (storageExempt(user)) return {};
-  const limit = storageLimitBytes(app);
+  const limit = storageLimitBytes(app, ownerId);
   const guest =
     repo !== undefined && isContributionFork(app.db, repo.id)
       ? (await contributionRoom(app, ownerId, repo)).room

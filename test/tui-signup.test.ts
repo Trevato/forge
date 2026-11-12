@@ -73,15 +73,15 @@ test("reads open, esc changes nothing, a confirm closes the door", async () => {
   const h = boot("alice");
   await h.open();
   expect(h.text()).toContain("signup: open");
-  // picker, closed, then esc on the plan
-  await h.press("s", "j", "j", "enter");
+  // picker (open, request, invite, closed), closed, then esc on the plan
+  await h.press("s", "j", "j", "j", "enter");
   expect(h.text()).toContain("from open to closed");
   await h.press("esc");
   expect(getSignup(forge.db)).toBe("open");
   // esc on the picker too
   await h.press("s", "esc");
   expect(getSignup(forge.db)).toBe("open");
-  await h.press("s", "j", "j", "enter", "enter");
+  await h.press("s", "j", "j", "j", "enter", "enter");
   expect(getSignup(forge.db)).toBe("closed");
   expect(signupClosed({ db: forge.db } as never)).toBe(true);
   expect(h.text()).toContain("signup: closed");
@@ -111,4 +111,24 @@ test("a non-admin and an admin agent are never offered s", async () => {
   const admin = new Session(forge, { sshUsername: "t", remoteAddress: "127.0.0.1", user: getUserByName(forge.db, "alice")! });
   const own = invitesScreen(admin, { push() {}, invalidate() {} } as never);
   expect(JSON.stringify(own.keys)).toContain('"s"');
+});
+
+test("an admin sets who may start an agent with a, after a confirm; others are not offered it", async () => {
+  const { getAgentStart } = await import("../src/settings/agent_start.ts");
+  const h = boot("alice");
+  await h.open();
+  expect(getAgentStart(forge.db)).toBe("open");
+  await h.press("a", "j", "j", "enter");
+  expect(h.text()).toContain("from open to off");
+  await h.press("esc");
+  expect(getAgentStart(forge.db)).toBe("open");
+  await h.press("a", "j", "j", "enter", "enter");
+  expect(getAgentStart(forge.db)).toBe("off");
+  h.stop();
+  const bob = boot("bob");
+  await bob.open();
+  await bob.press("a", "j", "enter", "enter");
+  expect(getAgentStart(forge.db)).toBe("off");
+  bob.stop();
+  (await import("../src/settings/agent_start.ts")).setAgentStart(forge.db, "open", getUserByName(forge.db, "alice")!.id);
 });

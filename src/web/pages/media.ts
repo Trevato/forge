@@ -23,6 +23,7 @@ import type { Ctx } from "../../http/context.ts";
 import { holds } from "../../http/etag.ts";
 import { parseRange } from "../../http/range.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
+import { publicOrigin } from "../../core/public_origin.ts";
 import { loadRepo, notFoundPage } from "../chrome.ts";
 import { cachedMedia, keepMedia } from "./tree_cache.ts";
 import { HEAD_BYTES, mediaType } from "../render/kinds.ts";
@@ -40,6 +41,19 @@ export const MEDIA_POLICY =
  */
 export const PDF_POLICY =
   "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; frame-ancestors 'self'";
+
+/**
+ * An HTML file is served as a page only under this: `sandbox` with no
+ * `allow-*` token gives it an opaque origin and no script, form or popup;
+ * `default-src 'none'` blocks everything not listed. Images and stylesheets
+ * load only from `scope`, this repository's files at this ref, so a relative
+ * `../../` reference that climbs out of the repository (to another repository
+ * or any page of the forge) is refused by the browser, not fetched. Inline
+ * styles load. `frame-ancestors 'self'` lets only the forge's own blob page
+ * frame it.
+ */
+export const htmlPolicy = (scope: string): string =>
+  `sandbox; default-src 'none'; img-src ${scope} data:; style-src 'unsafe-inline' ${scope}; frame-ancestors 'self'`;
 
 /** At or under this, the pooled reader hands the body back without a spawn. */
 const SMALL_BYTES = 1_000_000;
@@ -148,6 +162,12 @@ async function mediaRead(ctx: Ctx, clock: Clock): Promise<Response> {
   const type = download ? "application/octet-stream" : mediaType(path, head);
   headers["content-type"] = type;
   if (type === "application/pdf") headers["content-security-policy"] = PDF_POLICY;
+  if (type.startsWith("text/html")) {
+    const origin = publicOrigin(ctx.app.config.url, ctx.url.origin);
+    headers["content-security-policy"] = htmlPolicy(
+      `${origin}${mediaHref(`/${repo.ownerName}/${repo.name}`, ref, "")}`,
+    );
+  }
 
   // A Range past an If-Range that no longer holds gets the whole new file.
   const ifRange = ctx.request.headers.get("if-range");

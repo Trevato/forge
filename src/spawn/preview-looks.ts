@@ -148,9 +148,21 @@ export const PREVIEW_MACHINES_PAGE = `${PREVIEW_REPO_HOME}/settings/machines`;
 export const PREVIEW_DISK_ALERT = "nvme1";
 export const PREVIEW_DISK_OPEN_LOOK = `${PREVIEW_MACHINES_PAGE}#disk-standard-${PREVIEW_DISK_ALERT}-figures`;
 
+/**
+ * The newcomer (#11285): a preview-only person of a spawned forge who has
+ * claimed it and told the crew nothing, so their home is the first-login
+ * card at "What do you want built?". Their look is of `/` with a query the
+ * page ignores, so it is a page of its own beside the admin's home.
+ */
+export const PREVIEW_NEWCOMER = "preview-newcomer";
+export const PREVIEW_NEWCOMER_ORG = "preview-newcomer-forge";
+export const PREVIEW_NEWCOMER_PAGE = "/?as=newcomer";
+
 export interface OwnerLook {
   readonly page: string;
   readonly kind: LookKind;
+  /** Taken as the newcomer, not the preview admin. */
+  readonly as?: "newcomer";
 }
 
 /** The named list: each page at desk and phone, taken as the owner. */
@@ -177,10 +189,17 @@ export const PREVIEW_OWNER_LOOKS: readonly OwnerLook[] = [
   PREVIEW_ISSUE_EDIT_PAGE,
   PREVIEW_RESILIENCE_PAGE,
   PREVIEW_SEARCH_PAGE,
+  PREVIEW_NEWCOMER_PAGE,
   PREVIEW_MACHINES_PAGE,
   PREVIEW_DISK_OPEN_LOOK,
   ...PREVIEW_SETTINGS_PAGES,
-].flatMap((page) => (["desktop", "phone"] as const).map((kind) => ({ page, kind })));
+  "/settings",
+  "/forges",
+].flatMap((page) =>
+  (["desktop", "phone"] as const).map((kind): OwnerLook =>
+    page === PREVIEW_NEWCOMER_PAGE ? { page, kind, as: "newcomer" } : { page, kind },
+  ),
+);
 
 /**
  * The owner looks a picture of `repo`'s `env` must include: the named list

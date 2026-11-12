@@ -237,3 +237,21 @@ export const parseSlots = (input: unknown): number | undefined =>
 export function usdOfCents(cents: number): string {
   return `${Math.floor(cents / 100)}.${String(cents % 100).padStart(2, "0")}`;
 }
+
+/**
+ * The slider's position in plain words, for a line that names it (#11102):
+ * the ends are the Economics page's own words ("cheapest", "most
+ * responsive"); 40–60 is "balanced", 50 the default among them; between,
+ * "lean" toward cheap and "responsive" toward warm. Out of range or not a
+ * number reads as the default's word, like a stored value that does not
+ * parse.
+ */
+export function positionWord(position: number): string {
+  const p = Number.isFinite(position) ? Math.round(position) : POSITION_DEFAULT;
+  if (p < POSITION_MIN || p > POSITION_MAX) return positionWord(POSITION_DEFAULT);
+  if (p === POSITION_MIN) return "cheapest";
+  if (p === POSITION_MAX) return "most responsive";
+  if (p < 40) return "lean";
+  if (p <= 60) return "balanced";
+  return "responsive";
+}

@@ -78,6 +78,7 @@ import { repoDir } from "../git/repos.ts";
 import { isStrangerPull, strangerGuard } from "../crew/stranger.ts";
 import { importIssue, importReviewStates } from "../origins/import.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { createLog } from "../kernel/log.ts";
 import {
   refusal,
   writeThroughFor,
@@ -97,6 +98,9 @@ import { carryBranchThrough } from "../origins/push-through.ts";
 import { ensureFork, forkHead, pushToFork } from "../origins/fork-route.ts";
 import { denied } from "../origins/operator.ts";
 import type { WriteThrough } from "../origins/write-through.ts";
+import { requestSyncNow } from "../origins/sync.ts";
+
+const log = createLog("pulls");
 
 /**
  * How a fork of a mirror proposes to the mirror's origin: `direct`, its
@@ -715,7 +719,7 @@ export async function submitReview(
   repo: Repo,
   pull: Pull,
   input: SubmitReviewInput,
-): Promise<Result<Review, SubmitReviewActionError>> {
+): Promise<Result<Review & { readonly note?: string }, SubmitReviewActionError>> {
   if (!isReviewState(input.state)) return err("invalid_state");
   const participant = requireParticipant(app, actor, repo);
   if (!participant.ok) return participant;
@@ -749,7 +753,16 @@ export async function submitReview(
     const sent = await through.value.provider.submitReview(
       through.value.fullName,
       pull.number,
-      { state: input.state, body: (input.body ?? "").trim() },
+      {
+        state: input.state,
+        body: (input.body ?? "").trim(),
+        comments: anchored.value.map((l) => ({
+          path: l.path,
+          line: l.line,
+          side: l.side,
+          body: l.body,
+        })),
+      },
     );
     if (!sent.ok) return err(refusal(sent.error.error));
     importReviewStates(
@@ -769,8 +782,26 @@ export async function submitReview(
         ...(stored ? { reviewId: stored.id } : {}),
       },
     });
-    // Line comments stay here, as `addReview`'s always have on a mirror.
-    for (const line of anchored.value) postLine(app, pull, user, line);
+    // The origin took the lines inside the review, and sync brings them
+    // back as its own; posting them here too would show each twice. One that
+    // refused the payload got the verdict alone, so the lines stay here, as
+    // `addReview`'s always have on a mirror, and the log says so.
+    if (anchored.value.length > 0 && (sent.value.carried ?? 0) === 0) {
+      log.warn("origin refused the review's line comments; kept here one by one", {
+        repo: repo.id,
+        number: pull.number,
+        lines: anchored.value.length,
+      });
+      for (const line of anchored.value) postLine(app, pull, user, line);
+      return stored
+        ? ok({
+            ...stored,
+            note: "The origin refused line comments inside a review: the verdict went there alone and the line comments are kept here.",
+          })
+        : err("origin_refused");
+    } else if (anchored.value.length > 0) {
+      requestSyncNow(app, through.value.origin.id);
+    }
     return stored ? ok(stored) : err("origin_refused");
   }
 

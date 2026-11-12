@@ -239,7 +239,7 @@ describe("web ui", () => {
       "Closed without merging.",
     );
     expect(await (await fetch(`${base}/mel/proj/pulls`)).text()).toContain(
-      "Nothing open.",
+      "No pull request is open.",
     );
 
     await fetch(`${at}/state`, {
@@ -988,7 +988,7 @@ describe("web ui", () => {
     const seeded = openIssue(app, mel, proj, { title: "dismiss me" });
     if (!seeded.ok) throw new Error(seeded.error);
     expect(assignIssue(app, mel, proj, seeded.value, mel).ok).toBe(true);
-    expect(shellJs).toContain(`e.key === '${NEW_ISSUE_KEY}'`);
+    expect(shellJs).toContain(`['${NEW_ISSUE_KEY}'], openNewIssue]`);
     for (const k of SCRIPT_KEYS) {
       const page = await (await fetch(`${base}${k.page}`, { headers: { cookie: `${owner}; forge_mode=studio` } })).text();
       // A menu row draws the key in its column; anything else carries it as data-hint (#8930).
@@ -1064,9 +1064,8 @@ describe("web ui", () => {
 
     // The shell sends a form on Enter only with a modifier held, only for a
     // form that opted in, and nowhere else.
-    expect(shellJs).toContain(
-      "(e.metaKey || e.ctrlKey) && e.key === 'Enter' && t.form && t.form.hasAttribute('data-submit-key')",
-    );
+    expect(shellJs).toContain("['Mod+Enter'], function (e) {");
+    expect(shellJs).toContain("if (f && f.hasAttribute('data-submit-key')) { e.preventDefault(); submitBox(f); }");
     const sends = shellJs
       .split("\n")
       .filter((l) => /requestSubmit|\.submit\(/.test(l));

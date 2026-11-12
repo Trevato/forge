@@ -42,6 +42,11 @@ const ADMIN_ARGS: Record<string, Record<string, unknown>> = {
   rollback: { sha: "a".repeat(40), dryRun: false },
 };
 
+/** Valid arguments for a tool whose write is one call among reads and plans (`readsWhen`): the generic arguments would only read. */
+const WRITE_ARGS: Record<string, Record<string, unknown>> = {
+  flow: { kind: "drift", action: "update", repo: "alice/game", pull: 1 },
+};
+
 /** What `visible()` answers for a tool the token's scope does not open. */
 const notListed = (body: any): boolean =>
   body.error?.code === -32602 && String(body.error.message).startsWith("no tool named");
@@ -99,6 +104,7 @@ describe("a token that may only read cannot write through any tool", () => {
   /** Minimal arguments that make the call a real write, not a plan or a list. */
   const writing = (t: ReturnType<typeof toolRegistry>[number]) => {
     if (t.name in ADMIN_ARGS) return ADMIN_ARGS[t.name]!;
+    if (t.name in WRITE_ARGS) return WRITE_ARGS[t.name]!;
     const args: Record<string, unknown> = { dryRun: false, action: "x" };
     if (t.readsWithout !== undefined) args[[t.readsWithout].flat()[0]!] = "x";
     return args;
@@ -116,9 +122,13 @@ describe("a token that may only read cannot write through any tool", () => {
     const counted = ownCount(app.db);
     const events = app.db.query("SELECT * FROM event ORDER BY rowid").all();
     const unrefused: string[] = [];
+    const planned: string[] = [];
     for (const t of writes) {
       const args = writing(t);
-      expect(t.plansOnly(args)).toBe(false);
+      if (t.plansOnly(args)) {
+        planned.push(t.name);
+        continue;
+      }
       const body = await rpc(ro, t.name, args);
       const text: string | undefined = body.result?.content?.[0]?.text;
       const refused = t.needsAdminScope
@@ -126,6 +136,8 @@ describe("a token that may only read cannot write through any tool", () => {
         : body.result?.isError === true && text === "forbidden: this token may read, not act";
       if (!refused) unrefused.push(t.name);
     }
+    // A tool named here needs valid arguments in WRITE_ARGS: the generic ones only plan or read.
+    expect(planned).toEqual([]);
     expect(unrefused).toEqual([]);
     expect(snapshot(app.db)).toEqual(before);
     expect(ownCount(app.db)).toBeGreaterThanOrEqual(counted);

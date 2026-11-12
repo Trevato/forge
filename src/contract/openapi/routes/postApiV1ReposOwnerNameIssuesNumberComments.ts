@@ -5,5 +5,6 @@ export const route: Route = {
   path: `${REPO}/issues/{number}/comments`,
   summary: "Comment on an issue or pull",
   auth: true,
+  role: "member",
   body: { body: "string" },
 };

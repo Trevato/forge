@@ -5,4 +5,5 @@ export const route: Route = {
   path: "/api/v1/health",
   summary: "How the forge is, uncached; anyone may ask, a stranger is told little, the release probe and a site admin the whole of it",
   auth: false,
+  role: "anonymous",
 };

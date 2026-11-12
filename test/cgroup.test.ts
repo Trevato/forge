@@ -9,13 +9,16 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   cgroupHost,
   cgroupRoot,
   cpuMax,
+  diskDevice,
+  ioMaxLine,
+  majorMinor,
   enterArgv,
   oomKills,
   tryEnterArgv,
@@ -24,6 +27,8 @@ import {
 } from "../src/apps/cgroup.ts";
 import { cellCgroup, cellsAvailable, processCapHolder, PROCESSES_MAX, type CellSpec } from "../src/apps/contain.ts";
 import { childEnv, runStep } from "../src/apps/process.ts";
+import { cellSpecFor } from "../src/spawn/cell.ts";
+import { SIZE_IO } from "../src/spawn/sizes.ts";
 import type { Proc, Raw } from "../src/system/proc.ts";
 import { buildSystem } from "../src/system/view.ts";
 
@@ -181,6 +186,70 @@ describe("the layout, on a directory shaped like cgroupfs", () => {
     expect(readFileSync(join(run.dir, "cpu.max"), "utf8")).toBe("400000 100000");
     // Named like any cell, so a restart sweeps it once this forge is gone.
     expect(run.dir).toMatch(/\/cells\/c\d+-\d+$/);
+  });
+
+  test("a child forge's cell gets io.max of its size on the data disk, where io is delegated", () => {
+    const dir = fake("io", "cpu io memory\n");
+    const host = prepare({ ok: true, root: dir });
+    // cgroupfs reads back every controller enabled, without the `+`.
+    writeFileSync(join(dir, "cells", "cgroup.subtree_control"), "memory cpu io\n");
+    const child = cellSpecFor({
+      dir: join(root, "child"),
+      parentDataDir: root,
+      parentUrl: "http://127.0.0.1:1",
+      size: "medium",
+      port: 4100,
+      label: "child:x",
+    });
+    expect(child.io).toEqual(SIZE_IO.medium);
+    const seen: string[] = [];
+    const cell = cellCgroup(child, host, (path) => (seen.push(path), "259:0"))!;
+    expect(seen).toEqual([child.dir]);
+    const { rbps, wbps, riops, wiops } = SIZE_IO.medium;
+    expect(readFileSync(join(cell.dir, "io.max"), "utf8")).toBe(`259:0 rbps=${rbps} wbps=${wbps} riops=${riops} wiops=${wiops}`);
+    expect(cell.ioCapped).toBe(true);
+    // An app declares no io: no io.max. No disk under the data (tmpfs): none either.
+    expect(existsSync(join(cellCgroup(spec(join(root, "app")), host)!.dir, "io.max"))).toBe(false);
+    const none = cellCgroup(child, host, () => undefined)!;
+    expect(existsSync(join(none.dir, "io.max"))).toBe(false);
+    expect(none.ioCapped).toBe(false);
+    // The io controller not delegated to the cells: no io.max, and the cell still opens.
+    const memOnly = prepare({ ok: true, root: fake("io-none", "memory\n") });
+    const bare = cellCgroup(child, memOnly, () => "259:0")!;
+    expect(existsSync(join(bare.dir, "io.max"))).toBe(false);
+    expect(bare.ioCapped).toBe(false);
+  });
+
+  test("io.max by hand: each key a whole number or max, and a device that is not MAJ:MIN writes nothing", () => {
+    expect(ioMaxLine({ device: "8:0", max: { rbps: 1048576.7, wbps: 0, riops: Infinity, wiops: 500 } })).toBe(
+      "8:0 rbps=1048576 wbps=max riops=max wiops=500",
+    );
+    expect(ioMaxLine({ device: "8:0\n9:0", max: SIZE_IO.small })).toBeUndefined();
+    expect(ioMaxLine({ device: "sda", max: SIZE_IO.small })).toBeUndefined();
+  });
+
+  test("the disk under a path: dev_t split as Linux does, a partition climbs to its disk, no block device is none", () => {
+    expect(majorMinor(0x0801)).toBe("8:1");
+    expect(majorMinor(259n << 8n)).toBe("259:0");
+    // A large minor spills into the high bits: 8:300.
+    expect(majorMinor((8n << 8n) | 44n | (1n << 20n))).toBe("8:300");
+    const sys = mkdtempSync(join(tmpdir(), "forge-sysblock-"));
+    try {
+      const here = majorMinor(statSync(root, { bigint: true }).dev);
+      const disk = join(sys, "devices", "sda");
+      mkdirSync(join(disk, "sda1"), { recursive: true });
+      writeFileSync(join(disk, "dev"), "8:0\n");
+      writeFileSync(join(disk, "sda1", "partition"), "1\n");
+      symlinkSync(join(disk, "sda1"), join(sys, here));
+      expect(diskDevice(root, sys)).toBe("8:0");
+      rmSync(join(disk, "sda1", "partition"));
+      expect(diskDevice(root, sys)).toBe(here);
+      rmSync(join(sys, here));
+      expect(diskDevice(root, sys)).toBeUndefined();
+      expect(diskDevice(join(root, "absent"), sys)).toBeUndefined();
+    } finally {
+      rmSync(sys, { recursive: true, force: true });
+    }
   });
 
   test("cpu.max by hand: 2 cores, half a core, and the kernel's 1 ms floor", () => {

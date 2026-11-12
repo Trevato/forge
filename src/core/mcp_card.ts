@@ -7,15 +7,48 @@
  * later standard's field names; when one settles, the card follows it.
  */
 import type { Database } from "bun:sqlite";
+import { claudeInstall, opencodeInstall, pluginSource } from "./plugin_install.ts";
 import { running, type Running } from "../kernel/version.ts";
 import { forgeSource } from "../settings/forge_source.ts";
 import { repoVisibility } from "./repos.ts";
+import { CARD_OF_TOOL, CARD_URI } from "../web/studio/cards.ts";
 
 /** The endpoint and the protected-resource metadata that names how to sign in. */
 export function mcpPointers(origin: string): { url: string; oauth: string } {
   return {
-    url: `${origin}/mcp`,
+    url: `${origin}${DISCOVERY.mcp}`,
     oauth: `${origin}/.well-known/oauth-protected-resource`,
+  };
+}
+
+/** The paths the discovery documents name each other by; the card, the API catalog and /llms.txt read them, so they cannot drift. */
+export const DISCOVERY = {
+  openapi: "/contract/openapi.json",
+  docs: "/llms.txt",
+  card: "/.well-known/mcp.json",
+  catalog: "/.well-known/api-catalog",
+  mcp: "/mcp",
+  api: "/api/v1",
+} as const;
+
+/** The `Link` header value that points at the catalog (RFC 9727 §3). */
+export const API_CATALOG_LINK = `<${DISCOVERY.catalog}>; rel="api-catalog"`;
+
+/** RFC 9727 API catalog: an RFC 9264 linkset, one anchor per API. */
+export function apiCatalog(origin: string) {
+  return {
+    linkset: [
+      {
+        anchor: `${origin}${DISCOVERY.api}`,
+        "service-desc": [{ href: `${origin}${DISCOVERY.openapi}`, type: "application/json" }],
+        "service-doc": [{ href: `${origin}${DISCOVERY.docs}`, type: "text/plain" }],
+      },
+      {
+        anchor: mcpPointers(origin).url,
+        "service-desc": [{ href: `${origin}${DISCOVERY.card}`, type: "application/json" }],
+        "service-doc": [{ href: `${origin}${DISCOVERY.docs}`, type: "text/plain" }],
+      },
+    ],
   };
 }
 
@@ -24,13 +57,15 @@ export function mcpPointers(origin: string): { url: string; oauth: string } {
  * `http/mcp.ts` answers these and refuses the rest with 401. The card and
  * `/api/v1/here` both read this list, so they cannot drift.
  */
-export const TOKEN_FREE_TOOLS: readonly string[] = ["report"];
+export const TOKEN_FREE_TOOLS: readonly string[] = ["report", "start"];
 
 /** A thin plugin the forge ships for a harness: where its source is and its one install line. */
 export interface HarnessPlugin {
   readonly harness: string;
   readonly label: string;
   readonly path: string;
+  /** True when the install clones the source repository (so it needs one offered); false when this forge serves the file itself. */
+  readonly cloned: boolean;
   /** The one line, given the origin it was read from and the source repository; it works in an empty directory. */
   readonly install: (origin: string, repo: string) => string;
   /** What to set before it runs. */
@@ -38,27 +73,22 @@ export interface HarnessPlugin {
 }
 
 /**
- * The repository that holds the plugins, as `owner/name`: the forge's
- * configured source (admin setting, else `FORGE_REPO`), and only while it is
- * public here, so every printed line works for whoever reads it. The card,
- * /llms.txt, Settings › Tokens and the terminal all ask this one question.
+ * The repository that holds the plugins, as `owner/name`, or the upstream's
+ * full URL: the forge's own source (admin setting, else `FORGE_REPO`) while it
+ * is public here, else `upstream`, so every printed line works for whoever
+ * reads it. Undefined only when neither is available. The card, /llms.txt,
+ * Settings › Tokens and the terminal all ask this one question.
  */
-export function offeredPluginRepo(db: Database, fromEnv: string | undefined): string | undefined {
+export function offeredPluginRepo(db: Database, fromEnv: string | undefined, upstream: string | undefined): string | undefined {
   const repo = forgeSource(db, fromEnv);
-  if (repo === undefined) return undefined;
-  const [owner = "", name = ""] = repo.split("/");
-  return repoVisibility(db, owner, name) === "public" ? repo : undefined;
+  if (repo !== undefined) {
+    const [owner = "", name = ""] = repo.split("/");
+    if (repoVisibility(db, owner, name) === "public") return repo;
+  }
+  return upstream;
 }
 
-/** The two Claude Code lines that install the plugin from the marketplace. */
-export function marketplaceLines(origin: string, repo: string): { add: string; install: string } {
-  return { add: `/plugin marketplace add ${pluginSource(origin, repo)}`, install: "/plugin install forge@forge" };
-}
-
-/** The clone URL of that repository on this forge's origin. */
-export function pluginSource(origin: string, repo: string): string {
-  return `${origin}/${repo}.git`;
-}
+export { pluginSource };
 
 /** The one list the card and /llms.txt both read, so they cannot drift. */
 export const HARNESS_PLUGINS: readonly HarnessPlugin[] = [
@@ -66,19 +96,44 @@ export const HARNESS_PLUGINS: readonly HarnessPlugin[] = [
     harness: "claude-code",
     label: "Claude Code",
     path: "plugins/claude-code",
-    install: (o, r) =>
-      `git clone --depth 1 --filter=blob:none --sparse ${pluginSource(o, r)} forge-plugin && git -C forge-plugin sparse-checkout set plugins/claude-code && claude --plugin-dir forge-plugin/plugins/claude-code`,
+    cloned: true,
+    install: (o) => claudeInstall(o),
     setup: "set FORGE_URL, then sign in through /mcp with the forge server; or also set FORGE_TOKEN and use the forge-token server",
   },
   {
     harness: "opencode",
     label: "OpenCode",
     path: "plugins/opencode/forge.ts",
-    install: (o, r) =>
-      `mkdir -p .opencode/plugin && curl -fsSL ${o}/${r}/raw/main/plugins/opencode/forge.ts -o .opencode/plugin/forge.ts`,
+    cloned: false,
+    install: (o) => opencodeInstall(o),
     setup: "set FORGE_URL and FORGE_TOKEN",
   },
 ];
+
+/** The plugins this forge can offer: the ones it serves itself always, the cloned ones only while a public source exists. */
+export function offeredPlugins(repo: string | undefined): readonly HarnessPlugin[] {
+  return HARNESS_PLUGINS.filter((p) => !p.cloned || repo !== undefined);
+}
+
+/**
+ * The MCP Apps cards (SEP-1865) a harness can draw, one `{ resource, tools }`
+ * per `ui://` resource, read from `CARD_OF_TOOL` so the card and /llms.txt
+ * cannot drift from what `tools/list` advertises.
+ */
+export function cardList(): { resource: string; tools: string[] }[] {
+  const byResource = new Map<string, string[]>();
+  for (const [tool, kind] of Object.entries(CARD_OF_TOOL)) {
+    const uri = CARD_URI(kind);
+    byResource.set(uri, [...(byResource.get(uri) ?? []), tool]);
+  }
+  return [...byResource].map(([resource, tools]) => ({ resource, tools }));
+}
+
+/** The one /llms.txt line that says tool results carry cards, and how many. */
+export function cardsLine(): string {
+  const n = cardList().length;
+  return `Tool results carry MCP Apps cards: a tool listed with _meta.ui.resourceUri points at a ui:// resource a harness can draw (${n} cards; the list is "cards" in the server card).`;
+}
 
 /**
  * The server card. The format is still a draft, so only what we can keep
@@ -94,14 +149,15 @@ export function mcpCard(origin: string, repo: string | undefined, now: Running =
     endpoint: url,
     transport: "streamable-http",
     protectedResourceMetadata: oauth,
-    documentation: `${origin}/llms.txt`,
-    openapi: `${origin}/contract/openapi.json`,
+    documentation: `${origin}${DISCOVERY.docs}`,
+    openapi: `${origin}${DISCOVERY.openapi}`,
     tokenFreeTools: [...TOKEN_FREE_TOOLS],
-    plugins: (repo === undefined ? [] : HARNESS_PLUGINS).map((p) => ({
+    cards: cardList(),
+    plugins: offeredPlugins(repo).map((p) => ({
       harness: p.harness,
       path: p.path,
-      source: pluginSource(origin, repo!),
-      install: p.install(origin, repo!),
+      ...(repo !== undefined ? { source: pluginSource(origin, repo) } : {}),
+      install: p.install(origin, repo ?? ""),
     })),
   };
 }
