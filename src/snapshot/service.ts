@@ -36,6 +36,8 @@ import { isOffBox } from "./off_box.ts";
 import { noteOffBox, recordSnapshotOutcome } from "./outcome.ts";
 import { s3FromEnv, type Store } from "./store.ts";
 import { during } from "../perf/jobs.ts";
+import { crewHoldsCore, forgeCpus } from "../core/one_core.ts";
+import { listActive } from "../core/runs.ts";
 
 const log = createLog("snapshots");
 
@@ -43,6 +45,8 @@ const log = createLog("snapshots");
 const NIGHTLY_HOUR_UTC = 8;
 /** After a failed snapshot, the next try is this soon (or the nightly, if sooner). */
 export const RETRY_MS = 3_600_000;
+/** A due snapshot waits for a crew run on a 1-CPU forge at most this long, then is taken anyway. */
+export const MAX_DEFER_MS = 3_600_000;
 /** A moving snapshot tells the page how far it is no oftener than this. */
 const PROGRESS_EVENT_MS = 2_000;
 
@@ -149,6 +153,11 @@ export function startSnapshots(
     readonly bucketFirstMs?: number | undefined;
     /** Test seam: the clock `takeIfDue` judges by. */
     readonly now?: (() => number) | undefined;
+    /** Test seams: the forge's CPU count and how many crew runs are active (1 CPU: a run holds the core). */
+    readonly cpus?: (() => number) | undefined;
+    readonly activeCrewRuns?: (() => number) | undefined;
+    /** Test seam: how soon the first nightly timer fires. */
+    readonly nightlyInMs?: number | undefined;
   } = {
     version: "0",
   },
@@ -262,6 +271,26 @@ export function startSnapshots(
     }
   };
 
+  // One core: a crew run has it, so a due snapshot waits and is taken on the
+  // next tick after the run ends (src/core/one_core.ts). Never forever: after
+  // MAX_DEFER_MS of waiting it is taken anyway. A snapshot running is untouched.
+  let deferredSince: number | undefined;
+  const deferred = (): boolean => {
+    const at = (options.now ?? Date.now)();
+    const held = crewHoldsCore(
+      (options.cpus ?? forgeCpus)(),
+      (options.activeCrewRuns ?? (() => listActive(app.db, "agent").length))(),
+    );
+    if (!held) {
+      deferredSince = undefined;
+      return false;
+    }
+    deferredSince ??= at;
+    if (at - deferredSince >= MAX_DEFER_MS) return false;
+    log.info("snapshot due; a crew run holds the one core, waiting");
+    return true;
+  };
+
   // A restart takes the night's snapshot if the store does not hold it: a
   // release at 08:21 killed the one in flight and nothing took it again (#8742).
   // The manifest is written last, so a snapshot cut short is not one.
@@ -277,6 +306,8 @@ export function startSnapshots(
       return false;
     }
     if (stopped || active > 0 || !snapshotDue(newest?.finishedAt, (options.now ?? Date.now)())) return false;
+    if (deferred()) return false;
+    deferredSince = undefined;
     const cut = await cutShort(store, newest?.name);
     log.info("snapshot due or lost; taking one", { newest: newest?.name ?? "none", resuming: cut?.toISOString() ?? "no" });
     await take(cut).catch(() => {});
@@ -380,9 +411,20 @@ export function startSnapshots(
     if (timer !== undefined) clearTimeout(timer);
     timer = undefined;
     if (options.nightly === false || stopped) return;
-    timer = setTimeout(() => void during("snapshot", take).catch(() => {}), ms);
+    timer = setTimeout(
+      () =>
+        void during("snapshot", () => {
+          if (active === 0 && deferred()) {
+            arm(options.snapshotCheckMs ?? SNAPSHOT_CHECK_MS);
+            return Promise.resolve();
+          }
+          deferredSince = undefined;
+          return take().then(() => {});
+        }).catch(() => {}),
+      ms,
+    );
   }
-  arm(untilNightly());
+  arm(options.nightlyInMs ?? untilNightly());
 
   // The board only reads; the time the forge first owed a drill is kept here.
   try {
