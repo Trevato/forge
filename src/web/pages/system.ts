@@ -21,6 +21,7 @@
  * line each for memory, CPU and disk; a parent lists each child's use
  * against its size (#10853, `spawn/usage.ts`).
  */
+import { mayReadRefusals } from "../../core/first_ask_refusals.ts";
 import { canSeeMemory, memoryHours } from "../../boards/memory.ts";
 import { telemetryReader } from "../../actions/telemetry.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -385,6 +386,7 @@ export async function systemPage(ctx: Ctx): Promise<Response> {
       <span class="spacer"></span><a href="/system?pause">pause</a>
     </div>
     ${help}
+    ${mayReadRefusals(ctx.auth.user) ? html`<p class="small"><a href="/forges/refused">Refused first asks</a></p>` : null}
     <div id="sys-dup">${at("sys-dup")}</div>
     <section class="settings-block"><h2>Machine</h2>
       <div id="summary" class="row-meta">${at("summary")}</div>

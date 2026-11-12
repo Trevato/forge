@@ -7,10 +7,16 @@
 
 import type { Database } from "bun:sqlite";
 
+/** How many refusals a reader sees. */
+export const REFUSED_SHOWN = 20;
 export const ASK_CHARS = 200;
 export const PER_ACTOR_HOUR = 20;
 export const KEEP_MS = 30 * 24 * 3_600_000;
 const HOUR_MS = 3_600_000;
+
+/** Who may read the refusals: a forge admin who is a person. The page, its link on /system and the terminal all ask this. */
+export const mayReadRefusals = (user: { isAdmin: boolean; kind?: string } | null | undefined): boolean =>
+  user?.isAdmin === true && user.kind !== "agent";
 
 export interface Refusal {
   readonly id: number;

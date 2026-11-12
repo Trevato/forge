@@ -280,6 +280,7 @@ import { firstAdminOptions, firstAdminPage, firstAdminSubmit } from "../web/page
 import { familyPage } from "../web/pages/family.ts";
 import { forgeLinkRevoke, forgeLinkSubmit, forgeLinkUndo, forgeRemoveConfirm, forgeRemoveSubmit, forgeStopSubmit,
   forgeOwnCodeSubmit, forgesPage } from "../web/pages/forges.ts";
+import { forgesRefusedPage } from "../web/pages/forges-refused.ts";
 import { forgeItSubmit } from "../web/pages/forge-it.ts";
 import { funnelSubmit } from "./funnel.ts";
 import { pricingDone, pricingOrder, pricingPage, resendPage, resendSubmit } from "../web/pages/pricing.ts";
@@ -856,6 +857,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/first-admin/options", firstAdminOptions);
   // "+ New forge": the spawn door as a page, any signed-in person (spawn/door.ts).
   router.add("GET", "/forges", forgesPage);
+  router.add("GET", "/forges/refused", forgesRefusedPage);
   router.add("GET", "/family", familyPage);
   router.add("GET", "/forges/name/:name", forgeName);
   router.add("POST", "/forges/:name/claim-link", forgeLinkSubmit);
