@@ -386,6 +386,13 @@ around it. None is advisory.
    `main` the pull's commit predates — is tried exactly once more on an
    empty data directory before the deploy is failed; production is never
    seeded from a copy, so this never applies to it.
+   **Rehearsal.** A preview of a moved app is a rehearsal: the copy above,
+   plus variables set for scope `preview`, which win over `all` and
+   `production` of the same name (`core/app_env.ts`). Set a payment key
+   once for `production` (live) and once for `preview` (sandbox); a name
+   left in `all` reaches previews too, so a live key must never be there.
+   The forge does not know which names are payment keys and does not refuse
+   one; the procedure is in `docs/features/platform-app-move.md`, step 4.
 4. **A deployment is a check.** Every deploy is a run; the run's state is
    what the pull shows. With `require_checks` on, `mergePull` refuses
    `checks_required` until the head's deploy run is `ok`, read live inside

@@ -36,6 +36,25 @@ Preview address, a copy of the data, the payment **sandbox** keys. The owner,
 or the shop's owner, places an order and the webhook lands. No cut-over before
 they say so in the issue.
 
+The forge already does the parts of this (`docs/APPS.md`, "Rehearsal"): a
+preview's data is a copy of production's taken when it is created, and a
+variable set for scope `preview` beats the same name set for `all` or
+`production`. So the rehearsal is a procedure, in this order:
+1. In **Settings → App → Environment**, set each payment name (for example
+   `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`) with scope `production` to
+   the live value and with scope `preview` to the sandbox value.
+2. **Never leave a payment name in scope `all`.** `all` reaches previews, so
+   a live key there is a live key in the rehearsal. Move it to `production`
+   before the pull is opened.
+3. Open the pull; read the app's payment-mode indicator (the app should show
+   `sandbox` on the preview) before anyone places an order.
+4. The copy is disposable: it is gone with the pull, and nothing placed on it
+   reaches production's data.
+
+What stays open: the forge cannot tell which names are payment keys, so
+nothing refuses a live key in `all` or in `preview`; the checks above are a
+person's. Webhooks reaching a preview's changing address are #11703.
+
 ## 5. Backup before anything is removed (person)
 Encrypted dump and files archive (`age` or `gpg`, key held by the owner, not
 on the node). Restore it into a scratch database and compare the step-3
@@ -55,7 +74,7 @@ counts. The old copy stays until that has passed.
 - A file and upload copy with a manifest compared on both ends. (#11699)
 - A custom domain for an app with certificate issuance, and a one-step revert of it. (#11700)
 - Per-app encrypted backup with a restore proof (`docs/features/backup-truth.md` covers the forge's own, not an app's). (#11701)
-- A rehearsal mode: a preview seeded from a copy of production data, with payment sandbox keys only. (#11702)
+- A guard for rehearsal: data copy and `preview`-scoped sandbox keys exist and are the procedure in step 4; nothing yet refuses a payment name left in scope `all`. (#11702)
 - Inbound payment webhooks that survive a preview's changing address. (#11703)
 - A read-only switch for the old side of a migration. (#11704)
 - Importing an app's customer accounts (password-hash formats) without the owner reading them. (#11705)
