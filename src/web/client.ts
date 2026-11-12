@@ -2406,7 +2406,9 @@ export const liveRegionsJs = /* js */ `
     var t = /<time\\b[^>]*>[^<]*<\\/time>/g;
     return a.replace(t, '') === b.replace(t, '');
   }
-  function swap(fresh, ids) {
+  // data-live-hold: a reader inside the region keeps their place.
+  function holdRegion(r) { var b = r.hasAttribute('data-live-hold') && r.getBoundingClientRect(); return b && b.top < 0 && b.bottom > 0; }
+  function swap(fresh, ids, src) {
     ids.forEach(function (id) {
       var mine = document.getElementById(id);
       var theirs = fresh.getElementById(id);
@@ -2425,6 +2427,7 @@ export const liveRegionsJs = /* js */ `
       var typed = Array.prototype.some.call(mine.querySelectorAll('input.input, textarea'), function (i) { return i.value !== ''; });
       if (typed) return;
       if (same(mine.innerHTML, theirs.innerHTML)) return;
+      if (holdRegion(mine)) { delete tags[src]; mine.dispatchEvent(new CustomEvent('forge:held', { bubbles: true, detail: { html: theirs.innerHTML } })); return; }
       // A disclosure the reader opened stays open across the swap.
       var opened = Array.prototype.map.call(mine.querySelectorAll('details[id][open]'), function (d) { return d.id; });
       mine.innerHTML = theirs.innerHTML;
@@ -2459,7 +2462,7 @@ export const liveRegionsJs = /* js */ `
           holder.innerHTML = text;
           var stamped = holder.content.querySelector('[data-etag]');
           if (stamped) tags[src] = '"' + stamped.getAttribute('data-etag') + '"';
-          swap(holder.content, ids);
+          swap(holder.content, ids, src);
           return;
         }
         // Parse a copy without the page's own style element: the swap only
@@ -2473,7 +2476,7 @@ export const liveRegionsJs = /* js */ `
         var theirSprite = fresh.querySelector('.sprite');
         var mySprite = document.querySelector('.sprite');
         if (theirSprite && mySprite) mySprite.replaceWith(theirSprite);
-        swap(fresh, ids);
+        swap(fresh, ids, src);
       })
       .catch(function () {});
   }
