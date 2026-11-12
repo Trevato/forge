@@ -58,6 +58,8 @@ export function scaffoldFiles(input: ScaffoldInput): FileWrite[] {
     { path: "src/env.ts", content: ENV_TS },
     { path: "src/who.ts", content: WHO_TS },
     { path: "src/signin.ts", content: SIGNIN_TS },
+    { path: "src/once.ts", content: ONCE_TS },
+    { path: "src/once.test.ts", content: ONCE_TEST },
     { path: "src/can.ts", content: CAN_TS },
     { path: "src/contract.ts", content: CONTRACT_TS },
     { path: "src/security.ts", content: SECURITY_TS },
@@ -171,6 +173,7 @@ decide nothing themselves. \`AGENTS.md\` says how to add to it.
 | \`src/audit.ts\`                     | every change and every refused one, as a row                   |
 | \`src/who.ts\`                       | who is asking, from the forge's signed headers                 |
 | \`src/signin.ts\`                    | sign-in through the forge: OpenID Connect, code flow with PKCE |
+| \`src/once.ts\`                      | a job the forge fires: verified, and run once per key          |
 | \`src/db.ts\`                        | SQLite under \`FORGE_APP_DATA\`, WAL, forward-only migrations    |
 | \`src/live.ts\`                      | the in-process bus and \`GET /events\`                           |
 | \`src/mcp.ts\`                       | the actions as MCP tools at \`POST /mcp\`                        |
@@ -3425,6 +3428,105 @@ connect();
 `;
 
 // The tests the app starts with.
+const ONCE_TS = `/**
+ * A job the forge fires on a clock (\`schedules\` in forge.json, or a timer the
+ * app armed). The forge wakes the app and POSTs the path with:
+ *
+ *   x-forge-schedule, x-forge-scheduled-at, x-forge-attempt
+ *   idempotency-key:   <app>:<name>:<scheduled time>
+ *   x-forge-identity:  forge-timer|<that key>|timer|<expiresMs>
+ *   x-forge-signature: base64url(HMAC-SHA256(FORGE_APP_IDENTITY_KEY, identity))
+ *
+ * \`fromForge\` says whether the forge sent it. \`once\` runs a handler once per
+ * key and answers 200 for a repeat, so a retry or a second delivery never
+ * does the work twice. A handler that throws gives the key back, so the forge's
+ * next attempt runs it.
+ */
+
+import type { Database } from "bun:sqlite";
+import { timingSafeEqual } from "node:crypto";
+import { sign } from "./who.ts";
+
+export interface Delivery {
+  key: string;
+  schedule: string;
+  scheduledAt: string;
+  attempt: number;
+}
+
+/** The delivery, when its signature verifies under the app's identity key; otherwise null. */
+export function fromForge(request: Request, identityKey: string, now = Date.now()): Delivery | null {
+  const identity = request.headers.get("x-forge-identity");
+  const signature = request.headers.get("x-forge-signature");
+  const key = request.headers.get("idempotency-key");
+  if (identityKey === "" || identity === null || signature === null || key === null) return null;
+  const want = Buffer.from(sign(identity, identityKey));
+  const got = Buffer.from(signature);
+  if (want.length !== got.length || !timingSafeEqual(want, got)) return null;
+  const [who, signed, role, expires] = identity.split("|");
+  if (who !== "forge-timer" || role !== "timer" || signed !== key || Number(expires) <= now) return null;
+  return {
+    key,
+    schedule: request.headers.get("x-forge-schedule") ?? "",
+    scheduledAt: request.headers.get("x-forge-scheduled-at") ?? "",
+    attempt: Number(request.headers.get("x-forge-attempt") ?? 1),
+  };
+}
+
+/** Run \`handler\` once for \`key\`; a repeat answers 200 "already done" without running it. */
+export async function once(db: Database, key: string, handler: () => Promise<Response | void> | Response | void): Promise<Response> {
+  db.run("CREATE TABLE IF NOT EXISTS once_key (key TEXT PRIMARY KEY, at INTEGER NOT NULL)");
+  db.run("DELETE FROM once_key WHERE at < ?1", [Date.now() - 30 * 86_400_000]);
+  if (db.run("INSERT OR IGNORE INTO once_key (key, at) VALUES (?1, ?2)", [key, Date.now()]).changes === 0)
+    return new Response("already done", { status: 200 });
+  try {
+    return (await handler()) ?? new Response("done", { status: 200 });
+  } catch (error) {
+    db.run("DELETE FROM once_key WHERE key = ?1", [key]);
+    throw error;
+  }
+}
+`;
+
+const ONCE_TEST = `import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { fromForge, once } from "./once.ts";
+import { sign } from "./who.ts";
+
+const KEY = "k";
+const delivery = (key: string, over: Record<string, string> = {}): Request => {
+  const identity = "forge-timer|" + key + "|timer|" + (Date.now() + 60_000);
+  return new Request("http://app/jobs/print", {
+    method: "POST",
+    headers: { "idempotency-key": key, "x-forge-identity": identity, "x-forge-signature": sign(identity, KEY), "x-forge-schedule": "print", ...over },
+  });
+};
+
+test("a delivery the forge signed is read; anything else is not", () => {
+  expect(fromForge(delivery("a:print:1"), KEY)?.key).toBe("a:print:1");
+  expect(fromForge(delivery("a:print:1"), "other")).toBeNull();
+  expect(fromForge(delivery("a:print:1", { "idempotency-key": "a:print:2" }), KEY)).toBeNull();
+  expect(fromForge(new Request("http://app/jobs/print", { method: "POST" }), KEY)).toBeNull();
+});
+
+test("a handler runs once per key; a repeat answers 200 and does not run it", async () => {
+  const db = new Database(":memory:");
+  let ran = 0;
+  const handler = () => void ran++;
+  expect((await once(db, "a:print:1", handler)).status).toBe(200);
+  expect(await (await once(db, "a:print:1", handler)).text()).toBe("already done");
+  expect(ran).toBe(1);
+  await once(db, "a:print:2", handler);
+  expect(ran).toBe(2);
+});
+
+test("a handler that throws gives the key back, so the next attempt runs", async () => {
+  const db = new Database(":memory:");
+  await expect(once(db, "k", () => { throw new Error("no paper"); })).rejects.toThrow("no paper");
+  expect((await once(db, "k", () => new Response("printed"))).status).toBe(200);
+});
+`;
+
 const WHO_TEST = `import { expect, test } from "bun:test";
 import { sign, who, whoAtTty } from "./who.ts";
 

@@ -39,6 +39,8 @@ const EXEMPT: Record<string, string> = {
   "src/http/api/following.ts: ? 429": "the ceiling outcome is answered through tryAgain just below",
   "src/http/feed.ts: error.code === \"forbidden\" ? 403 : error.code === \"too_many\" ? 429 : error.code === \"already_undone\" || error.code === \"expired\" ? 409 : 422,":
     "a cap on one request's size, not a wait; json()'s 60 s floor answers it",
+  "src/http/api/timers.ts: const STATUS: Record<TimerError, number> = { unauthorized: 401, invalid: 422, too_many: 429, not_found: 404 };":
+    "a cap on timers per app, not a wait; json()'s 60 s floor answers it",
   "src/http/rp.ts: const slow = failure(ctx, `Too many attempts. Try again in ${retryAfterOf(wait)}s.`, 429);": "an HTML page; the header is set on the next line",
   "src/http/read_only.ts: status: 503,": "plain text; its headers are MAINTENANCE_HEADERS, which carry retry-after (the JSON answer above names it in the body too)",
   "src/http/server.ts: may.refusal === \"not_found\" ? [404, \"not found\"] : may.refusal === \"busy\" ? [429, \"too many shells\"] : [403, \"forbidden\"];":

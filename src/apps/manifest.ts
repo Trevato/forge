@@ -18,6 +18,7 @@ import { isPublicAddress } from "./egress.ts";
 import { isLaunch, LAUNCHES, type Launch } from "../git/builds.ts";
 import { parseAdapter, type AdapterSpec } from "./adapter.ts";
 import { parseToolchain, type ToolchainPin } from "./toolchain.ts";
+import { parseSchedules, type ScheduleSpec } from "./schedule_spec.ts";
 
 export interface AppManifest {
   /** The command that serves on `$PORT`. Run through `sh -c`, `exec`-ed. */
@@ -85,6 +86,8 @@ export interface AppManifest {
   readonly adapter?: AdapterSpec | undefined;
   /** `toolchain` (top level of `forge.json`): pinned toolchain versions. Unset is none. */
   readonly toolchain?: ToolchainPin | undefined;
+  /** `schedules` (top level of `forge.json`): calls the forge makes on a clock (`apps/schedule_spec.ts`). Unset is none. */
+  readonly schedules?: readonly ScheduleSpec[] | undefined;
 }
 
 export type ManifestError =
@@ -197,6 +200,8 @@ export function parseManifest(
   );
   if (unopened !== undefined)
     return invalid(`forge.json: adapter.source.hosts names ${unopened}, which egress does not list`);
+  const schedules = parseSchedules(parsed.value["schedules"]);
+  if (!schedules.ok) return invalid(schedules.error);
   const kind = app["kind"];
   if (kind !== undefined && kind !== "web" && kind !== "service")
     return invalid('forge.json: app.kind must be "web" or "service"');
@@ -232,6 +237,7 @@ export function parseManifest(
     toolbar: toolbar ?? true,
     ...(adapter.value === undefined ? {} : { adapter: adapter.value }),
     ...(toolchain.value === undefined ? {} : { toolchain: toolchain.value }),
+    ...(schedules.value.length === 0 ? {} : { schedules: schedules.value }),
   });
 }
 

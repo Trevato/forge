@@ -60,6 +60,7 @@ import { nowCard, nowRegion } from "./now.ts";
 import { repoAsks } from "./asks.ts";
 import { notesCard } from "./notes.ts";
 import { adapterCard } from "./adapter.ts";
+import { schedulesCard } from "./schedules.ts";
 import { appPanels } from "./previews.ts";
 import { noCrewLine, pausedWords, servingHistory, type WordCtx } from "./words.ts";
 import { crewKeyCard } from "./crew_key.ts";
@@ -486,6 +487,7 @@ export async function studioApp(
   const adapter = ownerFacts
     ? await timePhaseAsync(req, "adapter", () => adapterCard(ctx, record, repo))
     : null;
+  const schedules = ownerFacts ? schedulesCard(ctx, repo) : null;
   const rendering = performance.now();
   const tellRegion = html`${tell}
         ${ownerFacts && ctx.auth.user ? answersRegion(ctx, repo, ctx.auth.user) : null}`;
@@ -501,6 +503,7 @@ export async function studioApp(
     ${ownerFacts ? crewKeyCard(ctx, true) : null}
     <div class="stack">
       ${adapter}
+      ${schedules}
       ${tellRegion}
       <div id="app-previews"></div>
       ${nowRegion(repo, now)}
@@ -537,7 +540,7 @@ export async function studioApp(
         ${notesCard(ctx, repo, record)}
       </div>
       <aside class="stack">
-        ${adapter} ${crewCard} ${weekCard} ${moneyCard} ${ownCard} ${more}
+        ${adapter} ${schedules} ${crewCard} ${weekCard} ${moneyCard} ${ownCard} ${more}
       </aside>
     </div>
     ${liveMount({ repo: base, app: true })}`;

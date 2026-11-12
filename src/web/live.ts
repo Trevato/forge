@@ -312,7 +312,7 @@ export const liveClientJs = /* js */ `
     'branch.created', 'branch.deleted',
     'label.created', 'label.updated', 'label.deleted',
     'run.queued', 'run.started', 'run.finished', 'app.serving',
-    'app.created', 'app.updated', 'app.deleted', 'app.stopped',
+    'schedule.steered', 'app.created', 'app.updated', 'app.deleted', 'app.stopped',
     'repo.upstream_checked', 'repo.links_probed', 'repo.source_added', 'repo.source_removed', 'repo.upstream_follow', 'repo.following', 'limb.moved', 'limb.replan', 'limb.replan_taken_back', 'issue.assigned', 'pull.assigned', 'crew.added', 'crew.removed',
   ];
   var extra = (cfg.getAttribute('data-repos') || '').split(' ').filter(Boolean);

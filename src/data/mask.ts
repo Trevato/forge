@@ -28,6 +28,8 @@ export const FORCE: Readonly<Record<string, readonly string[]>> = {
     "origin_cursor.value",
     "sentinel_kept.value",
     "idempotency.body",
+    "timer.body",
+    "timer_run.response",
     "event.payload",
     "sentinel_finding.evidence",
   ],

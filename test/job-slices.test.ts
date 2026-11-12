@@ -239,6 +239,7 @@ const UNTIMED: Record<string, string> = {
   "perf-watcher": "a closure in startPerfWatcher over its own in-memory record; the fixture has no FORGE_REPO to file in",
   probes: "probes each app over HTTP after a deploy and nightly; the fixture has no apps",
   prompts: "a closure in startPromptRoutine; the fixture has no prompt routines",
+  timers: "fires due app timers over HTTP to the apps; the fixture has no apps",
   snapshot: "copies the database file to disk (VACUUM INTO): I/O off the loop, nightly",
   "snapshot-mirror": "uploads a snapshot to the mirror: network, nightly",
   drill: "restores a snapshot into a scratch forge: nightly, I/O",

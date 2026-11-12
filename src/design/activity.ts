@@ -202,6 +202,7 @@ const WORDS: Record<string, string> = {
   "build.noted": "noted a pinned build",
   "run.queued": "queued a run",
   "run.started": "started a run",
+  "schedule.steered": "steered a schedule",
   "app.created": "made it an app",
   "app.updated": "changed the app's settings",
   "app.deleted": "stopped serving it as an app",

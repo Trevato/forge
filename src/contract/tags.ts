@@ -7,6 +7,8 @@
 /** A path segment that names a resource under another tag. */
 const ALIAS: Readonly<Record<string, string>> = {
   app: "apps",
+  timers: "apps",
+  schedules: "apps",
   "app-templates": "apps",
   display: "builds",
   following: "forks",

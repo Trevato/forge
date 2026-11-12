@@ -289,7 +289,7 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
   // A run's summary, an app's serving state and its pictures can carry the
   // app's own output: for a private app they are for those who may enter it
   // (#620, #599).
-  if (kind.startsWith("run.") || kind.startsWith("app.") || kind.startsWith("look."))
+  if (kind.startsWith("run.") || kind.startsWith("app.") || kind.startsWith("look.") || kind === "schedule.steered")
     return "app";
   // A pull waiting on a named team's review is that team's news alone
   // (`actions/team_waits.ts`, #10164): its members, among those who may read.

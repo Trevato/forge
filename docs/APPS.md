@@ -1249,6 +1249,29 @@ counted on that board so the rate is visible; keeping the process itself
 running across a roll needs the cells supervised outside the forge
 process, which this does not do.
 
+## Time
+
+A sleeping app cannot keep time, and a laptop or a chat session must never be what makes a job run. The forge is always up, so time is one more reason for it to wake an app. One primitive does it: a **timer**, a row in the forge's database (app, environment, when, path, key). A schedule is a timer that re-arms; a one-shot is how an app sleeps until later. Waiting costs no process and no CPU.
+
+Declare schedules in `forge.json`:
+
+```json
+"schedules": [
+  { "name": "print", "cron": "30 6 * * *", "timezone": "America/Chicago", "path": "/jobs/print" }
+]
+```
+
+- **When.** Standard five-field cron (`*`, lists, ranges, `*` with a step; when both day fields are set a day matches if either does) in an IANA `timezone` (default UTC). A local time the clock skips (02:30 on the spring night) runs once, just after the gap; one it repeats (01:30 on the autumn night) runs once, the first time.
+- **Where.** Production only, unless an entry says `"env": "preview"`: a preview never fires production's jobs.
+- **Firing.** The forge wakes the app, then `POST`s `path` with `x-forge-schedule`, `x-forge-scheduled-at`, `x-forge-attempt` and `idempotency-key` (`<app>:<name>:<scheduled time>`), signed with the app's identity key as the identity headers are (`x-forge-identity` is `forge-timer|<key>|timer|<expiry>`). 2xx is done. Anything else, or no answer in `timeout` seconds (default 300, at most 3600), is retried after 30 s, 2 min, 10 min, 30 min, then hourly, up to `retries` (default 3), and then the run is failed.
+- **Once.** The template's `src/once.ts` gives `fromForge(request, key)` (did the forge send this?) and `once(db, key, handler)`, which runs the handler once per idempotency key and answers 200 for a repeat. The key is the same on every attempt, so a retry or a second delivery never does the work twice.
+- **Missed.** Timers are rows read at boot, so a release never drops one. A run due while the forge was away fires as soon as it is back if it is inside `catchUp` (default `"1h"`; `"none"`, or `"30m"`, `"2d"` up to 7 d) and the history says it ran late; past it, the run is recorded as missed and skipped.
+- **Seen and steered.** The app's page has a Schedules row per schedule: next run, last run and how it went, in the schedule's timezone, with **Run now** (once, apart from the clock) and **Pause**. `GET /api/v1/repos/{owner}/{name}/schedules` (`?runs=N` adds the history: attempts, duration, status, the first 2 KB of the response) and the `app_deploy` MCP tool (`action: "schedules" | "run_schedule" | "pause_schedule" | "resume_schedule"`) answer the same.
+- **When it fails.** A failed or missed run asks the app's owner once, with the reason in plain words (and on their phone when a notify URL is set); the ask is the schedule, not the run, so a schedule that keeps failing does not ask again. A schedule that fails five days running pauses itself and says so; Resume waits for the next occurrence.
+- **Runtime timers.** An app arms its own with `POST /api/v1/timers` under its own token: `{ "in": "10m" | seconds, or "at": "<ISO date>", "path": "/jobs/x", "key": "optional", "body": <up to 64 KB> }`; arming a key again replaces it; `DELETE /api/v1/timers/<key>` cancels. At most `FORGE_TIMERS_PER_APP` (default 100) pending, a year ahead at most.
+
+A fired job is an ordinary request to the app's port and counts toward its own limits. How to try it: `docs/features/timers.md`.
+
 ## Where state lives
 
 Git is truth for code. The app's serving configuration (slug, access, the

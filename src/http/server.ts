@@ -239,6 +239,7 @@ import {
   newIssueSubmit,
 } from "../web/pages/issues.ts";
 import { adapterPull } from "../web/studio/adapter.ts";
+import { steerSchedulePage } from "../web/studio/schedules.ts";
 import { noteModerate } from "../web/studio/notes.ts";
 import { tellPage } from "../web/studio/tell.ts";
 import { issuePicture } from "../web/studio/picture.ts";
@@ -527,6 +528,7 @@ import { during } from "../perf/jobs.ts";
 import { classOf, countryOf, repoOf, signatureOf } from "../perf/traffic.ts";
 import { createTrafficWriter } from "../perf/traffic_store.ts";
 import { startFeatureSchedule } from "../apps/feature_schedule.ts";
+import { startTimers } from "../apps/timer_service.ts";
 import { startPullSchedule } from "../apps/pull_schedule.ts";
 import { startGithubPull } from "../perf/github_traffic.ts";
 import { appSourcesPage } from "../web/pages/sources.ts";
@@ -1403,6 +1405,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/apps/open", appsOpen);
   router.add("POST", "/:owner/:name/app/notes", noteModerate);
   router.add("POST", "/:owner/:name/app/pull", adapterPull);
+  router.add("POST", "/:owner/:name/app/schedules/:schedule/:action", steerSchedulePage);
   router.add("POST", "/:owner/:name/app/:env/redeploy", appRedeploy);
   router.add("POST", "/:owner/:name/app/:env/stop", appStop);
   router.add("GET", "/:owner/:name/events", eventsList);
@@ -2483,6 +2486,7 @@ export async function serve(app: App): Promise<Servers> {
   const viewWriter = createViewWriter(app.db, app.log);
   const githubPull = startGithubPull(app.db, app.log);
   const featureSchedule = startFeatureSchedule(app);
+  const timers = startTimers(app);
   const pullSchedule = startPullSchedule(app);
   const readWriter = createReadWriter(app.db, readLedger, app.log);
   // The worst event-loop lag of the last 10 s, on every response (#10288).
@@ -2819,6 +2823,7 @@ export async function serve(app: App): Promise<Servers> {
       viewWriter.stop();
       githubPull?.stop();
       featureSchedule?.stop();
+      timers?.stop();
       pullSchedule?.stop();
       readWriter.stop();
       // A child's hooks stop answering before its database closes.

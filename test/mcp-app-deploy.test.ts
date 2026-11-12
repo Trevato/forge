@@ -19,6 +19,9 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { promote } from "./helpers/members.ts";
 import { tokenFor } from "./helpers/tokens.ts";
+import { parseSchedules } from "../src/apps/schedule_spec.ts";
+import { getAppByRepo } from "../src/core/apps.ts";
+import { dueTimers, syncSchedules } from "../src/core/timers.ts";
 
 describe("MCP app_deploy", () => {
   let dataDir: string;
@@ -115,6 +118,22 @@ describe("MCP app_deploy", () => {
     const s = await tool(aliceRw, { repo: "alice/hello", env: `pull-${pull}`, action: "stop" });
     expect(s.value).toEqual({ stopped: true });
   }, 30_000);
+
+  test("schedules lists the app's schedules, and a writer runs, pauses and resumes one; a reader only reads", async () => {
+    const record = getAppByRepo(app.db, getRepo(app.db, "alice", "hello")!.id)!;
+    const specs = parseSchedules([{ name: "print", cron: "30 6 * * *", timezone: "America/Chicago", path: "/jobs/print" }]);
+    if (!specs.ok) throw new Error(specs.error);
+    syncSchedules(app.db, record.id, "production", specs.value, "c1", Date.now());
+    const list = await tool(bobRw, { repo: "alice/hello", action: "schedules" });
+    expect(list.value.items.map((r: { name: string }) => r.name)).toEqual(["print"]);
+    expect((await tool(bobRw, { repo: "alice/hello", action: "run_schedule", name: "print" })).error).toContain("forbidden");
+    expect((await tool(aliceRw, { repo: "alice/hello", action: "run_schedule", name: "print" })).value).toEqual({ done: true });
+    expect(dueTimers(app.db, Date.now() + 1000).filter((t) => t.kind === "once" && t.name === "print")).toHaveLength(1);
+    expect((await tool(aliceRw, { repo: "alice/hello", action: "pause_schedule", name: "print" })).value).toEqual({ done: true });
+    expect((await tool(aliceRw, { repo: "alice/hello", action: "schedules" })).value.items[0].paused).toBe(true);
+    expect((await tool(aliceRw, { repo: "alice/hello", action: "resume_schedule", name: "print" })).value).toEqual({ done: true });
+    expect((await tool(aliceRw, { repo: "alice/hello", action: "run_schedule", name: "nope" })).error).toContain("not_found");
+  });
 
   test("a reader is refused, and nothing is queued", async () => {
     const before = runCount();

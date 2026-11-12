@@ -28,6 +28,7 @@ export { route as deleteApiV1ReposOwnerNamePullsNumberHold } from "./deleteApiV1
 export { route as deleteApiV1ReposOwnerNamePullsNumberThreadsAnchorResolve } from "./deleteApiV1ReposOwnerNamePullsNumberThreadsAnchorResolve.ts";
 export { route as deleteApiV1SecretsScopeName } from "./deleteApiV1SecretsScopeName.ts";
 export { route as deleteApiV1Sessions } from "./deleteApiV1Sessions.ts";
+export { route as deleteApiV1TimersKey } from "./deleteApiV1TimersKey.ts";
 export { route as deleteApiV1TokensId } from "./deleteApiV1TokensId.ts";
 export { route as deleteApiV1UserKeysId } from "./deleteApiV1UserKeysId.ts";
 export { route as deleteApiV1UserOriginAppsId } from "./deleteApiV1UserOriginAppsId.ts";
@@ -179,6 +180,7 @@ export { route as getApiV1ReposOwnerNameRoadmap } from "./getApiV1ReposOwnerName
 export { route as getApiV1ReposOwnerNameRuns } from "./getApiV1ReposOwnerNameRuns.ts";
 export { route as getApiV1ReposOwnerNameRunsId } from "./getApiV1ReposOwnerNameRunsId.ts";
 export { route as getApiV1ReposOwnerNameRunsIdLog } from "./getApiV1ReposOwnerNameRunsIdLog.ts";
+export { route as getApiV1ReposOwnerNameSchedules } from "./getApiV1ReposOwnerNameSchedules.ts";
 export { route as getApiV1ReposOwnerNameStatement } from "./getApiV1ReposOwnerNameStatement.ts";
 export { route as getApiV1ReposOwnerNameTags } from "./getApiV1ReposOwnerNameTags.ts";
 export { route as getApiV1ReposOwnerNameUpstream } from "./getApiV1ReposOwnerNameUpstream.ts";
@@ -363,6 +365,7 @@ export { route as postApiV1ReposOwnerNameReportsIdAccept } from "./postApiV1Repo
 export { route as postApiV1ReposOwnerNameReportsIdDismiss } from "./postApiV1ReposOwnerNameReportsIdDismiss.ts";
 export { route as postApiV1ReposOwnerNameRunsIdCancel } from "./postApiV1ReposOwnerNameRunsIdCancel.ts";
 export { route as postApiV1ReposOwnerNameRunsIdSteer } from "./postApiV1ReposOwnerNameRunsIdSteer.ts";
+export { route as postApiV1ReposOwnerNameSchedulesScheduleAction } from "./postApiV1ReposOwnerNameSchedulesScheduleAction.ts";
 export { route as postApiV1ReposOwnerNameSpend } from "./postApiV1ReposOwnerNameSpend.ts";
 export { route as postApiV1ReposOwnerNameSync } from "./postApiV1ReposOwnerNameSync.ts";
 export { route as postApiV1ReposOwnerNameTransfer } from "./postApiV1ReposOwnerNameTransfer.ts";
@@ -371,6 +374,7 @@ export { route as postApiV1Sessions } from "./postApiV1Sessions.ts";
 export { route as postApiV1Share } from "./postApiV1Share.ts";
 export { route as postApiV1Start } from "./postApiV1Start.ts";
 export { route as postApiV1Thoughts } from "./postApiV1Thoughts.ts";
+export { route as postApiV1Timers } from "./postApiV1Timers.ts";
 export { route as postApiV1Tokens } from "./postApiV1Tokens.ts";
 export { route as postApiV1UserEmailVerify } from "./postApiV1UserEmailVerify.ts";
 export { route as postApiV1UserKeys } from "./postApiV1UserKeys.ts";

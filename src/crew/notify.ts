@@ -21,6 +21,7 @@
  */
 
 import { blockedLines } from "../actions/egress_refused.ts";
+import { scheduleLines } from "../actions/schedules.ts";
 import { newAccountLines } from "../actions/accounts.ts";
 import { requestLines } from "../actions/requests.ts";
 import { mailCeilingLines } from "../actions/mail.ts";
@@ -514,6 +515,7 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
       ...clogLines(app, user),
       ...onboardedLines(app.db, user, now()),
       ...blockedLines(app, user, now()),
+      ...scheduleLines(app, user),
     ];
     const before = seen.get(userId);
     // What is gone may ask again later, and then it is new again. Seen by
