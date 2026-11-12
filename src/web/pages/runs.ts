@@ -18,6 +18,7 @@ import type { Database } from "bun:sqlite";
 import {
   cancelRepoRun,
   listRepoRuns,
+  requeueRepoRun,
   runLog,
   steerRepoRun,
 } from "../../actions/runs.ts";
@@ -408,4 +409,31 @@ export async function runCancel(ctx: Ctx): Promise<Response> {
     });
   }
   return flashTo(ctx, dest, { message: "Run cancelled." });
+}
+
+const REQUEUE_REFUSED: Record<string, string> = {
+  not_finished: "That run has not finished.",
+  not_agent: "Only a crew run can be tried again.",
+  no_task: "That run's task is gone.",
+  not_queued: "The forge would not queue it now: one is already waiting, or today's ceiling is reached.",
+  archived: "That app is archived.",
+};
+
+// POST /:owner/:name/runs/:id/requeue — "Try again": the run's task goes back on the queue.
+// Only Home posts it, so it answers on Home (/) on purpose.
+export async function runRequeue(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const queued = requeueRepoRun(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
+  if (!queued.ok) {
+    if (queued.error === "not_found") return notFoundPage(ctx);
+    return flashTo(ctx, "/", {
+      tone: "danger",
+      message: REQUEUE_REFUSED[queued.error] ?? "You need write access to try a run again.",
+    });
+  }
+  return flashTo(ctx, "/", { message: "Queued again." });
 }

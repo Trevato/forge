@@ -362,6 +362,7 @@ import {
   runCancel,
   runPage,
   runRedirect,
+  runRequeue,
   runSteer,
   runsList,
 } from "../web/pages/runs.ts";
@@ -1409,6 +1410,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/runs", runsList);
   router.add("GET", "/:owner/:name/runs/:id", runPage);
   router.add("POST", "/:owner/:name/runs/:id/cancel", runCancel);
+  router.add("POST", "/:owner/:name/runs/:id/requeue", runRequeue);
   router.add("POST", "/:owner/:name/runs/:id/steer", runSteer);
   // The public social cards: a repo as owner~name, an app as its slug.
   router.add("GET", "/og/repo/:ref.svg", ogCard("repo"));

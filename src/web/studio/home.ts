@@ -72,6 +72,7 @@ import { needsYouSection } from "./asks_page.ts";
 import { flowCards } from "./flow_card.ts";
 import { composer, feedJs, feedNote, feedRegion, registerWorkerJs } from "./feed.ts";
 import { heldLine } from "./held.ts";
+import { stoppedTwiceLine } from "./stopped_twice.ts";
 import { appChips, movingRegion, tellBox } from "./living.ts";
 import { alarmLines, cachedAlarms } from "./alarm_lines.ts";
 import { kpiRow, waitingLine } from "./kpi_row.ts";
@@ -355,6 +356,8 @@ export async function studioHome(
   const draws = homeDraws(ctx, user);
   const waiting = await homeRegion(ctx.app.db, ctx.request, user.id, "waiting", homeVariant(ctx.url), access, draws.waiting);
   const held = timePhase(ctx.request, "held", () => heldLine(ctx, user));
+  const mine = writableAppsOf(ctx, user).repos;
+  const stopped = timePhase(ctx.request, "stopped", () => stoppedTwiceLine(ctx, mine));
   const alarms = user.isAdmin
     ? alarmLines(cachedAlarms(ctx.app.db, new Date(), forgeCeiling(ctx.app.config), ctx.app.config.dataDir))
     : null;
@@ -368,8 +371,7 @@ export async function studioHome(
   // The first page after Allow says so, once.
   const allowed = untoldAnswer(ctx.app.db, user.id) === "allowed";
   if (allowed) markTold(ctx.app.db, user.id, new Date().toISOString());
-  const needsYou = html`${requests}${waiting}${held}${alarms}`;
-  const mine = writableAppsOf(ctx, user).repos;
+  const needsYou = html`${requests}${waiting}${held}${stopped}${alarms}`;
   const body = html`<h1 class="sr-only">Home</h1>
     ${allowed ? html`<div class="toast" data-tone="success" role="status" id="youre-in"><strong>${YOURE_IN_MESSAGE}</strong> Your account is open: tell the crew what you want to build.</div>` : null}
     ${tellBox(ctx, user)}
