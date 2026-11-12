@@ -239,6 +239,7 @@ credentials set by name or those people sign in as new accounts.
 - ~~A database import for an app.~~ Built: see "The database import" above. (#11697)
 - ~~A file and upload copy with a manifest compared on both ends.~~ Done as a script a person runs (#11699); no page or upload from a browser yet.
 - ~~A Postgres app has no home here.~~ Decided, not built: no managed Postgres; port to `bun:sqlite` or keep an external one by `egress` (docs/APPS.md). (#11698)
+- A custom domain for an app, with certificate issuance and a one-step revert: see `docs/features/app-own-domain.md`. (#11700)
 - Per-app encrypted backup with a restore proof: `scripts/app-backup.ts` and the terminal, see `docs/features/app-backup.md` (`docs/features/backup-truth.md` covers the forge's own, not an app's). Scheduling and a web button are not done. (#11701)
 - A guard for rehearsal: data copy and `preview`-scoped sandbox keys exist and are the procedure in step 4; nothing yet refuses a payment name left in scope `all`. (#11702)
 - ~~Inbound payment webhooks that survive a preview's changing address.~~ Built: `/__forge/hook/<pull>/…` on production's host. (#11703)
