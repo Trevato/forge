@@ -24,7 +24,7 @@ export function crewKeyLine(f: Session): string {
   if (crewHasCredential(f.app.db)) return "The crew runs on your key. a adds another.";
   const credit = includedCredit(f.app);
   if (credit !== undefined && credit.leftUsd > 0)
-    return `The crew is building on ${usdWords(credit.leftUsd)} of ${usdWords(credit.capUsd)} included credit. a adds your own key.`;
+    return `The crew is building on ${usdWords(credit.leftUsd)} of ${usdWords(credit.capUsd)} included credit (${usdWords(credit.spentUsd)} spent). a adds your own key.`;
   if (credit !== undefined) return "The included credit is spent. a adds your own key to keep building.";
   return "The crew needs a model key to start. a adds yours.";
 }

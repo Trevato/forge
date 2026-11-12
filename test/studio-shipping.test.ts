@@ -2134,7 +2134,7 @@ describe("a one-minute-old app's front door does not lead with a week of zeros (
     // forge's own cancelled boot is never counted, and two deploys is well
     // under the threshold a ratio needs anyway.
     expect(page).not.toMatch(/Runs<\/dt>/);
-    expect(page).not.toMatch(/Spent<\/dt>/);
+    expect(page).not.toMatch(/Runs cost<\/dt>/);
     expect(page).not.toContain("never reached a preview");
     expect(page).not.toContain("$0.00");
   });

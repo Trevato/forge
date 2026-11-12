@@ -63,7 +63,8 @@ import { adapterCard } from "./adapter.ts";
 import { schedulesCard } from "./schedules.ts";
 import { appPanels } from "./previews.ts";
 import { noCrewLine, pausedWords, servingHistory, type WordCtx } from "./words.ts";
-import { crewKeyCard } from "./crew_key.ts";
+import { crewKeyCard, includedCredit } from "./crew_key.ts";
+import { usdWords } from "../../spawn/credit.ts";
 import {
   notePhase,
   takeSessionTime,
@@ -297,6 +298,7 @@ export async function studioApp(
     ? timePhase(req, "spend", () => agentRunTotals(db, repo.id, week))
     : { runs: 0, spentUsd: 0 };
   const spent = weekTotals.spentUsd;
+  const credit = includedCredit(ctx.app);
   const ledgerWeek = ownerFacts && !fresh
     ? timePhase(req, "decisions", () => decisionStats(db, repo.id, week))
     : [];
@@ -395,7 +397,13 @@ export async function studioApp(
             <dd>
               ${previewLatencyWords(weekLatency, `${base}/runs?kind=deploy`)}
             </dd>
-            <dt>Spent</dt>
+            ${credit === undefined
+              ? null
+              : html`<dt>Included credit</dt>
+                  <dd id="app-credit">
+                    ${usdWords(credit.leftUsd)} of ${usdWords(credit.capUsd)} left
+                  </dd>`}
+            <dt>Runs cost</dt>
             <dd>
               $${spent.toFixed(2)}${shipped > 0
                 ? html` <span class="muted"
