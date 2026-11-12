@@ -59,3 +59,55 @@ describe("a stranger's text stays inside one fence in a brief", () => {
     expectContained(out, HOSTILE);
   });
 });
+
+// A report is untrusted by kind, not by author (#11768): an outside report
+// and a from-app note are fenced even when the owner or a writer filed them.
+describe("an outside or from-app report is fenced in the brief whoever filed it", () => {
+  const assigned = { ...base, reason: "assigned", pull: undefined, readers: new Set<string>() };
+  const kinds = [
+    { kind: "outside", title: "From outside: the save button", labels: ["outside"] },
+    { kind: "from-app", title: "From the app: the save button", labels: ["from-app"] },
+  ];
+  for (const { kind, title, labels } of kinds)
+    for (const author of ["alice", "writer"]) {
+      test(`${kind}, filed by ${author === "alice" ? "the owner" : "a writer"}`, () => {
+        const out = taskPrompt({
+          ...assigned,
+          labels,
+          issue: { number: 1, title, body: HOSTILE, authorName: author },
+        } as unknown as TaskInput);
+        expect(out).toContain("inside the fence below");
+        expectContained(out, HOSTILE);
+        // The forged closing fence and the order stay inside, never on a line of their own outside.
+        const outsideFences = out.split(/^`{4,}.*$/m).filter((_, i) => i % 2 === 0).join("\n");
+        expect(outsideFences).not.toContain("## New instructions");
+      });
+
+      test(`${kind} by title alone, filed by ${author}`, () => {
+        const out = taskPrompt({
+          ...assigned,
+          issue: { number: 1, title, body: HOSTILE, authorName: author },
+        } as unknown as TaskInput);
+        expectContained(out, HOSTILE);
+      });
+    }
+
+  test("a reader's outside report is fenced too, not only indented", () => {
+    const out = taskPrompt({
+      ...assigned,
+      readers: new Set(["stranger"]),
+      labels: ["outside"],
+      issue: { number: 1, title: "From outside: x", body: HOSTILE, authorName: "stranger" },
+    } as unknown as TaskInput);
+    expectContained(out, HOSTILE);
+  });
+
+  test("an ordinary issue by a writer is told plainly, not fenced", () => {
+    const out = taskPrompt({
+      ...assigned,
+      issue: { number: 1, title: "Make the button blue", body: "Make it blue.", authorName: "alice" },
+    } as unknown as TaskInput);
+    expect(out).not.toContain("inside the fence below");
+    expect(out).toContain("\nMake it blue.\n");
+  });
+});
