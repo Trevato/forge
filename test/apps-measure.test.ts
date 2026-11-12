@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { newApp } from "../src/actions/apps.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
-import { scaffoldFiles } from "../src/apps/scaffold.ts";
+import { bakedFiles as scaffoldFiles } from "../src/apps/template.ts";
 import { appVisitors } from "../src/actions/apps.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { getRepo } from "../src/core/repos.ts";

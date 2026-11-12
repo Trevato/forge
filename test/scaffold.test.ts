@@ -23,7 +23,7 @@ import { parseManifest } from "../src/apps/manifest.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve } from "../src/http/server.ts";
-import { scaffoldFiles } from "../src/apps/scaffold.ts";
+import { bakedFiles as scaffoldFiles } from "../src/apps/template.ts";
 
 /** How long the written-out app's `bun test` may take, wall clock. */
 const SUITE_BUDGET_MS = 3_000;

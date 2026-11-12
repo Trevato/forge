@@ -33,7 +33,6 @@ const LISTENERS: Record<string, { count: number; why: string }> = {
   "src/spawn/beat-door.ts": { count: 1, why: "fetch is `securityFloor(await answerBeat(...))`, asked below" },
   "src/kernel/port.ts": { count: 1, why: "a port probe, stopped before any request can reach it" },
   "src/apps/process.ts": { count: 1, why: "a port probe, stopped before any request can reach it" },
-  "src/apps/scaffold.ts": { count: 1, why: "text of another app's server, written into its repository; it lays its own floor" },
   "src/actions/spawn.ts": { count: 1, why: "text of a fresh app's index.ts, written into its repository" },
 };
 

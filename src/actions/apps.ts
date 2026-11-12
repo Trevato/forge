@@ -23,7 +23,7 @@ import { appVitals, type AppVitals } from "../apps/vitals.ts";
 import { appsRuntime, envsFor, type EnvStatus } from "../apps/runtime.ts";
 import { grantUrl, originFor, sideForViewer, sideReader } from "../apps/proxy.ts";
 import { plainLine } from "../apps/side.ts";
-import { scaffoldFiles } from "../apps/scaffold.ts";
+import { scaffoldFiles } from "../apps/template.ts";
 import type { FileWrite } from "../git/write.ts";
 import { TEMPLATE_ERRORS, templateFiles, type TemplateError } from "../apps/template_tip.ts";
 import {
@@ -364,10 +364,10 @@ export async function newApp(
     message: `Start ${input.name}`,
     files:
       starter ??
-      scaffoldFiles({
+      (await scaffoldFiles(app, {
         name: input.name,
         description: input.description ?? "",
-      }),
+      })),
   });
   lap("scaffold");
   if (!committed.ok) {

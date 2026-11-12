@@ -10,7 +10,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { scaffoldFiles } from "../src/apps/scaffold.ts";
+import { bakedFiles as scaffoldFiles } from "../src/apps/template.ts";
 import { policyLines, taskPrompt } from "../src/crew/brief.ts";
 import {
   NOBODY,

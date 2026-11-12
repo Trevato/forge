@@ -8,7 +8,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { scaffoldFiles } from "../src/apps/scaffold.ts";
+import { bakedFiles as scaffoldFiles } from "../src/apps/template.ts";
 import { webspec, type Finding } from "../src/release/webspec.ts";
 
 /** Today's gaps, each with its specification.website section. None: the scaffold meets it. */

@@ -24,7 +24,7 @@ import { getRepo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
-import { scaffoldFiles } from "../src/apps/scaffold.ts";
+import { bakedFiles as scaffoldFiles } from "../src/apps/template.ts";
 import { parseCheck } from "../src/apps/manifest.ts";
 import {
   appNameJs,

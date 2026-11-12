@@ -42,7 +42,6 @@ const WALKED: Record<string, number> = {
 };
 const UNREACHED: Record<string, { sites: number; why: string }> = {
   "src/http/addressed.ts": { sites: 1, why: "only asks whether a response sets a cookie, so it isn't shared; it sets none" },
-  "src/apps/scaffold.ts": { sites: 7, why: "the `notice` cookie lives in the template generated into new apps, not in the forge's own responses" },
   "src/apps/feedback.ts": { sites: 2, why: "the visitor cookie is set on a deployed app's own host from its feedback widget; covered by the feedback tests" },
   "src/web/pages/claim.ts": { sites: 1, why: "claiming the first admin seat needs a fresh forge with a claim link; same sessionCookie() as the walked doors" },
   "src/web/pages/first-admin.ts": { sites: 1, why: "first-admin recovery needs a forge with no admin; same sessionCookie() as the walked doors" },
@@ -234,7 +233,6 @@ const BUILDERS: Record<string, string> = {
   "clearFlashCookie(": "src/web/flash.ts",
   "cookieHeader(": "src/http/rp.ts",
   "visitorCookie(": "src/apps/feedback.ts",
-  "cookie(": "src/apps/scaffold.ts, the scaffolded app's own `cookie`",
   clear: "src/http/rp.ts, `cookieHeader` with Max-Age 0",
   value: "src/apps/scaffold.ts, `redirectTo`'s cookies, each from `cookie`",
   cookie: "src/http/measure.ts, the line `trackVisitor` returns, built by `cookieLine` in src/perf/visitor_id.ts",
@@ -268,7 +266,7 @@ describe("cookie flags, walked in the source", () => {
 
   test("the walk finds the forge's cookies, including those no door above reaches", () => {
     const where = new Set(spelled.map((s) => s.where.replace(/:\d+$/, "")));
-    for (const file of ["src/web/pages/site.ts", "src/web/flash.ts", "src/http/rp.ts", "src/http/server.ts", "src/apps/proxy.ts", "src/apps/feedback.ts", "src/apps/scaffold.ts", "src/web/pages/map.ts"])
+    for (const file of ["src/web/pages/site.ts", "src/web/flash.ts", "src/http/rp.ts", "src/http/server.ts", "src/apps/proxy.ts", "src/apps/feedback.ts", "src/web/pages/map.ts"])
       expect([file, where.has(file)]).toEqual([file, true]);
   });
 

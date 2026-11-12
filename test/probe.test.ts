@@ -13,7 +13,7 @@ import { createApp, type App } from "../src/app.ts";
 import { newApp } from "../src/actions/apps.ts";
 import { commitToBranch } from "../src/actions/repos.ts";
 import { AppsRuntime, appsRuntime } from "../src/apps/runtime.ts";
-import { scaffoldFiles } from "../src/apps/scaffold.ts";
+import { bakedFiles as scaffoldFiles } from "../src/apps/template.ts";
 import { audit } from "../src/contract/audit.ts";
 import { probe, type Probed } from "../src/contract/probe.ts";
 import { getAppByRepo } from "../src/core/apps.ts";

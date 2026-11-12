@@ -25,6 +25,8 @@ COPY docs/DESIGN.md ./docs/DESIGN.md
 COPY plugins/opencode ./plugins/opencode
 # The Claude Code command files the marketplace manifest lists (same route file).
 COPY plugins/claude-code/commands ./plugins/claude-code/commands
+# The app template every forge can make apps from, taken from trevato/app-template (src/apps/template.ts).
+COPY templates ./templates
 # src/ alone: nothing under it imports scripts/ or test/ (test/src-imports.test.ts),
 # and the boot proof below fails the build if that ever stops being so (#2652).
 

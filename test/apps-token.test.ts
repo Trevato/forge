@@ -23,7 +23,7 @@ import {
   renewAppToken,
   revokeAppToken,
 } from "../src/apps/token.ts";
-import { scaffoldFiles } from "../src/apps/scaffold.ts";
+import { bakedFiles as scaffoldFiles } from "../src/apps/template.ts";
 import { newApp } from "../src/actions/apps.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";

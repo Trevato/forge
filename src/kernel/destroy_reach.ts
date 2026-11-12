@@ -83,11 +83,6 @@ export const ALLOWED_REMOVALS: readonly { unit: string; why: string }[] = [
   { unit: "src/spawn/own_code.ts:checkout", why: "removes a half-made export of the forge's own code, keyed by commit" },
   { unit: "src/spawn/own_code.ts:recordGood", why: "removes exports of the forge's own code for other commits than the good one" },
   { unit: "src/web/asset.ts:prune", why: "removes cached page scripts older than their keep time" },
-  ...unitsOn("the call is inside text the unit returns (a generated app's code), never run by the forge", [
-    "src/apps/scaffold.ts:db",
-    "src/apps/scaffold.ts:committed",
-    "src/apps/scaffold.ts:base",
-  ]),
 ];
 
 const REMOVERS = ["rmSync", "rmdirSync", "unlinkSync", "rm", "rmdir", "unlink"];

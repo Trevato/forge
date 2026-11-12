@@ -999,7 +999,7 @@ generous because the first boot migrates.
 ## What a new app starts as
 
 **New app** writes a small, complete app into the repository
-(`src/apps/scaffold.ts`): notes behind a page, a JSON API, an MCP server
+(`src/apps/template.ts`): notes behind a page, a JSON API, an MCP server
 and a terminal, all over one set of actions, with no dependencies. What
 the forge already does for every app (identity, the grant, preview data,
 health polling, the terminal, the swap, sleep, the contract's wall) is not

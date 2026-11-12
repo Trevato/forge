@@ -247,7 +247,6 @@ const UNTIMED: Record<string, string> = {
   "release-behind": "reads the forge's own release tags with git; needs FORGE_REPO and its repository",
   "release-keeper": "cluster only (FORGE_RELEASE_KEEPER=on): talks to the cluster's API",
   "roll-probe": "cluster only (FORGE_RELEASE_KEEPER=on): one HTTP probe",
-  "spawn-due-wake": "one child's wake when its paused run falls due; the fixture has no children",
   "apps-sweep": "AppsRuntime's sweep over running app processes; the fixture has no apps",
   "cell-watch": "watches running app cells' cgroups; needs cells, skipped in this sandbox mode",
   "cell-probe-deadline": "a cell's start probe running out of time: needs cells, skipped in this sandbox mode",
@@ -275,6 +274,7 @@ const UNTIMED: Record<string, string> = {
   "system-live": "reads /proc and the cgroup roots for the system page while someone watches it",
   entitlements: "reads each paid subscription from Stripe: network, daily, and the fixture has no entitlements",
   traffic: "a closure in createTrafficWriter over its in-memory minute ledger; follow-up",
+  "spawn-due-wake": "a timer in the spawn host that wakes a due run: needs a spawned run; the fixture has none",
 };
 
 /** A job held past this in one slice fails the test: five times the issue's 50 ms, so no runner flakes it. */

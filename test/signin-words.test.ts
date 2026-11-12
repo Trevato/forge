@@ -6,9 +6,10 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { bakedTemplate } from "../src/apps/template.ts";
 import * as words from "../src/kernel/signin_words.ts";
 
-const READERS = ["src/http/rp.ts", "src/apps/scaffold.ts"];
+const READERS = ["src/http/rp.ts"];
 const source = (path: string): string =>
   readFileSync(join(import.meta.dir, "..", path), "utf8");
 
@@ -32,4 +33,12 @@ describe("a sign-in flow's expiry sentences", () => {
         expect(text).not.toContain(sentence);
       }
     });
+});
+
+describe("the app template says the same sentences", () => {
+  test("its sign-in carries each one verbatim", () => {
+    const signin = bakedTemplate().files.find((f) => f.path === "src/signin.ts")?.content;
+    expect(typeof signin).toBe("string");
+    for (const [, sentence] of Object.entries(words)) expect(signin as string).toContain(sentence);
+  });
 });

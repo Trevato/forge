@@ -8,7 +8,7 @@
  */
 
 import type { App } from "../app.ts";
-import { scaffoldFiles } from "../apps/scaffold.ts";
+import { bakedFiles as scaffoldFiles } from "../apps/template.ts";
 import { createRepo, getRepo, updateRepoSettings } from "../core/repos.ts";
 import { runGit } from "../git/env.ts";
 import { repoDir } from "../git/repos.ts";
