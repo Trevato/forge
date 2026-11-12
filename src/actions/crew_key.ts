@@ -10,6 +10,7 @@ import type { App } from "../app.ts";
 import { addSubscription, getSubscriptionByName, setGrants } from "../core/subscriptions.ts";
 import type { User } from "../core/users.ts";
 import { spawnedOrg } from "../spawn/claim.ts";
+import { wakeParked } from "../crew/wake.ts";
 
 const KEY_NAME = "my-key";
 /** The most bytes a key may be; the longest real one is well under it. */
@@ -27,7 +28,7 @@ export async function saveCrewKey(
   app: App,
   user: User | undefined,
   raw: string,
-): Promise<{ ok: true } | { ok: false; error: CrewKeyError }> {
+): Promise<{ ok: true; woken: number } | { ok: false; error: CrewKeyError }> {
   if (user === undefined || !user.isAdmin || user.kind === "agent") return { ok: false, error: "not_found" };
   if (!keyShapeOk(raw)) return { ok: false, error: "invalid_token" };
   const name = getSubscriptionByName(app.db, KEY_NAME) === undefined ? KEY_NAME : `${KEY_NAME}-${Date.now().toString(36)}`;
@@ -41,5 +42,6 @@ export async function saveCrewKey(
       .map((r) => r.subscription_id);
     setGrants(app.db, scope, "", [...held, added.value.id]);
   }
-  return { ok: true };
+  // Issues parked for want of a key are tried again (`crew/wake.ts`).
+  return { ok: true, woken: wakeParked(app, user, "key") };
 }

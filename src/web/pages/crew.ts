@@ -6,6 +6,7 @@
  * the crew is actually there, in words, before anyone assigns anything.
  */
 
+import { budgetsCard } from "../studio/crew_budgets.ts";
 import { fundingOf, fundingWords } from "../../spawn/funding.ts";
 import {
   createAgent,
@@ -661,6 +662,7 @@ function crewView(
     ["Scorecard", `Over the pulls each agent opened, and each team's members pooled (an agent on two teams counts in both), in the last ${RECENT_DAYS} days and over all time: review rounds are change requests per landed pull, red checks the share of finished checks that failed; reverts (the landed pulls a merged pull took back) and time to land (the mean from opening to merge) are all time.`],
     ["Model review", `At most one change of model per agent a week, to the cheapest that holds its quality. A step up always asks; a step down ${review.limits.auto ? "applies on its own" : "asks too"} (Settings → Limits). Under ${review.limits.minLanded} landed changes nothing. A week after a change the result is reported, and the change undone if quality fell. An ask nobody answers lapses after two weeks. Weekly, from the last ${review.windowDays} days of the ledger.`],
   ], helpAsked(ctx.request.url))}
+  ${budgetsCard(ctx)}
   ${knobsCard(ctx)}
   ${when(spending.length > 0, () =>
     spendingCard(spending, forgeCeiling(ctx.app.config) ?? undefined),

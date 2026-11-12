@@ -89,6 +89,7 @@ import { entry as secrets } from "./secrets.ts";
 import { entry as sentinel } from "./sentinel.ts";
 import { entry as subscriptions } from "./subscriptions.ts";
 import { entry as crewKey } from "./crewkey.ts";
+import { entry as crewBudgets } from "./crewbudgets.ts";
 import { entry as system } from "./system.ts";
 import { entry as teams } from "./teams.ts";
 import { entry as telemetry } from "./telemetry.ts";
@@ -173,6 +174,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   bulk,
   subscriptions,
   crewKey,
+  crewBudgets,
   cloud,
   pinned,
   bets,
