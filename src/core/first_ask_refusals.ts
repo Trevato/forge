@@ -56,3 +56,8 @@ export function listRefusals(db: Database, limit: number, now: number): Refusal[
     .all(n, now - KEEP_MS) as { id: number; at: number; actor_id: string | null; ask: string; words: string }[];
   return rows.map((r) => ({ id: r.id, at: r.at, actorId: r.actor_id, ask: r.ask, words: r.words }));
 }
+
+/** How many refusals are kept (none older than `KEEP_MS`): one COUNT, never the list. */
+export function countRefusals(db: Database, now: number): number {
+  return (db.query("SELECT COUNT(*) AS n FROM first_ask_refusals WHERE at >= ?1").get(now - KEEP_MS) as { n: number }).n;
+}
