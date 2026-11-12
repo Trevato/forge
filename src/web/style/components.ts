@@ -790,7 +790,9 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
   box-shadow: var(--shadow-2);
 }
 .dialog::backdrop { background: color-mix(in srgb, var(--bg) 62%, #0008); backdrop-filter: blur(3px); }
-.dialog[open] { animation: pop 140ms var(--ease) both; }
+/* The one open-state rule (#11831): an overlay is laid out only while open, and every overlay
+   (dialog, palette) gets its layout here; a component adds only what is its own. */
+.dialog[open] { display: flex; flex-direction: column; animation: pop 140ms var(--ease) both; }
 .dialog-head { display: flex; align-items: center; gap: 8px; padding: 14px 16px 0; }
 .dialog-head h2 { flex: 1; }
 .dialog-body { padding: 12px 16px; }
@@ -874,12 +876,7 @@ html:has(.palette[open]) { overflow: hidden; }
     height: calc(var(--vv-h, 100dvh) - env(safe-area-inset-top, 0px));
     max-height: calc(var(--vv-h, 100dvh) - env(safe-area-inset-top, 0px));
     border-radius: 0 0 var(--radius-lg) var(--radius-lg); border-top: 0; border-bottom: 1px solid var(--border);
-    flex-direction: column;
   }
-  /* Only an open palette is laid out. \`display\` on the bare selector showed the
-     closed dialog over every page on a phone (2026-11-12). */
-  .palette:not([open]) { display: none; }
-  .palette[open] { display: flex; }
   .palette .palette-input { flex: none; font-size: 16px; }
   .palette-list { flex: 1; min-height: 0; height: auto; }
   .palette-item { min-height: 44px; }
@@ -889,7 +886,7 @@ html:has(.palette[open]) { overflow: hidden; }
 }
 
 /* ---- toast / flash ---- */
-.toast {
+.toast:not([hidden]) {
   display: flex; align-items: flex-start; gap: 8px;
   margin: 16px 0 0; padding: 10px 12px;
   border: 1px solid var(--border); border-radius: var(--radius);
