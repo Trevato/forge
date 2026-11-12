@@ -82,8 +82,8 @@ Wants: to read what it was not given, reach what it may not, or land code no
 person approved.
 
 - The agent's shell may reach only the forge, the package registry and its
-  own repository's app — production and each open pull's preview, by exact
-  host, never another repository's app; the
+  own repository's app (production and each open pull's preview), by exact
+  host, and never another repository's app. The
   forge's repositories, index, key and every other agent's clone are denied by
   name and by allow-list, and a listing that fails refuses the run.
   Test: `test/crew-sandbox.test.ts`
@@ -100,7 +100,7 @@ person approved.
   forge fills it on the host with `--ignore-scripts`, and reads no
   `bunfig.toml` or `.npmrc` of the pull's.
   Test: `test/check-install.test.ts`
-- An app environment's cell (#7544) reads that same cache read-only and
+- An app environment's cell reads that same cache read-only and
   copies from it, so a preview cannot plant a package production installs;
   the forge fills it through the same lockfile rule as a check's.
   Test: `test/app-install-cache.test.ts`
