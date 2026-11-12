@@ -30,6 +30,7 @@ import type { User } from "../src/core/users.ts";
 import type { Decider } from "../src/crew/decide.ts";
 import { appendRunLog, readRunLog } from "../src/runs/log.ts";
 import { startStandInCrew, stopStandInCrew, type StandInCrew } from "./helpers/crew-standin.ts";
+import { askForReviews } from "./helpers/reviews.ts";
 
 const IMPACT = new Map([
   ["test/people.test.ts", ["src/people.ts"]],
@@ -83,6 +84,7 @@ describe("the crew, with a red outside the diff", () => {
     (app.config as { decider?: Decider }).decider = decider;
     // Parking is autonomy's: the repository runs on its own, on alice's word.
     app.db.run("UPDATE repo SET autonomy = 'autonomous', autonomy_by = ?1 WHERE id = ?2", [alice.id, repo.id]);
+    askForReviews(app.db, repo.id);
     const checkout = mkdtempSync(join(tmpdir(), "forge-outside-diff-"));
     writeFileSync(join(checkout, IMPACT_FILE), formatImpact(IMPACT));
     expect(keepImpact(app.config.dataDir, repo.id, checkout)).toBe("impact map kept: 3 tests");

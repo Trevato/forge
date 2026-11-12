@@ -42,6 +42,7 @@ import { runGit } from "../src/git/env.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve } from "../src/http/server.ts";
 import { mirrorOutbound, quietLogs } from "./helpers/globals.ts";
+import { askForReviews } from "./helpers/reviews.ts";
 
 quietLogs();
 mirrorOutbound({ allow: ["127.0.0.1"] });
@@ -163,6 +164,7 @@ describe("following several sources", () => {
   /** A repository whose main holds f.txt = `mainText`, and a commit tree builder. */
   async function repoWith(name: string, mainText: string) {
     const r = ok(await createRepo(app, alice, { name, visibility: "public" }));
+    askForReviews(app.db, r.id);
     const d = repoDir(app.reposRoot, r.ownerName, r.name);
     const git = async (args: string[], input?: string) =>
       ok(await runGit(args, { cwd: d, env: ident, ...(input === undefined ? {} : { stdin: input }) })).trim();

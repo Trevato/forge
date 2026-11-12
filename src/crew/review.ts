@@ -133,6 +133,20 @@ export function pickReviewer(
 export const reviewersOf = (db: Database, repoId: string): Agent[] =>
   reviewersForRepos(db, [repoId]).get(repoId) ?? [];
 
+/**
+ * Whether reviews are off for a repository (#11666): its owner has not asked
+ * for them (`requireReview`) and no reviewer is seated. A green pull then
+ * lands without one, and nothing waits for one. The one rule: the gate, the
+ * waits and the next-actor line all ask it here. The seated reviewers are
+ * read only when the owner has not asked; a caller that already read them
+ * (`reviewersForRepos`) passes them in.
+ */
+export const reviewsOff = (
+  db: Database,
+  repo: Pick<Repo, "id" | "requireReview">,
+  seated?: ReadonlyMap<string, readonly Agent[]>,
+): boolean => !repo.requireReview && ((seated ?? reviewersForRepos(db, [repo.id])).get(repo.id)?.length ?? 0) === 0;
+
 /** `reviewersOf` for many repositories at once, by repo; one with none is absent. */
 export const reviewersForRepos = (db: Database, repoIds: readonly string[]): Map<string, Agent[]> =>
   crewWithRole(db, repoIds, "reviewer");
@@ -374,7 +388,11 @@ export function reviewWaitsFor(
   handovers?: ReadonlyMap<string, Handover>,
 ): Map<string, ReviewWaits> {
   const out = new Map<string, ReviewWaits>();
-  const agents = pulls.filter((p) => p.pull.authorIsAgent);
+  // An app with reviews off waits on none (#11666).
+  const seated = reviewersForRepos(db, pulls.map((p) => p.repo.id));
+  const agents = pulls.filter(
+    (p) => p.pull.authorIsAgent && !reviewsOff(db, p.repo, seated),
+  );
   const held = holdsFor(db, agents.map((p) => p.pull.id));
   const unheld = agents.filter((p) => !held.has(p.pull.id));
   const seen = reviewSummariesFor(db, unheld.map((p) => p.pull));
@@ -388,7 +406,7 @@ export function reviewWaitsFor(
   // answer differently.
   const over = handovers ?? handoversOf(db, open.map((p) => ({ id: p.pull.id, repo: p.repo })));
   const histories = reviewAttemptsFor(db, open.map((p) => p.pull));
-  const reviewers = reviewersForRepos(db, open.map((p) => p.repo.id));
+  const reviewers = seated;
   for (const { repo, pull } of open) {
     const handover = over.get(pull.id);
     const history = histories.get(pull.id);

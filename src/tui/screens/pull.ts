@@ -399,7 +399,7 @@ export function pullScreen(
         : nextOfPull(f.db, row, {
             headOid: row.headOid || (facts?.headOid ?? ""),
             conflicts: facts?.conflicts.length ?? 0,
-          });
+          }, settings);
     step =
       row === undefined || settings === undefined
         ? null

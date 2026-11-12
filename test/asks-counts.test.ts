@@ -39,6 +39,7 @@ import { handoverOf, handoversOf } from "../src/crew/guard.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { id } from "../src/kernel/id.ts";
 import { quiet, statements } from "./helpers/statements.ts";
+import { askForReviews } from "./helpers/reviews.ts";
 
 const ZERO = "0".repeat(40);
 
@@ -94,6 +95,7 @@ describe("home's asks are read grouped, and once", () => {
       description: name,
     });
     if (!made.ok) throw new Error(`seed repo ${name}: ${made.error}`);
+    askForReviews(app.db, made.value.id);
     for (const agent of [builder, reviewer]) addCrew(app.db, made.value.id, agent.id, owner.id);
     seatAs(app.db, made.value.id, reviewer.id, "reviewer");
     app.db.query("UPDATE repo SET autonomy = ?2 WHERE id = ?1").run(made.value.id, autonomy);

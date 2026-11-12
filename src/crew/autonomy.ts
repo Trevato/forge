@@ -152,7 +152,7 @@ import { recordQueueFlakes } from "../checks/flake.ts";
 import { readVitals, vitalsMisses, vitalsWords } from "../flow/vitals.ts";
 import { moveRequested, tallyRequested, tallyWords } from "./requested.ts";
 import { passLanded } from "./box_pass.ts";
-import { reviewersOf, sendToReview, sweepReviews } from "./review.ts";
+import { reviewersForRepos, reviewsOff, sendToReview, sweepReviews } from "./review.ts";
 import { lastWaits, noteWaits, tallyWaits, type Wait, waitWords } from "./waits.ts";
 import { bootCounts } from "../kernel/boots.ts";
 
@@ -1951,12 +1951,17 @@ export async function reviewed(
   // An agent's pull ships only on an approving review — the crew's reviewer
   // or a person's. With no reviewer, or a review that lapsed, it waits for
   // a person (`waitsForPerson` puts it where a person looks); never by lapse.
+  // An app whose owner has not asked for reviews lands a green pull without
+  // one (#11666); a verdict already on the head was handled above.
+  const seated = reviewersForRepos(app.db, [repo.id]);
+  if (reviewsOff(app.db, repo, seated)) return "pass";
+  const reviewers = seated.get(repo.id)?.length ?? 0;
   if (pull.authorIsAgent) {
-    if (reviewersOf(app.db, repo.id).length > 0) await sendToReview(app, repo, pull);
+    if (reviewers > 0) await sendToReview(app, repo, pull);
     return "hold";
   }
   // A person's own pull is not held for a review that never comes.
-  if (reviewersOf(app.db, repo.id).length === 0) return "pass";
+  if (reviewers === 0) return "pass";
   const stage = await sendToReview(app, repo, pull);
   return stage === "lapsed" ? "lapsed" : stage === "none" ? "pass" : "hold";
 }

@@ -9,6 +9,10 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { reviewed } from "../src/crew/autonomy.ts";
+import { reviewWaitsFor } from "../src/crew/review.ts";
+import { getRepoById } from "../src/core/repos.ts";
+import { getPull } from "../src/core/pulls.ts";
 import { crewNow } from "../src/actions/crew_now.ts";
 import { createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
@@ -20,6 +24,7 @@ import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { getUserByName, type User } from "../src/core/users.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { askForReviews } from "./helpers/reviews.ts";
 
 quietLogs();
 
@@ -32,20 +37,20 @@ describe("crewNow's review waits", () => {
   let n = 0;
 
   /** An agent's pull whose check went green two hours ago, with no reviewer on the crew. */
-  const greenAgentPull = async () => {
+  const greenAgentPull = async (into: Repo = repo) => {
     const branch = `b${++n}`;
-    const c = await commitToBranch(app, ada, repo, {
+    const c = await commitToBranch(app, ada, into, {
       branch,
       base: "main",
       message: branch,
       files: [{ path: `${branch}.md`, content: "x\n" }],
     });
     if (!c.ok) throw new Error(JSON.stringify(c.error));
-    const o = await openPull(app, ada, repo, { title: `pull ${branch}`, body: "", baseBranch: "main", headBranch: branch });
+    const o = await openPull(app, ada, into, { title: `pull ${branch}`, body: "", baseBranch: "main", headBranch: branch });
     if (!o.ok) throw new Error(String(o.error));
     app.db.query("UPDATE issue SET author_id = ?2 WHERE id = ?1").run(o.value.id, agentId);
     const run = createRun(app.db, {
-      repoId: repo.id,
+      repoId: into.id,
       kind: "check",
       issueId: o.value.id,
       env: `pull-${o.value.number}`,
@@ -82,7 +87,9 @@ describe("crewNow's review waits", () => {
     ada = made.value;
     const r = await createRepo(app, ada, { name: "garden", visibility: "private" });
     if (!r.ok) throw new Error(String(r.error));
-    repo = r.value;
+    // Reviews are something an owner turns on (#11666).
+    askForReviews(app.db, r.value.id);
+    repo = getRepoById(app.db, r.value.id)!;
     createAppRecord(app.db, { repoId: repo.id, slug: "garden", access: "private" });
     const seeded = await commitToBranch(app, ada, repo, {
       message: "seed",
@@ -112,5 +119,20 @@ describe("crewNow's review waits", () => {
     const nine = build();
     expect(nine.rows.filter((r) => r.why === "review")).toHaveLength(9);
     expect(nine.statements).toBe(one.statements);
+  }, 30_000);
+
+  test("in a repository with reviews off, a green agent pull waits on nobody and the gate passes it (#11666)", async () => {
+    const made = await createRepo(app, ada, { name: "meadow", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    const meadow = made.value;
+    const seeded = await commitToBranch(app, ada, meadow, { message: "seed", files: [{ path: "README.md", content: "# meadow\n" }] });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const pull = getPull(app.db, meadow.id, (await greenAgentPull(meadow)).number)!;
+    expect(await reviewed(app, meadow, pull)).toBe("pass");
+    expect(reviewWaitsFor(app.db, [{ repo: meadow, pull }]).get(pull.id)).toBeUndefined();
+    // The same pull's twin where reviews are asked for still waits, as before.
+    const asked = getPull(app.db, repo.id, (await greenAgentPull()).number)!;
+    expect(await reviewed(app, repo, asked)).toBe("hold");
+    expect(reviewWaitsFor(app.db, [{ repo, pull: asked }]).get(asked.id)?.person?.why).toBe("no reviewer");
   }, 30_000);
 });

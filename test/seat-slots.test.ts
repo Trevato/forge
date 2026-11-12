@@ -80,7 +80,7 @@ beforeAll(async () => {
   const id = (n: string) => getUserByName(app.db, n)!.id;
   seatAs(app.db, repo.id, id("atlas"), "planner");
   seatAs(app.db, repo.id, id("judge"), "reviewer");
-  ok(await updateRepoSettings(app, alice, repo, { autonomy: "autonomous", autonomyDirection: "Make the yard rounder.", autonomyCeilingUsd: 10, autonomySlots: 2, autonomyBy: alice.id }));
+  ok(await updateRepoSettings(app, alice, repo, { autonomy: "autonomous", requireReview: true, autonomyDirection: "Make the yard rounder.", autonomyCeilingUsd: 10, autonomySlots: 2, autonomyBy: alice.id }));
   const res = await fetch(`${servers.url}/signin`, { method: "POST", body: new URLSearchParams({ username: "alice", password: PASSWORD }), redirect: "manual" });
   cookie = (res.headers.get("set-cookie") ?? "").split(";")[0]!;
   admin = createToken(app.db, alice.id, "admin", "admin").token;

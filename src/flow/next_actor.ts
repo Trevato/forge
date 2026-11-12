@@ -9,6 +9,8 @@ import { getHold } from "../core/holds.ts";
 import type { Pull } from "../core/pulls.ts";
 import { checkSummary, type RunState } from "../core/runs.ts";
 import { reviewSummary } from "../core/reviews.ts";
+import type { Repo } from "../core/repos.ts";
+import { reviewsOff } from "../crew/review.ts";
 import { wallAsk, wallWords } from "./wall_wait.ts";
 
 export type Actor = "builder" | "reviewer" | "queue" | "person";
@@ -30,6 +32,8 @@ export interface NextInput {
   readonly pushedSince: number;
   /** What the access wall holds this head for, in plain words (#7847): a person decides it. */
   readonly wall?: readonly string[] | null;
+  /** Reviews are off for the app (`reviewsOff`): a green pull lands without one. */
+  readonly reviewOff?: boolean;
 }
 
 const WAITING = {
@@ -51,10 +55,24 @@ export function nextActor(i: NextInput): Next {
     if (i.check === "ok") return { who: "queue", why: "approved and green" };
     return { who: "queue", why: `approved, ${WAITING[i.check]}` };
   }
+  if (i.reviewOff === true) {
+    if (i.check === "ok") return { who: "queue", why: "green, reviews are off: it lands" };
+    return { who: "queue", why: i.check === "none" ? "no check yet" : WAITING[i.check] };
+  }
   return {
     who: "reviewer",
     why: i.pushedSince > 0 ? "pushed since the last review" : "no review yet",
   };
+}
+
+/**
+ * `nextActor`, asking whether reviews are off only when the answer would be
+ * a wait on the reviewer: that is the one answer reviews being off changes,
+ * so the seated reviewers are read then and only then (#11666).
+ */
+export function nextAsking(i: NextInput, off: () => boolean): Next {
+  const next = nextActor(i);
+  return next.who === "reviewer" && off() ? nextActor({ ...i, reviewOff: true }) : next;
 }
 
 /** The next actor of an open pull at `headOid`; null once it is merged or closed. */
@@ -62,17 +80,22 @@ export function nextOfPull(
   db: Database,
   pull: Pull,
   live: { readonly headOid: string; readonly conflicts: number },
+  /** The pull's repository; without one, reviews count as asked for. */
+  repo: Pick<Repo, "id" | "requireReview"> | undefined,
 ): Next | null {
   if (pull.state !== "open" || pull.mergedAt !== null) return null;
   const reviews = reviewSummary(db, pull.id, live.headOid);
   const hold = getHold(db, pull.id);
-  return nextActor({
-    held: hold === undefined ? null : { by: hold.heldByName, why: hold.why },
-    conflicted: live.conflicts > 0,
-    check: checkSummary(db, pull.id, live.headOid).state,
-    changesRequested: reviews.changesRequested,
-    approvals: reviews.approvals,
-    pushedSince: reviews.stale,
-    wall: wallWords(db, pull.id, live.headOid),
-  });
+  return nextAsking(
+    {
+      held: hold === undefined ? null : { by: hold.heldByName, why: hold.why },
+      conflicted: live.conflicts > 0,
+      check: checkSummary(db, pull.id, live.headOid).state,
+      changesRequested: reviews.changesRequested,
+      approvals: reviews.approvals,
+      pushedSince: reviews.stale,
+      wall: wallWords(db, pull.id, live.headOid),
+    },
+    () => repo !== undefined && reviewsOff(db, repo),
+  );
 }

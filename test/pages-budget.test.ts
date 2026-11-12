@@ -37,7 +37,7 @@ const DEFAULT = { statements: 60, git: 8 };
 const HEAVIER: Record<string, { statements?: number; git?: number }> = {
   "/:owner/:name/issues/:number": { statements: 70 },
   "/:owner/:name/next": { statements: 64 },
-  "/:owner/:name/pulls/:number": { statements: 110 }, // +1: the header Talk count (#10327); +1: the landing line (#10860)
+  "/:owner/:name/pulls/:number": { statements: 111 }, // +1: the header Talk count (#10327); +1: the landing line (#10860); +1: whether a reviewer is seated, read only when Require review is off and the pull would otherwise wait on one; the page loads no crew besides (#11666)
   "/board": { statements: 70 }, // +6: the money line (#510) — one settings read, then the month's and the 30 days' meter, storage and ledger reads; constant in the number of apps
   "/settings/capacity": { statements: 71 },
 };

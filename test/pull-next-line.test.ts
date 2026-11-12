@@ -10,6 +10,7 @@ import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { askForReviews } from "./helpers/reviews.ts";
 
 quietLogs();
 
@@ -45,6 +46,7 @@ beforeAll(async () => {
   for (const name of ["open", "merged"]) {
     const repo = await createRepo(app, alice, { name, visibility: "public" });
     if (!repo.ok) throw new Error(String(repo.error));
+    askForReviews(app.db, repo.value.id);
     for (const [branch, file] of [[undefined, "forge.json"], ["topic", "t.txt"]] as const) {
       const done = await commitToBranch(app, alice, repo.value, {
         ...(branch === undefined ? {} : { branch }),

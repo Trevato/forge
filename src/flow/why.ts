@@ -213,7 +213,7 @@ export function whyPull(
 ): Why {
   if (pull.mergedAt !== null) return { cause: null, settled: "merged" };
   if (pull.state !== "open") return { cause: null, settled: "closed" };
-  const next = nextOfPull(app.db, pull, live);
+  const next = nextOfPull(app.db, pull, live, repo);
   if (next === null) return { cause: null };
   const check = checkSummary(app.db, pull.id, live.headOid).state;
   const wall = next.who === "person" ? wallWords(app.db, pull.id, live.headOid) : null;

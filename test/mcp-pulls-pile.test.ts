@@ -17,6 +17,7 @@ import { createUser, getUserByName } from "../src/core/users.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { askForReviews } from "./helpers/reviews.ts";
 
 quietLogs();
 
@@ -65,6 +66,8 @@ beforeAll(async () => {
     }));
   };
   const pub = ok(await createRepo(app.db, app.reposRoot, { ownerId: ada.id, name: "svc", visibility: "public" }));
+  // Reviews are something an owner turns on (#11666): with them off these pulls would land.
+  askForReviews(app.db, pub.id);
   const priv = ok(await createRepo(app.db, app.reposRoot, { ownerId: ada.id, name: "vault", visibility: "private" }));
   for (const repo of [pub, priv])
     ok(await commitToBranch(app, ada, repo, { message: "seed", files: [{ path: "a.txt", content: "a\n" }] }));

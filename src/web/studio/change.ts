@@ -226,7 +226,7 @@ export function changeHead(
   pull: Pull,
   live: { readonly headOid: string; readonly conflicts: number } | null = null,
 ): Html {
-  const next = live === null ? null : nextOfPull(ctx.app.db, pull, live);
+  const next = live === null ? null : nextOfPull(ctx.app.db, pull, live, repo);
   const step =
     live === null && pull.mergedAt === null
       ? null

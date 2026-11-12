@@ -19,7 +19,8 @@ import { getPull, type Pull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
 import { reviewSummariesFor, reviewSummary } from "../core/reviews.ts";
 import { checksForHeads, checkSummary, type RunState } from "../core/runs.ts";
-import { nextActor, nextOfPull, type Next } from "./next_actor.ts";
+import { reviewsOff } from "../crew/review.ts";
+import { nextAsking, nextOfPull, type Next } from "./next_actor.ts";
 import { wallWordsOf } from "./wall_wait.ts";
 
 export const STEPS = ["check", "review", "land", "live"] as const;
@@ -107,7 +108,7 @@ export function stepOfPull(
   repo: Repo,
   pull: Pull,
   live: { readonly headOid: string; readonly conflicts: number },
-  next: Next | null = pull.state === "open" && pull.mergedAt === null ? nextOfPull(db, pull, live) : null,
+  next: Next | null = pull.state === "open" && pull.mergedAt === null ? nextOfPull(db, pull, live, repo) : null,
 ): PathStep | null {
   if (pull.mergedAt !== null) {
     const deploys = pull.baseBranch === repo.defaultBranch && getAppByRepo(db, repo.id) !== undefined;
@@ -171,19 +172,25 @@ export function stepsOfStored(db: Database, repo: Repo, pulls: readonly Pull[]):
   const checks = checksForHeads(db, new Map(open.map((p) => [p.id, p.headOid])));
   const holds = holdsFor(db, ids);
   const walls = latestDecisionsFor(db, ids, "land");
+  // Asked at most once for the batch, and only if a pull would wait on a review (#11666).
+  let off: boolean | undefined;
+  const reviewOff = (): boolean => (off ??= reviewsOff(db, repo));
   for (const pull of open) {
     const r = reviews.get(pull.id)!;
     const check = checks.get(pull.id)?.[0]?.state ?? "none";
     const hold = holds.get(pull.id);
-    const next = nextActor({
-      held: hold === undefined ? null : { by: hold.heldByName, why: hold.why },
-      conflicted: false,
-      check,
-      changesRequested: r.changesRequested,
-      approvals: r.approvals,
-      pushedSince: r.stale,
-      wall: wallWordsOf(walls.get(pull.id), pull.headOid),
-    });
+    const next = nextAsking(
+      {
+        held: hold === undefined ? null : { by: hold.heldByName, why: hold.why },
+        conflicted: false,
+        check,
+        changesRequested: r.changesRequested,
+        approvals: r.approvals,
+        pushedSince: r.stale,
+        wall: wallWordsOf(walls.get(pull.id), pull.headOid),
+      },
+      reviewOff,
+    );
     out.set(pull.id, pathStep({ state: "open", check, approvals: r.approvals, next }));
   }
   const merged = pulls.filter((p) => p.mergedAt !== null);

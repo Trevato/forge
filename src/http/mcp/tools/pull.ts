@@ -74,7 +74,7 @@ export const tool: Tool = {
       next: nextOfPull(ctx.app.db, pull, {
         headOid: pull.headOid,
         conflicts: state?.conflicts?.length ?? 0,
-      }),
+      }, repo),
       step: stepOfPull(ctx.app.db, repo, pull, {
         headOid: pull.headOid,
         conflicts: state?.conflicts?.length ?? 0,

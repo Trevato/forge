@@ -18,6 +18,7 @@ import { stepOfStored, stepsOfStored } from "../src/flow/path.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { statements } from "./helpers/statements.ts";
 import { expectWork } from "./helpers/work.ts";
+import { askForReviews } from "./helpers/reviews.ts";
 
 quietLogs();
 
@@ -67,7 +68,9 @@ beforeAll(async () => {
   bob = await user("bob");
   const made = await createRepo(app, alice, { name: "steps", visibility: "public" });
   if (!made.ok) throw new Error(String(made.error));
-  repo = made.value;
+  // These pulls wait on a review, as reviews asked for say (#11666).
+  askForReviews(app.db, made.value.id);
+  repo = { ...made.value, requireReview: true };
   const record = createAppRecord(app.db, { repoId: repo.id, slug: "steps", access: "public" });
   if (!record.ok) throw new Error(record.error);
 });

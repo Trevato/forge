@@ -35,6 +35,7 @@ import { showBoard } from "../src/actions/boards.ts";
 import { panelData } from "../src/boards/panel_data.ts";
 import { listVia } from "./mcp-list.ts";
 import { adminOpenapi } from "./helpers/openapi-doc.ts";
+import { askForReviews } from "./helpers/reviews.ts";
 
 /** tools/list's order: the tools by name, then `report`. */
 const sortedThenReport = (names: string[]): string[] => [
@@ -120,6 +121,7 @@ describe("the forge over MCP", () => {
     });
     if (!made.ok) throw new Error(String(made.error));
     game = made.value;
+    askForReviews(app.db, game.id);
     await commitToBranch(app, alice, game, {
       message: "seed",
       files: [{ path: "README.md", content: "# game\n" }],

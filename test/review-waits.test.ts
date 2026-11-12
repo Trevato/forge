@@ -6,7 +6,7 @@
  * who only reads.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +23,7 @@ import { landIfGreen } from "../src/crew/autonomy.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { askLinesFor } from "../src/web/studio/asks.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { askForReviews } from "./helpers/reviews.ts";
 
 quietLogs();
 
@@ -35,6 +36,12 @@ describe("an agent pull that waits for a person's review says so", () => {
   let alice: User;
   let bob: User;
   let repo: Repo;
+  /** Whether the owner asks for reviews (#11666), in the row and in the copy the tests pass on. */
+  const setReviews = (on: boolean) => {
+    askForReviews(app.db, repo.id, on);
+    repo = { ...repo, requireReview: on };
+  };
+  afterEach(() => setReviews(true));
   let aliceCookie = "";
   let bobCookie = "";
   let aliceRo = "";
@@ -141,6 +148,7 @@ describe("an agent pull that waits for a person's review says so", () => {
     });
     if (!made.ok) throw new Error(String(made.error));
     repo = made.value;
+    setReviews(true);
     await commitToBranch(app, alice, repo, {
       message: "seed",
       files: [{ path: "README.md", content: "# engine\n" }],
@@ -180,6 +188,8 @@ describe("an agent pull that waits for a person's review says so", () => {
 
   test("with no reviewer the agent's pull does not land, and a person's own does", async () => {
     expect(await landIfGreen(app, repo, waiting)).toBe(false);
+    // A person's own pull lands on green in an app whose owner has reviews off (#11666).
+    setReviews(false);
     expect(await landIfGreen(app, repo, own)).toBe(true);
   });
 

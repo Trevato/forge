@@ -6,7 +6,7 @@
  * before.
  */
 import { seatAs } from "./helpers/seat.ts";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,6 +28,7 @@ import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { landIfGreen, settleAgentRun } from "../src/crew/autonomy.ts";
 import { sendToReview, waitsForPerson } from "../src/crew/review.ts";
 import { askLinesFor } from "../src/web/studio/asks.ts";
+import { askForReviews } from "./helpers/reviews.ts";
 
 describe("the review gate", () => {
   let dataDir: string;
@@ -37,6 +38,10 @@ describe("the review gate", () => {
   let quill: User;
   let repo: Repo;
   const fresh = () => getRepoById(app.db, repo.id)!;
+  /** Whether the owner asks for reviews (#11666); each test starts with them off. */
+  const askReviews = (on: boolean) =>
+    askForReviews(app.db, repo.id, on);
+  afterEach(() => askReviews(false));
   const reviewRuns = (pull: Pull) =>
     listRuns(app.db, repo.id, { issueId: pull.id }).filter(
       (r) => r.reason === "review",
@@ -203,11 +208,22 @@ describe("the review gate", () => {
   test("with no reviewer on the crew an agent's pull waits for a person and says why", async () => {
     seatAs(app.db, repo.id, quill.id, "builder");
     const pull = await greenPull(mason, "no-reviewer");
+    askReviews(true); // with them off this pull would land (#11666)
     expect(await landIfGreen(app, fresh(), pull)).toBe(false);
     expect(reviewRuns(pull)).toHaveLength(0);
     expect(waitsForPerson(app.db, repo.id, getPull(app.db, repo.id, pull.number)!)?.why).toBe("no reviewer");
     approve(pull, alice);
     expect(await landIfGreen(app, fresh(), pull)).toBe(true);
+  });
+
+  test("with reviews off, a green agent pull lands; changes asked on its head still hold it (#11666)", async () => {
+    seatAs(app.db, repo.id, quill.id, "builder");
+    const landing = await greenPull(mason, "reviews-off");
+    expect(await landIfGreen(app, fresh(), landing)).toBe(true);
+    const asked = await greenPull(mason, "reviews-off-changes");
+    submitReview(app.db, { issueId: asked.id, authorId: alice.id, state: "changes_requested", commitOid: asked.headOid });
+    expect(await landIfGreen(app, fresh(), asked)).toBe(false);
+    expect(getPull(app.db, repo.id, asked.number)?.mergedAt).toBeNull();
   });
 
   test("a person's own pull is unchanged: a review that lapses does not hold it; it lands, and says so", async () => {

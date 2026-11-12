@@ -19,6 +19,7 @@ import { movingRow } from "../src/tui/screens/about.ts";
 import { CAUSES, firstCause, type WhyFacts } from "../src/flow/why.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { promote } from "./helpers/members.ts";
+import { askForReviews } from "./helpers/reviews.ts";
 
 describe("the list of causes", () => {
   const cases: [string, WhyFacts][] = [
@@ -238,6 +239,7 @@ describe("MCP flow about a pull", () => {
     if (!made.ok) throw new Error(String(made.error));
     repo = made.value;
     await put("main", "top\nbase\n");
+    askForReviews(app.db, repo.id);
     const bot = await createAgent(app, alice, { username: "bot" });
     if (!bot.ok) throw new Error(String(bot.error));
     expect(addToCrew(app, alice, repo, "bot").ok).toBe(true);
