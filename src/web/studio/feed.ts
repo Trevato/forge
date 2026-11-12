@@ -26,12 +26,13 @@ import { getRepo, getRepoById } from "../../core/repos.ts";
 import { DEFAULT_PAGE, looksForEnv, lookUrl } from "../../core/looks.ts";
 import { mayFetchLook, pictured } from "../pages/looks.ts";
 import { dividers } from "./day_divider.ts";
-import { html, type Html } from "../html.ts";
+import { html, raw, type Html } from "../html.ts";
 import { DISMISS_KEY } from "../script_keys.ts";
 import { fragment } from "../layout.ts";
 import { draftJs } from "../draft.ts";
 import { outboxJs } from "../outbox.ts";
 import { avatar, btn, card, disclosure, empty, hintAttr, nameMark, row, stateBadge, time } from "../ui.ts";
+import { heldPostsJs } from "./held_posts.ts";
 import { stepLink } from "./step_link.ts";
 import { writableAppsOf } from "./asks.ts";
 
@@ -270,7 +271,7 @@ export function composer(ctx: Ctx, user: User): Html {
  * are waiting in the outbox. The script fills it; `hidden` until then.
  */
 export function feedNote(): Html {
-  return html`<p
+  return html`<p id="new-posts" class="new-posts" role="status" aria-live="polite">${raw(String(btn("New posts", { type: "button", variant: "primary", size: "sm" })).replace("<button", "<button hidden"))}</p><p
     id="feed-note"
     class="feed-note small muted"
     role="status"
@@ -425,7 +426,9 @@ function drawRegion(user: User, ctx: Ctx, read: ReturnType<typeof readRegion>): 
     id="live-feed"
     class="feed"
     aria-label="Feed"
+    tabindex="-1"
     data-live="${FEED_LIVE}"
+    data-live-hold
     data-live-src="/live/feed${liveQuery === "" ? "" : `?${liveQuery}`}"
   >
     ${chipsBar(user, ctx, items)}
@@ -484,6 +487,7 @@ export const feedJs = /* js */ `
 ${outboxJs}
 ${draftJs}
 ${dayKeepJs}
+${heldPostsJs}
 (function () {
   var feed = document.getElementById('live-feed');
   if (!feed || typeof fetch === 'undefined') return;
@@ -649,6 +653,33 @@ ${dayKeepJs}
     box.value = '';
     box.focus();
     outbox.flush().then(function (r) { if (r.refused && draft) draft.refused(text); });
+  });
+  // Posts that arrived while the reader was inside the feed wait behind one
+  // button; each later hold replaces the last, so the count is against the screen.
+  var slot = document.getElementById('new-posts');
+  var slotBtn = slot && slot.querySelector('button');
+  var held = null;
+  function ids(root) {
+    return Array.prototype.map.call(root.querySelectorAll('[data-item]'), function (c) { return c.getAttribute('data-item'); });
+  }
+  feed.addEventListener('forge:held', function (e) {
+    if (!slot || !slotBtn || !e.detail || typeof e.detail.html !== 'string') return;
+    var holder = document.createElement('template');
+    holder.innerHTML = e.detail.html;
+    var n = newPostIds(ids(feed), ids(holder.content)).length;
+    if (n < 1) { held = null; slotBtn.hidden = true; return; }
+    held = e.detail.html;
+    slotBtn.textContent = newPostsLabel(n);
+    slotBtn.hidden = false;
+  });
+  if (slotBtn) slotBtn.addEventListener('click', function () {
+    if (held === null) return;
+    feed.innerHTML = held;
+    held = null;
+    slotBtn.hidden = true;
+    feed.dispatchEvent(new CustomEvent('forge:swapped', { bubbles: true }));
+    window.scrollTo(0, 0);
+    if (feed.focus) feed.focus({ preventScroll: true });
   });
   document.addEventListener('keydown', function (e) {
     if (e.key !== '${DISMISS_KEY}' || e.metaKey || e.ctrlKey || e.altKey) return;
