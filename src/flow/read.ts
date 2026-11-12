@@ -7,9 +7,9 @@
 import type { Database } from "bun:sqlite";
 import { getIssuesByIds, LIST_LIMIT_MAX, listIssues, type Issue } from "../core/issues.ts";
 import { closesFromBody, joinMany, listPulls, type Pull } from "../core/pulls.ts";
-import { listReviews, reviewSummary } from "../core/reviews.ts";
+import { listReviews, reviewSummariesFor, reviewSummary } from "../core/reviews.ts";
 import type { Repo } from "../core/repos.ts";
-import { verdictForHead } from "../core/runs.ts";
+import { checksForHeads, verdictForHead, type Run } from "../core/runs.ts";
 import {
   flowStage,
   type FlowChecks,
@@ -235,3 +235,58 @@ function openBlockers(
   }
   return out;
 }
+
+/**
+ * The stage of each issue an open pull closes, by issue number: the lean read
+ * for a list that only needs to say building, checking or in review (#11619).
+ * The furthest-along pull speaks for the issue, as in `flowStage`.
+ */
+export function openPullStages(db: Database, repo: Repo, scope: Scope, now: Date, only?: ReadonlySet<number>): Map<number, FlowStage["stage"]> {
+  const out = new Map<number, FlowStage["stage"]>();
+  // One statement for all open pulls; a repository with none costs nothing more.
+  const seal = sealedClause(scope, "issue", 2);
+  const pulls = db
+    .query<{ id: string; body: string; head_oid: string; created_at: string; number: number }, string[]>(
+      `SELECT issue.id, issue.number, issue.body, issue.created_at, pull.head_oid FROM issue
+         JOIN pull ON pull.issue_id = issue.id
+        WHERE issue.repo_id = ?1 AND issue.kind = 'pull' AND issue.state = 'open'${seal.sql}`,
+    )
+    .all(repo.id, ...seal.params);
+  const asked = pulls
+    .map((pull) => ({ pull, closes: closesFromBody(pull.body).filter((n) => only === undefined || only.has(n)) }))
+    .filter((p) => p.closes.length > 0); // a pull that closes nothing asked about costs nothing
+  if (asked.length === 0) return out;
+  // Two reads for all of them, not two per pull.
+  const runs = checksForHeads(db, new Map(asked.map((p) => [p.pull.id, p.pull.head_oid])));
+  const reviews = reviewSummariesFor(db, asked.map((p) => ({ id: p.pull.id, headOid: p.pull.head_oid })));
+  for (const { pull, closes } of asked) {
+    const summary = reviews.get(pull.id);
+    const flowPull: FlowPull = {
+      number: pull.number,
+      state: "open",
+      openedAt: pull.created_at,
+      closedAt: null,
+      mergedAt: null,
+      checks: foldRuns(newestPerKind(runs.get(pull.id) ?? [])),
+      approvals: summary?.approvals ?? 0,
+      changesRequested: summary?.changesRequested ?? 0,
+      requireReview: repo.requireReview,
+      reviewedAt: null,
+      liveAt: null,
+      deployFailed: false,
+    };
+    for (const n of closes) {
+      const stage = flowStage({ number: n, title: "", createdAt: pull.created_at, assignee: null, blockedBy: [], pulls: [flowPull] }, now).stage;
+      const seen = out.get(n);
+      if (seen === undefined || STAGE_ORDER.indexOf(stage) > STAGE_ORDER.indexOf(seen)) out.set(n, stage);
+    }
+  }
+  return out;
+}
+/** `verdictForHead` over runs already read, newest first: the newest of each kind and environment. */
+function newestPerKind(runs: readonly Run[]): Run[] {
+  const newest = new Map<string, Run>();
+  for (const run of runs) if (!newest.has(`${run.kind}:${run.env}`)) newest.set(`${run.kind}:${run.env}`, run);
+  return [...newest.values()];
+}
+const STAGE_ORDER = ["issue", "pull", "check", "review", "land", "live"] as const;

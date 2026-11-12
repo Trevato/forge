@@ -17,6 +17,9 @@ import { canRead, canWrite, type Repo } from "../../core/repos.ts";
 import { sealedScope } from "../../core/sealed.ts";
 import { notStartable } from "../../crew/not_startable.ts";
 import { rangeWords, weekView, type WeekView } from "../../flow/week.ts";
+import { openPullStages } from "../../flow/read.ts";
+import type { Stage } from "../../flow/stage.ts";
+import { stateWord } from "../../web/pages/next_state.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { fill, len, split } from "../ui/layout.ts";
@@ -35,6 +38,7 @@ export function nextScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let rows: readonly NextRow[] = [];
   let away = 0;
   let week: WeekView | undefined;
+  let stages = new Map<number, Stage>();
   let loaded = false;
   // Read at use, not at open: access can change under a session.
   const may = (): boolean =>
@@ -51,6 +55,7 @@ export function nextScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       rows = next.rows;
       away = next.notNowTotal;
       week = weekView(f.db, repo.id, rows, new Date());
+      stages = openPullStages(f.db, repo, scope, new Date(), new Set(rows.map((r) => r.issue.number)));
     }
     loaded = true;
     if (follow !== undefined) {
@@ -91,9 +96,9 @@ export function nextScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       const cut = week?.cut;
       const ends = cut !== undefined && cut.unsure === null && cut.fits.length > 0 && at === cut.fits.length - 1;
       return {
-        title: `${r.place === null ? "·" : r.place}. #${r.issue.number} ${r.issue.title}`,
+        title: `${at + 1}. #${r.issue.number} ${r.issue.title}`,
         secondary: r.role === "blocker" ? "Blocker" : "Enabler",
-        meta: [estimate === undefined ? "" : rangeWords(estimate), r.onIt === null ? "" : `on it: ${r.onIt}`, r.why ?? ""]
+        meta: [stateWord(r, { stage: stages.get(r.issue.number) ?? "issue", waits: r.waits, held: r.state === "held", onIt: r.onIt !== null }), r.onIt ?? "next", estimate === undefined ? "" : rangeWords(estimate), r.why ?? ""]
           .filter((x) => x !== "")
           .join(" · "),
         ...(ends ? { note: `── this week ends here (${cut.fits.length} fit): below reads as next week ──` } : {}),

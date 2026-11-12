@@ -44,6 +44,8 @@ export interface NextRow {
   readonly why: string | null;
   /** One word: "ready" (a builder starts it in its turn), "blocked" (waits on open work) or "held" (anything else that passes it over). */
   readonly state: "ready" | "blocked" | "held";
+  /** The numbers of the open issues this one waits for, lowest first; empty when none (a deferred one too). */
+  readonly waits: readonly number[];
 }
 
 export interface NextUp {
@@ -152,6 +154,7 @@ export function nextUp(
       onIt: crew.get(issue.id) ?? issue.assigneeName,
       why,
       state: why === null ? "ready" : blockedByOpen ? "blocked" : "held",
+      waits: blockedByOpen ? waitsOn(graph, issue) : [],
     };
   };
   const blocked = graph.issues.filter((i) => i.state === "open" && ranks.has(i.id) && !readyIds.has(i.id));

@@ -7,3 +7,7 @@
 ## Rows under headings, not boxes (#9764)
 
 The head is `pageHead("Next up")` with one sentence: the crew builds strictly from the top. The ranked list is a `<ul class="list setting-list">` straight under `<h2>Ready, in order</h2>`, and Not now (`?all=1`) the same under its own `<h2>`: no card, not even a bare one, since a list is rows (principle 7). Inside `[data-next]` the rows are spaced by a 4px gap, not ruled by hairlines (principle 3); the cut line keeps its dashed rule, as it marks where this week ends. The week's projection, its link, and for a writer the drag and j/k hint sit in one muted line after the list, beside the buttons that show their own keys. Blocker or Enabler is muted text in the row's meta (no badge). Top/Up/Down/Not now stay plain same-origin POST forms; each row still names its issue number, who is on it and what it waits on. No new class.
+
+## One numbered queue, folded (#11619)
+
+`/:owner/:name/next` is the dispatcher's whole order as one numbered list: each row's lead is its position (1 at the top, continuing across folds), and its meta reads `#N · <state> · <who or "next">`. The state is one word from `web/pages/next_state.ts`: building, checking, in review, landing, waiting on #N, held or ready. The rows sit in three native `<details>` (no script, no new class): "Up next" (the first ten, open), "After" (the rest, closed) and "Later" (behind the Later gate, closed), each heading carrying its count. `?all=1` is gone; every fold is already in the page.

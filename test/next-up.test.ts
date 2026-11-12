@@ -218,16 +218,21 @@ describe("Next up", () => {
     expect(order()).toEqual(before);
   });
 
-  test("beyond ten rows the rest is one line that opens it", async () => {
+  test("beyond ten rows the rest folds under After with its count, in the API's order", async () => {
     for (let i = 0; i < 12; i++) open(`Extra ${i}`);
     const page = await (await fetch(`${base}/alice/plan/next`, { headers: { cookie } })).text();
-    expect(page).toContain("next?all=1");
-    expect(page).toContain("open the rest");
-    const rows = (html: string) => (html.match(/data-number="/g) ?? []).length;
-    expect(rows(page)).toBe(10);
-    const full = await (await fetch(`${base}/alice/plan/next?all=1`, { headers: { cookie } })).text();
-    expect(rows(full)).toBeGreaterThan(10);
-    expect(full).toContain("Not now");
+    const rows = [...page.slice(0, page.indexOf("<h2>Later")).matchAll(/data-number="(\d+)"/g)].map((m) => Number(m[1]));
+    const queue = (await (await fetch(`${base}/api/v1/repos/alice/plan/queue`, { headers: { cookie } })).json()) as { queue: { number: number }[] };
+    expect(rows.length).toBeGreaterThan(10);
+    expect(rows).toEqual(queue.queue.map((q) => q.number).slice(0, rows.length));
+    // Positions run 1.. down the page, across the folds.
+    const leads = [...page.slice(0, page.indexOf("<h2>Later")).matchAll(/<span class="row-lead">(\d+)<\/span>/g)].map((m) => Number(m[1]));
+    expect(leads).toEqual(rows.map((_, i) => i + 1));
+    const folds = page.replace(/\s+/g, " ");
+    expect(folds).toMatch(/<details class="mt" open><summary><h2>Up next · 10<\/h2>/);
+    expect(folds).toContain(`<h2>After · ${rows.length - 10}</h2>`);
+    expect(folds).toContain("<h2>Later · ");
+    expect(page).not.toContain("all=1");
   });
 });
 
@@ -337,9 +342,9 @@ describe("Next up page shape (#9764)", () => {
       expect(res.status).toBe(200);
       const body = (await res.text()).replace(/\s+/g, " ");
 
-      expect(body).toContain("<h2>Ready, in order</h2>");
+      expect(body).toContain("<h2>Up next · 3</h2>");
       // The list is rows straight under its heading: no card, bare or boxed.
-      expect(body).toMatch(/<h2>Ready, in order<\/h2> ?<ul class="list setting-list" id="next-list"/);
+      expect(body).toMatch(/<h2>Up next · 3<\/h2><\/summary> ?<ul class="list setting-list" id="next-list"/);
       const main = body.slice(body.indexOf("<div data-next>"));
       expect(main).not.toMatch(/class="card\b/);
       // One sentence in the head, from pageHead; the key hint sits after the list, not in the lead.
@@ -353,11 +358,11 @@ describe("Next up page shape (#9764)", () => {
       const rowOf = (n: number) => rows.find((r) => r.includes(`data-number="${n}"`))!;
       for (const [issue, role] of [[first, "Blocker"], [second, "Enabler"]] as const) {
         const meta = /<span class="row-meta">([\s\S]*?)<\/span>/.exec(rowOf(issue.number))![1]!;
-        expect(meta).toContain(`${role} · #${issue.number}`);
+        expect(meta).toContain(`${role} · #${issue.number} · `);
         expect(meta.split("<span")[0]).not.toContain("<");
       }
-      expect(rowOf(second.number)).toContain("on it: bob");
-      expect(rowOf(waits.number)).toContain(`waits for #${first.number}`);
+      expect(rowOf(second.number)).toContain("held · bob");
+      expect(rowOf(waits.number)).toContain(`waiting on #${first.number} · next`);
 
       // Every action is still a form that posts.
       for (const label of ["Top", "Up", "Down", "Not now"]) {
@@ -369,9 +374,9 @@ describe("Next up page shape (#9764)", () => {
       const gate = open("Later gate: not now");
       const far = open("Far off");
       addDependency(app.db, far, gate, alice.id);
-      const all = (await (await fetch(`${servers.url}/alice/shape/next?all=1`, { headers: { cookie } })).text()).replace(/\s+/g, " ");
-      const notNow = all.slice(all.indexOf("<h2>Not now</h2>"));
-      expect(notNow).toMatch(/^<h2>Not now<\/h2> ?<ul class="list setting-list">/);
+      const all = (await (await fetch(`${servers.url}/alice/shape/next`, { headers: { cookie } })).text()).replace(/\s+/g, " ");
+      const notNow = all.slice(all.indexOf("<h2>Later · "));
+      expect(notNow).toMatch(/^<h2>Later · 1<\/h2><\/summary> ?<ul class="list setting-list">/);
       expect(notNow).not.toMatch(/class="card\b/);
       expect(notNow).not.toContain("Behind the Later gate. Top lifts");
       const farRow = /<li[^>]*data-number="(\d+)"[\s\S]*?<\/li>/.exec(notNow)!;

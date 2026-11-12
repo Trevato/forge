@@ -8,6 +8,8 @@
  */
 import { placeOf, rankIssue, rankedWords, stepTo, type Place } from "../../actions/next.ts";
 import { nextUp, TOP, type NextRow } from "../../core/next_up.ts";
+import { openPullStages } from "../../flow/read.ts";
+import { stateWord, type StateFacts } from "./next_state.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { sealedScope } from "../../core/sealed.ts";
@@ -16,7 +18,7 @@ import { CUT_TOP_WORDS, cutWords, FIT_COUNT_JS, rangeWords, rowCosts, weekView, 
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, loadRepo, notFoundPage, pageHead, repoBase, repoHeader, repoPalette, signInFirst } from "../chrome.ts";
 import { backTo, field, readForm } from "../form.ts";
-import { html, type Html } from "../html.ts";
+import { html, raw, type Html } from "../html.ts";
 import { flashOrJson, page } from "../layout.ts";
 import { btn, kbd, row } from "../ui.ts";
 
@@ -34,6 +36,7 @@ export const NEXT_CSS = `[data-next] { overflow-wrap: anywhere; }
 [data-next] .list .row { border-radius: var(--radius); }
 [data-next] .list > li.has-after > .row { flex: 1 1 14rem; }
 [data-next] .row-after { display: flex; flex-wrap: wrap; gap: 6px; max-width: 100%; padding: 0 14px 8px; }
+[data-next] summary h2 { display: inline; margin: 0; }
 [data-next] .cut-line { overflow-wrap: anywhere; }`;
 
 export const KEYS_JS = `
@@ -146,6 +149,8 @@ function line(
   away: boolean,
   priced: readonly Priced[] = [],
   cost: number | undefined = undefined,
+  position: number | null = null,
+  state: string | null = null,
 ): Html {
   const r = rows[at]!;
   const n = r.issue.number;
@@ -163,8 +168,8 @@ function line(
     href: `${base}/issues/${n}`,
     title: r.issue.title,
     titleAttr: r.issue.title,
-    lead: html`${r.place === null ? "·" : String(r.place)}`,
-    meta: html`${r.role === "blocker" ? "Blocker" : "Enabler"} · #${n} · ${r.roleWhy}${away ? null : html` · <span class="estimate">${rangeWords(priced.find((p) => p.number === n)?.estimate ?? { known: false, samples: 0, basis: "no estimate" })}</span>`}${r.onIt === null ? "" : ` · on it: ${r.onIt}`}${r.why === null ? "" : ` · ${r.why}`}`,
+    lead: html`${position === null ? "·" : String(position)}`,
+    meta: html`${r.role === "blocker" ? "Blocker" : "Enabler"} · #${n}${state === null ? "" : ` · ${state} · ${r.onIt ?? "next"}`} · ${r.roleWhy}${away ? null : html` · <span class="estimate">${rangeWords(priced.find((p) => p.number === n)?.estimate ?? { known: false, samples: 0, basis: "no estimate" })}</span>`}${state !== null || r.onIt === null ? "" : ` · on it: ${r.onIt}`}${r.why === null ? "" : ` · ${r.why}`}`,
     nav: true,
     data: { number: String(n), ...(cost === undefined ? {} : { cost: String(cost) }) },
     ...(controls === null ? {} : { after: controls }),
@@ -183,57 +188,45 @@ export function nextPage(ctx: Ctx): Response {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   const base = repoBase(repo);
-  const all = ctx.url.searchParams.get("all") === "1";
   const writer = ctx.auth.user !== undefined && ctx.auth.user.kind !== "agent" && canWrite(ctx.app.db, repo, ctx.auth.user);
   const scope = sealedScope(ctx.app.db, repo, ctx.auth.user);
   const next = nextUp(ctx.app.db, repo, scope, (ready) => notStartable(ctx.app, repo, ready, scope));
-  const shown = all ? next.rows : next.rows.slice(0, TOP);
-  const rest = next.rows.length - shown.length;
-  const back = all ? `${base}/next?all=1` : `${base}/next`;
+  const rows = next.rows;
+  const back = `${base}/next`;
   const rendering = performance.now();
-  const { priced, cut, capacity, sentence } = weekView(ctx.app.db, repo.id, next.rows, new Date());
+  const { priced, cut, capacity, sentence } = weekView(ctx.app.db, repo.id, rows, new Date());
   const costs = rowCosts(priced);
-  const rowsHtml = (): Html[] => {
-    const out: Html[] = [];
-    shown.forEach((_, at) => {
-      if (at === cut.fits.length && cut.unsure === null) out.push(cutMark(cut, at === 0));
-      out.push(line(base, next.rows, at, writer, back, false, priced, costs?.[at]));
-    });
-    return out;
-  };
+  const stages = openPullStages(ctx.app.db, repo, scope, new Date(), new Set(rows.map((r) => r.issue.number)));
+  const facts = (r: NextRow): StateFacts => ({ stage: stages.get(r.issue.number) ?? "issue", waits: r.waits, held: r.state === "held", onIt: r.onIt !== null });
+  // One numbered order, folded: the first TOP rows open, what comes after, then Later.
+  const first = rows.slice(0, TOP);
+  const after = rows.slice(TOP);
+  const section = (title: string, list: readonly NextRow[], start: number, open: boolean, id?: string): Html =>
+    html`<details class="mt"${open ? raw(" open") : null}><summary><h2>${title} · ${String(list.length)}</h2></summary>
+      <ul class="list setting-list"${id === undefined ? null : html` id="${id}"`}${id !== undefined && costs !== null && capacity !== null && cut.unsure === null ? html` data-capacity="${String(capacity.usd)}"` : null}>
+        ${list.flatMap((_, i) => {
+          const at = start + i;
+          const mark = at === cut.fits.length && cut.unsure === null && id !== undefined && i > 0 ? [cutMark(cut, false)] : [];
+          return [...mark, line(base, rows, at, writer, back, false, priced, costs?.[at], at + 1, stateWord(rows[at]!, facts(rows[at]!)))];
+        })}
+      </ul></details>`;
   const body = html`${repoHeader(ctx, repo, "issues")}
     <div data-next>
     ${pageHead("Next up", { sub: "The crew builds strictly from the top." })}
     <p class="error" id="next-flash" role="alert" hidden></p>
-    ${next.rows.length === 0
+    ${rows.length === 0
       ? html`<p class="muted">Nothing is ready: everything open waits for something. <a href="${base}/map">See the map</a>.</p>`
-      : html`<section class="stack-tight mt"><h2>Ready, in order</h2><ul class="list setting-list" id="next-list"${costs !== null && capacity !== null && cut.unsure === null ? html` data-capacity="${String(capacity.usd)}"` : null}>
-            ${rowsHtml()}
-          </ul></section>`}
+      : html`${section("Up next", first, 0, true, "next-list")}${after.length > 0 ? section("After", after, TOP, false) : null}`}
     <p class="muted small mt" id="next-week">${sentence} <a href="${base}/week">The week</a>${writer
       ? " · Drag a row, or press the key on its button; j and k move between rows."
       : null}</p>
-    ${all
-      ? null
-      : rest > 0 || next.notNowTotal > 0 || next.unlisted > 0
-        ? html`<p class="mt">
-            <a href="${base}/next?all=1">${[
-              rest > 0 ? `${rest} more ready` : null,
-              next.notNowTotal > 0 ? `${next.notNowTotal} not now` : null,
-            ]
-              .filter((x) => x !== null)
-              .join(" · ")}: open the rest</a>
-          </p>`
-        : null}
+    ${next.notNow.length > 0
+      ? html`<details class="mt"><summary><h2>Later · ${String(next.notNowTotal)}</h2></summary><ul class="list setting-list">
+            ${next.notNow.map((_, at) => line(base, next.notNow, at, writer, back, true))}
+          </ul></details>`
+      : null}
     ${next.unlisted > 0
       ? html`<p class="muted small mt">${String(next.unlisted)} more open issues are not listed here; the queue API pages through them.</p>`
-      : null}
-    ${all && next.notNow.length > 0
-      ? html`<section class="stack-tight mt">
-          <h2>Not now</h2><ul class="list setting-list">
-            ${next.notNow.map((_, at) => line(base, next.notNow, at, writer, back, true))}
-          </ul>
-        </section>`
       : null}
     </div>`;
   const response = page({
