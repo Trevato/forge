@@ -523,10 +523,18 @@ export function ensureEdgeUser(db: Database, login: string): User | undefined {
   const link = db
     .query<{ user_id: string }, [string]>("SELECT user_id FROM edge_link WHERE login = ?")
     .get(login);
-  const existing = (link === null ? undefined : getUserById(db, link.user_id)) ?? getUserByName(db, login);
-  return existing && existing.kind === "user" && isActive(existing)
-    ? existing
-    : undefined;
+  const linked = link === null ? undefined : getUserById(db, link.user_id);
+  const existing = linked ?? getUserByName(db, login);
+  if (!(existing && existing.kind === "user" && isActive(existing))) return undefined;
+  // Found by name: map the login to the account once, so the mapping
+  // outlives the edge (#11802). An account linked to another login, or a
+  // login another account holds, keeps what it has.
+  if (linked === undefined)
+    db.query(
+      `INSERT OR IGNORE INTO edge_link (login, user_id)
+       SELECT ?1, ?2 WHERE NOT EXISTS (SELECT 1 FROM edge_link WHERE user_id = ?2)`,
+    ).run(login, existing.id);
+  return existing;
 }
 
 /** Why a password was not accepted: wrong, or tried too often to check. */

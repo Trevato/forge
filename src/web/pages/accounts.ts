@@ -29,6 +29,7 @@ import {
   soleOwnedOrgs,
 } from "../../core/orgs.ts";
 import { getUserByName, hasPassword, isStandInEmail } from "../../core/users.ts";
+import { mintWayBack, wayBackAccounts } from "../../actions/edge_handover.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
@@ -39,6 +40,7 @@ import {
   badge,
   btn,
   confirmAction,
+  copyField,
   field as formField,
   row,
   time,
@@ -117,6 +119,55 @@ function personRow(a: AccountRow, sole: readonly string[]): Html {
   });
 }
 
+/**
+ * Once the edge is gone, a person it signed in who added no passkey gets in
+ * by a way-back link an admin hands over (#11802): one button per account
+ * `wayBackAccounts` names. An admin is not offered one; they add a passkey.
+ */
+function wayBackForms(ctx: Ctx): Html | null {
+  const listed = wayBackAccounts(ctx.app, ctx.auth.user);
+  if (!listed.ok || listed.value.length === 0) return null;
+  return html`<div class="form-actions" id="way-back">
+    ${listed.value.map(
+      (a) => html`<form method="post" action="/settings/accounts/${encodeURIComponent(a.username)}/way-back">
+        ${btn(`Way-back link for ${a.username}`, { type: "submit", size: "sm" })}
+      </form>`,
+    )}
+  </div>`;
+}
+
+// POST /settings/accounts/:username/way-back — the link, shown once on the page.
+export async function wayBackAct(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const username = ctx.params.username ?? "";
+  const minted = mintWayBack(ctx.app, ctx.auth.user, username);
+  if (!minted.ok) {
+    if (minted.error === "not_found") return notFoundPage(ctx);
+    return flashTo(ctx, "/settings/accounts", {
+      message: `${username} already signs in without the edge; no link was made.`,
+      tone: "danger",
+    });
+  }
+  const w = minted.value;
+  const response = accountsView(
+    ctx,
+    html`<section class="settings-block" id="way-back-link">
+      <h2>Way-back link for ${w.username}</h2>
+      <p>
+        Hand this to ${w.username} (edge login <code>${w.login}</code>) by a
+        channel you trust: it works once, until ${time(w.expiresAt)}, and is
+        not shown again.
+      </p>
+      ${copyField("way-back-url", w.url, `Way-back link for ${w.username}`, "Copy the link")}
+    </section>`,
+  );
+  response.headers.set("cache-control", "no-store");
+  return response;
+}
+
 // GET /settings/accounts
 export function accountsPage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -192,6 +243,7 @@ function accountsView(ctx: Ctx, notice?: Html, status = 200): Response {
                   : ""}`,
             )}.
           </p>
+          ${wayBackForms(ctx)}
         </section>`;
   const sole = timePhase(ctx.request, "owned", () =>
     people.map((a) => {

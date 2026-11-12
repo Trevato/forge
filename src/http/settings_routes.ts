@@ -37,6 +37,7 @@ import {
   retireAct,
   retirePage,
   accountsPage,
+  wayBackAct,
   personSignInsPage,
   signInAct,
 } from "../web/pages/accounts.ts";
@@ -297,6 +298,7 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("GET", "/settings/accounts/:username/retire", retirePage);
   router.add("POST", "/settings/accounts/:username/retire", retireAct);
   router.add("POST", "/settings/accounts/:username/verify", accountAct("verify"));
+  router.add("POST", "/settings/accounts/:username/way-back", wayBackAct);
   router.add("GET", "/settings/crew", crewPage);
   router.add("POST", "/settings/crew/knobs", knobSet);
   router.add("POST", "/settings/crew", agentCreate);

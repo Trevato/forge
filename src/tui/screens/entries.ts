@@ -36,6 +36,7 @@ import { entry as displays } from "./displays.ts";
 import { entry as disks } from "./disks.ts";
 import { entry as domains } from "./domains.ts";
 import { entry as edgeOnly } from "./edgeonly.ts";
+import { entry as wayBack } from "./wayback.ts";
 import { entry as traffic } from "./trafficview.ts";
 import { entry as funnelEntry } from "./funnel.ts";
 import { entry as featureReview } from "./features.ts";
@@ -139,6 +140,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   valves,
   access,
   edgeOnly,
+  wayBack,
   traffic,
   funnelEntry,
   audit,

@@ -173,6 +173,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["app-templates", "App templates", "the repositories New app offers; mark or unmark one"],
     ["devices", "Devices", "LAN printers: model, state, supplies; declare or remove one"],
     ["edge-only-accounts", "Edge-only accounts", "who would be locked out if the platform edge sign-in went off"],
+    ["way-back-links", "Way-back links", "a link that signs in an account the edge made, once the edge is gone"],
     ["traffic-sources", "Traffic sources", "where people come from and where they go, for the forge"],
     ["from-visit-to-paid", "From visit to paid", "the last 7 days: home visits, plans seen, plan clicks, forges made, paid"],
     ["audit", "Who can do what", "each app's doors from its contract.json: yes, own or no"],
