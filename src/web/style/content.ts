@@ -21,6 +21,8 @@ export const content = /* css */ `
 @media (max-width: 640px) {
   .repo-head p.muted.small a { display: inline-block; padding: 12px 0; min-height: 44px; box-sizing: border-box; }
 }
+/* The by-wave link under the changelog filters: a thumb-sized target, no new class. */
+a[data-waves-link] { display: inline-flex; align-items: center; min-height: 44px; }
 .repo-head p.muted.small { margin-top: 4px; text-wrap: pretty; }
 .repo-head .tabs, .repo-head .repo-nav { margin-top: 12px; }
 .repo-nav { display: flex; align-items: flex-start; gap: 4px; border-bottom: 1px solid var(--border); }

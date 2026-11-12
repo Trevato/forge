@@ -179,3 +179,18 @@ describe("carriedPulls", () => {
     expect(carriedPulls(app.db, ref, undefined)[0]?.title).toBe("Renamed idea");
   });
 });
+
+test("the page opens with one escaped sentence of what landed, and says when nothing did", async () => {
+  const body = await (await fetch(`${servers.url}/alice/pub/waves/0.1.0`, { headers: { cookie: bobCookie } })).text();
+  const start = body.indexOf("data-wave-sentence>") + "data-wave-sentence>".length;
+  const text = body.slice(start, body.indexOf("</p>", start));
+  expect(start).toBeGreaterThan("data-wave-sentence>".length - 1);
+  expect(text).toContain("This wave landed ");
+  expect(text).toContain("Add the &lt;b&gt;thing&lt;/b&gt;");
+  expect(text).toContain("Fix the other");
+  expect(text).not.toContain("<b>");
+  expect(text).not.toContain("Dropped idea");
+  expect(body.indexOf("data-wave-sentence")).toBeLessThan(body.indexOf("data-wave-size"));
+  const none = await (await fetch(`${servers.url}/alice/pub/waves/0.2.0`, { headers: { cookie: bobCookie } })).text();
+  expect(none).toContain("No pull in this wave has landed yet.");
+});

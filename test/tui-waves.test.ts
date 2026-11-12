@@ -264,6 +264,14 @@ describe("waves in the terminal", () => {
     expect(h.text).toContain("Not a wave:");
   });
 
+  test("a wave opens with the same sentence as the page, under the headline", () => {
+    const entry = { ok: true as const, file: "1.0.0.md", wave: { version: "1.0.0", date: "2026-01-01", headline: "Head", highlights: [], pulls: [] } };
+    const lines = waveLines(entry, [{ owner: "o", name: "r", number: 1, title: "Add \u001b[2Jsearch", mergedAt: "2026-01-01", state: "closed" }]);
+    expect(lines[0]).toBe("Head");
+    expect(lines[1]).toBe("This wave landed Add [2Jsearch.");
+    expect(waveLines(entry, [])[1]).toBe("No pull in this wave has landed yet.");
+  });
+
   test("wave text carries no escape or control characters", () => {
     const lines = waveLines(
       {

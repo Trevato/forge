@@ -13,7 +13,7 @@ import { milestonePath, planNow } from "../../story/wave_plan.ts";
 import { repoBase } from "../../web/chrome.ts";
 import { carriedPulls, pullPath, type CarriedPull } from "../../story/wave_pulls.ts";
 import { pullRefs, readWave, readWaves, sizeWords, waveLine, waveSize, type WaveEntry } from "../../story/waves.ts";
-import { NO_WAVES } from "../../story/words.ts";
+import { NO_WAVES, waveSentence } from "../../story/words.ts";
 import type { RepoSource } from "../../view/source.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -59,6 +59,7 @@ export function waveLines(
   const w = entry.wave;
   return [
     plain(w.headline),
+    plain(waveSentence(pulls.filter((p) => p.mergedAt !== null).map((p) => p.title))),
     // Sized over `pulls`, the ones this viewer may see, as the page's header is.
     `${plain(w.version)}  ${plain(w.date)}  ${sizeWords(waveSize(pulls))}`,
     ...(moved.length === 0 ? [] : [plain(waveProgress(moved))]),
