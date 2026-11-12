@@ -118,7 +118,8 @@ export function projection(cut: Cut, total: number, capacity: Capacity | null): 
 /** Price each row of the list from the repository's history. */
 export function priceRows(db: Database, repoId: string, rows: readonly NextRow[], history?: readonly Sample[]): Priced[] {
   const past = history ?? issueHistory(db, repoId);
-  const labels = labelsOf(db, rows.map((r) => r.issue.id));
+  // The kind only narrows a history; with none there is nothing to narrow, so no read.
+  const labels = past.length === 0 ? new Map<string, string[]>() : labelsOf(db, rows.map((r) => r.issue.id));
   return rows.map((r) => ({
     number: r.issue.number,
     estimate: estimate(past, sizeOf(r.issue), kindOf(labels.get(r.issue.id) ?? [])),

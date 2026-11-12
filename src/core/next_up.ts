@@ -19,6 +19,8 @@ import { getUserById } from "./users.ts";
 export const TOP = 10;
 /** The most "Not now" rows one page lists. */
 export const NOT_NOW_MAX = 100;
+/** The most unranked rows that cannot start one list carries; the count beyond it is `unlisted`. */
+export const REST_MAX = 200;
 /** How many blockers a reason names before it counts the rest. */
 const NAMED = 3;
 
@@ -40,26 +42,35 @@ export interface NextRow {
   readonly onIt: string | null;
   /** In one line, why it cannot start yet; null when it can. A ready row has one whenever a builder will not start it. */
   readonly why: string | null;
+  /** One word: "ready" (a builder starts it in its turn), "blocked" (waits on open work) or "held" (anything else that passes it over). */
+  readonly state: "ready" | "blocked" | "held";
 }
 
 export interface NextUp {
   /** Ranked first, then ready; every row is a candidate for the picker. */
   readonly rows: readonly NextRow[];
+  /** Open issues that belong on the list but are past {@link REST_MAX}: counted, not carried. */
+  readonly unlisted: number;
   /** Deferred work, "Not now", the oldest first, at most {@link NOT_NOW_MAX}. */
   readonly notNow: readonly NextRow[];
   /** All deferred open issues, listed or not. */
   readonly notNowTotal: number;
 }
 
+/** The numbers of the open issues this one waits for, from the graph's edges. */
+export function waitsOn(graph: Graph, issue: Issue): number[] {
+  const open = new Map(graph.issues.filter((i) => i.state === "open").map((i) => [i.id, i]));
+  return graph.edges
+    .filter((e) => e.issueId === issue.id && open.has(e.blockedById))
+    .map((e) => open.get(e.blockedById)!.number)
+    .sort((a, b) => a - b);
+}
+
 /** In one line, why this open issue cannot start yet; null when nothing stands in front of it. */
 export function whyNot(graph: Graph, issue: Issue): string | null {
   const deferred = graph.deferred.get(issue.id);
   if (deferred !== undefined) return `not now: ${deferred}`;
-  const open = new Map(graph.issues.filter((i) => i.state === "open").map((i) => [i.id, i]));
-  const waits = graph.edges
-    .filter((e) => e.issueId === issue.id && open.has(e.blockedById))
-    .map((e) => open.get(e.blockedById)!.number)
-    .sort((a, b) => a - b);
+  const waits = waitsOn(graph, issue);
   if (waits.length > 0) {
     const named = waits.slice(0, NAMED).map((n) => `#${n}`).join(", ");
     return `waits for ${named}${waits.length > NAMED ? `, and ${waits.length - NAMED} more` : ""}`;
@@ -130,18 +141,44 @@ export function nextUp(
   }
   const holds = reachOf(graph).holds;
   const serves = servedBy(db, pillarsOf(db, repo));
-  const rowOf = (issue: Issue): NextRow => ({
-    issue,
-    ...roleOf(holds.get(issue.id)?.size ?? 0, serves.get(issue.id), ranks.has(issue.id)),
-    place: ranks.get(issue.id) ?? null,
-    onIt: crew.get(issue.id) ?? issue.assigneeName,
-    why: readyIds.has(issue.id) ? unstartable.get(issue.id) ?? null : whyNot(graph, issue),
-  });
+  const rowOf = (issue: Issue): NextRow => {
+    const why = readyIds.has(issue.id) ? unstartable.get(issue.id) ?? null : whyNot(graph, issue);
+    // Blocked is a fact of the graph (open work in front of it), not a reading of `why`.
+    const blockedByOpen = !graph.deferred.has(issue.id) && waitsOn(graph, issue).length > 0;
+    return {
+      issue,
+      ...roleOf(holds.get(issue.id)?.size ?? 0, serves.get(issue.id), ranks.has(issue.id)),
+      place: ranks.get(issue.id) ?? null,
+      onIt: crew.get(issue.id) ?? issue.assigneeName,
+      why,
+      state: why === null ? "ready" : blockedByOpen ? "blocked" : "held",
+    };
+  };
   const blocked = graph.issues.filter((i) => i.state === "open" && ranks.has(i.id) && !readyIds.has(i.id));
-  const rows = pickOrder(ready, ranks, (i) => i.id, blocked, fromAppIssues(db, ready.map((i) => i.id))).map(rowOf);
+  const ordered = pickOrder(ready, ranks, (i) => i.id, blocked, fromAppIssues(db, ready.map((i) => i.id)));
+  // Every open issue the Later gate does not hold is on the list (#11618): the
+  // ones nobody ranked that cannot start (the plan's own structural issues apart) sit last, by number, each with its reason.
+  const placed = new Set(ordered.map((i) => i.id));
+  const behind = graph.issues
+    .filter((i) => i.state === "open" && !graph.deferred.has(i.id) && !graph.structural.has(i.id) && !placed.has(i.id))
+    .sort((a, b) => a.number - b.number);
+  const rest = behind.slice(0, REST_MAX);
+  const rows = [...ordered, ...rest].map(rowOf);
   const listed = new Set(rows.map((r) => r.issue.id));
   const away = graph.issues.filter(
     (i) => i.state === "open" && graph.deferred.has(i.id) && !listed.has(i.id) && !graph.structural.has(i.id),
   );
-  return { rows, notNow: away.slice(0, NOT_NOW_MAX).map(rowOf), notNowTotal: away.length };
+  return { rows, unlisted: behind.length - rest.length, notNow: away.slice(0, NOT_NOW_MAX).map(rowOf), notNowTotal: away.length };
+}
+
+/** The list as the API serves it: position from 1, in the dispatcher's order. */
+export function queueJson(rows: readonly NextRow[]) {
+  return rows.map((r, i) => ({
+    position: i + 1,
+    number: r.issue.number,
+    title: r.issue.title,
+    onIt: r.onIt,
+    state: r.state,
+    why: r.why,
+  }));
 }

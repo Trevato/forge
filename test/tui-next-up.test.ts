@@ -138,6 +138,31 @@ describe("next up in the terminal", () => {
     h.stop();
   });
 
+  test("an unranked row that waits is on the screen, last, and the rank keys still move rows around it", async () => {
+    const waiting = open(repo, "Waits on a");
+    addDependency(forge.db, getIssue(forge.db, repo.id, waiting)!, getIssue(forge.db, repo.id, n.a!)!, alice.id);
+    const h = boot(alice);
+    await h.toNext("alice/plan");
+    expect(order().at(-1)).toBe(waiting);
+    expect(h.text()).toContain("Waits on a");
+    expect(h.text()).toContain(`waits for #${n.a}`);
+    // Down from the top, then Top again: the order of the rows that can start stays in step with the screen.
+    const startable = (): number[] => nextUp(forge.db, repo).rows.filter((r) => r.state === "ready").map((r) => r.issue.number);
+    const before = startable();
+    await h.press("d");
+    expect(startable()).toEqual([before[1]!, before[0]!]);
+    await h.press("t");
+    expect(startable()).toEqual(before);
+    expect(order().at(-1)).toBe(waiting);
+    // The blocked row itself can be lifted to the top: it is ranked, and still waits.
+    await h.press("j", "j", "t");
+    const row = nextUp(forge.db, repo).rows[0]!;
+    expect(row.issue.number).toBe(waiting);
+    expect(row.state).toBe("blocked");
+    expect(startable()).toEqual(before);
+    h.stop();
+  });
+
   test("a reader sees the order and the keys change nothing", async () => {
     const h = boot(bob);
     await h.toNext("alice/plan");

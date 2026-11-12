@@ -171,6 +171,7 @@ export { route as getApiV1ReposOwnerNamePullsNumberLooks } from "./getApiV1Repos
 export { route as getApiV1ReposOwnerNamePullsNumberReviewStates } from "./getApiV1ReposOwnerNamePullsNumberReviewStates.ts";
 export { route as getApiV1ReposOwnerNamePullsNumberReviews } from "./getApiV1ReposOwnerNamePullsNumberReviews.ts";
 export { route as getApiV1ReposOwnerNamePullsNumberThreads } from "./getApiV1ReposOwnerNamePullsNumberThreads.ts";
+export { route as getApiV1ReposOwnerNameQueue } from "./getApiV1ReposOwnerNameQueue.ts";
 export { route as getApiV1ReposOwnerNameQueueGates } from "./getApiV1ReposOwnerNameQueueGates.ts";
 export { route as getApiV1ReposOwnerNameReports } from "./getApiV1ReposOwnerNameReports.ts";
 export { route as getApiV1ReposOwnerNameRoadmap } from "./getApiV1ReposOwnerNameRoadmap.ts";
