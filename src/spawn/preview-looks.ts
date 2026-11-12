@@ -193,6 +193,8 @@ export const PREVIEW_OWNER_LOOKS: readonly OwnerLook[] = [
   PREVIEW_MACHINES_PAGE,
   PREVIEW_DISK_OPEN_LOOK,
   ...PREVIEW_SETTINGS_PAGES,
+  "/settings",
+  "/forges",
 ].flatMap((page) =>
   (["desktop", "phone"] as const).map((kind): OwnerLook =>
     page === PREVIEW_NEWCOMER_PAGE ? { page, kind, as: "newcomer" } : { page, kind },
