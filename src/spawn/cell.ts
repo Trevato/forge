@@ -37,9 +37,18 @@ export const ownsBody = (bodyId: string): boolean => bodyId.startsWith(CELL_PREF
  * (grokbot-agency: every run "interrupted by a restart" ten minutes in).
  * A run paused on a limit (`not_before` ahead, e.g. a provider's weekly
  * limit) is not at work: it would hold the forge awake, and a slot of the
- * host's ceiling (`FORGE_CHILD_AWAKE_MAX`), for days. It starts when the
- * forge next wakes. Read from its database, read-only; a database that
- * cannot be read says no.
+ * host's ceiling (`FORGE_CHILD_AWAKE_MAX`), for days. The host wakes the
+ * forge when it falls due (`nextRunDue`, `host.ts` `wakeWhenDue`).
+ *
+ * "Due" is the dispatcher's own rule (`core/runs.ts`, `not_before <= now`
+ * as text): every writer stores `not_before` as `Date#toISOString()` (UTC,
+ * milliseconds, `Z`), so the text order is the time order and this says a
+ * run is due exactly when the dispatcher would start it.
+ *
+ * A schema older than `not_before` (migration 0016) falls back to the old
+ * test, any run queued or running is work, so a running run is never
+ * counted as nothing. Read from its database, read-only; a database that
+ * cannot be read at all says no.
  */
 export function crewAtWork(dir: string, now = Date.now()): boolean {
   const path = join(dir, "forge.db");
@@ -47,16 +56,43 @@ export function crewAtWork(dir: string, now = Date.now()): boolean {
   let db: Database | undefined;
   try {
     db = new Database(path, { readonly: true });
-    return (
-      db
-        .query<{ one: number }, [string]>(
-          `SELECT 1 AS one FROM run WHERE state = 'running'
-              OR (state = 'queued' AND (not_before IS NULL OR not_before <= ?1)) LIMIT 1`,
-        )
-        .get(new Date(now).toISOString()) !== null
-    );
+    try {
+      return (
+        db
+          .query<{ one: number }, [string]>(
+            `SELECT 1 AS one FROM run WHERE state = 'running'
+                OR (state = 'queued' AND (not_before IS NULL OR not_before <= ?1)) LIMIT 1`,
+          )
+          .get(new Date(now).toISOString()) !== null
+      );
+    } catch {
+      return db.query("SELECT 1 FROM run WHERE state IN ('queued','running') LIMIT 1").get() !== null;
+    }
   } catch {
     return false;
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * When the earliest run paused on a limit in the child forge whose data is
+ * `dir` falls due, in ms; undefined when none waits (or it cannot be read).
+ * The host arms a wake for it when the forge goes to sleep (`wakeWhenDue`).
+ */
+export function nextRunDue(dir: string): number | undefined {
+  const path = join(dir, "forge.db");
+  if (!existsSync(path)) return undefined;
+  let db: Database | undefined;
+  try {
+    db = new Database(path, { readonly: true });
+    const row = db
+      .query<{ at: string | null }, []>("SELECT MIN(not_before) AS at FROM run WHERE state = 'queued' AND not_before IS NOT NULL")
+      .get();
+    const at = row?.at == null ? NaN : Date.parse(row.at);
+    return Number.isFinite(at) ? at : undefined;
+  } catch {
+    return undefined;
   } finally {
     db?.close();
   }

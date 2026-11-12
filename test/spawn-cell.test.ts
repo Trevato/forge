@@ -3,11 +3,14 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { askUntilBelieved, cellsAvailable, openCell } from "../src/apps/contain.ts";
-import { answerFromCell, closeHostedChildren, resolveHostedChild } from "../src/spawn/host.ts";
+import { answerFromCell, closeHostedChildren, resolveHostedChild, sleepIdleChildren } from "../src/spawn/host.ts";
+import { Database } from "bun:sqlite";
+import { childDirOf } from "../src/actions/spawn.ts";
+import { createRun, queueDepth } from "../src/core/runs.ts";
 import { createApp } from "../src/app.ts";
 import { childEnv } from "../src/apps/process.ts";
 import { watchedLimits } from "../src/apps/contain.ts";
-import { childLog, plainLine, cellChildren, crewAtWork, stopCellChildren, stopGently, cellEnv, cellLimits, cellPlacement, cellSpecFor, forward, launchSpecFor, ownsBody } from "../src/spawn/cell.ts";
+import { childLog, plainLine, cellChildren, crewAtWork, nextRunDue, type CellChild, stopCellChildren, stopGently, cellEnv, cellLimits, cellPlacement, cellSpecFor, forward, launchSpecFor, ownsBody } from "../src/spawn/cell.ts";
 import { fallbackPlacement, hostedPlacement, memoryBodies } from "../src/spawn/placement.ts";
 import type { SpawnPlan } from "../src/spawn/plan.ts";
 import { SIZES } from "../src/spawn/sizes.ts";
@@ -208,6 +211,72 @@ describe("a child forge's crew inside its cell", () => {
       expect(crewAtWork(dir)).toBe(false);
     } finally {
       child.close();
+    }
+  });
+
+  test("a run paused as the dispatcher writes it is due at its moment, not a millisecond before, as the dispatcher's own queue says", () => {
+    const dir = join(tmp, "due-format");
+    const child = createApp({ dataDir: dir, url: "https://kid--f.test" });
+    try {
+      child.db.exec("PRAGMA foreign_keys = OFF");
+      // resumeLater (crew/dispatch.ts) queues the run again with the pause's resumeAt, a Date#toISOString()
+      const at = Date.parse("2026-11-12T18:00:00.000Z");
+      createRun(child.db, { repoId: "repo", kind: "agent", notBefore: new Date(at).toISOString(), attempt: 1 });
+      expect(nextRunDue(dir)).toBe(at);
+      expect(crewAtWork(dir, at - 1)).toBe(false);
+      expect(queueDepth(child.db, at - 1)).toEqual([]);
+      expect(crewAtWork(dir, at)).toBe(true);
+      expect(queueDepth(child.db, at).map((q) => q.queued)).toEqual([1]);
+    } finally {
+      child.close();
+    }
+  });
+
+  test("on a schema older than not_before a queued or running run is still work, never nothing", () => {
+    const dir = join(tmp, "old-schema");
+    mkdirSync(dir, { recursive: true });
+    const db = new Database(join(dir, "forge.db"));
+    try {
+      db.exec("CREATE TABLE run (id TEXT PRIMARY KEY, state TEXT NOT NULL)");
+      db.exec("INSERT INTO run VALUES ('r1', 'running')");
+      expect(crewAtWork(dir)).toBe(true);
+      expect(nextRunDue(dir)).toBeUndefined();
+      db.exec("UPDATE run SET state = 'done'");
+      expect(crewAtWork(dir)).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a cell put to sleep with a run due at T is woken at T, not before, and its run then counts as work", async () => {
+    const dataDir = join(tmp, "due-wake");
+    mkdirSync(join(dataDir, "spawn"), { recursive: true });
+    writeFileSync(join(dataDir, "spawn", "kid.json"), JSON.stringify({ name: "kid", bodyId: "cell-due", size: "small", done: true, placement: "cell" }));
+    const parent = createApp({ dataDir, url: "https://f.test" });
+    const dir = childDirOf(parent, "cell-due");
+    const child = createApp({ dataDir: dir, url: "https://kid--f.test" });
+    const at = Date.now() + 1500; // room for a slow machine between here and the sleep
+    child.db.exec("PRAGMA foreign_keys = OFF");
+    createRun(child.db, { repoId: "repo", kind: "agent", notBefore: new Date(at).toISOString(), attempt: 1 });
+    child.close();
+    const cells = cellChildren(parent);
+    let wokeAt: number | undefined;
+    cells.sleepIdle = async () => ["kid"];
+    cells.start = async (input) => {
+      wokeAt ??= Date.now();
+      return { ...input, port: 1 } as unknown as CellChild;
+    };
+    try {
+      expect(crewAtWork(dir)).toBe(false);
+      expect(await sleepIdleChildren(parent, 0)).toEqual(["kid"]);
+      await Bun.sleep(Math.max(0, at - Date.now() - 300));
+      expect(wokeAt).toBeUndefined();
+      for (let i = 0; i < 100 && wokeAt === undefined; i++) await Bun.sleep(50);
+      expect(wokeAt).toBeGreaterThanOrEqual(at);
+      expect(crewAtWork(dir)).toBe(true);
+    } finally {
+      closeHostedChildren(parent);
+      parent.close();
     }
   });
 });
