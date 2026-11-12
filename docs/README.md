@@ -34,6 +34,7 @@ platform for organizations.
 - [Operating](OPERATING.md): configuration, health, releases, switches and limits.
 - [Metrics](METRICS.md): the Prometheus endpoint.
 - [Failure domains](DOMAINS.md): the ways the forge stops and what it reports.
+- [An app's own domain](features/app-own-domain.md): cut-over, certificate, and the way back.
 - [Snapshots](SNAPSHOT.md): nightly copies and what they hold.
 - [Recovery](RECOVERY.md): a printable guide for a forge in trouble.
 - [Restore](RESTORE.md): bring a forge back on a fresh machine.

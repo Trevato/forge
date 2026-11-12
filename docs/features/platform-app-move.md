@@ -63,16 +63,16 @@ counts. The old copy stays until that has passed.
 ## 6. Cut-over (person, quiet hour, the owner says "go")
 1. Lower the DNS TTL a day ahead.
 2. Put the old app read-only; take a last dump; load; compare counts.
-3. Point the domain at the forge; switch payment webhooks and live keys.
+3. Point the domain at the forge (`app-own-domain.md` has the steps, the
+   certificate and the revert); switch payment webhooks and live keys.
 4. Place one live order.
-5. **Way back:** the old DNS records, written down before step 3; restoring
+5. **Way back:** the old DNS records, written down before step 3 (`app-own-domain.md`); restoring
    them is the one step. The old app stays up read-only for a week.
 
 ## What the forge lacks (each is an issue)
 - A database import for an app (`migrate` has no data path): upload a dump, load it, report counts and checksums. (#11697)
 - ~~A Postgres app has no home here.~~ Decided, not built: no managed Postgres; port to `bun:sqlite` or keep an external one by `egress` (docs/APPS.md). (#11698)
 - A file and upload copy with a manifest compared on both ends. (#11699)
-- A custom domain for an app with certificate issuance, and a one-step revert of it. (#11700)
 - Per-app encrypted backup with a restore proof (`docs/features/backup-truth.md` covers the forge's own, not an app's). (#11701)
 - A guard for rehearsal: data copy and `preview`-scoped sandbox keys exist and are the procedure in step 4; nothing yet refuses a payment name left in scope `all`. (#11702)
 - Inbound payment webhooks that survive a preview's changing address. (#11703)
