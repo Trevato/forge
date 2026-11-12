@@ -24,6 +24,7 @@ import { requireAbility } from "./roles.ts";
 import type { App } from "../app.ts";
 import { adoptResolution } from "../core/trusted_sources.ts";
 import { crewRole, isCrew } from "../core/agents.ts";
+import { pausedUntil } from "../core/planner_pause.ts";
 import { moveBlockersToChildren } from "../core/dependencies.ts";
 import {
   addComment as insertComment,
@@ -94,11 +95,18 @@ export function openIssue(
   input: { title: string; body?: string; sealed?: boolean },
 ): Result<
   Issue,
-  "not_found" | "unauthorized" | TitleError | "body_too_long" | MirrorError
+  "not_found" | "unauthorized" | "planner_paused" | TitleError | "body_too_long" | MirrorError
 > {
   const user = requireParticipant(app, actor, repo);
   if (!user.ok) return user;
   if (isMirror(app, repo)) return err("mirrored");
+  // The owner's switch (#11604): a paused planner opens nothing, and says so; everyone else is unaffected.
+  if (
+    user.value.kind === "agent" &&
+    crewRole(app.db, repo.id, user.value.id) === "planner" &&
+    pausedUntil(app.db, repo.id, new Date()) !== null
+  )
+    return err("planner_paused");
   // Anyone who may open an issue may seal it: a reader reporting a hole
   // seals it too, and from then on only writers and the crew see it
   // (`core/sealed.ts`).
@@ -801,7 +809,7 @@ export async function openIssueThrough(
 ): Promise<
   Result<
     Issue,
-    ThroughError<"not_found" | "unauthorized" | TitleError | "body_too_long">
+    ThroughError<"not_found" | "unauthorized" | "planner_paused" | TitleError | "body_too_long">
   >
 > {
   const user = requireParticipant(app, actor, repo);

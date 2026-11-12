@@ -5,6 +5,7 @@
  * Mobile-first, no JavaScript required.
  */
 
+import { PAUSE_REFUSAL } from "../../core/planner_pause.ts";
 import {
   addCommentThrough,
   openIssueThrough,
@@ -262,7 +263,9 @@ export async function newIssueSubmit(ctx: Ctx): Promise<Response> {
           ? TITLE_TOO_LONG
           : created.error === "body_too_long"
             ? BODY_TOO_LONG
-            : "You cannot open an issue here.");
+            : created.error === "planner_paused"
+              ? PAUSE_REFUSAL
+              : "You cannot open an issue here.");
     return composePage(ctx, repo, typed, message);
   }
   return flashTo(ctx, `${repoBase(repo)}/issues/${created.value.number}`, {

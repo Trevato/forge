@@ -150,6 +150,7 @@ export { route as getApiV1ReposOwnerNameFollowing } from "./getApiV1ReposOwnerNa
 export { route as getApiV1ReposOwnerNameFollowingProposals } from "./getApiV1ReposOwnerNameFollowingProposals.ts";
 export { route as getApiV1ReposOwnerNameForks } from "./getApiV1ReposOwnerNameForks.ts";
 export { route as getApiV1ReposOwnerNameGatesIdLog } from "./getApiV1ReposOwnerNameGatesIdLog.ts";
+export { route as getApiV1ReposOwnerNameGrowth } from "./getApiV1ReposOwnerNameGrowth.ts";
 export { route as getApiV1ReposOwnerNameHooks } from "./getApiV1ReposOwnerNameHooks.ts";
 export { route as getApiV1ReposOwnerNameHooksIdDeliveries } from "./getApiV1ReposOwnerNameHooksIdDeliveries.ts";
 export { route as getApiV1ReposOwnerNameIssues } from "./getApiV1ReposOwnerNameIssues.ts";

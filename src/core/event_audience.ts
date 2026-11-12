@@ -227,6 +227,9 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     // Who is trusted to fold in, and the switch that stops it, are the owner's (`actions/trusted_sources.ts`).
     kind.startsWith("trust.") ||
     kind.startsWith("foldin.") ||
+    // The owner's planner switch is the admins' to hear (#11604).
+    kind === "planner.paused" ||
+    kind === "planner.resumed" ||
     // Events the retired FLOW ONLY switch wrote stay the admins' to hear.
     kind === "flow_only.cleared" ||
     // A report from outside waits for a person who decides; its arrival is

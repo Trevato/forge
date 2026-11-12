@@ -8,6 +8,8 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { growth, MAX_DAYS as MAX_GROWTH_DAYS } from "../core/growth.ts";
+import { PAUSE_REFUSAL, pausedUntil } from "../core/planner_pause.ts";
 import { teamHoldRefusal } from "../core/teams_words.ts";
 import { guardedRefusal } from "../crew/stranger.ts";
 import { MAX_PASS, passOf } from "../actions/box_pass.ts";
@@ -674,6 +676,7 @@ export function originAware(error: string, status = 422): Response {
       422,
       "a bug closed without a fix says why: send `note` (one sentence, at most 300 characters)",
     );
+  if (error === "planner_paused") return apiError("planner_paused", 409, PAUSE_REFUSAL);
   if (error === "mirrored")
     return apiError(
       "mirrored",
@@ -4062,6 +4065,21 @@ export function apiRoutes(router: Router<Handler>): void {
       return json({ error: "invalid", message: "`cursor` is a gate id from `next_cursor`" }, 422);
     const items = timePhase(ctx.request, "gates", () => recentGates(ctx.app.db, repo.id, limit, cursor));
     return timePhase(ctx.request, "render", () => json(paged(items, limit, (g) => g.id), 200, { "cache-control": "no-store" }));
+  });
+
+  // How the work is growing or shrinking (#11604, `core/growth.ts`): per day for `days` days.
+  router.add("GET", "/api/v1/repos/:owner/:name/growth", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const raw = ctx.url.searchParams.get("days");
+    const days = raw === null ? 14 : Number(raw);
+    if (!Number.isInteger(days) || days < 1 || days > MAX_GROWTH_DAYS)
+      return json({ error: "invalid", message: `\`days\` is a whole number from 1 to ${MAX_GROWTH_DAYS}` }, 422);
+    const now = new Date();
+    const g = timePhase(ctx.request, "growth", () => growth(ctx.app.db, repo, days, now, sealedScope(ctx.app.db, repo, ctx.auth.user)));
+    const paused = pausedUntil(ctx.app.db, repo.id, now);
+    return json({ ...g, planner: { paused: paused !== null, until: paused } }, 200, { "cache-control": "no-store" });
   });
 
   // A kept gate's log (`checks/gate_log.ts`): the last 200 lines, as text.
