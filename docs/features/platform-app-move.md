@@ -28,7 +28,16 @@ The decision and both paths are in docs/APPS.md, "What is deliberately not here"
 ## 3. Copy the data (person runs, crew writes the script)
 Dump with `pg_dump`, load, then compare per-table row counts and a per-table
 checksum (`md5` of ordered rows). Counts and checksums go in the issue. Files:
-copy, then compare the SHA-256 manifest. Secrets: the owner sets each by name
+copy, then compare the SHA-256 manifest:
+`bun scripts/copy-app-files.ts <source-dir> [target-dir]` (target defaults to
+`$FORGE_APP_DATA`) copies regular files, hashes both ends
+(`src/apps/file_manifest.ts`), prints MISSING / CHANGED / EXTRA lines and exits
+0 only when the manifests match and nothing was left behind (a target that
+already holds other files is EXTRA, exit 1). `--manifest <dir>` prints a
+manifest alone, for the old node. Symlinks and devices are listed as SKIPPED,
+never followed, and exit 1 unless `--allow-skips` says so. A target holding a
+symlink is refused.
+Secrets: the owner sets each by name
 in the app's settings; they are never pasted into an issue, a pull or a run.
 
 ## 4. Rehearse on a preview (person)
@@ -124,8 +133,8 @@ reminds anyone when the week ends; both are a person's.
 
 ## What the forge lacks (each is an issue)
 - A database import for an app (`migrate` has no data path): upload a dump, load it, report counts and checksums. (#11697)
+- ~~A file and upload copy with a manifest compared on both ends.~~ Done as a script a person runs (#11699); no page or upload from a browser yet.
 - ~~A Postgres app has no home here.~~ Decided, not built: no managed Postgres; port to `bun:sqlite` or keep an external one by `egress` (docs/APPS.md). (#11698)
-- A file and upload copy with a manifest compared on both ends. (#11699)
 - Per-app encrypted backup with a restore proof (`docs/features/backup-truth.md` covers the forge's own, not an app's). (#11701)
 - A guard for rehearsal: data copy and `preview`-scoped sandbox keys exist and are the procedure in step 4; nothing yet refuses a payment name left in scope `all`. (#11702)
 - Inbound payment webhooks that survive a preview's changing address. (#11703)
