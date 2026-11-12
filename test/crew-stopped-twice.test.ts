@@ -9,6 +9,9 @@ import { createApp, type App } from "../src/app.ts";
 import { claimRun, createRun, getRun, listQueued } from "../src/core/runs.ts";
 import { createUser } from "../src/core/users.ts";
 import { requeueInterrupted } from "../src/crew/dispatch.ts";
+import { daySpent } from "../src/core/account_ceiling.ts";
+import { noteRunProgress } from "../src/core/runs.ts";
+import { recordUsage, usageTotals } from "../src/core/usage.ts";
 import { STALE_AFTER_MS } from "../src/runs/lease.ts";
 import type { User } from "../src/core/users.ts";
 
@@ -81,5 +84,34 @@ describe("a run a restart cuts off", () => {
     expect(after.state).toBe("failed");
     expect(after.summary).toBe("stopped twice by its forge restarting; not tried again");
     expect(forIssue(issue.id)).toEqual([]);
+  });
+
+  test("an interruption is charged once: the sum of each run's own spend", async () => {
+    const { issue, run } = await setup();
+    const at = () => new Date().toISOString();
+    const line = (id: string, costUsd: number, outcome: "running" | "ok") =>
+      recordUsage(app.db, {
+        runId: id, repoId: run.repoId, issueId: issue.id, agentId: bot.id,
+        subscriptionId: null, kind: "build", tokensIn: 10, tokensOut: 5,
+        costUsd, wallMs: 1000, outcome, at: at(),
+      });
+    const owed = () =>
+      usageTotals(app.db, "issue", { since: "1970-01-01T00:00:00.000Z", repoId: run.repoId })
+        .reduce((sum, t) => sum + t.costUsd, 0);
+    // The first run paid $1.50 before the restart cut it off.
+    claimRun(app.db, run.id);
+    noteRunProgress(app.db, run.id, { costUsd: 1.5 });
+    line(run.id, 1.5, "running");
+    const before = daySpent(app.db, alice.id, new Date());
+    lapse(run.id);
+    requeueInterrupted(app);
+    // Being queued again costs nothing.
+    expect(owed()).toBeCloseTo(1.5, 10);
+    // The run that carries on reports only what it spent itself: $0.75.
+    const next = forIssue(issue.id)[0]!;
+    claimRun(app.db, next.id);
+    line(next.id, 0.75, "ok");
+    expect(owed()).toBeCloseTo(2.25, 10);
+    expect(daySpent(app.db, alice.id, new Date()) - before).toBeCloseTo(0.75, 10);
   });
 });
