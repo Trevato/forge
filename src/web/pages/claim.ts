@@ -46,6 +46,7 @@ import {
   founderToTake,
   linkOf,
   handOver,
+  isPlaceholderFounder,
   readClaim,
   spawnedOrg,
   takeFounder,
@@ -161,16 +162,19 @@ function owners(
   const team = listTeams(ctx.app.db, spawned.org.id).find(
     (t) => t.name === OWNERS_TEAM,
   );
-  return {
-    team,
-    spawner:
-      team === undefined ? undefined : listTeamMembers(ctx.app.db, team.id)[0],
-  };
+  const first = team === undefined ? undefined : listTeamMembers(ctx.app.db, team.id)[0];
+  // The placeholder an anonymous start made is no person to name (#11785):
+  // told by the start's record, never by the account's name.
+  return { team, spawner: isPlaceholderFounder(spawned, first) ? undefined : first };
 }
 
 /** One plain sentence: who can see this forge once it is claimed. */
 function accessSentence(spawned: Spawned, spawner: User | undefined): string {
   const who = spawner?.username ?? "Whoever made it";
+  // An anonymous start has no one to name: never the placeholder account (#11785).
+  if (spawner === undefined && !spawned.keepAccess) {
+    return "Once you open it as yours, only you can see its private work.";
+  }
   return spawned.keepAccess
     ? `${who} keeps owner access to this forge; you can remove it in your organisation's Owners team.`
     : `Once you open it as yours, only you can see its private work: ${who}, who made it, no longer has access unless you invite them back.`;

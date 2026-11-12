@@ -60,9 +60,118 @@ export async function startStandInCrew(
   const dataDir = await mkdtemp(join(tmpdir(), "forge-crew-"));
   const app = createApp({ dataDir, port: 0 });
   const servers = await serve(app);
+  const { fake, argsFile, promptFile } = writeStandInClaude(dataDir);
+  const checks = startChecks(app, {
+    forgeUrl: servers.url,
+    concurrency: 1,
+    ...(options.checkStep === undefined ? {} : { checkStep: options.checkStep }),
+  });
+  const crew = await startCrew(app, {
+    forgeUrl: servers.url,
+    localUrl: servers.url,
+    binary: fake,
+    concurrency: 1,
+    budgetUsd: 1,
+    runTimeoutMs: 60_000,
+    networkRetryScale: 0,
+    reviewBudgetMs: options.reviewBudgetMs ?? 4_000,
+    ...(options.tickMs === undefined ? {} : { tickMs: options.tickMs }),
+    ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.installRunner === undefined
+      ? {}
+      : { installRunner: options.installRunner }),
+  });
+  const a = await createUser(app.db, {
+    origin: "seed",
+    trusted: true,
+    username: "alice",
+    email: "alice@forge.local",
+    password: "a-good-passphrase",
+    adminIfFirst: true,
+  });
+  if (!a.ok) throw new Error(a.error);
+  const alice = a.value;
+  const made = await createAgent(app, alice, {
+    username: "bot",
+    brief: "Be brief.",
+  });
+  if (!made.ok) throw new Error(String(made.error));
+  const bot = made.value.user;
+  const created = await createRepo(app, alice, {
+    name: "garden",
+    visibility: "private",
+  });
+  if (!created.ok) throw new Error(String(created.error));
+  const repo = created.value;
+  const seeded = await commitToBranch(app, alice, repo, {
+    message: "Start",
+    files: [
+      { path: "README.md", content: "# garden\n" },
+      ...(options.files ?? []),
+    ],
+  });
+  if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+  expect(addToCrew(app, alice, repo, "bot").ok).toBe(true);
+  return {
+    dataDir,
+    app,
+    servers,
+    crew,
+    checks,
+    alice,
+    bot,
+    repo,
+    argsFile,
+    promptFile,
+  };
+}
+
+export async function stopStandInCrew(standIn: StandInCrew): Promise<void> {
+  await standIn.crew.stop();
+  await standIn.checks.stop();
+  standIn.servers.stop();
+  standIn.app.close();
+  await rm(standIn.dataDir, { recursive: true, force: true });
+}
+
+/** Wait for the first agent run on `repo` matching `where` to finish, and return it. */
+export async function agentRunSettled(
+  app: App,
+  repo: Repo,
+  where: (run: Run) => boolean,
+  timeoutMs = 30_000,
+  pollMs = 100,
+): Promise<Run> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const run = listRuns(app.db, repo.id, { kind: "agent" }).find(where);
+    if (
+      run &&
+      (run.state === "ok" ||
+        run.state === "failed" ||
+        run.state === "cancelled")
+    )
+      return run;
+    await Bun.sleep(pollMs);
+  }
+  throw new Error("agent run did not settle");
+}
+
+/** The stand-in's paths: the binary, and where it writes its last argv and prompt. */
+export interface StandInClaude {
+  readonly fake: string;
+  readonly argsFile: string;
+  readonly promptFile: string;
+}
+
+/**
+ * Write the stand-in for Claude Code into `dataDir`: it records its argv and
+ * prompt, does the work, pushes, and answers in stream-json. Any forge's crew
+ * can run it (`startCrew(app, { binary: fake, … })`).
+ */
+export function writeStandInClaude(dataDir: string): StandInClaude {
   const argsFile = join(dataDir, "fake.args");
   const promptFile = join(dataDir, "fake.prompt");
-  // The stand-in: records its argv and prompt, does the work, pushes.
   const fake = join(dataDir, "fake-claude");
   writeFileSync(
     fake,
@@ -200,98 +309,5 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
 `,
   );
   chmodSync(fake, 0o755);
-  const checks = startChecks(app, {
-    forgeUrl: servers.url,
-    concurrency: 1,
-    ...(options.checkStep === undefined ? {} : { checkStep: options.checkStep }),
-  });
-  const crew = await startCrew(app, {
-    forgeUrl: servers.url,
-    localUrl: servers.url,
-    binary: fake,
-    concurrency: 1,
-    budgetUsd: 1,
-    runTimeoutMs: 60_000,
-    networkRetryScale: 0,
-    reviewBudgetMs: options.reviewBudgetMs ?? 4_000,
-    ...(options.tickMs === undefined ? {} : { tickMs: options.tickMs }),
-    ...(options.now === undefined ? {} : { now: options.now }),
-    ...(options.installRunner === undefined
-      ? {}
-      : { installRunner: options.installRunner }),
-  });
-  const a = await createUser(app.db, {
-    origin: "seed",
-    trusted: true,
-    username: "alice",
-    email: "alice@forge.local",
-    password: "a-good-passphrase",
-    adminIfFirst: true,
-  });
-  if (!a.ok) throw new Error(a.error);
-  const alice = a.value;
-  const made = await createAgent(app, alice, {
-    username: "bot",
-    brief: "Be brief.",
-  });
-  if (!made.ok) throw new Error(String(made.error));
-  const bot = made.value.user;
-  const created = await createRepo(app, alice, {
-    name: "garden",
-    visibility: "private",
-  });
-  if (!created.ok) throw new Error(String(created.error));
-  const repo = created.value;
-  const seeded = await commitToBranch(app, alice, repo, {
-    message: "Start",
-    files: [
-      { path: "README.md", content: "# garden\n" },
-      ...(options.files ?? []),
-    ],
-  });
-  if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
-  expect(addToCrew(app, alice, repo, "bot").ok).toBe(true);
-  return {
-    dataDir,
-    app,
-    servers,
-    crew,
-    checks,
-    alice,
-    bot,
-    repo,
-    argsFile,
-    promptFile,
-  };
-}
-
-export async function stopStandInCrew(standIn: StandInCrew): Promise<void> {
-  await standIn.crew.stop();
-  await standIn.checks.stop();
-  standIn.servers.stop();
-  standIn.app.close();
-  await rm(standIn.dataDir, { recursive: true, force: true });
-}
-
-/** Wait for the first agent run on `repo` matching `where` to finish, and return it. */
-export async function agentRunSettled(
-  app: App,
-  repo: Repo,
-  where: (run: Run) => boolean,
-  timeoutMs = 30_000,
-  pollMs = 100,
-): Promise<Run> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const run = listRuns(app.db, repo.id, { kind: "agent" }).find(where);
-    if (
-      run &&
-      (run.state === "ok" ||
-        run.state === "failed" ||
-        run.state === "cancelled")
-    )
-      return run;
-    await Bun.sleep(pollMs);
-  }
-  throw new Error("agent run did not settle");
+  return { fake, argsFile, promptFile };
 }

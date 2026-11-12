@@ -85,6 +85,8 @@ describe("spawnForge", () => {
       org: "kids",
       url: "https://kid--forge.test",
       keepAccess: false,
+      // Spawned by a signed-in person: the founder is a real account (#11785).
+      anonymous: false,
       size: "small",
       // A hash only: what the parent answers to stays in its own ledger.
       statusHash: expect.stringMatching(/^[0-9a-f]{64}$/),

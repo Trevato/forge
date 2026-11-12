@@ -65,10 +65,31 @@ export interface Spawned {
   readonly org: User;
   /** Whether the spawner keeps owner access after the claim. */
   readonly keepAccess: boolean;
+  /**
+   * Whether nobody signed in to start it: its founder is a placeholder, not
+   * a person. Undefined for a `parent.json` from before it was recorded
+   * (#11785): `isPlaceholderFounder` tells those by the founder's name.
+   */
+  readonly anonymous: boolean | undefined;
   /** The child's own address, `<name>--<parent's host>`, when recorded. */
   readonly url: string | undefined;
   /** The hash of what the parent answers to (`spawn/clients.ts`), when recorded. */
   readonly statusHash: string | undefined;
+}
+
+/** The founder account a start nobody signed in for is made under (`founderNameOf`). */
+export const PLACEHOLDER_FOUNDER = "founder";
+
+/**
+ * Whether the founder (the Owners team's first member) is the placeholder an
+ * anonymous start made: by the start's record, or, for a `parent.json` from
+ * before it was recorded (#11785), by the founder still holding the
+ * placeholder name. A real spawner of that name on such an old forge reads as
+ * anonymous too, and is then not named: harmless, never wrong about access.
+ * Pure: the caller has the founder already, so no query is spent here.
+ */
+export function isPlaceholderFounder(spawned: Spawned, founder: User | undefined): boolean {
+  return spawned.anonymous ?? founder?.username === PLACEHOLDER_FOUNDER;
 }
 
 /** The organisation this forge was spawned as, or undefined if it was not spawned. */
@@ -79,6 +100,7 @@ export async function spawnedOrg(app: App): Promise<Spawned | undefined> {
     const parsed = (await file.json()) as {
       org?: unknown;
       keepAccess?: unknown;
+      anonymous?: unknown;
       url?: unknown;
       statusHash?: unknown;
     };
@@ -89,6 +111,7 @@ export async function spawnedOrg(app: App): Promise<Spawned | undefined> {
       : {
           org,
           keepAccess: parsed.keepAccess === true,
+          anonymous: typeof parsed.anonymous === "boolean" ? parsed.anonymous : undefined,
           url:
             typeof parsed.url === "string" && /^https?:\/\//.test(parsed.url)
               ? parsed.url
