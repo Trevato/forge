@@ -10,7 +10,7 @@ import { nameShapeVerdict } from "./name_verdict.ts";
 import { linkRequestVisitor } from "../perf/visitor_link.ts";
 import { startWatch, probeOf, type Probe } from "./live.ts";
 import { firstProof, reachWords, settleChild } from "./reach.ts";
-import { reissueClaim, spawnForge, type SpawnError } from "../actions/spawn.ts";
+import { founderClash, reissueClaim, spawnForge, type SpawnError } from "../actions/spawn.ts";
 import type { App } from "../app.ts";
 import { maxChildren } from "../core/capacity.ts";
 import { getAgentByName } from "../core/agents.ts";
@@ -321,6 +321,9 @@ export async function spawnDoor(
   if (dry) {
     const planned = planSpawn(input, source);
     if (!planned.ok) return spawnWords({ kind: "invalid", ...planned.error });
+    // What the real spawn would refuse, the plan refuses too.
+    const clash = founderClash(planned.value, user);
+    if (clash !== undefined) return spawnWords({ kind: "invalid", ...clash });
     return {
       status: 200,
       body: {
