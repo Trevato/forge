@@ -8,6 +8,7 @@
  */
 
 import { html, raw } from "../html.ts";
+import { CARD_PALETTE } from "../../http/mcp/card_palette.ts";
 import { timeAgo } from "../ui.ts";
 import { span, STAGE_LABEL, verdict, type PipelineKey, type PipelineStage } from "../../flow/pipeline.ts";
 
@@ -650,7 +651,9 @@ export function cardFor(
       });
     }
     rows.push(...hits.slice(0, SEARCH_ROWS));
-    status = `${hits.length} hit${hits.length === 1 ? "" : "s"}${hits.length > SEARCH_ROWS ? `, first ${SEARCH_ROWS}` : ""}`;
+    status = hits.length === 0
+      ? `No results${q === "" ? "" : ` for “${q}”`}. Try fewer or different words, or name a repository.`
+      : `${hits.length} hit${hits.length === 1 ? "" : "s"}${hits.length > SEARCH_ROWS ? `, first ${SEARCH_ROWS}` : ""}`;
     return { kind, title: q === "" ? CARD_TITLE[kind] : `Search: ${q}`, status, rows, actions };
   }
   if (kind === "issues") {
@@ -1008,10 +1011,12 @@ function button(a) {
   };
   return b;
 }
-function draw(card) {
+const SHOWN = 10;
+function draw(card, all) {
   root.replaceChildren(el("h2", card.title), el("p", card.status, "status"));
   const dl = document.createElement("dl");
-  for (const r of card.rows) {
+  const rows = all ? card.rows : card.rows.slice(0, SHOWN);
+  for (const r of rows) {
     const dt = el("dt", r.label);
     if (r.depth > 0) dt.style.paddingInlineStart = Math.min(8, r.depth) * 1.25 + "em";
     if (r.link && (r.link.startsWith("https://") || r.link.startsWith("http://"))) { const a = el("a", r.label); a.href = r.link; a.target = "_blank"; a.rel = "noopener noreferrer"; a.onclick = (ev) => { ev.preventDefault(); parent.postMessage({ jsonrpc: "2.0", id: ++n, method: "ui/open-link", params: { url: r.link } }, "*"); }; dt.replaceChildren(a); }
@@ -1019,21 +1024,102 @@ function draw(card) {
     for (const a of r.actions || []) dd.append(button(a));
     dl.append(dt, dd);
   }
-  root.append(dl);
-  field = card.actions.some((a) => a.words) ? document.createElement("input") : null;
+  if (rows.length > 0) root.append(dl);
+  if (rows.length < card.rows.length) {
+    const more = el("button", "Show " + (card.rows.length - rows.length) + " more", "more");
+    more.onclick = () => { draw(card, true); report(); };
+    root.append(more);
+  }
+  // Show-more redraws the rows only: the field the reader typed in is kept.
+  field = card.actions.some((a) => a.words) ? (all && field ? field : document.createElement("input")) : null;
   if (field) { field.type = "text"; field.maxLength = 2000; field.placeholder = "Your words"; field.setAttribute("aria-label", "Your words"); root.append(field); }
   for (const a of card.actions) root.append(button(a));
+}
+// The MCP Apps handshake: ui/initialize is a request (with an id); the host's
+// reply carries hostContext (theme, style variables); only then does the card
+// say ui/notifications/initialized. A tool result that comes first is drawn at
+// once, so a host that sends none of this still shows the content.
+const INIT_ID = "init-1";
+const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+// Colours: the host's background and text are used only as a pair that reads (4.5:1);
+// otherwise the card's own palette for the host's theme (or the OS scheme) stands.
+function channels(c) {
+  if (typeof c !== "string") return null;
+  let m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(c.trim());
+  if (m) { let h = m[1]; if (h.length === 3) h = h.replace(/./g, "$&$&"); return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)); }
+  m = /^rgba?\\(\\s*(\\d{1,3})[\\s,]+(\\d{1,3})[\\s,]+(\\d{1,3})\\s*(?:[,/]\\s*([\\d.]+%?)\\s*)?\\)$/i.exec(c.trim());
+  if (m && (m[4] === undefined || parseFloat(m[4]) >= 1)) return [m[1], m[2], m[3]].map(Number).map((n) => Math.min(255, n));
+  return null;
+}
+const lum = (c) => { const f = c.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }); return 0.2126 * f[0] + 0.7152 * f[1] + 0.0722 * f[2]; };
+const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+const OWN = ["--c-bg", "--c-fg", "--c-link"];
+function applyContext(ctx) {
+  if (!isObj(ctx)) return;
+  const html = document.documentElement;
+  if (ctx.theme === "light" || ctx.theme === "dark") { html.setAttribute("data-theme", ctx.theme); html.style.colorScheme = ctx.theme; }
+  const st = isObj(ctx.styles) ? ctx.styles : {};
+  if (isObj(st.variables)) {
+    const vars = st.variables;
+    for (const k of Object.keys(vars)) {
+      const v = vars[k];
+      if (/^--(?!color-)[a-z0-9-]{1,80}$/.test(k) && typeof v === "string" && v.length <= 500) html.style.setProperty(k, v);
+    }
+    const bg = channels(vars["--color-background-primary"]), fg = channels(vars["--color-text-primary"]);
+    if (bg && fg && ratio(bg, fg) >= 4.5) {
+      const info = channels(vars["--color-text-info"]);
+      html.style.setProperty("--c-bg", vars["--color-background-primary"].trim());
+      html.style.setProperty("--c-fg", vars["--color-text-primary"].trim());
+      html.style.setProperty("--c-link", info && ratio(bg, info) >= 4.5 ? vars["--color-text-info"].trim() : vars["--color-text-primary"].trim());
+    } else for (const k of OWN) html.style.removeProperty(k);
+  }
+  if (isObj(st.css) && typeof st.css.fonts === "string" && st.css.fonts.length <= 20000) {
+    let f = document.getElementById("host-fonts");
+    if (!f) { f = document.createElement("style"); f.id = "host-fonts"; document.head.append(f); }
+    // Only @font-face blocks: an @import or a stray rule would let a host make the frame fetch arbitrary CSS.
+    f.textContent = (st.css.fonts.match(/@font-face\\s*\\{[^{}]*\\}/g) || []).join("\\n");
+  }
+}
+let queued = false, lastW = -1, lastH = -1;
+function measure() {
+  queued = false;
+  const w = Math.ceil(document.documentElement.clientWidth || 0);
+  const h = Math.ceil(document.body.getBoundingClientRect().height);
+  if (h === lastH && w === lastW) return;
+  lastW = w; lastH = h;
+  parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/size-changed", params: { width: w, height: h } }, "*");
+}
+function report() {
+  if (queued) return;
+  queued = true;
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(measure); else measure();
 }
 addEventListener("message", (e) => {
   if (e.source !== parent) return;
   const m = e.data;
-  if (m && m.method === "ui/notifications/tool-result") {
-    const card = m.params && m.params.structuredContent && m.params.structuredContent.card;
-    if (card) draw(card);
+  if (!isObj(m) || m.jsonrpc !== "2.0") return;
+  if (m.id === INIT_ID && !("method" in m)) {
+    if (isObj(m.result)) {
+      applyContext(m.result.hostContext);
+      parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} }, "*");
+      report();
+    }
+    return;
   }
+  const p = isObj(m.params) ? m.params : {};
+  if (m.method === "ui/notifications/tool-result") {
+    const sc = isObj(p.structuredContent) ? p.structuredContent : {};
+    const card = sc.card;
+    if (isObj(card) && typeof card.title === "string" && Array.isArray(card.rows) && Array.isArray(card.actions)) { draw(card); report(); }
+  } else if (m.method === "ui/notifications/host-context-changed") applyContext(p);
 });
-parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} }, "*");
+if (typeof ResizeObserver === "function") new ResizeObserver(report).observe(document.body);
+parent.postMessage({ jsonrpc: "2.0", id: INIT_ID, method: "ui/initialize", params: { protocolVersion: "2026-01-26", appInfo: { name: "forge-card", version: "1" }, appCapabilities: {} } }, "*");
+report();
 `;
 
+const pal = (t: "light" | "dark"): string => `--c-bg:${CARD_PALETTE[t].bg};--c-fg:${CARD_PALETTE[t].fg};--c-link:${CARD_PALETTE[t].link};color-scheme:${t}`;
+export const CARD_CSS = `:root{${pal("light")}}@media(prefers-color-scheme:dark){:root{${pal("dark")}}}:root[data-theme=light]{${pal("light")}}:root[data-theme=dark]{${pal("dark")}}body{font:14px/1.4 var(--font-sans,system-ui,sans-serif);margin:0;padding:12px;background:var(--c-bg);color:var(--c-fg)}h2{margin:0 0 4px;font-size:16px}.status{margin:0 0 8px}dl{margin:0}dt{font-weight:600;margin-top:6px}dd{margin:0}a{color:var(--c-link);text-underline-offset:2px;display:inline-flex;align-items:center;min-height:44px}button,input{font:inherit;color:var(--c-fg);border:0;background:color-mix(in srgb,var(--c-fg) 12%,var(--c-bg));border-radius:var(--border-radius-sm,6px);min-height:44px;box-sizing:border-box}button{margin:8px 6px 0 0;padding:4px 12px}input{padding:4px 8px;width:100%;margin-top:8px}`;
+
 export const CARD_SHELL = (kind: CardKind): string =>
-  html`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${CARD_TITLE[kind]}</title><style>body{font:14px system-ui;margin:0;padding:12px}h2{margin:0 0 4px;font-size:16px}.status{margin:0 0 8px;opacity:.7}dt{font-weight:600;margin-top:6px}dd{margin:0}button{margin:8px 6px 0 0;padding:4px 10px}</style><div id="card"><h2>${CARD_TITLE[kind]}</h2></div><script>${raw(SHELL_JS)}</script>`.text;
+  html`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="color-scheme" content="light dark"><title>${CARD_TITLE[kind]}</title><style>${raw(CARD_CSS)}</style><div id="card"><h2>${CARD_TITLE[kind]}</h2></div><script>${raw(SHELL_JS)}</script>`.text;

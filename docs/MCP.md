@@ -570,6 +570,13 @@ answers
   words action shows one text field: **Tell <app>** (app card) sends the
   words to `tell` as `text` with `repo` and `context.said`.
   Empty words send nothing.
+  **What a card sends and expects (MCP Apps handshake).**
+  1. On load it posts `ui/initialize` as a request with an id (`protocolVersion`, `appInfo`, `appCapabilities`).
+  2. On the host's reply (matching id, `result` object) it applies `hostContext`, then posts `ui/notifications/initialized`.
+  3. `hostContext.theme` (`light`/`dark`) sets the colour scheme; without it the OS scheme decides. `styles.variables` (only `--name` keys, string values) become CSS variables, except that `--color-background-primary` and `--color-text-primary` are used only as a pair at 4.5:1 or better (else the card's own palette, `src/http/mcp/card_palette.ts`, stands, so never dark on dark); `styles.css.fonts` is added as a style. `ui/notifications/host-context-changed` does the same later, no reload. Links and buttons are 44 px tall; an empty result is one line; more than ten rows show ten and a "Show N more" button.
+  4. `ui/notifications/tool-result` draws the card, before or after the reply; a host that sends none of this still shows the card's content.
+  5. It posts `ui/notifications/size-changed` (`width`, `height` of the body box, so it can shrink) on load, on content or width change, at most once a frame.
+  6. Only messages from the parent with `jsonrpc: "2.0"` and the expected shape are read; the rest are ignored.
 - **The manifest's shape.** `GET /api/v1/here?path=/owner/name` (or the
   `here` tool with the page URL) answers `{ here, you, can, mcp, docs }`.
   `you.as` is `anonymous`, `reader`, `writer`, `owner` or `agent`; `can` is
