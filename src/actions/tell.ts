@@ -67,6 +67,8 @@ export type TellError =
   | "bad_from"
   | "not_found"
   | "unauthorized"
+  /** The owner paused the planner (`core/planner_pause.ts`). */
+  | "planner_paused"
   /** Someone who may not direct the crew here (`crew/direct.ts`). */
   | "forbidden"
   /** Someone whose email is not verified yet (`verify.ts`). */

@@ -171,6 +171,7 @@ import { auditCsv, auditPage, auditProbeSubmit } from "../web/pages/audit.ts";
 import { apiPage, appApiPage } from "../web/pages/api.ts";
 import { flowsCheck, flowsPage, flowsProbe, flowsUpdate } from "../web/pages/flows.ts";
 import { findingAccept, findingsPage } from "../web/pages/findings.ts";
+import { queuePage, queueSwitch } from "../web/pages/queue.ts";
 import { betAct, betPage, betPropose, betsPage } from "../web/pages/bets.ts";
 import { changelogJson, changelogPage } from "../web/pages/changelog.ts";
 import { docsFile, docsFolder } from "../web/pages/docs_link.ts";
@@ -1292,6 +1293,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/flows/update", flowsUpdate);
   router.add("GET", "/:owner/:name/findings", findingsPage);
   router.add("POST", "/:owner/:name/findings/:id/accept", findingAccept);
+  router.add("GET", "/:owner/:name/queue", queuePage);
+  router.add("POST", "/:owner/:name/queue/planner", queueSwitch);
   router.add("GET", "/:owner/:name/bets", betsPage);
   router.add("POST", "/:owner/:name/bets/propose", betPropose);
   router.add("GET", "/:owner/:name/bets/:id", betPage);

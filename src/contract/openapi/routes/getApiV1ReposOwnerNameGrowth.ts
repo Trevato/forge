@@ -1,0 +1,3 @@
+import { REPO, type Route, limitTo } from "../shared.ts";
+
+export const route: Route = { method: "get", path: `${REPO}/growth`, summary: "How the work is growing or shrinking: per day for `days` days (1 to 90, default 14) issues opened (split by owner, people, planner, builders, watchers) and closed, pulls opened, landed and closed unmerged; the open totals; net issues per day; days of work queued at the current pace; this week's spend on work the owner asked for versus work the planner proposed; three plain sentences; a suggestion to pause when the list has grown three days running or work passes two weeks; and whether the planner is paused, and until when", auth: false, role: "anonymous", query: { days: limitTo(90) } };

@@ -8,6 +8,7 @@
  * time. A missed wake-up costs a tick, never a run.
  */
 
+import { pausedUntil } from "../core/planner_pause.ts";
 import { crewFilters, isStrangerPull } from "./stranger.ts";
 import { TEMP_FULL } from "../checks/disk_full.ts";
 import { freshPullFor } from "./fresh_pull.ts";
@@ -464,6 +465,9 @@ export function queueAgentRun(
   if (!accountActive(app.db, repo.ownerId) || isContributionFork(app.db, repo.id)) return undefined;
   // Never a job outside the agent's seat: building is a builder's, reviewing a reviewer's.
   if (outsideSeat(app, repo, issue, agent, reason)) return undefined;
+  // The owner's switch (#11604): a paused planner starts nothing; builders and reviewers carry on.
+  if (crewRole(app.db, repo.id, agent.user.id) === "planner" && pausedUntil(app.db, repo.id, new Date()) !== null)
+    return undefined;
   // An archived repository starts nothing new; a run carrying on (`again`)
   // is one already going, and finishes. A first run
   // (`attempt` 0, as a conflict or converge run is queued) is new.
