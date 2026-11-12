@@ -132,9 +132,21 @@ test("the listing carries the governor's slots and reason for a writer while the
   app.db.query("UPDATE repo SET autonomy = 'assisted', autonomy_slots = 4 WHERE name = 'game'").run();
   try {
     const on = (await crew(admin, {})).value.governor;
-    expect(on).toEqual({ slots: 4, ceiling: 4, held: false, why: "Builders 4: a quiet hour, 0 of 0 open pulls moving" });
+    expect(on).toEqual({ slots: 4, ceiling: 4, held: false, says: "", why: "Builders 4: a quiet hour, 0 of 0 open pulls moving" });
     expect((await crew(bob, {})).value.governor).toBeNull(); // bob cannot write to alice/game
   } finally {
+    app.db.query("UPDATE repo SET autonomy = 'off' WHERE name = 'game'").run();
+  }
+});
+
+test("the listing's governor carries what it last did once the slots changed (#11459)", async () => {
+  app.db.query("UPDATE repo SET autonomy = 'assisted', autonomy_slots = 4 WHERE name = 'game'").run();
+  const repoId = (app.db.query("SELECT id FROM repo WHERE name = 'game'").get() as any).id;
+  app.db.query("INSERT INTO governor_last (repo_id, from_slots, to_slots, why, at) VALUES (?1, 4, 2, '9 opened vs 2 landed', ?2)").run(repoId, Date.UTC(2026, 9, 26, 20, 41));
+  try {
+    expect((await crew(admin, {})).value.governor.says).toBe("Builders 4 → 2 at 20:41: 9 opened vs 2 landed");
+  } finally {
+    app.db.query("DELETE FROM governor_last WHERE repo_id = ?1").run(repoId);
     app.db.query("UPDATE repo SET autonomy = 'off' WHERE name = 'game'").run();
   }
 });

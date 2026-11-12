@@ -30,6 +30,7 @@ import {
 } from "../../core/runs.ts";
 import { autonomyStatus } from "../../crew/autonomy.ts";
 import { governorSeen } from "../../crew/governed.ts";
+import { governorRows } from "./governor_rows.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, repoBase, repoHeader, repoPalette } from "../chrome.ts";
@@ -434,10 +435,7 @@ export async function studioApp(
                 </dd>
                 <dt>Slots</dt>
                 <dd>${autonomy.active} of ${autonomy.slots} in use</dd>
-                ${governor === undefined
-                  ? null
-                  : html`<dt>Governor</dt>
-                      <dd>${governor.why}</dd>`}
+                ${governorRows(governor)}
                 ${autonomy.paused
                   ? html`<dt>Paused</dt>
                       <dd>${pausedWords(autonomy.paused)}</dd>`

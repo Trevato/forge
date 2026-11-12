@@ -34,3 +34,38 @@ describe("governorStep", () => {
     expect(governorSays(null)).toBe("");
   });
 });
+
+describe("the remembered last change", () => {
+  const { Database } = require("bun:sqlite");
+  const { default: sql } = require("../src/core/migrations/20261111160000-governor-last.ts");
+  const { readLast, rememberGovernor } = require("../src/crew/governor_log.ts");
+  const fresh = () => { const db = new Database(":memory:"); db.exec(sql); return db; };
+  test("a baseline is stored but says nothing; a change is remembered and worded", () => {
+    const db = fresh();
+    expect(governorSays(rememberGovernor(db, "r", { slots: 6, why: "w" }, at(14, 0)))).toBe("");
+    expect(readLast(db, "r")).toEqual({ from: 6, to: 6, why: "w", at: at(14, 0) });
+    rememberGovernor(db, "r", { slots: 4, why: "9 opened vs 2 landed" }, at(14, 2));
+    expect(governorSays(readLast(db, "r"))).toBe("Builders 6 → 4 at 14:02: 9 opened vs 2 landed");
+  });
+  test("a restart keeps it: the same file opened twice remembers the change", () => {
+    const { mkdtempSync, rmSync } = require("node:fs");
+    const { tmpdir } = require("node:os");
+    const { join } = require("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "forge-gov-"));
+    const file = join(dir, "x.db");
+    try {
+      const one = new Database(file);
+      one.exec(sql);
+      rememberGovernor(one, "r", { slots: 6, why: "w" }, at(14, 0));
+      rememberGovernor(one, "r", { slots: 4, why: "x" }, at(14, 2));
+      one.close();
+      const two = new Database(file);
+      rememberGovernor(two, "r", { slots: 4, why: "y" }, at(15, 0));
+      expect(readLast(two, "r")?.at).toBe(at(14, 2));
+      expect(governorSays(readLast(two, "r"))).toBe("Builders 6 → 4 at 14:02: x");
+      two.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

@@ -20,7 +20,7 @@ import { addSubscription, setGrants } from "../src/core/subscriptions.ts";
 import { recordUsage } from "../src/core/usage.ts";
 import { createUser } from "../src/core/users.ts";
 import { repoPace } from "../src/crew/autonomy.ts";
-import { announceGovernor, governorFor, governorSeen } from "../src/crew/governed.ts";
+import { announceGovernor, governorFor, governorLine, governorSeen } from "../src/crew/governed.ts";
 import { governedSlots } from "../src/crew/governor.ts";
 import { readRepoFlow } from "../src/flow/repo_flow.ts";
 import { id } from "../src/kernel/id.ts";
@@ -274,6 +274,31 @@ test("governorSeen gates the governor alike for every door: off crew or a reader
   expect(governorSeen(app, user, repo, NOW)).toBeUndefined(); // autonomy off
   const on: Repo = { ...repo, autonomy: "assisted" };
   const seen = governorSeen(app, user, on, NOW);
-  expect(seen).toEqual({ ...governorFor(app, on, NOW), ceiling: 4, held: true });
+  expect(seen).toEqual({ ...governorFor(app, on, NOW), ceiling: 4, held: true, says: "" });
   expect(governorSeen(app, undefined, on, NOW)).toBeUndefined();
+});
+
+test("announceGovernor remembers a change: governorSeen says it after, and nothing before (#11459)", async () => {
+  const { app, repo: r0, pull } = await forge(4);
+  const repo = { ...r0, autonomy: "assisted" as const };
+  const actor = app.db.query<any, []>("SELECT * FROM user LIMIT 1").get();
+  const user = (await import("../src/core/users.ts")).getUserById(app.db, actor.id)!;
+  expect(announceGovernor(app, repo, NOW)).toBeUndefined(); // baseline
+  expect(governorSeen(app, user, repo, NOW)!.says).toBe("");
+  flood(pull);
+  announceGovernor(app, repo, later(1));
+  const seenNow = governorSeen(app, user, repo, later(1))!;
+  expect(seenNow.says).toStartWith("Builders 4 → ");
+  expect(seenNow.says).toContain(seenNow.why);
+  expect(governorLine(seenNow)).toBe(seenNow.says);
+});
+
+test("deleting a repository forgets its governor line (#11459)", async () => {
+  const { app, repo, pull } = await forge(4);
+  announceGovernor(app, repo, NOW);
+  flood(pull);
+  announceGovernor(app, repo, later(1));
+  expect(app.db.query("SELECT 1 FROM governor_last WHERE repo_id = ?1").get(repo.id)).not.toBeNull();
+  await (await import("../src/core/repos.ts")).deleteRepo(app.db, app.reposRoot, repo);
+  expect(app.db.query("SELECT 1 FROM governor_last WHERE repo_id = ?1").get(repo.id)).toBeNull();
 });
