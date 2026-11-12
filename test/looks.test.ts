@@ -44,7 +44,7 @@ import {
   type Capture,
   type LookInput,
 } from "../src/looks/capture.ts";
-import { startLooks, type LooksHandle } from "../src/looks/service.ts";
+import { NOT_ANSWERING, startLooks, type LooksHandle } from "../src/looks/service.ts";
 import type { BackoffClock } from "../src/looks/backoff.ts";
 import { setLogLevel } from "../src/kernel/log.ts";
 
@@ -1087,6 +1087,46 @@ describe("the look", () => {
       looksForEnv(app.db, record.id, "production").some((l) => l.commitOid === old),
     ).toBe(false);
     expect(existsSync(join(dataDir, path))).toBe(false);
+  });
+
+  test("a look waits for the app to answer before its one capture; an app that never answers gets none and one recorded reason (#11520)", async () => {
+    const status = runtime.envStatus(record, "production")!;
+    const head = status.commitOid;
+    const forgetPictures = () =>
+      app.db.query("DELETE FROM look WHERE app_id = ? AND env = 'production'").run(record.id);
+    const trial = async (answers: (port: number) => Promise<boolean>) => {
+      forgetPictures();
+      const seen: LookInput[] = [];
+      const own = startLooks(app, {
+        localUrl: servers.url,
+        capture: async (input) => {
+          seen.push(input);
+          return fake(input);
+        },
+        answers,
+        answerWaitMs: 2_000,
+        answerPollMs: 5,
+      });
+      own.sweep();
+      await own.idle();
+      await own.stop();
+      return { seen, rows: looksForEnv(app.db, record.id, "production", "any").filter((l) => l.commitOid === head) };
+    };
+    // Answers on the fourth ask: no capture before it, then the pictures.
+    let asked = 0;
+    const slow = await trial(async () => ++asked >= 4);
+    expect(asked).toBe(4);
+    expect(slow.seen.filter((c) => c.dark !== true).length).toBeGreaterThan(0);
+    expect(slow.rows.every((l) => l.error === null)).toBe(true);
+    // Never answers: no browser, and the reason on record.
+    const mute = await trial(async () => false);
+    expect(mute.seen).toEqual([]);
+    expect(mute.rows.length).toBeGreaterThan(0);
+    for (const look of mute.rows) {
+      expect(look.error).toBe(NOT_ANSWERING);
+      expect(look.path).toBe("");
+    }
+    forgetPictures();
   });
 
   test("the boot prune spares an owner-taken thumb, an attached one, and every thumb of a public app", async () => {

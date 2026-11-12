@@ -90,7 +90,32 @@ export interface LooksOptions {
   readonly pressure?: (() => number | undefined) | undefined;
   /** The clock a failed look's backoff waits on: the real one unless a test says otherwise. */
   readonly clock?: BackoffClock | undefined;
+  /**
+   * Whether the app answers at its port now: a real request unless a test
+   * says otherwise. A look waits for this before opening a browser (#11520).
+   */
+  readonly answers?: ((port: number) => Promise<boolean>) | undefined;
+  /** How long a look waits for the app to answer, and how often it asks. */
+  readonly answerWaitMs?: number | undefined;
+  readonly answerPollMs?: number | undefined;
 }
+
+/** The app answers when its page comes back with anything but a server error. */
+async function appAnswers(port: number): Promise<boolean> {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/`, {
+      redirect: "manual",
+      signal: AbortSignal.timeout(2_000),
+    });
+    await res.body?.cancel();
+    return res.status < 500;
+  } catch {
+    return false;
+  }
+}
+
+/** What a look records when the app never answered, so no browser was opened. */
+export const NOT_ANSWERING = "the app did not answer its health check in time";
 
 /** The share of the memory limit in use, read from cgroup v2, if this is a container. */
 export function cgroupMemoryPressure(): number | undefined {
@@ -148,6 +173,9 @@ const SWEEP_MS = 10 * 60_000;
 const FIRST_SWEEP_MS = 60_000;
 /** The browser's whole allowance for one picture. */
 const CAPTURE_TIMEOUT_MS = 20_000;
+/** How long a look waits for the app to answer before its first picture. */
+const ANSWER_WAIT_MS = 5_000;
+const ANSWER_POLL_MS = 250;
 /** How long the grant in the URL is good for — the browser uses it at once. */
 const GRANT_TTL_MS = 60_000;
 /**
@@ -377,6 +405,19 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
     }
   }
 
+  /** Ask until the app answers or the wait is spent. */
+  async function answered(port: number): Promise<boolean> {
+    const ask = options.answers ?? appAnswers;
+    const waitMs = options.answerWaitMs ?? ANSWER_WAIT_MS;
+    const pollMs = options.answerPollMs ?? ANSWER_POLL_MS;
+    const until = Date.now() + waitMs;
+    for (;;) {
+      if (await ask(port)) return true;
+      if (stopped || Date.now() >= until) return false;
+      await Bun.sleep(pollMs);
+    }
+  }
+
   async function take(item: Pending): Promise<void> {
     const record = getAppById(app.db, item.appId);
     const runtime = appsRuntime(app);
@@ -405,6 +446,25 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
       item.swept === true,
     );
     if (wanted.length === 0) return;
+    // An app still warming up gets no browser: wait, bounded, until it
+    // answers; one that never does is recorded as not answering (#11520).
+    if (status.port !== undefined && !(await answered(status.port))) {
+      if (stopped) return;
+      log.warn("no picture: the app did not answer", { app: record.slug, env: item.env });
+      for (const { page, kind, theme } of wanted)
+        recordLook(app.db, {
+          appId: item.appId,
+          env: item.env,
+          commitOid: item.commitOid,
+          page,
+          theme,
+          kind,
+          path: "",
+          error: NOT_ANSWERING,
+        });
+      failed(item);
+      return;
+    }
     // The phone and desktop pictures are what the owner sees: the app
     // renders for a signed-in admin, exactly as when they open it from the
     // forge. The thumb is what a stranger sees — it is the picture on the
