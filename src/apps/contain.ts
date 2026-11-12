@@ -50,6 +50,7 @@ import {
 } from "./cgroup.ts";
 import { during } from "../perf/jobs.ts";
 import { isSize, SIZES, type Size } from "../spawn/sizes.ts";
+import { cpuWatch } from "./cpu_rule.ts";
 
 /** `ceiling`: a declaration was cut to the machine's maximum; `declared`: forge.json's own; `default`: neither. */
 export type CeilingFrom = "env" | "pod" | "default" | "size";
@@ -632,6 +633,54 @@ export function cellCgroup(
   );
 }
 
+/** Where the next pinned cell's cores begin; `affinityArgv` advances it. */
+export interface CoreRotor {
+  next: number;
+}
+
+/** The process's one rotor: every cell opened here draws its cores from it. */
+const cellCores: CoreRotor = { next: 0 };
+
+/**
+ * Where the kernel's `cpu.max` is not ours to write, a cell that declares a
+ * quota is held to its cores by CPU affinity instead (`taskset -c`, util-linux;
+ * sched_setaffinity(2)): a 1-CPU forge builds slowly on one core instead of
+ * being stopped. The cores rotate so forges do not all pile on core 0.
+ * Nothing is added when the kernel holds the cores, `taskset` is absent, or
+ * the cell may have every core the machine has (#11657).
+ */
+export function affinityArgv(
+  spec: Pick<CellSpec, "cpuQuota" | "limits">,
+  kernelHolds: boolean,
+  rotor: CoreRotor = cellCores,
+  machine = availableParallelism(),
+  have: boolean = Bun.which("taskset") !== null,
+): string[] {
+  if (spec.cpuQuota !== true || kernelHolds || !have) return [];
+  const n = Math.max(1, Math.ceil(spec.limits.cpus));
+  if (!Number.isFinite(n) || n >= machine) return [];
+  const first = rotor.next % machine;
+  rotor.next = (first + n) % machine;
+  const cores = Array.from({ length: n }, (_, i) => (first + i) % machine);
+  return ["taskset", "-c", cores.join(",")];
+}
+
+/**
+ * The argv a cell's command runs as: into its cgroup when it has one, then
+ * pinned to its cores when the kernel does not hold them, then `inner` (bwrap).
+ */
+export function cellArgv(
+  inner: readonly string[],
+  spec: Pick<CellSpec, "cpuQuota" | "limits">,
+  cgroup: { readonly dir: string; readonly cpuCapped: boolean } | undefined,
+  rotor: CoreRotor = cellCores,
+  machine = availableParallelism(),
+  have: boolean = Bun.which("taskset") !== null,
+): string[] {
+  const pinned = [...affinityArgv(spec, cgroup?.cpuCapped === true, rotor, machine, have), ...inner];
+  return cgroup === undefined ? pinned : enterArgv(join(cgroup.dir, "cgroup.procs"), pinned);
+}
+
 /** Make a cell: its sockets, its proxy, its relays. `close()` undoes it. */
 export function openCell(
   spec: CellSpec,
@@ -681,10 +730,7 @@ export function openCell(
   const SMALL = String(1 << 20);
 
   const cgroup = cellCgroup(spec);
-  const argv = (command: string): string[] => {
-    const inner = bwrapArgv(command);
-    return cgroup === undefined ? inner : enterArgv(join(cgroup.dir, "cgroup.procs"), inner);
-  };
+  const argv = (command: string): string[] => cellArgv(bwrapArgv(command), spec, cgroup);
   const rlimits = cellRlimits(spec.limits);
   const bwrapArgv = (command: string): string[] => [
     "bwrap",
@@ -894,15 +940,6 @@ function readMountinfo(): string {
 
 /** How often the process table is read, and over how long CPU is averaged. */
 export const WATCH = { tickMs: 1_000, cpuWindowMs: 30_000, diskEveryTicks: 15 };
-/**
- * How far past its cores a cell may run before the watcher stops it. A
- * cell is already held to its cores by affinity, so a busy one measures
- * right at its limit (16.0 to 18.2 of 16 over a window): stopping at the
- * limit itself failed three checks in four and stopped a 1-core forge at
- * 1.0. The watcher is the last resort for a runaway, so it acts well past
- * the limit.
- */
-export const CPU_STOP_SLACK = 1.5;
 /** A cell's process limit: the watch's every tick, and the kernel's `pids.max` where pids is delegated. */
 export const PROCESSES_MAX = 512;
 const CLK_TCK = 100;
@@ -915,6 +952,9 @@ interface Watched {
   readonly breach: (why: string) => void;
   readonly samples: { at: number; ticks: number }[];
   ticks: number;
+  /** When the cell began to be watched, and since when its cores have held over the stop line without a break (#11657). */
+  readonly startedAt: number;
+  overSince: number | null;
   readonly key: number;
   readonly label: string | undefined;
   /** The memory cap, and who holds it: the kernel (a cgroup) or this watch alone. */
@@ -1097,6 +1137,8 @@ export function watchTree(
     breach,
     samples: [],
     ticks: 0,
+    startedAt: Date.now(),
+    overSince: null,
     key: nextKey++,
     label,
     cap,
@@ -1260,6 +1302,36 @@ export function diskBytes(dirs: readonly string[]): number {
 
 const mib = (bytes: number): string => `${Math.round(bytes / 1024 / 1024)} MiB`;
 
+/** The part of a watched cell its CPU decision reads and keeps. */
+export interface CpuState {
+  readonly samples: { at: number; ticks: number }[];
+  readonly startedAt: number;
+  overSince: number | null;
+}
+
+/**
+ * One tick's CPU decision for a watched cell: record the tree's CPU `ticks`
+ * at `now`, average the cores over `WATCH.cpuWindowMs`, keep the hold on
+ * `state`, and say whether `cpuWatch` (`apps/cpu_rule.ts`) stops it — with the
+ * cores and the window it measured — or null to let it run (#11657).
+ */
+export function cpuSample(
+  state: CpuState,
+  ticks: number,
+  cpus: number,
+  now: number,
+): { cores: number; seconds: number } | null {
+  state.samples.push({ at: now, ticks });
+  while (state.samples.length > 1 && now - (state.samples[1]?.at ?? now) >= WATCH.cpuWindowMs) state.samples.shift();
+  const oldest = state.samples[0];
+  if (oldest === undefined || now - oldest.at < WATCH.cpuWindowMs) return null;
+  const seconds = (now - oldest.at) / 1000;
+  const cores = (ticks - oldest.ticks) / CLK_TCK / seconds;
+  const verdict = cpuWatch(state.overSince, cores, cpus, now, state.startedAt);
+  state.overSince = verdict.overSinceMs;
+  return verdict.stop ? { cores, seconds } : null;
+}
+
 function tick(): void {
   if (watched.size === 0) return;
   const { rows, children } = processTable();
@@ -1293,24 +1365,14 @@ function tick(): void {
       );
       continue;
     }
-    entry.samples.push({ at: now, ticks });
-    while (
-      entry.samples.length > 1 &&
-      now - (entry.samples[1]?.at ?? now) >= WATCH.cpuWindowMs
-    )
-      entry.samples.shift();
-    const oldest = entry.samples[0];
-    if (oldest !== undefined && now - oldest.at >= WATCH.cpuWindowMs) {
-      const cores =
-        (ticks - oldest.ticks) / CLK_TCK / ((now - oldest.at) / 1000);
-      if (cores > limits.cpus * CPU_STOP_SLACK) {
-        // Read only now, at the stop: no tick pays for naming a process.
-        const top = busiest(tree, (pid) => rows.get(pid)?.ticks ?? 0);
-        entry.breach(
-          cpuBreach(cores, (now - oldest.at) / 1000, limits.cpus, top === undefined ? undefined : { ...top, name: commandName(top.pid) }),
-        );
-        continue;
-      }
+    const over = cpuSample(entry, ticks, limits.cpus, now);
+    if (over !== null) {
+      // Read only now, at the stop: no tick pays for naming a process.
+      const top = busiest(tree, (pid) => rows.get(pid)?.ticks ?? 0);
+      entry.breach(
+        cpuBreach(over.cores, over.seconds, limits.cpus, top === undefined ? undefined : { ...top, name: commandName(top.pid) }),
+      );
+      continue;
     }
     entry.ticks++;
     if (entry.ticks % WATCH.diskEveryTicks === 0) {

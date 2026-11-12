@@ -834,14 +834,14 @@ describe.skipIf(noCells)("cells: limits stop a step, and say which", () => {
       );
   }, 30_000);
 
-  test("over its CPU limit", async () => {
-    // A small share, so a busy machine still gives the loop more than it.
-    const result = await step(`bun -e "for (;;) {}"`, cell({ cpus: 0.02 }));
-    expect(result.ok).toBe(false);
-    if (!result.ok)
-      expect(result.error).toMatch(
-        /^check stopped: it used [\d.]+ cores for \d+s, over its limit of 0\.02; the busiest process is \S+ \(pid \d+, \d+s of CPU\)$/,
-      );
+  test("over its CPU limit inside its grace: it runs on, and finishes (#11657)", async () => {
+    // Twice the (shrunk) CPU window busy at far over 0.02 cores: the old 1.5× line
+    // stopped this at the first full window; the rule waits out the grace first.
+    const result = await step(
+      `bun -e "const end = Date.now() + 6000; while (Date.now() < end) {}"`,
+      cell({ cpus: 0.02 }),
+    );
+    expect(result.ok).toBe(true);
   }, 30_000);
 
   test("over its disk limit", async () => {
