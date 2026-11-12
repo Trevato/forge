@@ -118,6 +118,10 @@ export const ASKING: Readonly<Record<string, Asking>> = {
   seal: { does: "seal or unseal an issue or pull" },
   migrate: { does: "bring a repository in from a public address" },
   account_suspend: { does: "suspend an account or lift its suspension" },
+  account_access: {
+    does: "reset a person's access with a one-time link, or sign them out",
+    once: "The link was shown once, to you, and is not kept here.",
+  },
   account_role: { does: "make a person a member or a guest" },
   // Every admin-scope tool.
   agent: { does: "create, change or remove a crew agent" },

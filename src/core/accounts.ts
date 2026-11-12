@@ -47,8 +47,8 @@ export function originOf(a: Pick<AccountRow, "kind" | "via" | "signsInThrough">)
   return a.via ?? (a.kind === "agent" ? "crew" : "");
 }
 
-/** Every person and agent, newest first. Organizations are not accounts. */
-export function listAccounts(db: Database): AccountRow[] {
+/** Every person and agent, newest first, or just `only` by name. Organizations are not accounts. */
+export function listAccounts(db: Database, only = ""): AccountRow[] {
   const rows = db
     .query<
       {
@@ -67,7 +67,7 @@ export function listAccounts(db: Database): AccountRow[] {
         spent: number | null;
         payload: string | null;
       },
-      []
+      [string]
     >(
       `SELECT u.id, u.username, u.display_name, u.is_admin, u.is_agent,
               u.created_at, u.suspended_at, u.removed_at, u.waiting_at,
@@ -80,10 +80,10 @@ export function listAccounts(db: Database): AccountRow[] {
               (SELECT e.payload FROM event e
                 WHERE e.kind = 'user.created' AND e.actor_id = u.id
                 ORDER BY e.id LIMIT 1) AS payload
-       FROM user u WHERE u.kind = 'user'
+       FROM user u WHERE u.kind = 'user' AND (?1 = '' OR u.username = ?1)
        ORDER BY u.created_at DESC, u.id DESC`,
     )
-    .all();
+    .all(only);
   return rows.map((r) => {
     const origin = parseOrigin(r.payload);
     return {

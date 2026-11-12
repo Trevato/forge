@@ -157,6 +157,8 @@ import {
   recoverFinish,
   recoverOptions,
   recoverPage,
+  accessPage,
+  accessSubmit,
   recoverRequest,
   signinOptions,
   signinPasskey,
@@ -660,13 +662,14 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
 
   const session = cookieValue(request, "forge_session");
   if (session !== undefined) {
-    const found = sessionOf(app.db, session);
+    const found = sessionOf(app.db, session, clientAddress(request));
     if (found.ok)
       return {
         user: found.value.user,
         scope: "admin",
         via: "session",
         sessionId: found.value.id,
+        ...(found.value.notice ? { noticeWaiting: true as const } : {}),
       };
   }
 
@@ -915,6 +918,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/signin/parent", parentStart);
   router.add("GET", "/signin/parent/callback", parentCallback);
   router.add("GET", "/signup", signupPage);
+  router.add("GET", "/signin/access/:token", accessPage);
+  router.add("POST", "/signin/access/:token", accessSubmit);
   router.add("GET", "/claim/start/:token", startClaimPage);
   router.add("POST", "/claim/start/:token", startClaimSubmit);
   router.add("POST", "/claim/start/:token/account", startClaimAccountSubmit);

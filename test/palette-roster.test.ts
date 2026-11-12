@@ -153,6 +153,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["model-ceiling", "Model ceiling", "set an account's dollars a day and a run"],
     ["can", "What I can do", "your role and what it allows here"],
     ["people", "People", "who is a guest, a member or an admin; promote or demote"],
+    ["account-access", "Account access", "search people, reset access, end sessions"],
     ["quotas", "Account quotas", "what one account may own, and who changed it"],
     ["limits", "Limits", "what the forge caps, with default and bounds; change one"],
     ["plans", "Plans", "free, small, medium and large: size, price, crew credit, forges; change one"],

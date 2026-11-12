@@ -270,6 +270,7 @@ describe("the forge over MCP", () => {
       "account_role",
       "account_suspend",
       "account_requests",
+      "account_access",
       "flag_winner",
       "restore_drill",
       "model_ceiling",

@@ -63,6 +63,7 @@ const CART = "the seed pins no build with a cart (test/build-cart.test.ts covers
 const UNSEEDED: Record<string, string> = {
   "/:owner/-/teams/:team": ORG,
   "/claim/start/:token": "needs a one-time start claim token, which the seed does not mint (test/start.test.ts covers it)",
+  "/signin/access/:token": "needs a one-time access link an admin minted",
   "/talk/:id": TALK,
   "/docs/:file": "a file name of the documentation folder; the seed supplies no :file",
   "/bring/:id/:job": "needs a bring job of the signed-in person; the seed brings nothing",

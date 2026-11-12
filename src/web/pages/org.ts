@@ -401,6 +401,19 @@ export async function ownerProfile(ctx: Ctx): Promise<Response> {
           ${time(owner.createdAt)}
         </p>
       </div>
+      ${when(
+        ctx.auth.user?.isAdmin === true &&
+          ctx.auth.user.kind === "user" &&
+          owner.kind === "user" &&
+          owner.id !== ctx.auth.user.id &&
+          owner.removedAt === null,
+        () =>
+          btn("Manage account", {
+            href: `/settings/accounts/${encodeURIComponent(owner.username)}`,
+            variant: "ghost",
+            size: "sm",
+          }),
+      )}
       ${when(isSelf, () =>
         btn("New repository", {
           href: `/new?owner=${owner.username}`,

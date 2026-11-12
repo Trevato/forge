@@ -704,7 +704,7 @@ export function sessionsCard(
           ${sessions.map((x) =>
             row({
               title: html`${time(x.createdAt)} ${x.current ? badge("This browser") : null}`,
-              meta: html`last seen ${x.lastSeenAt ? time(x.lastSeenAt) : "not since"}`,
+              meta: html`last seen ${x.lastSeenAt ? time(x.lastSeenAt) : "not since"}${x.address === null ? null : html` · from ${x.address}`}`,
               trail: html`${confirmAction({
                 action: `${base}/sessions/${x.id}/delete`,
                 verb: "Sign out",

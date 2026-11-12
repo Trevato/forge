@@ -35,7 +35,7 @@ const WALKED: Record<string, number> = {
   "src/http/server.ts": 1, // the mode switch
   "src/http/rp.ts": 6, // parent sign-in and link: state cookie set and cleared
   "src/apps/proxy.ts": 2, // app grant, app sign-out
-  "src/web/pages/passkeys.ts": 4, // import, passkey sign-in, passkey add/recovery-link sign-in (+1 mention)
+  "src/web/pages/passkeys.ts": 5, // import, passkey sign-in, passkey add/recovery-link sign-in, access-link sign-in (+1 mention)
   "src/web/pages/site.ts": 4, // sessionCookie() itself and its uses: password sign-in/sign-up, logout; the theme cookie
   "src/web/layout.ts": 4, // the flash set on, and cleared from, a redirect
   "src/web/flash.ts": 2, // forge_flash

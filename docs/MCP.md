@@ -42,6 +42,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | Tool | Actions / kinds | Purpose | Bytes |
 | --- | --- | --- | ---: |
 | `access` | — | Non-browser public-path requests, redacted, newest first (max 500) | 235 |
+| `account_access` | `reset`, `end_sessions` | Reset a person's access with a one-time link, or end their sessions | 339 |
 | `account_requests` | — | List who asked for an account and wait; `answer: allow\|decline` answers one | 250 |
 | `account_role` | — | Make a person a member or a guest; promoting may grant `usdPerMonth` | 374 |
 | `account_suspend` | — | Suspend an account; `suspended: false` lifts | 231 |

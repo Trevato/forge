@@ -9,6 +9,7 @@ import type { Ctx } from "../app/app.ts";
 import type { Command } from "../app/palette.ts";
 import type { Session } from "../session.ts";
 import { entry as access } from "./access.ts";
+import { entry as accountAccess } from "./account_access.ts";
 import { entry as agents } from "./agents.ts";
 import { entry as askData } from "./ask_data.ts";
 import { entry as archived } from "./archived.ts";
@@ -151,6 +152,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   modelGrantEntry,
   modelCeilingEntry,
   people,
+  accountAccess,
   quotas,
   limits,
   plans,

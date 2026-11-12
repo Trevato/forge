@@ -64,6 +64,7 @@ import { prefersJson } from "./form.ts";
 import { notePhase } from "../core/route_timing.ts";
 import { html, raw, when, type Html } from "./html.ts";
 import { noRoom } from "../spawn/door.ts";
+import { takeNotice } from "../core/access_link.ts";
 import { quotaFull } from "../spawn/quota.ts";
 import { icon, inlineIcons, pointAtSprite, themeGlyph } from "./icons.ts";
 import { btn, copyField, hintAttr, kbd, menu, type MenuItem } from "./ui.ts";
@@ -772,7 +773,14 @@ export function page(options: PageOptions, status = 200): Response {
   const shareImage = `${ctx.url.origin}${options.ogImage !== undefined && options.ogImage.startsWith("/og/") ? options.ogImage : "/og/site.png"}`;
   const theme = ctx.theme ?? options.theme;
   const cookieFlash = readFlash(ctx.request);
-  const flash = options.flash ?? cookieFlash;
+  // What an admin did to this account is told on the first page a signed-in
+  // browser renders, and marked told only here, where it is shown.
+  const notice =
+    options.flash === undefined && cookieFlash === undefined && ctx.auth.noticeWaiting === true && ctx.auth.user !== undefined && ctx.request.method === "GET"
+      ? takeNotice(ctx.app.db, ctx.auth.user.id, new Date())
+      : undefined;
+  const flash: Flash | undefined =
+    options.flash ?? cookieFlash ?? (notice === undefined ? undefined : { tone: "attn", message: notice });
   const links = pageLinks(ctx);
 
   // The body's markup. Every `icon()` left a `<use>` behind; they are aimed

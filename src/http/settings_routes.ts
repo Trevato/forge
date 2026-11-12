@@ -32,6 +32,7 @@ import { sourcesPage } from "../web/pages/sources.ts";
 import { requestAct } from "../web/requests_card.ts";
 import { captureStart, captureStop, networksImport, scrapesExport, scrapesPage } from "../web/pages/scrapes.ts";
 import {
+  accessAct,
   accountAct,
   retireAct,
   retirePage,
@@ -270,6 +271,8 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("POST", "/settings/accounts/:username/model", grantAct);
   router.add("POST", "/settings/accounts/:username/ceiling", ceilingAct);
   router.add("GET", "/settings/accounts/:username", personSignInsPage);
+  router.add("POST", "/settings/accounts/:username/reset", accessAct("reset"));
+  router.add("POST", "/settings/accounts/:username/end-sessions", accessAct("end-sessions"));
   router.add(
     "POST",
     "/settings/accounts/:username/tokens/:id/delete",

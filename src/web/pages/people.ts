@@ -15,6 +15,7 @@ import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.t
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
+import { isLocalPath } from "../flash.ts";
 import { html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { badge, btn, empty, userLink } from "../ui.ts";
@@ -114,7 +115,8 @@ export async function roleAct(ctx: Ctx): Promise<Response> {
   const raw = field(form, "usd").trim().replace(/^\$/, "");
   const usd = raw === "" || Number(raw) === 0 ? null : /^\d{1,6}(\.\d{1,2})?$/.test(raw) ? Number(raw) : NaN;
   const done = timePhase(ctx.request, "role", () => setRole(ctx.app, ctx.auth.user as User, username, role, usd));
-  const back = "/settings/people";
+  const wanted = field(form, "back");
+  const back = isLocalPath(wanted) ? wanted : "/settings/people";
   if (!done.ok) {
     if (done.error === "not_found" || getUserByName(ctx.app.db, username) === undefined) return notFoundPage(ctx);
     return flashTo(ctx, back, {

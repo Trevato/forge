@@ -479,11 +479,17 @@ export async function changePassword(
 ): Promise<Result<void, "weak_password" | "password_too_long" | "no_such_user">> {
   if (next.length < MIN_PASSWORD) return err("weak_password");
   if (!withinPasswordCap(next)) return err("password_too_long");
-  const hash = await Bun.password.hash(next, "argon2id");
-  const changed = db
-    .query("UPDATE user SET password_hash = ?1 WHERE id = ?2 AND kind = 'user'")
-    .run(hash, userId).changes;
-  return changed > 0 ? ok() : err("no_such_user");
+  return setPasswordHash(db, userId, await hashPassword(next)) ? ok() : err("no_such_user");
+}
+
+/** A password's stored form, made apart from the write so a caller can hash first and write inside its own transaction. */
+export function hashPassword(password: string): Promise<string> {
+  return Bun.password.hash(password, "argon2id");
+}
+
+/** Store a hash made by `hashPassword`; whether a person was there to take it. */
+export function setPasswordHash(db: Database, userId: string, hash: string): boolean {
+  return db.query("UPDATE user SET password_hash = ?1 WHERE id = ?2 AND kind = 'user'").run(hash, userId).changes > 0;
 }
 
 export function getUserById(db: Database, userId: string): User | undefined {

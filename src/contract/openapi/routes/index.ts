@@ -248,7 +248,9 @@ export { route as patchApiV1ReposOwnerNameLabelsId } from "./patchApiV1ReposOwne
 export { route as patchApiV1ReposOwnerNamePullsNumber } from "./patchApiV1ReposOwnerNamePullsNumber.ts";
 export { route as patchApiV1User } from "./patchApiV1User.ts";
 export { route as postApiV1AdminAccountsUsernameCeiling } from "./postApiV1AdminAccountsUsernameCeiling.ts";
+export { route as postApiV1AdminAccountsUsernameEndSessions } from "./postApiV1AdminAccountsUsernameEndSessions.ts";
 export { route as postApiV1AdminAccountsUsernameModelGrant } from "./postApiV1AdminAccountsUsernameModelGrant.ts";
+export { route as postApiV1AdminAccountsUsernameReset } from "./postApiV1AdminAccountsUsernameReset.ts";
 export { route as postApiV1AdminAccountsUsernameRole } from "./postApiV1AdminAccountsUsernameRole.ts";
 export { route as postApiV1AdminAccountsUsernameSuspend } from "./postApiV1AdminAccountsUsernameSuspend.ts";
 export { route as postApiV1AdminAccountsUsernameUnsuspend } from "./postApiV1AdminAccountsUsernameUnsuspend.ts";
