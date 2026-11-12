@@ -64,8 +64,10 @@ import {
   automaticRunsSince,
   cancelRun,
   createRun,
+  finishRun,
   getRun,
   leaseLapsed,
+  REQUEUED_SUMMARY,
   listActive,
   listQueued,
   PULL_STOPPED,
@@ -1363,6 +1365,9 @@ function forgetWorkdir(app: App, repo: Repo, pull: Pull): void {
   });
 }
 
+/** What a run says when a restart cut it off a second time in a row. */
+export const STOPPED_TWICE = "stopped twice by its forge restarting; not tried again";
+
 /**
  * A run a dead forge left `running` was cut off with it: its lease has
  * lapsed. Each ends here as cancelled, and the same task goes back on the
@@ -1375,8 +1380,15 @@ function forgetWorkdir(app: App, repo: Repo, pull: Pull): void {
  */
 export function requeueInterrupted(app: App): void {
   for (const run of listActive(app.db, "agent")) {
-    if (run.state === "running" && leaseLapsed(run, STALE_AFTER_MS))
-      requeue(app, run, "interrupted by a restart; queued again");
+    if (run.state !== "running" || !leaseLapsed(run, STALE_AFTER_MS)) continue;
+    // Queued by an interruption and cut off again: a forge stopped every
+    // 90 s would loop it until its credit is gone. Fail it, saying why.
+    if ((run.summary ?? "").startsWith(REQUEUED_SUMMARY)) {
+      finishRun(app.db, run.id, { state: "failed", summary: STOPPED_TWICE });
+      log.info("run failed, stopped twice", { run: run.id });
+      continue;
+    }
+    requeue(app, run, REQUEUED_SUMMARY);
   }
 }
 
