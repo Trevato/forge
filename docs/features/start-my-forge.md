@@ -20,3 +20,7 @@ The form carries `from=home`. If the door refuses a stranger's start (rate limit
 ## Three screens, no link to copy
 
 When the door accepts a start from the home page (`from=home`, signed out), the browser is not shown the claim link. If the new forge already answers, it gets a 303 straight to its `/claim#<code>` form; if it is still booting, a "Making your forge" page polls `GET /forges/<name>/ready` and goes on by itself (`walkOn` in `src/web/pages/new-forge.ts`). On the claim form the person picks a username and password and lands signed in as the forge's admin. Screens: `/`, the claim form, the forge. Test: `test/stranger-three-screens.test.ts` (in the gate, which runs every test file).
+
+## One path, one button name
+
+`SITE_PATH` and `START_BUTTON` (`src/web/site_line.ts`) hold the path as short sentences and the button's one name. The sentence is the meta description of `/`, `/pricing` and `/agents`, and sits in `/llms.txt` beside a Plans table made from the plans setting (`src/web/offer.ts`, also the `Offer` data on `/pricing`); the home page itself keeps one sentence. `/`, `/pricing` (the Free plan's button, posted to `/forges/start`), `/agents` and the terminal command all say "Start my forge", and all tell the person they choose a username and password next. Test: `test/share-path.test.ts`.

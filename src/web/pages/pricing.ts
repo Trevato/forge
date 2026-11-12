@@ -20,6 +20,9 @@ import { notFoundPage, pageHead } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
+import { START_BUTTON, SITE_PATH } from "../site_line.ts";
+import { offerData } from "../offer.ts";
+import { safeJson } from "../structured_data.ts";
 import { btn, field as formField, row } from "../ui.ts";
 import { claimLinkBody } from "./new-forge.ts";
 
@@ -43,7 +46,7 @@ function plansView(ctx: Ctx, values: Values, errors: Partial<Record<Refusal["fie
       title: html`${p.name}`,
       meta: html`${sizeWords(p.size)}. ${p.says}${p.creditUsd > 0 && selling ? html` $${p.creditUsd} of crew credit each month.` : null}`,
       trail: free
-        ? html`<span class="muted">Free</span> ${btn("Start free", { name: "plan", value: p.key })}`
+        ? html`<span class="muted">Free</span> ${btn(START_BUTTON, { formaction: "/forges/start" })}`
         : paid
           ? html`<span>$${p.priceUsd} a month</span> ${btn(`Get ${p.name}`, { name: "plan", value: p.key, variant: "primary" })}`
           : html`<span class="muted">Ask the operator</span>`,
@@ -84,7 +87,14 @@ export function pricingPage(ctx: Ctx): Response {
   if (!isBuyer(ctx)) return notFoundPage(ctx);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const rendering = performance.now();
-  const response = page({ ctx, title: "Get your own forge", body: plansView(ctx, { name: (ctx.url.searchParams.get("name") ?? "").slice(0, 38), email: "" }, {}) });
+  const plans = getPlans(ctx.app.db);
+  const response = page({
+    ctx,
+    title: "Open Platform Forge: pricing and your own forge",
+    description: SITE_PATH(ctx.url.origin),
+    jsonLd: safeJson({ "@context": "https://schema.org", "@type": "Product", name: "Open Platform Forge", url: `${ctx.url.origin}/`, offers: offerData(plans, ctx.url.origin) }),
+    body: plansView(ctx, { name: (ctx.url.searchParams.get("name") ?? "").slice(0, 38), email: "" }, {}),
+  });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
 }

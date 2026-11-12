@@ -13,6 +13,7 @@ import { html, type Html } from "../html.ts";
 import { btn, disclosure, field as formField } from "../ui.ts";
 import { page } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
+import { START_BUTTON, SITE_PATH } from "../site_line.ts";
 import { llmsBody } from "../standards.ts";
 
 /** An address in prose, outside code, made a link; a template (`{owner}`) stays words. */
@@ -67,16 +68,15 @@ export function agentsPage(ctx: Ctx): Response {
   return timePhase(ctx.request, "render", () => page({
     ctx,
     title: "For AI assistants",
-    description:
-      "What this forge is and how an AI assistant can help you use it: build one of its public apps, report a problem, or get a forge of your own.",
+    description: SITE_PATH(ctx.url.origin),
     body: html`${pageHead("For AI assistants", {
         sub: html`People start at <a href="/">home</a>. Assistants: <a href="/llms.txt">/llms.txt</a>`,
       })}
       <section class="stack" aria-labelledby="agent-forge-h">
         <h2 id="agent-forge-h">Get a forge of your own</h2>
-        <form method="post" action="/forges/new" class="stack" id="agent-forge">
+        <form method="post" action="/forges/start" class="stack" id="agent-forge">
           ${formField({ label: "Name", name: "name", required: true })}
-          ${btn("Make my forge", { variant: "primary" })}
+          ${btn(START_BUTTON, { variant: "primary" })}
         </form>
       </section>
       <div class="prose break"><ol id="agent-steps" aria-label="Build an app with no account">${firstSteps(body).map((step) => html`<li>${stepLine(step)}</li>`)}</ol></div>

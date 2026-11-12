@@ -749,7 +749,7 @@ function footer(ctx: Ctx, own?: Html): Html {
 function pageDescription(options: PageOptions): string {
   const own = options.description?.trim().split(/\r?\n/)[0]?.trim() ?? "";
   const line = own === "" ? SITE_LINE : own;
-  return line.length <= 200 ? line : `${line.slice(0, 197).trimEnd()}…`;
+  return line.length <= 360 ? line : `${line.slice(0, 357).trimEnd()}…`;
 }
 
 /**
@@ -759,7 +759,7 @@ function pageDescription(options: PageOptions): string {
 export function tabTitle(title: string): string {
   const own = title.replace(/(?: · forge)+$/, "");
   if (own === "" || own === "forge") return "forge";
-  return own.startsWith("forge: ") ? own : `${own} · forge`;
+  return own.startsWith("forge: ") || own.startsWith("Open Platform Forge: ") ? own : `${own} · forge`;
 }
 
 export function page(options: PageOptions, status = 200): Response {
@@ -767,6 +767,7 @@ export function page(options: PageOptions, status = 200): Response {
   // inline <style> is admitted by the hash of its own text, so the same page
   // is the same bytes for everyone and can be cached (docs/web.md).
   const { ctx } = options;
+  const shareImage = `${ctx.url.origin}${options.ogImage !== undefined && options.ogImage.startsWith("/og/") ? options.ogImage : "/og/site.png"}`;
   const theme = ctx.theme ?? options.theme;
   const cookieFlash = readFlash(ctx.request);
   const flash = options.flash ?? cookieFlash;
@@ -800,7 +801,7 @@ export function page(options: PageOptions, status = 200): Response {
         />
         <title>${tabTitle(options.title)}</title>
         <meta name="description" content="${pageDescription(options)}" />
-        <meta property="og:site_name" content="forge" />
+        <meta property="og:site_name" content="Open Platform Forge" />
         <meta property="og:type" content="website" />
         <meta property="og:title" content="${options.title}" />
         <meta property="og:description" content="${pageDescription(options)}" />
@@ -821,14 +822,11 @@ export function page(options: PageOptions, status = 200): Response {
         }
         <meta
           property="og:image"
-          content="${ctx.url.origin}${
-            options.ogImage !== undefined && options.ogImage.startsWith("/og/")
-              ? options.ogImage
-              : "/og/site.png"
-          }"
+          content="${shareImage}"
         />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="${shareImage}" />
         <meta name="twitter:card" content="summary_large_image" />
         <link rel="manifest" href="/manifest.webmanifest" />
         <link

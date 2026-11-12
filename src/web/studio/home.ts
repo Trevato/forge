@@ -45,6 +45,7 @@ import { liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
 import { fragment, page, redirect } from "../layout.ts";
 import { START_REFUSALS, startRefusalIn } from "../start_refusal.ts";
+import { SITE_PATH, SITE_WHAT } from "../site_line.ts";
 import { siteStructuredData } from "../structured_data.ts";
 import { running } from "../../kernel/version.ts";
 import { homeMilestones } from "./milestone_lines.ts";
@@ -927,8 +928,8 @@ bun run src/main.ts</code></pre>
   </div>`;
   const res = page({
     ctx,
-    title: "forge: software for what you're building, yours to keep",
-    description: "Your own forge, with a private AI crew that builds your apps, games and business tools. Open source, and yours to keep.",
+    title: "Open Platform Forge: software for what you're building, yours to keep",
+    description: `${SITE_WHAT} ${SITE_PATH(origin)}`,
     body,
     scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${funnelJs}\n${startNameJs}\n${JS_FLAG_JS}`,
     jsonLd: siteStructuredData(origin, running().version),

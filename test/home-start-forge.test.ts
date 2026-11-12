@@ -39,7 +39,7 @@ test("a visitor with no cookies sees the start form on /", async () => {
   expect(form).toContain('autocapitalize="none"');
   expect(form).toContain('autocomplete="off"');
   expect(form).not.toContain("class=\"hint\"");
-  expect(body.match(/Start my forge/g)).toHaveLength(1);
+  expect(body.match(/Start my forge\s*<\/button>/g)).toHaveLength(1);
 });
 
 test("the first view has one primary button, and the first sentence is one", async () => {
