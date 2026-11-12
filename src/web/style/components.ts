@@ -812,9 +812,9 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 /* A dialog centres itself with its own auto margins, which the reset zeroes
    — so anything that wants to be centred has to say so again. */
 .palette { width: min(620px, calc(100vw - 24px)); margin: 12dvh auto auto; }
-@media (max-width: 719px) {
-  .palette { width: 100%; max-width: 100%; margin: auto auto 0; }
-}
+/* No scrolling the page behind an open palette. */
+html:has(.palette[open]) { overflow: hidden; }
+.palette [data-palette-close] { display: none; }
 .palette .palette-input {
   width: 100%; border: 0; border-bottom: 1px solid var(--border); border-radius: 0;
   min-height: 48px; padding: 0 16px; background: none; font-size: 15px; box-shadow: none;
@@ -861,6 +861,28 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .palette-empty {
   display: flex; align-items: center; justify-content: center; gap: 6px;
   height: 100%; margin: 0; color: var(--muted-fg); font-size: 13px; text-align: center;
+}
+
+/* Last of the palette rules, so nothing above can override the sheet. */
+/* On a phone the palette is a sheet pinned to the top of the visual viewport
+   (the script sets --vv-top and --vv-h as the keyboard comes and goes), its
+   list scrolling inside it, clear of the notch and the home indicator. */
+@media (max-width: 719px) {
+  .palette {
+    position: fixed; inset: auto 0 auto 0; width: 100%; max-width: 100%; margin: 0;
+    top: calc(var(--vv-top, 0px) + env(safe-area-inset-top, 0px));
+    height: calc(var(--vv-h, 100dvh) - env(safe-area-inset-top, 0px));
+    max-height: calc(var(--vv-h, 100dvh) - env(safe-area-inset-top, 0px));
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg); border-top: 0; border-bottom: 1px solid var(--border);
+    display: flex; flex-direction: column;
+  }
+  .palette[open] { display: flex; }
+  .palette .palette-input { flex: none; font-size: 16px; }
+  .palette-list { flex: 1; min-height: 0; height: auto; }
+  .palette-item { min-height: 44px; }
+  .palette-foot { flex: none; padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)); }
+  .palette-foot [data-keys] { display: none; }
+  .palette [data-palette-close] { display: inline-flex; margin-left: auto; min-height: 44px; }
 }
 
 /* ---- toast / flash ---- */

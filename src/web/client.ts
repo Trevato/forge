@@ -2173,7 +2173,9 @@ const shellCore = /* js */ `
     input.value = '';
     render(false);
     var close = openModal(dlg, function () {
-      dlg.onkeydown = null; dlg.onpointerdown = null;
+      dlg.onkeydown = null; dlg.onpointerdown = null; dlg.onclick = null;
+      if (vv) { vv.removeEventListener('resize', fit); vv.removeEventListener('scroll', fit); }
+      dlg.style.removeProperty('--vv-top'); dlg.style.removeProperty('--vv-h');
       list.onclick = null; list.onpointermove = null;
       input.oninput = null;
       window.clearTimeout(remoteTimer);
@@ -2182,8 +2184,32 @@ const shellCore = /* js */ `
     });
     closePalette = close;
     dlg.onkeydown = onKey;
-    // A press anywhere but the input would move the focus off it.
-    dlg.onpointerdown = function (e) { if (e.target !== input) e.preventDefault(); };
+    // The sheet follows the visual viewport, so the on-screen keyboard
+    // shrinks it instead of covering its input.
+    var vv = window.visualViewport;
+    function fit() {
+      if (!vv) return;
+      dlg.style.setProperty('--vv-top', Math.max(0, vv.offsetTop) + 'px');
+      dlg.style.setProperty('--vv-h', Math.max(0, vv.height) + 'px');
+    }
+    if (vv) { fit(); vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); }
+    // A press anywhere but the input would move the focus off it. Where it
+    // began is remembered: a drag that starts inside and ends on the
+    // backdrop is a selection, not a dismissal.
+    var pressedOutside = false;
+    function outside(e) {
+      var r = dlg.getBoundingClientRect();
+      return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+    }
+    dlg.onpointerdown = function (e) {
+      pressedOutside = e.target === dlg && outside(e);
+      if (e.target !== input) e.preventDefault();
+    };
+    dlg.onclick = function (e) {
+      var x = e.target && e.target.closest ? e.target.closest('[data-palette-close]') : null;
+      if (x || (e.target === dlg && pressedOutside && outside(e))) { e.preventDefault(); close(); }
+      pressedOutside = false;
+    };
     input.oninput = function () { ask(input.value.trim()); render(false); };
     list.onpointermove = function (e) {
       var a = e.target && e.target.closest ? e.target.closest('.palette-item') : null;

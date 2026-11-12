@@ -10,6 +10,8 @@ The command palette is the keyboard-first fuzzy-find overlay (`⌘K` / `Ctrl K`,
 - `.palette-list` — the scrolling results area under the input: a fixed height (not a ceiling) so the dialog does not jump as rows come and go.
 - `.palette-foot` — the faint one-line strip of key hints under the list, set off by a rule above it.
 
+Dismissal and the phone: a click or tap on the backdrop closes the palette (a drag that began inside does not), and the page behind does not scroll. Under 720px the dialog is a sheet pinned to the top of the visual viewport (`--vv-top`, `--vv-h`, set by `openPalette()`), so the keyboard shrinks it; the input is 16px, rows 44px, and the foot trades its key hints for a link-variant `[data-palette-close]` button. No new class.
+
 The palette's tell row (`data-tell`, last in the list) sends the typed sentence to `/tell`. Its answer is one `.toast[data-palette-tell]` at the top of `#main`, drawn by `tellFromHere()` in `src/web/client.ts` from existing parts only: `.toast` and `.toast-body`, a link-variant small `.btn` as the dismiss ×, and focus moved to the toast (`tabindex="-1"`, `role="status"`) because the palette that held it has just closed. It clears itself after 12 seconds. No new component class.
 
 ## Keys beside their actions

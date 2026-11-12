@@ -588,7 +588,8 @@ function overlays(): Html {
       <input class="input palette-input" type="text" role="combobox" aria-expanded="true" aria-haspopup="listbox" aria-controls="palette-list" aria-autocomplete="list" placeholder="Jump to a repository, page or action…" aria-label="Jump to anywhere" autocomplete="off" autocapitalize="off" spellcheck="false" />
       <div class="palette-list" id="palette-list" role="listbox" aria-label="Results"></div>
       <div class="palette-foot">
-        ${kbd(["↑", "↓"])} navigate ${kbd(["↵"])} open ${kbd(["⌘", "↵"])} its app ${kbd(["esc"])} close
+        <span data-keys>${kbd(["↑", "↓"])} navigate ${kbd(["↵"])} open ${kbd(["⌘", "↵"])} its app ${kbd(["esc"])} close</span>
+        <button class="btn" data-variant="link" type="button" data-palette-close>Close</button>
       </div>
     </dialog>
     <dialog class="dialog" id="help-dialog" aria-labelledby="help-title">
