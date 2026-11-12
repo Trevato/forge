@@ -25,6 +25,8 @@ State shared between modules through process memory, not the database, is named 
 
 `src/core/transfer.ts`: the old owner/name pairs a transfer left behind (`repo_redirect`), held per database after the first request reads them and dropped by `transferRepo`, so a request under a path nothing moved from costs no statement (#569).
 
+`src/system/footing.ts`: `footing`, the last reading of what the forge stands on from the kube API (#11685), held 60 s so /system, its terminal screen (`src/tui/screens/footing.ts`, palette entry for admins) and the MCP `system` tool (`kind: footing`) share one read; a probe that throws is not retried for 60 s; one reading, gone on restart.
+
 `src/apps/timer_fire.ts`: `inFlight`, the ids of timers being fired in this process, so a slow app's timer is never fired twice at once; at most the timers due, gone when each settles. The timers themselves are rows (`timer`), read at every boot, never memory.
 
 `src/actions/jobs.ts`: `jobReach.override`, a test seam only (a test hands in its own way to reach an app); the real one is `runtimeReach`. A durable job's runs are the app's own rows (`src/jobs.ts`, carried in the app template bundle `templates/app-template.json`; the template repository `trevato/app-template` must take the same files before a forge that reads that repository hands them out); the template's `Jobs` keeps in process memory only the ids of runs being advanced now (`active`), so a restart forgets nothing it needs.

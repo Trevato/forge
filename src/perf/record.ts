@@ -50,6 +50,8 @@ export interface PerfRecord {
   /** When `pattern` was first seen in this process, undefined if never. */
   first(pattern: string): number | undefined;
   patterns(): string[];
+  /** Forget every route's samples (not the minute ledger), as `loopWatch.clear` does its stalls: for a test that reads the record whole. */
+  clear(): void;
   /** Who used the answering time, by the minute: exact however the samples are thinned. */
   readonly ledger: TrafficLedger;
 }
@@ -100,6 +102,10 @@ export function createPerfRecord(valid: (key: string) => boolean = validPattern)
     traffic: (pattern, since) => (real.get(pattern) ?? []).filter((s) => s.at >= since),
     first: (pattern) => firsts.get(pattern),
     patterns: () => [...real.keys()],
+    clear() {
+      real.clear();
+      firsts.clear();
+    },
   };
 }
 

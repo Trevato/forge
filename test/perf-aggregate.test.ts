@@ -16,6 +16,16 @@ test("memory is capped", () => {
   for (let i = 0; i < MAX_SAMPLES + 50; i++) r.add("/x", { at, ms: 1, signedIn: true, phases: [] });
   expect(r.traffic("/x", 0).length).toBeLessThanOrEqual(MAX_SAMPLES);
 });
+test("clear forgets every pattern's samples and first sight, and the record fills again", () => {
+  const r = createPerfRecord();
+  r.add("/x", { at, ms: 1, signedIn: true, phases: [] });
+  r.clear();
+  expect(r.patterns()).toEqual([]);
+  expect(r.traffic("/x", 0)).toEqual([]);
+  expect(r.first("/x")).toBeUndefined();
+  r.add("/x", { at: at + 1, ms: 2, signedIn: true, phases: [] });
+  expect(r.first("/x")).toBe(at + 1);
+});
 test("a Server-Timing header becomes phases, hits marked", () => {
   expect(parseServerTiming('app;dur=5.0, kpis;dur=4400.0;desc="hit"')).toEqual([
     { name: "app", ms: 5, hit: false },

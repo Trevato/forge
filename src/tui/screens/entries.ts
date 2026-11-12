@@ -57,6 +57,7 @@ import { entry as plans } from "./plans.ts";
 import { entry as economics } from "./economics.ts";
 import { entry as money } from "./money.ts";
 import { entry as loopStalls } from "./loopstalls.ts";
+import { entry as footing } from "./footing.ts";
 import { entry as waiting } from "./waiting.ts";
 import { entry as slowPagesEntry } from "./slowpages.ts";
 import { entry as maintenance } from "./maintenance.ts";
@@ -122,6 +123,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   homePins,
   system,
   loopStalls,
+  footing,
   waiting,
   slowPagesEntry,
   telemetry,
