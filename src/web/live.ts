@@ -102,7 +102,8 @@ export const liveClientJs = /* js */ `
   // (a burst of events is one fetch, never sooner than BATCH after the first):
   // the page's own HTML is fetched, and every row it has that the list lacks is
   // inserted where the fresh order puts it; a row that changed is replaced in
-  // place unless the reader is in it. A reader at the top sees rows slide in;
+  // place unless the reader is in it, and a row the page no longer lists is
+  // removed unless the reader is in it. A reader at the top sees rows slide in;
   // anyone scrolled, typing or reading has the rows added above with the
   // scroll compensated by exactly their height, and a quiet "N above" marker
   // to jump up when they choose. Nothing asks for a refresh.
@@ -151,16 +152,40 @@ export const liveClientJs = /* js */ `
     var a = document.activeElement;
     return !!a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable === true);
   }
-  function mergeList(mine, theirs, calm) {
+  // Whether a fetched list is only part of what the server has: the page
+  // offers a pager link (ui.ts pager(), or a page's own nav.pager) or the
+  // list ends in an "and N more" row ([data-more]).
+  function offersMore(page, list) {
+    return !!(page.querySelector('nav.pager a[href]') || list.querySelector('[data-more]'));
+  }
+  // Merges one fetched list into the one on screen. Returns how many rows
+  // arrived (counted for the marker: only those above the reader when not
+  // calm) and how many were removed.
+  function mergeList(mine, theirs, calm, partial) {
     var olds = kids(mine);
     var have = {};
     olds.forEach(function (li) { var k = keyOf(li); if (k) have[k] = li; });
-    // The row the reader is looking at: it must stay where it is.
+    // A row the server no longer lists (deleted, filtered out) goes, unless
+    // the reader is in it. A complete page is the whole list, so every row
+    // it lacks goes — the last, the only one, all of them. A page that offers
+    // more is truncated: a row pushed off it, or loaded past it, is not gone,
+    // so only rows before the last row it still lists are candidates.
+    var listed = {};
+    kids(theirs).forEach(function (n) { var k = keyOf(n); if (k) listed[k] = true; });
+    var lastAt = partial ? -1 : olds.length;
+    if (partial) olds.forEach(function (li, at) { var k = keyOf(li); if (k && listed[k]) lastAt = at; });
+    var doomed = olds.filter(function (li, at) {
+      var k = keyOf(li);
+      return at < lastAt && k && !listed[k] && !held(li);
+    });
+    // The row the reader is looking at: it must stay where it is. Never one
+    // that is about to be removed.
+    var kept = olds.filter(function (li) { return doomed.indexOf(li) < 0; });
     var ref = null;
-    for (var i = 0; i < olds.length; i++) {
-      if (olds[i].getBoundingClientRect().bottom > 0) { ref = olds[i]; break; }
+    for (var i = 0; i < kept.length; i++) {
+      if (kept[i].getBoundingClientRect().bottom > 0) { ref = kept[i]; break; }
     }
-    if (!ref) ref = olds[0] || null;
+    if (!ref) ref = kept[0] || null;
     var refTop = ref ? ref.getBoundingClientRect().top : 0;
     var prev = null, added = [];
     kids(theirs).forEach(function (n) {
@@ -184,7 +209,17 @@ export const liveClientJs = /* js */ `
       prev = fresh;
       added.push(fresh);
     });
-    if (added.length === 0) return 0;
+    if (doomed.length > 0) {
+      doomed.forEach(function (li) { delete have[keyOf(li)]; li.remove(); });
+    }
+    if (added.length > 0 || doomed.length > 0) {
+      if (!calm && ref) {
+        var shift = ref.getBoundingClientRect().top - refTop;
+        if (shift !== 0) window.scrollBy(0, shift);
+      }
+    }
+    var out = { added: 0, removed: doomed.length };
+    if (added.length === 0) return out;
     if (calm) {
       added.forEach(function (n) {
         if (still) return;
@@ -193,27 +228,32 @@ export const liveClientJs = /* js */ `
         n.addEventListener('animationend', done);
         setTimeout(done, 400);
       });
-      return added.length;
+      out.added = added.length;
+      return out;
     }
     var gone = ref ? 0 : added.length;
     if (ref) {
-      var delta = ref.getBoundingClientRect().top - refTop;
-      if (delta !== 0) window.scrollBy(0, delta);
       added.forEach(function (n) { if (n.compareDocumentPosition(ref) & 4) gone++; });
     }
-    return gone;
+    out.added = gone;
+    return out;
   }
   function mergePage(fresh) {
     var mine = document.querySelectorAll('ul.list');
     var theirs = fresh.querySelectorAll('ul.list');
     if (mine.length === 0 || mine.length !== theirs.length) return;
     var calm = (window.pageYOffset || 0) < 8 && !typing();
-    var total = 0;
+    var total = 0, removed = 0;
     for (var i = 0; i < mine.length; i++) {
       if (mine[i].closest('#app-previews, #app-head')) continue;
-      total += mergeList(mine[i], theirs[i], calm);
+      var got = mergeList(mine[i], theirs[i], calm, offersMore(fresh, theirs[i]));
+      total += got.added;
+      removed += got.removed;
     }
-    if (total === 0) return;
+    if (total === 0) {
+      if (removed > 0) say(removed === 1 ? '1 item removed' : removed + ' items removed');
+      return;
+    }
     if (!calm) setAbove(above + total);
     say(total === 1 ? '1 new item' : total + ' new items');
   }
