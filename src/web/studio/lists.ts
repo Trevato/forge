@@ -845,8 +845,8 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
                 run.state === "failed"
                   ? html`${noteLine(info.note)} · ${time(run.finishedAt ?? run.createdAt)}`
                   : run.state === "queued" && run.notBefore !== null
-                    ? html`${noteLine("paused on a limit, resumes soon")} · ${time(run.createdAt)}`
-                  : time(run.finishedAt ?? run.createdAt),
+                    ? html`${noteLine(info.note)} · ${time(run.createdAt)}`
+                    : time(run.finishedAt ?? run.createdAt),
               trail: wordBadge(info.word),
             });
           }),

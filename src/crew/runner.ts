@@ -544,7 +544,11 @@ async function runClaimed(
     });
     const paused = cancelRun(app.db, run.id, outcome.summary);
     if (paused) announceRun(app, paused);
-    return { resumeAt: outcome.resumeAt, attempt: run.attempt + 1 };
+    return {
+      resumeAt: outcome.resumeAt,
+      attempt: run.attempt + 1,
+      summary: outcome.summary,
+    };
   }
   // A run the provider or a restart cut short says so, and when it goes
   // on: interrupted, never a park (`interrupted.ts`).

@@ -126,6 +126,7 @@ import {
 import { certain } from "./decide.ts";
 import { readRunLog } from "../runs/log.ts";
 import { whenText } from "./limits.ts";
+import { pauseCause } from "./pacing.ts";
 import {
   executeAgentRun,
   workdirFor,
@@ -1447,6 +1448,7 @@ function resumeLater(app: App, run: Run, pause: Pause): void {
     until: pause.resumeAt,
     attempt: pause.attempt,
     queued: queued?.id,
+    cause: pauseCause(pause.summary ?? ""),
   });
 }
 

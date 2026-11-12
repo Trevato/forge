@@ -13,6 +13,7 @@
 import { STEER_SAYS, steerRepoRun } from "../../actions/runs.ts";
 import { steerRefusedWords } from "../../actions/steer_words.ts";
 import { placementWords } from "../../checks/placement.ts";
+import { pausedNote } from "../../crew/pacing.ts";
 import { getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
 import type { Run, RunState } from "../../core/runs.ts";
@@ -85,7 +86,14 @@ export function runRows(
       title: `${run.state.padEnd(9)} ${runTitle(run, names, set)}${about === undefined ? "" : ` · #${about.number} ${about.title}`}`,
       ...(tone === undefined ? {} : { tone }),
       ...(runHollow(run.state) ? { hollow: true } : {}),
-      secondary: run.summary === "" ? run.reason : run.summary,
+      // A queued run held back by a limit says so, and when it resumes —
+      // the same words the web card uses (`crew/pacing.ts`).
+      secondary:
+        run.state === "queued" && run.notBefore !== null
+          ? pausedNote(run.notBefore)
+          : run.summary === ""
+            ? run.reason
+            : run.summary,
       meta: metaOf(
         run.commitOid === "" ? "" : run.commitOid.slice(0, 7),
         costText(run.costUsd),

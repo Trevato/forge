@@ -23,6 +23,7 @@ import { canEnterApp, getRepoById, type Repo } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
 import type { WindowStanding } from "../../core/standing.ts";
 import { whenText } from "../../crew/limits.ts";
+import { pausedNote } from "../../crew/pacing.ts";
 import { reviewWaitsFor, waitsForReviewer } from "../../crew/review.ts";
 import { getIssueById, getIssuesByIds } from "../../core/issues.ts";
 import {
@@ -417,7 +418,7 @@ export async function runWord(
   if (run.state === "queued")
     return run.notBefore === null
       ? { word: "waiting", note: "queued" }
-      : { word: "waiting", note: "paused, resumes soon" };
+      : { word: "waiting", note: pausedNote(run.notBefore) };
   if (run.state === "running") {
     // Worked out from what the run did, never what it says (`runs/state.ts`).
     const shown = shownState(ctx.db, run);

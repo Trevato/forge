@@ -45,7 +45,7 @@ describe("an agent run's timing line", () => {
       repo,
       (r) =>
         r.issueId === issue.value.id &&
-        (!paused || r.summary.startsWith("paused:")),
+        (!paused || (r.state === "cancelled" && r.summary.startsWith("paused:"))),
       60_000,
     );
     const lines = readRunLog(standIn.dataDir, run.id).lines;

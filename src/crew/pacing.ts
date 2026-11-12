@@ -107,3 +107,37 @@ export function pauseReason(
   const who = name === undefined ? "the" : `${name}'s`;
   return `${who} ${LABEL[limit.window]} window is full until ${whenText(limit.resetsAt)}`;
 }
+
+/**
+ * What a paused run's summary says caused the pause, in a word for the log:
+ * the provider's balance ("credit"), a full window or limit ("rate limit"),
+ * the network, or an account resting. Read from the summary the run wrote.
+ */
+export function pauseCause(summary: string): string {
+  const said = summary.replace(/^paused: /, "").toLowerCase();
+  if (/\b(credit|balance|billing|budget|quota)\b/.test(said)) return "credit";
+  if (/\bnetwork\b/.test(said)) return "network";
+  if (/\b(window|limit|rate|overloaded|resting)\b/.test(said)) return "rate limit";
+  return "other";
+}
+
+/**
+ * `07:21 UTC` when `at` falls on `now`'s UTC day, `2026-11-14 07:21 UTC`
+ * when it does not: a weekly window that lifts in days must not read like
+ * a time later today.
+ */
+export function resumeText(at: Date, now: Date = new Date()): string {
+  const day = at.toISOString().slice(0, 10);
+  return day === now.toISOString().slice(0, 10) ? whenText(at) : `${day} ${whenText(at)}`;
+}
+
+/**
+ * A paused run's note, the same words on the web card and the terminal's
+ * run row: when its limit lifts, or "soon" when the stored time is unreadable.
+ */
+export function pausedNote(notBefore: string, now: Date = new Date()): string {
+  const at = new Date(notBefore);
+  return Number.isNaN(at.getTime())
+    ? "paused, resumes soon"
+    : `paused, resumes ${resumeText(at, now)}`;
+}
