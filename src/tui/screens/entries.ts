@@ -52,6 +52,7 @@ import { entry as claimStart } from "./claim_start.ts";
 import { entry as invites } from "./invites.ts";
 import { entry as billingLinks } from "./billinglinks.ts";
 import { entry as planRow } from "./planrow.ts";
+import { entry as cores } from "./cores.ts";
 import { entry as limits } from "./limits.ts";
 import { entry as plans } from "./plans.ts";
 import { entry as economics } from "./economics.ts";
@@ -172,6 +173,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   invites,
   billingLinks,
   planRow,
+  cores,
   claimStart,
   requests,
   bulk,
