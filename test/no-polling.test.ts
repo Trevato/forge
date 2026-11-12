@@ -289,6 +289,7 @@ const NOT_WALKED: Record<string, string> = {
   "/:owner/:name/builds/:label/cart": "needs a pinned build with a cart",
   "/:owner/:name/builds/:label/cart.png": "needs a pinned build with a cart",
   "/:owner/:name/builds/:label/shots": "needs a pinned build with pictures",
+  "/:owner/:name/chapters/:chapter": "needs a drafted chapter, which the seed does not make",
   "/:owner/:name/builds/:label/shots/:file": "needs a pinned build with pictures",
   "/:owner/:name/commit/:oid": "the seed does not keep the commit id; the commit page is a plain diff with the shell script only",
   "/:owner/:name/looks/:env/:commit/:kind.png": "an image of a captured look, not a page",

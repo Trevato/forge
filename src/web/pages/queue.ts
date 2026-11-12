@@ -86,6 +86,7 @@ export function queuePage(ctx: Ctx): Response {
   const body = html`${repoHeader(ctx, repo, "issues")}
     ${pageHead("Queue", { sub: "Is the work growing or shrinking?" })}
     ${switchRow(repo, until, owner)}
+    <p><a href="${base}/chapters">Chapters</a></p>
     ${aged.length === 0 ? null : html`<ul class="list setting-list">${aged}</ul>`}
     ${growthRows(g)}`;
   const response = page({ ctx, title: `Queue · ${repo.name}`, crumbs: crumbsFor(repo), palette: repoPalette(ctx, repo), body });

@@ -169,6 +169,7 @@ import { appEnvCommands } from "./appenv.ts";
 import { variantsCommands } from "./variants.ts";
 import { autonomyCommands } from "./autonomy.ts";
 import { trafficCommands } from "./trafficview.ts";
+import { chaptersCommands } from "./chapters.ts";
 import { schedulesCommands } from "./schedules.ts";
 import { queueCommands } from "./queuegrowth.ts";
 import { blockedCommands } from "./blocked.ts";
@@ -1995,6 +1996,7 @@ export function workspaceScreen(
       ...autonomyCommands(f, ctx, repo),
       ...trafficCommands(f, ctx, repo),
       ...schedulesCommands(f, ctx, repo),
+      ...chaptersCommands(f, ctx, repo),
       ...queueCommands(f, ctx, repo),
       ...blockedCommands(f, ctx, repo),
       ...statementCommands(f, ctx, repo),

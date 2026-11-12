@@ -383,6 +383,7 @@ import { TEMPLATE_ERRORS } from "../apps/template_tip.ts";
 import { flagsRoutes } from "./api/flags.ts";
 import { appTemplateRoutes } from "./api/app_templates.ts";
 import { issueRoutes, labelsHandler } from "./api/issues.ts";
+import { chapterRoutes } from "./api/chapters.ts";
 import { FORGE_NOT_CARRIED } from "../origins/words.ts";
 import { forgeOriginRoutes } from "./api/forge_origin.ts";
 import { userRoutes } from "./api/user.ts";
@@ -2171,6 +2172,7 @@ export function apiRoutes(router: Router<Handler>): void {
   // ── issues — the label-as-queue surface automation drives ────────────
 
   issueRoutes(router);
+  chapterRoutes(router);
 
   reportRoutes(router);
   startRoutes(router);

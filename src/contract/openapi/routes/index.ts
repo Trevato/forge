@@ -134,6 +134,7 @@ export { route as getApiV1ReposOwnerNameBuilds } from "./getApiV1ReposOwnerNameB
 export { route as getApiV1ReposOwnerNameBuildsLabelCart } from "./getApiV1ReposOwnerNameBuildsLabelCart.ts";
 export { route as getApiV1ReposOwnerNameBuildsLabelShots } from "./getApiV1ReposOwnerNameBuildsLabelShots.ts";
 export { route as getApiV1ReposOwnerNameBuildsLabelShotsLooks } from "./getApiV1ReposOwnerNameBuildsLabelShotsLooks.ts";
+export { route as getApiV1ReposOwnerNameChapters } from "./getApiV1ReposOwnerNameChapters.ts";
 export { route as getApiV1ReposOwnerNameCommits } from "./getApiV1ReposOwnerNameCommits.ts";
 export { route as getApiV1ReposOwnerNameCommitsOid } from "./getApiV1ReposOwnerNameCommitsOid.ts";
 export { route as getApiV1ReposOwnerNameCommitsOidCheck } from "./getApiV1ReposOwnerNameCommitsOidCheck.ts";
@@ -317,6 +318,8 @@ export { route as postApiV1ReposOwnerNameBuildsLabelShots } from "./postApiV1Rep
 export { route as postApiV1ReposOwnerNameBuildsLabelShotsFile } from "./postApiV1ReposOwnerNameBuildsLabelShotsFile.ts";
 export { route as postApiV1ReposOwnerNameBuildsLabelShotsLooks } from "./postApiV1ReposOwnerNameBuildsLabelShotsLooks.ts";
 export { route as postApiV1ReposOwnerNameBuildsPreview } from "./postApiV1ReposOwnerNameBuildsPreview.ts";
+export { route as postApiV1ReposOwnerNameChapters } from "./postApiV1ReposOwnerNameChapters.ts";
+export { route as postApiV1ReposOwnerNameChaptersChapterVerb } from "./postApiV1ReposOwnerNameChaptersChapterVerb.ts";
 export { route as postApiV1ReposOwnerNameChecksRecheck } from "./postApiV1ReposOwnerNameChecksRecheck.ts";
 export { route as postApiV1ReposOwnerNameContents } from "./postApiV1ReposOwnerNameContents.ts";
 export { route as postApiV1ReposOwnerNameContribute } from "./postApiV1ReposOwnerNameContribute.ts";

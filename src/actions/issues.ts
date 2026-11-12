@@ -25,6 +25,8 @@ import type { App } from "../app.ts";
 import { adoptResolution } from "../core/trusted_sources.ts";
 import { crewRole, isCrew } from "../core/agents.ts";
 import { pausedUntil } from "../core/planner_pause.ts";
+import { keepWithinChapter } from "./chapters.ts";
+import { inheritChapter } from "../core/chapters.ts";
 import { moveBlockersToChildren } from "../core/dependencies.ts";
 import {
   addComment as insertComment,
@@ -118,6 +120,9 @@ export function openIssue(
     sealed: input.sealed === true,
   });
   if (!created.ok) return created;
+  // A chapter is open (#11603): the planner's issue waits in the next chapter, never in this one.
+  if (user.value.kind === "agent" && crewRole(app.db, repo.id, user.value.id) === "planner")
+    keepWithinChapter(app, repo, created.value, user.value);
   app.bus.append({
     kind: "issue.opened",
     repoId: repo.id,
@@ -522,8 +527,11 @@ export function setIssueState(
     return written;
   })();
   if (!changed) return ok(getIssueById(app.db, issue.id) ?? issue);
-  if (children.length > 0)
+  if (children.length > 0) {
     moveBlockersToChildren(app.db, issue, children, user.value.id);
+    // The parts of a split stay in the chapter the issue was in (#11603).
+    inheritChapter(app.db, issue, children, user.value.id);
+  }
   app.bus.append({
     kind: `${issue.kind}.${state === "closed" ? "closed" : "reopened"}`,
     repoId: repo.id,

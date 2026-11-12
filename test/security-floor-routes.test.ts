@@ -68,6 +68,7 @@ const UNSEEDED: Record<string, string> = {
   "/bring/:id/:job": "needs a bring job of the signed-in person; the seed brings nothing",
   "/fleet/ops/:id": FLEET,
   "/:owner/:name/bets/:id": BET,
+  "/:owner/:name/chapters/:chapter": "needs a chapter, which the seed does not draft (test/chapters.test.ts covers it)",
   "/:owner/:name/builds/:label/cart": CART,
   "/:owner/:name/builds/:label/cart.png": CART,
   "/:owner/:name/builds/:label/shots": SHOT,

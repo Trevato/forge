@@ -1,0 +1,3 @@
+import { REPO, type Route } from "../shared.ts";
+
+export const route: Route = { method: "post", path: `${REPO}/chapters/{chapter}/{verb}`, summary: "Act on a chapter. `verb` is `open` (the repository's one open chapter, from now), `add` or `remove` (`number`: an issue; the owner's act, recorded), `ship` (tag the default branch with the chapter's name, write its notes from what landed, move what is left to the next chapter and close it) or `patch` (open a patch chapter for a closed one). Only a person who administers the repository; a closed chapter cannot be reopened", auth: true, role: "member" };

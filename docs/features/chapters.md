@@ -1,0 +1,14 @@
+# Chapters: a version with an end
+
+A chapter is a named list of a repository's issues that is finished, tagged and closed (#11603). A name (`v1.0.0`; it becomes the git tag), one sentence of what done means, and the issues in it.
+
+- **One open, any number drafted.** A repository has at most one open chapter. Later ones (`v2`, `v3`) are drafted after it and filled with issues that wait.
+- **While one is open the crew builds only what is in it.** The dispatcher (`queueAgentRun`, through `chapterHold` in `src/core/chapters.ts`) starts no builder or reviewer run on an issue outside it. The planner may split a chapter's issue (the parts stay in the chapter) and may open an issue that says `Defect of #N` for an item of the chapter (it joins the chapter); every other issue it opens waits in the next chapter, or, with none drafted, behind the Later gate. Adding or removing an issue is the owner's act, recorded as `chapter.item_added` / `chapter.item_removed`.
+- **The list being crossed off.** `/<owner>/<name>/chapters/<name>`: done items struck through with the day they went live, what is building, what is left, and the date it finishes at the pace since it opened. An item is done when it is live and proven (a merged pull that closes it and a passing production release proof), never when the pull merged.
+- **Closing the book.** When the last item is done, or when the owner presses **Ship it**, the forge tags the default branch with the chapter's name, writes the notes from what landed (grouped, with who built what and what it cost), moves what is left to the next chapter and marks the chapter closed. The chapter's page then says it is finished: what shipped, how long it took, what it cost. The crew then rests on that repository until a chapter is opened; nothing starts by itself.
+- **Closed is forever.** A closed chapter stays readable at its own address and cannot be reopened or changed. A fix for something it shipped goes in a patch chapter (`v1.0.1`), opened with one click from the closed chapter's page.
+- **No chapter, no change.** A repository that never drafted one flows continuously, as before.
+
+Doors: the page (`/chapters`, linked from `/queue`), the terminal (`src/tui/screens/chapters.ts`, the palette's "Chapters" while an app is open: `n` drafts, `o` opens, `s` ships, `p` patches, `enter` shows the list where `a` adds an issue and `x` takes one out) and the API (`GET`/`POST /api/v1/repos/:owner/:name/chapters`, `POST …/chapters/:chapter/:verb` with `open`, `add`, `remove`, `ship`, `patch`). Only a person who administers the repository acts; an agent is refused.
+
+A closed chapter's list is frozen, so `itemsOf` keeps it in process memory (at most 200, `forgetFrozenItems` drops them); an open chapter's list is one pass over the repository's pulls and one grouped read of its runs, however many items it holds, so the anonymous page and API read stay cheap.

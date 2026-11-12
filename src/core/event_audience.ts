@@ -186,6 +186,12 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "start.made",
   "start.claimed",
   "start.swept",
+  // A chapter's drafting, opening, filling and closing are on its public page (#11603).
+  "chapter.drafted",
+  "chapter.opened",
+  "chapter.item_added",
+  "chapter.item_removed",
+  "chapter.closed",
 ]);
 
 /**

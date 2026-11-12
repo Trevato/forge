@@ -9,6 +9,7 @@
  */
 
 import { pausedUntil } from "../core/planner_pause.ts";
+import { chapterHold } from "../core/chapters.ts";
 import { crewFilters, isStrangerPull } from "./stranger.ts";
 import { TEMP_FULL } from "../checks/disk_full.ts";
 import { freshPullFor } from "./fresh_pull.ts";
@@ -469,6 +470,14 @@ export function queueAgentRun(
   if (outsideSeat(app, repo, issue, agent, reason)) return undefined;
   // The owner's switch (#11604): a paused planner starts nothing; builders and reviewers carry on.
   if (crewRole(app.db, repo.id, agent.user.id) === "planner" && pausedUntil(app.db, repo.id, new Date()) !== null)
+    return undefined;
+  // A chapter is open (#11603): builders and reviewers start only what it holds, and the crew rests
+  // between chapters. A planner plans (its scope is kept where it opens issues); a run carrying on finishes.
+  if (
+    again === undefined &&
+    crewRole(app.db, repo.id, agent.user.id) !== "planner" &&
+    chapterHold(app.db, repo.id, issue) !== null
+  )
     return undefined;
   // An archived repository starts nothing new; a run carrying on (`again`)
   // is one already going, and finishes. A first run

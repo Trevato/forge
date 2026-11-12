@@ -172,6 +172,7 @@ import { apiPage, appApiPage } from "../web/pages/api.ts";
 import { flowsCheck, flowsPage, flowsProbe, flowsUpdate } from "../web/pages/flows.ts";
 import { findingAccept, findingsPage } from "../web/pages/findings.ts";
 import { queuePage, queueSwitch } from "../web/pages/queue.ts";
+import { chapterAct, chapterPage, chaptersPage } from "../web/pages/chapters.ts";
 import { betAct, betPage, betPropose, betsPage } from "../web/pages/bets.ts";
 import { changelogJson, changelogPage } from "../web/pages/changelog.ts";
 import { docsFile, docsFolder } from "../web/pages/docs_link.ts";
@@ -1298,6 +1299,10 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/findings/:id/accept", findingAccept);
   router.add("GET", "/:owner/:name/queue", queuePage);
   router.add("POST", "/:owner/:name/queue/planner", queueSwitch);
+  router.add("GET", "/:owner/:name/chapters", chaptersPage);
+  router.add("POST", "/:owner/:name/chapters", chapterAct);
+  router.add("GET", "/:owner/:name/chapters/:chapter", chapterPage);
+  router.add("POST", "/:owner/:name/chapters/:chapter/:verb", chapterAct);
   router.add("GET", "/:owner/:name/bets", betsPage);
   router.add("POST", "/:owner/:name/bets/propose", betPropose);
   router.add("GET", "/:owner/:name/bets/:id", betPage);
