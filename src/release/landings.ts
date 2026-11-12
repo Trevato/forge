@@ -119,10 +119,15 @@ function isLive(row: MergedRow, state: LiveState | undefined): boolean {
 /**
  * The merged pulls split by whether they are live. A pull of the forge's own
  * repository that is not in the running commit but merged before a live one
- * is not on its way, just not in this history: it counts as live.
+ * of the same repository is not on its way, just not in this history: it
+ * counts as live. Only the own repository's pulls set that mark: another
+ * repository's pull is live as it lands, and once one merge elsewhere made
+ * every own pull before it "live", so the no-release alarm stayed silent
+ * for 5 h 50 min on 2026-11-11 (#11673).
  */
 export function split(rows: readonly MergedRow[], state: LiveState | undefined): { live: Landing[]; onItsWay: Landing[] } {
-  const newestLive = rows.find((r) => isLive(r, state));
+  const own = state?.own.toLowerCase();
+  const newestLive = rows.find((r) => r.repo.toLowerCase() === own && isLive(r, state));
   const out: { live: Landing[]; onItsWay: Landing[] } = { live: [], onItsWay: [] };
   for (const r of rows) {
     const live = isLive(r, state) || (newestLive !== undefined && r.at < newestLive.at);
@@ -132,11 +137,12 @@ export function split(rows: readonly MergedRow[], state: LiveState | undefined):
   return out;
 }
 
-/** The oldest landing still on its way, from what the last read kept; undefined when none or nothing was read. */
-export function waitingSince(db: Database): string | undefined {
+/** The merged pulls still on their way and when the oldest merged, from what the last read kept; undefined when none or nothing was read. */
+export function waiting(db: Database): { readonly since: string; readonly count: number } | undefined {
   if (kept === undefined) return undefined;
   const { onItsWay } = split(mergedRows(db), kept);
-  return onItsWay.at(-1)?.at;
+  const oldest = onItsWay.at(-1);
+  return oldest === undefined ? undefined : { since: oldest.at, count: onItsWay.length };
 }
 
 /** The merged pulls not yet in the running commit, oldest first, with their merge commits; empty when nothing was read (#11507). */

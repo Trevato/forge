@@ -49,7 +49,7 @@ describe("no release alarm", () => {
     const a = noReleaseAlarm(s.app.db, NOW);
     expect(a.fired).toBe(true);
     expect(a.since).toBe(minAgo(91));
-    expect(a.says).toBe("Main moved 91 min ago and nothing has gone live since abcdef1.");
+    expect(a.says).toBe("1 merged pull has waited 91 min and nothing has gone live: production runs dev · abcdef1.");
   });
   test("does not fire at 89 min, with no move, or once a release followed the move", async () => {
     const s = await seed();
