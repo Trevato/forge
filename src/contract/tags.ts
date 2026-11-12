@@ -14,6 +14,7 @@ const ALIAS: Readonly<Record<string, string>> = {
   "make-it-yours": "forks",
   contribute: "forks",
   queue: "gates",
+  growth: "issues",
   checks: "pulls",
   conversation: "conversations",
   "conversation-confirms": "conversations",

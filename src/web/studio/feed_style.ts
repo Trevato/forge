@@ -4,6 +4,10 @@ export const feedCss = /* css */ `
 /* A timeline of the design system's cards; the card's own margin spaces them. */
 .feed { display: grid; gap: 0; }
 .feed > .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The held-posts button sticks under the topbar so it is in sight while the reader is down the feed; the paragraph is zero-high until the button shows. */
+.new-posts { position: sticky; top: calc(var(--topbar-h) + 8px); z-index: 9; margin: 0; display: flex; justify-content: center; pointer-events: none; }
+.new-posts .btn { pointer-events: auto; min-height: 44px; box-shadow: var(--shadow-2); }
+.new-posts .btn[hidden] { display: none; }
 .feed > .card[hidden] { display: none; }
 /* The Like form sits in the card's flow; its count has a fixed width so a press moves nothing. */
 .feed .like { display: inline-block; margin: 0; }

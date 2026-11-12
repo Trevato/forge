@@ -10,6 +10,7 @@
  * nothing reaches the ready list without a reason to be built now.
  */
 
+import { pausedUntil, PAUSE_REFUSAL } from "../core/planner_pause.ts";
 import { sealedScope } from "../core/sealed.ts";
 import type { App } from "../app.ts";
 import { crewRole, isCrew } from "../core/agents.ts";
@@ -231,6 +232,7 @@ function vet(
   // A person's note from an app is owed an answer before the planner adds to the pile (#10563).
   // Only the repo's planner is held; it lifts when a crew member comments, or the issue is closed or hidden.
   if (actor.kind === "agent" && crewRole(app.db, repo.id, actor.id) === "planner") {
+    if (pausedUntil(app.db, repo.id, new Date()) !== null) return refuse("planner_paused", PAUSE_REFUSAL);
     const waiting = unansweredFromApp(app.db, repo.id);
     if (waiting !== undefined)
       return refuse(
