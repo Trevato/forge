@@ -51,6 +51,11 @@ Under the box, four starter sentences are plain links (no script):
   redeployed on each push and gone when the pull closes. Its data starts as
   a copy of production's — copy-on-write where the filesystem can — and
   never writes back. Merging moves code and touches no data.
+- **A webhook has a stable address.** `POST /__forge/hook/<pull>/<path>` on
+  production's host is relayed, untouched, to pull `<pull>`'s preview as
+  `POST /<path>` (`src/apps/hook_relay.ts`), so a payment provider keeps one
+  URL while previews change. The provider's signature reaches the app
+  unchanged; the app verifies it. See `docs/features/platform-app-move.md`.
 - **A preview is held to the website specification, report-only.** Once it is
   live, `webspec()` runs over the `app.looks` paths of its `forge.json`. The pull
   page shows the result under the Checks line as **Website spec: N findings

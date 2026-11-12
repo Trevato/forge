@@ -67,6 +67,7 @@ import { appMeasure } from "./measure.ts";
 import { holdPortRequest, holdPortSocket } from "./handoff.ts";
 import { secureFor } from "../http/cookie_secure.ts";
 import { currentLoopLag, forgeWaited, LAG_WINDOW_MS } from "../perf/loop_worst.ts";
+import { HOOK_MAX_BYTES, HOOK_PREFIX, hookPath, readCapped } from "./hook_relay.ts";
 import { loopWatch } from "../perf/live.ts";
 import { heldBy, noteRelayWait, stallTiming } from "./relay_wait.ts";
 import { cspNonce, htmlAnswer, readPage, rewritable, TOOLBAR_ASSET_PATH, TOOLBAR_ASSET_PREFIX, toolbarResponse, withToolbar, type PillWhere } from "./toolbar.ts";
@@ -983,6 +984,34 @@ export async function proxyApp(
 ): Promise<Response | undefined> {
   const entered = performance.now();
   const url = new URL(request.url);
+  // A webhook for a pull's preview, sent to production's stable address.
+  if (url.pathname.startsWith(HOOK_PREFIX) && !target.nested && target.env === "production") {
+    const hook = hookPath(url.pathname);
+    if (hook === undefined || request.method !== "POST")
+      return securityFloor(
+        hook === undefined ? notFound() : new Response(null, { status: 405, headers: { allow: "POST" } }),
+      );
+    const env = previewEnv(hook.pull);
+    if (runtime.envStatus(target.app, env) === undefined) return securityFloor(notFound());
+    // The header is an early refusal only; the cap is on the bytes read.
+    const length = Number(request.headers.get("content-length") ?? "0");
+    if (!(length <= HOOK_MAX_BYTES)) return securityFloor(new Response("too large", { status: 413 }));
+    const body = await readCapped(request.body, HOOK_MAX_BYTES);
+    if (body === undefined) return securityFloor(new Response("too large", { status: 413 }));
+    const previewHost = new URL(runtime.urlFor(target.app, env));
+    const next = new URL(url);
+    next.protocol = previewHost.protocol;
+    next.host = previewHost.host;
+    next.pathname = hook.path;
+    const headers = new Headers(request.headers);
+    headers.set("host", previewHost.host);
+    return proxyApp(
+      runtime,
+      new Request(next.toString(), { method: "POST", headers, body, signal: request.signal }),
+      { app: target.app, env, nested: false },
+      server,
+    );
+  }
   // The pill's script, from the app's own host: only the exact hashed path
   // is it; any other /__forge/toolbar… path is the forge's 404, never the app's.
   if (url.pathname.startsWith(TOOLBAR_ASSET_PREFIX) && !target.nested) {

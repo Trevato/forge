@@ -62,7 +62,22 @@ variable set for scope `preview` beats the same name set for `all` or
 
 What stays open: the forge cannot tell which names are payment keys, so
 nothing refuses a live key in `all` or in `preview`; the checks above are a
-person's. Webhooks reaching a preview's changing address are #11703.
+person's. Webhooks reaching a preview's changing address: see "Webhooks" below.
+
+### Webhooks
+Give the provider's sandbox **one** URL that never changes:
+`https://<app>.<forge host>/__forge/hook/<pull>/<path>`. A `POST` there reaches
+the preview of pull `<pull>` as `POST /<path>`, body and headers untouched, so
+the provider's own signature (`Stripe-Signature` and the like) verifies in the
+app against the sandbox `STRIPE_WEBHOOK_SECRET` set for scope `preview`. The
+forge adds no signature of its own and cannot break the provider's. When the
+pull changes, change only the number.
+- `POST` only (405 otherwise); 404 when the pull has no preview or the path
+  would leave the app (`..`, `//`, `/__forge/…`); 413 over 1 MiB; a sleeping
+  preview is woken by the request.
+- A private app, or a sealed pull's preview, refuses it like any request
+  without a grant: a provider cannot sign in. Rehearse payments on a public app.
+- The app must verify the provider's signature itself and answer 2xx only then.
 
 ## 5. Backup before anything is removed (person)
 Encrypted dump and files archive (`age` or `gpg`, key held by the owner, not
@@ -137,6 +152,6 @@ reminds anyone when the week ends; both are a person's.
 - ~~A Postgres app has no home here.~~ Decided, not built: no managed Postgres; port to `bun:sqlite` or keep an external one by `egress` (docs/APPS.md). (#11698)
 - Per-app encrypted backup with a restore proof (`docs/features/backup-truth.md` covers the forge's own, not an app's). (#11701)
 - A guard for rehearsal: data copy and `preview`-scoped sandbox keys exist and are the procedure in step 4; nothing yet refuses a payment name left in scope `all`. (#11702)
-- Inbound payment webhooks that survive a preview's changing address. (#11703)
+- ~~Inbound payment webhooks that survive a preview's changing address.~~ Built: `/__forge/hook/<pull>/…` on production's host. (#11703)
 - ~~A read-only switch for the old side of a migration.~~ A procedure at the old proxy and database, section 7; the forge cannot reach the old node, so no feature is built. (#11704)
 - Importing an app's customer accounts (password-hash formats) without the owner reading them. (#11705)
