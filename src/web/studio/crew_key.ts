@@ -30,6 +30,8 @@ const KEY_FORM_MAX = 2048;
 
 export interface Included {
   readonly capUsd: number;
+  /** What the host counted the runs actually cost; a reservation or a run's declared budget is never in it. */
+  readonly spentUsd: number;
   readonly leftUsd: number;
 }
 
@@ -37,7 +39,8 @@ export interface Included {
 export function includedCredit(app: App): Included | undefined {
   const f = fundingOf(app.config.dataDir);
   if (f === undefined || f.capUsd === null) return undefined;
-  return { capUsd: f.capUsd, leftUsd: leftUsd({ capUsd: f.capUsd, spentUsd: f.spentUsd ?? 0 }) };
+  const spentUsd = f.spentUsd ?? 0;
+  return { capUsd: f.capUsd, spentUsd, leftUsd: leftUsd({ capUsd: f.capUsd, spentUsd }) };
 }
 
 /** Whether a forge is a hosted child: its host's file is in its data directory. */

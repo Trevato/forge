@@ -97,7 +97,7 @@ describe("a new forge's starter crew", () => {
     expect(readCredit(parent, "maria")?.capUsd).toBe(2);
     expect(fundingOf(childDir)?.capUsd).toBe(2);
     expect(listSubscriptions(child.db)).toEqual([]);
-    expect(includedCredit(child)).toEqual({ capUsd: 2, leftUsd: 2 });
+    expect(includedCredit(child)).toEqual({ capUsd: 2, spentUsd: 0, leftUsd: 2 });
     expect(crewCanRun(child)).toBe(true);
   });
 
