@@ -152,6 +152,93 @@ row from the cluster, the forge's service account needs `get` on its own pod,
 reading is held 60 s, a page waits at most 0.8 s for it, and a probe that
 fails is not retried for a minute.
 
+## The vxrail without a control plane
+
+**The choice: no Kubernetes for the forge.** On the vxrail the forge runs as
+one process (`src/release/launch.ts` under a systemd unit), on one data
+directory (`/var/lib/forge`), with the self-swap keeper (#8941) as its release
+path. This is [EXTRACT.md](EXTRACT.md)'s box, and the vxrail is that box.
+The other option was a k3s server of the vxrail's own. Of the two, no
+Kubernetes is the simpler, and here is why. The forge already holds
+everything it runs: apps, previews, checks, child forges and the crew's
+shells all run in its own bubblewrap cells (`src/apps/contain.ts`), not as
+pods. All Kubernetes gives the forge is a supervisor and a volume, and
+systemd and a directory do the same. A k3s server of its own would be one
+more control plane on the same single machine. Someone would have to back it
+up, upgrade it and renew its certificates, and it would have no HA, so it
+would be exactly the single point of failure pg-grand was, just moved. It
+would also keep the image, registry and manifest path that #8942 deletes. And
+the swap's one kernel setting, `net.ipv4.tcp_migrate_req=1`, is a kubelet
+unsafe-sysctl flag inside a pod but one line in `/etc/sysctl.d` on a host.
+What the forge gives up: `FORGE_CHECKS_PLACEMENT=job` (no cluster to send a
+Job to, and under `cells.egress` `enforce` it never sends one anyway), the
+Deployment-patch keeper (`FORGE_RELEASE_KEEPER=on`), and the footing probe's
+live reading (it says "not running in a cluster" and keeps the declared
+machines). Off Kubernetes a cell's mounts default to `deny-list`, so the unit
+sets `FORGE_CELL_MOUNTS=allow-list` to keep what cells see on the host as
+narrow as in the pod.
+
+**The steps.** Each step is an issue that waits for this one. Nothing moves
+without the owner's go, and every step keeps the one before it as its
+rollback. #11803 (tunnel straight to the forge), #11802 (its own sign-in) and
+#11805 (an off-site backup with a drilled restore) come first.
+
+1. **The host can run it, taking no traffic** (#11823). The unit runs
+   `launch.ts` with `Delegate=yes` (cells get their cgroup) and
+   `FORGE_CELL_MOUNTS=allow-list`. The install script checks for bubblewrap,
+   chromium and socat, writes the sysctl, and makes the `forge` user with the
+   pod's uid. A `cloudflared-forge` unit carries the tunnel to
+   `http://127.0.0.1:3000`, and `forge-github-mirror` becomes a timer here.
+   The proof is a restore of the newest backup into a scratch directory,
+   served on another port. *Rollback:* `systemctl disable --now forge
+   cloudflared-forge`; nothing pointed at it.
+2. **The cutover, same data, same version** (#11824, a quiet hour). First
+   the reconcile must stop owning the forge Deployment's replicas (#8948).
+   Otherwise it brings the pod back, and two processes write one SQLite file.
+   Then: scale the Deployment to 0 and wait until the pod is gone.
+   Bind-mount the PVC's local-path directory at `/var/lib/forge` (a bind,
+   not a copy). Check out the image's commit at `/opt/forge`, start `forge`,
+   then `cloudflared-forge`, and scale the cluster's tunnels to 0. Git over
+   ssh then answers on the vxrail's own :2222, with no `forge-ssh` proxy. The
+   seconds dark are measured. *Rollback:* stop both units, then scale the
+   Deployment to 1 and the tunnels back. The pod mounts the same directory,
+   so nothing is copied back. This needs pg-grand's API, so the step is
+   taken while pg-grand runs. Releases by swap (#8941) wait for this step and
+   then run on the host.
+3. **Leave the cluster** (#11825, after a week on the unit). The data comes
+   out of k3s storage first, because `k3s-agent-uninstall.sh` deletes
+   `/var/lib/rancher`. With the forge stopped, `mv` the directory to
+   `/var/lib/forge` on the same filesystem and drop the bind. Next, the owner
+   deletes the forge's objects from gitops. Then `kubectl drain`/`delete
+   node vxrail`, and `k3s-agent` is disabled and uninstalled.
+   `forgejo-runner-vxrail` and `registry-node` go with it, after #8942.
+   *Rollback:* before the uninstall, `systemctl enable --now k3s-agent`
+   rejoins. After it, the forge needs no cluster, and the k3s installer with
+   `K3S_URL` and the node token the owner keeps rejoins.
+4. **pg-grand's other tenants** (#11826). None of them comes to the vxrail
+   as a cluster service. The steps below delete nothing on pg-grand, so each
+   one rolls back by restoring from its dump while pg-grand still runs.
+   - **Forgejo:** once no release reaches it (#8942) and outside pulls go to
+     the forge (#8950), a final `forgejo dump` and a `pg_dump` of its
+     CloudNativePG database go, encrypted, to the off-site bucket of #11805.
+     trevato-apps/gitops is mirrored into the forge before that (#8948).
+   - **Tenant apps' CloudNativePG databases:** the owner decides per app
+     (#8951). The app is either brought into the forge (Bring or Migrate,
+     with SQLite under `FORGE_APP_DATA`; see [APPS.md](APPS.md)) or archived
+     as an encrypted `pg_dump` in the same bucket. No CloudNativePG operator
+     and no Postgres for them on the vxrail: that would bring back the
+     operator this move takes out.
+   - **MinIO** is copied once into the off-site bucket.
+   - **What else pg-grand runs for the forge:** the backup CronJobs go to
+     #11805 and `forge-prune-images` to #11801. `forge-release-tick` and
+     `standby-reconcile` go to the swap (#8941, #8942). `forge-watchdog` is
+     replaced by `Restart=always` and the launcher. `plat-auth`, the signup
+     gate and Traefik leave the forge's path with #11802 and #11803.
+
+The thirty-minute proof (#11806) waits for step 2 and for releases by swap
+(#8941). With both in place, the forge runs, releases and is supervised on
+the vxrail alone.
+
 ## Health
 
 `GET /api/v1/health` (and the MCP `health` tool) answer a site admin with
