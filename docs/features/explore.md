@@ -53,7 +53,7 @@ An unknown filter word is refused the same way everywhere: `400` from the API (`
 
 A list holds 60 rows a page. When there are more, `/explore` ends with a full-width **More results** button, a plain link to the same view (kind, sort, since, owner, archived and the words) plus `cursor=…`; the last page has none, and it works without JavaScript. A cursor belongs to one sort: one that is malformed, over 400 characters or made under another sort shows the first page with a one-line note, never an error. `GET /api/v1/explore` returns `next_cursor` and takes `?cursor=`, and the MCP `explore` tool takes and returns the same cursor.
 
-The terminal's explore lines show the first page only: it has no way to page yet (a known gap). Narrow the line (`owner:`, `updated:`, more words) to reach what is past the first 60.
+The terminal's explore lines page the same way: when the answer carries `next_cursor` the list ends with one line, `more results — n`, and `n` fetches the next page and appends it; the last page shows no line. The cursor is kept with the line it came from, so changing the line starts again at the first page. A cursor the forge refuses shows the first page with one plain line (`that page is no longer there — showing the first page`), never an error screen. A fetch that fails (not a refusal) keeps the pages already shown and says `could not fetch more results — n to retry`. The line takes the list's last row, so it shows on any terminal tall enough for a list.
 
 ## Make it yours on an app row
 An app's row carries `action: { do: "make_it_yours", label: "Make it yours" }` exactly when `copyable` is true (`MAKE_IT_YOURS` in `actions/explore.ts`).
