@@ -56,6 +56,7 @@ import { readCombined } from "../git/combined.ts";
 import { approvedOnce } from "./approved_first.ts";
 import { checkOnApproval } from "./approval.ts";
 import { checkKey, provenBy, recordProven } from "./proven.ts";
+import { crewHoldsCore, forgeCpus } from "../core/one_core.ts";
 import { beginGate, endGate, gateHolding } from "./gate_record.ts";
 import { giveHistory } from "./history.ts";
 import { readLearned } from "./learned.ts";
@@ -144,6 +145,10 @@ export interface ChecksOptions {
   readonly concurrency?: number | undefined;
   /** The forge's public URL, told to the check as `FORGE_URL`. */
   readonly forgeUrl: string;
+  /** The forge's CPU count; a 1-CPU forge holds pull checks for a crew run. @default forgeCpus */
+  readonly cpus?: (() => number) | undefined;
+  /** Crew runs active now. @default the active agent runs */
+  readonly activeCrewRuns?: (() => number) | undefined;
   /** The parent's gate, for a hosted child: its checks take their turn in the parent's lane. */
   readonly gate?: Gate | undefined;
   /** Whose checks these are, written first in each run's log (a hosted child's name). */
@@ -647,11 +652,18 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         (repoId) => redMain(app.db, repoId),
         options.redHoldMs ?? 0,
       );
+      // One core: a crew run has it. A pull's check keeps its place and starts
+      // once the run has ended; main's check (the merge gate) is never held.
+      const crewHolds = crewHoldsCore(
+        (options.cpus ?? forgeCpus)(),
+        (options.activeCrewRuns ?? (() => listActive(app.db, "agent").length))(),
+      );
+      const runnable = crewHolds ? queued.filter((run) => run.issueId === null) : queued;
       // The limit is asked at the point of starting, one pick at a time:
       // a started check is in flight before the next is asked about, so a
       // burst of one account's checks cannot pass together. A rebase's
       // check goes before any other (`finishing_first.ts`, #6140).
-      const { rebases, rest: others } = rebasesFirst(app.db, queued);
+      const { rebases, rest: others } = rebasesFirst(app.db, runnable);
       // While a gate is about to start, the last free slot is its: a pull's
       // check waits for it, a rebase's and a main check do not.
       const held = holdsLastSlot(limit - gatesInFlight() - slotted(), gateQueued());
