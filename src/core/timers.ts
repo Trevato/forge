@@ -247,6 +247,18 @@ export function failingNow(db: Database, appId: string): TimerRun[] {
   return out;
 }
 
+/**
+ * Job runs (#11596) the app failed for good in the last `days` days: one per run, newest first.
+ * A durable job's timers are named `job:<run>:<wake>`; the app answers a failed run with
+ * `x-forge-no-retry`, which records it as failed at once.
+ */
+export function failedJobs(db: Database, appId: string, now: number, days = 3, limit = 20): TimerRun[] {
+  const rows = db
+    .query<Row, [string, number, number]>("SELECT * FROM timer_run WHERE app_id = ?1 AND name LIKE 'job:%' AND status = 'failed' AND finished_at > ?2 ORDER BY id DESC LIMIT ?3")
+    .all(appId, now - days * 86_400_000, limit);
+  return rows.map(toRun);
+}
+
 /** Drop the schedule rows of environments that are gone (a closed pull's preview). */
 export function dropGoneEnvs(db: Database, appId: string, live: ReadonlySet<string>): void {
   for (const t of scheduleTimers(db, appId)) if (!live.has(t.env)) db.query("DELETE FROM timer WHERE id = ?1").run(t.id);

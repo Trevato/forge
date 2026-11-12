@@ -240,6 +240,7 @@ import {
   newIssueSubmit,
 } from "../web/pages/issues.ts";
 import { adapterPull } from "../web/studio/adapter.ts";
+import { jobsPage, steerJobPage } from "../web/studio/jobs.ts";
 import { steerSchedulePage } from "../web/studio/schedules.ts";
 import { noteModerate } from "../web/studio/notes.ts";
 import { tellPage } from "../web/studio/tell.ts";
@@ -1410,6 +1411,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/apps/open", appsOpen);
   router.add("POST", "/:owner/:name/app/notes", noteModerate);
   router.add("POST", "/:owner/:name/app/pull", adapterPull);
+  router.add("GET", "/:owner/:name/app/jobs", jobsPage);
+  router.add("POST", "/:owner/:name/app/jobs/:id/:action", steerJobPage);
   router.add("POST", "/:owner/:name/app/schedules/:schedule/:action", steerSchedulePage);
   router.add("POST", "/:owner/:name/app/:env/redeploy", appRedeploy);
   router.add("POST", "/:owner/:name/app/:env/stop", appStop);

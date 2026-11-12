@@ -10,7 +10,7 @@ import type { App } from "../app.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import { canAdmin, listReposWritableTo, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
-import { failingNow, runNow, runsOf, scheduleTimer, scheduleTimers, setPaused, type TimerRun } from "../core/timers.ts";
+import { failedJobs, failingNow, runNow, runsOf, scheduleTimer, scheduleTimers, setPaused, type TimerRun } from "../core/timers.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireReader, requireWriter } from "./access.ts";
 
@@ -108,7 +108,7 @@ export function steerSchedule(app: App, actor: User | undefined, repo: Repo, nam
  * with the reason. The item is the schedule, not the run, so a schedule that
  * keeps failing is one ask, not one a day (`crew/notify.ts` says only what is new).
  */
-export function scheduleLines(app: App, user: User): { line: string; items: string[]; link: string }[] {
+export function scheduleLines(app: App, user: User, now = Date.now()): { line: string; items: string[]; link: string }[] {
   if (user.kind !== "user") return [];
   const out: { line: string; items: string[]; link: string }[] = [];
   for (const repo of listReposWritableTo(app.db, user, { limit: 200, withoutArchived: true })) {
@@ -117,6 +117,14 @@ export function scheduleLines(app: App, user: User): { line: string; items: stri
     for (const run of failingNow(app.db, record.id)) {
       const why = run.status === "failed" ? `Schedule ${run.name} failed: ${run.error}` : run.error;
       out.push({ line: `${repo.name}: ${why}`, items: [`schedule:${record.id}:${run.env}:${run.name}`], link: `/${repo.ownerName}/${repo.name}#schedules` });
+    }
+    // A durable job that failed for good is one ask, named by its run (`job:<run>:<wake>`), never one per wake.
+    const seen = new Set<string>();
+    for (const run of failedJobs(app.db, record.id, now)) {
+      const id = run.name.split(":")[1] ?? run.name;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push({ line: `${repo.name}: a job run failed: ${run.error ?? "no reason given"}`, items: [`job:${record.id}:${id}`], link: `/${repo.ownerName}/${repo.name}/app/jobs` });
     }
   }
   return out;

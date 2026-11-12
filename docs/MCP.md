@@ -49,7 +49,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `accounts` | — | Accounts, newest first: role, verified, suspended; `cursor` pages | 264 |
 | `agent` | — | Admin: create\|update\|remove an agent | 371 |
 | `agents` | — | Agents you may see, as GET /api/v1/agents | 160 |
-| `app_deploy` | `redeploy`, `stop`, `pull`, `schedules`, `run_schedule`, `pause_schedule`, `resume_schedule` | Redeploy or stop production or a pull-N preview, pull an adapter now, or list and steer the app's schedules | 419 |
+| `app_deploy` | `redeploy`, `stop`, `pull`, `schedules`, `run_schedule`, `pause_schedule`, `resume_schedule`, `jobs`, `cancel_job`, `retry_job` | Redeploy or stop an env, pull, list and steer schedules and jobs | 408 |
 | `app_domains` | — | App domains: list, add, check, remove | 201 |
 | `app_env` | `list`, `set`, `unset` | An app's environment variables: list names, set or unset by scope; write-only | 393 |
 | `app_members` | — | People a private app names, who may enter it and its previews | 297 |

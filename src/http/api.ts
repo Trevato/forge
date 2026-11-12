@@ -354,6 +354,7 @@ import { passportRoutes } from "./passport_edge.ts";
 import { egressGrantRoutes } from "./api/egress_grants.ts";
 import { printRoutes } from "./api/print.ts";
 import { timersRoutes } from "./api/timers.ts";
+import { jobsRoutes } from "./api/jobs.ts";
 import { schedulesRoutes } from "./api/schedules.ts";
 import { forgeRoutes } from "./api/forges.ts";
 import { packRoutes } from "./api/packs.ts";
@@ -3862,6 +3863,7 @@ export function apiRoutes(router: Router<Handler>): void {
   printRoutes(router);
   timersRoutes(router);
   schedulesRoutes(router);
+  jobsRoutes(router);
 
   promptRoutes(router);
 

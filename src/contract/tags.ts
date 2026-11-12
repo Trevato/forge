@@ -9,6 +9,7 @@ const ALIAS: Readonly<Record<string, string>> = {
   app: "apps",
   timers: "apps",
   schedules: "apps",
+  jobs: "apps",
   "app-templates": "apps",
   display: "builds",
   following: "forks",

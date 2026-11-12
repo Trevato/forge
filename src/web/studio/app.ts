@@ -60,6 +60,7 @@ import { nowCard, nowRegion } from "./now.ts";
 import { repoAsks } from "./asks.ts";
 import { notesCard } from "./notes.ts";
 import { adapterCard } from "./adapter.ts";
+import { jobsLink } from "./jobs.ts";
 import { schedulesCard } from "./schedules.ts";
 import { appPanels } from "./previews.ts";
 import { noCrewLine, pausedWords, servingHistory, type WordCtx } from "./words.ts";
@@ -495,7 +496,7 @@ export async function studioApp(
   const adapter = ownerFacts
     ? await timePhaseAsync(req, "adapter", () => adapterCard(ctx, record, repo))
     : null;
-  const schedules = ownerFacts ? schedulesCard(ctx, repo) : null;
+  const schedules = ownerFacts ? html`${schedulesCard(ctx, repo)}${jobsLink(ctx, repo)}` : null;
   const rendering = performance.now();
   const tellRegion = html`${tell}
         ${ownerFacts && ctx.auth.user ? answersRegion(ctx, repo, ctx.auth.user) : null}`;
