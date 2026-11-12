@@ -11,4 +11,6 @@ A chapter is a named list of a repository's issues that is finished, tagged and 
 
 Doors: the page (`/chapters`, linked from `/queue`), the terminal (`src/tui/screens/chapters.ts`, the palette's "Chapters" while an app is open: `n` drafts, `o` opens, `s` ships, `p` patches, `enter` shows the list where `a` adds an issue and `x` takes one out) and the API (`GET`/`POST /api/v1/repos/:owner/:name/chapters`, `POST …/chapters/:chapter/:verb` with `open`, `add`, `remove`, `ship`, `patch`). Only a person who administers the repository acts; an agent is refused.
 
+The MCP answers too: the `repo` tool with `view: "chapters"` lists a repository's chapters (name, what done means, state); adding `chapter: "v1"` names that chapter's items (`done`, `building` or `left`), its `progress` (the same sentence the page and the terminal print, from `progressSentence`) and `finishesOn`. `chapter` without `view` is `invalid`; a repository the caller cannot read is refused as the page refuses it.
+
 A closed chapter's list is frozen, so `itemsOf` keeps it in process memory (at most 200, `forgetFrozenItems` drops them); an open chapter's list is one pass over the repository's pulls and one grouped read of its runs, however many items it holds, so the anonymous page and API read stay cheap.

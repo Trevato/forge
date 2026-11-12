@@ -9,7 +9,7 @@
  */
 
 import { CHAPTER_WORDS, close, draft, fill, open, patch } from "../../actions/chapters.ts";
-import { getChapter, itemsOf, listChapters, progressOf, type Chapter, type Item } from "../../core/chapters.ts";
+import { getChapter, itemsOf, listChapters, progressOf, progressSentence, type Chapter, type Item } from "../../core/chapters.ts";
 import { canAdmin, type Repo } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import type { Command } from "../app/palette.ts";
@@ -25,8 +25,8 @@ const isChapterEvent = (kind: string): boolean => kind.startsWith("chapter.") ||
 /** The words under a chapter's name: what done means, then how far it is. */
 function chapterRow(f: Session, c: Chapter): ListRow {
   const p = progressOf(c, itemsOf(f.app.db, c), new Date());
-  const progress = c.state === "closed" ? "finished" : `${p.done} of ${p.total} done`;
-  return { title: `${c.name} — ${c.state}`, note: c.means === "" ? progress : `${c.means} (${progress})` };
+  const progress = c.state === "closed" ? "finished" : progressSentence(p);
+  return { title: `${c.name} — ${c.state}`, note: c.means === "" ? progress : `${c.means} ${progress}` };
 }
 
 function itemRow(i: Item): ListRow {
@@ -59,7 +59,7 @@ export function chapterScreen(f: Session, ctx: Ctx, repo: Repo, name: string): S
         head!.x,
         head!.y,
         truncate(
-          chapter === undefined ? "No such chapter." : `${chapter.state}: ${p!.done} of ${p!.total} done${p!.finishesOn === null ? "" : `, finishes ${p!.finishesOn}`}`,
+          chapter === undefined ? "No such chapter." : `${chapter.state}: ${progressSentence(p!)}`,
           head!.w,
         ),
         style(c.mutedFg, c.bg),

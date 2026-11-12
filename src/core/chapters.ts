@@ -318,6 +318,10 @@ export function progressOf(chapter: Chapter, items: readonly Item[], now: Date):
   return { done, total, finishesOn: new Date(now.getTime() + left * 86_400_000).toISOString().slice(0, 10) };
 }
 
+/** The sentence the page, and the MCP, print under a chapter's name. */
+export const progressSentence = (p: Progress): string =>
+  `${p.done} of ${p.total} done${p.finishesOn === null ? "" : `; at this pace it finishes ${p.finishesOn}`}.`;
+
 // ---- the crew's gate ----
 
 /** Whether the repository has closed a chapter and opened none since: the crew rests. */
