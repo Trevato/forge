@@ -146,6 +146,58 @@ reachable from a crew run); try them on a scratch copy first.
 What stays open: nothing in the forge records that the switch is on, nor
 reminds anyone when the week ends; both are a person's.
 
+## 8. Customer accounts, without the crew reading them (person runs, crew writes)
+Accounts are step 3's data with one more rule: the crew never sees a row of
+them, not an email, not a hash. **Nothing here was run**; the forge has no
+feature for it (the gap below), so it is a procedure and a script.
+1. **Formats are kept, not converted.** A password hash cannot be turned into
+   another format without the password. Carry each hash exactly as stored
+   (`$2b$` bcrypt, `$argon2id$` argon2, `scrypt$`/`pbkdf2$` with their salt
+   and cost parameters in the string). The inventory (step 1) names which
+   formats the old app wrote, by prefix only, and whether a **pepper** (a
+   server-side secret mixed in before hashing) was used. A pepper is a secret
+   the owner sets by name in the new app's settings (step 3); without it
+   every pepper-hashed account fails, so say so before cut-over.
+2. **The crew writes against invented data.** In the migrated app's own
+   repository (not in the forge, and **not yet written**), the crew will write
+   (a) a loader that reads the owner's export file and writes the new `bun:sqlite` table
+   without logging a row, and (b) a verifier that recognises each format by
+   its prefix, with tests on made-up accounts and hashes made in the test.
+   An unknown prefix is refused, never guessed at. Add the rehash: after a
+   successful sign-in with an old format, store the new app's own format.
+3. **The owner exports and loads.** On the old node, export only the columns
+   the new app needs (id, email, hash, created-at, and flags such as
+   verified or staff), to a file that stays on the owner's machine. Run the
+   loader on the owner's own machine against a copy of the new app's
+   database, then hand the loaded database over by the data copy of step 3.
+   The file never goes to a preview or a run: the forge has no way to receive
+   it unseen (#11697), so until that exists the owner, not the crew, does the
+   load. The export file is deleted after the load. Do not export sessions, reset tokens or API keys: sign
+   everyone out and let reset mail do its work.
+4. **Report counts, never content.** The loader prints per-format counts
+   (`bcrypt 1204, argon2id 31`), rows loaded, rows refused with the reason,
+   and an HMAC-SHA-256 over the ordered `id` and `hash` pairs, computed on
+   both sides with a throwaway key the owner makes and keeps. It must be
+   keyed: an unkeyed digest lets anyone holding candidate hashes confirm
+   them. Equal numbers and digests go in the issue; the key does not. Duplicate emails differing by case are listed by count and
+   resolved by the owner.
+5. **Prove it with the owner's own account.** In the rehearsal (step 4) the
+   owner, or a test customer they create on the old app first, signs in on
+   the preview. One working sign-in per format is the check; the crew is
+   told "works" or "fails", never the password or the row.
+6. **Cut-over order.** Freeze the old side (section 7), export again so
+   accounts made since the rehearsal are in, load, compare, then switch the
+   domain. Accounts changed on the old side after the last export are lost;
+   the freeze is what prevents that.
+7. **After.** Delete the export file and any copy; the step-5 backup is the
+   only other copy and is encrypted. Remove the pepper from the old node only
+   when the old app is switched off.
+
+What stays open: nothing stops an export file being pasted somewhere it
+should not be; the rule is a person's. OAuth accounts (Google and so on)
+carry a provider id, not a hash, and the new app needs the same client
+credentials set by name or those people sign in as new accounts.
+
 ## What the forge lacks (each is an issue)
 - A database import for an app (`migrate` has no data path): upload a dump, load it, report counts and checksums. (#11697)
 - ~~A file and upload copy with a manifest compared on both ends.~~ Done as a script a person runs (#11699); no page or upload from a browser yet.
@@ -154,4 +206,4 @@ reminds anyone when the week ends; both are a person's.
 - A guard for rehearsal: data copy and `preview`-scoped sandbox keys exist and are the procedure in step 4; nothing yet refuses a payment name left in scope `all`. (#11702)
 - ~~Inbound payment webhooks that survive a preview's changing address.~~ Built: `/__forge/hook/<pull>/…` on production's host. (#11703)
 - ~~A read-only switch for the old side of a migration.~~ A procedure at the old proxy and database, section 7; the forge cannot reach the old node, so no feature is built. (#11704)
-- Importing an app's customer accounts (password-hash formats) without the owner reading them. (#11705)
+- Importing an app's customer accounts without the crew reading them. Section 8 is the procedure; the loader and verifier it names are still to be written in the migrated app, and the file's way into a preview is #11697. (#11705)
