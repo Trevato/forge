@@ -1,7 +1,8 @@
 /**
  * The release tick's heartbeat (#11507): each time the tick runs it reports
  * what it did — cut, skipped and why, or failed and why — and the forge keeps
- * the last. The tick runs outside the forge's own judgment, so when it stops
+ * the last {@link KEPT} (#11794), so a quiet stretch can be told from a dead
+ * keeper. The tick runs outside the forge's own judgment, so when it stops
  * this is the only trace; `release_keeper`, /releases and the terminal's
  * release keeper screen show it, and a beat older
  * than {@link SILENT_MS} is said plainly. Plain rows in, plain rows out.
@@ -16,6 +17,8 @@ export const isOutcome = (v: unknown): v is Outcome => typeof v === "string" && 
 /** No heartbeat for this long is itself said. */
 export const SILENT_MS = 60 * 60_000;
 export const REASON_MAX = 300;
+/** How many beats are kept; the oldest goes when one more is written. */
+export const KEPT = 50;
 
 export interface Beat {
   readonly at: string;
@@ -25,15 +28,16 @@ export interface Beat {
 
 export function recordBeat(db: Database, outcome: Outcome, reason: string, at: Date = new Date()): Beat {
   const beat: Beat = { at: at.toISOString(), outcome, reason: reason.replace(/\s+/g, " ").trim().slice(0, REASON_MAX) };
-  db.query(
-    `INSERT INTO keeper_beat (id, at, outcome, reason) VALUES (1, ?1, ?2, ?3)
-     ON CONFLICT (id) DO UPDATE SET at = excluded.at, outcome = excluded.outcome, reason = excluded.reason`,
-  ).run(beat.at, beat.outcome, beat.reason);
+  db.transaction(() => {
+    db.query("INSERT INTO keeper_beat_tick (at, outcome, reason) VALUES (?1, ?2, ?3)").run(beat.at, beat.outcome, beat.reason);
+    db.query("DELETE FROM keeper_beat_tick WHERE id <= (SELECT MAX(id) FROM keeper_beat_tick) - ?1").run(KEPT);
+  })();
   return beat;
 }
 
+/** The newest beat, or null before the first. */
 export function lastBeat(db: Database): Beat | null {
-  return db.query<Beat, []>("SELECT at, outcome, reason FROM keeper_beat WHERE id = 1").get() ?? null;
+  return db.query<Beat, []>("SELECT at, outcome, reason FROM keeper_beat_tick ORDER BY id DESC LIMIT 1").get() ?? null;
 }
 
 /** What one tick did, as the keeper says it: the line and its outcome, never read back from the words. */

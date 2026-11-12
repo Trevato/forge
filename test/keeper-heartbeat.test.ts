@@ -7,7 +7,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { lastBeat, recordBeat } from "../src/keeper/beat.ts";
+import { KEPT, lastBeat, recordBeat, stepWithBeat } from "../src/keeper/beat.ts";
 import { keeperAnswer } from "../src/keeper/landed.ts";
 
 describe("release heartbeat", () => {
@@ -90,5 +90,27 @@ describe("release heartbeat", () => {
     expect((await post(admin, { outcome: "maybe", reason: "x" })).status).toBe(422);
     expect((await post(admin, { outcome: "cut", reason: "x".repeat(301) })).status).toBe(422);
     expect((await post(admin, { outcome: "cut" })).status).toBe(422);
+  });
+
+  test("each tick leaves a row: two ticks leave two, the 51st drops the oldest (#11794)", async () => {
+    app.db.query("DELETE FROM keeper_beat_tick").run();
+    const rows = () => app.db.query<{ at: string; outcome: string; reason: string }, []>(
+      "SELECT at, outcome, reason FROM keeper_beat_tick ORDER BY id",
+    ).all();
+    const tick = (n: number) =>
+      stepWithBeat(app.db, async () => ({ line: `tick ${n}`, outcome: "skipped" }), () => new Date(Date.UTC(2026, 10, 12, 0, n)));
+    await tick(1);
+    await tick(2);
+    expect(rows()).toEqual([
+      { at: "2026-11-12T00:01:00.000Z", outcome: "skipped", reason: "tick 1" },
+      { at: "2026-11-12T00:02:00.000Z", outcome: "skipped", reason: "tick 2" },
+    ]);
+    for (let n = 3; n <= KEPT + 1; n++) await tick(n);
+    const kept = rows();
+    expect(KEPT).toBe(50);
+    expect(kept).toHaveLength(50);
+    expect(kept[0]!.reason).toBe("tick 2");
+    expect(kept[49]!.reason).toBe("tick 51");
+    expect(lastBeat(app.db)?.reason).toBe("tick 51");
   });
 });
