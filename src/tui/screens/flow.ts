@@ -93,6 +93,8 @@ export function flowLines(
   keeper?: KeeperRead,
   /** Where the backup outcome files are kept; without it the off-box backup alarm cannot be read (the terminal passes the app's). */
   dataDir: string | null = null,
+  /** The release tick's heartbeat line, an owner's only (#11507). */
+  heartbeat?: string,
 ): string[] {
   const stages = readPipeline(db, now);
   const flow = readThroughput(db, stages.map((s) => s.key), now);
@@ -115,6 +117,7 @@ export function flowLines(
   return [
     ...wrap(verdict(stages, now.getTime()), inner),
     ...(keeper === undefined || keeperLine(keeper) === "" ? [] : ["", ...wrap(keeperLine(keeper), inner)]),
+    ...(heartbeat === undefined ? [] : ["", ...wrap(heartbeat, inner)]),
     ...(keeper?.ask == null ? [] : wrap(`${keeper.ask.question} Press l to ${keeper.ask.button.toLowerCase()}.`, inner)),
     "",
     ...wrap(vitalsLine(vitalsFor(readVitals(db, now, agent !== undefined), agent === undefined)), inner),

@@ -53,6 +53,7 @@ import type { App } from "../../app.ts";
 import { html, type Html } from "../html.ts";
 import { doctorCard } from "./boards-doctor.ts";
 import { keeperRow } from "../studio/keeper_row.ts";
+import { beatFact, lastBeat } from "../../keeper/beat.ts";
 import { gatesSection } from "./boards-gates.ts";
 import { heldCard } from "./boards-held.ts";
 import { badge, card, meter } from "../ui.ts";
@@ -127,7 +128,9 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
     ["Verified after landing", html`A repository that declares <span class="mono">check.verify</span> in forge.json has its main verified after landing.`],
     ["Elsewhere", html`Limits are set on <a href="/settings/capacity">Capacity</a>. How the forge stands against its threats is on <a href="/resilience">Resilience</a>; where an outside agent can help is on <a href="/contribute">Contribute</a>.`],
   ], helpAsked(url));
-  return html`${keeperRow(app.db, reader.kind === "owner")}${help}${card(
+  return html`${keeperRow(app.db, reader.kind === "owner")}${reader.kind === "owner"
+    ? html`<dl class="status-rows" id="keeper-heartbeat-row"><div class="status-row"><dt>Release tick</dt><dd id="keeper-heartbeat">${beatFact(lastBeat(app.db), new Date(now))}</dd></div></dl>`
+    : ""}${help}${card(
       html`<p id="bottleneck" data-stage="${worst?.key ?? ""}">
           <strong>${verdict(stages, now)}</strong>
         </p>

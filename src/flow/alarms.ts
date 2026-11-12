@@ -16,6 +16,8 @@ import { alarmBackup } from "./alarm_backup.ts";
 import { alarmFromApp } from "./alarm_from_app.ts";
 import { alarmPaidOrder } from "./alarm_paid_order.ts";
 import { alarmIdleCrew } from "./alarm_idle_crew.ts";
+import { laneAlarm } from "./alarm_lane.ts";
+import { mainAheadAlarm } from "./alarm_main_ahead.ts";
 import { noReleaseAlarm } from "./alarm_no_release.ts";
 import { redMainAlarm } from "./alarm_red_main.ts";
 import { alarmRepeat } from "./alarm_repeat.ts";
@@ -23,7 +25,7 @@ import { alarmSilent } from "./alarm_silent.ts";
 import { alarmStuck } from "./alarm_stuck.ts";
 
 export interface FiredAlarm {
-  readonly key: "landing_stopped" | "red_main" | "stuck" | "idle_crew" | "no_release" | "bug_clock" | "silent" | "repeat" | "from_app" | "unreachable" | "backup" | "paid_order";
+  readonly key: "landing_stopped" | "red_main" | "stuck" | "idle_crew" | "no_release" | "main_ahead" | "lane_stopped" | "bug_clock" | "silent" | "repeat" | "from_app" | "unreachable" | "backup" | "paid_order";
   readonly says: string;
   readonly since: string;
   /** A same-origin path to the item the alarm names. */
@@ -70,6 +72,10 @@ export function firedAlarms(
   }
   const release = noReleaseAlarm(db, now);
   if (release.fired) out.push({ key: "no_release", says: release.says, since: release.since!, href: "/releases" });
+  const ahead = mainAheadAlarm(db, now);
+  if (ahead.fired) out.push({ key: "main_ahead", says: ahead.says, since: ahead.since!, href: "/releases" });
+  const lane = laneAlarm(db, now, { ceilingUsd: opts.ceilingUsd ?? null });
+  if (lane.fired) out.push({ key: "lane_stopped", says: lane.says, since: lane.since!, href: "/flow" });
   const bug = bugClockAlarm(db, now, opts.publicOnly ? { publicOnly: true } : {});
   if (bug.fired) out.push({ key: "bug_clock", says: bug.says, since: bug.since!, href: bug.href });
   return out;

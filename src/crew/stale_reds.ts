@@ -28,6 +28,7 @@ import { closesFromBody, listOpenPulls, pullDir, type Pull } from "../core/pulls
 import type { Repo } from "../core/repos.ts";
 import { automaticRunsSince, getRun, INFRA_SUMMARY, type Run } from "../core/runs.ts";
 import { getUserById } from "../core/users.ts";
+import { type ForgeLines, forgeFailed } from "../flow/alarm_lane.ts";
 import { QUIET_MS, SWEEP_REASON } from "../flow/stale_reds.ts";
 import { mergeable, resolveOid } from "../git/merge.ts";
 import { createLog } from "../kernel/log.ts";
@@ -129,6 +130,7 @@ export async function sweepStaleReds(
   if (repo.autonomy !== "autonomous" || repo.autonomyBy === null) return moves;
   let budget = Math.min(PER_TICK, Math.max(room, 0));
   const main = redMain(app.db, repo.id);
+  const forgeLines: ForgeLines = new Map();
   for (const pull of listOpenPulls(app.db, repo.id)) {
     if (!pull.authorIsAgent || pull.mergedAt !== null || pull.headOid === "") continue;
     if (getHold(app.db, pull.id) !== undefined || authorsInRepoPull(pull)) continue;
@@ -159,7 +161,9 @@ export async function sweepStaleReds(
     }
 
     const since = lastHumanWord(app, issue, agent);
-    if (automaticRunsSince(app.db, issue.id, since) >= CHECK_FAILED_LIMIT) {
+    // The forge's failure (#11507) is never a reason to park: the pull is checked again, not reworked.
+    const forge = forgeFailed(app.db, red.run, now.getTime(), forgeLines);
+    if (!forge && automaticRunsSince(app.db, issue.id, since) >= CHECK_FAILED_LIMIT) {
       const why = `the check stayed red through ${CHECK_FAILED_LIMIT} automatic tries: ${failingLine(red.run)}`;
       if (await parkPullTold(app, repo, pull, why, since)) moves.push({ pull: pull.number, did: "parked" });
       continue;
@@ -178,6 +182,7 @@ export async function sweepStaleReds(
       continue;
     }
     if (again.state !== "failed" || again.summary.startsWith(INFRA_SUMMARY)) continue;
+    if (forgeFailed(app.db, again, now.getTime(), forgeLines)) continue;
     // Said as the builder, not as a person: a person's word restarts the tries.
     addComment(
       app,

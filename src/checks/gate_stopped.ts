@@ -66,7 +66,10 @@ function oneCause(gates: readonly { reason: string | null; tests: string }[]): b
 export function ownLandingStopped(db: Database, repo: { readonly id: string }): Stopped | undefined {
   const [owner, name] = ownRepoPath().split("/");
   const own = owner && name ? getRepo(db, owner, name) : undefined;
-  return own !== undefined && own.id === repo.id ? landingStopped(db, own.id) : undefined;
+  if (own === undefined || own.id !== repo.id) return undefined;
+  // Gate evidence only: the lane alarm (#11507) is a heuristic over merges and
+  // run rows, and a merge drought with pulls waiting on review is not a red gate.
+  return landingStopped(db, own.id);
 }
 
 /** The one sentence home and the pipeline carry. */

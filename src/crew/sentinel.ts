@@ -47,6 +47,10 @@ import {
 } from "../checks/shared_red.ts";
 import { readRunLogTail } from "../runs/log.ts";
 import { clip } from "../text/clip.ts";
+import { forgeCeiling } from "../flow/ceiling.ts";
+import { personSpoke } from "./person_spoke.ts";
+import { closeCaughtUp, mainAhead } from "./sentinel_main_ahead.ts";
+import { closeLaneMoving, laneStopped } from "./sentinel_lane.ts";
 import type { FindingKind } from "../hunt/finding.ts";
 import { addLabels, kindLabels } from "../hunt/label.ts";
 
@@ -400,7 +404,7 @@ export function repeatedErrors(now: number): Finding[] {
  * Each cause whose spans total more than ten minutes in the day ending at
  * `now`, quoting its sentence. Shorter totals stay in the history.
  */
-export function degradedCauses(db: Database, now: number, forgeRepoId?: string, dataDir?: string): Finding[] {
+export function degradedCauses(db: Database, now: number, forgeRepoId?: string, dataDir?: string, ceilingUsd: number | null = null): Finding[] {
   const from = now - DAY_MS;
   const byCause = new Map<
     string,
@@ -479,7 +483,7 @@ export function ownCause(cause: string, forgeRepoId: string | undefined): boolea
  * at once, not when the day has added up. The finding shares its key with
  * `degradedCauses`, so one cause is one issue.
  */
-export function budgetBreaches(db: Database, now: number, forgeRepoId?: string, dataDir?: string): Finding[] {
+export function budgetBreaches(db: Database, now: number, forgeRepoId?: string, dataDir?: string, ceilingUsd: number | null = null): Finding[] {
   const out: Finding[] = [];
   for (const s of spans(db, now - DAY_MS, now)) {
     if (s.closedAt !== null || !BREACH_CAUSE.test(s.cause) || !ownCause(s.cause, forgeRepoId)) continue;
@@ -569,8 +573,10 @@ function sharedLines(
 }
 
 /** Everything the sentinel reads, in one pass. */
-export function findFaults(db: Database, now = Date.now(), forgeRepoId?: string, dataDir?: string): Finding[] {
+export function findFaults(db: Database, now = Date.now(), forgeRepoId?: string, dataDir?: string, ceilingUsd: number | null = null): Finding[] {
   const found = [
+    ...mainAhead(db, now),
+    ...laneStopped(db, now, ceilingUsd),
     ...budgetBreaches(db, now, forgeRepoId, dataDir),
     ...heldSlots(db, now),
     ...strayTriggers(db),
@@ -768,17 +774,6 @@ function sinceFix(app: App, repo: Repo, actor: User, f: Finding, evidence: strin
     .query("UPDATE sentinel_finding SET commented_at = ?1, last_seen = ?1, evidence = ?2 WHERE key = ?3 AND issue_id = ?4")
     .run(at, evidence, f.key, fix.issueId);
   return 1;
-}
-
-/** Whether a person, not an agent, has commented on the issue: then they decide, not the sentinel. */
-function personSpoke(db: Database, issueId: string): boolean {
-  const spoke = db
-    .query<{ n: number }, [string]>(
-      `SELECT COUNT(*) AS n FROM comment c JOIN user u ON u.id = c.author_id
-        WHERE c.issue_id = ?1 AND u.is_agent = 0 AND u.kind = 'user'`,
-    )
-    .get(issueId);
-  return spoke !== null && spoke.n > 0;
 }
 
 /** The test a shared finding names, read back from its evidence. */
@@ -1031,7 +1026,7 @@ export function hunt(
   let commented = 0;
   const [owner = "", name = ""] = repoPath.split("/");
   const repo = getRepo(app.db, owner, name);
-  const findings = find(app.db, now, repo?.id, app.config.dataDir);
+  const findings = find(app.db, now, repo?.id, app.config.dataDir, forgeCeiling(app.config));
   const actor = sentinelActor(app.db);
   if (repo !== undefined && actor !== undefined) {
     settleShared(app, repo, actor, now);
@@ -1106,8 +1101,12 @@ export function hunt(
       }
     }
   }
-  if (repo !== undefined && actor !== undefined)
-    closeHeld(app, repo, actor, new Set(findings.map((f) => f.key)), now);
+  if (repo !== undefined && actor !== undefined) {
+    const active = new Set(findings.map((f) => f.key));
+    closeHeld(app, repo, actor, active, now);
+    closeCaughtUp(app, repo, actor, active, now);
+    closeLaneMoving(app, repo, actor, active, now);
+  }
   // A hunt with nowhere to file is recorded as such, never as a quiet one.
   const unfiled = repo === undefined || actor === undefined;
   app.db

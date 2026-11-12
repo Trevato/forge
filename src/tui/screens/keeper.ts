@@ -1,6 +1,7 @@
 /**
  * The release keeper in the terminal (#7557), the /releases card's read:
- * what holds the next cut, then each release the keeper cut with its stage,
+ * what holds the next cut, the release tick's heartbeat and whether main is
+ * green and ahead of production (#11507), then each release the keeper cut with its stage,
  * its short commit, landed to live (#8042), the known-good version it rolls
  * back to and what the probes counted.
  * Gated by `release/gate.ts` as the page is. `h` holds releases with a
@@ -8,6 +9,8 @@
  * functions the card and MCP `release_hold` call.
  */
 
+import { aheadLine } from "../../flow/alarm_main_ahead.ts";
+import { beatLine, lastBeat } from "../../keeper/beat.ts";
 import { stallWords } from "../../perf/boot_stall.ts";
 import { blocking, holdAs, liftAs, standingHolds } from "../../keeper/hold.ts";
 import { secondsWords, withLandedToLive, type LandedRelease } from "../../keeper/landed.ts";
@@ -32,13 +35,23 @@ const STAGE: Record<Stage, { label: string; tone: Tone }> = {
 export interface KeeperRead {
   /** What holds the next cut, or the line that says nothing does. */
   readonly blocked: string;
+  /** The release tick's last heartbeat as a sentence, said plainly when there is none or it is old. */
+  readonly heartbeat: string;
+  /** Main green and ahead of production, and for how long; absent when it is not. */
+  readonly ahead?: string;
   readonly releases: readonly LandedRelease[];
 }
 
 /** The card's content for this person; undefined for anyone the page would 404. */
-export function readKeeper(f: Session): KeeperRead | undefined {
+export function readKeeper(f: Session, now: Date = new Date()): KeeperRead | undefined {
   if (!mayRead(f.app, f.user)) return undefined;
-  return { blocked: blocking(standingHolds(f.db)) ?? "Nothing holds the next cut.", releases: withLandedToLive(f.db, listKeeperReleases(f.db)) };
+  const ahead = aheadLine(f.db, now);
+  return {
+    blocked: blocking(standingHolds(f.db)) ?? "Nothing holds the next cut.",
+    heartbeat: beatLine(lastBeat(f.db), now),
+    ...(ahead === undefined ? {} : { ahead }),
+    releases: withLandedToLive(f.db, listKeeperReleases(f.db)),
+  };
 }
 
 export function keeperRows(releases: readonly LandedRelease[]): ListRow[] {
@@ -90,7 +103,11 @@ export function keeperScreen(f: Session, ctx: Ctx): Screen {
         return;
       }
       // What holds the cut ends with what to land ("release hold N"): wrapped, up to three lines, never cut short of it.
-      const lines = wrap(read.blocked, area.w).slice(0, 3);
+      const lines = [
+        ...wrap(read.blocked, area.w).slice(0, 3),
+        ...wrap(read.heartbeat, area.w).slice(0, 2),
+        ...(read.ahead === undefined ? [] : wrap(read.ahead, area.w).slice(0, 2)),
+      ];
       const [head, body] = split(area, "v", [len(lines.length + 1), fill(1)]);
       lines.forEach((l, i) => s.text(head!.x, head!.y + i, truncate(l, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w));
       if (read.releases.length === 0) {

@@ -97,7 +97,8 @@ import { proveRunning } from "./release/prove.ts";
 import { CHECK_EVERY_MS, setBehind, watchBehind } from "./release/behind.ts";
 import { readLandings } from "./release/landings.ts";
 import { ownTagsReader } from "./release/own_tags.ts";
-import { rollProbe, tick as keeperTick } from "./keeper/keeper.ts";
+import { rollProbe, tickStep as keeperTick } from "./keeper/keeper.ts";
+import { stepWithBeat } from "./keeper/beat.ts";
 import { keeperEnv, keeperPorts } from "./keeper/wire.ts";
 import { snapshotPlace } from "./actions/health.ts";
 import { capacityDefault, egressEnvIgnored } from "./core/capacity.ts";
@@ -824,7 +825,7 @@ if (keeperOn.on) {
   else {
     let said = "";
     const step = () =>
-      void keeperTick(ports)
+      void stepWithBeat(app.db, () => keeperTick(ports))
         .then((line) => {
           if (line !== said) app.log.info("release keeper", { line });
           said = line;

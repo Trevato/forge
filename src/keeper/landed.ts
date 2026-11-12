@@ -7,6 +7,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { beatLine, lastBeat, SILENT_MS, type Beat } from "./beat.ts";
 import { blocking, listHolds, standingHolds, type Hold } from "./hold.ts";
 import { listKeeperReleases, type KeeperRelease } from "./record.ts";
 
@@ -55,11 +56,24 @@ export function withLandedToLive(db: Database, releases: readonly KeeperRelease[
   return releases.map((r) => ({ ...r, commit: r.sha.slice(0, 7), landedToLiveSeconds: landedToLive(db, r) ?? null }));
 }
 
+/** The tick's last heartbeat with its sentence and whether it has gone quiet (#11507); null before the first. */
+export type Heartbeat = Beat & { readonly silent: boolean; readonly says: string };
+
+export function heartbeatOf(db: Database, now: Date = new Date()): Heartbeat | null {
+  const beat = lastBeat(db);
+  if (beat === null) return null;
+  return { ...beat, silent: now.getTime() - Date.parse(beat.at) > SILENT_MS, says: beatLine(beat, now) };
+}
+
 /** What the keeper did and what stops the next cut: one answer for MCP `release_keeper` and `GET /api/v1/keeper`. */
-export function keeperAnswer(db: Database): { blocked: string | null; releases: LandedRelease[]; holds: Hold[] } {
+export function keeperAnswer(
+  db: Database,
+  now: Date = new Date(),
+): { blocked: string | null; releases: LandedRelease[]; holds: Hold[]; heartbeat: Heartbeat | null } {
   return {
     blocked: blocking(standingHolds(db)) ?? null,
     releases: withLandedToLive(db, listKeeperReleases(db)),
     holds: listHolds(db),
+    heartbeat: heartbeatOf(db, now),
   };
 }

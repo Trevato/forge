@@ -1,11 +1,14 @@
 /**
  * The release keeper on /releases (#7557): what stops the next cut, and
  * each release it cut with its stage, the known-good version it rolls back
- * to, and what the probes counted. Nothing when it has done nothing.
+ * to, and what the probes counted; the release tick's heartbeat and whether
+ * main is green and ahead of production (#11507). Nothing when it has done nothing.
  * A plain section under an h2, no card (#9998).
  */
 
 import type { Database } from "bun:sqlite";
+import { aheadLine } from "../../flow/alarm_main_ahead.ts";
+import { beatFact, lastBeat } from "../../keeper/beat.ts";
 import { blocking, MAX_REASON, standingHolds } from "../../keeper/hold.ts";
 import { secondsWords, withLandedToLive } from "../../keeper/landed.ts";
 import { listKeeperReleases, type Stage } from "../../keeper/record.ts";
@@ -21,11 +24,13 @@ const STAGE: Record<Stage, { label: string; tone: Tone }> = {
 };
 
 /** `mayHold` is `mayRollBack`: the section then offers the owner's hold and its lift. */
-export function keeperPanel(db: Database, mayHold = false): Html | undefined {
+export function keeperPanel(db: Database, mayHold = false, now: Date = new Date()): Html | undefined {
   const releases = withLandedToLive(db, listKeeperReleases(db));
   const holds = standingHolds(db);
   const blocked = blocking(holds);
-  if (releases.length === 0 && blocked === undefined && !mayHold) return undefined;
+  const beat = lastBeat(db);
+  const ahead = aheadLine(db, now);
+  if (releases.length === 0 && blocked === undefined && beat === null && ahead === undefined && !mayHold) return undefined;
   const rows = releases.map((r, i) => {
     const s = STAGE[r.stage];
     return html`<tr>
@@ -43,6 +48,10 @@ export function keeperPanel(db: Database, mayHold = false): Html | undefined {
   return html`<section class="settings-block" id="keeper">
     <h2>Release keeper</h2>
     <p class="small ${blocked === undefined ? "muted" : ""}" id="keeper-blocked">${blocked ?? "Nothing holds the next cut."}</p>
+    <dl class="status-rows" id="keeper-facts">
+      <div class="status-row"><dt>Release tick</dt><dd id="keeper-heartbeat">${beatFact(beat, now)}</dd></div>
+      ${when(ahead !== undefined, () => html`<div class="status-row"><dt>Main vs production</dt><dd id="keeper-ahead">${ahead}</dd></div>`)}
+    </dl>
     ${when(rows.length > 0, () => html`<div class="table-scroll" role="region" tabindex="0" aria-label="Keeper releases"><table class="table" data-sticky-lead>
       <thead><tr><th>Version</th><th>Cut</th><th>Landed to live</th><th>Known good</th><th>Roll non-200</th><th>Probes / pages</th><th>Worst</th><th>Stall, first 5 min</th><th>Dark</th></tr></thead>
       <tbody>${rows}</tbody>

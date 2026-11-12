@@ -56,6 +56,6 @@ describe("the release keeper screen", () => {
   test("with nothing cut, it says nothing holds the next cut and that no releases are kept yet", async () => {
     const f = await keeperForge();
     const read = readKeeper(new Session(f.app, identity(f.user)));
-    expect(read).toEqual({ blocked: "Nothing holds the next cut.", releases: [] });
+    expect(read).toEqual({ blocked: "Nothing holds the next cut.", heartbeat: "The release tick has never reported a heartbeat.", releases: [] });
   });
 });

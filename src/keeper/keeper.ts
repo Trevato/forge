@@ -37,6 +37,7 @@ import { stallReason, STALL_HOLD_MS } from "../perf/boot_stall.ts";
 import { countRollProbe, dropCut, finish, getKeeperRelease, inFlight, keepStall, keepTally, listKeeperReleases, markLive, releaseBefore, recordCut, type KeeperRelease } from "./record.ts";
 import { rollBackToNamed } from "./rollback.ts";
 import type { Probe, Tally, Verdict } from "./verify.ts";
+import type { Step } from "./beat.ts";
 
 /** A release not live this long after its cut never rolled: 3 h (the tag's check may take 2 h, the build some more). */
 export const ROLL_DEADLINE_MS = 3 * 3_600_000;
@@ -116,8 +117,8 @@ function fileDark(p: KeeperPorts, r: KeeperRelease): number | undefined {
 const verifying = new WeakMap<KeeperPorts, number>();
 
 /** The verify of an in-flight release this process is the new version of, to its end. */
-async function verifyAndDecide(p: KeeperPorts, r: KeeperRelease): Promise<string> {
-  if (verifying.has(p)) return `verifying ${r.version}`;
+async function verifyAndDecide(p: KeeperPorts, r: KeeperRelease): Promise<Step> {
+  if (verifying.has(p)) return { line: `verifying ${r.version}`, outcome: "skipped" };
   verifying.set(p, r.id);
   try {
     const verdict = await p.verify((t) => keepTally(p.db, r.id, t, r.rollNon200));
@@ -131,9 +132,9 @@ async function verifyAndDecide(p: KeeperPorts, r: KeeperRelease): Promise<string
       const lifted = liftFixed(p.db, r.version, p.now());
       p.bus.append({ kind: "release.verified_live", repoId: p.repo.id, payload: { ...numbers, holdsLifted: lifted } });
       fileDark(p, getKeeperRelease(p.db, r.id)!);
-      return `${r.version} verified live: ${kept.probes} probes, worst ${kept.worstMs} ms, ${kept.secondsDark} s dark${stalled === undefined ? "" : `; ${stalled}`}`;
+      return { line: `${r.version} verified live: ${kept.probes} probes, worst ${kept.worstMs} ms, ${kept.secondsDark} s dark${stalled === undefined ? "" : `; ${stalled}`}`, outcome: "cut" };
     }
-    return await rollBack(p, kept, verdict.reason);
+    return { line: await rollBack(p, kept, verdict.reason), outcome: "failed" };
   } finally {
     verifying.delete(p);
   }
@@ -171,6 +172,16 @@ async function rollBack(p: KeeperPorts, r: KeeperRelease, reason: string): Promi
 
 /** One step of the keeper; the line says what it did or why it did nothing. */
 export async function tick(p: KeeperPorts): Promise<string> {
+  return (await tickStep(p)).line;
+}
+
+/**
+ * One step with its outcome, said where it is decided (#11507): `cut` when it
+ * moved a release (cut one, or verified one live), `failed` when something
+ * refused or broke (a verify, a tag, the deployer's admit, main unreadable),
+ * else `skipped` with the reason.
+ */
+export async function tickStep(p: KeeperPorts): Promise<Step> {
   const holds = standingHolds(p.db);
   findCauses(p, holds);
   const flying = inFlight(p.db);
@@ -182,14 +193,14 @@ export async function tick(p: KeeperPorts): Promise<string> {
     // A cut recorded but never tagged (the process died between the two): tag it now, or drop it.
     if (flying.stage === "rolling" && (await p.newest())?.version !== flying.version) {
       const refused = await tagged(p, flying);
-      if (refused !== undefined) return refused;
+      if (refused !== undefined) return { line: refused, outcome: "failed" };
     }
     if (flying.stage === "rolling" && p.now() - Date.parse(flying.cutAt) > ROLL_DEADLINE_MS)
-      return rollBack(p, flying, `${flying.version} was not live ${ROLL_DEADLINE_MS / 3_600_000} h after its cut`);
+      return { line: await rollBack(p, flying, `${flying.version} was not live ${ROLL_DEADLINE_MS / 3_600_000} h after its cut`), outcome: "failed" };
     // A promote that did not take (the API refused, or something set the image back) is sent again.
     const want = refFor(p, flying.knownGood.image, flying.version, flying.sha);
     if (flying.stage === "rolling" && (await p.deployer.image()) !== want) await promote(p, flying.version, want);
-    return `${flying.version} is ${flying.stage}`;
+    return { line: `${flying.version} is ${flying.stage}`, outcome: "skipped" };
   }
   const main = await p.main();
   const newest = await p.newest();
@@ -207,19 +218,20 @@ export async function tick(p: KeeperPorts): Promise<string> {
     now: p.now(),
     ...(p.minIntervalMs === undefined ? {} : { minIntervalMs: p.minIntervalMs }),
   });
-  if (!decision.cut || main === undefined) return decision.cut ? "main is unreadable" : decision.why;
+  if (!decision.cut) return { line: decision.why, outcome: "skipped" };
+  if (main === undefined) return { line: "main is unreadable", outcome: "failed" };
   // A tree the deployer cannot release (dependencies changed, preflight red) is not cut: no tag, no row.
   const refused = await p.deployer.admits?.(main);
-  if (refused !== undefined) return `not cut: ${refused}`;
+  if (refused !== undefined) return { line: `not cut: ${refused}`, outcome: "failed" };
   const image = await p.deployer.image();
   const knownGood = { version: p.live(), image };
   // The row first, the tag second: a crash between them leaves a `rolling` row
   // whose tag the next tick sends (`tagged`), never a tag the keeper has no row for.
   const r = recordCut(p.db, { version: decision.version, sha: main, knownGood, at: p.now() });
   const tagRefused = await tagged(p, r);
-  if (tagRefused !== undefined) return tagRefused;
+  if (tagRefused !== undefined) return { line: tagRefused, outcome: "failed" };
   const sent = await promote(p, r.version, refFor(p, image, r.version, main));
-  return `cut ${r.version} at ${main.slice(0, 12)}; ${sent}; known good: ${knownGood.version}`;
+  return { line: `cut ${r.version} at ${main.slice(0, 12)}; ${sent}; known good: ${knownGood.version}`, outcome: "cut" };
 }
 
 const refFor = (p: KeeperPorts, image: string, version: string, sha: string): string =>

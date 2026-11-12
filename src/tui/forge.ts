@@ -83,6 +83,7 @@ import { readHandoverLists } from "../flow/handover_read.ts";
 import { readDrifts } from "../flow/alarm_drift.ts";
 import { readHeld } from "../flow/held.ts";
 import { answerKeeper, readKeeper } from "../flow/keeper.ts";
+import { beatLine, lastBeat } from "../keeper/beat.ts";
 import { readVerified } from "../flow/verified.ts";
 import { memoryScreen } from "./screens/system.ts";
 import { noteRead, telemetryReader } from "../actions/telemetry.ts";
@@ -502,6 +503,7 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               readVerified(session.app, flowReader.kind === "owner"),
               keeper,
               session.app.config.dataDir,
+              flowReader.kind === "owner" ? beatLine(lastBeat(session.db), new Date()) : undefined,
             ), keeper.ask && user ? { ask: keeper.ask, answer: () => answerKeeper(session.app, keeper.ask!.id, user.id) } : undefined,
             mayDrift(session)
               ? { read: async () => readHandoverLists(session.db, await readDrifts(session.app), Date.now()), update: (n) => askUpdate(session, n) }

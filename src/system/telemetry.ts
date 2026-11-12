@@ -11,6 +11,7 @@ import type { App } from "../app.ts";
 import { SOURCES } from "../boards/sources.ts";
 import { conflictedPulls, conflictedSays, rebaseLane, rebaseLaneSays } from "../flow/conflicted.ts";
 import { firedAlarms } from "../flow/alarms.ts";
+import { forgeCeiling } from "../flow/ceiling.ts";
 import { running } from "../kernel/version.ts";
 import { readTalkTurns, talkTurnsWords } from "../flow/talk_turns.ts";
 import { readTalkResumes, talkResumesWords } from "../flow/talk_resumes.ts";
@@ -18,6 +19,7 @@ import { readVitals, vitalsFor, vitalsLine, vitalsMisses } from "../flow/vitals.
 import { parkedSays, readParked } from "../flow/parked.ts";
 import { readDeclines } from "../flow/declines.ts";
 import { readKeeper } from "../flow/keeper.ts";
+import { heartbeatOf } from "../keeper/landed.ts";
 import { readPipeline, readStepStats, statWords, verdict } from "../flow/pipeline.ts";
 import { type QueueReading, readQueues } from "../flow/queue.ts";
 import { reviewersBusy, reviewingSays } from "../flow/reviewing.ts";
@@ -103,6 +105,8 @@ function flowBody(x: {
     steps: x.steps.map((m) => ({ ...m, says: statWords(m) })),
     // The cause binding landings now and the keeper's last act (#7645).
     keeper: readKeeper(app.db, reader.kind === "owner"),
+    // The release tick's last report, reason and all, for the owner only (#11507): the reason may name private work.
+    heartbeat: reader.kind === "owner" ? heartbeatOf(app.db, now) : null,
     // How long each main has gone unverified after landing (#7786); private repositories for the owner only.
     verified: x.verified.map((row) => ({ ...row, says: verifiedSays(row, now.getTime()) })),
     // Issues the crew parked in the last 24 h and 7 d, the newest three named (#6471).
@@ -117,7 +121,7 @@ function flowBody(x: {
     // Declined build runs of the last 24 h by reason, each with the runs behind it.
     declines: readDeclines(app.db, now, reader.kind === "agent"),
     // The four alarms (#5930) that are firing now; empty when none is.
-    alarms: firedAlarms(app.db, now, { publicOnly: reader.kind === "agent", dataDir: app.config.dataDir }),
+    alarms: firedAlarms(app.db, now, { publicOnly: reader.kind === "agent", dataDir: app.config.dataDir, ceilingUsd: forgeCeiling(app.config) }),
     // Review runs in flight per reviewer, cut to public repositories for an agent (#4733).
     reviewing: { says: reviewingSays(busy), reviewers: busy },
     conflicted: { says: conflictedSays(conflicted, now.getTime()), pulls: conflicted },

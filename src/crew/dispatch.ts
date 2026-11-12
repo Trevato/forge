@@ -48,6 +48,7 @@ import { appendRunLog } from "../runs/log.ts";
 import { noteHeld, type HoldCause } from "../runs/held.ts";
 import { decideAndRecord } from "./ledger.ts";
 import { bugsFirst } from "../flow/bugs.ts";
+import { forgeFailed } from "../flow/alarm_lane.ts";
 import { byDials } from "./team_share.ts";
 import { peopleFirst } from "./people_first.ts";
 import { inMaintenance } from "../maintenance/state.ts";
@@ -1097,6 +1098,11 @@ function waitOnMain(
     log.info("check failed while the check machine's disk was full; waiting for the disk", {
       issue: issue.number,
     });
+    return true;
+  }
+  // One failure line on five pulls within the hour is the forge's own (#11507): no builder is sent, no pull parked.
+  if (forgeFailed(app.db, run, Date.now())) {
+    log.info("check failed on a line five pulls share; the forge's failure, not the pull's", { issue: issue.number });
     return true;
   }
   const main = sharedWithMain(redMain(app.db, repo.id), run);

@@ -139,6 +139,14 @@ export function waitingSince(db: Database): string | undefined {
   return onItsWay.at(-1)?.at;
 }
 
+/** The merged pulls not yet in the running commit, oldest first, with their merge commits; empty when nothing was read (#11507). */
+export function waitingRows(db: Database): MergedRow[] {
+  if (kept === undefined) return [];
+  const rows = mergedRows(db);
+  const way = new Set(split(rows, kept).onItsWay.map((l) => `${l.repo}#${l.number}`));
+  return rows.filter((r) => way.has(`${r.repo}#${r.number}`)).reverse();
+}
+
 /** How long a miss is believed: a repository can turn public, or merge its first pull, after boot. */
 const MISS_MS = 60_000;
 

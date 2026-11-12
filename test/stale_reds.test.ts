@@ -227,3 +227,26 @@ test("the flow report counts stale reds and the keeper names them as a cause", (
   const found = pickCause({ repos: [{ repoId: "r", slug: "a/b", startable: 1, running: 1, slots: 4, ceilingUsd: 10, atCeiling: false, noHeadroom: false, resetsAt: null }], red: 0, staleReds: STALE_REDS, stale: 0 });
   expect(found?.cause).toBe("stale_reds");
 });
+
+test("one failure line on five pulls within the hour is the forge's (#11507): past their tries, none is parked", async () => {
+  app.db.query(`UPDATE issue SET state = 'closed' WHERE state = 'open' AND kind = 'pull'`).run();
+  const made: Awaited<ReturnType<typeof pullBy>>[] = [];
+  for (let i = 0; i < 5; i++) {
+    const p = await pullBy(mason);
+    const red = finished(p, "check", "failed", 5000 + i);
+    app.db.query("UPDATE run SET summary = ?2 WHERE id = ?1").run(red.id, `check failed: stopped: used 1${i}.0 cores for 30s, over its limit of 16`);
+    finished(p, "agent", "ok", 5010 + i, "check_failed");
+    finished(p, "agent", "ok", 5020 + i, "check_failed");
+    made.push(p);
+  }
+  const moves = await sweepStaleReds(app, repo, at(5060), 0);
+  expect(moves.filter((m) => made.some((p) => p.pull.number === m.pull))).toEqual([]);
+  expect(made.every((p) => open(p.pull.id))).toBe(true);
+  // A line on one pull only is the pull's: past its tries, it is parked.
+  const lone = await pullBy(mason);
+  finished(lone, "check", "failed", 5025, "", "engine > lone");
+  finished(lone, "agent", "ok", 5026, "check_failed");
+  finished(lone, "agent", "ok", 5027, "check_failed");
+  const later = await sweepStaleReds(app, repo, at(5060), 0);
+  expect(later).toEqual([{ pull: lone.pull.number, did: "parked" }]);
+});
