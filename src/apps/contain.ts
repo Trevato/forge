@@ -857,6 +857,15 @@ function readMountinfo(): string {
 
 /** How often the process table is read, and over how long CPU is averaged. */
 export const WATCH = { tickMs: 1_000, cpuWindowMs: 30_000, diskEveryTicks: 15 };
+/**
+ * How far past its cores a cell may run before the watcher stops it. A
+ * cell is already held to its cores by affinity, so a busy one measures
+ * right at its limit (16.0 to 18.2 of 16 over a window): stopping at the
+ * limit itself failed three checks in four and stopped a 1-core forge at
+ * 1.0. The watcher is the last resort for a runaway, so it acts well past
+ * the limit.
+ */
+export const CPU_STOP_SLACK = 1.5;
 /** A cell's process limit: the watch's every tick, and the kernel's `pids.max` where pids is delegated. */
 export const PROCESSES_MAX = 512;
 const CLK_TCK = 100;
@@ -1246,7 +1255,7 @@ function tick(): void {
     if (oldest !== undefined && now - oldest.at >= WATCH.cpuWindowMs) {
       const cores =
         (ticks - oldest.ticks) / CLK_TCK / ((now - oldest.at) / 1000);
-      if (cores > limits.cpus) {
+      if (cores > limits.cpus * CPU_STOP_SLACK) {
         // Read only now, at the stop: no tick pays for naming a process.
         const top = busiest(tree, (pid) => rows.get(pid)?.ticks ?? 0);
         entry.breach(
