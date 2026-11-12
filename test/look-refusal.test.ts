@@ -25,4 +25,11 @@ describe("refusal", () => {
   test("a page with no address is refused", () => {
     expect(refusal(HOST, undefined, "")).toBeDefined();
   });
+
+  test("the browser's net:: code leads the message, capped at 100 characters", () => {
+    const href = "chrome-error://chromewebdata/";
+    expect(refusal(HOST, "net::ERR_X", href)).toStartWith("net::ERR_X: the browser showed an error page");
+    const why = refusal(HOST, "net::" + "E".repeat(200), href) ?? "";
+    expect(why).toStartWith("net::" + "E".repeat(95) + ": the browser showed");
+  });
 });

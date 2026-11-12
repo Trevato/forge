@@ -262,6 +262,17 @@ export function signGrant(
   return `${payload}.${mac(dataDir, payload)}`;
 }
 
+/**
+ * The forge's own proof that a grant link is for the browser it opens a look
+ * with, on the forge's plain-http listener (`looks/service.ts`). Such a
+ * browser drops a `Secure` cookie set over http, so the grant it follows
+ * sets a plain one; only a link carrying this proof (which only this forge
+ * can mint, and only for that token) gets it. Everyone else keeps `Secure`.
+ */
+export function plainProof(dataDir: string, token: string): string {
+  return mac(dataDir, `plain.${token}`);
+}
+
 function mac(dataDir: string, payload: string): string {
   return createHmac("sha256", loadKey(dataDir))
     .update(payload)
@@ -1754,7 +1765,14 @@ function grant(
     vouched.who,
   );
   const path = safePath(url.searchParams.get("to"));
-  const secure = proxySecure(request, url, runtime.options.forgeUrl);
+  const proof = url.searchParams.get("plain") ?? "";
+  const expected = Buffer.from(plainProof(runtime.app.config.dataDir, token));
+  const given = Buffer.from(proof);
+  const plain =
+    url.protocol === "http:" &&
+    given.length === expected.length &&
+    timingSafeEqual(given, expected);
+  const secure = !plain && proxySecure(request, url, runtime.options.forgeUrl);
   return new Response(null, {
     status: 303,
     headers: {

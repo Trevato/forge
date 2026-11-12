@@ -31,7 +31,7 @@ import {
 import { dirname, join } from "node:path";
 import type { App } from "../app.ts";
 import { envBuild, envPull, isEnvName, previewEnv, type EnvName } from "../apps/data.ts";
-import { signGrant, type GrantWho } from "../apps/proxy.ts";
+import { plainProof, signGrant, type GrantWho } from "../apps/proxy.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import {
   getAppById,
@@ -244,6 +244,22 @@ interface Pending {
   readonly at: number;
   /** Queued by the sweep: a picture that failed at this head is not retaken. */
   readonly swept?: true;
+}
+
+/**
+ * What the browser opens: the app's grant door on the forge's own plain-http
+ * listener. The `plain` proof tells the door this is that browser, which
+ * would drop a `Secure` cookie on http, so a forge whose public address is
+ * https still hands it a cookie it keeps (#11519).
+ */
+export function lookUrl(
+  dataDir: string,
+  host: string,
+  port: string,
+  token: string,
+  page: string,
+): string {
+  return `http://${host}:${port}/__forge/grant?t=${encodeURIComponent(token)}&plain=${plainProof(dataDir, token)}&to=${encodeURIComponent(page)}`;
 }
 
 export function startLooks(app: App, options: LooksOptions): LooksHandle {
@@ -525,7 +541,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         Date.now(),
         asNobody(kind, page) ? undefined : isNewcomerLook(page) ? newcomer : asOwner,
       );
-      const url = `http://${host}:${port}/__forge/grant?t=${encodeURIComponent(token)}&to=${encodeURIComponent(page)}`;
+      const url = lookUrl(dataDir, host, port, token, page);
       const path = lookPath(item.appId, item.env, item.commitOid, page, kind, theme);
       const out = join(dataDir, path);
       // Taken to one side and moved in whole. A pull that closes while its

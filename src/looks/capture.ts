@@ -224,7 +224,7 @@ export function refusal(
   href: string,
 ): string | undefined {
   if (navigationError !== undefined && navigationError !== "")
-    return `the browser showed an error page instead of the app (${navigationError.slice(0, 100)})`;
+    return `${navigationError.slice(0, 100)}: the browser showed an error page instead of the app`;
   let url: URL;
   try {
     url = new URL(href);
