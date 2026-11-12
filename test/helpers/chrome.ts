@@ -477,3 +477,104 @@ export async function clickAndFollow(
     rmSync(profile, { recursive: true, force: true });
   }
 }
+
+/** What one navigation looked like while it loaded. */
+export interface NavigationSeen {
+  url: string;
+  /** Running view-transition animations on the root, once the transition was ready. */
+  rootAnimations: number;
+  /** The most loading indicators (aria-busy, or an animation that never ends) seen at once. */
+  mostIndicators: number;
+  /** Indicators still going once the page had settled. */
+  leftOver: number;
+  /** Summed layout-shift score of the document. */
+  shift: number;
+}
+
+/**
+ * Open `urls` one after another by navigation in one headless Chromium (so a
+ * cross-document view transition has an old page to run from), and report
+ * each. `settleMs` is how long each page is watched; a page that reloads
+ * itself is watched past its reload, and the report is of the document that
+ * is there at the end.
+ */
+export async function observeNavigations(
+  binary: string,
+  urls: readonly { url: string; settleMs?: number }[],
+  cookie: { name: string; value: string },
+): Promise<NavigationSeen[]> {
+  const profile = mkdtempSync(join(tmpdir(), "forge-nav-"));
+  const proc = Bun.spawn(
+    [binary, "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
+      "--disable-background-networking", "--disable-crash-reporter", "--no-first-run",
+      `--user-data-dir=${profile}`, "--remote-debugging-port=0"],
+    { env: childEnv({}), stdin: "ignore", stdout: "ignore", stderr: "pipe" },
+  );
+  let ws: WebSocket | undefined;
+  try {
+    const browserWsUrl = await Promise.race([
+      readDebuggerUrl(proc.stderr),
+      Bun.sleep(10_000).then((): string => { throw new Error("chromium never printed its devtools address"); }),
+    ]);
+    const target = await findPageTarget(browserWsUrl);
+    ws = new WebSocket(target.webSocketDebuggerUrl);
+    await within(5_000, "opening the devtools socket", new Promise<void>((resolve, reject) => {
+      ws!.addEventListener("open", () => resolve());
+      ws!.addEventListener("error", () => reject(new Error("chromium's devtools socket refused the connection")));
+    }));
+    const cdp = new Cdp(ws);
+    await cdp.send("Page.enable");
+    await cdp.send("Network.enable");
+    await cdp.send("Network.setCookie", { name: cookie.name, value: cookie.value, url: urls[0]!.url });
+    // Every document watches itself from its first instant.
+    await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
+      source: `(() => {
+        const seen = (window.__seen = { root: 0, most: 0, shift: 0 });
+        const indicators = () => {
+          const spinning = document.getAnimations().filter((a) => {
+            const t = a.effect && a.effect.getComputedTiming();
+            return !(a.effect && a.effect.pseudoElement) && t && t.iterations === Infinity;
+          }).length;
+          return spinning + document.querySelectorAll('[aria-busy="true"]').length;
+        };
+        window.__indicators = indicators;
+        const sample = () => { seen.most = Math.max(seen.most, indicators()); };
+        setInterval(sample, 20);
+        new PerformanceObserver((list) => {
+          for (const e of list.getEntries()) if (!e.hadRecentInput) seen.shift += e.value;
+        }).observe({ type: "layout-shift", buffered: true });
+        addEventListener("pagereveal", (e) => {
+          if (!e.viewTransition) return;
+          e.viewTransition.ready.then(() => {
+            seen.root = document.getAnimations().filter((a) => {
+              const p = a.effect && a.effect.pseudoElement;
+              return p && /\\(root\\)/.test(p) && a.playState === "running";
+            }).length;
+          }, () => {});
+        });
+      })();`,
+    });
+    const read = async (url: string, settleMs: number): Promise<NavigationSeen> => {
+      await Bun.sleep(settleMs);
+      const { result } = await cdp.send("Runtime.evaluate", {
+        expression: `JSON.stringify({ ...window.__seen, left: window.__indicators() })`,
+        returnByValue: true,
+      });
+      const s = JSON.parse(result.value) as { root: number; most: number; shift: number; left: number };
+      return { url, rootAnimations: s.root, mostIndicators: s.most, leftOver: s.left, shift: s.shift };
+    };
+    const out: NavigationSeen[] = [];
+    for (const { url, settleMs } of urls) {
+      const loaded = cdp.once("Page.loadEventFired");
+      await cdp.send("Page.navigate", { url });
+      await within(10_000, `loading ${url}`, loaded);
+      out.push(await read(url, settleMs ?? 700));
+    }
+    return out;
+  } finally {
+    ws?.close();
+    proc.kill("SIGKILL");
+    await proc.exited.catch(() => {});
+    rmSync(profile, { recursive: true, force: true });
+  }
+}
