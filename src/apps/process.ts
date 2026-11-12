@@ -25,6 +25,7 @@ import { seconds } from "./timing.ts";
 import { toolchainUse, type ToolchainUse } from "./toolchain.ts";
 import { notFoundHint, shellCommand } from "./run_command.ts";
 import { floorRefusal } from "../spawn/disk_floor.ts";
+import { usedRefusal } from "./disk_guard.ts";
 import { cellInstall, meteredInstall, prefillInstallCache, withLock } from "../checks/install.ts";
 import {
   commandPid,
@@ -340,6 +341,12 @@ export async function runStep(
     if (floor !== undefined) {
       options.log(`${name} not started: ${floor}`);
       return err(floor);
+    }
+    // At 80% used none starts either (#11799): the check is queued again, not failed.
+    const used = usedRefusal(options.cwd);
+    if (used !== undefined) {
+      options.log(`${name} ${used}`);
+      return err(`${name} ${used}`);
     }
   }
   options.log(`$ ${command}`);

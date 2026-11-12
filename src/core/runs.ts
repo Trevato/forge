@@ -535,6 +535,9 @@ export const INFRA_SUMMARY = "failed: infrastructure — the install failed twic
 /** What a check the cell's watch stopped for CPU says as it is queued again once on its own (#11617). */
 export const CPU_STOP_SUMMARY = "failed: infrastructure — stopped for CPU by the cell's watch; queued again";
 
+/** What a check says as it is queued again because the disk was 80% used (#11799): the machine's wait, not the pull's. */
+export const DISK_USED_SUMMARY = "waiting: the forge's disk is 80% used; queued again when there is room";
+
 /**
  * How many times one check may be cut off by its forge going away and be
  * queued again. Past it the check fails once, saying so: a check that kills

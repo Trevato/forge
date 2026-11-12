@@ -45,6 +45,7 @@ import {
   infraBefore,
   INFRA_SUMMARY,
   CPU_STOP_SUMMARY,
+  DISK_USED_SUMMARY,
   requeueCheck,
   REQUEUED_SUMMARY,
   sweepAbandonedChecks,
@@ -100,6 +101,7 @@ import { workerCpus } from "../core/capacity.ts";
 import { accountActive } from "../core/accounts.ts";
 import { childEnv, killedStep, runStep } from "../apps/process.ts";
 import { requeueCpuStop } from "./cpu_stop.ts";
+import { isUsedRefusal, usedRefusal } from "../apps/disk_guard.ts";
 import { noteReached } from "../apps/egress_report.ts";
 import {
   capacityCount,
@@ -485,6 +487,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   >();
   /** Checks already told why they wait, so the log says it once. */
   const waiting = new Set<string>();
+  /** Queued checks a full disk holds that have said so once (#11799); apart from `waiting`, so neither line hides the other. */
+  const diskWaiting = new Set<string>();
   /** The verification-lane run in flight, which holds no check slot. */
   let verifying: string | undefined;
   const slotted = (): number => inFlight.size - (verifying === undefined ? 0 : 1);
@@ -577,6 +581,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   function start(run: Run, repo: Repo): void {
     if (inFlight.has(run.id)) return;
     waiting.delete(run.id);
+    diskWaiting.delete(run.id);
     const abort = new AbortController();
     const low = inVerifyLane(run.env);
     if (low) verifying = run.id;
@@ -627,6 +632,16 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
    */
   /** `pickNext` among `queued`, passing over any whose account is at its limit. */
   function startable(queued: readonly Run[]): Run | undefined {
+    // At 80% used no check starts (#11799): they stay queued, one line each, and the tick asks again.
+    const full = usedRefusal(app.config.dataDir);
+    if (full !== undefined) {
+      for (const run of queued)
+        if (!diskWaiting.has(run.id)) {
+          diskWaiting.add(run.id);
+          appendRunLog(app.config.dataDir, run.id, `queued, ${full}`);
+        }
+      return undefined;
+    }
     let rest = queued;
     const isApproved = approvedOnce(app.db);
     let next = pickNext(rest, Date.now(), isApproved);
@@ -888,6 +903,16 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         const moved = requeueCheck(app.db, run.id, undefined, INFRA_SUMMARY);
         if (moved) {
           write(INFRA_SUMMARY);
+          announceRun(app, moved.again, run.actorId ?? undefined);
+          return;
+        }
+      }
+      // The disk was 80% used when the step would have started (#11799):
+      // the machine's wait. Queued again, not red; the pick holds it until there is room.
+      if (!outcome.ok && isUsedRefusal(outcome.error)) {
+        const moved = requeueCheck(app.db, run.id, undefined, DISK_USED_SUMMARY);
+        if (moved) {
+          write(DISK_USED_SUMMARY);
           announceRun(app, moved.again, run.actorId ?? undefined);
           return;
         }
