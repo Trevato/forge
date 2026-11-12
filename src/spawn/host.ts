@@ -23,7 +23,7 @@ import {
   type PlacementKind,
 } from "./placement.ts";
 import { DEFAULT_SIZE, isSize, type Size } from "./sizes.ts";
-import { cellChildren, forward, forwardSocket, type CellChild } from "./cell.ts";
+import { cellChildren, forward, forwardSocket, nextRunDue, type CellChild } from "./cell.ts";
 import { cellsAvailable } from "../apps/contain.ts";
 import { childNeedsOwnFilesystem } from "../core/capacity.ts";
 import { liveChildDisk, startRefusal } from "./disk_mount.ts";
@@ -200,9 +200,65 @@ export async function sleepIdleChildren(parent: App, idleMs = idleAfterMs(), now
     touched.get(parent)?.delete(bodyId);
     waking.get(parent)?.delete(bodyId);
   }
+  // A cell asleep with a run paused on a limit wakes when that run falls due (#11566).
+  for (const name of cellsAsleep) {
+    const ledger = readLedgerSync(parent, name);
+    const due = ledger === undefined ? undefined : nextRunDue(childDirOf(parent, ledger.bodyId));
+    if (ledger !== undefined && due !== undefined) wakeWhenDue(parent, ledger, due, now);
+  }
   asleep.push(...cellsAsleep);
   for (const name of asleep) parent.log.info("child forge asleep", { name });
   return asleep;
+}
+
+/** Wakes armed for cell children asleep with a run paused on a limit, by body id. */
+const dueWakes = new WeakMap<App, Map<string, ReturnType<typeof setTimeout>>>();
+/** A due wake the awake ceiling or the disk floor turned away is tried again this much later, ms. */
+const DUE_RETRY_MS = 60_000;
+/** The longest a timer waits in one step (setTimeout's own limit); a longer wait is armed again. */
+const TIMER_MAX_MS = 2 ** 31 - 1;
+
+/**
+ * Arm a wake for a cell child put to sleep while a run of its crew is paused
+ * on a limit (`not_before`, `nextRunDue`): at `at` its cell starts and the
+ * child's dispatcher starts the run, so a paused run does not wait for a
+ * visitor. The wake keeps the host's limits: never while its billing is
+ * `none` or when it is already awake; at the awake ceiling or below the disk
+ * floor it is tried again `DUE_RETRY_MS` later. One per child: arming again
+ * replaces it.
+ */
+function wakeWhenDue(parent: App, ledger: ChildLedger, at: number, now = Date.now()): void {
+  let wakes = dueWakes.get(parent);
+  if (!wakes) dueWakes.set(parent, (wakes = new Map()));
+  const was = wakes.get(ledger.bodyId);
+  if (was !== undefined) clearTimeout(was);
+  const mine = wakes;
+  const timer = setTimeout(() => {
+    if (mine.get(ledger.bodyId) === timer) mine.delete(ledger.bodyId);
+    if (Date.now() < at) return wakeWhenDue(parent, ledger, at);
+    void wakeDue(parent, ledger.name).catch((error: unknown) =>
+      parent.log.warn("child forge not woken for its run", { name: ledger.name, error: String(error) }),
+    );
+  }, Math.min(TIMER_MAX_MS, Math.max(0, at - now)));
+  timer.unref?.();
+  wakes.set(ledger.bodyId, timer);
+}
+
+async function wakeDue(parent: App, name: string): Promise<void> {
+  // Read again: since it slept the child may have been woken, demoted to hosted, lapsed or removed.
+  const ledger = readLedgerSync(parent, name);
+  if (ledger === undefined || !ledger.done || ledger.placement !== "cell") return;
+  if (isAwakeBody(parent, ledger.bodyId) || lapsedNone(parent, name) !== undefined) return;
+  if (floorRefusal(parent.config.dataDir) !== undefined || awakeRefusal(awakeCount(parent)) !== undefined) {
+    wakeWhenDue(parent, ledger, Date.now() + DUE_RETRY_MS);
+    return;
+  }
+  if (startRefused(parent, ledger) !== undefined) return;
+  keepSweeping(parent);
+  keepWatchingFloor(parent);
+  touch(parent, ledger);
+  parent.log.info("child forge woken for a run due", { name });
+  await settleCell(parent, ledger);
 }
 
 /**
@@ -426,6 +482,8 @@ export function closeHostedChildren(parent: App): void {
   bootOpened.delete(parent);
   waking.delete(parent);
   inFlight.delete(parent);
+  for (const timer of dueWakes.get(parent)?.values() ?? []) clearTimeout(timer);
+  dueWakes.delete(parent);
   const m = caches.get(parent);
   if (!m) return;
   const children = [...m.values()];
