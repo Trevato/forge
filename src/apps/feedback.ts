@@ -168,19 +168,26 @@ async function readJson(request: Request): Promise<Record<string, unknown> | und
   }
 }
 
+/**
+ * The page a note was sent from, as an origin plus path of this app, or "" when it is not one.
+ * The URL parser percent-encodes a path; one over 300 chars or outside the charset is dropped, not trimmed.
+ */
+export function pageOf(raw: unknown, host: string | null, origin: string): string {
+  if (typeof raw !== "string") return "";
+  try {
+    const p = new URL(raw);
+    if (p.host === host && p.pathname.length <= 300 && /^\/[A-Za-z0-9\-._~!$&'()*+,;=:@%/]*$/.test(p.pathname)) return `${origin}${p.pathname}`;
+  } catch { /* not a page of this app */ }
+  return "";
+}
+
 async function send(ask: FeedbackAsk, door: Door): Promise<Response> {
   const { request } = ask;
   const body = await readJson(request);
   if (body === undefined) return json(400, { error: "bad_request", message: NOTE_FAILED });
   const { sender, fresh } = senderOf(ask, door);
   const cookies = fresh === undefined ? {} : { "set-cookie": visitorCookie(fresh, ask.secure) };
-  let page = "";
-  if (typeof body.page === "string") {
-    try {
-      const p = new URL(body.page);
-      if (p.host === request.headers.get("host")) page = `${new URL(request.url).origin}${p.pathname}`.slice(0, 500);
-    } catch { /* not a page of this app */ }
-  }
+  const page = pageOf(body.page, request.headers.get("host"), new URL(request.url).origin);
   const viewport = typeof body.viewport === "string" && /^\d{2,5}x\d{2,5}$/.test(body.viewport) ? body.viewport : "unknown";
   const sent = await sendNote(
     ask.app, ask.record, door.repo, ask.env, ask.forgeUrl, sender,
