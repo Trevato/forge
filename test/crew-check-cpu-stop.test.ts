@@ -106,7 +106,7 @@ describe("a pull's check stopped for CPU, through the service", () => {
     // The second stop in a row is reported red, and the builder is sent check_failed.
     release();
     const red = await until(() => pullChecks().find((r) => r.attempt === 1 && r.state === "failed"));
-    expect(red.summary).toContain("used 16.3 cores for 31s, over its limit of 16");
+    expect(red.summary).toContain("used 16.3 cores for 31s, over twice its limit of 16");
     expect(stops).toHaveLength(2);
     await until(() => (reworks().length > 0 ? true : undefined));
     expect(reworks()).toHaveLength(1);

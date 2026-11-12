@@ -12,7 +12,7 @@ import { CPU_STOP_SUMMARY } from "../core/runs.ts";
 const HOUR_MS = 3_600_000;
 
 /** How the watch's stop reads in a red check's summary: `check failed: stopped: used 16.3 cores for 31s, over its limit of 16…`. */
-const CPU_RED = /stopped: (?:it )?used \d+(?:\.\d+)? cores for \d+s, over its limit of \d/;
+const CPU_RED = /stopped: (?:it )?used \d+(?:\.\d+)? cores for \d+s, over (?:twice )?its limit of \d/;
 
 export interface CpuStops {
   /** Checks stopped for CPU in the hour. */
