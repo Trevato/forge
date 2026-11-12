@@ -434,9 +434,9 @@ export async function studioApp(
               what is ready without being asked.
             </p>`
           : html`<dl>
-                <dt>Mode</dt>
+                <dt>Works</dt>
                 <dd>
-                  ${repo.autonomy === "autonomous" ? "Autonomous" : "Assisted"}
+                  ${repo.autonomy === "autonomous" ? "By itself" : "With you"}
                 </dd>
                 <dt>Today</dt>
                 <dd>

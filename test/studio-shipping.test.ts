@@ -347,7 +347,8 @@ describe("a stranger sees the app, not the owner's books", () => {
     // An older app: a new one shows only its progress (#10299).
     ageApp(app.db, lamp.id);
     const empty = await (await get("/alice/lamp", ownerCookie)).text();
-    expect(empty).toContain("Autonomous");
+    expect(empty).toContain("By itself");
+    expect(empty).not.toContain("Autonomous");
     expect(empty).toContain("nobody on the crew");
     expect(empty).toContain('href="/alice/lamp/settings">Put someone on the crew');
     // The shelf's stuck word and this card share one phrase.
