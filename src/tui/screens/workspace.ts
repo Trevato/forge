@@ -166,6 +166,7 @@ import { displayCommands } from "./display.ts";
 import { iterationsCommands } from "./iterations.ts";
 import { labelsCommands } from "./labels.ts";
 import { appEnvCommands } from "./appenv.ts";
+import { appBackupCommands } from "./appbackup.ts";
 import { variantsCommands } from "./variants.ts";
 import { autonomyCommands } from "./autonomy.ts";
 import { trafficCommands } from "./trafficview.ts";
@@ -1994,6 +1995,7 @@ export function workspaceScreen(
       ...iterationsCommands(f, ctx, repo),
       ...displayCommands(f, ctx, repo),
       ...appEnvCommands(f, ctx, repo),
+      ...appBackupCommands(f, ctx, repo),
       ...variantsCommands(f, ctx, repo),
       ...autonomyCommands(f, ctx, repo),
       ...trafficCommands(f, ctx, repo),
