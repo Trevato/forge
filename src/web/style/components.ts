@@ -874,8 +874,11 @@ html:has(.palette[open]) { overflow: hidden; }
     height: calc(var(--vv-h, 100dvh) - env(safe-area-inset-top, 0px));
     max-height: calc(var(--vv-h, 100dvh) - env(safe-area-inset-top, 0px));
     border-radius: 0 0 var(--radius-lg) var(--radius-lg); border-top: 0; border-bottom: 1px solid var(--border);
-    display: flex; flex-direction: column;
+    flex-direction: column;
   }
+  /* Only an open palette is laid out. \`display\` on the bare selector showed the
+     closed dialog over every page on a phone (2026-11-12). */
+  .palette:not([open]) { display: none; }
   .palette[open] { display: flex; }
   .palette .palette-input { flex: none; font-size: 16px; }
   .palette-list { flex: 1; min-height: 0; height: auto; }
