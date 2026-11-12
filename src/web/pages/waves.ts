@@ -17,7 +17,7 @@ import { VERSION, type Wave } from "../../story/wave.ts";
 import { movedWithPulls, waveProgress } from "../../story/wave_moved.ts";
 import { carriedPulls, pullPath } from "../../story/wave_pulls.ts";
 import { fromWave, pullRefs, readWave, readWaves, sizeWords, waveSize } from "../../story/waves.ts";
-import { NO_WAVES } from "../../story/words.ts";
+import { NO_WAVES, waveSentence } from "../../story/words.ts";
 import { loadRepo, notFoundPage, repoBase, scopeHeader } from "../chrome.ts";
 import { escapeHtml, html } from "../html.ts";
 import { page } from "../layout.ts";
@@ -227,6 +227,7 @@ export async function wavePage(ctx: Ctx): Promise<Response> {
 
   const content = entry.ok
     ? html`<h1>${entry.wave.headline}</h1>
+        <p data-wave-sentence>${waveSentence(carried.filter((p) => p.mergedAt !== null).map((p) => p.title))}</p>
         <p class="muted">${entry.wave.version} · ${entry.wave.date} · <span data-wave-size>${sizeWords(waveSize(carried))}</span></p>
         ${line === ""
           ? ""

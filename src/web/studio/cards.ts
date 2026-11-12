@@ -11,7 +11,7 @@ import { html, raw } from "../html.ts";
 import { timeAgo } from "../ui.ts";
 import { span, STAGE_LABEL, verdict, type PipelineKey, type PipelineStage } from "../../flow/pipeline.ts";
 
-export type CardKind = "app" | "run" | "asks" | "wave" | "map" | "feed" | "pull" | "pulls" | "runs" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones" | "release" | "releases" | "search" | "issues" | "forges" | "held" | "drill" | "reports" | "usage";
+export type CardKind = "app" | "run" | "asks" | "wave" | "map" | "feed" | "pull" | "pulls" | "runs" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones" | "release" | "releases" | "search" | "issues" | "forges" | "held" | "drill" | "reports" | "usage" | "health" | "capacity";
 
 export interface CardRow {
   readonly label: string;
@@ -44,7 +44,7 @@ const here = (origin: string, path: string): boolean => origin !== "" && /^\/(?!
 
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "asks", "wave", "map", "feed", "pull", "pulls", "runs", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones", "release", "releases", "search", "issues", "held", "forges", "drill", "reports", "usage"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "asks", "wave", "map", "feed", "pull", "pulls", "runs", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones", "release", "releases", "search", "issues", "held", "forges", "drill", "reports", "usage", "health", "capacity"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
@@ -77,6 +77,9 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   restore_drill: "drill",
   reports: "reports",
   usage: "usage",
+  health: "health",
+  capacity: "capacity",
+  crew: "crew",
 };
 
 const CARD_TITLE: Readonly<Record<CardKind, string>> = {
@@ -107,6 +110,8 @@ const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   drill: "Restore drill",
   reports: "Reports",
   usage: "Spend",
+  health: "Forge health",
+  capacity: "Capacity",
 };
 
 type Obj = Record<string, unknown>;
@@ -415,6 +420,56 @@ export function cardFor(
     if (v["undoOf"] == null && v["undoneBy"] == null)
       actions.push({ label: "Undo", tool: "asks_act", args: { action: "undo", operation } });
     return { kind, title: "Asks decided", status: text(v["receipt"]), rows, actions };
+  }
+  if (tool === "crew") {
+    // The `crew` tool's listing `{ crew, seats, slots, governor }`; a week, a plan or a change has no `crew` and no card.
+    const v = obj(value);
+    if (!Array.isArray(v["crew"])) return undefined;
+    const slug = text(extra["repo"]);
+    const at = web(origin) && slugOf(slug) ? { link: `${origin}/${slug}/settings/crew` } : {};
+    const slots = list(v["slots"]).map(obj);
+    const seated = list(obj(v["seats"])["seats"]).map(obj);
+    for (const s of seated.slice(0, LIMIT)) {
+      const by = list(s["by"]).map(text).join(", ");
+      const n = slots.find((p) => p["role"] === s["role"]);
+      const work = n === undefined ? "" : ` · ${Number(n["running"]) || 0} running · ${Number(n["waiting"]) || 0} waiting`;
+      rows.push({ label: text(s["role"]), value: `${by === "" ? `empty${text(s["without"]) === "" ? "" : ` — ${text(s["without"])}`}` : by}${work}`, ...at });
+    }
+    if (seated.length > LIMIT) rows.push({ label: "More", value: `${seated.length - LIMIT} more not shown`, ...at });
+    return { kind, title: CARD_TITLE[kind], status: `${v["crew"].length} on the crew${slug === "" ? "" : ` of ${slug}`}`, rows, actions };
+  }
+  if (kind === "health") {
+    // `readHealth`: a stranger gets `{ ok, version, commit, draining }`, an admin also `{ degraded, incidents, rollout, queue, apps }`.
+    const v = obj(value);
+    if (typeof v["ok"] !== "boolean") return undefined;
+    const link = web(origin) ? { link: `${origin}/` } : {};
+    const rollout = obj(v["rollout"]);
+    if (v["draining"] === true) rows.push({ label: "Draining", value: "yes, no new work", ...link });
+    if (rollout["state"] === "blocked" || rollout["state"] === "held") rows.push({ label: "Rollout", value: `${text(rollout["state"])} — ${text(rollout["reason"])}`, ...link });
+    // Plain words, never the cause key (`queue:agent`): the sentence says it; its own page is the link.
+    const degraded = list(v["degraded"]).map(obj);
+    for (const d of degraded.slice(0, LIMIT)) {
+      const href = text(d["href"]);
+      rows.push({ label: "Needs attention", value: text(d["sentence"]), ...(web(origin) && here(origin, href) ? { link: origin + href } : link) });
+    }
+    if (degraded.length > LIMIT) rows.push({ label: "More", value: `${degraded.length - LIMIT} more not shown`, ...link });
+    for (const i of list(v["incidents"]).map(obj).slice(0, LIMIT)) rows.push({ label: "Incident", value: text(i["message"]), ...link });
+    const apps = obj(v["apps"]);
+    if (v["apps"] !== undefined) rows.push({ label: "Apps", value: `${Number(apps["serving"]) || 0} serving · ${Number(apps["asleep"]) || 0} asleep · ${Number(apps["previews"]) || 0} previews`, ...link });
+    const ver = text(v["version"]);
+    return { kind, title: CARD_TITLE[kind], status: `${v["ok"] ? "green" : "red"}${ver === "" ? "" : ` · ${ver}`}`, rows, actions };
+  }
+  if (kind === "capacity") {
+    // `listCapacity`: `{ settings: [{ label, value, source }], egress, selfSwap }`; a plan or a change has no `settings`.
+    const v = obj(value);
+    if (!Array.isArray(v["settings"])) return undefined;
+    const link = web(origin) ? { link: `${origin}/settings/capacity` } : {};
+    const all = v["settings"].map(obj);
+    for (const s of all.slice(0, USAGE_ROWS))
+      rows.push({ label: text(s["label"]) || text(s["key"]), value: `${text(s["value"]) || "auto"}${text(s["source"]) === "setting" ? " · set" : ""}`, ...link });
+    if (all.length > USAGE_ROWS) rows.push({ label: "More", value: `${all.length - USAGE_ROWS} more not shown`, ...link });
+    const swap = obj(v["selfSwap"])["blocked"];
+    return { kind, title: CARD_TITLE[kind], status: typeof swap === "string" && swap !== "" ? `cannot swap itself: ${swap}` : `${v["settings"].length} settings`, rows, actions };
   }
   if (kind === "crew") {
     // `now` answers crewNow's rows; a waiting row has `run: null` and its words in `says`.

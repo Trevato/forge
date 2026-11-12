@@ -18,7 +18,7 @@ import { DEFAULT_WEIGHTS, frontWeights, type FrontWeights } from "../../core/fro
 import { exploreCount, exploreFiltered, exploreLine, isExploreLine, exploreNote, exploreSuggestion, explorePage, parseExploreQuery, readExploreLine, whyOf, type ExploreRow } from "../../actions/explore.ts";
 import { protectionNotice } from "../../kernel/protection.ts";
 import { holdWords, plannerHold } from "../../crew/autonomy.ts";
-import { governorSeen } from "../../crew/governed.ts";
+import { governorLine, governorSeen } from "../../crew/governed.ts";
 import { forgeFlakes, forgeLane, forgeNeeds } from "../../actions/health.ts";
 import { ownerWaits, waitLine, withMore } from "../../actions/owner_waits.ts";
 import { forgeHealth } from "../../kernel/guard.ts";
@@ -390,7 +390,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
           repo.autonomy === "autonomous" ? plannerHold(f.app, repo, now) : null;
         if (hold !== null) return [[repo.id, holdWords(hold)] as const];
         const governor = governorSeen(f.app, f.user, repo, now);
-        return governor?.held === true ? [[repo.id, governor.why] as const] : [];
+        return governor?.held === true ? [[repo.id, governorLine(governor)] as const] : [];
       }),
     );
     alarms =

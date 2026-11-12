@@ -101,8 +101,10 @@ describe("wave folds", () => {
     // progress is said once, and each pull once (in its fold, not again under Pulls)
     expect(text.split("1 of 2 done").length - 1).toBe(1);
     expect(text).not.toContain("1 of 1 done");
-    expect(text.split("Cache work").length - 1).toBe(1);
-    expect(text.split("Mail work").length - 1).toBe(1);
+    // (the opening sentence names the titles on purpose; the list below it does not repeat them)
+    const listed = text.replace(/<p data-wave-sentence>.*?<\/p>/s, "");
+    expect(listed.split("Cache work").length - 1).toBe(1);
+    expect(listed.split("Mail work").length - 1).toBe(1);
   });
 
   test("a wave with no milestone has no progress line", async () => {

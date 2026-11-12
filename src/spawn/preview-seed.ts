@@ -14,7 +14,9 @@
  * to show or log. Once: the admin remembers that it was seeded.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { keepNotice, noticeOf } from "../billing/notice.ts";
+import { putEntitlement } from "../billing/store.ts";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { createOrg } from "../core/orgs.ts";
@@ -327,7 +329,9 @@ export async function seedPreview(
     const files = await seedConfigFiles(app, admin);
     if (!files.ok) return files;
     const newcomer = await seedNewcomer(app);
-    return newcomer.ok ? ok({ seeded: false }) : newcomer;
+    if (!newcomer.ok) return newcomer;
+    seedGrace(app);
+    return ok({ seeded: false });
   }
   const world = await seedWorld(app, admin);
   if (!world.ok) return world;
@@ -341,7 +345,41 @@ export async function seedPreview(
   const files = await seedConfigFiles(app, admin);
   if (!files.ok) return files;
   const newcomer = await seedNewcomer(app);
-  return newcomer.ok ? ok({ seeded: true }) : newcomer;
+  if (!newcomer.ok) return newcomer;
+  seedGrace(app);
+  return ok({ seeded: true });
+}
+
+/** The client forge the preview's operator view shows in grace. */
+export const PREVIEW_GRACE_CLIENT = "preview-grace-client";
+
+/**
+ * A forge in grace, so the forge's looks picture the Plan row of /settings
+ * and the grace words of the operator's /forges row (#11549). Only a preview
+ * reaches it. The forge's own `plan.json` (never `parent.json`) tells it
+ * payment is late, and one client forge holds a late entitlement. Written
+ * only where absent, so it is once and a reboot changes nothing.
+ */
+function seedGrace(app: App): void {
+  const dir = app.config.dataDir;
+  if (noticeOf(dir) === undefined) {
+    keepNotice(dir, {
+      name: "Medium",
+      size: "medium",
+      priceUsd: 49,
+      creditUsd: 10,
+      status: "grace",
+      periodEnd: Math.floor(Date.now() / 1000) + 5 * 86_400,
+    });
+  }
+  const record = join(dir, "spawn", `${PREVIEW_GRACE_CLIENT}.json`);
+  if (existsSync(record)) return;
+  mkdirSync(join(dir, "spawn"), { recursive: true });
+  writeFileSync(
+    record,
+    JSON.stringify({ name: PREVIEW_GRACE_CLIENT, bodyId: "body-preview-grace", done: true, size: "small", org: PREVIEW_GRACE_CLIENT, apps: [] }),
+  );
+  putEntitlement(app.db, { forge: PREVIEW_GRACE_CLIENT, plan: "medium", status: "grace", periodEnd: Math.floor(Date.now() / 1000), provider: "stripe", customerId: "cus_preview", subscriptionId: "sub_preview", source: "stripe" }, "small", "");
 }
 
 /**

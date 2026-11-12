@@ -1058,11 +1058,13 @@ carries token material, a `state`, or a `code`.
   0600 — the forge refuses either file wider than that) and restart: a fresh
   `secret.key` is minted, new values seal under it, and `open` uses whichever
   key a value names. Values from before the format change (`v1:<iv>:<ct>`)
-  name no key and try the current key, then the old one. Nothing re-seals old
-  values yet, so `secret.key.old` must stay until every token has been
-  rewritten (reconnecting an origin does it); delete it and those values come
-  back `bad_key`, as losing `secret.key` did before. A snapshot carries only
-  `secret.key`, and the HMAC keys derived from it (passports, visitor links)
+  name no key and try the current key, then the old one.
+  `bun scripts/rotate-secret-key.ts --apply` (forge stopped) re-seals every
+  sealed column under the newest key in one transaction and says how many it
+  moved per table — see docs/RECOVERY.md, "Rotating the secret key". Until it
+  has run, `secret.key.old` must stay; delete it before then and the values it
+  sealed come back `bad_key`, as losing `secret.key` did before. A snapshot
+  carries only `secret.key`, and the HMAC keys derived from it (passports, visitor links)
   change with it.
 - **DNS rebinding is not closed.** The SSRF policy checks address _literals_;
   a hostname that resolves into a private range still gets through, because

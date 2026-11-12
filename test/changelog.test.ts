@@ -103,6 +103,11 @@ describe("changelog page", () => {
     expect(body).not.toContain("A note app change");
   });
 
+  test("it links on to the forge's waves", async () => {
+    const body = await (await fetch(`${servers.url}/changelog`)).text();
+    expect(body).toContain('href="/alice/forge/waves" data-waves-link');
+  });
+
   test("another repository is one filter away, and an unknown one falls back to this forge", async () => {
     const all = await (await fetch(`${servers.url}/changelog?repo=all`)).text();
     expect(all).toContain("A note app change");

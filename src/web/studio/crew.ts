@@ -32,6 +32,7 @@ import { canAdmin, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import { seatsOf, type Seat } from "../../crew/seats.ts";
 import { autonomyStatus } from "../../crew/autonomy.ts";
 import { governorSeen } from "../../crew/governed.ts";
+import { governorRows } from "./governor_rows.ts";
 import { crewOffInPreview } from "../../crew/preview.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase } from "../chrome.ts";
@@ -354,10 +355,7 @@ function autonomyCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html 
           </dd>
           <dt>Slots</dt>
           <dd>${status.active} of ${status.slots} in use</dd>
-          ${governor === undefined
-            ? null
-            : html`<dt>Governor</dt>
-                <dd>${governor.why}</dd>`}
+          ${governorRows(governor)}
           ${status.paused
             ? html`<dt>Paused</dt>
                 <dd>

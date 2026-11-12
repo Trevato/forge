@@ -233,7 +233,7 @@ export async function changelogPage(ctx: Ctx): Promise<Response> {
           { label: "Every bet", href: "/changelog", current: bet === "" },
           ...bets.map((b) => ({ label: b, href: `/changelog?bet=${encodeURIComponent(b)}`, current: bet === b })),
         ]);
-  const body = html`${pageHead("Changelog", { sub: "What went live, as it happens." })}${nearBlock(planned === undefined ? "" : repoBase(planned.repo), near)}${filters}${betFilters}
+  const body = html`${pageHead("Changelog", { sub: "What went live, as it happens." })}${nearBlock(planned === undefined ? "" : repoBase(planned.repo), near)}${filters}${betFilters}${read.own !== undefined && readable ? html`<p class="small"><a href="/${read.own}/waves" data-waves-link>Read it by wave</a></p>` : null}
     <div id="shipped" data-live="${LIVE}" aria-live="polite">${shippedRegion(read, choice, new Date(), "UTC", toLive, readable)}</div>`;
   const response = page({ ctx, title: "Changelog", body, feed: { href: "/changelog.atom", title: "Changelog" }, json: { href: `/api/v1/changelog${choice === read.own ? "" : `?repo=${encodeURIComponent(choice)}`}`, title: "Changelog (JSON)" }, scriptJs: `${liveRegionsJs}\n${localDaysJs}` });
   notePhase(ctx.request, "render", performance.now() - rendering);

@@ -1052,6 +1052,7 @@ export async function deleteRepo(
   if (!removed.ok && present) return err("delete_failed");
   // The doctor's rows carry `repo_id` without a foreign key (added columns on `maintenance_run`).
   db.query("DELETE FROM maintenance_run WHERE duty = 'batch-doctor' AND repo_id = ?1").run(repo.id);
+  db.query("DELETE FROM governor_last WHERE repo_id = ?1").run(repo.id);
   db.query("DELETE FROM repo WHERE id = ?1").run(repo.id);
   forgetRepoCursors(db, repo.id);
   forgetListings(db);
