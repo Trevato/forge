@@ -730,8 +730,10 @@ const failedTokens = new WeakMap<App, RateLimiter>();
 
 /**
  * A bearer token on a request to a guarded app, read the way the forge's
- * own API reads it. It admits when its person may enter the app; a run's
- * token only on the repository it was minted for; a proposal or via token never. A person who can read
+ * own API reads it. It admits when its person may enter the app. A run's
+ * token admits read-only (a user, GET and HEAD only, never an admin) and only
+ * on the repository or fork it was minted for, on any private app, from-app
+ * or not; it dies with the run. A proposal or via token never admits. A person who can read
  * the repository but not enter is told so (`hint`); anyone else — a token
  * that cannot read it, an expired one — gets nothing to learn from.
  */
@@ -783,15 +785,16 @@ function bearerAdmission(
       id: user.id,
       name: user.username,
       // A read-only token is never an admin inside the app.
+      // A run's token is read-only here too: the run reads its app, never acts in it.
       role:
-        scope !== "ro" && canWrite(runtime.app.db, repo, user)
+        scope !== "ro" && run === undefined && canWrite(runtime.app.db, repo, user)
           ? "admin"
           : "user",
     },
     expiresMs: Date.now() + BEARER_GRANT_MS,
   };
   return stillEntitled(runtime, target, grant)
-    ? { grant, readOnly: scope === "ro" }
+    ? { grant, readOnly: scope === "ro" || run !== undefined }
     : { hint: NOT_ENTITLED_WORDS };
 }
 

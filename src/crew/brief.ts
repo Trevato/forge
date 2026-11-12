@@ -1006,7 +1006,7 @@ export function ownAppLines(own: OwnApp | undefined): string[] {
         ]),
     ...(own.access === "private"
       ? [
-          '- This app is private: signed out, its door answers 404 by design, so a 404 from a plain `curl` is the door, not a fault in the app. Probe it as its owner does, with `-H "authorization: Bearer $FORGE_TOKEN"`, and judge what that answers.',
+          '- This app is private: signed out, its door answers 404 by design, so a 404 from a plain `curl` is the door, not a fault in the app. Probe it as its owner does, with `-H "authorization: Bearer $FORGE_TOKEN"`, and judge what that answers. That token is read-only here (GET and HEAD; any write is refused 403), reaches this app alone, and stops working when your run ends.',
         ]
       : []),
   ];
