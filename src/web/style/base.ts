@@ -9,6 +9,20 @@
  */
 
 /**
+ * The page itself does not cross-fade. Chromium's default for a cross-document
+ * transition is a 250 ms plus-lighter fade of the whole root, so a page that
+ * reloads itself (the "Waking up" page asks again every 3 s) pulses as a
+ * second loading indicator over its own. Only the named parts (topbar, repo
+ * header) are held still. These pseudo-elements fall outside the
+ * reduced-motion rule's `*`, so this is also what keeps that promise.
+ */
+const rootHolds = [
+  `::view-transition-group(root), ::view-transition-old(root), ::view-transition-new(root) { animation: none; }`,
+  `::view-transition-old(root) { display: none; }`,
+  `::view-transition-new(root) { mix-blend-mode: normal; }`,
+].join("\n");
+
+/**
  * The cascade order, declared once and up front, plus the one at-rule that
  * must sit outside every layer. Cross-document view transitions are pure
  * enhancement: where the browser honours them the topbar and repo header hold
@@ -17,6 +31,7 @@
 export const layers = [
   `@layer reset, base, components, content, utilities;`,
   `@view-transition { navigation: auto; }`,
+  rootHolds,
 ].join("\n");
 
 export const base = /* css */ `
