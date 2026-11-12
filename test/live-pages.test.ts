@@ -124,7 +124,7 @@ describe("live browsing pages", () => {
       liveClientJs.indexOf("function refreshApp"),
       liveClientJs.indexOf("function onEvent"),
     );
-    expect(refreshApp).toContain("status.textContent");
+    expect(refreshApp).toContain("say(");
     // A fragment identical to what's already on screen must not announce
     // anything: the sentence is built from what changed, not fetched anew
     // every time.
@@ -190,27 +190,26 @@ describe("live browsing pages", () => {
 });
 
 describe("the live mount's markup", () => {
-  test("the status line is a polite region drawn with §5's .sr-only, and the pill keeps its words and link", async () => {
-    const { liveMount } = await import("../src/web/live.ts");
+  test("the status line is a polite region drawn with §5's .sr-only; there is no refresh bar", async () => {
+    const { liveMount, liveClientJs } = await import("../src/web/live.ts");
     const out = String(liveMount({ repo: "/a/b" }));
     expect(out).not.toContain('class="live-status"');
     expect(out).toMatch(/<p\s+class="sr-only"\s+id="live-status"\s+role="status"\s+aria-live="polite"/);
-    expect(out).toContain('id="live-pill"');
-    expect(out).toContain("New activity — refresh");
+    expect(out).not.toContain("live-pill");
+    expect(out).not.toMatch(/new\s+—\s+refresh|New activity/i);
+    expect(liveClientJs).not.toMatch(/new\s+—\s+refresh|live-pill|location\.reload/i);
   });
 
-  test("the pill is §5's attn badge, hidden until news, and the script finds it by id alone", async () => {
+  test("the quiet marker and the connection word sit in the out-of-flow wrapper, hidden until needed", async () => {
     const { liveMount, liveClientJs } = await import("../src/web/live.ts");
     const out = String(liveMount({ repo: "/a/b" }));
-    expect(out).toMatch(/<a\s+id="live-pill"\s+class="badge"\s+data-variant="attn"\s+href=""\s+hidden/);
-    expect(out).toMatch(/<div class="live-news">\s*<a id="live-pill"/);
-    expect(out).not.toMatch(/class="[^"]*\blive-pill\b/);
-    expect(liveClientJs).toContain("document.getElementById('live-pill')");
-    expect(liveClientJs).not.toMatch(/\.live-pill|querySelector\([^)]*live-pill/);
+    expect(out).toMatch(/<div class="live-news">\s*<a id="live-above"[^>]*\bhidden/);
+    expect(out).toMatch(/id="live-conn"[^>]*\bhidden/);
+    expect(liveClientJs).toContain("document.getElementById('live-above')");
   });
 });
 
-describe("the live pill's wrapper", () => {
+describe("the live wrapper", () => {
   test("is out of flow and the badge inside is a 36px target", async () => {
     const { components } = await import("../src/web/style/components.ts");
     const rule = (sel: string) => components.slice(components.indexOf(sel + " {")).split("}")[0];

@@ -1111,6 +1111,10 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
   position: fixed; left: 0; right: 0; bottom: 20px; z-index: 25;
   display: flex; justify-content: center; pointer-events: none;
 }
+ul.list { overflow-anchor: none; }
+@keyframes live-in { from { opacity: 0; transform: translateY(-6px); } }
+.live-arrived { animation: live-in 220ms var(--ease) both; }
+.live-news { gap: 8px; }
 .live-news .badge {
   pointer-events: auto; min-height: 36px; padding: 0 14px; font-size: 13px;
   background: var(--card); box-shadow: var(--shadow-2);

@@ -196,7 +196,6 @@ test("the live client refreshes the head on the crew's runs and pulls only while
   await settled.send("run.started", { kind: "agent" });
   await settled.send("pull.closed");
   expect(settled.fetched).toEqual([]);
-  expect(settled.win.document.getElementById("live-pill")!.hasAttribute("hidden")).toBe(false);
 });
 
 test("the notifier judges a new app afresh on a pull event and tells its owner once it needs them", async () => {

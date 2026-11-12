@@ -4,8 +4,8 @@
  * interpolated script text — the CSP forbids that anyway) and:
  *   - on a comment for the thread you're viewing, fetches the new comments and
  *     appends them, so a conversation updates as people type;
- *   - on any other relevant activity, reveals a "new activity" pill that
- *     reloads on click.
+ *   - on any other relevant activity on a list page, fetches the page and
+ *     merges new rows into the lists in place (never a refresh bar).
  * Every page works without this; it is pure enhancement.
  *
  * Announcements are a count, not the text: the polite live region says "2 new
@@ -46,12 +46,12 @@ export interface LiveConfig {
   /**
    * The studio app page: a deploy run event for this repo fetches
    * `<repo>/app/state` and swaps the head card and previews list in place,
-   * rather than only offering the pill.
+   * rather than only announcing it.
    */
   app?: boolean;
 }
 
-/** The config element, the polite status line, and the (hidden) activity pill. */
+/** The config element, the polite status line, the quiet "N above" marker and the connection word. */
 export function liveMount(config: LiveConfig): Html {
   return html`<div
       id="live"
@@ -71,8 +71,9 @@ export function liveMount(config: LiveConfig): Html {
       aria-live="polite"
     ></p>
     <div class="live-news">
-      <a id="live-pill" class="badge" data-variant="attn" href="" hidden
-        >↻ New activity — refresh</a
+      <a id="live-above" class="badge" href="#top" hidden>new above</a>
+      <span id="live-conn" class="badge" data-variant="attn" role="status" hidden
+        >offline</span
       >
     </div>`;
 }
@@ -87,20 +88,158 @@ export const liveClientJs = /* js */ `
   var lastId = cfg.getAttribute('data-last') || '';
   var isApp = cfg.getAttribute('data-app') === '1';
   var head = cfg.getAttribute('data-head') || '';
-  var pill = document.getElementById('live-pill');
+  var marker = document.getElementById('live-above');
   var status = document.getElementById('live-status');
-  var conv = document.getElementById('conversation');
-
-  // A count, not a reload. Yanking the page out from under a reader to show
-  // them something new is the one thing a live list must never do.
-  var fresh = 0;
-  function showPill() {
-    if (!pill) return;
-    fresh++;
-    pill.textContent = '\\u21bb ' + fresh + ' new — refresh';
-    pill.hidden = false;
+  // The polite status line: said when the page has one.
+  function say(text) {
+    if (!status) return;
+    status.textContent = text;
   }
-  if (pill) pill.addEventListener('click', function (e) { e.preventDefault(); location.reload(); });
+  // A page that cannot animate, or whose reader asks it not to, shows a new row at once.
+  var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // New things arrive in place. An event on a list page schedules one catch-up
+  // (a burst of events is one fetch, never sooner than BATCH after the first):
+  // the page's own HTML is fetched, and every row it has that the list lacks is
+  // inserted where the fresh order puts it; a row that changed is replaced in
+  // place unless the reader is in it. A reader at the top sees rows slide in;
+  // anyone scrolled, typing or reading has the rows added above with the
+  // scroll compensated by exactly their height, and a quiet "N above" marker
+  // to jump up when they choose. Nothing asks for a refresh.
+  var BATCH = 400;
+  var DOWN_AFTER = 2000;
+  var above = 0;
+  function setAbove(n) {
+    above = n;
+    if (!marker) return;
+    marker.hidden = n <= 0;
+    if (n > 0) marker.textContent = n + ' above';
+  }
+  if (marker) marker.addEventListener('click', function (e) {
+    e.preventDefault();
+    window.scrollTo(0, 0);
+    setAbove(0);
+    var first = document.querySelector('ul.list > li a[href]');
+    if (first) first.focus();
+  });
+  window.addEventListener('scroll', function () {
+    if (above > 0 && (window.pageYOffset || 0) < 8) setAbove(0);
+  }, { passive: true });
+
+  function kids(list) {
+    return Array.prototype.filter.call(list.children, function (n) { return n.tagName === 'LI'; });
+  }
+  function keyOf(li) {
+    if (li.id) return '#' + li.id;
+    var a = li.querySelector('a[href]');
+    return a ? a.getAttribute('href') : '';
+  }
+  function sameRow(a, b) {
+    var t = /<time\\b[^>]*>[^<]*<\\/time>/g;
+    return a.replace(t, '') === b.replace(t, '');
+  }
+  // A row the reader is in is never replaced under them.
+  function held(li) {
+    var a = document.activeElement;
+    if (a && li.contains(a) && a !== document.body) return true;
+    if (li.querySelector('[data-busy], [data-live-hold]')) return true;
+    return Array.prototype.some.call(li.querySelectorAll('input, textarea'), function (i) {
+      return i.type !== 'hidden' && i.type !== 'checkbox' && i.value !== '';
+    });
+  }
+  function typing() {
+    var a = document.activeElement;
+    return !!a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable === true);
+  }
+  function mergeList(mine, theirs, calm) {
+    var olds = kids(mine);
+    var have = {};
+    olds.forEach(function (li) { var k = keyOf(li); if (k) have[k] = li; });
+    // The row the reader is looking at: it must stay where it is.
+    var ref = null;
+    for (var i = 0; i < olds.length; i++) {
+      if (olds[i].getBoundingClientRect().bottom > 0) { ref = olds[i]; break; }
+    }
+    if (!ref) ref = olds[0] || null;
+    var refTop = ref ? ref.getBoundingClientRect().top : 0;
+    var prev = null, added = [];
+    kids(theirs).forEach(function (n) {
+      var k = keyOf(n);
+      if (!k) return;
+      var cur = have[k];
+      if (cur) {
+        if (!held(cur) && !sameRow(cur.innerHTML, n.innerHTML)) {
+          var swapped = document.importNode(n, true);
+          cur.replaceWith(swapped);
+          if (cur === ref) ref = swapped;
+          have[k] = swapped;
+          cur = swapped;
+        }
+        prev = cur;
+        return;
+      }
+      var fresh = document.importNode(n, true);
+      if (prev) prev.after(fresh); else mine.insertBefore(fresh, mine.firstChild);
+      have[k] = fresh;
+      prev = fresh;
+      added.push(fresh);
+    });
+    if (added.length === 0) return 0;
+    if (calm) {
+      added.forEach(function (n) {
+        if (still) return;
+        var done = function () { n.classList.remove('live-arrived'); };
+        n.classList.add('live-arrived');
+        n.addEventListener('animationend', done);
+        setTimeout(done, 400);
+      });
+      return added.length;
+    }
+    var gone = ref ? 0 : added.length;
+    if (ref) {
+      var delta = ref.getBoundingClientRect().top - refTop;
+      if (delta !== 0) window.scrollBy(0, delta);
+      added.forEach(function (n) { if (n.compareDocumentPosition(ref) & 4) gone++; });
+    }
+    return gone;
+  }
+  function mergePage(fresh) {
+    var mine = document.querySelectorAll('ul.list');
+    var theirs = fresh.querySelectorAll('ul.list');
+    if (mine.length === 0 || mine.length !== theirs.length) return;
+    var calm = (window.pageYOffset || 0) < 8 && !typing();
+    var total = 0;
+    for (var i = 0; i < mine.length; i++) {
+      if (mine[i].closest('#app-previews, #app-head')) continue;
+      total += mergeList(mine[i], theirs[i], calm);
+    }
+    if (total === 0) return;
+    if (!calm) setAbove(above + total);
+    say(total === 1 ? '1 new item' : total + ' new items');
+  }
+  var syncBusy = false, syncQueued = false, syncTimer = null;
+  function schedule() {
+    if (syncTimer) return;
+    syncTimer = setTimeout(function () { syncTimer = null; sync(); }, BATCH);
+  }
+  function sync() {
+    if (syncBusy) { syncQueued = true; return; }
+    syncBusy = true;
+    fetch(location.pathname + location.search, { headers: { accept: 'text/html' }, credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.text() : ''; })
+      .then(function (text) {
+        if (!text) return;
+        var holder = document.createElement('template');
+        holder.innerHTML = text.replace(/<(style|script)[^>]*>[\\s\\S]*?<\\/\\1>/gi, '');
+        mergePage(holder.content);
+      })
+      .catch(function () {})
+      .then(function () {
+        syncBusy = false;
+        if (syncQueued) { syncQueued = false; schedule(); }
+      });
+  }
+  window.addEventListener('online', schedule);
 
   function relevant(data) {
     if (!thread || !data || !data.payload) return false;
@@ -116,6 +255,7 @@ export const liveClientJs = /* js */ `
     return data.kind.indexOf(thread) === 0;
   }
 
+  var conv = document.getElementById('conversation');
   function appendNew() {
     var kind = thread === 'issue' ? 'issues' : 'pulls';
     fetch(repo + '/' + kind + '/' + number + '/thread?after=' + encodeURIComponent(lastId), {
@@ -131,9 +271,7 @@ export const liveClientJs = /* js */ `
           conv.appendChild(nodes[i]);
           lastId = nodes[i].getAttribute('data-comment-id') || lastId;
         }
-        if (status && nodes.length > 0) {
-          status.textContent = nodes.length === 1 ? '1 new comment' : nodes.length + ' new comments';
-        }
+        if (nodes.length > 0) say(nodes.length === 1 ? '1 new comment' : nodes.length + ' new comments');
       })
       .catch(function () {});
   }
@@ -237,7 +375,7 @@ export const liveClientJs = /* js */ `
             });
           }
         });
-        if (status && line) status.textContent = line.charAt(0).toUpperCase() + line.slice(1);
+        if (line) say(line.charAt(0).toUpperCase() + line.slice(1));
       })
       .catch(function () {})
       .then(function () {
@@ -277,7 +415,7 @@ export const liveClientJs = /* js */ `
         var mark = document.querySelector('#pull-check [data-head]');
         if (mark && mark.getAttribute('data-head')) head = mark.getAttribute('data-head');
         var word = textOf(document.querySelector('#pull-check [data-pull-word]'));
-        if (status && word) status.textContent = word.charAt(0).toUpperCase() + word.slice(1);
+        if (word) say(word.charAt(0).toUpperCase() + word.slice(1));
       })
       .catch(function () {})
       .then(function () {
@@ -291,16 +429,13 @@ export const liveClientJs = /* js */ `
     try { data = JSON.parse(e.data); } catch (_) { return; }
     if (movesPull(data)) {
       refreshPull();
-      // A merge changes more than the word (the decision, the composer):
-      // it still offers the refresh. A run or a serving moves only the swap.
-      if (data.kind !== 'pull.merged') return;
+      return;
     }
     if (isDeploy(data) || isServing(data) || movesOnboarding(data)) { refreshApp(); return; }
     if (relevant(data) && conv && (data.kind === thread + '.commented')) {
       appendNew();
-    } else if (relevant(data) || !thread) {
-      showPill();
-      if (status) status.textContent = 'New activity on this page';
+    } else if (!thread) {
+      schedule();
     }
   }
 
@@ -319,8 +454,31 @@ export const liveClientJs = /* js */ `
   var watching = [repo].concat(extra).filter(function (r, i, all) {
     return r && all.indexOf(r) === i;
   }).slice(0, 3);
+  var conn = document.getElementById('live-conn');
+  var downTimer = null;
+  // "offline" shows only once a stream has been down for a moment: one that
+  // errors while the page navigates or unloads never flashes it.
+  function down() {
+    if (downTimer || !conn) return;
+    downTimer = setTimeout(function () { conn.hidden = false; }, DOWN_AFTER);
+  }
+  function up() {
+    if (downTimer) { clearTimeout(downTimer); downTimer = null; }
+    if (conn) conn.hidden = true;
+  }
   watching.forEach(function (at) {
     var es = new EventSource(at + '/stream');
+    var dropped = false;
+    // A dropped stream says so in a word; the browser reconnects by itself,
+    // and when it is back the page catches up on what it missed.
+    es.addEventListener('error', function () {
+      dropped = true;
+      down();
+    });
+    es.addEventListener('open', function () {
+      up();
+      if (dropped) { dropped = false; if (!thread) schedule(); }
+    });
     KINDS.forEach(function (k) { es.addEventListener(k, onEvent); });
   });
 })();
