@@ -62,12 +62,65 @@ counts. The old copy stays until that has passed.
 
 ## 6. Cut-over (person, quiet hour, the owner says "go")
 1. Lower the DNS TTL a day ahead.
-2. Put the old app read-only; take a last dump; load; compare counts.
+2. Put the old app read-only (section 7, with its immediate check); take a last dump; load; compare counts.
 3. Point the domain at the forge (`app-own-domain.md` has the steps, the
    certificate and the revert); switch payment webhooks and live keys.
 4. Place one live order.
 5. **Way back:** the old DNS records, written down before step 3 (`app-own-domain.md`); restoring
    them is the one step. The old app stays up read-only for a week.
+
+## 7. The old side, read-only (person on the old node)
+The forge cannot reach the old node, so the switch is a procedure at the
+old app's reverse proxy, not a forge feature. It is used twice: in step 6.2
+(freeze before the last dump, in a quiet hour) and for the week after
+cut-over. **The nginx and SQL below were not run** (no nginx or Postgres is
+reachable from a crew run); try them on a scratch copy first.
+1. Refuse every method except `GET`, `HEAD` and `OPTIONS` at the proxy,
+   before the request reaches the app, answering `503` with `Retry-After`
+   and a body that names the new address. Refusing there needs no change to
+   the old code and cannot be missed by a route the app forgot. nginx
+   (untested), inside the `server` block:
+
+       error_page 503 @frozen;
+       if ($request_method !~ ^(GET|HEAD|OPTIONS)$) { return 503; }
+       location @frozen {
+           add_header Retry-After 3600 always;
+           default_type text/plain;
+           return 503 "Read-only: moved to https://NEW-ADDRESS\n";
+       }
+
+   `if` with `return` in a `server` block runs in the rewrite phase, before
+   any `location` that would `proxy_pass`, so a refused write never reaches
+   the app. Keep it to `return`; other directives inside `if` are unreliable.
+   Reload (`nginx -t && nginx -s reload`).
+2. Payment webhooks and background jobs are writes the proxy does not see
+   as users: point the webhooks at the forge (step 6.3) and disable the old
+   cron entries, or the old database still changes.
+3. Make the database refuse writes too, so a missed path fails loudly.
+   **Postgres only**; for another engine do the equivalent (a read-only
+   user, or a read-only file mode for SQLite). Preferred: revoke write
+   grants from the app's role (`REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON
+   ALL TABLES IN SCHEMA public FROM app_role;`, untested). Alternative:
+   `ALTER ROLE app_role SET default_transaction_read_only = on;`. That
+   setting does not touch sessions already open and the app may override it
+   with `SET`, so afterwards end the open sessions: `SELECT
+   pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename =
+   'app_role' AND pid <> pg_backend_pid();` (untested). Grants hold against
+   an override; the setting does not.
+4. Check, at once (the freeze, step 6.2): a `POST` to the old address
+   answers `503` with the `Retry-After` header and the new address in the
+   body, a `GET` answers `200`, and the step-3 row counts are equal across
+   two reads a minute apart. Then take the last dump.
+5. Check, over the week (after cut-over): the same counts read once a day
+   do not move; any change means a write path was missed.
+6. Sign-ins that write a session or a last-seen row will fail while it is on;
+   say so on the old site's page, or serve it from the new address.
+7. After the week, with the step-5 backup restored once, switch the old app
+   off. Turning the switch off again (remove the rule, restore the grants,
+   reload) is the way back before that.
+
+What stays open: nothing in the forge records that the switch is on, nor
+reminds anyone when the week ends; both are a person's.
 
 ## What the forge lacks (each is an issue)
 - A database import for an app (`migrate` has no data path): upload a dump, load it, report counts and checksums. (#11697)
@@ -76,5 +129,5 @@ counts. The old copy stays until that has passed.
 - Per-app encrypted backup with a restore proof (`docs/features/backup-truth.md` covers the forge's own, not an app's). (#11701)
 - A guard for rehearsal: data copy and `preview`-scoped sandbox keys exist and are the procedure in step 4; nothing yet refuses a payment name left in scope `all`. (#11702)
 - Inbound payment webhooks that survive a preview's changing address. (#11703)
-- A read-only switch for the old side of a migration. (#11704)
+- ~~A read-only switch for the old side of a migration.~~ A procedure at the old proxy and database, section 7; the forge cannot reach the old node, so no feature is built. (#11704)
 - Importing an app's customer accounts (password-hash formats) without the owner reading them. (#11705)
