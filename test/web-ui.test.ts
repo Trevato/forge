@@ -14,6 +14,9 @@ import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { assignIssue, openIssue } from "../src/actions/issues.ts";
+import { getUserByName } from "../src/core/users.ts";
+import { NEW_ISSUE_KEY, SCRIPT_KEYS } from "../src/web/script_keys.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { listLabels, labelsFor, getIssue } from "../src/core/issues.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -198,7 +201,7 @@ describe("web ui", () => {
     expect(page).toContain(">bug</span>");
     // A colour mixed from the labels on *this* page is what `styleCss` is
     // for, and the only thing left using it: nothing static rides along.
-    expect(page).toMatch(/<style nonce="[^"]+">\.lc-d73a4a\{--label:#d73a4a\}<\/style>/);
+    expect(page).toMatch(/<style>\.lc-d73a4a\{--label:#d73a4a\}<\/style>/);
 
     // And the list can filter by it.
     const filtered = await (
@@ -236,7 +239,7 @@ describe("web ui", () => {
       "Closed without merging.",
     );
     expect(await (await fetch(`${base}/mel/proj/pulls`)).text()).toContain(
-      "Nothing open.",
+      "No pull request is open.",
     );
 
     await fetch(`${at}/state`, {
@@ -286,7 +289,7 @@ describe("web ui", () => {
     const res = await fetch(url);
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe(
-      "public, max-age=31536000, immutable",
+      "public, max-age=31536000, s-maxage=86400, immutable",
     );
     expect(res.headers.get("etag")).toBe(`"${blobOid}"`);
     expect(res.headers.get("content-security-policy")).toBe(
@@ -440,7 +443,8 @@ describe("web ui", () => {
       t
         .replaceAll(/nonce-?="?[\w-]+/g, "nonce")
         .replaceAll(/here\?path=[^"&\s]*/g, "here?path=")
-        .replaceAll(/next=[^"]*/g, "next=");
+        .replaceAll(/next=[^"]*/g, "next=")
+        .replaceAll(/\/new\/issue\?from=[^"]*/g, "/new/issue?from=");
     expect(scrub(await hidden.text())).toBe(scrub(await absent.text()));
   });
 
@@ -456,7 +460,7 @@ describe("web ui", () => {
     const hidden = await (await fetch(`${base}/kim/secret`)).text();
     const absent = await (await fetch(`${base}/kim/nothing`)).text();
     const scrub = (t: string) =>
-      t.replaceAll(/nonce-?="?[\w-]+/g, "nonce").replaceAll(/here\?path=[^"&\s]*/g, "here?path=").replaceAll(/next=[^"]*/g, "");
+      t.replaceAll(/nonce-?="?[\w-]+/g, "nonce").replaceAll(/here\?path=[^"&\s]*/g, "here?path=").replaceAll(/next=[^"]*/g, "").replaceAll(/\/new\/issue\?from=[^"]*/g, "/new/issue?from=").replaceAll(/q=[^"]*"/g, 'q="').replaceAll(/Search for ‘[^’]*’/g, "Search for");
     expect(scrub(hidden)).toBe(scrub(absent));
 
     const signedIn = await (
@@ -466,6 +470,28 @@ describe("web ui", () => {
     expect(signedIn).not.toContain("/signin?next=");
     expect(signedIn).toContain("Go home");
     expect(signedIn).toContain('href="/explore"');
+  });
+
+  test("a 404 offers a search for what was asked, and a stranger an account", async () => {
+    const out = await (await fetch(`${base}/kim/nothing`)).text();
+    expect(out).toContain('href="/search?q=nothing"');
+    expect(out).toContain("Search for ‘nothing’");
+    expect(out).toContain('href="/signup"');
+    expect(out).toContain("Create an account");
+
+    const odd = await (await fetch(`${base}/%3Cx%3E`)).text();
+    expect(odd).toContain("Search for ‘&lt;x&gt;’");
+    expect(odd).toContain('href="/search?q=%3Cx%3E"');
+    expect(odd).not.toContain("<x>");
+
+    const long = await (await fetch(`${base}/${"a".repeat(150)}`)).text();
+    expect(long).toContain(`q=${"a".repeat(100)}"`);
+
+    const signedIn = await (
+      await fetch(`${base}/kim/nothing`, { headers: { cookie: stranger } })
+    ).text();
+    expect(signedIn).toContain("Search for ‘nothing’");
+    expect(signedIn).not.toContain("Create an account");
   });
 
   test("safeNext refuses another origin", () => {
@@ -717,7 +743,7 @@ describe("web ui", () => {
       await fetch(`${base}/mel/proj/issues?q=nothing-matches-this&state=all`)
     ).text();
     expect(miss).not.toContain("needs a label");
-    expect(miss).toContain("Nothing here");
+    expect(miss).toContain("Nothing open.");
     expect(miss).toContain("nothing-matches-this in the title ✕");
 
     // A LIKE wildcard typed into the box is a literal character, not a glob.
@@ -798,7 +824,7 @@ describe("web ui", () => {
     }
   });
 
-  test("an issue row leads with who has it and trails its word", async () => {
+  test("an issue row leads with its word as a dot", async () => {
     const html = await (
       await fetch(`${base}/mel/proj/issues`, { headers: { cookie: owner } })
     ).text();
@@ -806,7 +832,7 @@ describe("web ui", () => {
     expect(start).toBeGreaterThan(-1);
     // From the lead to the end of the row it belongs to.
     const row = html.slice(start, html.indexOf("</a", start));
-    expect(row).toContain('class="avatar"');
+    expect(row).toContain('class="dot"');
     expect(row).toContain('<span class="row-meta">');
     expect(row).toContain('data-word="told"');
     // The word is the row's state; no dev state badge repeats it.
@@ -818,7 +844,7 @@ describe("web ui", () => {
   test("the tell composer is the thread's comment box, on the page and in place", async () => {
     const as = async (path: string) =>
       (await fetch(`${base}${path}`, { headers: { cookie: owner } })).text();
-    const keys = /<form[^>]*class="card comment-form"[^>]*data-box="[^"]+"[^>]*data-submit-key/;
+    const keys = /<form[^>]*class="(?:card )?comment-form"[^>]*data-box="[^"]+"[^>]*data-submit-key/;
     // Two kinds of page: the issue's comment box, and the tell composer.
     const issue = await as("/mel/proj/issues/1");
     const page = await as("/mel/proj/tell?from=/mel/proj/issues/1");
@@ -935,6 +961,43 @@ describe("web ui", () => {
     expect(bad.loc.href).toBe(href);
   });
 
+  test("every action bound to a key shows that key beside its label", async () => {
+    const pull = `/mel/proj/pulls/${pullNumber}`;
+    const paths = ["/", "/mel/proj", "/mel/proj/issues", "/mel/proj/issues/1", pull, `${pull}/files`, "/mel/proj/files", "/apps", "/asks", "/system"];
+    let seen = 0;
+    for (const path of paths) {
+      const html = await (await fetch(`${base}${path}`, { headers: { cookie: owner } })).text();
+      // The element a binding sits on, and for a radio the label around it.
+      for (const m of html.matchAll(/<(a|button|span|input)\b[^>]*\bdata-shortcut="([^"]+)"[^>]*>/g)) {
+        const chord = m[2]!;
+        const from = m[1] === "input" ? html.lastIndexOf("<label", m.index) : m.index;
+        const close = m[1] === "input" ? "</label>" : `</${m[1]}>`;
+        const el = html.slice(from, html.indexOf(close, m.index));
+        if (!new RegExp(`data-hint="(?:[^"]* · )?${chord}"`).test(el) && !el.includes(`<kbd class="keyhint">${chord}</kbd>`) && !chord.split(" ").every((k) => el.includes(`<kbd>${k}</kbd>`))) {
+          throw new Error(`${path}: "${chord}" has no <kbd> beside its label`);
+        }
+        seen++;
+      }
+    }
+    expect(seen).toBeGreaterThan(10);
+    // The keys the page scripts bind without a data-shortcut are declared in
+    // one list; each page that carries the action must show the key beside it.
+    // A card is seeded so the feed always has its Dismiss to check.
+    const mel = (getUserByName(app.db, "mel"))!;
+    const proj = (await getRepo(app.db, "mel", "proj"))!;
+    const seeded = openIssue(app, mel, proj, { title: "dismiss me" });
+    if (!seeded.ok) throw new Error(seeded.error);
+    expect(assignIssue(app, mel, proj, seeded.value, mel).ok).toBe(true);
+    expect(shellJs).toContain(`['${NEW_ISSUE_KEY}'], openNewIssue]`);
+    for (const k of SCRIPT_KEYS) {
+      const page = await (await fetch(`${base}${k.page}`, { headers: { cookie: `${owner}; forge_mode=studio` } })).text();
+      // A menu row draws the key in its column; anything else carries it as data-hint (#8930).
+      const at = Math.max(page.indexOf(`<kbd class="keyhint">${k.key}</kbd>`), page.indexOf(`data-hint="${k.key}"`));
+      const near = at < 0 ? "" : page.slice(Math.max(0, at - 400), at + 400);
+      if (!near.includes(k.label)) throw new Error(`${k.page}: "${k.label}" shows no ${k.key} beside it`);
+    }
+  });
+
   test("the composer, the verdicts and the settings sections carry their keys", async () => {
     const as = async (path: string, cookie = "") =>
       (
@@ -945,7 +1008,7 @@ describe("web ui", () => {
     // Cmd/Ctrl+Enter sends it. Signed out there is no box, so no key is promised.
     const issue = await as("/mel/proj/issues/1", owner);
     expect(issue).toMatch(
-      /<form[^>]*class="card comment-form"[^>]*data-box="Write a comment"[^>]*data-submit-key/,
+      /<form[^>]*class="comment-form"[^>]*data-box="Write a comment"[^>]*data-submit-key/,
     );
     expect(await as("/mel/proj/issues/1")).not.toContain("data-box=");
     // The close form is drawn from the design system's input, not page classes.
@@ -1001,9 +1064,8 @@ describe("web ui", () => {
 
     // The shell sends a form on Enter only with a modifier held, only for a
     // form that opted in, and nowhere else.
-    expect(shellJs).toContain(
-      "(e.metaKey || e.ctrlKey) && e.key === 'Enter' && t.form && t.form.hasAttribute('data-submit-key')",
-    );
+    expect(shellJs).toContain("['Mod+Enter'], function (e) {");
+    expect(shellJs).toContain("if (f && f.hasAttribute('data-submit-key')) { e.preventDefault(); submitBox(f); }");
     const sends = shellJs
       .split("\n")
       .filter((l) => /requestSubmit|\.submit\(/.test(l));

@@ -38,6 +38,7 @@ import {
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { CHECK_FAILED_LIMIT } from "../src/crew/dispatch.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { giveHistory } from "./helpers/history.ts";
 
 describe("the studio", () => {
   let dataDir: string;
@@ -118,6 +119,7 @@ describe("the studio", () => {
     const scout = await createAgent(app, alice, { username: "scout" });
     if (!scout.ok) throw new Error(String(scout.error));
     repo = await makeApp("notes", "a place for notes");
+    giveHistory(app.db, repo.id);
   }, 60_000);
 
   afterAll(async () => {
@@ -174,15 +176,18 @@ describe("the studio", () => {
       description: "",
     });
     if (!later.ok) throw new Error(String(later.error));
-    const html = await (await get("/")).text();
+    const html = await (await get("/feed")).text();
     const block = html.match(
       /<script type="application\/json" id="palette-index">([\s\S]*?)<\/script>/,
     )?.[1];
     if (block === undefined) throw new Error("no palette-index on the home");
-    const rows = (JSON.parse(block) as { items: { t: string; c: string }[] }).items;
+    const rows = (JSON.parse(block) as { items: { t: string; c: string; x?: string; o?: string }[] }).items;
     const at = (t: string) => rows.findIndex((r) => r.t === t);
-    expect(rows[at("alice/notes")]?.c).toBe("Apps");
-    expect(rows[at("alice/palette-later")]?.c).toBe("Repositories");
+    // A repository and its app are one row; the app shows as its label and door.
+    expect(rows[at("alice/notes")]?.c).toBe("Repositories");
+    expect(rows[at("alice/notes")]?.x).toStartWith("App · ");
+    expect(rows[at("alice/notes")]?.o).toBe("/alice/notes/app/production/open");
+    expect(rows[at("alice/palette-later")]?.x).toBeUndefined();
     expect(at("alice/notes")).toBeLessThan(at("alice/palette-later"));
   });
 
@@ -269,11 +274,11 @@ describe("the studio", () => {
     }
     const studio = await (await get("/alice/notes")).text();
     expect(studio).toMatch(/<div class="page-head">\s*<div class="stack stack-tight">\s*<h1 class="bar">/);
-    expect(studio).toContain('class="card comment-form"');
+    expect(studio).toContain('class="bar tell-box"');
   });
 
   test("the home and an app's page lay main and rail with .split's wide rail; no dash class is left (#4748)", async () => {
-    for (const path of ["/", "/alice/notes"]) {
+    for (const path of ["/feed", "/alice/notes"]) {
       const page = await (await get(path)).text();
       expect(page).not.toMatch(/class="[^"]*\bdash(?:-main|-rail)?\b/);
       expect(page).toContain('<div class="split" data-rail="wide">');
@@ -609,6 +614,49 @@ describe("the studio", () => {
     // The link to the run's full log is unchanged: a summary, not a
     // replacement for it.
     expect(studio).toContain(`href="/alice/notes/runs/${run.id}"`);
+  });
+
+  test("a run's summary is one clamped line in its row: whole text in the title, markdown characters literal, the time after it", async () => {
+    const scout = getUserByName(app.db, "scout")!;
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      actorId: scout.id,
+      reason: "assigned",
+    });
+    claimRun(app.db, run.id);
+    const report = Array.from(
+      { length: 12 },
+      (_, i) =>
+        `line ${i}: **bold** \`main\` [link](http://x.test) <b>tag</b> done`,
+    ).join("\n");
+    expect(report.length).toBeGreaterThan(600);
+    finishRun(app.db, run.id, { state: "failed", summary: report });
+    // The run table keeps the first 500 characters; the row carries all of those.
+    const flat = report.slice(0, 500).replace(/\s+/g, " ").trim();
+
+    const page = await (await get("/alice/notes/runs?state=failed")).text();
+    const at = page.indexOf(`href="/alice/notes/runs/${run.id}"`);
+    expect(at).toBeGreaterThan(-1);
+    const mine = page.slice(at, page.indexOf("</li>", at));
+    // One line: the note is its own clamped span, no newline survives in it.
+    const span = /<span class="row-note" title="([^"]*)">([^<]*)<\/span>/.exec(mine);
+    expect(span).not.toBeNull();
+    const unescape = (s: string) =>
+      s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+    expect(unescape(span![1]!)).toBe(flat);
+    expect(unescape(span![2]!)).toBe(flat);
+    // Text, not source: markdown characters literal, markup escaped.
+    expect(mine).toContain("**bold**");
+    expect(mine).toContain("`main`");
+    expect(mine).toContain("&lt;b&gt;tag&lt;/b&gt;");
+    expect(mine).not.toContain("<b>tag</b>");
+    expect(mine).not.toContain("<strong>");
+    expect(mine).not.toContain('href="http://x.test"');
+    // The when comes after the note, outside its clamp.
+    expect(mine.slice(mine.indexOf("</span>", mine.indexOf("row-note")))).toContain("<time");
+    const css = await (await fetch(`${base}${stylesheetAsset().path}`)).text();
+    expect(css).toMatch(/\.row-note \{[^}]*text-overflow: ellipsis[^}]*white-space: nowrap/);
   });
 
   test("a change that no longer merges into its base says so, and offers no Ship — a mergeable green pull is unchanged", async () => {

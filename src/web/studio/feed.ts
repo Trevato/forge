@@ -8,6 +8,7 @@
  * Every string on a card is plain text and is escaped here, once.
  */
 
+import { COMPOSER_FIELDS, TELL_MAX, sharedDraft, shareToken } from "../share_target.ts";
 import { chipCounts } from "../../feed/chips.ts";
 import { chipsOf, KIND_CHIPS, type KindChip } from "../../core/feed_chips.ts";
 import { marksByName, type Mark } from "../../core/marks.ts";
@@ -17,17 +18,21 @@ import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.t
 import { placementsOf, type Placement } from "../../core/placements.ts";
 import { recentThoughts, type Thought } from "../../core/thoughts.ts";
 import { parseCursor, readFeedPage } from "../../feed/feed.ts";
+import { parseBefore, readTimeline, TIMELINE_START } from "../../feed/timeline.ts";
 import type { FeedItem } from "../../feed/rank.ts";
+import { replyPath, replyRepo, threadOf } from "../../feed/reply.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { getRepo, getRepoById } from "../../core/repos.ts";
 import { DEFAULT_PAGE, looksForEnv, lookUrl } from "../../core/looks.ts";
 import { mayFetchLook, pictured } from "../pages/looks.ts";
 import { dividers } from "./day_divider.ts";
 import { html, type Html } from "../html.ts";
+import { DISMISS_KEY } from "../script_keys.ts";
 import { fragment } from "../layout.ts";
 import { draftJs } from "../draft.ts";
 import { outboxJs } from "../outbox.ts";
-import { avatar, btn, card, disclosure, empty, nameMark, row, stateBadge, time } from "../ui.ts";
+import { avatar, btn, card, disclosure, empty, hintAttr, nameMark, row, stateBadge, time } from "../ui.ts";
+import { stepLink } from "./step_link.ts";
 import { writableAppsOf } from "./asks.ts";
 
 /** Events that can change what the feed says. */
@@ -101,6 +106,25 @@ function settledBadge(settled: FeedItem["settled"]): Html | null {
 }
 
 /**
+ * The count of likes and, for a signed-in viewer, the button that toggles
+ * theirs. A form that posts back to the feed, so it works without a script;
+ * the script updates the same two nodes in place. The label never changes
+ * (the pressed state is `aria-pressed`) and the count is drawn at a fixed
+ * width, so a press moves nothing.
+ */
+function likeBar(item: FeedItem): Html {
+  const likes = item.likes ?? 0;
+  const liked = item.liked ?? false;
+  return html`<form method="post" action="/feed/like" class="like" data-like>
+    <input type="hidden" name="item" value="${item.id}" />
+    <input type="hidden" name="app" value="${item.app}" />
+    <input type="hidden" name="back" value="/feed" />
+    <input type="hidden" name="act" value="${liked ? "unlike" : "like"}" />
+    <button type="submit" class="btn" data-variant="ghost" data-size="sm" aria-pressed="${liked ? "true" : "false"}">Like <span data-likes>${likes}</span></button>
+  </form>`;
+}
+
+/**
  * One post: who, where and when; what it says, as a link into the thing;
  * why, when that is news; and one quiet control for the rest — say
  * something (steer a run, tell the crew), dismiss, mute.
@@ -109,7 +133,12 @@ export function feedCard(
   item: FeedItem,
   marks: ReadonlyMap<string, Mark> = new Map(),
   picture?: FeedPicture,
+  mayReply = false,
 ): Html {
+  // The thread must be in the post's own app: that is the repository `mayReply` was asked about.
+  const linked = mayReply ? threadOf(item.link) : undefined;
+  const thread = linked !== undefined && `${linked.owner}/${linked.name}` === item.app ? linked : undefined;
+  const reply = thread !== undefined;
   const steer = item.kind === "run" || item.kind === "cost";
   const target = steer && RUN_LINK.test(item.link) ? `${item.link}/steer` : null;
   const head = html`${avatar(item.actor ?? item.app)}
@@ -128,18 +157,26 @@ export function feedCard(
       : html`<a class="look" data-slot="feed" href="${item.link}" tabindex="-1" aria-hidden="true"
           ><img src="${picture.src}" width="${picture.width}" height="${picture.height}" alt="" loading="lazy" decoding="async"
         /></a>`}
-    ${saysMore(item) ? html`<p class="small muted break">${item.reason}</p>` : null}`;
+    ${item.step === undefined ? null : html`<p class="break">${stepLink(item.step)}</p>`}
+    ${saysMore(item) ? html`<p class="small muted break">${item.reason}</p>` : null}
+    ${likeBar(item)}`;
   const foot = disclosure(
-    `${target ? "Steer" : "Tell"} · more`,
-    html`<form method="post" action="${target ?? `/${item.app}/tell`}" class="stack">
+    `${reply ? "Reply or " : ""}${target ? "Steer" : "Tell"} · more`,
+    html`${reply
+        ? html`<form method="post" action="${thread === undefined ? "" : replyPath(thread)}" class="stack">
+        <input type="hidden" name="back" value="feed" />
+        <textarea class="input" name="body" rows="2" maxlength="20000" required aria-label="Reply on ${item.what}"></textarea>
+        <span class="bar">${btn("Reply", { size: "sm", variant: "primary" })}</span>
+      </form>`
+        : null}<form method="post" action="${target ?? `/${item.app}/tell`}" class="stack">
         <textarea class="input" name="text" rows="2" maxlength="2000" required aria-label="${target ? "Steer this run" : "Tell the crew"}"></textarea>
-        <span class="bar">${btn(target ? "Steer" : "Tell", { size: "sm", variant: "primary" })}</span>
+        <span class="bar">${btn(target ? "Steer" : "Tell", reply ? { size: "sm" } : { size: "sm", variant: "primary" })}</span>
       </form>
       <span class="bar">
-        <button type="button" class="btn" data-variant="ghost" data-size="sm" data-feed="dismissed" title="Dismiss (x)">Dismiss</button>
+        <button type="button" class="btn" data-variant="ghost" data-size="sm" data-feed="dismissed" ${hintAttr(DISMISS_KEY)}>Dismiss</button>
         ${item.kind === "ask" || item.kind === "milestone" || item.kind === "choose" ? null : html`<button type="button" class="btn" data-variant="ghost" data-size="sm" data-feed="muted" title="Mute ${item.app}">Mute app</button>`}
       </span>`,
-    { small: true, label: target ? "Steer, dismiss or mute" : "Tell the crew, dismiss or mute" },
+    { small: true, label: target ? "Steer, dismiss or mute" : reply ? "Reply, tell the crew, dismiss or mute" : "Tell the crew, dismiss or mute" },
   );
   return card(body, {
     head,
@@ -150,6 +187,8 @@ export function feedCard(
 
 /** The composer's app value for "the forge": no app, so no slash to collide with one. */
 export const FORGE_TARGET = "forge";
+/** The first-tell form's target: "a new app", made from the ask. */
+export const NEW_APP_TARGET = "new-app";
 
 /** How many thoughts stand at the top of the feed. */
 const THOUGHTS_SHOWN = 3;
@@ -188,24 +227,6 @@ export function replyUnder(placement: Placement): Html {
   return html`<p class="small break" data-placement="${placement.kind}"><span class="muted">Planner · ${placement.kind}</span> ${parts}</p>`;
 }
 
-/** The longest tell the composer takes (its textarea's `maxlength`). */
-const TELL_MAX = 2000;
-
-/**
- * What a phone's share sheet handed the composer (`share_target` in the web
- * manifest, standards.ts): the title, text and link it sent as query
- * parameters, as one draft. A page's title often repeats in the text, and
- * some apps put the link in the text as well, so nothing is said twice. It
- * is only ever a draft — nothing is sent until the person taps Post.
- */
-export function sharedDraft(params: URLSearchParams): string {
-  const parts: string[] = [];
-  for (const key of ["title", "text", "url"]) {
-    const part = (params.get(key) ?? "").trim();
-    if (part !== "" && !parts.some((p) => p.includes(part))) parts.push(part);
-  }
-  return parts.join("\n").slice(0, TELL_MAX);
-}
 
 /**
  * The composer: say something to an app's crew, which opens a tell — the
@@ -218,25 +239,26 @@ export function composer(ctx: Ctx, user: User): Html {
   const { repos } = writableAppsOf(ctx, user);
   const slug = (r: { ownerName: string; name: string }) => `${r.ownerName}/${r.name}`;
   const noApps = html`${empty({
-    icon: "rocket",
+    scene: "anvil",
     title: "No apps yet",
     note: "Make one, tell the crew what it is, and watch it come up here.",
     action: html`${btn("New app", { href: "/apps/new", variant: "primary" })}
       ${btn("Repositories", { href: `/${user.username}` })}`,
   })}`;
-  const form = html`<form id="composer" class="card" method="post" action="/tell">
-    <div class="card-body stack">
-    <textarea class="input" name="text" rows="2" maxlength="2000" required placeholder="Tell the crew what should change" aria-label="Tell the crew" data-draft="${user.id}">${sharedDraft(ctx.url.searchParams)}</textarea>
+  const shared = sharedDraft(ctx.url.searchParams);
+  const form = html`<form id="composer" class="stack" method="post" action="/tell">
+    <input type="hidden" name="${COMPOSER_FIELDS.back}" value="/feed" />
+    ${shared === "" ? "" : html`<input type="hidden" name="${COMPOSER_FIELDS.once}" value="${shareToken(user.id, shared)}" />`}
+    <textarea class="input" name="${COMPOSER_FIELDS.text}" rows="2" maxlength="${String(TELL_MAX)}" required placeholder="Tell the crew what should change" aria-label="Tell the crew" data-draft="${user.id}">${shared}</textarea>
     <div class="bar">
       ${repos.length === 0
-        ? html`<input type="hidden" name="app" value="${FORGE_TARGET}" /><span class="muted small">the forge</span>`
-        : html`<select name="app" class="input" aria-label="Send to">
+        ? html`<input type="hidden" name="${COMPOSER_FIELDS.app}" value="${FORGE_TARGET}" /><span class="muted small">the forge</span>`
+        : html`<select name="${COMPOSER_FIELDS.app}" class="input" aria-label="Send to">
         ${repos.map((r) => html`<option value="${slug(r)}">${slug(r)}</option>`)}
         <option value="${FORGE_TARGET}">the forge</option>
       </select>`}
       <span class="spacer"></span>
       ${btn("Post", { variant: "primary" })}
-    </div>
     </div>
   </form>`;
   return repos.length === 0 ? html`${form}${noApps}` : form;
@@ -305,15 +327,29 @@ function readRegion(user: User, ctx: Ctx) {
   // ask is never a second time a post below it; the feed API keeps them.
   // `?cursor=` is a page the line below the last post pointed at; one not issued here is the first page.
   const cursor = parseCursor(ctx.url.searchParams.get("cursor") ?? "");
-  const page = readFeedPage(ctx.app.db, user, {
-    limit: FEED_FIRST_PAGE,
-    withoutAsks: true,
-    phase: (name, ms) => notePhase(ctx.request, name, ms),
-    ...(cursor === undefined ? {} : { cursor }),
-  });
+  // `?before=` is the timeline, newest first, deeper than the ranked page reaches (`feed/timeline.ts`).
+  const before = parseBefore(ctx.url.searchParams.get("before") ?? "");
+  const page =
+    before === undefined
+      ? readFeedPage(ctx.app.db, user, {
+          limit: FEED_FIRST_PAGE,
+          withoutAsks: true,
+          phase: (name, ms) => notePhase(ctx.request, name, ms),
+          ...(cursor === undefined ? {} : { cursor }),
+        })
+      : {
+          ...readTimeline(ctx.app.db, user, {
+            limit: FEED_FIRST_PAGE,
+            phase: (name, ms) => notePhase(ctx.request, name, ms),
+            ...(before.id === undefined ? {} : { before: before.id }),
+          }),
+          quiet: { count: 0, repoId: null },
+        };
+  const timeline = before !== undefined;
+  const asked = ctx.url.searchParams.get("before") ?? "";
   const items = page.items;
   // The day the page before ended on, so a continuing page draws no divider twice (`day_divider.ts`).
-  const day = cursor === undefined ? "" : (ctx.url.searchParams.get("day") ?? "");
+  const day = cursor === undefined && !timeline ? "" : (ctx.url.searchParams.get("day") ?? "");
   const lastDayOnPage = Number.isFinite(Date.parse(day)) ? new Date(day).toISOString() : undefined;
   const thoughts = recentThoughts(ctx.app.db, user.id, THOUGHTS_SHOWN, new Date(Date.now() - THOUGHT_AGE_MS).toISOString());
   const placed = placementsOf(ctx.app.db, thoughts.map((t) => t.id));
@@ -325,8 +361,11 @@ function readRegion(user: User, ctx: Ctx) {
   const quiet = page.quiet;
   const quietRepo = quiet.repoId === null ? undefined : getRepoById(ctx.app.db, quiet.repoId);
   const quietLink = quietRepo === undefined ? "/explore" : `/${quietRepo.ownerName}/${quietRepo.name}/runs?kind=agent`;
-  return { items, next: page.next_cursor, cursor, lastDayOnPage, thoughts, placed, marks, pictures: picturesFor(ctx, items), quiet: quiet.count, quietLink };
+  return { items, next: page.next_cursor, cursor, timeline, asked, lastDayOnPage, thoughts, placed, marks, pictures: picturesFor(ctx, items), quiet: quiet.count, quietLink };
 }
+
+/** The one line an empty timeline says; the tell box above it is the action. */
+export const EMPTY_FEED = "Nothing yet. Tell the crew what to build.";
 
 /** The region: cards, or one line saying there is nothing to do. */
 export function feedRegion(user: User, ctx: Ctx): Html {
@@ -337,34 +376,48 @@ export function feedRegion(user: User, ctx: Ctx): Html {
  * The line under the last post: how far back the page reaches and the way
  * to older ones, or that there is nothing older.
  */
-export function caughtUp(items: readonly FeedItem[], next: string | null, cursor?: unknown): Html | null {
+export function caughtUp(items: readonly FeedItem[], next: string | null, cursor?: unknown, timeline = false): Html | null {
   // Ranked by score, not time: the last card is not always the oldest.
   const oldest = items.reduce<string | undefined>((min, item) => (min === undefined || item.at < min ? item.at : min), undefined);
-  if (oldest === undefined) return null;
-  const newest = cursor === undefined ? html`` : html`<a href="/">Newest</a>`;
+  // A page the filters emptied can still have older posts behind it: keep the way on.
+  if (oldest === undefined && next === null) return null;
+  const newest = cursor === undefined && !timeline ? html`` : html`<a href="/feed">Newest</a>`;
+  // The ranked page ends where its window does; the log goes on, newest first.
+  const deeper = timeline ? html`` : html`<a href="/feed?before=${TIMELINE_START}">Everything, newest first</a>`;
+  const older = (n: string) => timeline
+    ? html`<a href="/feed?before=${encodeURIComponent(n)}">Older posts</a>`
+    : html`<a href="/feed?cursor=${encodeURIComponent(n)}&day=${encodeURIComponent(items[items.length - 1]?.at ?? "")}">Older posts</a>`;
   return next === null
-    ? html`<p class="bar muted small" data-caught-up="end"><span>That's everything</span><span class="spacer"></span>${newest}</p>`
+    ? html`<p class="bar muted small" data-caught-up="end"><span>${timeline ? html`That's every post` : html`That's everything`}</span><span class="spacer"></span>${newest}${deeper}</p>`
     : html`<p class="bar muted small" data-caught-up="more">
-        <span>You're caught up to ${time(oldest)}</span>
+        <span>${oldest === undefined ? "Nothing to show on this page" : html`You're caught up to ${time(oldest)}`}</span>
         <span class="spacer"></span>
         ${newest}
-        <a href="/?cursor=${encodeURIComponent(next)}&day=${encodeURIComponent(items[items.length - 1]!.at)}">Older posts</a>
+        ${older(next)}
       </p>`;
 }
 
 function drawRegion(user: User, ctx: Ctx, read: ReturnType<typeof readRegion>): Html {
-  const { items, next, cursor, lastDayOnPage, thoughts, placed, marks, pictures, quiet, quietLink } = read;
+  const { items, next, cursor, timeline, asked, lastDayOnPage, thoughts, placed, marks, pictures, quiet, quietLink } = read;
   const now = new Date();
   // One divider per change of day between neighbours, in the order the feed already has.
   const posts: Html[] = [];
   let before = lastDayOnPage;
+  // Whether this viewer may reply in a repository, asked once per app on the page.
+  const mayReply = new Map<string, boolean>();
+  const mayReplyOn = (app: string): boolean => {
+    let may = mayReply.get(app);
+    if (may === undefined) mayReply.set(app, (may = replyRepo(ctx.app.db, user, app) !== undefined));
+    return may;
+  };
   for (const item of items) {
     const [label] = dividers([item.at], now, before);
     if (label !== undefined) posts.push(html`<p class="muted small" role="separator" aria-label="${label}" data-day-divider="${label}">${label}</p>`);
-    posts.push(feedCard(item, marks, pictures.get(item.id)));
+    posts.push(feedCard(item, marks, pictures.get(item.id), mayReplyOn(item.app)));
     before = item.at;
   }
   const liveQuery = [
+    timeline ? `before=${encodeURIComponent(asked)}` : "",
     cursor === undefined ? "" : `cursor=${encodeURIComponent(`${cursor.score}|${cursor.id}`)}`,
     cursor === undefined || lastDayOnPage === undefined ? "" : `day=${encodeURIComponent(lastDayOnPage)}`,
   ].filter(Boolean).join("&");
@@ -378,16 +431,12 @@ function drawRegion(user: User, ctx: Ctx, read: ReturnType<typeof readRegion>): 
     ${chipsBar(user, ctx, items)}
     ${thoughts.map((t) => thoughtCard(t, user.username, placed.get(t.id)))}
     ${items.length === 0 && thoughts.length === 0
-      ? empty({
-          icon: "activity",
-          title: "Nothing new",
-          note: "When something happens in your apps, it lands here.",
-        })
+      ? empty({ title: EMPTY_FEED })
       : posts}
     ${quiet === 0
       ? ""
       : html`<p class="small muted"><a href="${quietLink}">${quiet} quiet ${quiet === 1 ? "run" : "runs"} in the last 24 h</a></p>`}
-    ${caughtUp(items, next, cursor)}
+    ${caughtUp(items, next, cursor, timeline)}
   </section>`;
 }
 
@@ -402,6 +451,9 @@ export function liveFeedFragment(ctx: Ctx): Response {
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
 }
+
+/** Offline: the worker keeps the last home and the page that shows it is stale (`sw.ts`). */
+export const registerWorkerJs = `if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});`;
 
 /**
  * When a card is hidden, the day divider just above it goes with it, unless
@@ -539,11 +591,30 @@ ${dayKeepJs}
     if (t.hasAttribute('data-feed-open')) { send(card, 'opened'); return; }
     act(card, t.getAttribute('data-feed'));
   });
+  // A like flips at once and then takes the count the forge answers; a
+  // refusal puts it back. Without fetch the form posts back to the feed.
+  function like(form, e) {
+    var btn = form.querySelector('button');
+    var count = form.querySelector('[data-likes]');
+    if (!btn || !count) return;
+    e.preventDefault();
+    var was = btn.getAttribute('aria-pressed') === 'true';
+    var n = Number(count.textContent) || 0;
+    var show = function (on, total) { var a = form.querySelector('[name=act]'); if (a) a.value = on ? 'unlike' : 'like'; btn.setAttribute('aria-pressed', on ? 'true' : 'false'); count.textContent = String(total); };
+    var body = new URLSearchParams(new FormData(form)).toString();
+    show(!was, Math.max(0, n + (was ? -1 : 1)));
+    fetch(form.getAttribute('action'), { method: 'POST', credentials: 'same-origin', headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
+      body: body })
+      .then(function (r) { if (!r.ok) throw r; return r.json(); })
+      .then(function (a) { show(a.liked, a.likes); })
+      .catch(function () { show(was, n); problem = 'The like was not saved. Check your connection and press Like again.'; paint(); });
+  }
   // A tell is kept and sent the same way; a steer needs the run, so it
   // stays an ordinary post and waits for the network.
   feed.addEventListener('submit', function (e) {
     var form = e.target;
     var card = form.closest && form.closest('[data-item]');
+    if (card && form.hasAttribute && form.hasAttribute('data-like')) { like(form, e); return; }
     var box = form.elements && form.elements.text;
     if (!card || !box || !/\\/tell$/.test(form.getAttribute('action') || '')) return;
     var text = box.value.trim();
@@ -580,7 +651,7 @@ ${dayKeepJs}
     outbox.flush().then(function (r) { if (r.refused && draft) draft.refused(text); });
   });
   document.addEventListener('keydown', function (e) {
-    if (e.key !== 'x' || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key !== '${DISMISS_KEY}' || e.metaKey || e.ctrlKey || e.altKey) return;
     var a = document.activeElement;
     if (!a || !a.matches || !a.matches('[data-item]') || !feed.contains(a)) return;
     e.preventDefault();
@@ -599,7 +670,7 @@ ${dayKeepJs}
       if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage('clear');
     }
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
+  ${registerWorkerJs}
   paint();
   flush();
 })();

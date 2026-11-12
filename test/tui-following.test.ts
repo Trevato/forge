@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
+import { describeLink } from "../src/git/sync_link.ts";
 import { forkRelation, type ForkRelation } from "../src/core/following.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
@@ -24,13 +25,13 @@ const must = <T>(r: { ok: true; value: T } | { ok: false; error: unknown }): T =
 describe("followingRows", () => {
   const parent = { ownerName: "alice", name: "app", detached: null } as unknown as Repo;
   const at = (state: ForkRelation["state"], behind: number, ahead: number, clean = true) =>
-    ({ parent, state, behind, ahead, clean, conflicts: [] }) as unknown as ForkRelation;
+    ({ parent, state, behind, ahead, clean, conflicts: [], action: describeLink(behind, ahead, clean, []).action }) as unknown as ForkRelation;
 
   test("a fork behind its parent says by how much, in MCP following's state", () => {
     const rows = followingRows(at("behind", 3, 0), undefined);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.name).toBe("follows alice/app");
-    expect(rows[0]!.words).toBe("behind · 0 ahead · 3 behind");
+    expect(rows[0]!.words).toBe("behind · 0 ahead · 3 behind · fast-forward");
     expect(rows[0]!.repo).toBe(parent);
   });
 
@@ -44,7 +45,7 @@ describe("followingRows", () => {
     const issue = { number: 7 } as Issue;
     const proposed: Converge = { kind: "proposed", issue, pull: { number: 9 } as Pull };
     const rows = followingRows(at("diverged", 2, 1, false), proposed);
-    expect(rows.map((r) => r.words)).toEqual(["diverged · 1 ahead · 2 behind", ""]);
+    expect(rows.map((r) => r.words)).toEqual(["diverged · 1 ahead · 2 behind · keep-both", ""]);
     expect(rows[1]!.name).toContain("pull #9");
     expect(followingRows(at("diverged", 2, 1, false), undefined)).toHaveLength(1);
   });

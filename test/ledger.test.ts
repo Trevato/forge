@@ -3,6 +3,8 @@
  * ship or show, try again or stop — each with a rule underneath and a fake
  * decider on top, and each written down with what came of it.
  */
+import { quietWeek } from "./helpers/week-quiet.ts";
+import { seatAs } from "./helpers/seat.ts";
 import { beforeAll, afterAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -27,13 +29,17 @@ import {
 import { getIssueById, type Issue } from "../src/core/issues.ts";
 import { getPull } from "../src/core/pulls.ts";
 import { submitReview } from "../src/core/reviews.ts";
+import {
+  provideChecksForTest,
+  type ChecksHandle,
+} from "../src/checks/service.ts";
 import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import type { Answer, Decider, Questions } from "../src/crew/decide.ts";
 import { driveRepo, landIfGreen } from "../src/crew/autonomy.ts";
+import { summariseCheckFailure } from "../src/checks/summary.ts";
 import { answerFailedCheck, judgeFailedCheck } from "../src/crew/dispatch.ts";
-import { startChecks } from "../src/checks/service.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 /** A decider that answers from a script: question name → choice. */
@@ -76,8 +82,11 @@ describe("the decision ledger", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-ledger-"));
     app = createApp({ dataDir, port: 0, decider });
+    quietWeek(app.db);
     servers = await serve(app);
-    const a = await createUser(app.db, { origin: "seed", trusted: true,
+    const a = await createUser(app.db, {
+      origin: "seed",
+      trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -102,7 +111,7 @@ describe("the decision ledger", () => {
       expect(addToCrew(app, alice, repo, name).ok).toBe(true);
     }
     scout = getUserByName(app.db, "scout")!;
-    setCrewRole(app.db, repo.id, getUserByName(app.db, "atlas")!.id, "planner");
+    seatAs(app.db, repo.id, getUserByName(app.db, "atlas")!.id, "planner");
     updateRepoSettings(app.db, repo, {
       autonomy: "autonomous",
       autonomyDirection: "Sell one real thing end to end.",
@@ -241,7 +250,42 @@ describe("the decision ledger", () => {
       state: "failed",
       summary: "test failed: 1 of 9",
     });
+    // A shard that ran out of temp space is the environment's, even when the decider would stop.
+    const full = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, full.id);
+    // The real parse of a log, not a summary written by hand.
+    const said = summariseCheckFailure(
+      [
+        "SQLiteError: database or disk is full",
+        "(fail) migrate > pins [3ms]",
+        "(fail) test/a.test.ts > (unnamed) [1ms]",
+        " 9 pass",
+        " 2 fail",
+      ],
+      "exit 1",
+    );
+    finishRun(app.db, full.id, {
+      state: "failed",
+      summary: said.summary,
+      checkDetail: said.detail,
+    });
     script["retry"] = "stop";
+    const judged = await judgeFailedCheck(
+      app,
+      fresh(),
+      pull,
+      full.id,
+      pull.createdAt,
+    );
+    expect(judged.cause).toBe("environment");
+    expect(judged.retry).toBe("again");
     expect(
       (await judgeFailedCheck(app, fresh(), pull, failed.id, pull.createdAt))
         .retry,
@@ -269,9 +313,26 @@ describe("the decision ledger", () => {
 
   test("stop is not the last word on a red check: the environment's fault runs it again, once per commit, before anything is parked", async () => {
     const { getAgentByName } = await import("../src/core/agents.ts");
-    const { listComments } = await import("../src/core/issues.ts");
     const scoutAgent = getAgentByName(app.db, "scout")!;
-    const checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
+    // A stand-in lane: the retry is queued as the real one queues it, but no
+    // check runs, so the verdict does not wait on this machine's load.
+    provideChecksForTest(app, {
+      request: async (
+        r: Repo,
+        env: string,
+        commitOid: string,
+        reason: string,
+        issueId?: string,
+      ) =>
+        createRun(app.db, {
+          repoId: r.id,
+          kind: "check",
+          issueId,
+          env,
+          commitOid,
+          reason,
+        }),
+    } as unknown as ChecksHandle);
     try {
       const branch = await commitToBranch(app, alice, repo, {
         branch: "feature/flaky",
@@ -344,222 +405,82 @@ describe("the decision ledger", () => {
         ),
       ).toBe(false);
 
-      // Once per head commit: red again on the same commit is real, and
-      // the pull parks with a reason that says the environment.
+      // Once per head commit: red again on the same commit goes back to its builder.
+      // The decider's stop no longer parks; the try limit does.
       expect(
         await answerFailedCheck(app, fresh(), pull, scoutAgent, {
           runId: red(),
           ...failure,
         }),
-      ).toBe("parked");
-      expect(retries()).toBe(1);
-      expect(getPull(app.db, repo.id, pull.number)?.state).toBe("closed");
-      const why = listComments(app.db, pull.id).map((c) => c.body);
-      expect(
-        why.some((b) => b.includes("in the place it ran, not in the change")),
-      ).toBe(true);
-    } finally {
-      await checks.stop();
-      delete script["cause"];
-    }
-  }, 60_000);
-
-  test("the change's fault parks as it always has, and says so", async () => {
-    const { getAgentByName } = await import("../src/core/agents.ts");
-    const { listComments } = await import("../src/core/issues.ts");
-    const scoutAgent = getAgentByName(app.db, "scout")!;
-    const branch = await commitToBranch(app, alice, repo, {
-      branch: "feature/broken",
-      base: "main",
-      message: "Broken",
-      files: [{ path: "broken.ts", content: "export const broken = 1;\n" }],
-    });
-    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
-    const opened = await openPull(app, scout, repo, {
-      title: "Broken",
-      baseBranch: "main",
-      headBranch: "feature/broken",
-    });
-    if (!opened.ok) throw new Error(String(opened.error));
-    const pull = opened.value;
-    const run = createRun(app.db, {
-      repoId: repo.id,
-      kind: "check",
-      issueId: pull.id,
-      env: `pull-${pull.number}`,
-      commitOid: pull.headOid,
-      reason: "pull",
-    });
-    claimRun(app.db, run.id);
-    finishRun(app.db, run.id, {
-      state: "failed",
-      summary: 'check failed: 1 of 274 tests — "renders the broken widget"',
-      checkDetail: {
-        passed: 273,
-        failed: 1,
-        names: ["renders the broken widget"],
-      },
-    });
-    script["retry"] = "stop";
-    script["cause"] = "change";
-    try {
-      expect(
-        await answerFailedCheck(app, fresh(), pull, scoutAgent, {
-          runId: run.id,
-          kind: "check",
-          commitOid: pull.headOid,
-          env: `pull-${pull.number}`,
-          since: pull.createdAt,
-        }),
-      ).toBe("parked");
-      expect(getPull(app.db, repo.id, pull.number)?.state).toBe("closed");
-      const comments = listComments(app.db, pull.id).map((c) => c.body);
-      expect(
-        comments.some((b) => b.includes("saw no point in another try")),
-      ).toBe(true);
-      // The red test's own name, not just "the check failed".
-      expect(
-        comments.some((b) => b.includes('"renders the broken widget"')),
-      ).toBe(true);
-    } finally {
-      delete script["cause"];
-    }
-  });
-
-  test("a park after two red tries names the failing test and the files each try changed", async () => {
-    const { listComments } = await import("../src/core/issues.ts");
-    const { getAgentByName } = await import("../src/core/agents.ts");
-    const scoutAgent = getAgentByName(app.db, "scout")!;
-    const first = await commitToBranch(app, alice, repo, {
-      branch: "feature/twice",
-      base: "main",
-      message: "First try",
-      files: [{ path: "first.ts", content: "export const a = 1;\n" }],
-    });
-    if (!first.ok) throw new Error(JSON.stringify(first.error));
-    const opened = await openPull(app, scout, repo, {
-      title: "Twice",
-      baseBranch: "main",
-      headBranch: "feature/twice",
-    });
-    if (!opened.ok) throw new Error(String(opened.error));
-    const red = (oid: string) => {
-      const r = createRun(app.db, {
-        repoId: repo.id,
-        kind: "check",
-        issueId: opened.value.id,
-        env: `pull-${opened.value.number}`,
-        commitOid: oid,
-        reason: "pull",
-      });
-      claimRun(app.db, r.id);
-      return finishRun(app.db, r.id, {
-        state: "failed",
-        summary: 'check failed: 1 of 9 tests — "adds up the cart"',
-        checkDetail: { passed: 8, failed: 1, names: ["adds up the cart"] },
-      })!;
-    };
-    red(opened.value.headOid);
-    const second = await commitToBranch(app, alice, repo, {
-      branch: "feature/twice",
-      message: "Second try",
-      files: [{ path: "second.ts", content: "export const b = 2;\n" }],
-    });
-    if (!second.ok) throw new Error(JSON.stringify(second.error));
-    const moved = getPull(app.db, repo.id, opened.value.number)!;
-    expect(moved.headOid).not.toBe(opened.value.headOid);
-    const last = red(moved.headOid);
-    script["retry"] = "stop";
-    script["cause"] = "change";
-    try {
-      expect(
-        await answerFailedCheck(app, fresh(), moved, scoutAgent, {
-          runId: last.id,
-          kind: "check",
-          commitOid: moved.headOid,
-          env: `pull-${moved.number}`,
-          since: moved.createdAt,
-        }),
-      ).toBe("parked");
-      const note = listComments(app.db, moved.id)
-        .map((c) => c.body)
-        .find((b) => b.includes("saw no point in another try"))!;
-      expect(note.split("\n").length).toBeLessThanOrEqual(3);
-      expect(note).toContain('"adds up the cart"');
-      expect(note).toContain("try 1: first.ts");
-      expect(note).toContain("try 2: second.ts");
-    } finally {
-      delete script["cause"];
-    }
-  });
-
-  test("a stop the decider is not sure of (p < 0.7) is a feedback run; a sure one parks, and the pull closes as parked", async () => {
-    const { getAgentByName } = await import("../src/core/agents.ts");
-    const scoutAgent = getAgentByName(app.db, "scout")!;
-    const redPull = async (name: string) => {
-      const branch = await commitToBranch(app, alice, repo, {
-        branch: `feature/${name}`,
-        base: "main",
-        message: name,
-        files: [{ path: `${name}.ts`, content: "export const x = 1;\n" }],
-      });
-      if (!branch.ok) throw new Error(JSON.stringify(branch.error));
-      const opened = await openPull(app, scout, repo, {
-        title: name,
-        baseBranch: "main",
-        headBranch: `feature/${name}`,
-      });
-      if (!opened.ok) throw new Error(String(opened.error));
-      const pull = opened.value;
-      const run = createRun(app.db, {
-        repoId: repo.id,
-        kind: "check",
-        issueId: pull.id,
-        env: `pull-${pull.number}`,
-        commitOid: pull.headOid,
-        reason: "pull",
-      });
-      claimRun(app.db, run.id);
-      finishRun(app.db, run.id, { state: "failed", summary: "test failed: 1 of 9" });
-      return {
-        pull,
-        failure: {
-          runId: run.id,
-          kind: "check",
-          commitOid: pull.headOid,
-          env: `pull-${pull.number}`,
-          since: pull.createdAt,
-        },
-      };
-    };
-    script["retry"] = "stop";
-    script["cause"] = "change";
-    try {
-      sure["retry"] = 0.59;
-      const unsure = await redPull("unsure");
-      expect(
-        await answerFailedCheck(app, fresh(), unsure.pull, scoutAgent, unsure.failure),
       ).toBe("reworked");
-      expect(getPull(app.db, repo.id, unsure.pull.number)?.state).toBe("open");
-      expect(
-        listRuns(app.db, repo.id, { kind: "agent" }).some(
-          (r) => r.issueId === unsure.pull.id && r.reason === "check_failed",
-        ),
-      ).toBe(true);
+      expect(getPull(app.db, repo.id, pull.number)?.state).toBe("open");
 
-      sure["retry"] = 0.77;
-      const certain = await redPull("certain");
-      expect(
-        await answerFailedCheck(app, fresh(), certain.pull, scoutAgent, certain.failure),
-      ).toBe("parked");
-      const closed = getIssueById(app.db, certain.pull.id)!;
-      expect(closed.state).toBe("closed");
-      expect(closed.closeReason).toBe("parked");
+      // A full temp space on a commit is run again once; the same red on the
+      // same commit is not run again, however often it comes (#8679).
+      const second = await commitToBranch(app, alice, repo, {
+        branch: "feature/full",
+        base: "main",
+        message: "Full",
+        files: [
+          {
+            path: "forge.json",
+            content: `{"check": {"run": "test -f OK.md", "install": ""}}\n`,
+          },
+          { path: "OK.md", content: "ok\n" },
+        ],
+      });
+      if (!second.ok) throw new Error(JSON.stringify(second.error));
+      const reopened = await openPull(app, scout, repo, {
+        title: "Full",
+        baseBranch: "main",
+        headBranch: "feature/full",
+      });
+      if (!reopened.ok) throw new Error(String(reopened.error));
+      const filled = reopened.value;
+      script["retry"] = "again";
+      delete script["cause"];
+      const fullRed = (): string => {
+        const run = createRun(app.db, {
+          repoId: repo.id,
+          kind: "check",
+          issueId: filled.id,
+          env: `pull-${filled.number}`,
+          commitOid: filled.headOid,
+          reason: "pull",
+        });
+        claimRun(app.db, run.id);
+        const said = summariseCheckFailure(
+          ["Error: database or disk is full", "(fail) a [1ms]", " 1 fail"],
+          "exit 1",
+        );
+        finishRun(app.db, run.id, {
+          state: "failed",
+          summary: said.summary,
+          checkDetail: said.detail,
+        });
+        return run.id;
+      };
+      const again = {
+        kind: "check",
+        commitOid: filled.headOid,
+        env: `pull-${filled.number}`,
+        since: filled.createdAt,
+      };
+      const answers: string[] = [];
+      for (let i = 0; i < 3; i++)
+        answers.push(
+          await answerFailedCheck(app, fresh(), filled, scoutAgent, {
+            runId: fullRed(),
+            ...again,
+          }),
+        );
+      expect(answers).toEqual(["reran", "reworked", "reworked"]);
     } finally {
       delete script["cause"];
-      delete sure["retry"];
     }
-  });
+    // Two git writes and an open pull: the verdict is the code's, so the clock
+    // on a loaded check machine must not be the test's.
+  }, 30_000);
 
   test("conflicts come first: a green pull that no longer merges gets a conflict run before anyone decides", async () => {
     const branch = await commitToBranch(app, alice, repo, {
@@ -661,7 +582,7 @@ describe("the decision ledger", () => {
       parkedTwice(app.db, [fresh()]).find((i) => i.number === work.value.number)
         ?.reasons,
     ).toEqual([
-      `the check stayed red through 2 automatic tries (pull #${opened.value.number} closed)`,
+      `the check stayed red through 2 automatic tries (pull #${opened.value.number} closed; its branch \`feature/gift\` at ${opened.value.headOid.slice(0, 12)} keeps the work so far)`,
       "main moved under it twice",
     ]);
     // Not a question for a person, in either case.

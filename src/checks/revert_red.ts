@@ -35,7 +35,7 @@ function greenBefore(app: App, repoId: string, branch: string, below: string): s
 }
 
 /** Whether any pull, in any state, already takes `pullId` back. */
-function everReverted(app: App, pullId: string): boolean {
+export function everReverted(app: App, pullId: string): boolean {
   return (
     app.db
       .query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM pull WHERE reverts_issue_id = ?1")

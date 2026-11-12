@@ -2,5 +2,11 @@
 
 A form's fields and its buttons sit in two rows, one for what you fill in and one for what you do with it.
 
-- `.field-row` — a row of `.field`s side by side that wraps on a narrow screen, each at least 160px wide and aligned to the bottom so a labelled input and the button beside it share a baseline. Styled in `style/components.ts`; written by `createForm` in `pages/branches.ts` (the new-branch form), the graph filter in `pages/fleet-graph.ts`, the freeze form in `pages/frozen.ts` and the new-pull form in `pages/pulls.ts`.
+- `.field-row` — a row of `.field`s side by side that wraps on a narrow screen, each at least 160px wide and aligned to the bottom so a labelled input and the button beside it share a baseline. Styled in `style/components.ts`; written by `createForm` in `pages/branches.ts` (the new-branch form), the graph filter in `pages/fleet-graph.ts` and the freeze form in `pages/frozen.ts`. The new-pull form stacks Base and Compare as plain `.field`s, one column at any width.
 - `.form-actions` — the row of a form's buttons under its fields: 16px above, 8px apart, wrapping. Styled in `style/components.ts`, and in `style/content.ts` for a thread's close reason and "close into" input and for `.comment-form` on a narrow screen; written by nearly every form in `src/web/pages/` (`account.ts`, `settings.ts`, `crew.ts`, `edit.ts`, `issues.ts`, `pulls.ts`, `oauth.ts`, `teams.ts`, `chain.ts`, `everyday.ts`) and by the review comment form in `diff-view.ts`; `client.ts` finds its `.muted` note to report a save.
+
+- The gate break-glass (#7790) on the pull's Files step is a plain `field()` with a hint and a `.form-actions` row holding one `btn` in the `danger` variant; no new class. It sits under the disabled primary Merge button, so the page keeps one accent.
+
+- `/signin` and `/signup` (#9812) speak the home page's language and add no class: `authForm` in `pages/site.ts` draws the page's one `<h1>` (`pageHead`), then the passkey door, the form and its `.form-actions` row straight on the page, no `.card`. `test/auth-language.test.ts` holds the shape.
+
+- `/new` (#9830) fits a 390 px phone with no new class: the page's wrapper carries the `data-new-repo` hook (not a class), which `style/content.ts` gives `overflow-wrap: anywhere` like the other long-text pages. `test/new-repo-fit.test.ts` holds it.

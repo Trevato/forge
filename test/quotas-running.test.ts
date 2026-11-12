@@ -27,6 +27,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { startCrew } from "../src/crew/dispatch.ts";
 import { serve } from "../src/http/server.ts";
 import { readRunLog } from "../src/runs/log.ts";
+import { heldRuns } from "../src/runs/held.ts";
 import { QUOTA_KEYS, getQuota, runningLimitSentence, setQuota } from "../src/settings/quotas.ts";
 import { promote } from "./helpers/members.ts";
 
@@ -80,6 +81,9 @@ describe("the limits themselves", () => {
   });
 });
 
+/** How long one preview may take to settle: most of the 600 s test, since a deploy shares its gate with the app's own production deploy. */
+const PREVIEW_SETTLES_MS = 420_000;
+
 describe("live previews", () => {
   test("a fresh account's second preview is refused with the count on its run; the owner's two both run", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-qrun-previews-"));
@@ -115,16 +119,31 @@ describe("live previews", () => {
         runtime.status(record).find((e) => e.env === `pull-${n}`)?.state;
       const deployOf = (repo: Repo, n: number): Run | undefined =>
         listRuns(app.db, repo.id, { kind: "deploy", limit: 20 }).find((r) => r.env === `pull-${n}`);
+      // A preview that fits is waited for however loaded the machine (the
+      // test's own timeout is the bound); if it never runs, the failure
+      // names where it stood and what its deploy run said.
+      const running = async (record: Parameters<typeof runtime.status>[0], repo: Repo, n: number): Promise<void> => {
+        const seen = () => {
+          const env = runtime.status(record).find((e) => e.env === `pull-${n}`);
+          const run = deployOf(repo, n);
+          return `pull-${n} is ${env?.state ?? "unknown"}${env?.error ? ` (${env.error})` : ""}; its deploy run is ${run ? `${run.state}: ${run.summary}` : "not made"}`;
+        };
+        try {
+          await until(() => (state(record, n) === "running" ? true : undefined), PREVIEW_SETTLES_MS, `pull-${n} running`);
+        } catch (error) {
+          throw new Error(`${String(error)} — ${seen()}`);
+        }
+      };
 
       const mine = await newApp(app, bob, { name: "bobs", description: "x", visibility: "public" });
       if (!mine.ok) throw new Error(String(mine.error));
       const first = await pullOf(bob, mine.value.repo, "one");
-      await until(() => (state(mine.value.app, first) === "running" ? true : undefined));
+      await running(mine.value.app, mine.value.repo, first);
       const second = await pullOf(bob, mine.value.repo, "two");
       const refused = await until(() => {
         const run = deployOf(mine.value.repo, second);
         return run?.state === "failed" ? run : undefined;
-      });
+      }, PREVIEW_SETTLES_MS, `pull-${second}'s deploy refused`);
       expect(refused.summary).toContain("1 of 1 live previews");
       expect(readRunLog(dataDir, refused.id).lines.join("\n")).toContain("1 of 1 live previews");
       expect(state(mine.value.app, second)).not.toBe("running");
@@ -134,8 +153,7 @@ describe("live previews", () => {
       if (!theirs.ok) throw new Error(String(theirs.error));
       const a = await pullOf(alice, theirs.value.repo, "a");
       const b = await pullOf(alice, theirs.value.repo, "b");
-      for (const n of [a, b])
-        await until(() => (state(theirs.value.app, n) === "running" ? true : undefined));
+      for (const n of [a, b]) await running(theirs.value.app, theirs.value.repo, n);
     } finally {
       await runtime.stop();
       servers.stop();
@@ -443,6 +461,8 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok","total
         readRunLog(dataDir, waiting.id).lines.join("\n").includes("1 of 1 concurrent runs") ? true : undefined,
       );
       expect(count(mine, "running")).toBe(1);
+      // The pass that held it says so, for vitals (#9403).
+      expect(heldRuns(app.db).get(waiting.id)).toBe("limit");
 
       const theirs = await assignTwo(alice, "orchard");
       await until(() => (count(theirs, "running") === 2 ? true : undefined));

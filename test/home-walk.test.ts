@@ -4,6 +4,7 @@
  * post; a crew member's run and pull are posts with its name; a share
  * arrives as a post that says who shared it; the apps are one link away.
  */
+import { freshHome } from "./helpers/home-fresh.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -57,8 +58,7 @@ test("composer, timeline, a tell, a crew member's run and pull, a share, the app
   if (!repo.ok) throw new Error("repo");
   expect(addToCrew(app, root, repo.value, "scribe").ok).toBe(true);
   const cookie = (u: User) => `forge_session=${createSession(app.db, u.id).token}; forge_mode=studio`;
-  const home = async (u: User) =>
-    (await fetch(`${servers.url}/`, { headers: { cookie: cookie(u) } })).text();
+  const home = (u: User) => freshHome(servers.url, cookie(u), "/feed");
 
   // The composer comes first, then the timeline.
   const first = await home(alice);

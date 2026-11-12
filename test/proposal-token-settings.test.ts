@@ -157,7 +157,7 @@ describe("proposal tokens on the settings page", () => {
     expect(mintRes.status).toBe(403);
     const { secret } = await mint("keep");
     expect(secret).not.toBe("");
-    const id = /proposal-tokens\/([^/"%]+)\/delete/.exec(decodeURIComponent(await settings(owner)))?.[1];
+    const id = /proposal-tokens\/([^/"]+)\/delete/.exec(await settings(owner))?.[1];
     expect((await post(stranger, `/ada/lib/settings/proposal-tokens/${id}/delete`)).status).toBe(403);
     expect(await settings(owner)).toContain("keep");
   });

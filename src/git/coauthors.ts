@@ -1,0 +1,118 @@
+/**
+ * Co-authors a landing keeps: a squash folds a pull's commits into one, and
+ * the `Co-authored-by` trailers they carried must survive it, or the people
+ * they credit read as strangers to the change.
+ */
+
+import { runGitCapture } from "./env.ts";
+import { isSafeOid } from "./guard.ts";
+
+/** At most this many co-authors ride a landing. */
+export const COAUTHORS_MAX = 20;
+
+const TRAILER = /^co-authored-by:[ \t]*([^<>\s][^<>\r\n]{0,99}?)[ \t]*<([^<>\s@]{1,100}@[^<>\s@]{1,200})>[ \t]*$/i;
+
+/**
+ * The `Co-authored-by: Name <email>` lines in commit `messages`, as written
+ * canonically, one per person (by email), first seen first. A line that is
+ * not exactly name and address is dropped; `skip` lists emails already
+ * credited on the landing.
+ */
+export function coAuthorLines(messages: readonly string[], skip: readonly string[] = []): string[] {
+  const seen = new Set(skip.map((e) => e.toLowerCase()));
+  const out: string[] = [];
+  for (const message of messages)
+    for (const line of message.split("\n")) {
+      const m = TRAILER.exec(line.replace(/\r$/, ""));
+      if (m === null) continue;
+      const email = m[2]!.toLowerCase();
+      if (seen.has(email)) continue;
+      seen.add(email);
+      out.push(`Co-authored-by: ${m[1]!} <${m[2]!}>`);
+      if (out.length >= COAUTHORS_MAX) return out;
+    }
+  return out;
+}
+
+/**
+ * The authors of `base..head` as `Co-authored-by` lines, the crew's agents
+ * (whose address ends `@agents.invalid`) left out: they are the landing's own
+ * author. A person who wrote a commit stays credited when it is squashed.
+ */
+export async function authorLinesBetween(dir: string, base: string, head: string): Promise<string[]> {
+  if (!isSafeOid(base) || !isSafeOid(head)) return [];
+  const r = await runGitCapture(["log", "--format=Co-authored-by: %an <%ae>", "-n", "200", `${base}..${head}`], { cwd: dir });
+  if (r.code !== 0) return [];
+  return r.stdout.split("\n").filter((l) => l !== "" && !/@agents\.invalid>$/i.test(l));
+}
+
+/** The commit messages of `base..head` in `dir`, newest first; none when git cannot say. */
+export async function messagesBetween(dir: string, base: string, head: string): Promise<string[]> {
+  if (!isSafeOid(base) || !isSafeOid(head)) return [];
+  const r = await runGitCapture(["log", "--format=%B%x00", "-n", "200", `${base}..${head}`], { cwd: dir });
+  if (r.code !== 0) return [];
+  return r.stdout.split("\0").filter((m) => m.trim() !== "");
+}
+
+/** Who built a landed commit (its author) and who else it credits (the models and people in its trailers). */
+export interface Builders {
+  readonly by: string;
+  readonly with: readonly string[];
+}
+
+/** What a landed commit says of who made it, per commit; a commit never changes, so it is asked once. */
+const credited = new Map<string, Builders>();
+/** Commits remembered at most; the oldest remembered goes first. */
+export const CREDITED_MAX = 500;
+
+function remember(key: string, b: Builders): void {
+  credited.delete(key);
+  credited.set(key, b);
+  if (credited.size > CREDITED_MAX) credited.delete(credited.keys().next().value!);
+}
+
+/**
+ * Who built each landed commit in `oids`: its author as `by`, and as `with`
+ * the names in its own `Co-authored-by` trailers, less the committer (the
+ * lander) and the author. Commits git cannot read are left out.
+ */
+export async function buildersOf(dir: string, oids: readonly string[]): Promise<Map<string, Builders>> {
+  const out = new Map<string, Builders>();
+  const todo: string[] = [];
+  for (const oid of oids) {
+    if (!isSafeOid(oid)) continue;
+    const known = credited.get(`${dir}\0${oid}`);
+    if (known === undefined) todo.push(oid);
+    else out.set(oid, known);
+  }
+  if (todo.length > 0) {
+    const r = await runGitCapture(["log", "--no-walk=unsorted", "--format=%H%x01%an%x01%ce%x01%B%x02", ...todo], { cwd: dir });
+    if (r.code === 0)
+      for (const block of r.stdout.split("\x02")) {
+        const [oid, author, committer, message] = block.trim().split("\x01");
+        if (!oid || author === undefined || committer === undefined || message === undefined) continue;
+        const names: string[] = [];
+        for (const line of coAuthorLines([message], [committer])) {
+          const name = /^Co-authored-by: (.*) <[^<>]*>$/.exec(line)?.[1];
+          if (name !== undefined && name.toLowerCase() !== author.toLowerCase()) names.push(name);
+        }
+        const builders = { by: author, with: names };
+        remember(`${dir}\0${oid}`, builders);
+        out.set(oid, builders);
+      }
+  }
+  return out;
+}
+
+/** The names credited on each landed commit in `oids`, beyond its lander and author. */
+export async function creditsOf(dir: string, oids: readonly string[]): Promise<Map<string, readonly string[]>> {
+  return new Map([...(await buildersOf(dir, oids))].map(([oid, b]) => [oid, b.with] as const));
+}
+
+/**
+ * The `Co-authored-by` lines a squash of `base..head` keeps: those its commits
+ * carry and its commits' human authors, once per address, less `skip`.
+ */
+export async function squashCredits(dir: string, base: string, head: string, skip: readonly string[]): Promise<string[]> {
+  return coAuthorLines([...(await messagesBetween(dir, base, head)), ...(await authorLinesBetween(dir, base, head))], skip);
+}

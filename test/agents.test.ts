@@ -734,7 +734,7 @@ describe("backpressure", () => {
       }
 
       expect(deliveryBusy(app.db)).toBe(false);
-      runDelivery(app.db, app.log);
+      runDelivery(app.db, app.log, app.bus);
       expect(deliveryBusy(app.db)).toBe(true);
       // Every tick that lands while a batch is in flight is a no-op, which is
       // what keeps a slow endpoint from being attempted twice per delivery.
@@ -744,7 +744,7 @@ describe("backpressure", () => {
           []
         >("SELECT COALESCE(SUM(attempts), 0) AS n FROM webhook_delivery")
         .get()!.n;
-      for (let i = 0; i < 10; i++) runDelivery(app.db, app.log);
+      for (let i = 0; i < 10; i++) runDelivery(app.db, app.log, app.bus);
       expect(attemptsBefore).toBe(0);
 
       const deadline = Date.now() + 15_000;

@@ -1,10 +1,11 @@
 /**
  * Proposal tokens in the terminal: the ones you minted for a repository, with
  * `n` to mint (a child's name, then where it lives) and `x` to revoke the one
- * under the cursor. The secret is shown once, on a screen of its own. Every
- * rule is the action's (`actions/proposal_tokens.ts`), the same as the API's
- * and MCP's: a repository you do not write is "not visible to you", and
- * nothing is listed or changed.
+ * under the cursor, after a confirm that starts on Keep (`y` revokes, `n` or
+ * esc keeps it). The secret is shown once, on a screen of its own. Every rule
+ * is the action's (`actions/proposal_tokens.ts`), the same as the API's and
+ * MCP's: a repository you do not write is "not visible to you", and nothing
+ * is listed or changed.
  */
 
 import {
@@ -20,7 +21,7 @@ import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import type { Session } from "../session.ts";
 import { fill, len, split } from "../ui/layout.ts";
-import { ListState, drawList, later, promptScreen, type ListRow } from "./common.ts";
+import { ListState, confirmScreen, drawList, later, promptScreen, type ListRow } from "./common.ts";
 
 /** Ask for `owner/name`, then show its proposal tokens. */
 export function proposalTokensPrompt(f: Session, ctx: Ctx, parent: Screen): Screen {
@@ -91,9 +92,21 @@ export function proposalTokensScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       if (e.key === "x") {
         const t = items()[state.index];
         if (t === undefined) return false;
-        const done = revokeProposal(f.app, f.user, repo, t.id);
-        note = done.ok ? `${t.child}: revoked.` : done.error.message;
-        ctx.invalidate();
+        ctx.push(
+          confirmScreen(ctx, screen, {
+            title: `Revoke the token for ${t.child}?`,
+            body: [`${t.child} can no longer propose here until it is handed a new token.`],
+            actions: [{ label: "Revoke", variant: "danger" }, { label: "Keep", variant: "ghost" }],
+            selected: 1,
+            yesNo: true,
+            onChoose: (i) => {
+              if (i !== 0) return;
+              const done = revokeProposal(f.app, f.user, repo, t.id);
+              note = done.ok ? `${t.child}: revoked.` : done.error.message;
+              ctx.invalidate();
+            },
+          }),
+        );
         return true;
       }
       if (e.key === "n") {

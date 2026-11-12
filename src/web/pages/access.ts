@@ -11,7 +11,7 @@ import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { html } from "../html.ts";
 import { page } from "../layout.ts";
-import { btn, card, icon, row } from "../ui.ts";
+import { btn } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 // GET /settings/access
@@ -29,56 +29,53 @@ export function accessPage(ctx: Ctx): Response {
   );
   if (!listed.ok) return notFoundPage(ctx);
   const rendering = performance.now();
-  const rows = listed.value.map((l) =>
-    row({
-      lead: icon("activity"),
-      title: html`<span class="mono">${l.method} ${l.path}</span>
-        <span class="mono">${String(l.status)}</span>`,
-      meta: html`${l.t} · ${l.host} · ${String(l.ms)} ms ·
-        ${l.auth ? "signed in" : "anonymous"} ·
-        <span class="mono">${l.who}</span> ·
-        ${l.ua === "" ? "no user agent" : l.ua}`,
-    }),
+  const rows = listed.value.map(
+    (l) => html`<tr>
+      <td class="break"><span class="mono">${l.method} ${l.path}</span></td>
+      <td class="num mono">${String(l.status)}</td>
+      <td class="small">${l.t}</td>
+      <td class="small">${l.host}</td>
+      <td class="num small">${String(l.ms)} ms</td>
+      <td class="small">${l.auth ? "signed in" : "anonymous"}</td>
+      <td class="mono small">${l.who}</td>
+      <td class="break small">${l.ua === "" ? "no user agent" : l.ua}</td>
+    </tr>`,
   );
-  const body = html`${card(
-    html`<div class="card-body">
-        <p class="muted small">
-          The last day's requests from anything that is not a browser, to
-          public paths (issues, the API, MCP, discovery files, sign-in and
-          sign-up). Tokens, cookies and query strings are never kept; the
-          hash stands for one caller for one day.
-        </p>
-        <form class="row-fields" method="get" action="/settings/access">
-          <input
-            class="input"
-            name="ua"
-            value="${ua}"
-            placeholder="User agent contains"
-            aria-label="User agent contains"
-          />
-          <input
-            class="input mono"
-            name="path"
-            value="${path}"
-            placeholder="/api/"
-            aria-label="Path starts with"
-          />
-          ${btn("Filter", { size: "sm", variant: "primary" })}
-        </form>
-      </div>
-      ${rows.length === 0
-        ? html`<div class="card-body">
-            <p class="muted small" id="access-none">Nothing in the last day.</p>
-          </div>`
-        : html`<ul class="list" id="access-list">
-            ${rows}
-          </ul>`}`,
-    {
-      head: html`${icon("activity")}
-        <h2>Outside requests</h2>`,
-      pad: false,
-    },
-  )}`;
+  const body = html`<section class="settings-block">
+    <h2>Outside requests</h2>
+    <p class="muted small">
+      The last day's requests from anything that is not a browser, to public
+      paths (issues, the API, MCP, discovery files, sign-in and sign-up).
+      Tokens, cookies and query strings are never kept; the hash stands for one
+      caller for one day.
+    </p>
+    <form class="row-fields" method="get" action="/settings/access">
+      <input
+        class="input"
+        name="ua"
+        value="${ua}"
+        placeholder="User agent contains"
+        aria-label="User agent contains"
+      />
+      <input
+        class="input mono"
+        name="path"
+        value="${path}"
+        placeholder="/api/"
+        aria-label="Path starts with"
+      />
+      ${btn("Filter", { size: "sm", variant: "primary" })}
+    </form>
+    ${rows.length === 0
+      ? html`<p class="muted small" id="access-none">Nothing in the last day.</p>`
+      : html`<div class="table-scroll">
+          <table class="table" id="access-list" data-dense>
+            <caption class="sr-only">Requests from outside agents in the last day</caption>
+            <thead><tr><th scope="col">Request</th><th scope="col" class="num">Status</th><th scope="col">Time</th><th scope="col">Host</th><th scope="col" class="num">Took</th><th scope="col">Caller</th><th scope="col">Hash</th><th scope="col">User agent</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`}
+  </section>`;
   const response = page({
     ctx,
     title: "Access",

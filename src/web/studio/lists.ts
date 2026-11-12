@@ -20,6 +20,7 @@ import {
   type Label,
 } from "../../core/issues.ts";
 import { listPulls, openPullsClosing } from "../../core/pulls.ts";
+import { stepsOfStored } from "../../flow/path.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
 import { waitingCount } from "../../actions/reports.ts";
 
@@ -37,11 +38,13 @@ import {
   signInHref,
 } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
+import { noteLine } from "./note.ts";
 import { page } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import {
   avatar,
   btn,
+  disclosure,
   empty,
   icon,
   labelChip,
@@ -54,15 +57,16 @@ import {
   time,
 } from "../ui.ts";
 import type { Run, RunState } from "../../core/runs.ts";
-import { actorsFor, durationText, issuesFor, runTitleFrom } from "../pages/runs.ts";
+import { actorsFor, issuesFor, runTitleFrom } from "../pages/runs.ts";
 import { originGlyph } from "../pages/thread.ts";
 import { changeHref, PAGE_TITLES, pageTitle, tellHref } from "./nouns.ts";
-import { tellLine, tellsAnswered } from "./branch_tell.ts";
 import { knowMergeClosings, tellWords } from "./tell.ts";
 import {
   pullWords,
   runWord,
   wordBadge,
+  wordDot,
+  wordText,
   type Word,
   servingHistory,
   type WordCtx,
@@ -85,7 +89,8 @@ const WORD_FILTERS: readonly WordFilter[] = [
 ];
 
 function listBucket(word: Word): WordFilter {
-  if (word === "waiting" || word === "planned") return "working";
+  if (word === "waiting" || word === "planned" || word === "silent" || word === "needs input")
+    return "working";
   if (word === "done") return "shipped";
   if (word === "cancelled") return "stopped";
   return word;
@@ -121,6 +126,19 @@ function emptyNote(
   return `${subject} is ${filter} yet.`;
 }
 
+/** The one link under an empty list. A set filter points back at the whole
+ * list; none set points at what fills it: for issues, telling the crew (or
+ * signing in to), for pulls and runs, the issues that start them. */
+function nextStep(
+  list: string,
+  filter: WordFilter | undefined,
+  start: { label: string; href: string },
+): Html {
+  return filter === undefined
+    ? btn(start.label, { href: start.href, variant: "primary" })
+    : btn("Show all", { href: list, variant: "ghost" });
+}
+
 /** A filter bar of five words, each a link carrying `?word=` — never a
  * form, so the filter lives in the address and can be shared. No filter
  * reads as "Open": what is open and moving. `trail` sits at the bar's far
@@ -151,6 +169,15 @@ function wordFilterBar(
  * told to a crew apart from being open, and no head is ever deployed for a
  * look — so those two are not offered as filters there. */
 const PLAIN_FILTERS: readonly WordFilter[] = ["working", "shipped", "stopped"];
+
+/** The words a pull or a run can carry, as a list links to them: every word
+ * but *told*. `pullWord` never hands that word back, and `runWord` reaches a
+ * pull's word only through `pullWord` — so on the changes and runs lists a
+ * *Not started* filter could only ever land on an empty page (#175). The
+ * tells list, built on `tellWord`, is the one that offers all five. */
+const PULL_FILTERS: readonly WordFilter[] = WORD_FILTERS.filter(
+  (w) => w !== "told",
+);
 
 const LIST_PAGE = 25;
 
@@ -227,7 +254,12 @@ function shown(word: Word, f: ListFacets): boolean {
 
 /** The narrowings in force as chips, each ✕ clearing itself, then the
  * repository's labels to narrow by. Nothing at all when there is neither. */
-function facetChips(base: string, f: ListFacets, labels: readonly Label[]): Html {
+function facetChips(
+  base: string,
+  f: ListFacets,
+  labels: readonly Label[],
+  fold = false,
+): Html {
   const active = (
     [
       ["assignee", "has it"],
@@ -250,6 +282,9 @@ function facetChips(base: string, f: ListFacets, labels: readonly Label[]): Html
       : null;
   if (active.length === 0 && labels.length === 0 && state === null)
     return html``;
+  const chosen = f.label.toLowerCase();
+  const rest = labels.filter((l) => l.name.toLowerCase() !== chosen);
+  const picked = labels.find((l) => l.name.toLowerCase() === chosen);
   return html`<div class="bar mb">
     ${state}
     ${active.map(
@@ -262,17 +297,27 @@ function facetChips(base: string, f: ListFacets, labels: readonly Label[]): Html
           >${f[name]} ${says} ✕</a
         >`,
     )}
-    ${labels.map((l) =>
-      f.label.toLowerCase() === l.name.toLowerCase()
-        ? html`<a
-            class="label lc-${l.color}"
-            href="${facetHref(base, f, { label: "" })}"
-            aria-current="true"
-            title="Remove this filter"
-            >${l.name} ✕</a
-          >`
-        : labelChip(l, facetHref(base, f, { label: l.name })),
+    ${when(
+      picked,
+      (l) => html`<a
+        class="label lc-${l.color}"
+        href="${facetHref(base, f, { label: "" })}"
+        aria-current="true"
+        title="Remove this filter"
+        >${l.name} ✕</a
+      >`,
     )}
+    ${rest.length === 0
+      ? null
+      : !fold
+        ? rest.map((l) => labelChip(l, facetHref(base, f, { label: l.name })))
+        : disclosure(
+          "Labels",
+          html`<div class="bar">
+            ${rest.map((l) => labelChip(l, facetHref(base, f, { label: l.name })))}
+          </div>`,
+          { small: true },
+        )}
   </div>`;
 }
 
@@ -320,6 +365,48 @@ function listRead(ctx: Ctx, repo: Repo, f: ListFacets) {
   };
   return { options, record, wordCtx };
 }
+
+/**
+ * Every action the issues list offers, as palette entries (Cmd-K): the
+ * filters, the compose page and the outside reports. What the page shows
+ * quietly is still one keystroke away.
+ */
+export function tellsListActions(o: {
+  base: string;
+  name: string;
+  word: readonly WordFilter[];
+  signedIn: boolean;
+  reports: number;
+  labels?: readonly string[];
+}): { t: string; h: string; c: string }[] {
+  const c = "This list";
+  return [
+    { t: `${o.name} — Open issues`, h: `${o.base}/issues`, c },
+    ...o.word.map((w) => ({
+      t: `${o.name} — Issues: ${w === "told" ? "Not started" : w}`,
+      h: `${o.base}/issues?word=${w}`,
+      c,
+    })),
+    ...(o.labels ?? []).map((l) => ({
+      t: `${o.name} — Issues labelled ${l}`,
+      h: `${o.base}/issues?label=${encodeURIComponent(l)}`,
+      c,
+    })),
+    ...(o.signedIn ? [{ t: `${o.name} — New issue`, h: `${o.base}/issues/new`, c }] : []),
+    ...(o.reports > 0
+      ? [{ t: `${o.name} — Reports from outside`, h: `${o.base}/reports`, c }]
+      : []),
+  ];
+}
+
+/**
+ * An issue's title is the writer's words, so inside `[data-tells]` a row wraps
+ * them (a long word breaks anywhere) in place of the one-line ellipsis, and the
+ * page never scrolls sideways at 390 px. No new class.
+ */
+export const TELLS_CSS = `[data-tells] { overflow-wrap: anywhere; }
+[data-tells] .row-title, [data-tells] .row-meta { white-space: normal; overflow: visible; text-overflow: clip; }
+[data-tells] .row { align-items: flex-start; }`;
 
 /**
  * GET /:owner/:name/issues: every issue, for every
@@ -373,32 +460,30 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
     rows.length === 0
       ? empty({
           icon: "issue",
-          title: "Nothing here",
-          note: emptyNote(
+          title: emptyNote(
             f.word,
             "No issue",
-            record === undefined
-              ? "Nothing open."
-              : "Nothing open. Tell the crew what you want and it shows up here.",
+            "Nothing open.",
           ),
+          action: nextStep(`${base}/issues`, f.word, ctx.auth.user === undefined
+            ? { label: "Sign in", href: `/signin?next=${encodeURIComponent(`${base}/issues`)}` }
+            : { label: "Tell the crew", href: `${base}/issues/new` }),
         })
       : listCard(
           rows.map(({ issue, info }) =>
             row({
               href: tellHref(base, issue.number),
               nav: true,
-              lead: avatar(issue.assigneeName ?? "crew"),
+              lead: wordDot(info.word, info.note),
               title: titled(issue.title, labels.get(issue.id)),
               titleAttr: issue.title,
-              meta: html`${when(
+              meta: html`${wordText(info.word)}${when(
                 issue.originAuthor,
                 (login) => html`${originTag(login, originGlyph(repo))} · `,
-              )}${issue.assigneeName
-                ? html`${issue.assigneeName} · `
-                : null}${info.note} · ${time(issue.updatedAt)}`,
-              trail: wordBadge(info.word),
+              )}${time(issue.updatedAt)}`,
             }),
           ),
+          { extra: "bare" },
         );
   const lastNumber = fetched[fetched.length - 1]?.number;
   // Self-links follow the address that reached this page.
@@ -409,8 +494,7 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
     btn(PAGE_TITLES.compose, {
       href: `${base}/issues/new`,
       size: "sm",
-      variant: "outline",
-      icon: "plus",
+      variant: "primary",
       shortcut: "c",
     }),
   );
@@ -427,7 +511,11 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
   const waiting = waitingCount(ctx.app, ctx.auth.user, repo);
   const reports =
     waiting > 0
-      ? btn(`${waiting} from outside`, { href: `${base}/reports`, size: "sm" })
+      ? btn(`${waiting} from outside`, {
+          href: `${base}/reports`,
+          size: "sm",
+          variant: "ghost",
+        })
       : undefined;
   // Signed out, the way in: sign in to open one, or report a problem
   // without an account where the repository is public.
@@ -444,7 +532,7 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
       : html`${reports ?? null} ${compose} ${outside ?? null} ${signIn}`;
 
   const body = html`${repoHeader(ctx, repo, "issues")}
-    <div class="mt">
+    <div class="mt" data-tells>
       ${wordFilterBar(
         (word) => facetHref(listBase, f, { word }),
         f.word,
@@ -465,14 +553,33 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
     ctx,
     title: pageTitle("tells", repo, record !== undefined),
     crumbs: crumbsFor(repo),
-    palette: repoPalette(ctx, repo),
+    palette: [
+      ...repoPalette(ctx, repo),
+      ...tellsListActions({
+        base,
+        word: record === undefined ? PLAIN_FILTERS : WORD_FILTERS,
+        name: `${repo.ownerName}/${repo.name}`,
+        signedIn: ctx.auth.user !== undefined,
+        reports: waiting,
+        labels: repoLabels.map((l) => l.name),
+      }),
+    ],
     body,
-    styleCss: labelCss([...repoLabels, ...[...labels.values()].flat()]),
+    styleCss: `${TELLS_CSS}\n${labelCss([...repoLabels, ...[...labels.values()].flat()])}`,
     scriptJs: liveClientJs,
   });
   notePhase(ctx.request, "render", performance.now() - at);
   return response;
 }
+
+/**
+ * A pull's title and branch are the writer's words, so inside `[data-pulls]`
+ * a row wraps them (a long word breaks anywhere) in place of the list's
+ * one-line ellipsis, and the page never scrolls sideways at 390 px. No new class.
+ */
+export const PULLS_CSS = `[data-pulls] { overflow-wrap: anywhere; }
+[data-pulls] .row-title, [data-pulls] .row-meta { white-space: normal; overflow: visible; text-overflow: clip; }
+[data-pulls] .row { align-items: flex-start; }`;
 
 /**
  * GET /:owner/:name/pulls: every pull request, for every
@@ -505,41 +612,41 @@ export async function changesList(ctx: Ctx): Promise<Response> {
   lap("pulls");
   const words = await pullWords(wordCtx, fetched);
   lap("words");
-  const answered = tellsAnswered(db, repo.id, fetched);
-  lap("tells");
   const labels = labelsForIssues(db, fetched.map((pull) => pull.id));
   const repoLabels = listLabels(db, repo.id);
   lap("labels");
   const rows = fetched
     .map((pull, i) => ({ pull, info: words[i]! }))
-    .filter((r) => shown(r.info.word, f));
+    // An open pull is always listed, whatever its word: the tab counts them all.
+    .filter((r) => f.word === undefined || shown(r.info.word, f));
+
+  // Only a stopped pull's row says why: the step's sentence, one clamped line.
+  const stopped = stepsOfStored(
+    db,
+    repo,
+    rows.filter((r) => r.info.word === "stopped").map((r) => r.pull),
+  );
 
   const list =
     rows.length === 0
       ? empty({
           icon: "pull",
-          title: "Nothing here",
-          note: emptyNote(
+          title: emptyNote(
             f.word,
             "No pull request",
-            record === undefined
-              ? "Nothing open."
-              : "Nothing open. A pull request is the crew's proposed edit to your app; the crew opens them as it works.",
+            "No pull request is open.",
           ),
+          action: nextStep(`${base}/pulls`, f.word, { label: "See open issues", href: `${base}/issues` }),
         })
       : listCard(
           rows.map(({ pull, info }) =>
             row({
               href: changeHref(base, pull.number),
               nav: true,
-              lead: avatar(pull.authorName),
+              lead: wordDot(info.word, info.note),
               title: titled(pull.title, labels.get(pull.id)),
               titleAttr: pull.title,
-              meta: html`${pull.originAuthor
-                ? originTag(pull.originAuthor, originGlyph(repo))
-                : pull.authorName} · ${info.note} ·
-              ${when(answered.get(pull.number), (t) => html`${tellLine(base, t)} · `)}${time(pull.updatedAt)}`,
-              trail: wordBadge(info.word),
+              meta: html`${wordText(info.word)}${when(info.word === "stopped" ? stopped.get(pull.id) : undefined, (step) => html`${noteLine(step.why)} · `)}${time(pull.updatedAt)}`,
             }),
           ),
         );
@@ -548,13 +655,13 @@ export async function changesList(ctx: Ctx): Promise<Response> {
   const listBase = ctx.url.pathname;
 
   const body = html`${repoHeader(ctx, repo, "pulls")}
-    <div class="mt">
+    <div class="mt" data-pulls>
       ${wordFilterBar(
         (word) => facetHref(listBase, f, { word }),
         f.word,
         f.word === undefined && f.state === "open",
         undefined,
-        record === undefined ? PLAIN_FILTERS : WORD_FILTERS,
+        record === undefined ? PLAIN_FILTERS : PULL_FILTERS,
       )}
       ${facetChips(listBase, f, repoLabels)} ${list}
       ${pager(
@@ -571,7 +678,7 @@ export async function changesList(ctx: Ctx): Promise<Response> {
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
-    styleCss: labelCss([...repoLabels, ...[...labels.values()].flat()]),
+    styleCss: `${PULLS_CSS}\n${labelCss([...repoLabels, ...[...labels.values()].flat()])}`,
     scriptJs: liveClientJs,
   });
   lap("render");
@@ -629,9 +736,28 @@ function runsHref(
   return text === "" ? `${base}/runs` : `${base}/runs?${text}`;
 }
 
-/** A check's state in the words its row names it by. */
-const checkState = (run: Run): string =>
-  run.state === "ok" ? "passed" : run.state;
+/** Whether a run is doing something at this moment — the only runs under
+ * Working. A deploy is not counted: the flow report's stages are builders,
+ * reviewers and checks, and the tab's count is held to theirs. */
+export function isWorkingNow(run: Run): boolean {
+  return run.state === "running" && run.kind !== "deploy";
+}
+
+/** Whether a run belongs on the page asked for. Working is exactly the
+ * runs running now. With no word chosen a check or a deploy that finished
+ * is news too, and an explicit `?state=` shows every run it fetched: the
+ * default list is the whole story, newest first. Otherwise the word rules. */
+export function onRunsList(
+  run: Run,
+  word: Word,
+  filter: WordFilter | undefined,
+  state: RunState | undefined,
+): boolean {
+  if (filter === "working") return isWorkingNow(run);
+  if (filter === undefined && (run.kind !== "agent" || state !== undefined))
+    return true;
+  return inWordFilter(word, filter);
+}
 
 const RUNS_KIND_WORDS: Record<RunsKind, string> = {
   agent: "Agent runs",
@@ -644,7 +770,9 @@ const RUNS_KIND_WORDS: Record<RunsKind, string> = {
  * one row per run in its studio word — who ran it, when it last moved, and
  * the transcript as the row's own link. Agent runs, checks and deploys
  * together, newest first, by default; `?kind=agent|deploy|check` narrows to
- * one, from the three links under the list. `?word=` narrows any of them.
+ * one, from the three links under the list. `?word=` narrows any of them,
+ * from the changes list's words (`PULL_FILTERS`). The header is the full one
+ * the tells and changes lists carry, description included.
  */
 export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
   const db = ctx.app.db;
@@ -660,7 +788,9 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
   const reading = performance.now();
   const listed = listRepoRuns(ctx.app, ctx.auth.user, repo, {
     kind,
-    state,
+    // Working is what runs now: read only the running ones, so the page
+    // is not spent on finished rows it would drop.
+    state: state ?? (filter === "working" ? "running" : undefined),
     limit: LIST_PAGE,
     ...(cursor ? { cursor } : {}),
   });
@@ -680,11 +810,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
   const rows = fetched
     .map((run, i) => ({ run, info: words[i]! }))
     .filter(
-      // With no word chosen a check or a deploy that finished is news too:
-      // the default list is the whole story, newest first.
-      (r) =>
-        (filter === undefined && (r.run.kind !== "agent" || state !== undefined)) ||
-        inWordFilter(r.info.word, filter),
+      (r) => onRunsList(r.run, r.info.word, filter, state),
     );
 
   notePhase(ctx.request, "runs", performance.now() - reading);
@@ -694,14 +820,12 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
     rows.length === 0
       ? empty({
           icon: "bot",
-          title: "Nothing here",
-          note: emptyNote(
+          title: emptyNote(
             filter,
             "No run",
-            kind === undefined || kind === "agent"
-              ? "Nothing open. A run is one go the crew takes at a job; each one shows up here."
-              : `Nothing open. Every ${kind === "deploy" ? "deploy" : "check"} shows up here while it runs.`,
+            "No run is open.",
           ),
+          action: nextStep(`${base}/runs`, filter, { label: "Start with an issue", href: `${base}/issues` }),
         })
       : listCard(
           rows.map(({ run, info }) => {
@@ -718,19 +842,19 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
                   : icon(run.kind === "check" ? "check" : "rocket"),
               title: runTitleFrom(run, actors, issues),
               meta:
-                run.kind === "check"
-                  ? html`${run.commitOid.slice(0, 7)} · ${checkState(run)}
-                    ${when(durationText(run), (d) => html` · took ${d}`)} ·
-                    ${time(run.finishedAt ?? run.createdAt)}`
-                  : html`${run.kind === "agent" ? html`${who} · ` : null}${info.note}
-              · ${time(run.finishedAt ?? run.createdAt)}`,
+                run.state === "failed"
+                  ? html`${noteLine(info.note)} · ${time(run.finishedAt ?? run.createdAt)}`
+                  : run.state === "queued" && run.notBefore !== null
+                    ? html`${noteLine("paused on a limit, resumes soon")} · ${time(run.createdAt)}`
+                  : time(run.finishedAt ?? run.createdAt),
               trail: wordBadge(info.word),
             });
           }),
+          { extra: "bare" },
         );
   const last = fetched[fetched.length - 1];
 
-  const body = html`${repoHeader(ctx, repo, "runs", { compact: true })}
+  const body = html`${repoHeader(ctx, repo, "runs")}
     <div class="mt">
       <nav aria-label="Run state">
         ${seg(
@@ -745,6 +869,8 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
         (word) => runsHref(base, kind, word, undefined, state),
         filter,
         filter === undefined,
+        undefined,
+        PULL_FILTERS,
       )}
       ${list}
       ${pager(

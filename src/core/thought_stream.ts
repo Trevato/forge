@@ -29,6 +29,8 @@ import type { User } from "./users.ts";
 export type ThoughtState = "unplaced" | "placed" | "building" | "shipped" | "superseded";
 
 export const FLAG_DAYS = 3;
+/** The user setting that holds a person's overrule of one note. */
+export const overruleKey = (thoughtId: string): string => `note.${thoughtId}`;
 export const FLAG_DAYS_KEY = "thoughtFlagDays";
 export const THOUGHT_LIMIT = 200;
 
@@ -40,6 +42,9 @@ export interface PlacedLink extends Placed {
   readonly readable: boolean;
   readonly title: string | null;
   readonly issueState: "open" | "closed" | null;
+  /** The pulls that close it, and whether a run is on it now (what a note's one line reads). */
+  readonly pulls: readonly { readonly number: number; readonly state: "open" | "merged" | "closed" }[];
+  readonly running: boolean;
 }
 
 export interface StreamThought {
@@ -49,10 +54,14 @@ export interface StreamThought {
   readonly receivedAt: string;
   readonly kind: Kind | null;
   readonly reply: string | null;
+  /** The planner's reply is a question back to the person, not a placement. */
+  readonly asked: boolean;
   readonly placedAt: string | null;
   readonly placed: readonly PlacedLink[];
   readonly state: ThoughtState;
   readonly flagged: boolean;
+  /** What the person said against the planner's verdict (#8696), if they did. */
+  readonly overruled: "accepted" | "declined" | null;
   /** The later thought that superseded this one. */
   readonly supersededBy: { readonly id: string; readonly text: string; readonly receivedAt: string } | null;
   /** The earlier thought this one says again (#654). */
@@ -74,7 +83,7 @@ export function flagDays(db: Database, userId: string): number {
 }
 
 const keyOf = (p: Placed) => `${p.repo}#${p.number}`;
-const BUILDS = new Set(["opened", "amended", "linked"]);
+export const BUILDS = new Set(["opened", "amended", "linked"]);
 
 export function thoughtStream(
   db: Database,
@@ -126,6 +135,12 @@ export function thoughtStream(
     return t ? { id: t.id, text: t.text, receivedAt: t.receivedAt } : null;
   };
 
+  const overrules = new Map(
+    db
+      .query<{ key: string; value: string }, [string]>("SELECT key, value FROM user_setting WHERE user_id = ?1 AND key LIKE 'note.%'")
+      .all(viewer.id)
+      .map((r) => [r.key, r.value]),
+  );
   return thoughts.map((t) => {
     const p = placements.get(t.id);
     const from = linksFrom(db, t.id);
@@ -133,7 +148,15 @@ export function thoughtStream(
     const links: PlacedLink[] = (p?.placed ?? []).map((x) => {
       const repo = repoOf(x.repo);
       const issue = repo ? getIssue(db, repo.id, x.number) : undefined;
-      return { ...x, readable: repo !== undefined, title: issue?.title ?? null, issueState: issue?.state ?? null };
+      const its = repo ? (pullsOf(repo).get(`${repo.id}#${x.number}`) ?? []) : [];
+      return {
+        ...x,
+        readable: repo !== undefined,
+        title: issue?.title ?? null,
+        issueState: issue?.state ?? null,
+        pulls: its.map((q) => ({ number: q.number, state: q.state })),
+        running: issue !== undefined && activeRuns.has(issue.id),
+      };
     });
     let built = false;
     let shipped = false;
@@ -169,10 +192,12 @@ export function thoughtStream(
       receivedAt: t.receivedAt,
       kind: p?.kind ?? null,
       reply: p?.reply ?? null,
+      asked: p?.asked ?? false,
       placedAt: p?.placedAt ?? null,
       placed: links,
       state,
       flagged,
+      overruled: ((v) => (v === "accepted" || v === "declined" ? v : null))(overrules.get(overruleKey(t.id))),
       supersededBy:
         state === "superseded" && by ? { id: by.id, text: by.text, receivedAt: by.receivedAt } : null,
       repeats: from.repeats[0] ? ref(from.repeats[0]) : null,

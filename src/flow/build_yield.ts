@@ -26,23 +26,27 @@ interface Row {
   closed: number | null;
 }
 
-export function readBuildYield(db: Database, now = new Date(), publicOnly = false): BuildYield {
-  const to = now.toISOString();
-  const from = new Date(now.getTime() - DAY_MS).toISOString();
-  const rows = db
-    .query<Row, [string, string, number]>(
-      `SELECT x.id AS run_id, i.id AS pull_id, p.merged_at IS NOT NULL AS merged, i.state = 'closed' AS closed
+/**
+ * `q.number + 0` drops the column's affinity so the event expression index
+ * (`event_repo_kind_number_at`) applies: each run costs index lookups, never a scan of `event`.
+ */
+export const BUILD_YIELD_SQL = `SELECT x.id AS run_id, i.id AS pull_id, p.merged_at IS NOT NULL AS merged, i.state = 'closed' AS closed
          FROM run x JOIN repo r ON r.id = x.repo_id
          LEFT JOIN pull p ON x.branch != '' AND p.head_branch = x.branch
               AND EXISTS (SELECT 1 FROM issue q WHERE q.id = p.issue_id AND q.repo_id = x.repo_id)
               AND EXISTS (SELECT 1 FROM issue q JOIN event e ON e.repo_id = q.repo_id
                            WHERE q.id = p.issue_id AND e.kind IN ('pull.pushed', 'pull.opened')
-                             AND json_extract(e.payload, '$.number') = q.number
+                             AND json_extract(e.payload, '$.number') = q.number + 0
                              AND e.created_at >= x.started_at AND e.created_at <= x.finished_at)
          LEFT JOIN issue i ON i.id = p.issue_id
         WHERE x.kind = 'agent' AND x.reason != 'review' AND x.started_at IS NOT NULL
-          AND x.finished_at >= ?1 AND x.finished_at <= ?2 AND (?3 = 0 OR r.visibility = 'public')`,
-    )
+          AND x.finished_at >= ?1 AND x.finished_at <= ?2 AND (?3 = 0 OR r.visibility = 'public')`;
+
+export function readBuildYield(db: Database, now = new Date(), publicOnly = false): BuildYield {
+  const to = now.toISOString();
+  const from = new Date(now.getTime() - DAY_MS).toISOString();
+  const rows = db
+    .query<Row, [string, string, number]>(BUILD_YIELD_SQL)
     .all(from, to, publicOnly ? 1 : 0);
   const runs = new Set<string>();
   const pushed = new Set<string>();

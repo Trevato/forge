@@ -10,15 +10,23 @@
  * that was never meant to be confirmed.
  */
 
+import { DETACH_STAYS, DETACH_STOPS } from "../../actions/detach_words.ts";
+import { DISCONNECT_DETAIL } from "../../actions/origin_words.ts";
 import { strangerCodeSearch } from "../../http/strangers.ts";
 import { search } from "../../actions/search.ts";
 import { envsFor } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
+import { openLabelCounts } from "../../core/issues.ts";
 import { getPull } from "../../core/pulls.ts";
-import { canWrite, enterableApps, getRepo } from "../../core/repos.ts";
+import { canAdmin, canWrite, enterableApps, forkParentFor, getRepo } from "../../core/repos.ts";
+import { followModeWords, followSwitchPreview } from "../../actions/follow_words.ts";
+import type { ForkFollowMode } from "../../core/fork_follow.ts";
+import { getMirrorTarget } from "../../core/migrate_mirror.ts";
 import {
   cleanQuery,
   CODE_BUDGET_MS,
+  CODE_TOO_SHORT,
+  greppable,
   searchKind,
   type CodeHit,
   type IssueHit,
@@ -39,11 +47,8 @@ import { changeHref, tellHref } from "../studio/nouns.ts";
 import {
   badge,
   btn,
-  card,
   dot,
-  empty,
   field as formField,
-  listCard,
   repoCounts,
   row,
   seg,
@@ -53,6 +58,19 @@ import {
 } from "../ui.ts";
 
 // ---- search ----
+
+/**
+ * What a search finds is other people's words (titles, descriptions, paths,
+ * lines of code), so inside `[data-search]` a row wraps them and breaks a long
+ * word anywhere, in place of the one-line ellipsis; the matching line of code
+ * keeps `white-space: pre` and scrolls inside its own box. No new class.
+ */
+export const SEARCH_CSS = `[data-search] { overflow-wrap: anywhere; }
+[data-search] .row-title, [data-search] .row-meta:not(.code-line) { white-space: normal; overflow: visible; text-overflow: clip; }
+[data-search] .row { align-items: flex-start; }
+[data-search] .row-main { min-width: 0; }
+[data-search] .code-line { max-width: 100%; overflow-x: auto; overflow-wrap: normal; }
+[data-search] form .input { min-width: 0; }`;
 
 /** What was asked — everything a link back needs. */
 interface Asked {
@@ -71,6 +89,10 @@ interface Apps {
   /** The app ids the viewer may enter (`enterableApps`), read once for the page. */
   readonly enterable: ReadonlySet<string>;
 }
+
+/** A section's rows on the page's one background: a heading over rows, no box. */
+const rowsUnderHeading = (rows: Html[]): Html =>
+  html`<ul class="list">${rows}</ul>`;
 
 const privateBadge = (yes: boolean): Html =>
   when(yes, () => badge("Private", { icon: "lock", variant: "secondary" }));
@@ -283,9 +305,8 @@ function section(
   truncated: boolean,
   after: Html | null = null,
 ): Html {
-  const emptyIcon =
-    kind === "repos" ? "repo" : kind === "issues" ? "issue" : "code";
-  return html`<h2 class="mt" id="${kind}">
+  return html`<section id="${kind}" aria-labelledby="h-${kind}">
+    <h2 class="mt" id="h-${kind}">
       ${title}${rows.length === 0
         ? null
         : html` <span class="muted small num"
@@ -293,8 +314,14 @@ function section(
           >`}
     </h2>
     ${rows.length === 0
-      ? empty({ icon: emptyIcon, title: emptyText })
-      : listCard(rows)}
+      ? html`<p class="muted">
+          ${emptyText}${a.kind === "all"
+            ? null
+            : html` <a href="${searchHref(a, { kind: "all" })}"
+                >Search everything</a
+              >`}
+        </p>`
+      : rowsUnderHeading(rows)}
     ${after}
     ${when(
       truncated,
@@ -305,7 +332,8 @@ function section(
             >Show only ${title.toLowerCase()}</a
           >.
         </p>`,
-    )}`;
+    )}
+  </section>`;
 }
 
 /** The same `search()` the API and the palette call, so the sources can
@@ -316,11 +344,11 @@ async function find(
 ): Promise<{ found: SearchResults; busy?: number }> {
   // A stranger's code search takes a slot of its own (`http/strangers.ts`);
   // refused, the page still answers with everything but the code, and says so.
-  // The same test as the API's: a blank or stop-word query greps nothing.
+  // The same test as the API's: a blank or one-letter query greps nothing.
   const greps =
     ctx.auth.user === undefined &&
     (a.kind === "code" || a.kind === "all") &&
-    cleanQuery(a.query) !== "";
+    greppable(a.query);
   const held = greps
     ? timePhase(ctx.request, "gate", () => strangerCodeSearch(ctx.app, ctx.request))
     : undefined;
@@ -375,7 +403,7 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
       type="search"
       name="q"
       value="${a.query}"
-      placeholder="Search apps, repositories, issues, pull requests and code"
+      placeholder="Apps, repos, issues, pulls, code"
       aria-label="Search"
       autofocus
       data-search-input
@@ -395,12 +423,9 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
     const blank = page({
       ctx,
       title: "Search",
-      body: html`${pageHead("Search")} ${form}
-      ${empty({
-        icon: "search",
-        title: "Search this forge",
-        note: "An app or repository by name or description, a word from what was told or changed, or a line of the code itself — across everything you can see, here and on every origin you have connected.",
-      })}`,
+      styleCss: SEARCH_CSS,
+      body: html`<div data-search data-palette-auto>${pageHead("Search")} ${form}
+      </div>`,
     });
     notePhase(ctx.request, "render", performance.now() - rendering);
     return blank;
@@ -480,7 +505,10 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
       </p>`,
   );
 
-  const body = html`${pageHead(html`Results for “${a.query}”`)} ${form}
+  const nothing =
+    a.kind === "all" &&
+    found.repos.length + found.issues.length + found.code.length === 0;
+  const body = html`<div data-search>${pageHead(html`Results for “${a.query}”`)} ${form}
   <div class="bar mb">${chips}</div>
   ${liveToggle}
   ${when(
@@ -493,6 +521,10 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
       </p>`,
   )}
   ${when(
+    (a.kind === "code" || a.kind === "all") && !greppable(a.query),
+    () => html`<p class="muted small" role="status" data-code-short>${CODE_TOO_SHORT}</p>`,
+  )}
+  ${when(
     found.codeSkipped,
     () =>
       html`<p class="muted small" role="status" data-code-skipped>
@@ -500,14 +532,20 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
         shortly.
       </p>`,
   )}
-  ${WORDS
-    .filter(
-      ([kind]) => kind !== "all" && (a.kind === "all" || a.kind === kind),
-    )
-    .map((w) =>
-      section(a, w, ...rows[w[0]](), w[0] === "code" ? moreCode : null),
-    )}`;
-  const response = page({ ctx, title: `Search · ${a.query}`, body });
+  ${nothing
+    ? html`<p class="muted">
+        Nothing matches “${a.query}”. Search reads app and repository names
+        and descriptions, issues, pull requests and the code you can see.
+        <a href="/explore">Explore</a> instead.
+      </p>`
+    : WORDS
+        .filter(
+          ([kind]) => kind !== "all" && (a.kind === "all" || a.kind === kind),
+        )
+        .map((w) =>
+          section(a, w, ...rows[w[0]](), w[0] === "code" ? moreCode : null),
+        )}</div>`;
+  const response = page({ ctx, title: `Search · ${a.query}`, body, styleCss: SEARCH_CSS });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
 }
@@ -520,6 +558,8 @@ interface Destructive {
   detail: string;
   /** A phrase the visitor must type back before the button will work. */
   phrase: string;
+  /** A form value the settings page typed that the confirmed POST needs back. */
+  carries?: string;
 }
 
 /**
@@ -532,6 +572,16 @@ const DESTRUCTIVE: {
   describe: (m: RegExpMatchArray, ctx: Ctx) => Destructive;
 }[] = [
   {
+    pattern: /^\/([^/]+)\/([^/]+)\/archive$/,
+    describe: (m) => ({
+      verb: "Archive",
+      title: `Archive ${m[1]}/${m[2]}?`,
+      detail:
+        "Its process stops and it leaves home and the apps list. Its data and git stay, its address still answers, and Restore on the Archived list starts it again.",
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/delete$/,
     describe: (m) => ({
       verb: DELETE_REPO,
@@ -539,6 +589,26 @@ const DESTRUCTIVE: {
       detail:
         "Every issue, pull request, comment and webhook goes with it, and the git objects are removed from disk. Forks are detached first and keep working. This cannot be undone.",
       phrase: `${m[1]}/${m[2]}`,
+    }),
+  },
+  {
+    pattern: /^\/([^/]+)\/([^/]+)\/settings\/transfer$/,
+    describe: (m) => ({
+      verb: "Move",
+      title: `Move ${m[1]}/${m[2]} to another owner?`,
+      detail:
+        "The repository, its issues and pulls move to the new owner and its address changes; the old address redirects. You must be able to create repositories under the new owner.",
+      phrase: "",
+      carries: "owner",
+    }),
+  },
+  {
+    pattern: /^\/([^/]+)\/([^/]+)\/settings\/detach$/,
+    describe: (m) => ({
+      verb: "Detach from parent",
+      title: `Detach ${m[1]}/${m[2]} from its parent?`,
+      detail: `Every object it borrows is copied into its own store and the link is dropped. ${DETACH_STAYS} ${DETACH_STOPS} It is recorded in this repository's history. There is no undo.`,
+      phrase: "",
     }),
   },
   {
@@ -569,6 +639,26 @@ const DESTRUCTIVE: {
     }),
   },
   {
+    pattern: /^\/settings\/edge\/unlink$/,
+    describe: () => ({
+      verb: "Unlink",
+      title: "Unlink your open-platform.sh login?",
+      detail:
+        "You can no longer sign in here through open-platform.sh until you sign in that way and link it again on this page.",
+      phrase: "",
+    }),
+  },
+  {
+    pattern: /^\/settings\/parent\/unlink$/,
+    describe: () => ({
+      verb: "Unlink",
+      title: "Unlink the parent forge?",
+      detail:
+        "You can no longer sign in here through the parent forge until you link it again on this page. The last way in is never removed.",
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/proposal-tokens\/([^/]+)\/delete$/,
     describe: (m) => ({
       verb: "Revoke",
@@ -576,6 +666,26 @@ const DESTRUCTIVE: {
       detail: `The child can no longer push child/<name>/… branches or open pulls on ${m[1]}/${m[2]}. Pulls it already opened stay. A new token has to be minted to let it propose again.`,
       phrase: "",
     }),
+  },
+  {
+    pattern: /^\/([^/]+)\/([^/]+)\/settings\/mirror\/stop$/,
+    describe: (m, ctx) => {
+      // The mirror's name is read fresh, and only for someone who could
+      // stop it, so this page never says where a private repository goes.
+      const repo = getRepo(ctx.app.db, m[1]!, m[2]!);
+      const held =
+        repo && canAdmin(ctx.app.db, repo, ctx.auth.user)
+          ? getMirrorTarget(ctx.app.db, repo.id)
+          : undefined;
+      return {
+        verb: "Stop mirroring",
+        title: held
+          ? `Stop mirroring ${m[1]}/${m[2]} to ${held.fullName}?`
+          : `Stop mirroring ${m[1]}/${m[2]}?`,
+        detail: `${held ? held.fullName : "The copy on the other side"} stays as it is; nothing more is pushed to it. Only a new migration sets up a mirror again.`,
+        phrase: "",
+      };
+    },
   },
   {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/prompts\/([^/]+)\/delete$/,
@@ -588,10 +698,38 @@ const DESTRUCTIVE: {
   },
   {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/labels\/([^/]+)\/delete$/,
+    describe: (m, ctx) => {
+      // Only a writer is told the count, so this page reads no private repository's work.
+      const repo = getRepo(ctx.app.db, m[1]!, m[2]!);
+      const n =
+        repo && canWrite(ctx.app.db, repo, ctx.auth.user)
+          ? (openLabelCounts(ctx.app.db, repo.id).get(m[3]!) ?? 0)
+          : 0;
+      const carried = n === 1 ? "item carries" : "items carry";
+      const count = n > 0 ? `${n} open ${carried} it. ` : "";
+      return {
+        verb: "Delete label",
+        title: "Delete this label?",
+        detail: `${count}It is removed from every issue and pull request in ${m[1]}/${m[2]} that carries it. The issues themselves are untouched.`,
+        phrase: "",
+      };
+    },
+  },
+  {
+    pattern: /^\/boards\/([^/]+)\/delete$/,
     describe: (m) => ({
-      verb: "Delete label",
-      title: "Delete this label?",
-      detail: `It is removed from every issue and pull request in ${m[1]}/${m[2]} that carries it. The issues themselves are untouched.`,
+      verb: "Delete board",
+      title: `Delete the board ${decodeURIComponent(m[1] ?? "")}?`,
+      detail: "Its panels and pins go with it. Nothing it reads is touched.",
+      phrase: "",
+    }),
+  },
+  {
+    pattern: /^\/boards\/([^/]+)\/remove\?index=(\d+)&title=([^&]+)$/,
+    describe: (m) => ({
+      verb: "Remove panel",
+      title: `Remove the panel ${decodedOr(m[3] ?? "")} from ${decodedOr(m[1] ?? "")}?`,
+      detail: "Only this panel goes; the board, its other panels and what it reads stay. A pin of it on home goes with it.",
       phrase: "",
     }),
   },
@@ -619,8 +757,17 @@ const DESTRUCTIVE: {
     describe: () => ({
       verb: "Disconnect origin",
       title: "Disconnect this origin?",
+      detail: DISCONNECT_DETAIL,
+      phrase: "",
+    }),
+  },
+  {
+    pattern: /^\/settings\/cloud\/remove\?provider=([a-z0-9_-]+)&name=([a-z][a-z0-9_]{0,31})$/,
+    describe: (m) => ({
+      verb: "Remove account",
+      title: `Remove the ${m[1]} account ${m[2]}?`,
       detail:
-        "The stored credential is destroyed here immediately, and the repositories mirroring it stop syncing — they keep their git objects, issues and comments, and go on being readable as ordinary local repositories. The grant is revoked upstream only where the forge allows it (GitHub, and only when this forge has a client secret configured); everywhere else revoke the token on the origin yourself. The message after this says which happened.",
+        "Its sealed token is deleted from this forge. Anything that used it stops reaching that provider until you add an account again. Nothing at the provider is touched.",
       phrase: "",
     }),
   },
@@ -652,12 +799,40 @@ const DESTRUCTIVE: {
     }),
   },
   {
+    pattern: /^\/([^/]+)\/-\/teams\/([^/]+)\/remove\?user=([A-Za-z0-9_.-]+)$/,
+    describe: (m) => ({
+      verb: "Remove from team",
+      title: `Remove @${m[3]} from this team?`,
+      detail: `They lose whatever access this team grants them in ${m[1]}. Their account is untouched.`,
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/app\/disable$/,
     describe: (m) => ({
       verb: STOP_APP,
       title: `Stop running ${m[1]}/${m[2]} as an app?`,
       detail:
         "Production and every preview stop, and their data directories and checkouts are removed from disk. The repository and its code are untouched. Run it as an app again later and it starts from empty data.",
+      phrase: "",
+    }),
+  },
+  {
+    pattern: /^\/([^/]+)\/([^/]+)\/app\/(production|pull-[1-9]\d*)\/stop$/,
+    describe: (m) => ({
+      verb: "Stop",
+      title: `Stop ${m[3]} of ${m[1]}/${m[2]}?`,
+      detail:
+        "It stops answering at its address until someone presses Redeploy. Its data stays where it is.",
+      phrase: "",
+    }),
+  },
+  {
+    pattern: /^\/([^/]+)\/([^/]+)\/variants\/([a-z0-9]{1,16})\/retire$/,
+    describe: (m) => ({
+      verb: "Retire",
+      title: `Retire the ${m[3]} variant?`,
+      detail: "Its environment stops and its data is removed. The branch and its variant.json stay.",
       phrase: "",
     }),
   },
@@ -717,7 +892,64 @@ const DESTRUCTIVE: {
       };
     },
   },
+  {
+    pattern: /^\/pinned\/([a-z][a-z0-9-]*)\/(update|rollback|check)$/,
+    describe: (m) => {
+      const name = m[1]!;
+      if (m[2] === "update")
+        return {
+          verb: "Update",
+          title: `Update ${name}?`,
+          detail: "The forge is replaced with the version you named. It changes only when you press this, and the change is recorded with your name.",
+          phrase: "",
+          carries: "version",
+        };
+      if (m[2] === "rollback")
+        return {
+          verb: "Roll back",
+          title: `Roll ${name} back?`,
+          detail: "The forge is replaced with the version the latest change replaced. The change is recorded with your name.",
+          phrase: "",
+        };
+      return {
+        verb: "Check",
+        title: `Check ${name}?`,
+        detail: "The forge reads its droplet's address back and asks the forge there for its front page. Nothing is changed but what it says about itself.",
+        phrase: "",
+      };
+    },
+  },
+  {
+    pattern: /^\/([^/]+)\/([^/]+)\/following\/mode\/(tell-me|take-updates|dont-follow)$/,
+    describe: (m, ctx) => {
+      const mode = m[3] as ForkFollowMode;
+      const repo = getRepo(ctx.app.db, m[1]!, m[2]!);
+      const parent = repo && canWrite(ctx.app.db, repo, ctx.auth.user) ? forkParentFor(ctx.app.db, repo, ctx.auth.user) : undefined;
+      const upstream = parent === undefined ? "its parent" : `${parent.ownerName}/${parent.name}`;
+      const words = followModeWords(mode, upstream);
+      return { verb: "Switch", title: `${words.line}?`, detail: followSwitchPreview(mode, upstream), phrase: "" };
+    },
+  },
+  {
+    pattern: /^\/admin\/invites\/([^/]+)\/revoke$/,
+    describe: (m) => ({
+      verb: "Revoke",
+      title: `Revoke invite ${decodeURIComponent(m[1] ?? "")}?`,
+      detail:
+        "Whoever holds this link can no longer sign up with it. A new link has to be minted to let them in.",
+      phrase: "",
+    }),
+  },
 ];
+
+/** A path segment decoded, or as it came when it is not valid percent-encoding. */
+function decodedOr(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
 
 function describeTarget(to: string, ctx: Ctx): Destructive | undefined {
   for (const entry of DESTRUCTIVE) {
@@ -757,7 +989,8 @@ function confirmBody(ctx: Ctx): Response {
   // link therefore cannot invent reassuring words for a dangerous button, and
   // cannot aim the form at an endpoint that was never meant for it.
   if (!known) return notFoundPage(ctx);
-  const { verb, title, detail, phrase } = known;
+  const { verb, title, detail, phrase, carries } = known;
+  const carried = carries === undefined ? "" : (params.get(carries) ?? "").slice(0, 200);
 
   const referer = ctx.request.headers.get("referer");
   let back = "/";
@@ -769,30 +1002,24 @@ function confirmBody(ctx: Ctx): Response {
 
   const body = html`<div class="narrow-wide">
     ${pageHead(title)}
-    ${card(
-      html`<p>${detail}</p>
-        <form method="post" action="${to}" class="mt">
-          ${when(phrase !== "", () =>
-            formField({
-              label: `Type ${phrase} to continue`,
-              name: "confirm",
-              required: true,
-              autofocus: true,
-              mono: true,
-              autocomplete: "off",
-            }),
-          )}
-          <div class="form-actions">
-            ${btn(verb, { variant: "danger" })}
-            ${btn("Cancel", { href: back, variant: "ghost" })}
-          </div>
-        </form>`,
-      {
-        tone: "danger",
-        head: html`${icon("alert")}
-          <h2>${verb}</h2>`,
-      },
-    )}
+    <p>${detail}</p>
+    <form method="post" action="${to}" class="mt">
+      ${carries === undefined ? null : html`<input type="hidden" name="${carries}" value="${carried}" />`}
+      ${when(phrase !== "", () =>
+        formField({
+          label: `Type ${phrase} to continue`,
+          name: "confirm",
+          required: true,
+          autofocus: true,
+          mono: true,
+          autocomplete: "off",
+        }),
+      )}
+      <div class="form-actions">
+        ${btn(verb, { variant: "danger" })}
+        ${btn("Cancel", { href: back, variant: "ghost" })}
+      </div>
+    </form>
   </div>`;
   return page({ ctx, title: `${verb} · forge`, body });
 }

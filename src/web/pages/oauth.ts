@@ -16,11 +16,11 @@ import {
 } from "../../core/oauth.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
-import { pageHead } from "../chrome.ts";
+import { pageHead, SIGN_IN_TO_DO, forbiddenPage } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
-import { btn, card, field as formField } from "../ui.ts";
+import { btn, field as formField } from "../ui.ts";
 
 const PARAMS = [
   "client_id",
@@ -36,7 +36,9 @@ const PARAMS = [
 /** Nothing here is cacheable, and nothing here may be sent on as a referrer. */
 const guard = (response: Response): Response => {
   response.headers.set("cache-control", "no-store");
-  response.headers.set("referrer-policy", "no-referrer");
+  // same-origin, not no-referrer: no-referrer makes the browser send `Origin: null` on the consent form's
+  // own POST, and the CSRF gate refused every consent (2026-10-27). Other sites still get no referrer.
+  response.headers.set("referrer-policy", "same-origin");
   return response;
 };
 
@@ -62,12 +64,10 @@ const refused = (ctx: Ctx, message: string): Response =>
         title: "Can't connect",
         body: html`<div class="narrow">
           ${pageHead("This connection can't be made")}
-          ${card(
-            html`<p>${message}</p>
-              <p class="muted small">
-                Nothing was granted. Go back to the app and start again.
-              </p>`,
-          )}
+          <section class="settings-block">
+            <p>${message}</p>
+            <p class="muted small">Go back to the app and start again.</p>
+          </section>
         </div>`,
       },
       400,
@@ -98,20 +98,21 @@ function signInConsent(request: AuthRequest, values: Params): Html {
   const host = new URL(request.redirectUri).host;
   return html`<div class="narrow">
     ${pageHead(`Sign in to ${host}`)}
-    ${card(
-      html`<p class="mb">
-          Sign in to <strong>${host}</strong> as you. It learns only what is
-          listed below, and gets no access to this forge.
-        </p>
-        <form method="post" action="/oauth/authorize">
-          ${PARAMS.map((name) => hidden(name, values[name]))}
-          ${identity(request)}
-          <div class="form-actions">
-            ${btn("Sign in", { variant: "primary", name: "decision", value: "allow" })}
-            ${btn("Deny", { name: "decision", value: "deny" })}
-          </div>
-        </form>`,
-    )}
+    <section class="settings-block">
+      <h2>What it learns</h2>
+      <p class="mb">
+        Sign in to <strong>${host}</strong> as you. It learns only what is
+        listed below, and gets no access to this forge.
+      </p>
+      <form method="post" action="/oauth/authorize">
+        ${PARAMS.map((name) => hidden(name, values[name]))}
+        ${identity(request)}
+        <div class="form-actions">
+          ${btn("Sign in", { variant: "primary", name: "decision", value: "allow" })}
+          ${btn("Deny", { name: "decision", value: "deny" })}
+        </div>
+      </form>
+    </section>
   </div>`;
 }
 
@@ -120,50 +121,51 @@ function consent(ctx: Ctx, request: AuthRequest, values: Params): Html {
   const host = new URL(request.redirectUri).host;
   return html`<div class="narrow">
     ${pageHead(`Connect ${request.client.name}`)}
-    ${card(
-      html`<p class="mb">
-          <strong>${request.client.name}</strong> wants to use the forge as you,
-          through a token. When you allow it, you are sent back to
-          <strong>${host}</strong>.
-        </p>
-        <form method="post" action="/oauth/authorize">
-          ${PARAMS.map((name) => hidden(name, values[name]))}
-          ${identity(request)}
-          <fieldset class="field">
-            <legend>What it may do</legend>
-            <label
-              ><input type="radio" name="grant" value="ro"
-              ${request.scope === "ro" ? "checked" : ""} />
-              Read: see your apps, issues and runs</label
-            >
-            <label
-              ><input type="radio" name="grant" value="rw"
-              ${request.scope === "rw" ? "checked" : ""} />
-              Read and act: tell the crew, plan, and change things as you</label
-            >
-          </fieldset>
-          ${formField({
-            label: "Token name",
-            name: "name",
-            value: request.client.name,
-            required: true,
-            hint: "How it is listed under Settings, where you can revoke it.",
-          })}
-          <div class="field">
-            <label for="f-lifetime">Lasts</label>
-            <select class="input" id="f-lifetime" name="lifetime">
-              <option value="never" selected>Until I revoke it</option>
-              <option value="year">A year</option>
-              <option value="month">30 days</option>
-              <option value="day">A day</option>
-            </select>
-          </div>
-          <div class="form-actions">
-            ${btn("Allow", { variant: "primary", name: "decision", value: "allow" })}
-            ${btn("Deny", { name: "decision", value: "deny" })}
-          </div>
-        </form>`,
-    )}
+    <section class="settings-block">
+      <h2>What it gets</h2>
+      <p class="mb">
+        <strong>${request.client.name}</strong> wants to use the forge as you,
+        through a token. When you allow it, you are sent back to
+        <strong>${host}</strong>.
+      </p>
+      <form method="post" action="/oauth/authorize">
+        ${PARAMS.map((name) => hidden(name, values[name]))}
+        ${identity(request)}
+        <fieldset class="field">
+          <legend>What it may do</legend>
+          <label
+            ><input type="radio" name="grant" value="ro"
+            ${request.scope === "ro" ? "checked" : ""} />
+            Read: see your apps, issues and runs</label
+          >
+          <label
+            ><input type="radio" name="grant" value="rw"
+            ${request.scope === "rw" ? "checked" : ""} />
+            Read and act: tell the crew, plan, and change things as you</label
+          >
+        </fieldset>
+        ${formField({
+          label: "Token name",
+          name: "name",
+          value: request.client.name,
+          required: true,
+          hint: "How it is listed under Settings, where you can revoke it.",
+        })}
+        <div class="field">
+          <label for="f-lifetime">Lasts</label>
+          <select class="input" id="f-lifetime" name="lifetime">
+            <option value="never" selected>Until I revoke it</option>
+            <option value="year">A year</option>
+            <option value="month">30 days</option>
+            <option value="day">A day</option>
+          </select>
+        </div>
+        <div class="form-actions">
+          ${btn("Allow", { variant: "primary", name: "decision", value: "allow" })}
+          ${btn("Deny", { name: "decision", value: "deny" })}
+        </div>
+      </form>
+    </section>
   </div>`;
 }
 
@@ -200,7 +202,7 @@ export async function authorizeSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx);
   if (form instanceof Response) return form;
   if (ctx.auth.user === undefined || ctx.auth.via === "token")
-    return new Response("forbidden", { status: 403 });
+    return forbiddenPage(ctx, SIGN_IN_TO_DO);
   const request = parseAuthRequest(ctx.app.db, (n) => field(form, n));
   if (!request.ok) return refused(ctx, request.error);
   const { redirectUri, state } = request.value;

@@ -5,6 +5,7 @@ export const route: Route = {
   path: `${REPO}/issues/{number}/labels`,
   summary: "Replace the label set of an issue (names or ids; the set is all or nothing); answers the labels it now carries as a JSON array",
   auth: true,
+  role: "member",
   body: { labels: "array" },
   refusals: LABEL_REFUSALS,
 };

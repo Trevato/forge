@@ -17,6 +17,7 @@ import { truncate } from "../term/width.ts";
 import type { Session } from "../session.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { ListState, drawList, promptScreen, type ListRow } from "./common.ts";
+import type { PaletteEntry } from "./entries.ts";
 
 const limit = (v: number | string | null): string => (v === null || v === "" ? "no limit" : String(v));
 
@@ -95,3 +96,13 @@ export function quotasScreen(f: Session, ctx: Ctx): Screen {
   };
   return screen;
 }
+
+/** Account quotas, as /admin/limits has them: an admin who is not an agent (#2191). */
+export const entry: PaletteEntry = {
+  id: "quotas",
+  title: "Account quotas",
+  hint: "what one account may own, and who changed it",
+  after: ["people", "can"],
+  offered: (session) => session.user?.isAdmin === true && session.user.kind !== "agent",
+  run: (session, ctx) => ctx.push(quotasScreen(session, ctx)),
+};

@@ -64,8 +64,8 @@ test("a check declaring memory above the ceiling logs the warning before its com
       (r) => r.commitOid === oid && isTerminal(r.state),
     );
   while (Date.now() < deadline && mine() === undefined) await Bun.sleep(100);
-  const run = mine();
-  if (run === undefined) throw new Error("the check did not finish");
+  if (mine() === undefined) throw new Error(`never came: still waiting while mine() === undefined`);
+  const run = mine()!;
   const lines = readRunLog(dataDir, run.id).lines;
   const warned = lines.findIndex((l) => l.startsWith("warning: forge.json declares memory 8192 MiB"));
   const ran = lines.findIndex((l) => l.startsWith("$ "));

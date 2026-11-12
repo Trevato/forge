@@ -14,6 +14,8 @@ import {
   admissionRecord,
   admitted,
   ADMISSION_RUNS,
+  fallThroughWaits,
+  FALL_THROUGH_OWED,
   findBroken,
   findFlakes,
   flakyFile,
@@ -197,8 +199,8 @@ describe("quarantine", () => {
   });
 
   test("a file excluded already is left alone", async () => {
-    const { EXCLUDED } = await import("../scripts/gate.ts");
-    expect(quarantine(source, EXCLUDED[0]!.file, 1)).toBe(source);
+    const once = quarantine(source, file, 1);
+    expect(quarantine(once, file, 2)).toBe(once);
     expect(quarantine("no list here", file, 1)).toBe("no list here");
   });
 });
@@ -275,6 +277,68 @@ describe("admission", () => {
     expect(code).toBe(1);
   }, 120_000); // two `bun test` children beside busy loops: past the 5 s default
 });
+
+describe("a wait that runs out of time and carries on (#9017)", () => {
+  // test/conversation-queue.test.ts before #8995: ran out after 4 s and went on to steer a turn whose partial was unread.
+  const QUEUE_BEFORE = [
+    "const until = async (ok: () => boolean): Promise<void> => {",
+    "  for (let i = 0; i < 200 && !ok(); i++) await Bun.sleep(20);",
+    "};",
+  ].join("\n");
+  const QUEUE_AFTER = [
+    "const until = async (ok: () => boolean, what = \"the condition\"): Promise<void> => {",
+    "  for (let i = 0; i < 500 && !ok(); i++) await Bun.sleep(20);",
+    "  if (!ok()) throw new Error(`timed out waiting for ${what}`);",
+    "};",
+  ].join("\n");
+
+  test("the detector sees a poll that falls through, in each shape", () => {
+    expect(fallThroughWaits("q", QUEUE_BEFORE)).toEqual(["q:2: for (let i = 0; i < 200 && !ok(); i++) await Bun.sleep(20);"]);
+    const braced = "for (let i = 0; i < 100 && !h.text().includes(what); i++) {\n  await Bun.sleep(20);\n  await h.press();\n}\n}";
+    expect(fallThroughWaits("t", braced)).toHaveLength(1);
+    expect(fallThroughWaits("d", "while (Date.now() < deadline && !done()) await Bun.sleep(20);\nact();")).toHaveLength(1);
+    expect(fallThroughWaits("n", "for (let i = 0; i < 9 && (await bytes()) < 5; i++)\n  await Bun.sleep(20);\nact();")).toHaveLength(1);
+  });
+
+  test("a poll whose outcome is checked or handed back is no breach", () => {
+    expect(fallThroughWaits("q", QUEUE_AFTER)).toEqual([]);
+    expect(fallThroughWaits("e", "for (let i = 0; i < 9 && !ok(); i++) await Bun.sleep(20);\nexpect(ok()).toBe(true);")).toEqual([]);
+    expect(fallThroughWaits("r", "while (Date.now() < end && !ok()) await Bun.sleep(5);\nreturn ok();")).toEqual([]);
+    // A loop that never waits is no poll.
+    expect(fallThroughWaits("s", "for (let i = 0; i < 9 && n > 0; i++) n--;\nact();")).toEqual([]);
+  });
+
+  test("`admit` refuses it before any run, naming the line", async () => {
+    const dir = await scratch();
+    await mkdir(join(dir, "test"));
+    await writeFile(
+      join(dir, "test", "x.test.ts"),
+      `import { test } from "bun:test";\n${QUEUE_BEFORE}\ntest("one", async () => { await until(() => true); });\n`,
+    );
+    const child = Bun.spawn(["bun", join(root, "scripts/flake-hunt.ts"), "admit", "test/x.test.ts"], {
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+    expect(out).toContain("admission: test/x.test.ts — refused, a wait runs out of time and carries on");
+    expect(out).toContain("test/x.test.ts:3: for (let i = 0; i < 200 && !ok(); i++)");
+    expect(out).not.toContain("run 1:");
+    expect(code).toBe(1);
+  }, 30_000); // one bun child, no runs
+});
+
+  // A new file is refused here, on its own first check, not only by an `admit` it may never get.
+  breaches(
+    "no test file waits on a poll that runs out of time and carries on",
+    scanned.filter((path) => !FALL_THROUGH_OWED.has(path)).flatMap((path) => fallThroughWaits(path, read(path))),
+  );
+  breaches(
+    "every file owed under #9025 still owes a fix: strike the ones fixed",
+    [...FALL_THROUGH_OWED]
+      .filter((path) => !scanned.includes(path) || fallThroughWaits(path, read(path)).length === 0)
+      .map((path) => `${path}: no fall-through wait left (or no such file); delete it from FALL_THROUGH_OWED in scripts/flake.ts`),
+  );
 
 describe("random order", () => {
   const files = Array.from({ length: 30 }, (_, i) => `test/f${i}.test.ts`);
@@ -357,7 +421,6 @@ describe("no raw wall-clock budget in a test (#4429)", () => {
     expect(rawBudgets("x", "expect(dur(\"app\")).toBeLessThan(50);")).toHaveLength(1);
     expect(rawBudgets("x", "expect(total).toBeLessThan(50);")).toHaveLength(1);
     expect(rawBudgets("x", "test(`GET /a answers under 50 ms`, () => {});")).toHaveLength(1);
-    expect(rawBudgets("x", "expectBudget(dur(\"app\"), { ms: 50, against });")).toEqual([]);
     expect(rawBudgets("x", "expect(elapsed).toBeLessThan(5_000);")).toEqual([]); // a hang guard
     expect(rawBudgets("x", "expect(res.status).toBeLessThan(400);")).toEqual([]);
     expect(rawBudgets("x", "expect(lines.length).toBeLessThan(20);")).toEqual([]);
@@ -424,4 +487,26 @@ describe("the scheduled run of the files outside the gate", () => {
     expect(redFile("Flaky: test/a.test.ts")).toBeUndefined();
     expect(redFile("Red: test/a.test.ts")).toBe("test/a.test.ts");
   });
+});
+
+describe("a crash outside any test that ran green on its re-run (#7781)", () => {
+  const quoted = "  │ # Unhandled error between tests\n  │ error: Cannot use a closed database 42\n";
+  test("is named by one stable line and read back as a flake with no file", async () => {
+    const { crashFlakeLine, crashFlakes } = await import("../src/checks/flake.ts");
+    const line = crashFlakeLine("3/9", quoted);
+    expect(line).toBe("test-shards: crash flake 3/9: error: Cannot use a closed database #");
+    const got = crashFlakes(["noise", line, line, "(fail) a real failing test"]);
+    expect(got).toEqual([{ file: "", name: "(crash outside any test) error: Cannot use a closed database #" }]);
+  });
+  test("a real failing test is no crash flake", async () => {
+    const { crashFlakes } = await import("../src/checks/flake.ts");
+    expect(crashFlakes(["(fail) a [1ms]", " 1 fail"])).toEqual([]);
+  });
+});
+
+test("a crash of another Error class keeps its own cause, not one shared bucket (#7781)", async () => {
+  const { crashFlakeLine } = await import("../src/checks/flake.ts");
+  expect(crashFlakeLine("1/2", "  │ SyntaxError: bad token 7\n")).toBe("test-shards: crash flake 1/2: SyntaxError: bad token #");
+  expect(crashFlakeLine("1/2", "  │ AssertionError: x\n")).toContain("AssertionError");
+  expect(crashFlakeLine("1/2", "  │ # Unhandled error between tests\n")).toBe("test-shards: crash flake 1/2: unhandled error");
 });

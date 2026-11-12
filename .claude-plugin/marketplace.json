@@ -1,0 +1,12 @@
+{
+  "name": "forge",
+  "owner": { "name": "trevato" },
+  "plugins": [
+    {
+      "name": "forge",
+      "source": "./plugins/claude-code",
+      "description": "Your forge inside Claude Code: its MCP server and a /forge command.",
+      "version": "0.2.0"
+    }
+  ]
+}

@@ -289,7 +289,7 @@ describe("where the stamp is read", () => {
       "forge 9.8.7 · abcdef0",
     );
     for (const other of [await page(await signIn("bob")), await page()]) {
-      expect(other).toStartWith("forge — your code, your machine");
+      expect(other).toStartWith("forge · yours to keep");
       expect(other).not.toContain("9.8.7");
     }
   });

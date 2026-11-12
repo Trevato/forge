@@ -44,8 +44,9 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { requireVerified } from "./verify.ts";
 import { requireAbility } from "./roles.ts";
 import { requireAppRoom, appLimitWords } from "./app_limit.ts";
-import { enableApp } from "./apps.ts";
-import { FORKS_PER_DAY, forkRepo, repositoryLimitMessage } from "./repos.ts";
+import { disableApp, enableApp } from "./apps.ts";
+import { forkDrift } from "./forks.ts";
+import { deleteRepo, FORKS_PER_DAY, forkRepo, repositoryLimitMessage } from "./repos.ts";
 
 export interface MakeItYoursPlan {
   readonly dryRun: boolean;
@@ -69,7 +70,7 @@ export type MakeItYoursError =
   | { readonly kind: "not_found" }
   | { readonly kind: "unauthorized" }
   | { readonly kind: "unverified" }
-  /** A guest: the owner has not made this account a member. */
+  /** A guest: a person the owner has not made a member. */
   | { readonly kind: "not_member" }
   | { readonly kind: "own" }
   /** Today's copies are made; another may be made from `resetsAt`. */
@@ -262,4 +263,67 @@ export async function makeItYours(
       message: `the copy is made, but its app could not be registered: ${enabled.error}`,
     });
   return ok({ ...plan, made: { repo: copy, app: enabled.value } });
+}
+
+/** The receipt, in the words the page and the MCP both say. */
+export const receiptWords = (plan: Pick<MakeItYoursPlan, "repo" | "from" | "existing">): string =>
+  plan.existing
+    ? `${plan.repo} was already yours, a copy of ${plan.from}.`
+    : `${plan.repo} is yours: a copy of ${plan.from}, following it. Its first deploy is under way. Undo removes it while it has nothing of your own.`;
+
+export const undoWords = (repo: string): string => `${repo} is removed. The original was not touched.`;
+
+export type UndoError =
+  | { readonly kind: "not_found" }
+  | { readonly kind: "unauthorized" }
+  /** The copy has work of its own: removing it would lose that. */
+  | { readonly kind: "changed"; readonly message: string }
+  | { readonly kind: "failed" };
+
+/**
+ * Take back a copy made from `source`: the actor's own fork, with its app,
+ * removed — only while it has no commits of its own and no pull was sent from
+ * it, so nothing a person made is lost. The original is untouched.
+ */
+export async function undoMakeItYours(
+  app: App,
+  actor: User | undefined,
+  source: Repo,
+): Promise<Result<{ readonly repo: string; readonly says: string }, UndoError>> {
+  if (actor === undefined || !isActive(actor)) return err({ kind: "unauthorized" });
+  const row = app.db
+    .query<{ id: string }, [string, string]>(
+      `SELECT id FROM repo WHERE owner_id = ?1 AND fork_parent_id = ?2`,
+    )
+    .get(actor.id, source.id);
+  const copy = row === null ? undefined : getRepoById(app.db, row.id);
+  if (copy === undefined) return err({ kind: "not_found" });
+  const name = `${copy.ownerName}/${copy.name}`;
+  const drift = await forkDrift(app, copy, source);
+  if (drift.ahead === null || drift.ahead > 0)
+    return err({
+      kind: "changed",
+      message: `${name} has changes of your own, so it is kept. Delete it in its settings if you mean to.`,
+    });
+  // Refuse before anything is switched off: a refused undo leaves the copy as it was.
+  const sentPull =
+    app.db
+      .query(
+        `SELECT 1 FROM pull p JOIN issue i ON i.id = p.issue_id
+          WHERE p.head_repo_id = ?1 AND i.repo_id <> ?1 LIMIT 1`,
+      )
+      .get(copy.id) !== null;
+  if (sentPull)
+    return err({ kind: "changed", message: `${name} has a pull sent from it, so it is kept.` });
+  if (getAppByRepo(app.db, copy.id) !== undefined) disableApp(app, actor, copy);
+  const gone = await deleteRepo(app, actor, copy);
+  if (!gone.ok)
+    return err(
+      gone.error === "has_pulls"
+        ? { kind: "changed", message: `${name} has a pull sent from it, so it is kept.` }
+        : gone.error === "not_found"
+          ? { kind: "not_found" }
+          : { kind: "failed" },
+    );
+  return ok({ repo: name, says: undoWords(name) });
 }

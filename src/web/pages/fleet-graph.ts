@@ -65,6 +65,11 @@ export function fleetGraphPage(ctx: Ctx): Response {
             size: "sm",
             variant: "secondary",
           })}
+          ${btn("Rows", {
+            href: "/fleet",
+            size: "sm",
+            variant: "secondary",
+          })}
           <p class="muted">
             What a selection of repositories spent and how many runs ended,
             hour by hour and day by day.

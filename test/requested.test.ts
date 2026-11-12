@@ -6,6 +6,7 @@
  * which pulls wait on a builder and which on a reviewer.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,8 +15,8 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
-import { setCrewRole } from "../src/core/agents.ts";
-import { createIssue, createLabel, getIssueById, getLabel, listComments, setIssueLabels } from "../src/core/issues.ts";
+import {} from "../src/core/agents.ts";
+import { getIssueById, listComments } from "../src/core/issues.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { submitReview } from "../src/core/reviews.ts";
@@ -24,7 +25,6 @@ import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { autonomyTick } from "../src/crew/autonomy.ts";
 import { HANDOVER_NOTE } from "../src/crew/guard.ts";
 import { moveRequested, tallyRequested, tallyWords } from "../src/crew/requested.ts";
-import { WAITS_FOR_FLOW_ONLY } from "../src/crew/words.ts";
 import { requestedSays, requestedWaits } from "../src/flow/requested.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -149,7 +149,7 @@ describe("a pull with changes requested always moves", () => {
     }
     builder = getUserByName(app.db, "mason")!;
     reviewer = getUserByName(app.db, "quill")!;
-    setCrewRole(app.db, repo.id, reviewer.id, "reviewer");
+    seatAs(app.db, repo.id, reviewer.id, "reviewer");
     // Assisted: a lapsed head is not sent for being autonomous, only for answering a verdict.
     app.db
       .query("UPDATE repo SET autonomy = 'assisted', autonomy_by = ?2, autonomy_slots = 3 WHERE id = ?1")
@@ -359,53 +359,5 @@ describe("a pull with changes requested always moves", () => {
     const next = tallyRequested(await moveRequested(app, fresh(), 2));
     expect(next).toEqual({ moved: 0, total: 3, waiting: { "a run is in flight": 2, "handed to a person": 1 } });
     expect(tallyWords(next)).toBe("0/3 moved; 2 a run is in flight, 1 handed to a person");
-  });
-
-  test("while flow only is on, a pull for a non-flow issue gets no feedback run and one comment; a flow pull gets a run; off, a run", async () => {
-    app.db.query("UPDATE issue SET state = 'closed' WHERE repo_id = ?1 AND kind = 'pull'").run(repo.id);
-    clearRuns();
-    const flowLabel = (): string => {
-      const have = getLabel(app.db, repo.id, "flow");
-      if (have) return have.id;
-      const made = createLabel(app.db, repo.id, "flow", "1d76db");
-      if (!made.ok) throw new Error(made.error);
-      return made.value.id;
-    };
-    const closing = async (labels: boolean) => {
-      const made = createIssue(app.db, { repoId: repo.id, title: "Work", body: "", authorId: alice.id });
-      if (!made.ok) throw new Error(made.error);
-      if (labels) setIssueLabels(app.db, made.value.id, [flowLabel()]);
-      const pull = await currentShape();
-      app.db.query("UPDATE issue SET body = ?2 WHERE id = ?1").run(pull.id, `Closes #${made.value.number}`);
-      return pull;
-    };
-    const said = (pull: Pull) =>
-      listComments(app.db, pull.id).filter((c) => c.body.startsWith(WAITS_FOR_FLOW_ONLY));
-    app.db.query("UPDATE repo SET flow_only = 1 WHERE id = ?1").run(repo.id);
-    const feature = await closing(false);
-    const flow = await closing(true);
-    const moves = await moveRequested(app, fresh(), 5);
-    expect(moves.find((m) => m.pull === feature.number)).toEqual({
-      pull: feature.number,
-      did: "not moved",
-      why: WAITS_FOR_FLOW_ONLY,
-    });
-    const tally = tallyRequested(moves);
-    expect(tally.waiting["waits for flow only"]).toBe(1);
-    expect(tallyWords(tally)).toContain("1 waits for flow only");
-    expect(runs(feature, "feedback")).toHaveLength(0);
-    expect(said(feature)).toHaveLength(1);
-    expect(moves.find((m) => m.pull === flow.number)?.did).toBe("queued feedback");
-    expect(runs(flow, "feedback")).toHaveLength(1);
-    expect(said(flow)).toHaveLength(0);
-    // Said once.
-    await moveRequested(app, fresh(), 5);
-    expect(said(feature)).toHaveLength(1);
-    expect(runs(feature, "feedback")).toHaveLength(0);
-    // Switch off: the next tick handles it as ever.
-    app.db.query("UPDATE repo SET flow_only = 0 WHERE id = ?1").run(repo.id);
-    const off = await moveRequested(app, fresh(), 5);
-    expect(off.find((m) => m.pull === feature.number)?.did).toBe("queued feedback");
-    expect(runs(feature, "feedback")).toHaveLength(1);
   });
 });

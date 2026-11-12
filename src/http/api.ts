@@ -8,7 +8,9 @@
  * back to continue); errors are `{ error, message }`.
  */
 
-import { flowOnlyQueued } from "../crew/flow_only.ts";
+import { teamHoldRefusal } from "../core/teams_words.ts";
+import { guardedRefusal } from "../crew/stranger.ts";
+import { MAX_PASS, passOf } from "../actions/box_pass.ts";
 import { homeTruth } from "../system/home_truth.ts";
 import { upstreamFacts } from "../actions/upstream_follow.ts";
 import { FAMILY_WORDS } from "../actions/family_words.ts";
@@ -19,9 +21,7 @@ import {
 } from "../actions/origin_app_words.ts";
 import { getProvenance, provenanceFacts } from "../core/provenance.ts";
 import { goldenPath } from "../apps/golden_path.ts";
-import { setRole } from "../actions/roles.ts";
-import { listPeople, NOT_A_MEMBER } from "../core/roles.ts";
-import { setAccountCeilings, setAccountGrant } from "../actions/model_grant.ts";
+import { NOT_A_MEMBER } from "../core/roles.ts";
 import { storageLimitMessage } from "../core/storage.ts";
 import { voteVariant } from "../actions/variants.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../core/route_timing.ts";
@@ -33,18 +33,14 @@ import { DOMAINS } from "../kernel/domains.ts";
 import { readBounded } from "./limits.ts";
 import { askCheck } from "../checks/again.ts";
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
-import { changeCapacity, listCapacity } from "../actions/capacity.ts";
-import { changeLimit, listLimits } from "../actions/limits.ts";
-import { changeTeam, readTeams, TEAM_SAYS } from "../actions/teams.ts";
+import { crewNow } from "../actions/crew_now.ts";
 import { readScorecards } from "../actions/scorecard.ts";
-import { changeQuotas, readQuotas } from "../actions/quotas.ts";
-import { changeSignup, readSignup } from "../actions/signup.ts";
 import {
   accountSignIns,
   endAccountSession,
-  signOutHere,
 } from "../actions/signins.ts";
 import { STRANGER_MAX } from "./limits.ts";
+import { VIA_FORM, WORDS_MAX } from "../core/fence.ts";
 import {
   askedIn,
   askedJson,
@@ -53,15 +49,6 @@ import {
   isAskedShow,
 } from "../core/asked.ts";
 import { streamJson, thoughtStream } from "../core/thought_stream.ts";
-import {
-  listAccounts,
-  removeAccount,
-  retireAndRemoveAccount,
-  retirementPlan,
-  suspendAccount,
-  unsuspendAccount,
-  verifyAccount,
-} from "../actions/accounts.ts";
 import { PROVE_FIRST } from "../actions/verify_words.ts";
 import { REPORT_LINK_TITLE } from "../actions/report_words.ts";
 import { editMessage } from "../actions/edit_words.ts";
@@ -70,13 +57,20 @@ import { isProbe } from "../kernel/probe.ts";
 import { PRIVATE_ADDRESS_REFUSED } from "../kernel/address_words.ts";
 import { forgeState, PARENT_HEADER } from "../spawn/clients.ts";
 import { familyView } from "../spawn/family.ts";
+import { HOOK_BODY_MAX, receiveOriginHook, signatureOf } from "../origins/hook.ts";
+import { receiveMirrorHook } from "../origins/mirror-pulls.ts";
 import { receiveBeat, SIGNATURE_HEADER } from "../spawn/heartbeat.ts";
 import { takeOrTell } from "../actions/follow.ts";
 import { noteRead, telemetryReader, type Reader } from "../actions/telemetry.ts";
-import { flowFor, historyFor, sourcesOut, systemFor, welcome } from "../system/telemetry.ts";
+import { flowCopy, flowEtag, flowMaxAge } from "../system/flow_cache.ts";
+import { readHours, routeHours } from "../perf/history.ts";
+import { countRead } from "../system/telemetry_reads.ts";
+import { historyFor, sourcesOut, systemWithReaders, welcome } from "../system/telemetry.ts";
+import { weekCard, WEEK_DAYS } from "../crew/week_card.ts";
 import { markReaders } from "../crew/direct.ts";
 import {
   addCommentThrough,
+  PLANNER_REFUSALS,
   setIssueStateThrough,
 } from "../actions/issues.ts";
 import {
@@ -106,14 +100,18 @@ import {
   MAX_REVIEW_LINES,
   type ReviewInput,
 } from "../actions/pulls.ts";
+import { landSlice } from "../actions/pull_slices.ts";
 import { attachLook } from "../actions/attach_look.ts";
 import { lookUrl } from "../core/looks.ts";
+import { pullFit, pullLooks } from "../looks/readable.ts";
 import { holdPull, releasePull } from "../actions/holds.ts";
 import { getHold, type Hold } from "../core/holds.ts";
 import { watchMilestone } from "../actions/watches.ts";
 import { THOUGHT_MAX, keepThought } from "../actions/thought.ts";
-import { search, searchWithin, type SearchPhase } from "../actions/search.ts";
+import { search, searchRefusal, searchWithin, type SearchPhase } from "../actions/search.ts";
 import { runRepos } from "./run_gate.ts";
+import { writeStamp } from "../core/write_clock.ts";
+import { listChildren } from "../actions/spawn.ts";
 import {
   commitToBranch,
   createRepo,
@@ -122,17 +120,20 @@ import {
   resolveOwner,
   updateRepoSettings,
 } from "../actions/repos.ts";
+import { TRANSFER_SAID, TRANSFER_STATUS, transferRepository } from "../actions/transfer.ts";
 import {
   createToken,
-  deleteToken,
   HUMAN_CHECK_MESSAGE,
+  mintConversationToken,
   PASSKEY_REQUIRED_MESSAGE,
   signUp,
   SIGNUP_CLOSED_MESSAGE,
+  REQUEST_IN_MESSAGE,
 } from "../actions/users.ts";
 import { OFFSET_LIMIT_MAX, offsetPage, offsetQuery } from "./offset_page.ts";
-import { EVENTS_LIMIT_MAX, eventsLimit, eventsPage, validEventsCursor } from "../core/events_page.ts";
+import { EVENTS_LIMIT_MAX, eventsLimit, eventsPage, validEventsCursor, validEventsKind } from "../core/events_page.ts";
 import { audienceFor } from "../core/audience.ts";
+import { creditFacts } from "../actions/credit_facts.ts";
 import {
   forkParentFor,
   getReposByIds,
@@ -150,10 +151,6 @@ import {
   type IssueState,
 } from "../core/issues.ts";
 import {
-  soleOwnedOrgs,
-  lastOwnerSays,
-} from "../core/orgs.ts";
-import {
   getPull,
   listPulls,
   variantSiblings,
@@ -170,12 +167,13 @@ import {
   getRepo,
   listReposByOwner,
   listReposVisibleTo,
+  visibleReposMarker,
   type Repo,
   type RepoCounts,
   canWrite,
   getRepoById,
 } from "../core/repos.ts";
-import { cleanQuery, CODE_BUDGET_MS, searchKind } from "../core/search.ts";
+import { CODE_BUDGET_MS, greppable, searchKind, searchNote } from "../core/search.ts";
 import { strangerCodeSearch } from "./strangers.ts";
 import {
   isReviewState,
@@ -183,9 +181,7 @@ import {
   listReviews,
   withOutdated,
 } from "../core/reviews.ts";
-import { createSession } from "../core/sessions.ts";
 import { mintProposal } from "../actions/proposal_tokens.ts";
-import { ADMIN_TOKEN_WORDS, listTokens } from "../core/tokens.ts";
 import {
   headInNamespace,
   PROPOSAL_BODY_MAX,
@@ -195,17 +191,21 @@ import {
 import {
   getUserByName,
   hiddenFrom,
-  verifyPasswordThrottled,
-  type User,
 } from "../core/users.ts";
 import { isPinned } from "../core/pins.ts";
 import { diffCommit } from "../git/diff.ts";
 import { runGit } from "../git/env.ts";
 import { appLimitWords, appsOwnedBy } from "../actions/app_limit.ts";
-import { getQuota } from "../settings/quotas.ts";
+import { getQuota, quotaOf } from "../settings/quotas.ts";
 import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
 import { compareBranches, listBranchRows } from "../git/branches.ts";
-import { newApp } from "../actions/apps.ts";
+import {
+  NO_NAME_ERROR,
+  newApp,
+  newAppFromSentence,
+  type NewAppInput,
+  type NewAppResult,
+} from "../actions/apps.ts";
 import { listDomains } from "../core/domains.ts";
 import {
   migrateMessage,
@@ -219,6 +219,7 @@ import {
   checkOfCommit,
   getRepoRun,
   listRepoRuns,
+  nameRuns,
   runForReader,
   runLog,
 } from "../actions/runs.ts";
@@ -228,7 +229,8 @@ import {
   removeFromCrew,
 } from "../actions/crew.ts";
 import { assignIssue, editIssue, TAKEN_UP } from "../actions/issues.ts";
-import { steerRepoRun } from "../actions/runs.ts";
+import { requireReader } from "../actions/access.ts";
+import { looksOfCheck, mayReadRuns, runsViewKey, steerRepoRun } from "../actions/runs.ts";
 import { openPlan, parsePlan, proposePlan } from "../actions/plan.ts";
 import { repoGraph } from "../core/dependencies.ts";
 import { mapHeldFor } from "../crew/held.ts";
@@ -244,7 +246,9 @@ import {
 import { forReader } from "../crew/handover.ts";
 import { globalMapJson } from "../web/pages/global-map.ts";
 import { mapJson, marksFor, withoutDone } from "../web/pages/map.ts";
+import { roadmapOf } from "../web/roadmap.ts";
 import { cachedMap } from "../web/map_snapshot.ts";
+import { scopeKey } from "../web/map_cache.ts";
 import {
   milestoneData,
   milestonesJson,
@@ -257,7 +261,8 @@ import {
   takeBackLimb,
 } from "../actions/limb_replan.ts";
 import { appsRuntime, envsFor, type AppsRuntime } from "../apps/runtime.ts";
-import { isEnvName } from "../apps/data.ts";
+import { isEnvName, previewEnv } from "../apps/data.ts";
+import { checkWord } from "../apps/check_word.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import { crewRole, isCrew, type Agent } from "../core/agents.ts";
 import { listApps, type AppRecord } from "../core/apps.ts";
@@ -266,23 +271,28 @@ import {
   checksForHead,
   getRun,
   isTerminal,
+  latestRunsForIssues,
   listActiveRuns,
+  RUN_STATES,
+  type ListRunsOptions,
   type Run,
 } from "../core/runs.ts";
 import { checkStale } from "../checks/stale.ts";
 import { resolveOid } from "../git/merge.ts";
-import { readUsage, usageDays, USAGE_DAYS_MAX } from "../actions/usage.ts";
+import { readForgeUsage, readUsage, usageDays, USAGE_DAYS_MAX } from "../actions/usage.ts";
 import { readReturns, reportSpend, RETURNS_DAYS } from "../actions/returns.ts";
+import { COLUMNS, readSort, sortRows } from "../fleet/columns.ts";
+import { viewFleet } from "../fleet/rows.ts";
 import { fleetSelection, readFleetGraph } from "../actions/fleet-graph.ts";
 import { carriedBy } from "../core/carried.ts";
 import { readGateLog } from "../checks/gate_log.ts";
 import { recentGates } from "../checks/gate_result.ts";
 import { readRunLog, subscribeRunLog } from "../runs/log.ts";
-import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
+import { blobForRender, commitLog, listRefs, listTree, refTip } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
+import { holds, weakEtag } from "./etag.ts";
 import { carriedPulls, pullPath } from "../story/wave_pulls.ts";
-import { pullRefs, readWave, readWaves } from "../story/waves.ts";
-import { inviteLink, list as listInviteLinks, mint as mintInviteLink, revoke as revokeInviteLink } from "../actions/invites.ts";
+import { pullRefs, readWave, readWaves, waveSize } from "../story/waves.ts";
 import { originForRepo, type OriginRepoRow } from "../core/origins.ts";
 import { subscribe as subscribeJob, type MirrorJob } from "../origins/jobs.ts";
 import type { Origin } from "../origins/types.ts";
@@ -295,7 +305,7 @@ import {
   undoFleetOp,
   type FleetError,
 } from "../actions/fleet.ts";
-import { EDGE_NAME_MESSAGE, pinnedTo, sessionCookie, signupSlot } from "../web/pages/site.ts";
+import { EDGE_NAME_MESSAGE, pinnedTo, signupSlot } from "../web/pages/site.ts";
 import {
   FIRST_ADMIN_TOKEN_MAX_S,
   FIRST_ADMIN_TOKEN_MIN_S,
@@ -320,46 +330,86 @@ import {
   respondAccess,
   str,
   unauthorized,
-  tooManyAttempts,
+  tryAgain,
+  retryAfterOf,
 } from "./respond.ts";
 import {
   explorePage,
+  rowsWithWhy,
+  cursorFits,
   type ExploreRow,
   exploreLine,
-  parseExploreQuery,
+  exploreNote,
+  exploreSuggestion,
+  readExploreLine,
+  exploreLineFrom,
 } from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
 import { passportRoutes } from "./passport_edge.ts";
 import { egressGrantRoutes } from "./api/egress_grants.ts";
+import { printRoutes } from "./api/print.ts";
 import { forgeRoutes } from "./api/forges.ts";
+import { packRoutes } from "./api/packs.ts";
+import { forgeViewRoutes } from "./api/forge_view.ts";
+import { billingRoutes } from "./api/billing.ts";
+import { codesRoutes } from "./api/codes.ts";
+import { economicsRoutes } from "./api/economics.ts";
+import { releasesRoutes } from "./api/releases.ts";
 import { hookRoutes } from "./api/hooks.ts";
+import { keeperRoutes } from "./api/keeper.ts";
 import { agentRoutes } from "./api/agents.ts";
+import { subscriptionRoutes } from "./api/subscriptions.ts";
 import { boardRoutes } from "./api/boards.ts";
+import { displayRoutes } from "./api/displays.ts";
 import { followingRoutes } from "./api/following.ts";
 import { labelsRoutes } from "./api/labels.ts";
+import { dataRoutes } from "./api/data.ts";
+import { statementRoutes } from "./api/statement.ts";
+import { visionRoutes } from "./api/vision.ts";
+import { businessPlanRoutes } from "./api/business_plan.ts";
+import { tokenRoutes } from "./api/tokens.ts";
+import { accountAdmin, adminRoutes } from "./api/admin.ts";
+import { maintenanceRoutes } from "./api/maintenance.ts";
+import { maintenanceRunsRoutes } from "./api/maintenance_runs.ts";
+import { diskReadingRoutes } from "./api/disk_readings.ts";
+import { TEMPLATE_ERRORS } from "../apps/template_tip.ts";
+import { flagsRoutes } from "./api/flags.ts";
+import { appTemplateRoutes } from "./api/app_templates.ts";
 import { issueRoutes, labelsHandler } from "./api/issues.ts";
+import { FORGE_NOT_CARRIED } from "../origins/words.ts";
+import { forgeOriginRoutes } from "./api/forge_origin.ts";
 import { userRoutes } from "./api/user.ts";
 import { appRoutes } from "./api/app.ts";
+import { appPullsRoutes } from "./api/app_pulls.ts";
+import { buildRoutes } from "./api/builds.ts";
+import { buildShotRoutes } from "./api/build_shots.ts";
+import { buildCartRoutes } from "./api/build_cart.ts";
+import { iterationRoutes } from "./api/iterations.ts";
 import { appNoteRoutes } from "./api/app_notes.ts";
 import { reportRoutes } from "./api/reports.ts";
+import { startRoutes } from "./api/start.ts";
 import { rollbackRoutes } from "./api/rollback.ts";
 import { takeBackRoutes } from "./api/take_back.ts";
+import { conversationConfirmRoutes } from "./api/conversation_confirms.ts";
+import { conversationTalkRoutes } from "./api/conversation_talk.ts";
+import { conversationBuildRoutes } from "./api/conversation_build.ts";
 import { orgRoutes } from "./api/orgs.ts";
 import { promptRoutes } from "./api/prompts.ts";
+import { cloudRoutes } from "./api/cloud.ts";
 import { secretRoutes } from "./api/secrets.ts";
+import { drillRoutes } from "./api/drills.ts";
+import { featureRoutes } from "./api/features.ts";
 import { upstreamRoutes } from "./api/upstream.ts";
 import type { Router } from "./router.ts";
 import { clientAddress } from "./peer.ts";
 import { manifestFor } from "../actions/here.ts";
-import { egressSnapshot } from "../apps/egress.ts";
+import { egressRowsFor, egressTotalsFor } from "../spawn/process_counters.ts";
 import { egressMetrics } from "../apps/egress_metrics.ts";
 import { forgeMetrics } from "../metrics/forge.ts";
 import { appSources } from "../metrics/app_sources.ts";
 import { ADMIN_WORDS } from "../actions/admin_words.ts";
-import { SETTING_WORDS } from "../actions/setting_words.ts";
-import { SPEND_WORDS } from "../actions/spend_words.ts";
-import { ANSWER_WORDS, ORDER_WORDS, SIGNUP_WORDS, VISIBILITY_WORDS } from "../core/arg_words.ts";
+import { ANSWER_WORDS, ORDER_WORDS, VISIBILITY_WORDS } from "../core/arg_words.ts";
 
 /** Take the parent's updates for `repo` and answer as the API does, for every route that asks. */
 export async function respondTake(ctx: Ctx, repo: Repo): Promise<Response> {
@@ -421,13 +471,9 @@ function respondFleet(error: FleetError): Response {
 }
 
 export function withLabels<T extends Issue>(ctx: Ctx, issue: T) {
-  const repo = getRepoById(ctx.app.db, issue.repoId);
-  const queued = repo === undefined ? null : flowOnlyQueued(ctx.app.db, repo, issue);
   return {
     ...readerMarked(ctx, issue.repoId, [issue])[0]!,
     labels: labelsFor(ctx.app.db, issue.id),
-    // FLOW ONLY holds an assigned run: say so, so an assigner knows nothing started.
-    ...(queued === null ? {} : { queued }),
   };
 }
 
@@ -546,6 +592,9 @@ export function originJson(origin: Origin) {
     lastError: origin.lastError,
     needsReauth: origin.needsReauth,
     expiresAt: origin.expiresAt,
+    software: origin.software,
+    // What a forge origin does not bring, said where a client reads the origin.
+    carries: origin.software === "forge" ? FORGE_NOT_CARRIED : null,
   };
 }
 
@@ -611,6 +660,14 @@ export function originAware(error: string, status = 422): Response {
       422,
       "a reason is done, dropped, or split (with `into`: the issues it became); only an issue closing takes one",
     );
+  if (error === "invalid_note")
+    return apiError("invalid_note", 422, "`note` is one sentence of text, at most 300 characters");
+  if (error === "reason_required")
+    return apiError(
+      "reason_required",
+      422,
+      "a bug closed without a fix says why: send `note` (one sentence, at most 300 characters)",
+    );
   if (error === "mirrored")
     return apiError(
       "mirrored",
@@ -634,6 +691,24 @@ export function originAware(error: string, status = 422): Response {
       "origin_refused",
       409,
       "the origin refused this change; nothing was changed here either",
+    );
+  if (error === "origin_protected")
+    return apiError(
+      "origin_protected",
+      409,
+      "the operator protects this repository at its origin: nothing is pushed to it from here; propose the change from your fork",
+    );
+  if (error === "origin_read_only")
+    return apiError(
+      "origin_read_only",
+      409,
+      "this account was connected read-only, so nothing is written through it; nothing was changed",
+    );
+  if (error === "origin_paused")
+    return apiError(
+      "origin_paused",
+      409,
+      "this connection is not verified against the operator's rules yet, so writes through it are paused; nothing was changed",
     );
   return respondAccess(error, status);
 }
@@ -689,7 +764,7 @@ function editFailure(error: { kind: string } & Record<string, unknown>) {
   const status =
     kind === "branch_moved"
       ? 409
-      : kind === "file_too_large" || kind === "commit_too_large"
+      : kind === "file_too_large" || kind === "commit_too_large" || kind === "storage_limit"
         ? 413
         : kind === "protected_branch"
           ? 403
@@ -784,6 +859,15 @@ export function contributionJson(ctx: Ctx, result: ContributeResult) {
  * ordinary access and origin codes every other route already speaks.
  */
 export function contributeFailure(error: unknown): Response {
+  // Only a refusal that left nothing behind. A pull refused after its commit
+  // landed is `pull_failed` below, which carries that commit.
+  const landed = typeof error === "object" && error !== null && (error as { kind?: unknown }).kind === "pull_failed";
+  if (!landed && (String(error) === "origin_refused" || JSON.stringify(error).includes("origin_refused")))
+    return apiError(
+      "origin_refused",
+      403,
+      "the origin refused: this connection cannot write there, and a fork there takes a token that can write (rw). Nothing was changed. Connect again with one, or ask its owner.",
+    );
   if (typeof error === "object" && error !== null && "kind" in error) {
     const detail = error as {
       kind: string;
@@ -828,21 +912,39 @@ export function contributeFailure(error: unknown): Response {
 
 // ---- query parsing ----
 
+/**
+ * `?limit=`: absent is `fallback`, a whole number from 1 to 200 is itself,
+ * anything else is the 422 to answer.
+ */
+export function readLimit(ctx: Ctx, fallback: number): number | Response;
+export function readLimit(ctx: Ctx, fallback: undefined): number | undefined | Response;
+export function readLimit(ctx: Ctx, fallback: number | undefined): number | undefined | Response {
+  const rawLimit = ctx.url.searchParams.get("limit");
+  if (rawLimit === null) return fallback;
+  const limit = /^\d{1,4}$/.test(rawLimit) ? Number(rawLimit) : 0;
+  if (limit < 1 || limit > 200)
+    return apiError("invalid_limit", 422, "limit is a whole number from 1 to 200");
+  return limit;
+}
+
 /** `?state=&label=&author=&limit=&cursor=` for issue and pull lists. */
 export function listQuery(ctx: Ctx) {
   const q = ctx.url.searchParams;
+  const limit = readLimit(ctx, undefined);
+  if (limit instanceof Response) return limit;
   const stateParam = q.get("state");
-  const state: IssueState | "all" =
-    stateParam === "closed" || stateParam === "all" ? stateParam : "open";
-  const cursorParam = Number(q.get("cursor"));
+  if (stateParam !== null && stateParam !== "open" && stateParam !== "closed" && stateParam !== "all")
+    return apiError("invalid_state", 422, "state is open, closed or all");
+  const state: IssueState | "all" = stateParam ?? "open";
+  const rawCursor = q.get("cursor");
+  if (rawCursor !== null && !/^[1-9]\d{0,15}$/.test(rawCursor))
+    return apiError("invalid_cursor", 422, "cursor is the next_cursor of a previous page");
   const label = q.get("label");
   const author = q.get("author");
   return {
     state,
-    limit: pageLimit(q.has("limit") ? Number(q.get("limit")) : undefined),
-    ...(Number.isInteger(cursorParam) && cursorParam > 0
-      ? { cursor: cursorParam }
-      : {}),
+    limit: pageLimit(limit),
+    ...(rawCursor !== null ? { cursor: Number(rawCursor) } : {}),
     ...(label ? { label } : {}),
     ...(author ? { author } : {}),
   };
@@ -851,7 +953,7 @@ export function listQuery(ctx: Ctx) {
 /** Room for the longest key: a pin's `owner/name` (up to ~40 + 1 + 100 characters). */
 const KEYED_CURSOR_MAX = 160;
 
-function offsetRefused(error: "invalid_limit" | "invalid_cursor"): Response {
+export function offsetRefused(error: "invalid_limit" | "invalid_cursor"): Response {
   return error === "invalid_limit"
     ? apiError(error, 422, `limit is a whole number from 1 to ${OFFSET_LIMIT_MAX}`)
     : apiError(error, 422, "cursor is the next_cursor of a page before");
@@ -882,11 +984,8 @@ export function pageParams(
   ctx: Ctx,
 ): { limit: number; cursor: string | null } | Response {
   const q = ctx.url.searchParams;
-  const rawLimit = q.get("limit");
-  const limit =
-    rawLimit === null ? 50 : /^\d{1,4}$/.test(rawLimit) ? Number(rawLimit) : 0;
-  if (limit < 1 || limit > 200)
-    return apiError("invalid_limit", 422, "limit is a whole number from 1 to 200");
+  const limit = readLimit(ctx, 50);
+  if (limit instanceof Response) return limit;
   const cursor = q.get("cursor");
   if (cursor !== null && !/^[A-Za-z0-9_-]{1,64}$/.test(cursor))
     return apiError("invalid_cursor", 422, "cursor is the next_cursor of a previous page");
@@ -894,22 +993,31 @@ export function pageParams(
 }
 
 /**
- * One page of `rows` (already in order) after the row whose id is the cursor,
- * as a response. A cursor no row answers to (deleted between two requests, or
- * invented) is a 422 `invalid_cursor`, as for branches: an empty last page
- * would tell the client it had seen everything.
+ * One page of `rows` (already in order) after the row whose id is the cursor:
+ * `{ items, next_cursor }`. A cursor no row answers to (deleted between two
+ * requests, or invented) is a 422 `invalid_cursor`, as for branches: an empty
+ * last page would tell the client it had seen everything.
  */
-export function pageOf<T extends { id: string }>(
+export function slicePage<T extends { id: string }>(
   rows: T[],
   page: { limit: number; cursor: string | null },
-): Response {
+): { items: T[]; next_cursor: string | null } | Response {
   const at = page.cursor === null ? -1 : rows.findIndex((r) => r.id === page.cursor);
   if (page.cursor !== null && at === -1)
     return apiError("invalid_cursor", 422, "that cursor names a row that is gone: start over");
   const start = at + 1;
   const items = rows.slice(start, start + page.limit);
   const more = start + page.limit < rows.length;
-  return json({ items, next_cursor: more ? items[items.length - 1]!.id : null });
+  return { items, next_cursor: more ? items[items.length - 1]!.id : null };
+}
+
+/** `slicePage` as a response. */
+export function pageOf<T extends { id: string }>(
+  rows: T[],
+  page: { limit: number; cursor: string | null },
+): Response {
+  const sliced = slicePage(rows, page);
+  return sliced instanceof Response ? sliced : json(sliced);
 }
 
 /** The page of `rows` (sorted by name) after the cursor: `{ items, next_cursor }`. */
@@ -931,9 +1039,13 @@ export function keyedPage<T>(
 function repoQuery(ctx: Ctx) {
   const q = ctx.url.searchParams;
   const cursor = q.get("cursor");
+  if (cursor !== null && !/^[A-Za-z0-9_-]{1,64}$/.test(cursor))
+    return apiError("invalid_cursor", 422, "cursor is the next_cursor of a previous page");
+  const limit = readLimit(ctx, undefined);
+  if (limit instanceof Response) return limit;
   return {
-    limit: pageLimit(q.has("limit") ? Number(q.get("limit")) : undefined),
-    ...(cursor ? { cursor } : {}),
+    limit: pageLimit(limit),
+    ...(cursor !== null ? { cursor } : {}),
   };
 }
 
@@ -968,6 +1080,7 @@ export function agentJson(agent: Agent) {
     model: agent.model,
     brief: agent.brief,
     budgetUsd: agent.budgetUsd,
+    roles: agent.roles,
     createdAt: agent.createdAt,
   };
 }
@@ -979,6 +1092,10 @@ async function pullHeadOid(ctx: Ctx, repo: Repo, pull: Pull): Promise<string> {
     : `refs/heads/${pull.headBranch}`;
   return (await resolveOid(await pullDirOf(ctx, repo, pull), ref)) ?? pull.headOid;
 }
+
+/** A branch's tip from its ref file (no process); git is asked only when that cannot be read. */
+const baseTip = async (dir: string, ref: string): Promise<string | undefined> =>
+  (await refTip(dir, ref)) ?? (await resolveOid(dir, ref));
 
 /** Where a pull's objects are (`pullDir`): its base, or a sealed one's own place. */
 const pullDirOf = (ctx: Ctx, repo: Repo, pull: Pull): Promise<string> =>
@@ -992,7 +1109,7 @@ export function positiveInt(raw: string | undefined): number | undefined {
 /** 403 naming the limit and the count, for an account at its app limit. */
 export function appLimitResponse(ctx: Ctx, ownerName: string): Response {
   const owner = getUserByName(ctx.app.db, ownerName);
-  const limit = getQuota(ctx.app.db, "apps");
+  const limit = owner ? quotaOf(ctx.app.db, "apps", owner.id) : getQuota(ctx.app.db, "apps");
   return json(
     {
       error: "app_limit",
@@ -1069,11 +1186,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
     const slot = signupSlot(ctx);
     if (typeof slot === "number")
-      return json(
-        { error: "rate_limited", message: "too many sign-ups; wait and send again" },
-        429,
-        { "retry-after": String(slot) },
-      );
+      return tryAgain("rate_limited", 429, "too many sign-ups; wait and send again", slot);
     // Anyone may call this, so its body is a stranger's (`http/limits.ts`).
     const input = await boundedBody(ctx.request, STRANGER_MAX);
     if (input === "too_large")
@@ -1089,6 +1202,9 @@ export function apiRoutes(router: Router<Handler>): void {
         email: str(input.email),
         password: str(input.password),
         humanToken: str(input.turnstile_token),
+        // Where the ask comes from (a forge or an agent) and what they want to build.
+        note: str(input.note),
+        source: str(input.from),
       },
       {
         slot,
@@ -1103,6 +1219,8 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!created.ok && created.error === "human_check")
       return apiError("human_check", 422, HUMAN_CHECK_MESSAGE);
     if (!created.ok) return json({ error: created.error }, 422);
+    // Signup is `request`: the account waits for an admin, and acts as nothing yet.
+    if (created.value.waitingAt !== null) return json({ state: "waiting", username: created.value.username, message: REQUEST_IN_MESSAGE }, 202);
     return json(publicUser(created.value), 201);
   });
 
@@ -1121,68 +1239,39 @@ export function apiRoutes(router: Router<Handler>): void {
     const user = getUserByName(ctx.app.db, ctx.params.username!);
     if (!user || hiddenFrom(user, ctx.auth.user)) return notFound();
     const query = repoQuery(ctx);
+    if (query instanceof Response) return query;
+    const owned = { ...query, owner: user.username };
+    const marker = timePhase(ctx.request, "tag", () => visibleReposMarker(ctx.app.db, ctx.auth.user, owned));
+    const viewer = ctx.auth.user === undefined ? "anon" : `u${Bun.hash(ctx.auth.user.id).toString(36)}`;
+    const headers = {
+      etag: `W/"user-repos-${Bun.hash(`${user.id}|${viewer}|${query.limit}|${query.cursor ?? ""}|${marker}`).toString(36)}"`,
+      "cache-control": "private, no-cache",
+      vary: "authorization, cookie",
+    };
+    if (holds(ctx.request, headers.etag)) return new Response(null, { status: 304, headers });
     const items = timePhase(ctx.request, "repos", () =>
       listReposByOwner(ctx.app.db, user.username, ctx.auth.user, query),
     );
     return timePhase(ctx.request, "render", () =>
-      json(paged(items, query.limit, (r) => r.id)),
+      json(paged(items, query.limit, (r) => r.id), 200, headers),
     );
   });
 
-  router.add("POST", "/api/v1/sessions", async (ctx) => {
-    // The answer sets a cookie, so a page on another site must not be able
-    // to sign a visitor in as someone else (login CSRF).
-    if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
-    // Anyone may call this, so its body is a stranger's (`http/limits.ts`).
-    const input = await boundedBody(ctx.request, STRANGER_MAX);
-    if (input === "too_large")
-      return apiError("too_large", 413, `at most ${STRANGER_MAX} bytes`);
-    const verified = await verifyPasswordThrottled(ctx.app.db, {
-      username: str(input.username),
-      password: str(input.password),
-      source: clientAddress(ctx.request),
-    });
-    if (!verified.ok)
-      return verified.error.reason === "throttled"
-        ? tooManyAttempts(verified.error.retryAfter)
-        : unauthorized();
-    const session = createSession(ctx.app.db, verified.value.id);
-    return json(publicUser(verified.value), 201, {
-      "set-cookie": sessionCookie(session.token, session.expiresAt, ctx.url, ctx.app.config.url),
-    });
-  });
-
-  router.add("DELETE", "/api/v1/sessions", (ctx) => {
-    // Cookie-authenticated logout, so it must be same-origin like any other
-    // cookie mutation — otherwise it's a cross-site forced-logout.
-    if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
-    signOutHere(ctx.app, cookieValue(ctx.request, "forge_session"));
-    return json({}, 200, {
-      "set-cookie": sessionCookie("", new Date(0), ctx.url, ctx.app.config.url),
-    });
-  });
+  tokenRoutes(router);
 
   userRoutes(router);
-
-  // ---- accounts: the owner's view of who joined (#660) ----
-  // Hidden from everyone but a forge admin: the door is not there.
-  const accountError = (error: string): Response =>
-    error === "not_found"
-      ? notFound()
-      : error === "not_allowed"
-        ? apiError(
-            "not_allowed",
-            422,
-            ADMIN_WORDS.selfSuspend,
-          )
-        : apiError(error, 500, "the account could not be removed");
-  const accountAdmin = (ctx: Ctx, scope: "ro" | "admin"): Response | undefined =>
-    ctx.auth.user?.isAdmin === true ? requireScope(ctx, scope) : notFound();
+  forgeOriginRoutes(router);
+  adminRoutes(router);
+  maintenanceRoutes(router);
+  maintenanceRunsRoutes(router);
+  diskReadingRoutes(router);
+  flagsRoutes(router);
+  appTemplateRoutes(router);
 
   // Open read hooks (#1789): the owner, or an agent holding `telemetry:read`.
   // Anyone else is refused; every agent read is logged.
   const telemetryRead =
-    (what: string, out: (ctx: Ctx, reader: Reader) => unknown) =>
+    (what: string, out: (ctx: Ctx, reader: Reader) => unknown | (() => Response)) =>
     (ctx: Ctx): Response => {
       notePhase(ctx.request, "session", takeSessionTime(ctx.request));
       if (!ctx.auth.user) return unauthorized();
@@ -1191,11 +1280,28 @@ export function apiRoutes(router: Router<Handler>): void {
       const reader = telemetryReader(ctx.app, ctx.auth.user);
       if (!reader) return forbidden();
       noteRead(ctx.app, ctx.auth.user, reader, what);
+      // Counted after the body, so a body that lists the readers does not count this read.
       const body = timePhase(ctx.request, "read", () => out(ctx, reader));
+      countRead(what, ctx.auth.user.username);
+      // A read may hand back a responder (headers, a 304); it runs in the render phase.
+      if (typeof body === "function") return timePhase(ctx.request, "render", body as () => Response);
       return timePhase(ctx.request, "render", () => json(body));
     };
-  router.add("GET", "/api/v1/telemetry/system", telemetryRead("system", (c, r) => systemFor(c.app, r)));
-  router.add("GET", "/api/v1/telemetry/flow", telemetryRead("flow", (c, r) => flowFor(c.app, r)));
+  router.add("GET", "/api/v1/telemetry/system", telemetryRead("system", (c, r) => systemWithReaders(c.app, r)));
+  // The flow read tells a poller how fresh it is: the etag is the reader kind and
+  // the copy's computed-at time, so a repeat inside the TTL is a 304 (#9068).
+  router.add("GET", "/api/v1/telemetry/flow", telemetryRead("flow", (c, reader) => {
+    const copy = flowCopy(c.app, reader);
+    const etag = flowEtag(reader, copy.at);
+    const headers = {
+      "cache-control": `private, max-age=${flowMaxAge(copy.at)}`,
+      vary: "authorization, cookie",
+      etag,
+    };
+    const sent = (c.request.headers.get("if-none-match") ?? "").split(",").map((t) => t.trim().replace(/^W\//, ""));
+    return () =>
+      sent.includes(etag) || sent.includes("*") ? new Response(null, { status: 304, headers }) : json(copy.body, 200, headers);
+  }));
   router.add("GET", "/api/v1/telemetry/home", telemetryRead("home", (c) => homeTruth(c.app, c.auth.user!)));
   router.add("GET", "/api/v1/telemetry/sources", telemetryRead("sources", () => ({ sources: sourcesOut() })));
   router.add("GET", "/api/v1/telemetry/history", telemetryRead("history", (c) => ({ points: historyFor(c.app) })));
@@ -1207,6 +1313,7 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   boardRoutes(router);
+  displayRoutes(router);
 
   // A domain drill and its verdict (`kernel/domain_drill.ts`): an admin
   // person's, kept whether green or red.
@@ -1236,64 +1343,6 @@ export function apiRoutes(router: Router<Handler>): void {
     return json(recordDrill(ctx.app.db, ctx.auth.user!.id, domain.key, observed, back, verdict), 201);
   });
 
-  // The forge's capacity (`core/capacity.ts`): read and changed live by an
-  // admin, never by an agent; anyone else is told the door is not there.
-  router.add("GET", "/api/v1/admin/capacity", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = accountAdmin(ctx, "ro");
-    if (denied) return denied;
-    const listed = timePhase(ctx.request, "capacity", () => listCapacity(ctx.app, ctx.auth.user));
-    return timePhase(ctx.request, "render", () => (listed.ok ? json({ items: listed.value.settings, changes: listed.value.changes, next_cursor: null }) : notFound()));
-  });
-
-  router.add("PUT", "/api/v1/admin/capacity/:key", async (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const input = await body(ctx.request);
-    const value = input.value === null ? null : str(input.value);
-    const changed = changeCapacity(ctx.app, ctx.auth.user, ctx.params.key!, value);
-    if (changed.ok) return json(changed.value);
-    if (changed.error === "not_found") return notFound();
-    return apiError(
-      changed.error,
-      422,
-      changed.error === "no_such_setting"
-        ? "no such capacity setting"
-        : SETTING_WORDS.outOfRange,
-    );
-  });
-
-  // The forge's limits (`settings/limits.ts`): the same door as capacity.
-  router.add("GET", "/api/v1/admin/limits", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = accountAdmin(ctx, "ro");
-    if (denied) return denied;
-    const listed = timePhase(ctx.request, "limits", () => listLimits(ctx.app, ctx.auth.user));
-    return timePhase(ctx.request, "render", () => (listed.ok ? json({ items: listed.value.limits, changes: listed.value.changes, next_cursor: null }) : notFound()));
-  });
-
-  router.add("PUT", "/api/v1/admin/limits/:key", async (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const input = await body(ctx.request);
-    const value =
-      input.value === null
-        ? null
-        : typeof input.value === "number" && Number.isFinite(input.value)
-          ? String(input.value)
-          : str(input.value);
-    const changed = changeLimit(ctx.app, ctx.auth.user, ctx.params.key!, value);
-    if (changed.ok) return json(changed.value);
-    if (changed.error.kind === "not_found") return notFound();
-    return apiError(
-      changed.error.kind,
-      422,
-      changed.error.kind === "no_such_limit"
-        ? "no such limit"
-        : changed.error.message,
-    );
-  });
-
   // The crew's scorecard (`core/scorecard.ts`): a read, so any scope of a
   // forge admin's token, as the MCP tool; 401 without one, 403 for anyone else.
   router.add("GET", "/api/v1/crew/scorecard", (ctx) => {
@@ -1305,311 +1354,66 @@ export function apiRoutes(router: Router<Handler>): void {
     return timePhase(ctx.request, "render", () => json(card));
   });
 
-  // Crew teams (`core/teams.ts`): a forge admin who is a person; the page's door.
-  router.add("GET", "/api/v1/admin/teams", (ctx) => {
+  // Route p50/p95 by the hour, kept 7 days (`perf/history.ts`); admin.
+  router.add("GET", "/api/v1/telemetry/routes", (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = accountAdmin(ctx, "ro");
+    const denied = requireScope(ctx, "ro");
     if (denied) return denied;
-    const read = timePhase(ctx.request, "teams", () => readTeams(ctx.app, ctx.auth.user));
-    return read.ok ? timePhase(ctx.request, "render", () => json({ teams: read.value.teams })) : notFound();
+    if (!ctx.auth.user) return unauthorized();
+    if (ctx.auth.user.isAdmin !== true) return forbidden();
+    const hours = readHours(ctx.url.searchParams.get("hours"));
+    if (hours === null) return apiError("invalid_hours", 400, "hours is a whole number from 1 to 168");
+    const rows = timePhase(ctx.request, "read", () => routeHours(ctx.app.db, hours));
+    return timePhase(ctx.request, "render", () => json({ hours, rows }));
   });
 
-  router.add("PUT", "/api/v1/admin/teams/:slug", async (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
+  // The week's line per crew member (`crew/week_card.ts`); as MCP `crew` with kind "week".
+  router.add("GET", "/api/v1/crew/week", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const denied = requireScope(ctx, "ro");
     if (denied) return denied;
-    const input = await body(ctx.request);
-    const { charter, dial, members } = input;
-    if (
-      (charter !== undefined && typeof charter !== "string") ||
-      (dial !== undefined && typeof dial !== "number" && typeof dial !== "string") ||
-      (members !== undefined &&
-        (!Array.isArray(members) || !members.every((m) => typeof m === "string")))
-    )
-      return apiError("invalid_body", 422, "send charter (text), dial (a whole number) and members (agent ids)");
-    const changed = changeTeam(ctx.app, ctx.auth.user, ctx.params.slug ?? "", {
-      ...(charter === undefined ? {} : { charter: charter as string }),
-      ...(dial === undefined ? {} : { dial: String(dial) }),
-      ...(members === undefined ? {} : { members: members as string[] }),
-    });
-    if (changed.ok) return json(changed.value);
-    if (changed.error === "not_found") return notFound();
-    return apiError(changed.error, 422, TEAM_SAYS[changed.error]);
+    if (ctx.auth.user?.isAdmin !== true) return apiError("forbidden", 403, ADMIN_WORDS.scorecard);
+    const members = timePhase(ctx.request, "week", () => weekCard(ctx.app.db));
+    return timePhase(ctx.request, "render", () => json({ days: WEEK_DAYS, members }));
   });
 
-  // Per-account quotas (`core/quotas.ts`): null is no limit. Each is
-  // asked when the thing is made or started (`settings/quotas.ts`), never of a
-  // forge admin.
-  router.add("GET", "/api/v1/admin/settings", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = accountAdmin(ctx, "ro");
+  // What the crew is doing right now, as MCP `now` answers it: a read, so
+  // any scope; the visibility checks live in `actions/crew_now.ts`.
+  router.add("GET", "/api/v1/crew/now", (ctx) => {
+    const denied = requireScope(ctx, "ro");
     if (denied) return denied;
-    const { read, signup } = timePhase(ctx.request, "settings", () => ({
-      read: readQuotas(ctx.app, ctx.auth.user),
-      signup: readSignup(ctx.app, ctx.auth.user),
-    }));
+    if (!ctx.auth.user) return unauthorized();
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const user = ctx.auth.user;
+    const items = timePhase(ctx.request, "crew", () => crewNow(ctx, user));
     return timePhase(ctx.request, "render", () =>
-      read.ok && signup.ok ? json({ ...read.value, ...signup.value, signupChanges: signup.value.changes, changes: read.value.changes }) : notFound());
-  });
-
-  router.add("PATCH", "/api/v1/admin/settings", async (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const input = await body(ctx.request);
-    if (input.signup !== undefined) {
-      if (input.quotas !== undefined)
-        return apiError("invalid_body", 422, "send signup or quotas, not both");
-      const set = changeSignup(ctx.app, ctx.auth.user, input.signup);
-      if (set.ok) return json({ signup: set.value });
-      if (set.error === "not_found") return notFound();
-      return apiError(set.error, 422, SIGNUP_WORDS);
-    }
-    const quotas = input.quotas;
-    if (typeof quotas !== "object" || quotas === null || Array.isArray(quotas))
-      return apiError("invalid_body", 422, "send {\"signup\": \"closed\"} or {\"quotas\": {\"repositories\": 5, \"apps\": null}}");
-    const changed = changeQuotas(ctx.app, ctx.auth.user, quotas as Record<string, unknown>);
-    if (changed.ok) return json({ quotas: changed.value });
-    if (changed.error === "not_found") return notFound();
-    return apiError(
-      changed.error,
-      422,
-      changed.error === "no_such_quota"
-        ? "no such quota"
-        : "a quota is a positive whole number, or null for no limit",
+      json({ items, next_cursor: null }),
     );
   });
 
-  // Invite links (#2335): minted once, listed without tokens, revoked by id.
-  router.add("POST", "/api/v1/admin/invites", async (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const input = await body(ctx.request);
-    const made = mintInviteLink(ctx.app, ctx.auth.user, input.days);
-    if (!made.ok)
-      return made.error === "invalid_days"
-        ? apiError("invalid", 422, SPEND_WORDS.inviteDays)
-        : notFound();
-    const origin = ctx.app.config.url ?? ctx.url.origin;
-    return json(
-      { ...made.value.invite, token: made.value.token, link: inviteLink(origin, made.value.token) },
-      201,
-    );
-  });
-
-  router.add("GET", "/api/v1/admin/invites", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = accountAdmin(ctx, "ro");
-    if (denied) return denied;
-    const query = offsetQuery(ctx.url.searchParams);
-    if ("error" in query) return offsetRefused(query.error);
-    const listed = timePhase(ctx.request, "invites", () => listInviteLinks(ctx.app, ctx.auth.user));
-    return listed.ok ? timePhase(ctx.request, "render", () => json(offsetPage(listed.value, query.limit, query.offset))) : notFound();
-  });
-
-  router.add("DELETE", "/api/v1/admin/invites/:id", (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const done = revokeInviteLink(ctx.app, ctx.auth.user, ctx.params.id!);
-    return done.ok ? json(done.value) : notFound();
-  });
-
-  router.add("GET", "/api/v1/admin/accounts", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = accountAdmin(ctx, "ro");
-    if (denied) return denied;
-    const query = offsetQuery(ctx.url.searchParams);
-    if ("error" in query) return offsetRefused(query.error);
-    const listed = timePhase(ctx.request, "accounts", () => listAccounts(ctx.app, ctx.auth.user));
-    return listed.ok ? timePhase(ctx.request, "render", () => json(offsetPage(listed.value, query.limit, query.offset))) : notFound();
-  });
-
-  router.add("POST", "/api/v1/admin/accounts/:username/suspend", async (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const input = await body(ctx.request);
-    const done = await suspendAccount(ctx.app, ctx.auth.user, ctx.params.username!, {
-      confirmed: input.confirm === true,
-    });
-    if (!done.ok && done.error === "last_owner")
-      return apiError(
-        "last_owner",
-        409,
-        `${lastOwnerSays(ctx.app.db, ctx.params.username!)}, or send {"confirm": true} to suspend anyway`,
-      );
-    return done.ok ? json({ username: done.value.username, suspendedAt: done.value.suspendedAt }) : accountError(done.error);
-  });
-
-  // A capped model grant, dollars a month; null (or 0) takes it back.
-  router.add("POST", "/api/v1/admin/accounts/:username/model-grant", async (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const input = await body(ctx.request);
-    const raw = input.usdPerMonth;
-    if (raw !== null && (typeof raw !== "number" || !Number.isFinite(raw)))
-      return apiError("invalid", 422, "usdPerMonth is a number of dollars, or null to take the grant back");
-    const done = setAccountGrant(ctx.app, ctx.auth.user, ctx.params.username!, raw === 0 ? null : raw);
-    if (done.ok) return json(done.value);
-    return done.error === "invalid_amount"
-      ? apiError("invalid", 422, SPEND_WORDS.usdPerMonth)
-      : done.error === "not_allowed"
-        ? apiError("not_allowed", 422, "a grant is for a person who is not an admin")
-        : notFound();
-  });
-
-  // Every person and their role.
-  router.add("GET", "/api/v1/admin/people", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const query = offsetQuery(ctx.url.searchParams);
-    if ("error" in query) return offsetRefused(query.error);
-    const people = timePhase(ctx.request, "people", () => listPeople(ctx.app.db));
-    return timePhase(ctx.request, "render", () => json(offsetPage(people, query.limit, query.offset)));
-  });
-
-  // Make a person a member (with an optional starter allowance, dollars a month) or a guest again.
-  router.add("POST", "/api/v1/admin/accounts/:username/role", async (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const input = await body(ctx.request);
-    const { role, usdPerMonth } = input;
-    if ((role !== "member" && role !== "guest") || (usdPerMonth !== undefined && usdPerMonth !== null && (typeof usdPerMonth !== "number" || !Number.isFinite(usdPerMonth))))
-      return apiError("invalid", 422, 'role is "member" or "guest"; usdPerMonth is dollars a month, or null');
-    const done = setRole(ctx.app, ctx.auth.user, ctx.params.username!, role, typeof usdPerMonth === "number" ? usdPerMonth : null);
-    if (done.ok) return json(done.value);
-    return done.error === "invalid_amount"
-      ? apiError("invalid", 422, SPEND_WORDS.usdPerMonth)
-      : done.error === "not_allowed"
-        ? apiError("not_allowed", 422, "a role is for a person who is not an admin")
-        : notFound();
-  });
-
-  // An account's daily and per-run model spend ceilings, dollars (any account, orgs too).
-  router.add("POST", "/api/v1/admin/accounts/:username/ceiling", async (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const input = await body(ctx.request);
-    const { dailyUsd, perRunUsd } = input;
-    const amount = (v: unknown): v is number | null =>
-      v === null || (typeof v === "number" && Number.isFinite(v));
-    if (!amount(dailyUsd) || !amount(perRunUsd))
-      return apiError("invalid", 422, "dailyUsd and perRunUsd are numbers of dollars, both null to take them back");
-    const done = setAccountCeilings(ctx.app, ctx.auth.user, ctx.params.username!, dailyUsd, perRunUsd);
-    if (done.ok) return json(done.value);
-    return done.error === "invalid_amount"
-      ? apiError("invalid", 422, SPEND_WORDS.ceilings)
-      : notFound();
-  });
-
-  router.add("POST", "/api/v1/admin/accounts/:username/unsuspend", (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const done = unsuspendAccount(ctx.app, ctx.auth.user, ctx.params.username!);
-    return done.ok ? json({ username: done.value.username, suspendedAt: null }) : accountError(done.error);
-  });
-
-  router.add("POST", "/api/v1/admin/accounts/:username/verify", (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const done = verifyAccount(ctx.app, ctx.auth.user, ctx.params.username!);
-    return done.ok
-      ? json({ username: done.value.username, verified: true })
-      : accountError(done.error);
-  });
-
-  router.add("DELETE", "/api/v1/admin/accounts/:username", async (ctx) => {
-    const denied = accountAdmin(ctx, "admin");
-    if (denied) return denied;
-    const input = await body(ctx.request);
-    if (input.retireOrgs === true) {
-      const name = ctx.params.username!;
-      if (input.confirm !== true) {
-        const plan = retirementPlan(ctx.app, ctx.auth.user, name);
-        return plan.ok ? json({ confirm_required: true, retire: plan.value.orgs, own: plan.value.own }) : accountError(plan.error);
-      }
-      const retired = await retireAndRemoveAccount(ctx.app, ctx.auth.user, name, {
-        confirmed: true,
-      });
-      if (!retired.ok) return accountError(retired.error);
-      if (retired.value.failed !== null)
-        return json(
-          { error: "delete_failed", failed: retired.value.failed, removed: retired.value.removed },
-          500,
-        );
-      return json({ removed: name, retired: retired.value.removed });
-    }
-    const done = await removeAccount(ctx.app, ctx.auth.user, ctx.params.username!);
-    if (!done.ok && done.error === "last_owner") {
-      const user = getUserByName(ctx.app.db, ctx.params.username!);
-      const orgs =
-        user === undefined
-          ? []
-          : soleOwnedOrgs(ctx.app.db, user.id).map((o) => o.username);
-      return apiError(
-        "last_owner",
-        409,
-        `${ctx.params.username} is the only person owning ${orgs.join(", ")}: make someone else an owner first`,
-      );
-    }
-    return done.ok ? json({ removed: ctx.params.username }) : accountError(done.error);
-  });
-
-  // Tokens are minted, listed, and revoked with the account itself (a
-  // session or the password) — never with another token.
-  router.add("POST", "/api/v1/tokens", async (ctx) => {
-    // Anyone may call this, so its body is a stranger's (`http/limits.ts`).
-    const input = await boundedBody(ctx.request, STRANGER_MAX);
+  // The token the forge's agent acts with in one conversation (#7648): only
+  // the person's own browser session mints it, same-origin, for themself.
+  // Room for `words` at their cap even when every character is escaped.
+  const CONVERSATION_BODY_MAX = 128_000;
+  router.add("POST", "/api/v1/conversation-tokens", async (ctx) => {
+    if (ctx.auth.via !== "session" || !ctx.auth.user) return unauthorized();
+    if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
+    const input = await boundedBody(ctx.request, CONVERSATION_BODY_MAX);
     if (input === "too_large")
-      return apiError("too_large", 413, `at most ${STRANGER_MAX} bytes`);
-    let user: User | undefined;
-    if (
-      (ctx.auth.via === "session" || ctx.auth.via === "edge") &&
-      ctx.auth.user
-    ) {
-      if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
-      // From a page, a site admin's token is minted only on purpose (#596).
-      if (ctx.auth.user.isAdmin && input.adminConfirm !== true)
-        return json(
-          {
-            error: "admin_confirm",
-            message:
-              "you are the forge's admin: send adminConfirm: true to mean a token that acts as admin, or mint it from your everyday account",
-          },
-          422,
-        );
-      user = ctx.auth.user;
-    } else {
-      const verified = await verifyPasswordThrottled(ctx.app.db, {
-        username: str(input.username),
-        password: str(input.password),
-        source: clientAddress(ctx.request),
-      });
-      if (!verified.ok && verified.error.reason === "throttled")
-        return tooManyAttempts(verified.error.retryAfter);
-      if (verified.ok) user = verified.value;
-      // With the password too, a site admin's token is minted on purpose.
-      if (user?.isAdmin && input.adminConfirm !== true)
-        return json(
-          {
-            error: "admin_confirm",
-            message:
-              "you are the forge's admin: send adminConfirm: true to mean a token that acts as admin, or mint it from your everyday account",
-          },
-          422,
-        );
-    }
-    if (!user) return unauthorized();
-    const scope = str(input.scope);
-    if (scope !== "ro" && scope !== "rw" && scope !== "admin") {
-      return json({ error: "invalid_scope" }, 422);
-    }
-    const minted = createToken(
-      ctx.app,
-      user,
-      str(input.name) || "unnamed",
-      scope,
-    );
-    if (!minted.ok && minted.error === "forbidden")
-      return apiError("forbidden", 403, ADMIN_TOKEN_WORDS);
+      return apiError("too_large", 413, `at most ${CONVERSATION_BODY_MAX} bytes`);
+    const { conversation, words = "" } = input;
+    if (conversation !== undefined && !(typeof conversation === "string" && VIA_FORM.test(`conversation:${conversation}`)))
+      return apiError("invalid_conversation", 422, "conversation is 1 to 40 lowercase letters or digits");
+    if (typeof words !== "string" || words.length > WORDS_MAX)
+      return apiError("invalid_words", 422, `words is a string of at most ${WORDS_MAX} characters`);
+    const minted = mintConversationToken(ctx.app, ctx.auth.user, {
+      ...(conversation === undefined ? {} : { conversation }),
+      words,
+    });
+    if (!minted.ok && minted.error === "invalid_via")
+      return apiError("invalid_conversation", 422, "not a conversation of yours");
+    if (!minted.ok && minted.error === "rate_limited")
+      return tryAgain("rate_limited", 429, "too many conversation tokens are alive; wait for one to expire", 60);
     if (!minted.ok) return unauthorized();
     return json(minted.value, 201);
   });
@@ -1653,7 +1457,7 @@ export function apiRoutes(router: Router<Handler>): void {
     );
     // The throttle is in the action, before the code is read (H2's shape).
     if (!made.ok && made.error === "rate_limited")
-      return json({ error: made.error, message: FIRST_ADMIN_WORDS[made.error] }, 429, { "retry-after": "60" });
+      return tryAgain(made.error, 429, FIRST_ADMIN_WORDS[made.error], 60);
     if (!made.ok)
       return apiError(made.error, made.error === "refused" ? 403 : 422, FIRST_ADMIN_WORDS[made.error]);
     return json(
@@ -1688,26 +1492,10 @@ export function apiRoutes(router: Router<Handler>): void {
       address: clientAddress(ctx.request),
     });
     if (!recovered.ok && recovered.error === "rate_limited")
-      return json({ error: recovered.error, message: FIRST_ADMIN_WORDS.rate_limited }, 429, { "retry-after": "60" });
+      return tryAgain(recovered.error, 429, FIRST_ADMIN_WORDS.rate_limited, 60);
     if (!recovered.ok) return apiError("refused", 403, FIRST_ADMIN_WORDS.refused);
     const { user, id, token, expiresAt } = recovered.value;
     return json({ user: publicUser(user), scope, id, token, expiresAt, expiresIn }, 201);
-  });
-
-  router.add("GET", "/api/v1/tokens", (ctx) => {
-    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const denied = requireAccount(ctx);
-    if (denied) return denied;
-    const tokens = timePhase(ctx.request, "tokens", () => listTokens(ctx.app.db, ctx.auth.user!.id));
-    return timePhase(ctx.request, "render", () => json(tokens));
-  });
-
-  router.add("DELETE", "/api/v1/tokens/:id", (ctx) => {
-    const denied = requireAccount(ctx);
-    if (denied) return denied;
-    const removed = deleteToken(ctx.app, ctx.auth.user, ctx.params.id!);
-    if (!removed.ok) return respondAccess(removed.error, 422);
-    return new Response(null, { status: 204 });
   });
 
   // Where an account is signed in: its person, or the forge's owner for any
@@ -1758,17 +1546,17 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/search", async (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const q = ctx.url.searchParams;
+    const refusal = searchRefusal(q.get("kind"), q.get("limit"));
+    if (refusal) return apiError(refusal.code, 422, refusal.message);
     const kind = searchKind(q.get("kind"));
     const query = q.get("q") ?? "";
     const greps =
       ctx.auth.user === undefined &&
       (kind === "code" || kind === "all") &&
-      cleanQuery(query) !== "";
+      greppable(query);
     const held = greps ? strangerCodeSearch(ctx.app, ctx.request) : undefined;
     if (held !== undefined && !held.allowed) {
-      const refused = apiError("rate_limited", 429, `${held.why}; sign in, or retry in ${held.retryAfter}s`);
-      refused.headers.set("retry-after", String(held.retryAfter));
-      return refused;
+      return tryAgain("rate_limited", 429, `${held.why}; sign in, or retry in ${retryAfterOf(held.retryAfter)}s`, held.retryAfter);
     }
     try {
       const input = {
@@ -1786,7 +1574,8 @@ export function apiRoutes(router: Router<Handler>): void {
       const found = await (mine === undefined
         ? search(ctx.app, ctx.auth.user, timed)
         : searchWithin(ctx.app, ctx.auth.user, mine, timed));
-      return timePhase(ctx.request, "render", () => json(found));
+      const note = searchNote(q.get("q"), kind);
+      return timePhase(ctx.request, "render", () => json(note === undefined ? found : { ...found, note }));
     } finally {
       held?.release();
     }
@@ -1797,8 +1586,19 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/repos", (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const query = repoQuery(ctx);
+    if (query instanceof Response) return query;
+    // A poller holding the tag gets 304 after the marker alone: the rows are
+    // not built, counted or serialised (#9115).
+    const marker = timePhase(ctx.request, "tag", () => visibleReposMarker(ctx.app.db, ctx.auth.user, query));
+    const viewer = ctx.auth.user === undefined ? "anon" : `u${Bun.hash(ctx.auth.user.id).toString(36)}`;
+    const headers = {
+      etag: `W/"repos-${Bun.hash(`${viewer}|${query.limit}|${query.cursor ?? ""}|${marker}`).toString(36)}"`,
+      "cache-control": "private, no-cache",
+      vary: "authorization, cookie",
+    };
+    if (holds(ctx.request, headers.etag)) return new Response(null, { status: 304, headers });
     const items = timePhase(ctx.request, "repos", () => listReposVisibleTo(ctx.app.db, ctx.auth.user, query));
-    return timePhase(ctx.request, "render", () => json(paged(items, query.limit, (r) => r.id)));
+    return timePhase(ctx.request, "render", () => json(paged(items, query.limit, (r) => r.id), 200, headers));
   });
 
   router.add("POST", "/api/v1/repos", async (ctx) => {
@@ -1828,15 +1628,18 @@ export function apiRoutes(router: Router<Handler>): void {
     return json(created.value, 201);
   });
 
-  router.add("GET", "/api/v1/repos/:owner/:name", (ctx) => {
+  router.add("GET", "/api/v1/repos/:owner/:name", async (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
     if (!repo) return notFound();
     const facts = timePhase(ctx.request, "counts", () => repoJson(ctx, repo));
     const audience = timePhase(ctx.request, "audience", () => audienceFor(ctx.app.db, repo, ctx.auth.user));
+    const credited = performance.now();
+    const credit = await creditFacts(ctx.app, repo, ctx.auth.user);
+    notePhase(ctx.request, "credit", performance.now() - credited);
     const rendering = performance.now();
     const upstream = upstreamFacts(ctx.app.db, repo, ctx.auth.user);
-    const res = json({ ...facts, audience, upstream });
+    const res = json({ ...facts, audience, upstream, credit });
     notePhase(ctx.request, "render", performance.now() - rendering);
     return res;
   });
@@ -1862,8 +1665,6 @@ export function apiRoutes(router: Router<Handler>): void {
       );
     if (input.plansNeedNod !== undefined && typeof input.plansNeedNod !== "boolean")
       return apiError("bad_plans_need_nod", 422, "plansNeedNod is true or false");
-    if (input.flowOnly !== undefined && typeof input.flowOnly !== "boolean")
-      return apiError("bad_flow_only", 422, "flowOnly is true or false");
     if (input.showProvenance !== undefined) {
       if (typeof input.showProvenance !== "boolean")
         return apiError("bad_show_provenance", 422, "showProvenance is true or false");
@@ -1911,16 +1712,19 @@ export function apiRoutes(router: Router<Handler>): void {
       ...(typeof input.plansNeedNod === "boolean"
         ? { plansNeedNod: input.plansNeedNod }
         : {}),
-      // FLOW ONLY: an admin's switch, never an agent's.
-      ...(typeof input.flowOnly === "boolean" ? { flowOnly: input.flowOnly } : {}),
     });
+    if (!updated.ok && updated.error === "origin_read_only") return apiError("origin_read_only", 409, "this repository mirrors a read-only origin, so it stays private to its owner; nothing was changed");
     if (!updated.ok) return respondAccess(updated.error, 422);
     // "Show where this came from" (#3293): an admin's, never an agent's.
     if (typeof input.showProvenance === "boolean") {
       const shown = showProvenance(ctx.app, ctx.auth.user, repo, input.showProvenance);
       if (!shown.ok) return respondAccess(shown.error, 422);
     }
-    return json(repoJson(ctx, updated.value));
+    // The line about who can see it moves with the setting, in this answer.
+    return json({
+      ...repoJson(ctx, updated.value),
+      audience: audienceFor(ctx.app.db, updated.value, ctx.auth.user),
+    });
   });
 
   router.add("DELETE", "/api/v1/repos/:owner/:name", async (ctx) => {
@@ -1929,8 +1733,28 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const deleted = await deleteRepo(ctx.app, ctx.auth.user, repo);
+    if (!deleted.ok && deleted.error === "has_pulls")
+      return apiError("has_pulls", 409, "a pull request was sent from this repository, and that pull request needs it");
     if (!deleted.ok) return respondAccess(deleted.error, 500);
     return json({}, 200);
+  });
+
+  // Move a repository to another owner (#569): its old paths answer 308.
+  router.add("POST", "/api/v1/repos/:owner/:name/transfer", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const input = await body(ctx.request);
+    const newOwner = input.newOwner;
+    if (typeof newOwner !== "string" || newOwner.length === 0 || newOwner.length > 64)
+      return apiError("bad_new_owner", 422, "newOwner is an account or organisation name");
+    const moved = await transferRepository(ctx.app, ctx.auth.user, repo, newOwner);
+    if (!moved.ok) {
+      if (moved.error === "not_found") return notFound();
+      return apiError(moved.error, TRANSFER_STATUS[moved.error], TRANSFER_SAID[moved.error]);
+    }
+    return json(repoJson(ctx, moved.value));
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/events", (ctx) => {
@@ -1946,8 +1770,11 @@ export function apiRoutes(router: Router<Handler>): void {
     const cursor = q.get("cursor");
     if (cursor !== null && !validEventsCursor(cursor))
       return apiError("invalid_cursor", 422, "cursor is the next_cursor of a page before");
+    const kind = q.get("kind");
+    if (kind !== null && !validEventsKind(kind))
+      return apiError("invalid_kind", 422, "kind is an event kind, like repo.settings_updated");
     const page = timePhase(ctx.request, "events", () =>
-      eventsPage(ctx.app.db, repo.id, ctx.auth.user, limit, cursor ?? undefined),
+      eventsPage(ctx.app.db, repo.id, ctx.auth.user, limit, cursor ?? undefined, kind ?? undefined),
     );
     return timePhase(ctx.request, "render", () => json(page));
   });
@@ -1979,13 +1806,22 @@ export function apiRoutes(router: Router<Handler>): void {
       // The cursor is the name of the last branch of the page before.
       const start = cursor === null ? 0 : all.findIndex((r) => r.name === cursor) + 1;
       if (start === 0 && cursor !== null) return undefined;
+      // Ahead/behind rests on the default's tip, so the tag covers every ref.
+      const etag = weakEtag(
+        [limit, cursor ?? "", repo.defaultBranch, repo.protectDefault, ...all.map((r) => `${r.name}\0${r.oid}`)].join("\n"),
+      );
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return { notModified: new Response(null, { status: 304, headers }) };
       const slice = all.slice(start, start + limit);
-      const compared = await compareBranches(dir, repo.defaultBranch, slice, all.length);
-      return { branches: compared.branches, more: start + limit < all.length };
+      return { slice, total: all.length, more: start + limit < all.length, headers };
     });
     if (page === undefined)
       return apiError("invalid_cursor", 422, "cursor is the next_cursor of a page before");
-    const items = page.branches.map((b) => ({
+    if ("notModified" in page) return page.notModified;
+    const compared = await timePhaseAsync(ctx.request, "compare", () =>
+      compareBranches(dir, repo.defaultBranch, page.slice, page.total),
+    );
+    const items = compared.branches.map((b) => ({
       name: b.name,
       oid: b.oid,
       isDefault: b.isDefault,
@@ -1995,7 +1831,7 @@ export function apiRoutes(router: Router<Handler>): void {
     }));
     const more = page.more;
     return timePhase(ctx.request, "render", () =>
-      json({ items, next_cursor: more ? items[items.length - 1]!.name : null }),
+      json({ items, next_cursor: more ? items[items.length - 1]!.name : null }, 200, page.headers),
     );
   });
 
@@ -2066,7 +1902,12 @@ export function apiRoutes(router: Router<Handler>): void {
       const from = at + 1;
       const items = all.slice(from, from + limit);
       const more = from + limit < all.length;
-      return json({ items, next_cursor: more ? items[items.length - 1]!.name : null });
+      // The tag is of the exact bytes sent: a pushed, moved or deleted tag changes them, and so does the page.
+      const text = JSON.stringify({ items, next_cursor: more ? items[items.length - 1]!.name : null });
+      const etag = weakEtag(text);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
     });
   });
 
@@ -2083,7 +1924,15 @@ export function apiRoutes(router: Router<Handler>): void {
     const log = await timePhaseAsync(ctx.request, "git", () =>
       commitLog(dirOf(ctx, repo), ref, { limit }),
     );
-    return timePhase(ctx.request, "render", () => json(log.ok ? log.value : []));
+    // The tag is of the exact bytes sent plus the ref and limit asked, so a moved tip
+    // misses, a push to another branch does not, and two queries never share a tag.
+    return timePhase(ctx.request, "render", () => {
+      const text = JSON.stringify(log.ok ? log.value : []);
+      const etag = weakEtag(`${ref}\n${limit}\n${text}`);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+    });
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/commits/:oid", async (ctx) => {
@@ -2118,7 +1967,17 @@ export function apiRoutes(router: Router<Handler>): void {
     );
     if (!found.ok) return notFound();
     return timePhase(ctx.request, "render", () =>
-      json(found.value, 200, { "cache-control": "no-store" }),
+      json(
+        {
+          ...found.value,
+          looks: looksOfCheck(ctx.app, ctx.auth.user, repo, {
+            id: found.value.runId ?? "",
+            commitOid: found.value.checkedCommit,
+          }),
+        },
+        200,
+        { "cache-control": "no-store" },
+      ),
     );
   });
 
@@ -2288,6 +2147,10 @@ export function apiRoutes(router: Router<Handler>): void {
   // ── labels ───────────────────────────────────────────────────────────
 
   labelsRoutes(router);
+  visionRoutes(router);
+  dataRoutes(router);
+  statementRoutes(router);
+  businessPlanRoutes(router);
   router.add(
     "PUT",
     "/api/v1/repos/:owner/:name/pulls/:number/labels",
@@ -2299,9 +2162,13 @@ export function apiRoutes(router: Router<Handler>): void {
   issueRoutes(router);
 
   reportRoutes(router);
+  startRoutes(router);
   appNoteRoutes(router);
   rollbackRoutes(router);
   takeBackRoutes(router);
+  conversationConfirmRoutes(router);
+  conversationTalkRoutes(router);
+  conversationBuildRoutes(router);
 
   // Which stage of the one flow each open issue is in, and what went live in
   // the last day (src/flow).
@@ -2388,10 +2255,20 @@ export function apiRoutes(router: Router<Handler>): void {
     const entries = await timePhaseAsync(ctx.request, "waves", () =>
       readWaves(repoDir(ctx.app.reposRoot, repo.ownerName, repo.name), repo.defaultBranch),
     );
+    // Sized over the pulls this viewer can read, as the page does.
     return timePhase(ctx.request, "render", () =>
       json({
         items: entries.flatMap((e) =>
-          e.ok ? [{ version: e.wave.version, date: e.wave.date, headline: e.wave.headline }] : [],
+          e.ok
+            ? [
+                {
+                  version: e.wave.version,
+                  date: e.wave.date,
+                  headline: e.wave.headline,
+                  ...waveSize(carriedPulls(ctx.app.db, pullRefs(e.wave), ctx.auth.user)),
+                },
+              ]
+            : [],
         ),
         next_cursor: null,
       }),
@@ -2550,7 +2427,35 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!built)
       for (const name of ["graph", "marks", "pillars", "asktolive", "held", "render"])
         notePhase(request, name, 0, hit);
-    return json(ctx.url.searchParams.get("done") === "1" ? value : withoutDone(value));
+    // Tagged by the facts served (never an age that ticks) and the reader's sealed
+    // scope, so two scopes never share a tag; access was checked by loadRepo.
+    const text = JSON.stringify(ctx.url.searchParams.get("done") === "1" ? value : withoutDone(value));
+    const etag = weakEtag(`${scopeKey(scope)}\n${text}`);
+    const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+    if (holds(request, etag)) {
+      notePhase(request, "not-modified", 0, true);
+      return new Response(null, { status: 304, headers });
+    }
+    return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+  });
+  // The roadmap (#10303): the pillars in order, what is building, what landed,
+  // what is next and when each finishes. The page's own model; 404 where the
+  // repository names no pillars.
+  router.add("GET", "/api/v1/repos/:owner/:name/roadmap", (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const road = timePhase(ctx.request, "render", () =>
+      roadmapOf(ctx.app.db, repo, ctx.auth.user),
+    );
+    if (road === undefined) return notFound();
+    return new Response(JSON.stringify(road), {
+      headers: {
+        "content-type": "application/json",
+        "cache-control": "private, no-cache",
+        vary: "authorization, cookie",
+      },
+    });
   });
   // What people asked of the crew in the repositories the caller can write —
   // by default what has nothing merged yet, oldest first — and what became of each (core/asked.ts, the /asked page).
@@ -2608,7 +2513,8 @@ export function apiRoutes(router: Router<Handler>): void {
           kind === "next" ||
           kind === "land" ||
           kind === "retry" ||
-          kind === "guard"
+          kind === "guard" ||
+          kind === "place"
             ? kind
             : undefined,
         limit,
@@ -2632,14 +2538,14 @@ export function apiRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const { query, pulls } = timePhase(ctx.request, "list", () => {
-      const query = listQuery(ctx);
-      const pulls = listPulls(ctx.app.db, repo.id, {
+    const query = listQuery(ctx);
+    if (query instanceof Response) return query;
+    const pulls = timePhase(ctx.request, "list", () =>
+      listPulls(ctx.app.db, repo.id, {
         ...query,
         ...sealedScope(ctx.app.db, repo, ctx.auth.user),
-      });
-      return { query, pulls };
-    });
+      }),
+    );
     const states = await timePhaseAsync(ctx.request, "merge", async () =>
       pullMergeStates(
         await Promise.all(
@@ -2649,15 +2555,37 @@ export function apiRoutes(router: Router<Handler>): void {
     );
     const items = timePhase(ctx.request, "labels", () => {
       const siblings = variantSiblings(ctx.app.db, pulls);
+      // The check word and preview address the pull page shows, so a client
+      // lists "where to try it" without a request per pull.
+      const checks = latestRunsForIssues(ctx.app.db, pulls.map((p) => p.id));
+      // An address only where the pull page's preview card shows one: the
+      // environments `envsFor` hands this viewer (a private app shows none).
+      const record = getAppByRepo(ctx.app.db, repo.id);
+      const runtime = record === undefined ? undefined : appsRuntime(ctx.app);
+      const live = new Set(
+        record === undefined ? [] : envsFor(ctx.app, ctx.auth.user, record).map((e) => e.env),
+      );
       return withLabelsMany(ctx, pulls).map((item, i) => ({
         ...item,
+        author: item.originAuthor ?? item.authorName,
+        check: checkWord(checks.get(item.id), item.headOid),
+        preview:
+          record !== undefined && runtime !== undefined && item.state === "open" && item.mergedAt === null && live.has(previewEnv(item.number))
+            ? runtime.urlFor(record, previewEnv(item.number))
+            : null,
         variantSiblings: siblings[i] ?? [],
         ...(states[i] ?? {}),
       }));
     });
-    return timePhase(ctx.request, "render", () =>
-      json(paged(items, query.limit, (p) => p.number)),
-    );
+    // The tag is of the exact bytes sent, so a new verdict, head or state is never hidden behind a 304;
+    // the page, state, limit, cursor and fields are in the body or the query that chose it.
+    return timePhase(ctx.request, "render", () => {
+      const text = JSON.stringify(paged(items, query.limit, (p) => p.number));
+      const etag = weakEtag(text);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+    });
   });
 
   // A writer hands a child its own narrow credential for this repository
@@ -2791,16 +2719,14 @@ export function apiRoutes(router: Router<Handler>): void {
         live &&
         checkStale(
           checkSummary(ctx.app.db, found.pull.id, status.headOid).run,
-          await resolveOid(
-            await pullDirOf(ctx, found.repo, found.pull),
-            `refs/heads/${found.pull.baseBranch}`,
-          ),
+          await baseTip(await pullDirOf(ctx, found.repo, found.pull), `refs/heads/${found.pull.baseBranch}`),
         ),
     );
     return timePhase(ctx.request, "render", () => {
       const hold = getHold(ctx.app.db, found.pull.id);
-      return json({
+      const text = JSON.stringify({
         ...withLabels(ctx, found.pull),
+        check: checkWord(checkSummary(ctx.app.db, found.pull.id, status.headOid).run ?? undefined, status.headOid),
         checkStale: checkStaleNow,
         variantSiblings: variantSiblings(ctx.app.db, [found.pull])[0] ?? [],
         ...(live ? { mergeable: status.mergeable, conflicts: status.conflicts } : {}),
@@ -2809,6 +2735,11 @@ export function apiRoutes(router: Router<Handler>): void {
         ...(diff === undefined ? {} : { diff }),
         hold: hold === undefined ? null : holdJson(hold),
       });
+      // Tagged by the exact bytes sent, after access was checked: a new head, verdict, review or merge is never hidden behind a 304.
+      const etag = weakEtag(text);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
     });
   });
 
@@ -2867,7 +2798,7 @@ export function apiRoutes(router: Router<Handler>): void {
             return apiError(
               "forbidden",
               403,
-              "a planner may close only an agent's pull whose issue is closed",
+              PLANNER_REFUSALS.pull,
             );
           return originAware(changed.error, 409);
         }
@@ -2944,10 +2875,43 @@ export function apiRoutes(router: Router<Handler>): void {
       );
       if (!merged.ok) {
         if (typeof merged.error !== "string")
-          return json({ error: merged.error.kind }, 409);
+          return merged.error.kind === "guarded"
+            ? json({ error: "guarded", message: guardedRefusal(merged.error.paths), paths: merged.error.paths }, 409)
+            : merged.error.kind === "team_review_required"
+              ? json({ error: merged.error.kind, message: teamHoldRefusal(merged.error.teams), teams: merged.error.teams }, 409)
+              : json({ error: merged.error.kind }, 409);
         return originAware(merged.error, 409);
       }
       return json({ merged: true, ...merged.value });
+    },
+  );
+
+  // Land the author's commits up to `upTo` as their own merge commit (#9010).
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/pulls/:number/slices",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      const input = await body(ctx.request);
+      const landed = await landSlice(
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.pull,
+        str(input.upTo),
+      );
+      if (!landed.ok) {
+        if (typeof landed.error !== "string")
+          return json({ error: landed.error.kind }, 409);
+        if (landed.error === "bad_slice" || landed.error === "sealed" || landed.error === "not_fork")
+          return json({ error: landed.error }, 422);
+        if (landed.error === "held") return json({ error: "held" }, 409);
+        return originAware(landed.error, 409);
+      }
+      return json(landed.value);
     },
   );
 
@@ -3013,6 +2977,20 @@ export function apiRoutes(router: Router<Handler>): void {
         },
         201,
       );
+    },
+  );
+
+  // A pull's looks, newest first, from its own preview environment and only
+  // the ones this reader may fetch as a picture (`looks/readable.ts`).
+  router.add(
+    "GET",
+    "/api/v1/repos/:owner/:name/pulls/:number/looks",
+    (ctx) => {
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      const items = pullLooks(ctx.app, found.repo, found.pull, ctx.auth.user);
+      const fit = pullFit(ctx.app, found.repo, found.pull, ctx.auth.user);
+      return json({ items, fit });
     },
   );
 
@@ -3134,12 +3112,19 @@ export function apiRoutes(router: Router<Handler>): void {
           422,
           `comments is a list of {"path","line","side","body"}. ${ANCHOR_FORMAT}`,
         );
+      const pass = passOf(input.ticks, input.left);
+      if (pass === undefined)
+        return apiError(
+          "invalid_boxes",
+          422,
+          `ticks is a list of {"issue","box"} and left a list of {"issue","box","why"}, at most ${MAX_PASS} each; box counts the issue's unticked boxes from 1`,
+        );
       const submitted = await submitReview(
         ctx.app,
         ctx.auth.user,
         found.repo,
         found.pull,
-        { state, body: str(input.body), comments },
+        { state, body: str(input.body), comments, pass },
       );
       if (!submitted.ok) {
         if (submitted.error === "self_review")
@@ -3319,6 +3304,7 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   hookRoutes(router);
+  keeperRoutes(router);
 
   // Sync one mirror, or let a fork take its parent's updates. A mirror only
   // pulls, so any writer may ask. A fork fast-forwards, or writes a merge
@@ -3385,12 +3371,31 @@ export function apiRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     if (!ctx.auth.user) return unauthorized();
     const q = ctx.url.searchParams;
-    const limit = pageLimit(q.has("limit") ? Number(q.get("limit")) : undefined);
+    const asked = readLimit(ctx, undefined);
+    if (asked instanceof Response) return asked;
+    const limit = pageLimit(asked);
     const ops = timePhase(ctx.request, "ops", () =>
       listFleetOps(ctx.app, ctx.auth.user!, limit, q.get("cursor") ?? undefined),
     );
     if (!ops.ok) return respondFleet(ops.error);
     return timePhase(ctx.request, "render", () => json(paged(ops.value, limit, (op) => op.id)));
+  });
+
+  // The rows a query line selects, as `/fleet` shows them (`fleet/rows.ts`).
+  router.add("GET", "/api/v1/fleet/rows", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const q = ctx.url.searchParams.get("q") ?? "";
+    if (q.length > 500) return apiError("invalid_query", 422, "q is over 500 characters");
+    if (q.trim() === "") return apiError("invalid_query", 422, "q is a fleet query line, like: repo autonomy:autonomous");
+    const view = timePhase(ctx.request, "rows", () => viewFleet(ctx.app.db, ctx.auth.user, q));
+    if (!view.ok) return apiError("invalid_query", 422, view.error);
+    const asked = ctx.url.searchParams.get("sort");
+    const sort = asked === null || asked === "" ? undefined : readSort(view.kind, asked);
+    if (asked !== null && asked !== "" && sort === undefined)
+      return apiError("invalid_sort", 422, "sort is a column of the kind, optionally led by -");
+    return timePhase(ctx.request, "render", () =>
+      json({ kind: view.kind, columns: COLUMNS[view.kind], items: sortRows(view.rows, sort) }),
+    );
   });
 
   router.add("GET", "/api/v1/fleet/ops/:id", (ctx) => {
@@ -3428,7 +3433,7 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/metrics", (ctx) => {
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
-    return new Response(egressMetrics(egressSnapshot()) + forgeMetrics(ctx.app.db, appSources(ctx.app)), {
+    return new Response(egressMetrics(egressRowsFor(ctx.app), egressTotalsFor(ctx.app)) + forgeMetrics(ctx.app.db, appSources(ctx.app)), {
       headers: {
         "content-type": "text/plain; version=0.0.4; charset=utf-8",
         "cache-control": "no-store",
@@ -3440,7 +3445,11 @@ export function apiRoutes(router: Router<Handler>): void {
   // Explore (#607): the rows /explore shows, for the same one line.
   router.add("GET", "/api/v1/explore", async (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const query = parseExploreQuery(ctx.url.searchParams.get("q") ?? "");
+    const line = exploreLineFrom((name) => ctx.url.searchParams.get(name));
+    const { query, unknown } = readExploreLine(line);
+    const suggest = exploreSuggestion(line);
+    if (unknown.length > 0)
+      return json({ error: "unknown_filter", message: exploreNote(unknown), ...(suggest === undefined ? {} : { suggest: suggest.line }) }, 400);
     const mine = runRepos(ctx.app, ctx.auth);
     // A run token is shown only the rows of its own repositories; the cut
     // and the cursor are made from those rows alone.
@@ -3450,13 +3459,34 @@ export function apiRoutes(router: Router<Handler>): void {
         : (row: ExploreRow) =>
             row.repo !== undefined &&
             mine.some((r) => r.ownerName.toLowerCase() === row.repo!.owner.toLowerCase() && r.name.toLowerCase() === row.repo!.name.toLowerCase());
+    // The tag names the line, the cursor, the viewer and the forge's write clock
+    // (which moves on any like, fork, push or visibility change), and no clock
+    // for the ranking, so the tag is deterministic. Freshness ranks
+    // drift only by age, so a repeat may keep an order a little behind until
+    // the next write moves the clock. A repeat is answered before the explore
+    // phase runs, and only for a cursor that parses (`*` must not hide a 400).
+    const stamp = writeStamp(ctx.app.db);
+    let headers: Record<string, string> = {};
+    const cursor = ctx.url.searchParams.get("cursor");
+    if (cursor !== null && !cursorFits(cursor, query))
+      return apiError("invalid_cursor", 400, "cursor is the next_cursor of a page before");
+    if (stamp !== undefined) {
+      const viewer = ctx.auth.user === undefined ? "anonymous" : `${ctx.auth.user.id}${ctx.auth.user.isAdmin ? ":admin" : ""}`;
+      const confined = mine === undefined ? "" : mine.map((r) => r.id).join(",");
+      const children = ctx.auth.user?.isAdmin === true ? JSON.stringify((await listChildren(ctx.app)).map((c) => [c.name, c.done])) : "";
+      const etag = weakEtag(
+        [exploreLine(query), cursor ?? "", viewer, confined, stamp, children].join("\n"),
+      );
+      headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+    }
     const page = await timePhaseAsync(ctx.request, "explore", () =>
-      explorePage(ctx.app, ctx.auth.user, query, ctx.url.searchParams.get("cursor"), visible),
+      explorePage(ctx.app, ctx.auth.user, query, cursor, visible),
     );
     if (page === null)
       return apiError("invalid_cursor", 400, "cursor is the next_cursor of a page before");
-    const items = page.items;
-    return timePhase(ctx.request, "render", () => json({ query: exploreLine(query), items, next_cursor: page.nextCursor }));
+    const items = rowsWithWhy(ctx.app, query, page.items);
+    return timePhase(ctx.request, "render", () => json({ query: exploreLine(query), ...(unknown.length === 0 ? {} : { note: exploreNote(unknown) }), ...(suggest === undefined ? {} : { suggest: suggest.line }), items, next_cursor: page.nextCursor }, 200, headers));
   });
 
   // Make it yours (#606): a fork with its app, planned unless dryRun is
@@ -3479,13 +3509,13 @@ export function apiRoutes(router: Router<Handler>): void {
     });
     if (!made.ok)
       return made.error.kind === "limit"
-        ? json(
-            {
-              error: "limit",
-              message: `at most ${COPIES_PER_DAY} copies a day; another after ${made.error.resetsAt}`,
-              resetsAt: made.error.resetsAt,
-            },
+        ? tryAgain(
+            "limit",
             429,
+            `at most ${COPIES_PER_DAY} copies a day; another after ${made.error.resetsAt}`,
+            (Date.parse(String(made.error.resetsAt)) - Date.now()) / 1000,
+            {},
+            { resetsAt: made.error.resetsAt },
           )
         : made.error.kind === "repository_limit"
         ? apiError("repository_limit", 403, made.error.message)
@@ -3553,6 +3583,22 @@ export function apiRoutes(router: Router<Handler>): void {
     return kept ? json({ ok: true }) : apiError("not_found", 404, "no such door");
   });
 
+  // A mirror's origin saying a pull moved (`origins/hook.ts`). Signed; every
+  // refusal is the same 404.
+  router.add("POST", "/api/v1/repos/:owner/:name/origin-hook", async (ctx) => {
+    // Not `loadRepo`: the origin is no reader here, the signature is the proof.
+    const repo = getRepo(ctx.app.db, ctx.params.owner ?? "", ctx.params.name ?? "");
+    const bytes = await readBounded(ctx.request, HOOK_BODY_MAX);
+    if (!repo || bytes === "too_large") return notFound();
+    const raw = new TextDecoder().decode(bytes);
+    const signature = signatureOf(ctx.request.headers);
+    // The origin this repository mirrors, or the mirror it pushes to (#9011).
+    const kept =
+      (await receiveOriginHook(ctx.app, repo, raw, signature)) ||
+      (await receiveMirrorHook(ctx.app, repo, raw, signature));
+    return kept ? json({ ok: true }) : notFound();
+  });
+
   // The family (#425): the parent for anyone, the children for an admin.
   router.add("GET", "/api/v1/family", async (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -3565,6 +3611,12 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   forgeRoutes(router);
+  packRoutes(router);
+  forgeViewRoutes(router);
+  economicsRoutes(router);
+  billingRoutes(router);
+  codesRoutes(router);
+  releasesRoutes(router);
 
   router.add("GET", "/api/v1/apps", (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -3591,19 +3643,44 @@ export function apiRoutes(router: Router<Handler>): void {
     if (denied) return denied;
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const input = await body(ctx.request);
-    const made = await newApp(ctx.app, ctx.auth.user, {
-      name: str(input.name),
+    const options: Omit<NewAppInput, "name" | "description"> = {
       ...(typeof input.owner === "string" ? { owner: input.owner } : {}),
-      ...(typeof input.description === "string"
-        ? { description: input.description }
-        : {}),
       ...(input.visibility === "public" || input.visibility === "private"
         ? { visibility: input.visibility }
         : {}),
       ...(typeof input.agent === "string" ? { agent: input.agent } : {}),
+      ...(typeof input.template === "string" && input.template !== "" ? { template: input.template } : {}),
       // Only a real boolean asks; like the other fields, anything else is ignored.
       ...(input.pick === true ? { pickAgent: true } : {}),
-    }, (name, ms) => notePhase(ctx.request, name, ms));
+    };
+    const onPhase = (name: string, ms: number) => notePhase(ctx.request, name, ms);
+    // No `name` but a `sentence`: the name is derived, as the web form and terminal do.
+    const fromSentence = str(input.name) === "" && typeof input.sentence === "string";
+    let made: { ok: true; value: NewAppResult } | { ok: false; error: string };
+    if (fromSentence) {
+      const r = await newAppFromSentence(
+        ctx.app,
+        ctx.auth.user,
+        { ...options, sentence: str(input.sentence) },
+        onPhase,
+      );
+      made = r.ok ? { ok: true, value: r } : { ok: false, error: r.code };
+    } else {
+      made = await newApp(
+        ctx.app,
+        ctx.auth.user,
+        {
+          name: str(input.name),
+          ...(typeof input.description === "string"
+            ? { description: input.description }
+            : {}),
+          ...options,
+        },
+        onPhase,
+      );
+    }
+    if (!made.ok && made.error === "no_name")
+      return apiError("no_name", 422, NO_NAME_ERROR);
     if (!made.ok) {
       if (made.error === "repository_limit")
         return apiError("repository_limit", 403, repositoryLimitMessage(ctx.app, ctx.auth.user!));
@@ -3616,6 +3693,8 @@ export function apiRoutes(router: Router<Handler>): void {
             ctx.auth.user?.username ||
             "",
         );
+      // A template the caller cannot read answers as one that does not exist.
+      if (made.error === "no_such_template") return apiError("no_such_template", 404, TEMPLATE_ERRORS.no_such_template);
       return respondAccess(made.error, 422);
     }
     return json(
@@ -3735,12 +3814,22 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   appRoutes(router);
+  appPullsRoutes(router);
+  buildRoutes(router);
+  buildShotRoutes(router);
+  buildCartRoutes(router);
+  iterationRoutes(router);
 
   egressGrantRoutes(router);
+  printRoutes(router);
 
   promptRoutes(router);
 
+  cloudRoutes(router);
+
   secretRoutes(router);
+  drillRoutes(router);
+  featureRoutes(router);
 
   // What the crew's runs here spent over a window (`core/usage.ts`):
   // tokens, cost, wall time and outcome, by subscription, agent and issue.
@@ -3784,6 +3873,13 @@ export function apiRoutes(router: Router<Handler>): void {
       422,
       "who (1–100 characters) and some spend (tokensIn, tokensOut: whole numbers; usd: 0–10000); model, note (≤500) and issue (a number here) are optional",
     );
+  });
+
+  // The forge-wide twin: today, last24h and headroom across the apps the caller writes.
+  router.add("GET", "/api/v1/usage", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    if (!ctx.auth.user) return unauthorized();
+    return json(readForgeUsage(ctx.app, ctx.auth.user));
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/usage", (ctx) => {
@@ -3866,19 +3962,46 @@ export function apiRoutes(router: Router<Handler>): void {
     const q = ctx.url.searchParams;
     const kind = q.get("kind");
     const env = q.get("env");
+    const wanted = q.get("state");
+    const state = RUN_STATES.find((s) => s === wanted);
+    if (wanted !== null && state === undefined)
+      return apiError("invalid_state", 422, `state is one of ${RUN_STATES.join(", ")}`);
     const limit = Math.min(Math.max(Number(q.get("limit")) || 50, 1), 200);
-    const runs = timePhase(ctx.request, "runs", () =>
-      listRepoRuns(ctx.app, ctx.auth.user, repo, {
-        ...(kind === "deploy" || kind === "agent" ? { kind } : {}),
-        ...(env !== null && isEnvName(env) ? { env } : {}),
-        ...(q.get("cursor") ? { cursor: q.get("cursor")! } : {}),
-        limit,
-      }),
-    );
-    if (!runs.ok) return notFound();
+    const options: ListRunsOptions = {
+      ...(kind === "deploy" || kind === "agent" ? { kind } : {}),
+      ...(env !== null && isEnvName(env) ? { env } : {}),
+      ...(state === undefined ? {} : { state }),
+      ...(q.get("cursor") ? { cursor: q.get("cursor")! } : {}),
+      limit,
+    };
+    // The tag: repository, viewer, what shapes the page, and a marker over
+    // the page's rows (every field a row shows), so a repeat is a 304 before
+    // the list is built.
+    // Someone who may not read the repository gets the 404 of the list path,
+    // never a tag or a 304; someone who may not read its runs gets the list
+    // as it is (empty), untagged.
+    if (!requireReader(ctx.app, ctx.auth.user, repo).ok) return notFound();
+    const viewer = ctx.auth.user === undefined ? "anonymous" : ctx.auth.user.id;
+    let headers: Record<string, string> = {};
+    if (mayReadRuns(ctx.app, ctx.auth.user, repo)) {
+      const etag = timePhase(ctx.request, "tag", () =>
+        weakEtag(
+          [repo.id, viewer, JSON.stringify(options), runsViewKey(ctx.app, ctx.auth.user, repo, options)].join("\n"),
+        ),
+      );
+      headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+    }
     // Already as this reader may see them (`runForReader`): a stranger's
-    // runs carry no cost, turns, agent session or node.
-    return timePhase(ctx.request, "render", () => json(paged(runs.value, limit, (r) => r.id)));
+    // runs carry no cost, turns, agent session or node. Each row also names
+    // its agent and its pull or issue (`nameRuns`), so a client never parses
+    // the branch.
+    const runs = timePhase(ctx.request, "runs", () => {
+      const listed = listRepoRuns(ctx.app, ctx.auth.user, repo, options);
+      return listed.ok ? nameRuns(ctx.app, listed.value) : undefined;
+    });
+    if (runs === undefined) return notFound();
+    return timePhase(ctx.request, "render", () => json(paged(runs, limit, (r) => r.id), 200, headers));
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/runs/:id", (ctx) => {
@@ -4078,6 +4201,9 @@ export function apiRoutes(router: Router<Handler>): void {
           state: latest?.state ?? "none",
           required: found.repo.requireChecks,
           run: latest ?? null,
+          looks: latest
+            ? looksOfCheck(ctx.app, ctx.auth.user, found.repo, { id: latest.id, commitOid: latest.commitOid })
+            : [],
           runs,
         }),
       );
@@ -4136,6 +4262,7 @@ export function apiRoutes(router: Router<Handler>): void {
   }
 
   agentRoutes(router);
+  subscriptionRoutes(router);
 
   router.add("GET", "/api/v1/repos/:owner/:name/crew", (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));

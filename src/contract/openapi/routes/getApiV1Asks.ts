@@ -5,4 +5,5 @@ export const route: Route = {
   path: "/api/v1/asks",
   summary: "What asks the caller, ranked, with the week's measure (ro scope; never cached)",
   auth: true,
+  role: "member",
 };

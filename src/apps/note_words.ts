@@ -15,3 +15,9 @@ export const NOTE_FAILED = "That did not go through. Try again.";
 /** A note longer than one issue body may be. */
 export const NOTE_TOO_LONG = "That is too long to send in one go.";
 
+
+/** No network: the words stay in the box. */
+export const NOTE_OFFLINE = "You are offline. Your words are still here; send again when you are back.";
+
+/** Too many notes: the wait, in seconds, goes between the two halves. */
+export const NOTE_WAIT = ["Too many notes just now. Your words are still here; try again in ", " seconds."] as const;

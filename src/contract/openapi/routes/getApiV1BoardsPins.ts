@@ -5,4 +5,5 @@ export const route: Route = {
   path: "/api/v1/boards/pins",
   summary: "List the owner's pinned panels in order; answers { pins: [{ slug, title, panel }] }",
   auth: true,
+  role: "admin",
 };

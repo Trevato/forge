@@ -25,3 +25,13 @@ is `data-state` on `.map-node`, not a class.
 - `.map-edge-done` — an edge with a closed issue at either end, faded.
 - `.map-toggle` — the link beside the counts that swaps between "Show done" (`?done=1`) and "Open only"; padded, 44px tall under `pointer: coarse`. It is a link, not a badge.
 - `.map-ask` — a pillar row's lead-time figures in the side column, inline, with the hover title saying what they measure.
+
+The Ready now list's **First** button (a writer's `method="post"` form in the row's trail) and its "first, by <who>" meta line add no class: they are `row`'s `trail` and `meta` and the outline `btn`. The list is `.setting-list`, so the meta wraps and under 640px the trail drops to its own line.
+
+## Rows and space, not boxes (#9760)
+
+The side column is two headed lists, Ready now first, then By pillar and Blocked on: each a bare `ul.list.setting-list` under its heading (no card box), one row an
+issue on the page's one background, no frame and no badge. A row says its word (ready, blocked, waiting, held, parked), what
+stands in front of it (`waits for N`) and what it holds up; a pillar row says its counts as muted text. `.map-canvas` has
+no border: the drawing sits on the page. The First button, its same-origin POST form and the 390px single column are
+unchanged. No new class.

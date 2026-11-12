@@ -292,6 +292,7 @@ describe("the queue's extra gates and the pull checks' slots", () => {
     const [first, second] = [await entry(1), await entry(2)];
     const one = enqueue(repoId, [first], gate, options);
     for (let i = 0; i < 2000 && open < 1; i++) await Bun.sleep(5);
+    if (open < 1) throw new Error(`never came: still waiting while open < 1`);
     const two = enqueue(repoId, [second], gate, options);
     // Either it gates beside the first, or it still waits in line for it.
     for (let i = 0; i < 100 && open < 2; i++) await Bun.sleep(5);

@@ -110,7 +110,8 @@ describe("/system as btop", () => {
     expect(r["cores"]).toContain('class="row-title"');
     expect(r["cores"]).toContain("<meter");
     expect(r["mem"]).toContain("load");
-    expect(r["sys-disks"]).toContain('class="card"');
+    expect(r["sys-disks"]).toContain('class="row"');
+    expect(r["sys-disks"]).not.toContain("card");
     expect(r["sys-disks"]).toContain('data-io="nvme0n1"');
     expect(r["sys-disks"]).toContain('data-net="eth0"');
     expect(r["sys-procs"]).toContain('class="table"');
@@ -132,7 +133,7 @@ describe("/system as btop", () => {
     expect(r["cores"]).toContain('aria-label="cpu0 ');
     expect(r["mem"]).toContain('aria-label="swap 512 MiB / 1.0 GiB"');
     const page = await Bun.file("src/web/pages/system.ts").text();
-    expect(page).toMatch(/class="js-only">Sort by[\s\S]*data-sort="mem"/);
+    expect(page).toMatch(/class="js-only[^"]*">Sort by[\s\S]*data-sort="mem"/);
   });
 
   test("the sort puts kinds in order and the biggest first by CPU or memory, ties staying put", () => {

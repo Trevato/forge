@@ -99,6 +99,11 @@ closed per day drawn as bars. They share a chart and not an axis, because
 a level and a flow are different units: the line says whether the plan is
 converging, the bars say whether anything is moving.
 
+## The roadmap
+
+`/:owner/:name/map` opens on the roadmap (#10303), `?view=graph` is the
+drawing. How to read it and where else it is: [docs/features/roadmap.md](features/roadmap.md).
+
 The same three lists are data at `GET /api/v1/repos/:owner/:name/map`,
 which is what an agent reads before it starts (`issues` and `edges` hold only open issues; `?done=1`, or `done: true` on MCP `map`, brings the closed ones back; `counts.done` always says how many) and what a repository in
 autonomous mode reads to pick the next thing. Both carry where the crew
@@ -198,8 +203,13 @@ action as the MCP `plan` tool (`openPlan`): the same items, the same
 refusals, all or nothing. An item names its `pillar`, or is `later: true`
 with `why`; one that says neither is refused with `no_pillar` and nothing is
 opened, so the planner reads the refusal, names the pillar or defers the
-item, and posts again. The answer is `{ opened, ready, later, gate }`. A
-repository with no umbrella issues has no pillars, and plans as it always
+item, and posts again. The answer is `{ opened, ready, held, later, gate }`. `held`
+lists each opened issue that is ready but would not start now, as `{ key, number, by,
+detail }`: `by` is one of the map's hold names (`HOLDS` in
+`src/crew/held.ts`) and `detail` its sentence. The usual ones are `hot_file`
+(a file on the issue's `Files:` line is hot, or an admin holds it); an open
+pull cannot hold an issue opened a moment ago. The planner can rewrite
+what is held in the same run. A repository with no umbrella issues has no pillars, and plans as it always
 did.
 
 **An issue opened outside a plan.** A builder that finds its task too big
@@ -465,8 +475,16 @@ Everything it does, it does as that person, through the same actions they
 would take by hand — an assignment, a merge — so every run and every
 landing is credited and bounded exactly as theirs would be.
 
-**The crew's roles.** Each crew member has a role on the repository, set
-under **Settings → Crew**: a _builder_ takes what is ready; a _planner_
+**The crew's roles.** An agent declares its roles in its own config, beside
+its model and brief (Settings → Crew → the agent; `roles` on `/api/v1/agents`
+and the `agent` MCP tool): any of planner, builder, reviewer, one or more.
+A repository's team is three lists, Planners, Builders and Reviewers, each
+picking only from agents that declare the role, with how many may work at
+once beside it; a repository narrows what an agent declares and never widens
+it, and there is no default to builder. `/migrate` and a new app offer
+builders only, and a dispatch never hands an agent a job outside its seat:
+an issue assigned to a planner gets one comment saying so. Each crew member
+then holds one of its roles on the repository: a _builder_ takes what is ready; a _planner_
 turns the direction into a map; a _reviewer_ is for the look-back. Which
 builder takes an issue is one fixed-choice function: the issue's own
 assignee when it is a builder here, else the builder with the least in
@@ -643,3 +661,10 @@ then store one proposal — title, why, the ordered issues with their
 Off, the plan opens its linked issues all or none. A person's nod opens a
 stored proposal: `approve` in `src/actions/proposals.ts`, from the inbox card
 or the MCP `asks_proposal`.
+
+## A business, as a map (#439)
+
+Atlas turns a business described in words into apps, adapters and what
+waits for what, dry-run first and opened through `openPlan` once: the API
+(`POST …/atlas`) and the terminal's **Atlas plan**. How to use it:
+[docs/features/atlas-plan.md](features/atlas-plan.md).

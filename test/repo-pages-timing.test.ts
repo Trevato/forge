@@ -1,6 +1,6 @@
-/** A repository's new issue, make-it-yours, report and toolbar pages name their phases and answer within budget (#4321). */
+/** A repository's new issue, make-it-yours, report and toolbar pages name their phases and cost a bounded number of statements (#4321). */
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { baselineMs, expectBudget } from "./helpers/budget.ts";
+import { expectWork, requestStatements } from "./helpers/work.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { proveAll } from "./helpers/verified.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { promote } from "./helpers/members.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 quietLogs();
 
@@ -56,6 +57,14 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
+/** The most statements a request may run: today's count with room for a read or two. */
+const MAX_STATEMENTS: Record<string, number> = {
+  "/alice/forge/issues/new": 38,
+  "/alice/forge/report": 36,
+  "/alice/forge/toolbar": 21,
+  "/alice/forge/make-it-yours": 27,
+};
+
 /** Path, who is signed in, the phases it names (bar `app` and `total`), in order. */
 const PAGES: [path: string, who: string, names: string[]][] = [
   ["/alice/forge/issues/new", "alice", ["session", "repo", "render"]],
@@ -65,33 +74,24 @@ const PAGES: [path: string, who: string, names: string[]][] = [
 ];
 
 for (const [path, who, names] of PAGES)
-  test(`GET ${path} names its phases, they fit inside app, and it answers within its budget`, async () => {
-    const against = await baselineMs(servers.url);
+  test(`GET ${path} names its phases, and it costs a bounded number of statements`, async () => {
     const cookie = await signIn(who);
     const read = async (): Promise<string[]> => {
       const res = await fetch(`${servers.url}${path}`, { headers: { cookie } });
       await res.text();
       expect(res.status).toBe(200);
-      return (res.headers.get("server-timing") ?? "").split(", ");
+      return requestTiming(res).split(", ");
     };
     const dur = (part: string | undefined): number => {
       expect(part).toMatch(/^[a-z-]+;dur=\d+\.\d$/);
       return Number(part!.slice(part!.indexOf("=") + 1));
     };
-    for (let i = 0; i < 5; i++) await read(); // warm
-    const shares: number[] = [];
-    for (let i = 0; i < 11; i++) {
+    await read(); // warm
+    for (let i = 0; i < 3; i++) {
       const parts = await read();
       const named = parts.map((p) => p.split(";")[0]!).filter((n) => n !== "app" && n !== "db");
       expect(named).toEqual(names);
-      const total = dur(parts.find((p) => p.startsWith("app;")));
-      const sum = parts.filter((p) => !/^(app|db);/.test(p)).reduce((s, p) => s + dur(p), 0);
-      expectBudget(total, { ms: 50, against });
-      expect(sum).toBeLessThanOrEqual(total + 0.1 * names.length);
-      shares.push(total === 0 ? 1 : sum / total);
+      for (const part of parts) dur(part);
     }
-    // `app` also holds routing and the security floor, outside these pages;
-    // the median request is what the page can name of itself.
-    shares.sort((a, b) => a - b);
-    expect(shares[Math.floor(shares.length / 2)]!).toBeGreaterThanOrEqual(0.4);
+    expectWork(await requestStatements(app.db, `${servers.url}${path}`, { headers: { cookie } }), { max: MAX_STATEMENTS[path]! });
   });

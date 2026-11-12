@@ -13,7 +13,8 @@ import { linkIssue } from "../src/actions/dependencies.ts";
 import { writeStamp } from "../src/core/write_clock.ts";
 import { feedCandidateCache, readFeed } from "../src/feed/feed.ts";
 import { mapCacheStats } from "../src/web/map_cache.ts";
-import { snappyFixture, timeRoute, type SnappyFixture } from "../bench/snappy.ts";
+import { countStatements } from "../bench/run.ts";
+import { medianCount, pageStatements, snappyFixture, timeRoute, type SnappyFixture } from "../bench/snappy.ts";
 
 /**
  * The budgets, per request on the fixture: twelve apps of 24 planned
@@ -52,7 +53,7 @@ describe("budgets", () => {
       [await timeRoute(f, "map member", "/map", peer, 20), SQL.mapMember],
       [await timeRoute(f, "home owner", "/", owner, 20), SQL.homeOwner],
       [await timeRoute(f, "home member", "/", peer, 20), SQL.homeMember],
-      [await timeRoute(f, "home stranger", "/", {}, 20), 20],
+      [await timeRoute(f, "home stranger", "/", {}, 20), 19],
       [await timeRoute(f, "map owner cold", "/map", owner, 20, touch), COLD_SQL.mapOwner],
       [await timeRoute(f, "home owner cold", "/", owner, 20, touch), COLD_SQL.homeOwner],
     ] as const;
@@ -62,6 +63,32 @@ describe("budgets", () => {
       expect({ name: timing.name, ok: timing.sql <= sql, sql: timing.sql }).toMatchObject({ name: timing.name, ok: true });
     }
   }, 60_000);
+
+  test("the statement figure is the page's own: no telemetry flush, one outlier ignored", () => {
+    const db = new Database(":memory:");
+    db.run("CREATE TABLE route_timing (hour, pattern, bucket, n)");
+    db.run("CREATE TABLE usage_count (n)");
+    const counter = countStatements(db);
+    db.query("INSERT INTO route_timing (hour, pattern, bucket, n) VALUES (1, 'a', 1, 1)").run();
+    db.query("INSERT INTO usage_count (n) VALUES (1)").run();
+    db.query("DELETE FROM route_timing WHERE hour < 0").run();
+    db.query("PRAGMA busy_timeout = 0").all();
+    db.query("SELECT 1").all();
+    const mixed = pageStatements(counter);
+    counter.reset();
+    db.query("SELECT 1").all();
+    const alone = pageStatements(counter);
+    expect(alone).toBeGreaterThan(0);
+    expect(mixed).toBe(alone);
+    // A page's own read of a telemetry table is still the page's.
+    counter.reset();
+    db.query("SELECT n FROM usage_count").all();
+    expect(pageStatements(counter)).toBe(alone);
+    counter.stop();
+    db.close();
+    expect(medianCount([19, 19, 40, 19, 19])).toBe(19);
+    expect(medianCount([])).toBe(0);
+  });
 
   test("a warm /map computes no lane: every plan is a hit", async () => {
     await page("/map", f.ownerCookie);
@@ -76,10 +103,12 @@ describe("the caches are exact", () => {
   // (docs/CACHING.md, "Lane writes").
   test("a write is on the very next map: a new issue, a new edge, a closed one", async () => {
     const repo = f.repos[1]!;
+    // A lane's drawing comes when asked for (#8693).
+    const lanePage = (cookie: string) => page(`/map?lane=${repo.ownerName}/${repo.name}`, cookie);
     await page("/map", f.ownerCookie);
     const opened = openIssue(f.app, f.owner, repo, { title: "Zeppelin moorings" });
     if (!opened.ok) throw new Error(String(opened.error));
-    expect(await page("/map", f.ownerCookie)).toContain("Zeppelin moorings");
+    expect(await lanePage(f.ownerCookie)).toContain("Zeppelin moorings");
 
     const second = openIssue(f.app, f.owner, repo, { title: "Quokka census" });
     if (!second.ok) throw new Error(String(second.error));
@@ -95,22 +124,23 @@ describe("the caches are exact", () => {
     // An issue on no edge leaves the map when it closes.
     const lone = openIssue(f.app, f.owner, repo, { title: "Narwhal tally" });
     if (!lone.ok) throw new Error(String(lone.error));
-    expect(await page("/map", f.ownerCookie)).toContain("Narwhal tally");
+    expect(await lanePage(f.ownerCookie)).toContain("Narwhal tally");
     expect(closeIssue(f.app, f.owner, repo, lone.value, "closed").ok).toBe(true);
-    expect(await page("/map", f.ownerCookie)).not.toContain("Narwhal tally");
+    expect(await lanePage(f.ownerCookie)).not.toContain("Narwhal tally");
   });
 
   test("a sealed issue the owner's map drew is not drawn for a member who may not see it", async () => {
     // app-0 is public: the member reads it, but not what is sealed in it.
     const repo = f.repos[0]!;
+    const lane = `/map?lane=${repo.ownerName}/${repo.name}`;
     const sealed = openIssue(f.app, f.owner, repo, { title: "Sealed vault combination", sealed: true });
     if (!sealed.ok) throw new Error(String(sealed.error));
     // Warm in both orders: the owner first, then the member, then the owner.
-    expect(await page("/map", f.ownerCookie)).toContain("Sealed vault combination");
-    const member = await page("/map", f.peerCookie);
+    expect(await page(lane, f.ownerCookie)).toContain("Sealed vault combination");
+    const member = await page(lane, f.peerCookie);
     expect(member).toContain(`lane-olive-${repo.name}`);
     expect(member).not.toContain("Sealed vault combination");
-    expect(await page("/map", f.ownerCookie)).toContain("Sealed vault combination");
+    expect(await page(lane, f.ownerCookie)).toContain("Sealed vault combination");
     // And the member's own private repository is never on the owner's
     // stranger-scoped lanes either way: it is listed by visibility per request.
     expect(await page("/map", f.peerCookie)).toContain("lane-pablo-notes");

@@ -8,6 +8,7 @@
  * one closed Details section.
  */
 
+import { costRows, issueCostFor, type IssueCost } from "../../core/issue_cost.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { cardPath } from "../og/path.ts";
 import { mayEditIssue } from "../../actions/issues.ts";
@@ -19,6 +20,7 @@ import { getAppByRepo } from "../../core/apps.ts";
 import { LATER_TITLED } from "../../core/pillars.ts";
 import { deferredOf, linkedIssueIds } from "../../core/dependencies.ts";
 import { hasPicture } from "../../core/note_pictures.ts";
+import { heldBanner } from "../pages/gate.ts";
 import {
   getIssuesByNumbers,
   labelsFor,
@@ -33,6 +35,8 @@ import {
   type Pull,
 } from "../../core/pulls.ts";
 import { canEnterApp, canWrite, getSealedFork, type Repo } from "../../core/repos.ts";
+import { FLOW_LABEL } from "../../core/flow_label.ts";
+import { flowButton } from "../flow_button.ts";
 import { canSeeSealed } from "../../core/sealed.ts";
 import {
   activeRunFor,
@@ -46,6 +50,7 @@ import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, repoBase, repoHeader, repoPalette } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
+import { noteLine } from "./note.ts";
 import { threadLine } from "../describe.ts";
 import { page } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
@@ -64,7 +69,7 @@ import {
   time,
   userLink,
 } from "../ui.ts";
-import { previewCard } from "../pages/apps.ts";
+import { previewBlock } from "../pages/apps.ts";
 import {
   costText,
   durationText,
@@ -333,7 +338,8 @@ async function tellRuns(
     issueId: issue.id,
     limit: 10,
   });
-  if (runs.length === 0) return null;
+  const cost = issueCostFor(wordCtx.db, repo, issue, wordCtx.viewer);
+  if (runs.length === 0 && cost === null) return null;
   const base = repoBase(repo);
   const actors = getUsersByIds(
     wordCtx.db,
@@ -350,8 +356,7 @@ async function tellRuns(
         nav: true,
         lead: avatar(who),
         title: html`${who} <span class="muted">${reasonWords(r.reason)}</span>`,
-        meta: html`${duration ? html`${duration} · ` : null}${r.summary ||
-        "no summary yet"}`,
+        meta: html`${duration ? html`${duration} · ` : null}${noteLine(r.summary || "no summary yet")}`,
         trail: html`${wordBadge(word)}${when(
           r.costUsd > 0,
           () =>
@@ -360,14 +365,26 @@ async function tellRuns(
       });
     }),
   );
-  return listCard(rows, {
-    head: html`${icon("bot")}
-      <h2>Runs</h2>`,
-  });
+  return html`${runs.length === 0
+    ? null
+    : listCard(rows, {
+        head: html`${icon("bot")}
+          <h2>Runs</h2>`,
+      })}${costBlock(cost, base)}`;
+}
+
+/** What the issue and its closing pulls cost, as `dl` rows; nothing when there is no cost to show. */
+function costBlock(cost: IssueCost | null, base: string): Html | null {
+  if (cost === null) return null;
+  return html`<dl class="status-rows" data-issue-cost>${costRows(cost).map(
+    (r) => html`<div class="status-row"><dt>${r.label}</dt><dd class="num">${
+      r.pull === undefined ? null : html`<a href="${base}/pulls/${r.pull}">#${r.pull}</a> `
+    }${costText(r.usd)}</dd></div>`,
+  )}</dl>`;
 }
 
 /** The pull that closes this tell, with its check and a way into its
- * preview — nothing here that the change page or `previewCard` do not
+ * preview — nothing here that the change page or `previewBlock` do not
  * already draw. */
 async function tellClosingPull(
   ctx: Ctx,
@@ -377,13 +394,10 @@ async function tellClosingPull(
 ): Promise<Html> {
   const base = repoBase(repo);
   const { word, note } = await pullWord(wordCtx, pull);
-  return html`${card(
-    html`<p>
-      <a href="${changeHref(base, pull.number)}">${pull.title}</a>
-      ${wordBadge(word)} <span class="muted small">${note}</span>
-    </p>`,
+  return html`${listCard(
+    [row({ href: changeHref(base, pull.number), title: pull.title, meta: html`${note}`, trail: wordBadge(word) })],
     { head: html`${icon("pull")} <h2>Closes with</h2>` },
-  )}${previewCard(ctx, repo, pull)}`;
+  )}${previewBlock(ctx, repo, pull)}`;
 }
 
 /**
@@ -450,7 +464,7 @@ async function studioTell(
     doneBy.length === 0
       ? null
       : card(
-          html`<form method="post" action="${thread}/state" class="row">
+          html`<form method="post" action="${thread}/state" class="row" data-now="Closed" data-now-once>
             <input type="hidden" name="state" value="closed" />
             <input type="hidden" name="reason" value="done" />
             <span
@@ -508,6 +522,13 @@ async function studioTell(
           badge("Sealed security report", { tone: "danger", icon: "lock" }),
       )}
       ${workSpent(ctx, repo, issue.id)}
+      ${!direction && issue.state === "open" && canWrite(db, repo, user)
+        ? flowButton(
+            `${thread}/flow`,
+            labelsFor(db, issue.id).some((l) => l.name.toLowerCase() === FLOW_LABEL),
+            thread,
+          )
+        : null}
       ${issue.assigneeName !== null
         ? html`<span
             >${when(issue.assigneeIsAgent, () => icon("bot"))}
@@ -516,9 +537,7 @@ async function studioTell(
             })}
             has it</span
           >`
-        : !direction && wordInfo?.word === "told"
-          ? html`<span class="muted">nobody has it yet</span>`
-          : null}
+        : null}
     </div>
   </div>`;
 
@@ -550,11 +569,12 @@ async function studioTell(
     { extra: "mt" },
   );
 
-  const body = html`${repoHeader(ctx, repo, "issues", {
+  const body = html`<div data-tell>${repoHeader(ctx, repo, "issues", {
       compact: true,
       ownTitle: true,
     })}
     ${head}
+    ${heldBanner(ctx, repo, issue)}
     <div class="split">
       <div>
         ${talk.node} ${doneLine}
@@ -571,11 +591,14 @@ async function studioTell(
         ${privateWorkCard(ctx, repo, issue, `${thread}/private`)}
         ${hasPicture(db, repo.id, issue.number)
           ? card(
-              html`<h2>Picture of the page</h2>
-                <a href="${thread}/picture"
+              html`<a href="${thread}/picture"
                   ><img src="${thread}/picture" alt="The page the sender was looking at" loading="lazy" class="tell-picture"
                 /></a>`,
-              { extra: "mt" },
+              {
+                extra: "mt",
+                head: html`${icon("eye")}
+                  <h2>Picture of the page</h2>`,
+              },
             )
           : null}
         ${runsCard}
@@ -589,12 +612,13 @@ async function studioTell(
       thread: "issue",
       number: issue.number,
       lastCommentId: talk.lastCommentId,
-    })}`;
+    })}</div>`;
 
   const response = page({
     ctx,
     title: `${issue.title} · ${repo.name}`,
     ogImage: cardPath("issue", repo, issue),
+    about: `${repo.ownerName}/${repo.name}#${issue.number}`,
     description: threadLine({
       private: repo.visibility === "private" || issue.sealed,
       word: wordInfo?.word ?? (issue.state === "open" ? "open" : "closed"),

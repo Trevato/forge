@@ -87,8 +87,6 @@ describe("following across forges, end to end", () => {
   });
 
   test("the whole path", async () => {
-    const start = await main();
-
     // 1-2. Two parent commits: behind 2, one card listing both.
     await theirs("p1.txt", "1\n", "parent one");
     await theirs("p2.txt", "2\n", "parent two");
@@ -101,7 +99,10 @@ describe("following across forges, end to end", () => {
     expect(cards[0]!.body).toContain("parent two");
     expect(takes()).toHaveLength(0);
 
-    // 3. take-updates: the next check opens one pull listing both; main stays.
+    // 3. take-updates, the fork having a commit of its own: the next check opens one pull listing both; main stays.
+    const own = await commitToBranch(app, kid, repo, { message: "own", files: [{ path: "own.txt", content: "own\n" }] });
+    expect(own.ok).toBe(true);
+    const start = await main();
     expect((await setChainMode(app, "take-updates")).ok).toBe(true);
     const took = await checkUpstream(app, { remote: parent });
     expect(took?.taken).toMatchObject({ kind: "pull", commits: 2 });

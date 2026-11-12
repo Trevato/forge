@@ -5,6 +5,7 @@
  * developer's words.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,7 +18,7 @@ import { getAppByRepo } from "../src/core/apps.ts";
 import { clientApps } from "../src/web/studio/client_home.ts";
 import type { Ctx } from "../src/http/context.ts";
 import { clientAppRows, cutTitle, doingLine } from "../src/core/client-apps.ts";
-import { addCrew, createAgentRow, setCrewRole } from "../src/core/agents.ts";
+import { addCrew, createAgentRow } from "../src/core/agents.ts";
 import { moveArchived } from "../src/core/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { linkEveryday } from "../src/core/everyday.ts";
@@ -103,7 +104,7 @@ describe("a client's first screen", () => {
       createdBy: alice.id,
     });
     addCrew(parent.db, repo.value.id, atlas.value.id, alice.id);
-    setCrewRole(parent.db, repo.value.id, atlas.value.id, "planner");
+    seatAs(parent.db, repo.value.id, atlas.value.id, "planner");
     parentServers = await serve(parent);
     const spawned = await spawnForge(
       parent,
@@ -176,7 +177,7 @@ describe("a client's first screen", () => {
     expect(apps).toContain('href="/marias/bakery"');
     expect(apps).toMatch(/data-agents="(working|waiting)"/);
     expect(apps).toContain("agents are waiting");
-    expect(home).not.toContain('id="live-apps"');
+    expect(home).not.toContain('id="live-chips"');
     for (const gone of ['href="/map"', 'href="/board"', 'href="/audit"', 'href="/settings"'])
       expect(home).not.toContain(gone);
     expect(home).toContain('href="/?all=1"');
@@ -359,7 +360,7 @@ describe("a client's first screen", () => {
 
   test("asked for, the whole home is still there", async () => {
     const home = await page(owner, "/?all=1");
-    expect(home).toContain('id="live-apps"');
+    expect(home).toContain('id="live-chips"');
     expect(home).not.toContain('id="client-apps"');
   });
 
@@ -405,8 +406,8 @@ describe("a client's first screen", () => {
   });
 
   test("a client sees no forge-wide figures, lean or whole", async () => {
-    expect(await page(owner)).not.toContain('class="stats mb"');
-    expect(await page(owner, "/?all=1")).not.toContain('class="stats mb"');
+    expect(await page(owner)).not.toContain('class="stats kpi-row mb"');
+    expect(await page(owner, "/?all=1")).not.toContain('class="stats kpi-row mb"');
   });
 
   test("queued agents and no running ones read as about to start", async () => {
@@ -451,6 +452,7 @@ describe("a client's first screen", () => {
     app.start();
     await settleApp(app);
     expect(app.screen.toText()).toContain("bakery: Its agents are waiting for something to do.");
+    expect(app.screen.toText()).toMatch(/Atlas is ready to work toward Run Maria/);
     expect(app.screen.toText()).not.toContain("Shipped per hour");
     app.stop();
   });

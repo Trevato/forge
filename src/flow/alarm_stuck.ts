@@ -11,6 +11,7 @@
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { reviewSummariesFor } from "../core/reviews.ts";
+import { wallWords } from "./wall_wait.ts";
 
 export const STUCK_MINUTES = 30;
 
@@ -21,6 +22,8 @@ export interface StuckAlarm {
   /** The pull it names, `owner/name` and number; set only when fired. */
   readonly repo?: string;
   readonly number?: number;
+  /** Set when the access wall holds it: a person must decide, in plain words (#7847). */
+  readonly wall?: readonly string[];
   readonly says: string;
 }
 
@@ -40,7 +43,7 @@ interface PullRow {
   head_branch: string;
   head_oid: string;
 }
-interface Last {
+export interface Last {
   at: string;
   what: string;
 }
@@ -49,7 +52,7 @@ interface Last {
 const later = (a: Last | undefined, b: Last): Last =>
   a === undefined || b.at > a.at ? b : a;
 
-function lastEvent(db: Database, p: PullRow): Last | undefined {
+export function lastEvent(db: Database, p: Pick<PullRow, "id" | "repo_id" | "head_repo_id" | "head_branch">): Last | undefined {
   let last: Last | undefined;
   const review = db
     .query<{ at: string }, [string]>(
@@ -118,17 +121,27 @@ export function alarmStuck(from: App | Database, now: Date, scope: StuckScope = 
     )
     .all(scope.repoId ?? null, scope.publicOnly ? 1 : 0);
   const verdicts = reviewSummariesFor(db, pulls.map((p) => ({ id: p.id, headOid: p.head_oid })));
-  let oldest: { repo: string; number: number; last: Last } | undefined;
+  let oldest: { repo: string; number: number; last: Last; head: string; id: string } | undefined;
   for (const p of pulls) {
     const s = verdicts.get(p.id);
     if (s === undefined || s.approvals === 0 || s.changesRequested > 0) continue;
     const last = lastEvent(db, p);
     if (last === undefined || now.getTime() - Date.parse(last.at) < STUCK_MINUTES * 60_000) continue;
-    if (oldest === undefined || last.at < oldest.last.at) oldest = { repo: p.repo, number: p.number, last };
+    if (oldest === undefined || last.at < oldest.last.at) oldest = { repo: p.repo, number: p.number, last, head: p.head_oid, id: p.id };
   }
   if (oldest === undefined) return { fired: false, says: "No approved pull is sitting still." };
   const { repo, number, last } = oldest;
   const hhmm = new Date(last.at).toISOString().slice(11, 16);
+  const wall = wallWords(db, oldest.id, oldest.head);
+  if (wall !== null)
+    return {
+      fired: true,
+      since: last.at,
+      repo,
+      number,
+      wall,
+      says: `${repo}#${number} is approved and waits for a person to merge it.`,
+    };
   return {
     fired: true,
     since: last.at,

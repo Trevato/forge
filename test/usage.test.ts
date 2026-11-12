@@ -322,6 +322,9 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
       concurrency: 1,
       budgetUsd: 2,
       runTimeoutMs: 60_000,
+      // The pump picks queued runs on a tick; 5 s by default, 20 ms here,
+      // so the paused run's retry on the work key starts at once.
+      tickMs: 20,
     });
     const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
@@ -366,12 +369,13 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     while (Date.now() < deadline) {
       const value = read();
       if (value !== undefined) return value;
-      await Bun.sleep(100);
+      await Bun.sleep(10);
     }
     throw new Error("did not happen in time");
   }
 
   test("each run is attributed to the account it ran on, the app, the agent and the issue", async () => {
+    // Invariant: a crew run's ledger line names its subscription, app, agent and issue, and only the owner reads it over API and MCP.
     const personal = addSubscription(app.db, dataDir, { name: "personal", token: OAT });
     const work = addSubscription(app.db, dataDir, { name: "work", token: KEY });
     if (!personal.ok || !work.ok) throw new Error("pool");

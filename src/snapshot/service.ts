@@ -14,20 +14,28 @@ import type { App } from "../app.ts";
 import { createLog } from "../kernel/log.ts";
 import { firstSeen, reportVerdict, seedFirstSeen } from "./verdict.ts";
 import {
+  JOURNAL,
   KEEP,
   listSnapshots,
   pruneSnapshots,
+  RESUME_WINDOW_MS,
+  SNAPSHOT_PREFIX,
+  snapshotStart,
   takeSnapshot,
   type Manifest,
   type Progress,
 } from "./snapshot.ts";
 import { describeTimes, runDrill, type DrillDeps, type DrillResult } from "./drill.ts";
-import { BOOT_RED_FLOOR_MS, drillDue, RED_RETRY_MS } from "./due.ts";
+import { BOOT_RED_FLOOR_MS, drillDue, RED_RETRY_MS, snapshotDue } from "./due.ts";
+import { sealedTarget } from "./destination.ts";
+import { watchBucket } from "./bucket.ts";
+import { readDeclaredLanes } from "./lanes.ts";
 import { lastDrill, recordDrill } from "./drills.ts";
-import { lastMirror, mirrorPass, MIRROR_EVERY_MS, recordMirror, type MirrorState } from "./mirror.ts";
+import { lastMirror, mirrorPass, mirrorTarget, MIRROR_EVERY_MS, recordMirror, type MirrorState } from "./mirror.ts";
 import { isOffBox } from "./off_box.ts";
 import { noteOffBox, recordSnapshotOutcome } from "./outcome.ts";
-import type { Store } from "./store.ts";
+import { s3FromEnv, type Store } from "./store.ts";
+import { during } from "../perf/jobs.ts";
 
 const log = createLog("snapshots");
 
@@ -58,6 +66,8 @@ export interface SnapshotsHandle {
   readonly now: () => Promise<Manifest>;
   /** How far the snapshot being taken is; undefined when none is. */
   readonly progress: () => Progress | undefined;
+  /** How long the snapshot being taken has run, ms; undefined when none is. The release keeper waits on it (#9653). */
+  readonly takingMs: () => number | undefined;
   /** The newest first, from the store. */
   readonly list: () => Promise<Manifest[]>;
   /** The last one taken by this process, and what it said. */
@@ -76,6 +86,10 @@ export interface SnapshotsHandle {
   readonly mirrored: () => MirrorState | undefined;
   /** Forget the resolved store; the next use resolves again (a new destination was saved). */
   readonly forget: () => void;
+  /** Read the bucket now, as the watch does; resolves when the read is kept. */
+  readonly checkBucket: () => Promise<void>;
+  /** Take a snapshot if the store lacks the night's; says whether it did. For a boot, and for tests. */
+  readonly takeIfDue: () => Promise<boolean>;
   readonly stop: () => Promise<void>;
 }
 
@@ -87,6 +101,10 @@ export const snapshotsOf = (app: App): SnapshotsHandle | undefined =>
 const DRILL_DAY_UTC = 0;
 const DRILL_HOUR_UTC = 9;
 const CATCH_UP_MS = 5 * 60_000;
+/** A snapshot due on boot is taken this long after it, once the forge is serving. */
+const SNAPSHOT_CATCH_UP_MS = 2 * 60_000;
+/** A snapshot still owed is looked for again this often; one boot's look is not the last (#10167). */
+const SNAPSHOT_CHECK_MS = 30 * 60_000;
 
 export function untilDrill(now = Date.now()): number {
   const next = new Date(now);
@@ -124,6 +142,13 @@ export function startSnapshots(
     readonly catchUpMs?: number | undefined;
     readonly redRetryMs?: number | undefined;
     readonly bootRedFloorMs?: number | undefined;
+    /** Test seams: how soon after boot a due snapshot is taken, and how often the bucket is read. */
+    readonly snapshotCatchUpMs?: number | undefined;
+    readonly snapshotCheckMs?: number | undefined;
+    readonly bucketEveryMs?: number | undefined;
+    readonly bucketFirstMs?: number | undefined;
+    /** Test seam: the clock `takeIfDue` judges by. */
+    readonly now?: (() => number) | undefined;
   } = {
     version: "0",
   },
@@ -145,10 +170,12 @@ export function startSnapshots(
   };
   let stopped = false;
   let inFlight: Promise<Manifest> | undefined;
+  let active = 0;
   let running: Progress | undefined;
+  let startedAt: number | undefined;
   let last: { manifest?: Manifest; error?: string; at?: string } = {};
 
-  const take = (): Promise<Manifest> => {
+  const take = (resume?: Date): Promise<Manifest> => {
     // Whether this run's store is off the machine, for home's backup age (#3701).
     let offBox: boolean | undefined;
     // After the one before it, however that ended: chained on a failure as it
@@ -160,6 +187,7 @@ export function startSnapshots(
       if (store === undefined) throw new Nowhere();
       offBox = isOffBox(store);
       running = { objects: 0, bytes: 0, elapsedMs: 0 };
+      startedAt = Date.now();
       // Admin-only, no repository, nothing /backups does not already show.
       app.bus.append({ kind: "backup.started" });
       let toldAt = Date.now();
@@ -170,6 +198,7 @@ export function startSnapshots(
           reposRoot: app.reposRoot,
           version: options.version,
           passphrase: options.passphrase,
+          resume: resume !== undefined,
           onLand: (p) => {
             running = p;
             if (Date.now() - toldAt < (options.progressEventMs ?? PROGRESS_EVENT_MS)) return;
@@ -178,8 +207,10 @@ export function startSnapshots(
           },
         },
         store,
+        resume,
       ).finally(() => {
         running = undefined;
+        startedAt = undefined;
       });
       await pruneSnapshots(store, KEEP);
       return manifest;
@@ -208,7 +239,48 @@ export function startSnapshots(
         throw error;
       },
     );
+    active++;
+    inFlight.then(
+      () => void active--,
+      () => void active--,
+    );
     return inFlight;
+  };
+
+  // The newest snapshot a release cut short that is newer than the newest
+  // whole one and not stale: its journal says what need not go up again.
+  const cutShort = async (store: Store, newestWhole: string | undefined): Promise<Date | undefined> => {
+    try {
+      const names = (await store.names(SNAPSHOT_PREFIX)).sort().reverse();
+      const name = names.find((n) => newestWhole === undefined || n > newestWhole);
+      const at = name === undefined ? undefined : snapshotStart(name);
+      if (name === undefined || at === undefined) return undefined;
+      if ((options.now ?? Date.now)() - at.getTime() > RESUME_WINDOW_MS) return undefined;
+      return (await store.get(`${SNAPSHOT_PREFIX}${name}/${JOURNAL}`)) === undefined ? undefined : at;
+    } catch {
+      return undefined;
+    }
+  };
+
+  // A restart takes the night's snapshot if the store does not hold it: a
+  // release at 08:21 killed the one in flight and nothing took it again (#8742).
+  // The manifest is written last, so a snapshot cut short is not one.
+  const takeIfDue = async (): Promise<boolean> => {
+    if (stopped || active > 0) return false;
+    const store = current();
+    if (store === undefined) return false;
+    let newest: Manifest | undefined;
+    try {
+      newest = (await listSnapshots(store))[0];
+    } catch (error) {
+      log.warn("snapshot catch-up: store unreadable, not taking one now", { error: String(error) });
+      return false;
+    }
+    if (stopped || active > 0 || !snapshotDue(newest?.finishedAt, (options.now ?? Date.now)())) return false;
+    const cut = await cutShort(store, newest?.name);
+    log.info("snapshot due or lost; taking one", { newest: newest?.name ?? "none", resuming: cut?.toISOString() ?? "no" });
+    await take(cut).catch(() => {});
+    return true;
   };
 
   // Single-flight: two passes at once would copy the same objects twice.
@@ -259,11 +331,26 @@ export function startSnapshots(
       const store = current();
       if (store === undefined)
         throw new Error("this forge has nowhere to drill from");
+      // A drill that could not run is not a drill that passed: it is kept red,
+      // so the board and the alarm say so instead of the log alone (#8742).
       const result = await (options.drill ?? runDrill)({
         store,
         dataDir: app.config.dataDir,
         passphrase: options.passphrase,
-      });
+      }).catch(
+        (error): DrillResult => ({
+          at: new Date().toISOString(),
+          snapshotId: null,
+          ms: 0,
+          counts: { repositories: 0, issues: 0, users: 0, pulls: 0, apps: 0 },
+          health: "unreached",
+          verdict: "red",
+          failedStep: "restore",
+          phases: [],
+          budgetMs: 0,
+          reason: `the drill did not run: ${String(error).slice(0, 200)}`,
+        }),
+      );
       recordDrill(app.db, result);
       // The card and the recovery issue hear of every drill, whoever asked.
       const posted = await reportVerdict(app.config.dataDir, result);
@@ -293,7 +380,7 @@ export function startSnapshots(
     if (timer !== undefined) clearTimeout(timer);
     timer = undefined;
     if (options.nightly === false || stopped) return;
-    timer = setTimeout(() => void take().catch(() => {}), ms);
+    timer = setTimeout(() => void during("snapshot", take).catch(() => {}), ms);
   }
   arm(untilNightly());
 
@@ -312,7 +399,7 @@ export function startSnapshots(
   const scheduleDrill = (): void => {
     if (options.nightly === false || stopped) return;
     drillTimer = setTimeout(() => {
-      runIfDue().finally(scheduleDrill);
+      during("drill", () => runIfDue()).finally(scheduleDrill);
     }, untilDrill());
   };
   // While the newest drill is red, look again when it is owed again.
@@ -323,7 +410,7 @@ export function startSnapshots(
     const newest = lastDrill(app.db);
     if (newest?.verdict !== "red") return;
     const wait = Math.max(catchUpMs, Date.parse(newest.at) + redRetryMs - Date.now());
-    redRetry = setTimeout(() => void runIfDue().finally(armRedRetry), wait);
+    redRetry = setTimeout(() => void during("drill", () => runIfDue()).finally(armRedRetry), wait);
   };
   // Owed and not yet kept: run it once. A restart after a green drill finds it
   // kept; one after a red drill runs it again, once it is past the boot floor.
@@ -337,7 +424,9 @@ export function startSnapshots(
   // shortly after boot; a red one is looked at again until one passes.
   if (options.nightly !== false) {
     catchUp = setTimeout(
-      () => void runIfDue(options.bootRedFloorMs ?? BOOT_RED_FLOOR_MS).finally(armRedRetry),
+      () =>
+        void during("drill", () => runIfDue(options.bootRedFloorMs ?? BOOT_RED_FLOOR_MS))
+          .finally(armRedRetry),
       catchUpMs,
     );
   }
@@ -348,12 +437,52 @@ export function startSnapshots(
   const scheduleMirror = (first: boolean): void => {
     if (options.nightly === false || stopped) return;
     mirrorTimer = setTimeout(() => {
-      mirrorNow()
+      during("snapshot-mirror", mirrorNow)
         .catch(() => {})
         .finally(() => scheduleMirror(false));
     }, first ? Math.min(30_000, everyMs) : everyMs);
   };
   scheduleMirror(true);
+
+  // Not once: a store unreadable at the boot's look, or a snapshot cut short
+  // again, left the night's snapshot owed until the next night (#10167).
+  let catchUpSnapshot: ReturnType<typeof setTimeout> | undefined;
+  const scheduleCatchUp = (ms: number): void => {
+    if (options.nightly === false || stopped) return;
+    catchUpSnapshot = setTimeout(() => {
+      during("snapshot", takeIfDue)
+        .catch(() => {})
+        .finally(() => {
+          bootLookAt = undefined;
+          scheduleCatchUp(options.snapshotCheckMs ?? SNAPSHOT_CHECK_MS);
+        });
+    }, ms);
+  };
+  // Until the boot's look at the store is done, a snapshot may be about to
+  // start; the keeper counts that as one running, so a swap does not land in
+  // the gap between a boot and the catch-up and cut it short again (#9675).
+  let bootLookAt: number | undefined = options.nightly === false ? undefined : Date.now();
+  scheduleCatchUp(options.snapshotCatchUpMs ?? SNAPSHOT_CATCH_UP_MS);
+
+  // The bucket is read by this process, on its own clock, whatever any job says.
+  const bucket = watchBucket(
+    app.config.dataDir,
+    () => [
+      { lane: "primary", store: current() },
+      { lane: "mirror", store: currentMirror() },
+    ],
+    options.bucketEveryMs,
+    options.bucketFirstMs,
+    () => {
+      const sources = { db: app.db, dataDir: app.config.dataDir, bus: app.bus };
+      try {
+        return [sealedTarget(sources), s3FromEnv(), mirrorTarget(sources)?.target];
+      } catch {
+        return [s3FromEnv()];
+      }
+    },
+    (now) => readDeclaredLanes(process.env, now),
+  );
 
   const handle: SnapshotsHandle = {
     get store() {
@@ -369,11 +498,17 @@ export function startSnapshots(
     },
     last: () => last,
     progress: () => running,
+    takingMs: () => {
+      const since = startedAt ?? bootLookAt;
+      return since === undefined ? undefined : Date.now() - since;
+    },
     get mirror() {
       return currentMirror();
     },
     mirrorNow,
     mirrorFresh,
+    checkBucket: bucket.pass,
+    takeIfDue,
     mirrored: () => lastMirror(app.config.dataDir),
     forget: () => {
       resolved = undefined;
@@ -386,6 +521,8 @@ export function startSnapshots(
       if (catchUp !== undefined) clearTimeout(catchUp);
       if (redRetry !== undefined) clearTimeout(redRetry);
       if (mirrorTimer !== undefined) clearTimeout(mirrorTimer);
+      if (catchUpSnapshot !== undefined) clearTimeout(catchUpSnapshot);
+      bucket.stop();
       if (mirroring !== undefined) await mirroring.catch(() => {});
       if (inFlight !== undefined) await inFlight.catch(() => {});
       if (handles.get(app) === handle) handles.delete(app);

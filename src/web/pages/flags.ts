@@ -15,7 +15,7 @@ import { settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { btn, card, empty, icon, row } from "../ui.ts";
+import { btn, empty, icon, row } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 export { useFlagRegistry };
@@ -81,6 +81,7 @@ export function flagsPage(ctx: Ctx): Response {
     usesMs += t2 - t1;
     const lead = winnerOffer(month, v);
     return row({
+      nav: true,
       lead: icon("activity"),
       title: html`<span class="mono">${name}</span>`,
       meta: html`${decl.why}<br />Default
@@ -105,20 +106,14 @@ export function flagsPage(ctx: Ctx): Response {
       </form>`,
     });
   });
-  const body = card(
-    names.length === 0
-      ? html`<div class="card-body">
-          <p class="muted small">No flag is declared yet.</p>
-        </div>`
+  const body = html`<section class="settings-block">
+    <h2>Flags</h2>
+    ${names.length === 0
+      ? html`<p class="muted">No flag is declared yet.</p>`
       : html`<ul class="list setting-list">
           ${rows}
-        </ul>`,
-    {
-      head: html`${icon("activity")}
-        <h2>Flags</h2>`,
-      pad: false,
-    },
-  );
+        </ul>`}
+  </section>`;
   const response = page({
     ctx,
     title: "Flags",

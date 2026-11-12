@@ -8,6 +8,7 @@ import { createRepo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { id } from "../src/kernel/id.ts";
+import { forgetLive, keepLive } from "../src/release/landings.ts";
 import { serve } from "../src/http/server.ts";
 import { firedAlarms, type FiredAlarm } from "../src/flow/alarms.ts";
 import { setNotifyUrl, startNotifier } from "../src/crew/notify.ts";
@@ -27,6 +28,9 @@ async function seed(mergedMinAgo?: number) {
   if (!u.ok) throw new Error(u.error);
   const repo = await createRepo(app.db, app.reposRoot, { ownerId: u.value.id, name: "r", visibility: "public", description: "r" });
   if (!repo.ok) throw new Error(repo.error);
+  // The running commit predates every merge here, so a merge is on its way.
+  if (mergedMinAgo === undefined) forgetLive();
+  else keepLive("alice/r", [], 0);
   if (mergedMinAgo !== undefined) {
     const at = new Date(Date.now() - mergedMinAgo * 60_000).toISOString();
     const issueId = id();
@@ -52,7 +56,7 @@ describe("alarm lines", () => {
       for (const path of ["/boards", "/"]) {
         const body = await (await fetch(servers.url + path, { headers })).text();
         expect(body.includes("nothing has gone live"), `${path} ${String(merged)}`).toBe(want);
-        expect(body.includes('role="alert"')).toBe(want);
+        expect(body.includes('role="alert"'), `${path} ${String(merged)} draws a line, not an alert`).toBe(false);
       }
       await servers.stop?.();
     }
@@ -63,7 +67,7 @@ describe("alarm lines", () => {
     expect(flowFor(app, { kind: "owner" }).alarms.map((a) => a.key)).toEqual(["no_release"]);
     const none = await seed();
     expect(flowFor(none.app, { kind: "owner" }).alarms).toEqual([]);
-    expect(firedAlarms(none.app.db, new Date())).toEqual([]);
+    expect(firedAlarms(none.app.db, new Date(), { dataDir: null })).toEqual([]);
   });
 
   test("the owner is told once when an alarm starts firing, not again while it stands", async () => {

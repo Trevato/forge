@@ -21,7 +21,7 @@ import type { TuiIdentity } from "../src/tui/session.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { promote } from "./helpers/members.ts";
-import { settleApp } from "./helpers/tui.ts";
+import { settleApp, settlePalette, settleUntil } from "./helpers/tui.ts";
 
 quietLogs();
 
@@ -41,7 +41,8 @@ describe("private destinations in the terminal", () => {
     listEvents(forge.db, { repoId: repo.id }).filter((e) => e.kind.startsWith("app.egress."));
 
   function boot(user: User) {
-    const terminal = headlessTerminal(120, 32);
+    // Wide enough that the About card's hint line reaches `e  egress`.
+    const terminal = headlessTerminal(200, 32);
     const identity: TuiIdentity = { sshUsername: "t", remoteAddress: "127.0.0.1", user };
     const { app } = createForgeApp(forge, identity, { terminal, exitHooks: false });
     app.start();
@@ -57,11 +58,15 @@ describe("private destinations in the terminal", () => {
       await press("ctrl+k");
       for (const ch of "Open a repository")
         app.dispatch({ type: "key", key: ch, ctrl: false, alt: false, shift: false });
+      await settlePalette(app);
       await press("enter");
       for (const ch of "acme/arm")
         app.dispatch({ type: "key", key: ch, ctrl: false, alt: false, shift: false });
+      await settlePalette(app);
       await press("enter");
       await press("I");
+      // "About" is in the breadcrumb at once; the footer's `v  events` key exists only once the repository has loaded.
+      await settleUntil(app, "v  events");
     };
     return { text: () => app.screen.toText(), press, toAbout, stop: () => app.stop() };
   }
@@ -134,12 +139,68 @@ describe("private destinations in the terminal", () => {
     expect(h.text()).toContain(CAMERA);
     expect(h.text()).toContain("asked for, not granted");
     await h.press("g");
+    expect(h.text()).toContain(`Let acme/arm reach ${ARM}?`);
+    expect(grants()).toEqual([]);
+    await h.press("y");
     expect(grants()).toEqual([ARM]);
+    expect(h.text()).toContain(`${ARM} is granted.`);
+    // Already granted: `g` asks nothing and grants nothing again.
+    await h.press("g");
+    expect(h.text()).not.toContain(`Let acme/arm reach ${ARM}?`);
     expect(h.text()).toContain("granted by ada");
     expect(changes().map((e) => e.kind)).toEqual(["app.egress.granted"]);
     await h.press("x");
+    expect(h.text()).toContain(`Stop acme/arm reaching ${ARM}?`);
+    expect(grants()).toEqual([ARM]);
+    await h.press("y");
     expect(grants()).toEqual([]);
     expect(changes().map((e) => e.kind).sort()).toEqual(["app.egress.granted", "app.egress.revoked"]);
+    h.stop();
+  });
+
+  test("a site admin who presses x then n or esc revokes nothing", async () => {
+    const h = boot(ada);
+    await h.toAbout();
+    await h.press("e");
+    await h.press("g");
+    await h.press("y");
+    expect(grants()).toEqual([ARM]);
+    const before = changes().length;
+    await h.press("x");
+    expect(h.text()).toContain(`Stop acme/arm reaching ${ARM}?`);
+    expect(h.text()).toContain("refused until g grants it again.");
+    await h.press("n");
+    expect(h.text()).not.toContain(`Stop acme/arm reaching ${ARM}?`);
+    await h.press("x");
+    await h.press("esc");
+    expect(h.text()).not.toContain(`Stop acme/arm reaching ${ARM}?`);
+    expect(grants()).toEqual([ARM]);
+    expect(changes().length).toBe(before);
+    await h.press("x");
+    await h.press("y");
+    expect(grants()).toEqual([]);
+    h.stop();
+  });
+
+  test("a site admin who presses g then n grants nothing", async () => {
+    const before = changes().length;
+    const h = boot(ada);
+    await h.toAbout();
+    await h.press("e");
+    await h.press("g");
+    expect(h.text()).toContain(`Let acme/arm reach ${ARM}?`);
+    expect(h.text()).toContain("The app's outbound traffic to it is allowed until you revoke it with x.");
+    await h.press("n");
+    expect(h.text()).not.toContain(`Let acme/arm reach ${ARM}?`);
+    expect(grants()).toEqual([]);
+    expect(changes().length).toBe(before);
+    const view = await egressView(forge, ada, repo);
+    expect(view.ok && view.value.rows.find((r) => r.destination === ARM)?.granted).toBe(false);
+    await h.press("g");
+    expect(h.text()).toContain(`Let acme/arm reach ${ARM}?`);
+    await h.press("esc");
+    expect(h.text()).not.toContain(`Let acme/arm reach ${ARM}?`);
+    expect(grants()).toEqual([]);
     h.stop();
   });
 
@@ -149,7 +210,8 @@ describe("private destinations in the terminal", () => {
     const before = changes().length;
     const view = await egressView(forge, erin, repo);
     expect(view.ok && view.value.rows.length).toBe(2);
-    const terminal = headlessTerminal(120, 32);
+    // Wide enough that the About card's hint line reaches `e  egress`.
+    const terminal = headlessTerminal(180, 32);
     const identity: TuiIdentity = { sshUsername: "t", remoteAddress: "127.0.0.1", user: erin };
     const { app, session } = createForgeApp(forge, identity, { terminal, exitHooks: false });
     app.start();

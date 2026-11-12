@@ -20,7 +20,8 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import type { Socket } from "bun";
-import { neverGrantable } from "../core/egress_grants.ts";
+import { neverGrantable, PAYMENT_HOSTS } from "../core/egress_grants.ts";
+import { during } from "../perf/jobs.ts";
 
 export interface EgressPolicy {
   /** Host names from `forge.json` `egress`: exact, or `*.example.com`. */
@@ -33,19 +34,47 @@ export interface EgressPolicy {
    */
   readonly granted?: readonly string[] | undefined;
   /**
-   * Set while egress is only reported (`FORGE_CELLS_EGRESS=report`): an
+   * Set while egress is only reported (`cells.egress` = `report`, an admin's setting): an
    * undeclared public host is let through and handed here instead of
    * refused. Private addresses are refused either way.
    */
   readonly report?: ((host: string, port: number) => void) | undefined;
   /** Whose proxy this is (`app:<slug>/<env>`), for the connection gauges. */
   readonly label?: string | undefined;
+  /** More `egress` entries, asked on every connection: what an owner allowed since the cell started (#10456). */
+  readonly allowed?: (() => readonly string[]) | undefined;
+  /** Told of every connection refused by policy (not one that merely failed), with whether the destination is private. */
+  readonly refused?: ((host: string, port: number, isPrivate: boolean) => void) | undefined;
   /** Most connections open to one destination at once; default 8. */
   readonly maxPerDestination?: number | undefined;
   /** Close a connection that moved no bytes for this long; default 5 min. */
   readonly idleMs?: number | undefined;
-  /** Bytes held for a client that does not read before it is cut; default 4 MiB. */
+  /** Bytes held for a slow client; a quarter of it pauses the upstream, and past all of it once paused the client is cut. Default 4 MiB. */
   readonly queueMax?: number | undefined;
+  /**
+   * The proxy of the cell this forge itself runs in (`upstreamProxy`): a
+   * child forge's cell has no route but that, so a cell the child opens
+   * dials through it with `CONNECT`, and that proxy's own policy applies
+   * on top of this one. Names are resolved there, not here (here nothing
+   * resolves).
+   */
+  readonly upstream?: { readonly host: string; readonly port: number } | undefined;
+}
+
+/**
+ * The proxy this forge's own cell set (`apps/contain.ts`): an `http:` URL on
+ * loopback, or undefined where the forge runs in no cell.
+ */
+export function upstreamProxy(env: Record<string, string | undefined> = process.env): EgressPolicy["upstream"] {
+  const raw = env["HTTPS_PROXY"] ?? env["https_proxy"];
+  if (raw === undefined || raw === "") return undefined;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.port === "" || url.username !== "") return undefined;
+    return { host: url.hostname, port: Number(url.port) };
+  } catch {
+    return undefined;
+  }
 }
 
 export interface Egress {
@@ -57,8 +86,15 @@ const MAX_PER_DESTINATION = 8;
 /** A public destination's cap: an install opens dozens of parallel fetches to one registry. */
 export const MAX_PER_PUBLIC_DESTINATION = 64;
 const IDLE_MS = 5 * 60_000;
-/** Bytes held for a client that does not read before its upstream is cut. */
+/** Bytes held for a client that does not read before its upstream is cut, once the pause has landed. */
 const QUEUE_MAX = 4 * 1024 * 1024;
+/**
+ * A backlog past this share of `queueMax` pauses the side that fills it until
+ * the slow side drains: an install extracting a big tarball slower than the
+ * registry sends it gets every byte instead of a cut connection, and the
+ * bytes held stay bounded. A side that never drains is cut by the idle sweep.
+ */
+const PAUSE_AT = 4;
 
 interface Tally {
   open: number;
@@ -107,6 +143,198 @@ export function egressSnapshot(): EgressRow[] {
     for (const [destination, t] of byDestination)
       rows.push({ label, destination, open: t.open, bytesIn: t.bytesIn, bytesOut: t.bytesOut });
   return rows.sort((a, b) => b.open - a.open || a.label.localeCompare(b.label));
+}
+
+/**
+ * Bytes moved since the forge started, per destination alone (#7546): the
+ * counters `/metrics` serves, and a minute-by-minute ring of the last hour,
+ * so a cold bun cache shows as registry bytes without a packet capture.
+ * Keyed by `host:port` and never by run label, so it holds one entry per
+ * host the apps reach, not one per run; past `MOVED_MAX` destinations the
+ * rest are counted under `other`, save the registry, which always keeps its
+ * own entry so the headline figure is never lost there.
+ */
+interface Moved {
+  bytesIn: number;
+  bytesOut: number;
+  /** Minute `m` (ms since epoch / 60 000) lands in slot `m % 60`. */
+  readonly minute: number[];
+  readonly minuteIn: number[];
+}
+
+const MOVED_MAX = 256;
+const HOUR_MINUTES = 60;
+const moved = new Map<string, Moved>();
+/**
+ * label -> bytes in, for the labels someone is metering now (`meterEgress`),
+ * and the repository whose cell the label is: the one thing that says whose
+ * registry bytes these are (#8382), set by the caller that opened the cell.
+ */
+const meters = new Map<string, { bytesIn: number; npmIn: number; holders: number; repoId: string | undefined }>();
+/**
+ * Registry bytes per repository, minute by minute over the last hour
+ * (#8382). Only a metered install with a repository lands here; past
+ * `NPM_REPOS_MAX` repositories the quietest is dropped first.
+ */
+const npmByRepo = new Map<string, Moved>();
+const NPM_REPOS_MAX = 256;
+
+function ring(): Moved {
+  return { bytesIn: 0, bytesOut: 0, minute: Array(HOUR_MINUTES).fill(-1), minuteIn: Array(HOUR_MINUTES).fill(0) };
+}
+
+/** Add `bytesIn` to `m` at minute `minute`. */
+function addMinute(m: Moved, minute: number, bytesIn: number): void {
+  const slot = minute % HOUR_MINUTES;
+  if (m.minute[slot] !== minute) {
+    m.minute[slot] = minute;
+    m.minuteIn[slot] = 0;
+  }
+  m.minuteIn[slot] = (m.minuteIn[slot] ?? 0) + bytesIn;
+}
+
+function recordNpmRepo(repoId: string, bytesIn: number, minute: number): void {
+  let m = npmByRepo.get(repoId);
+  if (m === undefined) {
+    if (npmByRepo.size >= NPM_REPOS_MAX) {
+      let quietest: string | undefined;
+      let least = Infinity;
+      for (const [id, r] of npmByRepo) {
+        const hour = lastHour(r, minute);
+        if (hour < least) [quietest, least] = [id, hour];
+      }
+      if (quietest !== undefined) npmByRepo.delete(quietest);
+    }
+    npmByRepo.set(repoId, (m = ring()));
+  }
+  m.bytesIn += bytesIn;
+  addMinute(m, minute, bytesIn);
+}
+
+/** Count `bytesIn` received from and `bytesOut` sent to `destination`. */
+export function recordEgress(
+  label: string,
+  destination: string,
+  bytesIn: number,
+  bytesOut: number,
+  now = Date.now(),
+): void {
+  const key =
+    destination === NPM_REGISTRY || moved.has(destination) || moved.size < MOVED_MAX
+      ? destination
+      : "other";
+  let m = moved.get(key);
+  if (m === undefined) moved.set(key, (m = ring()));
+  m.bytesIn += bytesIn;
+  m.bytesOut += bytesOut;
+  const minute = Math.floor(now / 60_000);
+  addMinute(m, minute, bytesIn);
+  const meter = meters.get(label);
+  if (meter === undefined) return;
+  meter.bytesIn += bytesIn;
+  if (destination !== NPM_REGISTRY || bytesIn === 0) return;
+  meter.npmIn += bytesIn;
+  if (meter.repoId !== undefined) recordNpmRepo(meter.repoId, bytesIn, minute);
+}
+
+export interface EgressTotal {
+  readonly destination: string;
+  /** Bytes received from it since the forge started. */
+  readonly bytesIn: number;
+  /** Bytes sent to it since the forge started. */
+  readonly bytesOut: number;
+  /** Bytes received from it in the 60 minutes up to `now`, this minute included. */
+  readonly bytesInLastHour: number;
+}
+
+/** Bytes `m` received in the 60 minutes up to `minute`, that minute included. */
+function lastHour(m: Moved, minute: number): number {
+  let hour = 0;
+  for (let i = 0; i < HOUR_MINUTES; i++) {
+    const at = m.minute[i] ?? -1;
+    if (at > minute - HOUR_MINUTES && at <= minute) hour += m.minuteIn[i] ?? 0;
+  }
+  return hour;
+}
+
+/** Every destination reached since the forge started, most received this hour first. */
+export function egressTotals(now = Date.now()): EgressTotal[] {
+  const minute = Math.floor(now / 60_000);
+  const rows: EgressTotal[] = [];
+  for (const [destination, m] of moved)
+    rows.push({ destination, bytesIn: m.bytesIn, bytesOut: m.bytesOut, bytesInLastHour: lastHour(m, minute) });
+  return rows.sort((a, b) => b.bytesInLastHour - a.bytesInLastHour || a.destination.localeCompare(b.destination));
+}
+
+/** The package registry every install step reaches (`apps/contain.ts` STEP_HOSTS). */
+export const NPM_REGISTRY = "registry.npmjs.org:443";
+
+/** Bytes received from the npm registry over the last hour, across every app and check. */
+export function npmBytesLastHour(now = Date.now()): number {
+  const m = moved.get(NPM_REGISTRY);
+  return m === undefined ? 0 : lastHour(m, Math.floor(now / 60_000));
+}
+
+/** The repository that received most from the npm registry over the last hour, by id. */
+export interface NpmTopRepo {
+  readonly repoId: string;
+  readonly bytes: number;
+}
+
+/** The metered repository the registry sent most to in the last hour; none when no metered install fetched. */
+export function npmTopRepoLastHour(now = Date.now()): NpmTopRepo | undefined {
+  const minute = Math.floor(now / 60_000);
+  let top: NpmTopRepo | undefined;
+  for (const [repoId, m] of npmByRepo) {
+    const bytes = lastHour(m, minute);
+    if (bytes > 0 && (top === undefined || bytes > top.bytes || (bytes === top.bytes && repoId < top.repoId)))
+      top = { repoId, bytes };
+  }
+  return top;
+}
+
+export interface EgressMeter {
+  /** Stop counting; answers the bytes received from every destination. */
+  stop(): number;
+  /** Bytes received from the npm registry alone, up to `stop()`. */
+  npm(): number;
+}
+
+/**
+ * Count what `label`'s proxy receives from now until `stop()`, which answers
+ * the bytes in. Only labels being metered are kept, and each goes with its
+ * last holder, so a run label never outlives the step that asked. `repoId`
+ * is the repository whose cell `label` names, from the caller that opened
+ * it: the registry bytes are attributed to it, never to anything the
+ * install printed.
+ */
+export function meterEgress(label: string, repoId?: string): EgressMeter {
+  const meter = meters.get(label) ?? { bytesIn: 0, npmIn: 0, holders: 0, repoId };
+  // An earlier holder that knew no repository must not lose a later one's.
+  meter.repoId ??= repoId;
+  meters.set(label, meter);
+  meter.holders++;
+  const start = meter.bytesIn;
+  const npmStart = meter.npmIn;
+  let stopped: { bytes: number; npm: number } | undefined;
+  return {
+    stop() {
+      if (stopped === undefined) {
+        stopped = { bytes: meter.bytesIn - start, npm: meter.npmIn - npmStart };
+        if (--meter.holders === 0) meters.delete(label);
+      }
+      return stopped.bytes;
+    },
+    npm() {
+      return stopped?.npm ?? meter.npmIn - npmStart;
+    },
+  };
+}
+
+/** For tests: forget every cumulative count. */
+export function resetEgressTotals(): void {
+  moved.clear();
+  npmByRepo.clear();
 }
 
 /** The ports a declared host may be reached on when its entry names none. */
@@ -163,7 +391,7 @@ export function isPublicAddress(address: string): boolean {
 
 export type Verdict =
   | { ok: true; address: string; undeclared: boolean }
-  | { ok: false; why: string };
+  | { ok: false; why: string; policy?: { private: boolean } };
 
 export async function decide(
   policy: EgressPolicy,
@@ -174,7 +402,7 @@ export async function decide(
   const origin = policy.origins.some(
     (o) => o.host.toLowerCase() === name && o.port === port,
   );
-  const declared = origin || hostAllowed(policy.hosts, name, port);
+  const declared = origin || hostAllowed([...policy.hosts, ...(policy.allowed?.() ?? [])], name, port);
   const literalPrivate = isIP(name) !== 0 && !isPublicAddress(name);
   const askAdmin =
     `${name}:${port} is a private destination: ` +
@@ -187,12 +415,18 @@ export async function decide(
   // Reporting lets an undeclared host through (and says so) on the web
   // ports alone; any other port, and any private address (below), is
   // refused in both modes.
-  if (!declared && literalPrivate) return { ok: false, why: askAdmin };
-  if (!declared && (policy.report === undefined || !WEB_PORTS.includes(port)))
+  if (!declared && literalPrivate) return { ok: false, why: askAdmin, policy: { private: true } };
+  // A payment host is never let through by report mode: only an app that
+  // names it reaches it, whatever the admin's setting (#11142).
+  const payment = PAYMENT_HOSTS.includes(`${name}:${port}`);
+  if (!declared && (policy.report === undefined || payment || !WEB_PORTS.includes(port)))
     return {
       ok: false,
       why: `${name}:${port} is not in this repository's egress (forge.json "egress")`,
+      policy: { private: false },
     };
+  // Inside a cell, the cell's proxy resolves and checks the name itself.
+  if (policy.upstream !== undefined) return { ok: true, address: name, undeclared: !declared };
   let addresses: string[];
   try {
     addresses = (await lookup(name, { all: true })).map((a) => a.address);
@@ -210,6 +444,7 @@ export async function decide(
           ? askAdmin
           : `${name} resolves to a private address; add ${name}:${port} ` +
             "to forge.json egress and ask a site admin to grant it",
+        policy: { private: true },
       };
     // A grant opens one destination, never the metadata service or the
     // forge's own cluster, whatever a name resolves to.
@@ -230,10 +465,18 @@ interface Conn {
   done: boolean;
   /** The destination's counts once dialled; the data path adds to it directly. */
   tally?: Tally;
+  /** Whose proxy and where to, once dialled, for the cumulative counts. */
+  label: string;
+  destination?: string;
   /** When bytes last moved either way (ms). */
   last: number;
   /** Frees the destination's slot and counts it closed; set once dialled. */
   release: (() => void) | undefined;
+  /**
+   * The upstream is paused until this client drains its backlog: "pausing"
+   * while the read already under way lands, "paused" once it has.
+   */
+  held?: "pausing" | "paused" | undefined;
 }
 
 /** Cut both sides now: the upstream must never outlive the client. */
@@ -368,6 +611,7 @@ async function open(
   const verdict = await decide(policy, host, port);
   if (!verdict.ok) {
     log(`egress refused: ${verdict.why}`);
+    if (verdict.policy !== undefined) policy.refused?.(host.toLowerCase(), port, verdict.policy.private);
     refuse(client, "403 Forbidden", verdict.why);
     return;
   }
@@ -380,7 +624,7 @@ async function open(
   const count = tally(policy.label ?? "", destination);
   // The cap guards a granted private device (a Pi's camera, #3719); a public host such as the package
   // registry is reached by many parallel requests from one install, so it gets the wider cap.
-  const cap = policy.maxPerDestination ?? (isPublicAddress(verdict.address) ? MAX_PER_PUBLIC_DESTINATION : MAX_PER_DESTINATION);
+  const cap = policy.maxPerDestination ?? (policy.upstream !== undefined || isPublicAddress(verdict.address) ? MAX_PER_PUBLIC_DESTINATION : MAX_PER_DESTINATION);
   if (count.open >= cap) {
     log(`egress capped: ${policy.label ?? "app"} already has ${count.open} connections to ${destination}`);
     refuse(
@@ -394,6 +638,7 @@ async function open(
   count.open++;
   client.data.tally = count;
   const label = policy.label ?? "";
+  client.data.destination = destination;
   client.data.release = () => untally(label, destination);
   const ended = () => {
     if (!client.data.done) {
@@ -401,23 +646,69 @@ async function open(
       client.end();
     }
   };
+  const upstream = policy.upstream;
+  // Through the cell's own proxy, its answer to `CONNECT` comes first; until
+  // it says 200 nothing reaches the client, and anything else refuses it.
+  let answer: Uint8Array | undefined = upstream === undefined ? undefined : new Uint8Array(0);
+  let established = (): void => {};
   try {
     const peer = await Bun.connect<undefined>({
-      hostname: verdict.address,
-      port,
+      hostname: upstream?.host ?? verdict.address,
+      port: upstream?.port ?? port,
       socket: {
-        data(_peer, chunk) {
-          if (client.data.done) return;
+        data(peer, got) {
+          if (client.data.done) {
+            // Gone while the cell's proxy was still answering: nothing holds this end.
+            if (answer !== undefined) peer.terminate();
+            return;
+          }
+          let chunk: Uint8Array = got;
+          if (answer !== undefined) {
+            answer = concat(answer, chunk);
+            const at = headEnd(answer);
+            if (at === -1) {
+              if (answer.length > HEAD_MAX) peer.terminate();
+              return;
+            }
+            const status = decoder.decode(answer.subarray(0, at)).split("\r\n")[0] ?? "";
+            const rest = answer.subarray(at);
+            answer = undefined;
+            if (!/^HTTP\/1\.[01] 200\b/.test(status)) {
+              log(`egress refused upstream: ${destination} ${status}`);
+              client.data.release?.();
+              client.data.release = undefined;
+              refuse(client, "403 Forbidden", `${destination} is not reachable from this forge's cell (${status.slice(9, 80)})`);
+              peer.terminate();
+              return;
+            }
+            established();
+            if (rest.length === 0) return;
+            chunk = rest;
+          }
           client.data.last = Date.now();
           count.bytesIn += chunk.length;
+          recordEgress(label, destination, chunk.length, 0);
           send(client, client.data.toClient, chunk);
-          if (queued(client.data.toClient) > (policy.queueMax ?? QUEUE_MAX)) {
+          const backlog = queued(client.data.toClient);
+          const max = policy.queueMax ?? QUEUE_MAX;
+          if (backlog <= max / PAUSE_AT) return;
+          // The read under way when the pause lands may still deliver a socket
+          // buffer's worth; past the limit after that, the pause did not hold: cut.
+          if (client.data.held === "paused" && backlog > max) {
             drop(client);
             client.terminate();
+            return;
           }
+          if (client.data.held !== undefined) return;
+          client.data.held = "pausing";
+          peer.pause();
+          setImmediate(() => {
+            if (client.data.held === "pausing") client.data.held = "paused";
+          });
         },
         drain(peer) {
           flush(peer, client.data.toPeer);
+          if (queued(client.data.toPeer) <= (policy.queueMax ?? QUEUE_MAX) / PAUSE_AT) client.resume();
         },
         close: ended,
         error: ended,
@@ -431,20 +722,25 @@ async function open(
       client.data.release = undefined;
       return;
     }
-    client.data.peer = peer;
-    if (tunnel)
-      send(
-        client,
-        client.data.toClient,
-        encoder.encode("HTTP/1.1 200 Connection Established\r\n\r\n"),
-      );
-    // Everything after the head — including what arrived during the dial,
-    // kept with it — goes out now; from here `data` forwards directly.
-    const first = concat(prefix, client.data.head.subarray(end));
-    if (first.length > 0) {
-      count.bytesOut += first.length;
-      send(peer, client.data.toPeer, first);
-    }
+    established = () => {
+      client.data.peer = peer;
+      if (tunnel)
+        send(
+          client,
+          client.data.toClient,
+          encoder.encode("HTTP/1.1 200 Connection Established\r\n\r\n"),
+        );
+      // Everything after the head — including what arrived during the dial,
+      // kept with it — goes out now; from here `data` forwards directly.
+      const first = concat(prefix, client.data.head.subarray(end));
+      if (first.length > 0) {
+        count.bytesOut += first.length;
+        recordEgress(label, destination, 0, first.length);
+        send(peer, client.data.toPeer, first);
+      }
+    };
+    if (upstream === undefined) established();
+    else peer.write(encoder.encode(`CONNECT ${destination} HTTP/1.1\r\nHost: ${destination}\r\n\r\n`));
   } catch {
     client.data.release?.();
     client.data.release = undefined;
@@ -471,6 +767,7 @@ export function startEgress(
         toPeer: [],
         toClient: [],
         done: false,
+        label: policy.label ?? "",
         last: Date.now(),
         release: undefined,
       };
@@ -481,7 +778,9 @@ export function startEgress(
       if (conn.peer !== undefined) {
         if (conn.done) return;
         if (conn.tally !== undefined) conn.tally.bytesOut += chunk.length;
+        if (conn.destination !== undefined) recordEgress(conn.label, conn.destination, 0, chunk.length);
         send(conn.peer, conn.toPeer, chunk);
+        if (queued(conn.toPeer) > (policy.queueMax ?? QUEUE_MAX) / PAUSE_AT) client.pause();
         return;
       }
       if (conn.done) return;
@@ -504,6 +803,10 @@ export function startEgress(
     drain(client: Socket<Conn>) {
       client.data.last = Date.now();
       flush(client, client.data.toClient);
+      if (client.data.held !== undefined && queued(client.data.toClient) <= (policy.queueMax ?? QUEUE_MAX) / PAUSE_AT) {
+        client.data.held = undefined;
+        client.data.peer?.resume();
+      }
     },
     close(client: Socket<Conn>) {
       live.delete(client);
@@ -522,7 +825,7 @@ export function startEgress(
   // that stopped sending) is cut, so it cannot hold an upstream open.
   const idleMs = policy.idleMs ?? IDLE_MS;
   const sweep = setInterval(
-    () => {
+    () => during("egress-idle", () => {
       const now = Date.now();
       for (const client of live)
         if (now - client.data.last > idleMs) {
@@ -531,7 +834,7 @@ export function startEgress(
           client.terminate();
           live.delete(client);
         }
-    },
+    }),
     Math.max(50, Math.min(5_000, idleMs / 2)),
   );
   sweep.unref();

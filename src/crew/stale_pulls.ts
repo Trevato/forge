@@ -14,7 +14,6 @@
 
 import type { App } from "../app.ts";
 import { assignIssue, addComment, setIssueState } from "../actions/issues.ts";
-import { listEvents } from "../core/events.ts";
 import { getIssue, getIssueById } from "../core/issues.ts";
 import { closesFromBody, type Pull } from "../core/pulls.ts";
 import { type Repo } from "../core/repos.ts";
@@ -54,7 +53,13 @@ export function closeStale(app: App, repo: Repo, pull: Pull, since: string, now:
 /** How many stale pulls the crew closed in this repository today (UTC), for the tick line. */
 export function closedToday(app: App, repoId: string, now: Date = new Date()): number {
   const from = `${now.toISOString().slice(0, 10)}T00:00:00.000Z`;
-  return listEvents(app.db, { repoId, kind: "pull.closed", limit: 500 }).filter(
-    (e) => e.payload.stale === true && e.createdAt >= from,
-  ).length;
+  // Counted in SQL: no rows built or parsed, and the index finds the day (#8103).
+  const row = app.db
+    .query<{ n: number }, [string, string]>(
+      `SELECT COUNT(*) AS n FROM event
+       WHERE repo_id = ?1 AND kind = 'pull.closed' AND created_at >= ?2
+         AND json_extract(payload, '$.stale') = 1`,
+    )
+    .get(repoId, from);
+  return row?.n ?? 0;
 }

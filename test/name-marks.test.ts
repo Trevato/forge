@@ -22,6 +22,7 @@ import { createApp as insertApp } from "../src/core/apps.ts";
 import { markOf, marksByName } from "../src/core/marks.ts";
 import type { Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
+import { setMember } from "../src/core/roles.ts";
 import { submitReview } from "../src/core/reviews.ts";
 import { claimRun, createRun } from "../src/core/runs.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -30,6 +31,27 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { feedCard } from "../src/web/studio/feed.ts";
 
 const PASSWORD = "a-good-passphrase";
+
+/**
+ * One slow step of the setup under its own short deadline, named when it
+ * fails: a hang or a throw in a hook shows up as bun's `(unnamed)`, which
+ * says nothing (#9438). Setup takes ~2 s whole, so 10 s is a hang.
+ */
+const step = async <T>(label: string, run: () => Promise<T> | T): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(run),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`setup step "${label}" took over 10 s`)), 10_000);
+      }),
+    ]);
+  } catch (e) {
+    throw new Error(`setup step "${label}" failed: ${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    clearTimeout(timer);
+  }
+};
 
 /** Every way a display name might try to wear the mark. None is the forge's. */
 const DISGUISES = [
@@ -109,23 +131,24 @@ describe("a name always says who it is", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-name-marks-"));
     app = createApp({ dataDir, port: 0 });
-    servers = await serve(app);
+    servers = await step("serve", () => serve(app));
     base = servers.url;
     alice = await person("alice");
     mallory = await person("mallory");
-    const agent = await createAgent(app, alice, { username: "scout" });
+    const agent = await step("create agent", () => createAgent(app, alice, { username: "scout" }));
     if (!agent.ok) throw new Error(String(agent.error));
     scout = agent.value.user;
-    const made = await createRepo(app, alice, {
-      name: "garden",
-      visibility: "public",
-    });
+    const made = await step("create repo", () =>
+      createRepo(app, alice, { name: "garden", visibility: "public" }),
+    );
     if (!made.ok) throw new Error(String(made.error));
     repo = made.value;
-    await commitToBranch(app, alice, repo, {
-      message: "seed",
-      files: [{ path: "README.md", content: "# garden\n" }],
-    });
+    await step("seed commit", () =>
+      commitToBranch(app, alice, repo, {
+        message: "seed",
+        files: [{ path: "README.md", content: "# garden\n" }],
+      }),
+    );
     insertApp(app.db, { repoId: repo.id, slug: "garden", access: "public" });
     expect(addToCrew(app, alice, repo, "scout").ok).toBe(true);
     disguise(mallory, DISGUISES[0]!);
@@ -149,18 +172,25 @@ describe("a name always says who it is", () => {
       ["scout/beds", scout],
       ["mallory/beds", mallory],
     ] as const) {
-      await commitToBranch(app, alice, repo, {
-        branch,
-        base: "main",
-        message: branch,
-        files: [{ path: `${branch.replace("/", "-")}.md`, content: "x\n" }],
-      });
-      const p = await openPull(app, who, repo, {
-        title: `Beds by ${who.username}`,
-        body: `Closes #${issueNumber}`,
-        baseBranch: "main",
-        headBranch: branch,
-      });
+      await step(`commit ${branch}`, () =>
+        commitToBranch(app, alice, repo, {
+          branch,
+          base: "main",
+          message: branch,
+          files: [{ path: `${branch.replace("/", "-")}.md`, content: "x\n" }],
+        }),
+      );
+      // A member who cannot write here sends from a branch; a guest needs a fork.
+      if (who === mallory) setMember(app.db, mallory.id, true, alice.id, new Date());
+      const p = await step(`open pull ${branch}`, () =>
+        openPull(app, who, repo, {
+          title: `Beds by ${who.username}`,
+          body: `Closes #${issueNumber}`,
+          baseBranch: "main",
+          headBranch: branch,
+        }),
+      );
+      if (who === mallory) setMember(app.db, mallory.id, false, alice.id, new Date());
       if (!p.ok) throw new Error(String(p.error));
       if (who === scout) pull = p.value;
       else theirs = p.value;
@@ -186,11 +216,13 @@ describe("a name always says who it is", () => {
     });
     claimRun(app.db, run.id);
 
-    const signin = await fetch(`${base}/signin`, {
-      method: "POST",
-      body: new URLSearchParams({ username: "alice", password: PASSWORD }),
-      redirect: "manual",
-    });
+    const signin = await step("sign in", () =>
+      fetch(`${base}/signin`, {
+        method: "POST",
+        body: new URLSearchParams({ username: "alice", password: PASSWORD }),
+        redirect: "manual",
+      }),
+    );
     cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0]!;
     token = createToken(app.db, alice.id, "t", "ro").token;
   }, 30_000);

@@ -3,8 +3,9 @@ import type { Route } from "../shared.ts";
 export const route: Route = {
   method: "post",
   path: "/api/v1/feed/interactions",
-  summary: "Record an act on a feed item, so the feed learns what the caller wants more or less of (rw scope); `item` is a feed item id, `kind` one the feed knows, `app` is owner/name and names the repository when the item is not an event; answers 201 with { id }",
+  summary: "Record an act on a feed item, so the feed learns what the caller wants more or less of (rw scope); `item` is a feed item id, `kind` one the feed knows, `app` is owner/name and names the repository when the item is not an event; `liked` and `unliked` each write one row to the like ledger and are idempotent (a repeat writes nothing and answers the same), answering 201 with { likes, liked }; any other answers 201 with { id }",
   auth: true,
+  role: "member",
   status: 201,
   body: { item: "string", kind: "string", app: "string" },
   refusals: {

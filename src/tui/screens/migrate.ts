@@ -6,6 +6,10 @@
  * the job. Nothing here is a second path: the last step is `migrateRepo`
  * with `branch` and `crew`, and this file only puts its questions and its
  * answer on a terminal.
+ *
+ * An origin whose token sees public repositories only says so under the
+ * rows, with GitHub's new-token page to visit; `t` takes the new token
+ * into `replaceOriginToken`, the action the web page posts to.
  */
 
 import { listAllAgents } from "../../actions/crew.ts";
@@ -15,7 +19,11 @@ import {
   migrateRepo,
   type MigrateSource,
 } from "../../actions/migrate.ts";
-import { listRemoteRepos, listUserOrigins } from "../../actions/origins.ts";
+import {
+  listRemoteRepos,
+  listUserOrigins,
+  replaceOriginToken,
+} from "../../actions/origins.ts";
 import { repositoryLimitMessage } from "../../actions/repos.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
 import type { OriginRepoRow } from "../../core/origins.ts";
@@ -24,6 +32,12 @@ import { subscribe, type MirrorJob, type MirrorStage } from "../../origins/jobs.
 import { providerForOrigin } from "../../origins/credential.ts";
 import { cachedRemoteTips, pickWorkBranch } from "../../origins/work-branch.ts";
 import { getOriginFor } from "../../core/origins.ts";
+import {
+  PUBLIC_ONLY,
+  newTokenUrl,
+  replaceTokenMessage,
+  tokenReach,
+} from "../../origins/token-reach.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { G } from "../term/screen.ts";
@@ -51,6 +65,13 @@ interface Row {
   readonly repo: OriginRepoRow;
 }
 
+/** An origin whose token lists public repositories only. */
+interface PublicOnly {
+  readonly originId: string;
+  readonly login: string;
+  readonly webUrl: string;
+}
+
 /** Where the repository comes from, and — for an origin — the branch chosen. */
 interface Picked {
   readonly source: MigrateSource;
@@ -74,6 +95,7 @@ export function migrateScreen(f: Session, ctx: Ctx): Screen {
   let loading = true;
   // Origins that would not answer: said aloud, never read as "no repositories".
   let unreachable: string[] = [];
+  let publicOnly: PublicOnly[] = [];
   let self: Screen;
 
   const shown = (): Row[] =>
@@ -160,6 +182,46 @@ export function migrateScreen(f: Session, ctx: Ctx): Screen {
     );
   };
 
+  const replaceToken = (origin: PublicOnly): void => {
+    if (user === undefined) return;
+    ctx.push(
+      promptScreen(ctx, self, {
+        title: `Replace the token for ${origin.login}`,
+        label: "New token (with repo)",
+        hint: newTokenUrl(origin.webUrl),
+        mask: true,
+        onSubmit: (token) => {
+          if (token.trim() === "") return "Paste the new token first.";
+          return replaceOriginToken(f.app, user, origin.originId, token).then(
+            async (replaced) => {
+              if (!replaced.ok) {
+                ctx.toast(replaceTokenMessage(replaced.error), "danger");
+                return;
+              }
+              ctx.toast(`Token replaced for ${origin.login}; listed again.`);
+              await self.load?.(new AbortController().signal);
+              ctx.invalidate();
+            },
+          );
+        },
+      }),
+    );
+  };
+
+  const pickReplace = (): void => {
+    if (publicOnly.length === 1) return replaceToken(publicOnly[0]!);
+    ctx.push(
+      pickerScreen(ctx, self, {
+        title: "Replace which token",
+        items: publicOnly.map((o) => ({ id: o.originId, label: o.login })),
+        onPick: ([id]) => {
+          const origin = publicOnly.find((o) => o.originId === id);
+          if (origin !== undefined) replaceToken(origin);
+        },
+      }),
+    );
+  };
+
   self = {
     title: "Migrate a repository",
     get keys() {
@@ -168,6 +230,7 @@ export function migrateScreen(f: Session, ctx: Ctx): Screen {
         binding(["enter"], "pick branch"),
         binding(["/"], "filter"),
         binding(["u"], "paste a URL"),
+        ...(publicOnly.length > 0 ? [binding(["t"], "replace token")] : []),
         binding(["esc"], "back"),
       ];
     },
@@ -178,8 +241,18 @@ export function migrateScreen(f: Session, ctx: Ctx): Screen {
       }
       const out: Row[] = [];
       const failed: string[] = [];
+      const limited: PublicOnly[] = [];
       for (const origin of listUserOrigins(f.app, user)) {
-        const listed = await listRemoteRepos(f.app, user, origin.id);
+        const [listed, reach] = await Promise.all([
+          listRemoteRepos(f.app, user, origin.id),
+          tokenReach(f.app, origin),
+        ]);
+        if (reach === "public")
+          limited.push({
+            originId: origin.id,
+            login: origin.login,
+            webUrl: origin.webUrl,
+          });
         if (!listed.ok) {
           failed.push(origin.login);
           continue;
@@ -189,12 +262,34 @@ export function migrateScreen(f: Session, ctx: Ctx): Screen {
       }
       rows = out;
       unreachable = failed;
+      publicOnly = limited;
       loading = false;
       ctx.invalidate();
     },
     render(area, s) {
       const c = ctx.theme.c;
-      const [top, list] = split(area, "v", [len(2), fill(1)]);
+      const [top, list, foot] = split(area, "v", [
+        len(2),
+        fill(1),
+        len(publicOnly.length === 0 ? 0 : 2 * publicOnly.length),
+      ]);
+      publicOnly.forEach((o, i) => {
+        const at = foot!.y + 2 * i;
+        s.text(
+          foot!.x,
+          at,
+          truncate(`${PUBLIC_ONLY} — ${o.login}.`, foot!.w),
+          style(c.attn, c.bg),
+          foot!.x + foot!.w,
+        );
+        s.text(
+          foot!.x,
+          at + 1,
+          truncate(`Make one with repo at ${newTokenUrl(o.webUrl)} · t to paste it`, foot!.w),
+          style(c.mutedFg, c.bg),
+          foot!.x + foot!.w,
+        );
+      });
       ctx.setCursor(filter.render(s, { ...top!, h: 1 }, c, "filter repositories"));
       const items = shown();
       const down = `Could not reach ${unreachable.join(", ")}.`;
@@ -216,7 +311,7 @@ export function migrateScreen(f: Session, ctx: Ctx): Screen {
               : rows.length === 0 && unreachable.length > 0
                 ? `${down} Try again, or press u to paste a URL.`
                 : rows.length === 0
-                  ? "No connected origin has repositories. Press u to paste a URL, or connect one on the web under Settings → Origins."
+                  ? "No connected origin has repositories. Press u to paste a URL, or connect one on the web under Settings → Connected accounts."
                   : "Nothing matches.",
             list!.w,
           ),
@@ -259,6 +354,10 @@ export function migrateScreen(f: Session, ctx: Ctx): Screen {
       }
       if (e.key === "u") {
         pasteUrl();
+        return true;
+      }
+      if (e.key === "t" && publicOnly.length > 0) {
+        pickReplace();
         return true;
       }
       if (state.key(e, shown().length)) return true;

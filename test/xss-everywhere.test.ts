@@ -138,7 +138,7 @@ describe("one hostile string, every surface", () => {
   });
 
   const pages: [string, () => string][] = [
-    ["the home feed", () => "/"],
+    ["the home feed", () => "/feed"],
     ["the issue", () => `/alice/game/issues/${issueNo}`],
     ["the pull", () => `/alice/game/pulls/${pullNo}`],
     ["the issue list", () => "/alice/game/issues"],

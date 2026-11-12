@@ -18,5 +18,4 @@ export type Allowed = {
   issue: number;
 };
 
-export const ALLOWED: readonly Allowed[] = [
-];
+export const ALLOWED: readonly Allowed[] = [];

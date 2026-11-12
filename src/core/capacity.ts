@@ -14,6 +14,7 @@
 import type { Database } from "bun:sqlite";
 import { readFileSync } from "node:fs";
 import { availableParallelism, totalmem } from "node:os";
+import { PAYMENT_HOSTS } from "./egress_grants.ts";
 
 export type CapacityKey =
   | "crew.concurrency"
@@ -21,15 +22,21 @@ export type CapacityKey =
   | "checks.shards"
   | "queue.depth"
   | "queue.batch"
+  | "week.use"
   | "children.max"
   | "cells.egress"
+  | "children.modelEgress"
+  | "children.registryEgress"
+  | "children.paymentEgress"
+  | "children.ownFilesystem"
   | "guard_new_accounts"
-  | "signin.edge";
+  | "signin.edge"
+  | "pace.floor";
 
 interface Definition {
   /** What the settings page and the API call it. */
   readonly label: string;
-  /** The environment variable that is its boot default. */
+  /** The environment variable that is its boot default; "" for a setting only an admin moves. */
   readonly env: string;
   /** Whole numbers in a range, or one of a few words. */
   readonly kind:
@@ -71,7 +78,7 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     env: "FORGE_QUEUE_DEPTH",
     kind: { type: "count", min: 1, max: 4 },
     fallback: "2",
-    help: "How many merge-queue candidates of one repository gate at once, each on top of the one before: while one gates on main the next gates on it, and lands right after it if both are green. 1 gates one candidate at a time. A gate beyond the first takes a free check slot only, never one of the two kept for pull checks.",
+    help: "How many merge-queue candidates of one repository gate at once, each on top of the one before: while one gates on main the next gates on it, and lands right after it if both are green. Derived from Speed (half of it rounded up, 1 to 4), read-only; FORGE_QUEUE_DEPTH is ignored. A gate beyond the first takes a free check slot only, never one of the two kept for pull checks.",
   },
   "queue.batch": {
     label: "Merge queue batch size",
@@ -79,6 +86,13 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     kind: { type: "count", min: 1, max: 32 },
     fallback: "8",
     help: "The most pulls one merge-queue candidate carries. A bigger batch lands more pulls per green gate; a red one costs more search gates to find its culprit (one bad pull in 16 is found in two rounds, at most √16 = 4 gates each). The queue starts each line here, halves the batch after a red gate and doubles it back after two green gates in a row, never past this. Read on every sweep.",
+  },
+  "week.use": {
+    label: "Share of the week to use (%)",
+    env: "FORGE_WEEK_USE",
+    kind: { type: "count", min: 10, max: 100 },
+    fallback: "90",
+    help: "The weekly budget knob: how much of the week's subscription the crew may spend, evenly to the reset. The rest is kept for conversations and a person's own requests; the crew stops at it. Read on every pump.",
   },
   "children.max": {
     label: "Forges this one may send",
@@ -89,10 +103,41 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
   },
   "cells.egress": {
     label: "Egress from cells",
-    env: "FORGE_CELLS_EGRESS",
+    // No environment default: report is a decision an admin makes and the
+    // change log keeps, never what a deployment's environment says (#10778).
+    env: "",
     kind: { type: "choice", values: ["enforce", "report"] },
     fallback: "enforce",
-    help: "enforce refuses a host an app or check did not declare; report lets it through on 80 and 443 and lists it on the app's page. Takes effect on the next cell started.",
+    help: "enforce refuses a host an app or check did not declare; report lets it through on 80 and 443 and lists it on the app's page. Enforce unless an admin sets report here, with a reason. Takes effect on the next cell started.",
+  },
+  "children.modelEgress": {
+    label: "Model provider a child forge cell may reach",
+    env: "FORGE_CHILDREN_MODEL_EGRESS",
+    kind: { type: "choice", values: ["off", "openrouter", "anthropic", "both"] },
+    fallback: "off",
+    help: "off keeps a child forge's cell to its parent alone; openrouter also lets it reach openrouter.ai on 443, anthropic api.anthropic.com on 443, both the two, so the child's crew can call its model on the child's own key. Nothing else opens, and the cell enforces this even when cells.egress is report. Takes effect on the next child cell started.",
+  },
+  "children.registryEgress": {
+    label: "Package registry a child forge cell may reach",
+    env: "FORGE_CHILDREN_REGISTRY_EGRESS",
+    kind: { type: "choice", values: ["off", "npm", "build"] },
+    fallback: "off",
+    help: "off keeps a child forge's cell from the package registries, so its checks cannot fill their install cache; npm also lets it reach registry.npmjs.org on 443; build opens the hosts ordinary app builds fetch from, on 443 alone: npm and yarn, PyPI, GitHub (git dependencies and release tarballs), crates.io and the Go module proxy. Nothing else opens, and the cell enforces this even when cells.egress is report. Takes effect on the next child cell started.",
+  },
+  "children.paymentEgress": {
+    label: "Payment provider a child forge cell may reach",
+    env: "FORGE_CHILDREN_PAYMENT_EGRESS",
+    kind: { type: "choice", values: ["off", "stripe"] },
+    fallback: "stripe",
+    help: "stripe lets a child forge's cell reach api.stripe.com on 443, so an app a customer builds there can take a payment; off closes it. Only an app whose forge.json egress names the host reaches it: an app that does not, and the child's crew sandbox, get none of it. Nothing else opens, and the cell enforces this even when cells.egress is report. Takes effect on the next child cell started.",
+  },
+  "children.ownFilesystem": {
+    label: "Child forges need a filesystem of their own",
+    // No environment default: refusing children is an admin's decision.
+    env: "",
+    kind: { type: "choice", values: ["off", "on"] },
+    fallback: "off",
+    help: "on refuses to start a child forge whose data directory (<data>/children/<id>) is not a filesystem of its own, so no child can fill the disk this forge and its other children share; the refusal names the child and says why. off starts it on the shared disk, held only by its cell's disk watch. Off by default, because a forge mounts nothing itself: turn it on once the platform mounts one per child. A child already running is not stopped. Read on every start.",
   },
   "guard_new_accounts": {
     label: "New-account repository guard",
@@ -107,6 +152,13 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     kind: { type: "choice", values: ["on", "off"] },
     fallback: "on",
     help: "on reads the platform edge's identity headers (when the forge has an edge secret) and offers its sign-in; off ignores them on every door, so people sign in with the forge's own methods — password and passkey. Accounts the edge made keep their names but have no password until they set one. Takes effect on the next request.",
+  },
+  "pace.floor": {
+    label: "Slots the pace always leaves reviews and assigned work",
+    env: "FORGE_PACE_FLOOR",
+    kind: { type: "count", min: 1, max: 16 },
+    fallback: "2",
+    help: "While the week's pace allows any slots, this many reviews and issues a person assigned may run at once, apart from the crew's own picks, however hard the pace slows them; also the fewest slots a fast burn slows a repository to. At the reserve's wall everything waits. Derived from Speed (half of it, at least 1), read-only; FORGE_PACE_FLOOR is ignored; read on every pump.",
   },
 };
 
@@ -146,7 +198,9 @@ export function capacityDefault(key: CapacityKey, cpus?: number): string {
 
 /** The environment's value for `key`, when it holds a valid one. */
 function explicitDefault(key: CapacityKey): string | undefined {
-  const env = process.env[CAPACITY[key].env]?.trim() ?? "";
+  const name = CAPACITY[key].env;
+  if (name === "") return undefined;
+  const env = process.env[name]?.trim() ?? "";
   return env !== "" && validCapacity(key, env) ? env : undefined;
 }
 
@@ -298,6 +352,20 @@ export function bootDefault(db: Database, key: CapacityKey): string {
 }
 
 /**
+ * The ceiling `key` is held under: its default in force, when an admin's
+ * stored count is below it; null for a choice, an unset key or a value at
+ * or above the ceiling. A crew concurrency lowered at runtime holds the
+ * crew back, and this is how a page can say so.
+ */
+export function belowCeiling(db: Database, key: CapacityKey): { value: number; ceiling: number } | null {
+  if (CAPACITY[key].kind.type !== "count") return null;
+  const stored = storedCapacity(db, key);
+  const ceiling = Number(bootDefault(db, key));
+  if (stored === undefined || !Number.isFinite(ceiling) || ceiling <= 0) return null;
+  return Number(stored) < ceiling ? { value: Number(stored), ceiling } : null;
+}
+
+/**
  * A count setting as a number: an admin's value, else `fallback` — the
  * value the calling service booted with, which is the default in force.
  */
@@ -311,19 +379,113 @@ export function capacityCount(
   return Number.isInteger(n) && n > 0 ? n : fallback;
 }
 
+/** The slots the pace leaves reviews and assigned work (`pace.floor`). */
+export function paceFloor(db: Database): number {
+  return Number(effectiveCapacity(db, "pace.floor"));
+}
+
+/** The dials Speed (`crew.concurrency`) sets: always derived, never stored. */
+export type SpeedDerivedKey = "pace.floor" | "queue.depth";
+
+export function followsSpeed(key: CapacityKey): key is SpeedDerivedKey {
+  return key === "pace.floor" || key === "queue.depth";
+}
+
+/** What Speed implies for a dial that follows it: half of Speed, at least 1 for the floor; half rounded up, 1 to 4, for the depth. */
+export function derivedFromSpeed(db: Database, key: SpeedDerivedKey): number {
+  const speed = Number(capacityValue(db, "crew.concurrency"));
+  if (key === "pace.floor") return Math.max(1, Math.floor(speed / 2));
+  return Math.min(4, Math.max(1, Math.ceil(speed / 2)));
+}
+
+/** A capacity's value as the crew reads it: derived from Speed for the dials that follow it. */
+export function effectiveCapacity(db: Database, key: CapacityKey): string {
+  return followsSpeed(key) ? String(derivedFromSpeed(db, key)) : capacityValue(db, key);
+}
+
+/** The share of the week the crew may use, in percent (`week.use`); the rest is the reserve. */
+export function weekUse(db: Database): number {
+  return Number(capacityValue(db, "week.use"));
+}
+
 /** How many hosted children this forge may hold now; read on every use. */
 export function maxChildren(db: Database): number {
   return Number(capacityValue(db, "children.max"));
 }
 
-/** The egress mode a cell starts with now. */
+/** The egress mode a cell starts with now: enforce unless an admin set report. */
 export function egressSetting(db: Database): "enforce" | "report" {
   return capacityValue(db, "cells.egress") === "report" ? "report" : "enforce";
 }
 
+/** The variable that once set the egress mode, and is now only noticed (#10778). */
+export const EGRESS_ENV = "FORGE_CELLS_EGRESS";
+
+/**
+ * The one boot line for an environment that still asks for an egress mode:
+ * it is ignored, and this says so once, plainly; null when it asks nothing.
+ */
+export function egressEnvIgnored(env: Record<string, string | undefined> = process.env): string | null {
+  const asked = env[EGRESS_ENV]?.trim() ?? "";
+  if (asked === "" || asked === "enforce") return null;
+  return `${EGRESS_ENV}=${asked.slice(0, 32)} is ignored: egress is enforced unless an admin sets cells.egress on /settings/capacity, with a reason`;
+}
+
+/** Most characters a change's reason keeps. */
+export const REASON_MAX = 500;
+
+/** Keys whose loosening must say why: a move of these to report needs a reason. */
+export function needsReason(key: CapacityKey): boolean {
+  return key === "cells.egress";
+}
+
+/** The model provider hosts a child forge's cell may reach now: none unless an admin chose one. */
+export function childModelHosts(db: Database): readonly string[] {
+  return MODEL_HOSTS[capacityValue(db, "children.modelEgress")] ?? [];
+}
+
+// A child's own key is an OpenRouter key or an Anthropic one (scottishbob,
+// 2026-11-10: his Anthropic key was refused at api.anthropic.com).
+const MODEL_HOSTS: Readonly<Record<string, readonly string[]>> = {
+  openrouter: ["openrouter.ai:443"],
+  anthropic: ["api.anthropic.com:443"],
+  both: ["openrouter.ai:443", "api.anthropic.com:443"],
+};
+
+/** Whether a child forge must have a filesystem of its own to start (`children.ownFilesystem`); off by default. */
+export function childNeedsOwnFilesystem(db: Database): boolean {
+  return capacityValue(db, "children.ownFilesystem") === "on";
+}
+
+/** The package registry a child forge cell may reach (`children.registryEgress`); none by default. */
+export function childRegistryHosts(db: Database): readonly string[] {
+  const value = capacityValue(db, "children.registryEgress");
+  return value === "build" ? BUILD_HOSTS : value === "npm" ? ["registry.npmjs.org:443"] : [];
+}
+
+/** The payment provider hosts a child forge cell may reach (`children.paymentEgress`); the cell's ceiling, each app still declares its own. */
+export function childPaymentHosts(db: Database): readonly string[] {
+  return capacityValue(db, "children.paymentEgress") === "stripe" ? PAYMENT_HOSTS : [];
+}
+
+/** `build`: where an ordinary app's build fetches its packages from, each named exactly, on 443. */
+export const BUILD_HOSTS: readonly string[] = [
+  "registry.npmjs.org",
+  "registry.yarnpkg.com",
+  "pypi.org",
+  "files.pythonhosted.org",
+  "github.com",
+  "codeload.github.com",
+  "objects.githubusercontent.com",
+  "crates.io",
+  "static.crates.io",
+  "proxy.golang.org",
+  "sum.golang.org",
+].map((host) => `${host}:443`);
+
 /** How many merge-queue candidates of one repository gate at once (#4053). */
 export function queueDepth(db: Database): number {
-  return Number(capacityValue(db, "queue.depth"));
+  return Number(effectiveCapacity(db, "queue.depth"));
 }
 
 /** The most pulls one merge-queue candidate carries (#6674); the line adapts below it. */
@@ -357,6 +519,8 @@ export interface CapacityChange {
   readonly actorId: string;
   readonly actorName: string;
   readonly at: string;
+  /** Why, as the admin said it; "" for a change made before reasons were kept. */
+  readonly reason: string;
 }
 
 /**
@@ -370,6 +534,8 @@ export function setCapacity(
   key: CapacityKey,
   value: string | null,
   actorId: string,
+  /** Why, in the admin's words, already cut to REASON_MAX by the action; kept beside who (#10778). */
+  reason = "",
 ): { from: string; to: string } {
   const from = capacityValue(db, key);
   const at = new Date().toISOString();
@@ -385,9 +551,9 @@ export function setCapacity(
   })();
   const to = capacityValue(db, key);
   db.query(
-    `INSERT INTO forge_setting_change (key, from_value, to_value, actor_id, at)
-     VALUES (?1, ?2, ?3, ?4, ?5)`,
-  ).run(key, from, to, actorId, at);
+    `INSERT INTO forge_setting_change (key, from_value, to_value, actor_id, at, reason)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
+  ).run(key, from, to, actorId, at, reason);
   return { from, to };
 }
 
@@ -402,10 +568,11 @@ export function capacityChanges(db: Database, limit = 20): CapacityChange[] {
         actor_id: string;
         username: string | null;
         at: string;
+        reason: string;
       },
       [number]
     >(
-      `SELECT c.key, c.from_value, c.to_value, c.actor_id, u.username, c.at
+      `SELECT c.key, c.from_value, c.to_value, c.actor_id, u.username, c.at, c.reason
          FROM forge_setting_change c LEFT JOIN user u ON u.id = c.actor_id
         ORDER BY c.at DESC, c.rowid DESC LIMIT ?1`,
     )
@@ -418,5 +585,6 @@ export function capacityChanges(db: Database, limit = 20): CapacityChange[] {
       actorId: r.actor_id,
       actorName: r.username ?? "",
       at: r.at,
+      reason: r.reason,
     }));
 }

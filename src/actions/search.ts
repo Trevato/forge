@@ -14,11 +14,14 @@
 import { isActive } from "../core/users.ts";
 import { canSeeSealed } from "../core/sealed.ts";
 import type { App } from "../app.ts";
+import { appsForRepos } from "../core/apps.ts";
 import { listOrigins } from "../core/origins.ts";
-import { canRead, listReposVisibleTo } from "../core/repos.ts";
+import { canRead, enterableApps, listReposVisibleTo } from "../core/repos.ts";
 import {
   cleanQuery,
+  searchKind,
   grepRepos,
+  greppable,
   searchLocalIssues,
   matchOneRepo,
   searchLocalRepos,
@@ -39,6 +42,27 @@ import { providerForOrigin } from "../origins/credential.ts";
 export const SEARCH_LIMIT = 20;
 /** Hard ceiling on a caller-chosen limit. */
 export const SEARCH_LIMIT_MAX = 100;
+
+/**
+ * The refusal an API or MCP caller gets for a `kind` or `limit` the search
+ * does not accept, in one set of words; undefined when both are fine. The
+ * page keeps its softer `searchNote`.
+ */
+export function searchRefusal(
+  rawKind: string | null | undefined,
+  rawLimit: string | number | null | undefined,
+): { code: "invalid_kind" | "invalid_limit"; message: string } | undefined {
+  if (rawKind !== null && rawKind !== undefined && rawKind !== "all" && searchKind(rawKind) === "all") {
+    const asked = rawKind.length > 40 ? `${rawKind.slice(0, 39)}…` : rawKind;
+    return { code: "invalid_kind", message: `kind ${JSON.stringify(asked)} is not a kind — use all, repos, issues or code` };
+  }
+  if (rawLimit !== null && rawLimit !== undefined) {
+    const n = typeof rawLimit === "number" ? rawLimit : /^\d{1,4}$/.test(rawLimit) ? Number(rawLimit) : 0;
+    if (!Number.isInteger(n) || n < 1 || n > SEARCH_LIMIT_MAX)
+      return { code: "invalid_limit", message: `limit is a whole number from 1 to ${SEARCH_LIMIT_MAX}` };
+  }
+  return undefined;
+}
 
 /**
  * The whole live half gets this long, all origins together. A search box
@@ -82,6 +106,15 @@ export type SearchPhase = "repos" | "issues" | "code";
  * half — the same rows a signed-out repo listing shows — and no origins,
  * because an origin belongs to the person who connected it.
  */
+/** Whether the repository runs an app the actor may enter (a private one is its writers'). */
+function hasEnterableApp(app: App, actor: User | undefined, repo: Repo): boolean {
+  const record = appsForRepos(app.db, [repo.id]).get(repo.id);
+  return (
+    record !== undefined &&
+    enterableApps(app.db, [{ repo, app: record }], actor, { named: false }).has(record.id)
+  );
+}
+
 export async function search(
   app: App,
   actor: User | undefined,
@@ -120,7 +153,7 @@ export async function search(
   const repos = !wants("repos")
     ? []
     : input.repo !== undefined
-      ? matchOneRepo(input.repo, q)
+      ? matchOneRepo(input.repo, q, hasEnterableApp(app, actor, input.repo))
       : [
           ...searchLocalRepos(app.db, actor, q, limit),
           ...(actor ? searchOriginRepos(app.db, actor.id, q, limit) : []),
@@ -152,17 +185,19 @@ export async function search(
   if (wants("issues")) phase("issues", performance.now() - issuesAt);
 
   const codeAt = performance.now();
-  const code = wants("code") && input.withCode !== false
-    ? await grepRepos(
-        app.reposRoot,
-        visible,
-        q,
-        Math.min(limit * 5, MAX_CODE_HITS),
-        input.codeBudgetMs ?? Infinity,
-        // The slot is keyed on the actor the session resolved, never on input.
-        { memberId: actor?.id },
-      )
-    : { hits: [], truncated: false, more: false, skipped: false };
+  const code =
+    // A one-letter query greps nothing: it would match every line (#11120).
+    wants("code") && input.withCode !== false && greppable(q)
+      ? await grepRepos(
+          app.reposRoot,
+          visible,
+          q,
+          Math.min(limit * 5, MAX_CODE_HITS),
+          input.codeBudgetMs ?? Infinity,
+          // The slot is keyed on the actor the session resolved, never on input.
+          { memberId: actor?.id },
+        )
+      : { hits: [], truncated: false, more: false, skipped: false };
   if (wants("code")) phase("code", performance.now() - codeAt);
 
   return {

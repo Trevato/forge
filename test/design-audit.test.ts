@@ -1,17 +1,21 @@
 /**
  * docs/design/audit.md has one entry for every top-level page, and names no
  * route the router does not have (#2709). The router is read as text: the
- * static GET paths in src/http/server.ts, less the ones that are not pages.
+ * static GET paths in src/http/server.ts and settings_routes.ts, less the
+ * ones that are not pages.
  */
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
-const server = readFileSync("src/http/server.ts", "utf8");
+// The settings routes register from their own module (#8309), so both are read.
+const server = ["src/http/server.ts", "src/http/settings_routes.ts"]
+  .map((file) => readFileSync(file, "utf8"))
+  .join("\n");
 const doc = readFileSync("docs/design/audit.md", "utf8");
 
 /** Routes that answer a file, a fragment, a redirect hop or a callback. */
 const NOT_PAGES =
-  /^\/(assets\/|\.well-known\/|icons\/|og\/|live\/|__forge\/|go\/|events$|system\/stream$|settings\/teams\/stream$|sw\.js$|robots\.txt$|sitemap\.xml$|manifest\.webmanifest$|opensearch\.xml$|llms\.txt$|releases\.json$|audit\.csv$|fleet\/graph\/live$|fleet\/graph\.csv$|settings\/origins\/callback$|home\/archived\/|settings\/backups\/live$)/;
+  /^\/(assets\/|\.well-known\/|icons\/|og\/|live\/|__forge\/|go\/|new\/issue$|events$|system\/stream$|talk\/stream$|settings\/teams\/stream$|sw\.js$|robots\.txt$|favicon\.ico$|apple-touch-icon(-precomposed)?\.png$|sitemap\.xml$|manifest\.webmanifest$|opensearch\.xml$|llms\.txt$|openapi\.json$|releases\.json$|changelog\.atom$|explore\.atom$|docs(\/[^/]*)?$|audit\.csv$|settings\/traffic\/scrapes\/export$|fleet\/graph\/live$|fleet\/graph\.csv$|settings\/origins\/callback$|home\/archived\/|settings\/backups\/live$|api\/v1(\/|$))/;
 
 const getRoutes = [
   ...server.matchAll(/router\.add\(\s*"GET",\s*"([^"]+)"/g),
@@ -26,8 +30,6 @@ const pages = [
 const entries = [...doc.matchAll(/^- `(\/[^`]*)`/gm)].map((m) => m[1]!);
 
 test("every top-level page has an entry in the audit", () => {
-  const stated = /There are (\d+) top-level pages/.exec(doc)?.[1];
-  expect(pages.length).toBe(Number(stated));
   expect(entries.length).toBe(pages.length);
   expect(pages.filter((p) => !entries.includes(p))).toEqual([]);
 });

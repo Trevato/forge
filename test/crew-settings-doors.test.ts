@@ -97,7 +97,7 @@ describe("settings › crew doors", () => {
     });
     if (!made.ok) throw new Error(String(made.error));
     repo = made.value;
-    const bot = await createAgent(app, a.value, { username: "yardbot" });
+    const bot = await createAgent(app, a.value, { username: "yardbot", roles: ["planner", "builder", "reviewer"] });
     if (!bot.ok) throw new Error("agent");
     botId = bot.value.user.id;
     const sub = addSubscription(app.db, dataDir, {
@@ -106,7 +106,7 @@ describe("settings › crew doors", () => {
     });
     if (!sub.ok) throw new Error("subscription");
     subId = sub.value.id;
-    const other = await createAgent(app, a.value, { username: "otherbot" });
+    const other = await createAgent(app, a.value, { username: "otherbot", roles: ["planner", "builder", "reviewer"] });
     if (!other.ok) throw new Error("agent");
     otherId = other.value.user.id;
     const c = await createUser(app.db, {
@@ -228,5 +228,22 @@ describe("settings › crew doors", () => {
     });
     expect(res.status).toBe(404);
     expect(listGrants(app.db, carolRepo.id)).toEqual([]);
+  });
+
+  test("the team card's button adds the agent in the pillar it names", async () => {
+    const own = (body: Record<string, string>) =>
+      fetch(`${servers.url}/carol/carolyard/settings/crew`, {
+        method: "POST",
+        headers: { origin: servers.url, cookie: carol },
+        body: new URLSearchParams(body),
+        redirect: "manual",
+      });
+    await fetch(`${servers.url}/carol/carolyard/settings/crew/otherbot/remove`, {
+      method: "POST",
+      headers: { origin: servers.url, cookie: carol },
+      redirect: "manual",
+    });
+    expect((await own({ agent: "otherbot", role: "planner" })).status).toBe(303);
+    expect(crewRole(app.db, carolRepo.id, otherId)).toBe("planner");
   });
 });

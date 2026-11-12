@@ -12,11 +12,14 @@
  * settings files of the operator's, a spend budget, and a deadline.
  */
 
-import { BACKGROUND_CPU_WEIGHT, backgroundArgv, crewCpus } from "../apps/background.ts";
-import { cgroupHost, openCellCgroup, tryEnterArgv } from "../apps/cgroup.ts";
-import { join } from "node:path";
+import { measureOf, type Measure } from "../core/measure.ts";
+import { backgroundArgv, crewCpus } from "../apps/background.ts";
+import { cgroupHost } from "../apps/cgroup.ts";
+import { openRunCell, type RunLimits } from "./run-cell.ts";
 import { watchLabelled } from "../apps/contain.ts";
 import { childEnv, pump } from "../apps/process.ts";
+import { endedLine, liveTree } from "../runs/ended.ts";
+import { CANCEL_GRACE_MS } from "../runs/grace.ts";
 import { spellings, stripForgeDirs } from "../runs/paths.ts";
 import type { SandboxPolicy } from "./sandbox.ts";
 
@@ -31,11 +34,15 @@ export interface ClaudeInput {
   readonly resume?: string | undefined;
   readonly env: Record<string, string>;
   readonly sandbox: SandboxPolicy;
+  /** The run's machine's memory and CPU ceilings (`crew/run-cell.ts`); none is today's cell. */
+  readonly limits?: RunLimits | undefined;
   /** What `/system` calls this run's process tree (`crew:<name>`); unlabelled when absent. */
   readonly label?: string | undefined;
   readonly timeoutMs: number;
   readonly log: (line: string) => void;
   readonly signal: AbortSignal;
+  /** Images that go with the prompt, once: base64 data and its media type (#8820). */
+  readonly images?: readonly { readonly mediaType: string; readonly data: string }[] | undefined;
   /**
    * Hands the caller a way to say something to the agent while it runs.
    * The words arrive as its next user turn, after the step it is on; a
@@ -49,6 +56,17 @@ export interface ClaudeInput {
    * for this invocation, never deltas.
    */
   readonly onUsage?: ((spent: Spent) => void) | undefined;
+  /** The provider's measurement of a window, each time the session reports one (#8960). */
+  readonly onMeasure?: ((measure: Measure) => void) | undefined;
+  /**
+   * Talks to the forge through MCP alone (#7651): no file or shell tools, no
+   * clone, the one server named in `config` (`--mcp-config` JSON) allowed.
+   */
+  readonly mcp?: { readonly config: string; readonly allow: readonly string[] } | undefined;
+  /** The session id, once the init record names it (a restart resumes it). */
+  readonly onSession?: ((sessionId: string) => void) | undefined;
+  /** What the agent said or called, as each assistant message arrives. */
+  readonly onSaid?: ((said: { readonly kind: "text" | "tool" | "thinking"; readonly text: string }) => void) | undefined;
   /**
    * How long a session may stay silent after a result while its input is
    * still open (a steer was pending) before it is closed and settled as
@@ -89,6 +107,10 @@ export interface ClaudeOutcome {
    */
   readonly tokensIn: number;
   readonly tokensOut: number;
+  /** What the last assistant message read: the session's context at its end; 0 when none reported. */
+  readonly contextTokens: number;
+  /** The model's context window in tokens, from the result's `modelUsage`; 0 when it named none. */
+  readonly contextWindow: number;
   /** `completed`, `max_budget_reached`, `timeout`, `cancelled`, `error`, `exit <n>`. */
   readonly reason: string;
 }
@@ -110,7 +132,10 @@ export const TOOLS = ["Bash", "Read", "Edit", "Write", "Glob", "Grep"] as const;
  */
 export function claudeSettings(
   sandbox: SandboxPolicy,
+  mcp?: ClaudeInput["mcp"],
 ): Record<string, unknown> {
+  if (mcp !== undefined)
+    return { permissions: { allow: [...mcp.allow], deny: [...TOOLS] } };
   return {
     sandbox: {
       enabled: sandbox.enforced,
@@ -164,19 +189,20 @@ export function claudeArgs(input: ClaudeInput): string[] {
     // Restricted mode drops every tool that runs code unless it is named
     // here; "default" does not name Bash. This is the agent's whole kit.
     "--tools",
-    TOOLS.join(","),
+    input.mcp === undefined ? TOOLS.join(",") : "",
     "--permission-mode",
     "acceptEdits",
     "--permission-prompts",
     "none",
     "--strict-mcp-config",
     "--settings",
-    JSON.stringify(claudeSettings(input.sandbox)),
+    JSON.stringify(claudeSettings(input.sandbox, input.mcp)),
     "--max-budget-usd",
     input.budgetUsd.toFixed(2),
     "--append-system-prompt",
     input.appendSystemPrompt,
   ];
+  if (input.mcp !== undefined) args.push("--mcp-config", input.mcp.config);
   if (input.model !== undefined && input.model !== "")
     args.push("--model", input.model);
   if (input.resume !== undefined && input.resume !== "")
@@ -191,13 +217,13 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
   // there is spawned bare, so it fails as itself (ENOENT, caught by the
   // caller as a failed run) and not as `nice`'s exit 127. Where the forge
   // holds a cgroup, the run gets a cell of its own, weighed and held to
-  // `FORGE_CREW_CPUS` cores, so it no longer shares the forge's leaf.
+  // `FORGE_CREW_CPUS` cores, so it no longer shares the forge's leaf; its
+  // machine may narrow that cell with a memory cap and fewer cores.
   const argv = [input.binary, ...claudeArgs(input)];
   const present = Bun.which(input.binary) !== null;
-  const cgroup = present
-    ? openCellCgroup(undefined, cgroupHost(), { weight: BACKGROUND_CPU_WEIGHT, cpus: crewCpus() })
-    : undefined;
-  const contained = cgroup === undefined ? argv : tryEnterArgv(join(cgroup.dir, "cgroup.procs"), argv);
+  const cell = present ? openRunCell(input.limits ?? {}, cgroupHost(), crewCpus(), input.log) : undefined;
+  const cgroup = cell?.cgroup;
+  const contained = cell === undefined ? argv : cell.wrap(argv);
   const spawn = (): ReturnType<typeof Bun.spawn<"pipe", "pipe", "pipe">> =>
     Bun.spawn(present ? backgroundArgv(contained) : argv, {
     cwd: input.cwd,
@@ -232,14 +258,20 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
   // closes its stdin after a turn nobody followed.
   let pending = 0;
   let open = true;
-  const say = (text: string): boolean => {
+  const say = (text: string, images: ClaudeInput["images"] = []): boolean => {
     if (!open || proc.exitCode !== null || proc.signalCode !== null)
       return false;
     try {
       proc.stdin.write(
         `${JSON.stringify({
           type: "user",
-          message: { role: "user", content: [{ type: "text", text }] },
+          message: {
+            role: "user",
+            content: [
+              ...images.map((i) => ({ type: "image", source: { type: "base64", media_type: i.mediaType, data: i.data } })),
+              { type: "text", text },
+            ],
+          },
         })}\n`,
       );
       proc.stdin.flush();
@@ -257,7 +289,7 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
       // already gone
     }
   };
-  say(input.prompt);
+  say(input.prompt, input.images);
   input.onSteer?.((text) => {
     if (!say(text)) return false;
     pending++;
@@ -270,6 +302,8 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
   let turns = 0;
   let tokensIn = 0;
   let tokensOut = 0;
+  let contextTokens = 0;
+  let contextWindow = 0;
   let reason = "";
   let ok = false;
   let sawResult = false;
@@ -331,8 +365,15 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
     if (typeof event !== "object" || event === null) return;
     const e = event as Record<string, unknown>;
     const type = e["type"];
-    if (typeof e["session_id"] === "string" && sessionId === "")
+    if (typeof e["session_id"] === "string" && sessionId === "") {
       sessionId = e["session_id"];
+      input.onSession?.(sessionId);
+    }
+    if (type === "rate_limit_event") {
+      const measure = measureOf(e, new Date());
+      if (measure !== undefined) input.onMeasure?.(measure);
+      return;
+    }
     if (type === "system") {
       if (e["subtype"] === "init")
         input.log(`session ${sessionId} (${String(e["model"] ?? "")})`);
@@ -341,19 +382,36 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
     if (type === "assistant") {
       for (const text of assistantLines(e, workdir)) input.log(text);
       const message = e["message"];
-      if (input.onUsage && typeof message === "object" && message !== null) {
+      if (input.onSaid && typeof message === "object" && message !== null) {
+        const content = (message as Record<string, unknown>)["content"];
+        for (const block of Array.isArray(content) ? content : []) {
+          const b = (block ?? {}) as Record<string, unknown>;
+          if (b["type"] === "text" && typeof b["text"] === "string")
+            input.onSaid({ kind: "text", text: b["text"] });
+          else if (b["type"] === "thinking" && typeof b["thinking"] === "string")
+            input.onSaid({ kind: "thinking", text: b["thinking"] });
+          else if (b["type"] === "tool_use" && typeof b["name"] === "string")
+            input.onSaid({ kind: "tool", text: `${b["name"]} ${JSON.stringify(b["input"] ?? {})}` });
+        }
+      }
+      if (typeof message === "object" && message !== null) {
         const m = message as Record<string, unknown>;
         if (typeof m["usage"] === "object" && m["usage"] !== null) {
           const key =
             typeof m["id"] === "string" ? m["id"] : `#${perMessage.size}`;
-          perMessage.set(key, tokensOf(m["usage"]));
-          let tokensIn = 0;
-          let tokensOut = 0;
-          for (const t of perMessage.values()) {
-            tokensIn += t.tokensIn;
-            tokensOut += t.tokensOut;
+          const used = tokensOf(m["usage"]);
+          // What the last message read is the context the session holds.
+          contextTokens = used.tokensIn;
+          perMessage.set(key, used);
+          if (input.onUsage) {
+            let tokensIn = 0;
+            let tokensOut = 0;
+            for (const t of perMessage.values()) {
+              tokensIn += t.tokensIn;
+              tokensOut += t.tokensOut;
+            }
+            input.onUsage({ tokensIn, tokensOut, costUsd: 0 });
           }
-          input.onUsage({ tokensIn, tokensOut, costUsd: 0 });
         }
       }
       return;
@@ -364,6 +422,7 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
       result = typeof e["result"] === "string" ? e["result"] : "";
       costUsd =
         typeof e["total_cost_usd"] === "number" ? e["total_cost_usd"] : 0;
+      contextWindow = windowOf(e["modelUsage"]);
       turns = typeof e["num_turns"] === "number" ? e["num_turns"] : 0;
       ({ tokensIn, tokensOut } = tokensOf(e["usage"]));
       input.onUsage?.({ tokensIn, tokensOut, costUsd });
@@ -415,7 +474,7 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
       if (proc.exitCode === null && proc.signalCode === null)
         signalGroup("SIGKILL");
       stopReading.abort();
-    }, 5_000).unref();
+    }, CANCEL_GRACE_MS).unref();
   };
   const timer = setTimeout(() => {
     why = "timeout";
@@ -423,6 +482,7 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
   }, input.timeoutMs);
   const onAbort = (): void => {
     why = "cancelled";
+    input.log(endedLine(liveTree(proc.pid).length));
     stopChild();
   };
   if (input.signal.aborted) onAbort();
@@ -462,6 +522,8 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
       turns,
       tokensIn,
       tokensOut,
+      contextTokens,
+      contextWindow,
       reason: why,
     };
   }
@@ -475,10 +537,12 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
       turns,
       tokensIn,
       tokensOut,
+      contextTokens,
+      contextWindow,
       reason: `exit ${code}`,
     };
   }
-  return { ok, sessionId, result, costUsd, turns, tokensIn, tokensOut, reason };
+  return { ok, sessionId, result, costUsd, turns, tokensIn, tokensOut, contextTokens, contextWindow, reason };
 }
 
 /**
@@ -495,6 +559,17 @@ export function reapGroup(pgid: number): void {
   } catch {
     // the group is empty: nothing was left behind
   }
+}
+
+/** The largest `contextWindow` a result's `modelUsage` names, 0 when none. */
+export function windowOf(modelUsage: unknown): number {
+  if (typeof modelUsage !== "object" || modelUsage === null) return 0;
+  let most = 0;
+  for (const v of Object.values(modelUsage)) {
+    const w = typeof v === "object" && v !== null ? (v as Record<string, unknown>)["contextWindow"] : undefined;
+    if (typeof w === "number" && Number.isFinite(w) && w > most) most = Math.floor(w);
+  }
+  return most;
 }
 
 /**

@@ -70,7 +70,7 @@ export const DEFAULT_PAGE = "/";
  * column is truth.
  */
 const pageSlug = (page: string): string =>
-  page === DEFAULT_PAGE ? "" : page.slice(1).replace(/\//g, "-");
+  page === DEFAULT_PAGE ? "" : page.slice(1).replace(/[/#?=&]/g, "-");
 
 /**
  * The fragment one picture is named by, on disk and in its URL: the page
@@ -109,6 +109,16 @@ export interface Look {
   readonly attachedBy: string | null;
   /** The one line that says what an attached look shows. */
   readonly note: string | null;
+  /** The page's own size when it was pictured; absent when it was not kept. */
+  readonly size?: LookSize;
+}
+
+/** The document's scroll size and the window's inner size, in CSS pixels. */
+export interface LookSize {
+  readonly scrollWidth: number;
+  readonly scrollHeight: number;
+  readonly innerWidth: number;
+  readonly innerHeight: number;
 }
 
 interface Row {
@@ -125,6 +135,10 @@ interface Row {
   taken_as: "owner" | "nobody";
   attached_by: string | null;
   note: string | null;
+  scroll_width: number | null;
+  scroll_height: number | null;
+  inner_width: number | null;
+  inner_height: number | null;
 }
 
 /**
@@ -140,6 +154,21 @@ const stored = (page: string, theme: LookTheme): string =>
 const unstored = (page: string): string =>
   page.startsWith(DARK_PREFIX) ? page.slice(DARK_PREFIX.length) : page;
 
+const sizeOf = (r: Row): { size: LookSize } | undefined =>
+  r.scroll_width === null ||
+  r.scroll_height === null ||
+  r.inner_width === null ||
+  r.inner_height === null
+    ? undefined
+    : {
+        size: {
+          scrollWidth: r.scroll_width,
+          scrollHeight: r.scroll_height,
+          innerWidth: r.inner_width,
+          innerHeight: r.inner_height,
+        },
+      };
+
 const toLook = (r: Row): Look => ({
   id: r.id,
   appId: r.app_id,
@@ -154,6 +183,7 @@ const toLook = (r: Row): Look => ({
   takenAs: r.taken_as,
   attachedBy: r.attached_by,
   note: r.note,
+  ...sizeOf(r),
 });
 
 export interface RecordLookInput {
@@ -170,6 +200,8 @@ export interface RecordLookInput {
   /** A person's attachment: who, and what it shows. */
   readonly attachedBy?: string | undefined;
   readonly note?: string | undefined;
+  /** What the page reported of its size; none stores nulls. */
+  readonly size?: LookSize | undefined;
 }
 
 /** Record a picture, or the reason there is none. A retake replaces. */
@@ -177,10 +209,13 @@ export function recordLook(db: Database, input: RecordLookInput): Look {
   const page = input.page ?? DEFAULT_PAGE;
   const theme = input.theme ?? DEFAULT_THEME;
   db.query(
-    `INSERT INTO look (id, app_id, env, commit_oid, page, kind, path, error, taken_as, attached_by, note, theme)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+    `INSERT INTO look (id, app_id, env, commit_oid, page, kind, path, error, taken_as, attached_by, note, theme,
+       scroll_width, scroll_height, inner_width, inner_height)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
      ON CONFLICT (app_id, env, commit_oid, page, kind) DO UPDATE SET
        path = excluded.path, error = excluded.error, taken_as = excluded.taken_as,
+       scroll_width = excluded.scroll_width, scroll_height = excluded.scroll_height,
+       inner_width = excluded.inner_width, inner_height = excluded.inner_height,
        created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
   ).run(
     newId(),
@@ -195,6 +230,10 @@ export function recordLook(db: Database, input: RecordLookInput): Look {
     input.attachedBy ?? null,
     input.note ?? null,
     theme,
+    input.size?.scrollWidth ?? null,
+    input.size?.scrollHeight ?? null,
+    input.size?.innerWidth ?? null,
+    input.size?.innerHeight ?? null,
   );
   return getLook(db, input.appId, input.env, input.commitOid, page, input.kind, theme)!;
 }
@@ -256,6 +295,28 @@ export function looksForApps(db: Database, appIds: readonly string[]): Look[] {
 }
 
 /**
+ * Every picture taken of some commits, in any environment and either
+ * theme, newest first: what a pin's screenshots are picked from. Errors
+ * are left out; a person picks only what is there.
+ */
+export function looksForCommits(db: Database, commitOids: readonly string[]): Look[] {
+  const out: Look[] = [];
+  const unique = [...new Set(commitOids)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<Row, string[]>(
+        `SELECT * FROM look WHERE error IS NULL AND commit_oid IN (${batch.map((_, n) => `?${n + 1}`).join(",")})
+         ORDER BY created_at DESC, kind, theme`,
+      )
+      .all(...batch);
+    for (const row of rows) out.push(toLook(row));
+  }
+  return out;
+}
+
+/**
  * Forget an environment's looks — all of them, or all but one commit's
  * (a person's attachments are not the forge's to age out: they go with the
  * environment).
@@ -282,6 +343,17 @@ export function deleteLooks(
           >(`DELETE FROM look WHERE app_id = ?1 AND env = ?2 AND commit_oid != ?3 AND attached_by IS NULL RETURNING *`)
           .all(appId, env, keepCommit);
   return gone.map(toLook);
+}
+
+/** Delete every thumb of an app that was taken as a stranger; the ones deleted. */
+export function deleteStrangerThumbs(db: Database, appId: string): Look[] {
+  return db
+    .query<
+      Row,
+      [string]
+    >(`DELETE FROM look WHERE app_id = ?1 AND kind = 'thumb' AND taken_as = 'nobody' AND attached_by IS NULL RETURNING *`)
+    .all(appId)
+    .map(toLook);
 }
 
 /**

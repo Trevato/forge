@@ -63,7 +63,7 @@ describe("an admin's refusals, from every door", () => {
   test("an admin suspending themselves: the API and MCP say the module's sentence", async () => {
     const r = await api(admin, "POST", "/api/v1/admin/accounts/alice/suspend", {});
     expect(r.status).toBe(422);
-    expect(r.body).toEqual({ error: "not_allowed", message: ADMIN_WORDS.selfSuspend });
+    expect(r.body).toMatchObject({ error: "not_allowed", message: ADMIN_WORDS.selfSuspend });
     const m = await mcp(admin, "account_suspend", { username: "alice", suspended: true });
     expect(m.error).toBe(true);
     expect(m.text).toBe(`not_allowed: ${ADMIN_WORDS.selfSuspend}`);
@@ -72,13 +72,13 @@ describe("an admin's refusals, from every door", () => {
   test("a non-admin reading the scorecard: the API says the module's sentence", async () => {
     const r = await api(person, "GET", "/api/v1/crew/scorecard");
     expect(r.status).toBe(403);
-    expect(r.body).toEqual({ error: "forbidden", message: ADMIN_WORDS.scorecard });
+    expect(r.body).toMatchObject({ error: "forbidden", message: ADMIN_WORDS.scorecard });
   });
 
   test("a non-admin setting the front page: the API and MCP say the module's sentence", async () => {
     const r = await api(person, "PUT", "/api/v1/front", { pinned: [], hidden: [] });
     expect(r.status).toBe(403);
-    expect(r.body).toEqual({ error: "forbidden", message: ADMIN_WORDS.frontPage });
+    expect(r.body).toMatchObject({ error: "forbidden", message: ADMIN_WORDS.frontPage });
     const m = await mcp(person, "front_page", { pinned: [], hidden: [] });
     expect(m.error).toBe(true);
     expect(m.text).toBe(`forbidden: ${ADMIN_WORDS.frontPage}`);

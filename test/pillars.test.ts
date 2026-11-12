@@ -391,7 +391,7 @@ describe("pillars", () => {
     expect(mcp.value.pillars).toEqual(data.pillars);
     expect(mcp.value.mergedByPillar).toEqual(data.mergedByPillar);
 
-    const page = await get("/alice/engine/map");
+    const page = await get("/alice/engine/map?view=graph");
     expect(page).toContain('id="map-pillars"');
     // Each pillar opens its milestone (#731).
     expect(page).toMatch(
@@ -401,7 +401,17 @@ describe("pillars", () => {
     );
     expect(page).toContain("3 open · 2 ready · 1 blocked");
     expect(page).toMatch(/class="row-title"\s*>no pillar<\/span/);
-    expect(page).toMatch(/class="badge"\s*>3 open · 2 ready · 1 blocked<\/span/);
+    expect(page).toMatch(/class="muted small"\s*>3 open · 2 ready · 1 blocked<\/span/);
+    const pillarsBlock = page.slice(page.indexOf('id="map-pillars"'), page.indexOf("</section>", page.indexOf('id="map-pillars"')));
+    expect(pillarsBlock).not.toContain('class="badge"');
+    // The side lists sit straight under their headings, in no card box (#9848).
+    expect(pillarsBlock).not.toContain('class="card');
+    expect(pillarsBlock).toContain(`href="/alice/engine/issues/${loose.number}"`);
+    // A Ready now row leads with its pillar's name.
+    const readyBlock = page.slice(page.indexOf("<h2>Ready now</h2>"), page.indexOf("</section>", page.indexOf("<h2>Ready now</h2>")));
+    expect(readyBlock).toMatch(/#\d+ · ready · P[01] [A-Za-z]+ · /);
+    expect(readyBlock).not.toContain('class="card');
+    expect(readyBlock).toContain('href="/alice/engine/issues/');
     // §5's rows draw the section; the old names are gone (#4292).
     expect(page).not.toMatch(/class="[^"]*\bmap-list\b/);
     expect(page).not.toMatch(/class="[^"]*\bmap-empty\b/);
@@ -566,7 +576,7 @@ describe("pillars", () => {
       limbs.value.limbs.find((l: any) => l.number === feed.number).askToLive,
     ).toBeNull();
 
-    const page = await get("/alice/engine/map");
+    const page = await get("/alice/engine/map?view=graph");
     expect(page).toContain("8.5h median");
     expect(page).toContain(`#${sandbox.number}`);
     expect(page).toMatch(/P1 Feed[\s\S]*?ask to live\s+—/);
@@ -600,7 +610,7 @@ describe("pillars", () => {
     seal(1);
     try {
       const sealedLink = `/issues/${sandbox.number}"`;
-      const guest = await (await fetch(`${base}/alice/engine/map`)).text();
+      const guest = await (await fetch(`${base}/alice/engine/map?view=graph`)).text();
       expect(guest).toContain("5h median");
       expect(guest).not.toContain(sealedLink);
       const data = await asBob("/api/v1/repos/alice/engine/map");
@@ -616,7 +626,7 @@ describe("pillars", () => {
         limbs.limbs.find((l: any) => l.number === trust.number).askToLive.slowest.number,
       ).toBe(parts[0]!.number);
       // A writer still sees it.
-      expect(await get("/alice/engine/map")).toContain(sealedLink);
+      expect(await get("/alice/engine/map?view=graph")).toContain(sealedLink);
       expect(
         (await api("/api/v1/repos/alice/engine/map")).mergedByPillar.counts[0].askToLive
           .slowest.number,
@@ -739,7 +749,7 @@ describe("pillars", () => {
             "the plan's own: a person closes it, the crew never picks it",
         });
       expect(data.counts).toMatchObject({ ready: 2, parked: 3 });
-      const page = await get("/alice/bare/map");
+      const page = await get("/alice/bare/map?view=graph");
       const listed = page.slice(
         page.indexOf("<h2>Ready now</h2>"),
         page.indexOf("</section>", page.indexOf("<h2>Ready now</h2>")),

@@ -1,8 +1,8 @@
 /**
- * A repository with 200 branches lists them in under 50 ms: ahead/behind and
+ * A repository with 200 branches lists them with a fixed number of git processes: ahead/behind and
  * tips are one git call each, not one per branch.
  */
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,7 +13,7 @@ import { commitLog } from "../src/git/read.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { seedAdmin } from "./helpers/admin.ts";
-import { baselineMs, expectBudget } from "./helpers/budget.ts";
+import { expectWork } from "./helpers/work.ts";
 
 const env = gitClientEnv({
   GIT_AUTHOR_NAME: "A",
@@ -79,6 +79,17 @@ afterAll(async () => {
   await rm(work, { recursive: true, force: true });
 });
 
+/** How many processes `work` starts: counted, not timed (#7824). */
+async function spawns(work: () => Promise<unknown>): Promise<number> {
+  const spy = spyOn(Bun, "spawn");
+  try {
+    await work();
+    return spy.mock.calls.length;
+  } finally {
+    spy.mockRestore();
+  }
+}
+
 const get = async (path: string): Promise<{ text: string; timing: string }> => {
   const res = await fetch(`${servers.url}${path}`, { headers: { authorization: `Bearer ${bearer}` } });
   const text = await res.text();
@@ -86,13 +97,13 @@ const get = async (path: string): Promise<{ text: string; timing: string }> => {
   return { text, timing: res.headers.get("server-timing") ?? "" };
 };
 
-test("200 branches hold the 50 ms budget and name their phases", async () => {
+test("200 branches start a bounded number of git processes and name their phases", async () => {
   await get("/alice/app/branches");
-  const { text, timing } = await get("/alice/app/branches");
+  let page = { text: "", timing: "" };
+  // One batched read of the refs, not a process per branch.
+  expectWork(await spawns(async () => void (page = await get("/alice/app/branches"))), { max: 4 });
+  const { text, timing } = page;
   const dur = (name: string) => Number(new RegExp(`(?:^|, )${name};dur=([0-9.]+)`).exec(timing)?.[1]);
-  // 50 ms absolute on a quiet machine (FORGE_TEST_QUIET=1); under load it is judged
-  // against a /healthz baseline from the same run, capped at 4x the budget.
-  expectBudget(dur("app"), { ms: 50, against: await baselineMs(servers.url) });
   for (const phase of ["session", "refs", "compare", "render"]) expect(dur(phase)).toBeGreaterThanOrEqual(0);
   expect(text).toContain("200 branches");
   expect(text).toContain("feat/b198");
@@ -115,15 +126,15 @@ test("the one-call counts equal the per-branch rev-list counts", async () => {
   expect(listed.value.branches[1]).toMatchObject({ name: "feat/b000", ahead: 1, behind: 1 });
 }, 60_000);
 
-test("the API returns the first 30 of 200 branches with the whole list's counts, and its git phase fits the budget", async () => {
+test("the API returns the first 30 of 200 branches with the whole list's counts, and a page of it starts a bounded number of git processes", async () => {
   const dir = repoDir(app.reposRoot, "alice", "app");
   const full = await listBranches(dir, "main");
   if (!full.ok) throw new Error("listBranches failed");
   const path = "/api/v1/repos/alice/app/branches?limit=30";
   await get(path);
-  const { text, timing } = await get(path);
-  const dur = Number(/(?:^|, )git;dur=([0-9.]+)/.exec(timing)?.[1]);
-  expectBudget(dur, { ms: 60, against: await baselineMs(servers.url) });
+  let got = { text: "", timing: "" };
+  expectWork(await spawns(async () => void (got = await get(path))), { max: 5 });
+  const { text } = got;
   const page = JSON.parse(text) as { items: { name: string; ahead: number | null; behind: number | null }[]; next_cursor: string | null };
   // Rows, order and cursor are the whole list's first 30.
   expect(page.items.map((i) => [i.name, i.ahead, i.behind])).toEqual(
@@ -135,23 +146,19 @@ test("the API returns the first 30 of 200 branches with the whole list's counts,
   expect(next.items[0]).toMatchObject({ ahead: 1, behind: 1 });
 }, 30_000);
 
-test("the per-branch fallback gives the same rows, and the one-call path is faster", async () => {
+test("the per-branch fallback gives the same rows, and the one-call path starts fewer processes", async () => {
   const dir = repoDir(app.reposRoot, "alice", "app");
-  // Best of three each, so one stalled run on a loaded machine cannot flip it.
-  const best = async (opts: { bulk?: boolean }) => {
-    let fastest = Infinity, last = await listBranches(dir, "main", opts);
-    for (let i = 0; i < 3; i++) {
-      const t = performance.now();
-      last = await listBranches(dir, "main", opts);
-      fastest = Math.min(fastest, performance.now() - t);
-    }
-    return { last, fastest };
+  const run = async (opts: { bulk?: boolean }) => {
+    let last = await listBranches(dir, "main", opts);
+    const started = await spawns(async () => void (last = await listBranches(dir, "main", opts)));
+    return { last, started };
   };
-  const { last: bulk, fastest: bulkMs } = await best({});
-  const { last: slow, fastest: slowMs } = await best({ bulk: false });
+  const { last: bulk, started: bulkSpawns } = await run({});
+  const { last: slow, started: slowSpawns } = await run({ bulk: false });
   if (!bulk.ok || !slow.ok) throw new Error("listBranches failed");
   expect(slow.value).toEqual(bulk.value);
-  expect(bulkMs).toBeLessThan(slowMs);
+  expect(bulkSpawns).toBeLessThan(slowSpawns);
+  expectWork(bulkSpawns, { max: 5 });
 }, 60_000);
 
 test("a malformed or unsupported ahead-behind output gives up so the slow path runs", () => {

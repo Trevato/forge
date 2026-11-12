@@ -14,14 +14,18 @@
  * hook needed.
  */
 
+import { putFlowFirst } from "../../actions/flow_first.ts";
+import { FLOW_LABEL } from "../../core/flow_label.ts";
 import {
   addCommentThrough,
   editIssue,
   mayEditIssue,
   setIssueLabelsThrough,
   setIssueStateThrough,
+  setIssueSealed,
   TAKEN_UP,
 } from "../../actions/issues.ts";
+import { sealedWords, sealRefusedWords } from "../../actions/seal_issue_words.ts";
 import {
   dependencyWords,
   linkIssue,
@@ -31,7 +35,12 @@ import { THREAD_SAYS } from "../../actions/thread_words.ts";
 import { ISSUE_TEAMS_SAY, nameTeams } from "../../actions/issue_teams.ts";
 import { teamsOfIssue, TEAMS_MAX } from "../../core/issue_teams.ts";
 import { listTeams } from "../../core/teams.ts";
-import { listRepoRuns } from "../../actions/runs.ts";
+import { costLine, issueCostFor, type IssueCost } from "../../core/issue_cost.ts";
+import { listRepoRuns, mayReadRuns } from "../../actions/runs.ts";
+import { readPlan } from "../../actions/run_plan.ts";
+import type { IssuePlan } from "../../core/issue_plans.ts";
+import { shownStates } from "../../runs/state.ts";
+import { headline, planLines, planTitle } from "./runplan.ts";
 import { privateRepoForSealed } from "../../actions/repos.ts";
 import { confirmIssue } from "../../actions/dependencies.ts";
 import { isCrew } from "../../core/agents.ts";
@@ -65,9 +74,9 @@ import {
   promptScreen,
   runAsync,
 } from "./common.ts";
-import { assignPicker, assignedText, queuedText } from "./assign.ts";
+import { assignPicker, assignedText } from "./assign.ts";
 import { liveBindings, liveKey } from "./mirror.ts";
-import { RunList, openRunLog } from "./runlist.ts";
+import { RunList, maySteer, openRunLog, steerPrompt } from "./runlist.ts";
 import { Composer, threadLines, type ThreadEntry } from "./thread.ts";
 import { local, localRepo, whereRows, whereStrip } from "./where.ts";
 
@@ -158,6 +167,10 @@ export function issueScreen(
   let doneBy: readonly string[] = [];
   /** Closed-as-dropped-or-split blockers nobody has said may be passed. */
   let held: Issue[] = [];
+  let plan: IssuePlan | undefined;
+  /** What the issue and its closing pulls cost, when this viewer may see it. */
+  let cost: IssueCost | null = null;
+  let shown: ReturnType<typeof headline>;
   /** Which issues this one waits for and holds up; a line when any. */
   let waits: Waits = { blockedBy: [], blocks: [] };
   /** What the crew has done here, newest first; a card when there is any. */
@@ -206,7 +219,15 @@ export function issueScreen(
       blockedBy: deps?.blockedBy.map((i) => i.number) ?? [],
       blocks: deps?.blocks.map((i) => i.number) ?? [],
     };
+    cost =
+      repo === undefined || issueRow === undefined || !mayReadRuns(f.app, f.user, repo)
+        ? null
+        : issueCostFor(f.db, repo, issueRow, f.user);
     crew.set(runs !== undefined && runs.ok ? runs.value : []);
+    plan =
+      repo === undefined || issueRow === undefined ? undefined : readPlan(f.app, repo, f.user, issueRow);
+    const states = shownStates(f.db, runs !== undefined && runs.ok ? runs.value : []);
+    shown = headline(runs !== undefined && runs.ok ? runs.value.map((r) => states.get(r.id)!) : []);
     if (crew.runs.length === 0) focus = "thread";
     width = 0;
     ctx.invalidate();
@@ -417,6 +438,41 @@ export function issueScreen(
     });
   };
 
+  /** `S` — seal or unseal this report, after a confirm that says who will see it. */
+  const seal = (): void => {
+    const at = row();
+    if (at?.issue === undefined) return;
+    const { repo: target, issue } = at;
+    const sealed = !issue.sealed;
+    ctx.push(
+      confirmScreen(ctx, screen, {
+        title: sealed ? "Seal this report?" : "Unseal this report?",
+        body: [
+          sealed
+            ? `Seal #${issue.number}? Only people who can write here and the crew will see it.`
+            : `Unseal #${issue.number}? Everyone who can read ${target.ownerName}/${target.name} sees it and its fix.`,
+        ],
+        actions: [
+          // Unsealing shows the report and its fix to every reader: the danger button.
+          { label: sealed ? "Seal" : "Unseal", variant: sealed ? "default" : "danger" },
+          { label: "Cancel", variant: "ghost" },
+        ],
+        selected: 1,
+        width: 90,
+        onChoose: (index) => {
+          if (index !== 0) return;
+          const done = setIssueSealed(f.app, f.user, target, issue, sealed);
+          if (!done.ok) {
+            ctx.toast(sealRefusedWords(done.error), "danger");
+            return;
+          }
+          ctx.toast(sealedWords(sealed), "success");
+          runAsync(ctx, reload);
+        },
+      }),
+    );
+  };
+
   /**
    * `w` — a number to wait for. A new one links it; one it already waits
    * for asks first, then stops the wait. Refusals in `dependencyWords`.
@@ -490,6 +546,9 @@ export function issueScreen(
         focus === "crew"
           ? binding(["enter"], "open the run")
           : binding(["j", "k"], "scroll"),
+        ...(focus === "crew" && repo !== undefined && maySteer(f, repo, crew.selected)
+          ? [binding(["s"], "steer")]
+          : []),
         ...(mayWrite()
           ? [
               binding(["c"], "comment"),
@@ -505,9 +564,11 @@ export function issueScreen(
               binding(["t"], "teams"),
               ...(mayGoAhead() ? [binding(["g"], "go ahead")] : []),
               binding(["w"], "waits for"),
+              binding(["S"], issueRow?.sealed === true ? "unseal" : "seal"),
               ...(issueRow?.sealed === true
                 ? [binding(["p"], "private repo")]
                 : []),
+              binding(["f"], "flow first"),
             ]
           : [
               ...(mayEdit() ? [binding(["e"], "edit")] : []),
@@ -532,15 +593,20 @@ export function issueScreen(
       // Then the crew card, only when an agent has worked here.
       const crewH =
         crew.runs.length === 0 ? 0 : Math.min(crew.runs.length, CREW_ROWS) + 2;
+      const planRows = planLines(plan);
+      const planH = planRows.length === 0 ? 0 : Math.min(planRows.length, CREW_ROWS + 2) + 2;
       const waitsLine = waitsParts(waits);
       const headH = waitsLine.length === 0 ? 3 : 4;
-      const [strip, head, waitRow, crewRow, body, box] = split(area, "v", [
+      const costH = cost === null ? 0 : 1;
+      const [strip, head, waitRow, crewRow, costRow, planRow, body, box] = split(area, "v", [
         len(whereRows(src)),
         len(headH),
         len(held.length === 0 ? 0 : 1),
         len(crewH),
+        len(costH),
+        len(planH),
         fill(1),
-        len(Math.min(foot, Math.max(0, area.h - 4 - headH - crewH - whereRows(src) - (held.length === 0 ? 0 : 1)))),
+        len(Math.min(foot, Math.max(0, area.h - 4 - headH - crewH - costH - planH - whereRows(src) - (held.length === 0 ? 0 : 1)))),
       ]);
       whereStrip(s, strip!, c, f, src);
       const right = head!.x + head!.w;
@@ -566,7 +632,7 @@ export function issueScreen(
         x,
         head!.y + 1,
         truncate(
-          ` ${issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)} · ${plural(detail.comments.length, "comment")}${assignedText(issueRow, ctx.icons)}${queuedText(f.db, repo, issueRow)}${doneText(doneBy, mayWrite())}${pictureText()}`,
+          ` ${issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)} · ${plural(detail.comments.length, "comment")}${assignedText(issueRow, ctx.icons)}${doneText(doneBy, mayWrite())}${pictureText()}`,
           Math.max(0, right - x),
         ),
         style(c.mutedFg, c.bg),
@@ -632,6 +698,16 @@ export function issueScreen(
         });
       }
 
+      if (cost !== null && costRow!.h > 0)
+        s.text(costRow!.x, costRow!.y, truncate(costLine(cost), costRow!.w), style(c.fg, c.bg), costRow!.x + costRow!.w);
+
+      if (planH > 0 && plan !== undefined) {
+        const inner = card(s, planRow!, c, { title: planTitle(plan, shown) });
+        planRows.slice(0, inner.h).forEach((row, i) => {
+          s.text(inner.x, inner.y + i, truncate(row, inner.w), style(c.fg, c.card), inner.x + inner.w);
+        });
+      }
+
       if (width !== body!.w) {
         width = body!.w;
         lines = threadLines(entries(), Math.max(20, body!.w - 1), c);
@@ -687,6 +763,12 @@ export function issueScreen(
           openRun();
           return true;
         }
+        if (e.key === "s") {
+          const run = crew.selected;
+          if (run !== undefined && repo !== undefined && maySteer(f, repo, run))
+            steerPrompt(f, ctx, screen, repo, run, () => runAsync(ctx, reload));
+          return true;
+        }
       }
       if (e.key === "a" && mayWrite()) {
         assign();
@@ -735,6 +817,21 @@ export function issueScreen(
         );
         return true;
       }
+      if (e.key === "f" && mayWrite()) {
+        const at = row();
+        if (at?.issue === undefined) return true;
+        const { repo: target, issue } = at;
+        const first = !(detail?.issue.labels ?? []).some((l) => l.name.toLowerCase() === FLOW_LABEL);
+        runAsync(ctx, async () => {
+          const applied = await putFlowFirst(f.app, f.user, target, issue, first);
+          if (!applied.ok) ctx.toast(errorText(applied.error), "danger");
+          else {
+            ctx.toast(first ? "Flow first." : "No longer first.");
+            await reload();
+          }
+        });
+        return true;
+      }
       if (e.key === "t" && mayWrite()) {
         const at = row();
         if (at?.issue === undefined) return true;
@@ -760,6 +857,10 @@ export function issueScreen(
       }
       if (e.key === "w" && mayWrite()) {
         waitFor();
+        return true;
+      }
+      if (e.key === "S" && mayWrite()) {
+        seal();
         return true;
       }
       if (e.key === "p" && mayWrite()) {

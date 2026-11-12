@@ -20,6 +20,8 @@ import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createRun } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { recordCap } from "../src/crew/guard.ts";
+import { sharedCause } from "../src/checks/shared_red.ts";
+import { bugClockAlarm, HIGH_BUG_MS, openBugs } from "../src/flow/bugs.ts";
 import {
   budgetBreaches,
   degradedCauses,
@@ -60,6 +62,8 @@ function plantRun(
 }
 
 beforeAll(async () => {
+  // The error ledger is the process's: a file run before this one in the same shard leaves its lines there.
+  clearErrors();
   dataDir = await mkdtemp(join(tmpdir(), "forge-sentinel-"));
   app = createApp({ dataDir, port: 0 });
   const a = await createUser(app.db, {
@@ -688,7 +692,7 @@ describe("a budget breach is crew work at once", () => {
     const issue = open[0]!;
     // The sentinel never builds, so it never assigns itself (#3002).
     expect(issue.assigneeId).toBeNull();
-    expect(labelsFor(bapp.db, issue.id).map((l) => l.name)).toEqual(["P0 Trust"]);
+    expect(labelsFor(bapp.db, issue.id).map((l) => l.name).sort()).toEqual(["P0 Trust", "bug"]);
     expect(listEvents(bapp.db, { kind: "issue.assigned" }).length).toBe(0);
   });
 
@@ -836,6 +840,123 @@ describe("a degraded incident whose issue closed as done", () => {
     expect(r.filed).toBe(1);
     expect(issues("open").length).toBe(1);
   });
+
+  test("an incident that ended before its issue closed is not refiled as the day slides past its first span (#10291)", () => {
+    const t = T0 + 40 * DAY;
+    iapp.db.query("UPDATE issue SET state = 'closed', close_reason = 'done', closed_at = ?1 WHERE state = 'open'").run(new Date(t).toISOString());
+    // Two spans of one cause: the morning's, and the evening's; both ended.
+    span("backup", t - 12 * HOUR, 60);
+    span("backup", t - 4 * HOUR, 180);
+    expect(hunt(iapp, "alice/forge", t).filed).toBe(1);
+    // The fix lands after the evening span ended.
+    iapp.db.query("UPDATE issue SET state = 'closed', close_reason = 'done', closed_at = ?1 WHERE state = 'open'").run(new Date(t + HOUR).toISOString());
+    // The morning span slides out of the day: the first-open time moves, and the evening's total still counts.
+    const r = hunt(iapp, "alice/forge", t + 13 * HOUR);
+    expect(r.filed).toBe(0);
+    expect(r.commented).toBe(0);
+    expect(issues("open").length).toBe(0);
+    // A span after the close is a new incident, and is filed.
+    span("backup", t + 14 * HOUR, 30);
+    expect(hunt(iapp, "alice/forge", t + 15 * HOUR).filed).toBe(1);
+  });
+
+  test("one still going on as the day slides past its first span is told to its closed issue, not refiled", () => {
+    const t = T0 + 50 * DAY;
+    iapp.db.query("UPDATE issue SET state = 'closed', close_reason = 'done', closed_at = ?1 WHERE state = 'open'").run(new Date(t).toISOString());
+    span("mirror", t - 12 * HOUR, 60);
+    iapp.db
+      .query("INSERT INTO degraded_span (cause, sentence, href, opened_at) VALUES ('mirror', 'It is slow.', '/x', ?1)")
+      .run(t - 4 * HOUR);
+    expect(hunt(iapp, "alice/forge", t).filed).toBe(1);
+    iapp.db.query("UPDATE issue SET state = 'closed', close_reason = 'done', closed_at = ?1 WHERE state = 'open'").run(new Date(t + HOUR).toISOString());
+    const r = hunt(iapp, "alice/forge", t + 13 * HOUR);
+    expect(r.filed).toBe(0);
+    expect(r.commented).toBe(1);
+    expect(issues("open").length).toBe(0);
+  });
+});
+
+// ---- a shared test fixed within the hour (#8185) ----
+
+describe("a shared test whose fix landed within the hour", () => {
+  let fdir: string;
+  let fapp: App;
+  let frepo: Repo;
+  let author: User;
+  const TEST = "MCP backups > a listing that fails";
+  const T = Date.parse("2026-10-20T12:00:00.000Z");
+  const cause = (): string => sharedCause({ repoId: frepo.id, test: TEST });
+  const filedFor = () =>
+    listIssues(fapp.db, frepo.id, { state: "all" }).filter((i) => i.title.startsWith(`Sentinel: ${cause()}`));
+  /** One pull whose check failed on the test, created at `at`. */
+  const red = (n: number, at: number): void => {
+    const pull = createIssue(fapp.db, { repoId: frepo.id, authorId: author.id, title: `pull ${n}`, kind: "pull" });
+    if (!pull.ok) throw new Error(String(pull.error));
+    const run = createRun(fapp.db, { repoId: frepo.id, kind: "check", issueId: pull.value.id });
+    fapp.db
+      .query("UPDATE run SET state = 'failed', created_at = ?2, finished_at = ?2, check_detail = ?3 WHERE id = ?1")
+      .run(run.id, new Date(at).toISOString(), JSON.stringify({ names: [TEST] }));
+  };
+  beforeAll(async () => {
+    fdir = await mkdtemp(join(tmpdir(), "forge-sentinel-fix-"));
+    fapp = createApp({ dataDir: fdir, port: 0 });
+    const a = await createUser(fapp.db, { origin: "seed", trusted: true, username: "alice", email: "alice@forge.local", password: "a-good-passphrase", adminIfFirst: true });
+    if (!a.ok) throw new Error(a.error);
+    author = a.value;
+    const made = await createRepo(fapp, a.value, { name: "forge", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    frepo = made.value;
+    fapp.db
+      .query("INSERT INTO degraded_span (cause, sentence, href, opened_at) VALUES (?1, 'It is red on 12 pulls.', '/x', ?2)")
+      .run(cause(), T - 50 * D_MIN);
+    for (let n = 0; n < 12; n++) red(n, T - 40 * D_MIN + n * D_MIN);
+    expect(filedFor().length).toBe(0);
+    hunt(fapp, "alice/forge", T - 2 * D_MIN);
+    expect(filedFor().length).toBe(1);
+    // The fix lands a minute before the hunt: its pull closed the issue as done.
+    fapp.db
+      .query("UPDATE issue SET state = 'closed', close_reason = 'done', closed_at = ?1 WHERE id = ?2")
+      .run(new Date(T - D_MIN).toISOString(), filedFor()[0]!.id);
+  });
+  afterAll(async () => {
+    fapp.db.close();
+    await rm(fdir, { recursive: true, force: true });
+  });
+
+  test("with 12 earlier reds and none since, files no issue and says nothing", () => {
+    // Still a breach, as the terminal and the MCP count it.
+    expect(budgetBreaches(fapp.db, T, frepo.id).map((f) => f.cause)).toEqual([cause()]);
+    const r = hunt(fapp, "alice/forge", T);
+    expect(r.commented).toBe(0);
+    expect(filedFor().length).toBe(1);
+    expect(listComments(fapp.db, filedFor()[0]!.id).length).toBe(0);
+    const prior = process.env.FORGE_SENTINEL_REPO;
+    process.env.FORGE_SENTINEL_REPO = "alice/forge";
+    try {
+      // No hunt a tick for the hour it is held.
+      expect(sentinelTick(fapp, T + D_MIN)).toBeNull();
+    } finally {
+      if (prior === undefined) delete process.env.FORGE_SENTINEL_REPO;
+      else process.env.FORGE_SENTINEL_REPO = prior;
+    }
+  });
+
+  test("with 3 reds on checks created after the fix, comments once on the closed issue", () => {
+    for (let n = 0; n < 3; n++) red(100 + n, T + n * D_MIN);
+    const r = hunt(fapp, "alice/forge", T + 5 * D_MIN);
+    expect(r.commented).toBe(1);
+    const issues = filedFor();
+    expect(issues.length).toBe(1);
+    expect(issues[0]!.state).toBe("closed");
+    const comments = listComments(fapp.db, issues[0]!.id);
+    expect(comments.length).toBe(1);
+    expect(comments[0]!.body).toContain("Still red after the fix landed at");
+    expect(comments[0]!.body).toContain("3 pulls failed it on checks created since");
+    // Told once: the next hunt inside the hour neither comments nor files.
+    expect(hunt(fapp, "alice/forge", T + 10 * D_MIN).commented).toBe(0);
+    expect(filedFor().length).toBe(1);
+    expect(listComments(fapp.db, issues[0]!.id).length).toBe(1);
+  });
 });
 
 // ---- a finding held for a day is closed as done (#2635) ----
@@ -891,5 +1012,105 @@ describe("a degraded finding whose cause has stayed closed", () => {
     const t = T0 + 3 * DAY;
     happ.db.query("INSERT INTO degraded_span (cause, sentence, href, opened_at, closed_at) VALUES ('drill', 'It is slow.', '/x', ?1, ?2)").run(t - HOUR, t - 20 * D_MIN);
     expect(hunt(happ, "alice/forge", t).filed).toBe(1);
+  });
+});
+
+describe("a finding is filed sorted (#8856)", () => {
+  let kapp: App;
+  let krepo: Repo;
+  let kdir: string;
+  const names = (issueId: string): string[] => labelsFor(kapp.db, issueId).map((l) => l.name).sort();
+  const openTitled = (part: string) =>
+    listIssues(kapp.db, krepo.id, { state: "open", limit: 200 }).find((i) => i.title.includes(part));
+  beforeAll(async () => {
+    kdir = await mkdtemp(join(tmpdir(), "forge-sentinel-kind-"));
+    kapp = createApp({ dataDir: kdir, port: 0 });
+    const a = await createUser(kapp.db, {
+      origin: "seed",
+      trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    const made = await createRepo(kapp, a.value, { name: "forge", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    krepo = made.value;
+    kapp.db.exec(
+      `CREATE TRIGGER planted_guard BEFORE INSERT ON repo
+       BEGIN SELECT RAISE(ABORT, 'forge: paused'); END`,
+    );
+  });
+  afterAll(async () => {
+    kapp.db.close();
+    await rm(kdir, { recursive: true, force: true });
+  });
+
+  test("a security finding lands as a high bug, and is past its clock after 4 h", () => {
+    const found = findFaults(kapp.db, NOW).find((f) => f.key === "trigger:planted_guard");
+    expect(found?.kind).toBe("security");
+    expect(hunt(kapp, "alice/forge", NOW).filed).toBe(1);
+    const issue = openTitled("planted_guard")!;
+    // The repository had no `bug` or `high`: the sentinel made them.
+    expect(names(issue.id)).toEqual(["bug", "high"]);
+    const filedAt = Date.parse(issue.createdAt);
+    expect(bugClockAlarm(kapp.db, new Date(filedAt + HIGH_BUG_MS - 60_000)).fired).toBe(false);
+    const alarm = bugClockAlarm(kapp.db, new Date(filedAt + HIGH_BUG_MS + 60_000));
+    expect(alarm.fired).toBe(true);
+    expect(alarm.href).toBe(`/alice/forge/issues/${issue.number}`);
+    expect(alarm.says).toContain("4 h");
+  });
+
+  test("still present, it only comments; re-filed after close, it keeps its labels", () => {
+    expect(hunt(kapp, "alice/forge", NOW + 60_000).filed).toBe(0);
+    const issue = openTitled("planted_guard")!;
+    kapp.db.query("UPDATE issue SET state = 'closed' WHERE id = ?1").run(issue.id);
+    expect(hunt(kapp, "alice/forge", NOW + 120_000).filed).toBe(1);
+    const again = openTitled("planted_guard")!;
+    expect(again.id).not.toBe(issue.id);
+    expect(names(again.id)).toEqual(["bug", "high"]);
+  });
+
+  test("an issue adopted after its record was lost gets its labels", () => {
+    const lost = () => [
+      { key: "log:lost", title: "The log says lost 3 times", evidence: ["lost"], pillar: "Reliability", lookFor: "No lost.", kind: "defect" as const },
+    ];
+    expect(hunt(kapp, "alice/forge", NOW, lost).filed).toBe(1);
+    const issue = openTitled("log says lost")!;
+    // The record is lost and so are the labels: the next hunt adopts the issue, files nothing, and labels it again.
+    kapp.db.query("DELETE FROM sentinel_finding WHERE key = 'log:lost'").run();
+    kapp.db.query("DELETE FROM issue_label WHERE issue_id = ?1").run(issue.id);
+    expect(hunt(kapp, "alice/forge", NOW + 60_000, lost).filed).toBe(0);
+    expect(openTitled("log says lost")!.id).toBe(issue.id);
+    expect(names(issue.id)).toEqual(["bug"]);
+  });
+
+  test("another defect is a bug on the 48 h clock", () => {
+    const defect = () => [
+      { key: "log:x", title: "The log says x 3 times", evidence: ["x"], pillar: "Reliability", lookFor: "No x.", kind: "defect" as const },
+    ];
+    expect(hunt(kapp, "alice/forge", NOW, defect).filed).toBe(1);
+    expect(names(openTitled("log says x")!.id)).toEqual(["bug"]);
+  });
+
+  test("a cosmetic finding lands as polish, on no bug clock (#8969)", () => {
+    const cosmetic = () => [
+      { key: "look:y", title: "The link y lands on / and is not Home", evidence: ["y"], pillar: "Craft", lookFor: "No y.", kind: "cosmetic" as const },
+    ];
+    expect(hunt(kapp, "alice/forge", NOW, cosmetic).filed).toBe(1);
+    const issue = openTitled("link y lands")!;
+    expect(names(issue.id)).toEqual(["polish"]);
+    expect(openBugs(kapp.db).some((b) => b.number === issue.number)).toBe(false);
+  });
+
+  test("a broken route lands as a high bug (#8969)", () => {
+    const broken = () => [
+      { key: "route:z", title: "The route /z answers 500", evidence: ["GET /z → 500"], pillar: "Reliability", lookFor: "/z answers.", kind: "broken-route" as const },
+    ];
+    expect(hunt(kapp, "alice/forge", NOW, broken).filed).toBe(1);
+    const issue = openTitled("route /z")!;
+    expect(names(issue.id)).toEqual(["bug", "high"]);
+    expect(openBugs(kapp.db).find((b) => b.number === issue.number)?.high).toBe(true);
   });
 });

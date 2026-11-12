@@ -11,9 +11,7 @@
 
 import type { App } from "../app.ts";
 import { lacks, NOT_AN_ADMIN } from "../core/roles.ts";
-import { empty } from "../web/ui.ts";
-import { html } from "../web/html.ts";
-import { page } from "../web/layout.ts";
+import { forbiddenPage } from "../web/chrome.ts";
 import type { Auth, Ctx } from "./context.ts";
 import { json } from "./respond.ts";
 
@@ -21,6 +19,8 @@ const under = (path: string, root: string): boolean => path === root || path.sta
 
 /** Whether this path is one the `administer` ability guards. */
 export function isAdminPath(path: string): boolean {
+  // `/admin/flows` answers anyone but a site admin with the not-found page (#9594), so it keeps its own refusal.
+  if (path === "/admin/flows") return false;
   return under(path, "/admin") || under(path, "/api/v1/admin") || under(path, "/releases");
 }
 
@@ -30,13 +30,5 @@ export function adminGate(app: App, request: Request, url: URL, auth: Auth): Res
   if (!lacks(app.db, auth.user, "administer")) return undefined;
   if (url.pathname.startsWith("/api/")) return json({ error: "not_admin", message: NOT_AN_ADMIN }, 403);
   const ctx: Ctx = { app, request, url, params: {}, auth, theme: undefined };
-  return page(
-    {
-      ctx,
-      title: "Not allowed",
-      body: html`<div class="page-head"><h1>403</h1></div>
-        ${empty({ icon: "lock", title: "Not allowed", note: NOT_AN_ADMIN })}`,
-    },
-    403,
-  );
+  return forbiddenPage(ctx, NOT_AN_ADMIN);
 }

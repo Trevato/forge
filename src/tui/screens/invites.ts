@@ -3,17 +3,19 @@
  * state, when it was made and when it expires, as Invite links on /admin/limits
  * shows them. `m` mints one from a number of days (1 to 30, 7 by default) and
  * prints the link once, on this screen, until the next key of any kind; `x` revokes the
- * selected open one. Both go through the actions, so the gate is theirs: an
+ * selected open one after a confirm (`y` revokes, `n` or esc keeps it). Both go through the actions, so the gate is theirs: an
  * admin who is a person; anyone else sees nothing and mints nothing. The top
  * line says who may sign up now, as MCP `signup` does; `s` picks open, invite
- * or closed, shows from → to and changes it only after a confirm.
+ * or closed, shows from → to and changes it only after a confirm; `a` does the
+ * same for who may start an agent here (open, code or off, `Agents can start here`).
  */
 
 import { inviteLink, list, mint, revoke } from "../../actions/invites.ts";
 import { INVITE_NOT_OPEN } from "../../actions/sever_invite_words.ts";
-import { changeSignup, readSignup } from "../../actions/signup.ts";
+import { changeAgentStart, changeSignup, readAgentStart, readSignup } from "../../actions/signup.ts";
+import { AGENT_START_MODES, type AgentStartMode } from "../../settings/agent_start.ts";
 import { SIGNUP_MODES, type SignupMode } from "../../settings/signup.ts";
-import { DEFAULT_DAYS, MAX_DAYS } from "../../core/invites.ts";
+import { DEFAULT_DAYS, MAX_DAYS, type Invite } from "../../core/invites.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
@@ -21,6 +23,11 @@ import { truncate } from "../term/width.ts";
 import type { Session } from "../session.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { ListState, confirmScreen, drawList, pickerScreen, promptScreen, type ListRow } from "./common.ts";
+import type { PaletteEntry } from "./entries.ts";
+
+/** `used by ada on 2026-10-01`; the name is left out when the account is gone. */
+export const usedWords = (i: Invite): string =>
+  `used${i.usedBy === null ? "" : ` by ${i.usedBy}`}${i.usedAt === null ? "" : ` on ${i.usedAt.slice(0, 10)}`}`;
 
 export function invitesScreen(f: Session, ctx: Ctx): Screen {
   const state = new ListState();
@@ -66,10 +73,31 @@ export function invitesScreen(f: Session, ctx: Ctx): Screen {
     );
   };
 
+  const agentStart = () => readAgentStart(f.app, f.user);
+
+  const planAgentStart = (to: AgentStartMode): void => {
+    const now = agentStart();
+    if (!now.ok || now.value === to) return;
+    const from = now.value;
+    ctx.push(
+      confirmScreen(ctx, screen, {
+        title: "Agents can start here",
+        body: [`Would set agent start from ${from} to ${to}.`],
+        actions: [{ label: "Change" }, { label: "Cancel" }],
+        onChoose: (i) => {
+          if (i !== 0) return;
+          const changed = changeAgentStart(f.app, f.user, to);
+          note = changed.ok ? `agent start: ${from} → ${changed.value}.` : "You cannot change agent start.";
+          ctx.invalidate();
+        },
+      }),
+    );
+  };
+
   const rows = (): ListRow[] =>
     items().map((i) => ({
       title: i.id,
-      secondary: i.state,
+      secondary: i.state === "used" ? usedWords(i) : i.state,
       meta: `made ${i.createdAt.slice(0, 16)}  expires ${i.expiresAt.slice(0, 16)}`,
     }));
 
@@ -81,7 +109,7 @@ export function invitesScreen(f: Session, ctx: Ctx): Screen {
         binding(["j", "k"], "move cursor"),
         binding(["m"], "make a link"),
         binding(["x"], "revoke"),
-        ...(signup().ok ? [binding(["s"], "who may sign up")] : []),
+        ...(signup().ok ? [binding(["s"], "who may sign up"), binding(["a"], "agents can start here")] : []),
       ];
     },
     render(area, s) {
@@ -90,7 +118,7 @@ export function invitesScreen(f: Session, ctx: Ctx): Screen {
       const sg = signup();
       const [top, head, body] = split(area, "v", [len(sg.ok ? 1 : 0), len(1), fill(1)]);
       if (sg.ok)
-        s.text(top!.x, top!.y, truncate(`signup: ${sg.value.signup}. s changes it.`, top!.w), style(c.fg, c.bg), top!.x + top!.w);
+        s.text(top!.x, top!.y, truncate(`signup: ${sg.value.signup}. s changes it; a, who may start an agent (${agentStart().ok ? (agentStart() as { value: string }).value : ""}).`, top!.w), style(c.fg, c.bg), top!.x + top!.w);
       const text =
         note !== ""
           ? note
@@ -119,8 +147,21 @@ export function invitesScreen(f: Session, ctx: Ctx): Screen {
       } else if (e.key === "x") {
         const row = all[state.index];
         if (row === undefined) return false;
-        note = revoke(f.app, f.user, row.id).ok ? `Revoked ${row.id}.` : INVITE_NOT_OPEN;
-        ctx.invalidate();
+        if (row.state !== "open") note = INVITE_NOT_OPEN;
+        else
+          ctx.push(
+            confirmScreen(ctx, screen, {
+              title: `Revoke invite ${row.id}?`,
+              body: [`Expires ${row.expiresAt.slice(0, 10)}; holder can no longer sign up.`],
+              actions: [{ label: "Revoke", variant: "danger" }, { label: "Keep" }],
+              yesNo: true,
+              onChoose: (i) => {
+                if (i !== 0) return;
+                note = revoke(f.app, f.user, row.id).ok ? `Revoked ${row.id}.` : INVITE_NOT_OPEN;
+                ctx.invalidate();
+              },
+            }),
+          );
       } else if (e.key === "s") {
         const now = signup();
         if (!now.ok) return false;
@@ -135,9 +176,33 @@ export function invitesScreen(f: Session, ctx: Ctx): Screen {
             onPick: ([m]) => plan(m as SignupMode),
           }),
         );
+      } else if (e.key === "a") {
+        const now = agentStart();
+        if (!now.ok) return false;
+        ctx.push(
+          pickerScreen(ctx, screen, {
+            title: "Agents can start here",
+            items: AGENT_START_MODES.map((m) => ({
+              id: m,
+              label: m,
+              ...(m === now.value ? { hint: "now" } : {}),
+            })),
+            onPick: ([m]) => planAgentStart(m as AgentStartMode),
+          }),
+        );
       } else return false;
       return true;
     },
   };
   return screen;
 }
+
+/** Invite links, as /admin/limits has them: an admin who is a person (#2337). */
+export const entry: PaletteEntry = {
+  id: "invites",
+  title: "Invite links",
+  hint: "make a single-use link, see which are open, revoke one",
+  after: ["teams", "limits", "quotas", "people", "can"],
+  offered: (session) => session.user?.isAdmin === true && session.user.kind === "user",
+  run: (session, ctx) => ctx.push(invitesScreen(session, ctx)),
+};

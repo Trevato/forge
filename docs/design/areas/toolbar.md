@@ -1,3 +1,4 @@
 # Toolbar page
 
 - `.change-line` — a preview's toolbar page: the pull's diff totals and its check badge on one wrapping line, each link 40px tall (the dense-row step, set by padding) and 44px under `@media (pointer: coarse)`. It shares `.diff-summary`'s `.add`/`.del` colours. A stack of `.diff-summary` and the badge cannot carry the sizing: `.diff-summary` is a padded block, not a row of separately tappable links, and the badge is not itself a link target.
+- `.change-files` — under `.change-line`, the first ten changed paths of the pull, one per row: a mono link to that file's diff and its `.add`/`.del` counts, the last row "and K more" to the files page. Rows are 40px tall (12px link padding around a 16px line-height; 44px under `@media (pointer: coarse)`, 14px padding). It reuses the `.add`/`.del` colour rules of `.diff-summary` but is a list, not a line of inline links.

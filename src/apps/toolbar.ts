@@ -13,15 +13,32 @@
 
 import { staticResponse } from "../web/asset.ts";
 import { sha256 } from "../kernel/hash.ts";
-import { NOTE_EMPTY, NOTE_FAILED } from "./note_words.ts";
+import { CHECK_WORDS, type PillCheck } from "./pill_check.ts";
+import { NOTE_EMPTY, NOTE_FAILED, NOTE_OFFLINE, NOTE_WAIT } from "./note_words.ts";
 
-/** The client, as plain source: no `eval`, no inline handlers. */
-export const toolbarJs = `(function () {
+/** What the panel says about a preview's freshness (#9111): the pill's words, in one table. */
+export const FRESHNESS_WORDS = {
+  merged: "Merged: this preview shows the pull as it landed",
+  closed: "Closed without landing",
+  deploying: "A newer push is deploying",
+  behind: "Shows an older push than the pull's newest",
+} as const;
+
+/** The client, as plain source: no `eval`, no inline handlers. Its comments are for readers here. */
+const toolbarSource = `(function () {
   if (window.__forgeToolbar) return;
   window.__forgeToolbar = true;
   var me = document.currentScript;
-  var home = "/";
-  try { home = new URL(me.src).origin + "/"; } catch (e) {}
+  // The forge's origin comes from data-forge: the script itself is served from the app's own host.
+  var fo = "";
+  try { fo = new URL((me.dataset || {}).forge || "").origin; } catch (e) {}
+  var home = fo ? fo + "/" : "/";
+  // Back to the forge page the visitor left: only a referrer on the forge's own origin counts.
+  var back = home;
+  try {
+    var ref = new URL(document.referrer);
+    if (fo && ref.origin === fo && (ref.protocol === "https:" || ref.protocol === "http:")) back = ref.origin + ref.pathname + ref.search;
+  } catch (e) {}
   var host = document.createElement("div");
   host.id = "forge-toolbar";
   host.style.cssText = "all:initial;position:fixed;z-index:2147483647";
@@ -69,23 +86,67 @@ export const toolbarJs = `(function () {
     panel.appendChild(el);
   }
   if (d.app) line(d.app, true);
-  if (d.env === "production") line("Production");
-  else if (d.pull) line("Preview of pull #" + d.pull);
+  if (d.env === "production") line("production");
+  var LC = "#8ab4ff";
+  var LS = "color:" + LC + ";text-decoration:none;display:flex;align-items:center;min-height:44px";
+  var pullHref = "";
+  // The pull this preview shows, one tap away: built from the script's own origin, never from page text.
+  if (d.env !== "production" && /^\\d{1,9}$/.test(d.pull || "") && /^[\\w.-]+\\/[\\w.-]+$/.test(d.repo || "")) {
+    try { pullHref = new URL("/" + d.repo + "/pulls/" + d.pull, fo).href; } catch (e) {}
+  }
+  if (d.env === "production") {}
+  else if (pullHref) {
+    var pl = document.createElement("a");
+    pl.textContent = "preview \\u00b7 #" + d.pull;
+    pl.href = pullHref;
+    pl.rel = "noopener";
+    pl.style.cssText = LS;
+    panel.appendChild(pl);
+  } else if (d.pull) line("preview \\u00b7 #" + d.pull);
   if (d.title) line(d.title);
-  var LS = "color:#8ab4ff;text-decoration:none;display:flex;align-items:center;min-height:44px";
+  var CW = ${JSON.stringify(CHECK_WORDS)};
+  if (d.env !== "production" && d.check && Object.prototype.hasOwnProperty.call(CW, d.check)) line(CW[d.check]);
+  // Whether this is the pull as it stands now; an open, current preview says nothing.
+  var W = ${JSON.stringify(FRESHNESS_WORDS)};
+  var freshness = d.state === "merged" ? W.merged
+    : d.state === "closed" ? W.closed
+    : d.deploying ? W.deploying
+    : d.behind ? W.behind : "";
+  if (freshness) line(freshness);
+  // Which commit this page is serving and since when: the forge's record, set as text.
+  var ago = function (iso) {
+    var t = Date.parse(iso || "");
+    if (!(t > 0)) return "";
+    var m = Math.max(0, Math.floor((Date.now() - t) / 60000));
+    return m < 1 ? "just now" : m < 60 ? m + " min ago" : m < 1440 ? Math.floor(m / 60) + " h ago" : Math.floor(m / 1440) + " d ago";
+  };
+  var liveAgo = "";
+  if (/^[0-9a-f]{7,64}$/.test(d.commit || "") && (liveAgo = ago(d.live))) {
+    var sv = document.createElement("div");
+    sv.style.cssText = "overflow-wrap:anywhere;opacity:.85";
+    var part = function (t) { var sp = document.createElement("span"); sp.textContent = t; sv.appendChild(sp); };
+    part("Serving ");
+    var short = d.commit.slice(0, 7), cl = null;
+    if (/^[\\w.-]+\\/[\\w.-]+$/.test(d.repo || "") && fo) {
+      try { cl = document.createElement("a"); cl.href = new URL("/" + d.repo + "/commit/" + d.commit, fo).href; cl.rel = "noopener"; cl.style.color = LC; cl.textContent = short; } catch (e) { cl = null; }
+    }
+    if (cl) sv.appendChild(cl); else part(short);
+    part(", live " + liveAgo);
+    panel.appendChild(sv);
+  }
   var link = document.createElement("a");
   link.textContent = "Home";
   link.rel = "noopener";
   link.style.cssText = LS;
+  var hasHome = false;
   try {
-    var target = new URL(home);
-    if (target.origin === new URL(me.src).origin) link.href = target.href;
+    var target = new URL(back);
+    if (target.origin === fo) { link.href = target.href; hasHome = true; }
   } catch (e) {}
   // Tell the builders: one box, one button, no account. The note goes to
   // this app's own host (same-origin, so the sender's cookie goes along) and
   // the answer is a live status the panel keeps fresh while it is open.
-  var forgeOrigin = "";
-  try { forgeOrigin = new URL(me.src).origin; } catch (e) {}
+  var forgeOrigin = fo;
   var tellBox = document.createElement("form");
   tellBox.setAttribute("aria-label", "Tell the builders");
   tellBox.style.cssText = "display:flex;flex-direction:column;gap:6px;margin:6px 0";
@@ -158,20 +219,39 @@ export const toolbarJs = `(function () {
       st.style.cssText = "opacity:.85";
       row.appendChild(t);
       row.appendChild(st);
-      try {
-        var u = new URL(n.url);
-        if (u.origin === forgeOrigin) {
-          var al = document.createElement("a");
-          al.textContent = "See it";
-          al.href = u.href;
-          al.target = "_blank";
-          al.rel = "noopener";
-          al.style.cssText = "color:#8ab4ff";
-          row.appendChild(al);
-        }
-      } catch (e) {}
+      var all = Array.isArray(n.replies) ? n.replies : [];
+      // Only the latest few, so a long thread cannot push the panel off a phone; the rest is on the issue.
+      var shown = all.slice(-5);
+      if (all.length > shown.length) {
+        var more = document.createElement("div");
+        more.textContent = (all.length - shown.length) + " earlier on the forge";
+        more.style.cssText = "opacity:.85;margin-top:2px";
+        row.appendChild(more);
+      }
+      shown.forEach(function (r) {
+        var rr = document.createElement("div");
+        rr.textContent = String(r.by) + " (" + String(r.at).slice(0, 16).replace("T", " ") + "): " + String(r.text);
+        rr.style.cssText = "margin-top:2px;padding-left:6px;border-left:2px solid #444c56;white-space:pre-wrap;max-height:8em;overflow:auto";
+        row.appendChild(rr);
+      });
+      var al = n.url && link(n.url, "See it");
+      if (al) row.appendChild(al);
       mine.appendChild(row);
     });
+  }
+  function link(u, text) {
+    try {
+      var l = new URL(u), el = document.createElement("a");
+      if (l.origin !== forgeOrigin) return null;
+      el.textContent = text; el.href = l.href; el.target = "_blank"; el.rel = "noopener"; el.style.color = "#8ab4ff";
+      return el;
+    } catch (e) { return null; }
+  }
+  function filed(n) {
+    if (!n || typeof n.number !== "number") return;
+    var t = "Filed as #" + n.number, a = n.url && link(n.url, t), r = n.repoUrl && link(n.repoUrl, "The repository");
+    tellSay.append(" ", a || t);
+    if (r) tellSay.append(" ", r);
   }
   function refresh(sent) {
     call("/__forge/notes", { credentials: "same-origin", cache: "no-store" })
@@ -226,6 +306,18 @@ export const toolbarJs = `(function () {
       } catch (e) { end(); }
     });
   }
+  // The last few console errors: message text only, cut short here and again on the server.
+  var errs = [];
+  function noted(m) { errs.push(String(m).slice(0, 200)); if (errs.length > 5) errs.shift(); }
+  if (window.addEventListener) {
+    window.addEventListener("error", function (e) { noted(e && e.message); });
+    window.addEventListener("unhandledrejection", function (e) { var r = e && e.reason; noted(r && r.message ? r.message : r); });
+  }
+  var logged = typeof console === "object" && console ? console.error : null;
+  if (logged) console.error = function () {
+    try { noted(Array.prototype.map.call(arguments, function (a) { return a && a.message ? a.message : typeof a === "string" ? a : ""; }).join(" ")); } catch (x) {}
+    return logged.apply(console, arguments);
+  };
   tellBox.addEventListener("submit", function (e) {
     e.preventDefault();
     var text = tellText.value.trim();
@@ -242,9 +334,9 @@ export const toolbarJs = `(function () {
         method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text: text, page: location.href, viewport: window.innerWidth + "x" + window.innerHeight })
+        body: JSON.stringify({ text: text, page: location.href, viewport: window.innerWidth + "x" + window.innerHeight, errors: errs.slice(-5) })
       })
-        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (r) { return r.json().catch(function () { return null; }).then(function (j) { return { ok: r.ok, s: r.status, w: r.headers.get("retry-after"), j: j }; }); })
         .then(function (a) {
           if (!a.ok || !blob || !a.j || !a.j.note || !a.j.note.id) return { a: a, pic: false };
           return call("/__forge/note/picture?note=" + encodeURIComponent(a.j.note.id), {
@@ -262,11 +354,12 @@ export const toolbarJs = `(function () {
           tellText.value = "";
           tellPic.checked = false;
           tellSay.textContent = wantPicture && x.pic !== true ? "Sent, without the picture. The builders will see it." : "Sent. The builders will see it.";
+          filed(a.j && a.j.note);
           refresh(true);
         }
-        else tellSay.textContent = a.j && a.j.message ? a.j.message : ${JSON.stringify(NOTE_FAILED)};
+        else tellSay.textContent = a.s === 429 && +a.w > 0 ? ${JSON.stringify(NOTE_WAIT[0])} + Math.ceil(+a.w) + ${JSON.stringify(NOTE_WAIT[1])} : a.j && a.j.message ? a.j.message : ${JSON.stringify(NOTE_FAILED)};
       })
-      .catch(function () { idle(); tellSay.textContent = ${JSON.stringify(NOTE_FAILED)}; });
+      .catch(function () { idle(); tellSay.textContent = navigator.onLine === false ? ${JSON.stringify(NOTE_OFFLINE)} : ${JSON.stringify(NOTE_FAILED)}; });
   });
   var poll = 0;
   function watch(open) {
@@ -281,7 +374,7 @@ export const toolbarJs = `(function () {
   var crew = document.createElement("div");
   crew.setAttribute("aria-live", "polite");
   panel.appendChild(crew);
-  panel.appendChild(link);
+  if (hasHome) panel.appendChild(link);
   // The actions live on a forge page, opened in a tab of its own: the bar
   // posts nothing and reads nothing of this page beyond its address.
   if (d.repo && /^[\\w.-]+\\/[\\w.-]+$/.test(d.repo)) {
@@ -289,7 +382,7 @@ export const toolbarJs = `(function () {
     act.textContent = "Comment, tell, make it yours";
     act.target = "_blank";
     act.rel = "noopener noreferrer";
-    act.style.cssText = "color:#8ab4ff;text-decoration:none;margin-top:4px";
+    act.style.cssText = LS + ";margin-top:4px";
     try {
       var dest = new URL(home);
       dest.pathname = "/" + d.repo + "/toolbar";
@@ -307,7 +400,7 @@ export const toolbarJs = `(function () {
       .then(function (r) { return r.ok ? r.json() : {}; })
       .then(function (c) {
         if (!c) return;
-        var forge = new URL(me.src).origin;
+        var forge = fo;
         // Signed in, the crew can be told from here. The form is the forge's
         // own page, on its own origin, with its own CSRF check: the app's
         // page only carries the address and the pull to it.
@@ -323,6 +416,18 @@ export const toolbarJs = `(function () {
             ta.href = t.href;
             ta.style.cssText = LS;
             crew.appendChild(ta);
+          }
+        }
+        // Make it yours: the forge's own fork page, on its origin; it asks a
+        // signed-out reader to sign in and returns to itself.
+        if (typeof c.yours === "string") {
+          var y = new URL(c.yours);
+          if (y.origin === forge) {
+            var ya = document.createElement("a");
+            ya.textContent = "Make it yours";
+            ya.href = y.href;
+            ya.style.cssText = LS;
+            crew.appendChild(ya);
           }
         }
         // The other side: origin plus this path as text, so "//" cannot leave it.
@@ -362,10 +467,14 @@ export const toolbarJs = `(function () {
     var saved = window.localStorage.getItem(KEY);
     if (CORNERS.indexOf(saved) >= 0) corner = saved;
   } catch (e) {}
+  var NARROW_MAX = 600, CAMERA_TOP = "48px";
   function place(c) {
     corner = c;
     var top = c.charAt(0) === "t", left = c.charAt(1) === "l";
-    host.style.top = top ? "12px" : "auto";
+    var narrow = top && window.innerWidth <= NARROW_MAX;
+    host.style.top = top ? (narrow ? CAMERA_TOP : "12px") : "auto";
+    // The cssText cap assumes a pill 12px down; 36px lower, the cap drops by as much.
+    panel.style.maxHeight = narrow ? "min(70vh,calc(100vh - 124px))" : "";
     host.style.bottom = top ? "auto" : "12px";
     host.style.left = left ? "12px" : "auto";
     host.style.right = left ? "auto" : "12px";
@@ -405,6 +514,10 @@ export const toolbarJs = `(function () {
   }
   pill.addEventListener("pointerup", drop);
   pill.addEventListener("pointercancel", drop);
+  var sr = document.createElement("div");
+  sr.setAttribute("role", "status");
+  sr.style.cssText = "position:absolute;opacity:0";
+  box.appendChild(sr);
   pill.addEventListener("keydown", function (e) {
     var t = corner.charAt(0), l = corner.charAt(1);
     if (e.key === "ArrowLeft") l = "l";
@@ -413,8 +526,10 @@ export const toolbarJs = `(function () {
     else if (e.key === "ArrowDown") t = "b";
     else return;
     e.preventDefault();
+    if (t + l === corner) return;
     place(t + l);
     store(KEY, corner);
+    sr.textContent = "Moved to the " + (t > "b" ? "top " : "bottom ") + (l > "m" ? "right" : "left");
   });
   // An inline display beats the UA [hidden] rule, so display carries the state.
   function ring(b) {
@@ -484,12 +599,20 @@ export const toolbarJs = `(function () {
 })();
 `;
 
+/** What is served: the source without its whole-line comments, so the notes cost the pill none of its 24 KB (#10869). */
+export const toolbarJs = toolbarSource.replace(/^[ \t]*\/\/[^\n]*\n/gm, "");
+
 const hash = sha256(toolbarJs);
 const name = `toolbar-${hash.slice(0, 16)}`;
 
 /** The path the script is served from on the forge, content-addressed. */
 export const TOOLBAR_PATH = `/assets/${name}.js`;
 export const TOOLBAR_NAME = name;
+
+/** The same script on an app's own host, where a strict `script-src 'self'` allows it. */
+export const TOOLBAR_ASSET_PATH = `/__forge/${name}.js`;
+/** Every path under this prefix on an app host is the forge's, whether or not it names the script. */
+export const TOOLBAR_ASSET_PREFIX = "/__forge/toolbar";
 
 /** The forge's answer for the script: immutable, because its name is its hash. */
 export function toolbarResponse(request: Request): Response {
@@ -541,6 +664,16 @@ export type PillWhere = {
   env: string;
   pull?: number;
   title?: string;
+  /** Whether the pull is open, merged or closed; for a reader of the pull only. */
+  state?: "open" | "merged" | "closed";
+  /** The preview runs a commit that is not the pull's head (and none is deploying). */
+  behind?: boolean;
+  /** A newer commit is being deployed now. */
+  deploying?: boolean;
+  /** The newest check of the pull's head, a key of `CHECK_WORDS`. */
+  check?: PillCheck;
+  /** The commit the environment is serving and the instant it went live, from the forge's own record. */
+  serving?: { oid: string; at: string };
 };
 
 /** `text` safe inside a double-quoted HTML attribute. */
@@ -553,8 +686,32 @@ export function escapeAttr(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/**
+ * The nonce a response's own Content-Security-Policy admits scripts by: from
+ * `script-src`, or `default-src` when a policy has no `script-src`. Only a
+ * well-formed base64 value is returned; anything else is no nonce.
+ */
+export function cspNonce(policy: string | null): string | undefined {
+  if (policy === null) return undefined;
+  for (const one of policy.split(",")) {
+    const directives = one.split(";").map((d) => d.trim().split(/\s+/));
+    const names = (n: string) => directives.find((d) => d[0]?.toLowerCase() === n);
+    const chosen = names("script-src") ?? names("default-src");
+    for (const source of chosen?.slice(1) ?? []) {
+      const m = /^'nonce-([A-Za-z0-9+/_-]+={0,2})'$/i.exec(source);
+      if (m) return m[1];
+    }
+  }
+  return undefined;
+}
+
 /** The script tag, with where-you-are as escaped data attributes. */
-export function toolbarTag(forgeUrl: string, where?: PillWhere, proof?: string): string {
+export function toolbarTag(
+  forgeUrl: string,
+  where?: PillWhere,
+  proof?: string,
+  nonce?: string,
+): string {
   const data =
     where === undefined
       ? ""
@@ -564,25 +721,58 @@ export function toolbarTag(forgeUrl: string, where?: PillWhere, proof?: string):
           ["env", where.env],
           ["pull", where.pull === undefined ? undefined : String(where.pull)],
           ["title", where.title],
+          ["state", where.state],
+          ["check", where.check],
+          ["commit", where.serving?.oid],
+          ["live", where.serving?.at],
+          ["behind", where.behind === true ? "1" : undefined],
+          ["deploying", where.deploying === true ? "1" : undefined],
         ]
           .filter((pair): pair is [string, string] => pair[1] !== undefined)
           .map(([k, v]) => ` data-${k}="${escapeAttr(v)}"`)
           .join("");
   const token = proof === undefined ? "" : ` data-proof="${escapeAttr(proof)}"`;
-  return `<script src="${new URL(TOOLBAR_PATH, forgeUrl).href}"${data}${token} defer></script>`;
+  const forge = ` data-forge="${escapeAttr(new URL(forgeUrl).origin)}"`;
+  const admitted = nonce === undefined ? "" : ` nonce="${escapeAttr(nonce)}"`;
+  return `<script src="${TOOLBAR_ASSET_PATH}"${admitted}${forge}${data}${token} defer></script>`;
 }
 
-/** `bytes` with the pill's tag before the last `</body>`, or at the end. */
+/**
+ * The byte offset of the last `</body`, any case, or -1. Scanned from the end
+ * so a page pays for its tail, not for a lowercase copy of the whole body.
+ */
+function lastBodyClose(buffer: Buffer): number {
+  for (let i = buffer.length - 6; i >= 0; i--) {
+    if (buffer[i] !== 0x3c || buffer[i + 1] !== 0x2f) continue;
+    if (buffer.toString("latin1", i + 2, i + 6).toLowerCase() === "body") return i;
+  }
+  return -1;
+}
+
+/** The opening of the tag the proxy writes, with the hashed name: what a page that has the toolbar contains. */
+const TAG_OPEN = Buffer.from(`<script src="${TOOLBAR_ASSET_PATH}"`);
+
+/**
+ * Whether a page already carries this toolbar's tag (a page served through two
+ * forges, or cached with one). A byte search for the exact tag opening: a page
+ * that only quotes the path in its text does not match, and nothing is decoded.
+ */
+export function carriesToolbar(bytes: Uint8Array): boolean {
+  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).includes(TAG_OPEN);
+}
+
+/** `bytes` with the pill's tag before the last `</body>`, or at the end; a page that has one is returned as it is. */
 export function withToolbar(
   bytes: Uint8Array,
   forgeUrl: string,
   where?: PillWhere,
   proof?: string,
+  nonce?: string,
 ): Uint8Array<ArrayBuffer> {
-  const tag = Buffer.from(toolbarTag(forgeUrl, where, proof));
+  if (carriesToolbar(bytes)) return new Uint8Array(bytes);
+  const tag = Buffer.from(toolbarTag(forgeUrl, where, proof, nonce));
   const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  // latin1 is one character per byte, so an index in it is a byte offset.
-  const at = buffer.toString("latin1").toLowerCase().lastIndexOf("</body");
+  const at = lastBodyClose(buffer);
   const cut = at < 0 ? buffer.length : at;
   return Buffer.concat([buffer.subarray(0, cut), tag, buffer.subarray(cut)]);
 }

@@ -197,7 +197,7 @@ describe("proposal tokens through MCP and the terminal", () => {
 
     // The earlier "mine" token is first; the new one is under the second row.
     await h.press("j");
-    await h.press("x");
+    await h.press("x", "y");
     expect(proposalOf(app.db, row.token_id)).toBeUndefined();
     expect(h.text()).toContain("terminal-kid: revoked.");
     h.stop();
@@ -213,7 +213,7 @@ describe("proposal tokens through MCP and the terminal", () => {
     const rows = app.db.query<{ child: string }, []>("SELECT child FROM proposal_token ORDER BY token_id").all();
     expect(rows.length).toBeGreaterThan(0);
     // Revoke every row: the cursor stays on the first.
-    for (let i = 0; i < rows.length; i++) await h.press("x");
+    for (let i = 0; i < rows.length; i++) await h.press("x", "y");
     expect(h.text()).toContain("revoked");
     expect(app.db.query("SELECT 1 FROM proposal_token").all()).toEqual([]);
     h.stop();

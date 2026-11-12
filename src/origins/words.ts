@@ -18,3 +18,22 @@ export const PATH_IS_FILE = "that path is a file, not a directory";
 
 /** A file was asked of a path that is a directory. */
 export const PATH_IS_DIRECTORY = "that path is a directory, not a file";
+
+/**
+ * What comes across from another forge, and what does not — said on the page
+ * and in the API, so a mirror of a friend's app never reads as the whole of it.
+ */
+export const FORGE_NOT_CARRIED =
+  "Code comes across, and the repository's history. Issues, pulls, comments and labels come too, and issues, pulls and comments write through. Not yet: how the app runs. Never by default: its data and its secrets.";
+
+/**
+ * Signing in to another forge by OAuth needs a browser to approve in, and a
+ * forge has no device grant, so the terminal cannot start it: said where the
+ * terminal asks for a token, and where it lists the apps, pointing at the page.
+ */
+export const FORGE_SIGN_IN_ON_PAGE =
+  "Another forge signs in with one click on the web page; here, with a token.";
+
+/** A forge older than 0.7.355 reports no check on a pull; said so, with the release that does. */
+export const FORGE_PULL_CHECK_NEEDS =
+  "this forge is older than 0.7.355 and does not report a pull's check; it needs 0.7.355 or later";

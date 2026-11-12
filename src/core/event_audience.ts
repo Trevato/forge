@@ -26,17 +26,41 @@ import {
 import type { Database } from "bun:sqlite";
 import type { ForgeEvent } from "./events.ts";
 import { getAppByRepo } from "./apps.ts";
-import { canAdmin, canEnterApp, canSeeOwnerFacts, getRepoById } from "./repos.ts";
+import { personOwners } from "./orgs.ts";
+import { getTeam } from "./teams.ts";
+import { canAdmin, canEnterApp, canWrite, canSeeOwnerFacts, getRepoById } from "./repos.ts";
 import type { User } from "./users.ts";
 
-export type EventAudience = "readers" | "admins" | "actor" | "app";
+export type EventAudience = "readers" | "admins" | "actor" | "app" | "writers" | "team";
+
+/**
+ * Whether this viewer answers for a deleted repository: the forge's admin, who
+ * deleted it, or its owner (a person, or an org's owners while the org lasts).
+ * Its row is gone, so its owner comes from the event.
+ */
+function answersForDeleted(db: Database, viewer: User | undefined, event: ForgeEvent): boolean {
+  if (viewer === undefined || !isActive(viewer)) return false;
+  if (viewer.isAdmin || event.actorId === viewer.id) return true;
+  const owner = event.payload.ownerId;
+  return typeof owner === "string" && (owner === viewer.id || personOwners(db, owner).includes(viewer.id));
+}
+
+/** A `repo.deleted` names its repository; unless it was public (said so outright), the name is not for readers. */
+const namesHiddenRepo = (event: ForgeEvent): boolean =>
+  event.kind === "repo.deleted" &&
+  event.payload.repo !== undefined &&
+  event.payload.visibility !== "public";
 
 const READER_KINDS: ReadonlySet<string> = new Set([
   // Whether a repository follows an upstream, never where: the address is
   // the admins' (`repo.upstream_follow`).
   "repo.following",
   "issue.labeled",
+  "issue.first",
+  "issue.ranked",
+  "week.retro",
   "issue.closed",
+  "issue.gate_reviewed",
   "issue.commented",
   "usage.delta",
   "issue.raised",
@@ -70,6 +94,7 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "pull.reopened",
   "pull.opened",
   "pull.merged",
+  "pull.bypassed",
   "issue.opened",
   "spend.reported",
   "forge.proposal",
@@ -80,9 +105,17 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "team.deleted",
   "team.member_added",
   "team.member_removed",
+  "team.member_role_set",
   "forge.spawn.started",
   "forge.spawned",
+  "forge.removed",
+  "forge.stopped",
+  "forge.own_code_on",
+  "forge.own_code_off",
+  "forge.rolled_back",
   "forge.claim_reissued",
+  "forge.claim_revoked",
+  "forge.claim_restored",
   "agent.created",
   "agent.updated",
   "agent.deleted",
@@ -94,6 +127,7 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "pull.reviewed",
   "pull.thread_resolved",
   "pull.run_granted",
+  "pull.guest_approved",
   "team.changed",
   "forge.severed",
   "forge.follow_mode",
@@ -102,6 +136,8 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "issue.teams",
   "account.role_set",
   "account.email_verified",
+  "account.allowed",
+  "account.declined",
   "account.recovered",
   "limb.replan",
   "limb.replan_taken_back",
@@ -114,7 +150,11 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "repo.created",
   "repo.vision_kept",
   "repo.forked",
+  "repo.links_probed",
+  "repo.detached",
   "repo.deleted",
+  // Who moved a repository from where to where (#569): its readers knew both paths.
+  "repo.transferred",
   "label.updated",
   "label.deleted",
   "telemetry.granted",
@@ -125,14 +165,27 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "account.removed",
   "branch.created",
   "branch.deleted",
+  "build.pinned",
+  "build.deleted",
+  "build.noted",
+  // A pin's screenshots are read by its repository's readers (`actions/build_shots.ts`).
+  "build.shots",
   "invite.used",
   "user.updated",
   "user.key_added",
   "user.key_removed",
+  "user.key_renamed",
   "issue.unblocked",
   "issue.confirmed",
   "capacity.changed",
+  "shield.changed",
+  "traffic.capture_started",
+  "traffic.networks_imported",
   "crew.governed",
+  // Starts by an agent with only the URL (#10912): the forge owner hears them.
+  "start.made",
+  "start.claimed",
+  "start.swept",
 ]);
 
 /**
@@ -140,6 +193,9 @@ const READER_KINDS: ReadonlySet<string> = new Set([
  * `test/event-audience-coverage.test.ts` fails on an emitted kind that is.
  */
 export function classifiedAudience(kind: string): EventAudience | undefined {
+  // A hook that keeps failing is for those who can act on it: the host and
+  // the reason, never the address (`webhook_streak.ts`).
+  if (kind === "webhook.failing") return "writers";
   if (
     kind.startsWith("webhook.") ||
     kind.startsWith("app.env_") ||
@@ -154,9 +210,24 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind.startsWith("drill.") ||
     // A snapshot moving is the forge owner's too, and has no repository.
     kind.startsWith("backup.") ||
+    // Preparing for a power-off and ending it are the forge owner's (`maintenance/service.ts`).
+    kind.startsWith("maintenance.") ||
+    // The weekly model review's changes and results are the owner's (`actions/model_review.ts`).
+    kind.startsWith("crew.model_") ||
+    // A child forge answering no one at its public address is the owner's to hear (`spawn/reach.ts`).
+    kind.startsWith("forge.child_") ||
     // A clog is the whole forge's flow, the owner's to hear (`flow/clog_tick.ts`).
     kind.startsWith("clog.") ||
-    // The forge letting go of FLOW ONLY after 24 h clear is the admins' to hear (`flow/flow_only_auto.ts`).
+    // What the throughput keeper did to lift a brake is the owner's too (`flow/keeper.ts`).
+    kind.startsWith("keeper.") ||
+    // The flow keeper's acts on pulls, lulls and forge-down are the owner's too (`maintain/keeper/`, #7556).
+    kind.startsWith("keeper_") ||
+    kind === "forge_down" ||
+    kind === "forge_up" ||
+    // Who is trusted to fold in, and the switch that stops it, are the owner's (`actions/trusted_sources.ts`).
+    kind.startsWith("trust.") ||
+    kind.startsWith("foldin.") ||
+    // Events the retired FLOW ONLY switch wrote stay the admins' to hear.
     kind === "flow_only.cleared" ||
     // A report from outside waits for a person who decides; its arrival is
     // theirs to see, never the readers' (`actions/reports.ts`).
@@ -166,26 +237,48 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind === "forge.upstream" ||
     kind === "forge.updates_taken" ||
     kind === "cloud.write_allowed" ||
+    // A bet's name, share and what is left are the owner's plan (#8713).
+    kind.startsWith("bet.") ||
+    // A pinned forge's deploy, update and rollback name the owner's cloud (#8697).
+    kind.startsWith("pinned.") ||
     // Which of a person's connected accounts a mirror syncs through is too.
     kind.startsWith("origin.") ||
+    // A forge's plan and the billing provider are the admins' books (#11134).
+    kind.startsWith("billing.") ||
+    // A declared LAN device names the owner's own network (#10567).
+    kind.startsWith("device.") ||
     kind === "repo.settings_updated" ||
     // Where a repository follows is its admins' to read, off or on: the
     // address is often a private repository's.
     kind === "repo.upstream_follow" ||
     kind === "repo.upstream_checked" ||
+    kind === "repo.source_added" ||
+    kind === "repo.source_removed" ||
     kind === "repo.crew_outsiders" ||
+    // A valve turn names a repository and the owner's budget: for those who administer it (`actions/valves.ts`).
+    kind === "valve.turned" ||
     // A clog starting names the forge's own pile-up: the owner's to hear (#6524).
     kind.startsWith("clog.") ||
+    // The release keeper's steps name images and probe numbers: the forge owner's (`keeper/keeper.ts`, #7557).
+    kind.startsWith("release.") ||
     // A file held against new work is its admins' book-keeping (#6522).
     kind === "repo.file_held" ||
-    kind === "repo.file_released"
+    kind === "repo.file_released" ||
+    // Which repositories New app offers is the admins' choice (`actions/app_templates.ts`).
+    kind.startsWith("app_template.") ||
+    // What a parent lends a child's crew, by name and dollar, is the admins' business (`actions/child_credit.ts`, #10484).
+    kind === "forge.credit_set"
   )
     return "admins";
+  // A broken adapter sync is for those who may write the repository (`apps/pull.ts`).
+  if (kind === "adapter.sync_failed") return "writers";
   // A fleet operation spans repositories; its receipt is its actor's. So is
   // a thought: it belongs to no repository and to nobody but its author.
   if (
     kind === "repo.pinned" ||
     kind === "repo.unpinned" ||
+    // A person's pinned panels changed (`actions/board-pins.ts`): theirs alone.
+    kind === "board.pins" ||
     kind.startsWith("fleet.") ||
     kind.startsWith("thought.")
   )
@@ -195,6 +288,9 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
   // (#620, #599).
   if (kind.startsWith("run.") || kind.startsWith("app.") || kind.startsWith("look."))
     return "app";
+  // A pull waiting on a named team's review is that team's news alone
+  // (`actions/team_waits.ts`, #10164): its members, among those who may read.
+  if (kind === "pull.team_waiting" || kind === "pull.team_answered") return "team";
   if (READER_KINDS.has(kind)) return "readers";
   return undefined;
 }
@@ -225,6 +321,19 @@ export function audienceFilter(
     const repo = getRepoById(db, repoId);
     const yes = repo !== undefined && canAdmin(db, repo, viewer);
     admins.set(repoId, yes);
+    return yes;
+  };
+  const writers = new Map<string, boolean>();
+  const mayWrite = (repoId: string): boolean => {
+    const known = writers.get(repoId);
+    if (known !== undefined) return known;
+    const repo = getRepoById(db, repoId);
+    const yes =
+      repo !== undefined &&
+      viewer !== undefined &&
+      isActive(viewer) &&
+      canWrite(db, repo, viewer);
+    writers.set(repoId, yes);
     return yes;
   };
   const entrants = new Map<string, boolean>();
@@ -262,6 +371,15 @@ export function audienceFilter(
       subjects.set(key, rows.get(key) ?? null);
     }
   }
+  const teams = new Map<string, boolean>();
+  const onTeam = (slug: unknown): boolean => {
+    if (typeof slug !== "string" || viewer === undefined || !isActive(viewer)) return false;
+    const known = teams.get(slug);
+    if (known !== undefined) return known;
+    const yes = getTeam(db, slug)?.members.includes(viewer.id) ?? false;
+    teams.set(slug, yes);
+    return yes;
+  };
   const hidden = (event: ForgeEvent): boolean => {
     const subject = eventSubject(event);
     if (subject === undefined) return false;
@@ -278,13 +396,18 @@ export function audienceFilter(
   };
   return (event) => {
     if (hidden(event)) return false;
+    if (namesHiddenRepo(event) && !answersForDeleted(db, viewer, event)) return false;
     switch (eventAudience(event.kind)) {
       case "readers":
         return true;
       case "app":
         return event.repoId === null || mayEnter(event.repoId);
+      case "writers":
+        return event.repoId !== null && mayWrite(event.repoId);
       case "actor":
         return viewer !== undefined && event.actorId === viewer.id;
+      case "team":
+        return onTeam(event.payload.team);
       case "admins":
         return event.repoId === null
           ? viewer?.isAdmin === true && isActive(viewer)
@@ -316,6 +439,16 @@ export function eventForReader(
     return yes;
   };
   return (event) => {
+    // Which door an actor used (a token's name) is for those who answer for the repository.
+    if (event.payload.door !== undefined) {
+      const answers =
+        event.repoId === null
+          ? answersForDeleted(db, viewer, event)
+          : event.actorId === viewer?.id || isOwner(event.repoId);
+      if (answers) return event;
+      const { door: _, ...payload } = event.payload;
+      return { ...event, payload };
+    }
     if (!event.kind.startsWith("run.")) return event;
     if (event.repoId !== null && isOwner(event.repoId)) return event;
     const payload = { ...event.payload };

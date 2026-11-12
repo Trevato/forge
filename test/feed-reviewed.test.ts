@@ -126,7 +126,7 @@ test("each verdict is said in the post, asked-for-changes first, on / and in the
     .filter((w) => w.startsWith("approved ") || w.startsWith("asked for changes"));
   expect(posts.sort()).toEqual([APPROVED, CHANGES].sort());
 
-  const home = await fetch(`${servers.url}/`, { headers: { cookie } });
+  const home = await fetch(`${servers.url}/feed`, { headers: { cookie } });
   const html = (await home.text()).replace(/\s+/g, " ");
   const at = (s: string): number => html.indexOf(s);
   expect(at(APPROVED)).toBeGreaterThan(-1);

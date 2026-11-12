@@ -25,7 +25,8 @@ import { recordUsage } from "../src/core/usage.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { id } from "../src/kernel/id.ts";
-import { perShippedWords, windowWords } from "../src/web/studio/words.ts";
+import { perShippedWords } from "../src/core/efficiency.ts";
+import { windowWords } from "../src/web/studio/words.ts";
 
 /** Count the statements a block of work runs, through `db.query`. */
 async function statements(db: Database, work: () => Promise<void> | void) {
@@ -249,7 +250,8 @@ describe("efficiency and standing, grouped", () => {
   });
 
   test("the batch agrees with each account read alone, in three statements however many", async () => {
-    const repoId = repos.one!;
+    // Its own repository and accounts, so no other test's rows reach it.
+    const repoId = seedRepo("batch");
     const now = new Date("2026-10-02T12:00:00.000Z");
     const a = account();
     const b = account();
@@ -306,6 +308,15 @@ describe("efficiency and standing, grouped", () => {
     expect(page).toContain("account 1");
     expect(page).toContain("5-hour window");
     expect(page).toContain("weekly window");
+    // A plain row per subscription, never a boxed card, inside the strip.
+    const strip = page.slice(page.indexOf('id="windows"'), page.indexOf('id="spend-detail"'));
+    expect(strip).not.toContain('class="card');
+    expect(strip).toContain('data-group="crew"');
+    // A credential no app is scoped to sits in its own group.
+    expect(strip).toContain('data-group="apart"');
+    expect(strip).toContain('data-key="sub:');
+    expect(strip).toContain('data-window="5h"');
+    expect(strip).toContain('data-window="week"');
     expect(page).toMatch(/data-variant="outline"\s*>inferred</);
     expect(page).toContain(">full<");
     // ($3.00 + $1.50 + $0.50) ÷ 2 merged this week = $2.50.

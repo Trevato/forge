@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/user/email/verify",
   summary: "Send the caller another email verification link: {outcome} is sent (202) or already (200, nothing sent)",
   auth: true,
+  role: "member",
   status: 202,
   refusals: {
     unauthorized: "401: no signed-in account",

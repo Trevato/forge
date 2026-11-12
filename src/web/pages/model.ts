@@ -23,7 +23,7 @@ import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { btn, card } from "../ui.ts";
+import { btn, row } from "../ui.ts";
 import { accountOnly, accountSections } from "./origins.ts";
 
 // GET /settings/model
@@ -34,6 +34,7 @@ export function modelPage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const own = timePhase(ctx.request, "subscription", () => ownSubscription(ctx.app.db, user.id));
   const budget = timePhase(ctx.request, "budget", () => budgetLine(ctx.app.db, user, new Date()));
+  const grant = getModelGrant(ctx.app.db, user.id);
   const rendering = performance.now();
   const form = own
     ? html`<p class="muted">
@@ -64,12 +65,16 @@ export function modelPage(ctx: Ctx): Response {
     body: html`<div class="page-head"><h1>Model</h1></div>
       ${settingsLayout(
         accountSections("model", { admin: user.isAdmin }),
-        card(html`${form}`, {
-          head: html`<h2>Your model budget</h2>
-            <p class="muted" id="model-budget">
-              ${budget}
-            </p>`,
-        }),
+        html`<section class="settings-block">
+          <h2>Your model budget</h2>
+          ${grant === undefined || own || user.isAdmin
+            ? html`<p class="muted" id="model-budget">${budget}</p>`
+            : html`<ul class="list setting-list" id="model-budget">${row({
+                title: "A grant from an admin",
+                meta: html`${budget}`,
+              })}</ul>`}
+          ${form}
+        </section>`,
         "Account settings",
       )}`,
   });
@@ -100,8 +105,14 @@ export async function modelAdd(ctx: Ctx): Promise<Response> {
 export function ceilingCard(ctx: Ctx, user: User, at: string): Html {
   const ceiling = getAccountCeiling(ctx.app.db, user.id);
   const left = dailyLeft(ctx.app.db, user.id, new Date());
-  return card(
-    html`<form class="stack" method="post" action="${at}/ceiling">
+  return html`<section class="settings-block">
+    <h2>Spend ceilings</h2>
+    <p class="muted" id="ceiling-line">
+      ${ceiling === undefined || left === undefined
+        ? "No ceiling set."
+        : `$${ceiling.dailyUsd.toFixed(2)} a day, $${ceiling.perRunUsd.toFixed(2)} a run; $${left.toFixed(2)} left today.`}
+    </p>
+    <form class="stack" method="post" action="${at}/ceiling">
       <div class="field">
         <label for="f-daily">Daily ceiling, dollars</label>
         <input class="input" id="f-daily" name="daily" inputmode="decimal"
@@ -116,24 +127,18 @@ export function ceilingCard(ctx: Ctx, user: User, at: string): Html {
           ceiling.</span>
       </div>
       <div>${btn("Save", { variant: "primary", size: "sm" })}</div>
-    </form>`,
-    {
-      head: html`<h2>Spend ceilings</h2>
-        <p class="muted" id="ceiling-line">
-          ${ceiling === undefined || left === undefined
-            ? "No ceiling set."
-            : `$${ceiling.dailyUsd.toFixed(2)} a day, $${ceiling.perRunUsd.toFixed(2)} a run; $${left.toFixed(2)} left today.`}
-        </p>`,
-    },
-  );
+    </form>
+  </section>`;
 }
 
 /** The admin's card on a person's page: what they have, and the grant form. */
 export function grantCard(ctx: Ctx, user: User, at: string): Html {
   const grant = getModelGrant(ctx.app.db, user.id);
   const ceilings = ceilingCard(ctx, user, at);
-  const grantForm = card(
-    html`<form class="stack" method="post" action="${at}/model">
+  const grantForm = html`<section class="settings-block">
+    <h2>Model budget</h2>
+    <p class="muted">${budgetLine(ctx.app.db, user, new Date())}</p>
+    <form class="stack" method="post" action="${at}/model">
       <div class="field">
         <label for="f-grant">Grant, dollars a month</label>
         <input class="input" id="f-grant" name="usd" inputmode="decimal"
@@ -143,12 +148,8 @@ export function grantCard(ctx: Ctx, user: User, at: string): Html {
           $${GRANT_MAX_USD} a month; a run past the cap stops.</span>
       </div>
       <div>${btn("Save", { variant: "primary", size: "sm" })}</div>
-    </form>`,
-    {
-      head: html`<h2>Model budget</h2>
-        <p class="muted">${budgetLine(ctx.app.db, user, new Date())}</p>`,
-    },
-  );
+    </form>
+  </section>`;
   return html`${grantForm}${ceilings}`;
 }
 

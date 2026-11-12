@@ -6,15 +6,33 @@
  * through `listRepoRuns` (so it is gated like every other run read) and
  * joined to `deploy_pull` in one grouped read for `carries #3 #5`.
  *
- * Below the deploys, a signed-in viewer sees the app's open pulls, one line
+ * Under production's deploys, anyone who may read the repository sees a
+ * "Previews" group: one row per open pull with a preview environment,
+ * `#N title · <state> · <address>`, the state in the studio's words
+ * (`envPhrase`) and tone, all from one runtime `status()` read
+ * (`appPreviews`). `j`/`k` walk from the last deploy into it, and Enter on a
+ * preview opens that pull's screen. An app with none says `No previews.`.
+ *
+ * Below those, a signed-in viewer sees the app's open pulls, one line
  * each: `#N title · check <word> · <preview address or none>`. A guest sees
  * none.
+ *
+ * Until production first runs, the head carries one line of where the app
+ * stands (`apps/onboarding.ts`, #10295), as the app page says it.
+ *
+ * A writer who is a person — never an agent — gets `b`: type a commit's
+ * full id and `previewBuild` serves it at `<slug>--b<sha7>`, as the API's
+ * `POST …/builds/preview` does (`docs/features/build-preview.md`).
  *
  * A writer redeploys production with `D` and stops it with `S`, each after a
  * one-line confirm, through `redeployEnv` and `stopEnv` — the page's and MCP
  * `app_deploy`'s actions — and is told the answer in the page's words
  * (`env_words.ts`). A stopped production offers only `D`; a reader sees
  * neither key.
+ *
+ * With a preview selected, `D` and `S` do the same to that pull's preview
+ * (`redeploy #N's preview? y/n`), the env name read from its `appPreviews`
+ * row; `S` is offered only while it runs, and a reader sees neither.
  *
  * A writer — whom the MCP tool `probe` lets knock — gets `p`: the same
  * `probeApp` against the running production app, every door tried as
@@ -32,18 +50,31 @@
  * — `addAppDomain`, `checkAppDomain` and `removeAppDomain`, the page's and
  * MCP `app_domains`' actions. `listAppDomains` is the admin gate: anyone it
  * refuses sees neither the domains nor the key.
+ *
+ * The admin who is a person also gets `i`: the app's prompt source, the
+ * Instagram account whose comments become the crew's tell (`prompts.ts`).
+ * That admin also gets `X`, stop running as an app: after typing
+ * `<owner>/<name>` it calls `disableApp`, as Settings does, and the screen
+ * then says the repository is no longer an app.
  */
 
+import { appOnboardingLine } from "../../apps/onboarding.ts";
 import {
   appPace,
+  appPreviews,
   appPullLines,
   appSideLines,
   appView,
+  disableApp,
   appVisitors,
   redeployEnv,
   stopEnv,
+  type AppPreview,
   type AppPullLine,
 } from "../../actions/apps.ts";
+import { previewBuild, previewBuildRefusalText } from "../../actions/build_preview.ts";
+import { STOP_APP } from "../../web/danger_words.ts";
+import { envPhrase } from "../../apps/env_phrase.ts";
 import {
   addAppDomain,
   checkAppDomain,
@@ -60,25 +91,30 @@ import {
   domainStateWord,
   recordsInWords,
 } from "../../actions/domain_words.ts";
+import type { EnvName } from "../../apps/data.ts";
 import { envLabel, envRefusalText, redeployedText, stoppedText } from "../../actions/env_words.ts";
 import { trendLine, visitorsLine } from "../../apps/vitals.ts";
+import { egressModeSentence, undeclaredHosts } from "../../apps/egress_report.ts";
+import { egressSetting } from "../../core/capacity.ts";
 import { listRepoRuns } from "../../actions/runs.ts";
 import { carriedByRuns, carriesText } from "../../core/carried.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
-import { canWrite, type Repo } from "../../core/repos.ts";
+import { canAdmin, canWrite, type Repo } from "../../core/repos.ts";
 import type { Knock } from "../../contract/probe.ts";
 import { probeApp, type ProbeRow } from "../../contract/probes.ts";
 import type { Run } from "../../core/runs.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
+import type { Rect } from "../term/screen.ts";
 import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { emptyState } from "../ui/widgets.ts";
 import {
   ListState,
+  ago,
   confirmScreen,
   drawList,
   hitList,
@@ -88,7 +124,11 @@ import {
   type ListRow,
 } from "./common.ts";
 import { RunList, openRunLog, runRows } from "./runlist.ts";
+import { envTone } from "./runwords.ts";
+import { pullScreen } from "./pull.ts";
+import { local } from "./where.ts";
 import { appMembersScreen } from "./appmembers.ts";
+import { mayManagePrompts, promptsScreen } from "./prompts.ts";
 
 const LIMIT = 50;
 
@@ -107,6 +147,8 @@ interface Production {
   readonly state: string;
   readonly redeploy: boolean;
   readonly stop: boolean;
+  /** Its forge.json sets `app.always_on`: production never sleeps. */
+  readonly alwaysOn: boolean;
 }
 
 /**
@@ -116,16 +158,53 @@ interface Production {
  */
 function readProduction(f: Session, repo: Repo): Production {
   const view = appView(f.app, f.user, repo);
-  if (!view.ok) return { state: "", redeploy: false, stop: false };
-  const state = view.value.environments.find((e) => e.env === "production")?.state ?? "";
+  if (!view.ok) return { state: "", redeploy: false, stop: false, alwaysOn: false };
+  const env = view.value.environments.find((e) => e.env === "production");
+  const state = env?.state ?? "";
   const writer = view.value.serving && f.user !== undefined && canWrite(f.db, repo, f.user);
-  return { state, redeploy: writer, stop: writer && state !== "" && state !== "stopped" };
+  return {
+    state,
+    redeploy: writer,
+    stop: writer && state !== "" && state !== "stopped",
+    alwaysOn: env?.alwaysOn === true,
+  };
 }
 
 /** `#N title · check <word> · <preview address or none>` */
 function pullLine(p: AppPullLine): string {
   const title = p.title.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, "").trim();
   return `#${p.number} ${title} · check ${p.check} · ${p.preview ?? "none"}`;
+}
+
+/** Previews drawn before the group scrolls. */
+const PREVIEW_ROWS = 6;
+
+/** `#N title · live · https://app--4.apps.example`, the dot in the studio's tone. */
+export function previewRow(p: AppPreview): ListRow {
+  const title = p.title.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, "").trim();
+  const { word, tone } = envPhrase(p.env);
+  const t = envTone(tone);
+  return { title: `#${p.number} ${title} · ${word} · ${p.env.url}`, ...(t === undefined ? {} : { tone: t }) };
+}
+
+/**
+ * "Reached, not declared": the hosts the app's code called that `forge.json`
+ * does not declare, as the app's page says them, then the line to add them.
+ * Only a writer is told; nothing is drawn with none.
+ */
+function egressLines(f: Session, repo: Repo): string[] {
+  if (!canWrite(f.db, repo, f.user)) return [];
+  const record = getAppByRepo(f.db, repo.id);
+  if (record === undefined) return [];
+  const declared = appsRuntime(f.app)?.liveFor(record, "production")?.cell?.egress ?? [];
+  const { reached, entries } = undeclaredHosts(f.app.config.dataDir, repo.id, declared);
+  if (reached.length === 0) return [];
+  return [
+    "Reached, not declared",
+    ...reached.map((r) => `  ${r.host}:${r.port} · ${r.count}× · last seen ${ago(r.last)}`),
+    egressModeSentence(egressSetting(f.db)),
+    `Add them to the egress list in forge.json: ${JSON.stringify(entries)}`,
+  ];
 }
 
 export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
@@ -136,9 +215,20 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let trend = "";
   let pace = "";
   let side: string[] = [];
+  /** Where a new or migrated app stands until production runs, or "". */
+  let onboarding = "";
+  let egress: string[] = [];
   let pulls: AppPullLine[] = [];
-  let production: Production = { state: "", redeploy: false, stop: false };
+  /** The app's previews, or undefined for anyone who may not see them. */
+  let previews: AppPreview[] | undefined;
+  const previewState = new ListState();
+  /** Which list the cursor is in: production's deploys, or the previews under them. */
+  let inPreviews = false;
+  let production: Production = { state: "", redeploy: false, stop: false, alwaysOn: false };
   let members = false;
+  let prompts = false;
+  let stoppable = false;
+  let isApp = true;
   /** The app's domains, or undefined for anyone `listAppDomains` refuses. */
   let domains: AppDomainView[] | undefined;
 
@@ -154,7 +244,13 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     trend = seen === undefined ? "" : trendLine(seen.loadDays);
     pace = appPace(f.app, f.user, repo);
     side = appSideLines(f.app, f.user, repo);
+    const standing = appOnboardingLine(f.app, repo, f.user);
+    onboarding = standing === undefined ? "" : `${standing.text}${standing.href === undefined ? "" : ` ${standing.href}`}`;
+    egress = egressLines(f, repo);
     pulls = appPullLines(f.app, f.user, repo);
+    previews = appPreviews(f.app, f.user, repo);
+    previewState.clamp(previews?.length ?? 0);
+    if ((previews?.length ?? 0) === 0) inPreviews = false;
     production = readProduction(f, repo);
     // The action's gate: a person who can write, never an agent.
     members =
@@ -164,80 +260,186 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       canWrite(f.db, repo, f.user);
     const listed = listAppDomains(f.app, f.user, repo);
     domains = listed.ok ? listed.value : undefined;
+    prompts = mayManagePrompts(f, repo);
+    isApp = getAppByRepo(f.db, repo.id) !== undefined;
+    stoppable = isApp && f.user !== undefined && f.user.kind !== "agent" && canAdmin(f.db, repo, f.user);
     loaded = true;
     ctx.invalidate();
   };
 
   const open = (run: Run): void => openRunLog(f, ctx, repo, run);
+  const openPreview = (p: AppPreview): void => ctx.push(pullScreen(f, ctx, local(f, repo), p.number));
   // The MCP tool's gate, read once: only a writer is offered the knock.
   const mayProbe = canWrite(f.db, repo, f.user);
+  // Offered to a person who writes; `previewBuild` gates again, agents included.
+  const mayBuild = mayProbe && f.user !== undefined && f.user.kind !== "agent";
 
-  const confirm = (verb: "Redeploy" | "Stop", act: () => Promise<{ text: string; refused: boolean }>): void => {
+  /** `b`: ask for a commit's id, then serve it as a build preview and say where. */
+  const previewACommit = (): void => {
     ctx.push(
-      confirmScreen(ctx, screen, {
-        title: `${verb} ${envLabel("production")}`,
-        body: [`${verb} ${envLabel("production")} of ${repo.ownerName}/${repo.name}?`],
-        actions: [{ label: "Cancel", variant: "ghost" }, { label: verb }],
-        selected: 1,
-        onChoose: (choice) => {
-          if (choice !== 1) return;
+      promptScreen(ctx, screen, {
+        title: "Preview a build",
+        label: "Commit id",
+        placeholder: "40 hex characters",
+        hint: "Served at its own address for a while, with a copy of production's data.",
+        onSubmit: (typed) => {
+          const sha = typed.trim().toLowerCase();
+          if (!/^[0-9a-f]{40}$/.test(sha)) return "Give the full 40-character commit id.";
           runAsync(ctx, async () => {
-            const answer = await act();
-            ctx.toast(answer.text, answer.refused ? "danger" : undefined);
+            const asked = await previewBuild(f.app, f.user, repo, sha);
+            if (!asked.ok) ctx.toast(previewBuildRefusalText(asked.error), "danger");
+            else ctx.toast(`Previewing ${sha.slice(0, 7)} at ${asked.value.url}`, "success");
             read();
           });
+          return undefined;
         },
       }),
     );
   };
 
-  const redeploy = (): void =>
-    confirm("Redeploy", async () => {
-      const queued = await redeployEnv(f.app, f.user, repo, "production");
+  /** Redeploy or stop `env` and say the answer in the page's words; one path for production and previews. */
+  const act = async (verb: "Redeploy" | "Stop", env: EnvName): Promise<{ text: string; refused: boolean }> => {
+    if (verb === "Redeploy") {
+      const queued = await redeployEnv(f.app, f.user, repo, env);
       return queued.ok
-        ? { text: redeployedText("production", queued.value), refused: false }
+        ? { text: redeployedText(env, queued.value), refused: false }
         : { text: envRefusalText(queued.error), refused: true };
-    });
+    }
+    const stopped = await stopEnv(f.app, f.user, repo, env);
+    return stopped.ok
+      ? { text: stoppedText(env), refused: false }
+      : { text: envRefusalText(stopped.error), refused: true };
+  };
 
-  const stop = (): void =>
-    confirm("Stop", async () => {
-      const stopped = await stopEnv(f.app, f.user, repo, "production");
-      return stopped.ok
-        ? { text: stoppedText("production"), refused: false }
-        : { text: envRefusalText(stopped.error), refused: true };
-    });
+  /**
+   * Production asks with buttons; a preview asks `redeploy #N's preview? y/n`.
+   * Either way the action gates again and a refusal toasts in red.
+   */
+  const confirm = (verb: "Redeploy" | "Stop", env: EnvName, pull?: number): void => {
+    const go = (): void =>
+      runAsync(ctx, async () => {
+        const answer = await act(verb, env);
+        ctx.toast(answer.text, answer.refused ? "danger" : undefined);
+        read();
+      });
+    ctx.push(
+      confirmScreen(
+        ctx,
+        screen,
+        pull === undefined
+          ? {
+              title: `${verb} ${envLabel(env)}`,
+              body: [`${verb} ${envLabel(env)} of ${repo.ownerName}/${repo.name}?`],
+              actions: [{ label: "Cancel", variant: "ghost" }, { label: verb }],
+              selected: 1,
+              onChoose: (choice) => choice === 1 && go(),
+            }
+          : {
+              title: `${verb} preview`,
+              body: [`${verb.toLowerCase()} #${pull}'s preview? y/n`],
+              actions: [{ label: verb }, { label: "Cancel", variant: "ghost" }],
+              yesNo: true,
+              onChoose: (choice) => choice === 0 && go(),
+            },
+      ),
+    );
+  };
+
+  /** The selected preview and what may be done to it, or undefined outside the group or for a reader. */
+  const previewActs = (): { p: AppPreview; stop: boolean } | undefined => {
+    const p = inPreviews && production.redeploy ? previews?.[previewState.index] : undefined;
+    return p === undefined ? undefined : { p, stop: p.env.state !== "stopped" };
+  };
+
+  const name = `${repo.ownerName}/${repo.name}`;
+  /** `X`: type the name, then `disableApp` as Settings does; wrong names change nothing. */
+  const stopApp = (): void => {
+    ctx.push(
+      promptScreen(ctx, screen, {
+        title: STOP_APP,
+        label: `Type ${name} to confirm`,
+        hint: "All environments stop, data goes; code stays.",
+        placeholder: name,
+        onSubmit: (typed) => {
+          if (typed !== name) return `Type ${name} to confirm.`;
+          const done = disableApp(f.app, f.user, repo);
+          ctx.toast(done.ok ? "no longer an app" : "That app is not there, or it is not yours to stop.", done.ok ? undefined : "danger");
+          read();
+          return undefined;
+        },
+      }),
+    );
+  };
 
   const screen: Screen = {
     title: "Deploys",
     get keys() {
+      const preview = previewActs();
       return [
         binding(["j", "k"], "move"),
-        binding(["enter"], "open the log"),
+        binding(["enter"], inPreviews ? "open the pull" : "open the log"),
         binding(["r"], "refresh (the open pulls below the deploys: check, preview)"),
-        ...(production.redeploy ? [binding(["D"], "redeploy production")] : []),
-        ...(production.stop ? [binding(["S"], "stop production")] : []),
+        ...(inPreviews
+          ? [
+              ...(preview !== undefined ? [binding(["D"], "redeploy preview")] : []),
+              ...(preview?.stop === true ? [binding(["S"], "stop preview")] : []),
+            ]
+          : [
+              ...(production.redeploy ? [binding(["D"], "redeploy production")] : []),
+              ...(production.stop ? [binding(["S"], "stop production")] : []),
+            ]),
         ...(mayProbe ? [binding(["p"], "probe the running app's doors")] : []),
         ...(members ? [binding(["m"], "members")] : []),
         ...(domains !== undefined ? [binding(["n"], "the app's own domains")] : []),
+        ...(prompts ? [binding(["i"], "prompt source (Instagram)")] : []),
+        ...(stoppable ? [binding(["X"], STOP_APP.toLowerCase())] : []),
+        ...(mayBuild ? [binding(["b"], "preview a commit")] : []),
       ];
     },
     load: async () => read(),
     render(area, s) {
       const c = ctx.theme.c;
       const named = domainsLine(domains);
-      const [head, upper, tail] = split(area, "v", [
+      const drawPreviews = (r: Rect): void => {
+        s.text(r.x, r.y, truncate("Previews", r.w), style(c.mutedFg, c.bg), r.x + r.w);
+        const body = { x: r.x, y: r.y + 1, w: r.w, h: r.h - 1 };
+        if (previews === undefined || previews.length === 0) {
+          s.text(body.x, body.y, truncate("No previews.", body.w), style(c.mutedFg, c.bg), body.x + body.w);
+          return;
+        }
+        const rows = previews.map(previewRow);
+        drawList(s, body, c, previewState, rows, inPreviews);
+        hitList(ctx, body, previewState, rows.length, {
+          select: () => {
+            inPreviews = true;
+            ctx.invalidate();
+          },
+          open: (index) => {
+            const p = previews?.[index];
+            if (p === undefined) return;
+            inPreviews = true;
+            openPreview(p);
+          },
+        });
+      };
+      const shown = previews === undefined ? 0 : Math.max(1, Math.min(previews.length, PREVIEW_ROWS));
+      const [head, upper, middle, tail] = split(area, "v", [
         len(
           1 +
             (visitors === "" ? 0 : 1) +
             (trend === "" ? 0 : 1) +
             (pace === "" ? 0 : 1) +
             side.length +
+            (onboarding === "" ? 0 : 1) +
+            egress.length +
             (named === "" ? 0 : 1),
         ),
         fill(1),
+        len(previews === undefined ? 0 : shown + 1),
         len(pulls.length === 0 ? 0 : pulls.length + 1),
       ]);
       const body = upper;
+      if (previews !== undefined) drawPreviews(middle!);
       pulls.forEach((p, i) =>
         s.text(
           tail!.x,
@@ -253,13 +455,13 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         head!.x,
         head!.y,
         truncate(
-          `${repo.ownerName}/${repo.name} · production deploys${production.state === "" ? "" : ` · ${production.state}`}`,
+          `${repo.ownerName}/${repo.name} · production deploys${production.state === "" ? "" : ` · ${production.state}`}${production.alwaysOn ? " · never sleeps (app.always_on)" : ""}`,
           head!.w,
         ),
         style(c.mutedFg, c.bg),
         head!.x + head!.w,
       );
-      [visitors, trend, pace, ...side, named]
+      [onboarding, visitors, trend, pace, ...side, named, ...egress]
         .filter((line) => line !== "")
         .forEach((line, i) =>
           s.text(head!.x, head!.y + 1 + i, truncate(line, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w),
@@ -268,7 +470,9 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         emptyState(s, body!, c, {
           title: loaded ? "No deploys" : "Reading…",
           body: loaded
-            ? "Nothing has been deployed to production yet."
+            ? isApp
+              ? "Nothing has been deployed to production yet."
+              : "This repository is no longer an app."
             : "Reading the deploys",
         });
         return;
@@ -279,16 +483,38 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
           ? row
           : { ...row, secondary: [row.secondary, text].filter((t) => t !== "").join(" · ") };
       });
-      drawList(s, body!, c, list.state, rows);
+      drawList(s, body!, c, list.state, rows, !inPreviews);
       hitList(ctx, body!, list.state, rows.length, {
+        select: () => {
+          inPreviews = false;
+          ctx.invalidate();
+        },
         open: (index) => {
+          inPreviews = false;
           const run = list.runs[index];
           if (run !== undefined) open(run);
         },
       });
     },
     key(e) {
-      if (list.state.key(e, list.runs.length)) return true;
+      const n = previews?.length ?? 0;
+      const down = !e.ctrl && !e.alt && (e.key === "j" || e.key === "down");
+      const up = !e.ctrl && !e.alt && (e.key === "k" || e.key === "up");
+      if (!inPreviews && down && n > 0 && list.state.index >= list.runs.length - 1) {
+        inPreviews = true;
+        previewState.index = 0;
+        return true;
+      }
+      if (inPreviews && up && previewState.index === 0) {
+        inPreviews = list.runs.length === 0;
+        return true;
+      }
+      if (inPreviews ? previewState.key(e, n) : list.state.key(e, list.runs.length)) return true;
+      if (e.key === "enter" && inPreviews) {
+        const p = previews?.[previewState.index];
+        if (p !== undefined) openPreview(p);
+        return true;
+      }
       if (e.key === "enter") {
         const run = list.selected;
         if (run !== undefined) open(run);
@@ -298,16 +524,26 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         read();
         return true;
       }
+      if ((e.key === "D" || e.key === "S") && inPreviews) {
+        const target = previewActs();
+        if (target !== undefined && (e.key === "D" || target.stop))
+          confirm(e.key === "D" ? "Redeploy" : "Stop", target.p.env.env, target.p.number);
+        return true;
+      }
       if (e.key === "D" && production.redeploy) {
-        redeploy();
+        confirm("Redeploy", "production");
         return true;
       }
       if (e.key === "S" && production.stop) {
-        stop();
+        confirm("Stop", "production");
         return true;
       }
       if (e.key === "p" && mayProbe) {
         ctx.push(probeScreen(f, ctx, repo));
+        return true;
+      }
+      if (e.key === "b" && mayBuild) {
+        previewACommit();
         return true;
       }
       if (e.key === "m" && members) {
@@ -316,6 +552,14 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       }
       if (e.key === "n" && domains !== undefined) {
         ctx.push(domainsScreen(f, ctx, repo, read));
+        return true;
+      }
+      if (e.key === "i" && prompts) {
+        ctx.push(promptsScreen(f, ctx, repo));
+        return true;
+      }
+      if (e.key === "X" && stoppable) {
+        stopApp();
         return true;
       }
       return false;

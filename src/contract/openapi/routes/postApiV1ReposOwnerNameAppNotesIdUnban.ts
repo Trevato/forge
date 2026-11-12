@@ -5,6 +5,7 @@ export const route: Route = {
   path: `${REPO}/app/notes/{id}/unban`,
   summary: "Let the sender of a note write again (rw scope; admin of the repository); answers the note",
   auth: true,
+  role: "member",
   refusals: {
     not_found: "no such repository, app or note",
     forbidden: "not an admin of the repository, or a read-only token",

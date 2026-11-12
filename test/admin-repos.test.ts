@@ -9,7 +9,8 @@ import { addTeamMember, createOrg, createTeam } from "../src/core/orgs.ts";
 import { canAdmin, getRepoById } from "../src/core/repos.ts";
 import { createUser, getUserById, type User } from "../src/core/users.ts";
 import { id } from "../src/kernel/id.ts";
-import { expectBudget } from "./helpers/budget.ts";
+import { statements } from "./helpers/statements.ts";
+import { expectWork } from "./helpers/work.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -124,21 +125,11 @@ test("it is exactly one statement", () => {
   expect(n).toBe(1);
 });
 
-test("on 2,000 repositories it costs about one scan of the repository table", () => {
+test("on 2,000 repositories it is still one statement", async () => {
   app.db.transaction(() => {
     for (let i = 0; i < 2000; i++) repo(i % 3 === 0 ? pat.id : root.id, `bulk${i}`);
   })();
-  const best = (run: () => unknown): number => {
-    let least = Infinity;
-    for (let n = 0; n < 5; n++) {
-      const t = performance.now();
-      run();
-      least = Math.min(least, performance.now() - t);
-    }
-    return least;
-  };
-  // The baseline is a plain scan of the same table, taken in the same run.
-  const against = best(() => app.db.query("SELECT id FROM repo").all());
-  expectBudget(best(() => adminRepoIds(app.db, pat)), { ms: 5, against });
+  // Counted, not timed: one statement however many repositories there are.
+  expectWork(await statements(app.db, () => void adminRepoIds(app.db, pat)), { max: 1 });
   expect(adminRepoIds(app.db, pat).size).toBe(667 + 3);
 });

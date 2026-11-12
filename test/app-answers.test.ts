@@ -124,6 +124,15 @@ describe("the crew's answer under the tell box", () => {
 
     const frag = await (await get(alice, "/alice/notes/app/answers")).text();
     expect(frag).toContain("Footer added on a branch.");
+    // The home page's language: rows under a heading, no boxed card.
+    for (const body of [page, frag]) {
+      const from = body.indexOf('id="live-answers"');
+      const region = body.slice(from, body.indexOf("</section>", from));
+      expect(region).toContain('<section class="settings-block">');
+      expect(region).toMatch(/<h2>The crew(&#39;|')s answers<\/h2>/);
+      expect(region).not.toContain('class="card');
+      expect(region).not.toContain("card-head");
+    }
     expect(frag.indexOf("Add a footer.")).toBeLessThan(frag.indexOf("Make the &lt;b&gt;"));
   });
 

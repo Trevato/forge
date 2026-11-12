@@ -279,7 +279,7 @@ describe("what you asked for", () => {
     expect(page.indexOf("Fix the gate")).toBeLessThan(page.indexOf("Plant tomatoes"));
     // Reached from the board and the feed's header, not only the asks page.
     expect(await (await fetch(`${servers.url}/board`, { headers: { cookie } })).text()).toContain('href="/asked"');
-    expect(await (await fetch(`${servers.url}/`, { headers: { cookie } })).text()).toContain('href="/asked"');
+    expect(await (await fetch(`${servers.url}/feed`, { headers: { cookie } })).text()).toContain('href="/asked"');
     const flagged = (
       await (
         await fetch(`${servers.url}/asked?show=flagged`, {

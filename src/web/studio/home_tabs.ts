@@ -27,7 +27,7 @@ export function homeTabs(current: HomeTab, unshipped = 0): Html {
   });
   return html`<div class="mb">
     ${tabs(
-      [item("feed", "/", "Feed"), item("apps", "/apps", "Your apps"), item("asked", "/asked", "Asked", unshipped)],
+      [item("feed", "/feed", "Feed"), item("apps", "/apps", "Your apps"), item("asked", "/asked", "Asked", unshipped)],
       "Home",
     )}
   </div>`;

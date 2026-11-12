@@ -27,6 +27,7 @@ import {
   setIssueLabelsThrough,
   setIssueStateThrough,
 } from "../../actions/issues.ts";
+import { VIA_WORDS } from "../../core/acting_via.ts";
 import { listEvents } from "../../core/events.ts";
 import { markOf, marksByName, type Mark } from "../../core/marks.ts";
 import {
@@ -36,6 +37,7 @@ import {
   type Label,
 } from "../../core/issues.ts";
 import { editIssue, type Closing } from "../../actions/issues.ts";
+import { putFlowFirst } from "../../actions/flow_first.ts";
 import {
   getIssue,
   labelsFor,
@@ -57,6 +59,7 @@ import type { Ctx } from "../../http/context.ts";
 import { commentCard } from "../comments.ts";
 import { backTo, field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
+import { planCard } from "./plan_card.ts";
 import { NOT_CHANGED } from "../edit_words.ts";
 import { flashOrJson, flashTo } from "../layout.ts";
 import {
@@ -73,7 +76,6 @@ import {
 } from "../ui.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { studioRecord, tellHref } from "../studio/nouns.ts";
-import { flowOnlyQueued } from "../../crew/flow_only.ts";
 import { interruptionsOn } from "../../crew/interrupted.ts";
 
 /**
@@ -90,6 +92,10 @@ export function originError(error: string): string | undefined {
     origin_owner_only:
       "Only the person who connected this origin can write through it. Your comment would otherwise appear upstream under their name.",
     origin_refused: "The origin refused that. Nothing was changed here either.",
+    origin_protected:
+      "The operator protects this repository at its origin, so nothing is pushed to it from here. Propose the change from your fork.",
+    origin_paused:
+      "This connection is not verified yet, so writes through it are paused. Nothing was changed. Check it again under Settings → Connected accounts.",
     origin_unreachable: "The origin could not be reached. Nothing was changed.",
   };
   return words[error];
@@ -117,12 +123,21 @@ export function threadContext(
   const issue =
     number === undefined ? undefined : getIssue(ctx.app.db, repo.id, number);
   // A sealed report is not there for anyone who may not see it (`core/sealed.ts`).
-  if (
-    !issue ||
-    issue.kind !== kind ||
-    !mayView(ctx.app.db, repo, issue, ctx.auth.user)
-  )
+  if (!issue || !mayView(ctx.app.db, repo, issue, ctx.auth.user))
     return notFoundPage(ctx);
+  if (issue.kind !== kind) {
+    // Issues and pulls share one number space: a read of the other kind's URL
+    // lands on it; a write still refuses.
+    const method = ctx.request.method;
+    if (method !== "GET" && method !== "HEAD") return notFoundPage(ctx);
+    const from = kind === "issue" ? "/issues/" : "/pulls/";
+    const to = kind === "issue" ? "/pulls/" : "/issues/";
+    const path = ctx.url.pathname;
+    const at = path.lastIndexOf(from);
+    if (at < 0) return notFoundPage(ctx);
+    const target = path.slice(0, at) + to + path.slice(at + from.length) + ctx.url.search;
+    return new Response(null, { status: 302, headers: { location: target } });
+  }
   return { repo, issue };
 }
 
@@ -167,6 +182,11 @@ const EVENT_LOOK: Record<string, { icon: IconName; tone: Tone; verb: string }> =
       icon: "check",
       tone: "default",
       verb: "let this head run",
+    },
+    "pull.guest_approved": {
+      icon: "check",
+      tone: "default",
+      verb: "approved this guest",
     },
     "pull.edited": { icon: "pencil", tone: "default", verb: "edited this" },
     "pull.released": {
@@ -222,7 +242,9 @@ function stateEvents(ctx: Ctx, repo: Repo, issue: Issue): Entry[] {
               )}`
             : html`${actor
             ? userLink(actor.username, { mark: markOf(actor) })
-            : html`<span>someone</span>`} <span>${look.verb}</span> ${time(
+            : html`<span>someone</span>`}${event.via !== undefined && actor
+            ? html` <span>${VIA_WORDS}</span>`
+            : null} <span>${look.verb}</span> ${time(
             event.createdAt,
           )}`,
       }),
@@ -284,10 +306,10 @@ export interface ConversationOptions {
  * the body as they stand, one form, one Save. Folded away until asked for,
  * since most visits read and few rewrite.
  */
-function editForm(issue: Issue, action: string): Html {
-  return html`<details class="tl-edit" id="edit">
+function editForm(issue: Issue, action: string, open: boolean): Html {
+  return html`<details class="tl-edit" id="edit"${open ? html` open` : null}>
     <summary class="muted small">${icon("pencil")} Edit</summary>
-    <form class="card comment-form mt" method="post" action="${action}">
+    <form class="mt" method="post" action="${action}">
       <label class="sr-only" for="edit-title">Title</label>
       <input
         class="input"
@@ -393,8 +415,8 @@ export function conversation(
   return {
     node: html`<div class="timeline" id="conversation">
       ${opening}${when(options.editAction, (action) =>
-        editForm(issue, action),
-      )}${earlier}${shown.map((e) => e.node)}
+        editForm(issue, action, ctx.url.searchParams.get("edit") === "1"),
+      )}${planCard(ctx.app.db, issue)}${earlier}${shown.map((e) => e.node)}
     </div>`,
     lastCommentId: comments.length > 0 ? comments[comments.length - 1]!.id : "",
   };
@@ -497,6 +519,11 @@ export interface ComposerOptions {
    * the button tells the crew, and `from` (a path on this forge, or null)
    * rides along as a hidden field so the tell remembers the page it was
    * said on (`actions/tell.ts`). `rows` sizes it; one is a single line. */
+  /** The page already has its one primary action; Comment steps down. */
+  plainSend?: boolean;
+  /** Draw the box as a `card`: only the floating tell box (`tell_here.ts`), which
+   * sits over the page and needs its own ground. A thread's box is plain lines. */
+  boxed?: boolean;
   tell?: { from: string | null; rows?: number; page?: string; pull?: number; text?: string; ask?: boolean };
 }
 
@@ -518,7 +545,7 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
   // action. The state form sits outside; the button joins it by id.
   const stateForm =
     o.stateAction !== undefined && !o.locked
-      ? html`<form method="post" action="${o.stateAction}" id="thread-state">
+      ? html`<form method="post" action="${o.stateAction}" id="thread-state" data-now="${o.state === "open" ? "Closed" : "Reopened"}" data-now-once>
           <input
             type="hidden"
             name="state"
@@ -548,6 +575,14 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
             inputmode="numeric"
             placeholder="#, #"
             aria-label="Issue numbers it was split into"
+          />
+          <input
+            class="input"
+            name="note"
+            form="thread-state"
+            maxlength="300"
+            placeholder="why (a bug needs one; else optional)"
+            aria-label="Why it closes, in a sentence"
           />`
       : null;
   const closeButton =
@@ -561,7 +596,7 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
   const tell = o.tell;
   return html`${stateForm}
     <form
-      class="card comment-form"
+      class="${o.boxed ? "card comment-form" : "comment-form"}"
       method="post"
       action="${o.action}"
       data-box="${tell ? "Tell the crew" : "Write a comment"}"
@@ -610,7 +645,7 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
         ${reasons} ${closeButton}
         ${tell
           ? btn("Tell the crew", { variant: "primary", icon: "bot" })
-          : btn("Comment", { variant: "primary", icon: "comment" })}
+          : btn("Comment", { ...(o.plainSend ? {} : { variant: "primary" as const }), icon: "comment" })}
       </div>
     </form>`;
 }
@@ -630,8 +665,8 @@ export function labelsCard(
   const mayEdit = canWrite(ctx.app.db, repo, ctx.auth.user);
   const chips =
     applied.length === 0
-      ? html`<p class="muted small">None yet.</p>`
-      : html`<div class="bar">
+      ? html`<p class="muted small" id="labels-now">None yet.</p>`
+      : html`<div class="bar" id="labels-now">
           ${applied.map((l) =>
             labelChip(
               l,
@@ -643,12 +678,13 @@ export function labelsCard(
     return card(chips, {
       head: html`${icon("tag")}
         <h2>Labels</h2>`,
+      extra: "bare",
     });
 
   const applies = new Set(applied.map((l) => l.id));
   return card(
     html`${chips}
-      <form method="post" action="${action}" class="mt">
+      <form method="post" action="${action}" class="mt" data-now="Applied" data-now-into="#labels-now" data-now-from="labels">
         <fieldset class="stack">
           <legend class="sr-only">Labels on this thread</legend>
           ${all.map(
@@ -671,6 +707,7 @@ export function labelsCard(
     {
       head: html`${icon("tag")}
         <h2>Labels</h2>`,
+      extra: "bare",
     },
   );
 }
@@ -724,27 +761,27 @@ export function assigneeCard(
   action: string,
 ): Html {
   const mayEdit = canWrite(ctx.app.db, repo, ctx.auth.user);
-  const held = flowOnlyQueued(ctx.app.db, repo, issue);
   const current =
     issue.assigneeName === null
-      ? html`<p class="muted small">Nobody yet.</p>`
-      : html`<p class="bar">
+      ? html`<p class="muted small" id="assignee-now">Nobody yet.</p>`
+      : html`<p class="bar" id="assignee-now">
           ${when(issue.assigneeIsAgent, () => icon("bot"))}
           ${userLink(issue.assigneeName, {
             mark: marksByName(ctx.app.db, [issue.assigneeName]).get(
               issue.assigneeName,
             ),
           })}
-        </p>${held === null ? null : html`<p class="muted small" id="flow-only-queued">${held}</p>`}`;
+        </p>`;
   if (!mayEdit)
     return card(current, {
       head: html`${icon("user")}
         <h2>Assignee</h2>`,
+      extra: "bare",
     });
   const candidates = assigneeCandidates(ctx, repo, issue);
   return card(
     html`${current}
-      <form method="post" action="${action}" class="edit-row mt">
+      <form method="post" action="${action}" class="edit-row mt" data-now="Assigned" data-now-into="#assignee-now" data-now-from="assignee">
         <label class="sr-only" for="f-assignee">Assign to</label>
         <select class="input" id="f-assignee" name="assignee">
           <option
@@ -768,6 +805,7 @@ export function assigneeCard(
     {
       head: html`${icon("user")}
         <h2>Assignee</h2>`,
+      extra: "bare",
     },
   );
 }
@@ -787,7 +825,7 @@ export async function assigneeSubmit(
   const name = field(form, "assignee").trim();
   const assignee = name === "" ? null : getUserByName(ctx.app.db, name);
   if (assignee === undefined)
-    return flashTo(ctx, dest, {
+    return flashOrJson(ctx, dest, {
       tone: "danger",
       message: `There is no account named ${name}.`,
     });
@@ -805,12 +843,12 @@ export async function assigneeSubmit(
       forbidden: "You need write access to assign.",
       archived: ARCHIVED_WHY,
     };
-    return flashTo(ctx, dest, {
+    return flashOrJson(ctx, dest, {
       tone: "danger",
       message: words[assigned.error] ?? "That could not be assigned.",
     });
   }
-  return flashTo(ctx, dest, {
+  return flashOrJson(ctx, dest, {
     message:
       assignee === null
         ? "Unassigned."
@@ -853,11 +891,18 @@ export async function stateSubmit(
       tone: "danger",
       message: "Close as done, dropped, or split into issue numbers.",
     });
+  const note = field(form, "note").trim();
+  if (note.length > 300)
+    return flashOrJson(ctx, dest, {
+      tone: "danger",
+      message: "A reason is one sentence of at most 300 characters.",
+    });
   const closing: Closing =
-    wanted === "closed" && kind === "issue" && why !== ""
+    wanted === "closed" && kind === "issue"
       ? {
-          reason: why as CloseReason,
+          ...(why !== "" ? { reason: why as CloseReason } : {}),
           ...(why === "split" ? { into } : {}),
+          ...(note !== "" ? { note } : {}),
         }
       : {};
   // The `…Through` twin: identical on a native repo, and on a mirror it
@@ -877,13 +922,13 @@ export async function stateSubmit(
       studioRecord(ctx, found.repo) !== undefined
         ? "A merged change cannot be reopened."
         : "A merged pull request cannot be reopened.";
-    const message =
-      originError(changed.error) ??
-      (changed.error === "already_merged"
-        ? merged
-        : changed.error === "forbidden"
-          ? "Only the author or someone with write access can do that."
-          : NOT_CHANGED);
+    const refusals: Record<string, string> = {
+      reason_required: "A bug closed without a fix says why: add a sentence.",
+      invalid_note: "A reason is one sentence of at most 300 characters.",
+      already_merged: merged,
+      forbidden: "Only the author or someone with write access can do that.",
+    };
+    const message = originError(changed.error) ?? refusals[changed.error] ?? NOT_CHANGED;
     return flashOrJson(ctx, dest, { tone: "danger", message });
   }
   return flashOrJson(ctx, dest, {
@@ -949,7 +994,7 @@ export async function labelsSubmit(
     chosen,
   );
   if (!applied.ok) {
-    return flashTo(ctx, dest, {
+    return flashOrJson(ctx, dest, {
       tone: "danger",
       message:
         originError(applied.error) ??
@@ -958,12 +1003,31 @@ export async function labelsSubmit(
           : THREAD_SAYS.labelsForbidden),
     });
   }
-  return flashTo(ctx, dest, {
+  return flashOrJson(ctx, dest, {
     message:
       applied.value.length === 0
         ? "Labels cleared."
         : `Labels set to ${applied.value.map((l) => l.name).join(", ")}.`,
   });
+}
+
+/** POST …/issues/:number/flow — put the issue first, or take it back. Writers only. */
+export async function flowSubmit(ctx: Ctx): Promise<Response> {
+  const found = threadContext(ctx, "issue");
+  if (found instanceof Response) return found;
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const asked = field(form, "flow");
+  const dest = backTo(form, `${repoBase(found.repo)}/issues/${found.issue.number}`);
+  if (asked !== "0" && asked !== "1") return flashOrJson(ctx, dest, { tone: "danger", message: NOT_CHANGED });
+  const applied = await putFlowFirst(ctx.app, ctx.auth.user, found.repo, found.issue, asked === "1");
+  if (!applied.ok)
+    return flashOrJson(ctx, dest, {
+      tone: "danger",
+      message: originError(applied.error) ?? THREAD_SAYS.labelsForbidden,
+    });
+  return flashOrJson(ctx, dest, { message: asked === "1" ? "Flow first." : "No longer first." });
 }
 
 // ---- teams ----
@@ -979,7 +1043,7 @@ export function issueTeamsCard(ctx: Ctx, repo: Repo, issue: Issue, action: strin
       ? html`<p class="muted small">None named.</p>`
       : html`<p>${named.map((slug) => all.find((t) => t.slug === slug)?.name ?? slug).join(", ")}</p>`;
   if (!canWrite(ctx.app.db, repo, ctx.auth.user) || repo.origin !== null)
-    return card(chips, { head });
+    return card(chips, { head, extra: "bare" });
   return card(
     html`${chips}
       <form method="post" action="${action}" class="mt">
@@ -994,7 +1058,7 @@ export function issueTeamsCard(ctx: Ctx, repo: Repo, issue: Issue, action: strin
         </fieldset>
         <div class="form-actions">${btn("Name teams", { size: "sm", variant: "primary" })}</div>
       </form>`,
-    { head },
+    { head, extra: "bare" },
   );
 }
 
@@ -1117,6 +1181,7 @@ export function dependenciesCard(
   return card(body, {
     head: html`${icon("map")}
       <h2>Depends on</h2>`,
+    extra: "bare",
   });
 }
 

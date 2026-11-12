@@ -8,6 +8,7 @@
 import type { Database } from "bun:sqlite";
 import { id } from "../kernel/id.ts";
 import { anyHeld, createLog, redactValues } from "../kernel/log.ts";
+import { currentVia } from "./acting_via.ts";
 import { repoVisible } from "./visibility.ts";
 
 const log = createLog("events");
@@ -19,6 +20,8 @@ export interface ForgeEvent {
   readonly actorId: string | null;
   readonly payload: Record<string, unknown>;
   readonly createdAt: string;
+  /** Set when the actor acted through the forge's agent: `conversation:<id>`. */
+  readonly via?: string;
 }
 
 export type EventListener = (event: ForgeEvent) => void;
@@ -51,6 +54,7 @@ export class EventBus {
     actorId?: string | undefined;
     payload?: Record<string, unknown> | undefined;
   }): ForgeEvent {
+    const via = currentVia(input.actorId);
     const event: ForgeEvent = {
       id: id(),
       kind: input.kind,
@@ -58,10 +62,11 @@ export class EventBus {
       actorId: input.actorId ?? null,
       payload: scrubPayload(input.payload ?? {}),
       createdAt: new Date().toISOString(),
+      ...(via === undefined ? {} : { via }),
     };
     this.db
       .query(
-        "INSERT INTO event (id, kind, repo_id, actor_id, payload, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO event (id, kind, repo_id, actor_id, payload, created_at, via) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
       )
       .run(
         event.id,
@@ -70,6 +75,7 @@ export class EventBus {
         event.actorId,
         JSON.stringify(event.payload),
         event.createdAt,
+        via ?? null,
       );
 
     for (const listener of this.listeners) {
@@ -159,6 +165,10 @@ export function listEventsVisibleTo(
     params.push(options.afterId);
     where += ` AND ${afterEvent(params.length)}`;
   }
+  if (options.beforeId !== undefined) {
+    params.push(options.beforeId);
+    where += ` AND ${beforeEvent(params.length)}`;
+  }
   params.push(options.limit ?? 100);
   return db
     .query<EventRow, (string | number)[]>(
@@ -169,6 +179,30 @@ export function listEventsVisibleTo(
     .map(toEvent);
 }
 
+/**
+ * The newest events of one kind addressed to a team this user is on
+ * (`payload.team`), from any repository: the caller owes the read check.
+ * The feed reads team waits this way (#10164) because its own window is
+ * cut by owner and org access, and a crew member who reads a private
+ * repository is not in it.
+ */
+export function listTeamEventsFor(
+  db: Database,
+  userId: string,
+  kind: string,
+  limit = 50,
+): ForgeEvent[] {
+  return db
+    .query<EventRow, [string, string, number]>(
+      `SELECT * FROM event
+       WHERE kind = ?2 AND repo_id IS NOT NULL
+         AND json_extract(payload, '$.team') IN (SELECT team_slug FROM crew_team_member WHERE user_id = ?1)
+       ORDER BY seq DESC LIMIT ?3`,
+    )
+    .all(userId, kind, limit)
+    .map(toEvent);
+}
+
 interface EventRow {
   id: string;
   kind: string;
@@ -176,6 +210,7 @@ interface EventRow {
   actor_id: string | null;
   payload: string;
   created_at: string;
+  via?: string | null;
 }
 
 const toEvent = (r: EventRow): ForgeEvent => ({
@@ -185,6 +220,7 @@ const toEvent = (r: EventRow): ForgeEvent => ({
   actorId: r.actor_id,
   payload: JSON.parse(r.payload) as Record<string, unknown>,
   createdAt: r.created_at,
+  ...(r.via ? { via: r.via } : {}),
 });
 
 /** One event by id, or undefined. No access check: the caller owes one. */

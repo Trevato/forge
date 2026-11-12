@@ -19,7 +19,9 @@ import { html, type Html } from "../html.ts";
 import { btn } from "../ui.ts";
 import { thumbLook } from "../pages/looks.ts";
 import { changeHref } from "./nouns.ts";
+import { flatten } from "./note.ts";
 import { testsClause } from "./words.ts";
+import { reviewerPaused } from "../../crew/reviewer_paused.ts";
 import { reviewWhy, scoredFor, waitingOn, type Decision, type Scored } from "./asks.ts";
 
 /** Dollars as a person reads them: cents when small, whole when not. */
@@ -28,16 +30,17 @@ const dollars = (n: number): string => (n < 10 ? n.toFixed(2) : n.toFixed(0));
 /**
  * The decisions waiting on the viewer, worded and pictured. A change's own
  * page passes `evenDismissed`: setting an ask aside quiets the lists, never
- * the decision on the thing itself.
+ * the decision on the thing itself, and names its `pull`: only that pull's
+ * own decisions are read, never the repository's whole list.
  */
 export function decisionsFor(
   ctx: Ctx,
   allRepos: readonly Repo[],
-  options: { evenDismissed?: boolean } = {},
+  options: { evenDismissed?: boolean; pull?: string } = {},
 ): Decision[] {
   const db = ctx.app.db;
   const candidates = options.evenDismissed
-    ? scoredFor(db, ctx.auth.user, allRepos)
+    ? scoredFor(db, ctx.auth.user, allRepos, Date.now(), options.pull)
     : waitingOn(db, ctx.auth.user, allRepos);
   // The pictures, in one read: a green pull's row leads with its preview.
   const repoIds = [...new Set(candidates.map((c) => c.repo.id))];
@@ -73,6 +76,7 @@ export function decisionsFor(
         short: c.why ?? `assigned to you · updated ${thing.updatedAt.slice(0, 10)}`,
         ...(c.why === undefined ? {} : { why: c.why }),
         ...(c.builder === undefined ? {} : { giveBack: c.builder }),
+        ...(c.canLand === true ? { canLand: true } : {}),
       };
     }
     if (c.kind === "proposal" && c.proposal)
@@ -102,8 +106,9 @@ export function decisionsFor(
         repo: c.repo,
         issue: c.issue,
         who: c.who,
-        says: `The planner declined the direction: \u201c${c.decline.words}\u201d. It plans nothing more until you answer on #${c.issue.number}.`,
-        short: `the planner declined the direction: \u201c${c.decline.words}\u201d`,
+        says: `The planner declined the direction: \u201c${flatten(c.decline.words)}\u201d. It plans nothing more until you answer on #${c.issue.number}.`,
+        short: "the planner declined the direction",
+        note: c.decline.words,
       };
     if (c.kind === "handover" && c.pull && c.handover)
       return {
@@ -154,8 +159,8 @@ export function decisionsFor(
         repo: c.repo,
         pull: c.pull,
         who: c.who,
-        says: `${c.who}'s "${c.pull.title}" is green and waits for a review: ${reviewWhy(c.reviewWait)}. An agent's change never ships unreviewed; ship it, or say what is off.`,
-        short: `green; waits for a review — ${reviewWhy(c.reviewWait)}`,
+        says: `${c.who}'s "${c.pull.title}" is green and waits for a review: ${reviewWhy(c.reviewWait, reviewerPaused(c.repo))}. An agent's change never ships unreviewed; ship it, or say what is off.`,
+        short: `green; waits for a review — ${reviewWhy(c.reviewWait, reviewerPaused(c.repo))}`,
       };
     if (c.kind === "look" && c.pull) {
       const picture = pictureOf(c.repo, c.pull);
@@ -215,12 +220,28 @@ export function decisionForm(d: Decision, back?: string): Html | null {
       <input type="hidden" name="ask" value="${d.id}" />
     </form>`;
   if (d.kind === "proposal" && d.proposal) return proposalForms(d, back);
+  if (d.kind === "assigned" && d.issue !== undefined)
+    return html`${d.giveBack === undefined
+      ? null
+      : html`<form id="${askFormId(d)}-back" method="post" hidden action="/asks/give-back">
+      <input type="hidden" name="ask" value="${d.id}" />${back === undefined ? null : html`<input type="hidden" name="back" value="${back}" />`}
+    </form>`}<form ${own} action="${repoBase(d.repo)}/issues/${d.issue.number}/state">
+      <input type="hidden" name="state" value="closed" />${back === undefined ? null : html`<input type="hidden" name="back" value="${back}" />`}
+    </form>`;
   if (pull === undefined) return null;
   const base = repoBase(d.repo);
   const where = back === undefined ? null : html`<input type="hidden" name="back" value="${back}" />`;
-  if (d.kind === "assigned" && d.giveBack !== undefined)
-    return html`<form id="${askFormId(d)}-back" method="post" hidden action="/asks/give-back">
+  if (d.kind === "assigned")
+    return html`${d.giveBack === undefined
+      ? null
+      : html`<form id="${askFormId(d)}-back" method="post" hidden action="/asks/give-back">
       <input type="hidden" name="ask" value="${d.id}" />${where}
+    </form>`}${d.canLand !== true
+      ? null
+      : html`<form id="${askFormId(d)}-land" method="post" hidden action="${base}/pulls/${pull.number}/ship">
+      <input type="hidden" name="pull" value="${pull.number}" />${where}
+    </form>`}<form ${own} action="${base}/pulls/${pull.number}/state">
+      <input type="hidden" name="state" value="closed" />${where}
     </form>`;
   if (d.kind === "handover" && d.giveBack !== undefined)
     return html`<form ${own} action="${base}/pulls/${pull.number}/state">
@@ -300,15 +321,18 @@ export function decisionButtons(ctx: Ctx, d: Decision): { primary: Html; others:
         btn("Close", { size: "sm", form: `${askFormId(d)}-close` }),
       ],
     };
-  if (d.kind === "assigned" && (d.pull ?? d.issue))
-    return {
-      primary: btn("Open", {
-        href: pull ? changeHref(base, pull.number) : `${base}/issues/${d.issue!.number}`,
-        size: "sm",
-        variant: "primary",
-      }),
-      others: d.giveBack === undefined ? [] : [btn("Give back to the crew", { size: "sm", form: `${askFormId(d)}-back` })],
-    };
+  if (d.kind === "assigned" && (d.pull ?? d.issue)) {
+    const open = btn("Open", {
+      href: pull ? changeHref(base, pull.number) : `${base}/issues/${d.issue!.number}`,
+      size: "sm",
+    });
+    const close = btn("Close", { size: "sm", form: askFormId(d) });
+    const give = d.giveBack === undefined ? [] : [btn("Give to the crew", { size: "sm", form: `${askFormId(d)}-back`, variant: "primary" as const })];
+    const land = d.canLand === true ? [btn("Land", { size: "sm", form: `${askFormId(d)}-land` })] : [];
+    // One accent per card: only the first action is primary.
+    const [first, ...rest] = [...give, ...land, close];
+    return { primary: first!, others: [...rest, open] };
+  }
   if (d.kind === "proposal" && d.proposal)
     return {
       primary: btn("Approve", { size: "sm", form: askFormId(d), variant: "primary" }),
@@ -351,6 +375,6 @@ function proposalForms(d: Decision, back?: string): Html {
   const id = askFormId(d);
   const post = (verb: string) => `/asks/proposal/${d.proposal!.id}/${verb}`;
   const where = back === undefined ? null : html`<input type="hidden" name="back" value="${back}" />`;
-  return html`<form id="${id}" method="post" action="${post("approve")}" hidden>${where}</form>
+  return html`<form id="${id}" method="post" action="${post("approve")}" hidden data-now="Approved" data-now-once>${where}</form>
     <form id="${id}-later" method="post" action="${post("later")}" hidden>${where}</form>`;
 }

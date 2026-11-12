@@ -22,6 +22,22 @@ export type Merged =
   | { ok: true; commit: string; line: string }
   | { ok: false; error: string };
 
+/** How many of the pull's commits the merge commit carries. */
+const MESSAGE_CAP = 200;
+
+/**
+ * The pull's own commit messages, so rules that read `git log base..HEAD`
+ * (the gate's Why-now) still see them in a history cut to the merge commit.
+ * Best effort: a history too shallow to walk yields none.
+ */
+async function pullMessages(dir: string, baseTip: string, head: string): Promise<string> {
+  const log = await runGit(
+    ["log", "-n", String(MESSAGE_CAP), "--format=%B", `${baseTip}..${head}`],
+    { cwd: dir, env: IDENTITY },
+  );
+  return log.ok ? log.value.trim() : "";
+}
+
 export async function mergeForCheck(
   dir: string,
   baseBranch: string,
@@ -37,6 +53,7 @@ export async function mergeForCheck(
       };
     return { ok: false, error: "the pull could not be merged with its base" };
   }
+  const pull = await pullMessages(dir, baseTip, head);
   const made = await runGit(
     [
       "commit-tree",
@@ -47,6 +64,7 @@ export async function mergeForCheck(
       head,
       "-m",
       `check of ${head.slice(0, 7)} merged into ${baseBranch}`,
+      ...(pull ? ["-m", pull] : []),
     ],
     { cwd: dir, env: IDENTITY },
   );

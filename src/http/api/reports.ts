@@ -12,13 +12,16 @@ import {
   acceptReport,
   dismissReport,
   fileReport,
+  reportViews,
   waitingReports,
 } from "../../actions/reports.ts";
-import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../../core/reports.ts";
+import { BODY_MAX, REQUEST_MAX, TITLE_MAX, byFiler } from "../../core/reports.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { keyedPage, keyedWindow, loadRepo, originAware, withLabels } from "../api.ts";
 import type { Handler } from "../context.ts";
+import { holds, weakEtag } from "../etag.ts";
 import { clientBucket } from "../peer.ts";
+import { proofOf } from "../report_filer.ts";
 import {
   apiError,
   body,
@@ -28,11 +31,19 @@ import {
   requireScope,
   respondAccess,
   str,
+  tryAgain,
 } from "../respond.ts";
 import type { Router } from "../router.ts";
 
 /** What a refused report is told: the shape that would have been taken. */
-const REPORT_HINT = `send JSON {title, body?, page?}: plain text, a title of 1-${TITLE_MAX} characters, a body of at most ${BODY_MAX}, page an http(s) address`;
+const REPORT_HINT =
+  "send JSON {title, body?, page?, agent?}: plain text, " +
+  `a title of 1-${TITLE_MAX} characters, a body of at most ${BODY_MAX}, ` +
+  "page an http(s) address, agent a name of letters, digits, . _ - " +
+  "(a claim unless a token proves it)";
+
+/** A full queue drains as the crew reads reports; no clock says when, so a minute. */
+const REPORT_QUEUE_RETRY = 60;
 
 export function reportRoutes(router: Router<Handler>): void {
   // ── reports from outside — no account, a person decides ──────────────
@@ -46,30 +57,29 @@ export function reportRoutes(router: Router<Handler>): void {
     const filed = fileReport(
       ctx.app,
       repo,
-      { title: str(input.title), body: str(input.body), page: str(input.page) },
+      {
+        title: str(input.title),
+        body: str(input.body),
+        page: str(input.page),
+        agent: str(input.agent),
+      },
       clientBucket(ctx.request),
+      proofOf(ctx),
     );
     if (!filed.ok) {
       const refusal = filed.error;
       if (refusal.error === "not_found") return notFound();
       if (refusal.error === "rate_limited")
-        return json(
-          { error: "rate_limited", message: "too many reports; wait and send again" },
-          429,
-          { "retry-after": String(refusal.retryAfter) },
-        );
+        return tryAgain("rate_limited", 429, "too many reports; wait and send again", refusal.retryAfter);
       if (refusal.error === "queue_full")
-        return apiError(
-          "queue_full",
-          429,
-          "this repository has many reports waiting; try again later",
-        );
+        return tryAgain("queue_full", 429, "this repository has many reports waiting; try again later", REPORT_QUEUE_RETRY);
       return apiError(refusal.error, 422, REPORT_HINT);
     }
     return json(
       {
         id: filed.value.id,
         state: filed.value.state,
+        filedBy: filed.value.filedBy,
         message: REPORT_RECEIVED,
       },
       202,
@@ -90,15 +100,31 @@ export function reportRoutes(router: Router<Handler>): void {
       waitingReports(ctx.app, ctx.auth.user, repo),
     );
     if (!waiting.ok) return respondAccess(waiting.error, 403);
-    return timePhase(ctx.request, "render", () =>
-      json(
-        keyedPage(
-          waiting.value.map((r) => ({ ...r, from: "outside" })),
+    return timePhase(ctx.request, "render", () => {
+      const text = JSON.stringify({
+        ...keyedPage(
+          reportViews(ctx.app, repo, waiting.value),
           (r) => r.id,
           window,
         ),
-      ),
-    );
+        // Every waiting report's filer, not only this page's.
+        byAgent: byFiler(waiting.value),
+      });
+      // The tag is of the exact bytes sent: a report filed, answered or out
+      // of the window moves it, and each window has its own. Only a writer
+      // reaches here, so every viewer who may ask is shown the same body.
+      const etag = weakEtag(text);
+      const headers = {
+        etag,
+        "cache-control": "private, no-cache",
+        vary: "authorization, cookie",
+      };
+      if (holds(ctx.request, etag))
+        return new Response(null, { status: 304, headers });
+      return new Response(text, {
+        headers: { "content-type": "application/json", ...headers },
+      });
+    });
   });
 
   router.add(

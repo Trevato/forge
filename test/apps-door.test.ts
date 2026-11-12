@@ -12,6 +12,8 @@ import { signGrant, type AppTarget } from "../src/apps/proxy.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
 import { createIssue } from "../src/core/issues.ts";
+import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
+import { setSealed } from "../src/core/sealed.ts";
 import { createUser, getUserById } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -215,7 +217,9 @@ test("a private repository is linked only to who may read it", async () => {
   const mine = await (await door(host, as(alice, "alice", "admin"))).text();
   expect(mine).toContain(`href="${servers.url}/alice/vault"`);
   expect(mine).toContain("alice/vault");
-  expect(mine).toContain("secret plan · check running");
+  // Which word depends on whether the runtime has started this pull's preview
+  // yet, a race the test does not own; the check word has its own test below.
+  expect(mine).toMatch(/>#\d+ secret plan · check (none|running|green|red)</);
 });
 
 test("HEAD answers the headers with no body; POST is a 405 that says what is allowed", async () => {
@@ -319,7 +323,7 @@ test("the door and the crew line name the phases they read, signed in, on produc
     [`notes--${pull}.${DOMAIN}`, grantFor(`pull-${pull}`)],
   ];
   const reads: Record<string, string[]> = {
-    "/__forge/": ["session", "app", "pull", "serving", "pulls", "render"],
+    "/__forge/": ["session", "app", "pull", "serving", "pulls", "working", "render"],
     "/__forge/crew": ["session", "app", "pull", "working", "side", "render"],
   };
   for (const [host, cookie] of hosts)
@@ -428,4 +432,122 @@ test("the door links a dormant preview to itself, and says so when more than fiv
   html = await (await door(`notes.${DOMAIN}`)).text();
   expect(html).toContain("More pulls are open on the forge.");
   expect((html.match(/ · check /g) ?? []).length).toBe(5);
+});
+
+test("a preview links What changed for a reader only, never on production or for a guest", async () => {
+  const forgeUrl = "http://forge.test";
+  const text = (where: PillWhere) => doorPage({ where, forgeUrl }, false).text();
+  const reader = await text({ app: "notes", env: "pull-7", pull: 7, repo: "alice/notes" });
+  expect(reader).toContain('<li><a href="http://forge.test/alice/notes/pulls/7/files">What changed</a></li>');
+  expect(reader.indexOf("The repository")).toBeLessThan(reader.indexOf("What changed"));
+  expect(reader.indexOf("What changed")).toBeLessThan(reader.indexOf("Make it yours"));
+  expect(await text({ app: "notes", env: "pull-7", pull: 7 })).not.toContain("What changed");
+  expect(await text({ app: "notes", env: "production", repo: "alice/notes" })).not.toContain("What changed");
+});
+
+test("a preview's door links the live app and marks its own pull; production's has neither", async () => {
+  const live = runtime.urlFor(record, "production");
+  const preview = doorPage(
+    {
+      where: { app: "notes", env: "pull-7", pull: 7, repo: "alice/notes" },
+      forgeUrl: "http://forge.test",
+      live,
+      pulls: [
+        { number: 7, title: "mine", check: "none", href: "http://x/7", self: true },
+        { number: 8, title: "other", check: "none", href: "http://x/8" },
+      ],
+    },
+    false,
+  );
+  const html = await preview.text();
+  expect(html).toContain(`<li><a href="${live}">The live app</a></li>`);
+  expect(html).toContain("#7 mine · check none (this preview)");
+  expect(html).not.toContain('href="http://x/7"');
+  expect(html).toContain('href="http://x/8"');
+  const prod = await doorPage(
+    { where: { app: "notes", env: "production" }, forgeUrl: "http://forge.test", pulls: [] },
+    false,
+  ).text();
+  expect(prod).not.toContain("The live app");
+  expect(prod).not.toContain("this preview");
+  // Without the repository to read, no production address either.
+  const bare = await doorPage(
+    { where: { app: "notes", env: "pull-7", pull: 7 }, forgeUrl: "http://forge.test", live },
+    false,
+  ).text();
+  expect(bare).not.toContain("The live app");
+  // The newest pull is among the five the door lists, so the proxy marks it.
+  const fresh = createIssue(app.db, { repoId: record.repoId, authorId: alice, title: "newest", kind: "pull" });
+  if (!fresh.ok) throw new Error(fresh.error);
+  app.db
+    .query(
+      "INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid) VALUES (?, 'main', 'h', 'b', 'x')",
+    )
+    .run(fresh.value.id);
+  const real = await (await door(`notes--${fresh.value.number}.${DOMAIN}`)).text();
+  expect(real).toContain(">The live app</a>");
+  expect(real).toContain(`#${fresh.value.number} newest · check none (this preview)</li>`);
+  expect(await (await door(`notes.${DOMAIN}`)).text()).not.toContain("The live app");
+});
+
+test("the door names the crew run working here, linked, to who may see it", async () => {
+  const bob = await createUser(app.db, {
+    origin: "seed",
+    trusted: true,
+    username: "scoutbot",
+    email: "scoutbot@forge.local",
+    password: "a-good-passphrase",
+  });
+  if (!bob.ok) throw new Error(bob.error);
+  const repoId = record.repoId;
+  const open = createIssue(app.db, { repoId, authorId: alice, title: "o", kind: "pull" });
+  const sealed = createIssue(app.db, { repoId, authorId: alice, title: "s", kind: "issue" });
+  if (!open.ok || !sealed.ok) throw new Error("issue");
+  setSealed(app.db, sealed.value.id, true);
+  const target = { app: record, env: "production" } as AppTarget;
+  const cookie = `forge_grant_${record.id.slice(-8)}=${signGrant(dataDir, target, 60_000, Date.now(), { id: alice, name: "alice", role: "admin" })}`;
+  const start = (issueId: string) => {
+    const run = createRun(app.db, { repoId, kind: "agent", issueId, actorId: bob.value.id, reason: "assigned" });
+    claimRun(app.db, run.id);
+    return run;
+  };
+  const idle = await (await door(`notes.${DOMAIN}`, cookie)).text();
+  expect(idle).not.toContain("is working on this");
+  const hidden = start(sealed.value.id);
+  // A signed-in reader who may not see the sealed issue is not told of its run.
+  const other = signGrant(dataDir, target, 60_000, Date.now(), { id: bob.value.id, name: "scoutbot", role: "user" });
+  const otherCookie = `forge_grant_${record.id.slice(-8)}=${other}`;
+  expect(await (await door(`notes.${DOMAIN}`, otherCookie)).text()).not.toContain("is working on this");
+  expect(await (await door(`notes.${DOMAIN}`)).text()).not.toContain("is working on this");
+  const run = start(open.value.id);
+  const html = await (await door(`notes.${DOMAIN}`, cookie)).text();
+  expect(html).toContain(`<a href="${servers.url}/alice/notes/runs/${run.id}">scoutbot is working on this</a>`);
+  expect(html).not.toContain("<script");
+  finishRun(app.db, run.id, { state: "ok", summary: "d" });
+  finishRun(app.db, hidden.id, { state: "ok", summary: "d" });
+  expect(await (await door(`notes.${DOMAIN}`, cookie)).text()).not.toContain("is working on this");
+});
+
+test("a public app's door links the report form on its own host; a private one's does not", async () => {
+  const html = await (await door(`notes.${DOMAIN}`)).text();
+  expect(html).toContain('<a href="/__forge/report">Report a problem, no account needed</a>');
+  // The link resolves: the same public host answers it with the forge's form.
+  const gone = await fetch(`${servers.url}/__forge/report`, {
+    headers: { host: `notes.${DOMAIN}` },
+    redirect: "manual",
+  });
+  expect(gone.status).toBe(303);
+  const to = new URL(gone.headers.get("location")!);
+  expect(`${to.origin}${to.pathname}`).toBe(`${servers.url}/alice/notes/report`);
+  const owner = getUserById(app.db, alice)!;
+  const made = await newApp(app, owner, { name: "closed", description: "x", visibility: "private" });
+  if (!made.ok) throw new Error(String(made.error));
+  const closed = getAppByRepo(app.db, made.value.repo.id)!;
+  const target = { app: closed, env: "production" } as AppTarget;
+  const grant = signGrant(dataDir, target, 60_000, Date.now(), { id: alice, name: "alice", role: "admin" });
+  const mine = await (
+    await door(`closed.${DOMAIN}`, `forge_grant_${closed.id.slice(-8)}=${grant}`)
+  ).text();
+  expect(mine).toContain("<h1>closed</h1>");
+  expect(mine).not.toContain("/__forge/report");
 });

@@ -2,18 +2,19 @@
  * The `preview` tool tells an agent what the forge pill tells a person: the
  * app, the environment, the pull, its check, its first failure and its log.
  */
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { AppsRuntime } from "../src/apps/runtime.ts";
+import { AppsRuntime, type EnvStatus } from "../src/apps/runtime.ts";
 import { newApp } from "../src/actions/apps.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch } from "../src/actions/repos.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { getPull } from "../src/core/pulls.ts";
+import { setIssueState } from "../src/core/issues.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { seedAdmin } from "./helpers/admin.ts";
@@ -110,6 +111,63 @@ describe("MCP preview", () => {
       firstFailure: null,
       logUrl: null,
       working: [],
+      serving: expect.objectContaining({ state: expect.any(String), says: expect.any(String) }),
+    });
+  });
+
+  describe("serving", () => {
+    let spy: ReturnType<typeof spyOn> | undefined;
+    const stub = (status: EnvStatus | undefined) => {
+      spy = spyOn(runtime, "envStatus").mockImplementation(() => status);
+    };
+    afterEach(() => {
+      spy?.mockRestore();
+      spy = undefined;
+    });
+    const serving = async (label: string) => (await tool(bobRw, { url: host(label) })).value.serving;
+    const base = { env: "production", commitOid: "x", url: "u" } as const;
+
+    test("running", async () => {
+      stub({ ...base, state: "running", runId: "r1" } as EnvStatus);
+      const s = await serving("hello");
+      expect(s.state).toBe("running");
+      expect(s.runUrl).toBe(`${servers.url}/runs/r1`);
+    });
+    test("starting", async () => {
+      stub({ ...base, state: "deploying" } as EnvStatus);
+      expect(await serving("hello")).toEqual({ state: "starting", says: "A new version is starting.", runUrl: null });
+    });
+    test("failed carries its error, redacted", async () => {
+      stub({ ...base, state: "failed", error: "boom token=ghp_abcdefghijklmnopqrstuvwxyz0123456789", runId: "r2" } as EnvStatus);
+      const s = await serving("hello");
+      expect(s.state).toBe("failed");
+      expect(s.says).toContain("boom");
+      expect(s.says).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz0123456789");
+      expect(s.runUrl).toBe(`${servers.url}/runs/r2`);
+    });
+    test("production is never gone: not running, then running", async () => {
+      stub(undefined);
+      const off = await serving("hello");
+      expect(off.state).toBe("not_running");
+      expect(off.says).toBe("Nothing is running here yet.");
+      spy?.mockRestore();
+      stub({ ...base, state: "running" } as EnvStatus);
+      expect((await serving("hello")).state).toBe("running");
+    });
+    test("not running: an open pull with nothing deployed is never gone", async () => {
+      stub(undefined);
+      const s = await serving(`hello--${redPull}`);
+      expect(s.state).toBe("not_running");
+      expect(s.says).toContain("starts again with the next push");
+    });
+    test("gone: a closed pull", async () => {
+      stub(undefined);
+      const repo = getRepo(app.db, "alice", "hello")!;
+      const n = await makePull(getUserByName(app.db, "alice")!, repo, "closing");
+      setIssueState(app.db, getPull(app.db, repo.id, n)!.id, "closed");
+      const s = await serving(`hello--${n}`);
+      expect(s.state).toBe("gone");
+      expect(s.says).toContain("This preview is gone");
     });
   });
 

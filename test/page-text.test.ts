@@ -56,7 +56,7 @@ test("the real home reads as text: heading and waiting count, no CSS, script or 
       .query(`INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, head_repo_id) VALUES (?1, 'main', ?2, ?3, ?3, ?4)`)
       .run(issueId, `b/${i}`, "0".repeat(40), repo.value.id);
   }
-  const raw = await get("/");
+  const raw = await get("/feed");
   expect(raw).toContain("<script");
   expect(raw).toContain("<style");
   const text = pageText(raw);
@@ -92,7 +92,7 @@ const run = async (args: string[], env: Record<string, string> = {}) => {
 };
 
 test("scripts/home-read.ts prints the text and the stats line, sends FORGE_COOKIE and never prints it", async () => {
-  const r = await run([`${servers.url}/`], { FORGE_COOKIE: cookie });
+  const r = await run([`${servers.url}/feed`], { FORGE_COOKIE: cookie });
   expect(r.code).toBe(0);
   expect(r.out.trimEnd().split("\n").pop()).toMatch(/^chars \d+ · words \d+ · fetched in \d+ ms$/);
   expect(r.out).toContain("Feed Your apps Asked");

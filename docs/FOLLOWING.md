@@ -184,8 +184,8 @@ there is landing it upstream.
 the API.
 
 A fork across forges (#1085): a spawned forge's `<org>/forge` follows its
-parent's forge code in the mode the spawner chose, `tell-me` (default) or
-`take-updates`; `/:owner/forge/following` shows the chain to the root and
+parent's forge code in the mode the spawner chose, `take-updates` (default) or
+`tell-me`; `/:owner/forge/following` shows the chain to the root and
 the owner's **Sever**, which cuts the link and deletes nothing (the page
 and the parent's `/family` say "follows nothing since …"). `docs/SPAWN.md`
 has the shape. A **conflict** on **Take updates** is a tell for the crew:
@@ -214,9 +214,30 @@ with `follows owner/name` and MCP `following`'s standing: `in step`, or the
 state with `N ahead · M behind` (`parent frozen` behind a disconnected
 origin). When the crew has a converge in hand, a second line says what it is
 doing, in the words the following page uses; a fork that merges cleanly needs
-no crew and has no such line. `enter` on either opens the parent. A parent the
-viewer may not read is never named (`relationOf` hides it), and a repository
-that follows nothing shows neither line.
+no crew and has no such line. `enter` on the first opens the parent; on the
+second, the converge issue. A parent the viewer may not read is never named
+(`relationOf` hides it), and a repository that follows nothing shows neither
+line.
+
+On a fork behind a parent that is not frozen, a person who writes the fork is
+offered `t`: a confirm says what will happen (`Fast-forward to owner/name: N
+commits.`, a merge that keeps the fork's own commits, or the converge issue
+when both sides changed the same files), and `y` calls `takeOrTell`, as the
+following page and MCP `take_updates` do. The answer is the page's sentence
+(`takeWords`); on a conflict the crew's line names the converge issue opened
+or found, and `enter` opens it. A reader, an agent, a fork in step and a
+repository that follows nothing are not offered `t`.
+
+On a fork, a person who can write to it presses `u` on the forks screen. A
+confirm says how many commits are ahead and which repository they would go to;
+confirming calls `proposeUpstream`, as the following page's Propose button
+does, and one pull opens on the parent. When a proposal is already open the
+screen shows `#N is open on owner/name`, and `u` (or `enter` on that row)
+opens that pull instead of making another. Readers and agents are not offered
+`u`. Refusals are said in the following page's words (`actions/follow_words.ts`):
+`This repository follows nothing.`, `Nothing here is ahead of owner/name.`,
+`You need write access to propose from here.` and `owner/name did not take the
+proposal: …`.
 
 Forks with nothing ahead (or whose standing git cannot read) follow under
 `N forks with nothing new`. At most 60 forks are ranked per view; past that
@@ -235,8 +256,8 @@ the default branch is pushed to `child/<name>/<branch>-<tip>` at the parent,
 and the pull opens there, titled by the change that landed last and naming it
 (`org/forge#7`). Asking again for the same tip returns the pull already made.
 
-The repository's admin changes how the forge follows its parent (`tell-me` or
-`take-updates`) from the radio form on the same page, with `PATCH
+The repository's admin changes how the forge follows its parent (`take-updates` or
+`tell-me`) from the radio form on the same page, with `PATCH
 /api/v1/forge/following {"mode"}`, with the MCP `follow_mode` tool, or by pressing `m` on the chain screen in the terminal. The
 record in `parent.json` is rewritten atomically and a `forge.follow_mode` event
 is appended. A non-admin is refused (403), a value outside the two modes is
@@ -272,4 +293,6 @@ The check cell's memory is on the same page under **Check cell**, and in the ter
   the repository) or `revoke` (`id`).
 - **Terminal**: `ctrl+k`, **Proposal tokens**, then the repository as
   `owner/name`. `n` mints (the child's name, then its https address) and shows
-  the secret once on its own screen; `x` revokes the one under the cursor.
+  the secret once on its own screen; `x` asks before it revokes the one under
+  the cursor ("Revoke the token for <child>?", Keep selected): `y` revokes,
+  `n`, esc or enter keeps it.

@@ -6,6 +6,7 @@ export const route: Route = {
   summary:
     "Read one panel's rows; `id` is its place on the board from 0. Answers { board, panel, title, chart, rows, from, to, step }, or a CSV table with format=csv",
   auth: true,
+  role: "admin",
   query: { format: "string", from: "string", to: "string", step: "string" },
   refusals: {
     invalid_format: "format is not json or csv (422)",

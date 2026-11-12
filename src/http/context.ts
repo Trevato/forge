@@ -20,11 +20,16 @@ export interface Auth {
   readonly via: "session" | "edge" | "token" | "password" | "none";
   /** Which signed-in browser asked, when `via` is `session`. */
   readonly sessionId?: string;
+  /** Set for a token: the name its owner gave it, never its secret. */
+  readonly tokenName?: string;
   /** Set for a proposal token: all it may do (`http/proposal_gate.ts`). */
   readonly proposal?: Proposal;
   /** Set for a crew run's token: the repositories it may reach
    * (`http/run_gate.ts`). */
   readonly run?: RunScope;
+  /** Set for a via token: the forge's own agent, speaking for this person in
+   * this conversation (`conversation:<id>`, `core/via_token.ts`). */
+  readonly through?: string;
   /** Set when a Basic password was turned away by the sign-in windows or the
    * hash gate, not found wrong: the request answers 429, not 401. */
   readonly retryAfter?: number;
@@ -84,9 +89,18 @@ export function publicUrl(request: Request, base: string | undefined): URL {
  */
 export function crossOrigin(request: Request, url: URL, log?: Log): boolean {
   const origin = request.headers.get("origin");
-  const mismatch = origin !== null && origin !== url.origin;
+  // `Origin: null` with the browser's own `Sec-Fetch-Site: same-origin` is one of our pages under a strict
+  // referrer policy; a page cannot set that header, so it stays a cross-site refusal everywhere else.
+  const sameSite = origin === "null" && request.headers.get("sec-fetch-site") === "same-origin";
+  const mismatch = origin !== null && origin !== url.origin && !sameSite;
   if (mismatch)
-    log?.warn("refused cross-origin mutation", { origin, expected: url.origin });
+    log?.warn("refused cross-origin mutation", {
+      origin,
+      expected: url.origin,
+      method: request.method,
+      path: url.pathname,
+      site: request.headers.get("sec-fetch-site") ?? "-",
+    });
   return mismatch;
 }
 

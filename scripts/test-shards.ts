@@ -7,6 +7,7 @@
  *   bun scripts/test-shards.ts [bun test flags…] --tier fast --diff <base>..<head>
  *   bun scripts/test-shards.ts --record [bun test flags…] test/a.test.ts …
  *   bun scripts/test-shards.ts [bun test flags…] -- a b …   (test/a.test.ts …)
+ *   bun scripts/test-shards.ts [bun test flags…] --gate --impact --keep-going --nice
  *
  * `--gate` runs the files `scripts/gate.ts` admits (every test file not
  * excluded), which is how
@@ -21,10 +22,21 @@
  * log tails live;
  * shards that run side by side are written through whole as each
  * finishes, so the log reads one shard at a time. Either way the tail
- * names every failing test from every shard. The first red shard stops
- * the rest (fail-fast) so a known fail does not burn the remaining wall
- * clock — unless every red in it is a budget test, which the forge re-runs
- * once after the gate (#7354). Exits non-zero if any shard does.
+ * names every failing test from every shard: every shard runs to the end,
+ * whatever goes red, so one red never hides another (#7788). A shard that
+ * crashed outside any test (an unhandled error between tests, a file that
+ * would not load, a process that died before its summary) is re-run once,
+ * whole, and judged by that run; the log keeps the crashed run quoted
+ * behind `  │ `. At most `CRASH_RERUNS` shards are re-run so. Exits
+ * non-zero if any shard does.
+ *
+ * `--keep-going` is the verification after landing (#7786): no shard stops
+ * the rest, a file red on its own is run once more alone (green then, it
+ * is named flaky and does not fail the run), and a measuring run writes
+ * the impact of every file that ended green even when another is red.
+ * `--nice` runs it all at the lowest CPU priority, so the checks a landing
+ * waits on go first. `FORGE_CHECK_ONLY` (comma-separated test files, set
+ * by the forge for a bisection step) keeps only those files.
  *
  * The whole gate, unsliced (`--gate` on the full tier, as `check.run`),
  * runs one file per `bun test`, heaviest first into whichever worker is
@@ -40,7 +52,7 @@
  * table is rewritten from those times when every file is green.
  */
 
-import { availableParallelism, tmpdir, totalmem } from "node:os";
+import { availableParallelism, setPriority, tmpdir, totalmem } from "node:os";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveLimits } from "../src/apps/contain.ts";
@@ -64,16 +76,21 @@ import {
   besideOthers,
   failingFiles,
   onlyTestFailures,
-  stopsTheRest,
+  crashedOutside,
+  quoteCrash,
+  CRASH_RERUNS,
   type ShardResult,
 } from "./shards.ts";
 import { gateFiles, gateRefusal, presentTests } from "./gate.ts";
 import { cgroupMemory, summaryLines } from "./gate-summary.ts";
 import { GATE_FILE, executedFiles, formatImpact, gateListAdds, handedImpact, mergeImpact, parseImpact } from "../src/checks/impact.ts";
 import { importsReader, readImpact } from "./tier-input.ts";
+import { shardHome, spaceLine } from "../src/checks/disk_full.ts";
 import { fastSet, duration } from "../src/checks/tiers.ts";
 import { CHECK_CACHE } from "../src/checks/cache.ts";
 import { parseCheck } from "../src/apps/manifest.ts";
+import { FLAKY_ALONE, onlyFiles } from "../src/checks/verify.ts";
+import { crashFlakeLine } from "../src/checks/flake.ts";
 
 const TIMES = new URL("./test-times.json", import.meta.url).pathname;
 // The forge hands the map over in the checkout (`src/checks/impact-store.ts`):
@@ -90,6 +107,15 @@ const argv = process.argv.slice(2);
 const record = argv.includes("--record");
 const gate = argv.includes("--gate");
 const measure = argv.includes("--impact");
+const keepGoing = argv.includes("--keep-going");
+const nice = argv.includes("--nice");
+// Every `bun test` this spawns inherits it.
+if (nice)
+  try {
+    setPriority(19);
+  } catch (error) {
+    console.log(`test-shards: --nice refused (${String(error)}); running at normal priority`);
+  }
 
 /**
  * Measured seconds where a table has them, bytes scaled to seconds where
@@ -175,7 +201,7 @@ function takeValue(
 }
 
 const tierArg = takeValue(
-  argv.filter((arg) => arg !== "--record" && arg !== "--gate" && arg !== "--impact"),
+  argv.filter((arg) => !["--record", "--gate", "--impact", "--keep-going", "--nice"].includes(arg)),
   "--tier",
 );
 const diffArg = takeValue(tierArg.rest, "--diff");
@@ -288,6 +314,13 @@ if (tier === "fast") {
   files = plan.files;
 }
 
+const only = onlyFiles(process.env["FORGE_CHECK_ONLY"]);
+if (only !== undefined) {
+  const named = new Set(only);
+  files = files.filter((file) => named.has(file) || named.has(file.replace(/^\.\//, "")));
+  console.log(`test-shards: FORGE_CHECK_ONLY keeps ${files.length} of ${only.length} named file(s)`);
+}
+
 if (files.length === 0) {
   console.error("test-shards: name the test files to run, or --gate");
   process.exit(2);
@@ -382,10 +415,13 @@ const serialFiles = !record && count.value === 1;
 // refreshes the time of every file it ran (#1797).
 const timed = !record && !serialFiles && gate && tier === "full" && "none" in shardSpec;
 const perFile = record || measure || serialFiles || timed;
-const slices =
-  perFile
-    ? heaviestFirst(files, weight).map((file) => [file])
-    : splitCapped(files, count.value, weight);
+const slicesOf = (list: string[]): string[][] =>
+  list.length === 0
+    ? []
+    : perFile
+      ? heaviestFirst(list, weight).map((file) => [file])
+      : splitCapped(list, count.value, weight);
+const slices = slicesOf(files);
 const work = files.reduce((sum, file) => sum + weight(file), 0);
 
 const banner = record
@@ -431,9 +467,10 @@ const unmeasured = new Set<string>();
 
 // Failing files a red shard re-runs alone.
 const RETRY_CAP = 3;
-// Set once any shard has gone red for good: no retries then.
-let halted = false;
-const stopping = (): boolean => halted;
+// Shards re-run after a crash outside any test, so far.
+let crashReruns = 0;
+/** What a live first run shows once it has gone red: held until its end. */
+const RED_SIGN = /^(\(fail\)|# Unhandled error|error:)/m;
 
 type Timed = ShardResult & { seconds: number };
 
@@ -443,12 +480,27 @@ type Timed = ShardResult & { seconds: number };
  * output is held and written through whole when the shard ends, so shards
  * running side by side never interleave.
  */
-async function runShard(
+async function runShard(slice: string[], index: number, live: boolean): Promise<Timed> {
+  // Its own temp and data directories: shards side by side never share a
+  // path. They sit on the cell's disk (FORGE_CHECK_SCRATCH, else a
+  // FORGE_APP_DATA, which is nested under, never replaced), not in its
+  // 256 MiB /tmp; the system temp directory when neither is set. Removed
+  // however the shard ends.
+  const home = shardHome(process.env, tmpdir());
+  try {
+    return await runShardIn(slice, index, live, home);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+async function runShardIn(
   slice: string[],
   index: number,
   live: boolean,
+  home: string,
 ): Promise<Timed> {
-  const started = performance.now();
+  let started = performance.now();
   const where = `${index + 1}/${slices.length}`;
   // Print before spawn so a mid-suite cgroup SIGKILL still leaves a breadcrumb.
   // stderr: Actions often block-buffers stdout until exit; an OOM never flushes.
@@ -460,6 +512,10 @@ async function runShard(
     file.startsWith("/") || file.startsWith("./") ? file : `./${file}`,
   );
   const childEnv = { ...process.env };
+  childEnv["TMPDIR"] = join(home, "tmp");
+  childEnv["FORGE_APP_DATA"] = join(process.env["FORGE_APP_DATA"] ?? home, `data-${index}`);
+  mkdirSync(childEnv["TMPDIR"], { recursive: true });
+  mkdirSync(childEnv["FORGE_APP_DATA"], { recursive: true });
   delete childEnv["FORGE_CHECK_SHARDS"];
   delete childEnv["FORGE_CHECK_SHARD_INDEX"];
   delete childEnv["FORGE_CHECK_SHARD_TOTAL"];
@@ -503,19 +559,63 @@ async function runShard(
         process.stdout.write(text);
       }
     : undefined;
-  const first = await run(paths, cover, through);
+  // Live, the first run streams until the first sign of a red, then is held
+  // to its end: if it crashed it is quoted behind `  │` like a parallel
+  // shard's, never left bare, so nothing reading the log counts its
+  // `(fail)` lines beside the re-run. A clean run streams in full.
+  const mayRerun = crashReruns < CRASH_RERUNS;
+  const held: string[] = [];
+  const firstThrough =
+    through && mayRerun
+      ? (text: string): void => {
+          if (held.length > 0 || RED_SIGN.test(text)) held.push(text);
+          else through(text);
+        }
+      : through;
+  let first = await run(paths, cover, firstThrough);
+  // A crash outside any test re-runs the shard once, whole (#7788): the
+  // leaked-timer class ("Cannot use a closed database" between tests) is
+  // not this shard's tests failing. The re-run is the verdict, and its
+  // time the shard's time.
+  let quoted = "";
+  const crashed = crashReruns < CRASH_RERUNS && crashedOutside({ code: first.code, output: first.output.join("") });
+  if (!crashed && held.length > 0) through?.(held.join(""));
+  if (crashed) {
+    crashReruns++;
+    quoted = quoteCrash(where, first.code, first.output.join(""));
+    if (live) process.stdout.write(quoted);
+    process.stderr.write(`test-shards: re-run ${where} after a crash (exit ${first.code})\n`);
+    started = performance.now();
+    first = await run(paths, cover, through);
+    // Green the second time: the crash is a flake, named for the check to record.
+    if (first.code === 0) process.stderr.write(`${crashFlakeLine(where, quoted)}\n`);
+  }
   let code = first.code;
-  const output = first.output;
+  let output = quoted === "" ? first.output : [quoted, ...first.output];
+  // Kept going, a file red on its own is run once more alone: green then,
+  // it was a flake, and its first output (the `(fail)` lines) is set aside.
+  if (code !== 0 && keepGoing && slice.length === 1) {
+    // The red run's coverage is not the green one's.
+    if (covDir) {
+      rmSync(covDir, { recursive: true, force: true });
+      mkdirSync(covDir);
+    }
+    const again = await run(paths, cover, through);
+    if (again.code === 0) {
+      code = 0;
+      output = [...again.output, `test-shards: ${FLAKY_ALONE} ${slice[0]}\n`];
+      through?.(output.at(-1)!);
+    } else output = again.output;
+  }
   // A sliced shard that went red: each failing file (the first few) is run
   // once alone, same env and flags. One that passes alone was red only
   // beside others, and does not fail the check; the log names it.
-  if (code !== 0 && slice.length > 1 && !covDir && !stopping()) {
-    const report = output.join("");
+  if (code !== 0 && slice.length > 1 && !covDir) {
+    const report = first.output.join("");
     // A file that errored (not a failed test) keeps the whole shard red.
     const red = onlyTestFailures(report) ? failingFiles(report) : [];
     const alone = new Map<string, boolean>();
     for (const file of red.slice(0, RETRY_CAP)) {
-      if (stopping()) break;
       const again = await run([file.startsWith("/") || file.startsWith("./") ? file : `./${file}`], []);
       alone.set(file, again.code === 0);
     }
@@ -527,6 +627,15 @@ async function runShard(
       if (verdict.red.length === 0) code = 0;
     }
   }
+  // Where the room went, named on the log of a red shard, before its
+  // directories are removed: the next red says its own cause (#8679).
+  if (code !== 0) {
+    const note = `${spaceLine({ scratch: home, tmp: tmpdir() })}\n`;
+    output.push(note);
+    through?.(note);
+  }
+  if (process.env["FORGE_APP_DATA"])
+    rmSync(childEnv["FORGE_APP_DATA"], { recursive: true, force: true });
   const text = output.join("");
   const seconds = ((performance.now() - started) / 1000).toFixed(1);
   process.stdout.write(
@@ -534,7 +643,10 @@ async function runShard(
       ? `${text.endsWith("\n") || text === "" ? "" : "\n"}── shard ${where} done (exit ${code}, ${seconds}s)\n`
       : `\n── shard ${where} (exit ${code}, ${seconds}s): ${slice.join(" ")}\n${text}${text.endsWith("\n") ? "" : "\n"}`,
   );
-  if (covDir) {
+  if (covDir && keepGoing && code !== 0) {
+    // A red file's coverage is not its impact; the map keeps its old row.
+    rmSync(covDir, { recursive: true, force: true });
+  } else if (covDir) {
     try {
       measured.set(slice[0]!, executedFiles(readFileSync(join(covDir, "lcov.info"), "utf8")));
     } catch {
@@ -550,45 +662,33 @@ async function runShard(
   };
 }
 
-/** Runs every slice, at most `width` at once, in the slices' order.
- * Stops starting new slices after the first non-zero exit and signals
- * in-flight children so a red shard does not burn the rest of the wall. */
-async function pool(width: number): Promise<Timed[]> {
+/** Runs slices `from` up to `to`, at most `width` at once, in the slices' order. */
+async function pool(width: number, from: number, to: number): Promise<Timed[]> {
   const results: Timed[] = [];
-  let next = 0;
-  let stop = false;
+  let next = from;
   async function worker(): Promise<void> {
-    while (next < slices.length) {
-      if (stop) break;
+    while (next < to) {
       const index = next++;
-      if (stop) break;
-      results[index] = await runShard(slices[index]!, index, width === 1);
-      // A shard red only on budget tests lets the rest run (#7354).
-      if (stopsTheRest(results[index]!)) {
-        stop = true;
-        halted = true;
-        for (const child of children) child.kill("SIGTERM");
-      }
+      results[index - from] = await runShard(slices[index]!, index, width === 1);
     }
   }
   await Promise.all(Array.from({ length: width }, worker));
-  // Only slices that ran (parallel fail-fast leaves holes for never-started).
-  return results.filter((result): result is Timed => result !== undefined);
+  return results;
 }
 
 const started = performance.now();
 // Serial one-file processes when SHARDS=1; record keeps its worker width;
 // multi-shard still runs every slice side by side.
-const results = await pool(
-  // Never more side by side than the count: capped slices outnumber it.
-  serialFiles ? 1 : Math.min(count.value, slices.length),
-);
-if (results.length < slices.length) {
-  const skipped = slices.length - results.length;
-  console.log(
-    `test-shards: fail-fast — skipped ${skipped} remaining shard${skipped === 1 ? "" : "s"} after a red exit`,
-  );
-}
+const results = [
+  ...(await pool(
+    // Never more side by side than the count: capped slices outnumber it.
+    serialFiles ? 1 : Math.max(1, Math.min(count.value, slices.length)),
+    0,
+    slices.length,
+  )),
+  // Budget files, one at a time, once the rest are done and green.
+  ...(await pool(1, slices.length, slices.length)),
+];
 const wall = (performance.now() - started) / 1000;
 const ending = tally(results, wall);
 const spread = results.map((result) => result.seconds);
@@ -622,8 +722,11 @@ if (record || timed) {
   }
 }
 if (measure) {
-  if (ending.code !== 0 || unmeasured.size > 0) {
-    console.log(`test-shards: not writing ${IMPACT_NAME}: the run was not green and measured`);
+  if ((ending.code !== 0 && !keepGoing) || unmeasured.size > 0 || measured.size === 0) {
+    console.log(
+      `test-shards: not writing ${IMPACT_NAME}: the run was not green and measured` +
+        (unmeasured.size > 0 ? ` (no coverage from ${[...unmeasured].join(", ")})` : ""),
+    );
   } else {
     // A partial run refreshes what it ran and forgets nothing else.
     let old = new Map<string, string[]>();

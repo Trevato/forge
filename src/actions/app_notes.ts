@@ -9,20 +9,24 @@ import { dropHiddenPictures } from "../core/note_pictures.ts";
 import type { App } from "../app.ts";
 import { banVisitor, bannedNotes, unbanVisitor, markSender, getNote, hideNote, insertNote, isBanned, notesOf, notesOfApp, type AppNote } from "../core/app_notes.ts";
 import type { AppRecord } from "../core/apps.ts";
-import { createLabel, getIssue, getLabel } from "../core/issues.ts";
+import { createLabel, getIssue, getLabel, listComments, type Issue } from "../core/issues.ts";
 import { mergedPullClosing } from "../core/pulls.ts";
 import { releaseName, releaseOfPull } from "../release/record.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
-import { canAdmin, type Repo } from "../core/repos.ts";
+import { canAdmin, canRead, canWrite, type Repo } from "../core/repos.ts";
 import { plainText } from "../core/reports.ts";
-import { workingAgentRuns } from "../core/runs.ts";
+import { listActiveRuns, workingAgentRuns } from "../core/runs.ts";
 import { getUserById, isActive, type User } from "../core/users.ts";
+import { crewWithRole, isCrew } from "../core/agents.ts";
+import { fence } from "../crew/fence.ts";
 import { unadoptedAmong } from "../crew/direct.ts";
+import { contextFold, type NoteContext } from "./note_context.ts";
 import { NOTE_EMPTY } from "../apps/note_words.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { openIssueThrough, setIssueLabelsThrough, setIssueStateThrough } from "./issues.ts";
+import { assignIssue, openIssueThrough, setIssueLabelsThrough, setIssueStateThrough } from "./issues.ts";
 
-export const FROM_APP_LABEL = "from-app";
+export { FROM_APP_LABEL } from "../core/from_app.ts";
+import { FROM_APP_LABEL } from "../core/from_app.ts";
 /**
  * What every title opens with: the words after it are a stranger's, on an
  * issue filed in the owner's name (as `core/reports.ts` does for `/report`).
@@ -89,17 +93,29 @@ export interface NoteStatus {
   readonly label: string;
 }
 
+/** One answer to a note: a comment on its issue by the crew or a writer of the repository. */
+export interface NoteReply {
+  readonly by: string;
+  readonly at: string;
+  readonly text: string;
+}
+
 export interface NoteView {
   readonly id: string;
   readonly text: string;
   readonly by: string;
   readonly at: string;
   readonly status: NoteStatus;
+  /** The issue's number: shown to everyone, linked only to a reader of the repository. */
+  readonly number: number;
+  /** The crew's and writers' comments on the issue, newest last; an outsider's are never here. */
+  readonly replies: readonly NoteReply[];
   readonly url?: string;
+  readonly repoUrl?: string;
 }
 
 /** Where a note stands, read from the issue as it moves. */
-export function statusOf(app: App, repo: Repo, number: number): { status: NoteStatus; title: string } | undefined {
+export function statusOf(app: App, repo: Repo, number: number): { status: NoteStatus; title: string; issueId: string } | undefined {
   const issue = getIssue(app.db, repo.id, number);
   if (issue === undefined) return undefined;
   if (issue.state === "closed") {
@@ -110,47 +126,69 @@ export function statusOf(app: App, repo: Repo, number: number): { status: NoteSt
       const release = pull === undefined ? undefined : releaseOfPull(app.db, repo.id, pull.number);
       const label =
         release !== undefined ? `Shipped in ${releaseName(release)}` : `Shipped on ${(pull?.mergedAt ?? issue.closedAt ?? issue.updatedAt).slice(0, 10)}`;
-      return { title: issue.title, status: { state: "shipped", label } };
+      return { issueId: issue.id, title: issue.title, status: { state: "shipped", label } };
     }
     const label = issue.closeReason === "parked" ? "Set aside for now" : issue.closeReason === "split" ? "Split into smaller pieces" : "Closed without a change";
-    return { title: issue.title, status: { state: "closed", label: `${label} (${when})` } };
+    return { issueId: issue.id, title: issue.title, status: { state: "closed", label: `${label} (${when})` } };
   }
   // A stranger's words are a suggestion until a writer adopts them.
   if (unadoptedAmong(app.db, repo, [issue]).has(issue.id))
-    return { title: issue.title, status: { state: "waiting", label: "Waiting for the builders to look" } };
+    return { issueId: issue.id, title: issue.title, status: { state: "waiting", label: "Waiting for the builders to look" } };
   const run = workingAgentRuns(app.db, repo.id, issue.id)[0];
   if (run !== undefined) {
     const actor = run.actorId === null ? undefined : getUserById(app.db, run.actorId);
-    return { title: issue.title, status: { state: "building", label: `Being built by ${actor?.username ?? "the crew"}` } };
+    return { issueId: issue.id, title: issue.title, status: { state: "building", label: `Being built by ${actor?.username ?? "the crew"}` } };
   }
-  return { title: issue.title, status: { state: "queued", label: "In the queue for a builder" } };
+  return { issueId: issue.id, title: issue.title, status: { state: "queued", label: "In the queue for a builder" } };
 }
 
-function view(app: App, record: AppRecord, repo: Repo, forgeUrl: string | undefined, note: AppNote): NoteView | undefined {
+/** What the crew and the repository's writers said on a note's issue; anyone else's comment stays on the forge. */
+function repliesTo(app: App, repo: Repo, issueId: string, keepOutsiders = false): (NoteReply & { untrusted?: true })[] {
+  const standing = new Map<string, boolean>();
+  const speaks = (id: string): boolean => {
+    let yes = standing.get(id);
+    if (yes === undefined) {
+      const user = getUserById(app.db, id);
+      yes = user !== undefined && isActive(user) && (isCrew(app.db, repo.id, id) || canWrite(app.db, repo, user));
+      standing.set(id, yes);
+    }
+    return yes;
+  };
+  return listComments(app.db, issueId, { kind: "comment" })
+    .flatMap((c) => {
+      const reply = { by: c.authorName, at: c.createdAt, text: c.body };
+      if (speaks(c.authorId)) return [reply];
+      // The owner's list keeps an outsider's words, flagged; the sender's button never shows them.
+      return keepOutsiders ? [{ ...reply, untrusted: true as const }] : [];
+    });
+}
+
+function view(app: App, repo: Repo, forgeUrl: string | undefined, viewer: User | undefined, note: AppNote): NoteView | undefined {
   const found = statusOf(app, repo, note.issueNumber);
   if (found === undefined) return undefined;
-  const open = forgeUrl !== undefined && record.access === "public" && repo.visibility === "public";
+  // A link only to someone the repository would show the issue to.
+  const open = forgeUrl !== undefined && canRead(app.db, repo, viewer);
   return {
     id: note.id,
     text: found.title.startsWith(FROM_APP_TITLE) ? found.title.slice(FROM_APP_TITLE.length) : found.title,
     by: note.name,
     at: note.createdAt,
     status: found.status,
-    ...(open ? { url: new URL(`/${repo.ownerName}/${repo.name}/issues/${note.issueNumber}`, forgeUrl).href } : {}),
+    number: note.issueNumber,
+    replies: repliesTo(app, repo, found.issueId),
+    ...(open
+      ? {
+          url: new URL(`/${repo.ownerName}/${repo.name}/issues/${note.issueNumber}`, forgeUrl).href,
+          repoUrl: new URL(`/${repo.ownerName}/${repo.name}`, forgeUrl).href,
+        }
+      : {}),
   };
 }
 
 /** A sender's own notes; an admin of the repository may ask for every sender's. */
-export function notesFor(app: App, record: AppRecord, repo: Repo, forgeUrl: string | undefined, sender: Sender, everyone = false): NoteView[] {
+export function notesFor(app: App, record: AppRecord, repo: Repo, forgeUrl: string | undefined, sender: Sender, everyone = false, viewer?: User): NoteView[] {
   const rows = everyone ? notesOfApp(app.db, record.id) : notesOf(app.db, record.id, sender.key);
-  return rows.map((n) => view(app, record, repo, forgeUrl, n)).filter((n): n is NoteView => n !== undefined);
-}
-
-/** The longest run of backticks in `text`, so the fence can be longer. */
-function fence(text: string): string {
-  const longest = Math.max(2, ...(text.match(/`+/g) ?? []).map((r) => r.length));
-  const bar = "`".repeat(longest + 1);
-  return `${bar}\n${text}\n${bar}`;
+  return rows.map((n) => view(app, repo, forgeUrl, viewer, n)).filter((n): n is NoteView => n !== undefined);
 }
 
 function titleOf(text: string): string {
@@ -163,6 +201,8 @@ export interface NoteInput {
   /** The page, already reduced to this app's own origin and path. */
   readonly page: string;
   readonly viewport: string;
+  /** Path, build and console errors, already checked (`parseNoteContext`). */
+  readonly context?: NoteContext;
 }
 
 /**
@@ -192,6 +232,7 @@ export async function sendNote(
   sender: Sender,
   input: NoteInput,
   source: string,
+  viewer?: User,
 ): Promise<Result<NoteView, Refusal>> {
   const text = plainText(input.text).trim();
   if (text === "") return err({ error: "empty", message: NOTE_EMPTY });
@@ -215,7 +256,7 @@ export async function sendNote(
     `- Page: ${input.page === "" ? "unknown" : `\`${input.page.replace(/`/g, "%60")}\``}`,
     `- Viewport: ${input.viewport}`,
     `- Time: ${new Date().toISOString()}`,
-  ].join("\n");
+  ].join("\n") + (input.context === undefined ? "" : contextFold(input.context));
   // The label exists before the issue does, so a mirror's origin can apply it too.
   if (getLabel(app.db, repo.id, FROM_APP_LABEL) === undefined) createLabel(app.db, repo.id, FROM_APP_LABEL, LABEL_COLOR);
   const unavailable = err({ error: "unavailable", message: "The builders cannot take notes right now." } as const);
@@ -229,7 +270,7 @@ export async function sendNote(
     // Without its label the crew's warning would not show: take it back.
     console.error(`app note: issue #${opened.value.number} could not take the ${FROM_APP_LABEL} label: ${labelled.error}`);
     // Through the action layer, as the owner: the bus, the webhooks and a mirror's origin see it.
-    const closed = await setIssueStateThrough(app, owner, repo, opened.value, "closed", { reason: "dropped" });
+    const closed = await setIssueStateThrough(app, owner, repo, opened.value, "closed", { reason: "dropped", system: true });
     if (!closed.ok) console.error(`app note: issue #${opened.value.number} could not be closed: ${closed.error}`);
     return unavailable;
   }
@@ -240,7 +281,31 @@ export async function sendNote(
     visitor: sender.key,
     name: sender.name,
   });
-  return ok(view(app, record, repo, forgeUrl, note)!);
+  if (sender.person) {
+    const who = assignOnArrival(app, owner, repo, opened.value);
+    // Not awaited: the sender's answer does not wait for the model.
+    // Loaded on use: the first look reaches the model runner, which would otherwise close an import cycle.
+    const facts = { slug: record.slug, env, text, page: input.page };
+    void import("../crew/first_look.ts").then((m) => m.firstLook(app, owner, repo, opened.value, facts, who))
+      .catch((error) => app.log.warn("first look could not start", { error: String(error) }));
+  }
+  return ok(view(app, repo, forgeUrl, viewer, note)!);
+}
+
+/**
+ * A person's note goes to a builder when it is filed (#10563): the first of
+ * the repo's builders with no run going, in name order, so it does not wait
+ * for the planner. With every builder busy, or a refusal (an unverified owner,
+ * an archived repo), it stays unassigned and the flow alarm names it at 15
+ * minutes.
+ */
+function assignOnArrival(app: App, owner: User, repo: Repo, issue: Issue): User | undefined {
+  const busy = new Set(listActiveRuns(app.db, [repo.id]).flatMap((r) => (r.actorId === null ? [] : [r.actorId])));
+  const free = (crewWithRole(app.db, [repo.id], "builder").get(repo.id) ?? []).find((a) => !busy.has(a.user.id));
+  if (free === undefined) return undefined;
+  const done = assignIssue(app, owner, repo, issue, free.user);
+  if (!done.ok) console.error(`app note: issue #${issue.number} could not be assigned to ${free.user.username}: ${done.error}`);
+  return done.ok ? free.user : undefined;
 }
 
 /** The owner's: hide a note (closing its issue), or ban its sender too. */
@@ -258,7 +323,7 @@ export async function moderateNote(
   const issue = getIssue(app.db, repo.id, note.issueNumber);
   // Close first: a note is hidden only once its issue is, wherever the issue lives.
   if (issue !== undefined && issue.state === "open") {
-    const closed = await setIssueStateThrough(app, actor, repo, issue, "closed", { reason: "dropped" });
+    const closed = await setIssueStateThrough(app, actor, repo, issue, "closed", { reason: "dropped", system: true });
     if (!closed.ok) {
       console.error(`app note: issue #${issue.number} could not be closed: ${closed.error}`);
       return err("unavailable");
@@ -280,6 +345,27 @@ export interface OwnerNote {
   readonly page: string;
   readonly at: string;
   readonly banned: boolean;
+  /**
+   * The issue's latest comments, oldest first: the crew's and writers' as the button shows them, an
+   * outsider's flagged `untrusted`. At most `OWNER_REPLIES`, each body cut to `OWNER_REPLY_CHARS`;
+   * the studio card and the terminal leave them out on purpose (the thread stays on the issue), MCP and the API carry them.
+   */
+  readonly replies: readonly { by: string; body: string; at: string; untrusted?: true }[];
+  /** How many earlier comments `replies` leaves out. */
+  readonly earlierReplies: number;
+}
+
+/** Outsiders write these words: the owner's list carries only the latest few, each cut short. */
+export const OWNER_REPLIES = 10;
+export const OWNER_REPLY_CHARS = 1000;
+
+/** A body cut to `OWNER_REPLY_CHARS`, never splitting a surrogate pair, marked with an ellipsis. */
+function clip(body: string): string {
+  if (body.length <= OWNER_REPLY_CHARS) return body;
+  let cut = body.slice(0, OWNER_REPLY_CHARS);
+  const last = cut.charCodeAt(cut.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
+  return `${cut}…`;
 }
 
 /** The page a note was sent from, read back from the fenced line the issue holds. */
@@ -291,6 +377,8 @@ function pageOf(body: string): string {
 function ownerView(app: App, repo: Repo, n: AppNote, banned: boolean): OwnerNote | undefined {
   const issue = getIssue(app.db, repo.id, n.issueNumber);
   if (issue === undefined) return undefined;
+  const all = repliesTo(app, repo, issue.id, true);
+  const latest = all.slice(-OWNER_REPLIES);
   return {
     id: n.id,
     by: n.name,
@@ -299,6 +387,8 @@ function ownerView(app: App, repo: Repo, n: AppNote, banned: boolean): OwnerNote
     page: pageOf(issue.body),
     at: n.createdAt,
     banned,
+    replies: latest.map(({ text, ...r }) => ({ ...r, body: clip(text) })),
+    earlierReplies: all.length - latest.length,
   };
 }
 

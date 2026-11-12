@@ -1,4 +1,5 @@
 /** The Asked tab wears the number of unshipped asks, on `/`, `/apps` and `/asked`; none reads plain `Asked` (#6745). */
+import { forgetHome } from "../src/web/studio/home_last.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -70,7 +71,8 @@ test("homeTabs reads plain Asked at 0 or when not given, and the count otherwise
 });
 
 test("with no asks the Asked tab is plain on all three pages", async () => {
-  for (const path of ["/?all=1", "/apps", "/asked"]) expect(await askedTab(path)).toBe("Asked");
+  forgetHome(app.db);
+  for (const path of ["/feed?all=1", "/apps", "/asked"]) expect(await askedTab(path)).toBe("Asked");
 });
 
 test("three unshipped asks read Asked 3 on `/`, `/apps` and `/asked`", async () => {
@@ -78,8 +80,9 @@ test("three unshipped asks read Asked 3 on `/`, `/apps` and `/asked`", async () 
     const ask = createIssue(app.db, { repoId, authorId: userId, title: `Ask ${i}` });
     if (!ask.ok) throw new Error(ask.error);
   }
-  for (const path of ["/?all=1", "/apps", "/asked"]) expect(await askedTab(path)).toBe("Asked 3");
-  const res = await fetch(`${servers.url}/?all=1`, { headers: { cookie } });
+  forgetHome(app.db);
+  for (const path of ["/feed?all=1", "/apps", "/asked"]) expect(await askedTab(path)).toBe("Asked 3");
+  const res = await fetch(`${servers.url}/feed?all=1`, { headers: { cookie } });
   await res.arrayBuffer();
   expect(res.headers.get("server-timing") ?? "").toContain("asked;");
 });

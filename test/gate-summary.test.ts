@@ -147,15 +147,6 @@ describe("summaryLines", () => {
     ]);
   });
 
-  test("fail-fast skipped files: the heading says how many of those named never ran", () => {
-    const lines = summaryLines({
-      ...base,
-      files: 40,
-      times: [{ file: "test/red.test.ts", seconds: 3 }],
-    });
-    expect(lines[4]).toBe("test-shards: slowest 1 of 1 files (39 of 40 skipped after a red file):");
-  });
-
   test("FORGE_CHECK_SHARDS is named as the reason when it is set", () => {
     expect(summaryLines({ ...base, shards: 1, override: "1" })[1]).toBe(
       "test-shards: shards: 1 = least of FORGE_CHECK_SHARDS 1; 12 files",

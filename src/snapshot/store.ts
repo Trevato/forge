@@ -180,9 +180,13 @@ function answered<T>(attempt: Promise<T>, ms: number): Promise<T> {
   return Promise.race([attempt, deadline]).finally(() => clearTimeout(timer));
 }
 
-export function s3Store(target: S3Target): Store {
-  return withRetries(rawS3Store(target));
+export function s3Store(target: S3Target, attempts?: number): Store {
+  return withRetries(rawS3Store(target), attempts === undefined ? {} : { attempts });
 }
+
+/** A bucket's place for a page and a log: `host[:port]/bucket`, never a key. */
+export const s3Where = (target: Pick<S3Target, "endpoint" | "bucket">): string =>
+  `${target.endpoint.replace(/^https?:\/\//, "")}/${target.bucket}`;
 
 function rawS3Store(target: S3Target): Store {
   const client = new Bun.S3Client({
@@ -193,7 +197,7 @@ function rawS3Store(target: S3Target): Store {
     ...(target.region === undefined ? {} : { region: target.region }),
   });
   return {
-    where: `${target.endpoint.replace(/^https?:\/\//, "")}/${target.bucket}`,
+    where: s3Where(target),
     async put(key, body) {
       await client.write(key, body);
     },

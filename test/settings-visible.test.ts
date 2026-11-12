@@ -54,7 +54,8 @@ const get = async (path: string) =>
   ).text();
 
 // The list item of each setting, from its key to the next row.
-const rowsOf = (page: string) => page.split("<li>").slice(1);
+// A setting row is a list row or, on the denser pages, a table row.
+const rowsOf = (page: string) => page.split(/<li>|<tr>/).slice(1);
 
 test("every limit row shows name, value, default, bounds and a control, hover-free", async () => {
   const page = await get("/admin/limits");
@@ -79,10 +80,12 @@ test("every capacity row shows its value and control, hover-free", async () => {
   const listed = listCapacity(app, admin);
   if (!listed.ok) throw new Error("no capacity");
   for (const s of listed.value.settings) {
-    const row = rowsOf(page).find((r) => r.includes(`name="key" value="${s.key}"`));
+    // a row derived from Speed is read-only: its value, no form
+    const mark = s.source === "derived" ? `data-derived="${s.key}"` : `name="key" value="${s.key}"`;
+    const row = rowsOf(page).find((r) => r.includes(mark));
     expect(row, s.key).toBeDefined();
     expect(row).toContain(s.label);
-    expect(row).toContain("Now <span");
+    if (s.source !== "derived") expect(row).toContain("Now <span");
     expect(row).not.toContain("row-actions");
   }
 });

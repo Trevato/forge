@@ -21,7 +21,7 @@ import { HEARTBEAT_MS, heldRuns } from "./lease.ts";
 
 /** Two renewals missed: the lease is not being kept. */
 export const PEER_FRESH_MS = 2 * HEARTBEAT_MS;
-/** The pod's grace (charts/app, 720 s): an old pod is gone by then. */
+/** The pod's grace (charts/app, 720 s): an old pod is gone by then. A drain is 10 s (`src/drain.ts`); this is the ceiling for a run that ignores it. */
 export const PEER_WAIT_MAX_MS = 720_000;
 const POLL_MS = 5_000;
 

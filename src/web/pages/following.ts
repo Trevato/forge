@@ -16,6 +16,7 @@ import {
 } from "../../actions/forks.ts";
 import { listCrewRoles } from "../../core/agents.ts";
 import {
+  canAdmin,
   canRead,
   canWrite,
   forkParentFor,
@@ -36,27 +37,34 @@ import {
   type ParentReleases,
 } from "../../core/parent_releases.ts";
 import { running } from "../../kernel/version.ts";
+import { FOLLOW_SWITCH_LABELS, followModeWords } from "../../actions/follow_words.ts";
+import type { ForkFollowMode } from "../../core/fork_follow.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
-import { convergeWords, takeOrTell } from "../../actions/follow.ts";
-import { FOLLOWS_NOTHING, PROPOSE_NEEDS_WRITE } from "../../actions/follow_words.ts";
+import { convergeWords, followModeOf, takeOrTell, takeWords } from "../../actions/follow.ts";
+import { FOLLOW_WORD, FOLLOWS_NOTHING, proposeRefusalWords } from "../../actions/follow_words.ts";
 import { openProposal, proposeUpstream } from "../../actions/upstream.ts";
+import { proposesViaFork } from "../../origins/fork-route.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashOrJson } from "../layout.ts";
-import { badge, btn, card, icon, row, type Tone } from "../ui.ts";
+import { badge, btn, icon, row, type Tone } from "../ui.ts";
 import { disconnectedOn } from "./frozen.ts";
 
 /**
  * The family as a tree: nested lists, so the nesting a sighted reader sees
  * as indentation is the nesting a screen reader announces, and a phone
  * never has to scroll sideways to follow it. The repository being looked at
- * is marked, and every fork carries its standing against its own parent.
+ * is marked "you are here", the viewer's other forks say "you", and every
+ * fork carries its standing against its own parent.
  */
-export function lineageCard(lineage: Lineage, hereId: string): Html {
+export function lineageCard(lineage: Lineage, hereId: string, viewerId?: string): Html {
   const node = (n: LineageNode, depth: number): Html => {
     const here = n.repo.id === hereId;
     const trail = [
       here ? badge("you are here", { variant: "outline" }) : null,
+      // The viewer's own forks say "you" in words. aria-current stays on the one row being looked at.
+      !here && viewerId !== undefined && n.repo.ownerId === viewerId ? badge("you", { variant: "outline" }) : null,
+      n.mode === undefined ? null : html`<span class="muted small">${FOLLOW_WORD[n.mode]}</span>`,
       n.relation === undefined ? null : relationBadge(n.relation),
     ].filter((t): t is Html => t !== null);
     return row({
@@ -70,20 +78,19 @@ export function lineageCard(lineage: Lineage, hereId: string): Html {
       children: n.children.map((c) => node(c, depth + 1)),
     });
   };
-  return card(
-    html`<ul class="list" aria-label="Forks, by who follows whom">
-        ${node(lineage.root, 0)}
-      </ul>
-      ${when(
-        lineage.truncated,
-        () =>
-          html`<p class="muted small card-body">
-            A large family: the newest and deepest forks are left out here; each
-            fork's own page shows where it stands.
-          </p>`,
-      )}`,
-    { pad: false },
-  );
+  return html`<section class="settings-block">
+    <ul class="list" aria-label="Forks, by who follows whom">
+      ${node(lineage.root, 0)}
+    </ul>
+    ${when(
+      lineage.truncated,
+      () =>
+        html`<p class="muted small">
+          A large family: the newest and deepest forks are left out here; each
+          fork's own page shows where it stands.
+        </p>`,
+    )}
+  </section>`;
 }
 
 export interface Following {
@@ -91,6 +98,8 @@ export interface Following {
   readonly converge: Converge | undefined;
   /** The parent forge's releases, when this forge names a parent forge. */
   readonly releases: { url: string; view: ParentReleases } | undefined;
+  /** How this repository follows its parent (`followModeOf`). */
+  readonly mode: ForkFollowMode;
 }
 
 /** Everything the card needs, for a repo that follows something. */
@@ -99,6 +108,7 @@ export async function followingOf(
   repo: Repo,
 ): Promise<Following | undefined> {
   if (repo.forkParentId === null) return undefined;
+  if (archivedParent(ctx, repo) !== undefined) return undefined;
   const relation = await relationOf(ctx.app, ctx.auth.user, repo);
   if (relation === undefined) return undefined;
   // A parent the viewer may not read is not named here at all.
@@ -117,7 +127,30 @@ export async function followingOf(
             loopback: ctx.app.config.parentLoopback === true,
           }),
         };
-  return { relation, converge, releases };
+  return { relation, converge, releases, mode: await followModeOf(ctx.app, repo) };
+}
+
+/** The parent, when the viewer may read it and an admin has archived it. */
+function archivedParent(ctx: Ctx, repo: Repo): Repo | undefined {
+  const parent = forkParentFor(ctx.app.db, repo, ctx.auth.user);
+  return parent?.archivedAt === null ? undefined : parent;
+}
+
+/**
+ * In place of the Following card, when the parent is archived (#7452): one
+ * quiet line. A frozen parent's "N ahead" reads as unshipped work, and there
+ * is nothing to take from it or offer it, so no count and no button.
+ */
+export function archivedParentLine(ctx: Ctx, repo: Repo): Html | null {
+  const parent = archivedParent(ctx, repo);
+  if (parent === undefined) return null;
+  return html`<p class="mt small muted" data-archived-parent>
+    ${icon("fork")} forked from
+    <a href="/${parent.ownerName}/${parent.name}">${parent.ownerName}/${parent.name}</a>
+    (archived)${canAdmin(ctx.app.db, repo, ctx.auth.user)
+      ? html` · <a href="${repoBase(repo)}/settings/danger#detach">detach from it</a>`
+      : null}
+  </p>`;
 }
 
 /**
@@ -158,8 +191,8 @@ export function relationBadge(relation: ForkRelation): Html {
         : relation.state === "ahead"
           ? [`${relation.ahead} ahead`, "default"]
           : relation.clean
-            ? ["diverged · merges cleanly", "attn"]
-            : ["diverged", "attn"];
+            ? [`diverged · ${relation.ahead} ahead · ${relation.behind} behind · merges cleanly`, "attn"]
+            : [`diverged · ${relation.ahead} ahead · ${relation.behind} behind`, "attn"];
   return badge(text, { tone });
 }
 
@@ -199,6 +232,8 @@ export function followingCard(
   ctx: Ctx,
   repo: Repo,
   following: Following,
+  /** `bare` drops the card's margin; `family: false` drops the link to the forks page, for the forks page itself. */
+  o: { bare?: boolean; family?: boolean } = {},
 ): Html {
   const { relation, converge } = following;
   const parent = relation.parent;
@@ -255,11 +290,18 @@ export function followingCard(
       proposal === undefined
         ? html`<form method="post" action="${base}/following">
             <input type="hidden" name="do" value="propose" />
-            ${btn("Propose upstream", {
-              size: "sm",
-              type: "submit",
-              icon: "merge",
-            })}
+            ${proposesViaFork(ctx.app, parent)
+              ? btn("Propose via your fork", {
+                  size: "sm",
+                  type: "submit",
+                  icon: "fork",
+                  title: `Your account can only read ${parent.ownerName}/${parent.name}'s origin, or its operator protects it: the change goes to your own fork there, and the pull opens from it`,
+                })
+              : btn("Offer this change", {
+                  size: "sm",
+                  type: "submit",
+                  icon: "merge",
+                })}
           </form>`
         : btn("See the upstream proposal", {
             size: "sm",
@@ -275,10 +317,13 @@ export function followingCard(
           ? writer
             ? null
             : html`A writer can ask the crew to converge it.`
-          : html`Nobody is on the crew to converge it: add someone under
-              <a href="${base}/settings/crew">Settings → Crew</a>, or merge
-              <span class="mono">refs/following/${parent.defaultBranch}</span>
-              by hand.`
+          : // Only a writer can do either; a visitor is not told to.
+            writer
+            ? html`Nobody is on the crew to converge it: add someone under
+                <a href="${base}/settings/crew">Settings → Crew</a>, or merge
+                <span class="mono">refs/following/${parent.defaultBranch}</span>
+                by hand.`
+            : null
         : null
       : converge.kind === "working"
         ? html`${converge.agent === undefined
@@ -328,40 +373,47 @@ export function followingCard(
     prose.push(block.sentence);
     rows.push(...block.links);
   }
+  if (parent.detached === null && relation.action !== "none")
+    prose.push(html`<p class="muted small">${relation.words}</p>`);
   if (foot !== null) prose.push(html`<p class="muted small">${foot}</p>`);
-  if (followers > 0)
+  const words = followModeWords(following.mode, parentName);
+  prose.push(
+    html`<p data-follow-mode="${following.mode}">
+      <strong>${words.line}</strong>.
+      ${canAdmin(ctx.app.db, repo, ctx.auth.user) && writer
+        ? words.others.map((m) =>
+            btn(FOLLOW_SWITCH_LABELS[m], {
+              href: `/-/confirm?to=${encodeURIComponent(`${base}/following/mode/${m}`)}`,
+              size: "sm",
+            }),
+          )
+        : null}
+    </p>`,
+  );
+  if (followers > 0 && o.family !== false)
     rows.push(
       row({
         href: `${base}/forks`,
         title: `${followers === 1 ? "One fork follows" : `${followers} forks follow`} this one.`,
       }),
     );
-  return card(
-    html`<div class="card-body stack">${prose}</div>${when(
-        rows.length > 0,
-        () => html`<ul class="list">
-          ${rows}
-        </ul>`,
-      )}`,
-    {
-      id: "following",
-      head,
-      ...(actions.length > 0 ? { foot: html`${actions}` } : {}),
-      pad: false,
-    },
-  );
-}
-
-/**
- * What taking updates says when there was nothing to take. "Up to date"
- * only of a parent that is itself up to date: a frozen one may be far
- * behind its own upstream, and the take only knows the frozen copy.
- */
-export function nothingNew(parent: Repo): string {
-  const name = `${parent.ownerName}/${parent.name}`;
-  return parent.detached === null
-    ? `Already up to date with ${name}.`
-    : `Nothing new from ${name}, which is frozen: its origin was disconnected, so upstream may have moved. Reconnect it.`;
+  return html`<section
+    class="settings-block${o.bare === true ? " bare" : " mt"}"
+    id="following"
+  >
+    <div class="bar"><h2>${head}</h2></div>
+    <div class="stack">${prose}</div>
+    ${when(
+      rows.length > 0,
+      () => html`<ul class="list">
+        ${rows}
+      </ul>`,
+    )}
+    ${when(
+      actions.length > 0,
+      () => html`<div class="bar mt">${actions}</div>`,
+    )}
+  </section>`;
 }
 
 /**
@@ -398,14 +450,7 @@ export async function followingSubmit(ctx: Ctx): Promise<Response> {
       const e = proposed.error;
       return flashOrJson(ctx, base, {
         tone: "danger",
-        message:
-          e === "not_a_fork"
-            ? FOLLOWS_NOTHING
-            : e === "nothing_to_propose"
-              ? `Nothing here is ahead of ${parentName}.`
-              : typeof e === "string"
-                ? PROPOSE_NEEDS_WRITE
-                : `${parentName} did not take the proposal: ${e.reason}.`,
+        message: proposeRefusalWords(e, parentName),
       });
     }
     const { pull, opened, changes } = proposed.value;
@@ -421,35 +466,5 @@ export async function followingSubmit(ctx: Ctx): Promise<Response> {
   }
 
   const took = await takeOrTell(ctx.app, ctx.auth.user, repo);
-  if (!took.ok) {
-    const e = took.error;
-    if (typeof e === "string")
-      return flashOrJson(ctx, base, {
-        tone: "danger",
-        message:
-          e === "not_a_fork"
-            ? FOLLOWS_NOTHING
-            : "You need write access to take updates here.",
-      });
-    // A conflict is a tell for the crew (`actions/follow.ts`).
-    if (e.kind === "conflict") {
-      const files = `${e.files.length === 1 ? "One file needs" : `${e.files.length} files need`} a decision (${e.files.join(", ")})`;
-      const words = "converge" in e ? convergeWords(e.converge, parentName) : { message: "" };
-      return flashOrJson(ctx, base, { tone: "danger", message: `${files}. ${words.message}` });
-    }
-    return flashOrJson(ctx, base, {
-      tone: "danger",
-      message:
-        e.kind === "moved"
-            ? "Something moved while this was read; try again."
-            : `Git could not take the updates: ${e.message}`,
-    });
-  }
-  return flashOrJson(ctx, base, {
-    message: !took.value.updated
-      ? nothingNew(parent)
-      : took.value.merged
-        ? `Took ${parentName}'s updates: merged into ${repo.defaultBranch} at ${took.value.to.slice(0, 7)}.`
-        : `Took ${parentName}'s updates: ${repo.defaultBranch} is at ${took.value.to.slice(0, 7)}.`,
-  });
+  return flashOrJson(ctx, base, takeWords(took, repo, parent));
 }

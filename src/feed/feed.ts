@@ -19,6 +19,8 @@ import { writeStamp } from "../core/write_clock.ts";
 import { Stamped } from "../kernel/stamped.ts";
 import { foldBursts } from "./fold.ts";
 import { rank, type FeedItem } from "./rank.ts";
+import { likesOf } from "./likes.ts";
+import { stepsOf } from "./step.ts";
 import { settledOf } from "./settled.ts";
 
 export const FEED_LIMIT_DEFAULT = 20;
@@ -136,9 +138,36 @@ type FeedOptions = {
     chips?: Chips;
     /** The home pins asks above the feed: they must not fill its page. */
     withoutAsks?: boolean;
+    /** Only this repository's items (an app's own feed); its mute does not hide them. */
+    repoId?: string;
     /** Told how long the settled-state read took, for Server-Timing. */
     phase?: (name: string, ms: number) => void;
 };
+
+/** A page with what it settled into, where it stands on the path, and who likes it. */
+export function decorate(
+  db: Database,
+  viewer: User,
+  page: readonly FeedItem[],
+  phase?: (name: string, ms: number) => void,
+): FeedItem[] {
+  const started = performance.now();
+  const settled = settledOf(db, page);
+  phase?.("settled", performance.now() - started);
+  const steps = stepsOf(db, page);
+  const likes = likesOf(db, viewer.id, page.map((i) => i.id));
+  return page.map((i) => {
+    const state = settled.get(i.id);
+    const step = steps.get(i.id);
+    const liked = likes.get(i.id)!;
+    return {
+      ...i,
+      ...(state === undefined ? {} : { settled: state }),
+      ...(step === undefined ? {} : { step }),
+      ...(liked.likes === 0 ? {} : liked),
+    };
+  });
+}
 
 /** The page, with the quiet runs it left out and where most of them are. */
 export function readFeedPage(
@@ -164,6 +193,7 @@ export function readFeedPage(
     ...shared,
   ]
     // The chips: the one filter. An ask was filtered by it in `askLinesFor`.
+    .filter((c) => options.repoId === undefined || c.repoId === options.repoId)
     .filter((c) => c.kind === "ask" || !chipHides(chips, c))
     .filter((c) =>
     // An ask is never muted away. Its own dismissal was already read by
@@ -175,6 +205,7 @@ export function readFeedPage(
         (c.kind === "ask" ||
           c.kind === "milestone" ||
           c.kind === "choose" ||
+          options.repoId !== undefined ||
           !muted.has(c.repoId)),
   );
   // After every filter, so a burst folds only what the viewer would see.
@@ -197,13 +228,7 @@ export function readFeedPage(
         : ranked.filter((i) => i.score < cursor.score);
   }
   const page = ranked.slice(0, limit);
-  const started = performance.now();
-  const settled = settledOf(db, page);
-  options.phase?.("settled", performance.now() - started);
-  const items = page.map((i) => {
-    const state = settled.get(i.id);
-    return state === undefined ? i : { ...i, settled: state };
-  });
+  const items = decorate(db, viewer, page, options.phase);
   const last = items[items.length - 1];
   return {
     items,

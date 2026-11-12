@@ -26,6 +26,7 @@ export type LimitKey =
   | "crew.concurrency"
   | "checks.concurrency"
   | "agent.budget_max_usd"
+  | "spawn.included_credit_usd"
   | "subscription.budget_max_usd"
   | "app.members_max"
   | "front.pinned_max"
@@ -36,7 +37,25 @@ export type LimitKey =
   | "signin.per_forge"
   | "signup.per_source"
   | "signup.per_forge"
-  | "api.anonymous_per_source";
+  | "signup.per_source_hour"
+  | "signup.per_forge_hour"
+  | "guest.forks_per_day"
+  | "guest.forks_forge_per_day"
+  | "guest.pulls_per_day"
+  | "forges.per_person"
+  | "forges.wakes_per_person_hour"
+  | "forges.storage_mb"
+  | "guest.storage_mb"
+  | "guest.fork_storage_mb"
+  | "guest.cooldown_minutes"
+  | "api.anonymous_per_source"
+  | "report.per_source"
+  | "model_review.auto"
+  | "model_review.min_landed"
+  | "model_review.slack_pct"
+  | "shell_idle_minutes"
+  | "billing.grace_days"
+  | "billing.retention_days";
 
 export interface LimitDef {
   readonly label: string;
@@ -79,6 +98,14 @@ export const LIMITS: Record<LimitKey, LimitDef> = {
     min: 1,
     max: 1_000_000,
     reason: "A crew member's per-run budget is spent unattended, so what one run may cost has a top.",
+  },
+  "spawn.included_credit_usd": {
+    label: "Crew credit a new forge comes with",
+    unit: "dollars",
+    default: 2,
+    min: 0,
+    max: 1_000,
+    reason: "A new forge's crew runs on this forge's model access until its owner adds a key; 0 turns it off. Worst case a day is the visitor limit times this.",
   },
   "subscription.budget_max_usd": {
     label: "Pool account budget ceiling",
@@ -160,6 +187,94 @@ export const LIMITS: Record<LimitKey, LimitDef> = {
     max: 100_000,
     reason: "Spread across many sources, sign-ups still cost hashes and accounts, so the forge as a whole has a ceiling.",
   },
+  "signup.per_source_hour": {
+    label: "New accounts per source an hour",
+    unit: "accounts",
+    default: 5,
+    min: 1,
+    max: 10_000,
+    reason: "One address has no need of many accounts, and an account is what every other guest limit is counted on. Never less than the per-minute limit.",
+  },
+  "signup.per_forge_hour": {
+    label: "New accounts per forge an hour",
+    unit: "accounts",
+    default: 60,
+    min: 1,
+    max: 100_000,
+    reason: "Many addresses together still make accounts, so the whole forge has a ceiling that holds while an admin looks.",
+  },
+  "guest.forks_per_day": {
+    label: "Forks one guest may make a day",
+    unit: "forks",
+    default: 3,
+    min: 0,
+    max: 1_000,
+    reason: "A guest's fork is for one contribution, and deleting one makes no room in the count.",
+  },
+  "guest.forks_forge_per_day": {
+    label: "Guest forks on the whole forge a day",
+    unit: "forks",
+    default: 50,
+    min: 0,
+    max: 100_000,
+    reason: "Many guests together can fill a disk one fork at a time, so their forks have a ceiling across the forge.",
+  },
+  "guest.pulls_per_day": {
+    label: "Pull requests one guest may send a day",
+    unit: "pulls",
+    default: 5,
+    min: 0,
+    max: 1_000,
+    reason: "Every pull asks a person to read it, so a guest's pulls have a daily count.",
+  },
+  "forges.per_person": {
+    label: "Hosted forges one person may own",
+    unit: "forges",
+    default: 3,
+    min: 1,
+    max: 1_000,
+    reason: "Every hosted forge holds a database and its repositories on this machine's disk; site admins are not counted.",
+  },
+  "forges.wakes_per_person_hour": {
+    label: "Wakes per person per hour",
+    unit: "wakes",
+    default: 30,
+    min: 1,
+    max: 10_000,
+    reason: "Waking a sleeping forge starts a process on this machine; a person who wakes theirs too often is asked to wait.",
+  },
+  "forges.storage_mb": {
+    label: "Storage a person can hold in hosted forges",
+    unit: "MB",
+    default: 1_000,
+    min: 1,
+    max: 10_000_000,
+    reason: "A hosted forge keeps its data here even asleep, so what one person's forges hold in all has a ceiling.",
+  },
+  "guest.storage_mb": {
+    label: "Storage one guest may hold in their forks",
+    unit: "MB",
+    default: 100,
+    min: 1,
+    max: 1_000_000,
+    reason: "What a guest pushes stays on this machine's disk until someone deletes it.",
+  },
+  "guest.fork_storage_mb": {
+    label: "Storage one guest fork may hold",
+    unit: "MB",
+    default: 50,
+    min: 1,
+    max: 1_000_000,
+    reason: "A fork borrows its parent's history, so a change that needs more room than this is not a change to review.",
+  },
+  "guest.cooldown_minutes": {
+    label: "Minutes a new guest waits before a first fork or pull",
+    unit: "minutes",
+    default: 10,
+    min: 0,
+    max: 100_000,
+    reason: "An account made only to send something is slowed; reading and commenting start at once.",
+  },
   "api.anonymous_per_source": {
     label: "API reads without a token per source a minute",
     unit: "reads",
@@ -167,6 +282,62 @@ export const LIMITS: Record<LimitKey, LimitDef> = {
     min: 1,
     max: 100_000,
     reason: "A token's reads are counted by the token; a stranger's have no token to count, so one source reading without one has a ceiling of its own.",
+  },
+  "report.per_source": {
+    label: "Reports from outside per source a minute",
+    unit: "reports",
+    default: 5,
+    min: 1,
+    max: 1_000,
+    reason: "Anyone may file a report with no account, so one address cannot flood the people who read them; the sixth in a minute waits.",
+  },
+  "model_review.auto": {
+    label: "Weekly model review applies a cheaper model on its own",
+    unit: "0 asks first, 1 applies",
+    default: 0,
+    min: 0,
+    max: 1,
+    reason: "A step to a cheaper model is undone if quality falls, but only the owner says whether it may happen unasked; a step up always asks.",
+  },
+  "model_review.min_landed": {
+    label: "Landed pulls a model needs before the weekly review judges it",
+    unit: "pulls",
+    default: 8,
+    min: 3,
+    max: 1_000,
+    reason: "A handful of pulls is luck, not a rate, so a smaller sample changes nothing.",
+  },
+  "model_review.slack_pct": {
+    label: "Red-check rate a cheaper model may be worse by",
+    unit: "percentage points",
+    default: 10,
+    min: 0,
+    max: 100,
+    reason: "Past this the weekly review undoes its own change, so quality is the bar the saving is held to.",
+  },
+  shell_idle_minutes: {
+    label: "Minutes a machine shell may be silent before it stops",
+    unit: "minutes",
+    default: 30,
+    min: 5,
+    max: 1440,
+    reason: "A shell nobody types in and that prints nothing holds a process and memory for no reason; one that prints, like a build, is never stopped.",
+  },
+  "billing.grace_days": {
+    label: "Days a forge keeps working after its payment fails",
+    unit: "days",
+    default: 7,
+    min: 0,
+    max: 90,
+    reason: "A card that fails is usually fixed within days, so a lapse is not felt at once; past this the forge's billing reads as none.",
+  },
+  "billing.retention_days": {
+    label: "Days a lapsed forge keeps its data",
+    unit: "days",
+    default: 30,
+    min: 1,
+    max: 365,
+    reason: "A forge that lapsed may come back, so its data waits this long before anything is allowed to remove it; paying again makes it active at once.",
   },
 };
 
@@ -240,6 +411,45 @@ export function limitIsSet(db: Database, key: LimitKey): boolean {
         .get(cap) !== null
     );
   return stored(db, key) !== undefined;
+}
+
+/**
+ * Value, whether it is set and the default in one go: a stored limit is read
+ * once, not once for the value and again for "is it set".
+ */
+export function limitState(
+  db: Database,
+  key: LimitKey,
+): { value: number; isSet: boolean; defaultValue: number } {
+  if (capacityKey(key) !== undefined)
+    return { value: limitValue(db, key), isSet: limitIsSet(db, key), defaultValue: limitDefault(db, key) };
+  const set = stored(db, key);
+  return { value: set ?? LIMITS[key].default, isSet: set !== undefined, defaultValue: LIMITS[key].default };
+}
+
+/** `limitState` for every limit with one read of the stored settings, not one per limit. */
+export function limitStates(
+  db: Database,
+  keys: readonly LimitKey[],
+): Map<LimitKey, { value: number; isSet: boolean; defaultValue: number }> {
+  const rows = new Map(
+    db
+      .query<{ key: string; value: string }, []>("SELECT key, value FROM forge_setting WHERE key LIKE 'limit.%'")
+      .all()
+      .map((r) => [r.key, r.value]),
+  );
+  const out = new Map<LimitKey, { value: number; isSet: boolean; defaultValue: number }>();
+  for (const key of keys) {
+    if (capacityKey(key) !== undefined) {
+      out.set(key, limitState(db, key));
+      continue;
+    }
+    const raw = rows.get(storeKey(key));
+    const n = raw !== undefined && /^\d+$/.test(raw) ? Number(raw) : NaN;
+    const set = validLimit(key, n) ? n : undefined;
+    out.set(key, { value: set ?? LIMITS[key].default, isSet: set !== undefined, defaultValue: LIMITS[key].default });
+  }
+  return out;
 }
 
 export type LimitError = {

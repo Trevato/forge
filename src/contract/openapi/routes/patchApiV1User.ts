@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/user",
   summary: "Change your own profile (a session, the password or an admin token); answers the profile",
   auth: true,
+  role: "member",
   body: { displayName: "string", email: "string", commitEmail: "string" },
   refusals: {
     forbidden: "403: the token is ro or rw; only a session, the password or an admin token may change the profile",

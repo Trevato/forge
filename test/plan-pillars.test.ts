@@ -243,7 +243,7 @@ describe("a plan says what each issue is for", () => {
       ).headers.get("set-cookie") ?? ""
     ).split(";")[0]!;
     const page = await (
-      await fetch(`${base}/alice/forge/map`, { headers: { cookie } })
+      await fetch(`${base}/alice/forge/map?view=graph`, { headers: { cookie } })
     ).text();
     const card = (title: string) =>
       page.match(

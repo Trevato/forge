@@ -7,6 +7,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { seedAdmin } from "./helpers/admin.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 let dataDir = "";
 let app: App, servers: Servers, bearer = "";
@@ -34,13 +35,13 @@ afterAll(async () => {
 });
 
 function names(res: Response): string[] {
-  return (res.headers.get("server-timing") ?? "").split(", ").map((p) => p.split(";")[0]!);
+  return requestTiming(res).split(", ").map((p) => p.split(";")[0]!);
 }
 
-test("a repository's pulls list names session, repo, pulls, words, tells, labels and render in order", async () => {
+test("a repository's pulls list names session, repo, pulls, words, labels and render in order", async () => {
   const res = await fetch(`${servers.url}/alice/notes/pulls`, { headers: { authorization: `Bearer ${bearer}` } });
   expect(res.status).toBe(200);
   await res.text();
   expect(res.headers.get("x-content-type-options")).toBe("nosniff");
-  expect(names(res)).toEqual(["app", "session", "repo", "pulls", "words", "tells", "labels", "render"]);
+  expect(names(res)).toEqual(["app", "session", "repo", "pulls", "words", "labels", "render"]);
 });

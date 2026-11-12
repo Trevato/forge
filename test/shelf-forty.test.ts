@@ -1,4 +1,4 @@
-/** 40 busy apps: the shelf asks git once for production's ancestry and never again until production moves; its phase stays under 50 ms (#6290, for #6179). */
+/** 40 busy apps: the shelf asks git once for production's ancestry and never again until production moves; the whole shelf costs a bounded number of statements (#6290, for #6179). */
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,13 +9,13 @@ import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { createIssue } from "../src/core/issues.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
-import { takePhases } from "../src/core/route_timing.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import type { Repo } from "../src/core/repos.ts";
 import type { Ctx } from "../src/http/context.ts";
 import { ancestries } from "../src/web/studio/ancestry.ts";
 import { shelfRows } from "../src/web/studio/shelf.ts";
-import { expectBudget } from "./helpers/budget.ts";
+import { expectWork } from "./helpers/work.ts";
+import { statements } from "./helpers/statements.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { proveAll } from "./helpers/verified.ts";
 
@@ -137,15 +137,9 @@ test("a viewer who cannot enter a private app causes no read about it", async ()
   }
 });
 
-test("41 busy apps are drawn under 50 ms of shelf (a smoke check)", async () => {
+test("41 busy apps are drawn in a bounded number of statements", async () => {
   await shelfRows(ctx(), repos);
-  let best = Infinity;
-  for (let i = 0; i < 5; i++) {
-    const c = ctx();
-    await shelfRows(c, repos);
-    best = Math.min(best, takePhases(c.request).filter((p) => p.name.startsWith("shelf-")).reduce((n, p) => n + p.ms, 0));
-  }
-  const t = performance.now();
-  app.db.query("SELECT 1").get();
-  expectBudget(best, { ms: 50, against: performance.now() - t });
+  // Measured, not timed: 70 statements for 41 busy apps today, a read or two per app. A regression to
+  // several statements per app (or an unbatched read) lands well past this.
+  expectWork(await statements(app.db, async () => void (await shelfRows(ctx(), repos))), { max: 72 });
 });

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 let dataDir = "";
 let app: App, servers: Servers;
@@ -25,7 +26,7 @@ test("the front read names session, front, render in order", async () => {
   const res = await fetch(`${servers.url}/api/v1/front`);
   await res.arrayBuffer();
   expect(res.status).toBe(200);
-  const parts = (res.headers.get("server-timing") ?? "").split(", ");
+  const parts = requestTiming(res).split(", ");
   const names = parts.map((p) => p.split(";")[0]!).filter((n) => n !== "app");
   expect(names).toEqual(["session", "front", "render"]);
   for (const p of parts) expect(Number(/dur=([\d.]+)/.exec(p)?.[1])).not.toBeNaN();

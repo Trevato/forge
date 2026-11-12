@@ -179,7 +179,7 @@ describe("the client list", () => {
     const maria = JSON.parse(rows.result.content[0].text).forges.find((f: any) => f.name === "maria");
     expect(typeof maria.lastActivityAt).toBe("string");
     // The secret itself is never in an answer.
-    expect(JSON.stringify(rows)).not.toMatch(/status|secret/i);
+    expect(rows.result.content[0].text).not.toMatch(/status|secret/i);
   });
 
   test("`for` is at most 200 characters", async () => {
@@ -199,6 +199,11 @@ describe("the client list", () => {
     const maria = html.slice(html.indexOf('data-forge="maria"'));
     expect(maria).toContain("Maria&#39;s bakery");
     expect(maria).toContain("alice/bakery");
+    // One plain line first: for whom, then the apps; the state facts follow.
+    const line = maria.slice(0, maria.indexOf("</li>"));
+    expect(line.indexOf("Maria&#39;s bakery")).toBeLessThan(line.indexOf("alice/bakery"));
+    expect(line.indexOf("alice/bakery")).toBeLessThan(line.indexOf("has not reported yet"));
+    expect(line).not.toContain('class="card');
     expect(maria).toContain('href="https://maria--forge.test"');
     expect(maria).toMatch(/data-claimed="no"/);
     expect(html).not.toContain("forges-sent");
@@ -228,7 +233,7 @@ describe("the client list", () => {
       expect(html).toContain(`<th scope="col">${col}</th>`);
     const maria = html.slice(html.indexOf('data-compare="maria"'), html.indexOf("</tr>", html.indexOf('data-compare="maria"')));
     expect(maria).toContain('data-use="shared"');
-    expect(maria).toContain("<td>small · 512 MiB, 1 core, 2 GiB</td>");
+    expect(maria).toContain("<td>small · 2 GiB, 1 core, 2 GiB</td>");
     expect(maria).toContain("<td>shared</td>");
     expect(maria).toContain("<td>none yet</td>");
   });
@@ -322,6 +327,44 @@ describe("the client list", () => {
     expect(step.words).toBe("going: last tell 2030-02-03T04:05:06.000Z");
   });
 
+  test("GET /api/v1/forges answers the MCP tool's rows, and an old unclaimed child is flagged", async () => {
+    const made = await spawn({ name: "dusty", apps: ["alice/bakery"], dryRun: false });
+    expect(made.status).toBe(201);
+    // A calm second child, named to sort before dusty: attention first must put dusty ahead of it.
+    expect((await spawn({ name: "calm", apps: ["alice/bakery"], dryRun: false })).status).toBe(201);
+    const file = join(dir, "spawn", "dusty.json");
+    const ledger = JSON.parse(await Bun.file(file).text());
+    ledger.createdAt = new Date(Date.now() - 5 * 86_400_000).toISOString();
+    await Bun.write(file, JSON.stringify(ledger));
+    const before = parent;
+    useChildFetch(before, (url) =>
+      url.startsWith("https://dusty--forge.test/")
+        ? Promise.resolve(Response.json({ claimed: false, lastActivityAt: new Date().toISOString() }))
+        : url.startsWith("https://calm--forge.test/")
+          ? Promise.resolve(Response.json({ claimed: true, lastActivityAt: new Date().toISOString() }))
+          : Promise.reject(new Error("unreachable")),
+    );
+    const api = await fetch(`${parentServers.url}/api/v1/forges`, { headers: { authorization: `Bearer ${adminRw}` } });
+    expect(api.status).toBe(200);
+    const body = (await api.json()) as { items: any[]; next_cursor: null };
+    expect(body.next_cursor).toBeNull();
+    const tool = (await (await mcp(adminRw)).json()) as any;
+    const forges = JSON.parse(tool.result.content[0].text).forges as any[];
+    expect(body.items.map((r) => r.name)).toEqual(forges.map((r) => r.name));
+    const names = body.items.map((r) => r.name);
+    expect(names.indexOf("dusty")).toBeLessThan(names.indexOf("calm"));
+    expect(body.items.find((r) => r.name === "calm").attention).toBeNull();
+    const dustyApi = body.items.find((r) => r.name === "dusty");
+    expect(dustyApi.attention).toBe("unclaimed");
+    expect(dustyApi.claimed).toBe(false);
+    expect(dustyApi).toMatchObject(forges.find((r) => r.name === "dusty"));
+    expect(dustyApi.nextStep.key).toBe("unreported");
+    // Admin only: a non-admin is 403, a signed-out caller 401.
+    const bob = await fetch(`${parentServers.url}/api/v1/forges`, { headers: { authorization: `Bearer ${bobRw}` } });
+    expect(bob.status).toBe(403);
+    expect((await fetch(`${parentServers.url}/api/v1/forges`)).status).toBe(401);
+  });
+
   test("each step in words, and a beat with a bad value loses the field, not the beat", () => {
     const beat = (o: Record<string, unknown>) =>
       parseBeat(JSON.stringify({ name: "maria", at: 1, version: "1.0.0", openProposals: 0, children: 0, ...o }));
@@ -345,12 +388,19 @@ describe("the client list", () => {
 describe("the claim link's markup", () => {
   test("is drawn from the design system and stays one tap to copy", async () => {
     const { claimLinkBody } = await import("../src/web/pages/new-forge.ts");
-    const out = claimLinkBody("https://x.test/claim#abc").text;
+    const out = claimLinkBody("https://x.test/claim#abc", true).text;
     expect(out).not.toContain("claim-link-box");
     expect(out).toContain('id="claim-link"');
     expect(out).toContain('class="row"');
     // The long link wraps rather than ellipsizes: only .setting-list lifts nowrap.
     expect(out).toContain("list setting-list");
     expect(out).toContain("Copy the link");
+  });
+
+  test("offers the forges sent only to an admin: /forges is a 404 to anyone else", async () => {
+    const { claimLinkBody } = await import("../src/web/pages/new-forge.ts");
+    expect(claimLinkBody("https://x.test/claim#abc", true).text).toContain('href="/forges"');
+    expect(claimLinkBody("https://x.test/claim#abc", false).text).not.toContain('href="/forges"');
+    expect(claimLinkBody("https://x.test/claim#abc", false).text).not.toContain("Forges you sent");
   });
 });

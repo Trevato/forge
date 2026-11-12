@@ -19,7 +19,7 @@ const read = (file: string): string => readFileSync(join(root, file), "utf8");
 const readers: Record<string, Record<string, string>> = {
   "src/actions/migrate.ts": { AT_REPOSITORY_LIMIT, NO_SUCH_AGENT },
   "src/actions/repos.ts": { AT_REPOSITORY_LIMIT },
-  "src/web/pages/apps.ts": { NO_SUCH_AGENT },
+  "src/actions/apps.ts": { NO_SUCH_AGENT },
   "src/fleet/verbs.ts": { AGENT_NOT_ON_CREW },
   "src/tui/screens/common.ts": { AGENT_NOT_ON_CREW },
   "src/http/mcp/tools/assign.ts": { AGENT_NOT_ON_CREW },

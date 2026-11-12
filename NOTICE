@@ -1,0 +1,10 @@
+forge
+Copyright (C) 2026 Trevor Dobbertin
+
+Licensed under the GNU Affero General Public License, version 3. See LICENSE.
+
+This repository also contains third-party files under their own licenses:
+
+- DejaVu fonts, src/web/og/vendor/DejaVu*.ttf: see src/web/og/vendor/DEJAVU-LICENSE.
+- resvg, src/web/og/vendor/resvg.*: Mozilla Public License 2.0, https://github.com/thx/resvg-js and https://github.com/linebender/resvg.
+- ghostty-web 0.4.0, src/web/vendor/ghostty-web/: MIT License, Copyright (c) 2025 Coder, https://github.com/coder/ghostty-web; see src/web/vendor/ghostty-web/LICENSE.

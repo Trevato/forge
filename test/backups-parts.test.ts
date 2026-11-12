@@ -13,6 +13,7 @@ import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { startSnapshots, type SnapshotsHandle } from "../src/snapshot/service.ts";
 import { recordDrill } from "../src/snapshot/drills.ts";
+import { forgetReads, keepReads } from "../src/snapshot/bucket.ts";
 import { dirStore } from "../src/snapshot/store.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
@@ -73,7 +74,7 @@ test("the page carries none of the old classes, and keeps its words, links and f
   expect(page).toContain('href="/settings/backups"');
 });
 
-test("the restore command is a scrollable pre in the card body, not in the foot", async () => {
+test("the restore command is a scrollable pre in the Snapshots block, not in a box", async () => {
   const page = await get();
   const pre = /<pre[^>]*>[^]*?<\/pre>/.exec(page)?.[0] ?? "";
   expect(pre).toContain('class="restore-command"');
@@ -81,10 +82,67 @@ test("the restore command is a scrollable pre in the card body, not in the foot"
   expect(pre).toContain('tabindex="0"');
   expect(pre).toContain("aria-label=");
   expect(pre).toContain("bun run src/snapshot/restore.ts");
-  const at = page.indexOf(pre);
-  const body = page.lastIndexOf('class="card-body"', at);
-  const foot = page.lastIndexOf('class="card-foot"', at);
-  expect(body).toBeGreaterThan(foot);
+  const from = page.indexOf("<h2>Snapshots</h2>");
+  expect(from).toBeGreaterThan(-1);
+  const block = page.slice(from, page.indexOf("</section>", from));
+  expect(block).toContain(pre);
+  expect(block).toContain('id="snapshots"');
+  expect(page).not.toContain('class="card');
+});
+
+test("snapshots are rows under a heading, and no section is a card (#9708)", async () => {
+  await svc.now();
+  const page = await get();
+  const main = page.slice(page.indexOf("<main"), page.indexOf("</main>"));
+  expect(main).toContain('<ul class="list setting-list" id="snapshots">');
+  expect(main).toContain('class="row-title"');
+  for (const h of ["Where and when", "Snapshots", "Destination", "Off-box mirror"]) expect(main).toContain(`<h2>${h}</h2>`);
+  for (const boxed of ['class="card', "card-head", "card-body", 'class="empty']) expect(main).not.toContain(boxed);
+  expect(main).toContain('id="backups-live" data-live="backup.*" data-live-src="/settings/backups/live"');
+});
+
+test("Lanes and Failure domains are headed sections, not cards (#9708)", async () => {
+  keepReads(root, [
+    { lane: "primary", where: "bucket/forge", offBox: true, newestAt: new Date().toISOString(), newestName: "n", newestBytes: 5, count: 1, readAt: new Date().toISOString() },
+  ]);
+  try {
+    const page = await get();
+    const lanes = page.slice(page.indexOf("<h2>Lanes</h2>"));
+    expect(page).toContain("<h2>Lanes</h2>");
+    expect(lanes.slice(0, lanes.indexOf("</section>"))).toContain('id="backup-lanes"');
+    const domains = page.slice(page.indexOf("<h2>Failure domains</h2>"));
+    expect(page).toContain("<h2>Failure domains</h2>");
+    expect(domains.slice(0, domains.indexOf("</section>"))).toContain('id="resilience-list"');
+    expect(page).not.toContain('class="card');
+  } finally {
+    forgetReads(root);
+  }
+});
+
+test("with no snapshot store the page says so under a plain heading, not in an empty-state box (#9708)", async () => {
+  const bare = mkdtempSync(join(tmpdir(), "forge-backups-bare-"));
+  const other = createApp({ dataDir: bare, port: 0 });
+  const made = await createUser(other.db, { origin: "seed", trusted: true, username: "bob", email: "bob@forge.local", password: "a-good-passphrase", adminIfFirst: true });
+  if (!made.ok) throw new Error(made.error);
+  const srv = await serve(other);
+  try {
+    const r = await fetch(`${srv.url}/signin`, {
+      method: "POST",
+      headers: { origin: srv.url },
+      body: new URLSearchParams({ username: "bob", password: "a-good-passphrase" }),
+      redirect: "manual",
+    });
+    const own = (r.headers.get("set-cookie") ?? "").split(";")[0]!;
+    const page = await (await fetch(`${srv.url}/settings/backups`, { headers: { cookie: own } })).text();
+    const from = page.indexOf("<h2>No snapshots are taken</h2>");
+    expect(from).toBeGreaterThan(-1);
+    expect(page.slice(from, page.indexOf("</section>", from))).toContain("This forge was given nowhere to put them.");
+    for (const boxed of ['class="card', 'class="empty', "card-body"]) expect(page).not.toContain(boxed);
+  } finally {
+    srv.stop();
+    other.close();
+    rmSync(bare, { recursive: true, force: true });
+  }
 });
 
 test("the paragraphs that can carry a long id, reason or step wrap", async () => {

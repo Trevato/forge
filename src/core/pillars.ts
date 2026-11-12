@@ -299,7 +299,7 @@ function mergedPulls(
   const rows = db
     .query<{ id: string; body: string; at: string; oid: string | null }, string[]>(
       `SELECT i.id, i.body, p.merged_at AS at, p.merged_oid AS oid
-         FROM pull p JOIN issue i ON i.id = p.issue_id
+         FROM pull p INDEXED BY pull_merged CROSS JOIN issue i ON i.id = p.issue_id
         WHERE i.repo_id = ?1 AND p.merged_at IS NOT NULL AND p.merged_at >= ?2
           AND ${sealedClause("i", scope, 3)}
         ORDER BY p.merged_at DESC LIMIT 1000`,
@@ -380,33 +380,13 @@ export function askToLiveByPillar(
   scope: SealedScope = {},
 ): AskToLiveCount[] {
   const { pulls, issues } = mergedPulls(db, repoId, since, scope);
-  // Read from the window's merged pulls up, by `deploy_pull_issue` and the run's key,
-  // not from every run the repository ever made.
-  const live = new Map<string, string[]>();
-  const ids = pulls.map((pull) => pull.id);
-  for (let i = 0; i < ids.length; i += CHUNK) {
-    const chunk = ids.slice(i, i + CHUNK);
-    for (const row of db
-      .query<{ id: string; at: string }, string[]>(
-        `SELECT dp.issue_id AS id, COALESCE(r.serving_at, r.finished_at) AS at
-           FROM deploy_pull dp CROSS JOIN run r ON r.id = dp.run_id
-          WHERE dp.issue_id IN (${chunk.map((_, n) => `?${n + 3}`).join(",")})
-            AND r.repo_id = ?1 AND r.kind = 'deploy' AND r.env = 'production' AND r.state = 'ok'
-            AND COALESCE(r.serving_at, r.finished_at) >= ?2
-          ORDER BY COALESCE(r.serving_at, r.finished_at), r.id`,
-      )
-      .all(repoId, since, ...chunk)) {
-      const list = live.get(row.id) ?? [];
-      list.push(row.at);
-      live.set(row.id, list);
-    }
-  }
+  const firstLive = firstLiveOf(db, repoId, since);
   // One entry per asked issue: its first time live over every pull that closed it.
   const first = new Map<number, { pillar: string; createdAt: string; at: string }>();
   for (const pull of pulls) {
     const ask = pillarOf(pull.closes, issues, served);
     if (ask === undefined) continue;
-    const at = live.get(pull.id)?.find((t) => t >= pull.mergedAt);
+    const at = firstLive(pull.id, pull.mergedAt);
     if (at === undefined) continue;
     const seen = first.get(ask.number);
     if (seen === undefined || at < seen.at)
@@ -440,6 +420,61 @@ export function askToLiveByPillar(
 }
 
 const round1 = (n: number): number => Math.round(n * 10) / 10;
+
+/**
+ * When a merged pull first went live: the first successful production deploy
+ * since `since`, at or after its merge, that carries it. `deploy_pull` is
+ * cumulative (every deploy records every merged pull its commit contains), so
+ * reading a pull's rows reads one per later deploy: on trevato/forge, 992
+ * pulls by 644 deploys in a week were ~320k rows and 1.8 s (#8381). So the
+ * window's deploys are read once in time order, and each pull probes the
+ * first few from its merge on by primary key — the first one tried almost
+ * always carries it. A pull none of those carry (not live yet, or behind a
+ * lagging deploy) reads its own rows instead, which are few or none. Three
+ * statements however many pulls.
+ */
+function firstLiveOf(
+  db: Database,
+  repoId: string,
+  since: string,
+): (pullId: string, mergedAt: string) => string | undefined {
+  const deploys = db
+    .query<{ id: string; at: string }, [string, string]>(
+      `SELECT id, COALESCE(serving_at, finished_at) AS at FROM run
+        WHERE repo_id = ?1 AND kind = 'deploy' AND env = 'production' AND state = 'ok'
+          AND COALESCE(serving_at, finished_at) >= ?2
+        ORDER BY 2, id`,
+    )
+    .all(repoId, since);
+  const carries = db.query<{ one: number }, [string, string]>(
+    "SELECT 1 AS one FROM deploy_pull WHERE run_id = ?1 AND issue_id = ?2",
+  );
+  const rest = db.query<{ at: string | null }, [string, string, string]>(
+    `SELECT MIN(COALESCE(r.serving_at, r.finished_at)) AS at
+       FROM deploy_pull dp CROSS JOIN run r ON r.id = dp.run_id
+      WHERE dp.issue_id = ?3 AND r.repo_id = ?1 AND r.kind = 'deploy'
+        AND r.env = 'production' AND r.state = 'ok'
+        AND COALESCE(r.serving_at, r.finished_at) >= ?2`,
+  );
+  return (pullId, mergedAt) => {
+    // The first deploy at or after the merge: ISO instants sort as strings.
+    let lo = 0;
+    let hi = deploys.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (deploys[mid]!.at < mergedAt) lo = mid + 1;
+      else hi = mid;
+    }
+    for (let i = lo; i < Math.min(lo + PROBES, deploys.length); i++)
+      if (carries.get(deploys[i]!.id, pullId) !== null) return deploys[i]!.at;
+    if (lo + PROBES >= deploys.length) return undefined;
+    const from = mergedAt > since ? mergedAt : since;
+    return rest.get(repoId, from, pullId)?.at ?? undefined;
+  };
+}
+
+/** Deploys a pull probes from its merge on before it reads its own rows. */
+const PROBES = 4;
 
 /** Of these repositories, the ones with an open issue titled like an umbrella: one read. */
 export function reposWithUmbrellas(

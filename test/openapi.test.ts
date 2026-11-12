@@ -20,8 +20,11 @@ test("every http route the manifest names is described", () => {
     }),
   );
   expect(named.length).toBeGreaterThan(5);
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
+  // The sign-up and sign-in pages are HTML for a person, not part of the API.
+  const pages = new Set(["/signup", "/signin"]);
   for (const [method, path] of named) {
+    if (pages.has(path)) continue;
     const p = path.replace(/\{(\w+)\}/g, "{$1}");
     expect(doc.paths[p]?.[method], `${method} ${p}`).toBeDefined();
   }
@@ -30,7 +33,7 @@ test("every http route the manifest names is described", () => {
 });
 
 test("every described route is registered in the router", () => {
-  const src = ["src/http/server.ts", "src/http/api.ts", "src/http/mcp.ts", "src/http/passport_edge.ts", "src/http/feed.ts", "src/http/checks_recheck.ts",
+  const src = ["src/http/server.ts", "src/http/api.ts", "src/http/mcp.ts", "src/http/passport_edge.ts", "src/http/feed.ts", "src/http/checks_recheck.ts", "src/contract/served.ts",
     ...readdirSync("src/http/api").map((f) => `src/http/api/${f}`)]
     .map((f) => readFileSync(f, "utf8"))
     .join("\n")
@@ -54,9 +57,9 @@ test("every described route is registered in the router", () => {
 });
 
 test("the map, plan and dependency routes are described", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const R = "/api/v1/repos/{owner}/{name}";
-  expect(doc.paths[`${R}/map`].get.security).toBeUndefined();
+  expect(doc.paths[`${R}/map`].get.security).toEqual([]);
   expect(doc.paths[`${R}/plan`].post.requestBody.content["application/json"].schema.properties.issues.type).toBe("array");
   expect(doc.paths[`${R}/issues/{number}/dependencies`].post.security).toBeDefined();
   const del = doc.paths[`${R}/issues/{number}/dependencies/{blocker}`].delete;
@@ -64,7 +67,7 @@ test("the map, plan and dependency routes are described", () => {
 });
 
 test("starting a migration and reading its job are described", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const start = doc.paths["/api/v1/migrate"].post;
   expect(start.security).toBeDefined();
   expect(Object.keys(start.requestBody.content["application/json"].schema.properties)).toEqual(
@@ -76,11 +79,11 @@ test("starting a migration and reading its job are described", () => {
 });
 
 test("listing issues and pulls is described with the query the handlers read", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const R = "/api/v1/repos/{owner}/{name}";
   for (const kind of ["issues", "pulls"]) {
     const get = doc.paths[`${R}/${kind}`].get;
-    expect(get.security).toBeUndefined();
+    expect(get.security).toEqual([]);
     const q = get.parameters.filter((p: any) => p.in === "query");
     const base = ["state", "limit", "cursor", "label", "author"];
     expect(q.map((p: any) => p.name)).toEqual(kind === "issues" ? [...base, "fields"] : base);
@@ -92,7 +95,7 @@ test("listing issues and pulls is described with the query the handlers read", (
 });
 
 test("reading one pull describes its diff switch", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const get = doc.paths["/api/v1/repos/{owner}/{name}/pulls/{number}"].get;
   const diff = get.parameters.find((p: any) => p.in === "query" && p.name === "diff");
   expect(diff.schema.enum).toEqual(["0", "1"]);
@@ -100,21 +103,21 @@ test("reading one pull describes its diff switch", () => {
 });
 
 test("reading and closing one issue and reading one pull are described", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const R = "/api/v1/repos/{owner}/{name}";
   const issue = doc.paths[`${R}/issues/{number}`];
-  expect(issue.get.security).toBeUndefined();
+  expect(issue.get.security).toEqual([]);
   expect(issue.patch.security).toBeDefined();
   const props = issue.patch.requestBody.content["application/json"].schema.properties;
   expect(Object.keys(props).sort()).toEqual(["into", "reason", "state"]);
   expect(props.into.type).toBe("integer");
   expect(issue.patch.parameters.find((p: any) => p.name === "number").in).toBe("path");
-  expect(doc.paths[`${R}/pulls/{number}`].get.security).toBeUndefined();
+  expect(doc.paths[`${R}/pulls/{number}`].get.security).toEqual([]);
 });
 
 test("making and listing apps is described with every field the route reads", () => {
-  const doc = openapi("https://f.test", "1") as any;
-  expect(doc.paths["/api/v1/apps"].get.security).toBeUndefined();
+  const doc = openapi("https://f.test", "1", "admin") as any;
+  expect(doc.paths["/api/v1/apps"].get.security).toEqual([]);
   const post = doc.paths["/api/v1/apps"].post;
   expect(post.security).toBeDefined();
   expect(post.responses["201"]).toBeDefined();
@@ -133,7 +136,7 @@ test("making and listing apps is described with every field the route reads", ()
 });
 
 test("the caller's own routes are described, pinning included", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const want: Record<string, string[]> = {
     "/api/v1/user": ["get", "patch"],
     "/api/v1/user/keys": ["get", "post"],
@@ -171,7 +174,7 @@ test("the caller's own routes are described, pinning included", () => {
 });
 
 test("the boards routes are described", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const B = "/api/v1/boards";
   const want: [string, string][] = [
     ["get", B], ["get", `${B}/{slug}`], ["put", `${B}/{slug}`], ["delete", `${B}/{slug}`],
@@ -185,7 +188,7 @@ test("the boards routes are described", () => {
 });
 
 test("a repository's reads are described: branches, commits, contents, labels, milestones", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const R = "/api/v1/repos/{owner}/{name}";
   for (const path of ["branches", "commits", "commits/{oid}", "contents", "labels", "milestones", "milestones/{number}"])
     expect(doc.paths[`${R}/${path}`]?.get, path).toBeDefined();
@@ -196,7 +199,7 @@ test("a repository's reads are described: branches, commits, contents, labels, m
 });
 
 test("an issue's teams and labels, a pull's labels and an issue's private repository are described", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const R = "/api/v1/repos/{owner}/{name}";
   for (const [method, path] of [
     ["get", `${R}/issues/{number}/teams`],
@@ -207,7 +210,7 @@ test("an issue's teams and labels, a pull's labels and an issue's private reposi
   ] as const) expect(doc.paths[path]?.[method], `${method} ${path}`).toBeDefined();
   expect(doc.paths[`${R}/issues/{number}/teams`].put.requestBody.content["application/json"].schema.properties.teams.type).toBe("array");
   expect(doc.paths[`${R}/issues/{number}/private`].post.responses["201"]).toBeDefined();
-  expect(doc.paths[`${R}/issues/{number}/teams`].get.security).toBeUndefined();
+  expect(doc.paths[`${R}/issues/{number}/teams`].get.security).toEqual([]);
   expect(doc.paths[`${R}/pulls/{number}/labels`].put.security).toBeDefined();
 });
 
@@ -221,7 +224,7 @@ test("no method and path is described twice, so no row is dead", () => {
 });
 
 test("the front reads say what they answer and refuse", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   expect(JSON.stringify(doc.paths["/api/v1/here"].get)).toContain("not_found");
   expect(JSON.stringify(doc.paths["/api/v1/forge"].get)).toContain("not_found");
   expect(doc.paths["/api/v1/forge"].get.summary).toContain("lastActivityAt");
@@ -230,7 +233,7 @@ test("the front reads say what they answer and refuse", () => {
 });
 
 test("signing up, signing in and the first admin are described", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const want: [string, string, number][] = [
     ["post", "/api/v1/users", 201],
     ["post", "/api/v1/sessions", 201],
@@ -242,7 +245,7 @@ test("signing up, signing in and the first admin are described", () => {
     const op = doc.paths[path]?.[method];
     expect(op, `${method} ${path}`).toBeDefined();
     expect(op.responses[String(status)], `${method} ${path} ${status}`).toBeDefined();
-    expect(op.security, `${method} ${path}`).toBeUndefined();
+    expect(op.security, `${method} ${path}`).toEqual([]);
   }
   const props = (p: string) => doc.paths[p].post.requestBody.content["application/json"].schema.properties;
   expect(props("/api/v1/users").password.type).toBe("string");
@@ -270,7 +273,7 @@ test("the served document carries the sign-up and sign-in routes", async () => {
 });
 
 test("an app's routes are described, and env values are never read back", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const A = "/api/v1/repos/{owner}/{name}/app";
   const want: Record<string, string[]> = {
     [A]: ["get", "post", "patch", "delete"],
@@ -293,7 +296,7 @@ test("an app's routes are described, and env values are never read back", () => 
 });
 
 test("triage, confirming a wait, a limb and proposal tokens are described", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const R = "/api/v1/repos/{owner}/{name}";
   for (const [path, status] of [
     [`${R}/reports/{id}/accept`, "201"],
@@ -314,7 +317,7 @@ test("triage, confirming a wait, a limb and proposal tokens are described", () =
 });
 
 test("browsing an origin's code is described, and a refusal matches what the route answers", async () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const B = "/api/v1/user/origins/{id}/browse/{owner}/{name}";
   for (const tail of ["branches", "tags", "labels", "paths/{ref}", "tree/{ref}", "tree/{ref}/{path}", "blob/{ref}/{path}", "commits", "commits/{sha}"]) {
     const op = doc.paths[`${B}/${tail}`]?.get;
@@ -347,7 +350,7 @@ test("browsing an origin's code is described, and a refusal matches what the rou
 });
 
 test("mirroring and forking from an origin, its job and stream, and origin apps are described", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const want: [string, string][] = [
     ["/api/v1/user/origins/{id}/mirror", "post"],
     ["/api/v1/user/origins/{id}/fork", "post"],
@@ -368,7 +371,7 @@ test("mirroring and forking from an origin, its job and stream, and origin apps 
 });
 
 test("the caller's origins are described, from listing to removal, with no token in the document", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const O = "/api/v1/user/origins";
   const want: Record<string, string[]> = {
     [O]: ["get", "post"],
@@ -386,7 +389,7 @@ test("the caller's origins are described, from listing to removal, with no token
 });
 
 test("the admin's writes are described: a capacity setting, a limit and a team", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   for (const path of ["capacity/{key}", "limits/{key}", "teams/{slug}"]) {
     const put = doc.paths[`/api/v1/admin/${path}`]?.put;
     expect(put, path).toBeDefined();
@@ -398,7 +401,7 @@ test("the admin's writes are described: a capacity setting, a limit and a team",
 });
 
 test("a pull comment, a pull variant, a steered run and a prompt run are described", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const R = "/api/v1/repos/{owner}/{name}";
   for (const path of ["pulls/{number}/comments", "pulls/{number}/variant", "runs/{id}/steer", "prompts/{id}/run"]) {
     expect(doc.paths[`${R}/${path}`]?.post?.security, path).toBeDefined();
@@ -410,7 +413,7 @@ test("a pull comment, a pull variant, a steered run and a prompt run are describ
 });
 
 test("a person's sign-ins and ending one are described, with no session secret", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const list = doc.paths["/api/v1/users/{username}/signins"]?.get;
   const end = doc.paths["/api/v1/users/{username}/sessions/{id}"]?.delete;
   expect(list).toBeDefined();
@@ -424,7 +427,7 @@ test("a person's sign-ins and ending one are described, with no session secret",
 });
 
 test("a repository's code writes are described: branches and contents", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const R = "/api/v1/repos/{owner}/{name}";
   expect(doc.paths[`${R}/branches`]?.post).toBeDefined();
   expect(doc.paths[`${R}/branches/{branch}`]?.delete).toBeDefined();
@@ -434,7 +437,7 @@ test("a repository's code writes are described: branches and contents", () => {
 });
 
 test("the contents row names the refusals of its own handler, protection and size caps included", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const R = "/api/v1/repos/{owner}/{name}";
   const text = JSON.stringify(doc.paths[`${R}/contents`].post.responses);
   expect(text).toContain("path_conflict");
@@ -443,7 +446,7 @@ test("the contents row names the refusals of its own handler, protection and siz
 });
 
 test("the tell row names its body, its answer and the refusals of its handler", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const op = doc.paths["/api/v1/feed/tells"]?.post;
   expect(op).toBeDefined();
   expect(op.responses["201"]).toBeDefined();
@@ -453,7 +456,7 @@ test("the tell row names its body, its answer and the refusals of its handler", 
 });
 
 test("the origin applications are described, and a client secret is written, never read back", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const list = doc.paths["/api/v1/user/origin-apps"];
   const add = list.post;
   expect(add.requestBody).toBeDefined();
@@ -470,7 +473,7 @@ test("the origin applications are described, and a client secret is written, nev
 });
 
 test("labels made and removed, a commit's check and a file read by path are described", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const R = "/api/v1/repos/{owner}/{name}";
   const make = doc.paths[`${R}/labels`].post;
   expect(make.security).toBeDefined();
@@ -480,15 +483,15 @@ test("labels made and removed, a commit's check and a file read by path are desc
   expect(del.security).toBeDefined();
   expect(del.responses["204"]).toBeDefined();
   const check = doc.paths[`${R}/commits/{oid}/check`].get;
-  expect(check.security).toBeUndefined();
+  expect(check.security).toEqual([]);
   expect(check.parameters.find((p: any) => p.name === "oid").in).toBe("path");
   const read = doc.paths[`${R}/contents/{path}`].get;
-  expect(read.security).toBeUndefined();
+  expect(read.security).toEqual([]);
   expect(read.parameters.map((p: any) => p.name)).toEqual(["owner", "name", "path", "ref"]);
 });
 
 test("the feed, chips and asks routes are described, and the bulk default is a preview", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const want: Record<string, string[]> = {
     "/api/v1/feed": ["get"],
     "/api/v1/feed/chips": ["get", "post"],
@@ -514,7 +517,7 @@ test("the feed, chips and asks routes are described, and the bulk default is a p
 
 test("every feed and asks route src/http/feed.ts registers is described", () => {
   const src = readFileSync("src/http/feed.ts", "utf8");
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   const registered = [...src.matchAll(/router\.add\("(\w+)",\s*"([^"]+)"/g)].filter((m) => /^\/api\/v1\/(feed|asks)\b/.test(m[2]!))
     .map((m) => [m[1]!.toLowerCase(), m[2]!.replace(/:(\w+)/g, "{$1}")] as const);
   expect(registered.length).toBeGreaterThan(8);
@@ -524,11 +527,11 @@ test("every feed and asks route src/http/feed.ts registers is described", () => 
 test("the served document is tagged by version and origin and answers 304 to its tag", async () => {
   const { openapiText } = await import("../src/contract/served.ts");
   const { weakEtag } = await import("../src/http/etag.ts");
-  const a = openapiText("https://a.example", "1");
-  expect(openapiText("https://a.example", "1")).toBe(a);
+  const a = openapiText("https://a.example", "1", "admin");
+  expect(openapiText("https://a.example", "1", "admin")).toBe(a);
   expect(a.etag).toBe(weakEtag(a.text));
-  expect(openapiText("https://a.example", "2").etag).not.toBe(a.etag);
-  expect(openapiText("https://b.example", "1").etag).not.toBe(a.etag);
+  expect(openapiText("https://a.example", "2", "admin").etag).not.toBe(a.etag);
+  expect(openapiText("https://b.example", "1", "admin").etag).not.toBe(a.etag);
 
   const dir = await mkdtemp(join(tmpdir(), "forge-openapi-"));
   const app = createApp({ dataDir: dir, port: 0 });
@@ -549,7 +552,7 @@ test("the served document is tagged by version and origin and answers 304 to its
 });
 
 test("people, organizations and agents are described", () => {
-  const doc = openapi("https://f.test", "1") as any;
+  const doc = openapi("https://f.test", "1", "admin") as any;
   for (const path of [
     "/api/v1/users/{username}",
     "/api/v1/users/{username}/repos",

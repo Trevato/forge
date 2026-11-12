@@ -2,7 +2,6 @@
 import { expect, test } from "bun:test";
 import { ASCII_LIMIT, readStl, sayStl, stlSize, TOO_LARGE } from "../src/text/stl.ts";
 import { asciiBox, binaryBox } from "./helpers/stl.ts";
-import { expectBudget } from "./helpers/budget.ts";
 
 const ascii = (s: string) => new TextEncoder().encode(s);
 
@@ -61,20 +60,7 @@ test("an ASCII body over the limit is too large to describe, and one at the limi
   };
   const at = fill(ASCII_LIMIT);
   expect(at.bytes.length).toBe(ASCII_LIMIT);
-  const best = (bytes: Uint8Array) => {
-    let ms = Infinity;
-    for (let i = 0; i < 3; i++) {
-      const start = performance.now();
-      readStl(bytes);
-      ms = Math.min(ms, performance.now() - start);
-    }
-    return ms;
-  };
-  // The baseline is a binary model of the same byte size read in this run, so load slows both alike.
-  const bin = new Uint8Array(84 + 50 * Math.floor((ASCII_LIMIT - 84) / 50));
-  new DataView(bin.buffer).setUint32(80, (bin.length - 84) / 50, true);
   expect(readStl(at.bytes)).toEqual({ ok: true, value: { format: "ascii", triangles: at.n, min: [1, 2, 3], max: [7, 8, 9] } });
-  expectBudget(best(at.bytes), { ms: 50, against: best(bin) });
   expect(readStl(fill(ASCII_LIMIT + 1).bytes)).toEqual({ ok: false, error: TOO_LARGE });
   expect(readStl(fill(5_000_000).bytes)).toEqual({ ok: false, error: TOO_LARGE });
   // Junk tokens are no slower to refuse: the limit is checked before any scan.

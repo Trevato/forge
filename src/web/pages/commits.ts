@@ -10,6 +10,9 @@
  * list can do neither, so the live browse pages by cursor and says so.
  */
 
+import { immutableWhenAddressed } from "../../http/addressed.ts";
+import { checkOfCommit, verdictsOfCommits } from "../../actions/runs.ts";
+import type { CommitCheck } from "../../checks/commit_check.ts";
 import { diffCommit, type Diff } from "../../git/diff.ts";
 import { isSafeOid, isSafeRef, isSafeTreePath } from "../../git/guard.ts";
 import { commitLog } from "../../git/read.ts";
@@ -27,13 +30,11 @@ import { localScope, type RepoScope } from "../scope.ts";
 import {
   avatar,
   badge,
-  card,
   empty,
-  icon,
-  listCard,
   messageText,
   originTag,
   pager,
+  runStateBadge,
   sha,
   time,
 } from "../ui.ts";
@@ -46,6 +47,16 @@ import {
 } from "./refs.ts";
 
 const PER_PAGE = 30;
+
+/**
+ * A commit's subject, body and author are the writer's words, so inside
+ * `[data-commits]` a row wraps them (a long word breaks anywhere) in place of
+ * the list's one-line ellipsis, and the page never scrolls sideways at 390 px.
+ * A diff keeps scrolling inside its own `.diff-body`. No new class.
+ */
+export const COMMITS_CSS = `[data-commits] { overflow-wrap: anywhere; }
+[data-commits] .row-title, [data-commits] .row-meta { white-space: normal; overflow: visible; text-overflow: clip; }
+[data-commits] .row { align-items: flex-start; }`;
 
 /** Infinity, 1e300 and NaN all collapse to page 1 — never a bogus skip. */
 function pageNumber(raw: string | null): number {
@@ -62,40 +73,71 @@ function pageNumber(raw: string | null): number {
  * it wears that forge's mark instead of a local avatar — the same rule every
  * imported author follows.
  */
-export function commitRows(scope: RepoScope, commits: readonly Commit[]): Html {
-  const glyph = scope.origin?.kind ?? scope.repo?.origin?.kind ?? "globe";
-  return listCard(
-    commits.map(
-      (commit) =>
-        html`<li>
-          <a
-            class="row"
-            data-nav
-            tabindex="-1"
-            href="${scope.base}/commit/${commit.oid}"
+export function commitRows(
+  scope: RepoScope,
+  commits: readonly Commit[],
+  verdicts: ReadonlyMap<string, CommitCheck> = new Map(),
+): Html {
+  return html`<div data-commits><ul class="list">${
+    commits.map((commit) => {
+      const verdict = verdicts.get(commit.oid);
+      // The message is the row's one link; the check is a plain badge here and
+      // its run is reachable from the commit page.
+      return html`<li>
+        <a
+          class="row"
+          data-nav
+          tabindex="-1"
+          href="${scope.base}/commit/${commit.oid}"
+          ><span class="row-main"
+            ><span class="row-title" title="${commit.subject}">${commit.subject}</span>
+            <span class="row-meta"
+              >${commit.author} committed
+              ${time(commit.date)}${when(
+                commit.parents.length > 1,
+                () => html` · ${badge("merge", { variant: "secondary" })}`,
+              )}</span
+            ></span
           >
-            <span class="row-lead"
-              >${scope.kind === "origin" && commit.login
-                ? icon(glyph)
-                : avatar(commit.author)}</span
-            >
-            <span class="row-main">
-              <span class="row-title" title="${commit.subject}"
-                >${commit.subject}</span
-              >
-              <span class="row-meta"
-                >${commit.author} committed
-                ${time(commit.date)}${when(
-                  commit.parents.length > 1,
-                  () => html` · ${badge("merge", { variant: "secondary" })}`,
-                )}</span
-              >
-            </span>
-            <span class="row-trail">${sha(commit.oid)}</span>
-          </a>
-        </li>`,
-    ),
-  );
+          <span class="row-trail"
+            >${when(
+              verdict !== undefined && verdict.runId !== null,
+              () =>
+                html`${runStateBadge(verdict!.state === "ok" ? "ok" : "failed", "check")} `,
+            )}${sha(commit.oid)}</span
+          >
+        </a>
+      </li>`;
+    })
+  }</ul></div>`;
+}
+
+/** A commit's check in a sentence; on red, the first failing step as the check named it. */
+export function checkSentence(scope: RepoScope, check: CommitCheck): Html {
+  const run = check.runId === null ? null : `${scope.base}/runs/${check.runId}`;
+  const via =
+    check.checkedCommit === check.commit
+      ? ""
+      : ` (the check of ${check.checkedCommit.slice(0, 7)}, which contains it)`;
+  const link = (text: string): Html =>
+    run === null ? html`${text}` : html`<a href="${run}">${text}</a>`;
+  switch (check.state) {
+    case "ok":
+      return html`${runStateBadge("ok", "check")} ${link("The check passed")}${via}.`;
+    case "failed": {
+      const step = check.summary.split("\n")[0]?.trim() ?? "";
+      return html`${runStateBadge("failed", "check")} ${link("The check failed")}${via}${when(
+        step !== "",
+        () => html`: first failing ${step}`,
+      )}.`;
+    }
+    case "pending":
+      return html`${runStateBadge("running", "check")} ${link("The check is running")}${via}.`;
+    case "superseded":
+      return html`${runStateBadge("cancelled", "check")} The check was superseded and none will follow.`;
+    default:
+      return html`No check ran on this commit.`;
+  }
 }
 
 /** One commit's header card and its diff. */
@@ -104,37 +146,35 @@ export function renderCommit(
   commit: Commit,
   diff: Diff,
   syntax: SyntaxMap,
+  check: CommitCheck | null = null,
 ): Html {
-  const head: Html = card(
-    html`${when(
-        commit.body.trim() !== "",
-        () => html`<div class="card-body">${messageText(commit.body)}</div>`,
+  const verdict: Html =
+    check !== null && check.state !== "none"
+      ? html`<p class="small">${checkSentence(scope, check)}</p>`
+      : html``;
+  const head: Html = html`<h2>${commit.subject}</h2>
+    ${verdict}
+    ${when(
+      commit.body.trim() !== "",
+      () => messageText(commit.body),
+    )}
+    <p class="bar small muted">
+      ${commit.login
+        ? originTag(
+            commit.login,
+            scope.origin?.kind ?? scope.repo?.origin?.kind ?? "globe",
+          )
+        : avatar(commit.author)}
+      <span>${commit.author} committed ${time(commit.date)}</span>
+      ${sha(commit.oid)}
+      ${when(
+        commit.parents.length > 1,
+        () => html`${badge("merge", { icon: "merge" })}`,
       )}
-      <div class="card-body bar small muted">
-        ${commit.login
-          ? originTag(
-              commit.login,
-              scope.origin?.kind ?? scope.repo?.origin?.kind ?? "globe",
-            )
-          : avatar(commit.author)}
-        <span>${commit.author} committed ${time(commit.date)}</span>
-        ${sha(commit.oid)}
-        ${when(
-          commit.parents.length > 1,
-          () => html`${badge("merge", { icon: "merge" })}`,
-        )}
-        <span class="spacer"></span>
-        <a
-          class="btn"
-          data-size="sm"
-          data-variant="outline"
-          href="${scope.base}/tree/${commit.oid}"
-          >${icon("repo")}Browse files</a
-        >
-      </div>`,
-    { head: html`<h2>${commit.subject}</h2>`, pad: false },
-  );
-  return html`<div class="mt">${head}</div>
+      <span class="spacer"></span>
+      <a href="${scope.base}/tree/${commit.oid}">Browse files</a>
+    </p>`;
+  return html`<div data-commits>${head}</div>
     <div class="mt">
       ${renderDiff(diff, {
         syntax,
@@ -221,6 +261,7 @@ export async function commitsPage(ctx: Ctx): Promise<Response> {
       body: html`${scopeHeader(ctx, scope, "commits")}${switcher}
       ${noCommits(num > 1)} ${liveMount({ repo: base })}`,
       scriptJs: liveClientJs,
+      styleCss: COMMITS_CSS,
     });
     notePhase(ctx.request, "render", performance.now() - rendering);
     return response;
@@ -230,7 +271,11 @@ export async function commitsPage(ctx: Ctx): Promise<Response> {
   const hasMore = log.value.length > PER_PAGE;
 
   const body = html`${scopeHeader(ctx, scope, "commits")}${switcher}
-  ${commitRows(scope, commits)}
+  ${commitRows(
+    scope,
+    commits,
+    verdictsOfCommits(ctx.app, ctx.auth.user, repo, commits.map((c) => c.oid)),
+  )}
   ${pager({
     ...(num > 1 ? { prev: query(num - 1) } : {}),
     ...(hasMore ? { next: query(num + 1) } : {}),
@@ -244,6 +289,7 @@ export async function commitsPage(ctx: Ctx): Promise<Response> {
     palette: scope.palette,
     body,
     scriptJs: liveClientJs,
+    styleCss: COMMITS_CSS,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
@@ -264,6 +310,8 @@ export async function commitPage(ctx: Ctx): Promise<Response> {
   if (!log.ok || log.value.length === 0) return notFoundPage(ctx);
   const commit = log.value[0]!;
 
+  // The ancestry walk behind a verdict runs beside the diff, not after it.
+  const checking = checkOfCommit(ctx.app, ctx.auth.user, repo, commit.oid);
   const diffResult = await diffCommit(dir, commit.oid);
   notePhase(ctx.request, "git", performance.now() - reading);
   const diff = diffResult.ok
@@ -273,18 +321,20 @@ export async function commitPage(ctx: Ctx): Promise<Response> {
   const syntax = hunkSyntax(diff);
   notePhase(ctx.request, "highlight", performance.now() - highlighting);
 
+  const checked = await checking;
   const rendering = performance.now();
   const body = html`${scopeHeader(ctx, scope, "commits", { compact: true })}
-  ${renderCommit(scope, commit, diff, syntax)}`;
+  ${renderCommit(scope, commit, diff, syntax, checked.ok ? checked.value : null)}`;
   const response = page({
     ctx,
     title: `${commit.subject} · ${repo.name}`,
     crumbs: scope.crumbs,
     palette: scope.palette,
     body,
+    styleCss: COMMITS_CSS,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
-  return response;
+  return immutableWhenAddressed(ctx.request, ctx.auth.user === undefined, repo, rev, response);
 }
 
 // ---- the live-browse pages ----
@@ -337,6 +387,7 @@ export async function browseCommits(
     crumbs: scope.crumbs,
     palette: scope.palette,
     body,
+    styleCss: COMMITS_CSS,
   });
 }
 
@@ -361,5 +412,6 @@ export async function browseCommit(
     crumbs: scope.crumbs,
     palette: scope.palette,
     body,
+    styleCss: COMMITS_CSS,
   });
 }

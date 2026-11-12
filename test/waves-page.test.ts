@@ -9,7 +9,9 @@ import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { mergedPull, waveNaming } from "./helpers/wave-pulls.ts";
+import { waveRow } from "../src/web/pages/waves.ts";
 import { writeWave, type Wave } from "../src/story/wave.ts";
+import { pullRefs, sizeWords, waveSize } from "../src/story/waves.ts";
 
 const PASSWORD = "a-good-passphrase";
 
@@ -105,8 +107,8 @@ describe("waves page", () => {
     expect(at("Tenth")).toBeGreaterThan(-1);
     expect(at("Tenth")).toBeLessThan(at("Ninth"));
     expect(at("Ninth")).toBeLessThan(at("Zeta"));
-    expect(body).toContain("0.10.0 · 2026-02-01 · Tenth · 0 pulls");
-    expect(body).toContain("0.9.0 · 2026-01-01 · Ninth · 0 pulls");
+    expect(body).toContain("0.10.0 · 2026-02-01 · <span data-wave-size>0 changes in 0 apps<");
+    expect(body).toContain("0.9.0 · 2026-01-01 · <span data-wave-size>0 changes in 0 apps<");
     expect(at("0.10.0 · 2026-02-01")).toBeLessThan(at("0.9.0 · 2026-01-01"));
     expect(body).toContain('href="/alice/pub/waves/0.10.0"');
   });
@@ -226,14 +228,34 @@ describe("waves page", () => {
 
   test("a row counts the pulls this viewer can see, as the wave's page lists them", async () => {
     const body = await (await get("/alice/pub/waves")).text();
-    expect(body).toContain("0.1.0 · 2026-03-05 · Mixed · 2 pulls");
+    expect(body).toContain("0.1.0 · 2026-03-05 · <span data-wave-size>2 changes in 2 apps<");
     const guest = await (await get("/alice/pub/waves", false)).text();
-    expect(guest).toContain("0.1.0 · 2026-03-05 · Mixed · 1 pull<");
-    expect(guest).not.toContain("2 pulls");
+    expect(guest).toContain("0.1.0 · 2026-03-05 · <span data-wave-size>1 change in 1 app<");
+    expect(guest).not.toContain("2 changes");
+    expect(guest).not.toMatch(/\d+ pulls?</);
     expect(guest).not.toContain("Secret work");
     const page = await (await get("/alice/pub/waves/0.1.0", false)).text();
     expect(page).toContain("Shown work");
+    expect(page).toContain("data-wave-size>1 change in 1 app<");
     expect(page).not.toContain("Secret work");
+  });
+
+  test("a row is the headline with the first highlight's why under it, in a list with no card or Waves heading", async () => {
+    const body = await (await get("/alice/pub/waves")).text();
+    expect(body).toContain('<h1 class="sr-only">Waves</h1>');
+    expect(body).not.toContain("<h2>Waves</h2>");
+    expect(body).not.toContain('class="card');
+    expect(body).toMatch(/class="row-title"[^>]*>Tenth<[\s\S]*?class="row-meta">\s*because\s*</);
+    expect(body).not.toContain("title=\"0.10.0 ·");
+  });
+
+  test("a wave whose first why is empty has a row with no sentence and no stray separator", () => {
+    const w = { ...wave("0.9.0", "2026-01-01", "Quiet"), highlights: [{ title: "T", why: "" }] };
+    const r = waveRow(w, "/x", { pulls: 1, apps: 1 }).text;
+    expect(r).toContain("Quiet");
+    expect(r).not.toContain("row-meta");
+    expect(r).toContain("0.9.0 · 2026-01-01 · <span data-wave-size>1 change in 1 app");
+    expect(r).not.toMatch(/·\s*·/);
   });
 
   test("waves.atom titles an entry with the headline", async () => {
@@ -266,5 +288,18 @@ describe("waves page", () => {
     const body = await (await get("/alice/pub/waves")).text();
     expect(body).toContain('href="/alice/pub/waves.atom"');
     expect(body).toContain("application/atom+xml");
+  });
+});
+
+describe("a wave says its size in plain numbers", () => {
+  const url = (n: number, repo = "r") => ({ title: `#${n} P`, url: `https://forge.example/o/${repo}/pulls/${n}` });
+  test("plural, singular, apps counted once each, a repeated pull once", () => {
+    const w = { ...wave("1.0.0", "2026-01-01", "Big"), pulls: [url(1), url(2), url(2), url(3, "s"), url(4, "t")] };
+    expect(sizeWords(waveSize(pullRefs(w)))).toBe("4 changes in 3 apps");
+    const one = { ...wave("1.0.1", "2026-01-01", "Small"), pulls: [url(1)] };
+    expect(waveSize(pullRefs(one))).toEqual({ pulls: 1, apps: 1 });
+    expect(sizeWords(waveSize(pullRefs(one)))).toBe("1 change in 1 app");
+    expect(waveRow(w, "/x", waveSize(pullRefs(w))).text).toContain("4 changes in 3 apps");
+    expect(waveRow(one, "/x", waveSize(pullRefs(one))).text).toContain("1 change in 1 app");
   });
 });

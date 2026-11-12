@@ -18,8 +18,10 @@
  * with what strangers type. Not the forge's health: that is `kernel/vitals`.
  */
 
+import { during } from "../perf/jobs.ts";
 import type { Database } from "bun:sqlite";
 import { withoutWaiting } from "../kernel/db.ts";
+import { quietly } from "./write_clock.ts";
 
 /** Upper edges in ms; bucket `i` holds durations `<= EDGES_MS[i]`, the last is everything slower. */
 export const EDGES_MS = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500] as const;
@@ -107,7 +109,7 @@ export function createRouteTiming(
     clear();
     timer = setTimeout(() => {
       try {
-        flush();
+        during("route-timing-flush", flush);
       } catch {
         // flush put the records back and rearmed the retry.
       }
@@ -129,7 +131,7 @@ export function createRouteTiming(
       );
       const hourNo = Math.floor(now() / HOUR_MS);
       // Behind another process's lock this throws at once and the records go back (#6957).
-      withoutWaiting(db, db.transaction(() => {
+      withoutWaiting(db, db.transaction(() => quietly(db, () => {
         for (const [key, v] of batch) {
           const [h, pattern, b] = key.split(SEP) as [string, string, string];
           upsert.run(hourText(Number(h)), pattern, Number(b), v.n, v.us);
@@ -140,7 +142,7 @@ export function createRouteTiming(
           );
           prunedHour = hourNo;
         }
-      }));
+      })));
     } catch (err) {
       prunedHour = -1;
       for (const [key, v] of batch) {
@@ -209,6 +211,16 @@ export function serverTiming(
   ].join(", ");
 }
 
+/**
+ * `header` with the worst event-loop lag of the last 10 s appended as
+ * `lag;dur=<ms>` (#10288): a request that waited on a loop someone else
+ * blocked shows it here, though its own `app` was fast.
+ */
+export function withLag(header: string, lagMs: number): string {
+  if (!Number.isFinite(lagMs) || lagMs < 0) return header;
+  return `${header}, lag;dur=${lagMs.toFixed(1)}`;
+}
+
 /** One named stretch of a request, in milliseconds. */
 export interface Phase {
   readonly name: string;
@@ -217,8 +229,8 @@ export interface Phase {
   readonly hit?: boolean;
 }
 
-/** A phase name is a header token: lowercase letters, nothing a viewer chose. */
-const PHASE_NAME = /^[a-z][a-z0-9-]{0,15}$/;
+/** A phase name is a header token: lowercase letters, a dot for a part (`kpis.live`), nothing a viewer chose. */
+const PHASE_NAME = /^[a-z][a-z0-9.-]{0,15}$/;
 
 const phaseLists = new WeakMap<Request, Phase[]>();
 
@@ -293,6 +305,11 @@ const startTimes = new WeakMap<Request, number>();
 /** The server stamps when it took a request, so the work before the handler can be named `route`. */
 export function noteStart(request: Request, at: number): void {
   startTimes.set(request, at);
+}
+
+/** When the server took the request (`noteStart`), if it did. */
+export function startedAt(request: Request): number | undefined {
+  return startTimes.get(request);
 }
 
 const framed = new WeakSet<Request>();

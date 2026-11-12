@@ -71,8 +71,8 @@ describe("flow vitals", () => {
         redirect: "manual",
       });
       const cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0]!;
-      const home = await (await fetch(`${servers.url}/`, { headers: { cookie } })).text();
-      expect(home).toContain(">3 open pulls</a> · 1 opened, 1 landed in 1 h · 3 opened, 2 landed in 6 h · 1 conflicted · 0 red, 0 queued · $0.00 stranded");
+      // Home no longer carries the line (#8015): it is the tick line and the flow tool.
+      expect(await (await fetch(`${servers.url}/`, { headers: { cookie } })).text()).not.toContain("open pulls</a>");
     } finally {
       await servers.stop();
       app.close();

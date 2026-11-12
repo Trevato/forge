@@ -8,7 +8,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { lastBuilderOf } from "../../actions/give_back.ts";
+import { crewHandsFor } from "../../actions/give_back.ts";
 import { forgeVitals, needLine } from "../../actions/health.ts";
 import { reviewSet } from "./review_set.ts";
 import type { Degraded } from "../../kernel/vitals.ts";
@@ -22,7 +22,7 @@ import { issueTitles, proposalsFor, type Proposal } from "../../core/proposals.t
 import { chipsOf, type Chips } from "../../core/feed_chips.ts";
 import { chipHides } from "../../feed/chips.ts";
 import { askDismissals, mutedRepos } from "../../core/interactions.ts";
-import { askMeasure, syncAskLedger, type AskEnd } from "../../core/ask_ledger.ts";
+import { ASKS_WINDOW_DAYS, askMeasureWeek, syncAskLedger, type AskEnd } from "../../core/ask_ledger.ts";
 import {
   getIssueById,
   labelsForIssues,
@@ -31,6 +31,7 @@ import {
   listOpenPullsVisibleTo,
   type Issue,
 } from "../../core/issues.ts";
+import { reviewSummary } from "../../core/reviews.ts";
 import { mayView } from "../../core/sealed.ts";
 import { closesFromBody, getPull, joinMany, type Pull } from "../../core/pulls.ts";
 import {
@@ -58,6 +59,8 @@ import { breakerParked, WAITING_NOTES } from "../../crew/breaker.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
 import { handoversOf, passReasonOf, type Handover } from "../../crew/guard.ts";
 import { conflictsOf, isStalePull, mergesAgainSince, staleGreen } from "../../crew/stale_asks.ts";
+import { reviewSays } from "../../crew/review_says.ts";
+import { reviewerPaused } from "../../crew/reviewer_paused.ts";
 import { reviewWaitsFor, type ReviewWait } from "../../crew/review.ts";
 import type { Ctx } from "../../http/context.ts";
 import { NO_LONGER_ASKS } from "../../actions/asks_words.ts";
@@ -65,7 +68,7 @@ import { NO_LONGER_ASKS } from "../../actions/asks_words.ts";
 /** Repos narrowed to those with an app record, with the records — the one
  * join `appsOf` and `writableAppsOf` share. */
 function appsFiltered(
-  ctx: Ctx,
+  ctx: Pick<Ctx, "app">,
   repos: readonly Repo[],
 ): { repos: Repo[]; records: ReturnType<typeof appsForRepos> } {
   const records = appsForRepos(
@@ -80,7 +83,7 @@ function appsFiltered(
  * Everyone's public apps sit in this list beside the viewer's own: right
  * for search, the palette and the asks count, wrong for a shelf headed
  * "your apps" — that reading is `writableAppsOf`. */
-export function appsOf(ctx: Ctx, user: User | undefined, archived = false) {
+export function appsOf(ctx: Pick<Ctx, "app">, user: User | undefined, archived = false) {
   return appsFiltered(
     ctx,
     listReposVisibleTo(
@@ -95,7 +98,7 @@ export function appsOf(ctx: Ctx, user: User | undefined, archived = false) {
  * repositories, with their records. This is "your apps": the studio home's
  * shelf and its cost line, never widened by what a stranger merely made
  * public. */
-export function writableAppsOf(ctx: Ctx, user: User | undefined) {
+export function writableAppsOf(ctx: Pick<Ctx, "app">, user: User | undefined) {
   return appsFiltered(
     ctx,
     listReposWritableTo(ctx.app.db, user, {
@@ -124,6 +127,10 @@ export interface Decision {
   readonly says: string;
   /** The same in one clause, for a row. */
   readonly short: string;
+  /** Free text a crew member wrote that the row quotes after `short` — a
+   * planner's decline, from its run's summary. A row shows it through
+   * `noteLine` (`./note.ts`): one escaped, clamped line (#10199). */
+  readonly note?: string | undefined;
   /** The option the decider thinks is right, and how sure; none for a rule. */
   readonly likely?: { readonly option: string; readonly p: number } | undefined;
   /** The preview pictured on a phone, when the forge has taken one. */
@@ -137,6 +144,8 @@ export interface Decision {
   readonly recommendation?: Recommendation | undefined;
   /** For "handover" and a pass-assigned "assigned": the builder the pull can be given back to, if any. */
   readonly giveBack?: string | undefined;
+  /** For "assigned" pull: whether landing is allowed now (green, no outstanding change request). */
+  readonly canLand?: boolean | undefined;
 }
 
 /** What an ask asks, the answers it takes, and what happens if nobody gives one. */
@@ -185,7 +194,7 @@ export const ASK_WORDS: Readonly<Record<DecisionKind, AskWords>> = {
   },
   assigned: {
     decision: "This is assigned to you: act on it?",
-    options: ["Open it"],
+    options: ["Give to the crew", "Land", "Close"],
     ifNothing: "it stays assigned to you",
   },
   proposal: {
@@ -287,6 +296,8 @@ interface AskCandidate {
   readonly handover?: Handover;
   /** For "handover" and a pass-assigned "assigned": the crew member that opened or last worked on the pull, when it can be given back. */
   readonly builder?: string;
+  /** For an "assigned" pull: it is green with no change requested, so it can land. */
+  readonly canLand?: boolean;
   /** For "handover", "waiting" and a pass-assigned "assigned": one sentence on why a person must decide. */
   readonly why?: string;
   /** For "handover" and "waiting": what the crew advised, when it wrote one. */
@@ -312,6 +323,7 @@ function askCandidatesFor(
   db: Database,
   user: User | undefined,
   allRepos: readonly Repo[],
+  only?: string,
 ): AskCandidate[] {
   const out: AskCandidate[] = [];
   if (!user) return out;
@@ -321,8 +333,10 @@ function askCandidatesFor(
   const ownerFacts = ownerFactRepoIds(db, allRepos, user);
   const repos = allRepos.filter((r) => ownerFacts.has(r.id));
   const byId = new Map(repos.map((r) => [r.id, r]));
-  const pulls = listOpenPullsVisibleTo(db, user, 50).filter((p) =>
-    byId.has(p.repoId),
+  // `only` narrows to one pull's own asks, for its page: the same fifty
+  // pulls are listed, so it asks exactly what the full read would say of it.
+  const pulls = listOpenPullsVisibleTo(db, user, 50).filter(
+    (p) => byId.has(p.repoId) && (only === undefined || p.id === only),
   );
   const checks = latestRunsForIssues(
     db,
@@ -519,6 +533,79 @@ function askCandidatesFor(
     const rec = a.kind === "handover" ? advice.get(a.pull!.id) : undefined;
     if (rec !== undefined) out[i] = { ...a, recommendation: rec };
   }
+  // Pauses, parked issues, declines and waves carry no pull: one pull's page
+  // never shows them, so it never reads them.
+  if (only === undefined) repoAsksInto(db, out, repos, byId);
+  // Open work assigned to the viewer that no ask above already covers: a
+  // pull that is an ask and assigned to them is one row, the ask's.
+  const taken = new Set(out.flatMap((a) => [a.pull?.id, a.issue?.id].filter((i) => i !== undefined)));
+  const visible = new Map(allRepos.map((r) => [r.id, r]));
+  const mine = listAssignedTo(db, user.id, 50).filter(
+    (i) => !taken.has(i.id) && (only === undefined || i.id === only),
+  );
+  const elsewhere = getReposByIds(
+    db,
+    [...new Set(mine.map((i) => i.repoId))].filter((id) => !visible.has(id)),
+  );
+  // An assignment can outlive the access that made it: each repo needs a real read.
+  // Asked once per repository, not once per assigned row.
+  const reads = new Map<string, boolean>();
+  const readable = (repo: Repo | undefined): repo is Repo => {
+    if (repo === undefined) return false;
+    if (visible.has(repo.id)) return true;
+    let ok = reads.get(repo.id);
+    if (ok === undefined) reads.set(repo.id, (ok = canRead(db, repo, user)));
+    return ok;
+  };
+  const joinedMine = new Map(
+    joinMany(db, mine.filter((i) => i.kind === "pull")).map((p) => [p.id, p]),
+  );
+  const mineChecks = latestRunsForIssues(db, [...joinedMine.keys()]);
+  const hands = crewHandsFor(
+    db,
+    mine.flatMap((issue) => {
+      const repo = visible.get(issue.repoId) ?? elsewhere.get(issue.repoId);
+      return repo === undefined || issue.assigneeIsAgent ? [] : [{ repo, work: issue }];
+    }),
+  );
+  for (const issue of mine) {
+    const repo = visible.get(issue.repoId) ?? elsewhere.get(issue.repoId);
+    if (!readable(repo) || repo.archivedAt !== null) continue;
+    if (!mayView(db, repo, issue, user)) continue;
+    const pull = joinedMine.get(issue.id);
+    if (issue.kind === "pull" && pull === undefined) continue;
+    // A pull a pass gave up on and assigned to this person says why, and can go back.
+    const reason = pull === undefined || issue.assigneeIsAgent ? undefined : passReasonOf(db, issue.id, issue.assigneeId!);
+    // Whatever a person holds can go to the crew, not only what a pass gave up on.
+    const back = issue.assigneeIsAgent ? undefined : hands.get(issue.id);
+    out.push({
+      kind: "assigned",
+      id: `assigned:${issue.id}`,
+      since: issue.updatedAt,
+      repo,
+      ...(pull === undefined ? { issue } : { pull }),
+      who: issue.authorName,
+      authorIsAgent: issue.authorIsAgent,
+      ...(reason === undefined ? {} : { why: reason }),
+      ...(back === undefined ? {} : { builder: back }),
+      ...(pull !== undefined &&
+      mineChecks.get(pull.id)?.state === "ok" &&
+      reviewSummary(db, pull.id, pull.headOid).changesRequested === 0
+        ? { canLand: true }
+        : {}),
+    });
+  }
+  return out;
+}
+
+/** The asks a repository makes that are not a pull's: a ceiling pause, a
+ * parked issue, a planner's decline, a wave waiting for its nod. */
+function repoAsksInto(
+  db: Database,
+  out: AskCandidate[],
+  repos: readonly Repo[],
+  byId: ReadonlyMap<string, Repo>,
+): void {
   const crew = crewForRepos(
     db,
     repos.map((r) => r.id),
@@ -581,50 +668,6 @@ function askCandidatesFor(
       proposal,
       who: getUserById(db, proposal.authorId)?.username ?? "the planner",
     });
-  // Open work assigned to the viewer that no ask above already covers: a
-  // pull that is an ask and assigned to them is one row, the ask's.
-  const taken = new Set(out.flatMap((a) => [a.pull?.id, a.issue?.id].filter((i) => i !== undefined)));
-  const visible = new Map(allRepos.map((r) => [r.id, r]));
-  const mine = listAssignedTo(db, user.id, 50).filter((i) => !taken.has(i.id));
-  const elsewhere = getReposByIds(
-    db,
-    [...new Set(mine.map((i) => i.repoId))].filter((id) => !visible.has(id)),
-  );
-  // An assignment can outlive the access that made it: each repo needs a real read.
-  // Asked once per repository, not once per assigned row.
-  const reads = new Map<string, boolean>();
-  const readable = (repo: Repo | undefined): repo is Repo => {
-    if (repo === undefined) return false;
-    if (visible.has(repo.id)) return true;
-    let ok = reads.get(repo.id);
-    if (ok === undefined) reads.set(repo.id, (ok = canRead(db, repo, user)));
-    return ok;
-  };
-  const joinedMine = new Map(
-    joinMany(db, mine.filter((i) => i.kind === "pull")).map((p) => [p.id, p]),
-  );
-  for (const issue of mine) {
-    const repo = visible.get(issue.repoId) ?? elsewhere.get(issue.repoId);
-    if (!readable(repo) || repo.archivedAt !== null) continue;
-    if (!mayView(db, repo, issue, user)) continue;
-    const pull = joinedMine.get(issue.id);
-    if (issue.kind === "pull" && pull === undefined) continue;
-    // A pull a pass gave up on and assigned to this person says why, and can go back.
-    const reason = pull === undefined || issue.assigneeIsAgent ? undefined : passReasonOf(db, issue.id, issue.assigneeId!);
-    const back = reason === undefined ? undefined : lastBuilderOf(db, repo, issue)?.username;
-    out.push({
-      kind: "assigned",
-      id: `assigned:${issue.id}`,
-      since: issue.updatedAt,
-      repo,
-      ...(pull === undefined ? { issue } : { pull }),
-      who: issue.authorName,
-      authorIsAgent: issue.authorIsAgent,
-      ...(reason === undefined ? {} : { why: reason }),
-      ...(back === undefined ? {} : { builder: back }),
-    });
-  }
-  return out;
 }
 
 /**
@@ -816,8 +859,9 @@ export function scoredFor(
   user: User | undefined,
   repos: readonly Repo[],
   now = Date.now(),
+  only?: string,
 ): Scored[] {
-  const asks = askCandidatesFor(db, user, repos);
+  const asks = askCandidatesFor(db, user, repos, only);
   const scores = consequencesOf(db, asks, now);
   return asks.map((a) => ({
     ...a,
@@ -977,21 +1021,15 @@ function lineOf(c: AskCandidate): string {
     return `"${c.pull?.title ?? ""}" had three reviews asking for changes and waits for you`;
   const title = c.pull?.title ?? "";
   if (c.kind === "review")
-    return `"${title}" waits for your review: ${reviewWhy(c.reviewWait)}`;
+    return `"${title}" waits for your review: ${reviewWhy(c.reviewWait, reviewerPaused(c.repo))}`;
   return c.kind === "stopped"
     ? `the crew stopped on "${title}"`
     : `"${title}" is green, waiting for your look`;
 }
 
 /** Why an agent's change waits for a person's review, in a clause. */
-export const reviewWhy = (wait: ReviewWait | undefined): string =>
-  wait?.why === "rounds"
-    ? `the reviewer asked for changes three times, since ${wait.since.slice(0, 10)}`
-    : wait?.why === "lapsed" && wait.lateCheckMinutes !== undefined
-    ? `review ran late: the check took ${wait.lateCheckMinutes} min, and the reviewer did not answer, since ${wait.since.slice(0, 10)}`
-    : wait?.why === "lapsed"
-    ? `the reviewer did not answer, since ${wait.since.slice(0, 10)}`
-    : `no reviewer on the crew, since ${wait?.since.slice(0, 10) ?? "it went green"}`;
+export const reviewWhy = (wait: ReviewWait | undefined, paused = false): string =>
+  `${reviewSays(wait, paused)}, since ${wait?.since.slice(0, 10) ?? "it went green"}`;
 
 /** A collapsed row in a line: how many, and of what. */
 export const ROW_PLURAL: Readonly<Record<DecisionKind, (n: number) => string>> = {
@@ -1040,6 +1078,8 @@ export function askLinesFor(
   /** For a wave proposal: what it says, as plain text (the reader escapes it). */
   proposal?: { id: string; title: string; why: string; issues: string[] };
   items: string[];
+  /** When the oldest ask in the row began to wait (ISO), for how long it has waited. */
+  since: string;
   /** The decision, its options and what happens if nobody acts (`ASK_WORDS`). */
   words: AskWords;
   /** Why it ranks where it does; rows come most consequential first. */
@@ -1060,6 +1100,7 @@ export function askLinesFor(
       repoId: row.repo.id,
       repo: `${row.repo.ownerName}/${row.repo.name}`,
       items: row.items.map((c) => c.id),
+      since: row.items.reduce((a, c) => (c.since < a ? c.since : a), row.items[0]!.since),
       words: ASK_WORDS[row.kind],
       consequence: row.consequence,
       waitingFor: row.items[0]!.waiting,
@@ -1145,14 +1186,13 @@ export function askSentence(count: number): string {
  * and gone by themselves. `GET /api/v1/asks` and the MCP's `asks` read this.
  */
 export function asksAnswer(ctx: Ctx, user: User, chips?: Chips) {
-  const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
   const set = reviewSet(ctx, user);
   return {
     // The very figures Home's line and /review show: `count` is live asks plus the forge's needs; `stale` are older than 30 days.
     waiting: { count: set.count, stale: set.stale.length },
     rows: askLinesFor(ctx.app.db, user, chips),
     forge: forgeNeedsFor(ctx, user).map((d) => needLine(d)),
-    measure: { days: 7, ...askMeasure(ctx.app.db, user.id, since) },
+    measure: { days: ASKS_WINDOW_DAYS, ...askMeasureWeek(ctx.app.db, user.id) },
   };
 }
 
@@ -1188,8 +1228,8 @@ export function askDismissedBy(db: Database, viewerId: string, issue: Issue): bo
     issue.kind === "pull"
       ? pullCause(db, issue)
       : (db
-          .query<{ at: string | null }, [string, string, string]>(
-            "SELECT MAX(created_at) AS at FROM comment WHERE issue_id = ?1 AND body IN (?2, ?3)",
+          .query<{ at: string | null }, [string, string, string, string]>(
+            "SELECT MAX(created_at) AS at FROM comment WHERE issue_id = ?1 AND body IN (?2, ?3, ?4)",
           )
           .get(issue.id, ...WAITING_NOTES)?.at ?? issue.createdAt);
   return at > cause;

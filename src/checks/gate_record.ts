@@ -38,3 +38,19 @@ export function endGate(db: Database, gateId: string, now = new Date()): void {
     now.toISOString(),
   );
 }
+
+/**
+ * Whether a gate on a commit starting with `prefix` (the 12 characters
+ * `gateRunId` keeps) still holds its slot: open, and started after `since`.
+ * A gate writes no `run`, so this is what keeps the checkout sweep off its
+ * directory while it runs; a row a crash left open stops counting at `since`.
+ */
+export function gateHolding(db: Database, prefix: string, since: Date): boolean {
+  return (
+    db
+      .query(
+        "SELECT 1 FROM check_gate WHERE finished_at IS NULL AND substr(commit_oid, 1, ?1) = ?2 AND started_at > ?3 LIMIT 1",
+      )
+      .get(prefix.length, prefix, since.toISOString()) !== null
+  );
+}

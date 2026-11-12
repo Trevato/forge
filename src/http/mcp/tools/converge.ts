@@ -6,7 +6,7 @@ import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts"
 
 export const tool: Tool = {
   name: "converge",
-  doc: "the fork's crew merges where both sides changed the same files; comes back as a pull",
+  doc: "`{ repo }`: the fork's crew merges where both sides changed the same files; comes back as a pull",
   description:
     "Have a fork's crew merge the parent's updates where both changed a file.",
   inputSchema: {

@@ -19,6 +19,7 @@
  * can see, one lane each.
  */
 
+import { faceAt } from "../pixel.ts";
 import type { MapHold } from "../../crew/held.ts";
 import { sealedScope } from "../../core/sealed.ts";
 import type { Database } from "bun:sqlite";
@@ -36,10 +37,8 @@ import type { Issue } from "../../core/issues.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { cachedLayout } from "../map_cache.ts";
 import { holdsFor } from "../../core/holds.ts";
-import {
-  getRepoById,
-  type Repo,
-} from "../../core/repos.ts";
+import { firstMarksInRepo } from "../../core/first.ts";
+import { canWrite, getRepoById, type Repo } from "../../core/repos.ts";
 import { listActiveRuns, type Run, type RunState } from "../../core/runs.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -53,7 +52,7 @@ import {
 import { liveRegionsJs } from "../client.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { badge, btn, card, empty, row } from "../ui.ts";
+import { btn, disclosure, empty, row } from "../ui.ts";
 import {
   parkedTwice,
   struckOut,
@@ -77,6 +76,10 @@ import {
   type PillarView,
 } from "../../core/pillars.ts";
 import { askToLiveFor } from "../ask_to_live.ts";
+import { roadmapOf } from "../roadmap.ts";
+import { roadmapBody, roadmapCss } from "./roadmap.ts";
+import { cookieValue } from "../../http/context.ts";
+import { secureFor } from "../../http/cookie_secure.ts";
 
 /** Where a card's own link goes: dev's issue page, by default. */
 const devIssueHref = (base: string, number: number): string =>
@@ -710,6 +713,7 @@ function node(
   const number = `#${n.issue.number}`;
   const who = n.issue.assigneeName;
   const whoX = left + 9 + number.length * 6.4;
+  const face = who ? faceAt(who, whoX, bottom - 11, 14) : null;
   return html`<a
     class="map-node"
     data-state="${word}"
@@ -743,7 +747,14 @@ function node(
         : html`<tspan x="${left}" dy="16">${second}</tspan>`}
     </text>
     <text class="map-meta" x="${left}" y="${bottom}">${number}</text>
-    ${who
+    ${face !== null
+      ? html`<g class="map-who">
+          ${face}
+          <text class="map-who-n" x="${whoX + 19}" y="${bottom}"
+            >${trim(who ?? "", 11)}</text
+          >
+        </g>`
+      : who !== null
       ? html`<g class="map-who">
           <circle cx="${whoX + 7}" cy="${bottom - 4}" r="7" />
           <text class="map-who-i" x="${whoX + 7}" y="${bottom - 1}"
@@ -960,25 +971,37 @@ function rankedList(
   say: (r: Ranked) => string,
   empty: string,
   issueHref: (base: string, number: number) => string,
+  first?: { writer: boolean; by: ReadonlyMap<string, string> },
 ): Html {
   const base = repoBase(repo);
   return html`<section class="stack-tight">
     <h2>${title}</h2>
     ${items.length === 0
       ? html`<p class="muted small">${empty}</p>`
-      : card(
-          html`<ul class="list setting-list">
+      : html`<ul class="list setting-list">
             ${items.slice(0, 6).map((r) =>
               row({
                 href: issueHref(base, r.issue.number),
                 title: r.issue.title,
                 titleAttr: r.issue.title,
-                meta: html`#${r.issue.number} · ${say(r)}`,
+                nav: true,
+                meta: html`#${r.issue.number} · ${say(r)}${first?.by.has(r.issue.id)
+                  ? ` · first, by ${first.by.get(r.issue.id)}`
+                  : ""}`,
+                ...(first?.writer
+                  ? {
+                      trail: html`<form
+                        method="post"
+                        action="${base}/issues/${r.issue.number}/first"
+                      >
+                        <input type="hidden" name="back" value="${base}/map" />
+                        ${btn("First", { variant: "outline", size: "sm" })}
+                      </form>`,
+                    }
+                  : {}),
               }),
             )}
-          </ul>`,
-          { pad: false },
-        )}
+          </ul>`}
   </section>`;
 }
 
@@ -1069,8 +1092,7 @@ function pillarList(repo: Repo, rows: readonly PillarRow[]): Html {
       : `${r.open} open · ${r.ready} ready · ${r.blocked} blocked`;
   return html`<section class="stack-tight" id="map-pillars">
     <h2>By pillar</h2>
-    ${card(
-      html`<ul class="list setting-list">
+    ${html`<ul class="list setting-list">
         ${rows.map((r) =>
           r.name === null
             ? row({
@@ -1081,7 +1103,7 @@ function pillarList(repo: Repo, rows: readonly PillarRow[]): Html {
                         >#${i.number}</a
                       >${" "}`,
                 )}${(r.issues ?? []).length > 8 ? "…" : ""}`,
-                trail: badge(counts(r)),
+                trail: html`<span class="muted small">${counts(r)}</span>`,
                 data: { pillar: "" },
               })
             : row({
@@ -1102,13 +1124,11 @@ function pillarList(repo: Repo, rows: readonly PillarRow[]): Html {
                         >
                         ${hours(r.askToLive.slowest.hours)}`}</span
                 >`,
-                trail: badge(counts(r)),
+                trail: html`<span class="muted small">${counts(r)}</span>`,
                 data: { pillar: r.name },
               }),
         )}
-      </ul>`,
-      { pad: false },
-    )}
+      </ul>`}
   </section>`;
 }
 
@@ -1118,7 +1138,7 @@ export const mapCss = /* css */ `
 .map-main { min-width: 0; }
 
 /* ---- the canvas ---- */
-.map-canvas { position: relative; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.map-canvas { position: relative; overflow: hidden; border: 0; border-radius: 0; background: var(--bg); touch-action: pan-y; user-select: none; -webkit-user-select: none; }
 .map-canvas.is-view { cursor: grab; }
 .map-canvas.is-drag { cursor: grabbing; }
 .map-canvas.is-cut::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 36px; background: linear-gradient(to bottom, transparent, var(--bg)); pointer-events: none; }
@@ -1180,7 +1200,7 @@ export const mapCss = /* css */ `
 #lanes { margin-top: 16px; }
 #lanes li[data-autonomy="autonomous"] .row-title .badge { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 34%, transparent); }
 #lanes li[data-idle] .row-title { color: var(--muted-fg); }
-#lanes details > .card.empty { border: 0; border-top: 1px solid var(--border); border-radius: 0; }
+#lanes details > .empty { border-top: 1px solid var(--border); }
 #lanes details > .map-canvas { border: 0; border-top: 1px solid var(--border); border-radius: 0; }
 @media (prefers-reduced-motion: reduce) {
   .map-card, .map-title { transition: none; }
@@ -1372,44 +1392,127 @@ function openOnly(graph: Graph): Graph {
   };
 }
 
-/** GET /:owner/:name/map (`?done=1` draws the closed issues too) */
+/** A visit older than this is a new visit: what moved since is marked. */
+const VISIT_MS = 30 * 60_000;
+
+/**
+ * When the reader last looked, from their cookie `prev~cur`: `cur` is this
+ * visit's start, `prev` the one before it. A live swap (a fetch, not a
+ * navigation) never moves them, so what is marked stays marked.
+ */
+export function lastLooked(
+  header: string | undefined,
+  now: Date,
+  navigating: boolean,
+): { since: string | undefined; cookie: string | undefined } {
+  const [prev, cur] = (header ?? "").split("~");
+  const valid = (t: string | undefined): string | undefined =>
+    t !== undefined && /^\d{4}-\d\d-\d\dT[\d:.]+Z$/.test(t) ? t : undefined;
+  let p = valid(prev);
+  let c = valid(cur);
+  if (!navigating) return { since: p ?? c, cookie: undefined };
+  if (c === undefined) c = now.toISOString();
+  else if (now.getTime() - Date.parse(c) > VISIT_MS) {
+    p = c;
+    c = now.toISOString();
+  }
+  return { since: p, cookie: `${p ?? ""}~${c}` };
+}
+
+/** GET /:owner/:name/map (`?done=1` draws the closed issues too; `?view=graph` is the drawing) */
 export async function mapPage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
+  if (
+    ctx.url.searchParams.get("view") !== "graph" &&
+    ctx.url.searchParams.get("done") !== "1"
+  ) {
+    const name = `rm_${repo.ownerName}_${repo.name}`.replace(/[^A-Za-z0-9_]/g, "_");
+    const mode = ctx.request.headers.get("sec-fetch-mode");
+    const seen = lastLooked(
+      cookieValue(ctx.request, name),
+      new Date(),
+      mode === null || mode === "navigate",
+    );
+    const road = roadmapOf(ctx.app.db, repo, ctx.auth.user, {
+      ...(seen.since === undefined ? {} : { since: seen.since }),
+    });
+    if (road !== undefined) {
+      const base = repoBase(repo);
+      const response = page({
+        ctx,
+        title: `Roadmap · ${repo.name}`,
+        crumbs: crumbsFor(repo),
+        palette: repoPalette(ctx, repo),
+        body: html`${repoHeader(ctx, repo, "map")}
+          <div class="page-head mt">
+            <h1>Roadmap</h1>
+            <p class="muted small"><a href="${base}/map?view=graph">The graph</a> · <a href="${base}/space">The space</a></p>
+          </div>
+          <div
+            class="rm"
+            id="roadmap-live"
+            data-live="${LIVE_KINDS}"
+            data-live-repo="${repo.ownerName}/${repo.name}"
+          >
+            ${roadmapBody(base, road)}
+          </div>`,
+        styleCss: roadmapCss,
+        scriptJs: liveRegionsJs,
+      });
+      if (seen.cookie !== undefined)
+        response.headers.append(
+          "set-cookie",
+          `${name}=${seen.cookie}; Path=/; Max-Age=31536000; SameSite=Lax; HttpOnly${secureFor(ctx.url, ctx.app.config.url) ? "; Secure" : ""}`,
+        );
+      return response;
+    }
+  }
   const db = ctx.app.db;
   const studio = studioRecord(ctx, repo) !== undefined;
   const showDone = ctx.url.searchParams.get("done") === "1";
-  // The read: graph, marks and pillars, one phase; `render` is the page's own.
-  const { shown, graph, ready, blocked, critical, placed, marks, readySet, counts, pillars, ask } =
-    timePhase(ctx.request, "map", () => {
-      const graph = repoGraph(db, repo.id, {
-        ...sealedScope(db, repo, ctx.auth.user),
-      });
-      const ready = readyNow(graph);
-      const blocked = blockedOn(graph);
-      const critical = criticalPath(graph);
-      const shown = showDone ? graph : openOnly(graph);
-      const placed = cachedLayout(shown, layout);
-      const marks = marksFor(db, repo.id, graph, listActiveRuns(db, [repo.id]));
-      const readySet = new Set(ready.map((r) => r.issue.id));
-      const counts = countWords(
-        graph.issues.map((i) => wordFor(i, readySet, marks)),
-      );
-      const pillars = pillarView(db, repo);
-      const ask = askToLiveFor(ctx.app, repo, pillars, ctx.auth.user);
-      return { shown, graph, ready, blocked, critical, placed, marks, readySet, counts, pillars, ask };
-    });
+  // The read, one Server-Timing phase per step (#8381); `render` is the page's own.
+  const rq = ctx.request;
+  const reading = performance.now();
+  const graph = timePhase(rq, "map-graph", () =>
+    repoGraph(db, repo.id, { ...sealedScope(db, repo, ctx.auth.user), lean: true }),
+  );
+  const ready = timePhase(rq, "map-ready", () => readyNow(graph));
+  const blocked = timePhase(rq, "map-blocked", () => blockedOn(graph));
+  const critical = timePhase(rq, "map-critical", () => criticalPath(graph));
+  const shown = timePhase(rq, "map-shown", () => (showDone ? graph : openOnly(graph)));
+  const placed = timePhase(rq, "map-layout", () => cachedLayout(shown, layout));
+  const marks = timePhase(rq, "map-marks", () =>
+    marksFor(db, repo.id, graph, listActiveRuns(db, [repo.id])),
+  );
+  const { readySet, counts } = timePhase(rq, "map-words", () => {
+    const readySet = new Set(ready.map((r) => r.issue.id));
+    return { readySet, counts: countWords(graph.issues.map((i) => wordFor(i, readySet, marks))) };
+  });
+  const pillars = timePhase(rq, "map-pillars", () => pillarView(db, repo));
+  const ask = timePhase(rq, "map-ask", () =>
+    askToLiveFor(ctx.app, repo, pillars, ctx.auth.user),
+  );
+  // The ten named steps above replace the old single `map` phase; `map` is
+  // still noted, by hand, as their total, for readers of the header.
+  notePhase(rq, "map", performance.now() - reading);
   const rendering = performance.now();
+  /** A row's pillar, as the words lead with it: "Name · ", or nothing. */
+  const pillarOf = (r: Ranked): string => {
+    const name = pillars?.of.get(r.issue.id);
+    return name === undefined || name === null ? "" : `${name} · `;
+  };
   const body = html`${repoHeader(ctx, repo, "map")}
     <div class="page-head mt">
       <h1>Map</h1>
-      <p class="muted">
-        What waits for what. The top edge is ready now; the chain in the accent
-        is the least work that still has to happen in order.
-        <a href="${repoBase(repo)}/milestones">How far each milestone is</a>.
-      </p>
+      <span class="spacer"></span>
+      <a href="${repoBase(repo)}/space">Space</a><a href="${repoBase(repo)}/milestones">Milestones</a><a href="${repoBase(repo)}/next">Next up</a>
     </div>
+    ${disclosure("? How to read this", html`<div class="prose break" id="map-help">
+      <p>What waits for what. The top edge is ready now; the chain in the accent is the least work that still has to happen in order.</p>
+      <p>The first list is what nothing stands in front of; when it is empty, everything open waits for something. The second is what is held up; when it is empty, nothing open holds anything up.</p>
+    </div>`, { id: "map-more" })}
     <div
       class="map-wrap"
       id="map-live"
@@ -1426,12 +1529,6 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
         ${placed.nodes.length === 0 && counts.done === 0 ? null : countsLine(counts, { base: `${repoBase(repo)}/map`, showDone })}
       </div>
       <aside class="stack">
-        ${pillars === undefined
-          ? null
-          : pillarList(
-              repo,
-              pillarRows(repo, graph, readySet, marks, pillars, ask),
-            )}
         ${graph.issues.length === 0
           ? null
           : rankedList(
@@ -1439,18 +1536,34 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
               "Ready now",
               ready,
               (r) =>
-                r.holdsUp === 0
-                  ? "holds nothing up"
-                  : `finishing it frees ${r.holdsUp}`,
-              "Nothing is ready: everything open waits for something.",
+                `ready · ${pillarOf(r)}${graph.flow?.has(r.issue.id) ? "flow · " : ""}${
+                  r.holdsUp === 0
+                    ? "holds nothing up"
+                    : `finishing it frees ${r.holdsUp}`
+                }`,
+              "Nothing ready.",
               tellHref,
+              {
+                writer:
+                  ctx.auth.user !== undefined &&
+                  ctx.auth.user.kind !== "agent" &&
+                  canWrite(db, repo, ctx.auth.user),
+                by: new Map([...firstMarksInRepo(db, repo.id)].map(([id, m]) => [id, m.by])),
+              },
+            )}
+        ${pillars === undefined
+          ? null
+          : pillarList(
+              repo,
+              pillarRows(repo, graph, readySet, marks, pillars, ask),
             )}
         ${rankedList(
           repo,
           "Blocked on",
           blocked,
-          (r) => `holds up ${r.holdsUp}`,
-          "Nothing open holds anything up.",
+          (r) =>
+            `${wordFor(r.issue, readySet, marks)} · ${pillarOf(r)}${r.waitsFor > 0 ? `waits for ${r.waitsFor} · ` : ""}holds up ${r.holdsUp}`,
+          "Nothing blocked.",
           tellHref,
         )}
       </aside>

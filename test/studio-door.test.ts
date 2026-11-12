@@ -50,6 +50,8 @@ import { liveClientJs } from "../src/web/live.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { promote } from "./helpers/members.ts";
+import { withScripts } from "./helpers/page-script.ts";
+import { ageApp } from "./helpers/history.ts";
 
 let dataDir: string;
 let app: App;
@@ -318,7 +320,9 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
         headers: cookie === undefined ? {} : { cookie },
         redirect: "manual",
       }).then((r) => r.text());
-    for (const page of [await visit(), await visit(strangerCookie)]) {
+    // The palette index lists other, public apps and their state; the page is what is under test.
+    const bare = (html: string) => html.replace(/<script[^>]*id="palette-index">.*?<\/script>/s, "");
+    for (const page of [bare(await visit()), bare(await visit(strangerCookie))]) {
       // The repository is public, so it is listed — once, plainly.
       expect(occurrences(page, 'href="/hal/ledger"')).toBe(1);
       expect(page).toContain("the books");
@@ -326,6 +330,9 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
       expect(page).not.toContain("quiet");
       expect(page).not.toContain('class="studio-word"');
     }
+    // Nor does the palette hand a visitor the private app's door.
+    for (const raw of [await visit(), await visit(strangerCookie)])
+      expect(raw).not.toContain("/hal/ledger/app/production/open");
     const own = await visit(ownerCookie);
     expect(own).toContain("not running");
   });
@@ -379,8 +386,8 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
     ).text();
     expect(occurrences(studio, 'href="/vega/anvil"')).toBe(1);
     expect(occurrences(studio, 'href="/vega/ledger"')).toBe(1);
-    expect(studio).toContain('<h2 class="mt">Members</h2>');
-    expect(studio).toContain('<h2 class="mt" id="teams">Teams</h2>');
+    expect(studio).toContain('<h2>Members</h2>');
+    expect(studio).toContain('<h2 id="teams">Teams</h2>');
 
     const dev = await (
       await fetch(`${base}/vega`, {
@@ -424,6 +431,8 @@ describe("every open pull's preview on the studio page", () => {
     const enabled = await enableApp(app, alice, repo, { slug: "widget" });
     if (!enabled.ok) throw new Error(String(enabled.error));
     record = getAppByRepo(app.db, repo.id)!;
+    // An older app: a new one shows only its progress, without the list (#10299).
+    ageApp(app.db, repo.id);
   });
 
   test("an open pull's preview host and open link render; none do once nothing is open", async () => {
@@ -522,7 +531,7 @@ describe("the studio home keeps itself current", () => {
   let readme: Issue;
 
   const get = (extraCookie = "") =>
-    fetch(`${base}/`, {
+    fetch(`${base}/feed`, {
       headers: {
         cookie: `${cookie}${extraCookie}; forge_mode=studio`,
       },
@@ -590,7 +599,7 @@ describe("the studio home keeps itself current", () => {
     const home = await res.text();
     expect(home).toMatch(/id="live-apps"\s*\n?\s*data-live="/);
     expect(home).not.toContain("live-on-you");
-    expect(home).toContain("new EventSource('/events')");
+    expect(await withScripts(servers.url, home)).toContain("new EventSource('/events')");
   });
 
   test("chips do not touch Your apps: it lists apps, not feed items", async () => {
@@ -743,7 +752,7 @@ describe("the studio head says why the app is not up", () => {
     expect(mine).not.toContain("<install>");
     expect(mine).toContain(`href="/alice/notes/runs/${deploy}"`);
     expect(mine).toContain('action="/alice/notes/app/production/redeploy"');
-    expect(mine).toContain('action="/alice/notes/app/production/stop"');
+    expect(mine).toContain('href="/-/confirm?to=%2Falice%2Fnotes%2Fapp%2Fproduction%2Fstop"');
     expect(mine).not.toContain('href="/alice/notes/app/production/open"');
     expect(mine).toContain('title="The last deploy failed"');
 
@@ -752,7 +761,7 @@ describe("the studio head says why the app is not up", () => {
     expect(theirs).toContain("the deploy failed: &lt;install&gt; exited 1");
     expect(theirs).toContain(`href="/alice/notes/runs/${deploy}"`);
     expect(theirs).not.toContain("/app/production/redeploy");
-    expect(theirs).not.toContain("/app/production/stop");
+    expect(theirs).not.toContain("%2Fapp%2Fproduction%2Fstop");
     expect(theirs).not.toContain('href="/alice/notes/app/production/open"');
   });
 
@@ -772,9 +781,9 @@ describe("the studio head says why the app is not up", () => {
     const mine = await head(writer);
     expect(mine).toContain("not running");
     expect(mine).toContain('action="/alice/notes/app/production/redeploy"');
-    expect(mine).not.toContain('action="/alice/notes/app/production/stop"');
+    expect(mine).not.toContain('href="/-/confirm?to=%2Falice%2Fnotes%2Fapp%2Fproduction%2Fstop"');
     expect(mine).not.toContain('href="/alice/notes/app/production/open"');
-    expect(mine).toContain('title="Not running"');
+    expect(mine).toContain('title="Nothing is running yet. The app starts when it is deployed."');
     expect(await shelfBadge(writer)).toBe("not running");
   });
 
@@ -1372,6 +1381,7 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
         if (data !== undefined) event = JSON.parse(data);
       }
     }
+    if (!event) throw new Error(`never came: still waiting while !event`);
     await reader.cancel().catch(() => {});
     expect(event).toBeDefined();
     expect(event?.["kind"]).toBe("app.serving");

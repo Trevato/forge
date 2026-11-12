@@ -1,0 +1,85 @@
+/**
+ * The owner's two hands on a hosted forge: stop it (put it to sleep now; the
+ * next request wakes it) and remove it (its ledger and its data, for good).
+ * Both are the site admin's, and both write an event.
+ */
+
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
+import type { App } from "../app.ts";
+import { childDirOf, listChildren } from "../actions/spawn.ts";
+import { createApp } from "../app.ts";
+import { restoreClaim, revokeClaim, spawnedOrg } from "./claim.ts";
+import { forgetHeard } from "./clients.ts";
+import { sleepChild } from "./host.ts";
+import { CHILD_NAME } from "./placement.ts";
+import { switchOwnCode } from "./own_code.ts";
+
+export type Managed = { readonly ok: true; readonly says: string } | { readonly ok: false; readonly says: string };
+
+async function find(app: App, name: string) {
+  if (!CHILD_NAME.test(name)) return undefined;
+  return (await listChildren(app)).find((c) => c.name === name);
+}
+
+export async function stopForge(app: App, name: string): Promise<Managed> {
+  const child = await find(app, name);
+  if (child === undefined) return { ok: false, says: `no forge named ${name}` };
+  const was = await sleepChild(app, name);
+  if (was) app.bus.append({ kind: "forge.stopped", payload: { name } });
+  return { ok: true, says: was ? `${name} is asleep; its next visitor wakes it` : `${name} was already asleep` };
+}
+
+export async function removeForge(app: App, name: string): Promise<Managed> {
+  const child = await find(app, name);
+  if (child === undefined) return { ok: false, says: `no forge named ${name}` };
+  await sleepChild(app, name);
+  await rm(join(app.config.dataDir, "spawn", `${name}.json`), { force: true });
+  await rm(childDirOf(app, child.bodyId), { recursive: true, force: true });
+  app.bus.append({ kind: "forge.removed", payload: { name } });
+  return { ok: true, says: `${name} is removed, with its data` };
+}
+
+/**
+ * Take a child's unclaimed link back, or undo that within the minute: the
+ * site admin's (callers check), receipted; the link's secret is in no event.
+ * `missing` says there is no such forge; otherwise a refusal means the link
+ * was not open (or the minute is over).
+ */
+export async function changeLink(
+  app: App,
+  actorId: string,
+  name: string,
+  act: "revoke" | "undo",
+): Promise<Managed & { readonly missing?: true }> {
+  const child = await find(app, name);
+  if (child === undefined || !child.done) return { ok: false, says: `no forge named ${name}`, missing: true };
+  const own = createApp({ dataDir: childDirOf(app, child.bodyId) });
+  try {
+    const spawned = await spawnedOrg(own);
+    if (!spawned) return { ok: false, says: "That forge has no link to change." };
+    if (!(act === "revoke" ? revokeClaim : restoreClaim)(own.db, spawned.org.id))
+      return { ok: false, says: act === "revoke" ? "That link is not open." : "That link cannot be brought back now." };
+  } finally {
+    own.close();
+  }
+  forgetHeard(app, name);
+  app.bus.append({ kind: act === "revoke" ? "forge.claim_revoked" : "forge.claim_restored", actorId, payload: { name } });
+  return {
+    ok: true,
+    says: act === "revoke" ? `The link for ${name} has ended. You can undo this for a minute.` : `The link for ${name} is open again.`,
+  };
+}
+
+/**
+ * Switch a child between its parent's code and its own forge repository's
+ * main (#11144). A running child is put to sleep so its next visitor wakes it
+ * on the new code; a hosted one is refused, with the reason.
+ */
+export async function ownCode(app: App, name: string, on: boolean): Promise<Managed> {
+  const child = await find(app, name);
+  if (child === undefined) return { ok: false, says: `no forge named ${name}` };
+  const switched = switchOwnCode(app, { name, placement: child.placement, childDir: childDirOf(app, child.bodyId), on });
+  if (switched.ok) await sleepChild(app, name);
+  return switched;
+}

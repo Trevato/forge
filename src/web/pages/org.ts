@@ -18,10 +18,21 @@ import {
   removeTeamMember,
 } from "../../actions/orgs.ts";
 import {
+  addRefusal,
+  addedSays,
+  createRefusal,
+  createdSays,
+  deleteRefusal,
+  deletedSays,
+  removeRefusal,
+  removedSays,
+} from "../../actions/team_words.ts";
+import {
   OWNERS_TEAM,
   accessAllows,
   getOrg,
   getTeam,
+  listTeamMemberRoles,
   listTeamMembers,
   listTeams,
   orgAccess,
@@ -30,11 +41,14 @@ import {
   type Team,
 } from "../../core/orgs.ts";
 import { appsForRepos } from "../../core/apps.ts";
+import { isTeamRole, TEAM_ROLES } from "../../core/agents.ts";
+import { metricsRows, teamWindows } from "../../core/team-metrics.ts";
 import { LIST_LIMIT_MAX } from "../../core/issues.ts";
 import { listReposByOwner, type Repo } from "../../core/repos.ts";
 import { getUserByName, hiddenFrom, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
-import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
+import { nameFrame, notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
+import { readOnlyWork } from "../../origins/read-only-work.ts";
 import { notFoundPage, pageHead, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
@@ -48,10 +62,8 @@ import {
   avatar,
   badge,
   btn,
-  card,
   confirmAction,
-  empty,
-  listCard,
+  dot,
   pager,
   repoCounts,
   row,
@@ -61,6 +73,19 @@ import {
 } from "../ui.ts";
 
 const PER_PAGE = 20;
+
+/** Rows as a plain list under a heading: the page's lists are sections, never boxes. */
+function plainList(rows: Html[]): Html {
+  return html`<ul class="list setting-list">
+    ${rows}
+  </ul>`;
+}
+
+/** An empty state as one muted line (a title, and a note when there is one). */
+function nothing(title: string, note?: string, action?: Html): Html {
+  return html`<p class="muted">${title}${note ? html`. ${note}` : null}</p>
+    ${action ? html`<p class="form-actions">${action}</p>` : null}`;
+}
 
 // ---- profile ----
 
@@ -96,7 +121,11 @@ function repoSection(
     ctx.app.db,
     page.map((r) => r.id),
   );
-  const shown = page.filter((repo) => !apps.has(repo.id));
+  // The owner's read-only mirrors are drawn once, in "work (read-only)".
+  const mirrored = new Set(
+    isSelf ? readOnlyWork(ctx.app.db, owner.id).flatMap((o) => o.repos.map((r) => r.name)) : [],
+  );
+  const shown = page.filter((repo) => !apps.has(repo.id) && !mirrored.has(repo.name));
 
   const lead = (repo: Repo) =>
     icon(repo.forkParentId !== null ? "fork" : "repo");
@@ -116,57 +145,83 @@ function repoSection(
       </form>
     </div>
     ${shown.length === 0
-      ? empty({
-          icon: "repo",
-          title:
-            query !== ""
-              ? "No matches"
-              : anyApps
-                ? "No other repositories"
-                : "No repositories yet",
-          note:
-            query !== ""
-              ? "Try a different search."
-              : anyApps
-                ? `Every repository ${owner.username} has is already listed as an app above.`
-                : `${owner.username} has not published anything you can see.`,
-          ...(isSelf && query === ""
-            ? {
-                action: btn("New repository", {
-                  href: `/new?owner=${owner.username}`,
-                  variant: "primary",
-                }),
-              }
-            : {}),
-        })
-      : listCard(
-          shown.map((repo) =>
-            row({
-              href: `/${repo.ownerName}/${repo.name}`,
-              lead: lead(repo),
-              title: repo.name,
-              nav: true,
-              ...(repo.description !== ""
-                ? { meta: html`${repo.description}` }
-                : {}),
-              trail: html`${repoCounts({
-                openIssues: repo.counts?.openIssues,
-                openPulls: repo.counts?.openPulls,
-              })}${repo.visibility === "private"
-                ? badge("Private", { icon: "lock", variant: "secondary" })
-                : badge("Public", { variant: "secondary" })}`,
-            }),
-          ),
-          {
-            head: html`${icon("repo")}
-              <h2>${anyApps ? "Other repositories" : "Repositories"}</h2>`,
-          },
-        )}
+      ? nothing(
+          query !== ""
+            ? "No matches"
+            : anyApps
+              ? "No other repositories"
+              : "No repositories yet",
+          query !== ""
+            ? "Try a different search."
+            : anyApps
+              ? `Every repository ${owner.username} has is already listed as an app above.`
+              : `${owner.username} has not published anything you can see.`,
+          isSelf && query === ""
+            ? btn("New repository", {
+                href: `/new?owner=${owner.username}`,
+                variant: "primary",
+              })
+            : undefined,
+        )
+      : html`<section class="settings-block">
+          <h2>${anyApps ? "Other repositories" : "Repositories"}</h2>
+          ${plainList(
+            shown.map((repo) =>
+              row({
+                href: `/${repo.ownerName}/${repo.name}`,
+                lead: lead(repo),
+                title: repo.name,
+                nav: true,
+                ...(repo.description !== ""
+                  ? { meta: html`${repo.description}` }
+                  : {}),
+                trail: html`${repoCounts({
+                  openIssues: repo.counts?.openIssues,
+                  openPulls: repo.counts?.openPulls,
+                })}${repo.visibility === "private"
+                  ? badge("Private", { icon: "lock", variant: "secondary" })
+                  : badge("Public", { variant: "secondary" })}`,
+              }),
+            ),
+          )}
+        </section>`}
     ${pager(
       repos.length > PER_PAGE && last
         ? { next: `/${owner.username}?${nextParams.toString()}` }
         : {},
     )}`;
+}
+
+/**
+ * "work (read-only)": what the owner mirrors from origins connected read-only,
+ * with its last fetch and, when it failed, why in one line. Only ever drawn
+ * for the owner's own view; nothing at all for anyone else.
+ */
+function workSection(ctx: Ctx, owner: User): Html {
+  const origins = readOnlyWork(ctx.app.db, owner.id);
+  if (origins.length === 0) return html``;
+  return html`<section class="settings-block" id="work-read-only">
+    <h2>work (read-only)</h2>
+    ${origins.map(
+      (o) => html`<p class="small muted">${URL.parse(o.webUrl)?.host ?? o.webUrl}</p>
+        ${plainList(
+          o.repos.map((r) =>
+            row({
+              href: `/${owner.username}/${r.name}`,
+              lead: icon("repo"),
+              title: r.fullName,
+              nav: true,
+              meta:
+                r.problem !== ""
+                  ? html`Last fetch failed: ${r.problem}`
+                  : r.lastFetchAt === null
+                    ? html`Not fetched yet`
+                    : html`Last fetch ${time(r.lastFetchAt)}`,
+            }),
+          ),
+        )}`,
+    )}
+  </section>`;
 }
 
 /**
@@ -196,29 +251,25 @@ async function appsSection(
     return {
       count: 0,
       html: when(isSelf, () =>
-        empty({
-          icon: "rocket",
-          title: "No apps yet",
-          note: "Make one, tell the crew what it is, and watch it come up.",
-          action: btn("New app", { href: newAppHref, variant: "primary" }),
-        }),
+        nothing(
+          "No apps yet",
+          "Make one, tell the crew what it is, and watch it come up.",
+          btn("New app", { href: newAppHref, variant: "primary" }),
+        ),
       ),
     };
 
   const rows = await shelfRows(ctx, appRepos);
-  return { count: appRepos.length, html: listCard(rows, {
-    head: html`${icon("rocket")}
+  return {
+    count: appRepos.length,
+    html: html`<section class="settings-block">
       <h2>Apps</h2>
-      ${when(
-        isSelf,
-        () =>
-          html`<span class="spacer"></span>${btn("New app", {
-              href: newAppHref,
-              size: "sm",
-              icon: "plus",
-            })}`,
-      )}`,
-  }) };
+      ${plainList(rows)}
+      ${when(isSelf, () =>
+        html`<p class="form-actions">${btn("New app", { href: newAppHref, size: "sm", icon: "plus" })}</p>`,
+      )}
+    </section>`,
+  };
 }
 
 /** Everyone on any of the org's teams, once each. */
@@ -232,6 +283,14 @@ function orgMembers(ctx: Ctx, teams: Team[]): User[] {
   );
 }
 
+/** A team's members with the role each holds (#571), one fact each: name, then role. */
+function teamMemberFacts(ctx: Ctx, team: Team): { label: string; value: string }[] {
+  return listTeamMemberRoles(ctx.app.db, team.id).map(({ user, role }) => ({
+    label: user.username,
+    value: role,
+  }));
+}
+
 /** "1 member" / "4 members" — a sentence, not a number in a pill. */
 function memberCount(n: number): Html {
   return html`${n} member${n === 1 ? "" : "s"}`;
@@ -240,40 +299,48 @@ function memberCount(n: number): Html {
 function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
   const teams = listTeams(ctx.app.db, org.id);
   const members = orgMembers(ctx, teams);
-  return html`<h2 class="mt">Members</h2>
-    ${members.length === 0
-      ? empty({ icon: "users", title: "No members yet" })
-      : listCard(
-          members.map((m) =>
-            row({
-              href: `/${m.username}`,
-              lead: avatar(m.username),
-              title: m.displayName || m.username,
-              nav: true,
-              ...(m.displayName ? { meta: html`@${m.username}` } : {}),
-            }),
-          ),
-        )}
-
-    <h2 class="mt" id="teams">Teams</h2>
-    ${listCard(
-      teams.map((t) =>
-        row({
-          lead: icon("users"),
-          title: t.name,
-          meta: memberCount(listTeamMembers(ctx.app.db, t.id).length),
-          trail: html`${badge(t.permission)}${when(canManage, () =>
-            btn("Manage", {
-              href: `/${org.username}/-/teams/${t.id}`,
-              size: "sm",
-            }),
-          )}`,
-        }),
-      ),
-    )}
-    ${when(canManage, () =>
-      card(
-        html`<form method="post" action="/${org.username}/-/teams">
+  return html`<section class="settings-block">
+      <h2>Members</h2>
+      ${members.length === 0
+        ? nothing("No members yet")
+        : plainList(
+            members.map((m) =>
+              row({
+                href: `/${m.username}`,
+                lead: avatar(m.username),
+                title: m.displayName || m.username,
+                nav: true,
+                ...(m.displayName ? { meta: html`@${m.username}` } : {}),
+              }),
+            ),
+          )}
+    </section>
+    <section class="settings-block">
+      <h2 id="teams">Teams</h2>
+      ${teams.length === 0
+        ? nothing("No teams yet")
+        : plainList(
+        teams.map((t) =>
+          row({
+            lead: icon("users"),
+            title: t.name,
+            meta: memberCount(listTeamMembers(ctx.app.db, t.id).length),
+            facts: teamMemberFacts(ctx, t),
+            trail: html`${badge(t.permission)}${when(canManage, () =>
+              btn("Manage", {
+                href: `/${org.username}/-/teams/${t.id}`,
+                size: "sm",
+              }),
+            )}`,
+          }),
+        ),
+      )}
+    </section>
+    ${when(
+      canManage,
+      () => html`<section class="settings-block">
+        <h2>New team</h2>
+        <form method="post" action="/${org.username}/-/teams">
           ${uiField({
             label: "Team name",
             name: "name",
@@ -292,9 +359,8 @@ function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
           <div class="form-actions">
             ${btn("Create team", { variant: "primary" })}
           </div>
-        </form>`,
-        { head: html`<h3>New team</h3>` },
-      ),
+        </form>
+      </section>`,
     )}`;
 }
 
@@ -345,18 +411,18 @@ export async function ownerProfile(ctx: Ctx): Promise<Response> {
       )}
     </div>
     ${ownerless
-      ? card(
-          html`<p>
-            Nobody can administer this organization right now: everyone on
-            its Owners team is suspended or removed. What it holds stays as
-            it is; the forge's owner can unsuspend an owner or
-            <a href="/${owner.username}/-/teams/${OWNERS_TEAM}">add one</a>.
-          </p>`,
-          { tone: "attn" },
-        )
+      ? html`<p class="small">
+          ${dot("attn")} Nobody can administer this organization right now:
+          everyone on its Owners team is suspended or removed. What it holds
+          stays as it is; the forge's owner can unsuspend an owner or
+          <a href="/${owner.username}/-/teams/${OWNERS_TEAM}">add one</a>.
+        </p>`
       : null}
     ${apps.html}
     ${repos}
+    ${when(ctx.auth.user !== undefined && ctx.auth.user.id === owner.id && !isOrg, () =>
+      workSection(ctx, owner),
+    )}
     ${when(isOrg && accessAllows(access, "read"), () =>
       teamsSection(ctx, owner, canManage),
     )}
@@ -431,7 +497,6 @@ function orgForm(ctx: Ctx, value: string, error?: string): Response {
         ${pageHead("New organization")}
         <p class="muted small mb">
           An organization owns repositories and hands out access through teams.
-          You become its first owner.
         </p>
         <form method="post" action="/organizations/new">
           ${uiField({
@@ -457,6 +522,7 @@ function orgForm(ctx: Ctx, value: string, error?: string): Response {
 
 // GET /organizations/new
 export function newOrgPage(ctx: Ctx): Response {
+  nameFrame(ctx.request);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   return timePhase(ctx.request, "render", () =>
     ctx.auth.user ? orgForm(ctx, "") : signInFirst(ctx),
@@ -499,18 +565,13 @@ export async function teamCreate(ctx: Ctx): Promise<Response> {
     chosen === "write" || chosen === "admin" ? chosen : "read";
   const name = field(form, "name");
   const created = createTeam(ctx.app, ctx.auth.user, org, name, permission);
-  if (!created.ok) {
-    const messages: Record<string, string> = {
-      name_taken: `${org.username} already has a team called ${name}.`,
-      invalid_name: "A team needs a name.",
-    };
+  if (!created.ok)
     return flashTo(ctx, `/${org.username}`, {
       tone: "danger",
-      message: messages[created.error] ?? "Could not create that team.",
+      message: createRefusal(created.error, org.username, name),
     });
-  }
   return flashTo(ctx, `/${org.username}/-/teams/${created.value.id}`, {
-    message: `Created ${created.value.name} with ${permission} access.`,
+    message: createdSays(created.value.name, permission),
   });
 }
 
@@ -525,7 +586,10 @@ export function teamPage(ctx: Ctx): Response {
   if (!team || team.orgId !== org.id) return notFoundPage(ctx);
 
   const members = timePhase(ctx.request, "members", () =>
-    listTeamMembers(ctx.app.db, team.id),
+    listTeamMemberRoles(ctx.app.db, team.id).map(({ user, role }) => ({ ...user, role })),
+  );
+  const figures = timePhase(ctx.request, "metrics", () =>
+    teamWindows(ctx.app.db, team.id, Date.now()),
   );
   const rendering = performance.now();
   const teamBase = `/${org.username}/-/teams/${team.id}`;
@@ -536,54 +600,74 @@ export function teamPage(ctx: Ctx): Response {
     lead: icon("users"),
     sub: html`${badge(team.permission)} on every repository ${org.username} owns`,
   })}
-  ${members.length === 0
-    ? empty({ icon: "users", title: "Nobody on this team yet" })
-    : listCard(
-        members.map((m) =>
-          row({
-            lead: avatar(m.username),
-            title: html`<a href="/${m.username}"
-              >${m.displayName || m.username}</a
-            >`,
-            meta: html`@${m.username}`,
-            trail: when(
-              !protectedTeam || members.length > 1,
-              () =>
-                html`<form method="post" action="${teamBase}/remove">
-                  <input type="hidden" name="user" value="${m.username}" />
-                  ${btn("Remove", { variant: "danger", size: "sm" })}
-                </form>`,
-            ),
-          }),
-        ),
-      )}
-  ${card(
-    html`<form method="post" action="${teamBase}/add">
+  <section class="settings-block">
+    <h2>How fast this team turns issues into shipped changes, and what each costs</h2>
+    ${([
+      ["24 h", figures.day],
+      ["7 d", figures.week],
+    ] as const).map(
+      ([label, m]) => html`<h3>${label}</h3>
+        <dl class="status-rows">
+          ${metricsRows(m).map((r) => html`<div class="status-row"><dt>${r.label}</dt><dd>${r.value}</dd></div>`)}
+        </dl>`,
+    )}
+  </section>
+  <section class="settings-block">
+    <h2>Members</h2>
+    ${members.length === 0
+      ? html`<p class="muted">Nobody is on this team yet.</p>`
+      : html`<ul class="list setting-list">
+          ${members.map((m) =>
+            row({
+              lead: avatar(m.username),
+              title: html`<a href="/${m.username}"
+                >${m.displayName || m.username}</a
+              >`,
+              meta: html`@${m.username}${m.role === "member" ? "" : html` · ${m.role}`}`,
+              trail: when(
+                !protectedTeam || members.length > 1,
+                () =>
+                  confirmAction({
+                    action: `${teamBase}/remove?user=${encodeURIComponent(m.username)}`,
+                    verb: "Remove",
+                    size: "sm",
+                    label: `Remove ${m.username}`,
+                  }),
+              ),
+            }),
+          )}
+        </ul>`}
+  </section>
+  <section class="settings-block">
+    <h2>Add a member</h2>
+    <form method="post" action="${teamBase}/add">
       ${uiField({
-        label: "Add a member",
+        label: "Username",
         name: "user",
         required: true,
         hint: "Their username on this forge.",
       })}
+      ${selectField({
+        label: "Role",
+        name: "role",
+        hint: "An agent's role is its seat on the org's repositories.",
+        options: TEAM_ROLES.map((r) => ({ value: r, label: r, selected: r === "member" })),
+      })}
       <div class="form-actions">
         ${btn("Add member", { variant: "primary" })}
       </div>
-    </form>`,
-    { head: html`<h3>Membership</h3>` },
-  )}
+    </form>
+  </section>
   ${when(!protectedTeam, () =>
-    card(
-      html`<p class="muted small mb">
-          Deleting ${team.name} revokes its ${team.permission} access for
-          ${members.length} ${members.length === 1 ? "person" : "people"}.
-          Repositories are untouched.
-        </p>
-        ${confirmAction({
-          action: `${teamBase}/delete`,
-          verb: "Delete team",
-        })}`,
-      { head: html`<h3>Danger zone</h3>`, tone: "danger" },
-    ),
+    html`<section class="settings-block">
+      <h2>Delete this team</h2>
+      <p class="muted small mb">
+        Deleting ${team.name} revokes its ${team.permission} access for
+        ${members.length} ${members.length === 1 ? "person" : "people"}.
+        Repositories are untouched.
+      </p>
+      ${confirmAction({ action: `${teamBase}/delete`, verb: "Delete team" })}
+    </section>`,
   )}`;
 
   const response = page({
@@ -618,21 +702,18 @@ export async function teamMemberAdd(ctx: Ctx): Promise<Response> {
   if (r instanceof Response) return r;
   const username = field(r.form, "user").trim();
   const dest = `/${r.org.username}/-/teams/${r.team.id}`;
-  const added = addTeamMember(ctx.app, ctx.auth.user, r.org, r.team, username);
+  const rawRole = field(r.form, "role");
+  if (rawRole !== "" && !isTeamRole(rawRole))
+    return flashTo(ctx, dest, { tone: "danger", message: `A role is one of ${TEAM_ROLES.join(", ")}.` });
+  const role = isTeamRole(rawRole) ? rawRole : undefined;
+  const added = addTeamMember(ctx.app, ctx.auth.user, r.org, r.team, username, role);
   if (!added.ok)
     return flashTo(ctx, dest, {
       tone: "danger",
-      message:
-        added.error === "no_such_user"
-          ? `No account called ${username || "that"}.`
-          : added.error === "agent_cannot_own"
-            ? `${username} is an agent: an agent never administers an organization.`
-            : "Could not add that member.",
+      message: addRefusal(added.error, username),
     });
   return flashTo(ctx, dest, {
-    message: added.value.added
-      ? `Added ${username} to ${r.team.name}.`
-      : `${username} was already on ${r.team.name}.`,
+    message: addedSays(added.value.added, username, r.team.name),
   });
 }
 
@@ -640,7 +721,13 @@ export async function teamMemberAdd(ctx: Ctx): Promise<Response> {
 export async function teamMemberRemove(ctx: Ctx): Promise<Response> {
   const r = await teamAction(ctx);
   if (r instanceof Response) return r;
-  const username = field(r.form, "user").trim();
+  // The confirm page posts to its `to` path exactly, so the member arrives
+  // in the query; a form that names one still wins.
+  const username = (
+    field(r.form, "user") ||
+    ctx.url.searchParams.get("user") ||
+    ""
+  ).trim();
   const dest = `/${r.org.username}/-/teams/${r.team.id}`;
   const removed = removeTeamMember(
     ctx.app,
@@ -652,17 +739,10 @@ export async function teamMemberRemove(ctx: Ctx): Promise<Response> {
   if (!removed.ok)
     return flashTo(ctx, dest, {
       tone: "danger",
-      message:
-        removed.error === "no_such_user"
-          ? `No account called ${username || "that"}.`
-          : removed.error === "last_owner"
-            ? `${r.team.name} must keep at least one person who owns ${r.org.username}. Make someone else an owner first.`
-            : "Could not remove that member.",
+      message: removeRefusal(removed.error, username, r.org.username, r.team.name),
     });
   return flashTo(ctx, dest, {
-    message: removed.value.removed
-      ? `Removed ${username} from ${r.team.name}.`
-      : `${username} was not on ${r.team.name}.`,
+    message: removedSays(removed.value.removed, username, r.team.name),
   });
 }
 
@@ -674,9 +754,9 @@ export async function teamDelete(ctx: Ctx): Promise<Response> {
   if (!deleted.ok)
     return flashTo(ctx, `/${r.org.username}/-/teams/${r.team.id}`, {
       tone: "danger",
-      message: `${r.team.name} is protected — an organization must keep its owners.`,
+      message: deleteRefusal(deleted.error, r.team.name),
     });
   return flashTo(ctx, `/${r.org.username}`, {
-    message: `Deleted the ${r.team.name} team.`,
+    message: deletedSays(r.team.name),
   });
 }

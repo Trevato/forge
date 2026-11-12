@@ -6,16 +6,20 @@
  * the caller says `false` — returns the plan and changes nothing.
  */
 
+import { nameShapeVerdict } from "./name_verdict.ts";
+import { linkRequestVisitor } from "../perf/visitor_link.ts";
 import { startWatch, probeOf, type Probe } from "./live.ts";
-import { reissueClaim, spawnForge, type SpawnError } from "../actions/spawn.ts";
+import { firstProof, reachWords, settleChild } from "./reach.ts";
+import { founderClash, reissueClaim, spawnForge, type SpawnError } from "../actions/spawn.ts";
 import type { App } from "../app.ts";
 import { maxChildren } from "../core/capacity.ts";
 import { getAgentByName } from "../core/agents.ts";
 import { canRead, getRepo } from "../core/repos.ts";
-import { kindOfToken, parseApiBase } from "../core/subscriptions.ts";
+import { kindOfToken, normalizeToken, parseApiBase } from "../core/subscriptions.ts";
 import type { User } from "../core/users.ts";
 import { repoDir } from "../git/repos.ts";
-import type { Ctx } from "../http/context.ts";
+import { crossOrigin, type Ctx } from "../http/context.ts";
+import { changeLink } from "./manage.ts";
 import { takeDoor } from "../http/strangers.ts";
 import {
   childPublicUrl,
@@ -34,6 +38,9 @@ import { ANON_SPAWNS_PER_DAY, checkAnonSpawn, noteAnonSpawn } from "./rate.ts";
 import { readdirSync, readFileSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { FREE, getPlan, getPlans, PAID_PLAN_ADMIN_ONLY } from "../settings/plans.ts";
+import { giftOf, REDEEM_WORDS, settleGift, unclaimGift } from "../actions/codes.ts";
+import { claimCode, CODE_WORDS, type Code } from "../billing/codes.ts";
 
 export interface Door {
   readonly status: number;
@@ -43,6 +50,12 @@ export interface Door {
 const MAX_CREW = 100;
 const placements = new WeakMap<App, Placement>();
 const probes = new WeakMap<App, (url: string) => Probe>();
+
+/** The probe this forge asks a child's address with: the test's when one was set, else `/healthz` within `timeoutMs`. */
+export function probeFor(app: App, url: string, timeoutMs: number): Probe {
+  const swapped = probes.get(app);
+  return swapped ? swapped(url) : probeOf(url, timeoutMs);
+}
 
 /** Tests swap how a new child is asked whether it is live. */
 export function useProbe(app: App, probe: (url: string) => Probe): void {
@@ -169,12 +182,15 @@ export async function spawnDoor(
   ctx: Ctx,
   user: User | undefined,
   raw: Record<string, unknown>,
+  /** `paid`: the plan was bought (`actions/order.ts`), so a paid plan needs no admin and a stranger's rate limits do not apply. */
+  opts: { readonly paid?: boolean } = {},
 ): Promise<Door> {
+  const paid = opts.paid === true;
   const anon = user === undefined;
   if (!anon && user.kind !== "user") return spawnWords({ kind: "forbidden" });
   // A plan is free of children but not of work — it reads every catalog
   // app it names — so a stranger's are counted per address and per forge.
-  if (anon) {
+  if (anon && !paid) {
     const verdict = takeDoor(ctx.app, "plan", ctx.request);
     if (!verdict.allowed)
       return {
@@ -193,13 +209,13 @@ export async function spawnDoor(
   const crew = names(raw["crew"], "crew", MAX_CREW);
   if (!Array.isArray(crew)) return crew;
   if (anon && crew.length > 0)
-    return invalid("crew", "anonymous spawns carry no crew; claim the forge and invite one there");
+    return invalid("crew", "anonymous spawns carry no crew; open the forge as yours and invite one there");
   // A stranger has no key to seal and no account to keep: the key is
   // refused outright, the rest simply do not apply.
   if (anon && raw["modelKey"] !== undefined)
     return invalid(
       "modelKey",
-      "anonymous spawns carry no model key; claim the forge and add one there",
+      "anonymous spawns carry no model key; open the forge as yours and add one there",
     );
   // The child's model key: a key or subscription token with a whole-life budget, or none. A
   // subscription token is a person's own plan and never travels.
@@ -215,11 +231,11 @@ export async function spawnDoor(
   }
   const modelKey = raw["modelKey"];
   if (modelKey !== undefined) {
-    const kind = typeof modelKey === "string" ? kindOfToken(modelKey) : undefined;
+    const kind = typeof modelKey === "string" ? kindOfToken(normalizeToken(modelKey)) : undefined;
     if (kind === undefined)
       return invalid(
         "modelKey",
-        "must be one line with no spaces: an Anthropic key (sk-ant-api…, sk-ant-usr…), a `claude setup-token` token (sk-ant-oat…), or a gateway's key with its base URL",
+        "is empty or over 4096 characters once spaces, line breaks and a `Bearer ` prefix are dropped: paste an Anthropic key, a `claude setup-token` token, or your gateway's key (with its base URL)",
       );
     if (kind === "oauth" && modelEndpoint !== undefined)
       return invalid("modelEndpoint", "a subscription token (sk-ant-oat…) talks to Anthropic itself and takes no base URL");
@@ -254,6 +270,35 @@ export async function spawnDoor(
     }
   }
   const source: SpawnSource = { catalog, briefs, subscriptions: [] };
+  // A plan (`settings/plans.ts`) gives the child its size; read now, so an edit governs this spawn.
+  let planKey: string | undefined;
+  let size = raw["size"];
+  // A gift code (`actions/codes.ts`) names the plan itself: no admin, no payment, whatever the provider.
+  const giftIn = raw["code"];
+  let giftSeen: { plan: string } | undefined;
+  if (giftIn !== undefined && giftIn !== null && giftIn !== "") {
+    if (raw["plan"] !== undefined && raw["plan"] !== null && raw["plan"] !== "") return invalid("code", "a code gives its own plan; send the code or a plan, not both");
+    const seen = giftOf(ctx.app, ctx.request, giftIn);
+    if (!seen.ok) return seen.error === "slow_down" ? { status: 429, body: { error: "rate_limited", message: REDEEM_WORDS.slow_down } } : invalid("code", REDEEM_WORDS[seen.error]);
+    raw = { ...raw, plan: seen.value.plan };
+    giftSeen = { plan: seen.value.plan };
+  }
+  if (raw["plan"] !== undefined && raw["plan"] !== null && raw["plan"] !== "") {
+    const chosen = typeof raw["plan"] === "string" ? getPlan(db, raw["plan"]) : undefined;
+    if (chosen === undefined) return invalid("plan", `must be one of ${getPlans(db).map((p) => p.key).join(", ")}`);
+    if (anon && chosen.key !== FREE && giftIn === undefined && !paid) return invalid("plan", `the ${chosen.name} plan is for a signed-in person; sign in first`);
+    if (chosen.key !== FREE && user?.isAdmin !== true && giftIn === undefined && !paid) return invalid("plan", PAID_PLAN_ADMIN_ONLY(chosen.name));
+    if (size !== undefined && size !== null && size !== "" && size !== chosen.size)
+      return invalid("size", `the ${chosen.name} plan is a ${chosen.size} forge; leave size out or send ${chosen.size}`);
+    planKey = chosen.key;
+    size = chosen.size;
+  }
+  // The same word the name field asks about, so a name it calls free is one the door takes.
+  // A bad shape is refused by the plan below, in the same words.
+  if (typeof raw["name"] === "string") {
+    const said = nameShapeVerdict(raw["name"]);
+    if (said?.verdict === "reserved") return invalid("name", said.why);
+  }
   const input = {
     name: raw["name"],
     org: raw["name"],
@@ -267,13 +312,18 @@ export async function spawnDoor(
     budgetUsd: raw["budgetUsd"],
     fresh: raw["fresh"],
     followMode: raw["followMode"],
-    size: raw["size"],
+    size,
+    template: raw["template"],
+    ...(planKey === undefined ? {} : { plan: planKey }),
     ...(anon ? {} : { for: raw["for"] }),
   };
 
   if (dry) {
     const planned = planSpawn(input, source);
     if (!planned.ok) return spawnWords({ kind: "invalid", ...planned.error });
+    // What the real spawn would refuse, the plan refuses too.
+    const clash = founderClash(planned.value, user);
+    if (clash !== undefined) return spawnWords({ kind: "invalid", ...clash });
     return {
       status: 200,
       body: {
@@ -281,13 +331,14 @@ export async function spawnDoor(
         plan: planned.value,
         // Who the child's first admin will be: the caller, or whoever claims it.
         firstAdmin: user?.username ?? null,
+        ...(giftSeen === undefined ? {} : { gift: giftSeen }),
         ...dryRun(planned.value, source),
         ...(planned.value.budgetUsd === null ? {} : { keyNote: KEY_BUDGET_NOTE }),
       },
     };
   }
   // A stranger may start only a few children a day; the plan above is free.
-  if (anon) {
+  if (anon && !paid) {
     const limit = checkAnonSpawn(ctx.app.db, ctx.request);
     if (!limit.allowed)
       return {
@@ -298,26 +349,61 @@ export async function spawnDoor(
         },
       };
   }
+  // The use is spent just before the forge is made, in one statement; it goes back if no forge is made.
+  let gift: Code | undefined;
+  if (giftIn !== undefined && giftIn !== null && giftIn !== "") {
+    const claimed = claimCode(ctx.app.db, giftIn);
+    if (!claimed.ok) return invalid("code", CODE_WORDS[claimed.error]);
+    gift = claimed.value;
+  }
   const startedAt = Date.now();
-  const made = await spawnForge(ctx.app, user, input, source, {
-    placement: placementFor(ctx.app),
-    request: ctx.request,
-    url: ctx.url,
-    ...(typeof modelKey === "string" ? { modelKey } : {}),
-    ...(modelEndpoint === undefined ? {} : { modelEndpoint }),
-  });
+  // The use is given back unless the forge was made and the redemption recorded: a throw settles it too.
+  let settled = false;
+  let made: Awaited<ReturnType<typeof spawnForge>>;
+  try {
+    made = await spawnForge(ctx.app, user, input, source, {
+      ...(gift === undefined && !paid ? {} : { gift: true }),
+      placement: placementFor(ctx.app),
+      request: ctx.request,
+      url: ctx.url,
+      ...(typeof modelKey === "string" ? { modelKey } : {}),
+      ...(modelEndpoint === undefined ? {} : { modelEndpoint }),
+    });
+    if (made.ok && gift !== undefined && !made.value.existed) {
+      settleGift(ctx.app, gift, made.value.name);
+      settled = true;
+    }
+  } finally {
+    if (gift !== undefined && !settled) unclaimGift(ctx.app, gift);
+  }
   if (!made.ok) return spawnWords(made.error);
-  if (anon && !made.value.existed) noteAnonSpawn(ctx.app.db, ctx.request);
+  if (anon && !paid && !made.value.existed) noteAnonSpawn(ctx.app.db, ctx.request);
+  // The visitor who started (or was given) this forge becomes someone, on the host's side (#11265).
+  if (!made.value.existed && !paid) linkRequestVisitor(ctx.app, ctx.request, made.value.name, gift === undefined ? "started" : "paid");
   // Its apps come up now, so the first visit after a claim finds them awake.
   if (!made.value.existed) {
     void bootHostedChild(ctx.app, made.value.name);
     startWatch(ctx.app, { name: made.value.name, startedAt, probe: (probes.get(ctx.app) ?? probeOf)(made.value.url) });
   }
+  // Proven from outside before it is called done: the child's home and each
+  // app's public address, each with what came back. What does not answer yet
+  // is kept proving behind this answer, and is an alarm if it never does.
+  const proved = made.value.existed ? undefined : await firstProof(ctx.app, made.value.name);
+  if (proved !== undefined) void settleChild(ctx.app, made.value.name);
   return {
     status: made.value.existed ? 200 : 201,
     body: {
       dryRun: false,
       ...made.value,
+      ...(proved === undefined
+        ? {}
+        : {
+            reach: {
+              ok: proved.ok,
+              says: proved.ok ? "Every public address answered." : `${reachWords(proved)}. Still checking; the owner is alarmed if it does not come up in 3 minutes.`,
+              proofs: proved.proofs,
+            },
+          }),
       ...(typeof modelKey === "string" ? { keyNote: KEY_BUDGET_NOTE } : {}),
     },
   };
@@ -330,4 +416,14 @@ export async function reissueDoor(ctx: Ctx, user: User, name: string): Promise<D
   if (made.error.kind === "not_found")
     return { status: 404, body: { error: "not_found", message: `no child forge named ${name}` } };
   return spawnWords(made.error);
+}
+
+/** Take a child's unclaimed link back, or undo that within the minute: an admin's, same-origin. */
+export async function changeDoor(ctx: Ctx, user: User, name: string, act: "revoke" | "undo"): Promise<Door> {
+  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return spawnWords({ kind: "cross_origin" });
+  if (!user.isAdmin) return { status: 403, body: { error: "forbidden", message: "only a site admin can end or bring back a claim link" } };
+  const done = await changeLink(ctx.app, user.id, name, act);
+  if (done.ok) return { status: 200, body: { name, says: done.says } };
+  if (done.missing) return { status: 404, body: { error: "not_found", message: `no child forge named ${name}` } };
+  return spawnWords({ kind: "refused", reason: "not_open", message: done.says });
 }

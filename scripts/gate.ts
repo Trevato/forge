@@ -14,13 +14,13 @@
  * check is green and whose description carries ten green runs in random
  * order under load (`bun scripts/flake-hunt.ts admit <file>`). A flaky file
  * leaves it only through `bun scripts/flake-hunt.ts quarantine`, under the
- * issue the nightly hunt filed (`.forgejo/workflows/flake-hunt.yml`).
+ * issue the nightly hunt filed (`src/nightly/`).
  *
- * The excluded files are not unseen: `.forgejo/workflows/outside-gate.yml`
+ * The excluded files are not unseen: the forge's nightly job (`src/nightly/`)
  * runs `outsideFiles` nightly and files a `Red:` issue for each that fails (#812).
  */
 
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 export type Exclusion = {
@@ -32,61 +32,7 @@ export type Exclusion = {
   issue: number;
 };
 
-export const EXCLUDED: readonly Exclusion[] = [
-  { file: "test/crew-sandbox-real.test.ts", reason: "landed unlisted and red locally; the builder admits it", issue: 1238 },
-  { file: "test/apps-api.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/apps-open-host.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
-  },
-  { file: "test/apps-sleep.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/apps-ws.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/board-windows.test.ts",
-    reason:
-      "red: an app with spend and nothing shipped is missing from the board",
-    issue: 555,
-  },
-  {
-    file: "test/crew-interrupted.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
-  },
-  { file: "test/parity.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/probe.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/probes.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/prompts.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/public-url.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/reviews.test.ts",
-    reason: "red in random order: a posted review comment appears inline, anchored to its line",
-    issue: 2106,
-  },
-  { file: "test/runs-lease.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/scaffold.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/snapshot-destination.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
-  },
-  { file: "test/snapshot.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/spawn-placement.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
-  },
-  { file: "test/ssh-app.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/ssh-port-taken.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
-  },
-  { file: "test/ssh.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/studio-phone.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/tui-asked.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/tui-boards.test.ts", reason: "not yet admitted", issue: 261 },
-];
+export const EXCLUDED: readonly Exclusion[] = [];
 
 /**
  * Everything wrong with the quarantine, against the test files that exist:
@@ -168,8 +114,8 @@ export async function treeGate(tree: string, key: string): Promise<string[]> {
  * What the check prints when the quarantine is wrong: every problem, then
  * one last line naming the files to fix. Empty when it is right.
  */
-export function gateRefusal(present: readonly string[]): string[] {
-  const problems = auditGate(present, EXCLUDED);
+export function gateRefusal(present: readonly string[], excluded: readonly Exclusion[] = EXCLUDED): string[] {
+  const problems = auditGate(present, excluded);
   if (problems.length === 0) return [];
   const named = [
     ...new Set(problems.map((p) => p.match(/^(test\/\S+\.test\.ts) /)?.[1])),
@@ -189,23 +135,37 @@ function git(args: string[], cwd: string = process.cwd()): { ok: boolean; out: s
  * Pins the pull edited, against its base: `$FORGE_CHECK_BASE`, else the
  * merge base with main. A pin whose migration is not on the base was never
  * history, so it is deleted and regenerated rather than left to a new migration.
- * With no base to compare to it says so on stderr and names nothing.
+ * It also compares HEAD to main's tip (#8352): a pin there that the pull's
+ * own commits changed or deleted is refused, though a squash landing left
+ * the merge base before it. A tree with no git history (the forge's full
+ * check exports one) has nothing to diff and says so on stderr; a repository
+ * where no base resolves is refused, never passed unchecked.
  */
 // Imported on use: `treeGate` loads this file alone, outside the repository.
 export async function pinRefusal(cwd: string = process.cwd()): Promise<string[]> {
-  const { parseNameStatus, pinEdits, unpinnedAdds } = await import("../src/kernel/pin_edits.ts");
-  const env = process.env.FORGE_CHECK_BASE;
-  const base =
-    env || git(["merge-base", "origin/main", "HEAD"], cwd).out || git(["merge-base", "main", "HEAD"], cwd).out;
-  if (!base) {
+  const { parseNameStatus, pinEdits, tipEdits, unpinnedAdds } = await import("../src/kernel/pin_edits.ts");
+  if (!git(["rev-parse", "--git-dir"], cwd).ok) {
     console.error("gate: no base to compare to (set FORGE_CHECK_BASE): migration pins not checked");
     return [];
   }
+  const env = process.env.FORGE_CHECK_BASE;
+  const base =
+    env || git(["merge-base", "origin/main", "HEAD"], cwd).out || git(["merge-base", "main", "HEAD"], cwd).out;
+  const tip =
+    env ||
+    git(["rev-parse", "--verify", "--quiet", "origin/main^{commit}"], cwd).out ||
+    git(["rev-parse", "--verify", "--quiet", "main^{commit}"], cwd).out;
+  const unchecked = (why: string) => [
+    `${why}: a migration on main is history, so its pins must be checked; set FORGE_CHECK_BASE or fetch origin/main`,
+  ];
+  if (!base || !tip) return unchecked("no base to compare to");
   const diff = git(["diff", "--name-status", "-M", `${base}..HEAD`], cwd);
-  if (!diff.ok) {
-    console.error(`gate: git diff against ${base} failed: migration pins not checked`);
-    return [];
-  }
+  if (!diff.ok) return unchecked(`git diff against ${base} failed`);
+  const fromTip = git(
+    ["diff", "--name-status", "--no-renames", tip, "HEAD", "--", "src/core/migration-pins", "src/core/migration-pins.json"],
+    cwd,
+  );
+  if (!fromTip.ok) return unchecked(`git diff against ${tip} failed`);
   const changes = parseNameStatus(diff.out);
   const edits = pinEdits(changes).map((path) => {
     const name = path.split("/").pop()?.replace(/\.pin$/, "") ?? "";
@@ -217,19 +177,122 @@ export async function pinRefusal(cwd: string = process.cwd()): Promise<string[]>
       ? `${path} was deleted: a migration on main is history, so restore it`
       : `${path} was changed: a migration on main is history, so add a new migration instead`;
   });
+  // Pins on main's tip the pull's commits wrote: by content, so a rebase passes.
+  const named = new Set(pinEdits(changes));
+  const touched = (path: string) => git(["log", "-1", "--format=%H", `${base}..HEAD`, "--", path], cwd).out !== "";
+  const landed = tipEdits(parseNameStatus(fromTip.out), touched)
+    .filter(({ path }) => !named.has(path))
+    .map(({ status, path }) =>
+      status.startsWith("D")
+        ? `${path} was deleted: a migration on main is history, so restore it`
+        : `${path} was changed: a migration on main is history, so add a new migration instead`,
+    );
   // Last, so the check's summary — its last line — names the one-step fix.
   const pinned = (name: string) => existsSync(join(cwd, "src/core/migration-pins", `${name}.pin`));
   const missing = unpinnedAdds(changes, pinned).map(
     (name) =>
       `this pull adds migration ${name} without its pin: run bun scripts/pin-migrations.ts and commit src/core/migration-pins/${name}.pin`,
   );
-  return [...edits, ...missing];
+  return [...edits, ...landed, ...missing];
+}
+
+/**
+ * A `*.test.ts` under `src/` (vendor excepted) is outside every gate plan,
+ * since `presentTests` reads only `test/` (#11222): name each, and where it goes.
+ */
+export function strayTestRefusal(root = "."): string[] {
+  const src = join(root, "src");
+  if (!existsSync(src)) return [];
+  return (readdirSync(src, { recursive: true }) as string[])
+    .filter((f) => f.endsWith(".test.ts") && !f.split("/").includes("vendor"))
+    .sort()
+    .map((f) => `src/${f}: a test outside test/ never runs in the gate; move it to test/`);
+}
+
+/**
+ * No call path from the billing webhook deletes a forge, an app or a child
+ * (#11392): the walk in `src/kernel/destroy_reach.ts`, named here so it runs
+ * in the check's first second as well as in `test/billing-never-deletes.test.ts`.
+ */
+export function billingDeletesRefusal(root = "."): string[] {
+  const { destroyReachRefusal } = require("../src/kernel/destroy_reach.ts") as typeof import("../src/kernel/destroy_reach.ts");
+  // A fixture repository (the gate's own tests) holds no walk at all and has nothing to check.
+  // A tree that has the walk but not the webhook is the real one after a move: refused, not passed.
+  if (!existsSync(join(root, "src/kernel/destroy_reach.ts"))) return [];
+  return destroyReachRefusal(root);
+}
+
+/** Review findings that repeated (#8888): see `src/kernel/review_rules.ts`. */
+export function reviewRefusal(root = "."): string[] {
+  // Loaded by `require` so `treeGate`, which loads this file alone, never needs it.
+  const { reviewProblems } = require("../src/kernel/review_rules.ts") as typeof import("../src/kernel/review_rules.ts");
+  const dir = join(root, "test");
+  const tests = existsSync(dir)
+    ? readdirSync(dir)
+        .filter((f) => f.endsWith(".test.ts"))
+        .map((f) => ({ path: `test/${f}`, text: readFileSync(join(dir, f), "utf8") }))
+    : [];
+  const src = join(root, "src");
+  const code = existsSync(src)
+    ? (readdirSync(src, { recursive: true }) as string[])
+        .filter((f) => f.endsWith(".ts") && !f.includes("vendor/"))
+        .map((f) => ({ path: `src/${f}`, text: readFileSync(join(src, f), "utf8") }))
+    : [];
+  return reviewProblems([...tests, ...code]);
+}
+
+/**
+ * A pull that changes a reachable surface must say how to try it on its
+ * preview (#8889). Same base and same pass-when-unknown as `pinRefusal`.
+ */
+export async function tryItRefusal(cwd: string = process.cwd()): Promise<string[]> {
+  const { parseNameStatus } = await import("../src/kernel/pin_edits.ts");
+  const { tryItProblems } = await import("../src/kernel/try_it.ts");
+  const base =
+    process.env.FORGE_CHECK_BASE ||
+    git(["merge-base", "origin/main", "HEAD"], cwd).out ||
+    git(["merge-base", "main", "HEAD"], cwd).out;
+  if (!base) return [];
+  const diff = git(["diff", "--name-status", "-M", `${base}..HEAD`], cwd);
+  const log = git(["log", "--format=%B%x00", `${base}..HEAD`], cwd);
+  if (!diff.ok || !log.ok) return [];
+  return tryItProblems(parseNameStatus(diff.out), log.out.split("\0").map((m) => m.trim()).filter(Boolean));
+}
+
+/** A pull that adds a page adds its terminal screen and how-to too (#10628). */
+export async function bothDoorsRefusal(cwd: string = process.cwd()): Promise<string[]> {
+  const { parseNameStatus } = await import("../src/kernel/pin_edits.ts");
+  const { bothDoorsProblems } = await import("../src/kernel/both_doors.ts");
+  const base =
+    process.env.FORGE_CHECK_BASE ||
+    git(["merge-base", "origin/main", "HEAD"], cwd).out ||
+    git(["merge-base", "main", "HEAD"], cwd).out;
+  if (!base) return [];
+  const diff = git(["diff", "--name-status", "-M", `${base}..HEAD`], cwd);
+  const log = git(["log", "--format=%B%x00", `${base}..HEAD`], cwd);
+  if (!diff.ok || !log.ok) return [];
+  return bothDoorsProblems(parseNameStatus(diff.out), log.out.split("\0").map((m) => m.trim()).filter(Boolean));
+}
+
+/** A pull that adds a feature without touching the pipeline says why (#11036). */
+export async function directionRefusal(cwd: string = process.cwd()): Promise<string[]> {
+  const { parseNameStatus } = await import("../src/kernel/pin_edits.ts");
+  const { directionProblems } = await import("../src/kernel/direction.ts");
+  const base =
+    process.env.FORGE_CHECK_BASE ||
+    git(["merge-base", "origin/main", "HEAD"], cwd).out ||
+    git(["merge-base", "main", "HEAD"], cwd).out;
+  if (!base) return [];
+  const diff = git(["diff", "--name-status", "-M", `${base}..HEAD`], cwd);
+  const log = git(["log", "--format=%B%x00", `${base}..HEAD`], cwd);
+  if (!diff.ok || !log.ok) return [];
+  return directionProblems(parseNameStatus(diff.out), log.out.split("\0").map((m) => m.trim()).filter(Boolean));
 }
 
 // `bun scripts/gate.ts`: the audit alone, first in `forge.json`'s check, so
 // a stale exclusion fails in under a second — not after install and tsc.
 if (import.meta.main) {
-  const refusal = [...gateRefusal(presentTests()), ...(await pinRefusal())];
+  const refusal = [...gateRefusal(presentTests()), ...(await pinRefusal()), ...(await tryItRefusal()), ...(await bothDoorsRefusal()), ...(await directionRefusal()), ...strayTestRefusal(), ...reviewRefusal(), ...billingDeletesRefusal()];
   for (const line of refusal) console.error(`gate: ${line}`);
   process.exit(refusal.length === 0 ? 0 : 2);
 }

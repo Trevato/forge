@@ -181,10 +181,10 @@ describe("a parked pull", () => {
     setIssueState(app, alice, repo, plain, "closed");
 
     const page = await get(`/alice/shop/pulls/${parked.number}`);
-    expect(page).toMatch(/data-state="closed"[^>]*>[^<]*<svg[\s\S]*?<\/svg>Parked</);
-    expect(page).not.toMatch(/<\/svg>Closed</);
+    expect(page).toMatch(/data-state="closed"[\s\S]*?"word-text">Parked</);
+    expect(page).not.toMatch(/"word-text">Closed</);
     expect(await get(`/alice/shop/pulls/${plain.number}`)).toMatch(
-      /<\/svg>Closed</,
+      /"word-text">Closed</,
     );
 
     const list = await get("/alice/shop/pulls?word=stopped");

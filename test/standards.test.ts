@@ -84,6 +84,62 @@ describe("what the open web expects", () => {
     }
   });
 
+  test("security.txt's contact is the sealed form of the forge's public repository", async () => {
+    app.config.forgeRepo = "alice/open";
+    try {
+      const body = await fetch(`${base}/.well-known/security.txt`).then((r) => r.text());
+      expect(body).toContain(`Contact: ${base}/alice/open/issues/new?sealed=1\n`);
+      // The no-account report is not sealed: it is never offered beside
+      // the contact, and the footer names it for what is not a vulnerability.
+      expect(body).not.toContain(`${base}/alice/open/report`);
+      expect(body.indexOf("/report")).toBeGreaterThan(body.indexOf("Not a vulnerability?"));
+      // The configured contact still wins.
+      process.env["FORGE_SECURITY_CONTACT"] = "mailto:security@example.org";
+      try {
+        const set = await fetch(`${base}/.well-known/security.txt`).then((r) => r.text());
+        expect(set).toContain("Contact: mailto:security@example.org\n");
+        expect(set).not.toContain("alice/open");
+      } finally {
+        delete process.env["FORGE_SECURITY_CONTACT"];
+      }
+    } finally {
+      delete app.config.forgeRepo;
+    }
+  });
+
+  test("the sealed form, signed out, offers the account only and comes back sealed", async () => {
+    const form = await fetch(`${base}/alice/open/issues/new?sealed=1`).then((r) => r.text());
+    expect(form).toContain("A sealed security report needs an account");
+    expect(form).not.toContain(">Report a problem</a");
+    // The password form brings the stranger back to the sealed form.
+    const next = encodeURIComponent("/alice/open/issues/new?sealed=1");
+    expect(form).toContain(`href="/signin?next=${next}"`);
+    const plain = await fetch(`${base}/alice/open/issues/new`).then((r) => r.text());
+    expect(plain).toContain("Opening an issue needs an account");
+    expect(plain).toContain(">Report a problem</a");
+    // Behind a platform edge, the edge's login comes back sealed too.
+    app.config.edgeToken = "edge-secret-0123456789";
+    try {
+      const edge = await fetch(`${base}/alice/open/issues/new?sealed=1`).then((r) => r.text());
+      expect(edge).toContain(`href="/_plat/login?rd=${next}"`);
+    } finally {
+      delete app.config.edgeToken;
+    }
+  });
+
+  test("security.txt names a profile for a private or malformed forge repository", async () => {
+    for (const named of ["alice/closed", "alice"]) {
+      app.config.forgeRepo = named;
+      try {
+        const body = await fetch(`${base}/.well-known/security.txt`).then((r) => r.text());
+        expect(body).toContain(`Contact: ${base}/alice\n`);
+        expect(body).not.toContain("issues/new?sealed=1\n");
+      } finally {
+        delete app.config.forgeRepo;
+      }
+    }
+  });
+
   test("change-password sends a password manager to the right page", async () => {
     const res = await fetch(`${base}/.well-known/change-password`, {
       redirect: "manual",
@@ -167,6 +223,53 @@ describe("what the open web expects", () => {
     expect(body).not.toContain("alice/closed");
   });
 
+  test("GET /api/v1 names the forge and where its API, MCP, OAuth and docs live; POST is still no_route", async () => {
+    for (const path of ["/api/v1", "/api/v1/"]) {
+      const res = await fetch(`${base}${path}`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("cache-control")).toBe("no-cache");
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(res.headers.get("content-security-policy")).not.toBeNull();
+      const j = (await res.json()) as Record<string, unknown>;
+      expect(Object.keys(j).sort()).toEqual(["commit", "here", "llms", "mcp", "name", "oauth", "openapi", "version"]);
+      expect(j["openapi"]).toBe(`${base}/contract/openapi.json`);
+      expect(j["mcp"]).toBe(`${base}/mcp`);
+      expect(j["oauth"]).toBe(`${base}/.well-known/oauth-protected-resource`);
+      expect(j["llms"]).toBe(`${base}/llms.txt`);
+      expect(j["here"]).toBe(`${base}/api/v1/here`);
+    }
+    expect((await fetch(`${base}/api/v1`, { method: "HEAD" })).status).toBe(200);
+    const post = await fetch(`${base}/api/v1`, { method: "POST", headers: { origin: base } });
+    expect(post.status).toBe(404);
+    expect(((await post.json()) as { error?: string }).error).toBe("no_route");
+    expect(await fetch(`${base}/llms.txt`).then((r) => r.text())).toContain(`${base}/api/v1 (the root`);
+  });
+
+  test("every MCP tool llms.txt offers without an account answers non-401 to an anonymous call, and the no-account section names only HTTP routes for finding things", async () => {
+    const body = await fetch(`${base}/llms.txt`).then((r) => r.text());
+    const tools = body.split("## MCP tools")[1]!.split("\n## ")[0]!;
+    const open = [...tools.matchAll(/^- (\w+):.*\(no account\)/gm)].map((m) => m[1]!);
+    expect(open).toContain("report");
+    for (const name of open) {
+      const res = await fetch(`${base}/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: { repo: "nobody/none", title: "x" } } }),
+      });
+      expect(res.status).not.toBe(401);
+    }
+    const find = body.split("## Find things (no account)")[1]!.split("\n## ")[0]!;
+    expect(find).toContain("with an account");
+    expect(find).not.toContain("MCP: the tool");
+    expect(find).toContain('MCP "search": with an account');
+    const probe = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "explore", arguments: { q: "" } } }),
+    });
+    expect(probe.status).toBe(401);
+  });
+
   test("llms.txt says how to use the forge from a harness, with the endpoint built from the URL", async () => {
     const body = await fetch(`${base}/llms.txt`).then((r) => r.text());
     const section = body.slice(body.indexOf("## Use it from your harness"));
@@ -174,8 +277,9 @@ describe("what the open web expects", () => {
     expect(section).toContain(`${base}/mcp`);
     expect(section).toContain(`${base}/.well-known/oauth-protected-resource`);
     expect(section).toContain("streamable HTTP");
-    expect(section).toContain("Claude Code plugin");
-    expect(section).toContain("OpenCode plugin");
+    // trevato/forge is not here, so the lines come from the public upstream.
+    expect(section).toContain("Claude Code plugin (source https://forge.open-platform.sh/trevato/forge.git");
+    expect(section).not.toContain("needs that repository to be public");
   });
 
   test("sitemap and llms.txt are each built once for 50 requests, and a repository made private drops out at once", async () => {
@@ -201,6 +305,49 @@ describe("what the open web expects", () => {
       const body = await fetch(`${base}${path}`).then((r) => r.text());
       expect(body).not.toContain("alice/midway");
       expect(body).toContain("alice/open");
+    }
+  });
+
+  test("llms.txt answers a strong ETag and a 304, and a new public repository changes the ETag", async () => {
+    const first = await fetch(`${base}/llms.txt`);
+    const etag = first.headers.get("etag")!;
+    expect(etag).toMatch(/^"[0-9a-f]{32}"$/);
+    await first.text();
+    const again = await fetch(`${base}/llms.txt`, { headers: { "if-none-match": etag } });
+    expect(again.status).toBe(304);
+    expect(await again.text()).toBe("");
+    expect(again.headers.get("etag")).toBe(etag);
+    expect(first.headers.get("cache-control")).toBe("private, no-cache");
+    expect(again.headers.get("cache-control")).toBe("private, no-cache");
+    expect(again.headers.get("vary")).toContain("Cookie");
+    expect(again.headers.get("x-content-type-options")).toBe("nosniff");
+    const made = await createRepo(app, alice, { name: "etagged", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    // A new repository reaches the listing when its minute is up.
+    forgetListings(app.db);
+    const after = await fetch(`${base}/llms.txt`, { headers: { "if-none-match": etag } });
+    expect(after.status).toBe(200);
+    expect(after.headers.get("etag")).not.toBe(etag);
+    expect(await after.text()).toContain("alice/etagged");
+  });
+
+  test("llms.txt changes its ETag when the running commit changes", async () => {
+    const saved = { c: process.env["FORGE_COMMIT"], a: process.env["FORGE_APP_COMMIT"] };
+    try {
+      delete process.env["FORGE_COMMIT"];
+      process.env["FORGE_APP_COMMIT"] = "aaaaaaa1111111";
+      const one = await fetch(`${base}/llms.txt`);
+      await one.text();
+      process.env["FORGE_APP_COMMIT"] = "bbbbbbb2222222";
+      const two = await fetch(`${base}/llms.txt`, { headers: { "if-none-match": one.headers.get("etag")! } });
+      expect(two.status).toBe(200);
+      expect(two.headers.get("etag")).not.toBe(one.headers.get("etag"));
+      expect(await two.text()).toContain("at bbbbbbb");
+    } finally {
+      for (const [k, v] of [["FORGE_COMMIT", saved.c], ["FORGE_APP_COMMIT", saved.a]] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
     }
   });
 
@@ -345,6 +492,23 @@ describe("what the open web expects", () => {
     expect((await fetch(`${base}/icons/forge-64.png`)).status).toBe(404);
   });
 
+  test("/favicon.ico answers with the 32px mark instead of a 404", async () => {
+    const icon = await fetch(`${base}/icons/forge-32.png`);
+    const fav = await fetch(`${base}/favicon.ico`);
+    expect(fav.status).toBe(200);
+    expect(fav.headers.get("content-type")).toBe("image/png");
+    expect(fav.headers.get("cache-control")).toBe(icon.headers.get("cache-control"));
+    expect(fav.headers.get("cache-control")).toContain("immutable");
+    const bytes = new Uint8Array(await fav.arrayBuffer());
+    expect(bytes).toEqual(new Uint8Array(await icon.arrayBuffer()));
+    const header = pngHeader(bytes);
+    expect(header.ok && `${header.value.width}x${header.value.height}`).toBe("32x32");
+    // The security floor is on it like on every response.
+    expect(fav.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(fav.headers.get("referrer-policy")).not.toBeNull();
+    expect(fav.headers.get("content-security-policy")).not.toBeNull();
+  });
+
   test("the mark is painted, not pasted: gradient inside, nothing outside", () => {
     const decoded = decodePng(markPng(64, "icon"));
     expect(decoded.ok).toBe(true);
@@ -391,8 +555,55 @@ describe("what the open web expects", () => {
     const manifest = (await (await fetch(`${base}/manifest.webmanifest`)).json()) as { description: string };
     const html = await (await fetch(`${base}/`)).text();
     expect(manifest.description).toBe(SITE_LINE);
-    expect(html).toContain(`<meta name="description" content="${SITE_LINE}"`);
-    expect(html).toContain(`<meta property="og:description" content="${SITE_LINE}"`);
+    // The front page's share line is its own; the sentence is in its body.
+    const said = /<meta name="description" content="([^"]*)"/.exec(html)?.[1] ?? "";
+    expect(said).not.toBe("");
+    expect(html).toContain(`<meta property="og:description" content="${said}"`);
     expect(html).toContain(SITE_LINE);
+  });
+
+  test("each web standard is served with its type and shape; the home page carries JSON-LD", async () => {
+    const get = (path: string) => fetch(`${base}${path}`);
+    const robots = await get("/robots.txt");
+    expect(robots.headers.get("content-type")).toContain("text/plain");
+    expect(await robots.text()).toContain(`Sitemap: ${base}/sitemap.xml`);
+    const sitemap = await get("/sitemap.xml");
+    expect(sitemap.headers.get("content-type")).toContain("xml");
+    expect(await sitemap.text()).toContain("<urlset");
+    const manifest = await get("/manifest.webmanifest");
+    expect(manifest.headers.get("content-type")).toMatch(/manifest\+json|json/);
+    expect(((await manifest.json()) as { icons: unknown[] }).icons.length).toBeGreaterThan(0);
+    const sec = await get("/.well-known/security.txt");
+    expect(sec.headers.get("content-type")).toContain("text/plain");
+    const secBody = await sec.text();
+    expect(secBody).toMatch(/^Contact: \S+/m);
+    const expires = /^Expires: (\S+)/m.exec(secBody)?.[1] ?? "";
+    expect(Date.parse(expires)).toBeGreaterThan(Date.now());
+    const llms = await get("/llms.txt");
+    expect(llms.headers.get("content-type")).toContain("text/plain");
+    expect((await llms.text()).startsWith("# ")).toBe(true);
+    expect((await get("/favicon.ico")).headers.get("content-type")).toContain("image/png");
+    expect((await get("/icons/forge-192.png")).headers.get("content-type")).toBe("image/png");
+    const home = await (await get("/")).text();
+    expect(home).toMatch(/name="theme-color"\s+media="\(prefers-color-scheme: light\)"/);
+    expect(home).toMatch(/name="theme-color"\s+media="\(prefers-color-scheme: dark\)"/);
+    const ld = /<script type="application\/ld\+json">([^<]*)<\/script>/.exec(home)?.[1];
+    expect(ld).toBeDefined();
+    const graph = (JSON.parse(ld ?? "{}") as { "@graph": { "@type": string; url: string }[] })["@graph"];
+    expect(graph.map((n) => n["@type"])).toEqual(["WebSite", "SoftwareApplication"]);
+    expect(graph[0]?.url).toBe(`${base}/`);
+  });
+
+  test("the JSON-LD origin is the configured canonical URL, not the request's Host", async () => {
+    app.config.url = "https://canon.example";
+    try {
+      const home = await fetch(`${base}/`, { headers: { host: "evil.example" } }).then((r) => r.text());
+      const ld = /<script type="application\/ld\+json">([^<]*)<\/script>/.exec(home)?.[1] ?? "";
+      expect(ld).toContain("https://canon.example/");
+      expect(ld).not.toContain("evil.example");
+      expect(ld).not.toContain(base);
+    } finally {
+      delete app.config.url;
+    }
   });
 });

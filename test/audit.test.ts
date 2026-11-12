@@ -25,6 +25,7 @@ import { getRepo } from "../src/core/repos.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { giveHistory } from "./helpers/history.ts";
 
 /** A forge of its own with alice signed in, for a test that changes what it reads. */
 async function boot(prefix: string) {
@@ -66,6 +67,7 @@ async function seedApps(app: App, alice: User) {
     visibility: "public",
   });
   if (!notes.ok) throw new Error(String(notes.error));
+  giveHistory(app.db, getRepo(app.db, "alice", "notes")!.id);
 
   // An app whose contract does not hold.
   const broken = await createRepo(app, alice, {
@@ -207,13 +209,27 @@ describe("the audit reads every app's policy from git", () => {
       expect(body).toContain("Unread");
       // The table's cells, as the scaffold's contract says.
       expect(body).toMatch(/data-answer="own"/);
-      // …each answer a §5 badge, in a §5 table, under a §5 card head.
+      // …each answer a §5 badge, in a §5 table, under the app's heading.
       expect(body).toMatch(
         /<td data-answer="own">\s*<span\s+class="badge"\s+data-variant="secondary"\s*>own<\/span/,
       );
       expect(body).toContain('<table class="table" data-dense>');
       expect(body).toMatch(
-        /<div class="card-head">[\s\S]*?<h3><a href="\/alice\/notes">alice\/notes<\/a><\/h3>/,
+        /<div class="bar mb"><h2><a href="\/alice\/notes">alice\/notes<\/a><\/h2>/,
+      );
+      // Rows, not boxes (#9710, #9863): each app's standing is a <section>
+      // under its <h2>, its rows on the page's one background — no card at
+      // all, no tone, no icon before the name.
+      for (const app of ["alice-notes", "alice-broken", "alice-secret"])
+        expect(body).toMatch(
+          new RegExp(`<section\\s+class="settings-block"\\s+id="${app}"\\s*>`),
+        );
+      const main = body.slice(body.indexOf("<h1>Audit</h1>"));
+      expect(main).not.toContain('class="card');
+      expect(main).not.toMatch(/data-tone=/);
+      // An app without a contract is not hidden: it is a row under "Unread".
+      expect(main).toMatch(
+        /<section\s+class="settings-block"\s*>\s*<div class="bar mb"><h2>Unread<\/h2><\/div>\s*<ul class="list">\s*<li[^>]*>\s*<a href="\/alice\/bare"\s+class="row"/,
       );
       // The unread apps are §5 rows.
       expect(body).toMatch(/<a href="\/alice\/bare"\s+class="row"/);
@@ -342,6 +358,7 @@ describe("the audit reads every app's policy from git", () => {
         state: {
           head: pull.value.headOid,
           cells: ["note.delete as anon: was no, now yes"],
+          plain: ["anyone signed out could delete note records"],
         },
         answer: "wall",
         p: 1,
@@ -352,6 +369,9 @@ describe("the audit reads every app's policy from git", () => {
       expect(waiting.map((c) => c.pull.title)).toEqual(["Anyone may delete"]);
       expect(waiting[0]!.cells).toEqual([
         "note.delete as anon: was no, now yes",
+      ]);
+      expect(waiting[0]!.plain).toEqual([
+        "anyone signed out could delete note records",
       ]);
 
       // Two probes, the second disagreeing with the first.
@@ -383,6 +403,7 @@ describe("the audit reads every app's policy from git", () => {
       expect(body).toContain("What changed");
       expect(body).toContain("1 pull waits");
       expect(body).toContain("Anyone may delete");
+      expect(body).toContain("anyone signed out could delete note records");
       expect(body).toContain("only the signed-in read");
       expect(body).toContain("2 doors narrower");
       expect(body).toContain("1 door wider");
@@ -432,7 +453,7 @@ describe("the audit reads every app's policy from git", () => {
 
   test("the way in: the studio home links the audit, and an app's page says its policy in one line", async () => {
     const home = await (
-      await fetch(`${servers.url}/`, {
+      await fetch(`${servers.url}/feed`, {
         headers: { cookie: `${cookie}; forge_mode=studio` },
       })
     ).text();

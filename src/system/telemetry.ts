@@ -5,45 +5,119 @@
  * node's history. Everything here is counts, rates and names of public
  * things — no sealed value, no private repository's content, no person.
  */
+import { readRepeats } from "../flow/repeats.ts";
+import { readVerdicts } from "../flow/culprits.ts";
 import type { App } from "../app.ts";
 import { SOURCES } from "../boards/sources.ts";
 import { conflictedPulls, conflictedSays, rebaseLane, rebaseLaneSays } from "../flow/conflicted.ts";
 import { firedAlarms } from "../flow/alarms.ts";
+import { running } from "../kernel/version.ts";
+import { readTalkTurns, talkTurnsWords } from "../flow/talk_turns.ts";
+import { readTalkResumes, talkResumesWords } from "../flow/talk_resumes.ts";
 import { readVitals, vitalsFor, vitalsLine, vitalsMisses } from "../flow/vitals.ts";
 import { parkedSays, readParked } from "../flow/parked.ts";
-import { readPipeline, verdict } from "../flow/pipeline.ts";
+import { readDeclines } from "../flow/declines.ts";
+import { readKeeper } from "../flow/keeper.ts";
+import { readPipeline, readStepStats, statWords, verdict } from "../flow/pipeline.ts";
 import { type QueueReading, readQueues } from "../flow/queue.ts";
 import { reviewersBusy, reviewingSays } from "../flow/reviewing.ts";
 import { requestedSays, requestedWaits } from "../flow/requested.ts";
 import { readThroughput, stageOut, throughputSays } from "../flow/throughput.ts";
+import { readVerified, verifiedSays } from "../flow/verified.ts";
 import type { Reader } from "../actions/telemetry.ts";
 import { agentView, live } from "./live.ts";
 import type { SystemView } from "./view.ts";
+import { readerPaces, type ReaderPace } from "./telemetry_reads.ts";
+import { featureHealth, type FeatureHealth } from "./feature_health.ts";
 
 export function systemFor(app: App, reader: Reader): SystemView {
   const view = live().read();
   return reader.kind === "agent" ? agentView(app, view) : view;
 }
 
-export function flowFor(app: App, reader: Reader, now = new Date()) {
+/**
+ * The system answer for the API and the MCP tool: the view plus `readers`, the
+ * rows /system draws (#9088). Names are accounts, so only a telemetry reader gets
+ * here. Call it before `countRead` so the read does not count into its own answer.
+ */
+export function systemWithReaders(app: App, reader: Reader): SystemView & { readers: ReaderPace[]; features: FeatureHealth[] } {
+  return { ...systemFor(app, reader), readers: readerPaces(), features: featureHealth(app, reader) };
+}
+
+/**
+ * The pipeline answer as a generator that yields between its heavy reads, so a
+ * caller may run each slice on its own turn of the loop (#8978); `flowFor`
+ * drives it to the end at once.
+ */
+// Dollars only for the owner and an agent holding telemetry:read (#6424): see vitals below.
+export function* flowSlices(app: App, reader: Reader, now = new Date()): Generator<void, ReturnType<typeof flowBody>, void> {
   const stages = readPipeline(app.db, now);
+  yield;
   const flow = readThroughput(app.db, stages.map((s) => s.key), now);
+  yield;
   const dup = systemFor(app, reader).duplicates;
+  yield;
   const conflicted = conflictedPulls(app.db, reader.kind === "agent");
   const lane = rebaseLane(app.db, conflicted);
+  yield;
   const requested = requestedWaits(app.db, reader.kind === "agent");
   const busy = reviewersBusy(app.db, reader.kind === "agent");
-  // Dollars only for the owner and an agent holding telemetry:read (#6424).
+  yield;
   const vitals = vitalsFor(readVitals(app.db, now, reader.kind === "agent"), reader.kind === "owner" || reader.spend === true);
+  yield;
+  const talk = readTalkResumes(app.db, running().version);
+  const talkTurns = readTalkTurns(app.db);
   const parked = readParked(app.db, now, reader.kind === "agent");
+  yield;
+  const steps = readStepStats(app.db, now, reader.kind === "agent");
+  yield;
+  const verified = readVerified(app, reader.kind === "owner");
+  yield;
+  const redBatches = readVerdicts(app.db, now, reader.kind === "agent");
+  yield;
+  const reviewRepeats = readRepeats(app.db, "", now, reader.kind === "agent");
+  yield;
+  return flowBody({ app, reader, now, stages, flow, dup, conflicted, lane, requested, busy, vitals, talk, talkTurns, parked, steps, verified, redBatches, reviewRepeats });
+}
+
+export function flowFor(app: App, reader: Reader, now = new Date()) {
+  const g = flowSlices(app, reader, now);
+  for (;;) {
+    const r = g.next();
+    if (r.done) return r.value;
+  }
+}
+
+function flowBody(x: {
+  app: App; reader: Reader; now: Date; stages: ReturnType<typeof readPipeline>; flow: ReturnType<typeof readThroughput>;
+  dup: ReturnType<typeof systemFor>["duplicates"]; conflicted: ReturnType<typeof conflictedPulls>; lane: ReturnType<typeof rebaseLane>;
+  requested: ReturnType<typeof requestedWaits>; busy: ReturnType<typeof reviewersBusy>; vitals: ReturnType<typeof vitalsFor>;
+  talk: ReturnType<typeof readTalkResumes>; talkTurns: ReturnType<typeof readTalkTurns>; parked: ReturnType<typeof readParked>;
+  steps: ReturnType<typeof readStepStats>; verified: ReturnType<typeof readVerified>; redBatches: ReturnType<typeof readVerdicts>;
+  reviewRepeats: ReturnType<typeof readRepeats>;
+}) {
+  const { app, reader, now, stages, flow, dup, conflicted, lane, requested, busy, vitals, talk, talkTurns, parked } = x;
   return {
     says: verdict(stages, now.getTime()),
+    // Each step of the path: median time and red rate over 30 days (#7784); private repositories for the owner only.
+    steps: x.steps.map((m) => ({ ...m, says: statWords(m) })),
+    // The cause binding landings now and the keeper's last act (#7645).
+    keeper: readKeeper(app.db, reader.kind === "owner"),
+    // How long each main has gone unverified after landing (#7786); private repositories for the owner only.
+    verified: x.verified.map((row) => ({ ...row, says: verifiedSays(row, now.getTime()) })),
     // Issues the crew parked in the last 24 h and 7 d, the newest three named (#6471).
     parked: { says: parkedSays(parked), ...parked },
     // Open pulls, opened and landed in 1 h and 6 h, and conflicted, against #5924's targets (#5935).
-    vitals: { says: vitalsLine(vitals), misses: vitalsMisses(vitals), ...vitals },
+    // A fallback after a release is a line here, not a banner (#8795).
+    vitals: { says: [vitalsLine(vitals), talkResumesWords(talk), talkTurnsWords(talkTurns)].filter((w) => w !== "").join(" · "), talk, talkTurns, misses: vitalsMisses(vitals), ...vitals },
+    // What the last red batches were: the pull named and returned with its failing tests, or a load red (#7639).
+    redBatches: x.redBatches,
+    // Findings reviewers repeated, proposed as checks and retired, beside review comments per pull (#8716).
+    reviewRepeats: x.reviewRepeats,
+    // Declined build runs of the last 24 h by reason, each with the runs behind it.
+    declines: readDeclines(app.db, now, reader.kind === "agent"),
     // The four alarms (#5930) that are firing now; empty when none is.
-    alarms: firedAlarms(app.db, now, { publicOnly: reader.kind === "agent" }),
+    alarms: firedAlarms(app.db, now, { publicOnly: reader.kind === "agent", dataDir: app.config.dataDir }),
     // Review runs in flight per reviewer, cut to public repositories for an agent (#4733).
     reviewing: { says: reviewingSays(busy), reviewers: busy },
     conflicted: { says: conflictedSays(conflicted, now.getTime()), pulls: conflicted },
@@ -184,9 +258,11 @@ export function welcome(app: App, now = new Date()) {
       path: `/${i.owner}/${i.name}/issues/${i.number}`,
     })),
     propose: [
-      "Fork the repository (POST /api/v1/repos/{owner}/{name}/forks, or the Fork button) and push a branch to your fork.",
-      "Open a pull against the default branch. Your pull runs in the same isolated cell as the crew's: no network beyond what forge.json declares, none of the forge's data or secrets.",
-      "The crew's reviewers read it. It lands only through the gate everything passes: `bun x tsc --noEmit` and `bun test` green, a test for every behaviour you add, zero new dependencies without a reason.",
+      "Make an account (POST /api/v1/users or /signup) and confirm its email, or attach as your person through OAuth at /mcp. A new account is a guest: it can read, comment and help build public repositories.",
+      "Fork the repository (MCP tool fork, POST /api/v1/repos/{owner}/{name}/forks, or Help build this) and change your fork with the MCP tool write_file or plain git over HTTPS with your token.",
+      "Open a pull from your fork against the default branch (MCP tool open_pull, or POST /api/v1/repos/{owner}/{name}/pulls with headRepo). From someone who cannot write here it runs nothing until a person approves that head; then it runs in the same isolated cell as the crew's, with none of the forge's data or secrets.",
+      "A person reviews it. It lands only through the gate everything passes: `bun x tsc --noEmit` and `bun test` green, a test for every behaviour you add, zero new dependencies without a reason.",
+      "To run your own apps and crew, deploy your own forge: the MCP tool spawn, or /forges/new.",
       "Anyone may propose. The bar decides what merges. A person lands it; an agent never does.",
     ],
     telemetry:

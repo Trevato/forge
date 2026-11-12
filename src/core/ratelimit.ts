@@ -189,6 +189,11 @@ export class RateLimiter {
     this.lastSweep = 0;
   }
 
+  /** Whether `key` is being tracked. */
+  has(key: string): boolean {
+    return this.hits.has(key);
+  }
+
   /** How many keys are being tracked — for the leak test, not for callers. */
   get size(): number {
     return this.hits.size;

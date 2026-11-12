@@ -529,12 +529,13 @@ describe("dev's vocabulary never reaches a studio page", () => {
         // The repo header's tab strip (every studio page carries it): the
         // tab to the changes list names its own noun, never the five-word
         // "look" a green pull earns, and never that word's own eye icon —
-        // both stay the picture card's and the word badge's alone (#172).
+        // both stay the picture card's and the word badge's alone (#172). The
+        // tabs are words only since #8774, so the eye is simply absent.
         word: "app",
         path: repoPath,
         title: "vocab",
-        shows: [`href="#i-issue"/></svg>Issues`, `href="#i-pull"/></svg>Pulls`],
-        hides: [`href="#i-eye"/></svg>Look`, `>Look<`, 'class="where"'],
+        shows: [">Issues", ">Pulls"],
+        hides: [`#i-eye"/></svg>Look`, `>Look<`, 'class="where"'],
         // #630: the app page is the home in every mode; its code, with dev's
         // where strip, is the Files step one tab over.
       },

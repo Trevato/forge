@@ -3,7 +3,7 @@ import { good, bad, type Tool, APP_ARG, planRepo, isAnswer } from "../shared.ts"
 
 export const tool: Tool = {
   name: "plan",
-  doc: "`{ app, issues }`: open up to 12 linked issues, all or none (see below)",
+  doc: "`{ app, issues, title?, why? }`: open up to 12 linked issues, all or none (see below)",
   description: `Open linked issues, all or none (max ${PLAN_MAX}); each: \`pillar\` or \`later\`+\`why\`.`,
   inputSchema: {
     type: "object",
@@ -29,15 +29,15 @@ export const tool: Tool = {
             },
             pillar: {
               type: "string",
-              description: 'Pillar, "P0".',
+              description: "e.g. P0",
             },
             later: {
               type: "boolean",
-              description: "No pillar; needs why.",
+              description: "Needs why.",
             },
             why: {
               type: "string",
-              description: "With later: why.",
+              description: "For later.",
             },
           },
           required: ["key", "title"],
@@ -66,7 +66,7 @@ export const tool: Tool = {
     }
     const planned = openPlan(ctx.app, user, repo, items.value);
     if (!planned.ok) return bad(planned.error.error, planned.error.message);
-    const { opened, ready, later, gate } = planned.value;
+    const { opened, ready, held, later, gate } = planned.value;
     const waits =
       gate === undefined
         ? ""
@@ -75,6 +75,7 @@ export const tool: Tool = {
       says: `Opened ${opened.length} issue${opened.length === 1 ? "" : "s"}: ${opened.map((o) => `${o.key} is #${o.number}`).join(", ")}.${waits}`,
       opened,
       ready,
+      held,
       later,
     });
   },

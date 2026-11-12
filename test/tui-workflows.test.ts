@@ -329,12 +329,14 @@ describe("reviews, threads and the merge gate", () => {
       await admin.until("Tweak the lamp");
       await admin.press("enter");
       await admin.until("#1");
-      // The box says what is missing, and `m` says it out loud.
-      // Wait for the gate's own line, not the word "review" (the footer
-      // wears it from the first paint, before the setting has loaded).
-      await admin.until("Needs an approval of this head", 30_000);
+      // The footer wears "review" from the first paint, before the setting
+      // has loaded; settle() waits for the pull's own load, so the gate's
+      // line is read once, not polled for.
+      await admin.settle();
+      expect(admin.text()).toContain("Needs an approval of this head");
+      // `m` while it is unread is a no-op, never a merge; loaded, it speaks.
       await admin.press("m");
-      await admin.until("needs an approval of its current head first", 30_000);
+      expect(admin.text()).toContain("needs an approval of its current head first");
       expect(getPull(forge.db, repo.id, 1)?.mergedAt).toBeNull();
     } finally {
       admin.stop();
@@ -348,13 +350,15 @@ describe("reviews, threads and the merge gate", () => {
       await reviewer.press("R");
       await reviewer.until("Review #1");
       await reviewer.press("ctrl+d");
-      await reviewer.until("1 approval", 30_000);
+      await reviewer.settle();
+      expect(reviewer.text()).toContain("1 approval");
 
       // The list wears the same verdict, in one tabular column.
       await reviewer.press("q");
-      // The title paints before the verdict column loads: wait for it.
-      await reviewer.until("Tweak the lamp", 30_000);
-      await reviewer.until("✓", 30_000);
+      // The title paints before the verdict column loads: settle waits for it.
+      await reviewer.settle();
+      expect(reviewer.text()).toContain("Tweak the lamp");
+      expect(reviewer.text()).toContain("✓");
     } finally {
       reviewer.stop();
     }

@@ -23,7 +23,7 @@ import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { btn, card, icon, row, time } from "../ui.ts";
+import { btn, row, time } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 const ERRORS: Record<string, string> = {
@@ -45,12 +45,6 @@ function backTo(scope: string, ref: string): string {
   return "/settings/secrets";
 }
 
-const WHERE: Record<SecretScope, string> = {
-  forge: "the whole forge",
-  org: "every repository in this organization",
-  repo: "this repository",
-};
-
 /** The card: names, never values, and a form to set one. */
 export function secretsCard(
   scope: SecretScope,
@@ -59,7 +53,6 @@ export function secretsCard(
 ): Html {
   const rows = names.map((s) =>
     row({
-      lead: icon("key"),
       title: html`<span class="mono">${s.name}</span>`,
       meta: html`set ${time(s.updatedAt)} ·
       ${
@@ -83,55 +76,43 @@ export function secretsCard(
       </form>`,
     }),
   );
-  return card(
-    html`<div class="card-body">
-        <p class="muted small">
-          What the forge itself needs and nobody should read back — an API
-          token, a bucket key. Set one for ${WHERE[scope]}; it is sealed, shown
-          to no one, and handed only to the run that asks for it by name. Where
-          the same name is set more than once, the narrowest place wins: a
-          repository over its organization over the forge.
-        </p>
-      </div>
-      ${when(
-        rows.length > 0,
-        () =>
-          html`<ul class="list">
-            ${rows}
-          </ul>`,
-      )}
-      <form class="edit-row" method="post" action="/settings/secrets">
-        <input type="hidden" name="scope" value="${scope}" />
-        <input type="hidden" name="ref" value="${ref}" />
-        <input
-          class="input mono"
-          type="text"
-          name="name"
-          placeholder="NAME"
-          aria-label="Secret name"
-          pattern="[A-Z][A-Z0-9_]*"
-          maxlength="${String(NAME_MAX)}"
-          autocomplete="off"
-          spellcheck="false"
-          required
-        />
-        <input
-          class="input"
-          type="password"
-          name="value"
-          placeholder="Value"
-          aria-label="Value"
-          autocomplete="off"
-          required
-        />
-        ${btn("Seal", { variant: "primary", size: "sm", icon: "plus" })}
-      </form>`,
-    {
-      head: html`${icon("key")}
-        <h2>Secrets</h2>`,
-      pad: false,
-    },
-  );
+  return html`<section class="settings-block">
+    <h2>Secrets</h2>
+    <p class="muted small">Sealed values the forge hands to a run by name; the narrowest place wins.</p>
+    ${when(
+      rows.length > 0,
+      () =>
+        html`<ul class="list setting-list">
+          ${rows}
+        </ul>`,
+    )}
+    <form class="edit-row mt" method="post" action="/settings/secrets">
+      <input type="hidden" name="scope" value="${scope}" />
+      <input type="hidden" name="ref" value="${ref}" />
+      <input
+        class="input mono"
+        type="text"
+        name="name"
+        placeholder="NAME"
+        aria-label="Secret name"
+        pattern="[A-Z][A-Z0-9_]*"
+        maxlength="${String(NAME_MAX)}"
+        autocomplete="off"
+        spellcheck="false"
+        required
+      />
+      <input
+        class="input"
+        type="password"
+        name="value"
+        placeholder="Value"
+        aria-label="Value"
+        autocomplete="off"
+        required
+      />
+      ${btn("Seal", { variant: "primary", size: "sm", icon: "plus" })}
+    </form>
+  </section>`;
 }
 
 /** The card for a place, or nothing for anyone who is not a forge admin. */

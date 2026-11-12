@@ -99,10 +99,10 @@ test("kind:app sort:forks lists the apps in the order the page's action gives, w
   expect(text).toContain("Read as: kind:app sort:forks");
 });
 
-test("an unknown word is said back as the text the query understood", async () => {
+test("an unknown word is dropped from what the query understood", async () => {
   const text = await typed("kind:app sort:nonsense");
-  expect(text).toContain("Read as: kind:app sort:nonsense");
-  expect(text).toContain("Nothing matches kind:app sort:nonsense");
+  expect(text).toContain("Read as: kind:app");
+  expect(text).toContain("alice/zed");
 });
 
 test("a plain search still matches repositories by name, with no explorer line", async () => {
@@ -156,4 +156,45 @@ test("while a new line is ranked, the old rows are not shown under it", async ()
   const text = app.screen.toText();
   app.stop();
   expect(text).not.toContain("alice/zed");
+});
+
+test("an unknown sort is named under Read as, with the words it takes", async () => {
+  const text = await typed("kind:app sort:nonsense");
+  expect(text).toContain("sort:nonsense is not a sort — use score, forks");
+});
+
+test("a mistyped sort is followed by Did you mean the mended line", async () => {
+  const text = await typed("kind:app sort:froks");
+  expect(text).toContain("Did you mean kind:app sort:forks?");
+});
+
+test("owner:<name> alone lists that owner's apps as the explorer", async () => {
+  const text = await typed("owner:alice");
+  expect(text).toContain("Read as: owner:alice");
+  expect(text).toContain("alice/zed");
+  expect(text).not.toContain("bob/zed-one");
+});
+
+test("sort:likes lists the apps by likes and each row says how many", async () => {
+  const ant = (await explorePage(forge, alice, parseExploreQuery("kind:app"), null))!.items.find((r) => r.name === "alice/ant")!;
+  const id = (await forge.db.query<{ id: string }, [string]>("SELECT id FROM repo WHERE name = ?1").get("ant"))!.id;
+  expect(ant.numbers.likes).toBe(0);
+  for (const who of [alice, bob])
+    forge.db.run("INSERT INTO feed_like (viewer_id, item_id, repo_id) VALUES (?1, ?2, ?3)", [who.id, "post-ant", id]);
+  const text = await typed("kind:app sort:likes");
+  expect(text).toContain("2 likes");
+  expect(text.indexOf("alice/ant")).toBeLessThan(text.indexOf("alice/zed"));
+});
+
+test("each explorer line starts with why it ranks there, and does not say that number again", async () => {
+  const text = await typed("kind:app sort:forks");
+  expect(text).toContain("2 forks");
+  expect(text.match(/2 forks/g)?.length).toBe(1);
+});
+
+test("the terminal says how many a line leaves and that Esc clears it", async () => {
+  const text = await typed("kind:app sort:forks");
+  expect(text).toContain("Read as: kind:app sort:forks · 3 apps · Esc clears");
+  const none = await typed("kind:app zzzzqqq");
+  expect(none).toContain("No apps match · Esc clears");
 });

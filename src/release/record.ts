@@ -53,6 +53,12 @@ export function listReleases(db: Database, limit = 20): Release[] {
     .map(toRelease);
 }
 
+/** The newest release of one repository, whatever its verdict; undefined while it has none. */
+export function latestReleaseOf(db: Database, repoId: string): Release | undefined {
+  const row = db.query<Row, [string]>(`SELECT * FROM release WHERE repo_id = ?1 ORDER BY id DESC LIMIT 1`).get(repoId);
+  return row === null ? undefined : toRelease(row);
+}
+
 /** Every kept release whose sha starts with these hex digits, newest first, one per sha. */
 export function releasesByPrefix(db: Database, hex: string): Release[] {
   if (!/^[0-9a-f]{1,40}$/.test(hex)) return [];
@@ -76,3 +82,10 @@ export function releaseOfPull(db: Database, repoId: string, pullNumber: number):
 
 /** What a release is called where people read it: the landed commit, short. */
 export const releaseName = (r: Release): string => r.sha.slice(0, 12);
+
+/** What a release is called in plain words: its number and the day it was cut. */
+export const releaseLabel = (r: Release): string => {
+  const day = new Date(r.createdAt);
+  const when = Number.isNaN(day.getTime()) ? r.createdAt.slice(0, 10) : day.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  return `release ${r.id} (${when})`;
+};

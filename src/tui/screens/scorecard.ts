@@ -8,6 +8,7 @@
  */
 
 import { listAllAgents } from "../../actions/crew.ts";
+import { decideChange, readReview } from "../../actions/model_review.ts";
 import { readSpend, type SpanName, type Spend } from "../../actions/spend.ts";
 import {
   crewScorecards,
@@ -20,6 +21,7 @@ import {
   type Scorecard,
   type SplitScorecard,
 } from "../../core/scorecard.ts";
+import { keeperDays, type KeeperDay } from "../../flow/keeper_rate.ts";
 import type { Agent } from "../../core/agents.ts";
 import { listTeams, type Team } from "../../core/teams.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -28,7 +30,8 @@ import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import type { Session } from "../session.ts";
 import { fill, len, split } from "../ui/layout.ts";
-import { ListState, drawList, type ListRow } from "./common.ts";
+import { ListState, confirmScreen, drawList, type ListRow } from "./common.ts";
+import type { PaletteEntry } from "./entries.ts";
 
 const landed = (s: Scorecard | undefined) =>
   s === undefined ? "—" : `${s.landed} of ${s.opened}`;
@@ -134,12 +137,57 @@ export function scorecardRows(
   return [...agentRows, ...teamRows];
 }
 
+/** "Forge per day" as the page's table has it: hours the forge ran and pulls it landed, newest day first (#7645). */
+export function forgeDayRows(days: readonly KeeperDay[]): ListRow[] {
+  return [...days].reverse().map((d) => ({
+    title: `Forge ${d.day}`,
+    secondary: `${d.hoursRunning} hour${d.hoursRunning === 1 ? "" : "s"} running · ${d.landed} landed`,
+  }));
+}
+
+type Review = ReturnType<typeof readReview>;
+
+/**
+ * The weekly model review (#7815), as the page's card has it: a verdict row
+ * per agent, then every change on the trail, newest first. `changeAt[i]` is
+ * the id of the change still waiting on a person at row `i` (or undefined).
+ */
+export function reviewRows(
+  r: Review,
+  names: ReadonlyMap<string, string>,
+): { rows: ListRow[]; changeAt: (string | undefined)[] } {
+  const rows: ListRow[] = [];
+  const changeAt: (string | undefined)[] = [];
+  const add = (row: ListRow, id?: string) => {
+    rows.push(row);
+    changeAt.push(id);
+  };
+  for (const a of r.agents) {
+    add({
+      title: `model review · ${a.username} on ${a.model === "" ? "default" : a.model}`,
+      secondary: a.verdict.kind === "hold" ? a.verdict.note : `would move to ${a.verdict.to}. ${a.verdict.why}`,
+    });
+  }
+  for (const c of r.changes) {
+    const who = names.get(c.agentId) ?? "an agent";
+    add(
+      {
+        title: `${c.state === "asked" ? "waiting" : "trail"} · ${who}: ${c.fromModel} → ${c.toModel} (${c.state})`,
+        secondary: c.why,
+        meta: c.state === "asked" ? "m move · n leave it" : c.result,
+      },
+      c.state === "asked" ? c.id : undefined,
+    );
+  }
+  return { rows, changeAt };
+}
+
 export function scorecardScreen(f: Session, ctx: Ctx): Screen {
   const state = new ListState();
   const allowed = f.user?.isAdmin === true;
   // Read once when the screen opens, as the page reads it once per request.
   const listed = allowed ? listAllAgents(f.app, f.user) : undefined;
-  const rows =
+  const cards =
     listed?.ok === true
       ? scorecardRows(
           listed.value,
@@ -153,21 +201,68 @@ export function scorecardScreen(f: Session, ctx: Ctx): Screen {
           agentSpend(f),
         )
       : [];
-  return {
+  const names = new Map((listed?.ok === true ? listed.value : []).map((a) => [a.user.id, a.user.username]));
+  // Re-read after a decision, so the button's result shows at once.
+  let review = allowed && cards.length > 0 ? reviewRows(readReview(f.app), names) : { rows: [], changeAt: [] };
+  const rows = (): ListRow[] => [...cards, ...review.rows, ...(allowed ? forgeDayRows(keeperDays(f.db, new Date())) : [])];
+  const waiting = (): string | undefined => review.changeAt[state.index - cards.length];
+  const decide = (take: boolean): void => {
+    const id = waiting();
+    if (id === undefined || f.user === undefined) return;
+    const change = readReview(f.app).changes.find((c) => c.id === id);
+    if (change === undefined) return;
+    const who = names.get(change.agentId) ?? "an agent";
+    ctx.push(
+      confirmScreen(ctx, self, {
+        title: take ? `Move ${who} to ${change.toModel}` : `Leave ${who} on ${change.fromModel}`,
+        body: [change.why],
+        actions: [{ label: take ? "Move" : "Leave it" }, { label: "Cancel", variant: "ghost" }],
+        yesNo: true,
+        onChoose: (choice) => {
+          if (choice !== 0) return;
+          const done = decideChange(f.app, f.user, id, take);
+          ctx.toast(
+            done.ok ? (take ? `${who} is on ${change.toModel}.` : "Left as it was.") : "That change is no longer waiting.",
+            done.ok ? "success" : "danger",
+          );
+          review = reviewRows(readReview(f.app), names);
+          ctx.invalidate();
+        },
+      }),
+    );
+  };
+  const self: Screen = {
     title: "Crew scorecard per agent",
-    keys: [binding(["j", "k"], "move cursor")],
+    keys: [binding(["j", "k"], "move cursor"), binding(["m"], "move a waiting agent to the proposed model"), binding(["n"], "leave it")],
     render(area, s) {
       const c = ctx.theme.c;
       const [head, list] = split(area, "v", [len(1), fill(1)]);
       const text = !allowed
         ? "The crew's scorecard is read by a forge admin."
-        : rows.length === 0
+        : cards.length === 0
           ? "No agents yet."
           : `Over the last ${RECENT_DAYS} days (${RECENT_DAYS}d) and all time, ` +
-            "as Settings → Crew shows it, with a pooled row per team.";
+            "as Settings → Crew shows it, with a pooled row per team, then the weekly model review.";
       s.text(head!.x, head!.y, truncate(text, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
-      drawList(s, list!, c, state, rows);
+      drawList(s, list!, c, state, rows());
     },
-    key: (e) => state.key(e, rows.length),
+    key(e) {
+      if (e.key === "m" || e.key === "n") {
+        decide(e.key === "m");
+        return true;
+      }
+      return state.key(e, rows().length);
+    },
   };
+  return self;
 }
+
+/** Settings → Crew's scorecard per agent, as the page has it: a forge admin (#2677). */
+export const entry: PaletteEntry = {
+  id: "scorecard",
+  title: "Crew scorecard per agent",
+  hint: "each agent's pulls landed, review rounds, red checks, reverts, time to land",
+  after: ["crew-handover"],
+  offered: (session) => session.user?.isAdmin === true,
+  run: (session, ctx) => ctx.push(scorecardScreen(session, ctx)),
+};

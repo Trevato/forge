@@ -3,14 +3,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readTips } from "../src/git/tips.ts";
-import { pullMergeStates, type Pull } from "../src/core/pulls.ts";
-import { expectBudget } from "./helpers/budget.ts";
+import { mergeReadingsSettled, pullMergeStates, type Pull } from "../src/core/pulls.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 
 const env = gitClientEnv();
 const N = 130;
-/** The uncached read spawns git per pull; a cached one should cost a small fraction of it. */
-const BASELINE_DIVISOR = 100;
 let root: string;
 let dir: string;
 
@@ -57,26 +54,18 @@ beforeEach(async () => {
 
 afterEach(() => rm(root, { recursive: true, force: true }));
 
-test("a second read of 130 pulls does no git work and is cheap beside the first; a moved head recomputes only its pull", async () => {
+test("a second read of 130 pulls does no git work and spawns nothing; a moved head recomputes only its pull", async () => {
   const items = Array.from({ length: N }, (_, i) => ({ dir, pull: pullOf(i) }));
   const spawn = spyOn(Bun, "spawn");
   try {
-    const t1 = performance.now();
-    const first = await pullMergeStates(items);
-    const uncached = performance.now() - t1;
+    const first = await pullMergeStates(items, { budgetMs: Infinity });
     expect(first.every((m) => m?.mergeable === true)).toBe(true);
     expect(spawn.mock.calls.length).toBeGreaterThan(0);
 
     spawn.mockClear();
-    // Best of a few cached reads: a busy machine slows one, not all.
-    let best = Infinity;
+    // Counted, not timed: cached reads spawn no git at all.
     let second = first;
-    for (let k = 0; k < 5; k++) {
-      const t0 = performance.now();
-      second = await pullMergeStates(items);
-      best = Math.min(best, performance.now() - t0);
-    }
-    expectBudget(best, { ms: 20, against: uncached / BASELINE_DIVISOR });
+    for (let k = 0; k < 5; k++) second = await pullMergeStates(items);
     expect(spawn.mock.calls.length).toBe(0);
     expect(second).toEqual(first);
 
@@ -89,6 +78,7 @@ test("a second read of 130 pulls does no git work and is cheap beside the first;
     await git(work, "push", "-q", dir, "b7:b7");
     spawn.mockClear();
     await pullMergeStates(items);
+    await mergeReadingsSettled();
     const verbs = spawn.mock.calls.map((c) => (c[0] as string[]).filter((a) => !a.startsWith("-"))[1]);
     expect(verbs.filter((v) => v === "rev-list").length).toBe(1);
     expect(verbs.filter((v) => v === "merge-tree").length).toBe(1);
@@ -108,6 +98,7 @@ test("a base that moves recomputes every pull", async () => {
   const spawn = spyOn(Bun, "spawn");
   try {
     await pullMergeStates(items);
+    await mergeReadingsSettled();
     const revLists = spawn.mock.calls.filter((c) => (c[0] as string[]).includes("rev-list"));
     expect(revLists.length).toBe(N);
   } finally {

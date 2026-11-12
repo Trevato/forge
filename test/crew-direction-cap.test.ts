@@ -4,6 +4,7 @@
  * bounds planning is the breaker, the replan floor, the hold, the dollar
  * ceiling — and the direction's own, generous day's share.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,7 +13,7 @@ import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { assignIssue, openIssue, setIssueState } from "../src/actions/issues.ts";
 import { createRepo, updateRepoSettings } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { getIssueById, type Issue } from "../src/core/issues.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
@@ -92,7 +93,7 @@ describe("the direction is paced, not capped", () => {
       expect(addToCrew(app, alice, repo, name).ok).toBe(true);
     }
     atlas = getUserByName(app.db, "atlas")!;
-    setCrewRole(app.db, repo.id, atlas.id, "planner");
+    seatAs(app.db, repo.id, atlas.id, "planner");
     const set = await updateRepoSettings(app, alice, repo, {
       autonomy: "autonomous",
       autonomyDirection: "Keep the engine small.",

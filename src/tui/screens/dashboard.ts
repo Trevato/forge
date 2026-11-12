@@ -14,19 +14,28 @@
  * whole of this screen's design.
  */
 
-import { exploreLine, explorePage, parseExploreQuery, type ExploreRow } from "../../actions/explore.ts";
+import { DEFAULT_WEIGHTS, frontWeights, type FrontWeights } from "../../core/front.ts";
+import { exploreCount, exploreFiltered, exploreLine, isExploreLine, exploreNote, exploreSuggestion, explorePage, parseExploreQuery, readExploreLine, whyOf, type ExploreRow } from "../../actions/explore.ts";
 import { protectionNotice } from "../../kernel/protection.ts";
 import { holdWords, plannerHold } from "../../crew/autonomy.ts";
+import { governorLine, governorSeen } from "../../crew/governed.ts";
 import { forgeFlakes, forgeLane, forgeNeeds } from "../../actions/health.ts";
 import { ownerWaits, waitLine, withMore } from "../../actions/owner_waits.ts";
 import { forgeHealth } from "../../kernel/guard.ts";
 import { coveredByVerdict, forgeVerdict, verdictLine } from "../../kernel/guard_verdict.ts";
 import { clientAppRows, clientDoings, clientFinished, doingLine, finishedLine } from "../../core/client-apps.ts";
+import { appCrew } from "../../core/app-crew.ts";
 import { nextStepsFor } from "../../core/next-steps.ts";
+import { keepThought } from "../../actions/thought.ts";
+import { SAY_SOMETHING_WORDS } from "../../actions/tell_words.ts";
+import { crewFirstText } from "../../web/studio/crew_key.ts";
 import { agentsLine } from "../../web/studio/client_home.ts";
 import { lastVisit } from "../../core/home_visit.ts";
 import { sinceDigest } from "../../web/studio/since.ts";
 import { askForSomething } from "./tell.ts";
+import { movingLines } from "./moving.ts";
+import { pipelineNow } from "../../web/studio/living.ts";
+import { askForEveryday, everydayOf, EVERYDAY_WHY, keepAdmin } from "../../core/everyday.ts";
 import { mayView } from "../../core/sealed.ts";
 import { applyFleetIds, previewFleetIds, undoFleetOp } from "../../actions/fleet.ts";
 import { plain } from "./boards.ts";
@@ -41,6 +50,7 @@ import { decideAsk, undoDecideAsk } from "../../actions/asks_decide.ts";
 import { actOnProposal, type ProposalVerb } from "../../actions/proposals.ts";
 import { putAsideWaves } from "../../web/studio/asks.ts";
 import type { Proposal } from "../../core/proposals.ts";
+import type { App } from "../../app.ts";
 import {
   applyAsksBulk,
   BULK_MAX,
@@ -48,8 +58,10 @@ import {
   previewAsksBulk,
   undoAsksBulk,
 } from "../../actions/asks_bulk.ts";
+import { stepLine, stepOfNumber } from "../../flow/path.ts";
 import { reviewSetOf, type ReviewSet } from "../../web/studio/review_set.ts";
 import { staleWords } from "../../flow/kpi_words.ts";
+import { askMeasureWeek, asksMeasureEmpty, asksMeasureWords } from "../../core/ask_ledger.ts";
 import { mutedRepos, removeMutes } from "../../core/interactions.ts";
 import { chipsOf, KIND_CHIPS, setChip } from "../../core/feed_chips.ts";
 import type { Operation } from "../../core/fleet_ops.ts";
@@ -111,6 +123,8 @@ import { firedAlarms } from "../../flow/alarms.ts";
 import { lastClearedNote } from "../../flow/clog_tick.ts";
 import { forgeCeiling } from "../../flow/ceiling.ts";
 import { alarmIdleCrew } from "../../flow/alarm_idle_crew.ts";
+import { idleLine, idleReason } from "../../crew/idle_reason.ts";
+import { weekBlock } from "../../crew/week_read.ts";
 import { noReleaseAlarm } from "../../flow/alarm_no_release.ts";
 import { redMainAlarm } from "../../flow/alarm_red_main.ts";
 import { alarmStuck } from "../../flow/alarm_stuck.ts";
@@ -120,6 +134,9 @@ import { local } from "./where.ts";
 import { signInScreen } from "./signin.ts";
 
 /** Rows the list keeps under the figures strip; below it the strip shows fewer figures. */
+/** The first line of a new forge's home, as the page's heading and its one box. */
+const FIRST_TELL_LINE = "What do you want built? t says it to the crew.";
+
 const FIGURES_ROOM = 6;
 
 /** The forge-wide daily ceiling, from config, for the spend figure; the data directory, for the backup's age. */
@@ -165,9 +182,15 @@ const ORDER: readonly PaneId[] = ["repos", "onyou", "machine"];
 export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let repos: Repo[] = [];
   let all: Repo[] = [];
+  /** What a typed filter found past `all`, for the query it was read for. */
+  let found: { query: string; repos: Repo[] } | undefined;
   let pins: Pin[] = [];
   let pinned = new Set<string>();
   let onYou: OnYouItem[] = [];
+  /** Where each pull on you stands on the path (check, review, land, live), by issue id. */
+  let onYouSteps = new Map<string, string>();
+  /** The week's asks line, read on reload; drawing only reads it. */
+  let asksLine: string | undefined;
   /** Wave proposals that wait for this person's nod, listed after the rows above. */
   let waves: { proposal: Proposal; repo: Repo }[] = [];
   /** Waves put aside with Later, which `B` brings back. */
@@ -183,7 +206,10 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   const markedRepos = new Set<string>();
   /** The receipt of the last archive made here, which `u` reverses once. */
   let lastArchive: string | undefined;
-  /** Why planning is paused, for the autonomous apps where it is; as on the board. */
+  /**
+   * Why planning is paused, for the autonomous apps where it is, as on the
+   * board; else why the governor holds the crew below its slots (#7644).
+   */
   let holds = new Map<string, string>();
   let forge: string[] | undefined;
   /** What the crews wait on this person for, one line each, as the board's notes say it. */
@@ -192,6 +218,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let clientLines: string[] = [];
   /** "Since you were here" and its lines: read from the web home's last-visit row, never written here. */
   let sinceLines: string[] = [];
+  /** The web home's living pipeline (#8015): Now for a site admin, then being built and just shipped. */
+  let moving: string[] = [];
   /** The ids of those apps, so the key that asks for something stays on them. */
   let clientRepoIds = new Set<string>();
   /** The live address of each of those apps that is running, by repo id; `o` shows it. */
@@ -204,6 +232,14 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let decider: string | null = null;
   /** Home's three figures, as the web's row says them; empty unless an admin looks (they count every repository). */
   let figures: string[] = [];
+  /**
+   * The web home's everyday ask, as one muted line at the head (#8046): why,
+   * and the two answers, while an admin has made no choice; once linked, the
+   * name of the account used day to day. Nobody else gets the row.
+   */
+  let everyday: { line: string; asking: boolean } | undefined;
+  /** A new forge's owner before their first tell: the home is one line, "what do you want built", and the everyday offer waits. */
+  let firstTell = false;
   /** One line per fired flow alarm; an admin reads every repository, anyone else public ones alone. */
   let alarms: string[] = [];
   /** The panels this admin pinned to the web home, by title and board, in their order. */
@@ -213,9 +249,11 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
    * A search line with `kind:` or `sort:` is the explorer's (#7325): the rows
    * `/explore` ranks, answered by the same action, for the line last settled.
    */
-  let explored: { line: string; rows: readonly ExploreRow[] } | undefined;
+  let explored: { line: string; rows: readonly ExploreRow[]; total: number } | undefined;
   let askedLine = "";
-  const exploring = (): boolean => /(^|\s)(kind|sort):/i.test(filter.query);
+  /** The forge's front weights, read once per ranked line so the reasons agree with the order. */
+  let exploredWeights: FrontWeights = DEFAULT_WEIGHTS;
+  const exploring = (): boolean => isExploreLine(filter.query);
   const exploredRows = (): readonly ExploreRow[] => (exploring() ? (explored?.rows ?? []) : []);
   const syncExplore = (): void => {
     if (!exploring()) {
@@ -234,7 +272,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       // A newer line was typed while this one was ranked; its answer wins.
       if (askedLine !== line) return;
       const rows = page?.items ?? [];
-      explored = { line, rows };
+      exploredWeights = frontWeights(f.app.db);
+      explored = { line, rows, total: page?.total ?? 0 };
       at("repos").clamp(rows.length);
       ctx.invalidate();
     });
@@ -249,14 +288,24 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
 
   const loadClientLines = async (): Promise<void> => {
     clientLines = [];
-    if (!f.user || (await nextStepsFor(f.app, f.user)) === undefined) return;
+    firstTell = false;
+    const steps = f.user ? await nextStepsFor(f.app, f.user) : undefined;
+    if (!f.user || steps === undefined) return;
     // A client's home never carries the forge-wide figures, on either door.
     figures = [];
+    firstTell = steps.some((s) => s.key === "tell" && !s.done);
+    everyday = everydayHead();
+    if (firstTell) {
+      clientLines = [FIRST_TELL_LINE, crewFirstText(f.app)];
+      ctx.invalidate();
+      return;
+    }
     const apps = await clientAppRows(f.app, f.user);
     clientRepoIds = new Set(apps.map((a) => a.repo.id));
     clientLive = new Map(apps.flatMap((a) => (a.live === undefined ? [] : [[a.repo.id, a.live] as const])));
     const now = new Date();
     const ids = apps.map((a) => a.repo.id);
+    const crewOf = new Map(appCrew(f.app.db, apps.map((a) => a.repo)).map((c) => [c.repo.id, c] as const));
     const doings = clientDoings(f.app.db, ids);
     const finished = clientFinished(f.app.db, ids);
     clientLines =
@@ -271,7 +320,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
               .join(" ");
             const mark = a.live === undefined ? "" : " (running, o opens it)";
             const line = `${a.repo.name}${mark}: ${agentsLine(a.working, a.queued)}`;
-            return doing === "" ? line : `${line} ${doing}`;
+            const crew = crewOf.get(a.repo.id)!.says;
+            return `${line}${doing === "" ? "" : ` ${doing}`} ${crew[0]!.toUpperCase()}${crew.slice(1)}.`;
           });
     ctx.invalidate();
   };
@@ -289,13 +339,44 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     ctx.invalidate();
   };
 
+  const everydayHead = (): typeof everyday => {
+    if (f.user === undefined || !f.user.isAdmin || f.user.kind !== "user" || firstTell) return undefined;
+    if (askForEveryday(f.db, f.user))
+      return { line: `${EVERYDAY_WHY} E makes it on the web · K keeps using admin`, asking: true };
+    const daily = everydayOf(f.db, f.user);
+    return daily === undefined
+      ? undefined
+      : { line: `Day to day you are ${daily.username}; this is the admin account.`, asking: false };
+  };
+
+  /** `K`: the admin keeps working as admin, recorded for web and terminal alike. */
+  const keepAdminHere = (): void => {
+    if (f.user === undefined) return;
+    keepAdmin(f.db, f.user);
+    reload();
+    ctx.toast("kept admin; you will not be asked again", "success");
+  };
+
   const reload = (): void => {
     // The server remembers the *choice* and nothing about the laptop, so
     // this is a list of decisions — never a status that would be stale.
     pins = f.user ? listPins(f.db, f.user.id) : [];
+    everyday = everydayHead();
     pinned = f.user ? pinnedRepoIds(f.db, f.user.id) : new Set<string>();
     all = listReposVisibleTo(f.db, f.user, { limit: 200 });
+    found = undefined;
     onYou = assignedToMe();
+    onYouSteps = new Map(
+      onYou.flatMap((item) => {
+        const step = item.issue.kind === "pull" ? stepOfNumber(f.db, item.repo, item.issue.number) : null;
+        return step === null ? [] : [[item.issue.id, stepLine(step)] as const];
+      }),
+    );
+    asksLine = undefined;
+    if (f.user !== undefined && f.user.kind === "user") {
+      const m = askMeasureWeek(f.db, f.user.id);
+      if (!asksMeasureEmpty(m)) asksLine = asksMeasureWords(m);
+    }
     waitingSet = f.user === undefined ? undefined : reviewSetOf(f.db, f.user, new Date());
     waves = f.user === undefined ? [] : wavesFor();
     asideWaves = f.user === undefined ? [] : putAsideWaves(f.db, f.user);
@@ -307,7 +388,9 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       all.flatMap((repo) => {
         const hold =
           repo.autonomy === "autonomous" ? plannerHold(f.app, repo, now) : null;
-        return hold === null ? [] : [[repo.id, holdWords(hold)] as const];
+        if (hold !== null) return [[repo.id, holdWords(hold)] as const];
+        const governor = governorSeen(f.app, f.user, repo, now);
+        return governor?.held === true ? [[repo.id, governorLine(governor)] as const] : [];
       }),
     );
     alarms =
@@ -336,15 +419,18 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     lane = forgeLane(f.app, f.user);
     flaky = forgeFlakes(f.app, f.user);
     decider = deciderLine(f.app, f.user);
+    moving = f.user ? movingLines(f.db, f.user, f.user.isAdmin ? pipelineNow(f.db) : undefined) : [];
     const commit = running().commit;
     const cleared = lastClearedNote(f.db, now);
     figures =
       f.user?.isAdmin !== true
         ? []
         : [
-            ...kpiLines(readKpis(f.db, now, kpiForge(f.app)), commit === null ? null : { sha: commit, since: ago(BOOTED) }),
+            ...idleLines(f.app, now),
+            ...weekBlock(f.app, now),
+            ...kpiLines(readKpis(f.db, now, { ...kpiForge(f.app), idle: () => idleReason(f.app, now) }), commit === null ? null : { sha: commit, since: ago(BOOTED) }),
             vitalsLine(readVitals(f.db, now)),
-            ...firedAlarms(f.db, now, { ceilingUsd: forgeCeiling(f.app.config) }).map((a) => a.says),
+            ...firedAlarms(f.db, now, { ceilingUsd: forgeCeiling(f.app.config), dataDir: f.app.config.dataDir }).map((a) => a.says),
             ...(cleared === undefined ? [] : [cleared]),
           ];
     // "Yours" is ownership plus the orgs you are on a team of; typing in the
@@ -720,12 +806,12 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     });
   };
 
-  /** Give the handed-over pull under the cursor back to its builder, through the action the web uses. */
+  /** Give the handed-over or assigned work under the cursor to the crew, through the action the web uses. */
   const giveBackHere = (): void => {
     const here = onYou[at("onyou").index];
     if (here === undefined) return;
-    if (here.over !== true && here.passed === undefined) {
-      ctx.toast("only a handed-over pull goes back to the crew", "attn");
+    if (here.hand === true) {
+      ctx.toast("only work handed to you goes back to the crew", "attn");
       return;
     }
     const done = giveBack(f.app, f.user, `${here.over === true ? "handover" : "assigned"}:${here.issue.id}`);
@@ -792,9 +878,26 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** Yours with an empty filter; anything you can see once you type —
    * the one way to find someone else's repository from here. */
   const shown = (): Repo[] =>
-    exploring() ? [] : (filter.query !== "" ? all : repos).filter((repo) =>
+    exploring() ? [] : (filter.query !== "" ? typedPool() : repos).filter((repo) =>
       filter.matches(`${repo.ownerName}/${repo.name} ${repo.description}`),
     );
+
+  /**
+   * Everything a typed filter can reach: the newest 200 already read, and
+   * whatever the forge's own search finds among every visible repository
+   * past them, read once per query so drawing stays a filter.
+   */
+  const typedPool = (): Repo[] => {
+    const query = filter.query.trim();
+    if (found === undefined || found.query !== query) {
+      const seen = new Set(all.map((r) => r.id));
+      found = {
+        query,
+        repos: launcherSearch(f.db, f.user, query).filter((r) => !seen.has(r.id)),
+      };
+    }
+    return found.repos.length === 0 ? all : [...all, ...found.repos];
+  };
 
   /**
    * The panes the last frame drew, which is what `tab` can reach — a focus
@@ -894,8 +997,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     if (focus === "repos") {
       if (exploring()) openExplored(exploredRows()[at("repos").index]);
       else openRepo(shown()[at("repos").index]);
-    }
-    else if (focus === "onyou") openAssigned(onYou[at("onyou").index]);
+    } else if (focus === "onyou") openAssigned(onYou[at("onyou").index]);
     else openPin(pins[at("machine").index]);
   };
 
@@ -912,7 +1014,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         ...(focus === "onyou" && onYou[at("onyou").index]?.hand === true
           ? [binding(["D"], "let the decider")]
           : []),
-        ...(focus === "onyou" && (onYou[at("onyou").index]?.over === true || onYou[at("onyou").index]?.passed !== undefined)
+        ...(focus === "onyou" && onYou[at("onyou").index] !== undefined && onYou[at("onyou").index]?.hand !== true
           ? [binding(["b"], "give back to the crew")]
           : []),
         ...(focus === "onyou" && waveHere() !== undefined
@@ -935,7 +1037,11 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
           disabled: focus !== "machine" || pins.length === 0,
         }),
         binding(["C"], "decider", { disabled: !f.user }),
-        ...(clientLines.length > 0 ? [binding(["t"], "ask for something")] : []),
+        ...(firstTell
+          ? [binding(["t"], "say what you want built")]
+          : clientLines.length > 0
+            ? [binding(["t"], "ask for something")]
+            : []),
         ...(clientLive.size > 0 ? [binding(["o"], "open the app")] : []),
         binding(["n"], "new repo", { disabled: !f.signedIn }),
         binding(["M"], "migrate", { disabled: !f.signedIn }),
@@ -943,6 +1049,9 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         binding(["s"], "sign in", { disabled: f.signedIn }),
         ...(focus === "repos" && f.user !== undefined && shown().some(mayArchive)
           ? [binding(["space"], "mark"), ...(markedRepos.size > 0 ? [binding(["a"], "archive marked")] : [])]
+          : []),
+        ...(everyday?.asking === true
+          ? [binding(["E"], "everyday account"), binding(["K"], "keep admin")]
           : []),
         binding(["r"], "refresh"),
       ];
@@ -961,6 +1070,11 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       // A site admin's forge strip, as the board's: "All fine" or a line
       // per cause. Anyone else gets no rows and no reads.
       let body = area;
+      if (everyday !== undefined) {
+        const [strip, rest] = split(body, "v", [len(1), fill(1)]);
+        s.text(strip!.x, strip!.y, truncate(everyday.line, strip!.w), style(c.mutedFg, c.bg), strip!.x + strip!.w);
+        body = rest!;
+      }
       if (alarms.length > 0) {
         const [strip, rest] = split(body, "v", [len(alarms.length), fill(1)]);
         alarms.forEach((line, i) =>
@@ -990,8 +1104,15 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         );
         body = rest!;
       }
-      // A short terminal drops the last figures before it drops the list.
-      const shown = figures.slice(0, Math.max(0, body.h - FIGURES_ROOM));
+      if (moving.length > 0) {
+        const [strip, rest] = split(body, "v", [len(moving.length), fill(1)]);
+        moving.forEach((line, i) =>
+          s.text(strip!.x, strip!.y + i, truncate(line, strip!.w), style(c.mutedFg, c.bg), strip!.x + strip!.w),
+        );
+        body = rest!;
+      }
+      // A short terminal drops lesser figures before it drops the list; the spend line goes last.
+      const shown = keepFigures(figures, body.h - FIGURES_ROOM);
       if (shown.length > 0) {
         const [strip, rest] = split(body, "v", [len(shown.length), fill(1)]);
         shown.forEach((line, i) =>
@@ -1055,9 +1176,13 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
 
       // A site admin is told once, under the filter, when the forge runs
       // with less than its default protection — the web footer's line.
-      const readAs = exploring()
-        ? `Read as: ${exploreLine(parseExploreQuery(filter.query)) || "everything"}`
-        : undefined;
+      const read = exploring() ? readExploreLine(filter.query) : undefined;
+      const note = read === undefined ? "" : exploreNote(read.unknown);
+      const mend = exploring() ? exploreSuggestion(filter.query) : undefined;
+      const readAs =
+        read === undefined
+          ? undefined
+          : `Read as: ${exploreLine(read.query) || "everything"}${explored === undefined ? "" : ` · ${exploreCount(read.query, explored.total)}${exploreFiltered(read.query) ? " · Esc clears" : ""}`}${mend === undefined ? "" : ` · Did you mean ${mend.line}?`}${note === "" ? "" : ` · ${note}`}`;
       const reduced = readAs ?? (f.user?.isAdmin === true ? protectionNotice() : undefined);
       const [box, warn, list] = split(
         main,
@@ -1164,6 +1289,23 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         }
         return true;
       }
+      if (e.key === "t" && f.user && firstTell) {
+        ctx.push(
+          promptScreen(ctx, screen, {
+            title: "What do you want built?",
+            label: "Your request",
+            hint: "enter sends",
+            onSubmit: (said) => {
+              if (said.trim() === "") return SAY_SOMETHING_WORDS;
+              const kept = keepThought(f.app, f.user, said, "composer");
+              ctx.toast(kept.ok ? "Received." : "That could not be kept.", kept.ok ? "success" : "danger");
+              if (kept.ok) void loadClientLines().then(reload);
+              return undefined;
+            },
+          }),
+        );
+        return true;
+      }
       if (e.key === "t" && f.user && clientLines.length > 0) {
         // A client's apps are the list; the one under the cursor is asked.
         const repo = shown()[at("repos").index];
@@ -1185,6 +1327,15 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         ctx.push(migrateScreen(f, ctx));
         return true;
       }
+      if (e.key === "W" && asksLine !== undefined) {
+        openOnWeb(f, ctx, "/asks", "Asks");
+        return true;
+      }
+      if (e.key === "E" && everyday?.asking === true) {
+        openOnWeb(f, ctx, "/settings", "Making your everyday account");
+        return true;
+      }
+      if (e.key === "K" && everyday?.asking === true) return keepAdminHere(), true;
       if (e.key === "A" && f.user) {
         openOnWeb(f, ctx, "/settings", "Account settings");
         return true;
@@ -1207,11 +1358,17 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   function drawOnYou(s: Surface, r: Rect, c: Tokens, set: IconSet): void {
     const on = focus === "onyou";
     const footer = onYouFooter();
-    const inner = card(s, r, c, {
+    const frame = card(s, r, c, {
       title: `${icon("person", set)} ${TITLES.onyou}`,
       focused: on,
       ...(footer === undefined ? {} : { footer }),
     });
+    // The week's asks lead the pane, muted; absent when all four are 0, so the list sits where it did.
+    let inner = frame;
+    if (asksLine !== undefined && frame.h > 1) {
+      s.text(frame.x, frame.y, truncate(asksLine, frame.w), style(c.mutedFg, c.bg), frame.x + frame.w);
+      inner = { ...frame, y: frame.y + 1, h: frame.h - 1 };
+    }
     if (onYou.length + waves.length === 0) {
       note(s, inner, c, [
         silenced.size > 0
@@ -1235,6 +1392,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
               : ISSUE_MARK;
         return {
           title: `${marked.has(item.issue.id) ? "[x] " : ""}${item.hand === true ? "parked " : item.over === true ? "handed over " : item.late !== undefined ? "waiting " : ""}${mark} #${item.issue.number} ${item.issue.title} · ${item.repo.ownerName}/${item.repo.name}`,
+          ...(onYouSteps.has(item.issue.id) ? { note: onYouSteps.get(item.issue.id)! } : {}),
           meta: `${item.waiting.word} · on ${item.waiting.on}${item.passed === undefined ? "" : ` · handed to you: ${item.passed}`}${item.late?.advice ?? item.overAdvice ?? ""}`,
         };
       }),
@@ -1281,6 +1439,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
           : "1-4 chips · h hide author",
       );
     }
+    if (asksLine !== undefined) parts.push("W asks on the web");
     if (marked.size > 0) parts.push(`${marked.size} marked`);
     if (silenced.size > 0)
       parts.push(
@@ -1294,12 +1453,17 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** A row's numbers as the page says them; nothing that is zero. */
   function numbersOf(row: ExploreRow): string {
     const n = row.numbers;
+    // The row's reason first, as the page says it; its numbers are not said again.
+    const why = whyOf(row, parseExploreQuery(explored?.line ?? "").sort, Date.now(), exploredWeights);
+    const said = why?.signal;
     return metaOf(
+      why?.text ?? "",
       row.kind === "person" ? plural(n.apps, "app") : "",
-      n.forks > 0 ? plural(n.forks, "fork") : "",
-      n.ships > 0 ? `${n.ships} shipped this month` : "",
-      n.awakeHours > 0 ? `${n.awakeHours} h in use` : "",
-      row.shippedAt !== null ? `shipped ${ago(row.shippedAt)}` : "",
+      n.forks > 0 && said !== "forks" ? plural(n.forks, "fork") : "",
+      n.likes > 0 && said !== "likes" ? plural(n.likes, "like") : "",
+      n.ships > 0 && said !== "ships" ? `${n.ships} shipped this month` : "",
+      n.awakeHours > 0 && said !== "use" ? `${n.awakeHours} h in use` : "",
+      row.shippedAt !== null && said !== "fresh" ? `shipped ${ago(row.shippedAt)}` : "",
     );
   }
 
@@ -1398,7 +1562,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       note(s, inner, c, [
         "Nothing pinned yet.",
         "p pins the repository under the cursor;",
-        'for forge sync, see README "On your machine".',
+        'for forge sync, see docs/ON-YOUR-MACHINE.md.',
       ]);
       return;
     }
@@ -1429,6 +1593,29 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
 }
 
 /**
+ * The figures a strip of `room` rows keeps, in the order they are drawn:
+ * the crew spend line (with its ceiling words) is kept ahead of every other
+ * figure, and the rest fill what room is left from the top (#9512).
+ */
+export function keepFigures(figures: readonly string[], room: number): string[] {
+  const n = Math.max(0, room);
+  if (figures.length <= n) return [...figures];
+  const first = figures.findIndex((line) => line.startsWith(SPEND_LINE));
+  const order = first < 0 ? figures.map((_, i) => i) : [first, ...figures.map((_, i) => i).filter((i) => i !== first)];
+  const kept = new Set(order.slice(0, n));
+  return figures.filter((_, i) => kept.has(i));
+}
+
+/** How the crew spend figure begins, as `kpiLines` says it. */
+const SPEND_LINE = "Crew spend today";
+
+/** Why the builders are idle, as the one line an admin's home reads; none while they are not. */
+function idleLines(app: App, now: Date): string[] {
+  const reason = idleReason(app, now);
+  return reason === null ? [] : [idleLine(reason)];
+}
+
+/**
  * The mark a repository row wears.
  *
  * `◆` has meant "kept on this machine" since the where-strip was written
@@ -1455,4 +1642,23 @@ function note(s: Surface, r: Rect, c: Tokens, lines: readonly string[]): void {
         r.x + r.w,
       ),
     );
+}
+
+/**
+ * The repositories a typed launcher filter finds among every one the viewer
+ * can see: the listing's own visibility rule and its owner/name match, so
+ * nothing past the first page is out of reach. `owner/name` is split, since
+ * the match reads the two columns apart.
+ */
+export function launcherSearch(
+  db: Parameters<typeof listReposVisibleTo>[0],
+  viewer: Parameters<typeof listReposVisibleTo>[1],
+  query: string,
+): Repo[] {
+  const q = query.trim();
+  if (q === "") return [];
+  const slash = q.indexOf("/");
+  if (slash > 0 && slash < q.length - 1)
+    return listReposVisibleTo(db, viewer, { owner: q.slice(0, slash), query: q.slice(slash + 1), limit: 200 });
+  return listReposVisibleTo(db, viewer, { query: q.replace(/\//g, ""), limit: 200 });
 }

@@ -51,7 +51,8 @@ export async function startChildApps(parent: App, child: App, name: string): Pro
     sleepAfterMs: own.options.sleepAfterMs,
     sweepEveryMs: own.options.sweepEveryMs,
     dns: own.options.dns,
-    placement: own.options.placement,
+    cloudBody: own.options.cloudBody,
+    ownedCapacity: own.options.ownedCapacity,
   });
   // Claimed before the first await: a second request cannot start it twice.
   const parentChecks = checksFor(parent);
@@ -80,6 +81,16 @@ export async function stopChildApps(parent: App): Promise<void> {
     await checks?.stop();
     await runtime.stop();
   }
+}
+
+/** Stop one child's apps and checks (it is going to sleep). */
+export async function stopChildAppsOf(parent: App, name: string): Promise<void> {
+  const held = running.get(parent);
+  const entry = held?.get(name);
+  if (!held || !entry) return;
+  held.delete(name);
+  await entry.checks?.stop();
+  await entry.runtime.stop();
 }
 
 export interface ChildAppsSummary {

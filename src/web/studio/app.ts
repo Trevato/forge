@@ -10,6 +10,7 @@
  */
 
 import { appCardPath } from "../og/path.ts";
+import { fleetGraphHref } from "../fleet-graph.ts";
 import { sealedScope } from "../../core/sealed.ts";
 import { egressSetting } from "../../core/capacity.ts";
 import { egressNote } from "./egress.ts";
@@ -28,6 +29,8 @@ import {
   type PreviewLatency,
 } from "../../core/runs.ts";
 import { autonomyStatus } from "../../crew/autonomy.ts";
+import { governorSeen } from "../../crew/governed.ts";
+import { governorRows } from "./governor_rows.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, repoBase, repoHeader, repoPalette } from "../chrome.ts";
@@ -36,7 +39,11 @@ import { html, when, type Html } from "../html.ts";
 import { appLine } from "../describe.ts";
 import { page } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
-import { followingCard, followingOf } from "../pages/following.ts";
+import {
+  archivedParentLine,
+  followingCard,
+  followingOf,
+} from "../pages/following.ts";
 import {
   avatar,
   badge,
@@ -46,16 +53,16 @@ import {
   icon,
   listCard,
   row,
-  userTag,
 } from "../ui.ts";
-import { changesHref, tellsHref } from "./nouns.ts";
 import { answersRegion } from "./answers.ts";
+import { appMilestones } from "./milestone_lines.ts";
 import { nowCard, nowRegion } from "./now.ts";
 import { repoAsks } from "./asks.ts";
 import { notesCard } from "./notes.ts";
+import { adapterCard } from "./adapter.ts";
 import { appPanels } from "./previews.ts";
-import { noCrewLine, servingHistory, type WordCtx } from "./words.ts";
-import { crewKeyNote } from "./crew.ts";
+import { noCrewLine, pausedWords, servingHistory, type WordCtx } from "./words.ts";
+import { crewKeyCard } from "./crew_key.ts";
 import {
   notePhase,
   takeSessionTime,
@@ -63,6 +70,8 @@ import {
   timePhaseAsync,
 } from "../../core/route_timing.ts";
 import { noteAppOpened } from "../../core/next-steps.ts";
+import { readAppMoney } from "../../actions/money.ts";
+import { moneyRows } from "./money_line.ts";
 
 /**
  * What asks the viewer in this repository, muted or not: a mute quiets the
@@ -111,9 +120,6 @@ const PREVIEW_LATENCY_MIN = 3;
  * statistic.
  */
 const FAILED_RATIO_MIN = 5;
-
-/** The start of history, for an "ever" count rather than one week of it. */
-const EPOCH = new Date(0).toISOString();
 
 /**
  * How fast a change has reached its preview this week, worded like the
@@ -271,86 +277,68 @@ export async function studioApp(
       ...sealedScope(db, repo, ctx.auth.user),
     }),
   );
+  // A new app that has not run is told apart from one with a past in
+  // `appPanels` (`fresh.ts`): its page shows only its progress, so the
+  // week's reads below are skipped for it.
+  const { head, previews, deployTailing, fresh, history } = timePhase(req, "panels", () =>
+    appPanels(ctx, repo, record, openPulls),
+  );
   const week = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
   // What landed this week, counted by the database like the runs and the
   // spend below — a page of closed pulls would stop at a hundred and the
   // cost per shipped change would read high off the short count.
-  const shipped = timePhase(req, "shipped", () =>
-    mergedPullCount(db, repo.id, week),
-  );
+  const shipped = fresh
+    ? 0
+    : timePhase(req, "shipped", () => mergedPullCount(db, repo.id, week));
   // The rest is spend, worked out only for a viewer who is going to see it —
   // counted by the database over the whole week, not off a page of rows.
-  const weekTotals = ownerFacts
+  const weekTotals = ownerFacts && !fresh
     ? timePhase(req, "spend", () => agentRunTotals(db, repo.id, week))
     : { runs: 0, spentUsd: 0 };
   const spent = weekTotals.spentUsd;
-  const ledgerWeek = ownerFacts
+  const ledgerWeek = ownerFacts && !fresh
     ? timePhase(req, "decisions", () => decisionStats(db, repo.id, week))
     : [];
-  const weekLatency = ownerFacts
+  const weekLatency = ownerFacts && !fresh
     ? timePhase(req, "latency", () => previewLatency(db, repo.id, week))
     : undefined;
-  // Whether there is any history at all — ever, not this week's — so a
-  // fresh app reads as "nothing yet" rather than a stretch of zeros and a
-  // scary ratio (#274). A quiet week on an old app still has shipped a
-  // change or taken a run at some point; only an app with neither, ever,
-  // gets the quieter line. Deploys are not part of this: they happen on
-  // their own the moment an app exists, so they say nothing about whether
-  // anyone has done anything yet.
-  const hasHistory = timePhase(req, "history", () => {
-    const everShipped = shipped > 0 || mergedPullCount(db, repo.id, EPOCH) > 0;
-    const everRuns = ownerFacts
-      ? weekTotals.runs > 0 || agentRunTotals(db, repo.id, EPOCH).runs > 0
-      : false;
-    return everShipped || everRuns;
-  });
   const autonomy =
-    !ownerFacts || repo.autonomy === "off"
+    !ownerFacts || fresh || repo.autonomy === "off"
       ? undefined
       : timePhase(req, "autonomy", () => autonomyStatus(ctx.app, repo));
+  // The governor's reason, one line on the crew card (#7644).
+  const governor = fresh
+    ? undefined
+    : timePhase(req, "governor", () => governorSeen(ctx.app, ctx.auth.user, repo, new Date()));
 
   // ---- the app itself ----
   // `deployTailing` says the head card is tailing production's own deploy —
   // the "Now" panel's empty-state words below care about that distinction.
-  const { head, previews, deployTailing } = timePhase(req, "panels", () =>
-    appPanels(ctx, repo, record, openPulls),
-  );
 
   // ---- the box ----
   // Telling the crew, and who takes it, is the owner's own front door — a
   // stranger sees the app, not who is behind it.
   const tell = !ownerFacts
     ? null
-    : html`<form
-        class="card comment-form"
-        method="post"
-        action="${base}/tell"
-      >
+    : html`<form class="bar tell-box" method="post" action="${base}/tell">
         <label class="sr-only" for="tell">Tell the crew</label>
-        <textarea
+        <input
           class="input"
           id="tell"
           name="text"
-          rows="3"
           required
           maxlength="${MAX_BODY}"
-          placeholder="${builders.length === 0
-            ? "Add a crew member under Settings → Crew, then tell them what you want."
-            : "What should change? One thing at a time works best."}"
-        ></textarea>
-        <div class="bar">
-          <span class="muted small">
-            ${builders.length === 0
-              ? html`Nobody on the crew yet.`
-              : html`${builders
-                  .map((b) => userTag(b.user.username))
-                  .reduce((a, b) => html`${a} ${b}`)}
-                ${builders.length === 1 ? "takes it" : "share the work"}`}
-          </span>
-          <span class="spacer"></span>
-          ${btn("Tell the crew", { variant: "primary", type: "submit" })}
-        </div>
-      </form>`;
+          placeholder="Tell the crew…"
+        />
+        ${btn("Tell", { variant: "primary", type: "submit" })}
+      </form>
+      ${builders.length === 0
+        ? html`<p class="muted small">
+            Nobody on the crew yet.
+            <a href="${base}/settings#crew">Add a crew member under Settings → Crew</a>,
+            then tell them what you want.
+          </p>`
+        : null}`;
 
   // ---- now: one row per thing, in the five words (studio/now.ts) ----
   const { card: now } = await timePhaseAsync(req, "now", () =>
@@ -360,6 +348,7 @@ export async function studioApp(
       ownerFacts,
       wordCtx,
       deployTailing,
+      previewLinks: fresh,
     }),
   );
 
@@ -367,19 +356,10 @@ export async function studioApp(
   // Crew, spend and autonomy are the owner's facts; a viewer who cannot
   // write here gets only the shipped count, never the roster, the money or
   // the ledger — and the page never asks for the rest on their behalf.
-  const crewCard = !ownerFacts
+  // No crew yet: the tell box and the Now row already say so, once.
+  const crewCard = !ownerFacts || crew.length === 0
     ? null
-    : crew.length === 0
-      ? card(
-          html`<p class="muted small">
-            Nobody yet. <a href="${base}/settings">Add someone.</a>
-          </p>`,
-          {
-            head: html`${icon("bot")}
-              <h2>Crew</h2>`,
-          },
-        )
-      : listCard(
+    : listCard(
           crew.map((c) =>
             row({
               lead: avatar(c.agent.user.username),
@@ -398,13 +378,9 @@ export async function studioApp(
               ${btn("Change", { href: `${base}/settings`, size: "sm" })}`,
           },
         );
-  const weekCard = card(
-    !hasHistory
-      ? html`<p class="muted small">
-          Nothing to show yet — it fills in once a pull request
-          ships${ownerFacts ? " or the crew takes a run" : ""}.
-        </p>`
-      : !ownerFacts
+  // No history, no card: an empty week explains itself to nobody.
+  const weekCard = !history ? null : card(
+    !ownerFacts
         ? html`<dl>
             <dt>Shipped</dt>
             <dd>${shipped} pull request${shipped === 1 ? "" : "s"}</dd>
@@ -459,13 +435,10 @@ export async function studioApp(
                 </dd>
                 <dt>Slots</dt>
                 <dd>${autonomy.active} of ${autonomy.slots} in use</dd>
+                ${governorRows(governor)}
                 ${autonomy.paused
                   ? html`<dt>Paused</dt>
-                      <dd>
-                        ${autonomy.paused === "ceiling"
-                          ? "at the ceiling, until 00:00 UTC"
-                          : autonomy.paused}
-                      </dd>`
+                      <dd>${pausedWords(autonomy.paused)}</dd>`
                   : null}
               </dl>
               ${when(crew.length === 0, () => noCrewLine(`${base}/settings`))}`,
@@ -473,19 +446,33 @@ export async function studioApp(
           head: html`${icon("play")}
             <h2>On its own</h2>
             <span class="spacer"></span>
+            ${btn("Graph", {
+              href: fleetGraphHref([`${repo.ownerName}/${repo.name}`]),
+              size: "sm",
+              variant: "secondary",
+            })}
             ${btn("Change", { href: `${base}/settings`, size: "sm" })}`,
           extra: "about",
         },
       );
+  // This month's money (#510): the statement's total against what the app
+  // cost, for whoever may read its statement — the same numbers, one door.
+  const money = fresh ? null : timePhase(req, "money", () => readAppMoney(ctx.app, ctx.auth.user, repo));
+  const moneyCard =
+    money === null || !money.ok
+      ? null
+      : card(moneyRows(money.value, `${base}/settings/app/statement`), {
+          head: html`${icon("activity")}
+            <h2>This month</h2>`,
+          extra: "about",
+        });
   // The rest of the app's environment — its variables, hostname, access and
   // domains — is the admin's, on the app's settings page.
+  // Issues, Pulls and the map are the head's own tabs; only what it lacks is here.
   const more = html`<p class="muted small">
-    <a href="${base}/map">The map</a> ·
-    <a href="${tellsHref(base)}">Issues</a> ·
-    <a href="${changesHref(base)}">Pull requests</a>${when(
-      canAdmin(db, repo, ctx.auth.user),
-      () => html` · <a href="${base}/settings/app">Environment settings</a>`,
-    )}
+    <a href="${base}/variants">Variants</a>
+    ${when(canAdmin(db, repo, ctx.auth.user), () => html`<a href="${base}/settings/app">Environment settings</a>`)}
+    ${when(canAdmin(db, repo, ctx.auth.user), () => html`<a href="/-/confirm?to=${encodeURIComponent(`${base}/archive`)}">Archive</a>`)}
   </p>`;
 
   // An app that follows another says so before anything else: whether it
@@ -493,19 +480,45 @@ export async function studioApp(
   const following = await timePhaseAsync(req, "following", () =>
     followingOf(ctx, repo),
   );
-  const policy = await timePhaseAsync(req, "policy", () =>
-    policyLine(ctx, repo, record),
-  );
+  const policy = fresh
+    ? null
+    : await timePhaseAsync(req, "policy", () => policyLine(ctx, repo, record));
+  const adapter = ownerFacts
+    ? await timePhaseAsync(req, "adapter", () => adapterCard(ctx, record, repo))
+    : null;
   const rendering = performance.now();
-  const body = html`${repoHeader(ctx, repo, "app", {
+  const tellRegion = html`${tell}
+        ${ownerFacts && ctx.auth.user ? answersRegion(ctx, repo, ctx.auth.user) : null}`;
+  // A new app that has not run yet shows only its progress: the head's
+  // state line, the box to tell the crew, and Now. Everything else waits
+  // until there is something to show.
+  const body = fresh
+    ? html`${repoHeader(ctx, repo, "app", { compact: true, ownTitle: true })}
+    ${following === undefined
+      ? archivedParentLine(ctx, repo)
+      : followingCard(ctx, repo, following)}
+    <div id="app-head">${head}</div>
+    ${ownerFacts ? crewKeyCard(ctx, true) : null}
+    <div class="stack">
+      ${adapter}
+      ${tellRegion}
+      <div id="app-previews"></div>
+      ${nowRegion(repo, now)}
+      ${appMilestones(ctx, repo)}
+      ${more}
+    </div>
+    ${liveMount({ repo: base, app: true })}`
+    : html`${repoHeader(ctx, repo, "app", {
       compact: true,
       ownTitle: true,
     })}
-    ${following === undefined ? "" : followingCard(ctx, repo, following)}
+    ${following === undefined
+      ? archivedParentLine(ctx, repo)
+      : followingCard(ctx, repo, following)}
     <div id="app-head">${head}</div>
     ${askingLine(ctx, repo)}
     ${policy}
-    ${ownerFacts ? crewKeyNote(ctx) : null}
+    ${ownerFacts ? crewKeyCard(ctx, true) : null}
     ${ownerFacts
       ? egressNote(
           ctx.app.config.dataDir,
@@ -517,14 +530,14 @@ export async function studioApp(
       : null}
     <div class="split" data-rail="wide">
       <div class="stack">
-        ${tell}
-        ${ownerFacts && ctx.auth.user ? answersRegion(ctx, repo, ctx.auth.user) : null}
+        ${tellRegion}
         <div id="app-previews">${previews}</div>
         ${nowRegion(repo, now)}
+        ${appMilestones(ctx, repo)}
         ${notesCard(ctx, repo, record)}
       </div>
       <aside class="stack">
-        ${crewCard} ${weekCard} ${ownCard} ${more}
+        ${adapter} ${crewCard} ${weekCard} ${moneyCard} ${ownCard} ${more}
       </aside>
     </div>
     ${liveMount({ repo: base, app: true })}`;

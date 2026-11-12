@@ -24,6 +24,8 @@ const SAMPLES: Record<string, [Uint8Array, FileKind, string]> = {
   ico: [of(0, 0, 1, 0, 1), "image", "image/x-icon"],
   svg: [enc('<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg"/>'), "svg", "image/svg+xml"],
   pdf: [enc("%PDF-1.7\n"), "pdf", "application/pdf"],
+  html: [enc("<!doctype html><p>"), "html", "text/html; charset=utf-8"],
+  htm: [enc("<p>"), "html", "text/html; charset=utf-8"],
   mp3: [enc("ID3\x04\0"), "audio", "audio/mpeg"],
   ogg: [enc("OggS\0"), "audio", "audio/ogg"],
   oga: [enc("OggS\0"), "audio", "audio/ogg"],
@@ -37,9 +39,16 @@ const SAMPLES: Record<string, [Uint8Array, FileKind, string]> = {
   mov: [box("qt  "), "video", "video/quicktime"],
   stl: [enc("solid cube\n"), "model3d", "model/stl"],
   glb: [enc("glTF\x02\0\0\0"), "model3d", "model/gltf-binary"],
+  "3mf": [enc("PK\x03\x04"), "model3d", "model/3mf"],
+  db: [enc("SQLite format 3\0"), "sqlite", "application/vnd.sqlite3"],
+  sqlite: [enc("SQLite format 3\0"), "sqlite", "application/vnd.sqlite3"],
+  sqlite3: [enc("SQLite format 3\0"), "sqlite", "application/vnd.sqlite3"],
   csv: [enc("a,b\n1,2\n"), "csv", "application/octet-stream"],
   tsv: [enc("a\tb\n"), "csv", "application/octet-stream"],
+  jsonl: [enc("{\"a\":1}\n"), "csv", "application/octet-stream"],
+  ndjson: [enc("{\"a\":1}\n"), "csv", "application/octet-stream"],
   gltf: [enc('{"asset":{}}'), "model3d", "application/octet-stream"],
+  obj: [enc("v 0 0 0\n"), "model3d", "application/octet-stream"],
   json: [enc("{}"), "config", "application/octet-stream"],
   jsonc: [enc("{}"), "config", "application/octet-stream"],
   yaml: [enc("a: 1\n"), "config", "application/octet-stream"],
@@ -47,9 +56,37 @@ const SAMPLES: Record<string, [Uint8Array, FileKind, string]> = {
   toml: [enc("a = 1\n"), "config", "application/octet-stream"],
   ini: [enc("[a]\n"), "config", "application/octet-stream"],
   conf: [enc("a 1\n"), "config", "application/octet-stream"],
+  ttf: [of(0, 1, 0, 0, 0, 0), "font", "font/ttf"],
+  otf: [enc("OTTO\0\0"), "font", "font/otf"],
+  woff: [enc("wOFF\0\0"), "font", "font/woff"],
+  woff2: [enc("wOF2\0\0"), "font", "font/woff2"],
+  zip: [of(0x50, 0x4b, 3, 4, 0), "archive", "application/octet-stream"],
+  tar: [enc("x".repeat(257) + "ustar\0"), "archive", "application/octet-stream"],
+  tgz: [of(0x1f, 0x8b, 8), "archive", "application/octet-stream"],
+  ipynb: [enc("{}"), "notebook", "application/octet-stream"],
   md: [enc("# a\n"), "markdown", "application/octet-stream"],
   markdown: [enc("# a\n"), "markdown", "application/octet-stream"],
   mdx: [enc("# a\n"), "markdown", "application/octet-stream"],
+  patch: [enc("diff --git a/a b/a\n"), "patch", "application/octet-stream"],
+  diff: [enc("diff --git a/a b/a\n"), "patch", "application/octet-stream"],
+  log: [enc("ok\n"), "log", "application/octet-stream"],
+  ansi: [enc("\x1b[31mok\n"), "log", "application/octet-stream"],
+  srt: [enc("1\n00:00:01,000 --> 00:00:02,000\nHi\n"), "subtitles", "application/octet-stream"],
+  vtt: [enc("WEBVTT\n"), "subtitles", "application/octet-stream"],
+  gpx: [enc("<gpx/>"), "gpx", "application/octet-stream"],
+  vcf: [enc("BEGIN:VCARD\nEND:VCARD\n"), "contacts", "application/octet-stream"],
+  vcard: [enc("BEGIN:VCARD\nEND:VCARD\n"), "contacts", "application/octet-stream"],
+  eml: [enc("From: a@b.c\n\nhi\n"), "mail", "application/octet-stream"],
+  geojson: [enc('{"type":"FeatureCollection","features":[]}'), "geojson", "application/octet-stream"],
+  ics: [enc("BEGIN:VCALENDAR\nEND:VCALENDAR\n"), "calendar", "application/octet-stream"],
+  gcode: [enc("G28\nG1 X1 E1\n"), "gcode", "application/octet-stream"],
+  gco: [enc("G28\n"), "gcode", "application/octet-stream"],
+  har: [enc(`{"log":{"entries":[]}}`), "har", "application/octet-stream"],
+  sql: [enc("CREATE TABLE a (id int);\n"), "sql", "application/octet-stream"],
+  graphql: [enc("type A { b: Int }\n"), "graphql", "application/octet-stream"],
+  gql: [enc("type A { b: Int }\n"), "graphql", "application/octet-stream"],
+  sarif: [enc('{"runs":[]}'), "sarif", "application/octet-stream"],
+  lcov: [enc("SF:a.ts\nend_of_record\n"), "lcov", "application/octet-stream"],
 };
 
 describe("the registry of file kinds", () => {
@@ -78,18 +115,20 @@ describe("the registry of file kinds", () => {
     );
   });
 
-  test("nothing it can answer is HTML or script", () => {
-    for (const ext of [...KNOWN_EXTENSIONS, "html", "htm", "js", "mjs", "xhtml", "xml"]) {
+  test("nothing it can answer is script, and HTML only as .html or .htm (sandboxed by the media route)", () => {
+    for (const ext of [...KNOWN_EXTENSIONS, "js", "mjs", "xhtml", "xml"]) {
+      if (ext === "html" || ext === "htm") continue;
       const head = SAMPLES[ext]?.[0] ?? enc("<script>alert(1)</script>");
       const type = mediaType(`a.${ext}`, head);
       expect(type).not.toMatch(/html|javascript|ecmascript|xml(?!$)/);
       expect(type).not.toBe("text/html");
     }
-    expect(mediaType("index.html", enc("<html>"))).toBe("application/octet-stream");
+    expect(mediaType("index.html", enc("<html>"))).toBe("text/html; charset=utf-8");
+    expect(mediaType("index.html", new Uint8Array([60, 0]))).toBe("application/octet-stream");
   });
 
   test("a file with no known extension is text or binary by its bytes", () => {
-    expect(fileKind("Makefile", enc("all:\n"))).toBe("text");
+    expect(fileKind("LICENSE", enc("MIT\n"))).toBe("text");
     expect(fileKind("src/a.ts", enc("export {}\n"))).toBe("text");
     expect(fileKind("blob.dat", of(1, 0, 2))).toBe("binary");
     expect(fileKind(".png", SAMPLES.png![0])).toBe("binary");

@@ -13,10 +13,34 @@ export interface SizeLimits {
   readonly diskMiB: number;
 }
 
+// A child is a whole forge: its own process, its apps, a crew run and a
+// check, all held to one figure. One app's first deploy took a forge to
+// 1195 MiB and another past 2 GiB, so a small forge never came up in 512.
 export const SIZES: Readonly<Record<Size, SizeLimits>> = {
-  small: { cpu: 1, memoryMiB: 512, diskMiB: 2048 },
-  medium: { cpu: 2, memoryMiB: 2048, diskMiB: 10240 },
+  small: { cpu: 1, memoryMiB: 2048, diskMiB: 2048 },
+  medium: { cpu: 2, memoryMiB: 4096, diskMiB: 10240 },
   large: { cpu: 4, memoryMiB: 8192, diskMiB: 40960 },
+};
+
+/**
+ * A child's disk bandwidth, held by the kernel (`io.max` on the device under
+ * the forge's data, `apps/cgroup.ts`): bytes and operations a second, read
+ * and write. One child's install or checkout cannot starve the forge's own
+ * database or its neighbours' of the disk; io.weight only orders a queue.
+ */
+export interface SizeIo {
+  readonly rbps: number;
+  readonly wbps: number;
+  readonly riops: number;
+  readonly wiops: number;
+}
+
+const MiB = 1024 * 1024;
+
+export const SIZE_IO: Readonly<Record<Size, SizeIo>> = {
+  small: { rbps: 50 * MiB, wbps: 25 * MiB, riops: 1000, wiops: 500 },
+  medium: { rbps: 100 * MiB, wbps: 50 * MiB, riops: 2000, wiops: 1000 },
+  large: { rbps: 200 * MiB, wbps: 100 * MiB, riops: 4000, wiops: 2000 },
 };
 
 /** A size, or one sentence saying which are allowed. */

@@ -94,6 +94,21 @@ person approved.
   and only this repository's directory re-allowed, so a cache made later is
   denied too, and deleting the repository removes it.
   Test: `test/crew-install-cache.test.ts`
+- A check's cell reads its repository's shared bun cache
+  (`check-install/<repo id>/bun`) through a read-only bind and cannot write
+  it, so one pull cannot plant a package the gate on main installs. The
+  forge fills it on the host with `--ignore-scripts`, and reads no
+  `bunfig.toml` or `.npmrc` of the pull's.
+  Test: `test/check-install.test.ts`
+- An app environment's cell (#7544) reads that same cache read-only and
+  copies from it, so a preview cannot plant a package production installs;
+  the forge fills it through the same lockfile rule as a check's.
+  Test: `test/app-install-cache.test.ts`
+- The forge fills that cache only from a lockfile whose every package is a
+  registry `name@version` with a sha512 integrity (`checks/fillable.ts`):
+  the host never fetches a URL a pull chose and reads no file, link or
+  workspace a pull points at, an override's or resolution's included.
+  Test: `test/check-fillable.test.ts`
 - The same policy holds against a real bubblewrap, not only as a string.
   Test: `test/crew-sandbox-real.test.ts`
 - An agent cannot push to the default branch or merge; a person merges.
@@ -131,6 +146,16 @@ Wants: accounts, spam, resources, or a way to exhaust the forge.
 - A new-account guard can refuse repository creation and forks for young
   accounts.
   Test: `test/guard-new-accounts.test.ts`
+- Sign-up has a ceiling per address and for the whole forge, per minute and per
+  hour, and an admin can close it at once.
+  Test: `test/guest-contribute.test.ts`
+- A guest owns only a contribution fork of a public repository. It holds no
+  settings, secrets or app, nothing runs for it, and its storage, forks and
+  pulls are limited (`docs/ROLES.md`).
+  Test: `test/guest-contribute.test.ts`
+- A guest's pull runs nothing until a person who can write the repository
+  approves that exact head, and the crew never lands it.
+  Test: `test/guest-contribute.test.ts`
 - Every limit is a setting with its reason, changed by an admin only.
   Test: `test/limits.test.ts`
 - Distributed attacks across many addresses: only the whole-forge caps stand
@@ -160,6 +185,19 @@ How each part proves itself to the next, today.
 
 Gaps: edge → pod and runner → forge ride a shared secret, not a per-call
 signature; child → parent has no credential.
+
+## A child forge running its own code (#11144)
+
+A cell child's owner may switch it from the parent's code to its own `<org>/forge` main (`spawn/own_code.ts`). The code is then the child's author's, so treat it as hostile code in a cell, the same as any app.
+
+What it cannot reach: the cell's memory, CPU, disk and I/O limits, its sandbox and its egress list are the same as with the parent's code, and nothing in the child's repository is read to make them. The parent's data, home and temporary directory are hidden; only the parent's code and the one checkout (a tree, with no `.git`) are revealed, read-only. Its `forge.json` is not run by the parent: the parent refuses a repository or tree over 256 MB or 50,000 files and any symbolic link in the tree, checks that `src/main.ts` parses and `forge.json` is JSON, and never executes the child's code outside the cell. What the parent records about a failed start is fixed wording; no text from the child's files reaches the rollback row or the `forge.rolled_back` event.
+
+What it can reach: everything a child forge can reach, no more: its own data directory, the parent's heartbeat door and public address, the hosts the admin allowed for models, registry and payment. It can lie in what it serves and in its heartbeat, and can break itself: a start that fails to answer within the deadline rolls back to the last commit that came up, then to the parent's code, and the owner's `/forges` page shows a Rolled back row saying so. A commit that failed is not tried again until main moves. A child that comes up and breaks later is not rolled back; the owner switches it off. Hosted children run inside the parent's process and cannot turn this on.
+
+- The cell limits, sandbox, egress list and hidden parent paths are built by the
+  parent from outside, never read from the child's repository, so a child's own
+  code is held exactly like any app.
+  Test: `test/own-code.test.ts`
 
 ## Honeypots (later)
 

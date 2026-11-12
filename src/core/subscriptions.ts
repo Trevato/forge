@@ -65,7 +65,7 @@ interface Row {
 }
 
 export const NAME_MAX = 40;
-const TOKEN_MAX = 512;
+const TOKEN_MAX = 4096;
 
 /** The forge's own token, from its environment: a row with no sealed token. */
 export const PLATFORM = "platform";
@@ -200,18 +200,28 @@ export const envNameOf = (kind: SubscriptionKind): string =>
 export const API_BASE_MAX = 200;
 
 /**
+ * A pasted key as the owner meant it: every whitespace character (a wrapped line, a trailing newline, a
+ * non-breaking space from a web page) and a leading `Bearer ` are dropped. Keys never contain whitespace,
+ * and a gateway may use any shape at all, so nothing else is judged.
+ */
+export function normalizeToken(raw: string): string {
+  return raw.replace(/^\s*bearer\s+/i, "").replace(/[\s\u200b-\u200d\ufeff]+/g, "");
+}
+
+/**
  * What kind of token this is. A token from `claude setup-token` begins
  * `sk-ant-oat…` and is a person's own plan: it goes under
  * `CLAUDE_CODE_OAUTH_TOKEN` and never takes a base URL. Anything else that
- * could be a key — one line, no spaces, not absurdly long — is an API key:
+ * could be a key — not empty once normalized, not absurdly long — is an API key:
  * Anthropic's `sk-ant-api…`, the `sk-ant-usr…` keys that come with a
  * subscription's API credits, OpenRouter's `sk-or-v1-…`, or whatever shape
  * a gateway hands out with its base URL. The forge keeps no list of shapes;
  * the provider answers a bad key on the first call, and the run says so.
+ * Takes a token already through `normalizeToken`, so the kind and the stored
+ * value are read from the same string; whitespace left in is refused.
  */
 export function kindOfToken(token: string): SubscriptionKind | undefined {
-  if (token === "" || token.length > TOKEN_MAX || /\s|\0/.test(token))
-    return undefined;
+  if (token === "" || token.length > TOKEN_MAX || /\s|\0/.test(token)) return undefined;
   if (/^sk-ant-oat\d*-/.test(token)) return "oauth";
   return "api_key";
 }
@@ -312,7 +322,8 @@ export function addSubscription(
     if (parsed === undefined) return err("invalid_api_base");
     apiBase = parsed;
   }
-  const kind = kindOfToken(input.token);
+  const token = normalizeToken(input.token);
+  const kind = kindOfToken(token);
   if (kind === undefined) return err("invalid_token");
   // A Claude subscription token is Anthropic's own plan — never a gateway.
   if (kind === "oauth" && apiBase !== null) return err("invalid_api_base");
@@ -325,7 +336,7 @@ export function addSubscription(
     subscriptionId,
     name,
     kind,
-    seal(dataDir, input.token, aad(subscriptionId)),
+    seal(dataDir, token, aad(subscriptionId)),
     apiBase,
     input.createdBy ?? null,
   );
@@ -738,4 +749,25 @@ export function crewHasCredential(
   return ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "FORGE_CLAUDE_CONFIG_DIR"].some(
     (name) => (env[name] ?? "").trim() !== "",
   );
+}
+
+/** What MCP `subscriptions` and `GET /api/v1/admin/subscriptions` list: each account, never its token. */
+export function subscriptionRows(db: Database) {
+  const scopes = scopesOf(db);
+  const budgets = budgetsOf(db);
+  return listSubscriptions(db).map((s) => {
+    const b = budgets.get(s.id);
+    return {
+      id: s.id,
+      name: s.name,
+      kind: s.kind,
+      apiBase: s.apiBase,
+      scopes: scopes.get(s.id) ?? [],
+      budgetUsd: b?.budgetUsd ?? null,
+      spentUsd: b?.spentUsd ?? 0,
+      restingUntil: s.restingUntil,
+      restingSaid: s.restingSaid,
+      lastUsedAt: s.lastUsedAt,
+    };
+  });
 }

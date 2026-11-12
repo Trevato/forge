@@ -12,7 +12,6 @@ import { getRepo } from "../src/core/repos.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { proveAll } from "./helpers/verified.ts";
-import { baselineMs, expectBudget } from "./helpers/budget.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { quiet } from "./helpers/statements.ts";
 
@@ -238,22 +237,7 @@ test("following stays cheap on a diverged fork (regression guard; this pull does
   expect(Math.abs((await costOf(path)) - small[path]!)).toBeLessThanOrEqual(SLACK);
 });
 
-async function phases(path: string): Promise<Record<string, number>> {
-  const best: Record<string, number> = {};
-  for (let i = 0; i < 6; i++) {
-    const res = await fetch(`${servers.url}${path}`, { headers: { cookie } });
-    expect(res.status).toBe(200);
-    const body = await res.text();
-    if (path.endsWith("-fork")) expect(body.replace(/\s+/g, " ")).toContain("needs a decision");
-    for (const part of (res.headers.get("server-timing") ?? "").split(", ")) {
-      const m = /^([a-z]+);dur=([\d.]+)/.exec(part);
-      if (m) best[m[1]!] = Math.min(best[m[1]!] ?? Infinity, Number(m[2]));
-    }
-  }
-  return best;
-}
-
-test("now stays within budget on the live shape: 300 open issues, 2,000 closed, 3,500 edges, 20 pillars", async () => {
+test("now costs the same statements on the live shape: 300 open issues, 2,000 closed, 3,500 edges, 20 pillars", async () => {
   const repo = getRepo(app.db, "alice", "vault")!;
   const author = app.db.query<{ id: string }, []>("SELECT id FROM user WHERE username = 'alice'").get()!.id;
   app.db.transaction(() => {
@@ -264,10 +248,9 @@ test("now stays within budget on the live shape: 300 open issues, 2,000 closed, 
       ).run(`${repo.id}i${i}`, repo.id, 5000 + i, `Tell ${i}`, author);
     seedLive(app.db, repo.id, author, 0);
   })();
-  const against = await baselineMs(servers.url);
-  const best = await phases("/alice/vault");
-  expectBudget(best.now!, { ms: 5, against });
-  expectBudget(best.shipped!, { ms: 5, against });
+  // Counted, not timed: 2,000 closed issues and 3,500 edges cost four statements more than the small page
+  // (measured), not one per row; a per-row read would add thousands.
+  expect(Math.abs((await costOf("/alice/vault")) - small["/alice/vault"]!)).toBeLessThanOrEqual(4);
 });
 
 test("the lean deferred read says what the whole graph says, and something is deferred", () => {

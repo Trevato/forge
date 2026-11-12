@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/tokens",
   summary: "Mint a token of scope ro, rw or admin; needs a browser session or a username and password, a bearer token is refused with 403; a site admin must send adminConfirm: true; answers 201 with the token once",
   auth: false,
+  role: "member",
   status: 201,
   body: { name: "string", scope: "string", username: "string", password: "string", adminConfirm: "boolean" },
   refusals: {

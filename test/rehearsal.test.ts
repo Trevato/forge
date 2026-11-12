@@ -1,16 +1,22 @@
 /**
- * The roll rehearsal (#873): its plain parts, and two short real rolls of
- * two forge processes on one data directory. A forge that exits the moment
- * it is signalled refuses the requests routers still send it; one that
- * lingers past a probe period refuses none.
+ * The roll rehearsal (#873): its plain parts. The two short real rolls of
+ * two forge processes on one data directory are `rehearsal-real.test.ts`.
  */
 
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { PORT_RETRIES } from "../src/kernel/port.ts";
 import { rehearse } from "../scripts/rehearse-roll.ts";
 import {
   count,
   DEFAULTS,
   emptyTally,
+  goneLine,
+  OUTPUT_TAIL_LINES,
+  PROBLEM_TAIL_CHARS,
+  PROBLEM_TAIL_LINES,
   isRefusal,
   judge,
   missLine,
@@ -19,7 +25,6 @@ import {
   report,
   Rotation,
   SILENT_PROBES_TO_LEAVE,
-  type RehearsalArgs,
 } from "../scripts/rehearsal.ts";
 
 describe("arguments", () => {
@@ -148,33 +153,110 @@ describe("the verdict", () => {
   });
 });
 
-describe("a real roll of two forge processes on one data directory", () => {
-  const short = (lingerS: number): RehearsalArgs => ({
-    ...parseArgs([], `${import.meta.dir}/..`),
-    // Room for a slow boot and a long linger on a busy machine (#2020).
-    seconds: 30,
-    probeMs: 300,
-    lingerS,
-    concurrency: 2,
+describe("a rehearsal that rolled nothing names the forge, its port and the wait", () => {
+  const rolled = { newInRotationMs: 2100, oldOutOfRotationMs: 300, oldExitMs: 5200 };
+  const t = emptyTally();
+  count(t, "old", 200);
+  const stderr = Array.from({ length: 30 }, (_, i) => `line ${i}`).join("\n") + "\n";
+  const seen = {
+    old: { port: 39001, portsLost: 0, waitedMs: 30500, output: "draining\n" },
+    new: { port: 39002, portsLost: 2, waitedMs: 28000, output: stderr },
+  };
+
+  test("a new forge that never joined: its port, ports lost, wait and last lines", () => {
+    const p = judge(t, { ...rolled, newInRotationMs: null, oldExitMs: null }, seen).problem;
+    expect(p).toBe(
+      "the new forge never became ready: the new forge on port 39002, 2 ports lost, waited 28000 ms; " +
+        "it last wrote: line 25 | line 26 | line 27 | line 28 | line 29",
+    );
+    expect(p).not.toContain("39001");
   });
 
-  test("an old forge that exits on SIGTERM refuses what routers still send it", async () => {
-    const v = await rehearse(short(0));
-    expect(v.problem).toBeNull();
-    expect(v.refused).toBeGreaterThan(0);
-    expect(v.tally.byOutcome["refused"]).toBeGreaterThan(0);
-  }, 60_000);
+  test("an old forge that never exited: its port and the wait since its SIGTERM", () => {
+    const v = judge(t, { ...rolled, oldExitMs: null }, seen);
+    expect(v.ok).toBe(false);
+    expect(v.problem).toBe(
+      "the old forge did not exit: the old forge on port 39001, 0 ports lost, waited 30500 ms; it last wrote: draining",
+    );
+    // One line, so report's first line carries all of it.
+    expect(report(v).split("\n")[0]).toBe(`no verdict: ${v.problem}`);
+  });
 
-  test("an old forge that lingers past a probe period refuses nobody", async () => {
-    const v = await rehearse(short(5));
-    expect(v.problem).toBeNull();
-    // Each refusal says when, whom, what came back and where both processes were.
-    expect(v.tally.misses.filter((m) => isRefusal(m.outcome)).map(missLine)).toEqual([]);
-    expect(v.refused).toBe(0);
-    expect(v.tally.byForge["old"]).toBeGreaterThan(0);
-    expect(v.tally.byForge["new"]).toBeGreaterThan(0);
-    // It lingered: the old forge left rotation before it stopped answering.
-    expect(v.timeline.oldExitMs).toBeGreaterThanOrEqual(5000);
-    expect(v.timeline.oldOutOfRotationMs).toBeLessThan(v.timeline.oldExitMs ?? 0);
-  }, 60_000);
+  test("the quoted stderr is cut short, and silence is said", () => {
+    const long = { ...seen.new, output: `${"x".repeat(2000)}\n`.repeat(PROBLEM_TAIL_LINES + 3) };
+    const p = judge(t, { ...rolled, newInRotationMs: null }, { new: long }).problem ?? "";
+    expect(p.length).toBeLessThan(PROBLEM_TAIL_CHARS + 200);
+    expect(p).toContain("it last wrote: …x");
+    const quiet = judge(t, { ...rolled, newInRotationMs: null }, { new: { ...long, output: "" } });
+    expect(quiet.problem).toEndWith("waited 28000 ms; it wrote nothing");
+  });
+});
+
+describe("a forge that does not come up says which, where and why", () => {
+  const base = {
+    name: "old" as const,
+    pid: 4242,
+    port: 39001,
+    exitCode: 1,
+    signal: null,
+    waitedMs: 112,
+    portsLost: 0,
+    output: "booting\nerror: database is locked\n",
+    log: "/tmp/r/old-0.log",
+  };
+
+  test("its process, port, exit and wait, then the end of what it wrote", () => {
+    expect(goneLine(base)).toBe(
+      "the old forge (pid 4242, port 39001) exited with code 1 112 ms after it started; " +
+        "it wrote (/tmp/r/old-0.log):\nbooting\nerror: database is locked",
+    );
+  });
+
+  test("a signal, a forge still not ready, lost ports and silence are each said", () => {
+    expect(goneLine({ ...base, exitCode: null, signal: "SIGKILL" })).toContain("was ended by SIGKILL");
+    const slow = goneLine({ ...base, exitCode: null, waitedMs: 60_004, portsLost: 1, output: "" });
+    expect(slow).toBe(
+      "the old forge (pid 4242, port 39001) was still not ready 60004 ms after it started, " +
+        "after losing 1 port to other processes; it wrote nothing; see /tmp/r/old-0.log",
+    );
+  });
+
+  test("only the last lines are quoted", () => {
+    const output = Array.from({ length: OUTPUT_TAIL_LINES + 5 }, (_, i) => `line ${i}`).join("\n");
+    const line = goneLine({ ...base, output });
+    expect(line).not.toContain("line 4\n");
+    expect(line).toContain("line 5\n");
+    expect(line.endsWith(`line ${OUTPUT_TAIL_LINES + 4}`)).toBe(true);
+  });
+});
+
+describe("rehearse: a forge that dies at boot", () => {
+  // A checkout whose src/main.ts is only `body`: no real forge is started.
+  const rehearseWith = async (body: string): Promise<string> => {
+    const checkout = mkdtempSync(join(tmpdir(), "forge-rehearsal-checkout-"));
+    mkdirSync(join(checkout, "src"));
+    writeFileSync(join(checkout, "src", "main.ts"), body);
+    try {
+      await rehearse({ ...parseArgs([], checkout), seconds: 2, probeMs: 100, lingerS: 0, concurrency: 1 });
+      return "it came up";
+    } catch (error) {
+      return (error as Error).message;
+    } finally {
+      rmSync(checkout, { recursive: true, force: true });
+    }
+  };
+
+  test("is named with its port, exit code and last words", async () => {
+    const message = await rehearseWith('console.error("cannot open FORGE_DATA"); process.exit(3);');
+    expect(message).toMatch(/^the old forge \(pid \d+, port \d+\) exited with code 3 \d+ ms after it started; it wrote/);
+    expect(message).toContain("cannot open FORGE_DATA");
+  }, 30_000);
+
+  test("one that lost its port to another process is started on a fresh one, a bounded number of times", async () => {
+    const message = await rehearseWith(
+      'console.error(`Failed to start server. Is port ${process.env.PORT} in use?`); process.exit(1);',
+    );
+    expect(message).toContain(`after losing ${PORT_RETRIES} ports to other processes`);
+    expect(message).toMatch(/Is port \d+ in use\?$/);
+  }, 30_000);
 });

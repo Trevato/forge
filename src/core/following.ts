@@ -31,15 +31,19 @@ import {
 import {
   fetchInto,
   merge,
-  mergeBase,
   mergeable,
   resolveOid,
   writeRef,
   type MergeIdentity,
 } from "../git/merge.ts";
 import { runGit } from "../git/env.ts";
+import { describeLink, syncLink, type Reconcile } from "../git/sync_link.ts";
 import { readTipOrAbsent } from "../git/tip.ts";
+import { readTips } from "../git/tips.ts";
 import { repoDir } from "../git/repos.ts";
+import { combine } from "../git/combined.ts";
+import { fromKeptFork } from "./landing_kind.ts";
+import { forkFollowMode, forkFollowModes, FORK_DEFAULT_MODE, type ForkFollowMode } from "./fork_follow.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
@@ -51,6 +55,8 @@ export interface Following {
   readonly db: Database;
   readonly reposRoot: string;
   readonly bus: EventBus;
+  /** Who a merge the forge makes for a fork's owner is written as; absent, a fork never merges by itself. */
+  readonly authorOf?: (userId: string) => (MergeIdentity & { readonly id: string }) | undefined;
 }
 
 interface Moved {
@@ -103,14 +109,23 @@ export function follow(forge: Following): () => void {
       }),
     );
     if (moved.some((m) => m.ref === `refs/heads/${repo.defaultBranch}`))
-      for (const fork of listForks(forge.db, repo.id))
+      for (const fork of listForks(forge.db, repo.id)) {
+        // A fork that chose not to follow (#608) is neither moved nor told.
+        if (forkFollowMode(forge.db, fork.id) === "dont-follow") continue;
         fastForwardFork(forge, fork, repo, actor)
-          .then((followed) => {
+          .then(async (followed) => {
             // A fork with work of its own cannot be moved; it is told the
             // parent moved, and whoever listens (the crew, a card) takes it
             // from there. The fast-forward is silent because it changed
             // nothing the fork's owner would want to know about.
             if (followed.ok) return;
+            // A fork that chose to take updates merges what git merges
+            // cleanly; a conflict is told like any other divergence.
+            const author = forge.authorOf?.(fork.ownerId);
+            if (author !== undefined && forkFollowMode(forge.db, fork.id) === "take-updates") {
+              const took = await takeUpdates(forge, fork, repo, author);
+              if (took.ok) return;
+            }
             forge.bus.append({
               kind: "fork.diverged",
               repoId: fork.id,
@@ -127,6 +142,7 @@ export function follow(forge: Following): () => void {
               error: String(error),
             }),
           );
+      }
   });
 }
 
@@ -139,6 +155,20 @@ export function follow(forge: Following): () => void {
  * the comparison is memoized on that pair of tips, so a relationship is
  * recomputed only when either side moves; the database never holds it.
  */
+const reconcileOf = (
+  state: RelationState,
+  behind: number,
+  ahead: number,
+  clean: boolean,
+  conflicts: readonly string[],
+): { action: Reconcile; words: string } => {
+  // Two histories with no common commit count as nothing either way, and are not in sync.
+  if (state === "diverged" && behind === 0 && ahead === 0)
+    return { action: "keep-both", words: "The two sides share no history; keep both and choose which one to follow." };
+  const { action, words } = describeLink(behind, ahead, clean, conflicts);
+  return { action, words };
+};
+
 export type RelationState = "synced" | "behind" | "ahead" | "diverged";
 
 export interface ForkRelation {
@@ -154,6 +184,9 @@ export interface ForkRelation {
   readonly conflicts: readonly string[];
   readonly forkTip: string;
   readonly parentTip: string;
+  /** The one action that reconciles the two, and the words for it: the sync contract's (`describeLink`). */
+  readonly action: Reconcile;
+  readonly words: string;
 }
 
 export async function forkRelation(
@@ -189,6 +222,7 @@ export async function forkRelation(
     conflicts,
     forkTip: forkTip ?? "",
     parentTip: parentTip ?? "",
+    ...reconcileOf(state, behind, ahead, clean, conflicts),
   });
   // An empty side has nothing to follow or to differ by.
   if (parentTip === undefined || forkTip === undefined || parentTip === forkTip)
@@ -419,13 +453,19 @@ export async function refreshPullHead(
   // everyone reads (`pullDir`, `core/sealed.ts`).
   const apart = pull.sealed && head.sealedFor === repo.id;
   const snapshotDir = apart ? headDir : baseDir;
-  // Two cheap `rev-parse`s before a fetch: this runs on every read of a
-  // cross-repo pull, and the overwhelmingly common answer is "nothing moved".
-  const [live, snapshot] = await Promise.all([
-    resolveOid(headDir, `refs/heads/${pull.headBranch}`),
-    resolveOid(snapshotDir, `refs/pull/${pull.number}/head`),
+  // This runs on every read of a cross-repo pull, and the overwhelmingly
+  // common answer is "nothing moved": both tips come from the ref files, and
+  // git is asked only for one they cannot say (#8157).
+  const headRef = `refs/heads/${pull.headBranch}`;
+  const pullRef = `refs/pull/${pull.number}/head`;
+  const [heads, snaps] = await Promise.all([
+    readTips(headDir, [headRef]),
+    readTips(snapshotDir, [pullRef]),
   ]);
-  if (live === undefined || live === snapshot) return undefined;
+  const live = heads.get(headRef) ?? (await resolveOid(headDir, headRef));
+  if (live === undefined) return undefined;
+  const snapshot = snaps.get(pullRef) ?? (await resolveOid(snapshotDir, pullRef));
+  if (live === snapshot) return undefined;
   const tip = apart
     ? live
     : await fetchInto(baseDir, headDir, `refs/heads/${pull.headBranch}`);
@@ -436,6 +476,12 @@ export async function refreshPullHead(
   forge.db
     .query("UPDATE pull SET head_oid = ?2 WHERE issue_id = ?1")
     .run(pull.id, tip);
+  // A kept fork's pull is combined with main on our side (#9012).
+  if (!apart && fromKeptFork(forge.db, pull)) {
+    const baseTip = await resolveOid(baseDir, `refs/heads/${pull.baseBranch}`);
+    if (baseTip !== undefined)
+      await combine(baseDir, { number: pull.number, baseOid: baseTip, headOid: tip });
+  }
   return tip;
 }
 
@@ -488,17 +534,22 @@ export async function fastForwardFork(
   const from = await resolveOid(forkDir, ref);
   if (to === undefined || from === to)
     return ok({ updated: false, from: from ?? "", to: to ?? "" });
-  // The parent's objects reach the fork through its alternates, so the
-  // ancestry question is answerable before anything is fetched.
-  if (from !== undefined && (await mergeBase(forkDir, from, to)) !== from)
-    return err("diverged");
-  const tip = await fetchInto(
+  // The contract (`syncLink`): their tip is staged whole, and the fork's
+  // branch moves only by a fast-forward, compare-and-swap. Both paths are
+  // computed here from repository rows, never from text a person typed.
+  const synced = await syncLink(
     forkDir,
+    ref,
     parentDir,
     `refs/heads/${parent.defaultBranch}`,
+    `refs/following/${parent.defaultBranch}`,
   );
-  if (tip === undefined || !(await writeRef(forkDir, ref, tip)))
-    return ok({ updated: false, from: from ?? "", to });
+  if (!synced.ok) return ok({ updated: false, from: from ?? "", to });
+  if (!synced.value.moved)
+    return synced.value.judgement.state === "synced"
+      ? ok({ updated: false, from: from ?? "", to })
+      : err("diverged");
+  const tip = synced.value.to;
   forge.bus.append({
     kind: "push",
     repoId: fork.id,
@@ -522,6 +573,8 @@ export interface LineageNode {
   readonly repo: Repo;
   /** Against this node's parent; absent on the root, and past the budget. */
   readonly relation: ForkRelation | undefined;
+  /** How it follows its parent, as stored (a fork that never chose has the default); absent on the root. */
+  readonly mode?: ForkFollowMode;
   readonly children: readonly LineageNode[];
 }
 
@@ -570,6 +623,7 @@ export async function lineageOf(
   interface Draft {
     repo: Repo;
     relation: ForkRelation | undefined;
+    mode?: ForkFollowMode;
     children: Draft[];
   }
   const root: Draft = { repo: top, relation: undefined, children: [] };
@@ -588,7 +642,9 @@ export async function lineageOf(
         size++;
         const child: Draft = { repo: fork, relation: undefined, children: [] };
         // The budget is spent in order; the reads themselves run together.
-        if (relations < LINEAGE_MAX_RELATIONS) {
+        // Against an archived parent a count reads as unshipped work, so
+        // none is taken (#7452).
+        if (node.repo.archivedAt === null && relations < LINEAGE_MAX_RELATIONS) {
           relations++;
           asked.push(
             forkRelation(forge, fork, node.repo, tips).then((r) => {
@@ -607,5 +663,16 @@ export async function lineageOf(
   // the bound is not hinted at, any more than one inside it is shown.
   if (level.some((n) => forksOf(n.repo.id).some(mayRead)))
     truncated = true;
+  // The follow modes of every fork in the tree, in one query.
+  const drafts: Draft[] = [];
+  const walk = (d: Draft): void => {
+    for (const c of d.children) {
+      drafts.push(c);
+      walk(c);
+    }
+  };
+  walk(root);
+  const modes = forkFollowModes(forge.db, drafts.map((d) => d.repo.id));
+  for (const d of drafts) d.mode = modes.get(d.repo.id) ?? FORK_DEFAULT_MODE;
   return { root, size, truncated };
 }

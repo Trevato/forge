@@ -6,6 +6,7 @@ export const route: Route = {
   summary:
     "Confirm that an issue may go ahead although its blocker closed as dropped or split (rw scope; a person who writes, never the crew); answers 204",
   auth: true,
+  role: "member",
   status: 204,
   refusals: {
     not_found: "no such issue or blocker, or not yours to see (404)",

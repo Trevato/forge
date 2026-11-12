@@ -10,6 +10,11 @@
 import { afterAll, beforeAll } from "bun:test";
 import { logLevel, setLogLevel, type LogLevel } from "../../src/kernel/log.ts";
 import { firstFetchRetry } from "../../src/origins/mirror.ts";
+import type { OutboundOptions } from "../../src/kernel/outbound.ts";
+import {
+  mirrorOutboundForTest,
+  provideMirrorOutboundForTest,
+} from "../../src/origins/git-mirror.ts";
 
 /** Raise the log floor (by default to errors only) while this scope runs. */
 export function quietLogs(level: LogLevel = "error"): void {
@@ -31,6 +36,20 @@ export function fastFirstFetch(ms: readonly number[] = [50]): void {
   afterAll(() => {
     firstFetchRetry.ms = found;
   });
+}
+
+/**
+ * Tell a mirror's outbound vet `options` while this scope runs. The preload
+ * lets every file mirror from loopback; a file that tightens that and leaves
+ * it tightened refuses the next file's fake origin in the same shard.
+ */
+export function mirrorOutbound(options: OutboundOptions): void {
+  let found: OutboundOptions;
+  beforeAll(() => {
+    found = mirrorOutboundForTest();
+    provideMirrorOutboundForTest(options);
+  });
+  afterAll(() => provideMirrorOutboundForTest(found));
 }
 
 /**

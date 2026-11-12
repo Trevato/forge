@@ -85,6 +85,24 @@ describe("alarmStuck", () => {
     expect(a.says).toBe(`alice/r#${num} has sat approved for 31 minutes; its last event was a red check at 11:29.`);
   });
 
+  test("a walled pull says a person must decide, in plain words (#7847)", () => {
+    reset();
+    const num = pull({ eventMin: 31 });
+    const wall = (head: string): void =>
+      void app.db.run(
+        "INSERT INTO decision (id, kind, repo_id, issue_id, state, answer, p, by, ms) VALUES (?1, 'land', 'r', ?2, ?3, 'wall', 1, 'wall', 0)",
+        [`d${num}${head}`, `p${num}`, JSON.stringify({ head, cells: ["pack.read as anon: new, and yes"], plain: ["anyone signed out could read pack records"] })],
+      );
+    wall("other");
+    expect(alarmStuck(app, NOW).wall).toBeUndefined();
+    app.db.run("DELETE FROM decision");
+    wall("h");
+    const a = alarmStuck(app, NOW);
+    expect(a.wall).toEqual(["anyone signed out could read pack records"]);
+    expect(a.says).toBe(`${a.repo}#${a.number} is approved and waits for a person to merge it.`);
+    expect(a.says.length).toBeLessThan(80);
+  });
+
   test("an event 29 minutes ago does not fire", () => {
     reset();
     pull({ eventMin: 29 });

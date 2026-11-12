@@ -1,13 +1,19 @@
 /**
  * The forge's own memory against its JS heap, hour by hour (#2151): every
- * minute `process.memoryUsage().rss` and `heapStats().heapSize` (bun:jsc)
- * are folded into the hour they fall in (`memory_hour` in `app.db`, under
- * the data directory), as a count, a sum and a max. RSS rising while the
+ * minute `process.memoryUsage().rss` and `heapSize()` (bun:jsc) are folded
+ * into the hour they fall in (`memory_hour` in `app.db`, under the data
+ * directory), as a count, a sum and a max. RSS rising while the
  * heap stays flat is native memory growth. A week of hours is kept.
+ *
+ * `heapSize()`, never `heapStats().heapSize`: the same byte count, but
+ * `heapStats()` first counts every object on the heap by type, which held the
+ * loop ~280 ms a minute on a 2M-object heap and grows with it (#11118).
  */
 import type { Database } from "bun:sqlite";
-import { heapStats } from "bun:jsc";
+import { heapSize } from "bun:jsc";
 import type { App } from "../app.ts";
+import { quietly } from "../core/write_clock.ts";
+import { during } from "../perf/jobs.ts";
 
 export const MEMORY_EVERY_MS = 60_000;
 export const HOUR_MS = 3_600_000;
@@ -29,7 +35,7 @@ const valid = (n: number) => Number.isFinite(n) && n >= 0;
 export function recordMemory(db: Database, rss: number, heap: number, now: number): void {
   if (!valid(rss) || !valid(heap) || !valid(now)) return;
   const hour = Math.floor(now / HOUR_MS) * HOUR_MS;
-  db.transaction(() => {
+  db.transaction(() => quietly(db, () => {
     db.run(
       `INSERT INTO memory_hour (hour, samples, rss_sum, rss_max, heap_sum, heap_max) VALUES (?, 1, ?, ?, ?, ?)
        ON CONFLICT(hour) DO UPDATE SET samples = samples + 1, rss_sum = rss_sum + excluded.rss_sum,
@@ -38,7 +44,7 @@ export function recordMemory(db: Database, rss: number, heap: number, now: numbe
       [hour, rss, rss, heap, heap],
     );
     db.run("DELETE FROM memory_hour WHERE hour < ?", [hour - KEEP_MS]);
-  })();
+  }))();
 }
 
 /** The hours in the `hours` before `now` (the current one included), oldest first. */
@@ -62,13 +68,13 @@ export type MemorySampler = { tick(now?: number): void; stop(): void };
 export function startMemorySampler(app: App, everyMs = MEMORY_EVERY_MS): MemorySampler {
   const tick = (now = Date.now()) => {
     try {
-      recordMemory(app.db, process.memoryUsage().rss, heapStats().heapSize, now);
+      recordMemory(app.db, process.memoryUsage().rss, heapSize(), now);
     } catch (error) {
       app.log.warn("memory sample failed", { error: String(error) });
     }
   };
-  tick();
-  const timer = setInterval(tick, everyMs);
+  during("memory-sampler", () => tick());
+  const timer = setInterval(() => during("memory-sampler", () => tick()), everyMs);
   timer.unref?.();
   return { tick, stop: () => clearInterval(timer) };
 }

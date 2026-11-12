@@ -122,7 +122,7 @@ describe("passkey recovery", () => {
     const cookie = done!.headers.get("set-cookie")!;
     expect(cookie).toContain("HttpOnly");
     const keys = await fetch(`${base}/settings/passkeys`, { headers: { cookie: cookie.split(";")[0]! } });
-    expect(await keys.text()).toContain("<strong>Laptop</strong>");
+    expect(await keys.text()).toContain(`aria-label="Remove Laptop"`);
 
     // Reused: refused, and no second session.
     const again = await finish(token);

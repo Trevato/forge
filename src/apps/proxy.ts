@@ -1,6 +1,7 @@
 /**
  * Apps on the forge's own port, by `Host`. `<slug>.<domain>` is production,
- * `<slug>--<n>.<domain>` the preview of pull `n`; the request is fetched
+ * `<slug>--<n>.<domain>` the preview of pull `n`, `<slug>--b<sha7>.<domain>`
+ * a build preview; the request is fetched
  * from the deployment's loopback port and streamed back. A websocket
  * handshake is the same request until the app accepts it — then the forge
  * holds one socket to the browser and one to the app and carries frames
@@ -17,7 +18,9 @@
 import { compressBytes, MIN_BYTES, negotiate } from "../http/compress.ts";
 import type { Database } from "bun:sqlite";
 import { getIssue, type Issue } from "../core/issues.ts";
+import { getPull } from "../core/pulls.ts";
 import { mayView } from "../core/sealed.ts";
+import { holds, weakEtag } from "../http/etag.ts";
 import { holdOpen } from "../http/caller.ts";
 import { appHostSuffix } from "./host.ts";
 import { REPORT_LINK_TITLE } from "../actions/report_words.ts";
@@ -33,25 +36,40 @@ import {
   type Repo,
   ownerInStanding,
 } from "../core/repos.ts";
+import { RateLimiter } from "../core/ratelimit.ts";
+import { verifyToken } from "../core/tokens.ts";
 import { getUserById, isActive, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { loadKey } from "../kernel/secret.ts";
-import { previewEnv, type EnvName } from "./data.ts";
+import {
+  buildEnvFromLabel,
+  variantEnvFromLabel,
+  envVariant,
+  envBuild,
+  envWords,
+  previewEnv,
+  type EnvName,
+} from "./data.ts";
 import type { AppsRuntime, EnvStatus } from "./runtime.ts";
-import { crewNow, tellLink } from "./crew.ts";
+import { crewNow, tellLink, yoursLink } from "./crew.ts";
 import { sideOf, type Side } from "./side.ts";
 import { feedback, mintProof } from "./feedback.ts";
 import { clientBucket } from "../http/peer.ts";
 import { DOOR_PULL_LIMIT, doorPage, type DoorPullLine } from "./door.ts";
 import { checkWord } from "./check_word.ts";
+import { servingWords } from "./serving_words.ts";
+import { pillCheck } from "./pill_check.ts";
 import { openPulls } from "./door_pulls.ts";
-import { takePhases, timePhase } from "../core/route_timing.ts";
+import { notePhase, startedAt, takePhases, timePhase } from "../core/route_timing.ts";
 import { readServing } from "./serving.ts";
 import { notFound, securityFloor } from "../http/respond.ts";
 import { appMeasure } from "./measure.ts";
 import { holdPortRequest, holdPortSocket } from "./handoff.ts";
 import { secureFor } from "../http/cookie_secure.ts";
-import { htmlAnswer, readPage, rewritable, withToolbar, type PillWhere } from "./toolbar.ts";
+import { currentLoopLag, forgeWaited, LAG_WINDOW_MS } from "../perf/loop_worst.ts";
+import { loopWatch } from "../perf/live.ts";
+import { heldBy, noteRelayWait, stallTiming } from "./relay_wait.ts";
+import { cspNonce, htmlAnswer, readPage, rewritable, TOOLBAR_ASSET_PATH, TOOLBAR_ASSET_PREFIX, toolbarResponse, withToolbar, type PillWhere } from "./toolbar.ts";
 
 const proxySecure = (request: Request, url: URL, forgeUrl: string): boolean =>
   secureFor(url, forgeUrl) ||
@@ -94,11 +112,21 @@ export function parseAppHost(
   if (label === "" || label.includes(".")) return undefined;
   const parts = label.split("--");
   if (parts.some((part) => part === "")) return undefined;
-  // The app of ours is the tail of the label: `slug`, or `slug--N` for the
-  // preview of pull N. Whatever comes before it belongs to the app's own
-  // world — a forge hosted here has apps of its own, at `<theirs>--<ours>`
-  // — and travels through untouched in `Host`, for that app to route.
+  // The app of ours is the tail of the label: `slug`, `slug--N` for the
+  // preview of pull N, or `slug--b<sha7>` for a build preview (`b` and seven
+  // hex digits is no slug: `isSlug`). Whatever comes before it belongs to the
+  // app's own world — a forge hosted here has apps of its own, at
+  // `<theirs>--<ours>` — and travels through untouched in `Host`, for that
+  // app to route.
   const last = parts.at(-1)!;
+  const build = parts.length >= 2 ? buildEnvFromLabel(last) : undefined;
+  if (build !== undefined) {
+    return { slug: parts.at(-2)!, env: build, nested: parts.length > 2 };
+  }
+  const variant = parts.length >= 2 ? variantEnvFromLabel(last) : undefined;
+  if (variant !== undefined) {
+    return { slug: parts.at(-2)!, env: variant, nested: parts.length > 2 };
+  }
   if (parts.length >= 2 && /^\d+$/.test(last)) {
     if (!/^[1-9]\d*$/.test(last)) return undefined;
     return {
@@ -134,6 +162,13 @@ export function resolveAppHostname(
 ): AppTarget | "unknown" | undefined {
   const parsed = parseAppHost(host, domain);
   if (parsed === undefined) return ownDomain(app, host);
+  // An app that already holds the slug `v-<label>` (made before that shape was
+  // reserved) keeps its name: the host is it, in its parent's world, not a variant.
+  const variant = envVariant(parsed.env);
+  const held = variant === undefined ? undefined : getAppBySlug(app.db, `v-${variant}`);
+  if (held !== undefined) {
+    return shown(app, held) ? { app: held, env: "production", nested: true } : "unknown";
+  }
   const record = getAppBySlug(app.db, parsed.slug);
   return record && shown(app, record)
     ? { app: record, env: parsed.env, nested: parsed.nested }
@@ -388,15 +423,120 @@ function sealedPull(runtime: AppsRuntime, target: AppTarget): Issue | undefined 
   return pull?.sealed === true ? pull : undefined;
 }
 
-/** The response with the phases the request named, as `Server-Timing`. */
+/**
+ * The response with the phases the request named, as `Server-Timing`: the
+ * one writer for the proxy, on the forge's own `/__forge/*` pages and, for
+ * a reader who may see them (`relayAnswer`), on a relayed app answer. It appends, so an app's own entries stay first;
+ * on an app answer the forge's phases are `forge-` named (`relayPhase`) so
+ * none can collide with the app's or with the server's `route`.
+ */
 function withPhases(request: Request, res: Response): Response {
   const phases = takePhases(request);
-  if (phases.length > 0)
-    res.headers.set(
-      "server-timing",
-      phases.map((p) => `${p.name};dur=${p.ms.toFixed(1)}`).join(", "),
-    );
+  const stall = stallFor.get(request);
+  if (stall !== undefined) {
+    stallFor.delete(request);
+    // An admin's copy names internal routes: never one a shared cache may keep.
+    res.headers.set("cache-control", "private, no-store");
+    res.headers.delete("etag");
+  }
+  if (phases.length === 0 && stall === undefined) return res;
+  const named = phases.map((p) => `${p.name};dur=${p.ms.toFixed(1)}`);
+  if (stall !== undefined) named.push(stall);
+  const mine = named.join(", ");
+  const theirs = res.headers.get("server-timing");
+  res.headers.set("server-timing", theirs === null || theirs === "" ? mine : `${theirs}, ${mine}`);
   return res;
+}
+
+/**
+ * A relayed app answer, with the forge's phases only for a reader who may
+ * see them (#11112): someone who may write the app's repository, or a forge
+ * admin. Everyone else gets the app's own Server-Timing exactly as it came;
+ * how loaded the forge is and how long its lookups take are not a
+ * stranger's to read. The app's speed card and /system read the same
+ * numbers on the server side (`noteRelayWait`, the loop watch), never here.
+ */
+function relayAnswer(request: Request, res: Response): Response {
+  if (forgeReaders.has(request)) return withPhases(request, res);
+  takePhases(request);
+  stallFor.delete(request);
+  return res;
+}
+
+/** The requests whose reader is told the forge's phases (`relayAnswer`). */
+const forgeReaders = new WeakSet<Request>();
+
+/**
+ * Whether the grant names someone told the forge's phases on this app: an
+ * active person or agent who may write its repository, or a forge admin.
+ * A visitor with no grant is never asked about, so a stranger costs no read.
+ */
+function readsForgeTiming(runtime: AppsRuntime, target: AppTarget, who: GrantWho | undefined): boolean {
+  if (who === undefined) return false;
+  const db = runtime.app.db;
+  const viewer = getUserById(db, who.id);
+  if (viewer === undefined || !isActive(viewer)) return false;
+  // A forge admin, as `forgeAdmin` reads one: an agent never is.
+  if (viewer.isAdmin && viewer.kind !== "agent") return true;
+  const repo = getRepoById(db, target.app.repoId);
+  return repo !== undefined && canWrite(db, repo, viewer);
+}
+
+/**
+ * The forge's phases of relaying an app answer, `forge-` named. Durations
+ * only, under these fixed names: `route` is `lookup` + `state` + `session`.
+ */
+type RelayPhase =
+  | "route" | "lookup" | "state" | "session" | "wake"
+  | "upstream" | "ttfb" | "lag" | "body" | "rewrite";
+
+/** Name one of the forge's phases of relaying an app answer. Durations only. */
+function relayPhase(request: Request, name: RelayPhase, ms: number): void {
+  notePhase(request, `forge-${name}`, ms);
+}
+
+/**
+ * Name `ttfb` and `upstream` for headers that took `headersMs`. `fetch` says
+ * nothing of its connection, so the two are the same wait: `ttfb` is the name
+ * the split reads by, `upstream` the total older readers know.
+ *
+ * Beside them, `forge-lag` (#10838): the forge's worst event-loop lag of the
+ * last 10 s (`perf/loop_worst.ts`). `forge-ttfb` is read on the forge's clock,
+ * so a loop blocked by something else lands in it while the app sat idle;
+ * `forgeWaited` (the one place the rule lives) says when the wait was the forge's.
+ */
+function relayUpstream(
+  runtime: AppsRuntime,
+  request: Request,
+  target: AppTarget,
+  headersMs: number,
+  who: GrantWho | undefined,
+): void {
+  const lag = currentLoopLag();
+  relayPhase(request, "ttfb", headersMs);
+  relayPhase(request, "lag", lag);
+  relayPhase(request, "upstream", headersMs);
+  // What held a wait that was the forge's (#11000): the stalls of the lag's
+  // window, read only then — at most 40 of them, so the common relay pays nothing.
+  const now = performance.now();
+  const held = forgeWaited(lag, headersMs) ? heldBy(loopWatch.within(now - LAG_WINDOW_MS, now)) : [];
+  // Production's slowest wait, for the app's speed card (`apps/relay_wait.ts`).
+  if (target.env === "production") noteRelayWait(target.app.id, headersMs, lag, Date.now(), held);
+  if (held.length > 0 && forgeAdmin(runtime, who)) stallFor.set(request, stallTiming(held));
+}
+
+/**
+ * The `forge-stall` entries a relayed answer carries, by request, until
+ * `withPhases` writes them. Set only for a forge admin: route patterns are
+ * the forge's own, so nobody else sees them.
+ */
+const stallFor = new WeakMap<Request, string>();
+
+/** Whether the grant names an active person who administers the forge (an agent never does). */
+function forgeAdmin(runtime: AppsRuntime, who: GrantWho | undefined): boolean {
+  if (who === undefined) return false;
+  const user = getUserById(runtime.app.db, who.id);
+  return user !== undefined && isActive(user) && user.isAdmin && user.kind !== "agent";
 }
 
 /**
@@ -417,12 +557,30 @@ export function pillWhere(
   // An app's access is not its repository's: the name goes only to a reader.
   const reads = canRead(db, repo, user);
   if (reads) where.repo = `${repo.ownerName}/${repo.name}`;
+  // What the forge's own record says is running here, for a reader of the repository only.
+  const live = reads ? runtime.envStatus?.(target.app, target.env) : undefined;
+  const liveAt = live?.servingAt ?? live?.since;
+  if (live?.state === "running" && live.commitOid !== "" && liveAt !== undefined)
+    where.serving = { oid: live.commitOid, at: liveAt };
   const number = /^pull-(\d+)$/.exec(target.env)?.[1];
   if (number === undefined) return where;
   where.pull = Number(number);
   const pull = getIssue(db, target.app.repoId, where.pull);
   if (pull === undefined) return where;
-  if (reads && mayView(db, repo, pull, user)) where.title = pull.title;
+  if (!reads || !mayView(db, repo, pull, user)) return where;
+  where.title = pull.title;
+  const head = getPull(db, target.app.repoId, where.pull);
+  if (head !== undefined && head.headOid !== "") where.check = pillCheck(db, pull.id, head.headOid);
+  // How current the preview is: the row's head against the commit it runs. A
+  // signed-in reader only, so a page an anonymous viewer may share never carries it.
+  if (user === undefined) return where;
+  if (head === undefined) return where;
+  where.state = head.mergedAt !== null ? "merged" : head.state === "closed" ? "closed" : "open";
+  // Only an open pull has a newer push to be behind.
+  if (where.state !== "open") return where;
+  const status = runtime.envStatus?.(target.app, target.env);
+  if (status?.state === "deploying") where.deploying = true;
+  where.behind = status?.state !== "deploying" && status?.commitOid !== undefined && status.commitOid !== head.headOid;
   return where;
 }
 
@@ -472,6 +630,7 @@ function doorPulls(
       number: p.number,
       title: p.title,
       check: checkWord(p.run, p.headOid),
+      ...(env === target.env ? { self: true } : {}),
       href: live
         ? runtime.urlFor(target.app, env)
         : new URL(
@@ -548,6 +707,82 @@ function stillEntitled(
   );
 }
 
+/** What the app's host tells a signed-in reader it may not enter. */
+export const NOT_ENTITLED_WORDS =
+  "not found: this token can read the repository but may not enter its app. Ask a writer of the repository to add you to the app, or use a token of a writer or of the crew.";
+
+const BEARER_GRANT_MS = 60_000;
+/** Failed tokens one client may present per minute, across every app host. */
+const BEARER_FAILURES_PER_MINUTE = 30;
+const failedTokens = new WeakMap<App, RateLimiter>();
+
+/**
+ * A bearer token on a request to a guarded app, read the way the forge's
+ * own API reads it. It admits when its person may enter the app; a run's
+ * token only on the repository it was minted for; a proposal or via token never. A person who can read
+ * the repository but not enter is told so (`hint`); anyone else — a token
+ * that cannot read it, an expired one — gets nothing to learn from.
+ */
+function bearerAdmission(
+  runtime: AppsRuntime,
+  request: Request,
+  target: AppTarget,
+): {
+  grant?: Grant;
+  hint?: string;
+  readOnly?: boolean;
+  retryAfter?: number;
+} | undefined {
+  const header = request.headers.get("authorization");
+  if (header === null || !header.startsWith("Bearer ")) return undefined;
+  if (
+    target.app.access !== "private" &&
+    sealedPull(runtime, target) === undefined
+  )
+    return undefined;
+  // Counted before the lookup, given back when the token is good: only
+  // failures use up the allowance.
+  let limiter = failedTokens.get(runtime.app);
+  if (limiter === undefined) {
+    limiter = new RateLimiter({
+      perMinute: BEARER_FAILURES_PER_MINUTE,
+      adminPerMinute: BEARER_FAILURES_PER_MINUTE,
+      enabled: true,
+    });
+    failedTokens.set(runtime.app, limiter);
+  }
+  const key = clientBucket(request);
+  const allowed = limiter.take(key, "ro");
+  if (!allowed.allowed) return { retryAfter: allowed.retryAfter };
+  const verified = verifyToken(runtime.app.db, header.slice(7));
+  if (!verified.ok) return undefined;
+  limiter.refund(key);
+  const { user, run, scope, proposal, via } = verified.value;
+  // A proposal token is a writer's token held by a child forge, and a via
+  // token reaches /mcp alone: neither enters an app as the person who minted it.
+  if (proposal !== undefined || via !== undefined) return undefined;
+  const repo = getRepoById(runtime.app.db, target.app.repoId);
+  if (repo === undefined) return undefined;
+  if (run !== undefined && run.repoId !== repo.id && run.forkId !== repo.id)
+    return undefined;
+  if (!canRead(runtime.app.db, repo, user)) return undefined;
+  const grant: Grant = {
+    who: {
+      id: user.id,
+      name: user.username,
+      // A read-only token is never an admin inside the app.
+      role:
+        scope !== "ro" && canWrite(runtime.app.db, repo, user)
+          ? "admin"
+          : "user",
+    },
+    expiresMs: Date.now() + BEARER_GRANT_MS,
+  };
+  return stillEntitled(runtime, target, grant)
+    ? { grant, readOnly: scope === "ro" }
+    : { hint: NOT_ENTITLED_WORDS };
+}
+
 /**
  * What a request addressed to an app must pass before anything is served:
  * a private app's grant, then a live port. One gate for both the request
@@ -560,10 +795,40 @@ function admit(
   target: AppTarget,
 ): Result<{ status: EnvStatus; port: number; grant?: Grant }, Response> {
   const cookie = cookieValue(request, grantCookieName(target));
-  const signed =
+  const cookieGrant =
     cookie === undefined
       ? undefined
       : readGrant(runtime.app.config.dataDir, cookie, target);
+  // No browser, no cookie: a bearer token of someone who may enter is as
+  // good as a grant for this one request (#7829).
+  const bearer =
+    cookieGrant === undefined
+      ? bearerAdmission(runtime, request, target)
+      : undefined;
+  if (bearer?.retryAfter !== undefined)
+    return err(
+      new Response("too many failed tokens", {
+        status: 429,
+        headers: {
+          "retry-after": String(bearer.retryAfter),
+          "cache-control": "no-store",
+        },
+      }),
+    );
+  // A read-only token reads: the forge's API refuses it writes, and the
+  // app's door is no wider.
+  if (
+    bearer?.readOnly === true &&
+    request.method !== "GET" &&
+    request.method !== "HEAD"
+  )
+    return err(
+      new Response("this token is read-only", {
+        status: 403,
+        headers: { "cache-control": "no-store" },
+      }),
+    );
+  const signed = cookieGrant ?? bearer?.grant;
   // A private app's grant is asked again on every request whether the
   // person it names may still enter: a grant outlives a change of heart —
   // a writer removed, the app made private — by up to twelve hours, and
@@ -594,6 +859,10 @@ function admit(
       // gets that answer here.
       const url = new URL(request.url);
       const navigating =
+        bearer?.hint === undefined &&
+        // A caller that presented a token is a script, not a person at a
+        // link: it is answered, not sent to sign in.
+        !(request.headers.get("authorization") ?? "").startsWith("Bearer ") &&
         (request.method === "GET" || request.method === "HEAD") &&
         (request.headers.get("accept") ?? "").includes("text/html") &&
         !url.pathname.startsWith("/__forge/");
@@ -609,7 +878,14 @@ function admit(
           }),
         );
       }
-      return err(new Response("not found", { status: 404 }));
+      return err(
+        new Response(bearer?.hint ?? "not found", {
+          status: 404,
+          ...(bearer?.hint === undefined
+            ? {}
+            : { headers: { "content-type": "text/plain; charset=utf-8" } }),
+        }),
+      );
     }
   }
   // An archived repository's app is put away: stopped, its data kept, and
@@ -618,11 +894,14 @@ function admit(
   if (repo?.archivedAt != null) return err(archivedPage(target));
   // A preview stopped for want of attention is asked for: it deploys again
   // the ordinary way, and this request sees "starting" until it answers.
-  if (runtime.envStatus(target.app, target.env)?.dormant !== undefined)
+  // Read once; read again only when the rouse changed what it would say.
+  let status = runtime.envStatus(target.app, target.env);
+  if (status?.dormant !== undefined) {
     runtime.rouse(target.app, target.env);
-  const status = runtime.envStatus(target.app, target.env);
+    status = runtime.envStatus(target.app, target.env);
+  }
   if (status === undefined || status.port === undefined) {
-    return err(unavailable(runtime, target, status));
+    return err(unavailable(runtime, target, status, undefined, grant?.who));
   }
   return ok(
     grant === undefined
@@ -637,19 +916,45 @@ function admit(
  * public. A private one offers nothing, and a nested host is its guest's.
  */
 export function reportUrl(runtime: AppsRuntime, target: AppTarget): URL | undefined {
+  const repo = publicRepo(runtime, target);
+  return repo === undefined ? undefined : reportOf(runtime, repo);
+}
+
+/** The repository of an app that is public along with it, else nothing. */
+function publicRepo(runtime: AppsRuntime, target: AppTarget): Repo | undefined {
   if (target.nested || target.app.access !== "public") return undefined;
   const repo = getRepoById(runtime.app.db, target.app.repoId);
-  if (repo === undefined || !canRead(runtime.app.db, repo, undefined))
-    return undefined;
-  return new URL(
-    `/${repo.ownerName}/${repo.name}/report`,
-    runtime.options.forgeUrl,
-  );
+  return repo !== undefined && canRead(runtime.app.db, repo, undefined)
+    ? repo
+    : undefined;
 }
+
+const reportOf = (runtime: AppsRuntime, repo: Repo): URL =>
+  new URL(`/${repo.ownerName}/${repo.name}/report`, runtime.options.forgeUrl);
 
 /** The link relation a public app's pages carry to `/__forge/report`. */
 const REPORT_LINK =
   `</__forge/report>; rel="help"; title="${REPORT_LINK_TITLE}"`;
+
+/** Names the forge's manifest, so it is told apart from an app's own alternate. */
+export const REPO_LINK_TITLE = "this app's repository on its forge";
+
+/**
+ * The `Link` values a public app's pages carry: the report door and the
+ * forge's role-aware manifest for the app's repository, so an agent that
+ * landed on the app finds what it can do. One repository read serves both;
+ * a private app, a nested host or a vanished repository gets none.
+ */
+export function discoveryLinks(runtime: AppsRuntime, target: AppTarget): string[] {
+  const repo = publicRepo(runtime, target);
+  if (repo === undefined) return [];
+  const here = new URL("/api/v1/here", runtime.options.forgeUrl);
+  here.search = `?path=${encodeURIComponent(`/${repo.ownerName}/${repo.name}`)}`;
+  return [
+    REPORT_LINK,
+    `<${here.href}>; rel="alternate"; type="application/json"; title="${REPO_LINK_TITLE}"`,
+  ];
+}
 
 const isHtml = (headers: Headers): boolean =>
   (headers.get("content-type") ?? "").toLowerCase().startsWith("text/html");
@@ -665,7 +970,18 @@ export async function proxyApp(
   target: AppTarget,
   server: Bun.Server<AppSocket>,
 ): Promise<Response | undefined> {
+  const entered = performance.now();
   const url = new URL(request.url);
+  // The pill's script, from the app's own host: only the exact hashed path
+  // is it; any other /__forge/toolbar… path is the forge's 404, never the app's.
+  if (url.pathname.startsWith(TOOLBAR_ASSET_PREFIX) && !target.nested) {
+    return securityFloor(
+      url.pathname === TOOLBAR_ASSET_PATH &&
+        (request.method === "GET" || request.method === "HEAD")
+        ? toolbarResponse(request)
+        : notFound(),
+    );
+  }
   // A grant with this forge's own token is answered here. On a nested
   // hostname a grant this forge did not sign is the guest forge's, and
   // goes through to it like any other request.
@@ -727,6 +1043,10 @@ export async function proxyApp(
       target.app,
       signed?.who?.id,
     );
+    const yours =
+      sealedPull(runtime, target) !== undefined
+        ? undefined
+        : yoursLink(runtime.app.db, runtime.options.forgeUrl, target.app, signed?.who?.id);
     const side =
       signed?.who === undefined
         ? null
@@ -735,6 +1055,7 @@ export async function proxyApp(
       JSON.stringify({
         ...crew,
         ...(tell === undefined ? {} : { tell }),
+        ...(yours === undefined ? {} : { yours }),
         ...(side === null ? {} : { side }),
       }),
     );
@@ -785,6 +1106,7 @@ export async function proxyApp(
       ),
     );
     const ssh = doorSsh(runtime, target, signed?.who);
+    const report = reportUrl(runtime, target);
     const where = timePhase(request, "pull", () =>
       pillWhere(runtime, target, signed?.who),
     );
@@ -794,14 +1116,27 @@ export async function proxyApp(
     const pulls = timePhase(request, "pulls", () =>
       doorPulls(runtime, target, signed?.who),
     );
+    const crew = crewNow(
+      runtime.app.db,
+      runtime.options.forgeUrl,
+      target.app,
+      target.env,
+      signed?.who?.id,
+      request,
+    );
     const page = timePhase(request, "render", () =>
       doorPage(
         {
           where,
           pulls,
+          ...(target.env === "production"
+            ? {}
+            : { live: runtime.urlFor(target.app, "production") }),
+          ...(crew === undefined ? {} : { crew }),
           ...(serving === undefined ? {} : { serving }),
           forgeUrl: runtime.options.forgeUrl,
           ...(ssh === undefined ? {} : { ssh }),
+          ...(report === undefined ? {} : { report: "/__forge/report" }),
           ...(tell === undefined ? { signin: "/__forge/signin" } : { tell }),
         },
         request.method === "HEAD",
@@ -855,6 +1190,7 @@ export async function proxyApp(
       sealed,
       viewerId,
       grantCookie: cookie,
+      build: runtime.liveFor(target.app, target.env)?.commitOid,
       secure: proxySecure(request, url, runtime.options.forgeUrl),
       source: clientBucket(request),
     });
@@ -872,15 +1208,33 @@ export async function proxyApp(
   }
   // An environment asleep wakes for the request that wants it, and the
   // request waits the second that takes rather than seeing a closed door.
-  if (runtime.envStatus(target.app, target.env)?.state === "asleep")
+  let wakeMs = 0;
+  if (runtime.envStatus(target.app, target.env)?.state === "asleep") {
+    const woke = performance.now();
     await runtime.wake(target.app, target.env);
+    wakeMs = performance.now() - woke;
+  }
+  const admitting = performance.now();
   const admitted = admit(runtime, request, target);
+  const sessionMs = performance.now() - admitting;
+  // A refused answer names no phases: wake runs before `admit`, so its time
+  // would tell a caller who may not read the app whether it was asleep.
   if (!admitted.ok)
     return url.pathname.startsWith("/__forge/")
       ? securityFloor(admitted.error)
       : admitted.error;
   const { status, port, grant: vouched } = admitted.value;
   runtime.touch(target.app, target.env);
+  if (readsForgeTiming(runtime, target, vouched?.who)) forgeReaders.add(request);
+  const began = performance.now();
+  // `route` split where it goes: the server finding the app (`lookup`), the
+  // doors and the environment's state (`state`), the grant read (`session`).
+  const lookupMs = Math.max(0, entered - (startedAt(request) ?? entered));
+  relayPhase(request, "route", lookupMs + Math.max(0, began - entered - wakeMs));
+  relayPhase(request, "lookup", lookupMs);
+  relayPhase(request, "state", Math.max(0, began - entered - wakeMs - sessionMs));
+  relayPhase(request, "session", sessionMs);
+  relayPhase(request, "wake", wakeMs);
 
   const upstream = new URL(url);
   upstream.protocol = "http:";
@@ -905,8 +1259,12 @@ export async function proxyApp(
     !target.nested &&
     status.toolbar !== false &&
     (request.headers.get("accept") ?? "").includes("text/html")
-  )
+  ) {
     headers.set("accept-encoding", "identity");
+    // The proxy compares after fetching: a tag it did not make would pair an
+    // old toolbar with a new page.
+    headers.delete("if-none-match");
+  }
 
   if (isWebSocketHandshake(request)) {
     return proxyWebSocket(
@@ -931,6 +1289,7 @@ export async function proxyApp(
     portAnswered();
   };
   let response: Response;
+  const sent = performance.now();
   try {
     response = await fetch(upstream, {
       method: request.method,
@@ -946,14 +1305,19 @@ export async function proxyApp(
     } as RequestInit);
   } catch {
     answered();
-    return unavailable(runtime, target, status, "the app stopped answering");
+    relayUpstream(runtime, request, target, performance.now() - sent, vouched?.who);
+    return relayAnswer(request, unavailable(runtime, target, status, "the app stopped answering"));
   }
+  relayUpstream(runtime, request, target, performance.now() - sent, vouched?.who);
   const out = new Headers(response.headers);
   for (const name of HOP_BY_HOP) out.delete(name);
+  // Which app answered: a probe from outside (`spawn/reach.ts`) tells this
+  // from a platform's standby page, which answers 200 for any name.
+  out.set("x-forge-app", target.app.slug);
   // An agent reading a public app's page learns where to report a problem
   // without the app having to say so.
-  if (isHtml(out) && reportUrl(runtime, target) !== undefined)
-    out.append("link", REPORT_LINK);
+  if (isHtml(out))
+    for (const link of discoveryLinks(runtime, target)) out.append("link", link);
   const eventStream =
     response.body !== null &&
     (response.headers.get("content-type") ?? "")
@@ -976,6 +1340,7 @@ export async function proxyApp(
     (rewritable(out, response.status) ||
       (!out.has("content-length") && htmlAnswer(out, response.status)))
   ) {
+    const rewriting = performance.now();
     let bytes: Uint8Array<ArrayBuffer>;
     try {
       if (out.has("content-length")) bytes = new Uint8Array(await response.arrayBuffer());
@@ -984,15 +1349,19 @@ export async function proxyApp(
         // past that it goes on as it came, what was read first.
         const read = await readPage(response.body);
         if (!read.whole)
-          return new Response(read.rest, {
-            status: response.status,
-            statusText: response.statusText,
-            headers: out,
-          });
+          return relayAnswer(
+            request,
+            new Response(read.rest, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: out,
+            }),
+          );
         bytes = read.bytes;
       }
+      relayPhase(request, "body", performance.now() - rewriting);
     } catch {
-      return unavailable(runtime, target, status, "the app stopped answering");
+      return relayAnswer(request, unavailable(runtime, target, status, "the app stopped answering"));
     }
     // A signed-in person's page load gets the panel's one-use proof, and so
     // is theirs alone: never stored or shared. A page the app's own script
@@ -1003,11 +1372,14 @@ export async function proxyApp(
         ? mintProof(grantCookie, request.headers.get("host") ?? "")
         : undefined;
     if (proof !== undefined) out.set("cache-control", "private, no-store");
-    const page = withToolbar(
-      bytes,
-      runtime.options.forgeUrl,
-      pillWhere(runtime, target, vouched?.who),
-      proof,
+    const page = timePhase(request, "rewrite", () =>
+      withToolbar(
+        bytes,
+        runtime.options.forgeUrl,
+        pillWhere(runtime, target, vouched?.who),
+        proof,
+        cspNonce(out.get("content-security-policy")),
+      ),
     );
     let sent = page;
     // Whether it is gzipped depends on the client, so every copy says so.
@@ -1022,21 +1394,48 @@ export async function proxyApp(
       out.set("content-encoding", encoding);
     }
     out.set("content-length", String(sent.length));
+    const upstreamTag = out.get("etag");
     out.delete("etag");
     out.delete("content-md5");
-    return new Response(sent, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: out,
-    });
+    // The same page for every viewer keeps a validator: the app's tag joined
+    // with the bytes of what was sent, so a new toolbar is a new tag.
+    const tag =
+      upstreamTag !== null &&
+      response.status === 200 &&
+      request.method === "GET" &&
+      proof === undefined &&
+      vouched?.who === undefined &&
+      out.getSetCookie().length === 0 &&
+      cspNonce(out.get("content-security-policy")) === undefined &&
+      !/\b(no-store|private)\b/i.test(out.get("cache-control") ?? "")
+        ? weakEtag(`${upstreamTag}|${Bun.hash(page).toString(36)}`)
+        : undefined;
+    if (tag !== undefined) {
+      out.set("etag", tag);
+      if (holds(request, tag)) {
+        out.delete("content-length");
+        out.delete("content-encoding");
+        relayPhase(request, "rewrite", performance.now() - rewriting);
+        return relayAnswer(request, new Response(null, { status: 304, headers: out }));
+      }
+    }
+    relayPhase(request, "rewrite", performance.now() - rewriting);
+    return relayAnswer(
+      request,
+      new Response(sent, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: out,
+      }),
+    );
   }
-  return new Response(
-    body,
-    {
+  return relayAnswer(
+    request,
+    new Response(body, {
       status: response.status,
       statusText: response.statusText,
       headers: out,
-    },
+    }),
   );
 }
 
@@ -1122,7 +1521,7 @@ const portSockets = new WeakMap<Bun.ServerWebSocket<AppSocket>, () => void>();
  * it the socket is closed rather than the memory kept, and the forge never
  * buffers a frame on its own account.
  */
-const WS_MAX_MESSAGE = 16 * 1024 * 1024;
+export const WS_MAX_MESSAGE = 16 * 1024 * 1024;
 /**
  * Seconds a socket may go without a frame or a pong before it is dropped.
  * Bun pings on its own at half this, so a quiet tab that is still there
@@ -1135,13 +1534,13 @@ const WS_IDLE_SECONDS = 120;
  * that merely says `Upgrade: websocket` is an ordinary request, and is
  * fetched as one with the hop-by-hop headers stripped, as it always was.
  */
-const isWebSocketHandshake = (request: Request): boolean =>
+export const isWebSocketHandshake = (request: Request): boolean =>
   request.method === "GET" &&
   request.headers.get("upgrade")?.toLowerCase() === "websocket" &&
   request.headers.has("sec-websocket-key");
 
 /** The subprotocols a handshake offers, in the order it offers them. */
-const offeredProtocols = (request: Request): string[] =>
+export const offeredProtocols = (request: Request): string[] =>
   (request.headers.get("sec-websocket-protocol") ?? "")
     .split(",")
     .map((s) => s.trim())
@@ -1200,7 +1599,7 @@ async function proxyWebSocket(
  * sentence for the "not running" page: the app was not listening, or it
  * answered the handshake with something other than a socket.
  */
-function connectUpstream(
+export function connectUpstream(
   url: URL,
   headers: Record<string, string>,
   protocols: string[],
@@ -1257,9 +1656,11 @@ function closeBoth(
  * close of one side carried to the other. Text stays text and binary
  * stays binary; the forge reads neither.
  */
-export const appWebSocket: Bun.WebSocketHandler<AppSocket> = {
-  maxPayloadLength: WS_MAX_MESSAGE,
-  backpressureLimit: WS_MAX_MESSAGE,
+export const appWebSocketWith = (
+  maxMessage: number = WS_MAX_MESSAGE,
+): Bun.WebSocketHandler<AppSocket> => ({
+  maxPayloadLength: maxMessage,
+  backpressureLimit: maxMessage,
   closeOnBackpressureLimit: true,
   idleTimeout: WS_IDLE_SECONDS,
 
@@ -1287,7 +1688,7 @@ export const appWebSocket: Bun.WebSocketHandler<AppSocket> = {
         typeof data === "string"
           ? Buffer.byteLength(data)
           : (data as ArrayBuffer).byteLength;
-      if (size > WS_MAX_MESSAGE) {
+      if (size > maxMessage) {
         closeBoth(ws, 1009, "message too big");
         return;
       }
@@ -1332,7 +1733,7 @@ export const appWebSocket: Bun.WebSocketHandler<AppSocket> = {
     if (code === 1006) upstream.close(1001, "the browser went away");
     else upstream.close(sendable(code) ? code : 1000, reason);
   },
-};
+});
 
 function grant(
   runtime: AppsRuntime,
@@ -1384,37 +1785,65 @@ function cookieValue(request: Request, name: string): string | undefined {
  * The page an environment that is not serving shows: what it is doing, in
  * words, with the run to look at. Never a bare gateway error.
  */
-function unavailable(
+export function unavailable(
   runtime: AppsRuntime,
   target: AppTarget,
   status: EnvStatus | undefined,
   reason?: string,
+  who?: GrantWho,
 ): Response {
   const name = target.app.slug;
   const where =
-    target.env === "production"
-      ? "production"
-      : `the preview of pull #${target.env.slice(5)}`;
+    target.env.startsWith("pull-")
+      ? `the preview of pull #${target.env.slice(5)}`
+      : envWords(target.env);
   const state = status?.state ?? "stopped";
   const deploying = state === "deploying";
-  // A preview the forge no longer knows is gone, not broken: its pull closed
-  // and its data went with it. That is a 404, which also lets this page
-  // through an edge that replaces every 5xx with one of its own.
-  const gone = status === undefined && target.env !== "production";
+  // A preview is gone when its pull is closed, merged or no longer exists:
+  // its data went with it. That is a 404, which also lets this page through
+  // an edge that replaces every 5xx with one of its own. An open pull with no
+  // environment is not gone: it deploys again on the next push.
+  const at = pillWhere(runtime, target, who);
+  const pull =
+    at.pull === undefined
+      ? undefined
+      : getIssue(runtime.app.db, target.app.repoId, at.pull);
+  const preview = target.env !== "production";
+  const gone = preview && (pull === undefined || pull.state === "closed");
+  // Nothing was ever deployed for an open pull: also a 404, for the same
+  // edge, since there is nothing at this address yet. A stopped or failed
+  // environment keeps its 502.
+  const absent = preview && !gone && status === undefined;
+  const words = servingWords(status, preview ? (gone ? "closed" : "open") : null);
+  const build = envBuild(target.env) !== undefined;
   const message =
     reason ??
-    (deploying
-      ? "A new version is starting."
-      : state === "failed" || (state === "asleep" && status?.error !== undefined)
-        ? (status?.error ?? "The last deploy failed.")
-        : gone
-          ? "This preview is gone: its pull was closed, and its data with it."
-          : "Nothing is running here yet.");
-  const report = reportUrl(runtime, target) !== undefined;
+    (build && gone
+      ? "This build preview is gone: it was taken down, and its data with it. Ask for it again from the app's builds."
+      : words.says);
+  const links = discoveryLinks(runtime, target);
+  const report = links.length > 0;
   const runLink =
     status?.runId === undefined
       ? ""
       : `<p><a href="${escape(runtime.options.forgeUrl)}/runs/${escape(status.runId)}">See the run on the forge</a></p>`;
+  const forge = runtime.options.forgeUrl;
+  const exits: string[] = [];
+  if (preview && at.repo !== undefined && at.pull !== undefined) {
+    const href = new URL(`/${at.repo}/pulls/${at.pull}`, forge).href;
+    exits.push(
+      `<a href="${escape(href)}">Pull #${at.pull}${at.title === undefined ? "" : `: ${escape(at.title)}`}</a>`,
+    );
+  }
+  // A private app's address, like its repository's name, goes only to a reader.
+  const mayNameProduction = target.app.access === "public" || at.repo !== undefined;
+  if (
+    preview &&
+    mayNameProduction &&
+    runtime.envStatus(target.app, "production")?.port !== undefined
+  )
+    exits.push(`<a href="${escape(runtime.urlFor(target.app, "production"))}">Production</a>`);
+  exits.push(`<a href="${escape(new URL("/", forge).href)}">Forge home</a>`);
   const html = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1431,15 +1860,16 @@ ${deploying ? '<meta http-equiv="refresh" content="3">' : ""}
 <p>This is ${escape(where)}. ${escape(message)}</p>
 ${deploying ? "<p>This page refreshes on its own.</p>" : ""}
 ${runLink}
+<p>${exits.join(" · ")}</p>
 ${report ? '<p><a href="/__forge/report">Report a problem</a> to the people who keep it; no account needed.</p>' : ""}
 `;
   return new Response(html, {
-    status: deploying ? 503 : gone ? 404 : 502,
+    status: deploying ? 503 : gone || absent ? 404 : 502,
     headers: {
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
       ...(deploying ? { "retry-after": "3" } : {}),
-      ...(report ? { link: REPORT_LINK } : {}),
+      ...(report ? { link: links.join(", ") } : {}),
     },
   });
 }

@@ -5,7 +5,7 @@ import { good, bad, type Answer, type Args, type Tool } from "./shared.ts";
 
 type Ctx = Parameters<Tool["run"]>[0];
 
-/** The `origins` tool's `hosts` action: Settings → Origins' internal-host list, for a forge admin's admin-scope token. */
+/** The `origins` tool's `hosts` action: Settings → Connected accounts' internal-host list, for a forge admin's admin-scope token. */
 export function trustedHosts(ctx: Ctx, user: User, args: Args): Answer {
   if (!mayEditTrustedHosts(user)) return bad("forbidden", "Only a forge admin sets this.");
   if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))

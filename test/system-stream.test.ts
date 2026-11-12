@@ -11,6 +11,7 @@ import { eventStream, sseDroppedCount } from "../src/http/sse.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { createLive, useLive } from "../src/system/live.ts";
+import { withScripts } from "./helpers/page-script.ts";
 
 describe("/system over server-sent events", () => {
   let dataDir: string;
@@ -56,10 +57,15 @@ describe("/system over server-sent events", () => {
     expect(body).not.toContain("location.reload");
     expect(body).not.toContain("setTimeout");
     expect(body).not.toContain("setInterval");
-    expect(body).toContain("new EventSource('/system/stream')");
+    expect(await withScripts(servers.url, body)).toContain("new EventSource('/system/stream')");
     // First paint is server-rendered with the latest sample.
     expect(body).toContain('id="summary"');
     expect(body).toMatch(/id="summary"[^>]*>\s*<[^>]*>CPU /);
+    // The process table is marked to keep the reader's place across a swap.
+    const { Window } = await import("happy-dom");
+    const doc = new Window().document;
+    doc.body.innerHTML = body.replace(/<script[\s\S]*?<\/script>/gi, "");
+    expect(doc.getElementById("sys-procs")?.hasAttribute("data-live-hold")).toBe(true);
   });
 
   test("a sample written to the sampler arrives on the stream; a stranger is refused", async () => {
@@ -79,6 +85,7 @@ describe("/system over server-sent events", () => {
       if (done) break;
       text += decoder.decode(value);
     }
+    if (!text.includes("98765")) throw new Error(`never came: still waiting while !text.includes("98765")`);
     await reader.cancel();
     expect(text).toContain("event: sample");
     expect(text).toContain("98765 processes");
@@ -158,5 +165,71 @@ describe("/system over server-sent events", () => {
     for (let i = 0; i < sent && !ready!(); i++) await reader.read();
     expect(ready!()).toBe(true);
     await reader.cancel();
+  });
+});
+
+describe("/system's process table holds the reader's place", () => {
+  const table = (rows: [string, number][]) =>
+    `<div class="table-scroll"><table><tbody data-kind="app" data-cpu="1" data-mem="1"><tr data-group><th>apps</th></tr>` +
+    rows.map(([pid, cpu]) => `<tr data-cpu="${cpu}" data-mem="1"><td>${pid}</td><td><a href="#${pid}">cmd ${pid}</a></td></tr>`).join("") +
+    `</tbody></table></div>`;
+
+  /** The page script run against a DOM; `push` delivers one sample to its stream listener. */
+  async function open(hold: boolean) {
+    const { Window } = await import("happy-dom");
+    const { systemLiveJs } = await import("../src/web/system-live.ts");
+    const win = new Window();
+    const doc = win.document;
+    // happy-dom has no `rows` on a table section; the page script reads it.
+    const section = (doc.createElement("tbody") as unknown as { constructor: { prototype: object } }).constructor.prototype;
+    Object.defineProperty(section, "rows", { configurable: true, get(this: { querySelectorAll(s: string): unknown }) { return this.querySelectorAll(":scope > tr"); } });
+    doc.body.innerHTML = `<div id="sys-procs"${hold ? " data-live-hold" : ""}>${table([["10", 5], ["20", 1]])}</div><div id="summary">old</div>`;
+    let listener: (e: { data: string }) => void = () => {};
+    class FakeSource {
+      addEventListener(_: string, fn: typeof listener) { listener = fn; }
+    }
+    new Function("document", "EventSource", "location", systemLiveJs)(doc, FakeSource, { search: "" });
+    const push = (regions: Record<string, string>) => listener({ data: JSON.stringify({ regions }) });
+    return { doc, push };
+  }
+
+  test("the stream's payload names the held region", async () => {
+    const { regions } = await import("../src/web/pages/system.ts");
+    expect(Object.keys(regions(createLive().read()))).toContain("sys-procs");
+  });
+
+  test("focus on a row that left falls back to the same control in its group, not to the page", async () => {
+    const { doc, push } = await open(true);
+    (doc.querySelector('a[href="#20"]') as unknown as { focus(): void }).focus();
+    // pid 20's process ended: its row is gone from the next sample.
+    push({ "sys-procs": table([["10", 5], ["30", 1]]) });
+    expect(doc.activeElement?.getAttribute("href")).toBe("#10");
+  });
+
+  test("a held region keeps its scroll and its focus (after the re-sort) while only it and named regions change", async () => {
+    const { doc, push } = await open(true);
+    const box = doc.querySelector("#sys-procs .table-scroll")!;
+    box.scrollTop = 40;
+    box.scrollLeft = 25;
+    (doc.querySelector('a[href="#20"]') as unknown as { focus(): void }).focus();
+    // pid 20 now has the most CPU, so sort() moves its row above pid 10's.
+    push({ "sys-procs": table([["10", 1], ["20", 9]]), summary: "new" });
+    const rows = [...doc.querySelectorAll("#sys-procs tr[data-cpu]")].map((r) => r.getAttribute("data-cpu"));
+    expect(rows).toEqual(["9", "1"]);
+    const after = doc.querySelector("#sys-procs .table-scroll")!;
+    expect(after).not.toBe(box);
+    expect(after.scrollTop).toBe(40);
+    expect(after.scrollLeft).toBe(25);
+    expect(doc.activeElement?.getAttribute("href")).toBe("#20");
+    expect(doc.getElementById("summary")!.innerHTML).toBe("new");
+  });
+
+  test("a region without the marker is replaced as before: no scroll, no focus kept", async () => {
+    const { doc, push } = await open(false);
+    doc.querySelector("#sys-procs .table-scroll")!.scrollTop = 40;
+    (doc.querySelector('a[href="#20"]') as unknown as { focus(): void }).focus();
+    push({ "sys-procs": table([["10", 1], ["20", 9]]) });
+    expect(doc.querySelector("#sys-procs .table-scroll")!.scrollTop).toBe(0);
+    expect(doc.activeElement?.getAttribute("href")).not.toBe("#20");
   });
 });

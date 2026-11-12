@@ -1,5 +1,5 @@
 /**
- * SSH keys in the terminal (#7242): your own keys listed, one added, a bad
+ * Computer keys in the terminal (#7242): your own keys listed, one added, a bad
  * line refused in MCP's words, one removed after a confirm.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -27,7 +27,7 @@ const line = (fill: number, comment = "") => {
   return `ssh-ed25519 ${blob.toString("base64")} ${comment}`.trim();
 };
 
-describe("SSH keys in the terminal", () => {
+describe("Computer keys in the terminal", () => {
   let dataDir: string;
   let app: App;
 
@@ -62,7 +62,7 @@ describe("SSH keys in the terminal", () => {
       open: async function () {
         key("k", true);
         await settleApp(tui);
-        await this.type("SSH keys");
+        await this.type("Computer keys");
         await this.press("enter");
       },
       stop: () => tui.stop(),
@@ -152,6 +152,32 @@ describe("SSH keys in the terminal", () => {
     await h.press("d");
     expect(h.text()).toContain("Remove desktop?");
     expect(h.text()).not.toContain("This terminal session signed in with it.");
+    h.stop();
+  });
+
+  test("e renames the selected key: prefilled, esc keeps it, a bad name is refused", async () => {
+    const h = boot("alice");
+    await h.open();
+    const first = names("alice")[0]!;
+    await h.press("e");
+    expect(h.text()).toContain("Rename SSH key");
+    expect(h.text()).toContain(first);
+    await h.press("esc");
+    expect(names("alice")[0]).toBe(first);
+
+    await h.press("e");
+    for (let i = 0; i < first.length; i++) await h.press("backspace");
+    await h.press("enter");
+    expect(h.text()).toContain("a name is 1 to 64 printable characters");
+    expect(names("alice")[0]).toBe(first);
+    await h.press("esc");
+
+    await h.press("e");
+    await h.type(" at home");
+    await h.press("enter");
+    expect(names("alice")[0]).toBe(`${first} at home`);
+    expect(h.text()).toContain(`${first}: renamed to ${first} at home.`);
+    expect(names("bob")).toEqual(["bobs-secret-box"]);
     h.stop();
   });
 

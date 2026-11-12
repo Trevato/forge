@@ -20,9 +20,10 @@
  * because nothing moved. The fragment route returns this same section.
  */
 
-import type {
-  FleetGraph,
-  FleetWindow,
+import {
+  FLEET_GRAPH_MAX_REPOS,
+  type FleetGraph,
+  type FleetWindow,
 } from "../actions/fleet-graph.ts";
 import { html, type Html } from "./html.ts";
 import { seriesDot } from "./ui.ts";
@@ -226,6 +227,34 @@ export function selectionQuery(graph: FleetGraph): string {
   return graph.asked === null
     ? ""
     : graph.asked.map((n) => `repo=${encodeURIComponent(n)}`).join("&");
+}
+
+/**
+ * The way to the graph from another page, already holding what that page
+ * shows: one `repo=` per owner/name, each URL-encoded. None is every
+ * repository the viewer may write, the graph's own default. The graph
+ * re-validates the names (`fleetSelection`); this only spells them.
+ */
+export function fleetGraphHref(names: readonly string[]): string {
+  const q = [...new Set(names)]
+    .map((n) => `repo=${encodeURIComponent(n)}`)
+    .join("&");
+  return q === "" ? "/fleet/graph" : `/fleet/graph?${q}`;
+}
+
+/**
+ * The graph for a page that may be narrowed: not narrowed is the graph's
+ * default, the viewer's own; narrowed is exactly those names, and none (or
+ * more than one graph holds) is no link, so a link never widens or quietly
+ * cuts what the page showed.
+ */
+export function narrowedGraphHref(
+  narrowed: boolean,
+  names: readonly string[],
+): string | null {
+  if (!narrowed) return fleetGraphHref([]);
+  if (names.length === 0 || names.length > FLEET_GRAPH_MAX_REPOS) return null;
+  return fleetGraphHref(names);
 }
 
 /**

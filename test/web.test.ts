@@ -13,12 +13,13 @@ import { shellJs } from "../src/web/client.ts";
 import { escapeHtml, html, raw, when } from "../src/web/html.ts";
 import {
   icon,
-  iconSprite,
+  pointAtSprite,
+  spriteSvg,
   inlineIcons,
   type IconName,
 } from "../src/web/icons.ts";
 import { renderMarkdown } from "../src/web/markdown.ts";
-import { highlightAsset } from "../src/web/asset.ts";
+import { highlightAsset, spriteAsset } from "../src/web/asset.ts";
 import { securityFloor } from "../src/http/respond.ts";
 import { THEME_NAMES } from "../src/design/themes.ts";
 import { sha256 } from "../src/kernel/hash.ts";
@@ -43,6 +44,7 @@ describe("stylesheet asset", () => {
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { adminCookie } from "./helpers/admin.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { pageScriptOf } from "./helpers/page-script.ts";
 
 describe("html template", () => {
   test("escapes interpolations by default", () => {
@@ -147,14 +149,14 @@ describe("icons", () => {
     expect(icon("loader").text).toContain('class="ico ico-loader"');
     expect(icon("issue", 20).text).toContain('width="20" height="20"');
 
-    const sprite = iconSprite(icon("issue").text.repeat(4)).text;
-    expect(sprite.match(/<symbol /g)).toHaveLength(1);
+    const sprite = spriteSvg();
+    expect(sprite.match(/<symbol /g)!.length).toBeGreaterThan(20);
     expect(sprite).toContain(
       `<symbol id="i-issue" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"`,
     );
     expect(sprite).toContain('<circle cx="12" cy="12" r="1"/>');
-    // Markup with no icons defines none at all.
-    expect(iconSprite("<p>a page of words</p>").text).toBe("");
+    // A page aims every reference at the one hashed file.
+    expect(pointAtSprite(icon("issue").text, "/assets/i-x.svg")).toContain('<use href="/assets/i-x.svg#i-issue"/>');
   });
 
   test("a fragment carries its drawings inline, referencing no sprite", () => {
@@ -196,7 +198,7 @@ describe("icons", () => {
     const markup = census
       .map(([name, count]) => icon(name).text.repeat(count))
       .join("");
-    const shipped = markup.length + iconSprite(markup).text.length;
+    const shipped = pointAtSprite(markup, "/assets/i-0123456789abcdef.svg").length;
     // What the same page would weigh with a drawing per use.
     const perUse = inlineIcons(markup).length;
     expect(perUse - shipped).toBeGreaterThan(15_000);
@@ -259,31 +261,30 @@ describe("a page ships each drawing once", () => {
     const text = await (
       await fetch(`${base}/ada/engine/issues/1`, { headers: { cookie } })
     ).text();
-    expect(text.match(/<use href="#i-comment"\/>/g)!.length).toBeGreaterThan(
+    expect(text.match(/<use href="[^"#]+#i-comment"\/>/g)!.length).toBeGreaterThan(
       11,
     );
-    expect(text.match(/<symbol id="i-comment"/g)).toHaveLength(1);
+    // The drawing is not in the page at all: it is the one hashed sprite file.
+    expect(text).not.toContain("<symbol");
+    expect(text).toContain(`<use href="${spriteAsset().path}#i-comment"/>`);
   });
 
-  test("what a page defines is exactly what it used — no more, no less", async () => {
+  test("every icon a page uses is defined by the sprite file it points at", async () => {
     for (const path of ["/", "/ada/engine/issues", "/settings"]) {
       const text = await (
         await fetch(`${base}${path}`, { headers: { cookie } })
       ).text();
       const used = new Set(
-        [...text.matchAll(/<use href="#i-([A-Za-z]+)"\/>/g)].map((m) => m[1]),
+        [...text.matchAll(/<use href="([^"#]+)#i-([A-Za-z]+)"\/>/g)].map((m) => {
+          expect(m[1]).toBe(spriteAsset().path);
+          return m[2];
+        }),
       );
-      const defined = [...text.matchAll(/<symbol id="i-([A-Za-z]+)"/g)].map(
-        (m) => m[1],
-      );
-      expect(defined.length).toBe(used.size); // each defined once
-      expect(new Set(defined)).toEqual(used); // and nothing else shipped
       expect(used.size).toBeGreaterThan(0);
+      expect(text).not.toContain("<symbol");
+      const file = await (await fetch(base + spriteAsset().path)).text();
+      for (const name of used) expect(file).toContain(`<symbol id="i-${name}"`);
     }
-    // The front door is not the settings page's icons: a page with three
-    // drawings does not ship twenty.
-    const home = await (await fetch(base, { headers: { cookie } })).text();
-    expect(home).not.toContain('id="i-webhook"');
   });
 
   test("the thread fragment inlines its own drawings", async () => {
@@ -377,9 +378,7 @@ describe("web pages end to end", () => {
   test("the shell is a cached file, linked before the page's own inline script", async () => {
     const shell = shellAsset();
     const home = await (await fetch(base, { headers: { cookie } })).text();
-    expect(home).toMatch(
-      new RegExp(`<script nonce="[^"]+" src="${shell.path}" defer></script>`),
-    );
+    expect(home).toContain(`<script src="${shell.path}" defer></script>`);
     // Its source is no longer in the HTML, and the page is a good deal lighter.
     expect(home).not.toContain(shellJs.slice(0, 400));
     expect(home).not.toContain(shellJs.slice(-400));
@@ -390,10 +389,10 @@ describe("web pages end to end", () => {
       await fetch(`${base}/apps/new`, { headers: { cookie } })
     ).text();
     const at = apps.indexOf(`src="${shell.path}" defer>`);
-    const inline = apps.indexOf("<script nonce=", at);
+    const inline = apps.indexOf('<script src="/assets/page-', at);
     expect(at).toBeGreaterThan(-1);
     expect(inline).toBeGreaterThan(at);
-    expect(apps).toContain('document.addEventListener("DOMContentLoaded"');
+    expect(await pageScriptOf(base, apps)).toContain('document.addEventListener("DOMContentLoaded"');
     expect(apps).not.toContain(shellJs.slice(0, 400));
 
     const file = await fetch(base + shell.path);
@@ -456,7 +455,7 @@ describe("web pages end to end", () => {
     const { changeCapacity } = await import("../src/actions/capacity.ts");
     const { getUserByName } = await import("../src/core/users.ts");
     const ada = getUserByName(app.db, "ada")!;
-    expect(changeCapacity(app, ada, "cells.egress", "report").ok).toBe(true);
+    expect(changeCapacity(app, ada, "cells.egress", "report", "a test says why").ok).toBe(true);
     try {
       const text = await (await fetch(base, { headers: { cookie } })).text();
       expect(text).not.toMatch(/class="[^"]*\berror-note/);
@@ -672,8 +671,10 @@ describe("themes", () => {
     expect(css).toContain("color: var(--tok-keyword)");
   });
 
+  // The front door is a visitor's own page with its own bar (home: a visitor's front page);
+  // the switcher lives in the shared bar every other page carries.
   test("no cookie means system: no data-theme, switcher present", async () => {
-    const text = await (await fetch(base)).text();
+    const text = await (await fetch(`${base}/explore`)).text();
     expect(text).not.toMatch(/<html[^>]*\sdata-theme=/);
     expect(text).toContain('action="/theme"');
     for (const name of THEME_NAMES) {
@@ -690,7 +691,7 @@ describe("themes", () => {
     expect(text).not.toContain("theme-apply");
     // Critical paint before the stylesheet: system pair (light default + dark
     // media), then a rule per theme so a toggle repaints without a reload.
-    const boot = text.match(/<style nonce="[^"]+">([^<]*)<\/style>/)?.[1];
+    const boot = text.match(/<style>([^<]*)<\/style>/)?.[1];
     expect(boot).toStartWith(
       "html,body{background-color:#fafafa;color-scheme:light}@media (prefers-color-scheme: dark){html,body{background-color:#09090b;color-scheme:dark}}",
     );
@@ -718,18 +719,18 @@ describe("themes", () => {
     expect(setCookie).toStartWith("forge_theme=midnight");
 
     const cookie = setCookie.split(";")[0]!;
-    const text = await (await fetch(base, { headers: { cookie } })).text();
+    const text = await (await fetch(`${base}/explore`, { headers: { cookie } })).text();
     expect(text).toContain('data-theme="midnight"');
     // The switcher shows the active choice.
     expect(text).toMatch(/value="midnight"\s+checked/);
     // Boot paint follows the attribute: midnight's ground for this page, and
     // the same rules as a system page, so switching away repaints at once.
-    const boot = text.match(/<style nonce="[^"]+">([^<]*)<\/style>/)?.[1];
+    const boot = text.match(/<style>([^<]*)<\/style>/)?.[1];
     expect(boot).toContain(
       'html[data-theme="midnight"],html[data-theme="midnight"] body{background-color:#16161e;color-scheme:dark}',
     );
     const system = (await (await fetch(base)).text()).match(
-      /<style nonce="[^"]+">([^<]*)<\/style>/,
+      /<style>([^<]*)<\/style>/,
     )?.[1];
     expect(boot).toBe(system!);
   });
@@ -806,7 +807,7 @@ describe("HEAD mirrors the GET it stands in for", () => {
     expect(head.headers.get("content-type")).toBe(get.headers.get("content-type"));
     expect(head.headers.get("x-content-type-options")).toBe("nosniff");
     expect(head.headers.get("referrer-policy")).toBeTruthy();
-    expect(head.headers.get("content-security-policy")).toContain("nonce-");
+    expect(head.headers.get("content-security-policy")).toContain("script-src 'self'");
   });
 
   test("HEAD /healthz is 200 with an empty body", async () => {
@@ -848,7 +849,7 @@ function expectFloor(what: string, response: Response): void {
   );
   // No powers a page does not use, and https once https (#2917).
   const powers = response.headers.get("permissions-policy") ?? "";
-  for (const power of ["camera", "microphone", "geolocation", "payment", "usb", "interest-cohort"])
+  for (const power of ["camera", "microphone", "geolocation", "payment", "usb"])
     expect(label + powers).toContain(`${power}=()`);
   expect(label + response.headers.get("strict-transport-security")).toBe(
     label + "max-age=31536000",
@@ -892,9 +893,9 @@ describe("the security floor is on every response", () => {
     const page = await fetch(`${base}/`);
     expect(page.status).toBe(200);
     expectFloor("html page", page);
-    // An HTML body keeps the nonce'd policy it writes for itself: the floor
+    // An HTML body keeps the policy it writes for itself: the floor
     // adds the other two headers and does not touch a policy already there.
-    expect(page.headers.get("content-security-policy")).toContain("nonce-");
+    expect(page.headers.get("content-security-policy")).toContain("script-src 'self'");
 
     const list = await fetch(`${base}/api/v1/repos`);
     expect(list.status).toBe(200);

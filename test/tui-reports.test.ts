@@ -174,3 +174,18 @@ describe("no row for an agent or a guest", () => {
     expect(reportsCommands({ app, user: undefined } as Session, {} as Ctx, repo)).toEqual([]);
   });
 });
+
+describe("who filed it, in the terminal (#7658)", () => {
+  test("each row names its filer and the head counts them, most first", async () => {
+    for (const r of waiting()) dismissReport(app, alice, repo, r.id);
+    insertReport(app.db, repo.id, { title: "Stuck at sign-in", body: "", page: null }, bob.id);
+    insertReport(app.db, repo.id, { title: "Stuck at the map", body: "", page: null }, bob.id);
+    insertReport(app.db, repo.id, { title: "Search hangs", body: "", page: null, claimed: "grokbot" });
+    insertReport(app.db, repo.id, { title: "Typo", body: "", page: null });
+    const h = await open(alice);
+    const text = await h.run(":", "Reports (", "\r");
+    expect(text).toContain("From 2 @bob · 1 claims to be grokbot, unproven · 1 anonymous; unchecked.");
+    expect(text).toContain("Sent just now by @bob");
+    h.stop();
+  });
+});

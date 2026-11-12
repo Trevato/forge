@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/orgs/{org}/teams/{team}/members/{username}",
   summary: "Take a user out of a team (admin scope); answers 204",
   auth: true,
+  role: "member",
   status: 204,
   refusals: {
     not_found: "no such team, or the user is not in it",

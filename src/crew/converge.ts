@@ -36,6 +36,7 @@ import { closesFromBody, listPulls, type Pull } from "../core/pulls.ts";
 import { canWrite, getRepoById, listAllForks, type Repo } from "../core/repos.ts";
 import { activeRunFor, cancelRun, listRuns } from "../core/runs.ts";
 import { commitIdentity } from "../core/commit_identity.ts";
+import { forkFollowMode } from "../core/fork_follow.ts";
 import { getUserById, type User } from "../core/users.ts";
 import { runGit } from "../git/env.ts";
 import { isSafeOid } from "../git/guard.ts";
@@ -226,6 +227,8 @@ export function followDivergence(app: App): () => void {
       typeof parentId === "string" ? getRepoById(app.db, parentId) : undefined;
     if (fork === undefined || parent === undefined) return;
     if (fork.autonomy === "off") return;
+    // A fork that chose not to follow is never converged on its behalf.
+    if (forkFollowMode(app.db, fork.id) === "dont-follow") return;
     diverged(app, fork, parent).catch((error) =>
       log.error("could not act on a diverged fork", {
         fork: `${fork.ownerName}/${fork.name}`,

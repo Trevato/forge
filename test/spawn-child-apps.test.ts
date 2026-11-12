@@ -5,6 +5,8 @@
  * credential, the home and the app page say so and where to add one.
  */
 
+import { setLimit } from "../src/settings/limits.ts";
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,7 +14,7 @@ import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { childDirOf, spawnForge } from "../src/actions/spawn.ts";
 import { createApp, type App } from "../src/app.ts";
-import { addCrew, createAgentRow, setCrewRole } from "../src/core/agents.ts";
+import { addCrew, createAgentRow } from "../src/core/agents.ts";
 import { getAppByRepo, listApps } from "../src/core/apps.ts";
 import { getRepo } from "../src/core/repos.ts";
 import {
@@ -54,6 +56,8 @@ describe("a spawned child's apps", () => {
     });
     if (!made.ok) throw new Error("user");
     const alice = made.value;
+    // This forge is made with no included credit (#11154), so it has neither credit nor key.
+    setLimit(parent.db, "spawn.included_credit_usd", 0, alice.id);
     // One app (its forge.json says so) and one plain repository.
     for (const [name, files] of [
       [
@@ -91,7 +95,7 @@ describe("a spawned child's apps", () => {
           createdBy: alice.id,
         });
         addCrew(parent.db, repo.value.id, atlas.value.id, alice.id);
-        setCrewRole(parent.db, repo.value.id, atlas.value.id, "planner");
+        seatAs(parent.db, repo.value.id, atlas.value.id, "planner");
       }
     }
     const spawned = await spawnForge(
@@ -168,24 +172,25 @@ describe("a spawned child's apps", () => {
     expect(listApps(child.db).length).toBe(before);
   });
 
-  test("after claiming, the home shows the app, and says the crew has no model key and where to add one", async () => {
+  test("after claiming, the home shows the app, and says the crew cannot start yet and where to add one", async () => {
     const home = (
       await (await fetch(`${servers.url}/`, { headers: { cookie } })).text()
     ).replace(/\s+/g, " ");
     expect(home).toContain("bakery");
     expect(home).not.toContain("No apps yet");
-    expect(home).toContain("The crew has no model key yet");
+    expect(home).toContain("The crew cannot build until you");
     expect(home).toContain('href="/settings/subscriptions"');
+    expect(home).toContain('href="/pricing"');
     const appPage = await (
       await fetch(`${servers.url}/marias/bakery`, { headers: { cookie } })
     ).text();
-    expect(appPage).toContain("The crew has no model key yet");
+    expect(appPage).toContain("The crew needs a model key to start");
   });
 
   test("on the app page the key note is an owner fact: not for a stranger or a plain reader", async () => {
     const anonymous = await (await fetch(`${servers.url}/marias/bakery`)).text();
     expect(anonymous).toContain("bakery");
-    expect(anonymous).not.toContain("The crew has no model key yet");
+    expect(anonymous).not.toContain("The crew needs a model key to start");
     const reader = await createUser(child.db, { origin: "seed", trusted: true,
       username: "reader",
       email: "reader@x.test",
@@ -200,14 +205,14 @@ describe("a spawned child's apps", () => {
       })
     ).text();
     expect(asReader).toContain("bakery");
-    expect(asReader).not.toContain("The crew has no model key yet");
+    expect(asReader).not.toContain("The crew needs a model key to start");
     // Nor on the home: there the note is for an admin or a writer of an app.
     const readerHome = await (
       await fetch(`${servers.url}/`, {
         headers: { cookie: `forge_session=${session.token}` },
       })
     ).text();
-    expect(readerHome).not.toContain("The crew has no model key yet");
+    expect(readerHome).not.toContain("The crew needs a model key to start");
   });
 
   test("first boot registers apps as the founder, an account with no verified email", () => {
@@ -261,6 +266,6 @@ describe("a spawned child's apps", () => {
     const home = await (
       await fetch(`${servers.url}/`, { headers: { cookie } })
     ).text();
-    expect(home).not.toContain("The crew has no model key yet");
+    expect(home).not.toContain("The crew needs a model key to start");
   });
 });

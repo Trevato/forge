@@ -5,6 +5,7 @@
  * disk reading is plain data, injected.
  */
 
+import { pullCloses } from "./helpers/pull-closes.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { App } from "../src/app.ts";
 import { announceRun } from "../src/actions/runs.ts";
@@ -54,7 +55,7 @@ describe("a red on a full check machine", () => {
       files: [{ path: `${branch}.md`, content: "x\n" }],
     });
     if (!c.ok) throw new Error(JSON.stringify(c.error));
-    const o = await openPull(app, alice, repo, { title: branch, baseBranch: "main", headBranch: branch });
+    const o = await openPull(app, bot, repo, { title: branch, baseBranch: "main", headBranch: branch });
     if (!o.ok) throw new Error(String(o.error));
     app.db.run("UPDATE issue SET assignee_id = ?1 WHERE id = ?2", [bot.id, o.value.id]);
     for (let i = 0; i < CHECK_FAILED_LIMIT; i++) {
@@ -149,7 +150,7 @@ describe("a red on a full check machine", () => {
     const before = cards()[0]!.sentence;
     const own = await spentPull();
     announceRun(app, failed(own, 300));
-    expect(open(own)).toBe(false);
+    await pullCloses(app, own);
     expect(cards()[0]!.sentence).toBe(before);
   });
 });
@@ -166,10 +167,10 @@ describe("a full check machine gives back unused checkouts", () => {
       const orphan = join(dataDir, "checks", "orphan");
       mkdirSync(orphan, { recursive: true });
       diskReading.read = () => ({ freeBytes: 500, totalBytes: 1000 });
-      expect(reclaimIfFull(app)).toBe(false);
+      expect(await reclaimIfFull(app)).toBe(false);
       expect(existsSync(orphan)).toBe(true);
       diskReading.read = () => ({ freeBytes: 50, totalBytes: 1000 });
-      expect(reclaimIfFull(app)).toBe(true);
+      expect(await reclaimIfFull(app)).toBe(true);
       expect(existsSync(orphan)).toBe(false);
     } finally {
       diskReading.read = statDisk;

@@ -46,6 +46,7 @@ test("a response carries Server-Timing, and /alice/x and /bob/y share one route 
   const a = await fetch(`${servers.url}/alice/x`);
   await fetch(`${servers.url}/bob/y`);
   const health = await fetch(`${servers.url}/healthz`);
+  // A stranger reads no `lag`: how loaded the forge is is an admin's to know (#11112).
   expect(a.headers.get("server-timing")).toMatch(/^app;dur=\d+\.\d$/);
   expect(health.headers.get("server-timing")).toMatch(/^db;dur=\d+\.\d, app;dur=\d+\.\d$/);
   servers.stop();

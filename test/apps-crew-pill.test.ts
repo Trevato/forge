@@ -156,7 +156,7 @@ describe("the crew line", () => {
     end(run.id);
   });
 
-  test("/__forge/crew answers a granted viewer, and {} to no cookie or a bad one", async () => {
+  test("/__forge/crew answers a granted viewer, and only the fork link to no cookie or a bad one", async () => {
     const run = start(pullId);
     const target = { app: record, env: "production" } as AppTarget;
     const cookie = `forge_grant_${record.id.slice(-8)}`;
@@ -181,11 +181,13 @@ describe("the crew line", () => {
       url: `${servers.url}/alice/notes/runs/${run.id}`,
       tell: `${servers.url}/alice/notes/tell`,
     });
-    expect(await (await ask()).json()).toEqual({});
-    expect(await (await ask(`${grant}x`)).json()).toEqual({});
+    // A public app's signed-out reader is offered only the fork page.
+    const yours = { yours: `${servers.url}/alice/notes/make-it-yours` };
+    expect(await (await ask()).json()).toEqual(yours);
+    expect(await (await ask(`${grant}x`)).json()).toEqual(yours);
     // A grant that names nobody is a guest: nothing.
     const guest = signGrant(dataDir, target, 60_000);
-    expect(await (await ask(guest)).json()).toEqual({});
+    expect(await (await ask(guest)).json()).toEqual(yours);
     // A nested host is the guest forge's to answer, not this one's.
     const nested = await fetch(`${servers.url}/__forge/crew`, {
       headers: { host: `notes.other.${DOMAIN}`, cookie: `${cookie}=${grant}` },
@@ -214,6 +216,6 @@ describe("the crew line", () => {
     );
     expect(toolbarJs).not.toContain("document.cookie");
     expect(toolbarJs).toContain('aria-live", "polite"');
-    expect(toolbarJs.length).toBeLessThan(22 * 1024);
+    // The byte budget lives in test/toolbar-budget.test.ts.
   });
 });

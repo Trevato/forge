@@ -27,6 +27,7 @@ import { mcpTool } from "./helpers/mcp.ts";
 import { askCountFor, askLinesFor, forgeNeedsFor, repoAsks } from "../src/web/studio/asks.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { listAt } from "./mcp-list.ts";
+import { giveHistory } from "./helpers/history.ts";
 
 quietLogs();
 // Every test here is HTTP round trips against a server on a shared machine: the 5s default measures its load, not the code.
@@ -145,7 +146,7 @@ describe("muting a repository's asks", () => {
 
     const res = await post(cookie, "/asks/mute", [["repo", repo.id]]);
     expect(res.status).toBe(303);
-    expect(res.headers.get("location")).toBe("/asks");
+    expect(res.headers.get("location")).toBe(`/asks?muted=${repo.id}`);
     expect(mutedRepos(app.db, alice.id).has(repo.id)).toBe(true);
     // Idempotent: twice is the same as once.
     await post(cookie, "/asks/mute", [["repo", repo.id]]);
@@ -169,6 +170,7 @@ describe("muting a repository's asks", () => {
     expect(repoAsks(app.db, alice, repo)).toEqual({ count: 1, muted: true });
     // The repository's page is the app's once it is one.
     expect(createAppRecord(app.db, { repoId: repo.id, slug: "muted", access: "public" }).ok).toBe(true);
+    giveHistory(app.db, repo.id);
     const page = await fetch(`${servers.url}/alice/muted`, { headers: headers(cookie) });
     expect(page.status).toBe(200);
     const text = await page.text();
@@ -204,6 +206,42 @@ describe("muting a repository's asks", () => {
     expect(await apiAsks()).toHaveLength(1);
     expect(await onYou()).toContain("Muted work");
     expect(repoAsks(app.db, alice, repo)).toEqual({ count: 1, muted: false });
+  });
+
+  test("muting and listening keep the reader on the page they were on, with Undo in place", async () => {
+    const page = (path: string) => fetch(`${servers.url}${path}`, { headers: headers(cookie) }).then((r) => r.text());
+    const res = await post(cookie, "/asks/mute", [["repo", repo.id], ["back", "/asks?kind=pulls"]]);
+    expect(res.status).toBe(303);
+    const to = res.headers.get("location")!;
+    expect(to).toBe(`/asks?kind=pulls&muted=${repo.id}`);
+    const flash = await page(to);
+    expect(flash).toContain("Muted alice/muted");
+    expect(flash).toContain('action="/asks/listen"');
+    const back = await post(cookie, "/asks/listen", [["repo", repo.id], ["back", "/asks?kind=pulls"]]);
+    expect(back.headers.get("location")).toBe(`/asks?kind=pulls&listened=${repo.id}`);
+    expect(await page(back.headers.get("location")!)).toContain("Listening to alice/muted again");
+    for (const evil of ["https://evil.example/", "/settings", "//evil.example/asks", "/asksfoo?x=1"]) {
+      const r = await post(cookie, "/asks/mute", [["repo", repo.id], ["back", evil]]);
+      expect(r.headers.get("location")).toBe(`/asks?muted=${repo.id}`);
+    }
+    await post(cookie, "/asks/listen", [["repo", repo.id]]);
+  });
+
+  test("the flash and its back are guarded: unreadable, malformed and fragment cases render or follow nothing", async () => {
+    const page = (c: string, path: string) =>
+      fetch(`${servers.url}${path}`, { headers: headers(c) }).then((r) => r.text());
+    const secret = await createRepo(app, alice, { name: "hush", visibility: "private" });
+    if (!secret.ok) throw new Error(String(secret.error));
+    // Bob cannot read it: no flash, even with the id in the address.
+    expect(await page(bobCookie, `/asks?muted=${secret.value.id}`)).not.toContain("Muted alice/hush");
+    expect(await page(cookie, `/asks?muted=${secret.value.id}`)).toContain("Muted alice/hush");
+    // A malformed id renders nothing.
+    for (const bad of ["../x", "a b", "x".repeat(65), ""])
+      expect(await page(cookie, `/asks?muted=${encodeURIComponent(bad)}`)).not.toContain('class="toast"');
+    // A back with a fragment falls back.
+    const r = await post(cookie, "/asks/mute", [["repo", repo.id], ["back", "/asks?kind=pulls#x"]]);
+    expect(r.headers.get("location")).toBe(`/asks?muted=${repo.id}`);
+    await post(cookie, "/asks/listen", [["repo", repo.id]]);
   });
 
   test("a chip leaves the inbox: the change's chip or its author's, and no other", async () => {

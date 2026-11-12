@@ -1,24 +1,26 @@
-import { applyAsksBulk, previewAsksBulk } from "../../../actions/asks_bulk.ts";
+import { applyAsksBulk, ownAsksOperation, previewAsksBulk, receiptOf, undoAsksBulk } from "../../../actions/asks_bulk.ts";
+import { NO_SUCH_OPERATION } from "../../../actions/asks_words.ts";
 import { mutedRepos, removeMutes } from "../../../core/interactions.ts";
 import { good, bad, repoArg, type Tool } from "../shared.ts";
 
 export const tool: Tool = {
   name: "asks_act",
   description:
-    "Decide asks (`items`): dismiss, decline, ship, close (`reason`), mute, replan; `listen` (`repo`) unmutes",
+    "Decide asks (`items`): dismiss, ship, close (`reason`), mute, replan; `listen` (`repo`) unmutes; `undo` (`operation`)",
   inputSchema: {
     type: "object",
     properties: {
-      action: { type: "string", enum: ["dismiss", "decline", "mute", "listen", "ship", "close", "replan"] },
+      action: { type: "string", enum: ["dismiss", "decline", "mute", "listen", "undo", "ship", "close", "replan"] },
       items: { type: "array", items: { type: "string" }, maxItems: 100 },
       repo: { type: "string" },
+      operation: { type: "string" },
       reason: { type: "string", maxLength: 300 },
       dryRun: { type: "boolean" },
     },
     required: ["action"],
   },
   doc:
-    "`{ action, items, reason?, dryRun? }`: decide asks in bulk (up to 100): `dismiss`, `decline`, `mute`, `ship`, `close` (with `reason`) or `replan`; planned first (`dryRun` is true unless `false`), as `POST /api/v1/asks/bulk`",
+    "`{ action, items?, repo?, reason?, dryRun? }`: decide asks in bulk (up to 100): `dismiss`, `decline`, `mute`, `ship`, `close` (with `reason`) or `replan`, `listen` with `repo` to unmute one, or `undo` with `operation` to reverse one of your own within a day; planned first (`dryRun` is true unless `false`), as `POST /api/v1/asks/bulk`",
   writes: true,
   dryByDefault: true,
   async run(ctx, user, args) {
@@ -33,10 +35,23 @@ export const tool: Tool = {
       removeMutes(ctx.app.db, user.id, [`repo:${repo.id}`]);
       return good({ listening: [name] });
     }
-    const answer =
-      args["dryRun"] === false
-        ? await applyAsksBulk(ctx.app, user, args["action"], args["items"], args["reason"])
-        : previewAsksBulk(ctx.app, user, args["action"], args["items"], args["reason"]);
-    return answer.ok ? good(answer.value) : bad(answer.error.code, answer.error.message);
+    if (args["action"] === "undo") {
+      if (typeof args["operation"] !== "string" || args["operation"] === "")
+        return bad("invalid", "`undo` needs `operation`, the id of a bulk action");
+      if (args["dryRun"] !== false) {
+        const own = ownAsksOperation(ctx.app, user, args["operation"]);
+        return own === undefined ? bad("not_found", NO_SUCH_OPERATION) : good({ wouldUndo: own.id });
+      }
+      const undone = await undoAsksBulk(ctx.app, user, args["operation"]);
+      return undone.ok
+        ? good({ ...undone.value, receipt: receiptOf(undone.value) })
+        : bad(undone.error.code, undone.error.message);
+    }
+    if (args["dryRun"] !== false) {
+      const plan = previewAsksBulk(ctx.app, user, args["action"], args["items"], args["reason"]);
+      return plan.ok ? good(plan.value) : bad(plan.error.code, plan.error.message);
+    }
+    const done = await applyAsksBulk(ctx.app, user, args["action"], args["items"], args["reason"]);
+    return done.ok ? good({ ...done.value, receipt: receiptOf(done.value) }) : bad(done.error.code, done.error.message);
   },
 };

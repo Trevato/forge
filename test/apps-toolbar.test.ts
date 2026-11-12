@@ -17,7 +17,7 @@ import { getAppByRepo } from "../src/core/apps.ts";
 import { listRuns } from "../src/core/runs.ts";
 import { AppsRuntime, type EnvStatus } from "../src/apps/runtime.ts";
 import { parseManifest } from "../src/apps/manifest.ts";
-import { REWRITE_MAX, TOOLBAR_PATH, readPage, toolbarJs, withToolbar } from "../src/apps/toolbar.ts";
+import { REWRITE_MAX, TOOLBAR_ASSET_PATH, TOOLBAR_PATH, readPage, toolbarJs, withToolbar } from "../src/apps/toolbar.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -55,6 +55,10 @@ describe("the forge pill", () => {
               })
             : new Response(HTML, { headers });
         }
+        if (path === "/has-tag")
+          return new Response(`<html><body>hi<script src="${TOOLBAR_ASSET_PATH}" defer></script></body></html>`, { headers: html });
+        if (path === "/quotes")
+          return new Response(`<html><body><code>&lt;script src="${TOOLBAR_ASSET_PATH}"&gt;</code> src="/__forge/toolbar-x"</body></html>`, { headers: html });
         if (path === "/json") return Response.json({ a: 1 });
         if (path === "/img") return new Response(PNG, { headers: { "content-type": "image/png" } });
         if (path === "/bare") return new Response("<p>no body tag</p>", { headers: html });
@@ -187,7 +191,7 @@ describe("the forge pill", () => {
       redirect: "manual",
     });
   const tag = () =>
-    `<script src="${servers.url}${TOOLBAR_PATH}" data-app="notes" data-repo="alice/notes" data-env="production" defer></script>`;
+    `<script src="${TOOLBAR_ASSET_PATH}" data-forge="${servers.url}" data-app="notes" data-repo="alice/notes" data-env="production" defer></script>`;
 
   test("HTML gets one script tag before </body>, with its length fixed", async () => {
     toolbar = undefined;
@@ -227,7 +231,7 @@ describe("the forge pill", () => {
     const got = Buffer.from(await res.arrayBuffer()).toString();
     const piece = "<p>" + "b".repeat(1024 * 1024) + "</p>";
     expect(got).toBe("<html><body>" + piece.repeat(5) + "</body></html>");
-    expect(got).not.toContain(TOOLBAR_PATH);
+    expect(got).not.toContain(TOOLBAR_ASSET_PATH);
   });
 
   test("a streamed page still open after the wait arrives whole with no pill", async () => {
@@ -237,6 +241,26 @@ describe("the forge pill", () => {
 
   test("a streamed text/html answer that does not start like markup is untouched", async () => {
     expect(await (await at("/notmarkup")).text()).toBe('{"a":1}</body>');
+  });
+
+  test("through the proxy: data, ranges and HEAD come back byte for byte; a page with the tag keeps exactly one", async () => {
+    expect(await (await at("/json")).text()).toBe('{"a":1}');
+    expect(new Uint8Array(await (await at("/img")).arrayBuffer())).toEqual(PNG);
+    const range = await at("/range");
+    expect(await range.text()).toBe(HTML.slice(0, 20));
+    const head = await fetch(`${servers.url}/`, { method: "HEAD", headers: { host: `notes.${DOMAIN}` } });
+    expect(head.headers.get("content-length")).toBe(String(HTML.length));
+    expect(await head.text()).toBe("");
+    const had = await (await at("/has-tag")).text();
+    expect(had.split(TOOLBAR_ASSET_PATH).length - 1).toBe(1);
+    expect(had).not.toContain("data-forge");
+  });
+
+  test("a page that only quotes the toolbar's path still gets one tag", async () => {
+    const quoted = await (await at("/quotes")).text();
+    expect(quoted.split("<script").length - 1).toBe(1);
+    expect(quoted).toContain("data-forge");
+    expect(quoted).toContain(`&lt;script src="${TOOLBAR_ASSET_PATH}"&gt;`);
   });
 
   test("a ranged answer, a HEAD, a huge page and a foreign charset pass through", async () => {
@@ -273,7 +297,7 @@ describe("the forge pill", () => {
     });
     expect(plain.headers.get("content-encoding")).toBeNull();
     expect(plain.headers.get("vary")).toContain("accept-encoding");
-    expect(await plain.text()).toContain(TOOLBAR_PATH);
+    expect(await plain.text()).toContain(TOOLBAR_ASSET_PATH);
   });
 
   test("a client that refuses gzip with q=0 gets the page plain", async () => {
@@ -284,7 +308,7 @@ describe("the forge pill", () => {
     } as RequestInit);
     expect(res.headers.get("content-encoding")).toBeNull();
     expect(res.headers.get("vary")).toContain("accept-encoding");
-    expect(await res.text()).toContain(TOOLBAR_PATH);
+    expect(await res.text()).toContain(TOOLBAR_ASSET_PATH);
   });
 
   test("a client that accepts br is sent brotli", async () => {
@@ -309,7 +333,7 @@ describe("the forge pill", () => {
     } as RequestInit);
     expect(res.headers.get("content-encoding")).toBeNull();
     expect(res.headers.get("vary")).toContain("accept-encoding");
-    expect(await res.text()).toContain(TOOLBAR_PATH);
+    expect(await res.text()).toContain(TOOLBAR_ASSET_PATH);
   });
 
   test("an app with the pill off is sent the client's encoding and its gzip passes through", async () => {
@@ -366,16 +390,18 @@ describe("the forge pill", () => {
     expect(res.headers.get("content-type")).toContain("javascript");
     const code = await res.text();
     expect(code).toBe(toolbarJs);
-    expect(code.length).toBeLessThan(22 * 1024);
+    expect(code.length).toBeLessThan(24 * 1024);
     expect(code).not.toMatch(/\beval\b|new Function|\son[a-z]+\s*=/);
     expect(code).toContain("attachShadow");
+    // The source's whole-line comments are for readers, not shipped (#10869).
+    expect(code).not.toMatch(/^[ \t]*\/\//m);
   });
 
   test("the tag lands before the last </body>, whatever its case", () => {
     const out = new TextDecoder().decode(
       withToolbar(new TextEncoder().encode("<BODY>x</BODY>"), "http://f.test"),
     );
-    expect(out).toBe(`<BODY>x<script src="http://f.test${TOOLBAR_PATH}" defer></script></BODY>`);
+    expect(out).toBe(`<BODY>x<script src="${TOOLBAR_ASSET_PATH}" data-forge="http://f.test" defer></script></BODY>`);
   });
 
   test("forge.json toolbar is validated", () => {
@@ -435,7 +461,7 @@ describe("the pill's keyboard and touch behaviour", () => {
         return el;
       };
       const doc = {
-        currentScript: { src: "https://forge.test/assets/t.js", dataset: data },
+        currentScript: { src: "/__forge/t.js", dataset: { forge: "https://forge.test", ...data } },
         createElement: patched,
         body: { appendChild: () => undefined },
         listeners: {} as Record<string, ((e: unknown) => void)[]>,
@@ -448,6 +474,24 @@ describe("the pill's keyboard and touch behaviour", () => {
       return { doc, pill, panel, root, lines: panel.children };
     }
 
+
+    test("on a preview with a repo the pull line links to the pull; otherwise it is plain text", () => {
+      const a = tree({ app: "notes", repo: "alice/notes", pull: "12" }).lines.find((l) => l.textContent === "preview \u00b7 #12")!;
+      expect(a.tag).toBe("a");
+      expect(a.href).toBe("https://forge.test/alice/notes/pulls/12");
+      expect(a.style.cssText).toContain("min-height:44px");
+      const prod = tree({ app: "notes", repo: "alice/notes", env: "production", pull: "12" });
+      expect(prod.lines.some((l) => l.textContent.startsWith("preview \u00b7"))).toBe(false);
+      expect(prod.lines.some((l) => l.textContent === "production")).toBe(true);
+      // An unknown environment with no pull draws no environment line at all.
+      const unknown = tree({ app: "notes", repo: "alice/notes", env: "staging" });
+      expect(unknown.lines.some((l) => l.textContent === "production" || l.textContent.startsWith("preview"))).toBe(false);
+      for (const bad of [{ pull: "12x" }, { pull: "../1" }, { pull: "1234567890" }, { repo: "" }]) {
+        const t = tree({ app: "notes", repo: "alice/notes", pull: "12", ...bad });
+        const l = t.lines.find((x) => x.textContent.startsWith("preview \u00b7"))!;
+        expect(l.tag === "a").toBe(false);
+      }
+    });
 
     test("the panel is a labelled region, opens with focus inside, and Escape returns focus to the pill", () => {
       const { doc, pill, panel } = tree({ app: "notes", env: "production" });
@@ -598,7 +642,7 @@ describe("the opt-out, from forge.json to the proxy", () => {
     // As created: the pill is on, so the page below has something to lose.
     expect((await settled()).state).toBe("ok");
     expect(runtime.envStatus(record, "production")?.toolbar).toBe(true);
-    expect(await page()).toContain(TOOLBAR_PATH);
+    expect(await page()).toContain(TOOLBAR_ASSET_PATH);
 
     const off = await commitToBranch(app, a.value, repo, {
       message: "Turn the pill off",
@@ -614,7 +658,7 @@ describe("the opt-out, from forge.json to the proxy", () => {
     expect(runtime.envStatus(record, "production")?.toolbar).toBe(false);
     const html = await page();
     expect(html).toContain("<");
-    expect(html).not.toContain(TOOLBAR_PATH);
+    expect(html).not.toContain(TOOLBAR_ASSET_PATH);
   }, 180_000);
 });
 
@@ -668,5 +712,31 @@ describe("readPage", () => {
     const bom = Uint8Array.from([0xef, 0xbb, 0xbf, ...enc.encode("x<p>")]);
     expect((await readPage(stream([bom]), 100, 1000)).whole).toBe(false);
     expect((await readPage(stream(["  \nplain"]), 100, 1000)).whole).toBe(false);
+  });
+});
+
+describe("pill link tap targets (#8462)", () => {
+  const js = toolbarJs;
+  test("the Comment link carries the 44 px floor of LS", () => {
+    expect(js).toContain('act.style.cssText = LS + ";margin-top:4px"');
+    expect(js).toContain("min-height:44px");
+  });
+  test("Home is appended only after its href is set", () => {
+    const set = js.indexOf("link.href = target.href");
+    const add = js.indexOf("panel.appendChild(link)");
+    expect(set).toBeGreaterThan(0);
+    expect(add).toBeGreaterThan(set);
+    expect(js).toContain("if (hasHome) panel.appendChild(link)");
+  });
+});
+
+describe("replies under a note in the button's list", () => {
+  test("each is set as text, the latest five are shown and the rest counted", async () => {
+    const { toolbarJs } = await import("../src/apps/toolbar.ts");
+    expect(toolbarJs).toContain("n.replies");
+    expect(toolbarJs).toContain("all.slice(-5)");
+    expect(toolbarJs).toContain("earlier on the forge");
+    expect(toolbarJs).toContain('rr.textContent = String(r.by) + " ("');
+    expect(toolbarJs).not.toMatch(/rr\.innerHTML/);
   });
 });

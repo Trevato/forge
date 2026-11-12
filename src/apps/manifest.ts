@@ -15,6 +15,9 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { parseService, type ServiceSpec } from "./service.ts";
 import type { DeclaredLimits } from "./contain.ts";
 import { isPublicAddress } from "./egress.ts";
+import { isLaunch, LAUNCHES, type Launch } from "../git/builds.ts";
+import { parseAdapter, type AdapterSpec } from "./adapter.ts";
+import { parseToolchain, type ToolchainPin } from "./toolchain.ts";
 
 export interface AppManifest {
   /** The command that serves on `$PORT`. Run through `sh -c`, `exec`-ed. */
@@ -40,6 +43,23 @@ export interface AppManifest {
    */
   readonly looks: readonly string[];
   /**
+   * `app.looksAsOwner`: the pages of `looks` whose phone and desktop
+   * pictures are taken signed in as the owner, even of a public app —
+   * the pages a stranger is shown nothing on (`looks/service.ts`). Unset
+   * or empty is none, exactly as before this field existed.
+   */
+  readonly looksAsOwner?: readonly string[] | undefined;
+  /** `app.pages`: paths the app serves as one self-contained page, offered to play and download. */
+  readonly pages?: readonly string[] | undefined;
+  /** `app.launch`: how this repository's demos open unless a pin says otherwise. */
+  readonly launch?: Launch | undefined;
+  /**
+   * `app.always_on: true`: production never sleeps, whatever the profit
+   * slider says (docs/PROFIT.md) — the one per-app exception. Previews
+   * still follow the forge. Unset or false follows the slider.
+   */
+  readonly alwaysOn?: true | undefined;
+  /**
    * Set when `app.kind` is `"service"`: declared TCP ports, always on,
    * a placement preference and synced volumes. `null` for an ordinary
    * HTTP app.
@@ -58,6 +78,13 @@ export interface AppManifest {
    * out of the app's HTML pages. Unset is on.
    */
   readonly toolbar?: boolean | undefined;
+  /**
+   * `adapter` (top level of `forge.json`): the app is pulled from on a
+   * schedule (`apps/adapter.ts`). Unset is not an adapter.
+   */
+  readonly adapter?: AdapterSpec | undefined;
+  /** `toolchain` (top level of `forge.json`): pinned toolchain versions. Unset is none. */
+  readonly toolchain?: ToolchainPin | undefined;
 }
 
 export type ManifestError =
@@ -142,6 +169,16 @@ export function parseManifest(
     );
   const looks = looksField(app);
   if (!looks.ok) return looks;
+  const looksAsOwner = looksAsOwnerField(app, looks.value);
+  if (!looksAsOwner.ok) return looksAsOwner;
+  const pages = pagesField(app);
+  if (!pages.ok) return pages;
+  const launch = app["launch"];
+  if (launch !== undefined && !isLaunch(launch))
+    return invalid(`forge.json: app.launch must be one of ${LAUNCHES.map((l) => `"${l}"`).join(", ")}`);
+  const alwaysOn = app["always_on"];
+  if (alwaysOn !== undefined && typeof alwaysOn !== "boolean")
+    return invalid("forge.json: app.always_on must be true or false");
   const egress = egressField(parsed.value);
   if (!egress.ok) return egress;
   const limits = limitsField(app, "app");
@@ -149,6 +186,17 @@ export function parseManifest(
   const toolbar = parsed.value["toolbar"];
   if (toolbar !== undefined && typeof toolbar !== "boolean")
     return invalid("forge.json: toolbar must be true or false");
+  const adapter = parseAdapter(parsed.value["adapter"]);
+  if (!adapter.ok) return invalid(adapter.error);
+  const toolchain = parseToolchain(parsed.value["toolchain"]);
+  if (!toolchain.ok) return invalid(toolchain.error);
+  // Only `egress` opens a host (docs/ADAPTERS.md): a source host it does
+  // not list would be refused by the proxy, so the block is invalid.
+  const unopened = adapter.value?.source?.hosts.find(
+    (h) => !(egress.value ?? []).some((e) => e.toLowerCase() === h),
+  );
+  if (unopened !== undefined)
+    return invalid(`forge.json: adapter.source.hosts names ${unopened}, which egress does not list`);
   const kind = app["kind"];
   if (kind !== undefined && kind !== "web" && kind !== "service")
     return invalid('forge.json: app.kind must be "web" or "service"');
@@ -174,10 +222,16 @@ export function parseManifest(
     ready: ready ?? READY_DEFAULT,
     tty: tty.value || null,
     looks: looks.value,
+    looksAsOwner: looksAsOwner.value,
+    pages: pages.value,
+    ...(launch === undefined ? {} : { launch }),
+    ...(alwaysOn === true ? { alwaysOn: true as const } : {}),
     service,
     egress: egress.value,
     limits: limits.value,
     toolbar: toolbar ?? true,
+    ...(adapter.value === undefined ? {} : { adapter: adapter.value }),
+    ...(toolchain.value === undefined ? {} : { toolchain: toolchain.value }),
   });
 }
 
@@ -231,6 +285,7 @@ const LIMIT_FIELDS = {
   memory: { key: "memoryMiB", min: 64, max: 65536, unit: "MiB" },
   cpus: { key: "cpus", min: 0.1, max: 64, unit: "cores" },
   disk: { key: "diskMiB", min: 64, max: 1048576, unit: "MiB" },
+  time: { key: "timeMs", min: 1, max: 3600, unit: "seconds a build step may take" },
 } as const;
 
 /** `app.limits` / `check.limits`: `{ memory, cpus, disk }`, each optional. */
@@ -242,18 +297,22 @@ function limitsField(
   if (value === undefined) return ok({});
   if (!isObject(value))
     return invalid(`forge.json: ${name}.limits must be an object`);
-  const out: { memoryMiB?: number; cpus?: number; diskMiB?: number } = {};
+  const out: { memoryMiB?: number; cpus?: number; diskMiB?: number; timeMs?: number } = {};
   for (const [field, raw] of Object.entries(value)) {
     const rule = LIMIT_FIELDS[field as keyof typeof LIMIT_FIELDS];
     if (rule === undefined)
       return invalid(
-        `forge.json: ${name}.limits takes memory, cpus and disk, not ${field}`,
+        `forge.json: ${name}.limits takes memory, cpus, disk and time, not ${field}`,
+      );
+    if (field === "time" && name === "check")
+      return invalid(
+        "forge.json: check.limits.time is not read: a check's time is the forge's own; app.limits.time lowers the build steps",
       );
     if (typeof raw !== "number" || !(raw >= rule.min && raw <= rule.max))
       return invalid(
         `forge.json: ${name}.limits.${field} must be a number of ${rule.unit}, ${rule.min}–${rule.max}`,
       );
-    out[rule.key] = raw;
+    out[rule.key] = rule.key === "timeMs" ? raw * 1000 : raw;
   }
   return ok(out);
 }
@@ -268,28 +327,75 @@ function limitsField(
 function looksField(app: Json): Result<readonly string[], ManifestError> {
   const value = app["looks"];
   if (value === undefined) return ok(["/"]);
+  const paths = pathList(value, "app.looks");
+  if (!paths.ok) return paths;
+  return ok(paths.value.length === 0 ? ["/"] : paths.value);
+}
+
+/**
+ * `app.looksAsOwner`: pages of `app.looks` to picture signed in as the
+ * owner. Held to the same rules, and each must be a page `app.looks`
+ * names — a page nobody pictures cannot be pictured as anyone.
+ */
+function looksAsOwnerField(
+  app: Json,
+  looks: readonly string[],
+): Result<readonly string[], ManifestError> {
+  const value = app["looksAsOwner"];
+  if (value === undefined) return ok([]);
+  const paths = pathList(value, "app.looksAsOwner");
+  if (!paths.ok) return paths;
+  const stray = paths.value.find((p) => !looks.includes(p));
+  if (stray !== undefined)
+    return invalid(
+      `forge.json: app.looksAsOwner names ${stray}, which app.looks does not`,
+    );
+  return ok(paths.value);
+}
+
+/** How many pages a manifest may offer to play. */
+export const PAGES_MAX = 20;
+
+function pagesField(app: Json): Result<readonly string[], ManifestError> {
+  const value = app["pages"];
+  if (value === undefined) return ok([]);
+  if (!Array.isArray(value) || value.length > PAGES_MAX)
+    return invalid(`forge.json: app.pages must be an array of at most ${PAGES_MAX} paths`);
+  const paths: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || !/^\/[A-Za-z0-9._-]*(\/[A-Za-z0-9._-]+)*$/.test(item) || item.length > 120 || item.includes(".."))
+      return invalid('forge.json: app.pages entries are paths like "/" or "/spicy": letters, digits, dot, dash, underscore');
+    if (!paths.includes(item)) paths.push(item);
+  }
+  return ok(paths);
+}
+
+/** A list of page paths, as `app.looks` and `app.looksAsOwner` take them. */
+function pathList(
+  value: unknown,
+  field: string,
+): Result<string[], ManifestError> {
   if (!Array.isArray(value))
-    return invalid("forge.json: app.looks must be an array of paths");
+    return invalid(`forge.json: ${field} must be an array of paths`);
   if (value.length > LOOKS_MAX)
-    return invalid(`forge.json: app.looks may name at most ${LOOKS_MAX} paths`);
-  if (value.length === 0) return ok(["/"]);
+    return invalid(`forge.json: ${field} may name at most ${LOOKS_MAX} paths`);
   const paths: string[] = [];
   for (const item of value) {
     if (typeof item !== "string")
-      return invalid("forge.json: app.looks entries must be strings");
+      return invalid(`forge.json: ${field} entries must be strings`);
     if (item.length > LOOK_PATH_MAX)
       return invalid(
-        `forge.json: app.looks entries must be at most ${LOOK_PATH_MAX} characters`,
+        `forge.json: ${field} entries must be at most ${LOOK_PATH_MAX} characters`,
       );
     if (!item.startsWith("/") || item.startsWith("//"))
       return invalid(
-        "forge.json: app.looks entries must be a path starting with / (no scheme, no host)",
+        `forge.json: ${field} entries must be a path starting with / (no scheme, no host)`,
       );
     if (item.includes(".."))
-      return invalid("forge.json: app.looks entries must not contain ..");
+      return invalid(`forge.json: ${field} entries must not contain ..`);
     if (/[\x00-\x1f\x7f]/.test(item))
       return invalid(
-        "forge.json: app.looks entries must not contain control characters",
+        `forge.json: ${field} entries must not contain control characters`,
       );
     paths.push(item);
   }
@@ -311,6 +417,12 @@ export interface CheckManifest {
   readonly fast: string | null;
   /** The full tier, run once when a pull lands. Defaults to `run`. */
   readonly full: string;
+  /**
+   * The verification after landing (#7786): the whole suite, run on the
+   * default branch on a schedule, never as a landing's requirement. `null`:
+   * nothing verifies main after it lands.
+   */
+  readonly verify: string | null;
   /** Seconds the check may take before it fails. */
   readonly timeout: number;
   /** Hosts its steps may reach besides the forge and the npm registry. */
@@ -320,7 +432,7 @@ export interface CheckManifest {
 }
 
 const CHECK_TIMEOUT_DEFAULT = 20 * 60;
-const CHECK_TIMEOUT_MAX = 2 * 60 * 60;
+export const CHECK_TIMEOUT_MAX = 2 * 60 * 60;
 
 /**
  * The check a commit declares, `undefined` when it declares none. Fails
@@ -347,6 +459,8 @@ export function parseCheck(
   if (!fast.ok) return fast;
   const full = command(check, "full", "check");
   if (!full.ok) return full;
+  const verify = command(check, "verify", "check");
+  if (!verify.ok) return verify;
   const pkg = packageJson === undefined ? undefined : readPackage(packageJson);
   if (pkg !== undefined && !pkg.ok) return pkg;
   const timeout = check["timeout"];
@@ -368,6 +482,7 @@ export function parseCheck(
     run: run.value,
     fast: fast.value || null,
     full: full.value || run.value,
+    verify: verify.value || null,
     egress: egress.value,
     limits: limits.value,
     install:
@@ -381,9 +496,9 @@ export function parseCheck(
 }
 
 /** The vendors a repository may name in `cloud.json`; a closed set. */
-export const CLOUD_VENDORS = ["cloudflare", "fly", "hetzner", "s3", "github", "vercel", "digitalocean", "azure"] as const;
+export const CLOUD_VENDORS = ["cloudflare", "fly", "hetzner", "s3", "github", "vercel", "digitalocean", "azure", "stripe"] as const;
 /** What a vendor may be used for; a closed set. */
-export const CLOUD_USES = ["compute", "storage", "backup", "dns", "cdn"] as const;
+export const CLOUD_USES = ["compute", "storage", "backup", "dns", "cdn", "payments"] as const;
 export type CloudVendor = (typeof CLOUD_VENDORS)[number];
 export type CloudUse = (typeof CLOUD_USES)[number];
 

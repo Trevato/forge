@@ -7,6 +7,7 @@
  * (`actions/asks_bulk.ts`). `/asks` was its own screen; it lands here now.
  */
 
+import { VERB_WORDS } from "../../actions/asks_words.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { WaitingFor } from "../../core/waiting_for.ts";
 import {
@@ -15,6 +16,7 @@ import {
   latestUndoable,
   ownAsksOperation,
   undoAsksBulk,
+  receiptOf,
   previewAsksBulk,
   type Skipped,
 } from "../../actions/asks_bulk.ts";
@@ -30,8 +32,9 @@ import type { User } from "../../core/users.ts";
 import { onYouAnswer, onYouRegion } from "./home.ts";
 import { liveRegionsJs } from "../client.ts";
 import { liveClientJs } from "../live.ts";
-import { notFoundPage, repoBase, signInFirst } from "../chrome.ts";
-import { backTo, field, readForm } from "../form.ts";
+import { notFoundPage, repoBase, signInFirst, NOT_YOURS_TO_DO, forbiddenPage } from "../chrome.ts";
+import { backTo, field, prefersJson, readForm } from "../form.ts";
+import { json } from "../../http/respond.ts";
 import { MAX_BODY } from "../../core/issues.ts";
 import { issueTitles } from "../../core/proposals.ts";
 import { actOnProposal, type ProposalVerb } from "../../actions/proposals.ts";
@@ -42,6 +45,7 @@ import {
   ownerFactRepoIds,
 } from "../../core/repos.ts";
 import { html, type Html } from "../html.ts";
+import { noteLine } from "./note.ts";
 import { page, redirect } from "../layout.ts";
 import { btn, card, icon, row } from "../ui.ts";
 import {
@@ -160,7 +164,7 @@ const clause = (
   which?: string,
 ): Html =>
   html`<p>
-    ${weight(c, which)}${d === undefined ? null : html`${d.short.charAt(0).toUpperCase()}${d.short.slice(1)}. `}<span class="muted"
+    ${weight(c, which)}${d === undefined ? null : html`${d.short.charAt(0).toUpperCase()}${d.short.slice(1)}${d.note === undefined ? null : html`: \u201c${noteLine(d.note)}\u201d`}. `}<span class="muted"
       >If nobody acts, ${ASK_WORDS[kind].ifNothing}.</span
     >
   </p>`;
@@ -209,9 +213,9 @@ function proposalBody(ctx: Ctx, d: Decision): Html | null {
 function decisionCard(ctx: Ctx, d: Decision, picked: ReadonlySet<string>): Html {
   const base = repoBase(d.repo);
   const title = d.pull
-    ? html`<a href="${changeHref(base, d.pull.number)}">${d.pull.title}</a>`
+    ? html`<a href="${changeHref(base, d.pull.number)}" data-nav>${d.pull.title}</a>`
     : d.issue
-      ? html`<a href="${base}/issues/${d.issue.number}">${d.issue.title}</a>`
+      ? html`<a href="${base}/issues/${d.issue.number}" data-nav>${d.issue.title}</a>`
       : d.proposal
         ? html`${d.proposal.title}`
         : html`<a href="${base}/settings/autonomy">Paused</a>`;
@@ -242,11 +246,60 @@ const rowHead = (kind: Decision["kind"], n: number): string => {
   return `${line.charAt(0).toUpperCase()}${line.slice(1)}`;
 };
 
+/** The flash's own query keys: dropped from the page a decision returns to, so Undo does not carry them. */
+const FLASH_KEYS = ["muted", "listened"] as const;
+
+/** This page as a path and query without the flash, for a form's `back`. */
+function here(ctx: Ctx): string {
+  const q = new URLSearchParams(ctx.url.searchParams);
+  for (const k of FLASH_KEYS) q.delete(k);
+  const rest = q.toString();
+  return ctx.url.pathname === "/asks" && rest !== "" ? `/asks?${rest}` : "/asks";
+}
+
+/** A `back` worth following after a mute: `/asks` or `/asks?…`, nothing else. */
+function asksBack(form: Parameters<typeof backTo>[0]): string {
+  const back = backTo(form, "/asks");
+  return back === "/asks" || (back.startsWith("/asks?") && !back.includes("#")) ? back : "/asks";
+}
+
+/** The same page with one flash key set, the others cleared. */
+function withFlash(back: string, key: (typeof FLASH_KEYS)[number], repoId: string): string {
+  const [path = "/asks", query = ""] = back.split("?");
+  const q = new URLSearchParams(query);
+  for (const k of FLASH_KEYS) q.delete(k);
+  q.set(key, repoId);
+  return `${path}?${q.toString()}`;
+}
+
+/** "Muted owner/name" or "Listening to owner/name again", with Undo, when the page was reached from a mute or listen. */
+function muteFlash(ctx: Ctx, user: NonNullable<Ctx["auth"]["user"]>): Html | null {
+  for (const key of FLASH_KEYS) {
+    const id = ctx.url.searchParams.get(key);
+    if (id === null || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) continue;
+    const repo = getRepoById(ctx.app.db, id);
+    if (!repo || !canRead(ctx.app.db, repo, user)) continue;
+    const name = `${repo.ownerName}/${repo.name}`;
+    const muted = key === "muted";
+    return html`<div class="toast" data-tone="success" role="status">
+      ${icon("check")}
+      <div class="toast-body">${muted ? `Muted ${name}` : `Listening to ${name} again`}</div>
+      <form class="bar" method="post" action="${muted ? "/asks/listen" : "/asks/mute"}">
+        <input type="hidden" name="repo" value="${repo.id}" />
+        <input type="hidden" name="back" value="${here(ctx)}" />
+        ${btn("Undo", { size: "sm" })}
+      </form>
+    </div>`;
+  }
+  return null;
+}
+
 /** A row and, under it, the chip that mutes its repository (`asksMute`). */
 function mutableRow(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Html {
   return html`${rowCard(ctx, r, picked)}
     <form class="bar" method="post" action="/asks/mute">
       <input type="hidden" name="repo" value="${r.repo.id}" />
+      <input type="hidden" name="back" value="${here(ctx)}" />
       <button
         type="submit"
         class="btn" data-variant="ghost" data-size="sm"
@@ -269,7 +322,7 @@ function rowCard(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Ht
       const box = pick(d, picked);
       return row({
         ...(box === null ? {} : { lead: box }),
-        title: html`<a href="${href}">${d.pull?.title ?? d.issue?.title ?? ""}</a>`,
+        title: html`<a href="${href}" data-nav>${d.pull?.title ?? d.issue?.title ?? ""}</a>`,
         meta: acts(ctx, d),
       });
   });
@@ -300,14 +353,13 @@ function rowCard(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Ht
   );
 }
 
-const forgeCard = (d: Degraded): Html =>
-  card(html`<p><a href="${d.href}">${needLine(d)}</a></p>`, {
-    tone: "danger",
-    head: html`${icon("shield")}
-      <h2>The forge</h2>
-      <span class="spacer"></span>
-      ${btn("Health", { href: "/api/v1/health", size: "sm" })}`,
-  });
+/** The forge is degraded: an alert line, marked in the danger tone, under its head; Health on its own row so it never wraps into the sentence. */
+export const forgeCard = (d: Degraded): Html =>
+  html`<section class="stack">
+    <h2>The forge</h2>
+    <p role="alert"><span class="dot" data-tone="danger" aria-hidden="true"></span> <a href="${d.href}">${needLine(d)}</a></p>
+    <div class="bar">${btn("Health", { href: "/api/v1/health", size: "sm" })}</div>
+  </section>`;
 
 /** What sits above the asks after a bulk step: a preview to confirm, a receipt, or why nothing was done. */
 export interface AsksTop {
@@ -334,7 +386,7 @@ function renderAsks(ctx: Ctx, top: AsksTop | undefined): Response {
   const response = page({
     ctx,
     title: "Asks",
-    body: html`<main class="stack"><h1 class="sr-only">Asks</h1>${onYouRegion(ctx, user, undefined, section.body)}<p class="small muted"><a href="/review">Review: one row per ask</a></p></main>`,
+    body: html`<main class="stack"><h1 class="sr-only">Asks</h1>${muteFlash(ctx, user)}${onYouRegion(ctx, user, undefined, section.body)}<p class="small muted"><a href="/review">Review: one row per ask</a></p></main>`,
     scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${section.scriptJs}`,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
@@ -424,7 +476,7 @@ export function needsYouSection(
     last === undefined
       ? null
       : html`<form class="bar" method="post" action="/asks/bulk/${last.id}/undo" role="status">
-          <span class="small">${VERB_WORDS[last.verb] ?? last.verb}: ${last.rows.filter((r) => r.outcome === "ok").length} done</span>
+          <span class="small">${receiptOf(last)}</span>
           ${btn("Undo", { size: "sm" })}
           <span class="muted small">kept for a day</span>
         </form>`;
@@ -494,15 +546,6 @@ async function asksScreen(ctx: Ctx, top: AsksTop): Promise<Response> {
 }
 
 // ---- many at once: select, preview, do it, undo — all on this screen ----
-
-const VERB_WORDS: Readonly<Record<string, string>> = {
-  dismiss: "Dismiss",
-  decline: "Decline",
-  mute: "Mute repository",
-  ship: "Ship",
-  close: "Close",
-  replan: "Hand back to the planner",
-};
 
 /** What the asks below can be given in one move. */
 const ASK_VERBS = ["decline", "ship", "close", "replan", "mute"] as const;
@@ -583,19 +626,15 @@ const bulkCard = (head: string, body: Html, foot: Html | null): Html =>
   });
 
 const nothingDone = (message: string): AsksTop => ({
-  banner: card(html`<p>Nothing done: ${message}.</p>`, {
-    id: "asks-bulk-result",
-    tone: "danger",
-  }),
+  banner: html`<p id="asks-bulk-result" role="alert">Nothing done: ${message}.</p>`,
 });
 
 /** The receipt of a bulk action on asks, for the person who acted; nothing for anyone else. */
 function receiptTop(ctx: Ctx, opId: string): AsksTop | undefined {
   const op = ownAsksOperation(ctx.app, ctx.auth.user, opId);
   if (op === undefined) return undefined;
-  const verb = VERB_WORDS[op.verb] ?? op.verb;
   const done = op.rows.filter((r) => r.outcome === "ok").length;
-  const head = op.undoOf === null ? `${verb}: ${done} done` : `${verb} undone: ${done}`;
+  const head = receiptOf(op);
   const undoable = op.reversible && op.undoOf === null && op.undoneBy === null && done > 0;
   return {
     banner: bulkCard(
@@ -710,9 +749,11 @@ export function asksProposal(verb: ProposalVerb) {
       return done.error.code === "not_found"
         ? notFoundPage(ctx)
         : done.error.code === "forbidden" || done.error.code === "unauthorized"
-          ? new Response("forbidden", { status: 403 })
-          : await asksScreen(ctx, nothingDone(done.error.message));
-    return redirect(backTo(form, "/asks"));
+          ? forbiddenPage(ctx, NOT_YOURS_TO_DO)
+          : prefersJson(ctx)
+            ? json({ ok: false, error: done.error.message }, 422)
+            : await asksScreen(ctx, nothingDone(done.error.message));
+    return prefersJson(ctx) ? json({ ok: true, flash: "Done." }) : redirect(backTo(form, "/asks"));
   };
 }
 
@@ -739,7 +780,9 @@ export async function asksListen(ctx: Ctx): Promise<Response> {
     .filter((r): r is string => typeof r === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(r))
     .slice(0, BULK_MAX);
   removeMutes(ctx.app.db, ctx.auth.user.id, repos.map((r) => `repo:${r}`));
-  return redirect("/asks");
+  const only = repos.length === 1 ? repos[0] : undefined;
+  const back = asksBack(form);
+  return redirect(only === undefined ? back : withFlash(back, "listened", only));
 }
 
 /** POST /asks/mute — the viewer mutes one repository they can read: its asks leave their home, inbox and phone. */
@@ -753,5 +796,5 @@ export async function asksMute(ctx: Ctx): Promise<Response> {
   const repo = getRepoById(ctx.app.db, id);
   if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFoundPage(ctx);
   muteRepo(ctx.app.db, ctx.auth.user.id, repo.id);
-  return redirect("/asks");
+  return redirect(withFlash(asksBack(form), "muted", repo.id));
 }

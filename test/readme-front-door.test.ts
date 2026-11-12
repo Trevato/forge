@@ -6,13 +6,14 @@ import { join } from "node:path";
 // an index into docs/. Feature prose goes in the doc that owns the topic.
 const root = join(import.meta.dir, "..");
 const readme = readFileSync(join(root, "README.md"), "utf8");
+const reference = readFileSync(join(root, "docs/REFERENCE.md"), "utf8");
 const INDEX = "## Where the rest is";
 
-test("README.md stays under 60 KB", () => {
+test("README.md stays short enough to read: under 4 KB", () => {
   const size = statSync(join(root, "README.md")).size;
-  if (size >= 60 * 1024)
+  if (size >= 4 * 1024)
     throw new Error(
-      `README.md is ${size} bytes, over 60 KB. Put feature prose in the docs/ file that owns the topic (README's "${INDEX}" lists them), not in README.md.`,
+      `README.md is ${size} bytes, over 4 KB. It's for people arriving: put the detail in docs/REFERENCE.md or the docs/ file that owns the topic.`,
     );
 });
 
@@ -23,11 +24,11 @@ test("every docs/ link in README.md resolves", () => {
   expect(broken).toEqual([]);
 });
 
-test(`every top-level docs/*.md is linked from "${INDEX}"`, () => {
-  const at = readme.indexOf(`\n${INDEX}\n`);
+test(`every top-level docs/*.md is linked from REFERENCE.md "${INDEX}"`, () => {
+  const at = reference.indexOf(`\n${INDEX}\n`);
   expect(at).toBeGreaterThan(-1);
-  const index = readme.slice(at).split(/\n## /)[1]!;
+  const index = reference.slice(at).split(/\n## /)[1]!;
   const docs = readdirSync(join(root, "docs")).filter((f) => f.endsWith(".md"));
-  const unlisted = docs.filter((f) => !index.includes(`](docs/${f})`));
+  const unlisted = docs.filter((f) => !index.includes(`](${f})`));
   expect(unlisted).toEqual([]);
 });

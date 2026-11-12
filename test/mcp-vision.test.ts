@@ -70,6 +70,7 @@ test("this repository's VISION.md is parsed", async () => {
   expect(v.rules.length).toBe(4);
   expect(v.rules[2]).toStartWith("Done means reachable");
   expect(v.direction).toBe("ship the feed");
+  expect(v.directionStall).toBeNull();
   expect(v.updatedAt).toMatch(/^\d{4}-\d\d-\d\dT/);
 });
 

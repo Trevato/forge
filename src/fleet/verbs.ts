@@ -29,6 +29,7 @@ import { moveLimb, parseSeat, type Seating } from "../core/limb_seats.ts";
 import { getHold } from "../core/holds.ts";
 import { recordInteraction, removeDismissals, removeMutes } from "../core/interactions.ts";
 import { getPull } from "../core/pulls.ts";
+import { teamHoldRefusal } from "../core/teams_words.ts";
 import { askItemsOf } from "../web/studio/asks.ts";
 import type { FleetValue } from "../core/fleet_ops.ts";
 import { findPillar, isStructural, type Pillars } from "../core/pillars.ts";
@@ -120,6 +121,8 @@ const WORDS: Record<string, string> = {
   assignee_cannot_read: "the assignee cannot read this repository",
   agent_not_on_crew: AGENT_NOT_ON_CREW,
   already_merged: "a merged pull stays closed",
+  reason_required: "a bug closed without a fix says why: add a reason",
+  invalid_note: "a reason is one sentence of at most 300 characters",
   finished: "already finished",
   not_agent: "only an agent run is queued again",
   not_finished: "only a cancelled or failed run is queued again",
@@ -370,12 +373,12 @@ export const VERBS: Record<string, Verb> = {
     async write(app, actor, t, after, value) {
       if (!t.issue || (after !== "open" && after !== "closed"))
         return words("not_found");
-      const closed = done(setIssueState(app, actor, t.repo, t.issue, after));
-      // Said after the close, so a refused close leaves no comment behind.
-      if (closed === undefined && after === "closed" && typeof value === "string" && value !== "") {
-        const said = addComment(app, actor, t.repo, t.issue, `Closed: ${value}`);
-        if (!said.ok) return words(String(said.error));
-      }
+      // The reason rides the close, so it is said with it or not at all,
+      // and a bug that needs one is refused without it.
+      const note = after === "closed" && typeof value === "string" ? value : "";
+      const closed = done(
+        setIssueState(app, actor, t.repo, t.issue, after, note === "" ? {} : { note }),
+      );
       return closed;
     },
   },
@@ -436,6 +439,8 @@ export const VERBS: Record<string, Verb> = {
         bringUpToDate(app, t.repo, pull, merged.error.files);
         return `it conflicts with main (${merged.error.files.join(", ")}); its agent brings it up to date`;
       }
+      if (typeof merged.error !== "string" && merged.error.kind === "team_review_required")
+        return teamHoldRefusal(merged.error.teams);
       return typeof merged.error === "string" ? words(merged.error) : merged.error.kind;
     },
   },

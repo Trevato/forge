@@ -4,7 +4,7 @@
  * Nobody else is offered the screen.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,14 +13,16 @@ import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { listEgressGrants } from "../src/core/egress_grants.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
-import { startEgress } from "../src/apps/egress.ts";
+import { meterEgress, NPM_REGISTRY, recordEgress, resetEgressTotals, startEgress } from "../src/apps/egress.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
-import { settleApp, settleUntil } from "./helpers/tui.ts";
+import { settleApp, settlePalette, settleUntil } from "./helpers/tui.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
+// Every wait inside settles for up to 20s; bun's 5s test default would cut a loaded check short.
+setDefaultTimeout(60_000);
 
 const ARM = "100.89.95.68:8101";
 
@@ -51,6 +53,10 @@ describe("egress grants in the terminal", () => {
     });
     if (!committed.ok) throw new Error(JSON.stringify(committed.error));
   }, 60_000);
+  // A grant left by one test must not decide the next.
+  beforeEach(() => {
+    app.db.query("DELETE FROM egress_grant WHERE repo_id = ?1").run(repo.id);
+  });
   afterAll(async () => {
     app.close();
     await rm(dir, { recursive: true, force: true });
@@ -72,8 +78,13 @@ describe("egress grants in the terminal", () => {
       await settleApp(tui);
       await press("/");
       for (const ch of "arm") await press(ch);
-      await press("enter", "enter");
+      // The palette searches twice, at 120ms and live at 400ms, and redraws the list each time;
+      // enter before the second can open a row the redraw moves.
+      await settlePalette(tui);
       await settleUntil(tui, "ada/arm");
+      await press("enter", "enter");
+      // "ada/arm" is on screen from the palette and the dashboard before the repository opens; its one-line file is the sign it has.
+      await settleUntil(tui, "1 line");
       await press("I");
       await settleUntil(tui, "clone (http)");
     };
@@ -87,9 +98,15 @@ describe("egress grants in the terminal", () => {
       await h.press("e");
       await settleUntil(h.tui, "asked for, not granted");
       await h.press("g");
+      await settleUntil(h.tui, "reach");
+      expect(grants()).toEqual([]);
+      await h.press("y");
       await settleUntil(h.tui, "granted by ada");
       expect(grants()).toEqual([ARM]);
       await h.press("x");
+      await settleUntil(h.tui, "Revoke");
+      expect(grants()).toEqual([ARM]);
+      await h.press("y");
       await settleUntil(h.tui, "asked for, not granted");
       expect(grants()).toEqual([]);
     } finally {
@@ -126,6 +143,10 @@ describe("egress grants in the terminal", () => {
     });
     client.write(`CONNECT 127.0.0.1:${camera.port} HTTP/1.1\r\n\r\n`);
     while (!reply.includes("200")) await Bun.sleep(10);
+    resetEgressTotals();
+    const meter = meterEgress("check:r", repo.id);
+    recordEgress("check:r", NPM_REGISTRY, 3_000_000, 0);
+    meter.stop();
     const admin = boot(ada);
     const other = boot(bob);
     try {
@@ -133,11 +154,16 @@ describe("egress grants in the terminal", () => {
       await admin.press("c");
       await settleUntil(admin.tui, "app:cam/main");
       expect(admin.text()).toContain(`127.0.0.1:${camera.port} · 1 open`);
+      // The registry's hour, as the Capacity page and MCP `capacity` read it (#7546).
+      // …and the repository it sent most to, from the same `egressHour` (#8382).
+      expect(admin.text()).toContain("The npm registry sent 2.9 MiB over the last hour, most to ada/arm (2.9 MiB).");
       await other.openAbout();
       await other.press("c");
       expect(other.text()).not.toContain("Egress connections");
       expect(other.text()).not.toContain("app:cam/main");
+      expect(other.text()).not.toContain("npm registry");
     } finally {
+      resetEgressTotals();
       admin.tui.stop();
       other.tui.stop();
       client.terminate();

@@ -7,18 +7,28 @@
  * The repositories are assisted, where nothing parks a stall when its run
  * ends, so the tick is what frees it.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
-import { openIssue } from "../src/actions/issues.ts";
-import { createRepo, updateRepoSettings } from "../src/actions/repos.ts";
-import { getAgentByName, setCrewRole } from "../src/core/agents.ts";
+import { openIssue, setIssueState } from "../src/actions/issues.ts";
+import { mergePull, openPull } from "../src/actions/pulls.ts";
+import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/repos.ts";
+import { getAgentByName } from "../src/core/agents.ts";
 import { getIssueById, listComments, type Issue } from "../src/core/issues.ts";
 import { getRepoById, listAutonomousRepos, type Repo } from "../src/core/repos.ts";
-import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
+import {
+  answerCancelled,
+  cancelRun,
+  claimRun,
+  createRun,
+  finishRun,
+  listRuns,
+  PULL_STOPPED,
+} from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { autonomyTick, driveRepo, ensureDirectionIssue } from "../src/crew/autonomy.ts";
 import { queueAgentRun } from "../src/crew/dispatch.ts";
@@ -46,7 +56,7 @@ async function crewed(builders: readonly string[]): Promise<Repo> {
     }
     expect(addToCrew(app, alice, created.value, name).ok).toBe(true);
   }
-  setCrewRole(app.db, created.value.id, getUserByName(app.db, "atlas")!.id, "planner");
+  seatAs(app.db, created.value.id, getUserByName(app.db, "atlas")!.id, "planner");
   const set = await updateRepoSettings(app, alice, created.value, {
     autonomy: "assisted",
     autonomyDirection: "Keep the engine small.",
@@ -161,6 +171,8 @@ describe("a stall", () => {
     expect(leftWithoutPull({ state: "ok", summary: "no changes pushed" })).toBe(true);
     expect(leftWithoutPull({ state: "ok", summary: "opened pull #4" })).toBe(false);
     expect(leftWithoutPull({ state: "running", summary: "" })).toBe(false);
+    expect(leftWithoutPull({ state: "ok", summary: PULL_STOPPED[1] })).toBe(false);
+    expect(leftWithoutPull({ state: "failed", summary: PULL_STOPPED[1] })).toBe(false);
     expect(stallReason("mason", "declined:\n\ntoo  big")).toBe(`@mason's ${NO_PULL}: declined: too big`);
   });
 });
@@ -249,5 +261,70 @@ describe("a stalled issue frees itself", () => {
     const later = new Date(Date.now() + SHUN_MS + 60_000);
     expect(await driveRepo(app, getRepoById(app.db, repo.id)!, later)).toBe("picked");
     expect(getIssueById(app.db, netcode.id)!.assigneeId).toBe(mason.id);
+  });
+});
+
+describe("a run its pull landed under (#8481)", () => {
+  /** The #8464 shape: an issue whose unticked box keeps it open, a pull that closes it, merged while the issue's run is live. */
+  async function landedUnderItsRun(summary: string): Promise<{ repo: Repo; work: Issue; runId: string }> {
+    const repo = await crewed(["mason"]);
+    const mason = getUserByName(app.db, "mason")!;
+    const opened = openIssue(app, alice, repo, { title: "Netcode", body: "Done:\n- [ ] the protocol\n" });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const work = opened.value;
+    const branch = `mason/${work.number}-netcode`;
+    for (const [at, path] of [[undefined, "README.md"], [branch, "NET.md"]] as const) {
+      const made = await commitToBranch(app, alice, repo, {
+        ...(at === undefined ? {} : { branch: at }),
+        message: path,
+        files: [{ path, content: `${path}\n` }],
+      });
+      if (!made.ok) throw new Error(JSON.stringify(made.error));
+    }
+    const run = createRun(app.db, { repoId: repo.id, kind: "agent", issueId: work.id, actorId: mason.id, branch, reason: "assigned" });
+    claimRun(app.db, run.id);
+    app.db.query("UPDATE issue SET assignee_id = ?2 WHERE id = ?1").run(work.id, mason.id);
+    const pull = await openPull(app, alice, repo, {
+      title: "Netcode",
+      body: `Closes #${work.number}`,
+      baseBranch: repo.defaultBranch,
+      headBranch: branch,
+    });
+    if (!pull.ok) throw new Error(String(pull.error));
+    if (summary === PULL_STOPPED[1]) {
+      const merged = await mergePull(app, alice, getRepoById(app.db, repo.id)!, pull.value, "squash");
+      if (!merged.ok) throw new Error(String(merged.error));
+    } else {
+      const closed = setIssueState(app, alice, getRepoById(app.db, repo.id)!, getIssueById(app.db, pull.value.id)!, "closed");
+      if (!closed.ok) throw new Error(String(closed.error));
+    }
+    // What the crew's dispatch does to the live run on the pull's branch.
+    expect(cancelRun(app.db, run.id, summary)?.summary).toBe(summary);
+    // Its run was a while ago, so the tick's note would be strictly newer.
+    const then = new Date(Date.now() - 5_000).toISOString();
+    app.db.query("UPDATE run SET created_at = ?2, finished_at = ?2 WHERE id = ?1").run(run.id, then);
+    return { repo, work, runId: run.id };
+  }
+
+  test("is no stall: the tick parks nothing and writes no note", async () => {
+    const { repo, work, runId } = await landedUnderItsRun(PULL_STOPPED[1]);
+    // The unticked box kept it open after the landing.
+    expect(getIssueById(app.db, work.id)!.state).toBe("open");
+    expect(heldWords(heldNow(app, getRepoById(app.db, repo.id)!))).not.toContain("stalled");
+    // An answer reached after the landing does not turn it into a decline.
+    expect(answerCancelled(app.db, runId, { state: "failed", summary: "declined: nothing left" })).toBeUndefined();
+    expect(await tick(repo)).toContain("unstuck=0");
+    plannerDone(repo);
+    expect(await tick(repo)).toContain("unstuck=0");
+    expect(listComments(app.db, work.id).some((c) => c.body.startsWith(PARK_NOTE))).toBe(false);
+    expect(parkedTwice(app.db, [getRepoById(app.db, repo.id)!]).some((p) => p.issueId === work.id)).toBe(false);
+  });
+
+  test("one its pull closed under, unlanded, is still parked", async () => {
+    const { repo, work } = await landedUnderItsRun(PULL_STOPPED[0]);
+    expect(heldWords(heldNow(app, getRepoById(app.db, repo.id)!))).toContain("stalled=1");
+    expect(await tick(repo)).toContain("unstuck=1");
+    const note = listComments(app.db, work.id).at(-1)!;
+    expect(note.body).toContain(`@mason's ${NO_PULL}: ${PULL_STOPPED[0]}`);
   });
 });

@@ -8,6 +8,7 @@ import { openapi } from "../src/contract/openapi.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { tokenFor } from "./helpers/tokens.ts";
+import { adminOpenapi } from "./helpers/openapi-doc.ts";
 
 let dataDir: string;
 let app: App;
@@ -47,13 +48,13 @@ const refusal = async (res: Response) => ((await res.json()) as { error: string 
 
 /** The codes the document names for a row. */
 function codes(path: string, method: string): string[] {
-  const doc = openapi("http://x", "1") as any;
+  const doc = openapi("http://x", "1", "admin") as any;
   const text: string = doc.paths[path][method].responses.default.description;
   return [...text.matchAll(/`(\w+)` \(/g)].map((m) => m[1]!);
 }
 
 test("each path and method is in the served document", async () => {
-  const res = await fetch(`${servers.url}/contract/openapi.json`);
+  const res = await adminOpenapi(app, servers.url, "/contract/openapi.json");
   const paths = ((await res.json()) as any).paths;
   for (const [method, path] of WANT) expect(paths[path]?.[method]).toBeDefined();
   expect(paths["/api/v1/openapi.json"].get.responses["308"]).toBeDefined();

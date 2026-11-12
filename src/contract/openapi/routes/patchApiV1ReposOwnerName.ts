@@ -7,6 +7,7 @@ export const route: Route = {
   summary:
     "Change a repository's settings (an admin's); `showProvenance` shows or hides where a migrated one came from (a person's, never an agent's)",
   auth: true,
+  role: "member",
   body: {
     description: "string",
     visibility: "string",
@@ -19,12 +20,10 @@ export const route: Route = {
     crewOutsiders: "boolean",
     decisionsBy: "string",
     plansNeedNod: "boolean",
-    flowOnly: "boolean",
   },
   refusals: {
     bad_archived: "422: archived is true or false",
     bad_decisions_by: "422: decisionsBy is me, decider or decider_tell",
-    bad_flow_only: "422: flowOnly is true or false",
     bad_plans_need_nod: "422: plansNeedNod is true or false",
     bad_show_provenance: "422: showProvenance is true or false",
     no_provenance: `422: ${FAMILY_WORDS.no_provenance}`,

@@ -81,7 +81,7 @@ describe("API errors are distinguishable and self-describing", () => {
   // with thirty-three kilobytes of the not-found *page* — wrong shape, wrong
   // content-type, to a caller whose `accept` said `application/json`.
   test("/api and /api/v1 are JSON 404s, not the studio's HTML page", async () => {
-    for (const path of ["/api", "/api/v1", "/api/v2/anything"]) {
+    for (const path of ["/api", "/api/v2", "/api/v2/anything"]) {
       const res = await fetch(`${base}${path}`, {
         headers: { accept: "application/json" },
       });
@@ -94,8 +94,8 @@ describe("API errors are distinguishable and self-describing", () => {
 
   // Content negotiation never rescues it either: a bare curl with no
   // `accept` header at all must still get JSON under `/api/`.
-  test("/api/v1 is JSON even with no accept header", async () => {
-    const res = await fetch(`${base}/api/v1`);
+  test("/api/v2 is JSON even with no accept header", async () => {
+    const res = await fetch(`${base}/api/v2`);
     expect(res.status).toBe(404);
     expect(res.headers.get("content-type")).toStartWith("application/json");
   });
@@ -120,5 +120,19 @@ describe("API errors are distinguishable and self-describing", () => {
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(res.headers.get("referrer-policy")).toBe("same-origin");
     expect(res.headers.get("content-security-policy")).toBeTruthy();
+  });
+
+  test("a known API path under the wrong method is 405 with Allow, an unknown one stays no_route", async () => {
+    const res = await fetch(`${base}/api/v1/repos`, { method: "PUT" });
+    expect(res.status).toBe(405);
+    expect(res.headers.get("allow")).toBe("GET, HEAD, POST");
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("method_not_allowed");
+    expect(body.message).toBe("PUT is not taken here; use GET, POST");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toBeTruthy();
+    const nope = await err("/api/v1/nope", { method: "PUT" });
+    expect(nope.status).toBe(404);
+    expect(nope.error).toBe("no_route");
   });
 });

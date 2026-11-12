@@ -15,6 +15,9 @@ import type { Command } from "../app/palette.ts";
 import type { Session } from "../session.ts";
 import { confirmScreen, pickerScreen, promptScreen } from "./common.ts";
 
+/** "2 replies", "1 reply": what a note's list line says of the answers under it. */
+export const repliesWord = (n: number): string => `${n} repl${n === 1 ? "y" : "ies"}`;
+
 export function noteCommands(f: Session, ctx: Ctx, parent: () => Screen, repo: Repo | undefined): Command[] {
   const user = f.user;
   if (repo === undefined || user === undefined || !canRead(f.app.db, repo, user)) return [];
@@ -70,11 +73,11 @@ export function noteCommands(f: Session, ctx: Ctx, parent: () => Screen, repo: R
             label: name,
             hint: "enter sends",
             onSubmit: (said) =>
-              (async () => {
-                const sent = await sendNote(f.app, record, repo, "production", undefined, sender, { text: said, page: "", viewport: "unknown" }, `ssh:${user.id}`);
-                if (sent.ok) ctx.toast("Sent. The builders will see it.", "success");
+              ctx.track((async () => {
+                const sent = await sendNote(f.app, record, repo, "production", undefined, sender, { text: said, page: "", viewport: "unknown" }, `ssh:${user.id}`, user);
+                if (sent.ok) ctx.toast(`Sent as #${sent.value.number}, ${name}/issues/${sent.value.number}. The builders will see it.`, "success");
                 else ctx.toast(sent.error.message, "danger");
-              })(),
+              })()),
           }),
         ),
     },
@@ -83,25 +86,31 @@ export function noteCommands(f: Session, ctx: Ctx, parent: () => Screen, repo: R
       title: `${name} — Notes from the app`,
       hint: admin ? "every sender's; hide or ban" : "yours, with their status",
       run: () => {
-        const notes = notesFor(f.app, record, repo, undefined, sender, admin);
+        const notes = notesFor(f.app, record, repo, undefined, sender, admin, user);
         if (notes.length === 0) return ctx.toast("No notes yet.");
         ctx.push(
           pickerScreen(ctx, parent(), {
             title: "Notes from the app",
-            items: notes.map((n) => ({ id: n.id, label: n.text, hint: `${n.status.label} — ${n.by}` })),
+            items: notes.map((n) => ({ id: n.id, label: `#${n.number} ${n.text}${n.replies.length > 0 ? ` (${repliesWord(n.replies.length)})` : ""}`, hint: `${n.status.label} — ${n.by}` })),
             onPick: ([id]) => {
               const picked = notes.find((n) => n.id === id);
               if (picked === undefined) return;
-              if (!admin) return ctx.toast(`${picked.status.label}.`);
+              const said = picked.replies.map((r) => `${r.by} ${r.at.slice(0, 16).replace("T", " ")}: ${r.text}`);
+              if (!admin && said.length > 0)
+                return ctx.push(confirmScreen(ctx, parent(), { title: `#${picked.number}: ${picked.status.label}`, body: said, actions: [{ label: "Close", variant: "ghost" }], onChoose: () => {} }));
+              if (!admin) return ctx.toast(`#${picked.number}: ${picked.status.label}.`);
               ctx.push(
                 confirmScreen(ctx, parent(), {
                   title: "Moderate this note",
-                  body: [`${picked.by}: ${picked.text}`, picked.status.label],
+                  body: [`#${picked.number} ${picked.by}: ${picked.text}`, picked.status.label, ...said],
                   actions: [{ label: "Keep", variant: "ghost" }, { label: "Hide" }, { label: "Ban sender", variant: "danger" }],
                   onChoose: (i) => {
                     if (i < 1) return;
-                    void moderateNote(f.app, record, repo, user, picked.id, i === 1 ? "hide" : "ban").then((done) =>
-                      ctx.toast(done.ok ? (i === 1 ? "Hidden." : "Sender banned.") : "That could not be done.", done.ok ? "success" : "danger"),
+                    // Tracked, so the screen is not settled until the note is moderated.
+                    void ctx.track(
+                      moderateNote(f.app, record, repo, user, picked.id, i === 1 ? "hide" : "ban").then((done) =>
+                        ctx.toast(done.ok ? (i === 1 ? "Hidden." : "Sender banned.") : "That could not be done.", done.ok ? "success" : "danger"),
+                      ),
                     );
                   },
                 }),

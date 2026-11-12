@@ -15,8 +15,6 @@
 import { listCrew } from "../../actions/crew.ts";
 import type { Agent } from "../../core/agents.ts";
 import { assignIssue } from "../../actions/issues.ts";
-import { flowOnlyQueued } from "../../crew/flow_only.ts";
-import type { Database } from "bun:sqlite";
 import type { Issue } from "../../core/issues.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
 import { getUserById, listPeople, type User } from "../../core/users.ts";
@@ -56,16 +54,6 @@ export function assignedText(issue: Issue | undefined, set: IconSet): string {
   return set === "nerd"
     ? ` · assigned to ${icon("bot", set)} ${issue.assigneeName}`
     : ` · assigned to ${issue.assigneeName} (agent)`;
-}
-
-/** ` · queued: flow only` while FLOW ONLY holds an assigned agent's run; empty otherwise. */
-export function queuedText(
-  db: Database,
-  repo: Repo | undefined,
-  issue: Issue | undefined,
-): string {
-  const held = repo === undefined || issue === undefined ? null : flowOnlyQueued(db, repo, issue);
-  return held === null ? "" : ` · ${held}`;
 }
 
 /** How many people the picker reads before it stops; `listPeople`'s ceiling. */

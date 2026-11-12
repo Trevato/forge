@@ -4,6 +4,7 @@
  * which case the rule's answer stands and the caller never knows the
  * difference except by `by`.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,7 +13,7 @@ import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { createRepo } from "../src/actions/repos.ts";
-import { listCrewRoles, setCrewRole } from "../src/core/agents.ts";
+import { listCrewRoles } from "../src/core/agents.ts";
 import { getIssueById } from "../src/core/issues.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
@@ -252,7 +253,7 @@ describe("routing an issue", () => {
       expect(addToCrew(app, alice, repo, name).ok).toBe(true);
     }
     scout = getUserByName(app.db, "scout")!;
-    setCrewRole(app.db, repo.id, getUserByName(app.db, "atlas")!.id, "planner");
+    seatAs(app.db, repo.id, getUserByName(app.db, "atlas")!.id, "planner");
   });
   afterAll(async () => {
     app.close();

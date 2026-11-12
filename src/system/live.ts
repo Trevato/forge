@@ -9,6 +9,7 @@ import type { App } from "../app.ts";
 import { cellRoots } from "../apps/contain.ts";
 import { HOST, readRaw, type Paths, type Raw } from "./proc.ts";
 import { buildSystem, forAgent, type Roots, type SystemView } from "./view.ts";
+import { during } from "../perf/jobs.ts";
 
 const FRESH_MS = 1_000;
 
@@ -32,7 +33,7 @@ export type Live = {
 export type Schedule = (tick: () => void, ms: number) => () => void;
 
 const realSchedule: Schedule = (tick, ms) => {
-  const t = setInterval(tick, ms);
+  const t = setInterval(() => during("system-live", tick), ms);
   t.unref?.();
   return () => clearInterval(t);
 };
@@ -48,11 +49,11 @@ export function createLive(options: { paths?: Paths; roots?: () => Roots; self?:
   const listeners = new Set<(view: SystemView) => void>();
   const schedule = options.schedule ?? realSchedule;
   let timer: (() => void) | undefined;
-  const self_: Live = {
+  const handle: Live = {
     subscribe(listener) {
       listeners.add(listener);
       if (timer === undefined) {
-        timer = schedule(() => self_.publish(self_.read()), options.pushMs ?? PUSH_MS);
+        timer = schedule(() => handle.publish(handle.read()), options.pushMs ?? PUSH_MS);
       }
       return () => {
         listeners.delete(listener);
@@ -84,7 +85,7 @@ export function createLive(options: { paths?: Paths; roots?: () => Roots; self?:
       return view;
     },
   };
-  return self_;
+  return handle;
 }
 
 let shared = createLive();

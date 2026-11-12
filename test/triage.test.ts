@@ -98,6 +98,40 @@ describe("triage", () => {
     expect(placementOf(app.db, t.id)?.reply).toBe(p.reply);
   });
 
+  test("work that names no pillar opens an issue on no edge: the old Later-gate rule is gone (#7801)", async () => {
+    app.config.decider = stub({ somewhere: ["work", 0.9, "none"] });
+    const p = await placeThought(app, fresh(), alice, think("somewhere to put a thing"));
+    expect(p.placed[0]!.action).toBe("opened");
+    const issue = getIssue(app.db, repo.id, p.placed[0]!.number)!;
+    const edges = app.db.query<{ c: number }, [string]>("SELECT count(*) c FROM issue_dependency WHERE issue_id = ?1").get(issue.id)!.c;
+    expect(edges).toBe(0);
+  });
+
+  test("a thought with nothing to act on opens nothing and is kept as a note", async () => {
+    app.config.decider = { name: "boom", async decide() { throw new Error("asked"); } } as never;
+    const count = () => app.db.query<{ c: number }, []>("SELECT count(*) c FROM issue").get()!.c;
+    const before = count();
+    const slug = await placeThought(app, fresh(), alice, think("trevato/forge"));
+    expect(slug.placed).toEqual([]);
+    expect(slug.reply).toBe("Kept as a note: what should change in alice/forge?");
+    const blank = await placeThought(app, fresh(), alice, { id: "blank-1", text: "  " });
+    expect(blank.placed).toEqual([]);
+    const url = await placeThought(app, fresh(), alice, think("https://forge.open-platform.sh/trevato/forge"));
+    expect(url.placed).toEqual([]);
+    expect(count()).toBe(before);
+  });
+
+  test("a short ask reaches the decider, and #N and a plain sentence still place", async () => {
+    app.config.decider = stub({ fix: ["amendment", 0.9, `#${n}`], the: ["work", 0.9, "none", "P7"] });
+    const short = await placeThought(app, fresh(), alice, think("fix login"));
+    expect(short.decidedBy).toBe("stub");
+    expect(short.placed.length).toBe(1);
+    const a = await placeThought(app, fresh(), alice, think("fix #" + n));
+    expect(a.placed[0]!.number).toBe(n);
+    const w = await placeThought(app, fresh(), alice, think("the home page is slow"));
+    expect(w.placed[0]!.action).toBe("opened");
+  });
+
   test("an amendment comments on the open issue it concerns", async () => {
     app.config.decider = stub({ also: ["amendment", 0.9, `#${n}`] });
     const t = think("also show it on the phone");
@@ -299,7 +333,7 @@ describe("triage", () => {
     await placeThought(app, fresh(), alice, late);
     const rows = thoughtStream(app.db, alice);
     const repeatRow = String(thoughtRow(rows.find((t) => t.id === again.id)!, 7));
-    expect(repeatRow).toContain("said again, first on");
+    expect(repeatRow).toContain("repeats “build a &lt;b&gt;bold&lt;/b&gt; gauge for queue depth”");
     const reverseRow = String(thoughtRow(rows.find((t) => t.id === late.id)!, 7));
     expect(reverseRow).toContain("takes back");
     expect(reverseRow).toContain("&lt;b&gt;bold&lt;/b&gt;");

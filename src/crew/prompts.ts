@@ -14,7 +14,7 @@
  */
 
 import type { App } from "../app.ts";
-import { tell } from "../actions/tell.ts";
+import { TELL_TITLE_MAX, tell } from "../actions/tell.ts";
 import {
   duePromptSources,
   getPromptSource,
@@ -35,6 +35,7 @@ import {
   type InstagramClient,
   type Reel,
 } from "./instagram.ts";
+import { during } from "../perf/jobs.ts";
 
 const log = createLog("prompts");
 
@@ -101,7 +102,7 @@ export function startPromptRoutine(
 
   const timer = setInterval(() => {
     if (stopped) return;
-    runDue().catch((error) =>
+    during("prompts", runDue).catch((error) =>
       log.error("prompt sweep failed", { error: String(error) }),
     );
   }, options.everyMs ?? TICK_MS);
@@ -143,11 +144,17 @@ function shortly(text: string): string {
 }
 
 /**
- * The tell, as the crew reads it: the comment itself first — `tell`
- * makes its first line the title — and where it came from beneath.
+ * The tell, as the crew reads it: the comment's first line as the title,
+ * then the whole comment — title line included, since `tell` takes the
+ * title off the text and the fan's words should reach the body as said —
+ * and where it came from beneath. A first line too long for a title is
+ * not repeated: `tell` cuts the title then and keeps the text whole.
  */
 export function tellText(reel: Reel, comment: Comment): string {
-  return `${comment.text.trim()}\n\nFrom Instagram: the top comment (${likes(comment.likeCount)}) by @${comment.username} on the Reel of ${dayOf(reel)}. ${reel.permalink}`.trim();
+  const text = comment.text.trim();
+  const firstLine = text.split(/\n/)[0]!.trim();
+  const title = firstLine.length <= TELL_TITLE_MAX ? `${firstLine}\n` : "";
+  return `${title}${text}\n\nFrom Instagram: the top comment (${likes(comment.likeCount)}) by @${comment.username} on the Reel of ${dayOf(reel)}. ${reel.permalink}`.trim();
 }
 
 /**

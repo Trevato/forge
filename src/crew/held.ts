@@ -7,15 +7,17 @@
  *
  * The filters, in the order they are asked:
  * - `running`: a run is in flight on it.
- * - `open_pull`: an open pull already proposes it (`direct.ts`).
+ * - `open_pull`: an open pull already proposes it (`direct.ts`), or one a
+ *   builder opened in the last 10 minutes (`fresh_pull.ts`).
  * - `planner`: the planner or a reviewer holds it, not a builder. The tick
  *   frees these (`freeParked` in `autonomy.ts`): neither ever builds it.
  * - `with_planner`: its limb was handed to the planner by a person and the
  *   planner has not answered (`core/limb_replan.ts`).
  * - `done_on_main`: the crew found it done on the base branch and waits for
  *   a person to close it (`done_on_main.ts`); nothing is left to plan.
- * - `flow_only`: the repository's FLOW ONLY switch is on and the issue is not
- *   labelled `flow` (`flow_only.ts`).
+ * - `landed`: a merged pull closes it, but it stayed open with boxes
+ *   unticked, and no person has answered since (`landed.ts`): a builder
+ *   would only find the pull landed.
  * - `stalled`: a builder ran on it and left without a pull, and nobody
  *   who directs the crew has spoken since. The next tick parks it in the
  *   crew's name, which frees it (`stalls.ts`).
@@ -42,13 +44,15 @@ import { listActive, type Run } from "../core/runs.ts";
 import { getUserById } from "../core/users.ts";
 import type { Stuck } from "./brief.ts";
 import { proposedWork, speaksForCrew } from "./direct.ts";
+import { freshPulls, pullFor } from "./fresh_pull.ts";
 import { capReached, runCapOf } from "./guard.ts";
-import { flowOnlyHolds } from "./flow_only.ts";
 import { interruptionOf } from "./interrupted.ts";
+import { landedUnanswered } from "./landed.ts";
 import { PARK_STRIKES, parkedCount } from "./parks.ts";
 import { heldFiles, type FileHold } from "./file_holds.ts";
-import { expectedFiles, hotFiles, hotOverlap, relievedFiles } from "./hot_files.ts";
+import { expectedFiles, hotFiles, hotOverlap, pullsTouching, relievedFiles } from "./hot_files.ts";
 import { coveredByRedFix } from "./red_fix.ts";
+import { landedUnder } from "./stalls.ts";
 
 export const HOLDS = [
   "running",
@@ -56,7 +60,7 @@ export const HOLDS = [
   "planner",
   "with_planner",
   "done_on_main",
-  "flow_only",
+  "landed",
   "stalled",
   "run_cap",
   "parked_twice",
@@ -97,6 +101,8 @@ export function stalled(app: App, repo: Repo, issue: Issue): boolean {
   if (last === null || last === undefined) return false;
   if (last.state === "queued" || last.state === "running") return true;
   if (/opened pull #|updated pull #/.test(last.summary)) return false;
+  // Its pull landed under it: the work is on the base, not stalled (#8481).
+  if (landedUnder(last)) return false;
   // Cut short by the provider or a restart: nobody tried it, so the clock
   // tries again (`interrupted.ts`).
   if (last.state === "failed" && interruptionOf(last.summary) !== undefined)
@@ -136,6 +142,9 @@ export function heldBy(
   const planners = new Set(
     crew.filter((c) => c.role !== "builder").map((c) => c.agent.user.id),
   );
+  const builders = crew.filter((c) => c.role === "builder").map((c) => c.agent.user.username);
+  // Read once for the whole pass, matched per issue in memory (#10445).
+  const fresh = builders.length === 0 ? [] : freshPulls(app.db, repo.id);
   const handed = withPlanner(app.db, repo);
   const hot = hotFiles(repo.id, admit);
   const pins = new Map(heldFiles(app.db, repo.id).map((h) => [h.path, h]));
@@ -179,7 +188,7 @@ export function heldBy(
     if (issue.assigneeId !== null && planners.has(issue.assigneeId)) return "planner";
     if (handed.has(issue.id)) return "with_planner";
     if (alreadyDone(app.db, [issue.id]).has(issue.id)) return "done_on_main";
-    if (flowOnlyHolds(app.db, repo, issue)) return "flow_only";
+    if (landedUnanswered(app.db, repo, issue) !== undefined) return "landed";
     if (stalled(app, repo, issue)) return "stalled";
     if (atRunCap(app, repo, issue)) return "run_cap";
     if (parkedCount(app.db, repo, issue.id) >= PARK_STRIKES) return "parked_twice";
@@ -191,6 +200,8 @@ export function heldBy(
     }
     if (hotOverlap(issue, hot).length > 0) return "hot_file";
     if (waitsOnRelief(issue)) return "hot_file";
+    // The dispatcher refuses a build on an issue whose pull just opened (#8473): held, not picked.
+    if (pullFor(fresh, issue.number, builders) !== undefined) return "open_pull";
     return null;
   };
   const by = Object.fromEntries(HOLDS.map((h) => [h, [] as Issue[]])) as Record<
@@ -257,6 +268,8 @@ export function stuckOf(held: Held): Stuck | undefined {
 export interface MapHold {
   readonly by: HoldName;
   readonly detail: string;
+  /** For a hot file: the open pulls that touch it, oldest first, at most 8. */
+  readonly pulls?: readonly number[];
 }
 
 const HOLD_WORDS: Readonly<Record<HoldName, string>> = {
@@ -265,7 +278,7 @@ const HOLD_WORDS: Readonly<Record<HoldName, string>> = {
   planner: "the planner or a reviewer holds it",
   with_planner: "its limb waits on the planner",
   done_on_main: "found done on the base branch; waits for a person to close it",
-  flow_only: "flow only is on and it is not labelled flow",
+  landed: "a merged pull closes it with boxes unticked; waits for a person",
   stalled: "a builder ran on it and left without a pull",
   run_cap: "it has used its runs for the day",
   parked_twice: "parked twice; it is the planner's",
@@ -289,6 +302,7 @@ export function mapHolds(
   for (const name of HOLDS) {
     for (const issue of held.by[name]) {
       let detail = HOLD_WORDS[name];
+      let pulls: number[] | undefined;
       if (name === "hot_file") {
         const pin = held.pinned.get(issue.number);
         const top = hotOverlap(issue, hot)[0];
@@ -296,17 +310,19 @@ export function mapHolds(
         if (pin !== undefined) detail = `${pin.path} is held by an admin`;
         else if (top === undefined && rel !== undefined)
           detail = `waits: ${rel.path} is already being relieved by #${rel.by}`;
-        else if (top !== undefined)
+        else if (top !== undefined) {
           detail = `${top.path} is in ${top.pulls} open ${top.pulls === 1 ? "pull" : "pulls"}`;
+          pulls = pullsTouching(repo.id, top.path, admit);
+        }
       }
-      holds.set(issue.number, { by: name, detail });
+      holds.set(issue.number, { by: name, detail, ...(pulls === undefined ? {} : { pulls }) });
     }
   }
   return { holds, startable: held.startable.map((r) => r.issue.number) };
 }
 
 /** The pulls a viewer of `scope` may see: all with the sealed scope, else the unsealed and their own. */
-function admits(app: App, repo: Repo, scope: { sealed?: true; sealedBy?: string }) {
+export function admits(app: App, repo: Repo, scope: { sealed?: true; sealedBy?: string }) {
   if (scope.sealed === true) return () => true;
   return (n: number): boolean => {
     const row = sealedRowByNumber(app.db, repo.id, n);
@@ -320,12 +336,15 @@ export function mapHeldFor(
   repo: Repo,
   graph: Graph,
   scope: { sealed?: true; sealedBy?: string },
+  /** Only these issue numbers are worked out: the cost grows with them, not with the ready list. */
+  only?: ReadonlySet<number>,
 ): ReturnType<typeof mapHolds> {
   const admit = admits(app, repo, scope);
   const active = listActive(app.db, "agent").filter((r) => r.repoId === repo.id);
+  const ready = readyNow(graph).filter((r) => only === undefined || only.has(r.issue.number));
   return mapHolds(
     repo,
-    heldBy(app, repo, readyNow(graph), listCrewRoles(app.db, repo.id), active, admit),
+    heldBy(app, repo, ready, listCrewRoles(app.db, repo.id), active, admit),
     admit,
   );
 }

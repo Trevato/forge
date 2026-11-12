@@ -83,6 +83,14 @@ describe("MCP search", () => {
     expect(repos.value.repos.map((x: any) => x.name)).toEqual(["pebble"]);
   });
 
+  test("a blank q answers the empty shape with a note saying what to send", async () => {
+    const r = await tool(aliceRo, { q: "  " });
+    expect(r.value.repos).toEqual([]);
+    expect(r.value.note).toContain("q is empty");
+    expect(r.value.note).toContain("kind=all|repos|issues|code");
+    expect((await tool(aliceRo, { q: "glow", kind: "issues" })).value.note).toBeUndefined();
+  });
+
   test("a caller who cannot read a private repository finds nothing of it", async () => {
     const r = await tool(bobRo, { q: "glow", kind: "issues" });
     expect(r.value.issues.map((i: any) => i.repo.name)).toEqual(["pebble"]);
@@ -102,8 +110,19 @@ describe("MCP search", () => {
     expect(scoped.value.issues.map((i: any) => i.repo.name)).toEqual(["pebble"]);
   });
 
+  test("an unknown kind or a bad limit is refused in the API's words; every kind answers", async () => {
+    expect((await tool(aliceRo, { q: "a", kind: "bogus" })).error).toContain("invalid_kind");
+    expect((await tool(aliceRo, { q: "a", kind: "bogus" })).error).toContain("all, repos, issues or code");
+    for (const limit of [0, 101, 1.5, "5"]) {
+      const r = await tool(aliceRo, { q: "a", limit });
+      expect(r.error).toContain("invalid_limit");
+      expect(r.error).toContain("1 to 100");
+    }
+    for (const kind of ["all", "repos", "issues", "code"]) expect((await tool(aliceRo, { q: "a", kind, limit: 5 })).error).toBeUndefined();
+  });
+
   test("bad arguments are refused", async () => {
-    for (const args of [{}, { q: "" }, { q: "x".repeat(201) }, { q: 5 }, { q: "a", kind: "all" }, { q: "a", repo: 3 }]) {
+    for (const args of [{}, { q: "x".repeat(201) }, { q: 5 }, { q: "a", repo: 3 }]) {
       expect((await tool(aliceRo, args)).error).toBeDefined();
     }
   });

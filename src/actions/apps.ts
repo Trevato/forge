@@ -6,9 +6,13 @@
  * the repository may look at it and open its environments.
  */
 
+import { getVariant } from "../core/variants.ts";
 import { pullDir } from "../core/pulls.ts";
 import { getIssue } from "../core/issues.ts";
 import { mayView } from "../core/sealed.ts";
+import { deriveAppName } from "../web/pages/apps-name.ts";
+import { REPO_INIT_FAILED, REPO_NAME_RULES } from "./repo_words.ts";
+import { NO_SUCH_AGENT } from "./crew_limit_words.ts";
 import { requireVerified } from "./verify.ts";
 import { requireAppRoom } from "./app_limit.ts";
 import type { App } from "../app.ts";
@@ -20,7 +24,11 @@ import { appsRuntime, envsFor, type EnvStatus } from "../apps/runtime.ts";
 import { grantUrl, originFor, sideForViewer, sideReader } from "../apps/proxy.ts";
 import { plainLine } from "../apps/side.ts";
 import { scaffoldFiles } from "../apps/scaffold.ts";
+import type { FileWrite } from "../git/write.ts";
+import { TEMPLATE_ERRORS, templateFiles, type TemplateError } from "../apps/template_tip.ts";
 import {
+  envBuild,
+  envVariant,
   isEnvName,
   previewEnv,
   type EnvName,
@@ -56,6 +64,7 @@ import { canAdmin, canEnterApp, canWrite, getRepo, type Repo } from "../core/rep
 import type { Run } from "../core/runs.ts";
 import { type User } from "../core/users.ts";
 import { resolveOid } from "../git/merge.ts";
+import { previewCommit } from "../git/combined.ts";
 import { repoDir } from "../git/repos.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import {
@@ -265,6 +274,8 @@ export interface NewAppInput {
    * also given.
    */
   pickAgent?: boolean;
+  /** `owner/name` of a repository the actor can read: its tip is copied instead of the starter app. */
+  template?: string;
 }
 
 export interface NewAppResult {
@@ -280,7 +291,9 @@ export type NewAppError =
   | CreateRepoActionError
   | CreateAppError
   | "scaffold_failed"
+  | TemplateError
   | "no_such_agent"
+  | "not_a_builder"
   | "app_limit";
 
 /**
@@ -304,6 +317,7 @@ export async function newApp(
       ? undefined
       : getAgentByName(app.db, input.agent);
   if (input.agent && !agent) return err("no_such_agent");
+  if (agent && !agent.roles.includes("builder")) return err("not_a_builder");
 
   // Refuse at the limit before a repository exists to take back.
   // The owner is resolved with the actor's rights, as createRepo does, so
@@ -321,6 +335,17 @@ export async function newApp(
   )
     return err("slug_taken");
 
+  // Read the template before a repository exists to take back.
+  let starter: FileWrite[] | undefined;
+  if (input.template !== undefined && input.template !== "") {
+    const copied = await templateFiles(app, user.value, input.template, {
+      name: input.name,
+      description: input.description ?? "",
+    });
+    if (!copied.ok) return copied;
+    starter = copied.value;
+  }
+
   let mark = performance.now();
   const lap = (name: string): void => {
     const now = performance.now();
@@ -337,10 +362,12 @@ export async function newApp(
   if (!repo.ok) return repo;
   const committed = await commitToBranch(app, user.value, repo.value, {
     message: `Start ${input.name}`,
-    files: scaffoldFiles({
-      name: input.name,
-      description: input.description ?? "",
-    }),
+    files:
+      starter ??
+      scaffoldFiles({
+        name: input.name,
+        description: input.description ?? "",
+      }),
   });
   lap("scaffold");
   if (!committed.ok) {
@@ -368,7 +395,7 @@ export async function newApp(
     const binary = process.env["FORGE_CLAUDE"] ?? "claude";
     if (planningAvailable(binary)) {
       const roster = listAllAgents(app, user.value);
-      const agents = roster.ok ? roster.value : [];
+      const agents = roster.ok ? roster.value.filter((a) => a.roles.includes("builder")) : [];
       if (agents.length > 0) {
         const result = await plan(
           {
@@ -398,7 +425,7 @@ export async function newApp(
 
   let issue: Issue | undefined;
   if (chosen) {
-    addCrew(app.db, repo.value.id, chosen.user.id, user.value.id);
+    addCrew(app.db, repo.value.id, chosen.user.id, user.value.id, "builder");
     app.bus.append({
       kind: "crew.added",
       repoId: repo.value.id,
@@ -434,6 +461,61 @@ export async function newApp(
     ...(issue === undefined ? {} : { issue }),
     ...(picked === undefined ? {} : { plan: picked }),
   });
+}
+
+/** How many suffixed names (`x-2`, `x-3`, …) a derived name will try before giving up. */
+const MAX_NAME_ATTEMPTS = 30;
+
+/** Nothing in the sentence a slug can carry: punctuation only, or a script `[a-z0-9]` cannot. */
+export const NO_NAME_ERROR =
+  "That doesn't leave anything to make a name from — type one below.";
+
+/** Error code → the words a person is shown, for the web form and the terminal alike. */
+export const NEW_APP_ERRORS: Record<string, string> = {
+  no_name: NO_NAME_ERROR,
+  name_taken: "That owner already has a repository by that name.",
+  invalid_name: REPO_NAME_RULES,
+  git_init_failed: REPO_INIT_FAILED,
+  invalid_slug:
+    "That name makes no usable hostname — start it with a letter or digit.",
+  slug_taken:
+    "Another app already answers to that hostname. Pick another name.",
+  already_app: "That repository is already an app.",
+  scaffold_failed: "The starter app could not be committed.",
+  ...TEMPLATE_ERRORS,
+  no_such_agent: NO_SUCH_AGENT,
+  not_a_builder: "That agent is not a builder, so it cannot be handed a new app. Pick a builder.",
+};
+
+export interface NewAppFromSentenceInput extends Omit<NewAppInput, "name"> {
+  /** The sentence the app is named from; it is also the first issue's description unless `description` is given. */
+  sentence: string;
+}
+
+export type NewAppFromSentence =
+  | ({ readonly ok: true; readonly name: string } & NewAppResult)
+  | { readonly ok: false; readonly code: string };
+
+/**
+ * `newApp` with the name derived from a sentence: the derived name first,
+ * then `name-2`, `name-3`, … while the owner already has it, up to
+ * MAX_NAME_ATTEMPTS. A sentence with nothing to name from is `no_name`.
+ */
+export async function newAppFromSentence(
+  app: App,
+  actor: User | undefined,
+  { sentence, description, ...rest }: NewAppFromSentenceInput,
+  onPhase?: (name: string, ms: number) => void,
+): Promise<NewAppFromSentence> {
+  const base = deriveAppName(sentence);
+  if (base === undefined) return { ok: false, code: "no_name" };
+  let name = base;
+  let made = await newApp(app, actor, { ...rest, description: description ?? sentence, name }, onPhase);
+  for (let n = 2; !made.ok && made.error === "name_taken" && n <= MAX_NAME_ATTEMPTS; n++) {
+    name = `${base}-${n}`;
+    made = await newApp(app, actor, { ...rest, description: description ?? sentence, name }, onPhase);
+  }
+  return made.ok ? { ok: true, name, ...made.value } : { ok: false, code: made.error };
 }
 
 export interface AppView {
@@ -539,6 +621,31 @@ export function appPullLines(app: App, actor: User | undefined, repo: Repo): App
   }));
 }
 
+export interface AppPreview {
+  readonly number: number;
+  readonly title: string;
+  /** The preview's environment, as the studio's previews list reads it. */
+  readonly env: EnvStatus;
+}
+
+/**
+ * The open pulls that have a preview environment, newest first, each with
+ * that environment — the studio's previews list (`studio/previews.ts`) for a
+ * door that cannot draw a page. One `status()` read for every row, never one
+ * per pull. `undefined` when the actor may not read the repository or it is
+ * no app, so "no previews" is only ever said to someone who may see them.
+ */
+export function appPreviews(app: App, actor: User | undefined, repo: Repo): AppPreview[] | undefined {
+  if (!requireReader(app, actor, repo).ok) return undefined;
+  const record = getAppByRepo(app.db, repo.id);
+  if (record === undefined) return undefined;
+  const envs = new Map(envsFor(app, actor, record).map((e) => [e.env, e] as const));
+  return openPulls(app.db, repo, actor, 50).flatMap((p) => {
+    const env = envs.get(previewEnv(p.number));
+    return env === undefined ? [] : [{ number: p.number, title: p.title, env }];
+  });
+}
+
 /**
  * The other side of the app for its production terminal, gated as the pill
  * is (an active reader of the repository; a guest gets none): production's
@@ -635,7 +742,7 @@ export async function redeployEnv(
   if (!isEnvName(env)) return err("no_such_env");
   const runtime = appsRuntime(app);
   if (runtime === undefined) return err("no_runtime");
-  const commit = await commitFor(app, repo, env);
+  const commit = await commitFor(app, repo, record, env);
   if (commit === undefined) return err("nothing_to_deploy");
   return ok(
     runtime.requestDeploy(
@@ -676,18 +783,26 @@ export async function stopEnv(
 async function commitFor(
   app: App,
   repo: Repo,
+  record: AppRecord,
   env: EnvName,
 ): Promise<string | undefined> {
   const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
   if (env === "production")
     return resolveOid(dir, `refs/heads/${repo.defaultBranch}`);
+  // A build preview names its commit only by its short sha: the commit it
+  // serves is the one the runtime holds for it, while it is held.
+  if (envBuild(env) !== undefined)
+    return appsRuntime(app)?.envStatus(record, env)?.commitOid || undefined;
+  const variant = envVariant(env);
+  if (variant !== undefined) {
+    const row = getVariant(app.db, record.id, variant);
+    return row === undefined ? undefined : resolveOid(dir, `refs/heads/${row.branch}`);
+  }
   const pull = getPull(app.db, repo.id, Number(env.slice(5)));
   if (!pull || pull.state !== "open") return undefined;
-  const ref = pull.crossRepo
-    ? `refs/pull/${pull.number}/head`
-    : `refs/heads/${pull.headBranch}`;
   const at = await pullDir(app.db, app.reposRoot, repo, pull);
-  return (await resolveOid(at, ref)) ?? (pull.headOid || undefined);
+  // A fork's pull combined on our side previews the combined build (#9012).
+  return previewCommit(at, pull);
 }
 
 export { previewEnv };

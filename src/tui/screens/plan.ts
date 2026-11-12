@@ -6,6 +6,8 @@
  * is left out here as it is there.
  */
 
+import { FIRST_FORBIDDEN, putIssueFirst } from "../../actions/first.ts";
+import { firstMarksInRepo } from "../../core/first.ts";
 import { repoGraph, readyNow } from "../../core/dependencies.ts";
 import { pillarView } from "../../core/pillars.ts";
 import { listActiveRuns } from "../../core/runs.ts";
@@ -24,6 +26,8 @@ import { local } from "./where.ts";
 export interface PlanLine {
   readonly text: string;
   readonly number?: number;
+  /** A ready issue: the one `f` puts first. */
+  readonly ready?: true;
 }
 
 export function readPlan(f: Session, repo: Repo): PlanLine[] {
@@ -56,6 +60,7 @@ export function readPlan(f: Session, repo: Repo): PlanLine[] {
     return h === undefined ? "" : ` (${h.detail})`;
   };
 
+  const firsts = firstMarksInRepo(f.db, repo.id);
   const lines: PlanLine[] = [{ text: `Working ${working.length}` }];
   for (const i of working)
     lines.push({
@@ -65,8 +70,11 @@ export function readPlan(f: Session, repo: Repo): PlanLine[] {
   lines.push({ text: `Ready now ${ready.length}` });
   for (const { issue: i } of ready)
     lines.push({
-      text: `#${i.number} ${i.title} — ${pillars?.of.get(i.id) ?? "no pillar"}${hold(i.number)}`,
+      text: `#${i.number} ${i.title} — ${pillars?.of.get(i.id) ?? "no pillar"}${hold(i.number)}${
+        firsts.has(i.id) ? ` — first, by ${firsts.get(i.id)!.by}` : ""
+      }`,
       number: i.number,
+      ready: true,
     });
   lines.push({ text: `Waiting ${waiting.length}` });
   for (const i of waiting)
@@ -111,7 +119,7 @@ export function planScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   };
   return {
     title: "Plan",
-    keys: [binding(["j", "k"], "move"), binding(["enter"], "open"), binding(["r"], "refresh")],
+    keys: [binding(["j", "k"], "move"), binding(["enter"], "open"), binding(["f"], "first"), binding(["r"], "refresh")],
     load(signal) {
       live(f, signal, { repoId: repo.id }, () => runAsync(ctx, async () => reload()));
       reload();
@@ -131,6 +139,22 @@ export function planScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       }
       if (e.key === "enter") {
         openAt(state.index);
+        return true;
+      }
+      if (e.key === "f") {
+        const line = lines[state.index];
+        if (line?.ready === undefined || line.number === undefined) {
+          ctx.toast("f puts a ready issue first", "danger");
+        } else if (f.user === undefined) {
+          ctx.toast(FIRST_FORBIDDEN, "danger");
+        } else {
+          const put = putIssueFirst(f.app, f.user, repo, line.number);
+          if (!put.ok) ctx.toast(put.error.message, "danger");
+          else {
+            ctx.toast(`#${line.number} is first`, "success");
+            reload();
+          }
+        }
         return true;
       }
       if (e.key === "r") {

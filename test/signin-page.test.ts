@@ -32,6 +32,10 @@ describe("/signin", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
+  // The markup a person sees: the inline client script, shared with the pages
+  // that do draw the badge, names it too.
+  const markup = (page: string) => page.replace(/<script\b[\s\S]*?<\/script>/g, "");
+
   const signin = async (mode: SignupMode) => {
     setSignup(app.db, mode, "boot");
     const res = await fetch(`${servers.url}/signin`);
@@ -47,18 +51,30 @@ describe("/signin", () => {
     expect(page).toMatch(/<button[^>]*id="passkey-signin"[^>]*data-variant="primary"/);
   });
 
-  test("the passkey state is a badge, and no passkey-on class remains", async () => {
-    const html = await signin("open");
-    expect(html).toContain("Passkey off");
-    expect(html).toMatch(/<span\s+class="badge"\s+data-variant="outline"\s*>\s*Passkey off/);
+  test("no passkey state word, and the passkey button waits hidden for a browser that can run it (#7921)", async () => {
+    const html = markup(await signin("open"));
+    expect(html).not.toContain("Passkey off");
+    expect(html).not.toContain("Passkey on");
+    expect(html).not.toContain("data-passkey-state");
     expect(html).not.toContain("passkey-on");
     expect(html).not.toContain('class="passkey');
-    expect(insideHiddenDiv(html, "data-passkey-state")).toBe(false);
+    expect(insideHiddenDiv(html, 'id="passkey-signin"')).toBe(true);
+  });
+
+  test("with no script the page is the password form with one visible Sign in button", async () => {
+    const html = markup(await signin("open"));
+    // Drop every hidden element, as a browser with no script shows the page.
+    const shown = html
+      .replace(/<div class="stack stack-tight mb" data-passkey="on" hidden>[\s\S]*?<\/div>\s*<\/div>/, "")
+      .replace(/<button[^>]*\shidden>[\s\S]*?<\/button>/g, "");
+    expect(shown).not.toContain("passkey-signin");
+    expect(shown.match(/<button[^>]*>\s*Sign in\s*<\/button>/g)?.length).toBe(1);
+    expect(shown).toContain('name="password"');
   });
 
   test("the passkey lead shows only where a passkey can run, and Sign in is primary everywhere else", async () => {
     const page = await signin("open");
-    expect(page).toMatch(/<div class="stack stack-tight mb">\s*<span data-passkey-state>[\s\S]*?Passkey off[\s\S]*?<\/span>\s*<div class="stack stack-tight" data-passkey="on" hidden>\s*<button[^>]*id="passkey-signin"/);
+    expect(page).toMatch(/<div class="stack stack-tight mb" data-passkey="on" hidden>\s*<button[^>]*id="passkey-signin"/);
     expect(page).not.toMatch(/passkey-lead|passkey-note/);
     expect(page).toMatch(/<span class="muted small" id="passkey-signin-note" data-fail="error" role="status"><\/span><\/div>\s*<\/div>/);
     // Both variants of Sign in, each a named btn() variant picked in markup.
@@ -74,16 +90,14 @@ describe("/signin", () => {
     expect(page).not.toContain(CLOSED);
   });
 
-  test("invite says the forge is invite-only", async () => {
-    const page = await signin("invite");
-    expect(page).toContain(INVITE);
-    expect(page).not.toContain(CLOSED);
-  });
-
-  test("closed says the forge is closed to new accounts", async () => {
-    const page = await signin("closed");
-    expect(page).toContain(CLOSED);
-    expect(page).not.toContain(INVITE);
+  test("invite and closed say it once: by invitation, linking /#yours", async () => {
+    for (const mode of ["invite", "closed"] as const) {
+      const page = await signin(mode);
+      expect(page).not.toContain(INVITE);
+      expect(page).not.toContain(CLOSED);
+      expect(page.split("are by invitation").length - 1).toBe(1);
+      expect(page).toContain('href="/#yours"');
+    }
   });
 });
 

@@ -97,6 +97,7 @@ describe("mirror in the terminal", () => {
     const h = boot("alice");
     await open(h);
     expect(h.text()).toContain("Mirror: none.");
+    expect(h.text()).toContain("m sets the mirror, f forgets it.");
     await h.press("m");
     await field(h, "http://s3.example.test");
     await field(h, "offbox-copy");
@@ -155,7 +156,7 @@ describe("mirror in the terminal", () => {
     const before = mirrorSealedSet(forge.db);
     const h = boot("robo");
     await open(h);
-    expect(h.text()).not.toContain("M sets the mirror");
+    expect(h.text()).not.toContain("m sets the mirror");
     await h.press("m");
     expect(h.text()).not.toContain("Mirror 1/5");
     await h.press("f");

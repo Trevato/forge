@@ -1,0 +1,15 @@
+# Bets
+
+A bet is a name, an appetite (a share of the week), what done looks like in a few journeys, and scopes — existing issues — that each finish on their own. One crew member leads. Open `/<owner>/<repo>/bets`; the MCP has `bets` (read) and `bet` (act); the terminal has **Bets** in the palette (`p` propose, `b` back, `s` stop, `c` cut, `e` end, `l` what is left, `d` feels done, `n` not yet). All three go through `actions/bets.ts`, and every write emits a `bet.*` event, which the web pages follow with their "new activity" pill.
+- **Who sees what.** The plan (shares, journeys, left lines, a verdict's reason) is for a person who administers the repo; any other reader sees names, states and scopes. Agents never act on a bet. `bet.*` events are admin-only to match.
+
+- **Propose.** "Ask the planner to propose bets" groups open issues in no live bet: by first label; else by the pillar an unlabelled issue holds up (later and structural issues are skipped); else by the title word most unlabelled issues share. A group of two or more becomes a proposal at 20% of the week. At most five proposals a pass; no model, so the same state gives the same proposals.
+- **Notes.** Only notes written by the repo's owner or an admin count (a visitor's never join or appear). Such a note joins a proposal when its issue is held there, it names one of the group's issues as `#N`, or it shares two words with the group's name and its issues' titles; it is quoted in the journeys as "The owner's note".
+- **Back.** The owner (a person who administers the repo, never an agent) backs one with a share. At most 5 run, and their shares stay within 100%.
+- **Picks.** Once a repository has ever had a bet backed, builders pick only scopes of a running bet, issues the owner asked for or raised, and small fixes, polish included (polish held to its share of the week, see polish-share.md). An issue in no bet does not start by itself. A repository with no bet picks as before.
+- **Appetite.** The budget is share × builder slots × one week of builder time, counted from the runs on the bet's scopes since it was backed. At the budget the bet stops: no extension. Its left line defaults to the open scopes; the lead rewrites it in one line; the owner re-backs, cuts or ends it (ending as done is for a stopped bet only; a running bet finishes when every scope closes).
+- **Scopes** read *figuring out* (no run yet), *executing*, or *raised hand* (nothing moved for two days), or *done*.
+- **Finishing.** When every scope is closed the bet is finished and its page says "This is done. Try it." with a link; the owner taps *Feels done* or *Not yet, because…* (the bet returns to stopped with that reason). `/changelog` marks each landing with its bet and filters by it (`?bet=`).
+- **Idle forge.** If nothing was ever backed and the oldest proposal is a day old, the top two start at 10%, marked "not backed by the owner". One tap on *Stop it* ends any of them, and the planner does not restart a stopped bet.
+
+Left out: a per-week reset of the appetite window.

@@ -1,6 +1,6 @@
-/** `/verify`, `/recover` and `/claim` name their phases in Server-Timing and answer within budget, signed in (#4317). */
+/** `/verify`, `/recover` and `/claim` name their phases in Server-Timing and cost a bounded number of statements, signed in (#4317). */
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { baselineMs, expectBudget } from "./helpers/budget.ts";
+import { expectWork, requestStatements } from "./helpers/work.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -43,6 +43,14 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
+/** The most statements a request may run: today's count with room for a read or two. */
+const MAX_STATEMENTS: Record<string, number> = {
+  "/verify?token=nope": 12,
+  "/recover": 10,
+  "/recover?token=nope": 12,
+  "/claim": 10,
+};
+
 const PAGES: [string, string[]][] = [
   ["/verify?token=nope", ["session", "verify", "render"]],
   ["/recover", ["session", "render"]],
@@ -51,8 +59,7 @@ const PAGES: [string, string[]][] = [
 ];
 
 for (const [path, names] of PAGES)
-  test(`GET ${path} names its phases and answers within its budget`, async () => {
-    const against = await baselineMs(servers.url);
+  test(`GET ${path} names its phases and costs a bounded number of statements`, async () => {
     const get = () => fetch(`${servers.url}${path}`, { headers: { cookie }, redirect: "manual" });
     await (await get()).text(); // warm
     const res = await get();
@@ -60,7 +67,5 @@ for (const [path, names] of PAGES)
     const parts = (res.headers.get("server-timing") ?? "").split(", ");
     for (const name of ["app", ...names])
       expect(parts.find((p) => p.startsWith(`${name};`))).toMatch(/^[a-z]+;dur=\d+\.\d$/);
-    const dur = (n: string) => Number(parts.find((p) => p.startsWith(`${n};`))!.split("=")[1]);
-    expectBudget(dur("app"), { ms: 50, against });
-    expect(names.reduce((s, n) => s + dur(n), 0)).toBeLessThanOrEqual(dur("app") + 1);
+    expectWork(await requestStatements(app.db, `${servers.url}${path}`, { headers: { cookie }, redirect: "manual" }), { max: MAX_STATEMENTS[path]! });
   });

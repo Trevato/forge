@@ -1,7 +1,8 @@
 /**
  * A red many pulls share (#2266), on in-memory SQLite: a test failed by
  * three pulls in the hour is the lane's, one failed by fewer, or failed
- * longer ago, is the pull's own; the vitals carry one card per shared test,
+ * longer ago, is the pull's own, and so is one main passes that no re-run
+ * passed (#8786); the vitals carry one card per shared test,
  * linked to its flake issue once the sentinel has filed one.
  */
 import { nameUnnamed } from "../src/checks/bun-test.ts";
@@ -21,6 +22,7 @@ import {
   TREE_GATES,
   flakeHref,
   flakeKey,
+  pullsOwn,
   sharedCause,
   sharedTests,
   sharedWithPulls,
@@ -50,6 +52,18 @@ const red = (issueId: string, names: string[], repoId = "r1"): Run => {
   return finishRun(db, run.id, { state: "failed", summary: "check failed", checkDetail: { passed: 1, failed: names.length, names } })!;
 };
 const shared = (run: Run | undefined, now?: number) => sharedWithPulls(db, run, now);
+/** Main's newest check: green, or red naming `names`. */
+const mainCheck = (state: "ok" | "failed", names: string[] = []): void => {
+  const run = createRun(db, { repoId: "r1", kind: "check", env: "main", commitOid: "b".repeat(40), reason: "push" });
+  claimRun(db, run.id);
+  finishRun(db, run.id, { state, summary: state, ...(state === "failed" ? { checkDetail: { passed: 1, failed: names.length, names } } : {}) });
+};
+/** A pull's re-run of the same commit, green. */
+const green = (issueId: string): void => {
+  const run = createRun(db, { repoId: "r1", kind: "check", env: `pull-${issueId}`, issueId, commitOid: "a".repeat(40), reason: "retry" });
+  claimRun(db, run.id);
+  finishRun(db, run.id, { state: "ok", summary: "ok" });
+};
 
 describe("a red many pulls share", () => {
   test("three pulls on one test share it; two do not", () => {
@@ -75,19 +89,117 @@ describe("a red many pulls share", () => {
     expect(sharedTests(db)).toEqual([]);
   });
 
-  test("a gate on the tree is each pull's own red, however many trip it (#2868)", () => {
-    const gate = "design check: nothing added outside the system (#2678) > the tree is no worse than its baseline";
-    for (const i of ["i1", "i2", "i3"]) red(i, [gate]);
-    expect(shared(red("i4", [gate]))).toBe(false);
-    expect(shared(red("i5", [gate, "X"]))).toBe(false);
+  test("three pulls fail a test main passes, and none is a shared red (#8786)", () => {
+    mainCheck("ok");
+    for (const i of ["i1", "i2"]) red(i, ["X"]);
+    const third = red("i3", ["X"]);
+    expect(shared(third)).toBe(false);
+    expect(sharedTests(db)).toEqual([]);
+    expect(pullsOwn(db, "r1", "X", Date.now() - SHARED_WINDOW_MS)).toBe(true);
+    const v = vitals({ db, dataDir: tmpdir(), signals: { errors: new ErrorLedger(), refused: new RefusedLedger() } });
+    expect(v.degraded.filter((d) => d.cause.startsWith("shared:"))).toEqual([]);
+    // Main red on other tests it named still ran this one, and passed it.
+    mainCheck("failed", ["Y"]);
+    expect(shared(red("i4", ["X"]))).toBe(false);
+  });
+
+  test("three pulls fail a test main also fails, and it is shared (#8786)", () => {
+    mainCheck("failed", ["X"]);
+    for (const i of ["i1", "i2"]) red(i, ["X"]);
+    expect(shared(red("i3", ["X"]))).toBe(true);
+    expect(sharedTests(db).map((t) => t.test)).toEqual(["X"]);
+  });
+
+  test("a flake that passes on a pull's re-run is still the lane's, main green (#8786)", () => {
+    mainCheck("ok");
+    for (const i of ["i1", "i2"]) red(i, ["X"]);
+    const third = red("i3", ["X"]);
+    expect(shared(third)).toBe(false);
+    // i2's re-run of the same commit is green: the test is random, not i2's.
+    green("i2");
+    expect(shared(third)).toBe(true);
+    expect(sharedTests(db).map((t) => t.test)).toEqual(["X"]);
+  });
+
+  test("a re-run red on other tests it named passed this one; one naming nothing did not", () => {
+    mainCheck("ok");
+    for (const i of ["i1", "i2"]) red(i, ["X"]);
+    const third = red("i3", ["X"]);
+    red("i2", []);
+    expect(shared(third)).toBe(false);
+    const broken = red("i2", ["Y"]);
+    db.run("UPDATE run SET check_detail = '{not json' WHERE id = ?1", [broken.id]);
+    expect(shared(third)).toBe(false);
+    red("i2", ["Y"]);
+    expect(shared(third)).toBe(true);
+  });
+
+  test("a test the check runner re-ran alone and recorded a flake is the lane's (#8786)", () => {
+    mainCheck("ok");
+    for (const i of ["i1", "i2"]) red(i, ["X"]);
+    const third = red("i3", ["X"]);
+    expect(shared(third)).toBe(false);
+    db.run(
+      "INSERT INTO check_flake (id, repo_id, run_id, commit_oid, test, file, at) VALUES ('f1', 'r1', ?1, 'a', 'X', 'x.test.ts', ?2)",
+      [third.id, new Date().toISOString()],
+    );
+    expect(shared(third)).toBe(true);
+  });
+
+  test("a test that fails again on the same pull's re-run, main green, is that pull's own", () => {
+    mainCheck("ok");
+    for (const i of ["i1", "i2", "i3"]) red(i, ["X"]);
+    expect(shared(red("i3", ["X"]))).toBe(false);
     expect(sharedTests(db)).toEqual([]);
   });
 
-  test("every tree gate names a suite that exists", () => {
-    const suites = new Set<string>();
-    for (const f of new Glob("test/*.test.ts").scanSync("."))
-      for (const m of readFileSync(f, "utf8").matchAll(/describe\("((?:[^"\\]|\\.)*)"/g)) suites.add(`${m[1]} > `);
-    for (const g of TREE_GATES) expect(suites.has(g)).toBe(true);
+  test("main's verdict unread (no check, or a red naming nothing) leaves a many-pull red the lane's", () => {
+    for (const i of ["i1", "i2"]) red(i, ["X"]);
+    const third = red("i3", ["X"]);
+    expect(shared(third)).toBe(true);
+    mainCheck("failed", []);
+    expect(shared(third)).toBe(true);
+  });
+
+  test("every gate once listed by hand is each pull's own by the rule, main green (#2868, #7809, #8140, #7906, #8184)", () => {
+    mainCheck("ok");
+    const gates = [
+      "design check: nothing added outside the system (#2678) > the tree is no worse than its baseline",
+      "reserved names > every top-level page of the forge is a reserved name",
+      "every registered /api/v1 route has an OpenAPI row or is listed as not yet described",
+      "the gathered routes > the index is current: run `bun scripts/openapi-routes.ts`",
+      "the gathered tools > the index is current: run `bun scripts/mcp-tools.ts`",
+    ];
+    for (const gate of gates) {
+      for (const i of ["i1", "i2", "i3"]) red(i, [gate]);
+      expect([gate, shared(red("i4", [gate]))]).toEqual([gate, false]);
+      // Checked per gate: each gate's reds share one commit, so a later gate's red passes an earlier one, as a re-run would.
+      expect(sharedTests(db).map((t) => t.test)).not.toContain(gate);
+    }
+  });
+
+  test("every tree gate names a suite, or a test in it, that exists", () => {
+    const names = new Set<string>();
+    for (const f of new Glob("test/*.test.ts").scanSync(".")) for (const n of suiteNames(readFileSync(f, "utf8"))) names.add(n);
+    for (const g of TREE_GATES) expect([g, names.has(g)]).toEqual([g, true]);
+  });
+
+  test("a gate naming a test under the wrong suite names nothing", () => {
+    const names = suiteNames('describe("A", () => {\n  test("t", () => {});\n});\ndescribe("B", () => {\n  test("u", () => {});\n});\n');
+    expect(names.has("A > t")).toBe(true);
+    expect(names.has("B > u")).toBe(true);
+    expect(names.has("B > t")).toBe(false);
+    expect(names.has("A > u")).toBe(false);
+    expect(suiteNames('test("top", () => {});\n').has("top")).toBe(true);
+  });
+
+  test("a top-level test is named bare; one inside a describe is not", () => {
+    const names = suiteNames('test("t", () => {});\ndescribe("A", () => {\n  test("u", () => {});\n});\ntest("v", () => {});\n');
+    expect(names.has("t")).toBe(true);
+    expect(names.has("v")).toBe(true);
+    expect(names.has("A > u")).toBe(true);
+    expect(names.has("u")).toBe(false);
+    expect(names.has("A > v")).toBe(false);
   });
 
   test("one pull red three times is its own red, not the lane's", () => {
@@ -197,12 +309,9 @@ describe("a failure outside a named test names its file and hook (#4582)", () =>
 
   test("summary names the file and the hook, not (unnamed)", () => {
     const failure = summariseCheckFailure(captured, "check exited with code 1");
-    expect(failure.detail?.names).toEqual([
-      "a.test.ts > beforeEach/afterEach (timeout)",
-      "c.test.ts > s > (unnamed): error: late",
-      "(unnamed)",
-    ]);
-    expect(failure.summary).toContain("a.test.ts > beforeEach/afterEach (timeout)");
+    // The (unnamed) fallout shows only when nothing else is named (#8730).
+    expect(failure.detail?.names).toEqual(["a.test.ts > beforeEach/afterEach (timeout)"]);
+    expect(failure.summary).toBe('2 of 12 tests — "a.test.ts > beforeEach/afterEach (timeout)" and 1 more');
   });
 
   test("the recap after the summary is not given the last file's name", () => {
@@ -250,3 +359,15 @@ describe("a failure outside a test names what it threw (#5727)", () => {
     );
   });
 });
+
+/** Each `describe > test` a test file declares, every test paired only with the describe it sits under, plus `describe > ` for each suite and each top-level test's bare name. */
+function suiteNames(text: string): Set<string> {
+  const names = new Set<string>();
+  let suite: string | undefined;
+  for (const m of text.matchAll(/^([ \t]*)(describe|test)\("((?:[^"\\]|\\.)*)"/gm)) {
+    if (m[2] === "describe") names.add(`${(suite = m[3])} > `);
+    else if (m[1] === "") names.add(m[3]!);
+    else if (suite !== undefined) names.add(`${suite} > ${m[3]}`);
+  }
+  return names;
+}

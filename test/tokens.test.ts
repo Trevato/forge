@@ -271,7 +271,7 @@ describe("token counts on the pages", () => {
     // 1,200,000 + 34,000 = 1,234,000 → 1.2M, in both windows.
     const settings = await get("/settings/subscriptions", cookie);
     expect(settings.match(/>1\.2M tok</g)?.length).toBe(2);
-    expect(settings).toContain("counted by\n            Claude's tokenizer");
+    expect(settings).toContain("as counted by Claude");
     const board = await get("/board", cookie);
     expect(board.match(/>1\.2M tok</g)?.length).toBe(2);
   });

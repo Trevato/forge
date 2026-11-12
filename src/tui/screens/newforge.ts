@@ -8,6 +8,7 @@
  */
 
 import { DEFAULT_SIZE, SIZES, type Size } from "../../spawn/sizes.ts";
+import { DEFAULT_TEMPLATE, TEMPLATES, templateOf } from "../../spawn/templates.ts";
 import { childUrlOf, spawnDoor } from "../../spawn/door.ts";
 import { quotaFull } from "../../spawn/quota.ts";
 import { FOLLOW_LINE, FOLLOW_WORDS } from "../../spawn/follow_words.ts";
@@ -32,18 +33,29 @@ interface Spec {
 
 const SIZE_CHOICES = Object.keys(SIZES) as Size[];
 
+const TEMPLATE_CHOICES = TEMPLATES.map((t) => t.id);
+
+const TEMPLATE_HINT = "blank (default) or starter: left and right choose, or type it.";
+
 const SPECS: readonly Spec[] = [
   { key: "name", label: "Name", hint: "Lowercase letters, digits and dashes." },
   { key: "for", label: "For whom", hint: "A person or client, for your list of forges sent. Optional." },
   { key: "direction", label: "What it is for", hint: "The crew's first direction. Optional." },
   { key: "apps", label: "Apps to fork", hint: "owner/name, comma-separated. Optional." },
   { key: "fresh", label: "Or a fresh app", hint: "One line on what it is. Optional." },
-  { key: "modelKey", label: "Model key", hint: "Sealed in the child, never shown again. Optional.", secret: true },
+  { key: "modelKey", label: "AI account key", hint: "Sealed in the new forge, never shown again. Optional.", secret: true },
   { key: "modelEndpoint", label: "API base URL", hint: "A gateway for the key; empty for Anthropic. Optional." },
   { key: "budgetUsd", label: "Budget in dollars", hint: `${MIN_BUDGET_USD}–${MAX_BUDGET_USD}, for the key's whole life. Needed with a key.` },
   { key: "followMode", label: "Follows this forge's code", hint: FOLLOW_LINE },
   { key: "size", label: "Size", hint: "small (default), medium or large: left and right choose, or type it.", choices: SIZE_CHOICES },
+  { key: "template", label: "Template", hint: TEMPLATE_HINT, choices: TEMPLATE_CHOICES },
 ];
+
+/** The chosen template's own sentence; a typed id that is no template keeps the general hint. */
+function templateHint(id: string): string {
+  const t = TEMPLATES.find((x) => x.id === id);
+  return t === undefined ? TEMPLATE_HINT : t.says;
+}
 
 /** The door's "field: reason" refusal, as the field it names and the reason. */
 function refusal(body: Record<string, unknown>): { key?: string; text: string } {
@@ -52,8 +64,8 @@ function refusal(body: Record<string, unknown>): { key?: string; text: string } 
   return m && body["error"] === "invalid" ? { key: m[1]!, text: m[2]! } : { text };
 }
 
-export function newForgeScreen(f: Session, ctx: Ctx): Screen {
-  const values: Record<string, string> = {};
+export function newForgeScreen(f: Session, ctx: Ctx, initial: Record<string, string> = {}): Screen {
+  const values: Record<string, string> = { ...initial };
   let focus = 0;
   let errorKey: string | undefined;
   let error: string | undefined;
@@ -70,7 +82,7 @@ export function newForgeScreen(f: Session, ctx: Ctx): Screen {
       name: val("name"),
       apps,
       ...(val("fresh") === "" ? {} : { fresh: val("fresh") }),
-      followMode: val("followMode") === "" ? "tell-me" : val("followMode"),
+      followMode: val("followMode") === "" ? "take-updates" : val("followMode"),
       ...(val("for") === "" ? {} : { for: val("for") }),
       ...(val("direction") === "" ? {} : { direction: val("direction") }),
       ...(val("modelKey") === "" ? {} : { modelKey: val("modelKey") }),
@@ -78,6 +90,8 @@ export function newForgeScreen(f: Session, ctx: Ctx): Screen {
       ...(val("budgetUsd") === "" ? {} : { budgetUsd: Number(val("budgetUsd")) }),
       // Small is the default: it is not recorded, as on the page.
       ...(val("size") === "" || val("size") === DEFAULT_SIZE ? {} : { size: val("size") }),
+      // Blank is the default: it is not recorded, as on the page.
+      ...(val("template") === "" || val("template") === DEFAULT_TEMPLATE ? {} : { template: val("template") }),
       dryRun,
     };
   };
@@ -121,7 +135,8 @@ export function newForgeScreen(f: Session, ctx: Ctx): Screen {
           const bytes = Number(body["bytes"] ?? 0);
           const budget = (body["plan"] as { budgetUsd?: number | null } | undefined)?.budgetUsd ?? null;
           const size = (body["plan"] as { size?: string } | undefined)?.size;
-          const mode = val("followMode") === "" ? "tell-me" : val("followMode");
+          const template = (body["plan"] as { template?: string } | undefined)?.template;
+          const mode = val("followMode") === "" ? "take-updates" : val("followMode");
           plan = [
             `A forge at ${childUrlOf(f.app, val("name"))}.`,
             `It follows this forge's code as ${mode}${isFollowMode(mode) ? `: it ${FOLLOW_WORDS[mode]}` : "."}`,
@@ -130,6 +145,7 @@ export function newForgeScreen(f: Session, ctx: Ctx): Screen {
             "Copied into it:",
             ...copied.map((c) => `  ${c}`),
             ...(size === undefined ? [] : [`Size: ${size}.`]),
+            ...(template === undefined ? [] : [`Template: ${templateOf(template).title}.`]),
             `About ${Math.max(1, Math.round(bytes / 1024))} KB. Nothing is made until you press enter.`,
             ...(typeof body["keyNote"] === "string" ? [body["keyNote"]] : []),
           ];
@@ -182,7 +198,7 @@ export function newForgeScreen(f: Session, ctx: Ctx): Screen {
       let cursor: { x: number; y: number } | null = null;
       SPECS.slice(first, first + rows).forEach((spec, n) => {
         const i = first + n;
-        const raw = spec.choices === undefined ? (values[spec.key] ?? "") : (values[spec.key] || DEFAULT_SIZE);
+        const raw = spec.choices === undefined ? (values[spec.key] ?? "") : (values[spec.key] || spec.choices[0]!);
         const shown = spec.secret === true ? "•".repeat([...raw].length) : raw;
         const at = field(s, { x: area.x, y: area.y + n * 3, w: Math.min(70, area.w), h: 3 }, c, {
           label: spec.label,
@@ -191,7 +207,7 @@ export function newForgeScreen(f: Session, ctx: Ctx): Screen {
           ...(focus === i ? { cursor: [...shown].length } : {}),
           ...(error !== undefined && (errorKey === spec.key || (errorKey === undefined && focus === i))
             ? { error }
-            : { hint: spec.hint }),
+            : { hint: spec.key === "template" ? templateHint(values["template"] || DEFAULT_TEMPLATE) : spec.hint }),
         });
         if (focus === i) cursor = at;
       });
@@ -222,7 +238,7 @@ export function newForgeScreen(f: Session, ctx: Ctx): Screen {
       if (choices !== undefined && step !== 0) {
         // A choice can be cycled or typed; both end in a value the door checks.
         const k = SPECS[focus]!.key;
-        const at = Math.max(0, choices.indexOf(values[k] || DEFAULT_SIZE));
+        const at = Math.max(0, choices.indexOf(values[k] || choices[0]!));
         values[k] = choices[(at + step + choices.length) % choices.length]!;
         error = undefined;
         return true;

@@ -4,10 +4,11 @@ export const route: Route = {
   method: "post",
   path: "/api/v1/users",
   summary:
-    "Sign up: answers 201 with the new account { id, username, displayName, isAdmin, commitEmail }, never the admin; `email` is optional; `invite` is an invite link's token, `turnstile_token` the human check when the forge asks for one; refused from another origin with 403 forbidden",
+    "Sign up: while the forge takes requests (signup `request`) answers 202 { state: 'waiting', username, message } and the account waits for an admin to allow it; otherwise answers 201 with the new account { id, username, displayName, isAdmin, commitEmail }, never the admin; `email` is optional; `invite` is an invite link's token, `turnstile_token` the human check when the forge asks for one; refused from another origin with 403 forbidden",
   auth: false,
+  role: "anonymous",
   status: 201,
-  body: { username: "string", email: "string", password: "string", invite: "string", turnstile_token: "string" },
+  body: { username: "string", email: "string", password: "string", invite: "string", note: "string", from: "string", turnstile_token: "string" },
   refusals: {
     rate_limited: "429, too many sign-ups; retry-after says when",
     too_large: "413, the body is over the limit for a stranger's",

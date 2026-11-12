@@ -8,3 +8,17 @@ Drawn from existing components only: `card` with an icon head, `row` per hold
 repositories the viewer administers and shows when there are none, because it
 holds the form. A person who administers a repository but is not a forge
 admin sees `/boards` as this card alone.
+
+## Pulls on a held issue (`.held-pulls`)
+
+In the held card, a hot-file hold lists the open pulls on that file after its
+sentence. `.held-pulls` is a wrapping flex line; each `<a>` is a 44px-high tap
+target with 8px of padding. Defined in `src/web/style/components.ts`.
+
+## Verified after landing (#7786)
+
+The card under the Pipeline table (`id="verified"`) adds no class: it is a `card()` with an `<h2>`, one `<p>` per repository in the default text colour, the repository and its run as plain `<a>` links, `small` for the run link. It is server-rendered, needs no JavaScript, and has no accent of its own.
+
+## The list and a board's management (#9815)
+
+`/boards` and the management under a board's grid speak the home page's language: no card boxes. `boardsList` is a `settings-block` section "Your boards" with one `row()` per board (title, then panels · range · refresh), or one plain sentence saying what a board is when there are none; the make-a-board form sits in its own "Make a board" section. Under a board, Panels, Add a panel and Board are `settings-block` sections with `<h2>` headings. The panels in the grid and the held-files card keep their `card` shape. No new class.

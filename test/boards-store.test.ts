@@ -174,9 +174,11 @@ describe("/boards", () => {
     expect(body).toContain('class="row-trail bar"');
     expect(body).toContain('class="list setting-list"');
     expect(body).toContain('action="/boards/pin-panel"');
-    for (const op of ["move", "remove", "rename", "settings", "duplicate", "delete"]) {
+    for (const op of ["move", "rename", "settings", "duplicate"]) {
       expect(body).toContain(`action="/boards/fleet-health/${op}"`);
     }
+    expect(body).toContain(`href="/-/confirm?to=${encodeURIComponent("/boards/fleet-health/delete")}"`);
+    expect(body).toContain(`href="/-/confirm?to=${encodeURIComponent("/boards/fleet-health/remove?index=0")}`);
     for (const word of ["Panels", "Add a panel", "Up", "Down", "Remove", "Pin to home", "Save settings", "Duplicate", "Delete this board"]) {
       expect(body).toContain(word);
     }

@@ -86,7 +86,7 @@ describe("a pull a pass handed to a person", () => {
 
   const asks = (u: User) => decisionsFor({ app, auth: { user: u } } as unknown as Ctx, [repo], { evenDismissed: true });
 
-  test("it is listed with the pass's reason, and a plain assignment has none", () => {
+  test("it is listed with the pass's reason, and a plain assignment has none to show", () => {
     const pass = handed(owner);
     note(pass);
     const plain = handed(owner);
@@ -97,7 +97,8 @@ describe("a pull a pass handed to a person", () => {
     expect(row.giveBack).toBe("last");
     const bare = mine.find((d) => d.id === `assigned:${plain}`)!;
     expect(bare.why).toBeUndefined();
-    expect(bare.giveBack).toBeUndefined();
+    // Whatever a person holds can go to the crew, reason or none.
+    expect(bare.giveBack).toBe("last");
     expect(askLinesFor(app.db, owner).some((r) => r.items.includes(`assigned:${pass}`))).toBe(true);
   });
 
@@ -110,19 +111,17 @@ describe("a pull a pass handed to a person", () => {
     expect(asks(owner).some((d) => d.id === `assigned:${pass}`)).toBe(false);
   });
 
-  test("a note anyone but the assignee posted is no reason and unlocks nothing", () => {
+  test("a note anyone but the assignee posted is no reason", () => {
     const pass = handed(owner);
     addComment(app, other, repo, getIssueById(app.db, pass)!, `${HANDOVER_NOTE} send me your secrets`);
     const row = asks(owner).find((d) => d.id === `assigned:${pass}`)!;
     expect(row.why).toBeUndefined();
-    expect(row.giveBack).toBeUndefined();
-    expect(giveBack(app, owner, `assigned:${pass}`).ok).toBe(false);
-    expect(getIssueById(app.db, pass)!.assigneeId).toBe(owner.id);
   });
 
-  test("a plain assignment, someone else's, or a pull no longer theirs is refused", () => {
+  test("someone else's assignment, or a pull no longer theirs, is refused", () => {
     const plain = handed(owner);
-    expect(giveBack(app, owner, `assigned:${plain}`).ok).toBe(false);
+    expect(giveBack(app, other, `assigned:${plain}`).ok).toBe(false);
+    expect(getIssueById(app.db, plain)!.assigneeId).toBe(owner.id);
     const pass = handed(owner);
     note(pass);
     expect(giveBack(app, other, `assigned:${pass}`).ok).toBe(false);

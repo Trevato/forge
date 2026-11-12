@@ -1,10 +1,11 @@
 import { listAllBoards, showBoard } from "../../../actions/boards.ts";
 import { panelData, parseWindow } from "../../../boards/panel_data.ts";
+import { panelNow } from "../../../boards/panel_now.ts";
 import { good, bad, type Tool, str, boardRefused, mayBoards, boardFailed } from "../shared.ts";
 
 export const tool: Tool = {
   name: "boards",
-  doc: "`{ slug?, panel?, from?, to?, step? }` (person admins): without `slug`, lists the forge's boards (slug, title, range, refresh, panels); with `slug`, that board; with `panel` (place from 0, up to 23), that panel's data over the `from`/`to` window and `step`",
+  doc: "`{ slug?, panel?, from?, to?, step? }` (person admins): without `slug`, lists the forge's boards (slug, title, range, refresh, panels); with `slug`, that board (the `ui://forge/board` card); with `panel` (place from 0, up to 23), that panel's data over the `from`/`to` window and `step`",
   description:
     "The forge's boards for person admins: slug, title, range, refresh and panels.",
   inputSchema: {
@@ -28,7 +29,10 @@ export const tool: Tool = {
     }
     const shown = await showBoard(ctx.app, user, str(args["slug"]));
     if (!shown.ok) return boardFailed(shown.error);
-    if (args["panel"] === undefined) return good({ slug: str(args["slug"]), ...shown.value });
+    if (args["panel"] === undefined) {
+      const values = shown.value.panels.slice(0, 8).map((p) => panelNow(ctx.app.db, shown.value, p));
+      return { ...good({ slug: str(args["slug"]), ...shown.value }), card: { values } };
+    }
     const index = args["panel"];
     const panel = typeof index === "number" && Number.isInteger(index) ? shown.value.panels[index] : undefined;
     if (!panel) return bad("not_found", "that board has no panel there");

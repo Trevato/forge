@@ -5,5 +5,6 @@ export const route: Route = {
   path: `${REPO}/app/{env}/redeploy`,
   summary: "Redeploy an environment (rw scope); answers 202 with { run }",
   auth: true,
+  role: "member",
   status: 202,
 };

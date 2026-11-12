@@ -11,7 +11,8 @@ import { getRepo } from "../src/core/repos.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { clearMapCache, planBuildCount } from "../src/web/map_cache.ts";
-import { baselineMs, expectBudget } from "./helpers/budget.ts";
+import { expectWork } from "./helpers/work.ts";
+import { statements } from "./helpers/statements.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { proveAll } from "./helpers/verified.ts";
 
@@ -85,28 +86,13 @@ const list = async () => {
   return res.status;
 };
 
-test("readPlan of 2,000 closed and 300 open issues under 10 pillars fits a 40 ms budget", async () => {
+test("readPlan of 2,000 closed and 300 open issues under 10 pillars costs a bounded number of statements", async () => {
   const repo = getRepo(app.db, "alice", "forge")!;
-  // The yardstick is the same machine reading the same rows raw, so load
-  // stretches both and the verdict follows the code (#6690). The plan builds
-  // 2,300 issue objects and walks their graph: ~25 ms quiet, so 30 sat on the
-  // edge and flipped with the machine (#6811); 40 leaves room under the page's 50.
-  const raw = Math.min(
-    ...Array.from({ length: 7 }, () => {
-      const start = performance.now();
-      app.db.query("SELECT * FROM issue WHERE repo_id = ?1").all(repo.id);
-      return performance.now() - start;
-    }),
-  );
-  readPlan(app.db, repo, { spend: true });
-  const times: number[] = [];
-  for (let n = 0; n < 7; n++) {
-    const start = performance.now();
-    const plan = readPlan(app.db, repo, { spend: true });
-    times.push(performance.now() - start);
-    expect(plan.limbs).toHaveLength(PILLARS);
-  }
-  expectBudget(Math.min(...times), { ms: 40, against: raw });
+  // Counted, not timed (#7824): the plan reads the repository's issues in a fixed number of
+  // statements, never one per issue (2,300 issues here).
+  let plan = readPlan(app.db, repo, { spend: true });
+  expectWork(await statements(app.db, () => void (plan = readPlan(app.db, repo, { spend: true }))), { max: 22 });
+  expect(plan.limbs).toHaveLength(PILLARS);
 });
 
 test("a write to another repository keeps the plan warm; a new issue here refreshes it", async () => {
@@ -139,13 +125,14 @@ test("a milestone page names session, repo, plan and render", async () => {
     expect(parts.find((p) => p.startsWith(`${name};`))).toMatch(/^[a-z]+;dur=\d+\.\d$/);
 });
 
-test("a cold plan names its stretches, stays under 50 ms, and keeps each limb's counts", async () => {
-  const against = await baselineMs(servers.url);
+test("a cold plan names its stretches, costs a bounded number of statements, and keeps each limb's counts", async () => {
   const stretches: string[] = [];
   const repo = getRepo(app.db, "alice", "forge")!;
-  const start = performance.now();
-  const plan = readPlan(app.db, repo, { spend: true, stretch: (name) => stretches.push(name) });
-  expectBudget(performance.now() - start, { ms: 50, against });
+  let plan = readPlan(app.db, repo, { spend: true });
+  expectWork(await statements(app.db, () => {
+    stretches.length = 0;
+    plan = readPlan(app.db, repo, { spend: true, stretch: (name) => stretches.push(name) });
+  }), { max: 22 });
   expect(stretches).toEqual(["graph", "crew", "week", "spend", "limbs"]);
   expect(plan.limbs).toHaveLength(PILLARS);
   for (const limb of plan.limbs)

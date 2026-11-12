@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { listProposals, repoByName } from "../src/actions/proposal_tokens.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
@@ -113,10 +114,60 @@ describe("proposal tokens in the terminal", () => {
     expect(h.text()).not.toContain("Shown once");
 
     await h.press("x");
+    expect(h.text()).toContain("Revoke the token for kid-one?");
+    expect(count(app)).toBe(1);
+    await h.press("y");
     expect(h.text()).toContain("kid-one: revoked.");
     expect(h.text()).not.toContain(secret);
     expect(count(app)).toBe(0);
     expect((await asProposal(secret)).status).toBe(401);
+    h.stop();
+  });
+
+  test("x asks first: n, esc or enter keeps the token listed", async () => {
+    const h = boot("alice");
+    await h.open();
+    await h.press("n");
+    await h.type("kid-two");
+    await h.press("enter");
+    await h.type("https://kid-two.example.com/");
+    await h.press("enter");
+    await h.press("esc");
+
+    const listed = () => {
+      const r = listProposals(app, getUserByName(app.db, "alice"), repoByName(app, "alice/lib"));
+      return r.ok ? r.value.map((t) => t.child) : [];
+    };
+    expect(listed()).toEqual(["kid-two"]);
+
+    await h.press("x");
+    expect(h.text()).toContain("Revoke the token for kid-two?");
+    expect(h.text()).toContain("kid-two can no longer propose here");
+    await h.press("n");
+    expect(h.text()).not.toContain("Revoke the token for");
+    expect(h.text()).not.toContain("revoked.");
+    expect(listed()).toEqual(["kid-two"]);
+
+    await h.press("x", "esc");
+    expect(listed()).toEqual(["kid-two"]);
+
+    // The dialog starts on Keep: a stray enter revokes nothing.
+    await h.press("x", "enter");
+    expect(h.text()).not.toContain("Revoke the token for");
+    expect(listed()).toEqual(["kid-two"]);
+
+    await h.press("x", "y");
+    expect(h.text()).toContain("kid-two: revoked.");
+    expect(listed()).toEqual([]);
+    h.stop();
+  });
+
+  test("x on an empty list asks nothing", async () => {
+    const h = boot("alice");
+    await h.open();
+    expect(h.text()).toContain("None yet");
+    await h.press("x");
+    expect(h.text()).not.toContain("Revoke the token for");
     h.stop();
   });
 

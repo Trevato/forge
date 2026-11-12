@@ -1,12 +1,16 @@
 {
   "name": "forge",
-  "version": "0.1.0",
-  "description": "Your forge inside Claude Code: its MCP server and a /forge command (tell, status, decide, plan).",
+  "version": "0.2.0",
+  "description": "Your forge inside Claude Code: its MCP server and a /forge command (new, tell, status, decide, archive, undo, plan, preview, pulls, runs, log, asked, waves, held, forks).",
   "mcpServers": {
     "forge": {
       "type": "http",
+      "url": "${FORGE_URL}/mcp"
+    },
+    "forge-token": {
+      "type": "http",
       "url": "${FORGE_URL}/mcp",
-      "headers": { "Authorization": "Bearer ${FORGE_TOKEN}" }
+      "headers": { "Authorization": "Bearer ${FORGE_TOKEN:-}" }
     }
   }
 }

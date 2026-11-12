@@ -10,18 +10,22 @@ import { ATTENTION_WORDS, orderRows, type ClientRow } from "../src/spawn/clients
 const NOW = Date.parse("2026-10-25T12:00:00Z");
 const ago = (h: number) => new Date(NOW - h * 3_600_000).toISOString();
 
-const row = (name: string, o: Partial<ClientRow> = {}): Omit<ClientRow, "attention"> => ({
+const row = (name: string, o: Partial<ClientRow> = {}): Omit<ClientRow, "attention" | "stage"> => ({
   name,
   url: `https://${name}.test`,
   for: null,
   apps: [],
+  stage: null,
   sentAt: ago(1),
   made: true,
   claimed: true,
   lastActivityAt: ago(1),
   running: null,
+  reach: null,
+  link: null,
   size: "small",
   use: { kind: "shared" },
+  disk: { own: false, path: "/d/children/c" },
   lastHeartbeatAt: null,
   nextStep: { key: "unreported", words: "has not reported yet", lastTellAt: null },
   spendTodayUsd: null,

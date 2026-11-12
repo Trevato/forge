@@ -10,6 +10,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { dayKeepJs } from "../src/web/studio/feed.ts";
 import { promote } from "./helpers/members.ts";
+import { freshHome } from "./helpers/home-fresh.ts";
 
 const dividerLabels = (text: string): string[] => [...text.matchAll(/data-day-divider="([^"]+)"/g)].map((m) => m[1]!);
 
@@ -21,7 +22,7 @@ describe("day dividers on the home timeline", () => {
   let repoId = "";
   let aliceId = "";
 
-  const get = async (path: string) => (await fetch(`${servers.url}${path}`, { headers: { cookie } })).text();
+  const get = (path: string) => freshHome(servers.url, cookie, path);
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-day-divider-"));
@@ -56,7 +57,7 @@ describe("day dividers on the home timeline", () => {
   });
 
   test("three days give three dividers in order, once each", async () => {
-    const labels = dividerLabels(await get("/"));
+    const labels = dividerLabels(await get("/feed"));
     expect(labels).toHaveLength(3);
     expect(labels.slice(0, 2)).toEqual(["Today", "Yesterday"]);
   });
@@ -66,13 +67,13 @@ describe("day dividers on the home timeline", () => {
       const e = app.bus.append({ kind: "run.finished", repoId: repoId, actorId: aliceId, payload: { kind: "agent", state: "ok", summary: `more ${i}`, runId: `m${i}` } });
       app.db.query("UPDATE event SET created_at = ?1 WHERE id = ?2").run(new Date(Date.now() - i * 1000).toISOString(), e.id);
     }
-    const first = await get("/");
+    const first = await get("/feed");
     expect(dividerLabels(first)[0]).toBe("Today");
-    const href = /href="(\/\?cursor=[^"]+)"[^>]*>Older posts/.exec(first)![1]!.replaceAll("&amp;", "&");
+    const href = /href="(\/feed\?cursor=[^"]+)"[^>]*>Older posts/.exec(first)![1]!.replaceAll("&amp;", "&");
     const older = await get(href);
     expect(older).toContain("data-item=");
     expect(dividerLabels(older)).not.toContain("Today");
-    const live = await get(href.replace("/?", "/live/feed?"));
+    const live = await get(href.replace("/feed?", "/live/feed?"));
     expect(dividerLabels(live)).toEqual(dividerLabels(older));
   });
 

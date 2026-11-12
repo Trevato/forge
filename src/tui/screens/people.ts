@@ -22,6 +22,7 @@ import type { Session } from "../session.ts";
 import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import { confirmScreen, drawList, later, ListState, promptScreen, runAsync, type ListRow } from "./common.ts";
+import type { PaletteEntry } from "./entries.ts";
 
 /**
  * The accounts page's no-mail card in one line that fits 80 columns: without
@@ -164,3 +165,13 @@ export function peopleScreen(f: Session, ctx: Ctx): Screen {
   };
   return screen;
 }
+
+/** Guests, members and admins, as /settings/people has them (#2301). */
+export const entry: PaletteEntry = {
+  id: "people",
+  title: "People",
+  hint: "who is a guest, a member or an admin; promote or demote",
+  after: ["can"],
+  offered: (session) => session.user?.isAdmin === true && session.user.kind === "user",
+  run: (session, ctx) => ctx.push(peopleScreen(session, ctx)),
+};

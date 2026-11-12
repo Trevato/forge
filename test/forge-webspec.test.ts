@@ -16,20 +16,27 @@ import { createSession } from "../src/core/sessions.ts";
 import { createUser } from "../src/core/users.ts";
 import { compress } from "../src/http/compress.ts";
 import { securityFloor } from "../src/http/respond.ts";
+import { setCrawlClock } from "../src/http/crawl.ts";
 import { forgeHttp, type ForgeHttp } from "../src/http/server.ts";
-import { webspec } from "../src/release/webspec.ts";
+import { bodyProblems, headProblems, headerProblems, s, webspec } from "../src/release/webspec.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
 
-const PATHS = ["/", "/signin", "/signup", "/explore", "/alice/notes", "/alice/notes/issues", "/alice/notes/issues/1", "/alice/notes/tree/main", "/alice/notes/blob/main/a.txt"];
+const PATHS = ["/", "/signin", "/signup", "/explore", "/alice/notes", "/alice/notes/issues", "/alice/notes/issues/1", "/alice/notes/tree/main", "/alice/notes/blob/main/a.txt", "/explore?kind=people", "/apps", "/changelog"];
+
+/** A person's browser: a request with no User-Agent counts against the crawl budget (#8129), which shrinks while the check machine is loaded, so these tests are never crawlers. */
+const BROWSER = { "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36" };
+
+const CACHING = "https://specification.website/#caching";
 
 /** `check path` -> [section, why it stands]. Every one is expected on every page it names; one fixed fails the test, one new fails it too. */
-const KNOWN: Record<string, [string, string]> = {};
+const KNOWN: Record<string, [string, string]> = {
+  "cache-html /alice/notes/commit/<sha>": [CACHING, "commit-addressed pages are immutable by design (#8129)"],
+};
 
 /** The owner's pages: signed in, so no-store by design; webspec's caching findings on them are not asserted away, they are named. */
 const SIGNED_IN = ["/map", "/system", "/boards", "/settings/crew", "/alice/notes/pulls/2", "/settings", "/audit", "/settings/backups", "/fleet/graph"];
-const CACHING = "https://specification.website/#caching";
 const NO_ETAG = "signed-in HTML is no-store by design: it is per-person, so there is no validator to revalidate against";
 const KNOWN_SIGNED_IN: Record<string, [string, string]> = {
   "etag /system": [CACHING, NO_ETAG],
@@ -53,6 +60,9 @@ beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "forge-webspec-"));
   app = createApp({ dataDir: dir, port: 0 });
   http = forgeHttp(app);
+  // The stranger budget shrinks while the check machine's event loop runs late (#8199); these tests walk pages, they do not measure the budget (crawl tests do), so each request gets a window of its own and the verdict never depends on load.
+  let minutes = 0;
+  setCrawlClock(app, () => Date.now() + 61_000 * ++minutes);
   const made = await createUser(app.db, {
     origin: "seed",
     trusted: true,
@@ -87,6 +97,7 @@ afterAll(async () => {
 const through = (signedIn: boolean) => async (input: string, init?: RequestInit) => {
   const request = new Request(input, init);
   if (signedIn) request.headers.set("cookie", cookie);
+  if (!request.headers.has("user-agent")) request.headers.set("user-agent", BROWSER["user-agent"]);
   if (!request.headers.has("accept-encoding")) request.headers.set("accept-encoding", "br, gzip");
   const response = await compress(request, await http.handle(request)).then(securityFloor);
   const encoding = response.headers.get("content-encoding");
@@ -98,7 +109,8 @@ const through = (signedIn: boolean) => async (input: string, init?: RequestInit)
 
 test("the forge's signed-out pages raise exactly the findings named in KNOWN", async () => {
   const found = await webspec("http://forge.test", PATHS, through(false), { site: true });
-  const keyOf = (f: { check: string; path: string }) => `${f.check} ${f.path}`;
+  // #8129: a page at a full commit id names bytes that never change, so the edge may keep it (#8016); the id differs per run, so the path is keyed as `<sha>`.
+  const keyOf = (f: { check: string; path: string }) => `${f.check} ${f.path.replace(/\/commit\/[0-9a-f]{40}$/, "/commit/<sha>")}`;
   // New: not named, or citing another section than the one named.
   expect(found.filter((f) => KNOWN[keyOf(f)]?.[0] !== f.section).map((f) => `${keyOf(f)}: ${f.message}`)).toEqual([]);
   // Fixed: named but no longer found, so the entry must go.
@@ -116,7 +128,7 @@ test("the owner's signed-in pages raise exactly the findings named in KNOWN_SIGN
 
 test("a page that answers 200 names its canonical address, equal to og:url; a 404 names none", async () => {
   const head = async (path: string) => {
-    const res = await http.handle(new Request(`http://forge.test${path}`));
+    const res = await http.handle(new Request(`http://forge.test${path}`, { headers: BROWSER }));
     return { status: res.status, html: await res.text() };
   };
   for (const path of ["/", "/explore", "/alice/notes", "/explore?x=1"]) {
@@ -134,12 +146,30 @@ test("a page that answers 200 names its canonical address, equal to og:url; a 40
 
 test("the walked signed-in pages answer 200 for the owner", async () => {
   for (const path of SIGNED_IN) {
-    expect((await http.handle(new Request(`http://forge.test${path}`, { headers: { cookie } }))).status).toBe(200);
+    expect((await http.handle(new Request(`http://forge.test${path}`, { headers: { cookie, ...BROWSER } }))).status).toBe(200);
   }
 });
 
 test("the walked repository pages exist", async () => {
   for (const path of ["/alice/notes", "/alice/notes/issues", "/alice/notes/issues/1"]) {
-    expect((await http.handle(new Request(`http://forge.test${path}`))).status).toBe(200);
+    expect((await http.handle(new Request(`http://forge.test${path}`, { headers: BROWSER }))).status).toBe(200);
   }
+});
+
+test("the 404 page raises exactly the head, body and header findings named in KNOWN_404", async () => {
+  const res = await through(false)("http://forge.test/no-such-page-here");
+  expect(res.status).toBe(404);
+  const html = await res.text();
+  const problems = [...headProblems(html), ...bodyProblems(html, false), ...headerProblems(res.headers, false)];
+  // `check message` -> [section, why it stands], as KNOWN: a 404 has no address of its own, so it names no canonical and no og:url (asserted above).
+  const KNOWN_404: Record<string, [string, string]> = {
+    "canonical no <link rel=\"canonical\">": [s("canonical"), "a 404 names no canonical address, by design"],
+    "open-graph missing og:url": [s("open-graph"), "a 404 names no address to share, by design"],
+  };
+  const keyOf = (p: { check: string; message: string }) => `${p.check} ${p.message}`;
+  // New: not named, or citing another section than the one named.
+  expect(problems.filter((p) => KNOWN_404[keyOf(p)]?.[0] !== p.section).map((p) => `${keyOf(p)} [${p.section}]`)).toEqual([]);
+  // Fixed: named but no longer found, so the entry must go.
+  const found = new Set(problems.map(keyOf));
+  expect(Object.keys(KNOWN_404).filter((k) => !found.has(k))).toEqual([]);
 });

@@ -1,0 +1,109 @@
+/**
+ * /maintenance: an admin's page to prepare the forge for a power-off and to
+ * end it. It says plainly what stops, what the drain still waits for, and,
+ * once the forge is back, when and what was verified.
+ */
+
+import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
+import { dutyStates, switchDuty } from "../../maintain/pause.ts";
+import { duties } from "../../maintenance/duties.ts";
+import { statusWithStandby } from "../../maintenance/standby.ts";
+import { ABOUT_TO_STOP_ROWS, prepare, resumeNow, status } from "../../maintenance/service.ts";
+import type { Ctx } from "../../http/context.ts";
+import { notFoundPage, signInFirst } from "../chrome.ts";
+import { field as formField, readForm } from "../form.ts";
+import { html, type Html } from "../html.ts";
+import { flashTo, page } from "../layout.ts";
+import { badge, btn, field } from "../ui.ts";
+import { budgetOfRow } from "./maintenance_budgets.ts";
+
+function admin(ctx: Ctx): Response | undefined {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
+  return undefined;
+}
+
+/** One fact of the page: what it is and how it stands, as a `dl` row. */
+const fact = (label: string, value: Html | string): Html => html`<div class="status-row"><dt>${label}</dt><dd>${value}</dd></div>`;
+
+export async function maintenancePage(ctx: Ctx): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const denied = admin(ctx);
+  if (denied) return denied;
+  const rendering = performance.now();
+  const s = await statusWithStandby(status(ctx.app));
+  const body = html`<div class="page-head"><h1>Maintenance</h1></div>
+    <p id="maintenance-says">${s.says}</p>
+    <dl id="maintenance-duties" class="status-rows">
+      ${duties(ctx.app.config.dataDir).map((d) => fact(d.name, html`${d.detail}${d.overdue ? html` ${badge("overdue", { tone: "danger" })}` : null}`))}
+      ${dutyStates(ctx.app.db).map((d) =>
+        html`${fact(d.name, html`${d.detail}
+          <form method="post" action="/maintenance/duties/${d.name}" class="inline">
+            <input type="hidden" name="paused" value="${d.paused ? "no" : "yes"}">${btn(d.paused ? "Resume" : "Pause", { variant: "outline" })}
+          </form>`)}${budgetOfRow(ctx.app, d.name)}`,
+      )}
+    </dl>
+    ${s.phase === "idle" ? html`<p id="maintenance-standby" class="muted">${s.standby.says}</p>` : null}
+    ${s.phase === "idle"
+      ? html`<p class="muted">Get the forge ready for a planned power-off. What stops:</p>
+          <dl class="status-rows">${ABOUT_TO_STOP_ROWS.map((r) => fact(r.what, r.stops))}</dl>
+          <form method="post" action="/maintenance/prepare" class="stack">
+            ${field({ name: "reason", label: "Shown to visitors (optional)", maxlength: 200, autocomplete: "off" })}
+            ${field({ name: "confirm", type: "checkbox", value: "yes", required: true, label: "I understand the crew and releases stop now" })}
+            <div class="form-actions">${btn("Prepare for maintenance", { variant: "danger" })}</div>
+          </form>
+          ${s.last
+            ? html`<p id="maintenance-last" class="muted">${s.last.says}</p>
+                ${s.last.checks
+                  ? html`<dl id="maintenance-checks" class="status-rows">
+                      ${s.last.checks.map((c) =>
+                        fact(c.name, html`${c.ok ? badge("ok", { tone: "success" }) : badge("FAILED", { tone: "danger", icon: "x" })} ${c.says}`),
+                      )}
+                    </dl>`
+                  : html`<ul id="maintenance-checks" class="muted">${s.last.verified.map((v) => html`<li>${v}</li>`)}</ul>`}`
+            : null}`
+      : html`<dl class="status-rows">
+            ${s.phase === "ready" ? null : fact("Standby", s.standby.says)}
+            ${fact("Since", s.since ?? "")} ${s.reason ? fact("Reason", s.reason) : null}
+            ${fact("Backup", s.backup?.says ?? "")} ${fact("Still working", String(s.working))}
+          </dl>
+          <div class="form-actions">
+            <form method="post" action="/maintenance/prepare">${btn("Check again and retake the backup", { variant: "outline" })}</form>
+            <form method="post" action="/maintenance/resume">${btn("End maintenance now")}</form>
+          </div>`}`;
+  const response = page({ ctx, title: "Maintenance", body });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
+}
+
+export async function maintenancePrepare(ctx: Ctx): Promise<Response> {
+  const denied = admin(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  // Idle -> prepared stops the crew: asked first. A re-check while prepared has already been agreed.
+  if (status(ctx.app).phase === "idle" && formField(form, "confirm") !== "yes")
+    return flashTo(ctx, "/maintenance", { tone: "danger", message: "Tick the box to confirm: the crew and releases stop." });
+  const r = await prepare(ctx.app, ctx.auth.user, formField(form, "reason"));
+  return flashTo(ctx, "/maintenance", r.ok ? { message: r.value.says } : { tone: "danger", message: r.error.says });
+}
+
+export async function maintenanceResume(ctx: Ctx): Promise<Response> {
+  const denied = admin(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const r = resumeNow(ctx.app, ctx.auth.user);
+  return flashTo(ctx, "/maintenance", r.ok ? { message: r.value.says } : { tone: "danger", message: r.error.says });
+}
+
+export async function maintenanceDuty(ctx: Ctx): Promise<Response> {
+  const denied = admin(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const want = formField(form, "paused");
+  if (want !== "yes" && want !== "no") return flashTo(ctx, "/maintenance", { tone: "danger", message: "paused is yes or no." });
+  const r = switchDuty(ctx.app.db, ctx.params["name"], want === "yes", ctx.auth.user!.username);
+  return flashTo(ctx, "/maintenance", r.ok ? { message: r.says } : { tone: "danger", message: r.says });
+}

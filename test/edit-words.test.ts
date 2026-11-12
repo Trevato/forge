@@ -25,6 +25,7 @@ import { listEvents } from "../src/core/events.ts";
 import { getIssueById, type Issue } from "../src/core/issues.ts";
 import { openPullsClosing, type Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
+import { setMember } from "../src/core/roles.ts";
 import { submitReview } from "../src/core/reviews.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
@@ -447,6 +448,19 @@ describe("new words for an issue or a pull", () => {
     ).toBeDefined();
   });
 
+  test("the folded Edit form is plain fields, not a boxed card", async () => {
+    const html = await page(`/alice/garden/pulls/${pull.number}`, await signIn("alice"));
+    const at = html.indexOf('<details class="tl-edit" id="edit">');
+    expect(at).toBeGreaterThan(-1);
+    const fold = html.slice(at, html.indexOf("</details>", at));
+    const open = fold.match(/<form[^>]*>/)![0];
+    expect(open).not.toMatch(/\bcard\b/);
+    expect(open).not.toContain("comment-form");
+    expect(fold).toContain('name="title"');
+    expect(fold).toContain('name="body"');
+    expect(fold).toContain("Save");
+  });
+
   test("the pages offer Edit to the author and a writer, and the form saves", async () => {
     const mine = await signIn("alice");
     const change = `/alice/garden/pulls/${pull.number}`;
@@ -603,12 +617,15 @@ describe("new words for an issue or a pull", () => {
       message: "tulips",
       files: [{ path: "tulips.md", content: "red\n" }],
     });
+    // A member who cannot write here sends from a branch; a guest needs a fork.
+    setMember(app.db, bob.id, true, alice.id, new Date());
     const opened = await openPull(app, bob, repo, {
       title: "Tulips",
       body: "Red ones.",
       baseBranch: "main",
       headBranch: "bob/tulips",
     });
+    setMember(app.db, bob.id, false, alice.id, new Date());
     if (!opened.ok) throw new Error(String(opened.error));
     const theirs = opened.value;
     const path = `/alice/garden/pulls/${theirs.number}`;

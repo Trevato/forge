@@ -457,13 +457,42 @@ describe("terminal: apps, runs and the crew", () => {
     }
   }, 30_000);
 
+  test("a typed filter finds a repository past the newest 200 the launcher read first (#1068)", async () => {
+    // Rows alone: the launcher reads the table, and 250 bare repositories
+    // would take minutes to init. Ids sort newest first, so the lantern is oldest.
+    const insert = forge.db.query(
+      "INSERT INTO repo (id, owner_id, name, visibility) VALUES (?1, ?2, ?3, ?4)",
+    );
+    insert.run("zz1068-000", alice.id, "faraway-lantern", "public");
+    insert.run("zz1068-001", alice.id, "faraway-secret", "private");
+    for (let i = 2; i <= 250; i++)
+      insert.run(`zz1068-${String(i).padStart(3, "0")}`, alice.id, `filler-${i}`, "public");
+    const bob = getUserByName(forge.db, "bob")!;
+    const h = boot(forge, identityFor(bob));
+    try {
+      await h.until("On you");
+      await h.press("/");
+      await h.type("faraway");
+      await h.until("alice/faraway-lantern");
+      // Past the first page, visibility still holds.
+      expect(h.text()).not.toContain("faraway-secret");
+      await h.press("esc");
+      await h.press("/");
+      await h.type("alice/faraway-l");
+      await h.until("alice/faraway-lantern");
+    } finally {
+      h.stop();
+      forge.db.run("DELETE FROM repo WHERE id LIKE 'zz1068-%'");
+    }
+  }, 30_000);
+
   test("the removed screens are unreachable: no palette entry, no dashboard or account key", async () => {
     const h = boot(forge, identityFor(alice));
     try {
       await h.until("On you");
       // alice is the site admin, so the crew entry would have been there.
       const ids = forgeCommands(h.session)(h.app.ctx).map((c) => c.id);
-      for (const gone of ["apps", "app", "runs", "new-app", "crew"])
+      for (const gone of ["apps", "app", "runs", "crew"])
         expect(ids).not.toContain(gone);
       expect(ids).toContain("repo");
       expect(ids).toContain("pulls");

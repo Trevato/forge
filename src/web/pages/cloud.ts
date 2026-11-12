@@ -24,13 +24,13 @@ import {
   type CloudAccount,
   type CloudRead,
 } from "../../core/cloud_account.ts";
-import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
+import { nameFrame, notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
-import { html, when, type Html } from "../html.ts";
+import { html, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { btn, card, icon, row, time } from "../ui.ts";
+import { btn, confirmAction, icon, row, time } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 const BACK = "/settings/cloud";
@@ -86,27 +86,26 @@ function accountsCard(accounts: CloudAccount[], reads: CloudRead[], uses: Map<st
             autocomplete="off" spellcheck="false" required />
           ${btn("Rename", { size: "sm", label: `Rename ${a.name}` })}
         </form>
-        <form method="post" action="/settings/cloud/remove">
-          ${hidden(a.provider, a.name)}${btn("Remove", { size: "sm", icon: "x", label: `Remove ${a.name}` })}
-        </form>
+        ${confirmAction({
+          action: `/settings/cloud/remove?provider=${encodeURIComponent(a.provider)}&name=${encodeURIComponent(a.name)}`,
+          verb: "Remove",
+          size: "sm",
+        })}
       </div>`,
     });
   });
-  return card(
-    html`<div class="card-body">
-        <p class="muted small">
-          Paste a credential once: the forge checks it with read-only calls,
-          says what it can see, then seals it. It is never shown again. Give it
-          the narrowest scope the provider offers — an audit only reads. A run
-          that declares <span class="mono">writes: yes</span> is refused a
-          credential until its write switch is on; the switch cannot make a
-          provider key less powerful than it already is.
-        </p>
-      </div>
-      ${when(rows.length > 0, () => html`<ul class="list setting-list">${rows}</ul>`)}
+  return html`<section class="settings-block">
+      <h2>Cloud accounts</h2>
+      <p class="muted small">Paste a credential once; the forge checks it read-only, seals it, and never shows it again.</p>
+      ${rows.length > 0
+        ? html`<ul class="list setting-list">${rows}</ul>`
+        : html`<p class="muted small">No cloud account is sealed yet. Add one below: pick a provider, name it, paste its credential.</p>`}
+    </section>
+    <section class="settings-block">
+      <h2>Add an account</h2>
       <form class="edit-row" method="post" action="/settings/cloud">
         <select class="input" name="provider" aria-label="Provider" required>
-          ${PROVIDERS.map((p) => html`<option value="${p}">${LABEL[p]}</option>`)}
+          ${PROVIDERS.map((p) => html`<option value="${p}">${LABEL[p]} — ${shape[p]}</option>`)}
         </select>
         <input class="input mono" type="text" name="name" placeholder="name, e.g. main"
           aria-label="Name" pattern="[a-z][a-z0-9_]{0,31}" maxlength="32"
@@ -115,19 +114,15 @@ function accountsCard(accounts: CloudAccount[], reads: CloudRead[], uses: Map<st
           aria-label="Credential" autocomplete="off" required />
         ${btn("Verify and seal", { variant: "primary", size: "sm", icon: "plus" })}
       </form>
-      <div class="card-body">
-        <p class="muted small">
-          ${PROVIDERS.map((p) => html`${LABEL[p]}: ${shape[p]}. `)}
-        </p>
-      </div>`,
-    { head: html`${icon("key")}<h2>Cloud accounts</h2>`, pad: false },
-  );
+      <p class="muted small">A run that declares <span class="mono">writes: yes</span> gets no credential until you allow writes on its account.</p>
+    </section>`;
 }
 
 function readsCard(reads: CloudRead[]): Html {
-  return card(
-    reads.length === 0
-      ? html`<p class="muted small card-body">No credential has been read yet.</p>`
+  return html`<section class="settings-block">
+    <h2>Every read</h2>
+    ${reads.length === 0
+      ? html`<p class="muted small">No credential has been read yet.</p>`
       : html`<ul class="list">
           ${reads.map((r) =>
             row({
@@ -136,9 +131,8 @@ function readsCard(reads: CloudRead[]): Html {
               meta: html`${runWords(r.run)} · ${time(r.at)}`,
             }),
           )}
-        </ul>`,
-    { head: html`${icon("eye")}<h2>Every read</h2>`, pad: false },
-  );
+        </ul>`}
+  </section>`;
 }
 
 // GET /settings/cloud
@@ -158,8 +152,8 @@ export async function cloudPage(ctx: Ctx): Promise<Response> {
     body: html`<div class="page-head"><h1>Cloud accounts</h1></div>
       ${settingsLayout(
         accountSections("cloud", { admin: true }),
-        html`${accountsCard(accounts, reads, uses)}<div class="mt">${readsCard(reads)}</div>
-          <p class="muted small mt"><a href="/settings/cloud/audit">Every vendor call today</a></p>`,
+        html`${accountsCard(accounts, reads, uses)}${readsCard(reads)}
+          <p class="muted small"><a href="/settings/cloud/audit">Every vendor call today</a> · <a href="/pinned">Pinned forges</a> · <a href="/deploy-to">Deploy a pinned forge</a></p>`,
         "Account settings",
       )}`,
   });
@@ -218,6 +212,7 @@ export async function cloudAudit(ctx: Ctx): Promise<Response> {
 
 // GET /settings/cloud/audit
 export function cloudAuditPage(ctx: Ctx): Response {
+  nameFrame(ctx.request);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const denied = requireAdmin(ctx);
   if (denied) return timePhase(ctx.request, "render", () => denied);
@@ -228,9 +223,10 @@ export function cloudAuditPage(ctx: Ctx): Response {
     body: html`<div class="page-head"><h1>Cloud audit</h1></div>
       ${settingsLayout(
         accountSections("cloud", { admin: true }),
-        card(
-          rows.length === 0
-            ? html`<p class="muted small card-body">No vendor call today. Rows are kept 90 days.</p>`
+        html`<section class="settings-block">
+          <h2>Today's vendor calls</h2>
+          ${rows.length === 0
+            ? html`<p class="muted small">No vendor call today. Rows are kept 90 days.</p>`
             : html`<ul class="list">
                 ${rows.map((r) =>
                   row({
@@ -240,9 +236,8 @@ export function cloudAuditPage(ctx: Ctx): Response {
                     meta: html`<span class="mono">${r.target}</span> · ${r.bytesOut} bytes out · ${time(r.at)}`,
                   }),
                 )}
-              </ul>`,
-          { head: html`${icon("eye")}<h2>Today's vendor calls</h2>`, pad: false },
-        ),
+              </ul>`}
+        </section>`,
         "Account settings",
       )}`,
   }));
@@ -274,6 +269,10 @@ export async function cloudRemove(ctx: Ctx): Promise<Response> {
   if (denied) return denied;
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
-  const r = removeAccount(ctx.app, ctx.auth.user, field(form, "provider"), field(form, "name"));
+  // The confirm page posts to its `to` exactly, so the account arrives in the query.
+  const query = ctx.url.searchParams;
+  const provider = field(form, "provider") || (query.get("provider") ?? "");
+  const name = field(form, "name") || (query.get("name") ?? "");
+  const r = removeAccount(ctx.app, ctx.auth.user, provider, name);
   return said(ctx, r, "Removed.", r.ok ? undefined : r.error);
 }

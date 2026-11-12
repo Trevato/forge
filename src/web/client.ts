@@ -10,6 +10,11 @@
  * behaviour that a page depends on to be usable.
  */
 
+import { GO_MATCH_JS, goPagesData } from "./go_pages.ts";
+import { keyDecisionJs } from "./key_decision.ts";
+import { actNowJs } from "./act_now.ts";
+import { pickJs } from "./pick.ts";
+import { imageViewJs } from "./render/image.ts";
 import { STAGE_BADGE_JS } from "./stage-row.ts";
 import { paletteHelpersJs } from "./palette.ts";
 import { MEDIA_PLAY_JS } from "./render/player.ts";
@@ -58,34 +63,23 @@ const modalJs = /* js */ `
 `;
 
 /**
- * The device-code page's only enhancement: submit the "check again" form on
- * the interval the provider asked for, and reload when the flow stops being
- * pending. Everything it does is something the page already offers a button
- * for, and the poll route answers JSON only because it was asked to — the
- * same POST from a plain form gets a redirect.
+ * The device-code page's only enhancement: listen on the page's own stream
+ * (`data-stream` on the "check again" form) and re-read the page when the
+ * forge says the flow has left pending. The forge does the asking of the
+ * provider (`src/http/flow_stream.ts`); this loops on nothing. Without script
+ * the form's button and a reload still re-poll.
  *
- * Shipped per page (`PageOptions.scriptJs`) rather than in the shell: a page
- * with no connect in flight should carry none of it.
+ * Shipped per page (`PageOptions.scriptJs`) rather than in the shell.
  */
 export const pollJs = /* js */ `
 (function () {
-  var form = document.querySelector('form[data-poll]');
-  if (!form) return;
-  var every = Number(form.getAttribute('data-poll') || 0);
-  if (!every) return;
-  var tries = 0;
-  function ask() {
-    if (tries++ > 200) return;
-    fetch(form.getAttribute('action') || location.href, {
-      method: 'POST',
-      headers: { accept: 'application/json' },
-      body: new FormData(form),
-    }).then(function (r) { return r.json(); }).then(function (out) {
-      if (out && out.status && out.status !== 'pending') { location.reload(); return; }
-      window.setTimeout(ask, every * 1000);
-    }, function () { window.setTimeout(ask, every * 1000); });
-  }
-  window.setTimeout(ask, every * 1000);
+  var form = document.querySelector('form[data-stream]');
+  if (!form || typeof EventSource === 'undefined') return;
+  var source = new EventSource(form.getAttribute('data-stream'));
+  source.addEventListener('flow.settled', function () {
+    source.close();
+    location.reload();
+  });
 })();
 `;
 
@@ -149,7 +143,7 @@ export const mirrorJs = /* js */ `
       paint(job.stage, job.detail);
       if (job.stage === 'done' && job.repo) {
         source.close();
-        location.href = '/' + job.repo.ownerName + '/' + job.repo.name;
+        location.href = list.getAttribute('data-landing') || '/' + job.repo.ownerName + '/' + job.repo.name;
       } else if (job.stage === 'failed') {
         // The page for a failed job carries the reason and a way to retry,
         // and does not stream — so this loads it once, and stops.
@@ -894,6 +888,7 @@ export const codeJs = /* js */ `
     var list = dlg.querySelector('.palette-list');
     var note = dlg.querySelector('.palette-foot > span');
     var at = 0;
+    var armed = null;      // the action row awaiting its one confirmation
 
     function render(rows) {
       var hits = search(rows, input.value);
@@ -1271,10 +1266,37 @@ export const editorJs = /* js */ `
 })();
 `;
 
-export const shellJs = /* js */ `
+/**
+ * A rendered file whose viewer needs a library (the 3D view) names its
+ * bundle in `data-module`. `loadModules` loads each one once, with the
+ * shell's own nonce, and only when a figure on the page asks: on the first
+ * paint, and when the code browser swaps such a file in. Only a first-party
+ * asset's exact shape is loaded (`/assets/<name>.js`), so nothing a page
+ * carries can point it elsewhere. The module mounts its figures itself.
+ * Its own string so a test can run it against a stand-in document.
+ */
+export const moduleLoaderJs = /* js */ `
+  var shellNonce = doc.currentScript ? doc.currentScript.nonce : '';
+  var modules = {};
+  function loadModules() {
+    doc.querySelectorAll('[data-module]').forEach(function (el) {
+      var src = el.getAttribute('data-module') || '';
+      if (!/^\\/assets\\/[a-z0-9-]+\\.js$/.test(src) || modules[src]) return;
+      modules[src] = true;
+      var s = doc.createElement('script');
+      s.type = 'module';
+      s.nonce = shellNonce;
+      s.src = src;
+      doc.head.appendChild(s);
+    });
+  }
+`;
+
+const shellCore = /* js */ `
 (function () {
   var doc = document;
   ${modalJs}
+  ${imageViewJs}
 
   // Controls that only mean something with a script running stay hidden
   // until one is: no dead buttons on a page with JavaScript switched off.
@@ -1414,7 +1436,31 @@ export const shellJs = /* js */ `
     paint();
   }
 
+  // ---- a heavy viewer, loaded only by the page that shows one ----
+  ${moduleLoaderJs}
+  doc.addEventListener('code:swap', loadModules);
+  loadModules();
+
+  // ---- settings: the section list narrows as you type ----
+  doc.addEventListener('input', function (e) {
+    var f = e.target;
+    if (!f || !f.hasAttribute || !f.hasAttribute('data-settings-filter')) return;
+    var q = f.value.trim().toLowerCase();
+    var nav = f.closest('.settings-nav');
+    Array.prototype.forEach.call(nav.querySelectorAll('.settings-group'), function (g) {
+      var name = (g.getAttribute('aria-label') || '').toLowerCase();
+      var shown = 0;
+      Array.prototype.forEach.call(g.querySelectorAll('a'), function (a) {
+        var hit = q === '' || name.indexOf(q) >= 0 || a.textContent.toLowerCase().indexOf(q) >= 0;
+        a.hidden = !hit;
+        if (hit) shown++;
+      });
+      g.hidden = shown === 0;
+    });
+  });
+
   // ---- keyboard: sequences from the DOM, so the help can never drift ----
+  ${keyDecisionJs}
   var seq = []; var last = 0;
   function rows() { return Array.prototype.slice.call(doc.querySelectorAll('[data-nav]')); }
   function move(step) {
@@ -1427,6 +1473,40 @@ export const shellJs = /* js */ `
     var next = all[Math.min(Math.max(at + step, 0), all.length - 1)] || all[0];
     next.focus();
     next.scrollIntoView({ block: 'nearest' });
+  }
+  // Esc returns to the list a row was opened from, and the list focuses that
+  // row again: the place is kept in sessionStorage for this tab only.
+  function place(k, v) { try { if (v == null) sessionStorage.removeItem(k); else sessionStorage.setItem(k, v); } catch (_) {} }
+  function placed(k) { try { return sessionStorage.getItem(k); } catch (_) { return null; } }
+  doc.addEventListener('click', function (e) {
+    var a = e.target.closest ? e.target.closest('[data-nav]') : null;
+    if (a && !a.matches('a')) a = a.querySelector('a');
+    if (a && a.pathname) place('nav-from', JSON.stringify({ list: location.pathname + location.search, to: a.pathname, href: a.getAttribute('href') }));
+  });
+  // A stored place is only ever read back through this: a malformed or
+  // foreign value is no place, and never throws inside a key handler.
+  function fromPlace() {
+    try {
+      var v = JSON.parse(placed('nav-from') || 'null');
+      return v && typeof v.list === 'string' && typeof v.to === 'string' && v.list.charAt(0) === '/' && v.list.charAt(1) !== '/' ? v : null;
+    } catch (_) { return null; }
+  }
+  (function () {
+    var from = fromPlace();
+    if (!from) return;
+    if (location.pathname + location.search === from.list) {
+      place('nav-from', null);
+      var back = rows().filter(function (r) { var a = r.matches('a') ? r : r.querySelector('a'); return a && a.getAttribute('href') === from.href; })[0];
+      if (back) { back.focus(); back.scrollIntoView({ block: 'nearest' }); }
+    }
+  })();
+  function leaveToList() {
+    var from = fromPlace();
+    // The thing on top closes first: an open dialog or menu keeps its Escape.
+    if (doc.querySelector('dialog[open], details.menu[open]')) return false;
+    if (!from || location.pathname !== from.to || doc.querySelector('[data-nav]')) return false;
+    location.assign(from.list);
+    return true;
   }
   function openFocused() {
     var el = doc.activeElement.closest ? doc.activeElement.closest('[data-nav]') : null;
@@ -1451,29 +1531,42 @@ export const shellJs = /* js */ `
     if (f.tagName === 'TEXTAREA') { var n = f.value.length; f.setSelectionRange(n, n); }
     return true;
   }
+  // The "new issue from here" door: c on a page with no box of
+  // its own, Shift C on any page.
+  function openNewIssue(e) {
+    var p = location.pathname;
+    seq.length = 0; e.preventDefault();
+    location.assign(p.indexOf('/new/issue') === 0 ? '/new/issue' : '/new/issue?from=' + encodeURIComponent(p));
+  }
+  // Holding Option (Alt) lays each action's key over it; nothing moves (#8930).
+  function hints(on) { if (on) doc.documentElement.setAttribute('data-hints', ''); else doc.documentElement.removeAttribute('data-hints'); }
+  doc.addEventListener('keydown', function (e) { if (e.key === 'Alt') hints(true); });
+  doc.addEventListener('keyup', function (e) { if (e.key === 'Alt') hints(false); });
+  // Escape clears the hints and is then spent: it leaves nothing else.
+  var escClosedHints = false;
+  doc.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    escClosedHints = doc.documentElement.hasAttribute('data-hints');
+    hints(false);
+  });
+  window.addEventListener('blur', function () { hints(false); });
   doc.addEventListener('keydown', function (e) {
     var t = e.target;
-    // Inside an open dialog the dialog owns the keys; none of these apply.
-    if (t && t.closest && t.closest('dialog[open]')) return;
-    // The palette is one chord away from anywhere, a field included.
-    if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === 'k' || e.key === 'K')) {
-      e.preventDefault();
-      openPalette();
-      return;
-    }
-    if (t && t.matches && t.matches('input, textarea, select, [contenteditable]')) {
-      if (e.key === 'Escape') { e.preventDefault(); t.blur(); }
-      // Cmd/Ctrl+Enter sends the form a box belongs to, and only a form that
-      // asked for it (\`data-submit-key\`): the button's own submit, with its
-      // validation. Plain Enter stays a newline.
-      else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && t.form && t.form.hasAttribute('data-submit-key')) {
-        e.preventDefault();
-        if (t.form.requestSubmit) t.form.requestSubmit(); else t.form.submit();
-      }
-      return;
-    }
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
-    if (Date.now() - last > 1200) seq.length = 0;
+    var chord = (e.metaKey || e.ctrlKey) && !e.altKey ? rowForKey('Mod+' + (e.key === 'K' ? 'k' : e.key)) : null;
+    // The decision is key_decision.ts: a dialog owns its keys, a chord
+    // answers from anywhere, a field keeps its typing, a held modifier is
+    // the browser's.
+    var what = decideKey({
+      ctrl: e.ctrlKey, meta: e.metaKey, alt: e.altKey, key: e.key, hasChord: !!chord,
+      inDialog: !!(t && t.closest && t.closest('dialog[open]')),
+      inField: !!(t && t.matches && t.matches('input, textarea, select, [contenteditable]')),
+    });
+    if (what === 'chord') { chord[3](e); return; }
+    if (what === 'blur') { e.preventDefault(); t.blur(); return; }
+    if (what !== 'key') return;
+    var row = rowForKey(e.key);
+    if (e.key === 'Escape') { if (row) row[3](e); return; }
+    if (Date.now() - last > 1000) seq.length = 0;
     last = Date.now();
     seq.push(e.key);
     if (seq.length > 2) seq.splice(0, seq.length - 2);
@@ -1487,29 +1580,58 @@ export const shellJs = /* js */ `
       if (after) after.focus();
       return;
     }
-    if (e.key === 'j') { seq.length = 0; e.preventDefault(); move(1); }
-    else if (e.key === 'k') { seq.length = 0; e.preventDefault(); move(-1); }
-    else if (e.key === 'o' || e.key === 'Enter') { seq.length = 0; openFocused(); }
-    else if (e.key === 'c') { if (focusBox()) { seq.length = 0; e.preventDefault(); } }
-    else if (e.key === '/') {
-      var box = doc.querySelector('[data-search-input]');
-      if (box) { seq.length = 0; e.preventDefault(); box.focus(); box.select(); }
-    } else if (e.key === '?') { seq.length = 0; e.preventDefault(); openHelp(); }
-    else if (e.key === ':') { seq.length = 0; e.preventDefault(); openPalette(); }
+    // \`g\` then a letter: a page from the one list (go_pages.ts), only if this viewer may open it.
+    if (seq.length === 2 && seq[0] === 'g') {
+      var gp = gotoPages().filter(function (p) { return p[3] !== '' && p[3] === e.key; })[0];
+      if (gp) { seq.length = 0; e.preventDefault(); location.assign(gp[1]); return; }
+    }
+    if (row) { seq.length = 0; row[3](e); }
   });
 
   // ---- help overlay, generated from the shortcuts actually on the page ----
+  // One table: the sheet lists its rows and the keydown handler runs them.
+  // A row is [shown, what it does, the e.key values it answers, its action];
+  // a chord is written 'Mod+<key>' (Cmd or Ctrl) and is read ahead of the field guard.
+  function submitBox(f) { if (f.requestSubmit) f.requestSubmit(); else f.submit(); }
   var STATIC_KEYS = [
-    ['j / k', 'Move between rows'], ['o or Enter', 'Open the focused row'],
-    ['/', 'Focus search'], ['Cmd/Ctrl K', 'Command palette'], [':', 'Command palette'], ['?', 'This help'],
-    ['Esc', 'Leave a box, close a menu or dialog'],
+    ['j / k', 'Move between rows', ['j', 'k'], function (e) { e.preventDefault(); move(e.key === 'j' ? 1 : -1); }],
+    ['o or Enter', 'Open the focused row', ['o', 'Enter'], openFocused],
+    ['/', 'Focus search', ['/'], function (e) {
+      var box = doc.querySelector('[data-search-input]');
+      if (box) { e.preventDefault(); box.focus(); box.select(); }
+    }],
+    ['Cmd/Ctrl K', 'Jump to anywhere', ['Mod+k'], function (e) { e.preventDefault(); openPalette(); }],
+    [':', 'Go to a page by name', [':'], function (e) { e.preventDefault(); openGoto(); }],
+    ['?', 'This help', ['?'], function (e) { e.preventDefault(); hints(false); openHelp(); }],
+    ['Esc', 'Leave a box, close a menu or dialog', ['Escape'], function (e) {
+      if (e.defaultPrevented) return;
+      if (escClosedHints) { escClosedHints = false; e.preventDefault(); return; }
+      if (leaveToList()) e.preventDefault();
+    }],
   ];
+  // The keys a page row may answer: only these cost a look at the page.
+  var PAGE_KEYS = ['c', 'C', 'Mod+Enter'];
+  function answers(r, k) { return r[2].indexOf(k) >= 0; }
+  function rowForKey(k) {
+    var row = STATIC_KEYS.filter(function (r) { return answers(r, k); })[0];
+    if (row || PAGE_KEYS.indexOf(k) < 0) return row;
+    return pageKeys().filter(function (r) { return answers(r, k); })[0];
+  }
   // The rows a page earns by what it carries: a box to type in, a form
   // that sends on Cmd/Ctrl+Enter.
   function pageKeys() {
     var out = [];
-    if (pageBox() && !doc.querySelector('[data-shortcut="c"]')) out.push(['c', doc.querySelector('[data-box]').getAttribute('data-box') || 'Write here']);
-    if (doc.querySelector('form[data-submit-key]')) out.push(['Cmd/Ctrl Enter', 'Submit the box you are typing in']);
+    if (pageBox() && !doc.querySelector('[data-shortcut="c"]')) out.push(['c', doc.querySelector('[data-box]').getAttribute('data-box') || 'Write here', ['c'], function (e) { if (focusBox()) e.preventDefault(); else openNewIssue(e); }]);
+    // A page that keeps c for its own box shows Shift C alone; any other
+    // page opens the new issue on either.
+    var ownC = pageBox() || doc.querySelector('[data-shortcut="c"]');
+    out.push(ownC ? ['Shift C', 'New issue from this page', ['C'], openNewIssue] : ['c / Shift C', 'New issue from this page', ['c', 'C'], openNewIssue]);
+    // Only a form that asked for it (\`data-submit-key\`) is sent: the button's own
+    // submit, with its validation. Plain Enter stays a newline.
+    if (doc.querySelector('form[data-submit-key]')) out.push(['Cmd/Ctrl Enter', 'Submit the box you are typing in', ['Mod+Enter'], function (e) {
+      var f = e.target && e.target.form;
+      if (f && f.hasAttribute('data-submit-key')) { e.preventDefault(); submitBox(f); }
+    }]);
     return out;
   }
   // Built with DOM nodes, never innerHTML: every string below is page text,
@@ -1546,6 +1668,16 @@ export const shellJs = /* js */ `
       tbody.appendChild(keyRow(k, label));
     });
     pageKeys().concat(STATIC_KEYS).forEach(function (p) { tbody.appendChild(keyRow(p[0], p[1])); });
+    // The pages \`:\` reaches, read from the prompt's own list so the two cannot differ.
+    var names = gotoPages().map(function (p) { return p[0]; });
+    if (names.length) {
+      var pr = doc.createElement('tr');
+      var pk = doc.createElement('td'); var pkb = doc.createElement('kbd'); pkb.textContent = ':'; pk.appendChild(pkb);
+      var pl = doc.createElement('td'); pl.textContent = 'Pages: ' + names.join(', ');
+      pr.appendChild(pk); pr.appendChild(pl); tbody.appendChild(pr);
+    }
+    // The \`g\` jumps, read from the same list: one row per page this viewer may open by key.
+    gotoPages().forEach(function (p) { if (p[3] !== '') tbody.appendChild(keyRow('g ' + p[3], 'Go to ' + p[0])); });
     table.appendChild(tbody);
     if (body) { body.textContent = ''; body.appendChild(table); }
     openModal(dlg);
@@ -1576,7 +1708,18 @@ export const shellJs = /* js */ `
   //    first while the box is empty
   ${paletteHelpersJs}
   var RECENT_KEY = 'forge.palette.recent';
-  var RECENT_MAX = 8;
+  var RECENT_MAX = 50;  // entries kept
+  var RECENT_SHOWN = 8; // entries listed while the box is empty
+  var VISITS_KEY = 'forge.palette.visits';
+  var VISITS_MAX = 5;   // rows in the Recent group while the box is empty (visits, then picked)
+  // Pages visited: paths only, never titles; each load records its page once.
+  function readVisits() {
+    try { var v = JSON.parse(window.localStorage.getItem(VISITS_KEY) || '[]'); return Array.isArray(v) ? v : []; } catch (_) { return []; }
+  }
+  try {
+    var seenRows = (function () { try { return JSON.parse(doc.getElementById('palette-index').textContent).items || []; } catch (_) { return []; } })();
+    window.localStorage.setItem(VISITS_KEY, JSON.stringify(visitLoad(readVisits(), window.location.pathname, seenRows, VISITS_MAX + 1)));
+  } catch (_) {}
   var index = null;
   function loadIndex() {
     if (index) return index;
@@ -1587,21 +1730,12 @@ export const shellJs = /* js */ `
   // Storage may be absent, full or refused (a private window): a palette
   // with no memory is still a palette.
   function readRecent() {
-    try {
-      var raw = JSON.parse(window.localStorage.getItem(RECENT_KEY) || '[]');
-      if (!Array.isArray(raw)) return [];
-      return raw.filter(function (r) {
-        return r && typeof r.t === 'string' && typeof r.h === 'string' && r.h.charAt(0) === '/';
-      }).slice(0, RECENT_MAX).map(function (r) {
-        return { t: r.t, h: r.h, g: typeof r.g === 'string' ? r.g : '' };
-      });
-    } catch (_) { return []; }
+    try { return readUses(JSON.parse(window.localStorage.getItem(RECENT_KEY) || '[]'), RECENT_MAX); } catch (_) { return []; }
   }
   function remember(r) {
     try {
-      var rest = readRecent().filter(function (x) { return x.h !== r.h; });
-      var next = [{ t: r.t, h: r.h, g: r.g === 'Recent' ? (r.d || '') : r.g }].concat(rest);
-      window.localStorage.setItem(RECENT_KEY, JSON.stringify(next.slice(0, RECENT_MAX)));
+      var next = recordUse(readRecent(), { t: r.t, h: r.h, g: r.g === 'Recent' ? (r.d || '') : r.g }, Date.now(), RECENT_MAX);
+      window.localStorage.setItem(RECENT_KEY, JSON.stringify(next));
     } catch (_) {}
   }
   // What the server found, as rows. The links are built here from the
@@ -1612,7 +1746,12 @@ export const shellJs = /* js */ `
       rows.push(r.source === 'origin'
         ? { t: r.fullName, h: '/origins/' + r.originId + '/r/' + r.fullName, g: 'Repositories',
             d: r.originKind ? 'on ' + r.originKind : 'on an origin' }
-        : { t: r.owner + '/' + r.name, h: '/' + r.owner + '/' + r.name, g: 'Repositories' });
+        : (function () {
+            var row = { t: r.owner + '/' + r.name, h: '/' + r.owner + '/' + r.name, g: 'Repositories', n: r.name };
+            if (r.owner === loadIndex().me) row.m = 1;
+            if (r.app) { row.x = 'App'; row.o = row.h + '/app/production/open'; }
+            return row;
+          })());
     });
     // An issue lives at /issues/:n and a pull request at /pulls/:n in every
     // mode (\`tellHref\`/\`changeHref\`, src/web/studio/nouns.ts).
@@ -1735,6 +1874,78 @@ export const shellJs = /* js */ `
     }).catch(function () { say('danger', '${NOT_TOLD_WORDS}'); });
   }
 
+  // ---- go to a page: one line, the server's own list filtered in place ----
+  var closeGoto = null;
+  // The pages ride in this script (cached once); the page wears only the viewer's level in data-go.
+  var GO_PAGES = ${JSON.stringify(goPagesData())};
+  function gotoPages() {
+    var lv = +(doc.body.getAttribute('data-go') || 0);
+    return GO_PAGES.filter(function (p) { return p[2] <= lv; });
+  }
+  ${GO_MATCH_JS}
+  var GOTO_HINT = 'Enter opens the first, Esc closes';
+  function gotoDialog() {
+    var dlg = doc.getElementById('goto');
+    if (dlg) return dlg;
+    dlg = doc.createElement('dialog');
+    dlg.id = 'goto'; dlg.className = 'dialog palette'; dlg.setAttribute('aria-label', 'Go to a page');
+    var input = doc.createElement('input');
+    input.className = 'input palette-input'; input.type = 'text'; input.placeholder = 'Page name';
+    input.setAttribute('role', 'combobox'); input.setAttribute('aria-label', 'Go to a page');
+    input.setAttribute('aria-controls', 'goto-list'); input.setAttribute('aria-expanded', 'true');
+    input.setAttribute('aria-autocomplete', 'list'); input.setAttribute('autocomplete', 'off');
+    input.setAttribute('autocapitalize', 'off'); input.spellcheck = false;
+    var box = doc.createElement('div'); box.className = 'palette-list'; box.id = 'goto-list';
+    box.setAttribute('role', 'listbox'); box.setAttribute('aria-label', 'Pages');
+    gotoPages().forEach(function (p, i) {
+      var a = doc.createElement('div'); a.className = 'palette-item'; a.setAttribute('role', 'option');
+      a.id = 'goto-' + i; a.setAttribute('aria-selected', 'false'); a.setAttribute('data-href', p[1]);
+      var sp = doc.createElement('span'); sp.className = 'grow'; sp.textContent = p[0]; a.appendChild(sp); box.appendChild(a);
+    });
+    var foot = doc.createElement('div'); foot.className = 'palette-foot'; foot.id = 'goto-foot';
+    foot.setAttribute('role', 'status'); foot.textContent = GOTO_HINT;
+    dlg.appendChild(input); dlg.appendChild(box); dlg.appendChild(foot);
+    doc.body.appendChild(dlg);
+    return dlg;
+  }
+  function openGoto() {
+    var dlg = gotoDialog();
+    if (!dlg.showModal) { location.href = '/search'; return; }
+    if (closeGoto) { closeGoto(); return; }
+    var input = dlg.querySelector('input');
+    var foot = dlg.querySelector('#goto-foot');
+    var pages = gotoPages();
+    var opts = Array.prototype.slice.call(dlg.querySelectorAll('[role=option]'));
+    var lead = null;
+    function paint() {
+      var hits = goMatch(pages, input.value);
+      lead = hits.length ? opts[pages.indexOf(hits[0])] : null;
+      opts.forEach(function (o, i) {
+        o.hidden = hits.indexOf(pages[i]) < 0;
+        o.setAttribute('aria-selected', o === lead ? 'true' : 'false');
+      });
+      if (lead) input.setAttribute('aria-activedescendant', lead.id); else input.removeAttribute('aria-activedescendant');
+      foot.textContent = hits.length ? GOTO_HINT : 'No page called that';
+    }
+    function go(o) { location.assign(o.getAttribute('data-href')); }
+    function onKey(e) {
+      if (e.key !== 'Enter' || e.isComposing) return;
+      e.preventDefault();
+      if (lead) go(lead);
+    }
+    function onClick(e) { var o = e.target.closest && e.target.closest('[role=option]'); if (o) go(o); }
+    input.value = '';
+    paint();
+    closeGoto = openModal(dlg, function () {
+      closeGoto = null; dlg.removeEventListener('keydown', onKey);
+      dlg.removeEventListener('click', onClick); input.removeEventListener('input', paint);
+    });
+    dlg.addEventListener('keydown', onKey);
+    dlg.addEventListener('click', onClick);
+    input.addEventListener('input', paint);
+    input.focus();
+  }
+
   var closePalette = null;
   function openPalette() {
     var dlg = doc.getElementById('palette');
@@ -1743,11 +1954,23 @@ export const shellJs = /* js */ `
     var input = dlg.querySelector('.palette-input');
     var list = dlg.querySelector('.palette-list');
     var items = (loadIndex().items || []).map(function (i) {
-      return { t: String(i.t), h: String(i.h), g: i.c ? String(i.c) : 'Go to' };
+      var r = { t: String(i.t), h: String(i.h), g: i.c ? String(i.c) : 'Go to' };
+      if (i.n) r.n = String(i.n);
+      if (i.m === 1) r.m = 1;
+      if (typeof i.k === 'number') r.k = i.k;
+      if (i.a === 1) r.a = 1;
+      if (i.d) r.d = String(i.d);
+      if (i.x) r.x = String(i.x);
+      if (i.o && String(i.o).charAt(0) === '/') r.o = String(i.o);
+      if (i.p && typeof i.p === 'object' && r.h.charAt(0) === '/') r.p = i.p;
+      return r;
     });
     var tellApp = (loadIndex().tell || {}).app;
-    var recent = readRecent().map(function (r) { return { t: r.t, h: r.h, g: 'Recent', d: r.g }; });
-    var recentHrefs = recent.map(function (r) { return r.h; });
+    // Storage is read once per opening, not per keystroke.
+    var openedAt = Date.now();
+    var visits = readVisits();
+    var uses = readRecent();
+    var recentHrefs = frecencyOrder(uses, openedAt).slice(0, RECENT_SHOWN).map(function (r) { return r.h; });
     var served = [];       // rows the server found, for the query servedFor
     var servedFor = '';
     var pending = false;   // a server answer is on its way
@@ -1768,10 +1991,18 @@ export const shellJs = /* js */ `
       a.setAttribute('aria-selected', 'false');
       // Same-origin paths only: the index is ours, and this keeps it so.
       a.setAttribute('href', r.h.charAt(0) === '/' ? r.h : '/');
+      if (r.a) a.setAttribute('data-action', '');
+      if (r.p) a.setAttribute('data-post', JSON.stringify(r.p));
       var t = doc.createElement('span');
       t.className = 'grow';
       t.textContent = r.t;
       a.appendChild(t);
+      if (r.x) {
+        var x = doc.createElement('span');
+        x.className = 'cat';
+        x.textContent = r.x;
+        a.appendChild(x);
+      }
       if (r.d) {
         var d = doc.createElement('span');
         d.className = 'cat';
@@ -1804,8 +2035,18 @@ export const shellJs = /* js */ `
     // when the list changes under it (a server answer landing); a new query
     // starts at the top.
     function render(keep) {
+      armed = null;
       var q = input.value.trim();
-      var pool = (q === '' ? recent : []).concat(items, q.length >= 2 ? served : []);
+      var pool = palettePool(q, items, served, visits, uses, window.location.pathname, openedAt, VISITS_MAX);
+      // "#123" on a repository's page: that number, built here from the page's own path (the server read no issue for it).
+      var hereBase = loadIndex().here;
+      var num = /^#(\\d+)$/.exec(q);
+      if (num && typeof hereBase === 'string' && hereBase.charAt(0) === '/') {
+        // Issues and pulls share one number space and each address redirects to the other kind, so one row serves both.
+        pool = [
+          { t: 'Go to #' + num[1], h: hereBase + '/issues/' + num[1], g: 'Issues and pulls', d: '#' + num[1], k: Number(num[1]) },
+        ].concat(pool);
+      }
       var groups = rankPalette(pool, q, recentHrefs, q === '' ? 24 : 20);
       var was = keep && nodes[at] ? nodes[at].getAttribute('href') : null;
       var frag = doc.createDocumentFragment();
@@ -1825,6 +2066,14 @@ export const shellJs = /* js */ `
           var a = row(r, 'palette-o' + nodes.length);
           nodes.push(a); shown.push(r);
           box.appendChild(a);
+          // The app is its own option under its repository: reachable by
+          // arrow, touch and screen reader, not only by Cmd/Ctrl+Enter.
+          if (r.o) {
+            var ar = { t: 'Open the app of ' + r.t, h: r.o, g: g.title };
+            var aa = row(ar, 'palette-o' + nodes.length);
+            nodes.push(aa); shown.push(ar);
+            box.appendChild(aa);
+          }
         });
         frag.appendChild(box);
       });
@@ -1905,6 +2154,11 @@ export const shellJs = /* js */ `
       else if (k === 'ArrowUp') { e.preventDefault(); select(at - 1); }
       else if (k === 'Home') { e.preventDefault(); select(0); }
       else if (k === 'End') { e.preventDefault(); select(nodes.length - 1); }
+      else if (k === 'Enter' && (e.metaKey || e.ctrlKey) && shown[at] && shown[at].o) {
+        e.preventDefault();
+        remember(shown[at]);
+        location.href = shown[at].o;
+      }
       else if (k === 'Enter') {
         e.preventDefault();
         var q = input.value.trim();
@@ -1942,10 +2196,49 @@ export const shellJs = /* js */ `
       var a = e.target && e.target.closest ? e.target.closest('.palette-item') : null;
       var i = a ? nodes.indexOf(a) : -1;
       if (i === -1) return;
+      // An action asks once: the first press arms the row, the second runs it.
+      // Navigation rows have no data-action and never ask.
+      if (a.hasAttribute('data-action') && armed !== a.getAttribute('href')) {
+        e.preventDefault();
+        armed = a.getAttribute('href');
+        var label = a.querySelector('.grow');
+        var say = 'Tap or press Enter again to confirm: ' + shown[i].t;
+        if (label) label.textContent = shown[i].t + ' \u2014 tap or press Enter again to confirm';
+        a.setAttribute('aria-description', 'Tap or press Enter again to confirm');
+        var live = dlg.querySelector('[data-armed]');
+        if (!live) {
+          live = doc.createElement('div'); live.className = 'sr-only';
+          live.setAttribute('aria-live', 'polite'); live.setAttribute('data-armed', '');
+          dlg.appendChild(live);
+        }
+        live.textContent = say;
+        return;
+      }
       if (a.hasAttribute('data-tell')) {
         e.preventDefault();
         close();
         tellFromHere(tellApp, a.getAttribute('data-tell'));
+        return;
+      }
+      if (a.hasAttribute('data-post')) {
+        // A mutation posts the page's own form; it is never followed as a GET.
+        e.preventDefault();
+        close();
+        var pf = doc.createElement('form');
+        pf.method = 'post'; pf.action = a.getAttribute('href') || '/';
+        var fields = {};
+        try { fields = JSON.parse(a.getAttribute('data-post') || '{}'); } catch (_) {}
+        Object.keys(fields).forEach(function (k) {
+          var hid = doc.createElement('input');
+          hid.type = 'hidden'; hid.name = k; hid.value = String(fields[k]);
+          pf.appendChild(hid);
+        });
+        var go = doc.createElement('button');
+        go.type = 'submit';
+        pf.appendChild(go);
+        pf.hidden = true;
+        doc.body.appendChild(pf);
+        go.click();
         return;
       }
       remember(shown[i]);
@@ -1961,6 +2254,10 @@ export const shellJs = /* js */ `
   doc.querySelectorAll('[data-palette]').forEach(function (b) {
     b.addEventListener('click', function (e) { e.preventDefault(); openPalette(); });
   });
+  // /search at phone width IS the palette: the bare search page opens the
+  // same sheet, same rows, same ranking. The page's own form stays beneath
+  // it for a closed sheet and for no script at all.
+  if (opensAsSheet(!!doc.querySelector('[data-palette-auto]'), window.innerWidth)) openPalette();
   doc.querySelectorAll('[data-help]').forEach(function (b) {
     b.addEventListener('click', function (e) { e.preventDefault(); openHelp(); });
   });
@@ -1973,6 +2270,9 @@ export const shellJs = /* js */ `
   });
 })();
 `;
+
+/** The shell and the one script that makes actions answer at once (`act_now.ts`). */
+export const shellJs = `${shellCore}\n${actNowJs}\n${pickJs}`;
 
 /**
  * Live regions. A page marks the parts of itself that change while it is
@@ -2093,6 +2393,10 @@ export const liveRegionsJs = /* js */ `
   var timer = null;
   var last = 0;
   var MIN_GAP = 1500;
+  // A region with no address of its own is the whole page: one render of
+  // everything. That is never fetched per event, only once per PAGE_GAP.
+  var PAGE_GAP = 30000;
+  var lastPage = 0;
   // What each address last answered with, so the next ask is conditional:
   // a region that did not change comes back 304 and paints nothing.
   var tags = {};
@@ -2126,8 +2430,6 @@ export const liveRegionsJs = /* js */ `
       mine.innerHTML = theirs.innerHTML;
       opened.forEach(function (i) { var d = document.getElementById(i); if (d) d.open = true; });
       Array.prototype.forEach.call(theirs.attributes, function (a) { if (a.name !== 'id') mine.setAttribute(a.name, a.value); });
-      if (!theirs.hasAttribute('data-live-every')) mine.removeAttribute('data-live-every');
-      arm(mine);
       mine.dispatchEvent(new CustomEvent('forge:swapped', { bubbles: true }));
     });
   }
@@ -2185,12 +2487,16 @@ export const liveRegionsJs = /* js */ `
     if (ids.length === 0) return;
     last = Date.now();
     var groups = {};
+    var held = false;
     ids.forEach(function (id) {
       var region = document.getElementById(id);
       if (!region) return;
       var src = region.getAttribute('data-live-src') || location.href;
+      if (src === location.href && last - lastPage < PAGE_GAP) { due[id] = true; held = true; return; }
       (groups[src] = groups[src] || []).push(id);
     });
+    if (groups[location.href]) lastPage = last;
+    if (held && timer === null) timer = setTimeout(refresh, lastPage + PAGE_GAP - Date.now());
     Object.keys(groups).forEach(function (src) { pull(src, groups[src]); });
   }
   var source = null;
@@ -2236,23 +2542,6 @@ export const liveRegionsJs = /* js */ `
     if (hit && timer === null)
       timer = setTimeout(refresh, Math.max(600, last + MIN_GAP - Date.now()));
   }
-  // A region with data-live-every="<seconds>" is also due on that beat, for
-  // what no event announces; it rides the same fetch, etag and swap.
-  // The beat lasts as long as the region asks for it: a swap that drops the
-  // attribute ends it, and one that brings it (a check starting) begins it.
-  var beats = {};
-  function arm(r) {
-    var s = parseInt(r.getAttribute('data-live-every'), 10);
-    if (!r.id) return;
-    if (!(s > 0)) {
-      if (beats[r.id]) { window.clearInterval(beats[r.id]); delete beats[r.id]; }
-      return;
-    }
-    if (beats[r.id]) return;
-    var id = r.id;
-    beats[id] = window.setInterval(function () { due[id] = true; if (timer === null) timer = setTimeout(refresh, 0); }, s * 1000);
-  }
-  Array.prototype.forEach.call(document.querySelectorAll('[data-live-every]'), arm);
   connect();
   // Back online: reconnect from the last id and look at every region once,
   // in case the replay window no longer reaches back that far.

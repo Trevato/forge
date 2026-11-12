@@ -9,6 +9,7 @@ import { createSession } from "../src/core/sessions.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 quietLogs();
 
@@ -49,14 +50,14 @@ afterAll(async () => {
 async function phases(path: string): Promise<{ status: number; names: string[]; body: string }> {
   const res = await fetch(`${servers.url}${path}`, { headers: { cookie } });
   const body = await res.text();
-  const names = (res.headers.get("server-timing") ?? "").split(", ").map((p) => p.split(";")[0]!);
+  const names = requestTiming(res).split(", ").map((p) => p.split(";")[0]!);
   return { status: res.status, names: names.slice(names.indexOf("app") + 1), body };
 }
 
-test("the branches list names session, git, render in order", async () => {
+test("the branches list names session, git, compare, render in order", async () => {
   const got = await phases("/api/v1/repos/alice/r/branches");
   expect(got.status).toBe(200);
-  expect(got.names).toEqual(["session", "git", "render"]);
+  expect(got.names).toEqual(["session", "git", "compare", "render"]);
   expect(Array.isArray(JSON.parse(got.body).items)).toBe(true);
 });
 

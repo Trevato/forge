@@ -73,7 +73,7 @@ describe("crew teams", () => {
     const res = await post(alice, "design", new URLSearchParams({ charter: "Owns <b>looks</b>", dial: "30" }));
     expect(res.status).toBe(303);
     expect(dialOf("design")).toBe(30);
-    const text = await (await fetch(`${servers.url}/settings/teams`, { headers: { cookie: cookie(alice) } })).text();
+    const text = await (await fetch(`${servers.url}/settings/teams/design`, { headers: { cookie: cookie(alice) } })).text();
     expect(text).toContain('value="30"');
     expect(text).toContain("Owns &lt;b&gt;looks");
     expect(text).not.toContain("Owns <b>looks");

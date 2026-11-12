@@ -127,6 +127,7 @@ test("the terminal's checks row says it too, and not for the other pull", async 
         await settleApp(tui);
         await Bun.sleep(20);
       }
+      if (!tui.screen.toText().includes(pull.title)) throw new Error(`never came: still waiting while !tui.screen.toText().includes(pull.title)`);
       await settleApp(tui);
       const screen = tui.screen.toText();
       expect(screen.includes("red alone at")).toBe(says);

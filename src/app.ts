@@ -4,6 +4,9 @@
  * side-effect-contained, so tests boot real forges by the dozen.
  */
 
+import { ownHost, setOwnHost } from "./core/trusted_sources.ts";
+import { commitIdentity } from "./core/commit_identity.ts";
+import { getUserById } from "./core/users.ts";
 import type { MailConfig, Mailer } from "./kernel/mail.ts";
 import type { Database } from "bun:sqlite";
 import type { Decider } from "./crew/decide.ts";
@@ -28,6 +31,7 @@ import {
 } from "./kernel/log.ts";
 import { RefusedLedger } from "./kernel/internal_refused.ts";
 import { closeReadersUnder } from "./git/read.ts";
+import { dropAllPins } from "./git/pins_kept.ts";
 
 export interface ForgeConfig {
   /** Everything lives here: index db, bare repos, the internal socket. */
@@ -62,6 +66,13 @@ export interface ForgeConfig {
    * in by the platform. Unset, those headers are a claim and are ignored.
    */
   edgeToken?: string;
+  /**
+   * In a preview of this forge run as another's app, the key the parent
+   * signs its visitors' identity with (`FORGE_APP_IDENTITY_KEY`): set, a
+   * visitor it names as an admin is the preview admin
+   * (`spawn/preview-owner.ts`). Never set in production.
+   */
+  previewIdentityKey?: string;
   /**
    * Let anyone, not only an admin, migrate from a host inside the network
    * (loopback, private ranges): a forge run for one person on one machine.
@@ -167,6 +178,11 @@ export interface ForgeConfig {
    */
   appSsh?: string;
   /**
+   * The rolling intent doc a person's build note is copied into, once,
+   * under "## Iterator notes" (`core/intent_notes.ts`). Unset copies none.
+   */
+  notesIntent?: string;
+  /**
    * The repository holding this forge's own code, as `owner/name`
    * (`FORGE_REPO`, e.g. `trevato-apps/forge`). A spawned child forks it,
    * so every child starts from the forge's code and can follow its
@@ -190,6 +206,10 @@ export interface ForgeConfig {
    * The listener is bound with SO_REUSEPORT so the new process can share it.
    */
   selfSwap?: boolean;
+  /** The most one proxied app websocket frame may carry, either way (`apps/proxy.ts`). Tests lower it. @default 16 MiB */
+  wsMaxMessage?: number;
+  /** A standby: reads are answered, every mutation is a 503 (`FORGE_READ_ONLY=1`; `http/read_only.ts`, #9657). */
+  readOnly?: boolean;
   /** How long a swapped-in release has to read healthy (`FORGE_SWAP_BUDGET_S`). @default 60000 */
   swapBudgetMs?: number;
 }
@@ -225,6 +245,7 @@ export function createApp(config: ForgeConfig): App {
   const dbPath = join(dataDir, "forge.db");
   const fresh = !existsSync(dbPath);
   const db = openDb(dbPath, migrationFiles);
+  setOwnHost(db, ownHost(config));
   if (config.seedSignup === true) seedSignup(db, fresh);
   // Hand-installed new-account guards become the `guard_new_accounts`
   // setting (default off): drop the legacy triggers once, here, on boot.
@@ -237,9 +258,22 @@ export function createApp(config: ForgeConfig): App {
   // sends them. Listener throws are swallowed by the bus, so this can never
   // break the action that produced the event.
   bus.subscribe((event) => enqueueForEvent(db, event));
+  // A push, a merge, a repository change or a build event may move pins: the kept listings go (`git/pins_kept.ts`).
+  bus.subscribe((event) => {
+    const k = event.kind;
+    if (k === "push" || k === "pull.merged" || k.startsWith("repo.") || k.startsWith("build.")) dropAllPins();
+  });
   // What a push moves besides its own branch: the pulls it heads elsewhere,
   // and the forks whose default branch is still a copy of this one's.
-  follow({ db, reposRoot, bus });
+  follow({
+    db,
+    reposRoot,
+    bus,
+    authorOf: (userId) => {
+      const who = getUserById(db, userId);
+      return who === undefined ? undefined : { id: who.id, ...commitIdentity(config, who) };
+    },
+  });
 
   const owner = id();
   const errors = forgeErrorLedger(owner);

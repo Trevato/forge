@@ -38,6 +38,7 @@ import {
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { promote } from "./helpers/members.ts";
+import { withScripts } from "./helpers/page-script.ts";
 
 describe("finding things in the studio: /search", () => {
   let dataDir: string;
@@ -192,6 +193,13 @@ describe("finding things in the studio: /search", () => {
     expect(html).toMatch(/<form\s+class="bar mb"[^>]*role="search"/);
     expect(html).toMatch(/<div class="bar mb">\s*<div class="seg">/);
     expect(html).toContain("Apps &amp; repos");
+  });
+
+  test("results are rows under a heading, not a boxed card", async () => {
+    const html = mainOf(await (await asAlice("/search?q=chess")).text());
+    expect((html.match(/<ul class="list">/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(html).not.toContain('class="card');
+    expect(html).toMatch(/<section id="repos"[^>]*>\s*<h2 class="mt" id="h-repos">/);
   });
 
   test("an empty query is an empty result, not an error page", async () => {
@@ -797,8 +805,8 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
   test("the head card shows the new state where it stands: the live fragment, no second navigation", async () => {
     putLive();
     const serving = await studioPage();
-    expect(serving).toContain("serving");
-    expect(serving).toContain('action="/alice/notes/app/production/stop"');
+    expect(await withScripts(base, serving)).toContain("serving");
+    expect(serving).toContain('href="/-/confirm?to=%2Falice%2Fnotes%2Fapp%2Fproduction%2Fstop"');
     // The page a person stays on is the one that refreshes itself: its live
     // mount asks for the app's state on a deploy event.
     expect(serving).toContain('data-app="1"');
@@ -817,7 +825,7 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
     expect(html).toContain('id="app-head"');
     expect(html).toContain("not running");
     expect(html).toContain('action="/alice/notes/app/production/redeploy"');
-    expect(html).not.toContain('action="/alice/notes/app/production/stop"');
+    expect(html).not.toContain('href="/-/confirm?to=%2Falice%2Fnotes%2Fapp%2Fproduction%2Fstop"');
   });
 
   test("pressed on a change's page, Stop comes back to that change", async () => {
@@ -931,7 +939,7 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
     });
     const owner = await studioPage();
     expect(owner).toContain(`action="/alice/notes/app/${env}/redeploy"`);
-    expect(owner).toContain(`action="/alice/notes/app/${env}/stop"`);
+    expect(owner).toContain(`href="/-/confirm?to=%2Falice%2Fnotes%2Fapp%2F${env}%2Fstop"`);
     expect(owner).toContain(`href="/alice/notes/app/${env}/open"`);
     expect(owner).toContain('href="/alice/notes/settings/app"');
 
@@ -940,7 +948,7 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
     ).text();
     expect(stranger).toContain(`href="/alice/notes/app/${env}/open"`);
     expect(stranger).not.toContain("/redeploy");
-    expect(stranger).not.toContain("/stop");
+    expect(stranger).not.toContain("%2Fstop");
     expect(stranger).not.toContain('href="/alice/notes/settings/app"');
   });
 });
@@ -1123,8 +1131,10 @@ describe("the studio names a person on the app's page, and the crew only for the
     const onList = rowWith(changes, `/pulls/${personPull.number}`);
     expect(onApp).toContain("ivy");
     expect(onApp).not.toContain("the crew");
-    // The same name the list gives, and the same initials beside it.
-    expect(initialsIn(onApp)).toBe(initialsIn(onList));
+    // The same name the list gives; the list's row wears a status dot in
+    // place of an avatar (#8719), so the initials are the app page's alone.
+    expect(onList).toContain("ivy");
+    expect(onList).not.toContain("the crew");
     expect(initialsIn(onApp)).toBe("i");
     expect(change).toContain("ivy");
 
@@ -1237,12 +1247,11 @@ describe("the studio's empty lists", () => {
   test("a repository with nothing in it says what to do, and blames no filter", async () => {
     await setup("blank");
     for (const [path, words] of [
-      ["issues", "Tell the crew what you want"],
-      ["pulls", "A pull request is the crew"],
-      ["runs", "A run is one go"],
+      ["issues", "Nothing open."],
+      ["pulls", "No pull request is open."],
+      ["runs", "No run is open."],
     ] as const) {
       const page = await get(`/alice/blank/${path}`);
-      expect(page).toContain("Nothing here");
       expect(page).toContain(words);
       expect(page).not.toContain("this filter");
     }
@@ -1254,7 +1263,7 @@ describe("the studio's empty lists", () => {
     if (!told.ok) throw new Error(String(told.error));
     const issues = await get("/alice/busy/issues?word=shipped");
     expect(issues).toContain("No issue is shipped yet.");
-    expect(issues).not.toContain("Tell the crew what you want");
+    expect(issues).not.toContain("Nothing open.");
     const pulls = await get("/alice/busy/pulls?word=look");
     expect(pulls).toContain("No pull request is look yet.");
     const runs = await get("/alice/busy/runs?word=stopped");

@@ -20,11 +20,17 @@ export interface Handovers {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** Whether a note at `at` is inside the 24 h window ending at `now`. */
+export function inWindow(at: string, now: number): boolean {
+  const t = Date.parse(at);
+  return Number.isFinite(t) && t <= now && now - t <= DAY_MS;
+}
+
 export function handovers(rows: readonly Handover[], now: number): Handovers {
   const latest = new Map<number, number>();
   for (const r of rows) {
+    if (!inWindow(r.at, now)) continue;
     const t = Date.parse(r.at);
-    if (!Number.isFinite(t) || t > now || now - t > DAY_MS) continue;
     if (t > (latest.get(r.pull) ?? -Infinity)) latest.set(r.pull, t);
   }
   const newest = [...latest]

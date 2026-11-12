@@ -31,7 +31,7 @@ import {
 } from "../../core/pulls.ts";
 import { canAdmin, canWrite, type Repo } from "../../core/repos.ts";
 import { listReviews, type Review } from "../../core/reviews.ts";
-import { wallOf, wallSentence, type Wall } from "../../contract/policy.ts";
+import { wallOf, wallPlain, wallSentence, type Wall } from "../../contract/policy.ts";
 import { checkSummary } from "../../core/runs.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -42,7 +42,7 @@ import {
   repoHeader,
   repoPalette,
 } from "../chrome.ts";
-import { html, when, type Html } from "../html.ts";
+import { html, raw, when, type Html } from "../html.ts";
 import type { IconName as Glyph } from "../icons.ts";
 import { threadLine } from "../describe.ts";
 import { fragment, page, redirect } from "../layout.ts";
@@ -51,20 +51,24 @@ import { liveClientJs, liveMount } from "../live.ts";
 import {
   btn,
   card,
+  crumbs,
   confirmAction,
+  badge,
   icon,
   originTag,
   seg,
-  stateBadge,
   time,
   tlEvent,
   userLink,
   verdictBadge,
   type Tone,
 } from "../ui.ts";
-import { previewCard } from "../pages/apps.ts";
+import { previewBlock } from "../pages/apps.ts";
 import { lookCard } from "../pages/looks.ts";
-import { approveHereCard, pullChecksLineFor, teamsCard } from "../pages/pull.ts";
+import { approveHereCard, keptChange, pullChecksLineFor, teamsCard, verdictFacts } from "../pages/pull.ts";
+import { changeSummary, verdictLine, verdictOf } from "../pages/pull-verdict.ts";
+import { guestWalls, strangerCard } from "../pages/pull-guest.ts";
+import { combinedCard } from "../pages/pull-combined.ts";
 import { teamVerdicts } from "../../core/issue_teams.ts";
 import { liveRegionsJs } from "../client.ts";
 import { pullState } from "../pages/pulls.ts";
@@ -74,6 +78,7 @@ import {
   conversation,
   originGlyph,
   parseNumber,
+  threadContext,
   type Entry,
 } from "../pages/thread.ts";
 import { KIND_TIER, type Decision } from "./asks.ts";
@@ -83,9 +88,14 @@ import { previewVision } from "../../crew/vision.ts";
 import { visionPreviewCard } from "./direction.ts";
 import { holdCard } from "./hold.ts";
 import { pullMayRun } from "../../core/pull_trust.ts";
-import { nextOfPull, type Next } from "../../flow/next_actor.ts";
+import { landingLine } from "../../flow/landing_line.ts";
+import { nextOfPull } from "../../flow/next_actor.ts";
+import { STEP_MEANS, STEPS, stepOfPull, stepWord, type PathStep } from "../../flow/path.ts";
 import { changeHref } from "./nouns.ts";
-import { pullWord, servingHistory, wordBadge, type WordCtx } from "./words.ts";
+import { pullWord, servingHistory, stateDot, wordDot, type WordCtx } from "./words.ts";
+import { getHold } from "../../core/holds.ts";
+import { backToWave } from "../../story/waves.ts";
+import { pullRoster } from "./pull_roster.ts";
 
 /** The pull and its repo, or the response that refuses to say why not. */
 export function pullContext(ctx: Ctx): { repo: Repo; pull: Pull } | Response {
@@ -94,8 +104,12 @@ export function pullContext(ctx: Ctx): { repo: Repo; pull: Pull } | Response {
   const number = parseNumber(ctx.params.number);
   const pull =
     number === undefined ? undefined : getPull(ctx.app.db, repo.id, number);
-  if (!pull || !mayView(ctx.app.db, repo, pull, ctx.auth.user))
-    return notFoundPage(ctx);
+  // Not a pull: an issue of that number sends a read to its own page (`threadContext`).
+  if (!pull) {
+    const other = threadContext(ctx, "pull");
+    return other instanceof Response ? other : notFoundPage(ctx);
+  }
+  if (!mayView(ctx.app.db, repo, pull, ctx.auth.user)) return notFoundPage(ctx);
   return { repo, pull };
 }
 
@@ -105,7 +119,7 @@ export function pullContext(ctx: Ctx): { repo: Repo; pull: Pull } | Response {
  * so, in the same sentences the ledger keeps, and leaves the decision to
  * the person reading.
  */
-export function wallCard(wall: Wall): Html {
+export function wallCard(wall: Wall, act?: string): Html {
   return card(
     html`<p class="muted small">
         ${wall.unsound !== undefined
@@ -116,7 +130,28 @@ export function wallCard(wall: Wall): Html {
         ${(wall.unsound ?? wall.loosened.map(wallSentence)).map(
           (line) => html`<div>${line}</div>`,
         )}
-      </div>`,
+      </div>${when(
+        act,
+        (thread) => html`<p class="small">
+            ${wall.unsound !== undefined
+              ? "This one does not boot."
+              : `If you allow it, ${wall.loosened.map(wallPlain).join("; ")}.`}
+          </p>
+          <div class="bar mt">
+            <form method="post" action="${thread}/merge">
+              <input type="hidden" name="strategy" value="squash" />
+              ${btn("Allow it and merge", { variant: "primary", icon: "merge" })}
+            </form>
+            <form method="post" action="${thread}/review-state">
+              <input type="hidden" name="state" value="changes_requested" />
+              <label class="small"
+                >Why (optional)
+                <input name="body" autocomplete="off" />
+              </label>
+              ${btn("Send it back", { variant: "danger" })}
+            </form>
+          </div>`,
+      )}`,
     {
       tone: "attn",
       extra: "wall mt",
@@ -174,10 +209,8 @@ function reviewEntry(
       )}${when(
         review.body !== "",
         () =>
-          html`<div class="card">
-            <div class="prose comment-body">
-              ${renderMarkdown(review.body)}
-            </div>
+          html`<div class="prose comment-body">
+            ${renderMarkdown(review.body)}
           </div>`,
       )}`,
     }),
@@ -187,13 +220,23 @@ function reviewEntry(
 /** A change's head, the same on both of its tabs: the title, its state,
  * who opened it and in answer to whom, where it came from, and what the
  * crew spent on it. */
-export function changeHead(ctx: Ctx, repo: Repo, pull: Pull, next: Next | null = null): Html {
+export function changeHead(
+  ctx: Ctx,
+  repo: Repo,
+  pull: Pull,
+  live: { readonly headOid: string; readonly conflicts: number } | null = null,
+): Html {
+  const next = live === null ? null : nextOfPull(ctx.app.db, pull, live);
+  const step =
+    live === null && pull.mergedAt === null
+      ? null
+      : stepOfPull(ctx.app.db, repo, pull, live ?? { headOid: pull.headOid, conflicts: 0 }, next);
   const who = toldBy(ctx.app.db, pull);
   const marks = marksByName(ctx.app.db, [pull.authorName, who ?? ""]);
   return html`<div class="page-head">
     <h1>${pull.title} <span class="num">#${pull.number}</span></h1>
     <div class="page-head-sub bar muted small">
-      ${stateBadge(
+      ${stateDot(
         pullState(pull),
         getIssueById(ctx.app.db, pull.id)?.closeReason === "parked",
       )}
@@ -225,11 +268,30 @@ export function changeHead(ctx: Ctx, repo: Repo, pull: Pull, next: Next | null =
           >`,
       )}
     </div>
-    ${when(
-      next,
-      (n) => html`<p class="next-actor muted small">Next: ${n.who}, ${n.why}.</p>`,
+    ${when(step, (st) => pathLine(st, next === null ? undefined : `${next.who}, ${next.why}`))}${when(
+      live === null ? null : landingLine(ctx.app.db, pull, repo.id),
+      (eta) => html`<p class="muted small" data-landing-eta>${eta.says}</p>`,
     )}
   </div>`;
+}
+
+/**
+ * Where the pull is on the one path (#7703): the four words, the current one
+ * marked, and why it waits there. The words link to /pipeline, which says
+ * what each one means and holds the finer steps.
+ */
+export function pathLine(p: PathStep, next?: string): Html {
+  const at = STEPS.indexOf(p.step);
+  const words = STEPS.map((s, i) => {
+    const label = stepWord(s);
+    if (i === at)
+      return html`<strong aria-current="step" title="${STEP_MEANS[s]}">${label}</strong>${p.done ? html` ${badge("done", { tone: "success" })}` : null}`;
+    return html`<span>${label}</span>`;
+  });
+  return html`<p class="muted small" data-path="${p.step}">
+    <a href="/pipeline">${words.map((w, i) => html`${i > 0 ? " · " : ""}${w}`)}</a>
+    — ${p.why}${next === undefined ? "" : html`<span class="next-actor"> Next: ${next}.</span>`}
+  </p>`;
 }
 
 /** The change's two steps: the change itself, and its Files one tab
@@ -352,29 +414,30 @@ async function pullPanels(ctx: Ctx, repo: Repo, pull: Pull, spent: Spent = newSp
       deploy = { id: production.runId, commitOid: production.commitOid };
   }
 
-  const checkLine = card(
-    html`<p
-      class="studio-pull-check"
-      data-head="${pull.mergedOid ?? pull.headOid}"
-    >
-      ${wordBadge(word)} <span class="muted small">${note}</span>
-      ${when(
-        tellsAnswered(db, repo.id, [pull]).get(pull.number),
-        (t) => html`<span class="sep" aria-hidden="true">·</span
-          >${tellLine(base, t)}`,
-      )}
-      ${when(
-        deploy,
-        (d) =>
-          html`<span class="sep" aria-hidden="true">·</span
-            ><a href="${base}/runs/${d.id}"
-              >deploy ${d.commitOid.slice(0, 7)}</a
-            >`,
-      )}
-    </p>`,
-  );
+  // At rest the check is a line, not a card: a dot, its word, the note.
+  const checkLine = html`<p
+    class="studio-pull-check"
+    data-head="${pull.mergedOid ?? pull.headOid}"
+  >
+    ${wordDot(word)}
+    <span class="word-text" data-pull-word>${word === "told" ? "open" : word}</span>
+    <span class="muted small">${note}</span>
+    ${when(
+      tick(spent, "tells", () => tellsAnswered(db, repo.id, [pull]).get(pull.number)),
+      (t) => html`<span class="sep" aria-hidden="true">·</span
+        >${tellLine(base, t)}`,
+    )}
+    ${when(
+      deploy,
+      (d) =>
+        html`<span class="sep" aria-hidden="true">·</span
+          ><a href="${base}/runs/${d.id}">deploy ${d.commitOid.slice(0, 7)}</a>`,
+    )}
+  </p>`;
 
-  const preview = when(record, () => previewCard(ctx, repo, pull));
+  const preview = tick(spent, "preview", () =>
+    when(record, () => previewBlock(ctx, repo, pull)),
+  );
   return {
     record,
     db,
@@ -445,9 +508,13 @@ async function changeConversation(
       : await lap(spent, "diff", () =>
           wallOf(wordCtx.dir, status.baseOid, status.headOid),
         );
-  const crewDecision = decisionsFor(ctx, [repo], { evenDismissed: true }).find(
-    (d) => d.pull?.id === pull.id,
-  );
+  // Everything the Decide card, the vision preview and Take it back read is
+  // read here, under `decide`; only this pull's own asks (`pull`).
+  const decideAt = performance.now();
+  const crewDecision = decisionsFor(ctx, [repo], {
+    evenDismissed: true,
+    pull: pull.id,
+  }).find((d) => d.pull?.id === pull.id);
   // A person's own change carries no crew decision (`decisionsFor` reads
   // agent pulls only — #208's territory), but the change's own page still
   // owes its writer the same route and the same words, whoever opened it.
@@ -538,11 +605,11 @@ async function changeConversation(
     ctx.auth.user !== undefined && canAdmin(db, repo, ctx.auth.user)
       ? await previewVision(ctx.app, repo, pull)
       : null;
-  const decisionSection = when(decisionBody, (body) =>
-    card(body, {
-      head: html`${icon("alert")}
-        <h2>Decide</h2>`,
-    }),
+  const decisionForms = decision ? decisionForm(decision) : null;
+  // No card, no heading: the decision is the page's one primary action.
+  const decisionSection = when(
+    decisionBody,
+    (body) => html`<div class="mt mb" id="decide">${body}</div>`,
   );
 
   // A shipped change offers one more verb: open a new change that undoes
@@ -550,38 +617,99 @@ async function changeConversation(
   // open (nothing shipped to take back yet), never on a mirror (the origin
   // owns that history), never twice. The action re-checks all of this and
   // does the git work; this only decides whether to offer the button.
-  const takeBackSection = when(
+  const mayTakeBack =
     pull.mergedAt !== null &&
-      writer &&
-      repo.origin === null &&
-      pull.originHeadRepo === null &&
-      revertOf(db, repo.id, pull.id) === undefined,
+    writer &&
+    repo.origin === null &&
+    pull.originHeadRepo === null &&
+    revertOf(db, repo.id, pull.id) === undefined;
+  const takeBackSection = when(
+    mayTakeBack,
     () =>
-      card(
-        html`<p class="muted small">
-            Take it back — opens a new change that undoes exactly what this
-            one shipped, for a person to ship.
-          </p>
-          <div class="bar mt">
-            ${confirmAction({
-              action: `${thread}/take-back`,
-              verb: "Take it back",
-              size: "sm",
-            })}
-          </div>`,
-      ),
+      html`<div class="bar mt" id="take-back">
+        ${confirmAction({
+          action: `${thread}/take-back`,
+          verb: "Take it back",
+          size: "sm",
+        })}
+        <span class="muted small"
+          >opens a new change that undoes exactly what this one shipped</span
+        >
+      </div>`,
   );
 
   const siblings = variantSiblings(db, [pull])[0] ?? [];
+  spent.decide += performance.now() - decideAt;
   const glyph = originGlyph(repo);
   const headOid = status?.headOid ?? pull.headOid;
+  const pageHead = tick(spent, "head", () => ({
+    top: html`${repoHeader(ctx, repo, "pulls", {
+      compact: true,
+      ownTitle: true,
+      quiet: true,
+    })}
+    ${changeHead(ctx, repo, pull, status === undefined ? null : { headOid, conflicts: status.conflicts.length })}
+    ${changeTabs(repo, pull, "change")}`,
+    crumbs: crumbsFor(repo),
+    palette: [
+      ...repoPalette(ctx, repo),
+      ...pullRoster({
+        base,
+        number: pull.number,
+        headBranch: pull.headBranch,
+        crossRepo: pull.crossRepo,
+        signedIn: ctx.auth.user !== undefined,
+        writer,
+        state: pull.state === "closed" ? "closed" : "open",
+        merged: pull.mergedAt !== null,
+        labels: false,
+        mayState: ctx.auth.user !== undefined && (ctx.auth.user.id === pull.authorId || writer),
+        mergeReady: false,
+        change: {
+          shippable: decision !== undefined,
+          conflicted: conflicted === true,
+          mayEdit: mayEditIssue(ctx.app, repo, pull, ctx.auth.user).ok && !mirrored,
+          takeBack: mayTakeBack,
+        },
+      }),
+    ],
+  }));
+  const held = getHold(db, pull.id) !== undefined;
+  const holdForm = held ? null : holdCard(ctx, repo, pull, { act: true, bare: true });
+  // The rare actions, one step away: hold and take back.
+  const more =
+    holdForm === null && !mayTakeBack
+      ? null
+      : html`<details class="mt mb" id="more" ${ctx.url.searchParams.has("more") ? raw("open") : null}>
+          <summary class="muted small">More: hold, take it back</summary>
+          ${holdForm}${takeBackSection}
+        </details>`;
+  // A fork's pull combined with main on our side says so, with its note (#9012).
+  const combined =
+    status === undefined
+      ? null
+      : await lap(spent, "diff", () => combinedCard(wordCtx.dir, pull, headOid, status.baseOid));
+  const walls = status === undefined ? [] : await guestWalls(ctx, repo, pull, status.baseOid);
+  const next = await strangerCard(ctx, repo, pull, `${thread}/approve-guest`, walls);
+  const gate = tick(
+    spent,
+    "gate",
+    () => html`${held ? holdCard(ctx, repo, pull, { act: true }) : null}
+    ${combined}
+    ${next}
+    ${approveHereCard(ctx, repo, pull, headOid, `${thread}/approve-here`)}
+    ${teamsCard(teamVerdicts(db, { ...pull, headOid }))}
+    ${when(wall, (w) => wallCard(w, writer ? thread : undefined))}`,
+  );
+  const look = tick(spent, "looks", () =>
+    when(record, (r) => lookCard(ctx, repo, r, pull, pull.headOid)),
+  );
   const reviewsAt = performance.now();
   const reviews = listReviews(db, pull.id);
   const reviewerMarks = marksByName(
     db,
     reviews.map((r) => r.authorName),
   );
-  spent.reviews += performance.now() - reviewsAt;
   const talk = conversation(ctx, repo, pull, {
     openVerb: "opened this",
     extra: reviews.map((review) =>
@@ -592,13 +720,34 @@ async function changeConversation(
         ? `${thread}/edit`
         : undefined,
   });
+  const reply = composer(ctx, {
+    action: `${thread}/comments`,
+    // Closing is its author's or a writer's (`setIssueState`): nobody
+    // else is shown a button the server would only refuse.
+    ...(ctx.auth.user !== undefined &&
+    (ctx.auth.user.id === pull.authorId || writer)
+      ? { stateAction: `${thread}/state` }
+      : {}),
+    state: pull.state,
+    locked: pull.mergedAt !== null,
+    closeLabel: "Close pull request",
+    plainSend: decision !== undefined,
+    crewNote: threadNote(ctx.app.db, repo, pull),
+  });
+  spent.reviews += performance.now() - reviewsAt;
 
-  const body = html`${repoHeader(ctx, repo, "pulls", {
-      compact: true,
-      ownTitle: true,
-    })}
-    ${changeHead(ctx, repo, pull, status === undefined ? null : nextOfPull(db, pull, { headOid, conflicts: status.conflicts.length }))}
-    ${changeTabs(repo, pull, "change")}
+  // From here on nothing is read: `render` only builds the page.
+  // The page opens on its verdict, then the change; the merge box and the
+  // reviews live on Files, so the line's anchors point there.
+  const files = `${thread}/files`;
+  const totals =
+    status === undefined ? null : (await lap(spent, "diff", () => keptChange(wordCtx.dir, status))).diff;
+  const verdict = verdictOf(verdictFacts(ctx, repo, pull, status, { mayMerge: writer }), thread, files);
+  const wave = backToWave(ctx.url.searchParams.get("from"));
+  const body = html`${pageHead.top}
+    ${when(wave, (w) => crumbs([{ label: `Wave ${w.version}`, href: w.href }, { label: "This pull" }]))}
+    ${verdictLine(verdict, { action: false })}
+    ${changeSummary(pull.body, totals, files)}
     ${when(siblings.length > 0, () =>
       html`<p class="muted small variant-link">
         <a href="${base}/variants/${pull.variantGroup ?? ""}"
@@ -607,33 +756,18 @@ async function changeConversation(
       </p>`,
     )}
     <div id="pull-check">${checkLine}</div>
-    ${when(runLine, (l) => l)} ${holdCard(ctx, repo, pull, { act: true })}
-    ${approveHereCard(ctx, repo, pull, headOid, `${thread}/approve-here`)}
-    ${teamsCard(teamVerdicts(db, { ...pull, headOid }))}
-    ${when(wall, (w) => wallCard(w))} ${decisionSection}
+    ${when(runLine, (l) => l)} ${gate} ${decisionSection}
     ${when(visionPreview, (v) => visionPreviewCard(v))}
-    ${takeBackSection}
-    ${when(record, (r) => lookCard(ctx, repo, r, pull, pull.headOid))}
+    ${look}
     <div class="split">
       <div>
         ${talk.node}
-        ${composer(ctx, {
-          action: `${thread}/comments`,
-          // Closing is its author's or a writer's (`setIssueState`): nobody
-          // else is shown a button the server would only refuse.
-          ...(ctx.auth.user !== undefined &&
-          (ctx.auth.user.id === pull.authorId || writer)
-            ? { stateAction: `${thread}/state` }
-            : {}),
-          state: pull.state,
-          locked: pull.mergedAt !== null,
-          closeLabel: "Close pull request",
-          crewNote: threadNote(ctx.app.db, repo, pull),
-        })}
+        ${reply}
+        ${more}
       </div>
       <aside><div id="pull-preview">${preview}</div></aside>
     </div>
-    ${decision ? decisionForm(decision) : null}
+    ${decisionForms}
     ${liveMount({
       repo: base,
       thread: "pull",
@@ -646,28 +780,26 @@ async function changeConversation(
     ctx,
     title: `${pull.title} · ${repo.name}`,
     ogImage: cardPath("pull", repo, pull),
+    about: `${repo.ownerName}/${repo.name}#${pull.number}`,
     description: threadLine({
       private: repo.visibility === "private",
       word,
       title: pull.title,
       body: pull.body,
     }),
-    crumbs: crumbsFor(repo),
-    palette: repoPalette(ctx, repo),
+    crumbs: pageHead.crumbs,
+    palette: pageHead.palette,
     body,
     scriptJs: `${liveClientJs}\n${liveRegionsJs}`,
   });
   // Each phase is named once, from what the laps added up to; render is what
   // is left of the page's own time, so the phases never exceed `app`.
-  const { diff, checks, reviews: reviewMs } = spent;
-  notePhase(request, "diff", diff);
-  notePhase(request, "checks", checks);
-  notePhase(request, "reviews", reviewMs);
-  notePhase(
-    request,
-    "render",
-    Math.max(0, performance.now() - began - diff - checks - reviewMs),
-  );
+  let read = 0;
+  for (const [name, ms] of Object.entries(spent)) {
+    notePhase(request, name, ms);
+    read += ms;
+  }
+  notePhase(request, "render", Math.max(0, performance.now() - began - read));
   return response;
 }
 
@@ -675,15 +807,42 @@ async function changeConversation(
 interface Spent {
   diff: number;
   checks: number;
+  tells: number;
+  preview: number;
+  head: number;
+  gate: number;
+  decide: number;
+  looks: number;
   reviews: number;
 }
-const newSpent = (): Spent => ({ diff: 0, checks: 0, reviews: 0 });
+/** In the order Server-Timing names them. */
+const newSpent = (): Spent => ({
+  diff: 0,
+  checks: 0,
+  tells: 0,
+  preview: 0,
+  head: 0,
+  gate: 0,
+  decide: 0,
+  looks: 0,
+  reviews: 0,
+});
 
 /** Run `work` and add the time it took to `spent[key]`. */
-async function lap<T>(spent: Spent, key: "diff" | "checks", work: () => Promise<T>): Promise<T> {
+async function lap<T>(spent: Spent, key: keyof Spent, work: () => Promise<T>): Promise<T> {
   const started = performance.now();
   try {
     return await work();
+  } finally {
+    spent[key] += performance.now() - started;
+  }
+}
+
+/** The same for a synchronous read: no await, no microtask. */
+function tick<T>(spent: Spent, key: keyof Spent, work: () => T): T {
+  const started = performance.now();
+  try {
+    return work();
   } finally {
     spent[key] += performance.now() - started;
   }

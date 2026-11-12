@@ -9,25 +9,44 @@
 import { canAdmin, canRead, getRepo } from "../../core/repos.ts";
 import { notFound } from "../../http/respond.ts";
 import { holds, stamp, xml } from "../feeds.ts";
+import { STARTED } from "../started.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { VERSION, type Wave } from "../../story/wave.ts";
+import { movedWithPulls, waveProgress } from "../../story/wave_moved.ts";
 import { carriedPulls, pullPath } from "../../story/wave_pulls.ts";
-import { pullRefs, readWave, readWaves } from "../../story/waves.ts";
-import { NO_WAVES } from "../../story/words.ts";
+import { fromWave, pullRefs, readWave, readWaves, sizeWords, waveSize } from "../../story/waves.ts";
+import { NO_WAVES, waveSentence } from "../../story/words.ts";
 import { loadRepo, notFoundPage, repoBase, scopeHeader } from "../chrome.ts";
 import { escapeHtml, html } from "../html.ts";
 import { page } from "../layout.ts";
 import { btn, empty, listCard, row } from "../ui.ts";
 import { localScope } from "../scope.ts";
+import { milestoneHref, planFor } from "./milestones.ts";
+
+/**
+ * A wave's headline is the writer's words, so a row lets it wrap (a long word
+ * breaks anywhere) instead of the list's one-line ellipsis, and the page
+ * never scrolls sideways at 390 px. Scoped to `[data-waves]`; no new class.
+ */
+export const WAVES_CSS = `[data-waves] { overflow-wrap: anywhere; }
+[data-waves] .row-title, [data-waves] .row-meta { white-space: normal; overflow: visible; text-overflow: clip; }
+[data-waves] .row { align-items: flex-start; }`;
 
 const WHAT_A_WAVE =
   "A wave is a release note in waves/<version>.md that names its highlights and the pulls merged since the last one.";
 
-/** A wave's row title: `<version> · <date> · <headline> · N pulls`, N being the pulls this viewer can see. */
-export function waveLine(w: Wave, visible: number): string {
-  return `${w.version} · ${w.date} · ${w.headline} · ${visible} ${visible === 1 ? "pull" : "pulls"}`;
+/** One wave on the list: its headline, the first highlight's why as the one sentence under it, and version, date and pull count as a muted trail. */
+export function waveRow(w: Wave, href: string, size: { pulls: number; apps: number }) {
+  const why = w.highlights[0]?.why;
+  return row({
+    href,
+    nav: true,
+    title: w.headline,
+    ...(why === undefined || why === "" ? {} : { meta: html`${why}` }),
+    trail: html`<span class="muted small">${w.version} · ${w.date} · <span data-wave-size>${sizeWords(size)}</span></span>`,
+  });
 }
 
 // GET /:owner/:name/waves
@@ -48,20 +67,23 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
 
   const rows = entries.map((e) =>
     e.ok
-      ? row({
-          href: fileHref(e.file),
+      ? waveRow(
+          e.wave,
+          fileHref(e.file),
           // The wave's own page lists these same pulls, so the two agree.
-          title: waveLine(e.wave, carriedPulls(ctx.app.db, pullRefs(e.wave), ctx.auth.user).length),
-        })
+          waveSize(carriedPulls(ctx.app.db, pullRefs(e.wave), ctx.auth.user)),
+        )
       : row({
           href: fileHref(e.file),
+          nav: true,
           title: e.file,
           meta: html`Not a wave: ${e.reason}`,
         }),
   );
 
   const body = html`${scopeHeader(ctx, scope, "none", { compact: true })}
-    <div class="mt">
+    <div class="mt" data-waves>
+      <h1 class="sr-only">Waves</h1>
       ${entries.length === 0
         ? empty({
             title: "No waves yet",
@@ -74,7 +96,9 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
                 }
               : {}),
           })
-        : listCard(rows, { head: html`<h2>Waves</h2>` })}
+        : html`<ul class="list">
+            ${rows}
+          </ul>`}
     </div>`;
 
   const response = page({
@@ -83,6 +107,7 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
     crumbs: scope.crumbs,
     palette: scope.palette,
     body,
+    styleCss: WAVES_CSS,
     feed: {
       href: `${repoBase(repo)}/waves.atom`,
       title: `${repo.ownerName}/${repo.name} waves`,
@@ -136,7 +161,7 @@ export async function wavesAtom(ctx: Ctx): Promise<Response> {
   <id>${xml(base)}/waves.atom</id>
   <title>${xml(`${repo.ownerName}/${repo.name} waves`)}</title>
   <subtitle>${xml(repo.description === "" ? "Waves" : repo.description)}</subtitle>
-  <updated>${xml(newest ? updatedAt(newest.date) : new Date(0).toISOString())}</updated>
+  <updated>${xml(newest ? updatedAt(newest.date) : STARTED)}</updated>
   <link rel="self" type="application/atom+xml" href="${xml(base)}/waves.atom"/>
   <link rel="alternate" type="text/html" href="${xml(base)}/waves"/>
   <generator>forge</generator>
@@ -172,30 +197,70 @@ export async function wavePage(ctx: Ctx): Promise<Response> {
         carriedPulls(ctx.app.db, pullRefs(entry.wave), ctx.auth.user),
       )
     : [];
+  const moved = entry.ok
+    ? timePhase(ctx.request, "moved", () =>
+        movedWithPulls({
+          db: ctx.app.db,
+          repo,
+          refs: pullRefs(entry.wave),
+          viewer: ctx.auth.user,
+          plan: () => planFor(ctx, repo, false, new Date()),
+        }),
+      )
+    : [];
   const rendering = performance.now();
   const scope = localScope(ctx, repo);
   const back = html`<a href="${repoBase(repo)}/waves">All waves</a>`;
 
+  const byNumber = new Map(carried.filter((p) => p.owner === repo.ownerName && p.name === repo.name).map((p) => [p.number, p]));
+  const pullRow = (p: (typeof carried)[number]) =>
+    row({
+      href: `${pullPath(p)}${fromWave(repo.ownerName, repo.name, entry.ok ? entry.wave.version : "")}`,
+      title: html`#${p.number} ${p.title}`,
+      meta: html`${p.mergedAt === null ? p.state : `merged ${p.mergedAt.slice(0, 10)}`}`,
+      state: p.mergedAt === null ? p.state : ("merged" as const),
+    });
+  /** Each pull is said once: those a change's fold holds are not listed again below. */
+  const folded = new Set(moved.flatMap((m) => m.pulls));
+  const unfolded = carried.filter((p) => !(p.owner === repo.ownerName && p.name === repo.name && folded.has(p.number)));
+  const line = waveProgress(moved);
+
   const content = entry.ok
     ? html`<h1>${entry.wave.headline}</h1>
-        <p class="muted">${entry.wave.version} · ${entry.wave.date}</p>
+        <p data-wave-sentence>${waveSentence(carried.filter((p) => p.mergedAt !== null).map((p) => p.title))}</p>
+        <p class="muted">${entry.wave.version} · ${entry.wave.date} · <span data-wave-size>${sizeWords(waveSize(carried))}</span></p>
+        ${line === ""
+          ? ""
+          : html`<p class="muted" data-wave-progress>${line}</p>`}
         <h2>Highlights</h2>
         <ul>
           ${entry.wave.highlights.map(
             (h) => html`<li><strong>${h.title}</strong> — ${h.why}</li>`,
           )}
         </ul>
+        ${moved.length === 0
+          ? ""
+          : listCard(
+              moved.map((m) => {
+                const its = m.pulls.flatMap((n) => byNumber.get(n) ?? []);
+                return row({
+                  title: m.title,
+                  fold: {
+                    id: `change-${m.number}`,
+                    open: false,
+                    body: html`<p class="small"><a href="${milestoneHref(repoBase(repo), m.number)}">Open the milestone</a></p>
+                      ${its.length === 0 ? "" : html`<ul class="list">${its.map(pullRow)}</ul>`}`,
+                  },
+                });
+              }),
+              { head: html`<h2>Moved</h2>` },
+            )}
         ${carried.length === 0
           ? html`<p class="muted">No pulls to show here.</p>`
-          : listCard(
-              carried.map((p) =>
-                row({
-                  href: pullPath(p),
-                  title: html`#${p.number} ${p.title}`,
-                  meta: html`${p.mergedAt === null ? p.state : `merged ${p.mergedAt.slice(0, 10)}`}`,
-                  state: p.mergedAt === null ? p.state : ("merged" as const),
-                }),
-              ),
+          : unfolded.length === 0
+            ? ""
+            : listCard(
+              unfolded.map(pullRow),
               { head: html`<h2>Pulls</h2>` },
             )}`
     : html`<h1>${entry.file}</h1>

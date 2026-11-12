@@ -155,12 +155,27 @@ this, frozen.
 ## Gates in flight across a roll (#6722)
 
 A roll does not turn a merge-queue gate red. On SIGTERM the old forge
-starts no new gate and lets the gates under way finish for
-`FORGE_CHECKS_DRAIN_S` (660 s: a full gate takes about ten minutes). The
-chart's `terminationGracePeriodSeconds` is 720 for that reason, a minute
-past the drain; lower one and lower the other with it, or the kubelet kills
-the pod while its gates still run. The old and new pods share the node for
-up to those 12 minutes, which section 1's rule already sizes for.
+starts no new gate and gives the gates under way `FORGE_CHECKS_DRAIN_S`
+(10 s) to finish, the crew's runs `FORGE_CREW_DRAIN_S` (10 s); what is left
+is handed back queued. The old forge stops writing within seconds, so the
+new forge's `waitForPeer` (`src/runs/peer.ts`) returns at once and the
+release's write pause stays under 30 s (#7799). Before that the drain was
+660 s and the pause as long. Both budgets are read in `src/drain.ts`; junk
+falls back to 10 s.
+
+A gate cut off at the drain is `interrupted`, never red, and the new forge
+gates the same candidate again from the persisted queue
+(`test/merge-queue-restart.test.ts`: "the run gone, the same candidate is
+gated again" and the #6722 red case). A gate that outlives the drain on a
+roll is therefore redone, not lost; set `FORGE_CHECKS_DRAIN_S` higher to
+trade a longer write pause for fewer redone gates.
+
+If a crew run ignores the abort at the end of its 10 s, the old forge's
+leases stay renewed and the new forge logs "another forge still works this
+database" and keeps serving pages but holds its queue work. It starts when
+the run's process finally ends, or after `PEER_WAIT_MAX_MS` (720 s, the
+pod's grace, after which the platform has stopped the old pod). Pages answer
+throughout; only queue work is late.
 
 What the drain does not finish is no verdict, never red:
 

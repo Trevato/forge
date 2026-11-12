@@ -8,9 +8,11 @@
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PORT_RETRIES } from "../src/kernel/port.ts";
+import { bootRestored } from "../src/snapshot/boot.ts";
 import { bootProof, parseArgs, proveBoot, why } from "../src/release/boot.ts";
 
 let root: string;
@@ -94,6 +96,8 @@ test("this tree, shipped as the image ships it (src/ alone), boots", async () =>
   const repo = join(import.meta.dir, "..");
   cpSync(join(repo, "src"), join(image, "src"), { recursive: true });
   for (const file of ["package.json", "tsconfig.json"]) cpSync(join(repo, file), join(image, file));
+  // The Dockerfile copies the OpenCode plugin too: src/http/plugin_routes.ts reads it at boot (#10274).
+  cpSync(join(repo, "plugins", "opencode"), join(image, "plugins", "opencode"), { recursive: true });
   expect(existsSync(join(image, "scripts"))).toBe(false);
   const result = await proveBoot({ tree: image, version: "9.9.9", budgetMs: 60_000 });
   expect(result).toMatchObject({ ok: true });
@@ -127,4 +131,37 @@ test("the build runs the proof on the image it built, and the chart runs it on a
   expect(hook).toContain('command: ["bun", "src/release/boot.ts", "--from", "/data", "--budget", "180"]');
   expect(hook).toContain("claimName: {{ .Release.Name }}-data");
   expect(hook).toContain("backoffLimit: 0");
+});
+
+/** A tree whose main logs one line per run to `counter`, then dies saying `stderr`. */
+function dying(name: string, stderr: string): { dir: string; runs: () => number } {
+  const counter = join(root, `${name}.count`);
+  const dir = tree(
+    name,
+    `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(counter)}, "run\\n");\nconsole.error(${JSON.stringify(stderr)});\nprocess.exit(1);\n`,
+  );
+  return { dir, runs: () => (existsSync(counter) ? readFileSync(counter, "utf8").split("\n").length - 1 : 0) };
+}
+
+test("bootProof starts again on a fresh port while the child lost its port, and gives up after PORT_RETRIES", async () => {
+  const t = dying("lost-proof", "error: address already in use");
+  const result = await bootProof({ tree: t.dir, version: "1.0.0", dataDir: root, budgetMs: 30_000 });
+  expect(result.ok).toBe(false);
+  expect(t.runs()).toBe(PORT_RETRIES + 1);
+});
+
+test("bootProof does not retry a child that died for another reason", async () => {
+  const t = dying("other-proof", "TypeError: x");
+  const result = await bootProof({ tree: t.dir, version: "1.0.0", dataDir: root, budgetMs: 30_000 });
+  expect(result.ok).toBe(false);
+  expect(t.runs()).toBe(1);
+});
+
+test("bootRestored retries a lost port and not another failure", async () => {
+  const lost = dying("lost-restored", "error: address already in use");
+  expect((await bootRestored(root, 30_000, lost.dir)).ok).toBe(false);
+  expect(lost.runs()).toBe(PORT_RETRIES + 1);
+  const other = dying("other-restored", "TypeError: x");
+  expect((await bootRestored(root, 30_000, other.dir)).ok).toBe(false);
+  expect(other.runs()).toBe(1);
 });

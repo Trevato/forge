@@ -18,6 +18,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { writeServing } from "./serving.ts";
 
 export const SWAP_BUDGET_MS = 60_000;
 const POLL_MS = 250;
@@ -32,6 +33,8 @@ export interface SwapInput {
   /** The environment the new forge starts with: the old one's, as it is. */
   env: Record<string, string | undefined>;
   budgetMs?: number;
+  /** The version the new process runs as (`FORGE_VERSION`); the environment's own when absent. */
+  version?: string;
   /** Sent with each health read (`kernel/probe.ts`), so the answer names its commit. */
   probe?: Readonly<Record<string, string>>;
 }
@@ -62,6 +65,7 @@ export async function startRelease(input: SwapInput): Promise<Swapped> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(input.env)) if (v !== undefined) env[k] = v;
   env["FORGE_COMMIT"] = input.sha;
+  if (input.version !== undefined) env["FORGE_VERSION"] = input.version;
   env["PORT"] = String(input.port);
   env["FORGE_SELF_SWAP"] = "1";
   const proc = Bun.spawn([process.execPath, entry], {
@@ -81,6 +85,8 @@ export async function startRelease(input: SwapInput): Promise<Swapped> {
       return { ok: false, line: `the new process exited with ${exited} before it was healthy` };
     if (healthyAs(await readHealth(input.port, input.probe ?? {}), input.sha)) {
       proc.unref();
+      // The launcher of a container waits on this pid now (`serving.ts`).
+      if (env["FORGE_DATA"]) writeServing(env["FORGE_DATA"], { pid: proc.pid, sha: input.sha });
       return { ok: true, pid: proc.pid };
     }
     await Bun.sleep(POLL_MS);
@@ -139,12 +145,37 @@ const MIGRATE_SYSCTL = "/proc/sys/net/ipv4/tcp_migrate_req";
  * the swap would fail requests. `handover.migrate` stands in for the file in tests.
  */
 export function migratesQueuedConnections(): boolean {
-  if (handover.migrate !== undefined) return handover.migrate;
+  return migrateReq() === "1";
+}
+
+/** The kernel's `tcp_migrate_req` as read: `1`, `0` (or any other value), or `unreadable`. */
+export function migrateReq(): "1" | "0" | "unreadable" {
+  if (handover.migrate !== undefined) return handover.migrate ? "1" : "0";
   try {
-    return readFileSync(MIGRATE_SYSCTL, "utf8").trim() === "1";
+    return readFileSync(MIGRATE_SYSCTL, "utf8").trim() === "1" ? "1" : "0";
   } catch {
-    return false;
+    return "unreadable";
   }
+}
+
+export interface SelfSwap {
+  /** Whether `FORGE_SELF_SWAP=1` was set at boot. */
+  readonly enabled: boolean;
+  readonly migrateReq: "1" | "0" | "unreadable";
+  /** Why this forge cannot swap itself; null when it can. */
+  readonly blocked: string | null;
+}
+
+/**
+ * Whether this forge can swap itself, as plain data for /capacity and the
+ * MCP `capacity` tool (#8383): what `beginSwap` would refuse, and why, before
+ * a landing is refused for it. `enabled` is the app's `selfSwap`.
+ */
+export function selfSwapState(enabled: boolean): SelfSwap {
+  const blocked =
+    swapBlocked() ??
+    (enabled ? null : "FORGE_SELF_SWAP is off, so a landed release waits for a restart; set FORGE_SELF_SWAP=1 to swap");
+  return { enabled, migrateReq: migrateReq(), blocked };
 }
 
 let underWay = false;
@@ -164,20 +195,19 @@ let underWay = false;
 export function beginSwap(): { ok: true } | { ok: false; line: string; tell: boolean } {
   if (underWay)
     return { ok: false, line: "a swap is already under way or done in this process", tell: false };
-  if (handover.ssh === true)
-    return {
-      ok: false,
-      line: "this process holds the SSH terminal, which a new process cannot take over yet; restart the forge to run this tree",
-      tell: true,
-    };
-  if (!migratesQueuedConnections())
-    return {
-      ok: false,
-      line: "the kernel would reset connections queued on the old listener when it closes; set net.ipv4.tcp_migrate_req=1 (Linux 5.14+) to swap, or restart the forge to run this tree",
-      tell: true,
-    };
+  const blocked = swapBlocked();
+  if (blocked !== undefined) return { ok: false, line: blocked, tell: true };
   underWay = true;
   return { ok: true };
+}
+
+/** Why this process cannot swap at all (SSH held, queued connections not migrated); undefined when it can. */
+export function swapBlocked(): string | undefined {
+  if (handover.ssh === true)
+    return "this process holds the SSH terminal, which a new process cannot take over yet; restart the forge to run this tree";
+  if (!migratesQueuedConnections())
+    return "the kernel would reset connections queued on the old listener when it closes; set net.ipv4.tcp_migrate_req=1 (Linux 5.14+) to swap, or restart the forge to run this tree";
+  return undefined;
 }
 
 /** A swap that failed gives the turn back; one that worked keeps it, for this process is leaving. */

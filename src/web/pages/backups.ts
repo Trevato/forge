@@ -26,9 +26,10 @@ import { resolveDestination, sealedSet } from "../../snapshot/destination.ts";
 import { keyOf } from "../../snapshot/snapshot.ts";
 import { formatMinutes, formatSpan, timeByPart, type DrillResult } from "../../snapshot/drill.ts";
 import { lastDrill } from "../../snapshot/drills.ts";
+import { backupVerdict } from "../../snapshot/bucket.ts";
 import type { Store } from "../../snapshot/store.ts";
 import { snapshotsOf, type SnapshotsHandle } from "../../snapshot/service.ts";
-import { mirrorNow, snapshotNow } from "../../actions/backups_now.ts";
+import { drillNow, mirrorNow, snapshotNow } from "../../actions/backups_now.ts";
 import { lastSnapshotOutcome } from "../../snapshot/outcome.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -42,7 +43,7 @@ import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { liveRegionsJs } from "../client.ts";
 import { flashTo, fragment, page, redirect } from "../layout.ts";
-import { badge, btn, card, empty, fileSize, icon, row, time } from "../ui.ts";
+import { badge, btn, fileSize, icon, row, time } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 function requireAdmin(ctx: Ctx): Response | undefined {
@@ -231,16 +232,12 @@ function domainsCard(ctx: Ctx): Html | null {
     });
   });
   return html`<div id="domains">
-    ${card(
-      html`<ul class="list" id="resilience-list">
+    <section class="settings-block">
+      <h2>Failure domains</h2>
+      <ul class="list setting-list" id="resilience-list">
         ${rows}
-      </ul>`,
-      {
-        head: html`${icon("activity")}
-          <h2>Failure domains</h2>`,
-        pad: false,
-      },
-    )}
+      </ul>
+    </section>
   </div>`;
 }
 
@@ -271,11 +268,10 @@ export async function backupsPage(ctx: Ctx): Promise<Response> {
         reachable: false,
         unreachable: "no snapshot store is set",
         now: Date.now(),
-      })}${empty({
-        icon: "download",
-        title: "No snapshots are taken",
-        note: "This forge was given nowhere to put them. On the platform an app's bucket (S3_*) is the place; on a machine, FORGE_SNAPSHOT_DIR names a directory. Seal a bucket below, or restart with one set, and a snapshot is taken every night at 08:00 UTC.",
-      })}${form}`,
+      })}<section class="settings-block">
+          <h2>No snapshots are taken</h2>
+          <p class="small">This forge was given nowhere to put them. On the platform an app's bucket (S3_*) is the place; on a machine, FORGE_SNAPSHOT_DIR names a directory. Seal a bucket below, or restart with one set, and a snapshot is taken every night at 08:00 UTC.</p>
+        </section>${form}`,
       ),
     );
   }
@@ -338,8 +334,9 @@ async function movingPart(
   const restore = snapshots[0]
     ? html`<pre class="restore-command" tabindex="0" aria-label="Restore command">bun run src/snapshot/restore.ts ${snapshots[0].name} /path/to/empty/data</pre>`
     : null;
-  return html`<div id="backups-live" data-live="backup.*" data-live-src="/settings/backups/live">${recovery}${card(
-      html`<p>
+  return html`<div id="backups-live" data-live="backup.*" data-live-src="/settings/backups/live">${recovery}${lanesCard(ctx)}<section class="settings-block">
+      <h2>Where and when</h2>
+      <p>
           Every night at 08:00 UTC the forge writes what cannot be rebuilt — its
           database, its keys, every repository, every app's production data, the
           crew's logs — to <code>${store.where}</code>, and keeps the newest
@@ -349,7 +346,7 @@ async function movingPart(
         ${when(
           svc.progress(),
           (p) =>
-            html`<p class="break">
+            html`<p class="break" role="status" aria-live="polite">
               ${badge("Running", { icon: "clock", variant: "secondary" })} A snapshot is being taken: ${p.objects} objects,
               ${fileSize(p.bytes)} so far, ${Math.round(p.elapsedMs / 1000)} s
               in.
@@ -377,57 +374,36 @@ async function movingPart(
             variant: "primary",
             icon: "download",
           })}
-        </form>`,
-      {
-        head: html`${icon("download")}
-          <h2>Where and when</h2>`,
-      },
-    )}
+        </form>
+    </section>
     ${
       snapshots.length === 0
-        ? empty({
-            icon: "clock",
-            title: "None yet",
-            note: "The first is taken tonight, or now with the button above.",
-          })
-        : card(
-            html`<ul class="list">
-              ${snapshots.map(
-                (m) =>
-                  html`<li>
-                    <div class="row">
-                      <span class="row-lead">${icon("download")}</span>
-                      <span class="row-main">
-                        <span class="row-title">${m.name}</span>
-                        <span class="row-meta"
-                          >${time(m.finishedAt)} · forge ${m.version} ·
-                          ${
-                            m.repos === 1
-                              ? "one repository"
-                              : `${m.repos} repositories`
-                          },
-                          ${m.apps === 1 ? "one app" : `${m.apps} apps`},
-                          ${m.files.length} files</span
-                        >
-                      </span>
-                      <span class="row-trail muted">${fileSize(m.bytes)}</span>
-                    </div>
-                  </li>`,
+        ? html`<section class="settings-block">
+            <h2>Snapshots</h2>
+            <p class="small">None yet. The first is taken tonight, or now with the button above.</p>
+          </section>`
+        : html`<section class="settings-block">
+            <h2>Snapshots</h2>
+            <ul class="list setting-list" id="snapshots">
+              ${snapshots.map((m) =>
+                row({
+                  lead: icon("download"),
+                  nav: true,
+                  title: m.name,
+                  meta: html`${time(m.finishedAt)} · forge ${m.version} ·
+                    ${m.repos === 1 ? "one repository" : `${m.repos} repositories`},
+                    ${m.apps === 1 ? "one app" : `${m.apps} apps`},
+                    ${m.files.length} files`,
+                  trail: html`<span class="muted">${fileSize(m.bytes)}</span>`,
+                }),
               )}
             </ul>
-            <div class="card-body">
-              <p class="muted small break">
-                To restore, stop a forge, point it at an empty data directory,
-                and run this with the same S3_* variables or FORGE_SNAPSHOT_DIR:
-              </p>
-              ${restore}
-            </div>`,
-            {
-              pad: false,
-              head: html`${icon("history")}
-                <h2>Snapshots</h2>`,
-            },
-          )
+            <p class="muted small break">
+              To restore, stop a forge, point it at an empty data directory,
+              and run this with the same S3_* variables or FORGE_SNAPSHOT_DIR:
+            </p>
+            ${restore}
+          </section>`
     }
   </div>`;
 }
@@ -463,8 +439,9 @@ function destinationCard(ctx: Ctx): Html {
         spellcheck="false"
         placeholder="${mark(sealed) || opts.placeholder || ""}"
     /></label>`;
-  return card(
-    html`<p>
+  return html`<section class="settings-block">
+      <h2>Destination</h2>
+      <p>
         In effect:
         <strong
           >${dest ? SOURCE[dest.source] : "nothing — no snapshots are taken"}</strong
@@ -502,12 +479,8 @@ function destinationCard(ctx: Ctx): Html {
             Clear sealed destination
           </button>
         </div>
-      </form>`,
-    {
-      head: html`${icon("lock")}
-        <h2>Destination</h2>`,
-    },
-  );
+      </form>
+    </section>`;
 }
 
 /** The mirror: its age and reachability from the last pass, and the write-only form that seals it. */
@@ -517,7 +490,7 @@ function mirrorCard(ctx: Ctx): Html {
   const configured = svc?.mirror !== undefined;
   const need = mirrorNeed(state, Date.now());
   const set = mirrorSealedSet(ctx.app.db);
-  const field_ = (name: string, label: string, sealed: string, type = "text"): Html =>
+  const sealedField = (name: string, label: string, sealed: string, type = "text"): Html =>
     html`<label class="field"
       ><span>${label}</span
       ><input
@@ -543,14 +516,15 @@ function mirrorCard(ctx: Ctx): Html {
             : html`It holds no snapshot yet.`}
           ${need ? html`<br />${need.sentence}` : ""}
         </p>`;
-  return card(
-    html`${status}
+  return html`<section class="settings-block">
+      <h2>Off-box mirror</h2>
+      ${status}
       <form method="post" action="/settings/backups/mirror" class="stack">
-        ${field_("endpoint", "Endpoint", MIRROR_SEALED.endpoint)}
-        ${field_("bucket", "Bucket", MIRROR_SEALED.bucket)}
-        ${field_("region", "Region (optional)", MIRROR_SEALED.region)}
-        ${field_("access_key", "Access key", MIRROR_SEALED.accessKey)}
-        ${field_("secret_key", "Secret key", MIRROR_SEALED.secretKey, "password")}
+        ${sealedField("endpoint", "Endpoint", MIRROR_SEALED.endpoint)}
+        ${sealedField("bucket", "Bucket", MIRROR_SEALED.bucket)}
+        ${sealedField("region", "Region (optional)", MIRROR_SEALED.region)}
+        ${sealedField("access_key", "Access key", MIRROR_SEALED.accessKey)}
+        ${sealedField("secret_key", "Secret key", MIRROR_SEALED.secretKey, "password")}
         <div class="row-actions">
           ${btn("Seal mirror", { type: "submit", variant: "primary", icon: "lock" })}
           <button class="btn" type="submit" formaction="/settings/backups/mirror/now" formnovalidate>
@@ -560,9 +534,8 @@ function mirrorCard(ctx: Ctx): Html {
             Clear sealed mirror
           </button>
         </div>
-      </form>`,
-    { head: html`${icon("download")}<h2>Off-box mirror</h2>` },
-  );
+      </form>
+    </section>`;
 }
 
 function destinationInput(form: Form): DestinationInput {
@@ -635,6 +608,34 @@ export async function backupsNow(ctx: Ctx): Promise<Response> {
   );
 }
 
+/**
+ * Each lane beside its newest object and its line (#9067); a lane without a
+ * line says so, as information. Nothing when no lane has been read. The
+ * verdict is the in-memory read the tile uses: no disk read on the live path.
+ */
+export function lanesCard(ctx: Ctx): Html | "" {
+  const lanes = backupVerdict(ctx.app.config.dataDir, lastDrill(ctx.app.db)).lanes;
+  if (lanes.length === 0) return "";
+  // The glyph is the mark that is not colour alone: ok, !, and a dash for a lane that is retired.
+  const mark = { green: "✓", red: "!", retired: "–" } as const;
+  const lead = { green: "open", red: "closed", retired: "draft" } as const;
+  return html`<section class="settings-block">
+    <h2>Lanes</h2>
+    <ul id="backup-lanes" class="list setting-list">
+      ${lanes.map((l) =>
+        row({
+          lead: html`<span aria-hidden="true">${mark[l.state]}</span>`,
+          state: lead[l.state],
+          title: l.says,
+          meta: html`${l.line}`,
+          ...(l.state === "retired" ? { trail: badge("retired", { variant: "outline" }) } : {}),
+          data: { lane: l.lane, "lane-state": l.state },
+        }),
+      )}
+    </ul>
+  </section>`;
+}
+
 /** POST /settings/backups/drill — restore the newest snapshot, keep what came of it. */
 export async function backupsDrill(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
@@ -645,27 +646,14 @@ export async function backupsDrill(ctx: Ctx): Promise<Response> {
     });
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
-  const svc = snapshotsOf(ctx.app);
-  if (svc === undefined || svc.store === undefined)
-    return flashTo(ctx, "/settings/backups", {
-      tone: "danger",
-      message: "This forge has no snapshots to drill.",
-    });
-  try {
-    const d = await svc.drill();
-    return flashTo(
-      ctx,
-      "/settings/backups",
-      d.verdict === "green"
-        ? { message: "The drill restored green." }
-        : { tone: "danger", message: `The drill failed at ${d.failedStep}.` },
-    );
-  } catch (error) {
-    return flashTo(ctx, "/settings/backups", {
-      tone: "danger",
-      message: `The drill could not run: ${String(error)}`,
-    });
-  }
+  const ran = await drillNow(ctx.app, ctx.auth.user);
+  return flashTo(
+    ctx,
+    "/settings/backups",
+    ran.ok && ran.value.verdict === "green"
+      ? { message: ran.value.says }
+      : { tone: "danger", message: ran.ok ? ran.value.says : ran.error.says },
+  );
 }
 
 /** POST /settings/backups/mirror — seal the mirror. */

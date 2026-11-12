@@ -69,6 +69,27 @@ export function ownerLine(o: {
   return `${o.org ? "Organization" : "User"} @${o.name} · ${n} public ${noun}.`;
 }
 
+/**
+ * A whole line that is a scaffold's default or a placeholder, not a
+ * description a visitor can read. Anchored: "A todo list app" is real.
+ */
+const JARGON =
+  /^\s*(untitled|test|description|none|n\/a|todo|tbd|wip|fixme|lorem ipsum.*|initial commit|(an? )?(scaffold(ed)?|auto-?generated)( \w+)?|created (by|with|from) (forge|template).*)\s*[.!]?\s*$/i;
+
+/** A description a visitor can read, or `fallback` when it is empty or jargon. */
+export function plainDescription(text: string, fallback: string): string {
+  const line = firstLine(text);
+  return line === "" || JARGON.test(line) ? fallback : line;
+}
+
+const sentence = (text: string): string => (/[.!?…]$/.test(text) ? text : `${text}.`);
+
+/** A repository: its own description, or a plain sentence naming it. */
+export function repoLine(o: { private: boolean; name: string; description: string }): string {
+  if (o.private) return PRIVATE_LINE;
+  return sentence(plainDescription(o.description, `${o.name} is a project on the forge: code, issues and changes in one place.`));
+}
+
 /** An app: its own description, and whether it is up, in `envPhrase`'s word. */
 export function appLine(o: {
   private: boolean;
@@ -77,5 +98,6 @@ export function appLine(o: {
   state: string;
 }): string {
   if (o.private) return PRIVATE_LINE;
-  return `${firstLine(o.description) || o.name} · ${o.state}.`;
+  const own = plainDescription(o.description, `${o.name} is an app you can try and make your own.`);
+  return `${sentence(own)} Status: ${o.state}.`;
 }

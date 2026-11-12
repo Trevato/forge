@@ -69,7 +69,7 @@ async function gitMs(query: string): Promise<{ ms: number; items: { name: string
   });
   const body = (await res.json()) as { items: { name: string; ahead: number | null }[] };
   expect(res.status).toBe(200);
-  const ms = Number(/(?:^|, )git;dur=([0-9.]+)/.exec(res.headers.get("server-timing") ?? "")?.[1]);
+  const ms = Number(/(?:^|, )compare;dur=([0-9.]+)/.exec(res.headers.get("server-timing") ?? "")?.[1]);
   return { ms, items: body.items };
 }
 

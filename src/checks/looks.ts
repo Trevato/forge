@@ -10,7 +10,7 @@
 
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { LookVitals } from "./summary.ts";
+import type { LookVitals, PageSize } from "./summary.ts";
 import { runsRoot } from "../runs/log.ts";
 
 export const looksPath = (dataDir: string, runId: string): string =>
@@ -30,11 +30,23 @@ export const commitLooksPath = (
 const SAFE = /^[0-9A-Za-z]{1,64}$/;
 
 const MAX_BYTES = 1024 * 1024;
-const MAX_LOOKS = 20;
+// The forge's own preview takes ~55 looks (`PREVIEW_OWNER_LOOKS`); every one must fit.
+const MAX_LOOKS = 64;
 const MAX_WORDS = 80;
 
 const words = (v: unknown): string | null =>
   typeof v === "string" && v.trim() !== "" ? v.trim().slice(0, MAX_WORDS) : null;
+
+const whole = (v: unknown): v is number =>
+  typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 1e6;
+
+function parseSize(v: unknown): PageSize | undefined {
+  if (!v || typeof v !== "object") return undefined;
+  const { scrollWidth, scrollHeight, innerWidth, innerHeight } = v as Record<string, unknown>;
+  return whole(scrollWidth) && whole(scrollHeight) && whole(innerWidth) && whole(innerHeight)
+    ? { scrollWidth, scrollHeight, innerWidth, innerHeight }
+    : undefined;
+}
 
 /** Plain data in: the parsed file's value, narrowed to the looks it validly holds. */
 export function parseLooks(raw: unknown): LookVitals[] {
@@ -47,8 +59,10 @@ export function parseLooks(raw: unknown): LookVitals[] {
     if (look === null) continue;
     const skipped = words(rec.skipped);
     if (skipped !== null) out.push({ look, skipped });
-    else if (rec.entries && typeof rec.entries === "object" && !Array.isArray(rec.entries))
-      out.push({ look, entries: rec.entries });
+    else if (rec.entries && typeof rec.entries === "object" && !Array.isArray(rec.entries)) {
+      const size = parseSize(rec.size);
+      out.push({ look, entries: rec.entries, ...(size === undefined ? {} : { size }) });
+    }
   }
   return out;
 }
@@ -103,4 +117,21 @@ export function writeCommitLooks(
   const side = `${path}.${process.pid}.tmp`;
   writeFileSync(side, JSON.stringify(kept));
   renameSync(side, path);
+}
+
+/**
+ * File one look under its commit as it is taken, keeping the others already
+ * filed and replacing a look of the same name. A set written only when the
+ * whole round ends is lost to any round that is interrupted (a newer head,
+ * a restart) and, on the next round, covers only what was still missing.
+ */
+export function addCommitLook(
+  dataDir: string,
+  repoId: string,
+  commitOid: string,
+  look: LookVitals,
+): void {
+  if (!SAFE.test(commitOid) || !SAFE.test(repoId)) return;
+  const kept = readFile(commitLooksPath(dataDir, repoId, commitOid)).filter((l) => l.look !== look.look);
+  writeCommitLooks(dataDir, repoId, commitOid, [...kept, look]);
 }

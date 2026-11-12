@@ -6,6 +6,7 @@
  * `actions/repos.ts`.
  */
 
+import { forksSince } from "../../core/repos.ts";
 import { forkRepo, FORKS_PER_DAY, repositoryLimitMessage } from "../../actions/repos.ts";
 import {
   checkUpstreamNow,
@@ -14,14 +15,24 @@ import {
   setFollowUpstream,
 } from "../../actions/upstream_follow.ts";
 import { ENABLED_WORDS } from "../../core/arg_words.ts";
-import { canAdmin, visibleForks } from "../../core/repos.ts";
-import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
+import { driftOfForks, MAX_RANKED_FORKS, type RankedFork } from "../../actions/forks.ts";
+import { canAdmin, forkParentFor, visibleForks } from "../../core/repos.ts";
+import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
 import { getFollow } from "../../core/upstream_follow.ts";
-import { loadRepo, pageOf, pageParams } from "../api.ts";
+import { holds, weakEtag } from "../etag.ts";
+import { loadRepo, pageParams, slicePage } from "../api.ts";
 import type { Handler } from "../context.ts";
-import { apiError, body, json, notFound, requireScope, respondAccess, str } from "../respond.ts";
+import { apiError, body, json, notFound, requireScope, respondAccess, str, tryAgain, WINDOW } from "../respond.ts";
 import type { Router } from "../router.ts";
+
+/** Seconds until the oldest fork in the last day ages out and frees a place. */
+function forkWait(db: Parameters<typeof forksSince>[0], ownerId: string): number {
+  const since = new Date(Date.now() - WINDOW.day * 1000).toISOString();
+  const made = forksSince(db, ownerId, since);
+  const oldest = made[Math.max(0, made.length - FORKS_PER_DAY)];
+  return oldest === undefined ? WINDOW.day : (Date.parse(oldest) + WINDOW.day * 1000 - Date.now()) / 1000;
+}
 
 export function upstreamRoutes(router: Router<Handler>): void {
   // Following an outside upstream (#3442): an admin reads, sets and checks.
@@ -35,7 +46,14 @@ export function upstreamRoutes(router: Router<Handler>): void {
       return getFollow(ctx.app.db, repo.id) ?? null;
     });
     if (read === undefined) return notFound();
-    return timePhase(ctx.request, "render", () => json({ following: read === null ? null : followJson(read) }));
+    // The tag is of the exact bytes sent, and only after the access check above: a refusal carries none.
+    return timePhase(ctx.request, "render", () => {
+      const text = JSON.stringify({ following: read === null ? null : followJson(read) });
+      const etag = weakEtag(text);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+    });
   });
 
   router.add("PUT", "/api/v1/repos/:owner/:name/upstream", async (ctx) => {
@@ -71,14 +89,42 @@ export function upstreamRoutes(router: Router<Handler>): void {
     return json(checked.value);
   });
 
-  router.add("GET", "/api/v1/repos/:owner/:name/forks", (ctx) => {
+  router.add("GET", "/api/v1/repos/:owner/:name/forks", async (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const page = pageParams(ctx);
     if (page instanceof Response) return page;
     const rows = timePhase(ctx.request, "forks", () => visibleForks(ctx.app.db, repo.id, ctx.auth.user));
-    return timePhase(ctx.request, "render", () => pageOf(rows, page));
+    const sliced = slicePage(rows, page);
+    if (sliced instanceof Response) return sliced;
+    const { items, next_cursor } = sliced;
+    // Drift is read for this page only, in runs of what one call ranks.
+    const drifts = await timePhaseAsync(ctx.request, "drift", async () => {
+      const ranked: RankedFork[] = [];
+      for (let i = 0; i < items.length; i += MAX_RANKED_FORKS)
+        ranked.push(...(await driftOfForks(ctx.app, repo, items.slice(i, i + MAX_RANKED_FORKS))));
+      return ranked;
+    });
+    const parent = forkParentFor(ctx.app.db, repo, ctx.auth.user);
+    // The tag is of the exact bytes sent: a fork made, pushed or hidden, or a parent that moved, changes
+    // the body; limit and cursor choose the page. A 404 or bad page returned above carries none.
+    return timePhase(ctx.request, "render", () => {
+      const text = JSON.stringify({
+        parent: parent === undefined ? null : `${parent.ownerName}/${parent.name}`,
+        items: drifts.map(({ fork, drift, pushedAt }) => ({
+          ...fork,
+          ahead: drift.ahead,
+          behind: drift.behind,
+          updatedAt: pushedAt,
+        })),
+        next_cursor,
+      });
+      const etag = weakEtag(text);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+    });
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/forks", async (ctx) => {
@@ -98,8 +144,10 @@ export function upstreamRoutes(router: Router<Handler>): void {
         ? apiError("repository_limit", 403, repositoryLimitMessage(ctx.app, ctx.auth.user!))
         : forked.error === "storage_limit"
         ? apiError("storage_limit", 403, storageLimitMessage(ctx.app, ctx.auth.user!.id))
+        : forked.error === "already_forked"
+        ? apiError("already_forked", 409, "you already have a fork of this repository")
         : forked.error === "limit"
-        ? apiError("limit", 429, `at most ${FORKS_PER_DAY} forks a day: try again tomorrow`)
+        ? tryAgain("limit", 429, `at most ${FORKS_PER_DAY} forks a day: try again tomorrow`, forkWait(ctx.app.db, ctx.auth.user!.id))
         : forked.error === "fork_failed"
         ? apiError("fork_failed", 422, "the fork could not be created")
         : respondAccess(forked.error, 422);

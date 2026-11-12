@@ -5,6 +5,7 @@ export const route: Route = {
   path: "/api/v1/user/origin-apps",
   summary: "Register an OAuth application for an origin host (a forgejo or gitea needs its own; github may fall back to the forge's); answers 201 with the application. The client secret is written here and never read back",
   auth: true,
+  role: "member",
   body: { host: "string", kind: "string", clientId: "string", clientSecret: "string" },
   status: 201,
   reply: { id: "string", userId: "string", kind: "string", apiUrl: "string", webUrl: "string", clientId: "string", hasSecret: "boolean", createdAt: "string" },

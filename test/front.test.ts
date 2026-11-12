@@ -16,6 +16,7 @@ import { forgetFrontScores, frontPage } from "../src/actions/front.ts";
 import * as lookService from "../src/looks/service.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { createRepo } from "../src/actions/repos.ts";
+import { changeSignup } from "../src/actions/signup.ts";
 import {
   AppsRuntime,
   type EnvState,
@@ -431,7 +432,7 @@ describe("the front page", () => {
     expect(start).toBeGreaterThan(-1);
     const next = body.indexOf('class="card', start);
     const featured = body.slice(start, next === -1 ? undefined : next);
-    expect(featured).toContain('href="/zed/loved"');
+    expect(featured).toContain('href="/zed/loved/app/production/open"');
     expect(body).not.toContain('href="/owner/down"');
     expect(body).not.toContain('href="/owner/bare"');
     expect(body).not.toContain("hush");
@@ -446,7 +447,8 @@ describe("the front page", () => {
       expect(body).not.toContain(old);
     const shelf = body.slice(body.indexOf(' data-shelf'));
     expect(shelf).toMatch(/<div\s+class="card"/);
-    expect(shelf).toContain('<a class="look" href="/owner/one"');
+    // The picture opens the app; the name leads to its repository.
+    expect(shelf).toMatch(/<a\s+class="look"\s+href="\/owner\/one\/app\/production\/open"/);
     expect(shelf).toMatch(/<a href="\/owner\/one"><strong>one<\/strong><\/a>/);
     const json = (await (await fetch(`${base}/api/v1/front`)).json()) as any;
     expect(json.featured.repo).toBe("zed/loved");
@@ -536,6 +538,61 @@ describe("the front page", () => {
     expect(wet.value.picks.hidden).toEqual([]);
   });
 
+
+
+  test("the door leads with the pins, in order, each with its doors, and says what a closed forge offers", async () => {
+    await make(admin, "door-first");
+    await make(admin, "door-second");
+    expect((await put(adminToken, { pinned: ["owner/door-second", "owner/door-first"], hidden: [] })).status).toBe(200);
+    const shelf = (b: string) => b.slice(b.indexOf(" data-shelf"));
+    const open = await door();
+    const tiles = shelf(open);
+    expect(tiles.indexOf("door-second")).toBeLessThan(tiles.indexOf("door-first"));
+    expect(tiles.indexOf("door-first")).toBeLessThan(tiles.indexOf('class="door-org"'));
+    expect(tiles).toContain('href="/owner/door-second/app/production/open"');
+    expect(tiles).toContain(`href="/signup?next=${encodeURIComponent("/owner/door-second")}"`);
+    expect(tiles).toContain(">Help build<");
+    const set = changeSignup(app, admin, "invite");
+    expect(set.ok).toBe(true);
+    const closed = await door();
+    expect(closed).toContain('href="/owner/door-second/report"');
+    expect(closed).toContain(">Suggest a change<");
+    expect(closed).not.toContain(">Help build<");
+    expect(closed).toContain('href="/signup"');
+    expect(closed).not.toContain("by invitation");
+    expect(closed).not.toContain("not taking new accounts");
+    changeSignup(app, admin, "open");
+    expect((await put(adminToken, { pinned: [], hidden: [] })).status).toBe(200);
+  });
+  test("the door lists merges on public repositories only, and never a sealed one", async () => {
+    const merged = (repoId: string, title: string, sealed = false) => {
+      const issue = createIssue(app.db, { repoId, authorId: admin.id, title, body: "" });
+      if (!issue.ok) throw new Error(issue.error);
+      if (sealed) app.db.query("UPDATE issue SET sealed = 1 WHERE id = ?1").run(issue.value.id);
+      const cols = app.db.query("PRAGMA table_info(pull)").all() as { name: string; type: string; notnull: number; dflt_value: unknown }[];
+      const row: Record<string, string | number> = {
+        issue_id: issue.value.id,
+        merged_at: new Date().toISOString(),
+      };
+      for (const c of cols)
+        if (!(c.name in row) && c.notnull === 1 && c.dflt_value === null)
+          row[c.name] = c.type.includes("INT") ? 0 : crypto.randomUUID();
+      const names = Object.keys(row);
+      app.db
+        .query(`INSERT INTO pull (${names.join(",")}) VALUES (${names.map(() => "?").join(",")})`)
+        .run(...names.map((k) => row[k]!));
+    };
+    const shown = await make(admin, "door-public");
+    const hidden = await make(admin, "door-private", { visibility: "private" });
+    merged(shown.repo.id, "A merge anyone may read");
+    merged(shown.repo.id, "A sealed merge", true);
+    merged(hidden.repo.id, "A merge nobody outside may read");
+    forgetFrontScores(app);
+    const body = await door();
+    expect(body).toContain("A merge anyone may read");
+    expect(body).not.toContain("A sealed merge");
+    expect(body).not.toContain("A merge nobody outside may read");
+  });
   test("featured shows the crew at work on it right now, by issue", async () => {
     const issue = openIssue(
       app,

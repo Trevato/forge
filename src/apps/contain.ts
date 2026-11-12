@@ -36,9 +36,19 @@ import {
 import { availableParallelism, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { portInsteadOfSocket } from "../git/hook-address.ts";
-import { relay, startEgress, type Egress } from "./egress.ts";
+import { relay, startEgress, upstreamProxy, type Egress } from "./egress.ts";
 import { BACKGROUND_CPU_WEIGHT } from "./background.ts";
-import { cgroupHost, enterArgv, openCellCgroup } from "./cgroup.ts";
+import {
+  cgroupHost,
+  diskDevice,
+  enterArgv,
+  openCellCgroup,
+  pidsDelegated,
+  type CellCgroup,
+  type CgroupHost,
+  type IoMax,
+} from "./cgroup.ts";
+import { during } from "../perf/jobs.ts";
 
 /** `ceiling`: a declaration was cut to the machine's maximum; `declared`: forge.json's own; `default`: neither. */
 export type CeilingFrom = "env" | "pod" | "default";
@@ -55,6 +65,8 @@ export interface Limits {
   readonly cpus: number;
   /** Bytes on disk under the cell's writable directories, MiB. */
   readonly diskMiB: number;
+  /** Wall-clock time of a build step (install, test), ms; unset for an app, which runs on. */
+  readonly timeMs?: number | undefined;
 }
 
 /** What `forge.json` may ask for (`app.limits`, `check.limits`). */
@@ -63,8 +75,11 @@ export type DeclaredLimits = Partial<Limits>;
 /** A long-lived app, and a step (install, test, check) that ends. */
 export const DEFAULT_LIMITS: Record<"app" | "step", Limits> = {
   app: { memoryMiB: 512, cpus: 1, diskMiB: 1024 },
-  step: { memoryMiB: 2048, cpus: 2, diskMiB: 4096 },
+  step: { memoryMiB: 2048, cpus: 2, diskMiB: 4096, timeMs: 15 * 60_000 },
 };
+
+/** The most time a build step may be given, whatever forge.json declares. */
+export const STEP_TIME_MAX_MS = 30 * 60_000;
 
 /** The most any declaration gets on this machine. */
 export function maxLimits(podFile = POD_MEMORY_FILE): Limits {
@@ -72,6 +87,7 @@ export function maxLimits(podFile = POD_MEMORY_FILE): Limits {
     memoryMiB: memoryCeiling(process.env["FORGE_CELL_MEMORY_MAX_MIB"], podFile),
     cpus: availableParallelism(),
     diskMiB: positive(process.env["FORGE_CELL_DISK_MAX_MIB"]) ?? 16384,
+    timeMs: STEP_TIME_MAX_MS,
   };
 }
 
@@ -167,7 +183,39 @@ export function resolveLimits(
     ceilingFrom: memoryCeilingSource(process.env["FORGE_CELL_MEMORY_MAX_MIB"], podFile),
     cpus: Math.min(declared?.cpus ?? base.cpus, max.cpus),
     diskMiB: Math.min(declared?.diskMiB ?? base.diskMiB, max.diskMiB),
+    ...(base.timeMs === undefined
+      ? {}
+      : { timeMs: Math.min(declared?.timeMs ?? base.timeMs, max.timeMs ?? STEP_TIME_MAX_MS) }),
   };
+}
+
+const plural = (n: number, unit: string): string => `${n} ${unit}${n === 1 ? "" : "s"}`;
+
+/** A duration in the words a person reads: "15 minutes", "1 second". */
+export function durationWords(ms: number): string {
+  const seconds = Math.max(1, Math.round(ms / 1000));
+  return seconds >= 60 && seconds % 60 === 0 ? plural(seconds / 60, "minute") : plural(seconds, "second");
+}
+
+/** MiB as "2 GiB" where it is whole, else "1536 MiB". */
+export function sizeWords(mib: number): string {
+  return mib >= 1024 && mib % 1024 === 0 ? `${mib / 1024} GiB` : `${mib} MiB`;
+}
+
+/** The one line for a build stopped by its time limit. */
+export function timeLine(limits: Limits): string {
+  return `the build used its ${durationWords(limits.timeMs ?? DEFAULT_LIMITS.step.timeMs ?? 0)}`;
+}
+
+/**
+ * The one line for a build the cell stopped, from the watch's reason: which
+ * limit, and what it was. Undefined for a reason that is not a limit.
+ */
+export function breachLine(why: string, limits: Limits): string | undefined {
+  if (/memory/.test(why)) return `the build ran out of its ${sizeWords(limits.memoryMiB)}`;
+  if (/cores/.test(why)) return `the build used more than its ${plural(limits.cpus, "core")}`;
+  if (/disk/.test(why)) return `the build ran out of its ${sizeWords(limits.diskMiB)} of disk`;
+  return undefined;
 }
 
 /** Always reachable from inside a cell: the npm registry, for install steps. */
@@ -191,16 +239,22 @@ export interface CellSpec {
   readonly limits: Limits;
   /** Read-only paths to keep visible when they sit under a hidden directory (a forge's own code). */
   readonly reveal?: readonly string[] | undefined;
+  /** The name the cell's processes see as the host's (`cellHostname`); "cell" when unset. */
+  readonly hostname?: string | undefined;
   /** The port an app listens on; the forge relays `127.0.0.1:<port>` in. */
   readonly listen?: number | undefined;
   /** Keep the controlling terminal (an app's `tty`). */
   readonly terminal?: boolean | undefined;
   /** Told of every undeclared host let through while egress is only reported. */
   readonly onUndeclared?: ((host: string, port: number) => void) | undefined;
+  /** Egress entries allowed since the cell started, asked on every connection (`apps/egress_refused.ts`). */
+  readonly allowed?: (() => readonly string[]) | undefined;
+  /** Told of every refusal by policy, host and port, and whether it is private. */
+  readonly onRefused?: ((host: string, port: number, isPrivate: boolean) => void) | undefined;
   /**
    * Refuse undeclared egress, or only report it, for this cell — the
-   * forge's setting when the cell starts (`core/capacity.ts`); the
-   * environment's (`egressMode`) when the caller has none.
+   * forge's setting when the cell starts (`core/capacity.ts`); enforce
+   * when the caller has none. The environment never says (#10778).
    */
   readonly egressMode?: "enforce" | "report" | undefined;
   /**
@@ -215,16 +269,27 @@ export interface CellSpec {
    * (`apps/background.ts`). The step runner sets it.
    */
   readonly background?: boolean | undefined;
+  /**
+   * Held to `limits.cpus` by the kernel (`cpu.max`) at an app's weight: a
+   * whole child forge, whose checks and crew run inside it, is slowed when
+   * it is busy rather than stopped.
+   */
+  readonly cpuQuota?: boolean | undefined;
+  /**
+   * Disk bandwidth the kernel holds the cell to (`io.max`) on the disk
+   * under `dir` — the forge's data volume — where io is delegated. A child
+   * forge's comes from its size (`spawn/sizes.ts`); unset, no cap.
+   */
+  readonly io?: IoMax | undefined;
 }
 
 /**
- * Whether undeclared egress is refused (`enforce`, the default) or let
- * through and reported (`FORGE_CELLS_EGRESS=report`), for a release that
- * must not break an app before its writers have declared what it uses.
- * Files, processes and private addresses are held the same in both.
+ * The limits the watch stops a cell for: the cores only where the kernel
+ * does not already hold them. A cell under `cpu.max` cannot run over its
+ * cores, and a sampled 4.1 of 4 is the sampling, not the cell.
  */
-export function egressMode(): "enforce" | "report" {
-  return process.env["FORGE_CELLS_EGRESS"] === "report" ? "report" : "enforce";
+export function watchedLimits(limits: Limits, cgroup: { readonly cpuCapped: boolean } | undefined): Limits {
+  return cgroup?.cpuCapped === true ? { ...limits, cpus: Number.POSITIVE_INFINITY } : limits;
 }
 
 export interface Cell {
@@ -238,6 +303,8 @@ export interface Cell {
   readonly breach: () => string | undefined;
   /** Stop watching and close the cell's sockets. */
   readonly close: () => void;
+  /** The cell's own cgroup directory, where the kernel holds its caps; absent when only the watch does. */
+  readonly cgroupDir?: string;
 }
 
 // ---- can this host hold a cell? ----
@@ -268,7 +335,24 @@ async function probe(): Promise<{ ok: true } | { ok: false; reason: string }> {
   for (const tool of ["bwrap", "socat"])
     if (Bun.which(tool) === null)
       return { ok: false, reason: `${tool} is not installed` };
-  return askUntilBelieved(tryOnce);
+  const verdict = await askUntilBelieved(() => tryOnce());
+  // Some hosts hold a cell but refuse its sethostname (EPERM from bwrap's
+  // `--hostname`, seen on the check machine): asked once, after the cell is
+  // believed, so a refused name costs the cell nothing (#10850).
+  if (verdict.ok) hostnameAllowed = (await tryOnce(["--hostname", "cell"])).ok;
+  return verdict;
+}
+
+/** Whether this host lets a cell set its own hostname; false until `cellsAvailable` has asked. */
+let hostnameAllowed = false;
+
+/**
+ * The `--hostname` bwrap gets: the cell's own name (`cellHostname`) where
+ * the host allows it, nothing where it does not — the cell then keeps the
+ * name it was born with, the pod's, rather than not starting at all.
+ */
+export function hostnameArgs(name: string | undefined, allowed: boolean = hostnameAllowed): string[] {
+  return allowed ? ["--hostname", cellHostname(name)] : [];
 }
 
 type Verdict = { ok: true } | { ok: false; reason: string };
@@ -295,13 +379,14 @@ const PROBE_TRIES = 3;
 const PROBE_PAUSE_MS = 500;
 const PROBE_TIMEOUT_MS = 10_000;
 
-async function tryOnce(): Promise<Verdict> {
+async function tryOnce(extra: readonly string[] = []): Promise<Verdict> {
   let timedOut = false;
   try {
     const proc = Bun.spawn(
       [
         "bwrap",
         ...NAMESPACES,
+        ...extra,
         "--ro-bind",
         "/",
         "/",
@@ -318,10 +403,14 @@ async function tryOnce(): Promise<Verdict> {
       ],
       { stdin: "ignore", stdout: "ignore", stderr: "pipe" },
     );
-    const timer = setTimeout(() => {
-      timedOut = true;
-      proc.kill("SIGKILL");
-    }, PROBE_TIMEOUT_MS);
+    const timer = setTimeout(
+      () =>
+        during("cell-probe-deadline", () => {
+          timedOut = true;
+          proc.kill("SIGKILL");
+        }),
+      PROBE_TIMEOUT_MS,
+    );
     const [text, code] = await Promise.all([
       new Response(proc.stderr).text(),
       proc.exited,
@@ -358,6 +447,61 @@ const NAMESPACES = [
 /** The size of a cell's own `/tmp`, MiB. */
 export const TMP_MIB = 256;
 
+/** Open files a process in a cell may hold (`RLIMIT_NOFILE`): sockets count. */
+export const FILES_MAX = 8192;
+/**
+ * Tasks the cell's user may run (`RLIMIT_NPROC`), threads included: the
+ * kernel counts them per user namespace (since 5.14, ucounts), so this is
+ * the cell's own count. Above `PROCESSES_MAX`, which counts processes, since
+ * a Bun process runs a dozen threads; where pids is delegated `pids.max` is
+ * the tighter one.
+ */
+export const TASKS_MAX = 4096;
+
+/**
+ * The kernel's limits every process in a cell starts under, set by the
+ * cell's first shell with `ulimit` (both soft and hard, so nothing inside
+ * raises them; a hard limit already lower stays lower):
+ *
+ * - `fileBlocks`, `RLIMIT_FSIZE` in 512-byte blocks (dash's `ulimit -f`
+ *   unit): no file grows past the cell's disk, so one `fallocate -l 50G`
+ *   or `dd` on a small cell fails with SIGXFSZ / EFBIG at once, not at the
+ *   watch's next disk walk. It caps a file, not the sum of them: the total
+ *   is still the watch's (#10850).
+ * - `files`, `RLIMIT_NOFILE`, and `tasks`, `RLIMIT_NPROC`.
+ */
+export function cellRlimits(limits: Pick<Limits, "diskMiB">): { fileBlocks: number; files: number; tasks: number } {
+  const blocks = Number.isFinite(limits.diskMiB) && limits.diskMiB > 0 ? Math.ceil(limits.diskMiB * 2048) : undefined;
+  return { fileBlocks: blocks ?? Number.MAX_SAFE_INTEGER, files: FILES_MAX, tasks: TASKS_MAX };
+}
+
+/**
+ * The name a cell answers `uname -n` and a prompt's `\h` with: its own,
+ * never the pod's (the UTS namespace is unshared). Lowercased to a DNS
+ * label (RFC 1123: letters, digits, hyphens, at most 63); "cell" when
+ * nothing usable is left.
+ */
+export function cellHostname(name: string | undefined): string {
+  const label = (name ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 63)
+    .replace(/-+$/, "");
+  return label === "" ? "cell" : label;
+}
+
+/**
+ * The line the cell's first shell runs with `cellRlimits`' three figures
+ * as `$1 $2 $3`, then drops them. Arguments, never text spliced in.
+ * Processes are dash's `-p` and bash's `-u` (bash's `-p` is the pipe size,
+ * read-only, so its refusal is silent); `-f` counts 512-byte blocks in dash,
+ * the image's `/bin/sh`, and 1024-byte ones in bash, where a file's cap is
+ * then twice the disk: still finite.
+ */
+export const RLIMIT_LINE =
+  "ulimit -f $1 2>/dev/null; ulimit -n $2 2>/dev/null; ulimit -u $3 2>/dev/null || ulimit -p $3 2>/dev/null; shift 3";
+
 /** The proxy's port inside every cell. */
 const PROXY_PORT = 3128;
 const INSIDE = "/run/forge";
@@ -371,6 +515,7 @@ const INSIDE = "/run/forge";
  * forge tells a busy app from an idle one (`apps/busy.ts`).
  */
 const WRAPPER = `s=${INSIDE}; listen=$1; shift; loops=$1; shift
+${RLIMIT_LINE}
 (socat TCP-LISTEN:${PROXY_PORT},bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:$s/out.sock >/dev/null 2>&1 &)
 for p in $loops; do (socat TCP-LISTEN:$p,bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:$s/loop-$p.sock >/dev/null 2>&1 &); done
 [ "$listen" = - ] || (socat UNIX-LISTEN:$s/in.sock,fork,unlink-early TCP:127.0.0.1:$listen >/dev/null 2>&1 &)
@@ -426,6 +571,30 @@ export function cellMounts(
   return { hide, blank, reveal };
 }
 
+/**
+ * A cell's own cgroup on `at`: its memory cap, its share of the cores, and
+ * `pids.max` at the watch's process limit where pids is delegated (#10518),
+ * and `io.max` on the disk under its directory when it declares `io`.
+ */
+export function cellCgroup(
+  spec: CellSpec,
+  at: CgroupHost = cgroupHost(),
+  device: (path: string) => string | undefined = diskDevice,
+): CellCgroup | undefined {
+  const disk = spec.io === undefined || !at.ok ? undefined : device(spec.dir);
+  return openCellCgroup(
+    spec.limits.memoryMiB,
+    at,
+    spec.background === true
+      ? { weight: BACKGROUND_CPU_WEIGHT, cpus: spec.limits.cpus }
+      : spec.cpuQuota === true
+        ? { weight: 100, cpus: spec.limits.cpus }
+        : undefined,
+    PROCESSES_MAX,
+    spec.io === undefined || disk === undefined ? undefined : { device: disk, max: spec.io },
+  );
+}
+
 /** Make a cell: its sockets, its proxy, its relays. `close()` undoes it. */
 export function openCell(
   spec: CellSpec,
@@ -442,9 +611,16 @@ export function openCell(
         hosts: spec.egress,
         granted: spec.granted,
         label: spec.label,
+        allowed: spec.allowed,
+        refused: spec.onRefused,
         origins,
+        // A cell a child forge opens (its check, app or step) has no way out
+        // but the proxy of the cell the child runs in. A child in a cell is
+        // the forge told its parent's door; a check that boots a forge is not.
+        upstream: process.env["FORGE_PARENT_LOCAL"] === undefined ? undefined : upstreamProxy(),
         report:
-          (spec.egressMode ?? egressMode()) === "report"
+          // Enforce unless the caller carries an admin's report (`egressSetting`, #10778).
+          spec.egressMode === "report"
             ? (host, port) => spec.onUndeclared?.(host, port)
             : undefined,
       },
@@ -467,18 +643,16 @@ export function openCell(
   // small and bounded, and the ones that only exist to hide are read-only.
   const SMALL = String(1 << 20);
 
-  const cgroup = openCellCgroup(
-    spec.limits.memoryMiB,
-    cgroupHost(),
-    spec.background === true ? { weight: BACKGROUND_CPU_WEIGHT, cpus: spec.limits.cpus } : undefined,
-  );
+  const cgroup = cellCgroup(spec);
   const argv = (command: string): string[] => {
     const inner = bwrapArgv(command);
     return cgroup === undefined ? inner : enterArgv(join(cgroup.dir, "cgroup.procs"), inner);
   };
+  const rlimits = cellRlimits(spec.limits);
   const bwrapArgv = (command: string): string[] => [
     "bwrap",
     ...NAMESPACES,
+    ...hostnameArgs(spec.hostname),
     ...(spec.terminal === true ? [] : ["--new-session"]),
     "--ro-bind", "/", "/",
     "--size", String(TMP_MIB * 1024 * 1024), "--tmpfs", "/tmp",
@@ -503,6 +677,9 @@ export function openCell(
     "cell",
     spec.listen === undefined ? "-" : String(spec.listen),
     [...new Set(loops)].join(" "),
+    String(rlimits.fileBlocks),
+    String(rlimits.files),
+    String(rlimits.tasks),
     "/bin/sh",
     "-c",
     command,
@@ -535,7 +712,7 @@ export function openCell(
       cgroup === undefined
         ? { bytes: Math.floor(spec.limits.memoryMiB * 1024 * 1024), by: "watch" }
         : { bytes: cgroup.maxBytes, by: "kernel" };
-    unwatch = watchTree(pid, spec.limits, cap, writable, spec.label, (why) => {
+    unwatch = watchTree(pid, watchedLimits(spec.limits, cgroup), cap, writable, spec.label, (why) => {
       if (breach !== undefined) return;
       breach = why;
       log(`stopped: ${why}`);
@@ -546,6 +723,7 @@ export function openCell(
     argv,
     env,
     watch,
+    ...(cgroup === undefined ? {} : { cgroupDir: cgroup.dir }),
     breach: () => breach ?? killed(),
     close: () => {
       const kernel = breach === undefined ? killed() : undefined;
@@ -679,7 +857,17 @@ function readMountinfo(): string {
 
 /** How often the process table is read, and over how long CPU is averaged. */
 export const WATCH = { tickMs: 1_000, cpuWindowMs: 30_000, diskEveryTicks: 15 };
-const PROCESSES_MAX = 512;
+/**
+ * How far past its cores a cell may run before the watcher stops it. A
+ * cell is already held to its cores by affinity, so a busy one measures
+ * right at its limit (16.0 to 18.2 of 16 over a window): stopping at the
+ * limit itself failed three checks in four and stopped a 1-core forge at
+ * 1.0. The watcher is the last resort for a runaway, so it acts well past
+ * the limit.
+ */
+export const CPU_STOP_SLACK = 1.5;
+/** A cell's process limit: the watch's every tick, and the kernel's `pids.max` where pids is delegated. */
+export const PROCESSES_MAX = 512;
 const CLK_TCK = 100;
 const DISK_WALK_MAX = 200_000;
 
@@ -712,6 +900,14 @@ export interface MemoryCap {
 export function memoryCapHolder(): { by: "kernel" } | { by: "watch"; reason: string } {
   const host = cgroupHost();
   return host.ok ? { by: "kernel" } : { by: "watch", reason: host.reason };
+}
+
+/** Whether cells' process counts are the kernel's here (`pids.max`), or why they are watched only. */
+export function processCapHolder(host: CgroupHost = cgroupHost()): { by: "kernel" } | { by: "watch"; reason: string } {
+  if (!host.ok) return { by: "watch", reason: host.reason };
+  return pidsDelegated(host)
+    ? { by: "kernel" }
+    : { by: "watch", reason: "the pids controller is not delegated to the cells" };
 }
 
 /** One labelled cell as its watch last read it: cumulative CPU and resident memory. */
@@ -769,13 +965,17 @@ export function killTree(root: number): void {
       // already gone
     }
   }
-  setTimeout(() => {
-    try {
-      process.kill(root, "SIGKILL");
-    } catch {
-      // gone, as it should be
-    }
-  }, 1_000).unref();
+  setTimeout(
+    () =>
+      during("cell-kill-root", () => {
+        try {
+          process.kill(root, "SIGKILL");
+        } catch {
+          // gone, as it should be
+        }
+      }),
+    1_000,
+  ).unref();
 }
 
 /** Send `signal` to every process under `root`, not `root` (bubblewrap) itself. */
@@ -865,7 +1065,7 @@ export function watchTree(
     cap,
   };
   watched.add(entry);
-  timer ??= setInterval(tick, WATCH.tickMs);
+  timer ??= setInterval(() => during("cell-watch", tick), WATCH.tickMs);
   return () => {
     watched.delete(entry);
     if (watched.size === 0 && timer !== undefined) {
@@ -925,6 +1125,53 @@ function processTable(): {
     else children.set(ppid, [pid]);
   }
   return { rows, children };
+}
+
+/**
+ * The process of `tree` that has spent the most CPU (its utime + stime +
+ * cutime + cstime, in clock ticks, from `/proc/<pid>/stat`), or undefined
+ * when none has spent any: who to name when a cell is stopped for CPU
+ * (#11509). Its whole life's ticks, not the window's: a per-pid sample on
+ * every tick would cost every watched tree, every second, for a line that
+ * is written once.
+ */
+export function busiest(
+  tree: readonly number[],
+  ticksOf: (pid: number) => number,
+): { pid: number; ticks: number } | undefined {
+  let top: { pid: number; ticks: number } | undefined;
+  for (const pid of tree) {
+    const ticks = ticksOf(pid);
+    if (ticks > 0 && (top === undefined || ticks > top.ticks)) top = { pid, ticks };
+  }
+  return top;
+}
+
+/**
+ * Why a cell was stopped for CPU: cores = Δticks / CLK_TCK / Δseconds over
+ * the window, against its limit, and the busiest process when there is
+ * one (its CPU seconds = ticks / CLK_TCK, over its life).
+ */
+export function cpuBreach(
+  cores: number,
+  seconds: number,
+  cpus: number,
+  top: { pid: number; ticks: number; name: string } | undefined,
+): string {
+  const why = `used ${cores.toFixed(1)} cores for ${Math.round(seconds)}s, over its limit of ${cpus}`;
+  if (top === undefined) return why;
+  const spent = Math.round(top.ticks / CLK_TCK);
+  return `${why}; the busiest process is ${top.name} (pid ${top.pid}, ${spent}s of CPU)`;
+}
+
+/** A process's command name, printable and short, or "?" once it is gone. */
+function commandName(pid: number): string {
+  try {
+    const name = readFileSync(`/proc/${pid}/comm`, "utf8").trim().replace(/[^\x20-\x7e]/g, "?");
+    return name === "" ? "?" : name.slice(0, 32);
+  } catch {
+    return "?";
+  }
 }
 
 function residentKiB(pid: number): number {
@@ -1008,9 +1255,11 @@ function tick(): void {
     if (oldest !== undefined && now - oldest.at >= WATCH.cpuWindowMs) {
       const cores =
         (ticks - oldest.ticks) / CLK_TCK / ((now - oldest.at) / 1000);
-      if (cores > limits.cpus) {
+      if (cores > limits.cpus * CPU_STOP_SLACK) {
+        // Read only now, at the stop: no tick pays for naming a process.
+        const top = busiest(tree, (pid) => rows.get(pid)?.ticks ?? 0);
         entry.breach(
-          `used ${cores.toFixed(1)} cores for ${Math.round((now - oldest.at) / 1000)}s, over its limit of ${limits.cpus}`,
+          cpuBreach(cores, (now - oldest.at) / 1000, limits.cpus, top === undefined ? undefined : { ...top, name: commandName(top.pid) }),
         );
         continue;
       }

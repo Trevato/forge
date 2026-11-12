@@ -150,6 +150,37 @@ export interface Timing {
 const percentile = (sorted: readonly number[], p: number): number =>
   sorted[Math.min(sorted.length - 1, Math.floor((sorted.length * p) / 100))] ?? 0;
 
+/**
+ * Telemetry flushes on their own timer (docs/CACHING.md, "Telemetry does not
+ * invalidate"). They share the connection, so a flush that lands inside a
+ * timed request would be counted against the page, and which request it lands
+ * in depends on the machine's load, not on the page. Only the flush's writes
+ * are named: INSERT/UPDATE/DELETE on `route_timing` and `usage_count`, and the
+ * `PRAGMA busy_timeout` calls around them. A page's own read of those tables
+ * still counts.
+ */
+const TELEMETRY_SQL =
+  /^(INSERT INTO|UPDATE|DELETE FROM)\s+(route_timing|usage_count)\b|^PRAGMA busy_timeout/i;
+
+/** The statements run since the counter's last reset, less the telemetry flush's. */
+export function pageStatements(counter: SqlCounter): number {
+  let telemetry = 0;
+  for (const { sql, times } of counter.top(Number.MAX_SAFE_INTEGER)) if (TELEMETRY_SQL.test(sql)) telemetry += times;
+  return counter.count - telemetry;
+}
+
+/**
+ * The median of per-request statement counts. Another timer's stray statement
+ * lands in one window or another by the machine's load and must not move the
+ * figure. The cost: a statement issued by fewer than half the requests (a
+ * cache miss every fourth request) is not seen here; the cold rows, which
+ * write before every request, are where misses are budgeted.
+ */
+export function medianCount(counts: readonly number[]): number {
+  const sorted = [...counts].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)] ?? 0;
+}
+
 /** Time `n` sequential requests after one warm-up; SQL is per request. */
 export async function timeRoute(
   f: SnappyFixture,
@@ -168,7 +199,7 @@ export async function timeRoute(
   await hit();
   const times: number[] = [];
   let status = 0;
-  let statements = 0;
+  const counts: number[] = [];
   for (let i = 0; i < n; i++) {
     before?.();
     // Only the page's own statements count: not the write before it.
@@ -176,9 +207,9 @@ export async function timeRoute(
     const started = performance.now();
     status = await hit();
     times.push(performance.now() - started);
-    statements += f.counter.count;
+    counts.push(pageStatements(f.counter));
   }
-  const sql = statements / n;
+  const sql = medianCount(counts);
   times.sort((a, b) => a - b);
   return { name, p50: percentile(times, 50), p95: percentile(times, 95), sql, status };
 }

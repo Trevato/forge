@@ -90,7 +90,11 @@ describe("spawnForge", () => {
       statusHash: expect.stringMatching(/^[0-9a-f]{64}$/),
       // The child signs heartbeats to its parent with it (#425).
       beatKey: expect.stringMatching(/^[A-Za-z0-9_-]{20,}$/),
+      // The plan's included credit, lent once (#11154).
+      credit: { capUsd: 2, spentUsd: 0, token: expect.stringMatching(/^kid\./) },
     });
+    // Its own plan, told once when it was made (#11141): a file of its own, never parent.json.
+    expect(JSON.parse(await Bun.file(join(child, "plan.json")).text())).toMatchObject({ name: "Small", size: "small", status: "active" });
   });
 
   test("no secret arrives", async () => {

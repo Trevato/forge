@@ -100,13 +100,13 @@ test("h holds with a reason, the header says held, h again releases; an agent ha
     expect(h.text()).toContain("Hold #");
     expect(h.text()).toContain("empty why");
     expect(getHold(app.db, pullId)).toBeUndefined();
-    for (const ch of "x".repeat(WHY_MAX + 1)) await h.press(ch);
+    await h.press(..."x".repeat(WHY_MAX + 1));
     await h.press("enter");
     expect(h.text()).toContain("Hold #");
     expect(h.text()).toContain("why too long");
     expect(getHold(app.db, pullId)).toBeUndefined();
-    for (let i = 0; i < WHY_MAX + 1; i++) await h.press("backspace");
-    for (const ch of [..."wait for docs", "enter"]) await h.press(ch);
+    await h.press(...Array(WHY_MAX + 1).fill("backspace"));
+    await h.press(..."wait for docs", "enter");
     expect(getHold(app.db, pullId)?.why).toBe("wait for docs");
     expect(h.text()).toContain("held by alice: wait for docs");
 

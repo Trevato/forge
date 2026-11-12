@@ -29,6 +29,7 @@ const read = async <T>(response: Response): Promise<T> =>
   (await response.json()) as T;
 
 interface Results {
+  note?: string;
   moreCode?: boolean;
   codeSkipped?: boolean;
   repos: (
@@ -391,7 +392,9 @@ describe("search: one query, four sources", () => {
   test("an empty or whitespace query costs nothing and finds nothing", async () => {
     for (const q of ["", "%20%20", "%00"]) {
       const results = await find(`q=${q}`);
-      expect(results).toEqual({
+      expect(results.note).toContain("q is empty");
+      expect({ ...results, note: undefined }).toEqual({
+        note: undefined,
         repos: [],
         issues: [],
         code: [],
@@ -610,6 +613,12 @@ describe("search: one query, four sources", () => {
     // prevent; a SEARCH (with or without a sort) is the pass.
     expect(details.some((d) => /^SCAN\b.*\bissue\b/.test(d))).toBe(false);
     expect(details.some((d) => /^SEARCH\b.*\bissue\b/.test(d))).toBe(true);
+    // One walk a repository, newest first by `issue_repo_updated`, each cut at
+    // the limit: a query matching every title reads `limit` rows a repository,
+    // not every row it has (#11168).
+    const walks = details.filter((d) => /^SEARCH issue\b/.test(d));
+    expect(walks.length).toBe(repos.length);
+    for (const d of walks) expect(d).toBe("SEARCH issue USING INDEX issue_repo_updated (repo_id=?)");
   });
 
   test("bob's own view is bounded the same way", () => {

@@ -13,6 +13,7 @@ import {
 } from "../../actions/orgs.ts";
 import {
   getOrg,
+  listTeamMemberRoles,
   listTeamMembers,
   listTeams,
   listTeamsVisibleTo,
@@ -21,6 +22,7 @@ import {
 } from "../../core/orgs.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { User } from "../../core/users.ts";
+import { isTeamRole, TEAM_ROLES, type TeamRole } from "../../core/agents.ts";
 import { keyedPage, keyedWindow } from "../api.ts";
 import type { Ctx, Handler } from "../context.ts";
 import {
@@ -34,6 +36,7 @@ import {
   str,
 } from "../respond.ts";
 import type { Router } from "../router.ts";
+import { holds, weakEtag } from "../etag.ts";
 
 /** An org by name plus the team a route names (by name, case-insensitive). */
 function loadTeam(ctx: Ctx): { org: User; team: Team } | { error: Response } {
@@ -51,6 +54,19 @@ function teamVisible(ctx: Ctx, org: User, team: Team): boolean {
   return listTeamsVisibleTo(ctx.app.db, org.id, ctx.auth.user).some(
     (t) => t.id === team.id,
   );
+}
+
+/**
+ * A reader-scoped JSON answer tagged by its exact bytes: a repeat holding the
+ * tag gets 304. Callers check access first, so a 304 confirms nothing to
+ * someone who may not read it.
+ */
+function tagged(request: Request, data: unknown): Response {
+  const text = JSON.stringify(data);
+  const etag = weakEtag(text);
+  const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+  if (holds(request, etag)) return new Response(null, { status: 304, headers });
+  return new Response(text, { headers: { "content-type": "application/json", ...headers } });
 }
 
 const permissionOf = (raw: unknown): Permission => {
@@ -79,7 +95,7 @@ export function orgRoutes(router: Router<Handler>): void {
       listTeamsVisibleTo(ctx.app.db, org.id, ctx.auth.user),
     );
     return timePhase(ctx.request, "render", () =>
-      json({ id: org.id, ...publicProfile(org), teams }),
+      tagged(ctx.request, { id: org.id, ...publicProfile(org), teams }),
     );
   });
 
@@ -93,7 +109,7 @@ export function orgRoutes(router: Router<Handler>): void {
       listTeamsVisibleTo(ctx.app.db, org.id, ctx.auth.user),
     );
     return timePhase(ctx.request, "render", () =>
-      json(keyedPage(teams, (t) => t.name, window)),
+      tagged(ctx.request, keyedPage(teams, (t) => t.name, window)),
     );
   });
 
@@ -132,10 +148,13 @@ export function orgRoutes(router: Router<Handler>): void {
     const window = keyedWindow(ctx);
     if (window instanceof Response) return window;
     const members = timePhase(ctx.request, "members", () =>
-      listTeamMembers(ctx.app.db, found.team.id).map(publicProfile),
+      listTeamMemberRoles(ctx.app.db, found.team.id).map(({ user, role }) => ({
+        ...publicProfile(user),
+        role,
+      })),
     );
     return timePhase(ctx.request, "render", () =>
-      json(keyedPage(members, (u) => u.username, window)),
+      tagged(ctx.request, keyedPage(members, (u) => u.username, window)),
     );
   });
 
@@ -145,12 +164,15 @@ export function orgRoutes(router: Router<Handler>): void {
     const found = loadTeam(ctx);
     if ("error" in found) return found.error;
     const input = await body(ctx.request);
+    const role = roleOf(input.role);
+    if (role instanceof Response) return role;
     const added = addTeamMember(
       ctx.app,
       ctx.auth.user,
       found.org,
       found.team,
       str(input.user),
+      role,
     );
     if (!added.ok) return respondAccess(added.error, 422);
     return json(added.value, added.value.added ? 201 : 200);
@@ -164,6 +186,8 @@ export function orgRoutes(router: Router<Handler>): void {
       if (denied) return denied;
       const found = loadTeam(ctx);
       if ("error" in found) return found.error;
+      const role = roleOf(new URL(ctx.request.url).searchParams.get("role") ?? undefined);
+      if (role instanceof Response) return role;
       const username = ctx.params.username!;
       const isMember = listTeamMembers(ctx.app.db, found.team.id).some(
         (m) => m.username.toLowerCase() === username.toLowerCase(),
@@ -174,6 +198,7 @@ export function orgRoutes(router: Router<Handler>): void {
         found.org,
         found.team,
         username,
+        role,
       );
       if (!removed.ok)
         return removed.error === "last_owner"
@@ -184,6 +209,18 @@ export function orgRoutes(router: Router<Handler>): void {
             )
           : respondAccess(removed.error, 422);
       if (!isMember) return notFound();
+      // Taking a role off someone who does not hold it finds nothing.
+      if (role !== undefined && !removed.value.removed) return notFound();
       return new Response(null, { status: 204 });
     },
   );}
+
+/**
+ * A team role from a request (#571): absent is undefined, one of
+ * `TEAM_ROLES` is itself, anything else a 422.
+ */
+function roleOf(raw: unknown): TeamRole | undefined | Response {
+  if (raw === undefined || raw === null || raw === "") return undefined;
+  if (isTeamRole(raw)) return raw;
+  return apiError("bad_role", 422, `role is one of ${TEAM_ROLES.join(", ")}`);
+}

@@ -163,7 +163,7 @@ describe("anonymous spawn", () => {
         join(childDirOf(app, body.bodyId), "parent.json"),
       ).json()) as any;
       expect(parent.forgeCode).toEqual(
-        expect.objectContaining({ repo: "kid/forge", upstream: "alice/forge-code", mode: "tell-me" }),
+        expect.objectContaining({ repo: "kid/forge", upstream: "alice/forge-code", mode: "take-updates" }),
       );
     } finally {
       child.close();

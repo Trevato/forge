@@ -5,11 +5,11 @@
  * sever. A severed forge says so with the date and nothing is deleted.
  */
 
-import { FOLLOW_MODE_REFUSALS, setFollowMode, severForge, takeForgeCode, takeForgeWords } from "../../actions/follow.ts";
+import { FOLLOW_MODE_REFUSALS, followModeSaid, setFollowMode, severForge, takeForgeCode, takeForgeWords } from "../../actions/follow.ts";
 import { FOLLOWS_NOTHING, PROPOSE_NEEDS_WRITE } from "../../actions/follow_words.ts";
 import { forgeProposals, proposeToParentForge, type ForgeProposal } from "../../actions/upstream.ts";
 import { SEVER_CONFIRM } from "../../actions/sever_invite_words.ts";
-import { canAdmin, canWrite } from "../../core/repos.ts";
+import { canAdmin, canWrite, forkParentFor } from "../../core/repos.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { chainView, FOLLOW_MODES, forgeLinkOf, type ChainLine, type FollowMode } from "../../spawn/chain.ts";
@@ -19,7 +19,7 @@ import { loadRepo, notFoundPage, pageHead, repoBase, signInFirst } from "../chro
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashOrJson, page, redirect } from "../layout.ts";
-import { badge, btn, card, row } from "../ui.ts";
+import { badge, btn, row } from "../ui.ts";
 
 /** The events that change what the chain page says. */
 export const CHAIN_LIVE = "forge.severed,forge.proposal,forge.follow_mode,forge.upstream,forge.updates_taken";
@@ -29,11 +29,11 @@ const MODE_LABELS: Record<FollowMode, string> = {
   "take-updates": "Take the parent's updates",
 };
 
-function modeCard(base: string, current: FollowMode | null): Html {
-  return card(
-    html`<form method="post" action="${base}/following/mode">
+/** The mode choice as a form: a forge's, or a plain fork's on its own page. */
+export function modeForm(base: string, current: FollowMode | null, legend: string): Html {
+  return html`<form method="post" action="${base}/following/mode">
       <fieldset class="form-field">
-        <legend>How this forge follows its parent</legend>
+        <legend>${legend}</legend>
         ${FOLLOW_MODES.map(
           (m) => html`<label class="row"
             ><input type="radio" name="mode" value="${m}" ${m === current ? "checked" : null} />
@@ -42,9 +42,11 @@ function modeCard(base: string, current: FollowMode | null): Html {
         )}
       </fieldset>
       <div class="form-actions">${btn("Save", { type: "submit" })}</div>
-    </form>`,
-    { head: html`<h2>Follow mode</h2>` },
-  );
+    </form>`;
+}
+
+function modeSection(base: string, current: FollowMode | null): Html {
+  return html`<h2 class="mt">Follow mode</h2>${modeForm(base, current, "How this forge follows its parent")}`;
 }
 
 const MODE_WORDS = { "tell-me": "tell me", "take-updates": "take updates (as a pull you merge)" } as const;
@@ -77,31 +79,27 @@ async function carriesChain(ctx: Ctx): Promise<boolean> {
 
 const STATE_WORDS = { open: "open", merged: "merged", closed: "closed" } as const;
 
-function proposalCard(base: string, proposals: readonly ForgeProposal[], writer: boolean): Html {
-  return card(
-    html`${proposals.length === 0
-        ? html`<p class="muted">Nothing proposed to the parent forge yet.</p>`
-        : html`<ul class="list" aria-label="Proposals to the parent forge">
-            ${proposals.map(
-              (p) => html`<li>
-                <div class="row">
-                  <span class="row-main">
-                    <a class="row-title" href="${p.url}" rel="noopener">#${p.number} ${p.title}</a>
-                    <span class="row-meta"
-                      >${STATE_WORDS[p.state]}${p.reachable ? null : html` · parent unreachable`}</span
-                    >
-                  </span>
-                </div>
-              </li>`,
-            )}
-          </ul>`}
-      ${writer
-        ? html`<form method="post" action="${base}/following/propose" class="mt">
-            <div class="form-actions">${btn("Propose to the parent forge", { type: "submit", icon: "merge" })}</div>
-          </form>`
-        : null}`,
-    { head: html`<h2>Proposals</h2>` },
-  );
+export function proposalSection(base: string, proposals: readonly ForgeProposal[], writer: boolean): Html {
+  return html`<h2 class="mt">Proposals</h2>
+    ${proposals.length === 0
+      ? html`<p class="muted">Nothing proposed to the parent forge yet.</p>`
+      : html`<ul class="list" aria-label="Proposals to the parent forge">
+          ${proposals.map(
+            (p) => html`<li>
+              <div class="row" data-nav tabindex="-1">
+                <span class="row-main">
+                  <a class="row-title" href="${p.url}" rel="noopener">#${p.number} ${p.title}</a>
+                  <span class="row-meta">${STATE_WORDS[p.state]}${p.reachable ? null : html` · parent unreachable`}</span>
+                </span>
+              </div>
+            </li>`,
+          )}
+        </ul>`}
+    ${writer
+      ? html`<form method="post" action="${base}/following/propose" class="mt">
+          <div class="form-actions">${btn("Propose to the parent forge", { type: "submit", icon: "merge" })}</div>
+        </form>`
+      : null}`;
 }
 
 // GET /:owner/:name/following
@@ -135,12 +133,9 @@ export async function chainPage(ctx: Ctx): Promise<Response> {
         data-live="${CHAIN_LIVE}"
         data-live-repo="${repo.ownerName}/${repo.name}"
       >
-      ${card(
-        html`<ul class="list" aria-label="Forges, root first">
-          ${view.lines.map((l) => lineRow(l, l.here && l.mode !== null ? upstreamWords(state) : undefined))}
-        </ul>`,
-        { pad: false },
-      )}
+      <ul class="list" aria-label="Forges, root first">
+        ${view.lines.map((l) => lineRow(l, l.here && l.mode !== null ? upstreamWords(state) : undefined))}
+      </ul>
       ${writer && view.severedAt === null
         ? html`<form method="post" action="${base}/following/check" class="mt">
             <div class="form-actions">${btn("Check the parent now", { type: "submit" })}</div>
@@ -153,29 +148,27 @@ export async function chainPage(ctx: Ctx): Promise<Response> {
             </div>
           </form>`
         : null}
-      ${owner && view.severedAt === null ? modeCard(base, view.lines[view.lines.length - 1]?.mode ?? null) : null}
-      ${proposing ? proposalCard(base, proposals, writer) : null}
+      ${owner && view.severedAt === null ? modeSection(base, view.lines[view.lines.length - 1]?.mode ?? null) : null}
+      ${proposing ? proposalSection(base, proposals, writer) : null}
       ${view.severedAt !== null
         ? html`<p class="muted" id="severed">
             This forge follows nothing since ${view.severedAt.slice(0, 10)}. Its code and history are
             all still here.
           </p>`
         : owner
-          ? card(
-              html`<p>
-                  Severing cuts this forge's link to the one above it. Nothing is deleted and
-                  nothing leaves; the fork stays yours, and the tree says it follows nothing
-                  from today.
-                </p>
-                <form method="post" action="${base}/following/sever" class="mt">
-                  <label class="form-field"
-                    ><span>Type sever to continue</span>
-                    <input name="confirm" required autocomplete="off" class="mono"
-                  /></label>
-                  <div class="form-actions">${btn("Sever", { variant: "danger", type: "submit" })}</div>
-                </form>`,
-              { head: html`<h2>Sever</h2>` },
-            )
+          ? html`<h2 class="mt">Sever</h2>
+              <p>
+                Severing cuts this forge's link to the one above it. Nothing is deleted and
+                nothing leaves; the fork stays yours, and the tree says it follows nothing
+                from today.
+              </p>
+              <form method="post" action="${base}/following/sever" class="mt">
+                <label class="form-field"
+                  ><span>Type sever to continue</span>
+                  <input name="confirm" required autocomplete="off" class="mono"
+                /></label>
+                <div class="form-actions">${btn("Sever", { variant: "danger", type: "submit" })}</div>
+              </form>`
           : null}
       </div>
     </div>`,
@@ -235,7 +228,7 @@ export async function takeSubmit(ctx: Ctx): Promise<Response> {
   return flashOrJson(ctx, to, takeForgeWords(took.value));
 }
 
-/** POST /:owner/:name/following/mode {mode}; the owner only. */
+/** POST /:owner/:name/following/mode {mode} or /following/mode/:mode (what the confirm step posts); the owner only. */
 export async function modeSubmit(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
@@ -243,9 +236,9 @@ export async function modeSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   const to = `${repoBase(repo)}/following`;
-  const set = await setFollowMode(ctx.app, ctx.auth.user, repo, field(form, "mode"));
+  const set = await setFollowMode(ctx.app, ctx.auth.user, repo, ctx.params["mode"] ?? field(form, "mode"));
   if (!set.ok) return flashOrJson(ctx, to, { tone: "danger", message: FOLLOW_MODE_REFUSALS[set.error].message });
-  return flashOrJson(ctx, to, { message: `Now following in ${set.value} mode.` });
+  return flashOrJson(ctx, to, { message: followModeSaid(forkParentFor(ctx.app.db, repo, ctx.auth.user), set.value) });
 }
 
 /** POST /:owner/:name/following/propose: push to the parent forge and open the pull there; a writer only. */

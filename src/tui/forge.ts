@@ -10,11 +10,23 @@
 
 import type { App as Forge } from "../app.ts";
 import { search } from "../actions/search.ts";
-import { cleanQuery } from "../core/search.ts";
+import { greppable } from "../core/search.ts";
 import { guestCodeSearch } from "../http/strangers.ts";
-import { sentinelSummary } from "../crew/sentinel.ts";
 import { canRead, getRepo, type Repo } from "../core/repos.ts";
+import { nearRepos } from "../core/near_repos.ts";
 import { sourceFor } from "../view/source.ts";
+import { fleetCommand } from "./screens/fleet.ts";
+import { dataCommand } from "./screens/data.ts";
+import { packsCommand } from "./screens/packs.ts";
+import { getForgeCommand } from "./screens/getforge.ts";
+import { startForgeCommand } from "./screens/startforge.ts";
+import { pricingCommand } from "./screens/pricing.ts";
+import { forgeNameCommand } from "./screens/forgename.ts";
+import { workCommand } from "./screens/work.ts";
+import { shellsScreen } from "./screens/shells.ts";
+import { forkTreeScreen } from "./screens/fork_tree.ts";
+import { roadmapScreen } from "./screens/roadmap.ts";
+import { spaceScreen } from "./screens/space.ts";
 import { App, type Ctx, type Screen } from "./app/app.ts";
 import type { Command, PaletteItem, PaletteSearch } from "./app/palette.ts";
 import { G } from "./term/screen.ts";
@@ -26,18 +38,16 @@ import {
   ORIGIN_MARK,
   PULL_MARK,
   errorText,
-  pickerScreen,
   promptScreen,
+  blank,
   openOnWeb,
   runAsync,
 } from "./screens/common.ts";
 import { chainScreen } from "./screens/chain.ts";
 import { canSeeMemory } from "../boards/memory.ts";
-import { boardsScreen } from "./screens/boards.ts";
 import { askedScreen } from "./screens/asked.ts";
+import { notesScreen } from "./screens/thoughtnotes.ts";
 import { deciderScreen } from "./screens/decider.ts";
-import { forgesScreen } from "./screens/forges.ts";
-import { clientRows } from "../spawn/clients.ts";
 import { familyScreen } from "./screens/family.ts";
 import { familyLines, familyView } from "../spawn/family.ts";
 import { issueScreen } from "./screens/issue.ts";
@@ -45,49 +55,59 @@ import { pullScreen } from "./screens/pull.ts";
 import { blobScreen } from "./screens/repo.ts";
 import { dashboardScreen } from "./screens/dashboard.ts";
 import { mayManageFlags } from "../core/flags.ts";
-import { accessScreen } from "./screens/access.ts";
 import { mayEditTrustedHosts } from "../origins/trusted-hosts.ts";
 import { trustedHostsPrompt } from "./screens/trustedhosts.ts";
 import { flagsScreen } from "./screens/flags.ts";
-import { secretsScreen } from "./screens/secrets.ts";
-import { scorecardScreen } from "./screens/scorecard.ts";
-import { cloudScreen } from "./screens/cloud.ts";
-import { crewSplitsScreen } from "./screens/crewsplits.ts";
-import { crewHandoverScreen } from "./screens/crewhandover.ts";
+import { forgeUsageScreen } from "./screens/forge_usage.ts";
 import { usageScreen } from "./screens/usage.ts";
 import { canScreen } from "./screens/can.ts";
-import { peopleScreen } from "./screens/people.ts";
-import { modelCeilingPrompt, modelGrantPrompt, modelScreen } from "./screens/model.ts";
+import { modelScreen } from "./screens/model.ts";
+import { notifyScreen } from "./screens/notify.ts";
+import { talkBuildScreen } from "./screens/talk_build.ts";
+import { talkChatsScreen } from "./screens/talk_chats.ts";
 import { sshKeysScreen } from "./screens/sshkeys.ts";
+import { passkeysScreen } from "./screens/passkeys.ts";
+import { confirmsScreen } from "./screens/confirms.ts";
+import { mayTrust, trustedScreen } from "./screens/trusted.ts";
 import { proposalTokensPrompt } from "./screens/proposal_tokens.ts";
-import { invitesScreen } from "./screens/invites.ts";
-import { subscriptionsScreen } from "./screens/subscriptions.ts";
 import { signInsScreen } from "./screens/signins.ts";
-import { quotasScreen } from "./screens/quotas.ts";
-import { teamsScreen } from "./screens/teams.ts";
-import { domainsScreen } from "./screens/domains.ts";
-import { ownerScreen } from "./screens/owner.ts";
-import { resilienceScreen } from "./screens/resilience.ts";
+import { originAppsScreen } from "./screens/originapps.ts";
+import { addEntries } from "./screens/entries.ts";
+import { capacityScreen, mayCapacity } from "./screens/capacity.ts";
+import { crawlersScreen } from "./screens/crawlers.ts";
 import { forgeCeiling } from "../flow/ceiling.ts";
 import { flowLines, flowScreen } from "./screens/flow.ts";
+import { askUpdate, mayDrift } from "./screens/drift.ts";
+import { readHandoverLists } from "../flow/handover_read.ts";
+import { readDrifts } from "../flow/alarm_drift.ts";
 import { readHeld } from "../flow/held.ts";
-import { forgeLines, memoryScreen, systemLines, systemScreen } from "./screens/system.ts";
-import { readHealth } from "../actions/health.ts";
-import { grantable, READS_KEPT, recentReads } from "../core/telemetry.ts";
-import { noteRead, setTelemetryGrant, telemetryReader } from "../actions/telemetry.ts";
+import { answerKeeper, readKeeper } from "../flow/keeper.ts";
+import { readVerified } from "../flow/verified.ts";
+import { memoryScreen } from "./screens/system.ts";
+import { noteRead, telemetryReader } from "../actions/telemetry.ts";
 import { queuesFor, systemFor } from "../system/telemetry.ts";
-import { live as liveMachine } from "../system/live.ts";
+import { apiScreen } from "./screens/api.ts";
 import { changelogScreen } from "./screens/changelog.ts";
+import { docsScreen } from "./screens/docs.ts";
+import { keeperScreen } from "./screens/keeper.ts";
 import { releasesScreen } from "./screens/releases.ts";
 import { mayRead } from "../release/gate.ts";
 import { fileHoldsPrompt } from "./screens/fileholds.ts";
+import { heldScreen } from "./screens/held.ts";
 import { stalledScreen } from "./screens/stalled.ts";
 import { issuesScreen, newIssueScreen } from "./screens/issues.ts";
 import { limbsScreen } from "./screens/limbs.ts";
+import { nextScreen } from "./screens/next.ts";
+import { findingsScreen } from "./screens/findings.ts";
+import { flowsScreen } from "./screens/flows.ts";
+import { weekScreen } from "./screens/week.ts";
+import { machinesScreen } from "./screens/machines.ts";
 import { newPullScreen } from "./screens/newpull.ts";
 import { newForgeScreen } from "./screens/newforge.ts";
 import { newOrgScreen } from "./screens/neworg.ts";
 import { migrateScreen } from "./screens/migrate.ts";
+import { bringScreen } from "./screens/bring.ts";
+import { openNewApp, templateAppScreen } from "./screens/newapp.ts";
 import { newRepoScreen } from "./screens/newrepo.ts";
 import { repoScreen } from "./screens/repo.ts";
 import { signInScreen } from "./screens/signin.ts";
@@ -117,6 +137,28 @@ const REPO_VERBS: readonly {
     open: (f, ctx, repo) => issuesScreen(f, ctx, local(f, repo), "issue"),
   },
   {
+    // What the Later gate holds, as /held shows it: reading is the repository's own.
+    id: "held",
+    title: "Held by the Later gate",
+    open: (f, ctx, repo) => heldScreen(f, ctx, repo),
+  },
+  {
+    // The ancestors, siblings and descendants of a repository the person may read.
+    id: "fork-tree",
+    title: "Fork tree of a repository",
+    open: (f, ctx, repo) => forkTreeScreen(f, ctx, repo),
+  },
+  {
+    id: "roadmap",
+    title: "Roadmap of a repository",
+    open: (f, ctx, repo) => roadmapScreen(f, ctx, repo),
+  },
+  {
+    id: "space",
+    title: "Space of a repository",
+    open: (f, ctx, repo) => spaceScreen(f, ctx, repo),
+  },
+  {
     id: "pulls",
     title: "Pull requests in a repository",
     open: (f, ctx, repo) => issuesScreen(f, ctx, local(f, repo), "pull"),
@@ -125,6 +167,36 @@ const REPO_VERBS: readonly {
     id: "milestones",
     title: "Milestones in a repository",
     open: (f, ctx, repo) => limbsScreen(f, ctx, repo),
+  },
+  {
+    // The owner's one ranked list the crew builds from (#8694).
+    id: "next-up",
+    title: "Next up in a repository",
+    open: (f, ctx, repo) => nextScreen(f, ctx, repo),
+  },
+  {
+    // The retrospective the forge wrote at the last weekly reset, and its proposals (#8704).
+    id: "week",
+    title: "The week in a repository",
+    open: (f, ctx, repo) => weekScreen(f, ctx, repo),
+  },
+  {
+    // What flows in and out of a repository, and the radar's key for its admin (#9434).
+    id: "flows",
+    title: "Flows of a repository",
+    open: (f, ctx, repo) => flowsScreen(f, ctx, repo),
+  },
+  {
+    // What code scanning found, and acceptance with a reason for a writer (#9593).
+    id: "findings",
+    title: "Findings in a repository",
+    open: (f, ctx, repo) => findingsScreen(f, ctx, repo),
+  },
+  {
+    // Settings → Machines' other door: the machines and last shell sessions, writers only (#9471).
+    id: "machines",
+    title: "Machines of a repository",
+    open: (f, ctx, repo) => machinesScreen(f, ctx, repo),
   },
   {
     // What the crew's tokens bought on one app, as MCP `returns` with `repo` (#7271).
@@ -168,6 +240,21 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         run: () => openOnWeb(session, ctx, "/explore", "The explorer"),
       },
       {
+        // The same list as an Atom feed (#10967): the terminal hands over
+        // the feed's address, to copy into a reader.
+        id: "explore-feed",
+        title: "Explore feed",
+        hint: "Atom address",
+        run: () => openOnWeb(session, ctx, "/explore.atom", "The explore feed"),
+      },
+      packsCommand(session, ctx),
+      getForgeCommand(session, ctx),
+      ...startForgeCommand(session, ctx),
+      pricingCommand(session, ctx),
+      ...forgeNameCommand(session, ctx),
+      ...dataCommand(session, ctx),
+      fleetCommand(session, ctx),
+      {
         // A person's or an org's page is the web's (#636): the terminal
         // hands over its address.
         id: "profile",
@@ -197,8 +284,12 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               // The palette is a client like any other: a repo you cannot
               // read is "not found", indistinguishable from a typo. Without
               // this check the palette would be a way around `canRead`.
-              if (!repo || !canRead(session.db, repo, session.user))
-                return "not found";
+              if (!repo || !canRead(session.db, repo, session.user)) {
+                const near = owner && name ? nearRepos(session.db, session.user, owner, name) : [];
+                return near.length === 0
+                  ? "not found"
+                  : `not found — did you mean ${near.map((r) => `${r.ownerName}/${r.name}`).join(", ")}?`;
+              }
               // After the prompt has popped itself, or the pop takes the
               // screen just pushed instead (`later` in screens/common.ts).
               return Promise.resolve().then(() => {
@@ -223,6 +314,32 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               ctx.push(signInScreen(session, ctx, () => ctx.invalidate())),
           },
     );
+    // The owner's read-only mirrors, as the profile's "work (read-only)" draws them.
+    if (session.user !== undefined && session.user.kind !== "agent") commands.push(workCommand(session, ctx));
+    // An app from a sentence, as /apps/new makes it: a person's, never an agent's.
+    if (session.user !== undefined && session.user.kind !== "agent")
+      commands.push({
+        id: "new-app",
+        title: "New app",
+        hint: "say what it does in a sentence; the crew starts on it",
+        run: () => openNewApp(session, ctx, blank("New app")),
+      });
+    // The same from a template repository, as /apps/new?template= does.
+    if (session.user !== undefined && session.user.kind !== "agent")
+      commands.push({
+        id: "new-app-template",
+        title: "New app from a template",
+        hint: "copy a repository you can read, as the starting files",
+        run: () => ctx.push(templateAppScreen(session, ctx, blank("New app"))),
+      });
+    // An app from another forge, as /bring does: a person's, never an agent's.
+    if (session.user !== undefined && session.user.kind !== "agent")
+      commands.push({
+        id: "bring-app",
+        title: "Bring an app",
+        hint: "paste a link from another forge; it runs here",
+        run: () => ctx.push(bringScreen(session, ctx, blank("Bring an app"))),
+      });
     // An organization you own, as /organizations/new and MCP `org_create` make it: a person's, never an agent's (#7260).
     if (session.user !== undefined && session.user.kind !== "agent")
       commands.push({
@@ -254,6 +371,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "your thoughts and what became of them",
         run: () => ctx.push(askedScreen(session, ctx)),
       });
+    // One box to write an idea in, each note with its live state; /notes' own door (#8696).
+    if (session.signedIn)
+      commands.push({
+        id: "thought-notes",
+        title: "Notes",
+        hint: "write an idea and watch it become shipped work",
+        run: () => ctx.push(notesScreen(session, ctx)),
+      });
     if (session.signedIn)
       commands.push({
         id: "decider",
@@ -261,12 +386,68 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "what it closed, deferred and asked you about today",
         run: () => ctx.push(deciderScreen(session, ctx)),
       });
+    // The machine shells this person holds (#10544); an agent holds none.
+    if (session.signedIn && session.user?.kind !== "agent")
+      commands.push({
+        id: "shells",
+        title: "Your shells",
+        hint: "the machine shells you hold, live then ended",
+        run: () => ctx.push(shellsScreen(session, ctx)),
+      });
+    // Where a decision finds the owner; an agent is never offered it.
+    if (session.signedIn && session.user?.kind !== "agent")
+      commands.push({
+        id: "notify",
+        title: "Phone notifications",
+        hint: "where the crew reaches your phone; s sets, x turns off",
+        run: () => ctx.push(notifyScreen(session, ctx)),
+      });
+    // What the forge's agent asked first, waiting for the person's yes (#7650).
+    if (session.signedIn && session.user?.kind !== "agent")
+      commands.push({
+        id: "confirms",
+        title: "Confirms",
+        hint: "what the forge's agent asked to do; y does it once",
+        run: () => ctx.push(confirmsScreen(session, ctx)),
+      });
+    // Who folds in without a person's review, and the kill switch (#8937): a forge admin's.
+    if (session.signedIn && mayTrust(session))
+      commands.push({
+        id: "trusted",
+        title: "Trusted sources",
+        hint: "who folds in without review; a trusts, x removes, s stops all, v reverts",
+        run: () => ctx.push(trustedScreen(session, ctx)),
+      });
+    // The forge's agent keeps many conversations, as /talk lists them (#8814).
+    if (session.signedIn && session.user?.kind !== "agent")
+      commands.push({
+        id: "conversations",
+        title: "Conversations",
+        hint: "your talks with the forge's agent; n starts one, r renames, x archives",
+        run: () => ctx.push(talkChatsScreen(session, ctx)),
+      });
+    // One prompt builds an app; each turn is a version to diff, restore and publish (#11010).
+    if (session.signedIn && session.user?.kind !== "agent")
+      commands.push({
+        id: "build-app",
+        title: "Build an app",
+        hint: "say what to build; versions, diff, restore and publish. n starts one",
+        run: () => ctx.push(talkBuildScreen(session, ctx)),
+      });
     if (session.signedIn)
       commands.push({
         id: "ssh-keys",
-        title: "SSH keys",
+        title: "Computer keys",
         hint: "list, add and remove the keys that sign in as you",
         run: () => ctx.push(sshKeysScreen(session, ctx)),
+      });
+    // Settings › Passkeys and MCP `whoami_can kind: passkeys`, read only (#8044).
+    if (session.signedIn && session.user?.kind !== "agent")
+      commands.push({
+        id: "passkeys",
+        title: "Passkeys",
+        hint: "the passkeys that sign in as you",
+        run: () => ctx.push(passkeysScreen(session, ctx)),
       });
     if (session.signedIn)
       commands.push(
@@ -282,27 +463,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
           hint: "your browsers and tokens; d signs a browser out",
           run: () => ctx.push(signInsScreen(session, ctx)),
         },
+        // Settings → Connected accounts' OAuth apps and MCP `origin_apps` (#7291).
+        {
+          id: "origin-apps",
+          title: "Connection apps",
+          hint: "your OAuth apps for connecting accounts; a adds, d removes",
+          run: () => ctx.push(originAppsScreen(session, ctx)),
+        },
       );
-    // The forge's own faults, as the board's strip shows them: a site admin's.
-    if (session.user?.isAdmin === true)
-      commands.push({
-        id: "sentinel",
-        title: "Sentinel",
-        hint: "the forge's open faults",
-        run: () =>
-          ctx.toast(
-            sentinelSummary(session.db) ?? "The sentinel has not hunted yet",
-            "default",
-          ),
-      });
-    // The boards, as the page gates them: a site admin who is a person, never an agent (#1817).
-    if (session.user?.isAdmin === true && session.user.kind !== "agent")
-      commands.push({
-        id: "boards",
-        title: "Boards",
-        hint: "the forge's boards and their panels",
-        run: () => ctx.push(boardsScreen(session, ctx)),
-      });
     // The forge's RSS beside its JS heap, as /system gates it (#2151).
     if (canSeeMemory(session.user))
       commands.push({
@@ -320,6 +488,8 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "the pipeline's bottleneck and throughput",
         run: () => {
           if (session.user) noteRead(session.app, session.user, flowReader, "flow");
+          const keeper = readKeeper(session.db, flowReader.kind === "owner");
+          const user = session.user;
           ctx.push(flowScreen(ctx, flowLines(
               session.db,
               new Date(),
@@ -327,63 +497,45 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               flowReader.kind === "agent" ? { queues: queuesFor(session.app, flowReader, new Date(), { batches: true }) } : undefined,
               readHeld(session.app, flowReader.kind === "owner"),
               forgeCeiling(session.app.config),
-            )));
+              readVerified(session.app, flowReader.kind === "owner"),
+              keeper,
+              session.app.config.dataDir,
+            ), keeper.ask && user ? { ask: keeper.ask, answer: () => answerKeeper(session.app, keeper.ask!.id, user.id) } : undefined,
+            mayDrift(session)
+              ? { read: async () => readHandoverLists(session.db, await readDrifts(session.app), Date.now()), update: (n) => askUpdate(session, n) }
+              : undefined));
         },
       });
-    // The machine, as /system says it, and which agents may read it: the owner's, a person (#1789).
-    if (session.user?.isAdmin === true && session.user.kind !== "agent") {
+    // The forge's capacity and guards, as MCP `capacity` gates them: a forge admin who is a person.
+    if (mayCapacity(session))
       commands.push({
-        id: "system",
-        title: "System",
-        hint: "the machine now: CPU, memory, disks, processes",
-        run: () => ctx.push(systemScreen(ctx, [
-          ...forgeLines(readHealth(session.app, session.user)),
-          "",
-          ...systemLines(liveMachine().read()),
-        ], session)),
+        id: "capacity",
+        title: "Capacity",
+        hint: "concurrency and guards, live; e changes a settable one",
+        run: () => ctx.push(capacityScreen(session, ctx)),
       });
+    // What crawlers cost and who was refused, as GET /api/v1/admin/crawlers: the capacity screen's readers.
+    if (mayCapacity(session))
       commands.push({
-        id: "telemetry",
-        title: "Telemetry",
-        hint: "which agents may read flow and system; enter flips the grant",
-        run: () => {
-          const actor = session.user;
-          const agents = grantable(session.db);
-          if (agents.length === 0) return ctx.toast("No agent accounts yet");
-          const last = new Map<string, { n: number; what: string; at: string }>();
-          for (const r of recentReads(session.db, READS_KEPT).reverse()) {
-            last.set(r.username, { n: (last.get(r.username)?.n ?? 0) + 1, what: r.what, at: r.at });
-          }
-          const readsOf = (name: string): string => {
-            const l = last.get(name);
-            return l ? `${l.n} read${l.n === 1 ? "" : "s"}, last ${l.what} ${l.at}` : "no reads";
-          };
-          ctx.push(
-            pickerScreen(ctx, blank("Telemetry"), {
-              title: "Telemetry: telemetry:read",
-              items: agents.map((a) => ({ id: a.username, label: a.username, hint: `${a.granted ? "granted" : "not granted"} · ${readsOf(a.username)}` })),
-              onPick: ([name]) => {
-                const was = agents.find((a) => a.username === name);
-                if (!was) return;
-                const done = setTelemetryGrant(session.app, actor, was.username, !was.granted);
-                ctx.toast(
-                  done.ok ? `${was.username}: telemetry:read ${done.value.on ? "granted" : "revoked"}` : "Could not change the grant",
-                  done.ok ? "success" : "attn",
-                );
-              },
-            }),
-          );
-        },
+        id: "crawlers",
+        title: "Crawlers",
+        hint: "their share of answering time, and who was refused",
+        run: () => ctx.push(crawlersScreen(session, ctx)),
       });
-    }
-    // Each THREATS.md protection's standing, as /resilience says it: a site admin's.
-    if (session.user?.isAdmin === true)
-      commands.push({
-        id: "resilience",
-        title: "Resilience",
-        hint: "each protection green, red or untested",
-        run: () => ctx.push(resilienceScreen(session, ctx)),
-      });
+    // The forge's API operations, as /api lists them; Enter runs a GET: for anyone.
+    commands.push({
+      id: "api",
+      title: "API",
+      hint: "the forge's endpoints; run a GET",
+      run: () => ctx.push(apiScreen(session, ctx)),
+    });
+    // The forge's documentation, as /docs lists it: for anyone.
+    commands.push({
+      id: "docs",
+      title: "Docs",
+      hint: "the forge's documentation; Enter reads one",
+      run: () => ctx.push(docsScreen(ctx)),
+    });
     // The last releases with their pulls, as /changelog shows them: for anyone.
     commands.push({
       id: "changelog",
@@ -398,6 +550,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Releases",
         hint: "the live release and the kept ones",
         run: () => ctx.push(releasesScreen(session, ctx)),
+      });
+    // The release keeper's card (#7557), gated as /releases is.
+    if (mayRead(session.app, session.user))
+      commands.push({
+        id: "keeper",
+        title: "Release keeper",
+        hint: "what holds the next cut, and each release it cut with its probes",
+        run: () => ctx.push(keeperScreen(session, ctx)),
       });
     // Stalled flow steps the viewer can unblock, as the home's cards show them (#1807).
     if (session.signedIn)
@@ -415,14 +575,6 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "hold new work on a file, release it, or list the holds",
         run: () => ctx.push(fileHoldsPrompt(session, ctx, blank("Held files"))),
       });
-    // What outside agents tried, as Settings → Access says it: a site admin's (#1768).
-    if (session.user?.isAdmin === true && session.user.kind !== "agent")
-      commands.push({
-        id: "access",
-        title: "Access",
-        hint: "what outside agents tried",
-        run: () => ctx.push(accessScreen(session, ctx)),
-      });
     // Settings → Flags, as the page has it: an admin who is not an agent (#1970).
     if (mayManageFlags(session.user))
       commands.push({
@@ -431,15 +583,7 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "declared flags and their live values",
         run: () => ctx.push(flagsScreen(session, ctx)),
       });
-    // Settings → Secrets, as the page has it: a forge admin; names only, never a value.
-    if (session.user?.isAdmin === true)
-      commands.push({
-        id: "secrets",
-        title: "Secrets",
-        hint: "sealed secrets by name; set or remove one",
-        run: () => ctx.push(secretsScreen(session, ctx)),
-      });
-    // Settings → Origins' trusted internal hosts: the same admin gate as the page.
+    // Settings → Connected accounts' trusted internal hosts: the same admin gate as the page.
     if (mayEditTrustedHosts(session.user))
       commands.push({
         id: "trusted-hosts",
@@ -447,37 +591,21 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "internal hosts an origin may reach",
         run: () => ctx.push(trustedHostsPrompt(session, ctx, blank("Trusted hosts"))),
       });
-    // Settings → Usage, as the page has it: the same gate as Flags (#1565).
-    if (mayManageFlags(session.user))
+    // Usage: the forge's spend for any signed-in user (#8308); the route list stays the page's gate, the same as Flags (#1565).
+    if (session.user !== undefined)
       commands.push({
         id: "usage",
         title: "Usage",
-        hint: "every route, unused ones first",
+        hint: "the forge's spend and headroom; an admin also sees every route",
         run: () => ctx.push(usageScreen(session, ctx)),
       });
-    // Settings → Crew's scorecard by model and prompt version: an admin (#2682).
-    if (session.user?.isAdmin === true)
+    // What the forge spent across the apps you write, as GET /api/v1/usage and MCP `usage` answer.
+    if (session.user !== undefined)
       commands.push({
-        id: "crew-scorecard",
-        title: "Crew scorecard",
-        hint: "agent runs per model and per prompt version",
-        run: () => ctx.push(crewSplitsScreen(session, ctx)),
-      });
-    // Settings → Crew's hand-overs: issues parked twice, the last restore drill.
-    if (session.user?.isAdmin === true)
-      commands.push({
-        id: "crew-handover",
-        title: "Crew hand-overs",
-        hint: "issues parked twice, and the last restore drill",
-        run: () => ctx.push(crewHandoverScreen(session, ctx)),
-      });
-    // Settings → Crew's scorecard per agent, as the page has it: a forge admin (#2677).
-    if (session.user?.isAdmin === true)
-      commands.push({
-        id: "scorecard",
-        title: "Crew scorecard per agent",
-        hint: "each agent's pulls landed, review rounds, red checks, reverts, time to land",
-        run: () => ctx.push(scorecardScreen(session, ctx)),
+        id: "forge-spend",
+        title: "Forge spend",
+        hint: "today and the last 24 hours, headroom per subscription",
+        run: () => ctx.push(forgeUsageScreen(session, ctx)),
       });
     // Proposal tokens for a repository you write, as the API and MCP have them (#2148).
     if (session.user !== undefined)
@@ -495,21 +623,6 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "what your crew may spend, and add your own subscription",
         run: () => ctx.push(modelScreen(session, ctx)),
       });
-    // A capped monthly grant to an account: a forge admin who is a person (#1145).
-    if (session.user?.isAdmin === true && session.user.kind === "user")
-      commands.push({
-        id: "model-grant",
-        title: "Model grant",
-        hint: "give an account dollars a month, or take it back",
-        run: () => ctx.push(modelGrantPrompt(session, ctx, blank("Model grant"))),
-      });
-    if (session.user?.isAdmin === true && session.user.kind === "user")
-      commands.push({
-        id: "model-ceiling",
-        title: "Model ceiling",
-        hint: "set an account's dollars a day and a run",
-        run: () => ctx.push(modelCeilingPrompt(session, ctx, blank("Model ceiling"))),
-      });
     // The caller's own role and row of the roles table, as /settings and `whoami_can` have it (#2304).
     if (session.user !== undefined)
       commands.push({
@@ -518,81 +631,8 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "your role and what it allows here",
         run: () => ctx.push(canScreen(session, ctx)),
       });
-    // Guests, members and admins, as /settings/people has them (#2301).
-    if (session.user?.isAdmin === true && session.user.kind === "user")
-      commands.push({
-        id: "people",
-        title: "People",
-        hint: "who is a guest, a member or an admin; promote or demote",
-        run: () => ctx.push(peopleScreen(session, ctx)),
-      });
-    // Account quotas, as /admin/limits has them: an admin who is not an agent (#2191).
-    if (session.user?.isAdmin === true && session.user.kind !== "agent")
-      commands.push({
-        id: "quotas",
-        title: "Account quotas",
-        hint: "what one account may own, and who changed it",
-        run: () => ctx.push(quotasScreen(session, ctx)),
-      });
-    // Crew teams, as /settings/teams has them: an admin who is not an agent (#2679).
-    if (session.user?.isAdmin === true && session.user.kind !== "agent")
-      commands.push({
-        id: "teams",
-        title: "Crew teams",
-        hint: "each team's charter, dial and members",
-        run: () => ctx.push(teamsScreen(session, ctx)),
-      });
-    // Invite links, as /admin/limits has them: an admin who is a person (#2337).
-    if (session.user?.isAdmin === true && session.user.kind === "user")
-      commands.push({
-        id: "invites",
-        title: "Invite links",
-        hint: "make a single-use link, see which are open, revoke one",
-        run: () => ctx.push(invitesScreen(session, ctx)),
-      });
-    // The crew's Claude subscriptions, as MCP `subscriptions` has them: a forge admin (#7244).
-    if (session.user?.isAdmin === true)
-      commands.push({
-        id: "subscriptions",
-        title: "Crew subscriptions",
-        hint: "each account's budget and rest; wake one, set its budget",
-        run: () => ctx.push(subscriptionsScreen(session, ctx)),
-      });
-    // Cloud accounts, as Settings → Cloud accounts has them: a forge admin (#2199).
-    if (session.user?.isAdmin === true)
-      commands.push({
-        id: "cloud",
-        title: "Cloud accounts",
-        hint: "provider tokens, what they are used for, today's calls",
-        run: () => ctx.push(cloudScreen(session, ctx)),
-      });
-    // Each failure domain and its last drill, as Settings → Backups → Failure domains says it (#1945).
-    if (session.user?.isAdmin === true && session.user.kind !== "agent")
-      commands.push({
-        id: "domains",
-        title: "Failure domains",
-        hint: "failure domains and their last drill",
-        run: () => ctx.push(domainsScreen(session, ctx)),
-      });
-    // What needs the owner: needs, snapshot store, every failure domain (#1236).
-    if (session.user?.isAdmin === true && session.user.kind !== "agent")
-      commands.push({
-        id: "owner",
-        title: "Owner's needs",
-        hint: "what needs the owner, snapshots, failure domains",
-        run: () => ctx.push(ownerScreen(session, ctx)),
-      });
-    // The forges this one sent, as /forges lists them: an admin's only.
-    if (session.user?.isAdmin === true)
-      commands.push({
-        id: "forges",
-        title: "Forges you sent",
-        hint: "each forge sent, claimed or not, and its apps",
-        run: () =>
-          runAsync(ctx, async () => {
-            ctx.push(forgesScreen(ctx, await clientRows(session.app)));
-          }),
-      });
+    // Entries that live beside their screen, each at the place it names.
+    addEntries(commands, session, ctx);
     commands.push({
       id: "family",
       title: "Family",
@@ -640,7 +680,8 @@ export function forgeSearch(session: Session): (ctx: Ctx) => PaletteSearch {
     // A guest is a stranger with a key: its search greps code under the same
     // limits as the page's and the API's (`http/strangers.ts`), counted
     // under its peer address. Refused, everything but the code is searched.
-    const greps = session.user === undefined && cleanQuery(query) !== "";
+    // A one-letter query greps nothing (#11120), so it takes no slot either.
+    const greps = session.user === undefined && greppable(query);
     const held = greps
       ? guestCodeSearch(session.app, session.identity.remoteAddress)
       : undefined;
@@ -807,11 +848,6 @@ function countsHint(
     .join("  ");
 }
 
-/** A screen that draws nothing — the parent a palette-launched modal has. */
-function blank(title: string): Screen {
-  return { title, keys: [], render: () => undefined, key: () => false };
-}
-
 /** A prompt with no parent to draw behind it — the palette closed already. */
 function askFor(
   ctx: Ctx,
@@ -824,6 +860,8 @@ function askFor(
 
 export interface ForgeAppOptions extends SessionOpts {
   readonly terminal: Terminal;
+  /** How long a toast stays up; a test that reads one after a settle makes it long. */
+  readonly toastMs?: number;
 }
 
 /** Assemble the terminal app for one identity, theme persistence included. */

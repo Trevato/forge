@@ -1,9 +1,9 @@
 import { mayView } from "../../../core/sealed.ts";
 import { countThread, EMBEDDED_COMMENTS, getIssue, labelsFor, listComments } from "../../../core/issues.ts";
 import { isCrew } from "../../../core/agents.ts";
+import { canWrite } from "../../../core/repos.ts";
 import { dependenciesOf } from "../../../core/dependencies.ts";
 import { getUsersByIds } from "../../../core/users.ts";
-import { flowOnlyQueued } from "../../../crew/flow_only.ts";
 import { markReaders } from "../../../crew/direct.ts";
 import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
@@ -34,9 +34,12 @@ export const tool: Tool = {
     // Seen only after the sealed check, so a sealed pull is not told apart.
     if (issue.kind !== "issue") return good({ kind: "pull", tool: "pull" });
     const db = ctx.app.db;
-    // Marked only for a crew agent, as the API does: to anyone else the
-    // mark would say which commenters cannot write.
-    const marking = user.kind === "agent" && isCrew(db, repo.id, user.id);
+    // Marked only for a crew agent, as the API does, and for the forge's own
+    // agent speaking for a writer here (#7649): to anyone else the mark would
+    // say which commenters cannot write.
+    const marking =
+      (user.kind === "agent" && isCrew(db, repo.id, user.id)) ||
+      (ctx.auth.through !== undefined && canWrite(db, repo, user));
     const mark = <T extends { authorName: string; originAuthor: string | null }>(
       items: readonly T[],
     ): (T & { untrusted?: string })[] =>
@@ -54,7 +57,6 @@ export const tool: Tool = {
     const seen = (i: typeof issue) => mayView(db, repo, i, user);
     const flag = (x: { untrusted?: string }) =>
       x.untrusted === undefined ? {} : { untrusted: true };
-    const queued = flowOnlyQueued(db, repo, issue);
     const [self] = mark([issue]);
     const answer = good({
       number: issue.number,
@@ -67,7 +69,6 @@ export const tool: Tool = {
       ...flag(self!),
       labels: labelsFor(db, issue.id).map((l) => l.name),
       assignee: issue.assigneeName,
-      ...(queued === null ? {} : { queued }),
       comments: comments.map((c) => ({
         author: c.authorName,
         authorIsAgent: authors.get(c.authorId)?.kind === "agent",

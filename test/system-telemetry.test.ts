@@ -228,6 +228,8 @@ describe("telemetry:read: the owner grants it, an agent reads with it, nobody el
     expect((await tool(tokens["grok"]!, "flow")).error).toBe(true);
     const bobCookie = await login("bob");
     expect((await fetch(`${servers.url}/system`, { headers: { cookie: bobCookie } })).status).toBe(404);
+    const bobPage = await fetch(`${servers.url}/system`, { headers: { cookie: bobCookie } });
+    expect(await bobPage.text()).not.toContain("Telemetry readers");
   });
 
   test("a granted agent reads /system and /flow, with private repositories cut out", async () => {
@@ -298,11 +300,14 @@ describe("telemetry:read: the owner grants it, an agent reads with it, nobody el
     const page = await fetch(`${servers.url}/system`, { headers: { cookie: await login("alice") } });
     expect(page.status).toBe(200);
     const html = await page.text();
+    expect(html).toContain("Telemetry readers");
     expect(html).toContain('id="duplicates" data-count="1"');
     expect(html).toContain("test/shared.test.ts");
     // Each check cell's memory beside its cap, and who holds the cap (#2410).
     expect(html).toContain('data-cap="8589934592" data-cap-by="kernel">of 8.0 GiB (kernel cap)');
     expect(html).toMatch(/id="cell-caps" data-by="(kernel|watch)"/);
+    // And who holds each cell's process count (#10518).
+    expect(html).toMatch(/id="cell-pids" data-by="(kernel|watch)"/);
     // Built from the system's own parts: pills, meters and the process table grouped by kind (#2721), no style attribute (#2691).
     expect(html).toMatch(/id="summary"[^>]*>\s*<span class="pill"/);
     expect(html).toContain('<tbody data-kind="check"');
@@ -400,14 +405,10 @@ describe("telemetry:read: the owner grants it, an agent reads with it, nobody el
     expect(flowCommand()).toBeUndefined();
   });
 
-  test("GET /flow is a permanent redirect to /boards, for anyone", async () => {
-    for (const token of [undefined, tokens["alice"]]) {
-      const res = await fetch(`${servers.url}/flow`, { redirect: "manual", headers: token ? { authorization: `Bearer ${token}` } : {} });
-      expect(res.status).toBe(301);
-      expect(res.headers.get("location")).toBe("/boards");
-    }
-    const drill = await fetch(`${servers.url}/flow?out=approved&hour=3`, { redirect: "manual" });
-    expect(drill.headers.get("location")).toBe("/boards?out=approved&hour=3");
+  test("GET /flow is the pipes page, no longer a redirect to /boards", async () => {
+    const res = await fetch(`${servers.url}/flow`, { redirect: "manual", headers: { authorization: `Bearer ${tokens["alice"]}` } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("location")).toBeNull();
   });
 
   test("in the terminal, the owner is offered System and Telemetry; nobody else is", () => {

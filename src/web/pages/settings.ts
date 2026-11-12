@@ -8,6 +8,7 @@
  * same-origin POST and every one of them says what happened.
  */
 
+import { POLISH_SHARE_DEFAULT, POLISH_SHARE_MAX } from "../../crew/polish_share.ts";
 import { appLimitWords } from "../../actions/app_limit.ts";
 import { showProvenance } from "../../actions/provenance.ts";
 import { getProvenance, parentUrl, sourceLabel } from "../../core/provenance.ts";
@@ -37,6 +38,8 @@ import {
   revokeAppEgress,
   type EgressView,
 } from "../../actions/egress_grants.ts";
+import { allowBlocked, blockedView, ignoreBlocked, withLiveOnly, type Allowed, type BlockedView } from "../../actions/egress_refused.ts";
+import { blockedNote } from "../studio/blocked.ts";
 import type { DnsRecord } from "../../apps/domains.ts";
 import {
   listAppEnvNames,
@@ -49,11 +52,13 @@ import {
   APP_ENV_NOT_SET,
   SCOPE_WORDS,
 } from "../../actions/app_env_words.ts";
-import { isAutonomy, isDecisionsBy } from "../../core/repos.ts";
+import { AUTONOMY_SAID, checkAutonomy, isDecisionsBy } from "../../core/repos.ts";
+import { TRANSFER_SAID, TRANSFER_STATUS, transferRepository } from "../../actions/transfer.ts";
 import { updateRepoSettings } from "../../actions/repos.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { nameFrame, notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { appVitals, shiftText, speedText as ms, type AppVitals } from "../../apps/vitals.ts";
+import { relayWaitWords } from "../../apps/relay_wait.ts";
 import type { PreviewData } from "../../apps/data.ts";
 import {
   getAppByRepo,
@@ -82,15 +87,17 @@ import {
   settingsLayout,
 } from "../chrome.ts";
 import { daySpark } from "../studio/kpi_row.ts";
-import { settingsLead } from "../studio/crew.ts";
+import { settingsLead, teamJs } from "../studio/crew.ts";
 import { pageTitle } from "../studio/nouns.ts";
 import { appHref } from "./apps.ts";
 import { field, readForm, type Form } from "../form.ts";
-import { html, when, type Html } from "../html.ts";
+import { html, raw, when, type Html } from "../html.ts";
+import { settingLine, toggleLine } from "../setting_line.ts";
 import { NOT_CHANGED } from "../edit_words.ts";
 import { STOP_APP } from "../danger_words.ts";
 import { icon } from "../icons.ts";
 import { flashTo, page, redirect } from "../layout.ts";
+import { helpAsked, pageHelp } from "../page_help.ts";
 import type { Flash } from "../flash.ts";
 import {
   badge,
@@ -107,7 +114,7 @@ import { cutWaveFor } from "../../actions/cut_wave.ts";
 import { proposalTokensSection } from "./proposal-tokens.ts";
 import { secretsSection } from "./secrets.ts";
 import { checkMemoryAt } from "../../apps/check-memory.ts";
-import { followUpstreamCard } from "./upstream-follow.ts";
+import { followSourcesCard, followUpstreamCard } from "./upstream-follow.ts";
 
 type Section =
   | "general"
@@ -115,6 +122,7 @@ type Section =
   | "prompts"
   | "labels"
   | "hooks"
+  | "machines"
   | "danger";
 
 /** The repo, but only for someone who administers it. A non-admin is told
@@ -165,6 +173,12 @@ function sections(base: string, active: Section) {
       current: active === "hooks",
     },
     {
+      label: "Machines",
+      href: `${base}/settings/machines`,
+      icon: "terminal" as const,
+      current: active === "machines",
+    },
+    {
       label: "Danger zone",
       href: `${base}/settings/danger`,
       icon: "alert" as const,
@@ -190,6 +204,7 @@ export function settingsPageResponse(
       crumbs: crumbsFor(repo),
       palette: repoPalette(ctx, repo),
       ...(styleCss !== undefined ? { styleCss } : {}),
+      scriptJs: teamJs,
       body: html`${repoHeader(ctx, repo, "settings", { compact: true })}
       ${settingsLayout(sections(repoBase(repo), active), body)}`,
     },
@@ -218,7 +233,11 @@ export async function adminForm(
  * gates and the secrets, with the rest — the app, prompts, labels,
  * webhooks, the danger zone — one quiet section over in the same frame.
  */
-export async function settingsPage(ctx: Ctx): Promise<Response> {
+export async function settingsPage(
+  ctx: Ctx,
+  /** A refused move: the owner as typed and the sentence to show beside it. */
+  refused?: { owner: string; said: string; status: number },
+): Promise<Response> {
   nameFrame(ctx.request);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const [readable, repo] = timePhase(ctx.request, "repo", () => {
@@ -235,6 +254,7 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
         title: pageTitle("settings", readable, true),
         crumbs: crumbsFor(readable),
         palette: repoPalette(ctx, readable),
+        scriptJs: teamJs,
         body: html`${repoHeader(ctx, readable, "settings", { compact: true })}
       ${lead}${proposals ? html`<div class="mt">${proposals}</div>` : null}`,
       });
@@ -259,78 +279,40 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
 
   // The lead's About card owns the description and visibility; this form
   // sends them back unchanged, as that one does the gates below.
-  const body = card(
-    html`<form method="post" action="${base}/settings">
+  const body = html`<section class="settings-block">
+    <h2>Branch and gates</h2>
+    <form method="post" action="${base}/settings">
       <input type="hidden" name="card" value="gates" />
-      ${selectField({
-        label: "Default branch",
-        name: "defaultBranch",
-        hint: "Where the repository opens, and what a bare clone checks out.",
-        options: branches.map((b) => ({
-          value: b,
-          label: b,
-          selected: b === repo.defaultBranch,
-        })),
-      })}
-      <div class="field">
-        <label class="check">
-          <input
-            type="checkbox"
-            name="protect"
-            ${repo.protectDefault ? html`checked` : null}
-          />
-          <span
-            >Protect the default branch — no force-push, no deletion, and only
-            its admins push it; everyone else lands through a pull. Enforced
-            by the pre-receive hook, so it holds for every client.</span
-          >
-        </label>
-      </div>
-      <div class="field">
-        <label class="check">
-          <input
-            type="checkbox"
-            name="requireReview"
-            ${repo.requireReview ? html`checked` : null}
-          />
-          <span
-            >Require an approving review before merging — of the commit that is
-            head <em>now</em>, so a push after an approval dismisses it. Refused
-            in the merge itself, not just hidden on the button.</span
-          >
-        </label>
-      </div>
-      <div class="field">
-        <label class="check">
-          <input
-            type="checkbox"
-            name="requireChecks"
-            ${repo.requireChecks ? html`checked` : null}
-          />
-          <span
-            >Require a passing deploy before merging — the check is the pull
-            request's preview coming up at the commit that is head <em>now</em>.
-            Read live inside the merge, like the review.</span
-          >
-        </label>
-      </div>
-      <div class="field">
-        <input type="hidden" name="crewOutsidersShown" value="1" />
-        <label class="check">
-          <input
-            type="checkbox"
-            name="crewOutsiders"
-            ${repo.crewOutsiders ? html`checked` : null}
-          />
-          <span
-            >Outsiders may trigger the crew — anyone signed in who can read
-            this repository starts and steers runs by commenting, on your
-            budget. Off, only people who can write here direct the crew;
-            anyone else's words stay on the thread. Turning it on or off is
-            recorded in the activity.</span
-          >
-        </label>
-      </div>
+      ${settingLine("defaultBranch", html`<label for="f-defaultBranch">Default branch</label>
+        <select class="input" id="f-defaultBranch" name="defaultBranch" aria-describedby="why-defaultBranch">
+          ${branches.map(
+            (b) =>
+              html`<option value="${b}" ${b === repo.defaultBranch ? raw("selected") : null}>${b}</option>`,
+          )}
+        </select>`, "Where the repository opens, and what a bare clone checks out.")}
+      ${toggleLine("protect", "Protect the default branch", repo.protectDefault,
+        "No force-push, no deletion, and only its admins push it; everyone else lands through a pull. Enforced by the pre-receive hook, so it holds for every client.")}
+      ${toggleLine("requireReview", "Require an approving review", repo.requireReview,
+        html`Of the commit that is head <em>now</em>, so a push after an approval dismisses it. Refused in the merge itself, not just hidden on the button.`)}
+      ${toggleLine("requireChecks", "Require a passing deploy", repo.requireChecks,
+        html`The check is the pull request's preview coming up at the commit that is head <em>now</em>. Read live inside the merge, like the review.`)}
+      ${toggleLine("crewOutsiders", "Outsiders may trigger the crew", repo.crewOutsiders,
+        "Anyone signed in who can read this repository starts and steers runs by commenting, on your budget. Off, only people who can write here direct the crew; anyone else's words stay on the thread. Turning it on or off is recorded in the activity.",
+        "crewOutsidersShown")}
+      ${settingLine("polishShare", html`<input type="hidden" name="polishShareShown" value="1" />
+        <label for="polish-share">Polish share, percent (0 to ${String(POLISH_SHARE_MAX)})</label>
+        <input
+          class="input input-num mono"
+          id="polish-share"
+          name="polishShare"
+          type="number"
+          min="0"
+          max="${String(POLISH_SHARE_MAX)}"
+          step="1"
+          value="${String(repo.polishShare)}"
+          inputmode="numeric"
+          aria-describedby="why-polishShare"
+        />`, html`Percent of the week's agent spend that polish may take, 0 to ${String(POLISH_SHARE_MAX)} (starts at ${String(POLISH_SHARE_DEFAULT)}). Over it, the crew stops picking issues labelled polish or in the small-fixes lane until the week catches up; the <a href="${base}/week">week</a> shows where it stands.`)}
       ${cellMemory === undefined
         ? null
         : html`<div class="field"><p class="hint" data-check-memory>${
@@ -341,75 +323,98 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
       <div class="form-actions">
         ${btn("Save changes", { variant: "primary" })}
       </div>
-    </form>`,
-    { head: html`${icon("branch")}<h2>Branch and gates</h2>` },
-  );
+    </form>
+  </section>`;
   const secrets = secretsSection(ctx, "repo", `${repo.ownerName}/${repo.name}`);
   const upstream = followUpstreamCard(ctx, repo);
-  const wave = card(
-    html`<form method="post" action="${base}/settings/wave">
-      <p class="muted">
-        Opens a pull that adds the next <code>waves/&lt;version&gt;.md</code>,
-        listing every pull merged since the last wave. The headline and
-        highlights are left as TODO for you to write.
-        <a href="${base}/waves">See the waves so far</a>.
-      </p>
+  const sources = followSourcesCard(ctx, repo);
+  const wave = html`<section class="settings-block">
+    <h2>Cut a wave</h2>
+    <form method="post" action="${base}/settings/wave">
       <div class="form-actions">${btn("Cut a wave", { variant: "primary" })}</div>
-    </form>`,
-    { head: html`${icon("rocket")}<h2>Cut a wave</h2>` },
-  );
+    </form>
+  </section>`;
   const proposals = proposalTokensSection(ctx, repo);
   const trail = provenanceCard(ctx, repo);
-  const archive = card(
-    html`<form method="post" action="${base}/settings/archive">
+  const archive = html`<section class="settings-block">
+    <h2>Archive</h2>
+    <form method="post" action="${base}/settings/archive">
       <input type="hidden" name="archived" value="${repo.archivedAt === null ? "1" : "0"}" />
-      <p class="muted">
-        ${repo.archivedAt === null
-          ? "Put a finished repository away without deleting it. Its page says when it was archived; links, clone and push keep working."
-          : html`Archived on ${repo.archivedAt.slice(0, 10)}. Wake it to take the label off.`}
-      </p>
+      ${repo.archivedAt === null ? null : html`<p class="muted small">Archived on ${repo.archivedAt.slice(0, 10)}.</p>`}
       <div class="form-actions">
-        ${btn(repo.archivedAt === null ? "Archive" : "Wake", {
+        ${btn(repo.archivedAt === null ? "Archive" : "Restore", {
           variant: "primary",
         })}
       </div>
-    </form>`,
-    { head: html`${icon("folder")}<h2>Archive</h2>` },
-  );
+    </form>
+  </section>`;
+  const move = html`<section class="settings-block" id="move">
+    <h2>Move to another owner</h2>
+    <p class="muted small">Hands the repository to someone else.</p>
+    <form method="get" action="/-/confirm">
+      <input type="hidden" name="to" value="${base}/settings/transfer" />
+      ${formField({
+        label: "New owner",
+        name: "owner",
+        value: refused?.owner ?? "",
+        required: true,
+        maxlength: 64,
+        autocomplete: "off",
+        spellcheck: false,
+        mono: true,
+        ...(refused ? { error: refused.said } : {}),
+      })}
+      <div class="form-actions">${btn("Move", { variant: "danger" })}</div>
+    </form>
+  </section>`;
   renderMs += performance.now() - since;
   const held = timePhase(ctx.request, "mirror", () => getMirrorTarget(ctx.app.db, repo.id));
   since = performance.now();
   const mirror =
     held === undefined
       ? null
-      : card(
-          html`<form method="post" action="${base}/settings/mirror/stop">
-            <p class="muted" data-mirror-line>${mirrorLine(held)}</p>
-            <p class="muted small">
-              Stopping leaves ${held.fullName} as it is; nothing more is pushed.
-            </p>
+      : html`<section class="settings-block">
+          <h2>Mirror</h2>
+          <p class="muted" data-mirror-line>${mirrorLine(held)}</p>
+            <p class="muted small">Stopping leaves ${held.fullName} as it is; nothing more is pushed.</p>
             <div class="form-actions">
-              ${btn("Stop mirroring", { variant: "primary" })}
+              ${confirmAction({
+                action: `${base}/settings/mirror/stop`,
+                verb: "Stop mirroring",
+              })}
             </div>
-          </form>`,
-          { head: html`${icon("branch")}<h2>Mirror</h2>` },
-        );
+        </section>`;
+  const trailHelp = getProvenance(ctx.app.db, repo.id);
+  const help = pageHelp(
+    [
+      ["Cut a wave", html`Opens a pull that adds the next <code>waves/&lt;version&gt;.md</code>, listing every pull merged since the last wave. The headline and highlights are left as TODO for you to write. <a href="${base}/waves">See the waves so far</a>.`],
+      ["Archive", "Puts a finished repository away without deleting it. Its page says when it was archived; links, clone and push keep working. Restore takes the label off."],
+      ["Move to another owner", "Gives the repository to an account or organisation you can create repositories under. You are asked to confirm before it moves."],
+      ...(trailHelp === undefined ? [] : ([["Where this came from", "Where this repository was migrated from. Shown, it appears under the repository's name and in the API. Hidden, nobody else sees it, but the record is kept, so you can show it again."]] as const)),
+    ],
+    helpAsked(ctx.request.url),
+  );
   const response = settingsPageResponse(
     ctx,
     repo,
     "general",
     "Settings",
-    html`${lead}${mirror ? html`<div class="mt">${mirror}</div>` : null}<div class="mt">${body}</div>${trail
+    html`${help}${lead}${mirror ? html`<div class="mt">${mirror}</div>` : null}<div class="mt">${body}</div>${trail
       ? html`<div class="mt">${trail}</div>`
-      : null}${upstream ? html`<div class="mt">${upstream}</div>` : null}<div class="mt">${wave}</div><div class="mt">${archive}</div>${proposals
+      : null}${upstream ? html`<div class="mt">${upstream}</div>` : null}${sources ? html`<div class="mt">${sources}</div>` : null}<div class="mt">${wave}</div><div class="mt">${archive}</div><div class="mt">${move}</div>${proposals
       ? html`<div class="mt">${proposals}</div>`
       : null}${secrets
       ? html`<div class="mt">${secrets}</div>`
       : null}`,
+    undefined,
+    refused?.status,
   );
   notePhase(ctx.request, "render", renderMs + performance.now() - since);
   return response;
 }
+
+/** A form's polish share: the number if it is all digits, else NaN, which the action refuses. */
+const parseShare = (raw: string): number => (/^\d{1,3}$/.test(raw.trim()) ? Number(raw) : Number.NaN);
 
 export async function settingsUpdate(ctx: Ctx): Promise<Response> {
   const gate = await adminForm(ctx);
@@ -442,6 +447,8 @@ export async function settingsUpdate(ctx: Ctx): Promise<Response> {
       ? { crewOutsiders: form.get("crewOutsiders") !== null }
       : {}),
     ...(branch !== "" ? { defaultBranch: branch } : {}),
+    // Sent only by a form that draws the field; anything but a whole 0–50 is refused by the action.
+    ...(form.get("polishShareShown") !== null ? { polishShare: parseShare(field(form, "polishShare")) } : {}),
   };
   const updated = await updateRepoSettings(
     ctx.app,
@@ -456,6 +463,8 @@ export async function settingsUpdate(ctx: Ctx): Promise<Response> {
         message:
           updated.error === "unknown_branch"
             ? "That branch does not exist in this repository."
+            : updated.error === "polish_share"
+            ? `Polish share is a whole number of percent, 0 to ${POLISH_SHARE_MAX}.`
             : "Those settings could not be saved.",
       };
   return flashTo(ctx, `${base}/settings`, flash);
@@ -471,14 +480,26 @@ function samePath(ctx: Ctx, to: string | undefined): string | undefined {
 }
 
 /**
- * POST /:owner/:name/settings/archive — archive or wake. The state asked
+ * POST /:owner/:name/settings/archive — archive or restore. The state asked
  * for travels in the form, so a double submit is idempotent.
  */
 export async function archiveSubmit(ctx: Ctx): Promise<Response> {
+  return archiveWith(ctx, undefined);
+}
+
+/**
+ * POST /:owner/:name/archive — the one-tap Archive, reached only through
+ * `/-/confirm`: the form there carries no field, so the answer is fixed here.
+ */
+export async function archiveConfirmed(ctx: Ctx): Promise<Response> {
+  return archiveWith(ctx, "1");
+}
+
+async function archiveWith(ctx: Ctx, fixed: "1" | undefined): Promise<Response> {
   const gate = await adminForm(ctx);
   if (gate instanceof Response) return gate;
   const { repo, form } = gate;
-  const asked = field(form, "archived");
+  const asked = fixed ?? field(form, "archived");
   if (asked !== "0" && asked !== "1")
     return flashTo(ctx, `${repoBase(repo)}/settings`, {
       tone: "danger",
@@ -497,9 +518,33 @@ export async function archiveSubmit(ctx: Ctx): Promise<Response> {
     ctx,
     back,
     updated.ok
-      ? { message: archived ? "Archived." : "Awake again." }
+      ? { message: archived ? "Archived." : "Restored." }
       : { tone: "danger", message: NOT_CHANGED },
   );
+}
+
+/**
+ * POST /:owner/:name/settings/transfer — move the repository to another
+ * owner, through the action (never core). A refusal is the settings page
+ * again, with the sentence beside the field and the field as typed.
+ */
+export async function transferSubmit(ctx: Ctx): Promise<Response> {
+  const gate = await adminForm(ctx);
+  if (gate instanceof Response) return gate;
+  const { repo, form } = gate;
+  const owner = (field(form, "owner") ?? "").trim();
+  const refuse = (said: string, status: number) =>
+    settingsPage(ctx, { owner: owner.slice(0, 64), said, status });
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(owner))
+    return refuse(TRANSFER_SAID.unknown_owner, TRANSFER_STATUS.unknown_owner);
+  const moved = await transferRepository(ctx.app, ctx.auth.user, repo, owner);
+  if (!moved.ok) {
+    if (moved.error === "not_found") return repoNotFound(ctx);
+    return refuse(TRANSFER_SAID[moved.error], TRANSFER_STATUS[moved.error]);
+  }
+  return flashTo(ctx, `${repoBase(moved.value)}/settings`, {
+    message: `Moved to ${moved.value.ownerName}/${moved.value.name}.`,
+  });
 }
 
 /**
@@ -510,10 +555,17 @@ function provenanceCard(ctx: Ctx, repo: Repo): Html | null {
   const trail = getProvenance(ctx.app.db, repo.id);
   if (trail === undefined) return null;
   const base = repoBase(repo);
-  return card(
-    html`<form method="post" action="${base}/settings/provenance">
+  return html`<section class="settings-block">
+    <h2>Show where this came from</h2>
+    <form method="post" action="${base}/settings/provenance">
       <input type="hidden" name="shown" value="${trail.shown ? "0" : "1"}" />
-      <p class="muted">
+      <p class="muted small">${trail.shown ? "Shown under the repository's name." : "Hidden; the record is kept."}</p>
+      <div class="form-actions">
+        ${btn(trail.shown ? "Hide where this came from" : "Show where this came from", {
+          variant: "outline",
+        })}
+      </div>
+      <p class="muted small mt">
         Migrated from
         <a href="${trail.sourceUrl}" rel="noopener noreferrer"
           >${sourceLabel(trail.sourceUrl)}</a
@@ -525,18 +577,9 @@ function provenanceCard(ctx: Ctx, repo: Repo): Html | null {
               >`,
         )}
         on ${trail.migratedAt.slice(0, 10)}.
-        ${trail.shown
-          ? "Shown under the repository's name on every page and in the API. Hiding it keeps the record, so it can come back."
-          : "Hidden: nobody else sees it, on a page or in the API. The record is kept."}
       </p>
-      <div class="form-actions">
-        ${btn(trail.shown ? "Hide where this came from" : "Show where this came from", {
-          variant: "outline",
-        })}
-      </div>
-    </form>`,
-    { head: html`${icon("fork")}<h2>Show where this came from</h2>` },
-  );
+    </form>
+  </section>`;
 }
 
 /** POST /:owner/:name/settings/provenance — show or hide the trail. */
@@ -616,6 +659,7 @@ function appSettingsView(
   values: AppValues,
   error?: string,
   egress?: EgressView,
+  blocked?: BlockedView,
 ): Html {
   const base = repoBase(repo);
   const runtime = appsRuntime(ctx.app);
@@ -625,8 +669,9 @@ function appSettingsView(
       ? undefined
       : readAppMembers(ctx.app, ctx.auth.user, repo);
   const named = listed?.ok === true ? listed.value.members : [];
-  const form = card(
-    html`${when(
+  const form = html`<section class="settings-block" id="app">
+    <h2>${record === undefined ? "Run as an app" : "App"}</h2>
+    ${when(
         record === undefined,
         () =>
           html`<p class="muted small mb">
@@ -701,29 +746,41 @@ function appSettingsView(
             }),
           )}
         </div>
-      </form>`,
-    {
-      head: html`${icon("rocket")}
-        <h2>${record === undefined ? "Run as an app" : "App"}</h2>`,
-    },
-  );
-  if (record === undefined) return form;
+      </form>
+  </section>`;
+  // What the forge would charge (#508): crew spend counts before the repository runs as an app.
+  const statement = html`<section class="settings-block" id="statement">
+    <h2>Statement</h2>
+    <p><a href="${base}/settings/app/statement">This month's statement</a></p>
+  </section>`;
+  if (record === undefined) return html`${form}<div class="mt">${statement}</div>`;
   const domains = timePhase(ctx.request, "domains", () =>
     listAppDomains(ctx.app, ctx.auth.user, repo),
   );
   const vitals = timePhase(ctx.request, "vitals", () =>
     appVitals(ctx.app.db, record.id),
   );
-  return html`${form}
+  const help = pageHelp(
+    [
+      ["Visitors and speed", "Counted by the beacon, with no address kept; the 7 day figure adds the days up."],
+      ["Environment", "What the app reads at start-up; values are write-only, and one set for production only or previews only wins there over one set everywhere."],
+      ["Who may enter", "Named people may open the app and its previews, and nothing else: not the code, the crew, the settings or the terminal. Removing a name shuts them out at once. What the app itself shows them is the app's to decide: it runs with your read-only token, so anything it shows visitors from the forge, they see too."],
+      ["Domains", html`Serve the app at a name of your own — <span class="mono">app.example.com</span>, or an apex. Add it, publish the two records it shows, and press Check now. The forge serves the app there as soon as the record is verified; the app itself learns its new address at its next deploy.`],
+    ],
+    helpAsked(ctx.request.url),
+  );
+  return html`${help}${form}
     ${when(listed?.ok === true, () => html`<div class="mt">${appMembersView(base, values.access, named)}</div>`)}
     <div class="mt">${appVisitorsView(vitals)}</div>
+    <div class="mt">${statement}</div>
     <div class="mt">
       ${appEnvView(base, listAppEnvNames(ctx.app.db, record.id))}
     </div>
     <div class="mt">
       ${appDomainsView(base, domains.ok ? domains.value : undefined)}
     </div>
-    ${when(egress !== undefined && egress.rows.length > 0, () => html`<div class="mt">${appEgressView(base, egress!)}</div>`)}
+    ${when(blocked !== undefined, () => html`<div class="mt">${blockedNote(base, blocked!)}</div>`)}
+    ${when(egress !== undefined, () => html`<div class="mt">${appEgressView(base, egress!)}</div>`)}
     <div class="mt">
       ${card(
         html`<p>
@@ -755,12 +812,9 @@ export function appVisitorsView(v: AppVitals): Html {
       ? "p75 load each day over the last 30 days"
       : `p75 load each day over the last 30 days, latest ${ms(latest ?? undefined)}, range ${ms(Math.min(...known))} to ${ms(Math.max(...known))}`,
   );
-  return card(
-    html`<p class="muted small mb">
-        Counted by the beacon the template ships, through the forge: no
-        address is kept, and a visitor is the same only within a day, so the
-        7 day figure adds the days up.
-      </p>
+  return html`<section class="settings-block" id="visitors">
+    <h2>Visitors and speed</h2>
+    <p class="small mb"><a href="app/traffic">Where visitors come from</a></p>
       <dl class="stats">
         <div><dt>Visitors today</dt><dd>${v.today}</dd></div>
         <div><dt>Visitors, 7 days</dt><dd>${v.week}</dd></div>
@@ -769,10 +823,10 @@ export function appVisitorsView(v: AppVitals): Html {
         <div><dt>p75 LCP</dt><dd>${ms(v.lcpP75)}</dd></div>
         <div><dt>p75 INP</dt><dd>${ms(v.inpP75)}</dd></div>
         <div><dt>p75 CLS</dt><dd>${shiftText(v.clsP75)}</dd></div>
+        ${v.wait === undefined ? "" : html`<div><dt>Slowest wait, 10 min</dt><dd>${relayWaitWords(v.wait)}</dd></div>`}
       </dl>
-      ${spark ? html`<div class="bar muted">${spark}</div>` : html`<p class="muted small mt">No load reports in the last 30 days</p>`}`,
-    { head: html`${icon("rocket")}<h2>Visitors and speed</h2>` },
-  );
+      ${spark ? html`<div class="bar muted">${spark}</div>` : html`<p class="muted small mt">No load reports in the last 30 days</p>`}
+  </section>`;
 }
 
 /**
@@ -780,7 +834,7 @@ export function appVisitorsView(v: AppVitals): Html {
  * Values are write-only — the page shows a name and when it was set, and
  * the value input forgets what was typed the moment the form is sent.
  */
-function appEnvView(base: string, names: AppEnvName[]): Html {
+export function appEnvView(base: string, names: AppEnvName[]): Html {
   const rows = names.map((v) =>
     row({
       lead: icon("key"),
@@ -800,21 +854,12 @@ function appEnvView(base: string, names: AppEnvName[]): Html {
       </form>`,
     }),
   );
-  return card(
-    html`<div class="card-body">
-        <p class="muted small">
-          What the app reads from its environment at start-up — an admin
-          password, an API key. Values are write-only: set one, and it is never
-          shown again. A variable goes everywhere, to production only, or to
-          previews only; the same name may be set in each, and the narrower one
-          wins — a test key for previews, the live one for production. Changing
-          one redeploys what reads it, and nothing else.
-        </p>
-      </div>
+  return html`<section class="settings-block" id="environment">
+    <h2>Environment</h2>
       ${when(
         rows.length > 0,
         () =>
-          html`<ul class="list">
+          html`<ul class="list setting-list">
             ${rows}
           </ul>`,
       )}
@@ -846,13 +891,8 @@ function appEnvView(base: string, names: AppEnvName[]): Html {
           <option value="preview">Previews only</option>
         </select>
         ${btn("Set", { variant: "primary", size: "sm", icon: "plus" })}
-      </form>`,
-    {
-      head: html`${icon("key")}
-        <h2>Environment</h2>`,
-      pad: false,
-    },
-  );
+      </form>
+  </section>`;
 }
 
 /**
@@ -873,8 +913,9 @@ function appMembersView(
   access: AppAccess,
   named: readonly string[],
 ): Html {
-  return card(
-    html`<form method="post" action="${base}/settings/app/members">
+  return html`<section class="settings-block" id="members">
+    <h2>${icon("users")} Who may enter</h2>
+    <form method="post" action="${base}/settings/app/members">
       <div class="field">
         <label for="f-members">People</label>
         <textarea
@@ -888,19 +929,11 @@ function appMembersView(
         >
 ${named.join("\n")}</textarea
         >
-        <p class="hint">
-          ${access === "private"
-            ? "They may open the app and its previews, and nothing else: not the code, the crew, the settings or the terminal. Removing a name shuts them out at once. What the app itself shows them is the app's to decide: it runs with your read-only token, so anything it shows visitors from the forge, they see too."
-            : "The app is public, so anyone may open it now; these names matter once it is private."}
-        </p>
+        ${access === "private" ? null : html`<p class="hint">The app is public, so anyone may open it now; these names matter once it is private.</p>`}
       </div>
       <div class="form-actions">${btn("Save people", { variant: "primary" })}</div>
-    </form>`,
-    {
-      head: html`${icon("users")}
-        <h2>Who may enter</h2>`,
-    },
-  );
+    </form>
+  </section>`;
 }
 
 function appDomainsView(
@@ -941,14 +974,8 @@ function appDomainsView(
         </div>
       </li>`,
   );
-  return card(
-    html`<div class="card-body">
-        <p class="muted small">
-          Serve the app at a name of your own —
-          <span class="mono">app.example.com</span>, or an apex. Add it, publish
-          the two records it shows, and press Check now.
-        </p>
-      </div>
+  return html`<section class="settings-block" id="domains">
+    <h2>${icon("globe")} Domains</h2>
       ${when(
         rows.length > 0,
         () =>
@@ -957,20 +984,11 @@ function appDomainsView(
           </ul>`,
       )}
       ${domains === undefined
-        ? html`<div class="card-body">
-            <p class="muted small">
+        ? html`<p class="muted small">
               Nothing is serving apps on this forge, so a domain would have
               nowhere to point.
-            </p>
-          </div>`
-        : html`<div class="card-body">
-              <p class="muted small">
-                The forge serves the app there as soon as the record is
-                verified. The app itself learns its new address at its next
-                deploy.
-              </p>
-            </div>
-            <form
+            </p>`
+        : html`<form
               class="edit-row"
               method="post"
               action="${base}/settings/app/domains"
@@ -986,13 +1004,8 @@ function appDomainsView(
                 required
               />
               ${btn("Add", { variant: "primary", size: "sm", icon: "plus" })}
-            </form>`}`,
-    {
-      head: html`${icon("globe")}
-        <h2>Domains</h2>`,
-      pad: false,
-    },
-  );
+            </form>`}
+  </section>`;
 }
 
 /** The records as a person copies them into a zone: type, name, value. */
@@ -1049,6 +1062,8 @@ export async function appSettingsPage(ctx: Ctx): Promise<Response> {
     record === undefined
       ? undefined
       : await egressView(ctx.app, ctx.auth.user, repo);
+  const blockedBase = record === undefined ? undefined : blockedView(ctx.app, ctx.auth.user, repo);
+  const blocked = blockedBase?.ok ? { ok: true as const, value: await withLiveOnly(ctx.app, repo, blockedBase.value) } : blockedBase;
   const view = appSettingsView(
     ctx,
     repo,
@@ -1056,6 +1071,7 @@ export async function appSettingsPage(ctx: Ctx): Promise<Response> {
     appValues(repo, record),
     undefined,
     egress?.ok ? egress.value : undefined,
+    blocked?.ok ? blocked.value : undefined,
   );
   const rendering = performance.now();
   const response = settingsPageResponse(ctx, repo, "app", "App", view);
@@ -1330,30 +1346,26 @@ function appEgressView(base: string, egress: EgressView): Html {
         >`,
       }),
   );
-  return card(
-    html`<div class="card-body">
-        <p class="muted small">
-          Each is an exact address and port forge.json asks for. A grant opens
-          that one destination for the app's cells and nothing else.${egress.canChange
-            ? null
-            : " Only a site admin grants or revokes."}
-        </p>
-      </div>
-      <ul class="list setting-list">
-        ${rows}
-      </ul>
-      ${when(
-        changes.length > 0,
-        () =>
-          html`<div class="card-body">
-            <div class="timeline">${changes}</div>
-          </div>`,
-      )}`,
-    {
-      head: html`${icon("globe")}
-        <h2>Private destinations asked for</h2>`,
-    },
-  );
+  return html`<section class="settings-block" id="egress">
+    <h2>Private destinations asked for</h2>
+    ${rows.length === 0
+      ? html`<p class="muted small">
+          This app reaches only the forge; every other host is refused.
+        </p>`
+      : html`<p class="muted small">
+            Each is an exact address and port forge.json asks for; every other
+            host is refused.${egress.canChange
+              ? null
+              : " Only a site admin grants or revokes."}
+          </p>
+          <ul class="list setting-list">
+            ${rows}
+          </ul>`}
+    ${when(
+      changes.length > 0,
+      () => html`<div class="timeline">${changes}</div>`,
+    )}
+  </section>`;
 }
 
 const EGRESS_ERRORS: Record<string, string> = {
@@ -1383,6 +1395,40 @@ export async function appEgressGrant(ctx: Ctx): Promise<Response> {
           message: EGRESS_ERRORS[granted.error] ?? "That could not be granted.",
         },
   );
+}
+
+const BLOCKED_ERRORS: Record<string, string> = {
+  invalid: "That is not a host and port.",
+  not_refused: "The app was not refused that.",
+  needs_site_admin: "A private destination needs a site admin's yes.",
+  needs_human: "An agent proposes the forge.json change in a pull.",
+};
+
+// POST /:owner/:name/settings/app/blocked/:destination/(allow|ignore)
+export function appBlocked(how: "allow" | "ignore") {
+  return async (ctx: Ctx): Promise<Response> => {
+    const gate = await adminForm(ctx);
+    if (gate instanceof Response) return gate;
+    const { repo } = gate;
+    const destination = ctx.params.destination ?? "";
+    const done =
+      how === "allow"
+        ? await allowBlocked(ctx.app, ctx.auth.user, repo, destination)
+        : ignoreBlocked(ctx.app, ctx.auth.user, repo, destination);
+    if (!done.ok && done.error === "not_found") return repoNotFound(ctx);
+    const to = `${repoBase(repo)}/settings/app`;
+    if (!done.ok)
+      return flashTo(ctx, to, { tone: "danger", message: BLOCKED_ERRORS[done.error] ?? "That could not be done." });
+    return flashTo(ctx, to, { message: blockedMessage(done.value) });
+  };
+}
+
+function blockedMessage(value: string | Allowed): string {
+  if (typeof value === "string") return `Ignoring ${value}.`;
+  if (value.needsGrant) return `${value.entry} is in forge.json; a site admin grants it below.`;
+  return value.committed
+    ? `${value.entry} is allowed now and committed to forge.json.`
+    : `${value.entry} is allowed now; forge.json could not be edited, add it by hand.`;
 }
 
 // POST /:owner/:name/settings/app/egress/:destination/revoke
@@ -1422,50 +1468,23 @@ export function autonomySettingsPage(ctx: Ctx): Response {
   return redirect(`${repoBase(repo)}/settings#autonomy`);
 }
 
-// POST /:owner/:name/settings/flow-only — the one switch; the state asked
-// for travels in the form, so a double submit is idempotent.
-export async function flowOnlyUpdate(ctx: Ctx): Promise<Response> {
-  const gate = await adminForm(ctx);
-  if (gate instanceof Response) return gate;
-  const { repo, form } = gate;
-  const asked = field(form, "flowOnly");
-  const back = `${repoBase(repo)}/settings#autonomy`;
-  if (asked !== "0" && asked !== "1")
-    return flashTo(ctx, back, { tone: "danger", message: NOT_CHANGED });
-  const updated = await updateRepoSettings(ctx.app, ctx.auth.user, repo, {
-    flowOnly: asked === "1",
-  });
-  return flashTo(
-    ctx,
-    back,
-    updated.ok
-      ? { message: asked === "1" ? "Flow only is on." : "Flow only is off." }
-      : { tone: "danger", message: "Those settings could not be saved." },
-  );
-}
-
 // POST /:owner/:name/settings/autonomy
 export async function autonomySettingsUpdate(ctx: Ctx): Promise<Response> {
   const gate = await adminForm(ctx);
   if (gate instanceof Response) return gate;
   const { repo, form } = gate;
   const base = repoBase(repo);
-  const mode = field(form, "autonomy");
   const ceiling = Number(field(form, "ceiling"));
-  const slots = Number(field(form, "slots"));
-  if (
-    !isAutonomy(mode) ||
-    !Number.isFinite(ceiling) ||
-    ceiling < 0 ||
-    !Number.isInteger(slots) ||
-    slots < 1 ||
-    slots > 8
-  )
+  // The builders' slots are the Builder pillar's number on the team card; this form only keeps them.
+  const slotsField = field(form, "slots");
+  const slots = slotsField === "" ? repo.autonomySlots : Number(slotsField);
+  const checked = checkAutonomy(field(form, "autonomy"), ceiling, slots);
+  if (!checked.ok)
     return flashTo(ctx, `${base}/settings#autonomy`, {
       tone: "danger",
-      message:
-        "Mode is off, assisted or autonomous; the ceiling is a number of dollars; slots are 1 to 8.",
+      message: checked.message,
     });
+  const { mode } = checked;
   const rule = field(form, "decisions");
   const decisionsBy = rule === "" ? repo.decisionsBy : rule;
   if (!isDecisionsBy(decisionsBy))
@@ -1484,14 +1503,7 @@ export async function autonomySettingsUpdate(ctx: Ctx): Promise<Response> {
   });
   return flashTo(ctx, `${base}/settings#autonomy`, {
     ...(updated.ok
-      ? {
-          message:
-            mode === "off"
-              ? "Autonomy is off."
-              : mode === "assisted"
-                ? "Assisted: the crew works what is ready; green waits for you."
-                : "Autonomous: the crew works what is ready and ships on green, as you.",
-        }
+      ? { message: AUTONOMY_SAID[mode] }
       : {
           tone: "danger" as const,
           message: "Those settings could not be saved.",

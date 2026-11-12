@@ -56,7 +56,9 @@ describe("inline review comments use the comment component", () => {
   test("the text, the outdated mark, the resolved line and the reply form are", () => {
     expect(out).toContain("<strong>question</strong>");
     expect(out).toContain("stale remark");
-    expect(out).toContain('class="card comment');
+    expect(out).toContain('class="comment-row"');
+    expect(out).not.toContain('class="card comment');
+    expect(out).not.toContain('class="card comment-form');
     expect(out).toContain("outdated");
     expect(out).toContain("resolved");
     expect(out).toContain('action="/o/r/pulls/1/review"');
@@ -76,11 +78,12 @@ describe("a review thread is a card and its resolve control a button", () => {
       ]),
     }).toString();
 
-  test("an open thread is a card with a Resolve button", () => {
+  test("an open thread is prose with a Resolve button", () => {
     const out = render(null);
     expect(out).toContain('action="/o/r/pulls/1/threads/x/resolve"');
     expect(out).toMatch(/<button[^>]*class="btn"[^>]*>\s*Resolve\s*<\/button>/);
-    expect(out).toContain('class="card-foot"');
+    expect(out).toContain('class="dc-thread"');
+    expect(out).not.toContain("card-head");
   });
 
   test("a resolved thread is one line with an Unresolve button", () => {

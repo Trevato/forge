@@ -1,11 +1,12 @@
 /**
  * The "no release" flow alarm (#5930): main has moved and nothing has gone
- * live for 90 minutes. Reads the release record `/releases` reads and the
- * merges into the default branch; pure of the clock — `now` is passed in.
+ * live for 90 minutes. Reads what `/changelog` reads (`release/landings.ts`): the oldest
+ * merge the running commit does not yet contain; pure of the clock — `now` is passed in.
  */
 
 import type { Database } from "bun:sqlite";
-import { listReleases } from "../release/record.ts";
+import { waitingSince } from "../release/landings.ts";
+import { running } from "../kernel/version.ts";
 
 export const NO_RELEASE_MS = 90 * 60_000;
 
@@ -23,16 +24,11 @@ function ago(ms: number): string {
 }
 
 export function noReleaseAlarm(db: Database, now: Date): NoReleaseAlarm {
-  const last = listReleases(db, 50).find((r) => r.ok);
-  const after = last?.createdAt ?? "";
-  const moved = db
-    .query<{ at: string }, [string, string]>(
-      `SELECT MIN(p.merged_at) AS at FROM pull p JOIN issue i ON i.id = p.issue_id JOIN repo r ON r.id = i.repo_id
-        WHERE p.base_branch = r.default_branch AND p.merged_at IS NOT NULL AND p.merged_at > ?1 AND p.merged_at <= ?2`,
-    )
-    .get(after, now.toISOString())?.at;
-  const live = last ? `since ${last.sha.slice(0, 7)}` : "yet";
-  if (!moved) return { fired: false, says: "Nothing has moved on main since the last release." };
+  const moved = waitingSince(db);
+  const commit = running().commit;
+  const live = commit ? `since ${commit.slice(0, 7)}` : "yet";
+  if (moved === undefined || Date.parse(moved) > now.getTime())
+    return { fired: false, says: "Nothing has moved on main since the last release." };
   const wait = now.getTime() - Date.parse(moved);
   if (wait < NO_RELEASE_MS) return { fired: false, says: `Main moved ${ago(wait)}; a release is not yet due.` };
   return {

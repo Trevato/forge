@@ -42,29 +42,29 @@ const llms = () => fetch(`${servers.url}/llms.txt`).then((r) => r.text());
 const here = async (path = "/", tok = token) =>
   (await fetch(`${servers.url}/api/v1/here?path=${path}`, {
     headers: { authorization: `Bearer ${tok}` },
-  }).then((r) => r.json())) as { actions: { do: string; ssh?: string }[] };
+  }).then((r) => r.json())) as { can: { do: string; ssh?: string }[] };
 
 test("SSH off: neither mentions it", async () => {
   app.config.sshPort = 0;
   expect(await llms()).not.toContain("tell <words>");
-  expect((await here()).actions.some((a) => a.ssh !== undefined)).toBe(false);
+  expect((await here()).can.some((a) => a.ssh !== undefined)).toBe(false);
 });
 
 test("SSH on: both give the exact command from the forge's own address", async () => {
   app.config.sshPort = 2222;
   const cmd = `ssh -p 2222 ${app.config.host ?? "localhost"} tell <words>`;
   expect(await llms()).toContain(`\`${cmd}\``);
-  const a = (await here()).actions.find((x) => x.do === "tell the crew");
+  const a = (await here()).can.find((x) => x.do === "tell the crew");
   expect(a?.ssh).toBe(cmd);
 });
 
-test("a repository page puts ssh on its tell action for who may direct the crew; a read-only token gets none anywhere", async () => {
+test("a repository page puts ssh on its tell verb in `can` for who may direct the crew; a read-only token gets none anywhere", async () => {
   app.config.sshPort = 2222;
   const cmd = `ssh -p 2222 ${app.config.host ?? "localhost"} tell <words>`;
   const repoPage = await here("/alice/hello");
-  expect(repoPage.actions.find((x) => x.do === "tell the crew")?.ssh).toBe(cmd);
-  expect((await here("/", roToken)).actions.some((a) => a.ssh !== undefined)).toBe(false);
-  expect((await here("/alice/hello", roToken)).actions.some((a) => a.ssh !== undefined)).toBe(false);
+  expect(repoPage.can.find((x) => x.do === "tell the crew")?.ssh).toBe(cmd);
+  expect((await here("/", roToken)).can.some((a) => a.ssh !== undefined)).toBe(false);
+  expect((await here("/alice/hello", roToken)).can.some((a) => a.ssh !== undefined)).toBe(false);
   app.config.sshPort = 0;
-  expect((await here("/alice/hello")).actions.some((a) => a.ssh !== undefined)).toBe(false);
+  expect((await here("/alice/hello")).can.some((a) => a.ssh !== undefined)).toBe(false);
 });

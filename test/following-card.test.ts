@@ -1,6 +1,6 @@
 /**
- * The "following" card on a fork's page is built by card() (#2891): one
- * `div.card.following#following` with its badge and sentence, not hand-rolled
+ * The "following" section on a fork's page (#9841) is a heading over rows, no box: one
+ * `section#following` with its badge and sentence, not hand-rolled
  * markup.
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
@@ -61,15 +61,16 @@ afterAll(async () => {
 test("a fork's page draws the following panel with card, row and btn", async () => {
   const res = await fetch(`${servers.url}/bob/lib`, { headers: { cookie: "forge_mode=dev" } });
   const page = await res.text();
-  const m = page.match(/<div\s+class="card"\s+id="following"[\s\S]*?<\/ul>/);
+  const m = page.match(/<section\s+class="settings-block bare"\s+id="following"[\s\S]*?<\/section>/);
   expect(m).not.toBeNull();
   const panel = m![0];
+  expect(panel).not.toContain('class="card');
   for (const old of ["following-actions", "following-eyebrow", "following-foot", "following-head", "following-sentence"])
     expect(page).not.toContain(old);
   expect(page).not.toMatch(/class="[^"]*\bfollowing\b[^"]*"/);
-  expect(panel).toContain("card-head");
+  expect(panel).toMatch(/<h2>/);
   expect(panel).toContain('class="badge');
-  expect(panel).toMatch(/<div class="card-body stack">\s*<p>\s*Everything here is up to date with alice\/lib\./);
+  expect(panel).toMatch(/<div class="stack">\s*<p>\s*Everything here is up to date with alice\/lib\./);
   expect(panel).toContain('href="/alice/lib"');
   expect(panel).toContain("following");
 }, 30_000);
@@ -96,10 +97,11 @@ test("the card foot holds the take and propose forms, each a post form with a bt
     page = await (await fetch(`${servers.url}/bob/lib`, { headers: { cookie } })).text();
     if (!page.includes('value="take"')) await Bun.sleep(40);
   }
-  const foot = page.match(/<div class="card-foot">([\s\S]*?)<\/div>\s*<\/div>/);
+  if (!page.includes('value="take"')) throw new Error(`never came: still waiting while !page.includes('value="take"')`);
+  const foot = page.match(/<div class="bar mt">([\s\S]*?)<\/div>\s*<\/section>/);
   expect(foot).not.toBeNull();
   // Prose wraps: sentences and notes are paragraphs, never a (nowrap) row title.
-  const body = page.match(/id="following"[\s\S]*?<div class="card-body stack">([\s\S]*?)<\/div>/);
+  const body = page.match(/id="following"[\s\S]*?<div class="stack">([\s\S]*?)<\/div>/);
   expect(body).not.toBeNull();
   expect(body![1]).toContain("<p>");
   expect(body![1]).not.toContain("row-title");
@@ -107,3 +109,11 @@ test("the card foot holds the take and propose forms, each a post form with a bt
   expect(forms.map((f) => f[1]!.match(/name="do" value="(\w+)"/)![1])).toEqual(["take", "propose"]);
   for (const f of forms) expect(f[1]).toMatch(/<button[^>]*type="submit"[^>]*class="btn|<button[^>]*class="btn[^>]*type="submit"/);
 }, 30_000);
+
+test("the studio app page draws the Following section unboxed, without the bare variant", async () => {
+  const { followingCard } = await import("../src/web/pages/following.ts");
+  expect(followingCard.length).toBeLessThanOrEqual(4);
+  const src = await Bun.file(new URL("../src/web/studio/app.ts", import.meta.url)).text();
+  expect(src).toContain("followingCard(ctx, repo, following)");
+  expect(src).not.toContain("bare");
+});

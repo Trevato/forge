@@ -2,7 +2,7 @@
  * The seeded clog (#6523, part of #5930): 51 pulls opened against 15 landed in
  * the last hour, and six open pulls on one file. The inflow governor lowers the
  * builder slots and says why; the hot-file hold keeps a fresh build off that
- * file while a build on another file may start. Vitals are plain data and the
+ * file while a build on another file may start. The flow is plain data and the
  * pulls' files are remembered, so no clock and no git.
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
@@ -18,7 +18,7 @@ import type { Repo } from "../src/core/repos.ts";
 import { governedSlots } from "../src/crew/governor.ts";
 import { heldNow } from "../src/crew/held.ts";
 import { HOT_PULLS, rememberPullFiles } from "../src/crew/hot_files.ts";
-import type { Vitals } from "../src/flow/vitals.ts";
+import type { RepoFlow } from "../src/flow/repo_flow.ts";
 
 let dataDir: string;
 let app: App;
@@ -52,7 +52,7 @@ const open = (title: string): Issue => {
 };
 
 test("a seeded clog lowers the slots and holds a fresh build on the hot file", () => {
-  const clog: Vitals = { open: 8, opened1h: 51, landed1h: 15, opened6h: 120, landed6h: 40, conflicted: 0, red: 0, queued: 0, oldestApprovedHours: null, strandedUsd: 0, gateMinutes1h: 0, pullCheckMinutes1h: 0, batches6h: 0, redBatchRate: null };
+  const clog: RepoFlow = { open: 8, moving: 8, opened1h: 51, landed1h: 15, opened6h: 120, landed6h: 40 };
   const ceiling = 7;
   const governed = governedSlots(clog, ceiling);
   expect(governed.slots).toBeLessThan(ceiling);

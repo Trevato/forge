@@ -25,6 +25,7 @@ import {
   CALLBACK_PATH,
   linkParent,
 } from "../core/federation.ts";
+import { retryAfterOf } from "./respond.ts";
 import { readCapped } from "../origins/providers/http.ts";
 import { clientAddress } from "./peer.ts";
 import { signinAllowed } from "../web/pages/site.ts";
@@ -144,8 +145,8 @@ async function begin(ctx: Ctx, linkUser?: string): Promise<Response> {
   // out the sign-ins of people in flight. By socket address, never a header.
   const wait = signinAllowed(ctx, `parent:${clientAddress(ctx.request)}`);
   if (wait !== undefined) {
-    const slow = failure(ctx, `Too many attempts. Try again in ${wait}s.`, 429);
-    slow.headers.set("retry-after", String(wait));
+    const slow = failure(ctx, `Too many attempts. Try again in ${retryAfterOf(wait)}s.`, 429);
+    slow.headers.set("retry-after", String(retryAfterOf(wait)));
     return slow;
   }
   const redirectUri = redirectUriOf(ctx);

@@ -138,6 +138,24 @@ describe("forks, labels and webhooks are pages", () => {
       }
   });
 
+  test("repo, pull, issue and fleet-op lists refuse a bad limit with a 422, and take the bounds", async () => {
+    const base = `${servers.url}/api/v1`;
+    const headers = { authorization: `Bearer ${tokens["alice"]}` };
+    const paths = ["/repos", "/users/alice/repos", "/repos/alice/lib/pulls", "/repos/alice/lib/issues", "/fleet/ops"];
+    for (const path of paths) {
+      for (const bad of ["abc", "0", "-1", "1.5", "201", ""]) {
+        const res = await fetch(`${base}${path}?limit=${bad}`, { headers });
+        expect(res.status).toBe(422);
+        expect(await res.json()).toMatchObject({
+          error: "invalid_limit",
+          message: "limit is a whole number from 1 to 200",
+        });
+      }
+      for (const ok of ["", "?limit=1", "?limit=200"])
+        expect((await fetch(`${base}${path}${ok}`, { headers })).status).toBe(200);
+    }
+  });
+
   test("deleting the row a page ended on makes the next read start over", async () => {
     const first = await get("/labels?limit=1", "alice");
     expect(first.body.next_cursor).toBeTruthy();

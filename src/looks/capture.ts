@@ -58,6 +58,16 @@ export interface LookInput {
 /** What the page recorded while it loaded; a type the browser lacks is an empty list. */
 export interface Recorded {
   readonly entries: Entries;
+  /** The page's own size, when the page reported all four numbers. */
+  readonly size?: PageSize | undefined;
+}
+
+/** The document's scroll size and the window's inner size, in CSS pixels. */
+export interface PageSize {
+  readonly scrollWidth: number;
+  readonly scrollHeight: number;
+  readonly innerWidth: number;
+  readonly innerHeight: number;
 }
 
 /**
@@ -137,6 +147,16 @@ const OBSERVER = `(() => {
   watch("longtask", "longtask", (e) => ({ startTime: e.startTime, duration: e.duration }));
 })()`;
 
+/** Read after load, in the one evaluate that already fetches the entries. */
+const READ = `JSON.stringify(Object.assign({}, window.__forgeVitals, { size: {
+  scrollWidth: document.documentElement.scrollWidth,
+  scrollHeight: document.documentElement.scrollHeight,
+  innerWidth: window.innerWidth,
+  innerHeight: window.innerHeight } }))`;
+
+const whole = (v: unknown): v is number =>
+  typeof v === "number" && Number.isInteger(v) && v >= 0;
+
 const finite = (v: unknown): v is number =>
   typeof v === "number" && Number.isFinite(v) && v >= 0;
 
@@ -172,13 +192,50 @@ export function parseRecorded(raw: unknown): Recorded {
     }
     return out;
   };
+  const sz = rec["size"];
+  const from =
+    sz !== null && typeof sz === "object"
+      ? (sz as Record<string, unknown>)
+      : {};
+  const { scrollWidth, scrollHeight, innerWidth, innerHeight } = from;
+  const size =
+    whole(scrollWidth) && whole(scrollHeight) && whole(innerWidth) && whole(innerHeight)
+      ? { scrollWidth, scrollHeight, innerWidth, innerHeight }
+      : undefined;
   return {
+    ...(size === undefined ? {} : { size }),
     entries: {
       lcp: list("lcp", ["startTime", "size"], "startTime"),
       layoutShift: list("layoutShift", ["startTime", "value", "hadRecentInput"], "value"),
       longtask: list("longtask", ["startTime", "duration"], "startTime"),
     },
   };
+}
+
+/**
+ * Whether the page the browser ended on is the one asked for: why it is
+ * not, or undefined when it is. A browser's own error page (a certificate
+ * warning, a refused connection) or a page on another host is never a
+ * picture of the app, so the look fails and the last good one stays.
+ */
+export function refusal(
+  host: string,
+  navigationError: string | undefined,
+  href: string,
+): string | undefined {
+  if (navigationError !== undefined && navigationError !== "")
+    return `the browser showed an error page instead of the app (${navigationError.slice(0, 100)})`;
+  let url: URL;
+  try {
+    url = new URL(href);
+  } catch {
+    return "the browser ended on a page with no address";
+  }
+  if (url.protocol === "chrome-error:")
+    return "the browser showed an error page instead of the app";
+  if (url.hostname !== host)
+    return `the page left the app's host for ${url.hostname === "" ? url.protocol : url.hostname}`;
+  return undefined;
 }
 
 /** The DevTools endpoint Chromium writes into its profile once it listens. */
@@ -301,6 +358,16 @@ function within<T>(work: Promise<T>, deadline: number, what: string): Promise<T>
   return Promise.race([work, late]).finally(() => clearTimeout(timer));
 }
 
+/**
+ * What runs the browser at the lowest CPU priority, given where `nice` is
+ * (or null where there is none): a picture is housekeeping, and must never
+ * take the cores an app or the forge's requests need (#11509). Without
+ * `nice` the browser runs as it is.
+ */
+export function lowPriority(nice: string | null): string[] {
+  return nice === null ? [] : [nice, "-n", "19"];
+}
+
 async function shoot(
   binary: string,
   input: LookInput,
@@ -312,6 +379,7 @@ async function shoot(
   rmSync(input.out, { force: true });
   const proc = Bun.spawn(
     [
+      ...lowPriority(Bun.which("nice")),
       binary,
       "--headless=new",
       // The forge runs as one unprivileged user with no user namespaces
@@ -324,6 +392,9 @@ async function shoot(
       // only network this browser needs is the forge's own port.
       "--disable-background-networking",
       "--disable-crash-reporter",
+      // The cell's proxy (childEnv carries it) is for the world; this
+      // browser only ever visits the forge's own listener, directly.
+      "--no-proxy-server",
       "--hide-scrollbars",
       "--no-first-run",
       `--user-data-dir=${profile}`,
@@ -398,6 +469,18 @@ async function shoot(
         flatten: true,
       })) as { sessionId: string };
       await dt.send("Page.enable", {}, sessionId);
+      // Loopback-only machines read as offline; say the page is online (the host mapping still limits reach).
+      await dt.send("Network.enable", {}, sessionId);
+      await dt.send(
+        "Network.emulateNetworkConditions",
+        {
+          offline: false,
+          latency: 0,
+          downloadThroughput: -1,
+          uploadThroughput: -1,
+        },
+        sessionId,
+      );
       await dt.send(
         "Emulation.setDeviceMetricsOverride",
         {
@@ -421,16 +504,30 @@ async function shoot(
         sessionId,
       );
       const loaded = dt.heard("Page.loadEventFired", sessionId);
-      await dt.send("Page.navigate", { url: input.url }, sessionId);
+      const nav = await dt.send("Page.navigate", { url: input.url }, sessionId);
       // A page that never finishes loading is pictured as it stands.
       await Promise.race([loaded, Bun.sleep(LOAD_MS)]);
       await Bun.sleep(SETTLE_MS);
+      const where = await dt.send(
+        "Runtime.evaluate",
+        { expression: "location.href", returnByValue: true },
+        sessionId,
+      );
+      const href = String(
+        (where["result"] as { value?: unknown } | undefined)?.value ?? "",
+      );
+      const refused = refusal(
+        host,
+        typeof nav["errorText"] === "string" ? nav["errorText"] : undefined,
+        href,
+      );
+      if (refused !== undefined) throw new Error(refused);
       let recorded = parseRecorded(undefined);
       try {
         const read = await dt.send(
           "Runtime.evaluate",
           {
-            expression: "JSON.stringify(window.__forgeVitals ?? null)",
+            expression: READ,
             returnByValue: true,
           },
           sessionId,

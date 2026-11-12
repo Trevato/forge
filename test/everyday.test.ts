@@ -223,7 +223,7 @@ describe("the everyday account", () => {
   test("an admin's token from the page is minted only when they tick that they mean it", async () => {
     const root = await signIn("ada");
     const form = await page(root, "/settings/tokens");
-    expect(form).toContain("I mean to give this token admin");
+    expect(form).toContain("I mean to give this access code admin");
     const count = () =>
       (
         app.db
@@ -241,7 +241,7 @@ describe("the everyday account", () => {
     expect(count()).toBe(before + 1);
     // Someone who is not an admin is not asked.
     expect(await page(await signIn("kim"), "/settings/tokens")).not.toContain(
-      "I mean to give this token admin",
+      "I mean to give this access code admin",
     );
   });
 

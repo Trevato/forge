@@ -4,7 +4,7 @@ import { good, bad, type Tool, APP_ARG, REVEAL_ARG, LINK_KEPT, LINK_REVEALED } f
 
 export const tool: Tool = {
   name: "spawn",
-  doc: "`{ name, apps?, crew?, dryRun? }`: a child forge, planned first (`dryRun` is true unless `false`); an admin's, and an `ro` token may plan but not make",
+  doc: "`{ name, apps?, crew?, direction?, fresh?, followMode?, size?, plan?, template?, keepAccess?, dryRun?, reveal? }`: a child forge, planned first (`dryRun` is true unless `false`); an admin's, and an `ro` token may plan but not make; `reveal: true` shows the claim link",
   description:
     "Spawn a child forge. Plans first.",
   inputSchema: {
@@ -26,7 +26,7 @@ export const tool: Tool = {
       },
       fresh: {
         type: "string",
-        description: "One line: a new app to start.",
+        description: "A new app, one line.",
       },
       followMode: {
         type: "string",
@@ -37,6 +37,14 @@ export const tool: Tool = {
         type: "string",
         enum: ["small", "medium", "large"],
         description: "Recorded only.",
+      },
+      plan: {
+        type: "string",
+        description: "Plan key; paid: admin.",
+      },
+      template: {
+        type: "string",
+        description: "From `templates`.",
       },
       keepAccess: {
         type: "boolean",
@@ -62,10 +70,12 @@ export const tool: Tool = {
     const made = door.body["dryRun"] === false;
     const { claimUrl, ...rest } = door.body;
     const reveal = args["reveal"] === true && typeof claimUrl === "string";
+    const reach = door.body["reach"] as { ok?: boolean; says?: string } | undefined;
+    const reached = reach?.ok === false ? ` ${reach.says}` : "";
     return good({
       says: !made
         ? "This is the plan; nothing was made. Send dryRun: false to spawn."
-        : `Spawned ${String(door.body["name"])} at ${String(door.body["url"])}. ${reveal ? LINK_REVEALED : LINK_KEPT}`,
+        : `Spawned ${String(door.body["name"])} at ${String(door.body["url"])}. ${reveal ? LINK_REVEALED : LINK_KEPT}${reached}`,
       ...rest,
       ...(reveal ? { claimUrl } : {}),
     });

@@ -16,7 +16,10 @@ import type { App } from "../app.ts";
 import { appsRoot } from "../apps/data.ts";
 import { dirBytes } from "../apps/bytes.ts";
 import { repoDir } from "../git/repos.ts";
-import { getQuota } from "../settings/quotas.ts";
+import { limitValue } from "../settings/limits.ts";
+import { getQuota, quotaOf } from "../settings/quotas.ts";
+import { contributionForksOf, isContributionFork } from "./contribute.ts";
+import type { Repo } from "./repos.ts";
 import type { User } from "./users.ts";
 
 /** The limit is set in megabytes (decimal), the unit people say it in. */
@@ -134,6 +137,50 @@ export function storageChanged(app: App, ownerId: string): void {
   void walk(app, ownerId, entry).catch(() => {});
 }
 
+/**
+ * What a guest's contribution forks hold, walked on each ask: only a guest's
+ * write comes here, and their forks are small because they borrow their
+ * parents' history. An old account's other repositories are not counted.
+ */
+async function contributionRoom(
+  app: App,
+  ownerId: string,
+  repo?: Repo,
+): Promise<{ used: number; limit: number; room: number }> {
+  const total = limitValue(app.db, "guest.storage_mb") * BYTES_PER_MB;
+  let used = 0;
+  for (const f of contributionForksOf(app.db, ownerId)) used += await dirBytes(repoDir(app.reposRoot, f.owner, f.name));
+  let room = total - used;
+  let limit = total;
+  if (repo !== undefined) {
+    const forkLimit = limitValue(app.db, "guest.fork_storage_mb") * BYTES_PER_MB;
+    const here = await dirBytes(repoDir(app.reposRoot, repo.ownerName, repo.name));
+    if (forkLimit - here < room) {
+      room = forkLimit - here;
+      used = here;
+      limit = forkLimit;
+    }
+  }
+  return { used, limit, room };
+}
+
+/**
+ * The refusal a guest's next store gets, e.g. "50 MB of 50 MB", or nothing.
+ * With `repo`, nothing unless it is a contribution fork and the writer no admin
+ * or agent; without, the guest's whole allowance is asked before a new fork.
+ */
+export async function contributionRefusal(
+  app: App,
+  ownerId: string,
+  repo?: Repo,
+  writer?: User,
+): Promise<string | undefined> {
+  if (repo !== undefined && !isContributionFork(app.db, repo.id)) return undefined;
+  if (writer !== undefined && storageExempt(writer)) return undefined;
+  const { used, limit, room } = await contributionRoom(app, ownerId, repo);
+  return room <= 0 ? sentence(used, limit) : undefined;
+}
+
 /** Bytes the way a person says them: `1.9 GB`, `340 MB`, `12 kB`. */
 export function formatBytes(bytes: number): string {
   if (bytes >= 1e9) return `${+(bytes / 1e9).toFixed(1)} GB`;
@@ -143,8 +190,8 @@ export function formatBytes(bytes: number): string {
 }
 
 /** The storage limit in bytes, or none. */
-export function storageLimitBytes(app: App): number | undefined {
-  const mb = getQuota(app.db, "storage");
+export function storageLimitBytes(app: App, ownerId?: string): number | undefined {
+  const mb = ownerId === undefined ? getQuota(app.db, "storage") : quotaOf(app.db, "storage", ownerId);
   return mb === null ? undefined : mb * BYTES_PER_MB;
 }
 
@@ -163,8 +210,14 @@ export async function storageRefusal(
   app: App,
   user: User,
   ownerId: string,
+  /** The repository a push goes to: a guest's contribution fork answers to its own limits too. */
+  repo?: Repo,
 ): Promise<string | undefined> {
-  const limit = storageLimitBytes(app);
+  if (repo !== undefined) {
+    const guest = await contributionRefusal(app, ownerId, repo, user);
+    if (guest !== undefined) return guest;
+  }
+  const limit = storageLimitBytes(app, ownerId);
   if (limit === undefined || storageExempt(user)) return undefined;
   let used = await accountBytes(app, ownerId);
   // At the limit, look again: a repository deleted or data cleared since the
@@ -187,7 +240,7 @@ export const storageRefusedText = (used: string): string =>
 
 /** The sentence for a refusal just given, from the figure it was given on. */
 export function storageSentence(app: App, ownerId: string): string | undefined {
-  const limit = storageLimitBytes(app);
+  const limit = storageLimitBytes(app, ownerId);
   const used = cachedBytes(app, ownerId);
   return limit === undefined || used === undefined || used < limit
     ? undefined
@@ -203,10 +256,17 @@ export async function pushCap(
   app: App,
   user: User,
   ownerId: string,
+  repo?: Repo,
 ): Promise<Record<string, string>> {
-  const limit = storageLimitBytes(app);
-  if (limit === undefined || storageExempt(user)) return {};
-  const room = Math.max(1, limit - (await accountBytes(app, ownerId)));
+  if (storageExempt(user)) return {};
+  const limit = storageLimitBytes(app, ownerId);
+  const guest =
+    repo !== undefined && isContributionFork(app.db, repo.id)
+      ? (await contributionRoom(app, ownerId, repo)).room
+      : undefined;
+  if (limit === undefined && guest === undefined) return {};
+  const account = limit === undefined ? Number.POSITIVE_INFINITY : limit - (await accountBytes(app, ownerId));
+  const room = Math.max(1, Math.min(account, guest ?? Number.POSITIVE_INFINITY));
   return {
     GIT_CONFIG_COUNT: "1",
     GIT_CONFIG_KEY_0: "receive.maxInputSize",

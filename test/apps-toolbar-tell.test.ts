@@ -13,6 +13,7 @@ import { createApp, type App } from "../src/app.ts";
 import { newApp } from "../src/actions/apps.ts";
 import { tellLink } from "../src/apps/crew.ts";
 import { toolbarJs } from "../src/apps/toolbar.ts";
+import { NOTE_FAILED, NOTE_OFFLINE } from "../src/apps/note_words.ts";
 import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
 import { listIssues, MAX_BODY } from "../src/core/issues.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -95,7 +96,7 @@ describe("tell the crew from the pill", () => {
     const make = (tag: string) => { const e = el(); e.tag = tag; if (tag === "a") links.push(e); return e; };
     const run = async (dataset: Record<string, string>, tell: unknown, page: string) => {
       links.length = 0;
-      const me = { src: `${forge}/assets/toolbar-x.js`, dataset };
+      const me = { src: "/__forge/toolbar-x.js", dataset: { forge, ...dataset } };
       const doc = {
         currentScript: me,
         createElement: make,
@@ -169,8 +170,24 @@ describe("tell the crew from the pill", () => {
     });
     expect(res.status).toBe(200);
     const issue = listIssues(app.db, repoId, {}).find((i) => i.title === "Bigger button")!;
-    expect(issue.body).toContain("- page: https://notes-pull-3.apps.test/b");
-    expect(issue.body).toContain("- pull: #3");
+    expect(issue.body).toContain("- from preview of #3, page /b");
+    expect(issue.body).not.toContain("- page:");
+    expect(issue.body).not.toContain("- pull:");
+  });
+
+  test("a hostile page path is encoded in the filed line, and a hostile pull is refused", async () => {
+    const res = await post({
+      text: "Hostile path",
+      page: "https://notes-pull-3.apps.test/x)[evil](https://e.test)*<b>",
+      pull: "3",
+    });
+    expect(res.status).toBe(200);
+    const issue = listIssues(app.db, repoId, {}).find((i) => i.title === "Hostile path")!;
+    const line = issue.body.split("\n").find((l) => l.startsWith("- from preview"))!;
+    expect(line).not.toMatch(/[()\[\]*<>]/);
+    const before = told().length;
+    expect((await post({ text: "x", page: "https://a.test/", pull: "3; drop" })).status).toBe(303);
+    expect(told().length).toBe(before);
   });
 
   test("a bad page or pull opens nothing", async () => {
@@ -235,5 +252,59 @@ describe("tell the crew from the pill", () => {
     );
     expect(res.status).toBe(403);
     expect(told().length).toBe(before);
+  });
+});
+
+describe("a tell from the toolbar that fails keeps the words and says why", () => {
+  const sendWith = async (answer: () => Promise<unknown>, online = true) => {
+    const { boot } = await import("./helpers/toolbar-boot.ts");
+    const realFetch = globalThis.fetch;
+    const nav = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    (globalThis as any).fetch = answer;
+    Object.defineProperty(globalThis, "navigator", { value: { onLine: online }, configurable: true });
+    (globalThis as any).location = { href: "https://notes.apps.test/" };
+    try {
+      const b = boot(null);
+      const all = (e: any): any[] => [e, ...e.children.flatMap(all)];
+      const els = all(b.panel);
+      const form = els.find((e) => e.tag === "form" && e.attrs["aria-label"] === "Tell the builders")!;
+      const area = els.find((e) => e.tag === "textarea")!;
+      const say = els.find((e) => e.attrs["aria-live"] === "polite")!;
+      area.value = "make it purple";
+      b.fire(form, "submit");
+      for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
+      return { area, say: say.textContent as string };
+    } finally {
+      (globalThis as any).fetch = realFetch;
+      delete (globalThis as any).location;
+      if (nav) Object.defineProperty(globalThis, "navigator", nav);
+    }
+  };
+  const reply = (status: number, body: unknown, headers: Record<string, string> = {}) => async () => ({
+    ok: status < 400,
+    status,
+    headers: { get: (k: string) => headers[k.toLowerCase()] ?? null },
+    json: async () => body,
+  });
+
+  test("a rate limit says how many seconds to wait", async () => {
+    const r = await sendWith(reply(429, { error: "rate_limited", message: "x" }, { "retry-after": "42" }));
+    expect(r.area.value).toBe("make it purple");
+    expect(r.say).toContain("42 seconds");
+  });
+
+  test("a refusal says its reason and an answer that is not JSON still says something", async () => {
+    const refused = await sendWith(reply(403, { error: "banned", message: "You cannot send notes here." }));
+    expect(refused.area.value).toBe("make it purple");
+    expect(refused.say).toBe("You cannot send notes here.");
+    const broken = await sendWith(async () => ({ ok: false, status: 502, headers: { get: () => null }, json: async () => { throw new Error("html"); } }));
+    expect(broken.area.value).toBe("make it purple");
+    expect(broken.say).toBe(NOTE_FAILED);
+  });
+
+  test("offline, the words stay and the line says so", async () => {
+    const r = await sendWith(async () => { throw new TypeError("network"); }, false);
+    expect(r.area.value).toBe("make it purple");
+    expect(r.say).toBe(NOTE_OFFLINE);
   });
 });

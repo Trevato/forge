@@ -17,17 +17,32 @@
  * where it was — that page and its poll live in `origin-flow.ts`.
  */
 
+import { FORGE_NOT_CARRIED } from "../../origins/words.ts";
 import {
+  checkOriginAgain,
   connectOrigin,
+  connectRefusal,
+  completeOAuthCallback,
   deleteOriginApp,
   disconnectOrigin,
   listOriginApps,
   listUserOrigins,
   registerOriginApp,
+  replaceOriginToken,
   startOAuthConnect,
   syncOriginNow,
   type Reattachment,
 } from "../../actions/origins.ts";
+import { startBring } from "../../actions/bring.ts";
+import { hasArchive } from "../../actions/origin_archive.ts";
+import {
+  NO_SUCH_ORIGIN,
+  connectWords,
+  disconnectedWords,
+  syncedWords,
+  CHECK_TOO_SOON,
+  CHECK_WORDS,
+} from "../../actions/origin_words.ts";
 import {
   editableHosts,
   envHosts,
@@ -37,6 +52,8 @@ import {
   updateTrustedHosts,
 } from "../../origins/trusted-hosts.ts";
 import { reattachMessage } from "./frozen.ts";
+import { replaceTokenMessage } from "../../origins/token-reach.ts";
+import { writesPaused } from "../../origins/credential.ts";
 import {
   listDetachedMirrors,
   mirrorsByOrigin,
@@ -50,6 +67,8 @@ import {
   settingsLayout,
   signInFirst,
   type SettingsSection,
+  NOT_ADMIN_HERE,
+  forbiddenPage,
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
@@ -57,11 +76,9 @@ import { flashTo, page, redirect } from "../layout.ts";
 import {
   badge,
   btn,
-  card,
   confirmAction,
   empty,
   icon,
-  listCard,
   row,
   time,
   field as uiField,
@@ -70,9 +87,14 @@ import {
 } from "../ui.ts";
 
 export type AccountSection =
+  | "billing"
+  | "adminflows"
+  | "security"
   | "profile"
+  | "confirms"
   | "password"
   | "tokens"
+  | "shells"
   | "keys"
   | "model"
   | "passkeys"
@@ -81,15 +103,23 @@ export type AccountSection =
   | "spend"
   | "crew"
   | "accounts"
+  | "trusted"
   | "people"
   | "subscriptions"
   | "backups"
+  | "traffic"
   | "secrets"
+  | "devices"
   | "capacity"
   | "telemetry"
   | "access"
   | "limits"
+  | "economics"
   | "flags"
+  | "templates"
+  | "features"
+  | "packs"
+  | "captain"
   | "cloud";
 
 /**
@@ -100,124 +130,58 @@ export type AccountSection =
  */
 const USAGE: ReadonlySet<AccountSection> = new Set(["usage", "spend", "capacity", "telemetry"]);
 
+/**
+ * The groups a person thinks in, in order; an admin's groups come after their
+ * own. Each row: its group, label, address, icon, the sections it stands for,
+ * and whether only a forge admin sees it.
+ */
+const SECTION_ROWS: readonly (readonly [
+  group: string,
+  label: string,
+  href: string,
+  icon: NonNullable<SettingsSection["icon"]>,
+  is: (current: AccountSection) => boolean,
+  admin: boolean,
+])[] = [
+  ["Account", "Profile", "/settings", "user", (c) => c === "profile", false],
+  ["Account", "Password", "/settings/password", "lock", (c) => c === "password", false],
+  ["Account", "Passkeys", "/settings/passkeys", "key", (c) => c === "passkeys", false],
+  ["Account", "Computer keys", "/settings/keys", "lock", (c) => c === "keys", false],
+  ["Account", "Access codes", "/settings/tokens", "key", (c) => c === "tokens", false],
+  ["Account", "Confirms", "/settings/confirms", "check", (c) => c === "confirms", false],
+  ["Crew and AI", "Model", "/settings/model", "key", (c) => c === "model", false],
+  ["Crew and AI", "Crew", "/settings/crew", "bot", (c) => c === "crew", true],
+  ["Crew and AI", "Captain", "/settings/captain", "bot", (c) => c === "captain", true],
+  ["Crew and AI", "Subscriptions", "/settings/subscriptions", "key", (c) => c === "subscriptions", true],
+  ["Crew and AI", "Usage", "/settings/spend", "activity", (c) => USAGE.has(c), true],
+  ["Connections", "Connected accounts", "/settings/origins", "globe", (c) => c === "origins", false],
+  ["Connections", "Cloud", "/settings/cloud", "key", (c) => c === "cloud", true],
+  ["Connections", "Secrets", "/settings/secrets", "lock", (c) => c === "secrets", true],
+  ["Connections", "Devices", "/settings/devices", "globe", (c) => c === "devices", true],
+  ["Security", "Security", "/settings/security", "lock", (c) => c === "security", true],
+  ["Security", "Traffic", "/settings/traffic", "users", (c) => c === "traffic", true],
+  ["Security", "Trusted sources", "/settings/trusted", "lock", (c) => c === "trusted", true],
+  ["Security", "Access", "/settings/access", "activity", (c) => c === "access", true],
+  ["This forge", "Accounts", "/settings/accounts", "users", (c) => c === "accounts", true],
+  ["This forge", "People", "/settings/people", "users", (c) => c === "people", true],
+  ["This forge", "Limits", "/admin/limits", "activity", (c) => c === "limits", true],
+  ["This forge", "Economics", "/settings/economics", "activity", (c) => c === "economics", true],
+  ["This forge", "Billing", "/settings/billing", "activity", (c) => c === "billing", true],
+  ["This forge", "Flows", "/admin/flows", "activity", (c) => c === "adminflows", true],
+  ["This forge", "Flags", "/settings/flags", "activity", (c) => c === "flags", true],
+  ["This forge", "Templates", "/settings/app-templates", "rocket", (c) => c === "templates", true],
+  ["This forge", "Features", "/settings/features", "rocket", (c) => c === "features", true],
+  ["This forge", "Packs", "/settings/packs", "rocket", (c) => c === "packs", true],
+  ["This forge", "Backups", "/settings/backups", "download", (c) => c === "backups", true],
+];
+
 export function accountSections(
   current: AccountSection,
   o: { admin?: boolean } = {},
 ): SettingsSection[] {
-  return [
-    ...(o.admin
-      ? [
-          {
-            label: "Accounts",
-            href: "/settings/accounts",
-            icon: "users" as const,
-            current: current === "accounts",
-          },
-          {
-            label: "People",
-            href: "/settings/people",
-            icon: "users" as const,
-            current: current === "people",
-          },
-          {
-            label: "Crew",
-            href: "/settings/crew",
-            icon: "bot" as const,
-            current: current === "crew",
-          },
-          {
-            label: "Subscriptions",
-            href: "/settings/subscriptions",
-            icon: "key" as const,
-            current: current === "subscriptions",
-          },
-          {
-            label: "Secrets",
-            href: "/settings/secrets",
-            icon: "lock" as const,
-            current: current === "secrets",
-          },
-          {
-            label: "Cloud accounts",
-            href: "/settings/cloud",
-            icon: "key" as const,
-            current: current === "cloud",
-          },
-          {
-            label: "Access",
-            href: "/settings/access",
-            icon: "activity" as const,
-            current: current === "access",
-          },
-          {
-            label: "Limits",
-            href: "/admin/limits",
-            icon: "activity" as const,
-            current: current === "limits",
-          },
-          {
-            label: "Flags",
-            href: "/settings/flags",
-            icon: "activity" as const,
-            current: current === "flags",
-          },
-          {
-            label: "Usage",
-            href: "/settings/spend",
-            icon: "activity" as const,
-            current: USAGE.has(current),
-          },
-          {
-            label: "Backups",
-            href: "/settings/backups",
-            icon: "download" as const,
-            current: current === "backups",
-          },
-        ]
-      : []),
-    {
-      label: "Profile",
-      href: "/settings",
-      icon: "user",
-      current: current === "profile",
-    },
-    {
-      label: "Model",
-      href: "/settings/model",
-      icon: "key",
-      current: current === "model",
-    },
-    {
-      label: "Password",
-      href: "/settings/password",
-      icon: "lock",
-      current: current === "password",
-    },
-    {
-      label: "Access tokens",
-      href: "/settings/tokens",
-      icon: "key",
-      current: current === "tokens",
-    },
-    {
-      label: "SSH keys",
-      href: "/settings/keys",
-      icon: "lock",
-      current: current === "keys",
-    },
-    {
-      label: "Passkeys",
-      href: "/settings/passkeys",
-      icon: "key",
-      current: current === "passkeys",
-    },
-    {
-      label: "Origins",
-      href: "/settings/origins",
-      icon: "globe",
-      current: current === "origins",
-    },
-  ];
+  return SECTION_ROWS.filter((r) => o.admin === true || !r[5]).map(
+    ([group, label, href, icon, is]) => ({ group, label, href, icon, current: is(current) }),
+  );
 }
 
 /** The mark a forge wears wherever it is named. */
@@ -262,7 +226,7 @@ export function accountOnly(ctx: Ctx): Response | undefined {
   if (ctx.auth.via === "session" || ctx.auth.via === "password")
     return undefined;
   if (ctx.auth.scope === "admin") return undefined;
-  return new Response("forbidden", { status: 403 });
+  return forbiddenPage(ctx, "This takes your own signed-in account or an admin token.");
 }
 
 // ---- the origin list ----
@@ -302,30 +266,43 @@ function reauthNote(origin: Origin, mirrors: number): Html {
   </p>`;
 }
 
-function originCard(origin: Origin, mirrors: number): Html {
+/**
+ * An origin whose account the operator guard could not verify reads and
+ * syncs but writes nothing (`writesPaused`): said where the origin is, with
+ * the way out, a check now.
+ */
+function pausedNote(origin: Origin): Html {
+  return html`<div class="toast mt" data-tone="attn" role="status">
+    ${icon("alert")}
+    <div class="toast-body">
+      Couldn't verify this connection; writes paused. Reading and syncing go
+      on.
+    </div>
+    <form method="post" action="/settings/origins/${origin.id}/check">
+      ${btn("Check again", { size: "sm", variant: "outline", icon: "sync" })}
+    </form>
+  </div>`;
+}
+
+function originCard(origin: Origin, mirrors: number, paused = false): Html {
   const base = `/settings/origins/${origin.id}`;
-  return card(
-    html`<ul class="list setting-list">
-        ${row({
-          lead: icon(originIcon(origin.kind)),
-          title: html`${origin.login}<span class="muted"> @ </span>${hostLabel(
-              origin.webUrl,
-            )}`,
-          meta: html`${origin.authKind === "oauth"
-              ? "OAuth"
-              : "personal access token"}
-            ·
-            ${origin.lastSyncAt === null
-              ? html`never synced`
-              : html`synced ${time(origin.lastSyncAt)}`}
-            ${when(
-              isTrustedHost(URL.parse(origin.webUrl)?.hostname ?? ""),
-              () => html` · trusted internal host`,
-            )}`,
-          trail: healthBadge(origin),
-        })}
-      </ul>
+  return row({
+    lead: icon(originIcon(origin.kind)),
+    title: html`${origin.login}<span class="muted"> @ </span>${hostLabel(
+      origin.webUrl,
+    )}`,
+    meta: html`${origin.authKind === "oauth" ? "OAuth" : "personal access token"}
+      ${when(origin.readOnly, () => html` · read-only: nothing is written back`)}
+      ·
+      ${origin.lastSyncAt === null
+        ? html`never synced`
+        : html`synced ${time(origin.lastSyncAt)}`}
       ${when(
+        isTrustedHost(URL.parse(origin.webUrl)?.hostname ?? ""),
+        () => html` · trusted internal host`,
+      )}`,
+    trail: healthBadge(origin),
+    after: html`${when(
         origin.lastError !== "",
         () => html`<div class="field mt" data-invalid>
           <span class="error" role="alert" id="origin-${origin.id}-err"
@@ -334,6 +311,11 @@ function originCard(origin: Origin, mirrors: number): Html {
         </div>`,
       )}
       ${when(origin.needsReauth, () => reauthNote(origin, mirrors))}
+      ${when(
+        origin.software === "forge",
+        () => html`<p class="small mt">Another forge. ${FORGE_NOT_CARRIED}</p>`,
+      )}
+      ${when(paused, () => pausedNote(origin))}
       <div class="bar mt">
         <form method="post" action="${base}/sync">
           ${btn("Sync now", { size: "sm", icon: "sync" })}
@@ -344,6 +326,14 @@ function originCard(origin: Origin, mirrors: number): Html {
           variant: "outline",
           icon: "repo",
         })}
+        ${when(hasArchive(origin), () =>
+          btn("Archived", {
+            href: `${base}/archived`,
+            size: "sm",
+            variant: "outline",
+            icon: "clock",
+          }),
+        )}
         <span class="spacer"></span>
         ${confirmAction({
           action: `${base}/delete`,
@@ -351,7 +341,7 @@ function originCard(origin: Origin, mirrors: number): Html {
           size: "sm",
         })}
       </div>`,
-  );
+  });
 }
 
 // ---- the connect card ----
@@ -365,6 +355,8 @@ interface ConnectValues {
   tokenHost: string;
   tokenError?: string;
   registerError?: string;
+  /** Sign-in cannot work for this address, so the token path opens. */
+  offerToken?: boolean;
   trustedText?: string;
   trustedError?: string;
 }
@@ -431,7 +423,7 @@ function githubSection(configured: boolean, callback: string): Html {
     </p>
     <form method="post" action="/settings/origins/oauth">
       <input type="hidden" name="kind" value="github" />
-      ${btn("Connect GitHub", { variant: "primary", icon: "github" })}
+      ${btn("Connect GitHub", { icon: "github" })}
     </form>`;
 }
 
@@ -468,7 +460,7 @@ function forgejoSection(
               id <span class="mono">${registered.clientId}</span>).
             </p>
             <div class="bar">
-              ${btn("Authorize", { variant: "primary", icon: "external" })}
+              ${btn("Authorize", { icon: "external" })}
               ${btn("Forget this app", {
                 size: "sm",
                 variant: "ghost",
@@ -536,7 +528,7 @@ function forgejoSection(
               hint: "Optional. A public client is fine; a secret only buys revoke-on-disconnect.",
             })}
             <div class="form-actions">
-              ${btn("Register application", { variant: "primary" })}
+              ${btn("Register application")}
             </div>
           </form>
         </div>`
@@ -554,7 +546,6 @@ function forgejoSection(
         required: true,
         placeholder: "codeberg.org",
         autocomplete: "off",
-        ...(values.hostError ? { error: values.hostError } : {}),
       })}
       <div class="form-actions">
         ${btn("Continue", { variant: registered ? "secondary" : "primary" })}
@@ -610,17 +601,111 @@ function tokenSection(values: ConnectValues): Html {
         required: true,
         mono: true,
         autocomplete: "off",
-        hint: "Needs repository and issue access. It is never displayed after this.",
+        hint: "It is never displayed after this.",
       })}
-      <div class="form-actions">${btn("Connect", { variant: "primary" })}</div>
+      ${readOnlyField()}
+      ${tokenNeeds(values.tokenHost)}
+      <div class="form-actions">${btn("Connect")}</div>
     </form>`;
+}
+
+/** The one Read-only checkbox, on every way to connect by token. */
+function readOnlyField(): Html {
+  return uiField({
+    label: "Read-only",
+    name: "readOnly",
+    type: "checkbox",
+    value: "1",
+    hint: "Nothing is ever written back to that account: no comments, pulls, pushes or merges.",
+  });
+}
+
+const OLDER_FORGE_DOC = "/trevato/forge/blob/main/docs/features/forge-origin-older.md#connecting-from-an-older-forge";
+
+/** The one line for a forge older than 0.7.346 (#9626): it cannot start a connection, this side can. */
+function olderForgeLine(): Html {
+  return html`<p class="muted small" id="older-forge-line">
+    A forge older than 0.7.346 cannot connect outward: connect it from here, and
+    upgrade it to connect both ways.
+    <a href="${OLDER_FORGE_DOC}">Connecting from an older forge</a>
+  </p>`;
+}
+
+/**
+ * The path a friend's forge needs, first on the page: its address and one
+ * button. Only a forge that cannot name its own callback asks for a token here,
+ * and the line says where that token is made.
+ */
+function forgeSection(ctx: Ctx, values: ConnectValues): Html {
+  if (callbackUri(ctx) !== "")
+    return html`<p class="muted small">
+        You have an account on a friend's forge and want their apps here. Type
+        their address and sign in there; you come straight back. Their forge may
+        run an older release than this one: that is fine.
+      </p>
+      <form method="post" action="/settings/origins/oauth">
+        ${uiField({
+          label: "Their forge's address",
+          name: "host",
+          id: "f-forge-host",
+          value: values.host || values.tokenHost,
+          required: true,
+          placeholder: "forge.example.com",
+          autocomplete: "off",
+          ...(values.hostError ? { error: values.hostError } : {}),
+        })}
+        <div class="form-actions">${btn("Sign in there", { variant: "primary", icon: "external" })}</div>
+      </form>
+      ${olderForgeLine()}`;
+  const site =
+    values.tokenHost === ""
+      ? null
+      : URL.parse(values.tokenHost.includes("://") ? values.tokenHost : `https://${values.tokenHost}`);
+  const tokens =
+    site === null || (site.protocol !== "https:" && site.protocol !== "http:")
+      ? html`<span class="mono">/settings/tokens</span> on their forge`
+      : btn(`${site.host}/settings/tokens`, { href: `${site.origin}/settings/tokens`, external: true, variant: "link" });
+  return html`<p class="muted small">
+      You have an account on a friend's forge and want their apps here. Type
+      their address and a token from them; the token is checked before it is
+      stored, encrypted at rest, and never shown again. Their forge may run an
+      older release than this one: that is fine.
+    </p>
+    <form method="post" action="/settings/origins/token">
+      ${uiField({
+        label: "Their forge's address",
+        name: "host",
+        id: "f-forge-host",
+        value: values.tokenHost,
+        required: true,
+        placeholder: "forge.example.com",
+        autocomplete: "off",
+        ...(values.tokenError || values.hostError ? { error: values.tokenError ?? values.hostError ?? "" } : {}),
+      })}
+      ${uiField({
+        label: "Token",
+        name: "token",
+        id: "f-forge-token",
+        type: "password",
+        required: true,
+        mono: true,
+        autocomplete: "off",
+        hint: "Read is enough to bring an app; private repositories come with it.",
+      })}
+      ${readOnlyField()}
+      <p class="muted small">Make the token there: ${tokens} (Settings → Access codes).</p>
+      <div class="form-actions">
+        ${btn("Connect that forge", { variant: "primary", icon: "globe" })}
+      </div>
+    </form>
+    ${olderForgeLine()}`;
 }
 
 /** The admin's list of hosts an origin may reach inside the network. */
 function trustedHostsCard(text: string, error?: string): Html {
   const fixed = envHosts();
-  return card(
-    html`<h3>${icon("lock")}Trusted internal hosts</h3>
+  return html`<section class="settings-block">
+      <h2>Trusted internal hosts</h2>
       <p class="muted small">
         Origins on these exact host names may resolve to a private address
         (your own Forgejo, reached inside the cluster). Webhooks never do.
@@ -647,8 +732,41 @@ function trustedHostsCard(text: string, error?: string): Html {
           ...(error ? { error } : {}),
         })}
         <div class="form-actions">${btn("Save", { variant: "primary" })}</div>
-      </form>`,
-  );
+      </form>
+    </section>`;
+}
+
+/**
+ * What a Forgejo or Gitea token needs, in the words of the page that makes
+ * one, and — once the instance is known — a link to that page with the
+ * name and the scopes already chosen. Forgejo 15 fills its form from the
+ * query (`/user/settings/applications/tokens/new`); an older one or Gitea
+ * opens the plain form, and the list says what to pick.
+ */
+function tokenNeeds(host: string): Html {
+  const site =
+    host === ""
+      ? null
+      : URL.parse(host.includes("://") ? host : `https://${host}`);
+  const link =
+    site === null || site.hostname === "github.com" || site.hostname === "github"
+      ? undefined
+      : `${site.origin}/user/settings/applications/tokens/new?name=forge&resource=all&scope=read:user&scope=write:repository&scope=write:issue`;
+  return html`<div class="small muted">
+    <p>For Forgejo or Gitea, the token needs:</p>
+    <ul>
+      <li>User: Read</li>
+      <li>Repository: Read and write</li>
+      <li>Issue: Read and write</li>
+      <li>Everything else: No access</li>
+    </ul>
+    ${link === undefined
+      ? null
+      : html`<p>
+          ${btn(`Make this token at ${site!.host}`, { href: link, external: true, variant: "link" })}, with these already chosen. On Gitea or an older Forgejo, open
+          Settings → Applications there instead.
+        </p>`}
+  </div>`;
 }
 
 // ---- the page ----
@@ -679,14 +797,25 @@ function originsView(
       written through to the origin first.
     </p>
     ${origins.length === 0
-      ? empty({
-          icon: "globe",
-          title: "No origins connected",
-          note: "Connect GitHub, a Forgejo instance or a Gitea instance and its repositories become mirrorable here.",
-        })
-      : html`<div class="stack">
-          ${origins.map((o) => originCard(o, mirrors.get(o.id)?.count ?? 0))}
-        </div>`}
+      ? html`<section class="settings-block">
+          <h2>Connected accounts</h2>
+          <p class="small">
+            No connected accounts yet: connect another forge, GitHub, a Forgejo
+            instance or a Gitea instance below.
+          </p>
+        </section>`
+      : html`<section class="settings-block">
+          <h2>Connected accounts</h2>
+          <ul class="list setting-list" data-origins>
+            ${origins.map((o) =>
+              originCard(
+                o,
+                mirrors.get(o.id)?.count ?? 0,
+                writesPaused(ctx.app, o.id) !== undefined,
+              ),
+            )}
+          </ul>
+        </section>`}
     ${frozenCard(frozen)}
     ${mayEditTrustedHosts(user)
       ? trustedHostsCard(
@@ -694,14 +823,21 @@ function originsView(
           values.trustedError,
         )
       : null}
-    ${card(
-      html`<ul class="list">
+    <section class="settings-block" id="connect">
+      <h2>Connect an account</h2>
+      <ul class="list">
+        ${connectPath(
+          "connect-forge",
+          "globe",
+          html`Another forge ${badge("a friend's", { tone: "success" })}`,
+          true,
+          forgeSection(ctx, values),
+        )}
         ${connectPath(
           "connect-token",
           "key",
-          html`Personal access token
-            ${badge("recommended", { tone: "success" })}`,
-          true,
+          "A token for GitHub, Forgejo or Gitea",
+          values.offerToken === true || values.tokenError !== undefined,
           tokenSection(values),
         )}
         ${connectPath(
@@ -728,20 +864,14 @@ function originsView(
                 },
           ),
         )}
-      </ul>`,
-      {
-        id: "connect",
-        pad: false,
-        head: html`${icon("plus")}
-          <h2>Connect an origin</h2>`,
-        foot: html`<span class="muted small"
-          ><strong>One-click sign-in.</strong> Both of these are OAuth, and both
-          need somebody to register an application once — for GitHub, per forge; for Forgejo and Gitea,
-          per instance. Worth it if several people use this forge; a token is
-          faster if it is just you.</span
-        >`,
-      },
-    )}`;
+      </ul>
+      <p class="muted small">
+        <strong>One-click sign-in.</strong> Another forge needs nothing set
+        up. GitHub, Forgejo and Gitea need somebody to register an
+        application once: for GitHub, per forge; for Forgejo and Gitea, per
+        instance.
+      </p>
+    </section>`;
 }
 
 /**
@@ -765,40 +895,43 @@ function readFrozen(ctx: Ctx) {
 
 function frozenCard({ frozen, repos }: ReturnType<typeof readFrozen>): Html | null {
   if (frozen.length === 0) return null;
-  return listCard(
-    frozen.flatMap((m) => {
-      const repo = repos.get(m.repoId);
-      if (repo === undefined) return [];
-      const host = hostLabel(m.htmlUrl);
-      return [
-        row({
-          href: `/${repo.ownerName}/${repo.name}#frozen`,
-          lead: icon("repo"),
-          title: `${repo.ownerName}/${repo.name}`,
-          meta: html`mirrors <span class="mono">${m.fullName}</span>${host ===
-            ""
-              ? null
-              : html` at ${host}`}`,
-        }),
-      ];
-    }),
-    {
-      head: html`${icon("alert")}
-        <h2>Frozen mirrors</h2>
-        <span class="spacer"></span>
-        <span class="muted small"
-          >Connect an account where they came from to bring them back.</span
-        >`,
-    },
-  );
+  const rows = frozen.flatMap((m) => {
+    const repo = repos.get(m.repoId);
+    if (repo === undefined) return [];
+    const host = hostLabel(m.htmlUrl);
+    return [
+      row({
+        href: `/${repo.ownerName}/${repo.name}#frozen`,
+        nav: true,
+        lead: icon("repo"),
+        title: `${repo.ownerName}/${repo.name}`,
+        meta: html`mirrors <span class="mono">${m.fullName}</span>${host === ""
+          ? null
+          : html` at ${host}`}`,
+      }),
+    ];
+  });
+  return html`<section class="settings-block">
+    <h2>Frozen mirrors</h2>
+    <p class="muted small">Connect an account where they came from to bring them back.</p>
+    <ul class="list setting-list">
+      ${rows}
+    </ul>
+  </section>`;
 }
 
-export function shell(ctx: Ctx, body: Html, status = 200): Response {
+export function shell(
+  ctx: Ctx,
+  body: Html,
+  status = 200,
+  scriptJs?: string,
+): Response {
   return page(
     {
       ctx,
-      title: "Origins",
-      body: html`<div class="page-head"><h1>Origins</h1></div>
+      title: "Connected accounts",
+      ...(scriptJs === undefined ? {} : { scriptJs }),
+      body: html`<div class="page-head"><h1>Connected accounts</h1></div>
         ${settingsLayout(
           accountSections("origins", {
             admin: ctx.auth.user?.isAdmin === true,
@@ -841,7 +974,7 @@ export function originsPage(ctx: Ctx): Response {
           <div class="toast-body">
             ${error === "state"
               ? "That authorization could not be matched to a connect you started here. Start again."
-              : error.slice(0, 200)}
+              : error.slice(0, 300)}
           </div>
         </div>`
       : null;
@@ -865,13 +998,15 @@ export async function originConnectToken(ctx: Ctx): Promise<Response> {
   const connected = await connectOrigin(ctx.app, ctx.auth.user, {
     host,
     token,
+    readOnly: field(form, "readOnly") === "1",
   });
   if (!connected.ok) {
     // The host comes back; the token deliberately does not. Re-typing a
     // secret is a smaller cost than a secret sitting in a value attribute.
     const values = blankValues();
     values.tokenHost = host;
-    values.tokenError = connectMessage(connected.error);
+    const refused = connectRefusal(connected.error);
+    values.tokenError = refused.message ?? connectMessage(refused.code);
     return shell(ctx, originsView(ctx, values), 422);
   }
   const { reattached } = connected.value;
@@ -898,27 +1033,64 @@ export async function originConnectToken(ctx: Ctx): Promise<Response> {
   });
 }
 
-function connectMessage(error: string): string {
-  const words: Record<string, string> = {
-    unknown_host: "That does not look like a forge this can talk to.",
-    private_host: "That address is inside a network, not on the internet.",
-    unreachable: "That instance could not be reached.",
-    bad_token: "That token was refused by the origin.",
-    already_connected: "That account is already connected.",
-    rate_limited: "Too many connect attempts. Wait a few minutes.",
-    unauthorized: "Sign in first.",
-  };
-  return words[error] ?? "That connection could not be made.";
-}
+const connectMessage = connectWords;
 
 // POST /settings/origins/oauth
 /**
- * Where a connect or a disconnect started, when it was not here: only
- * `/migrate`, named by a fixed word — never a path a form can choose.
+ * Where a connect or a disconnect started, when it was not here: `/migrate`
+ * or `/bring`, named by a fixed word — never a path a form can choose.
  */
-export type Then = "/migrate" | undefined;
+export type Then = "/migrate" | "/bring" | undefined;
 export const thenOf = (value: string | null): Then =>
-  value === "migrate" ? "/migrate" : undefined;
+  value === "migrate" ? "/migrate" : value === "bring" ? "/bring" : undefined;
+
+/** The link a `/bring` started with, kept across a connect: a short http(s) URL or nothing. */
+export function linkOf(value: string | null): string | undefined {
+  if (value === null || value.length > 300 || /[\u0000-\u001f\u007f]/.test(value)) return undefined;
+  const url = URL.parse(value);
+  return url !== null && (url.protocol === "https:" || url.protocol === "http:") ? value : undefined;
+}
+
+/** The query that carries `then` (and the link, for `/bring`) through a connect flow. */
+export function thenQuery(then: Then, link?: string): string {
+  if (then === undefined) return "";
+  if (then === "/migrate") return "then=migrate";
+  return `then=bring${link === undefined ? "" : `&link=${encodeURIComponent(link)}`}`;
+}
+
+/** Where a finished connect returns: the page it began on, with the link kept. */
+export function thenTarget(then: Then, link?: string): string {
+  if (then === "/bring")
+    return `/bring?${link === undefined ? "" : `link=${encodeURIComponent(link)}&`}connected=1`;
+  return `${then ?? "/settings/origins"}?connected=1`;
+}
+
+/**
+ * Where the browser goes when the other forge sends it back. A connect begun
+ * from `/bring` carries straight on with the bring, as the token path does: the
+ * person asked for it, and the state just proved this is their connect. Nobody
+ * signed in here (a phone that scanned the code) signs in and comes back to
+ * this same callback, its state unspent.
+ */
+export function callbackLanding(
+  ctx: Ctx,
+  done: Awaited<ReturnType<typeof completeOAuthCallback>>,
+): string {
+  if (!done.ok)
+    return done.error === "unauthorized"
+      ? `/signin?next=${encodeURIComponent(ctx.url.pathname + ctx.url.search)}`
+      : "/settings/origins?error=state";
+  if (done.value.status !== "done")
+    return `/settings/origins?error=${encodeURIComponent(done.value.detail.slice(0, 300))}`;
+  const back = new URLSearchParams(done.value.returnQuery);
+  const then = thenOf(back.get("then"));
+  const link = linkOf(back.get("link"));
+  if (then === "/bring" && link !== undefined) {
+    const started = startBring(ctx.app, ctx.auth.user, link);
+    if (started.ok) return `/bring/${started.value.originId}/${started.value.job.id}`;
+  }
+  return thenTarget(then, link);
+}
 
 export async function originOAuthStart(ctx: Ctx): Promise<Response> {
   const denied = accountOnly(ctx);
@@ -928,23 +1100,29 @@ export async function originOAuthStart(ctx: Ctx): Promise<Response> {
   const kind = field(form, "kind");
   const host = field(form, "host").trim();
   const then = thenOf(field(form, "then"));
+  const link = linkOf(field(form, "link"));
 
+  if (host === "" && kind !== "github") {
+    const values = blankValues();
+    values.hostError = "Type the forge's address first, then sign in there.";
+    return shell(ctx, originsView(ctx, values), 422);
+  }
   const back = callbackUri(ctx);
   if (back === "" && kind !== "github") {
     const values = blankValues();
-    values.host = host;
-    values.mode = "host";
+    values.tokenHost = host;
     values.hostError =
-      "This forge does not know its own public URL. Set FORGE_URL (or FORGE_HOST) and try again — or paste a token instead.";
+      "This forge does not know its own public URL, so sign-in cannot come back to it. Make a token there and connect with that, or set FORGE_URL (or FORGE_HOST).";
     return shell(ctx, originsView(ctx, values), 422);
   }
   const started = await startOAuthConnect(ctx.app, ctx.auth.user, {
     host: host || kind,
     ...(kind === "github" ? { kind: "github" as const } : {}),
     redirectUri: back,
+    returnQuery: thenQuery(then, link),
   });
   if (!started.ok) {
-    if (started.error.error === "no_app" && kind !== "github") {
+    if (started.error.error === "no_app" && kind !== "github" && started.error.kind !== "github") {
       // The instance is real but has no application yet: that is the
       // registration step, not an error the user did anything about.
       return redirect(
@@ -953,18 +1131,18 @@ export async function originOAuthStart(ctx: Ctx): Promise<Response> {
     }
     const values = blankValues();
     values.host = host;
-    values.mode = "host";
+    values.tokenHost = host;
+    values.offerToken = started.error.error === "no_app" || started.error.error === "provider_refused";
     values.hostError =
       started.error.error === "no_app"
-        ? "This forge has no GitHub application configured. Paste a token instead."
-        : connectMessage(started.error.error);
+        ? "This forge has no GitHub application configured. Paste a token below instead."
+        : started.error.error === "provider_refused"
+          ? `${hostLabel(host.includes("://") ? host : `https://${host}`)} would not take a sign-in from this forge. Nothing was connected. A token made there works below.`
+          : connectMessage(started.error.error);
     return shell(ctx, originsView(ctx, values), 422);
   }
-  const query = new URLSearchParams(
-    started.value.flow === "code" ? { to: started.value.url } : {},
-  );
-  if (then !== undefined) query.set("then", "migrate");
-  const qs = query.size === 0 ? "" : `?${query}`;
+  // The flow's page knows where to go from the flow itself, not the link.
+  const qs = then === undefined ? "" : `?${thenQuery(then, link)}`;
   return redirect(`/settings/origins/flows/${started.value.flowId}${qs}`);
 }
 
@@ -1008,14 +1186,14 @@ export async function originTrustedHosts(ctx: Ctx): Promise<Response> {
   const denied = accountOnly(ctx);
   if (denied) return denied;
   if (!mayEditTrustedHosts(ctx.auth.user))
-    return new Response("forbidden", { status: 403 });
+    return forbiddenPage(ctx, NOT_ADMIN_HERE);
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
   const text = field(form, "hosts");
   const saved = updateTrustedHosts(ctx.app.db, ctx.auth.user, text);
   if (!saved.ok) {
     if (saved.error === "forbidden")
-      return new Response("forbidden", { status: 403 });
+      return forbiddenPage(ctx, NOT_ADMIN_HERE);
     const values = blankValues();
     values.trustedText = text.slice(0, 4000);
     values.trustedError = rejectedSentence(saved.rejected);
@@ -1044,14 +1222,37 @@ export function notFoundNote(): Html {
   return empty({
     icon: "search",
     title: "No such connect",
-    note: "It finished, expired, or was never yours. Start again from Origins.",
-    action: btn("Back to origins", {
+    note: "It finished, expired, or was never yours. Start again from Connected accounts.",
+    action: btn("Back to connected accounts", {
       href: "/settings/origins",
       variant: "primary",
     }),
   });
 }
 // ---- one origin ----
+
+// POST /settings/origins/:id/check — "Check again": the operator guard, now.
+export async function originCheckSubmit(ctx: Ctx): Promise<Response> {
+  const denied = accountOnly(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const to = "/settings/origins";
+  const checked = await checkOriginAgain(ctx.app, ctx.auth.user, ctx.params.id ?? "");
+  if (!checked.ok)
+    return flashTo(ctx, to, {
+      tone: checked.error === "too_soon" ? "attn" : "danger",
+      message:
+        checked.error === "too_soon" ? CHECK_TOO_SOON : "No such connection.",
+    });
+  return flashTo(ctx, to, {
+    tone:
+      checked.value === "passed" || checked.value === "unguarded"
+        ? "success"
+        : "danger",
+    message: CHECK_WORDS[checked.value],
+  });
+}
 
 // POST /settings/origins/:id/sync
 export async function originSyncSubmit(ctx: Ctx): Promise<Response> {
@@ -1067,13 +1268,13 @@ export async function originSyncSubmit(ctx: Ctx): Promise<Response> {
   if (!synced.ok)
     return flashTo(ctx, "/settings/origins", {
       tone: "danger",
-      message: "No such origin.",
+      message: NO_SUCH_ORIGIN,
     });
   const report = synced.value;
   return flashTo(ctx, "/settings/origins", {
     ...(report.error === ""
       ? {
-          message: `Synced ${report.repos} repositor${report.repos === 1 ? "y" : "ies"}.`,
+          message: syncedWords(report.repos),
         }
       : { tone: "danger" as const, message: report.error }),
   });
@@ -1094,11 +1295,36 @@ export async function originDisconnect(ctx: Ctx): Promise<Response> {
   if (!gone.ok)
     return flashTo(ctx, back, {
       tone: "danger",
-      message: "No such origin.",
+      message: NO_SUCH_ORIGIN,
     });
   return flashTo(ctx, back, {
-    message: gone.value.revokedUpstream
-      ? "Disconnected, and the grant was revoked upstream."
-      : "Disconnected. Revoke the token on the origin too if you want it dead there.",
+    message: disconnectedWords(gone.value.revokedUpstream),
+  });
+}
+
+// POST /settings/origins/:id/token
+/**
+ * A new token on an origin already connected: the origin, its mirrors and
+ * its pins stay; its repositories are listed again with what it sees.
+ */
+export async function originReplaceToken(ctx: Ctx): Promise<Response> {
+  const denied = accountOnly(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const back = thenOf(field(form, "then")) ?? "/settings/origins";
+  const replaced = await replaceOriginToken(
+    ctx.app,
+    ctx.auth.user,
+    ctx.params.id ?? "",
+    field(form, "token"),
+  );
+  if (!replaced.ok)
+    return flashTo(ctx, back, {
+      tone: "danger",
+      message: replaceTokenMessage(replaced.error),
+    });
+  return flashTo(ctx, back, {
+    message: `Token replaced for ${replaced.value.login} at ${hostLabel(replaced.value.webUrl)}; its repositories are listed again.`,
   });
 }

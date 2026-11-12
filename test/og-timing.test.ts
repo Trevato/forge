@@ -7,6 +7,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 setDefaultTimeout(30_000);
 
@@ -39,7 +40,7 @@ afterAll(async () => {
 async function get(path: string, headers: Record<string, string> = {}) {
   const res = await fetch(servers.url + path, { headers });
   await res.arrayBuffer();
-  const names = (res.headers.get("server-timing") ?? "")
+  const names = requestTiming(res)
     .split(", ")
     .map((p) => /^([a-z-]+);/.exec(p)?.[1])
     .filter((n): n is string => n !== undefined && n !== "app");

@@ -19,6 +19,11 @@ export interface SnapshotOutcome {
   readonly landedAt?: string;
   /** Whether the store it landed in is off the machine (a bucket, not a directory); absent when not known. */
   readonly offBox?: boolean;
+  /**
+   * When a snapshot last landed off the machine; kept across landings in a local directory,
+   * so moving the destination home does not erase the age of the last real off-box copy (#10924).
+   */
+  readonly offBoxAt?: string;
   /** Set while attempts are failing: since when, and the last one's reason. */
   readonly failingSince?: string;
   readonly error?: string;
@@ -37,6 +42,13 @@ export function lastSnapshotOutcome(dataDir: string): SnapshotOutcome | undefine
   }
 }
 
+/** When this outcome's last off-box landing was: the kept time, or the landing itself when it was off the machine. */
+export function offBoxAtOf(s: SnapshotOutcome | undefined): string | undefined {
+  if (s === undefined) return undefined;
+  if (s.offBoxAt !== undefined) return s.offBoxAt;
+  return s.offBox === true ? s.landedAt : undefined;
+}
+
 /** Keep an attempt's end: a name that landed, or the error it failed with. Returns what was kept. */
 export function recordSnapshotOutcome(
   dataDir: string,
@@ -48,10 +60,17 @@ export function recordSnapshotOutcome(
     ...(prev?.landed === undefined ? {} : { landed: prev.landed }),
     ...(prev?.landedAt === undefined ? {} : { landedAt: prev.landedAt }),
     ...(prev?.offBox === undefined ? {} : { offBox: prev.offBox }),
+    ...(offBoxAtOf(prev) === undefined ? {} : { offBoxAt: offBoxAtOf(prev)! }),
   };
   const next: SnapshotOutcome =
     "landed" in result
-      ? { at, landed: result.landed, landedAt: at, ...(result.offBox === undefined ? {} : { offBox: result.offBox }) }
+      ? {
+          at,
+          landed: result.landed,
+          landedAt: at,
+          ...(result.offBox === undefined ? {} : { offBox: result.offBox }),
+          ...(result.offBox === true ? { offBoxAt: at } : offBoxAtOf(prev) === undefined ? {} : { offBoxAt: offBoxAtOf(prev)! }),
+        }
       : { at, ...kept, failingSince: prev?.failingSince ?? at, error: result.error };
   write(dataDir, next);
   return next;

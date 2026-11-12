@@ -87,7 +87,7 @@ test("somebody not signed in sees the public sentence", async () => {
   expect(h).not.toContain("repo-audience");
 });
 
-test("the title says Public or Private once; the audience line adds no second badge", async () => {
+test("the title badges only what is not the default: Private; Public is the audience line's sentence alone (#8719)", async () => {
   const cookie = await signIn("olive");
   const made = await createRepo(app, olive, { name: "vault", visibility: "private" });
   if (!made.ok) throw new Error(String(made.error));
@@ -95,8 +95,9 @@ test("the title says Public or Private once; the audience line adds no second ba
   expect(priv.match(/class="badge"/g)?.length).toBe(1);
   expect(priv).toContain(">Private</span");
   const pub = await head("/olive/yard", cookie);
-  expect(pub.match(/class="badge"/g)?.length).toBe(1);
-  expect(pub).toContain(">Public</span");
+  expect(pub.match(/class="badge"/g)?.length ?? 0).toBe(0);
+  expect(pub).not.toContain(">Public</span");
+  expect(pub).toContain("Public: anyone can read this");
 });
 
 test("the head draws the owner, separator and description with shared classes", async () => {

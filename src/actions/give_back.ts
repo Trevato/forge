@@ -9,12 +9,12 @@
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { assignIssue, addComment } from "./issues.ts";
-import { crewRole, isCrew } from "../core/agents.ts";
+import { crewRole, crewWithRole, isCrew } from "../core/agents.ts";
 import { getIssue, getIssueById, setAssignee, type Issue } from "../core/issues.ts";
 import { closesFromBody } from "../core/pulls.ts";
 import { canWrite, getRepoById, type Repo } from "../core/repos.ts";
-import { getUserById, type User } from "../core/users.ts";
-import { handoverOf, passReasonOf } from "../crew/guard.ts";
+import { getUserById, getUsersByIds, type User } from "../core/users.ts";
+import { handoverOf } from "../crew/guard.ts";
 import { transact } from "../kernel/db.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { FleetError } from "./fleet.ts";
@@ -73,39 +73,121 @@ export function giveBack(
   // A reader, or someone who cannot see it, is told nothing exists.
   if (pull === undefined || repo === undefined || !canWrite(app.db, repo, actor))
     return fail("not_found", NO_LONGER_ASKS);
-  if (pull.kind !== "pull" || pull.state !== "open") return fail("not_found", NO_LONGER_ASKS);
-  // Three reviews without an approval, or a pass that gave up and assigned it to a person.
+  if (pull.state !== "open") return fail("not_found", NO_LONGER_ASKS);
+  // Three reviews without an approval, or work a person holds: a pass's
+  // hand-over, or any pull or issue assigned to them.
   const byPass = item.startsWith("assigned:");
+  if (!byPass && pull.kind !== "pull") return fail("not_found", NO_LONGER_ASKS);
   const stillAsks = byPass
-    ? pull.assigneeId === actor.id && !pull.assigneeIsAgent && passReasonOf(app.db, pull.id, actor.id) !== undefined
+    ? pull.assigneeId === actor.id && !pull.assigneeIsAgent
     : handoverOf(app.db, repo, pull.id) !== undefined;
   if (!stillAsks) return fail("not_found", NO_LONGER_ASKS);
-  const builder = byPass ? lastBuilderOf(app.db, repo, pull) : builderOf(app.db, repo, pull);
+  const builder = byPass ? crewHandFor(app.db, repo, pull) : builderOf(app.db, repo, pull);
   if (builder === undefined)
     return fail("bad_action", "no builder on the crew opened this pull, so there is no one to give it back to");
-  // All or nothing: the pull, the issue a person holds and the comment that
-  // ends the hand-over land together, or none of them does.
+  const given = handBack(app, actor, repo, pull, builder, `Given back to the crew by @${actor.username}`);
+  if (!given.ok) return given;
+  return ok({ pull: pull.number, builder: builder.username });
+}
+
+/**
+ * Who work a person holds goes to: the crew member who last worked on it,
+ * else (for an issue) a builder on the crew.
+ */
+export function crewHandFor(db: Database, repo: Repo, work: Issue): User | undefined {
+  const last = lastBuilderOf(db, repo, work);
+  if (last !== undefined || work.kind === "pull") return last;
+  return crewWithRole(db, [repo.id], "builder").get(repo.id)?.[0]?.user;
+}
+
+/**
+ * `crewHandFor` for many at once, by work id: the same answer, in a fixed
+ * number of statements however many rows (the home reads this per page).
+ */
+export function crewHandsFor(
+  db: Database,
+  rows: readonly { readonly repo: Repo; readonly work: Issue }[],
+): Map<string, string> {
+  const out = new Map<string, string>();
+  if (rows.length === 0) return out;
+  const CHUNK = 400;
+  const runs = new Map<string, string[]>();
+  const members = new Set<string>();
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const batch = rows.slice(i, i + CHUNK);
+    const issues = batch.map((r) => r.work.id);
+    for (const r of db
+      .query<{ issue_id: string; actor_id: string }, string[]>(
+        // The five newest per issue, as `lastBuilderOf` reads, cut in SQL so a long history is never returned.
+        `SELECT issue_id, actor_id FROM (
+           SELECT issue_id, actor_id,
+                  ROW_NUMBER() OVER (PARTITION BY issue_id ORDER BY created_at DESC, id DESC) AS nth
+             FROM run WHERE kind = 'agent' AND actor_id IS NOT NULL
+              AND issue_id IN (${issues.map((_, n) => `?${n + 1}`).join(",")})
+         ) WHERE nth <= 5 ORDER BY issue_id, nth`,
+      )
+      .all(...issues)) {
+      const list = runs.get(r.issue_id) ?? [];
+      list.push(r.actor_id);
+      runs.set(r.issue_id, list);
+    }
+    const repos = [...new Set(batch.map((r) => r.repo.id))];
+    for (const m of db
+      .query<{ repo_id: string; user_id: string }, string[]>(
+        `SELECT repo_id, user_id FROM repo_crew WHERE repo_id IN (${repos.map((_, n) => `?${n + 1}`).join(",")})`,
+      )
+      .all(...repos))
+      members.add(`${m.repo_id}:${m.user_id}`);
+  }
+  const ids = [...new Set([...runs.values()].flat().concat(rows.map((r) => r.work.authorId)))];
+  const users = getUsersByIds(db, ids);
+  const builders = crewWithRole(db, rows.map((r) => r.repo.id), "builder");
+  const crew = (repo: Repo, userId: string | undefined): User | undefined => {
+    const u = userId === undefined ? undefined : users.get(userId);
+    return u !== undefined && u.kind === "agent" && members.has(`${repo.id}:${u.id}`) ? u : undefined;
+  };
+  for (const { repo, work } of rows) {
+    const last = (runs.get(work.id) ?? []).map((a) => crew(repo, a)).find((u) => u !== undefined);
+    const by = last ?? (work.authorIsAgent ? crew(repo, work.authorId) : undefined);
+    const named = by ?? (work.kind === "pull" ? undefined : builders.get(repo.id)?.[0]?.user);
+    if (named !== undefined) out.set(work.id, named.username);
+  }
+  return out;
+}
+
+/**
+ * Assign `pull` (and the open issue it closes, when a person holds that
+ * too) to `builder` and say `words`, all or nothing.
+ */
+export function handBack(
+  app: App,
+  actor: User,
+  repo: Repo,
+  pull: Issue,
+  builder: User,
+  words: string,
+): Result<true, FleetError> {
   const refusal = (what: string, why: string) => new Refused(`could not ${what}: ${why}`);
   try {
     transact(app.db, () => {
       const assigned = assignIssue(app, actor, repo, pull, builder);
       if (!assigned.ok) throw refusal(`assign @${builder.username}`, assigned.error);
       // The issue it closes, when a person was left holding it.
-      for (const n of closesFromBody(pull.body)) {
+      for (const n of pull.kind === "pull" ? closesFromBody(pull.body) : []) {
         const issue = getIssue(app.db, repo.id, n);
         if (issue?.kind !== "issue" || issue.state !== "open" || issue.assigneeId === null || issue.assigneeIsAgent)
           continue;
         const moved = assignIssue(app, actor, repo, issue, builder);
         if (!moved.ok) throw refusal(`assign #${n} to @${builder.username}`, moved.error);
       }
-      const said = addComment(app, actor, repo, pull, `Given back to the crew by @${actor.username}`);
+      const said = addComment(app, actor, repo, pull, words);
       if (!said.ok) throw refusal("comment", said.error);
     });
   } catch (e) {
     if (e instanceof Refused) return fail("bad_action", e.message);
     throw e;
   }
-  return ok({ pull: pull.number, builder: builder.username });
+  return ok(true);
 }
 
 class Refused extends Error {}

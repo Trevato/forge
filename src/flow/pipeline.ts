@@ -99,11 +99,13 @@ function waitingTally(db: Database, sql: string, ...args: string[]): Tally {
   return { waiting: r?.n ?? 0, active: 0, oldest: r?.oldest ?? null };
 }
 
-// CROSS JOIN keeps SQLite's order: the ask's runs, their branch's pulls by
-// `pull_head_branch`, then each pull's issue, never every open issue (#3693).
+// CROSS JOIN keeps SQLite's order: the repositories that run themselves, then
+// their open issues by `issue_repo_kind_state_number`, never every issue
+// (#7896); and the ask's runs, their branch's pulls by `pull_head_branch`,
+// then each pull's issue, never every open issue (#3693).
 const READY = `
   SELECT i.created_at AS since
-    FROM issue i JOIN repo r ON r.id = i.repo_id
+    FROM repo r CROSS JOIN issue i ON i.repo_id = r.id
    WHERE i.kind = 'issue' AND i.state = 'open' AND r.autonomy != 'off'
      AND (r.direction_issue_id IS NULL OR r.direction_issue_id != i.id)
      AND NOT EXISTS (SELECT 1 FROM issue_dependency d JOIN issue b ON b.id = d.blocked_by_id
@@ -239,4 +241,127 @@ export function verdict(stages: readonly PipelineStage[], now = Date.now()): str
   if (worst === undefined) return "Nothing is waiting: every stage is empty or being worked.";
   const n = worst.waiting;
   return `${STAGE_LABEL[worst.key]} is the bottleneck: its oldest has waited ${waited(worst, now) ?? ""}, ${n} ${n === 1 ? "waits" : "wait"}${worst.capacity === null ? "" : `, ${worst.capacity}`}.`;
+}
+
+/** The window the per-step numbers are read over (#7784). */
+export const STEP_WINDOW_DAYS = 30;
+
+/** One measured step of the path: what it is, and how long and how often red it has been. */
+export interface StepStat {
+  readonly key: "pull-check" | "review" | "gate" | "main-check" | "release" | "boot" | "verify";
+  readonly label: string;
+  /** Finished runs counted (green + red); cancelled ones are no verdict and not counted. */
+  readonly runs: number;
+  readonly failed: number;
+  /** Median of finished − started, in ms; null when nothing finished or the step keeps no trace. */
+  readonly medianMs: number | null;
+  /** failed / runs, or null with no runs. */
+  readonly redRate: number | null;
+  /** Why there is no number, when there is none to read. */
+  readonly note: string | null;
+  /** What a red outcome means for this step: a check that failed is "red"; a review run that failed "errored" (a changes-asked verdict is not counted here). */
+  readonly redWord: "red" | "errored";
+}
+
+interface Timed {
+  state: string;
+  ms: number | null;
+}
+
+/** Median of the sorted middle: the mean of the two middle values for an even count. */
+export function median(xs: readonly number[]): number | null {
+  if (xs.length === 0) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 === 1 ? (s[m] as number) : ((s[m - 1] as number) + (s[m] as number)) / 2;
+}
+
+function stat(key: StepStat["key"], label: string, rows: readonly Timed[], note: string | null = null): StepStat {
+  const done = rows.filter((r) => r.state === "ok" || r.state === "failed");
+  const failed = done.filter((r) => r.state === "failed").length;
+  const times = done.flatMap((r) => (r.ms !== null && r.ms >= 0 ? [r.ms] : []));
+  return {
+    key,
+    label,
+    runs: done.length,
+    failed,
+    medianMs: median(times),
+    redRate: done.length === 0 ? null : failed / done.length,
+    note,
+    redWord: "red",
+  };
+}
+
+const MS = `(julianday(x.finished_at) - julianday(x.started_at)) * 86400000.0`;
+
+/**
+ * Each step's median time and red rate over the last 30 days, from the runs
+ * table (`run`) and the merge-queue gate's trace (`check_gate`,
+ * kept a week and without a verdict, so time only). `publicOnly` reads public
+ * repositories alone, for a reader who must not learn what private ones hold.
+ *
+ *   time = finished_at − started_at; red rate = failed ÷ (ok + failed)
+ */
+export function readStepStats(db: Database, now = new Date(), publicOnly = false): StepStat[] {
+  const since = new Date(now.getTime() - STEP_WINDOW_DAYS * DAY_MS).toISOString();
+  const vis = publicOnly ? `AND r.visibility = 'public'` : "";
+  const runs = (from: string, where: string): Timed[] =>
+    db
+      .query<Timed, [string]>(
+        `SELECT x.state AS state, CASE WHEN x.started_at IS NULL THEN NULL ELSE ${MS} END AS ms
+           FROM ${from} x JOIN repo r ON r.id = x.repo_id
+          WHERE x.finished_at >= ?1 AND x.state IN ('ok','failed') ${vis} AND ${where}`,
+      )
+      .all(since);
+  const verifyLane = `x.env IN ('verify','verify-bisect')`;
+  const gate = db
+    .query<{ ms: number }, [string]>(
+      `SELECT ${MS} AS ms FROM check_gate x JOIN repo r ON r.id = x.repo_id
+        WHERE x.finished_at IS NOT NULL AND x.finished_at >= ?1 ${vis}`,
+    )
+    .all(since);
+  const gateStat = stat("gate", "Merge-queue gate", []);
+  return [
+    stat("pull-check", "Pull check", runs("run", `x.kind = 'check' AND x.issue_id IS NOT NULL AND NOT ${verifyLane}`)),
+    { ...stat("review", "Review run", runs("run", `x.kind = 'agent' AND x.reason = 'review'`)), redWord: "errored" },
+    {
+      ...gateStat,
+      runs: gate.length,
+      medianMs: median(gate.map((g) => g.ms)),
+      note: "time only: the gate keeps no verdict, and only the last week",
+    },
+    stat("main-check", "Main's check", runs("run", `x.kind = 'check' AND x.issue_id IS NULL AND x.env = r.default_branch`)),
+    stat("release", "Release build", runs("run", `x.kind = 'deploy' AND x.env = 'production'`)),
+    {
+      ...stat("boot", "Boot check", []),
+      note: "runs inside the release build: a failed boot is a failed release build",
+    },
+    stat("verify", "Verify", runs("run", `x.kind = 'check' AND ${verifyLane}`)),
+  ];
+}
+
+/** A step as a figure and a note under it: "8m" over "25% red (1 of 4)", or "—" over why there is no number. */
+export function statParts(s: StepStat): { value: string; note: string } {
+  const value = s.medianMs === null ? "—" : span(s.medianMs);
+  if (s.medianMs === null && s.redRate === null) return { value, note: s.note ?? `no runs in the last ${STEP_WINDOW_DAYS} days` };
+  const red = s.redRate === null ? (s.note ?? "no verdict kept") : `${Math.round(s.redRate * 100)}% ${s.redWord} (${s.failed} of ${s.runs})`;
+  return { value, note: red };
+}
+
+/** "median 12m · 8% red (1 of 12)", or why there is no number: the terminal and MCP say this. */
+export function statWords(s: StepStat): string {
+  const p = statParts(s);
+  return s.medianMs === null && s.redRate === null ? p.note : `median ${p.value} · ${p.note}`;
+}
+
+const stepCache = new WeakMap<Database, { minute: number; publicOnly: boolean; stats: StepStat[] }>();
+
+/** `readStepStats` held for the minute it was read in, per database: the open page runs it at most once a minute, however often it is asked. */
+export function cachedStepStats(db: Database, now = new Date(), publicOnly = false): StepStat[] {
+  const minute = Math.floor(now.getTime() / 60_000);
+  const kept = stepCache.get(db);
+  if (kept !== undefined && kept.minute === minute && kept.publicOnly === publicOnly) return kept.stats;
+  const stats = readStepStats(db, now, publicOnly);
+  stepCache.set(db, { minute, publicOnly, stats });
+  return stats;
 }

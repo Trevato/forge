@@ -9,6 +9,8 @@
  */
 
 import { commitVerdicts, isCommitId, releaseCheck, type CommitCheck } from "../checks/commit_check.ts";
+import { readLooks } from "../checks/looks.ts";
+import { vitalsRows, type PageSize } from "../checks/summary.ts";
 import { hasCommit, isAncestor } from "../git/local.ts";
 import { repoDir } from "../git/repos.ts";
 import { mayViewId } from "../core/sealed.ts";
@@ -16,7 +18,7 @@ import { requireVerified } from "./verify.ts";
 import { requireAbility } from "./roles.ts";
 import type { App } from "../app.ts";
 import { steerRun } from "../crew/runner.ts";
-import { getIssueById } from "../core/issues.ts";
+import { getIssueById, getIssuesByIds } from "../core/issues.ts";
 import { addComment } from "./issues.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import { canEnterApp, canSeeOwnerFacts, onCrew, type Repo } from "../core/repos.ts";
@@ -24,16 +26,20 @@ import {
   cancelRun as markCancelled,
   getRun,
   listRuns as queryRuns,
+  runsMarker,
   type ListRunsOptions,
   type Run,
   setRunErrorLine,
 } from "../core/runs.ts";
-import type { User } from "../core/users.ts";
+import { getUsersByIds, type User } from "../core/users.ts";
 import { abortAgentRun } from "../crew/running.ts";
+import { stopRun } from "../runs/stoppable.ts";
 import { queueAgentRun, taskOf } from "../crew/dispatch.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { readRunLog, readRunLogTail, runLogPath } from "../runs/log.ts";
+import { shownStates, type ShownState } from "../runs/state.ts";
 import { firstErrorLine } from "../runs/error_line.ts";
+import { cancelledBy } from "../runs/cancelled.ts";
 import { requireReader, requireWriter, type AccessError } from "./access.ts";
 
 /** What a run event carries: enough for a surface to render the card. */
@@ -170,6 +176,54 @@ export function listRepoRuns(
 }
 
 /**
+ * What the runs list shows this reader, before the list is built: whether
+ * they see cost and turns. Call it only for someone who may read runs. The
+ * owner and a stranger never share it.
+ */
+export function runsViewKey(app: App, actor: User | undefined, repo: Repo, options: ListRunsOptions): string {
+  const facts = canSeeOwnerFacts(app.db, repo, actor);
+  return `${facts ? "f" : "-"}\n${runsMarker(app.db, repo.id, options)}`;
+}
+
+/** A run as the runs API lists it: the agent's name, and the pull or issue it is about. */
+export type NamedRun = Run & {
+  /** The state to show, worked out from what the run did (`runs/state.ts`). */
+  readonly shown: ShownState;
+  readonly agent: string | null;
+  readonly number: number | null;
+  readonly title: string | null;
+};
+
+/**
+ * Names runs already read for this reader (`listRepoRuns`) in two grouped
+ * reads: `agent` is the username behind an agent run (null for a check or
+ * deploy), `number` and `title` the pull or issue the run is about (null when
+ * it is about none). A sealed issue never reaches here: `listRepoRuns` drops
+ * its runs for a reader who may not see it.
+ */
+export function nameRuns(app: App, runs: readonly Run[]): NamedRun[] {
+  const actors = getUsersByIds(
+    app.db,
+    runs.flatMap((r) => (r.kind === "agent" && r.actorId !== null ? [r.actorId] : [])),
+  );
+  const issues = getIssuesByIds(
+    app.db,
+    runs.flatMap((r) => (r.issueId === null ? [] : [r.issueId])),
+  );
+  const shown = shownStates(app.db, runs);
+  return runs.map((r) => {
+    const issue = r.issueId === null ? undefined : issues.get(r.issueId);
+    return {
+      ...r,
+      shown: shown.get(r.id) ?? "waiting",
+      agent: r.kind === "agent" && r.actorId !== null ? (actors.get(r.actorId)?.username ?? null) : null,
+      number: issue?.number ?? null,
+      title: issue?.title ?? null,
+    };
+  });
+}
+
+/**
  * The default branch's check that covers one commit (`checks/commit_check.ts`
  * `releaseCheck`), for whoever may read the repository's runs: what a
  * release waits on — the commit's own check, or a later main commit's that
@@ -189,6 +243,35 @@ export async function checkOfCommit(
       contains: (descendant) => isAncestor(dir, oid, descendant),
     }),
   );
+}
+
+/** One look of a check as the API words it: how many screens tall, and whether a phone look scrolls sideways. */
+export interface LookFigures {
+  readonly look: string;
+  readonly screens: string;
+  readonly sideways: boolean;
+  /** The window and page as measured (`scrollWidth` vs `innerWidth` says whether it fits); absent when none was recorded. */
+  readonly size?: PageSize;
+}
+
+/**
+ * The looks of the run that checked a commit, from the same file the run page
+ * reads; `[]` for someone who may not read runs or when none were filed.
+ */
+export function looksOfCheck(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  run: { readonly id: string; readonly commitOid: string },
+): LookFigures[] {
+  if (!mayReadRuns(app, actor, repo)) return [];
+  const looks = readLooks(app.config.dataDir, { id: run.id, repoId: repo.id, commitOid: run.commitOid });
+  return vitalsRows(looks).map((g) => ({
+    look: g.look,
+    screens: g.screens,
+    sideways: g.sideways,
+    ...(g.size === undefined ? {} : { size: g.size }),
+  }));
 }
 
 /** The own green or red verdicts of a page of commits, for whoever may read the runs; empty otherwise. */
@@ -251,8 +334,9 @@ export function runLog(
 
 /**
  * Cancel a run that has not finished. A queued run never starts; a running
- * agent run is stopped; a running deploy is abandoned by its environment
- * when its step ends.
+ * agent run or check worked here is stopped, every process it started with
+ * it (#10776); a running deploy is abandoned by its environment when its
+ * step ends.
  */
 export function cancelRepoRun(
   app: App,
@@ -267,10 +351,13 @@ export function cancelRepoRun(
   const cancelled = markCancelled(
     app.db,
     runId,
-    `cancelled by ${writer.value.username}`,
+    cancelledBy(writer.value.username),
   );
   if (!cancelled) return err("finished");
+  // The row says cancelled first, so the run's own end leaves it so; the
+  // abort then ends the process group it started.
   if (run.kind === "agent") abortAgentRun(runId);
+  else stopRun(runId);
   announceRun(app, cancelled, writer.value.id);
   return ok(cancelled);
 }
@@ -319,6 +406,13 @@ export type SteerOutcome =
   | "sent"
   /** No session was listening; it went on the conversation for the next run. */
   | "commented";
+
+/** What each outcome means, said the same on every surface that steers. */
+export const STEER_SAYS: Record<SteerOutcome, string> = {
+  sent: "The agent hears it at its next step.",
+  commented:
+    "No session was listening; it went on the conversation for the next run.",
+};
 
 /**
  * Say something to an agent mid-run. A running agent hears it as its next

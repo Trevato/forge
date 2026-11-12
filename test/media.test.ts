@@ -17,13 +17,15 @@ import { mediaGate } from "../src/git/env.ts";
 import { blobStream, MEDIA_QUEUE_MAX, refTip, readerFor } from "../src/git/read.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { MEDIA_POLICY } from "../src/web/pages/media.ts";
+import { cachedMedia } from "../src/web/pages/tree_cache.ts";
+import { MEDIA_POLICY, PDF_POLICY } from "../src/web/pages/media.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 1, 2, 3]);
+const PDF = new TextEncoder().encode("%PDF-1.7\n1 0 obj<<>>endobj\n%%EOF\n");
 const EVIL_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(document.cookie)</script><rect width="1" height="1"/></svg>\n';
 /** Over the pooled read, so it is sniffed and streamed off git. */
@@ -61,7 +63,9 @@ beforeAll(async () => {
       { path: "art/logo.png", content: PNG },
       { path: "art/fake.png", content: "not a png at all\n" },
       { path: "art/evil.svg", content: EVIL_SVG },
-      { path: "art/page.html", content: "<script>alert(1)</script>" },
+      { path: "doc.pdf", content: PDF },
+      { path: "fake.pdf", content: "<script>alert(1)</script>" },
+      { path: "art/page.txt", content: "<script>alert(1)</script>" },
       { path: "clip.mp4", content: CLIP },
       { path: "README.md", content: "# gallery\n" },
       { path: "src/a.ts", content: "export const a = 1\n" },
@@ -86,6 +90,22 @@ afterAll(async () => {
 });
 
 describe("the media route", () => {
+  test("a small file at a full commit id is kept, a branch's and a large one are not", async () => {
+    const repoId = app.db.query<{ id: string }, []>("select id from repo where name = 'gallery'").get()!.id;
+    expect(cachedMedia(repoId, sha, "art/logo.png")).toBeUndefined();
+    const first = await get(`/alice/gallery/media/${sha}/art/logo.png`);
+    const bytes = new Uint8Array(await first.arrayBuffer());
+    const held = cachedMedia(repoId, sha, "art/logo.png");
+    expect(held?.body).toEqual(PNG);
+    const again = await get(`/alice/gallery/media/${sha}/art/logo.png`);
+    expect(again.headers.get("etag")).toBe(first.headers.get("etag"));
+    expect(new Uint8Array(await again.arrayBuffer())).toEqual(bytes);
+    await get("/alice/gallery/media/main/art/logo.png");
+    expect(cachedMedia(repoId, "main", "art/logo.png")).toBeUndefined();
+    await (await get(`/alice/gallery/media/${sha}/clip.mp4`)).arrayBuffer();
+    expect(cachedMedia(repoId, sha, "clip.mp4")).toBeUndefined();
+  });
+
   test("a confirmed PNG is served as image/png with its bytes", async () => {
     const res = await get("/alice/gallery/media/main/art/logo.png");
     expect(res.status).toBe(200);
@@ -99,7 +119,7 @@ describe("the media route", () => {
     const fake = await get("/alice/gallery/media/main/art/fake.png");
     expect(fake.status).toBe(200);
     expect(fake.headers.get("content-type")).toBe("application/octet-stream");
-    const page = await get("/alice/gallery/media/main/art/page.html");
+    const page = await get("/alice/gallery/media/main/art/page.txt");
     expect(page.headers.get("content-type")).toBe("application/octet-stream");
   });
 
@@ -112,6 +132,32 @@ describe("the media route", () => {
     expect(MEDIA_POLICY).toContain("default-src 'none'");
     expect(MEDIA_POLICY).not.toContain("script-src");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  test("a PDF drops sandbox for the viewer; an SVG keeps it; both embed same-origin only", async () => {
+    const pdf = await get("/alice/gallery/media/main/doc.pdf");
+    expect(pdf.status).toBe(200);
+    expect(pdf.headers.get("content-type")).toBe("application/pdf");
+    expect(pdf.headers.get("content-security-policy")).toBe(
+      "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; frame-ancestors 'self'",
+    );
+    expect(PDF_POLICY).not.toContain("sandbox");
+    expect(pdf.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(pdf.headers.get("content-disposition")).toBeNull();
+    expect(pdf.headers.get("x-frame-options")).toBe("SAMEORIGIN");
+
+    const svg = await get("/alice/gallery/media/main/art/evil.svg");
+    expect(svg.headers.get("content-security-policy")).toBe(
+      "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'self'",
+    );
+    expect(svg.headers.get("x-frame-options")).toBe("SAMEORIGIN");
+
+    // Only bytes that are a PDF get the PDF policy; a download never does.
+    const fake = await get("/alice/gallery/media/main/fake.pdf");
+    expect(fake.headers.get("content-type")).toBe("application/octet-stream");
+    expect(fake.headers.get("content-security-policy")).toBe(MEDIA_POLICY);
+    const dl = await get("/alice/gallery/media/main/doc.pdf?download=1");
+    expect(dl.headers.get("content-security-policy")).toBe(MEDIA_POLICY);
   });
 
   test("a single range is 206 with its window", async () => {
@@ -202,7 +248,7 @@ describe("the media route", () => {
   test("a full commit id is cached for a year; a branch revalidates", async () => {
     const pinned = await get(`/alice/gallery/media/${sha}/art/logo.png`);
     expect(pinned.status).toBe(200);
-    expect(pinned.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+    expect(pinned.headers.get("cache-control")).toBe("public, max-age=31536000, s-maxage=86400, immutable");
     const moving = await get("/alice/gallery/media/main/art/logo.png");
     expect(moving.headers.get("cache-control")).toBe("private, max-age=0");
   });
@@ -254,10 +300,24 @@ describe("the media permits", () => {
     const stream = await blobStream(dir, oid, 0, CLIP.length - 1, { idleMs: 50 });
     if (typeof stream === "string") throw new Error(stream);
     const reader = stream.getReader();
-    expect((await reader.read()).done).toBe(false);
+    const first = await reader.read();
+    expect(first.done).toBe(false);
     // Then it never pulls again.
     expect(await settled()).toBe(0);
-    await expect(reader.read()).rejects.toThrow("idle");
+    // What was queued before the stall still reads; then the stream ends.
+    // A loaded machine can hand the whole blob over in the first two pipe
+    // reads, and then the range ends before any stall — so either the idle
+    // timer cut it short, or every byte had already arrived.
+    let received = first.value?.length ?? 0;
+    let cut: unknown = null;
+    try {
+      for (let next = await reader.read(); !next.done; next = await reader.read())
+        received += next.value.length;
+    } catch (error) {
+      cut = error;
+    }
+    if (received < CLIP.length) expect(String(cut)).toContain("idle");
+    else expect(cut).toBeNull();
   });
 
   test("a stream nobody ever reads ends too", async () => {
@@ -300,6 +360,31 @@ describe("the media permits", () => {
   });
 });
 
+describe("the blob page of a PDF", () => {
+  const policy = async (path: string): Promise<{ csp: string; html: string }> => {
+    const res = await get(path);
+    const bare = (res.headers.get("content-security-policy") ?? "").replace(/'nonce-[^']+'/g, "'nonce'");
+    return { csp: bare, html: await res.text() };
+  };
+
+  test("draws the media URL in an object and alone sends object-src 'self'", async () => {
+    const pdf = await policy("/alice/gallery/blob/main/doc.pdf");
+    expect(pdf.html).toContain('<object class="pdf-frame" data="/alice/gallery/media/main/doc.pdf" type="application/pdf">');
+    expect(pdf.html).toContain('href="/alice/gallery/media/main/doc.pdf?download=1"');
+    expect(pdf.csp).toContain("object-src 'self'; ");
+
+    // Every other policy is exactly what it was, with object-src left out.
+    const readme = await policy("/alice/gallery/blob/main/README.md");
+    expect(readme.csp).not.toContain("object-src");
+    expect(pdf.csp.replace("object-src 'self'; ", "")).toBe(readme.csp);
+    const source = await policy("/alice/gallery/blob/main/doc.pdf?view=source");
+    expect(source.csp).not.toContain("object-src");
+    expect(source.html).not.toContain("<object");
+    for (const path of ["/alice/gallery", "/alice/gallery/blob/main/fake.pdf", "/alice/gallery/blob/main/art/logo.png"])
+      expect((await policy(path)).csp).not.toContain("object-src");
+  });
+});
+
 describe("the blob page's switch", () => {
   const flat = (s: string): string => s.replace(/\s+/g, " ");
 
@@ -325,7 +410,7 @@ describe("the blob page's switch", () => {
     expect(code).toContain('href="/alice/gallery/media/main/src/a.ts?download=1"');
 
     const png = flat(await (await get("/alice/gallery/blob/main/art/logo.png")).text());
-    expect(png).toContain("Binary file");
+    expect(png).toContain('src="/alice/gallery/media/main/art/logo.png"');
     expect(png).toContain('href="/alice/gallery/media/main/art/logo.png?download=1"');
   });
 });

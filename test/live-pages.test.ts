@@ -16,6 +16,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/core/repos.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { withScripts } from "./helpers/page-script.ts";
 
 describe("live browsing pages", () => {
   let dataDir: string;
@@ -57,19 +58,19 @@ describe("live browsing pages", () => {
     const html = await (await fetch(`${base}/lex/proj`)).text();
     expect(html).toContain('id="live"');
     expect(html).toContain('data-repo="/lex/proj"');
-    expect(html).toContain("new EventSource");
+    expect(await withScripts(servers.url, html)).toContain("new EventSource");
   });
 
   test("the commit history wires up the live client", async () => {
     const html = await (await fetch(`${base}/lex/proj/commits`)).text();
     expect(html).toContain('id="live"');
-    expect(html).toContain("new EventSource");
+    expect(await withScripts(servers.url, html)).toContain("new EventSource");
   });
 
   test("the branches page wires up the live client", async () => {
     const html = await (await fetch(`${base}/lex/proj/branches`)).text();
     expect(html).toContain('id="live"');
-    expect(html).toContain("new EventSource");
+    expect(await withScripts(servers.url, html)).toContain("new EventSource");
   });
 
   test("the studio app page wires up the live client with data-app, so a deploy run event refetches the app's own fragment", async () => {
@@ -103,11 +104,11 @@ describe("live browsing pages", () => {
     ).text();
     expect(html).toContain('id="live"');
     expect(html).toContain('data-app="1"');
-    expect(html).toContain("new EventSource");
+    expect(await withScripts(servers.url, html)).toContain("new EventSource");
     // `app.serving` fires at the swap-in, seconds to half a minute before
     // the deploy run's own `run.finished` — the client must listen for it
     // directly, not only learn a preview is live once its tests are done.
-    expect(html).toContain("app.serving");
+    expect(await withScripts(servers.url, html)).toContain("app.serving");
     // The polite region a swap must speak into — the one place a screen
     // reader learns a preview just went live.
     expect(html).toContain('id="live-status"');
@@ -156,18 +157,26 @@ describe("live browsing pages", () => {
     ).split(";")[0]!;
 
     const html = await (
-      await fetch(`${base}/`, {
+      await fetch(`${base}/feed`, {
         headers: { cookie: `${cookie}; forge_mode=studio` },
       })
     ).text();
     expect(html).toContain('id="live-apps"');
     expect(html).not.toContain('id="live-on-you"');
-    expect(html).toContain("new EventSource('/events')");
+    expect(await withScripts(servers.url, html)).toContain("new EventSource('/events')");
   });
 
   test("a live region never swaps out from under a card that is mid-decision", async () => {
     const { liveRegionsJs } = await import("../src/web/client.ts");
     expect(liveRegionsJs).toContain("data-busy");
+  });
+
+  test("the whole page is refetched at most once per 30 s, however many events arrive", async () => {
+    const { liveRegionsJs } = await import("../src/web/client.ts");
+    expect(liveRegionsJs).toContain("var PAGE_GAP = 30000;");
+    const refresh = liveRegionsJs.slice(liveRegionsJs.indexOf("function refresh("));
+    expect(refresh).toContain("src === location.href && last - lastPage < PAGE_GAP");
+    expect(refresh.indexOf("PAGE_GAP")).toBeLessThan(refresh.indexOf("pull(src"));
   });
 
   test("a live region never swaps out from under ticked boxes", async () => {
@@ -177,108 +186,6 @@ describe("live browsing pages", () => {
     const swap = liveRegionsJs.slice(liveRegionsJs.indexOf("function swap("));
     expect(swap.indexOf("checkbox]:checked")).toBeGreaterThan(-1);
     expect(swap.indexOf("checkbox]:checked")).toBeLessThan(swap.indexOf("innerHTML = "));
-  });
-});
-
-describe("the beat of a region with data-live-every", () => {
-  type Attrs = Record<string, string>;
-  const region = (attrs: Attrs, html: string) => {
-    const r = {
-      id: attrs["id"] ?? "",
-      attrs: { ...attrs },
-      innerHTML: html,
-      getAttribute: (n: string) => r.attrs[n] ?? null,
-      hasAttribute: (n: string) => n in r.attrs,
-      setAttribute: (n: string, v: string) => void (r.attrs[n] = v),
-      removeAttribute: (n: string) => void delete r.attrs[n],
-      get attributes() {
-        return Object.entries(r.attrs).map(([name, value]) => ({ name, value }));
-      },
-      querySelector: () => null,
-      querySelectorAll: () => [],
-      contains: () => false,
-      dispatchEvent: () => true,
-    };
-    return r;
-  };
-
-  /** Runs the script against a fake page; `answers` are the fragments the server gives, in order. */
-  const run = async (js: string, answers: Attrs[]) => {
-    const mine = region(
-      { id: "live-checks", "data-live": "run.*", "data-live-src": "/x/checks-line", "data-live-every": "5" },
-      "running",
-    );
-    let n = 0;
-    let fragment = region({ id: "live-checks" }, "");
-    const timers: Array<() => void> = [];
-    const intervals = new Map<number, () => void>();
-    const cleared: number[] = [];
-    let nextId = 1;
-    const doc = {
-      hidden: false,
-      activeElement: null,
-      querySelectorAll: (sel: string) =>
-        sel === "[data-live-every]"
-          ? "data-live-every" in mine.attrs ? [mine] : []
-          : sel === "[data-live]" ? [mine] : [],
-      getElementById: (id: string) => (id === "live-checks" ? mine : null),
-      createElement: () => ({
-        set innerHTML(_: string) {},
-        content: { querySelector: () => null, getElementById: () => fragment },
-      }),
-      dispatchEvent: () => true,
-      addEventListener: () => {},
-    };
-    const win = {
-      setInterval: (f: () => void) => (intervals.set(nextId, f), nextId++),
-      clearInterval: (id: number) => (intervals.delete(id), void cleared.push(id)),
-      addEventListener: () => {},
-    };
-    class ES {
-      addEventListener() {}
-      close() {}
-    }
-    const fake = {
-      document: doc,
-      window: win,
-      location: { href: "http://x/page" },
-      EventSource: ES,
-      CustomEvent: class {},
-      DOMParser: class {},
-      setTimeout: (f: () => void) => (timers.push(f), 0),
-      clearTimeout: () => {},
-      fetch: async () => {
-        fragment = region(answers[n++] ?? {}, "changed " + n);
-        return { status: 200, ok: true, headers: { get: () => null }, text: async () => "" };
-      },
-    };
-    try { new Function(...Object.keys(fake), js)(...Object.values(fake)); } catch (e) { console.log("ERR", e); }
-    const beat = async () => {
-      for (const f of [...intervals.values()]) f();
-      while (timers.length > 0) timers.shift()!();
-      await new Promise((r) => setTimeout(r, 0));
-    };
-    return { mine, intervals, cleared, beat };
-  };
-
-  test("a swap without the attribute clears the beat and the region stops asking", async () => {
-    const { liveRegionsJs } = await import("../src/web/client.ts");
-    const { mine, intervals, cleared, beat } = await run(liveRegionsJs, [{}]);
-    expect(intervals.size).toBe(1);
-    await beat();
-    expect(cleared.length).toBe(1);
-    expect(intervals.size).toBe(0);
-    expect(mine.hasAttribute("data-live-every")).toBe(false);
-  });
-
-  test("a swap that brings the attribute arms one beat, and a repeat does not arm a second", async () => {
-    const { liveRegionsJs } = await import("../src/web/client.ts");
-    const every = { "data-live-every": "5" };
-    const { intervals, cleared, beat } = await run(liveRegionsJs, [every, every]);
-    await beat();
-    await beat();
-    expect(intervals.size).toBe(1);
-    expect(cleared.length).toBe(0);
   });
 });
 

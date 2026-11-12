@@ -536,6 +536,20 @@ describe("editing files on the web", () => {
     expect(await res.text()).toContain("path this repository can hold");
   });
 
+  test("the commit section and the delete page are not boxed in cards", async () => {
+    const edit = await text("/alice/beacon/edit/main/src/lamp.ts", alice);
+    const del = await text("/alice/beacon/delete/main/src/spare.ts", alice);
+    for (const html of [edit, del]) {
+      expect(html).not.toContain('class="card');
+      expect(html).toContain('class="settings-block');
+    }
+    expect(edit).toContain('action="/alice/beacon/edit"');
+    expect(edit).toContain('name="message"');
+    expect(edit).toContain("data-preview=");
+    expect(del).toContain('action="/alice/beacon/delete"');
+    expect(del).toContain('name="message"');
+  });
+
   // ---- deleting ----
 
   test("deleting a file goes through its own confirm page", async () => {
@@ -547,6 +561,8 @@ describe("editing files on the web", () => {
     expect(html).toContain('action="/alice/beacon/delete"');
     // The confirm page is where the deletion is described, not the button.
     expect(html).toContain("a deletion in history, not from it");
+    // The page head says it is a deletion; no second heading repeats it.
+    expect(html).not.toContain("Delete a file");
 
     const res = await post(
       "/alice/beacon/delete",
@@ -647,14 +663,12 @@ describe("editing files on the web", () => {
     expect(await editor.text()).toContain(
       `<script type="module" src="${asset.path}">`,
     );
-    expect(policy).toContain(`script-src 'nonce-`);
-    expect(/script-src 'nonce-[^']+' 'self'/.test(policy)).toBe(true);
-
-    // Every other page keeps the stricter policy: nonce only.
+    // Scripts are hashed files, so every page's policy is the same: this
+    // origin's files, no inline script, no nonce, nothing unsafe.
+    expect(policy).toContain("script-src 'self';");
+    expect(policy).not.toContain("unsafe");
     const blob = await get("/alice/beacon/blob/main/src/lamp.ts", alice);
-    const strict = blob.headers.get("content-security-policy") ?? "";
-    expect(/script-src 'nonce-[^']+';/.test(strict)).toBe(true);
-    expect(/script-src [^;]*'self'/.test(strict)).toBe(false);
+    expect(blob.headers.get("content-security-policy")).toContain("script-src 'self';");
   });
 
   test("the bundle is served immutably at its hash, and nowhere else", async () => {
@@ -771,9 +785,6 @@ describe("editing files on the web", () => {
     expect(html).not.toContain('id="editor-mirror"');
     expect(html).not.toContain('data-mirror="1"');
     expect(html).not.toContain('<script type="module"');
-    const res = await get("/alice/beacon/edit/main/src/generated.ts", alice);
-    const policy = res.headers.get("content-security-policy") ?? "";
-    expect(/script-src [^;]*'self'/.test(policy)).toBe(false);
   });
 
   test("suggestBranch makes a name git will take", () => {

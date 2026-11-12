@@ -8,7 +8,8 @@ import { createRepo } from "../src/actions/repos.ts";
 import { forgetListings } from "../src/core/listings.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { baselineMs, expectBudget } from "./helpers/budget.ts";
+import { expectWork } from "./helpers/work.ts";
+import { statements } from "./helpers/statements.ts";
 
 let dataDir: string;
 let app: App;
@@ -34,24 +35,23 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-/** The whole request's time: `app` already holds the named phases, so they are not added again. */
-const total = (h: string) => Number(/(?:^|, )app;dur=([\d.]+)/.exec(h)?.[1] ?? Infinity);
-
-test("lists the 100 public repositories and none of the 20 private ones, built in under 15 ms", async () => {
-  let best = Infinity;
+test("lists the 100 public repositories and none of the 20 private ones, built in a bounded number of statements", async () => {
   let res!: Response;
   let body = "";
   for (let i = 0; i < 5; i++) {
     forgetListings(app.db);
     res = await fetch(`${servers.url}/sitemap.xml`);
     body = await res.text();
-    best = Math.min(best, total(res.headers.get("server-timing") ?? ""));
   }
   expect(body.match(/\/alice\/pub\d+</g)?.length).toBe(100);
   expect(body).not.toContain("priv");
   const timing = res.headers.get("server-timing") ?? "";
   for (const phase of ["repos", "render", "etag"]) expect(timing).toContain(`${phase};dur=`);
-  expectBudget(best, { ms: 15, against: await baselineMs(servers.url) });
+  // Counted, not timed: a cold build reads once for all 120 repositories, not once each.
+  expectWork(await statements(app.db, async () => {
+    forgetListings(app.db);
+    await (await fetch(`${servers.url}/sitemap.xml`)).text();
+  }), { max: 8 });
 });
 
 test("a repeat with If-None-Match gets a 304, a stale tag gets the document", async () => {

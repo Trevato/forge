@@ -1,12 +1,12 @@
 /**
  * Your SSH keys in the terminal: the list, `a` to add one (a title, then an
- * authorized_keys line) and `d` to remove the one under the cursor after a
- * confirm. Every rule is the action's (`actions/users.ts`) and the words are
- * MCP `ssh_keys`'s own (`keyWords`); the list is your own keys, never another
- * account's.
+ * authorized_keys line), and for the key under the cursor `e` to rename it
+ * and `d` to remove it after a confirm. Every rule is the action's
+ * (`actions/users.ts`) and the words are MCP `ssh_keys`'s own (`keyWords`);
+ * the list is your own keys, never another account's.
  */
 
-import { addSshKey, deleteSshKey } from "../../actions/users.ts";
+import { addSshKey, deleteSshKey, renameSshKey } from "../../actions/users.ts";
 import { listKeys } from "../../core/keys.ts";
 import { keyWords } from "../../http/mcp/shared.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -30,8 +30,8 @@ export function sshKeysScreen(f: Session, ctx: Ctx): Screen {
     }));
 
   const screen: Screen = {
-    title: "SSH keys",
-    keys: [binding(["j", "k"], "move cursor"), binding(["a"], "add"), binding(["d"], "remove")],
+    title: "Computer keys",
+    keys: [binding(["j", "k"], "move cursor"), binding(["a"], "add"), binding(["e"], "rename"), binding(["d"], "remove")],
     render(area, s) {
       const c = ctx.theme.c;
       const [head, body] = split(area, "v", [len(1), fill(1)]);
@@ -60,6 +60,28 @@ export function sshKeysScreen(f: Session, ctx: Ctx): Screen {
               const done = deleteSshKey(f.app, f.user, k.id);
               note = done.ok ? `${k.name}: removed.` : keyWords(done.error);
               ctx.invalidate();
+            },
+          }),
+        );
+        return true;
+      }
+      if (e.key === "e") {
+        const k = items()[state.index];
+        if (k === undefined) return false;
+        ctx.push(
+          promptScreen(ctx, screen, {
+            title: "Rename SSH key",
+            label: "which machine holds it",
+            value: k.name,
+            onSubmit: (name) => {
+              const done = renameSshKey(f.app, f.user, k.id, name);
+              if (!done.ok) {
+                ctx.toast(keyWords(done.error), "danger");
+                return keyWords(done.error);
+              }
+              note = `${k.name}: renamed to ${name.trim()}.`;
+              ctx.invalidate();
+              return undefined;
             },
           }),
         );

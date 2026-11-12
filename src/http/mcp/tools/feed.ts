@@ -1,12 +1,12 @@
 import { FEED_LIMIT_DEFAULT, FEED_LIMIT_MAX, parseCursor, readFeed } from "../../../feed/feed.ts";
+import { parseBefore, readTimeline } from "../../../feed/timeline.ts";
 import { CURSOR_NOT_ISSUED } from "../../../actions/feed_words.ts";
-import { lastVisit } from "../../../core/home_visit.ts";
-import { sinceDigest } from "../../../web/studio/since.ts";
+import { feedDigest } from "../../../web/studio/since.ts";
 import { good, bad, type Tool, CHIP_ARGS, chipArgs, str } from "../shared.ts";
 
 export const tool: Tool = {
   name: "feed",
-  doc: "`{ limit?, cursor? }`: your home timeline — tells, replies, runs, changes and looks — ranked, with who, what, why and a link; the same items as `GET /api/v1/feed`; `digest` (first page only) is home's \"Since you were here\" card, `{ heading, lines: [{ repo, says, href }] }` or null; `quietRuns` counts agent runs of the last 24 h that pushed, opened or said nothing, which the timeline leaves out; an item with `lines: [{ text, link }]` and `more` is a folded burst (3+ issues one author opened in one repository within 2 minutes: `planned N issues in owner/name`, linking to its map) — `lines` are the first three, `more` the rest",
+  doc: "`{ limit?, cursor?, before?, hide_kinds?, hide_people? }`: your home timeline — tells, replies, runs, changes and looks — ranked, with who, what, why and a link; the same items as `GET /api/v1/feed`; `before` (a `next_cursor`, or `now`) reads the log newest first instead of ranked, as constant-cost pages with no repeat or skip; `digest` (first page only) is home's \"Since you were here\" card, `{ heading, lines: [{ repo, says, href }] }` or null; `quietRuns` counts agent runs of the last 24 h that pushed, opened or said nothing, which the timeline leaves out; an item with `lines: [{ text, link }]` and `more` is a folded burst (3+ issues one author opened in one repository within 2 minutes: `planned N issues in owner/name`, linking to its map) — `lines` are the first three, `more` the rest",
   description:
     "Your ranked home timeline; `cursor` pages; saved filter applies.",
   inputSchema: {
@@ -14,6 +14,7 @@ export const tool: Tool = {
     properties: {
       limit: { type: "integer", minimum: 1, maximum: FEED_LIMIT_MAX },
       cursor: { type: "string" },
+      before: { type: "string" },
       ...CHIP_ARGS,
     },
   },
@@ -29,11 +30,23 @@ export const tool: Tool = {
     const cursor = given === undefined ? undefined : parseCursor(str(given));
     if (given !== undefined && cursor === undefined)
       return bad("invalid", CURSOR_NOT_ISSUED);
+    const rawBefore = args["before"];
+    if (rawBefore !== undefined) {
+      const before = parseBefore(str(rawBefore));
+      if (before === undefined || given !== undefined) return bad("invalid", CURSOR_NOT_ISSUED);
+      return good(
+        readTimeline(ctx.app.db, user, {
+          limit,
+          ...(chips === undefined ? {} : { chips }),
+          ...(before.id === undefined ? {} : { before: before.id }),
+        }),
+      );
+    }
     const page = readFeed(ctx.app.db, user, {
       limit,
       ...(chips === undefined ? {} : { chips }),
       ...(cursor === undefined ? {} : { cursor }),
     });
-    return good({ ...page, ...(cursor === undefined ? { digest: sinceDigest(ctx.app.db, user, lastVisit(ctx.app.db, user.id), Date.now()) ?? null } : {}) });
+    return good({ ...page, ...(cursor === undefined ? { digest: feedDigest(ctx.app.db, user, Date.now()) } : {}) });
   },
 };

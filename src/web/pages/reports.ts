@@ -12,11 +12,20 @@ import {
   waitingReports,
 } from "../../actions/reports.ts";
 import {
+  REPORT_WHERE_REPLY,
+  REPORT_WHO_READS,
+  reportTooFast,
+} from "../../actions/report_words.ts";
+import {
   BODY_MAX,
   OUTSIDE_TITLE,
   REQUEST_MAX,
   TITLE_MAX,
+  byFiler,
+  filerWords,
   outsideWords,
+  reportStanding,
+  type FiledBy,
   type Report,
 } from "../../core/reports.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
@@ -28,6 +37,7 @@ import {
   timePhase,
 } from "../../core/route_timing.ts";
 import { clientBucket } from "../../http/peer.ts";
+import { proofOf } from "../../http/report_filer.ts";
 import {
   crumbsFor,
   loadRepo,
@@ -41,7 +51,7 @@ import { field, readForm } from "../form.ts";
 import { pageAddress } from "../studio/toolbar.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { btn, card, empty, field as formField, messageText, time } from "../ui.ts";
+import { btn, field as formField, messageText, row, time } from "../ui.ts";
 
 /** The repository, when it takes reports: public, and so seen by anyone. */
 function publicRepo(ctx: Ctx): Repo | undefined {
@@ -80,10 +90,19 @@ function reportForm(
         <h1 class="mt">Report a problem</h1>
         <div class="narrow-wide mt">
           <p>
-            Tell the people who keep ${repo.ownerName}/${repo.name} that
-            something is wrong. You need no account. A person reads it first;
-            nothing acts on it before they do.
+            Tell the maintainers of ${repo.ownerName}/${repo.name} that
+            something is wrong. You need no account.
           </p>
+          <ul class="hint" id="report-next">
+            <li>${REPORT_WHO_READS}</li>
+            <li>${REPORT_WHERE_REPLY}</li>
+          </ul>
+          ${ctx.auth.user
+            ? html`<p class="hint">
+                Sent as @${ctx.auth.user.username}: the people who keep it see
+                who sent it.
+              </p>`
+            : html`<p class="hint">Sent anonymously: you are not signed in.</p>`}
           ${when(values.page !== "", () => html`<p class="small mono">About this page: ${values.page}</p>`)}
           <form class="mt" method="post" action="${base}/report">
             ${formField({
@@ -136,7 +155,10 @@ export function reportPage(ctx: Ctx): Response {
 }
 
 function reportBody(ctx: Ctx, repo: Repo): Response {
-  if (ctx.url.searchParams.get("sent") === "1")
+  const sentId = ctx.url.searchParams.get("sent");
+  if (sentId !== null && sentId !== "") {
+    const standing = reportStanding(ctx.app.db, repo.id, sentId.slice(0, 64));
+    const base = repoBase(repo);
     return page({
       ctx,
       title: `Report sent · ${repo.ownerName}/${repo.name}`,
@@ -145,12 +167,17 @@ function reportBody(ctx: Ctx, repo: Repo): Response {
         compact: true,
         ownTitle: true,
       })}
-      ${empty({
-        icon: "check",
-        title: "Report sent",
-        note: "A person who keeps this repository will read it.",
-      })}`,
+      <section class="settings-block">
+        <h1>Report sent</h1>
+        ${standing?.state === "accepted" && standing.issue !== null
+          ? html`<p>A person read it and opened
+              <a href="${base}/issues/${standing.issue}">an issue</a> from it.</p>`
+          : standing?.state === "dismissed"
+            ? html`<p>A person read it and closed it without an issue.</p>`
+            : html`<p>Not read yet. Keep this link and look again.</p>`}
+      </section>`,
     });
+  }
   return reportForm(ctx, repo, {
     title: "",
     body: "",
@@ -188,8 +215,17 @@ export async function reportSubmit(ctx: Ctx): Promise<Response> {
   // person is told, and nothing is kept.
   if (field(form, "website") !== "")
     return flashTo(ctx, sent, { message: "Report sent." });
-  const filed = fileReport(ctx.app, repo, values, clientBucket(ctx.request));
-  if (filed.ok) return flashTo(ctx, sent, { message: "Report sent." });
+  const filed = fileReport(
+    ctx.app,
+    repo,
+    values,
+    clientBucket(ctx.request),
+    proofOf(ctx),
+  );
+  if (filed.ok)
+    return flashTo(ctx, `${repoBase(repo)}/report?sent=${filed.value.id}`, {
+      message: "Report sent.",
+    });
   const refusal = filed.error;
   if (refusal.error === "not_found") return notFoundPage(ctx);
   if (refusal.error === "rate_limited") {
@@ -198,7 +234,7 @@ export async function reportSubmit(ctx: Ctx): Promise<Response> {
       repo,
       values,
       {
-        message: `Too many reports just now. Try again in ${refusal.retryAfter} seconds.`,
+        message: reportTooFast(refusal.retryAfter),
       },
       429,
     );
@@ -214,45 +250,48 @@ export async function reportSubmit(ctx: Ctx): Promise<Response> {
   );
 }
 
-function reportCard(base: string, report: Report): Html {
+function reportRow(base: string, report: Report): Html {
   const action = (verb: "accept" | "dismiss") =>
     `${base}/reports/${report.id}/${verb}`;
-  const accept = `accept-${report.id}`;
-  return card(
-    html`<p><strong>${report.title}</strong></p>
-      ${when(
-        report.body !== "",
-        () => messageText(report.body),
-      )}
-      ${when(report.page, (p) => html`<p class="hint">Sent from ${p}</p>`)}
-      <form
-        class="mt"
-        id="${accept}"
-        method="post"
-        action="${action("accept")}"
-      >
-        ${formField({
-          label: "Title of the issue",
-          name: "title",
-          id: `title-${report.id}`,
-          value: outsideWords(report.title),
-          required: true,
-          hint: `It opens as “${OUTSIDE_TITLE.trim()}” and then these words. Change the words if you like; the mark stays.`,
-        })}
-      </form>`,
-    {
-      tone: "attn",
-      head: html`From outside, not checked · ${time(report.createdAt)}`,
-      foot: html`${btn("Accept as an issue", {
-          variant: "primary",
-          icon: "issue",
-          form: accept,
-        })}
-        <form method="post" action="${action("dismiss")}">
+  return row({
+    title: report.title,
+    nav: true,
+    meta: html`From outside, ${filerWords(report.filedBy)}, not checked · ${time(report.createdAt)}`,
+    fold: {
+      id: `report-${report.id}`,
+      open: true,
+      body: html`<div class="report-body">
+        ${when(report.body !== "", () => messageText(report.body))}
+        ${when(report.page, (p) => html`<p class="hint">Sent from ${p}</p>`)}
+        <form id="accept-${report.id}" method="post" action="${action("accept")}">
+          ${formField({
+            label: "Title of the issue",
+            name: "title",
+            id: `title-${report.id}`,
+            value: outsideWords(report.title),
+            required: true,
+            hint: `It opens as “${OUTSIDE_TITLE.trim()}” and then these words. Change the words if you like; the mark stays.`,
+          })}
+          <div class="form-actions">
+            ${btn("Accept as an issue", { variant: "primary", icon: "issue" })}
+          </div>
+        </form>
+        <form class="form-actions" method="post" action="${action("dismiss")}">
           ${btn("Dismiss", { variant: "ghost" })}
-        </form>`,
+        </form>
+      </div>`,
     },
-  );
+  });
+}
+
+const sameFiler = (a: FiledBy, b: FiledBy): boolean =>
+  a.how === b.how && a.name === b.name;
+
+/** A group's heading: the proven name, the claim as a claim, or anonymous. */
+function groupTitle(by: FiledBy): string {
+  if (by.how === "signed") return `@${by.name}`;
+  if (by.how === "claimed") return `“${by.name}”, claimed without a token`;
+  return "Anonymous";
 }
 
 // GET /:owner/:name/reports
@@ -282,18 +321,23 @@ export function reportsPage(ctx: Ctx): Response {
       })}
       <h1 class="mt">Reports from outside</h1>
       <p class="hint">
-        Sent without an account. No agent sees one until you accept it; then it
-        is your issue, with the words quoted.
+        Sent from outside, grouped by who sent them: an account a token or
+        session proved, a name claimed without one, or anonymous. No agent
+        sees one until you accept it; then it is your issue, with the words
+        quoted.
       </p>
-      <div class="mt">
-        ${waiting.value.length === 0
-          ? empty({
-              icon: "check",
-              title: "Nothing waiting",
-              note: `Anyone can report a problem at ${base}/report.`,
-            })
-          : waiting.value.map((r) => reportCard(base, r))}
-      </div>`,
+      ${waiting.value.length === 0
+        ? html`<p class="muted small mt">Nothing is waiting at <a href="${base}/report">${base}/report</a>.</p>`
+        : byFiler(waiting.value).map(
+            (g) => html`<section class="settings-block">
+              <h2>${groupTitle(g)} · ${g.count}</h2>
+              <ul class="list setting-list">
+                ${waiting.value
+                  .filter((r) => sameFiler(r.filedBy, g))
+                  .map((r) => reportRow(base, r))}
+              </ul>
+            </section>`,
+          )}`,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;

@@ -3,7 +3,7 @@
  * an account authenticates with over the SSH listener.
  */
 
-import { withinPasswordCap } from "../core/hash-gate.ts";
+import { PASSWORD_TOO_LONG, withinPasswordCap } from "../core/hash-gate.ts";
 import { emailChanged, welcome } from "./verify.ts";
 import type { App } from "../app.ts";
 import type { Credential } from "../auth/webauthn.ts";
@@ -11,7 +11,9 @@ import { addPasskey, findPasskey } from "../core/passkeys.ts";
 import {
   addKey,
   deleteKey,
+  keyName,
   parseAuthorizedKey,
+  renameKey,
   type UserKey,
 } from "../core/keys.ts";
 import { turnstileVerifier } from "../core/turnstile.ts";
@@ -22,7 +24,10 @@ import {
   deleteToken as revokeToken,
   type TokenScope,
 } from "../core/tokens.ts";
+import { mintViaToken, VIA_TOKEN_MAX_MS } from "../core/via_token.ts";
+import { id } from "../kernel/id.ts";
 import { inviteSpentBy } from "../core/invites.ts";
+import { cleanAsk, NOTE_MAX, SOURCE_MAX } from "../core/requests.ts";
 import {
   changePassword as rehash,
   cleanDisplayName,
@@ -48,6 +53,9 @@ export interface SignUpInput {
   password: string;
   /** The Turnstile token the browser's widget gave; read only when a secret is set. */
   humanToken?: string;
+  /** While signup is `request`: what they want to build, and which forge or agent asks (`core/requests.ts`). */
+  note?: string;
+  source?: string;
 }
 
 export type SignUpError =
@@ -59,6 +67,18 @@ export type SignUpError =
 
 /** What anyone is told when the forge makes no new accounts. */
 export const SIGNUP_CLOSED_MESSAGE = "Signup is closed on this forge.";
+
+/** What a stranger whose request is in is told, plainly and with no one's name. */
+export const REQUEST_IN_MESSAGE =
+  "Your request is in. Someone who runs this forge will look at it; you can close this page and sign in later to check.";
+/** What a waiting person sees when they sign in before an answer. */
+export const STILL_WAITING_MESSAGE =
+  "Your request is still waiting. Someone who runs this forge will look at it; you can close this page and sign in later to check.";
+/** What a person is told once, when they sign in after Allow. */
+export const YOURE_IN_MESSAGE = "You're in.";
+/** What a person is told, politely, when the answer was no. */
+export const DECLINED_MESSAGE =
+  "Thanks for asking. This forge isn't able to open an account for you right now. You can still run a forge of your own, and suggest a change to any public app here without an account.";
 
 /**
  * Whether no new account may be made now. Read from the store on every call,
@@ -144,6 +164,7 @@ export async function signUp(
     origin: "signup",
     slot: from.slot,
     invite: from.invite,
+    ask: { note: cleanAsk(input.note, NOTE_MAX), source: cleanAsk(input.source, SOURCE_MAX) },
   });
   if (!created.ok) return created;
   app.bus.append({
@@ -151,13 +172,14 @@ export async function signUp(
     actorId: created.value.id,
     payload: {
       via: "signup",
+      ...(created.value.waitingAt === null ? {} : { waiting: true }),
       ...(from.address === undefined ? {} : { address: from.address }),
     },
   });
   auditInvite(app, created.value.id);
   // The address is proven by the link it is sent; until then nothing it
-  // does may create or cost.
-  if (email !== "") await welcome(app, created.value);
+  // does may create or cost. A waiting account is mailed nothing yet.
+  if (email !== "" && created.value.waitingAt === null) await welcome(app, created.value);
   return created;
 }
 
@@ -168,6 +190,8 @@ export interface PasskeySignUpInput {
   passkey: Credential;
   passkeyName: string;
   humanToken?: string;
+  note?: string;
+  source?: string;
 }
 
 /**
@@ -198,6 +222,7 @@ export async function signUpWithPasskey(
     origin: "passkey",
     slot: from.slot,
     invite: from.invite,
+    ask: { note: cleanAsk(input.note, NOTE_MAX), source: cleanAsk(input.source, SOURCE_MAX) },
   });
   if (!created.ok) return created;
   const kept = addPasskey(app.db, created.value.id, input.passkeyName, input.passkey);
@@ -210,12 +235,13 @@ export async function signUpWithPasskey(
     actorId: created.value.id,
     payload: {
       via: "signup",
+      ...(created.value.waitingAt === null ? {} : { waiting: true }),
       ...(from.address === undefined ? {} : { address: from.address }),
     },
   });
   auditInvite(app, created.value.id);
   // As on the password path: no address given, no link to send.
-  if (email !== "") await welcome(app, created.value);
+  if (email !== "" && created.value.waitingAt === null) await welcome(app, created.value);
   return created;
 }
 
@@ -254,6 +280,52 @@ export function createToken(
     },
   });
   return ok(minted);
+}
+
+/** Most conversation tokens one person holds alive at once (#8321). */
+export const CONVERSATION_TOKENS_MAX = 30;
+
+/**
+ * Mint the token the forge's agent acts with in one conversation: the
+ * person's own, rw, expiring within the turn (`core/via_token.ts`), gated to
+ * `/mcp` and fenced there. Without `conversation` a fresh one starts; with
+ * it, only one this person's earlier token named, so nobody resets the
+ * fence's marks of a conversation that is not theirs. `words` are what the
+ * person said to start the turn. The caller owes the door: the person's own
+ * session, same-origin, never a token.
+ */
+export function mintConversationToken(
+  app: App,
+  actor: User | undefined,
+  input: { conversation?: string; words: string },
+): Result<{ id: string; token: string; expiresAt: string; via: string }, "unauthorized" | "invalid_via" | "rate_limited"> {
+  const user = requireUser(actor);
+  if (!user.ok) return user;
+  const via = `conversation:${input.conversation ?? id()}`;
+  if (input.conversation !== undefined) {
+    const theirs = app.db
+      .query<{ n: number }, [string, string]>(
+        "SELECT COUNT(*) AS n FROM via_token v JOIN token t ON t.id = v.token_id WHERE v.via = ?1 AND t.user_id = ?2",
+      )
+      .get(via, user.value.id);
+    if (!theirs || theirs.n === 0) return err("invalid_via");
+  }
+  // A token lives an hour, so what is alive is what one session minted in it.
+  const alive = app.db
+    .query<{ n: number }, [string, string]>(
+      "SELECT COUNT(*) AS n FROM via_token v JOIN token t ON t.id = v.token_id WHERE t.user_id = ?1 AND t.expires_at > ?2",
+    )
+    .get(user.value.id, new Date().toISOString());
+  if (alive !== null && alive.n >= CONVERSATION_TOKENS_MAX) return err("rate_limited");
+  const expiresAt = new Date(Date.now() + VIA_TOKEN_MAX_MS).toISOString();
+  const minted = mintViaToken(app.db, user.value.id, via, input.words, expiresAt);
+  if (!minted.ok) return err("invalid_via");
+  app.bus.append({
+    kind: "token.created",
+    actorId: user.value.id,
+    payload: { tokenId: minted.value.id, name: `via:${via}`, scope: "rw", expiresAt, via },
+  });
+  return ok({ ...minted.value, expiresAt, via });
 }
 
 export function deleteToken(
@@ -324,6 +396,21 @@ export type ChangePasswordError =
   | "weak_password"
   | "password_too_long";
 
+/**
+ * What a refused password change reads as, one sentence each: Settings ›
+ * Password and the terminal's Sessions screen say the same words.
+ */
+export const CHANGE_PASSWORD_WORDS: Record<ChangePasswordError, string> = {
+  unauthorized: "Something went wrong.",
+  bad_credentials: "That isn't your current password.",
+  throttled: "Too many attempts. Try again in a minute.",
+  weak_password: "Passwords need at least 10 characters.",
+  password_too_long: PASSWORD_TOO_LONG,
+};
+
+/** What a changed password reads as, on every surface. */
+export const PASSWORD_CHANGED_WORDS = "Password changed. Existing sessions stay signed in.";
+
 /** Replace the password; the current one must be presented and verified. */
 export async function changePassword(
   app: App,
@@ -337,7 +424,7 @@ export async function changePassword(
     password: input.current,
     source: input.source,
   });
-  if (!verified.ok) return err(verified.error.reason);
+  if (!verified.ok) return err(verified.error.reason === "waiting" ? "bad_credentials" : verified.error.reason);
   const changed = await rehash(app.db, user.value.id, input.next);
   if (!changed.ok)
     return err(
@@ -389,6 +476,25 @@ export function deleteSshKey(
     kind: "user.key_removed",
     actorId: user.value.id,
     payload: { fingerprint: removed.fingerprint, name: removed.name },
+  });
+  return ok();
+}
+
+/** Rename one of the actor's keys, so each says which machine holds it. */
+export function renameSshKey(
+  app: App,
+  actor: User | undefined,
+  keyId: string,
+  name: string,
+): Result<void, "unauthorized" | "not_found" | "invalid_name"> {
+  const user = requireUser(actor);
+  if (!user.ok) return user;
+  if (keyName(name) === undefined) return err("invalid_name");
+  if (!renameKey(app.db, user.value.id, keyId, name)) return err("not_found");
+  app.bus.append({
+    kind: "user.key_renamed",
+    actorId: user.value.id,
+    payload: { keyId },
   });
   return ok();
 }

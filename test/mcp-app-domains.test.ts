@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { domainAddedText, domainRefusalText } from "../src/actions/domain_words.ts";
 import { createApp, type App } from "../src/app.ts";
 import { newApp } from "../src/actions/apps.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
@@ -102,15 +103,19 @@ describe("MCP app_domains", () => {
     expect(added.value.host).toBe("app.example.com");
     expect(added.value.verified).toBe(false);
     expect(added.value.records.length).toBe(2);
+    expect(added.value.says).toBe(domainAddedText(added.value));
 
     const checked = await tool(admin, { repo, action: "check", host: "app.example.com" });
     expect(checked.value.verified).toBe(false);
     expect(checked.value.said).toContain("No TXT record");
+    expect(checked.value.says).toBe(checked.value.said);
 
     const listed = await tool(admin, { repo, action: "list" });
     expect(listed.value.items.map((d: any) => d.host)).toEqual(["app.example.com"]);
 
-    expect((await tool(admin, { repo, action: "remove", host: "app.example.com" })).value).toEqual({});
+    expect((await tool(admin, { repo, action: "remove", host: "app.example.com" })).value).toEqual({
+      says: "app.example.com is removed. The forge no longer answers there.",
+    });
     expect((await tool(admin, { repo, action: "list" })).value.items).toEqual([]);
     expect((await tool(admin, { repo, action: "check", host: "app.example.com" })).error).toContain("no_such_domain");
   });
@@ -127,5 +132,18 @@ describe("MCP app_domains", () => {
     expect((await tool(admin, { repo, action: "add", host: "forge.test" })).error).toContain("reserved_host");
     expect((await tool(admin, { repo, action: "add" })).error).toContain("host");
     expect((await tool(admin, { repo, action: "drop", host: "a.example.com" })).error).toContain("action");
+  });
+
+  test("a refusal says what the settings page says for the same code", async () => {
+    for (const [host, code] of [["not a host", "invalid_host"], ["forge.test", "reserved_host"]] as const) {
+      const said = domainRefusalText(code, "That domain could not be added.");
+      const got = await tool(admin, { repo, action: "add", host });
+      expect(got.error).toContain(code);
+      expect(got.error).toContain(said);
+    }
+    await tool(admin, { repo, action: "add", host: "dup.example.com" });
+    const again = await tool(admin, { repo, action: "add", host: "dup.example.com" });
+    expect(again.error).toContain(domainRefusalText("taken", ""));
+    await tool(admin, { repo, action: "remove", host: "dup.example.com" });
   });
 });

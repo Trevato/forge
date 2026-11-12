@@ -70,16 +70,16 @@ export function readVitals(db: Database, now = new Date(), publicOnly = false): 
   const row = db
     .query<Omit<Vitals, "conflicted" | "red" | "queued" | "oldestApprovedHours" | "strandedUsd" | "gateMinutes1h" | "pullCheckMinutes1h" | "batches6h" | "redBatchRate">, [string, string, string, number]>(
       `SELECT
+         (SELECT COUNT(*) FROM issue i JOIN pull p ON p.issue_id = i.id JOIN repo r ON r.id = i.repo_id
+           WHERE (?4 = 0 OR r.visibility = 'public') AND i.kind = 'pull' AND i.state = 'open' AND p.merged_at IS NULL) AS open,
+         (SELECT COUNT(*) FROM issue i JOIN pull p ON p.issue_id = i.id JOIN repo r ON r.id = i.repo_id
+           WHERE (?4 = 0 OR r.visibility = 'public') AND i.kind = 'pull' AND i.created_at >= ?1 AND i.created_at <= ?3) AS opened1h,
+         (SELECT COUNT(*) FROM issue i JOIN pull p ON p.issue_id = i.id JOIN repo r ON r.id = i.repo_id
+           WHERE (?4 = 0 OR r.visibility = 'public') AND i.kind = 'pull' AND i.created_at >= ?2 AND i.created_at <= ?3) AS opened6h,
          (SELECT COUNT(*) FROM pull p JOIN issue i ON i.id = p.issue_id JOIN repo r ON r.id = i.repo_id
-           WHERE (?4 = 0 OR r.visibility = 'public') AND i.state = 'open' AND p.merged_at IS NULL) AS open,
+           WHERE (?4 = 0 OR r.visibility = 'public') AND p.base_branch = r.default_branch AND p.carried = 0 AND p.merged_at >= ?1 AND p.merged_at <= ?3) AS landed1h,
          (SELECT COUNT(*) FROM pull p JOIN issue i ON i.id = p.issue_id JOIN repo r ON r.id = i.repo_id
-           WHERE (?4 = 0 OR r.visibility = 'public') AND i.created_at >= ?1 AND i.created_at <= ?3) AS opened1h,
-         (SELECT COUNT(*) FROM pull p JOIN issue i ON i.id = p.issue_id JOIN repo r ON r.id = i.repo_id
-           WHERE (?4 = 0 OR r.visibility = 'public') AND i.created_at >= ?2 AND i.created_at <= ?3) AS opened6h,
-         (SELECT COUNT(*) FROM pull p JOIN issue i ON i.id = p.issue_id JOIN repo r ON r.id = i.repo_id
-           WHERE (?4 = 0 OR r.visibility = 'public') AND p.base_branch = r.default_branch AND p.merged_at >= ?1 AND p.merged_at <= ?3) AS landed1h,
-         (SELECT COUNT(*) FROM pull p JOIN issue i ON i.id = p.issue_id JOIN repo r ON r.id = i.repo_id
-           WHERE (?4 = 0 OR r.visibility = 'public') AND p.base_branch = r.default_branch AND p.merged_at >= ?2 AND p.merged_at <= ?3) AS landed6h`,
+           WHERE (?4 = 0 OR r.visibility = 'public') AND p.base_branch = r.default_branch AND p.carried = 0 AND p.merged_at >= ?2 AND p.merged_at <= ?3) AS landed6h`,
     )
     .get(h1, h6, to, publicOnly ? 1 : 0);
   const pile = readChecksPile(db, publicOnly);

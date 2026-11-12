@@ -26,6 +26,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { firstBoot } from "../src/spawn/first-boot.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { device, passkeyFields } from "./helpers/passkey.ts";
+import { withScripts } from "./helpers/page-script.ts";
 
 quietLogs();
 
@@ -134,12 +135,23 @@ describe("the claim link in the fragment, and its re-issue", () => {
   test("the claim page itself is fetched with no secret, and holds none", async () => {
     const page = await fetch(`${childServers.url}/claim`);
     expect(page.status).toBe(200);
-    const html = await page.text();
+    const html = await withScripts(childServers.url, await page.text());
     expect(html).not.toContain(tokenOf(first));
     // The page takes the fragment in the browser and drops it from the address.
     expect(html).toContain("location.hash");
     expect(html).toContain("replaceState");
     expect(html).toContain('name="token"');
+  });
+
+  test("the claim page and its dead-link state are not boxed in cards", async () => {
+    const html = await (await fetch(`${childServers.url}/claim`)).text();
+    expect(html).not.toContain('class="card');
+    expect(html).toContain('id="claim-access"');
+    expect(html).toMatch(/<form[^>]*action="\/claim"/);
+    expect(html).toContain('class="settings-block"');
+    const dead = await claim({ token: "nonsense", username: "x" });
+    expect(dead.status).toBe(404);
+    expect(await dead.text()).not.toContain('class="card');
   });
 
   test("the claim page draws the passkey state as a badge, not a passkey-on class", async () => {

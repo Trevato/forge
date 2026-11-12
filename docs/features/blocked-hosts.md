@@ -1,0 +1,10 @@
+# Blocked hosts (#10456)
+
+When a production cell is refused a host, the forge says so: `apps/egress_refused.ts` counts one row per host and port (first and last time, a count) in memory and writes `<data>/egress/<repo>.refused.json` at most every few seconds. The first refusal of a host appends `app.egress.refused`, which wakes the notifier. Preview cells (any pull's, a fork's too) neither report here nor read the owner's yes.
+
+- **Validated:** the host comes from app code, so only a hostname or IP of at most 253 characters is kept; the rest is dropped. At 50 hosts new ones are dropped, never old ones.
+- **Where it shows:** the app's settings page (`Blocked: huggingface.co (14 tries, last 2 min ago)` with **Allow** and **Ignore**), the terminal (`tui/screens/blocked.ts`, the palette while the repository is open: `a`, `i`), the owner's notifications (`blockedLines`) and the crew's brief (`ownAppLines`). All are for the repository's admins; a write from one is an event, so the others update live.
+- **Allow:** adds the entry to `<data>/egress/<repo>.allowed.json`, which the production cell's proxy asks on each connection (cached 2 s), so it passes within seconds with no redeploy, and commits it to `forge.json` `egress` on the default branch as the owner. An agent admin cannot allow (`needs_human`): an opening no one reads in the repository is refused, and the agent proposes the `forge.json` change in a pull. An entry allowed live that `forge.json` does not declare (the commit failed, or the owner later removed it) is listed on the page as "Allowed now, not in forge.json", so the repository's silence is never hidden.
+- **Ignore:** keeps the row and its count, stops saying it.
+- **No wildcards** are offered; an owner who wants `*.hf.co` writes it in `forge.json`.
+- **Private, LAN and tailnet** destinations are never allowed live: an owner who is not a site admin cannot allow one, and a site admin only gets it into `forge.json`; the grant (`core/egress_grants.ts`) stays the gate.

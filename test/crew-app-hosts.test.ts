@@ -19,6 +19,8 @@ import { createUser, type User } from "../src/core/users.ts";
 import { ownApp, ownAppUrls } from "../src/crew/app_hosts.ts";
 import { ownAppLines } from "../src/crew/brief.ts";
 import { sandboxPolicy } from "../src/crew/sandbox.ts";
+import { STANDARD, type Machine } from "../src/crew/machines.ts";
+import { shellCell, shellReach } from "../src/machines/shell.ts";
 
 const DOMAIN = "--forge-trevato-apps.open-platform.sh";
 
@@ -98,6 +100,7 @@ describe("a crew run's own app hosts", () => {
 
   test("lists production and each open pull's preview of the run's own repository", () => {
     expect(ownApp(app, arm)).toEqual({
+      access: "public",
       production: `https://arm${DOMAIN}`,
       previews: [{ number: pullNumber, url: `https://arm--${pullNumber}${DOMAIN}` }],
     });
@@ -140,7 +143,45 @@ describe("a crew run's own app hosts", () => {
     expect(line).not.toContain("armory");
     expect(ownAppLines(undefined)).toEqual([]);
     expect(
-      ownAppLines({ production: "https://x.example", previews: [] })[0],
+      ownAppLines({ access: "public", production: "https://x.example", previews: [] })[0],
     ).toContain("no pull has a preview yet");
+    expect(ownAppLines({ access: "public", production: "https://x.example", previews: [] })).toHaveLength(1);
+    const [, door] = ownAppLines({ access: "private", production: "https://x.example", previews: [] });
+    expect(door).toContain("This app is private");
+    expect(door).toContain("404 by design");
+    expect(door).toContain("Bearer $FORGE_TOKEN");
+  });
+
+  describe("a writer's shell (#9934)", () => {
+    const machine = (reach: Machine["reach"]): Machine => ({
+      name: "box",
+      label: "box",
+      tools: [],
+      reach,
+    });
+    const FORGE = "https://forge.open-platform.sh";
+
+    test("a machine with `apps` reach opens R's production and previews, exactly, and no other repository's", () => {
+      const spec = shellCell(app, join(dataDir, "w"), machine(["apps"]), "machine:x/box", ownAppUrls(ownApp(app, arm)));
+      const forge = app.config.url === undefined ? [] : [app.config.url];
+      expect(spec.reach).toEqual([...forge, `https://arm${DOMAIN}`, `https://arm--${pullNumber}${DOMAIN}`]);
+      expect(spec.reach.some((u) => u.includes("armory"))).toBe(false);
+      expect(spec.egress).toEqual([]);
+      // The forge's own data stays hidden whatever the machine says.
+      expect(spec.hide).toContain(app.config.dataDir);
+    });
+
+    test("a machine with no reach opens the forge alone", () => {
+      const urls = ownAppUrls(ownApp(app, arm));
+      expect(shellReach(FORGE, machine([]), urls)).toEqual([FORGE]);
+      const spec = shellCell(app, join(dataDir, "w"), machine([]), "machine:x/box", urls);
+      expect(spec.reach.some((u) => u.includes(DOMAIN))).toBe(false);
+    });
+
+    test("the reach follows what the machine declares, `standard` included", () => {
+      const urls = ownAppUrls(ownApp(app, arm));
+      expect(shellReach(FORGE, STANDARD, urls)).toEqual([FORGE, ...urls]);
+      expect(shellReach(undefined, machine(["apps"]), [])).toEqual([]);
+    });
   });
 });

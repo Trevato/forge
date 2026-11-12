@@ -31,6 +31,7 @@ import {
   cleanReport,
   countWaiting,
   decideReport,
+  filerWords,
   getReport,
   insertReport,
   listWaiting,
@@ -43,13 +44,13 @@ import {
 } from "../core/reports.ts";
 import { createLabel, getLabel, type Issue } from "../core/issues.ts";
 import { canRead, canWrite, type Repo } from "../core/repos.ts";
-import type { User } from "../core/users.ts";
+import { getUserById, type User } from "../core/users.ts";
 import { defect } from "../kernel/error.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { isMirror } from "../origins/write-through.ts";
+import { limitValue } from "../settings/limits.ts";
 import { openIssueThrough, setIssueLabels } from "./issues.ts";
 
-const PER_SOURCE = 3;
 const PER_REPO = 20;
 const PER_FORGE = 60;
 
@@ -61,6 +62,7 @@ interface Limits {
 
 const limiter = (perMinute: number) =>
   new RateLimiter({ perMinute, adminPerMinute: perMinute, enabled: true });
+const perSourceOf = (app: App) => limitValue(app.db, "report.per_source");
 
 /** One set per forge, so a test's forge never throttles another's. */
 const limits = new WeakMap<App, Limits>();
@@ -68,7 +70,7 @@ function limitsOf(app: App): Limits {
   let found = limits.get(app);
   if (found === undefined) {
     found = {
-      source: limiter(PER_SOURCE),
+      source: limiter(perSourceOf(app)),
       repo: limiter(PER_REPO),
       forge: limiter(PER_FORGE),
     };
@@ -81,17 +83,26 @@ export type FileRefusal =
   | { readonly error: "not_found" | ReportError | "queue_full" }
   | { readonly error: "rate_limited"; readonly retryAfter: number };
 
-/** File a report on a public repository; `source` keys the per-source limit. */
+/**
+ * File a report on a public repository; `source` keys the per-source limit.
+ * `filer` is the account a token or session proved, when one did: the
+ * report carries it as the filer's identity, and any `agent` name given
+ * beside it is dropped. Without one, a given name is kept as a claim.
+ */
 export function fileReport(
   app: App,
   repo: Repo,
   input: ReportInput,
   source: string,
+  filer?: User,
 ): Result<Report, FileRefusal> {
   if (!canRead(app.db, repo, undefined)) return err({ error: "not_found" });
   const clean = cleanReport(input);
   if (!clean.ok) return err({ error: clean.error });
   const { forge, repo: perRepo, source: perSource } = limitsOf(app);
+  // The per-source number is a setting (`report.per_source`), read on every use.
+  const perMinute = perSourceOf(app);
+  perSource.setLimits({ perMinute, adminPerMinute: perMinute, enabled: true });
   for (const verdict of [
     () => forge.take("forge", "ro"),
     () => perRepo.take(repo.id, "ro"),
@@ -103,7 +114,12 @@ export function fileReport(
   }
   if (countWaiting(app.db, repo.id) >= WAITING_MAX)
     return err({ error: "queue_full" });
-  const report = insertReport(app.db, repo.id, clean.value);
+  const report = insertReport(
+    app.db,
+    repo.id,
+    clean.value,
+    filer?.kind === "org" ? null : (filer?.id ?? null),
+  );
   app.bus.append({
     kind: "report.received",
     repoId: repo.id,
@@ -135,6 +151,60 @@ export function waitingReports(
   const decider = requireDecider(app, actor, repo);
   if (!decider.ok) return decider;
   return ok(listWaiting(app.db, repo.id));
+}
+
+/** A report as the API and the MCP answer it. */
+export interface ReportView {
+  readonly id: string;
+  readonly repoId: string;
+  readonly title: string;
+  readonly body: string;
+  readonly page: string | null;
+  readonly state: Report["state"];
+  readonly createdAt: string;
+  readonly from: "outside";
+  readonly filedBy: Report["filedBy"];
+  /** Set unless a proven filer writes the repository: the words are a stranger's. */
+  readonly untrusted?: true;
+}
+
+/**
+ * Reports as the API and the MCP answer them. Whether a filer writes the
+ * repository is asked once per distinct filer, not once per report.
+ */
+export function reportViews(
+  app: App,
+  repo: Repo,
+  reports: readonly Report[],
+): ReportView[] {
+  const writes = new Map<string, boolean>();
+  const writer = (filerId: string): boolean => {
+    let known = writes.get(filerId);
+    if (known === undefined) {
+      const filer = getUserById(app.db, filerId);
+      known = filer !== undefined && canWrite(app.db, repo, filer);
+      writes.set(filerId, known);
+    }
+    return known;
+  };
+  return reports.map((r) =>
+    reportView(r, r.filerId !== null && writer(r.filerId)),
+  );
+}
+
+function reportView(r: Report, trusted: boolean): ReportView {
+  return {
+    id: r.id,
+    repoId: r.repoId,
+    title: r.title,
+    body: r.body,
+    page: r.page,
+    state: r.state,
+    createdAt: r.createdAt,
+    from: "outside",
+    filedBy: r.filedBy,
+    ...(trusted ? {} : { untrusted: true as const }),
+  };
 }
 
 /** How many reports wait, for a surface that shows a count; 0 to anyone else. */
@@ -171,8 +241,13 @@ export function acceptedBody(report: Report, by: User): string {
   ]
     .join("\n")
     .trim();
+  const from =
+    report.filedBy.how === "anonymous"
+      ? "without an account"
+      : `by ${filerWords(report.filedBy)}`;
   const lines = [
-    `Reported from outside, without an account, ${report.createdAt.slice(0, 10)}. Accepted by @${by.username}; what is below is the reporter's, unchecked.`,
+    `Reported from outside, ${from}, ${report.createdAt.slice(0, 10)}. ` +
+      `Accepted by @${by.username}; what is below is the reporter's, unchecked.`,
   ];
   if (quoted !== "") lines.push("", fenced(quoted));
   return lines.join("\n");

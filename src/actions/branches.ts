@@ -30,7 +30,8 @@ import {
 import { resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { providerForOrigin } from "../origins/credential.ts";
+import { providerForOrigin, writesPaused } from "../origins/credential.ts";
+import { denied } from "../origins/operator.ts";
 import { redact, secretsIn } from "../origins/credentials.ts";
 import { pushToOrigin, type PushUpdate } from "../origins/git-mirror.ts";
 import type { WriteThroughError } from "../origins/write-through.ts";
@@ -179,6 +180,10 @@ export async function originPush(
   if (!link) return ok(undefined);
   if (link.origin.userId !== actor.id) return err("origin_owner_only");
   if (link.cloneUrl === "") return err("origin_unreachable");
+  if (link.origin.readOnly) return err("origin_read_only");
+  if (writesPaused(app, link.origin.id) !== undefined)
+    return err("origin_paused");
+  if (denied(link.origin, link.fullName)) return err("origin_protected");
 
   const provider = providerForOrigin(app, link.origin);
   if (!provider.ok) return err("origin_unreachable");

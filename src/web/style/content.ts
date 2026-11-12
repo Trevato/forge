@@ -17,12 +17,17 @@ export const content = /* css */ `
   font-size: 20px; font-weight: 620; letter-spacing: -0.02em; line-height: 1.3;
 }
 .repo-title .muted, .repo-title .sep { font-weight: 400; }
-/* A phone has no hover: the settings link is a full 44px line. */
+/* A phone has no hover: a link under the title is 44px tall, and stays in its sentence. */
 @media (max-width: 640px) {
-  .repo-head p.muted.small a { display: block; padding: 12px 0; min-height: 44px; box-sizing: border-box; }
+  .repo-head p.muted.small a { display: inline-block; padding: 12px 0; min-height: 44px; box-sizing: border-box; }
 }
+/* The by-wave link under the changelog filters: a thumb-sized target, no new class. */
+a[data-waves-link] { display: inline-flex; align-items: center; min-height: 44px; }
 .repo-head p.muted.small { margin-top: 4px; text-wrap: pretty; }
-.repo-head .tabs { margin-top: 12px; }
+.repo-head .tabs, .repo-head .repo-nav { margin-top: 12px; }
+.repo-nav { display: flex; align-items: flex-start; gap: 4px; border-bottom: 1px solid var(--border); }
+.repo-nav .tabs { margin-top: 0; border-bottom: 0; flex: 1 1 auto; }
+.repo-nav .menu { margin-top: 4px; }
 
 /* Provenance and pinning: one line under the title, so a <form> never has to
    live inside the <h1>. */
@@ -72,6 +77,20 @@ a.where-place:hover, button.where-place:hover {
 .row-meta .where-place > span[aria-hidden="true"] { margin-right: 3px; }
 .row-title a { color: inherit; text-decoration: none; }
 .row-title a:hover { color: var(--accent); }
+/* The signed-in home (#9378). Its rows already clip one line and its
+   sections are grid cells with min-width 0 (feed_style.ts); what is left is a
+   long app name, which wraps inside its chip, and the tell box's input and
+   select, which may shrink. The chip row is server-rendered, so a wrapped
+   chip is its final height on first paint. */
+#live-chips a, .home-doors a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; display: inline-flex; align-items: center; min-height: 44px; padding: 0 6px; box-sizing: border-box; }
+#live-chips a:hover, #live-chips a:focus-visible, .home-doors a:hover, .home-doors a:focus-visible { text-decoration-thickness: 2px; }
+#live-chips a { max-width: 100%; overflow-wrap: anywhere; }
+.home-doors { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.step-body { padding: 4px 16px 16px 44px; }
+.step-body > :first-child { margin-top: 0; }
+.step-body > :last-child { margin-bottom: 0; }
+@media (max-width: 719px) { .step-body { padding-left: 16px; } }
+.tell-box .input { min-width: 0; max-width: 100%; }
 .row-trail form { display: inline-flex; }
 
 /* "Where it lives": the origin, when it was last fetched, the button that
@@ -142,7 +161,32 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   font-variant-numeric: tabular-nums; letter-spacing: 0.14em;
   text-align: center; user-select: all; word-break: break-all;
 }
-[data-apps] { overflow-wrap: anywhere; }
+/* An issue's page (#9384): other people's words wrap, the columns shrink, code scrolls in its box. */
+[data-tell] { overflow-wrap: anywhere; }
+[data-tell] .split > * { min-width: 0; }
+[data-tell] .page-head-sub { flex-wrap: wrap; }
+[data-tell] .comment-body img { max-width: 100%; height: auto; }
+[data-tell] pre { max-width: 100%; overflow-x: auto; }
+[data-apps], [data-apps-page], [data-bet-card], [data-explore], [data-family], [data-forges], [data-milestone], [data-new-repo], [data-now], [data-people] { overflow-wrap: anywhere; }
+/* /new (#9830): a long owner name or refused value stays inside the form on a phone. */
+[data-new-repo] form, [data-new-repo] .error { min-width: 0; max-width: 100%; }
+[data-new-repo] select.input { text-overflow: ellipsis; }
+/* /explore (#9370): rows wrap rather than truncate a long name or description. */
+[data-explore] .row-title, [data-explore] .row-meta { white-space: normal; overflow: visible; }
+[data-explore] .row { flex-wrap: wrap; }
+[data-explore] .row-main { flex: 1 1 14rem; }
+/* The forges pages (#9372): a row's trail of badges and buttons drops under its text on a phone and wraps. */
+[data-forges] .row-title, [data-forges] .row-meta { white-space: normal; overflow: visible; }
+[data-forges] .row-trail { flex-wrap: wrap; }
+@media (max-width: 719px) {
+  [data-forges] .row { flex-wrap: wrap; }
+  [data-forges] .row-trail { flex: 1 1 100%; justify-content: flex-start; }
+}
+[data-bet-card] ul, [data-bet-card] p { margin-block: 8px; }
+[data-bet-card] ul { padding-inline-start: 16px; }
+/* The bound is on what a disclosure opens, not on the row: the page scrolls, a long issue list scrolls inside its own details. */
+[data-bet-card] details ul { max-height: 40vh; overflow-y: auto; }
+[data-bet-actions] { align-items: flex-start; }
 
 .bar > .device-code { flex: 1 1 auto; }
 
@@ -183,13 +227,122 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .fg-s5 { fill: var(--series-5); color: var(--series-5); }
 .fg-s6 { fill: var(--series-6); color: var(--series-6); }
 .fg-s7 { fill: var(--series-7); color: var(--series-7); }
+/* The money line (studio/money_line.ts, #510, #11056, #11102): the
+   slider's word ("spend: balanced") is the board's one link to Settings →
+   Economics, in the accent; the gap takes the warning tint for a loss and
+   the text colour otherwise. The accent on --bg holds 4.5:1 in every theme
+   (test/themes.test.ts), so the small text reads. The word never breaks
+   inside itself, so the line wraps between its parts. Two rows of 24px,
+   the first wrapping once on a phone, so the reserved height is the real
+   one; the chart a fixed box, so nothing shifts when the figures arrive. */
+.money-gap[data-sign="down"] { color: var(--attn); }
+.money-spend { color: var(--accent); white-space: nowrap; }
+.money-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
+.money-line > p { margin: 0; line-height: 24px; min-height: 48px; }
+.money-line > p > span { display: block; }
+@media (max-width: 480px) { .money-line > p { min-height: 72px; } }
+.money-chart { display: block; width: 240px; height: 48px; flex: none; }
+.money-chart polyline { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.money-cost { stroke: var(--muted-fg); }
+.money-revenue { stroke: var(--fg); }
+.money-band [data-sign="up"] { fill: color-mix(in srgb, var(--fg) 10%, transparent); }
+.money-band [data-sign="down"] { fill: color-mix(in srgb, var(--attn) 22%, transparent); }
 .restore-command { margin: 8px 0 0; padding: 8px 10px; font-size: 12.5px; white-space: pre-wrap; word-break: break-all; background: var(--muted); border-radius: var(--radius); }
 form.inline { display: inline; margin-left: auto; }
 
-/* The studio's front door: the public apps, live first, as pictures. */
-.stack[data-shelf] {
-  display: grid; gap: 16px; max-width: 1040px; margin-inline: auto;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+/* The studio's front door: the page a visitor reads first. It is a page, not a
+   screen, so its type runs past the working scale (docs/design/areas/front.md). */
+.door { --door-gap: clamp(96px, 11vw, 128px); }
+.door h1 { font-size: clamp(2.375rem, 5.4vw, 4.5rem); font-weight: 500; letter-spacing: -0.03em; line-height: 1.04; text-wrap: initial; }
+.door h1 .muted { color: var(--muted-fg); }
+.door h2 { font-size: clamp(1.75rem, 3.2vw, 2.5rem); font-weight: 500; letter-spacing: -0.025em; line-height: 1.1; }
+.door h3 { font-size: 20px; font-weight: 500; letter-spacing: -0.015em; }
+.door-support { max-width: 62ch; font-size: 16px; line-height: 1.55; color: var(--muted-fg); text-wrap: pretty; }
+.door-hero { padding-top: clamp(48px, 8vw, 104px); }
+.door-under { display: grid; gap: 56px; margin-top: 28px; }
+.door-lead { display: flex; flex-direction: column; align-items: flex-start; gap: 24px; min-width: 0; }
+.door-lead .bar { gap: 8px; flex-wrap: wrap; }
+.door-start { width: 100%; max-width: 28rem; }
+.door-start .btn { width: 100%; }
+[data-hits] { line-height: 24px; }
+.explore-more { margin-top: 12px; }
+.explore-more .btn { width: 100%; min-height: 44px; }
+.door-says { min-height: 1lh; margin: 6px 0 0; }
+.door-agent { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 520px; font-size: 13px; color: var(--muted-fg); }
+.door-agent a { margin-left: 8px; color: var(--fg); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border-strong); }
+/* On the input's own tinted ground the muted color falls short of AA; the words are the thing to copy. */
+.door-agent .input { color: var(--fg); }
+.door-live { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.door-figures { display: flex; flex-wrap: wrap; gap: 12px 36px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
+.door-figure { display: flex; flex-direction: column; gap: 2px; }
+.door-figure strong { font-size: clamp(1.75rem, 2.8vw, 2.25rem); font-weight: 500; letter-spacing: -0.03em; line-height: 1.1; }
+.door-now { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-family: var(--mono); font-size: 12.5px; color: var(--muted-fg); }
+.door-ledger { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.door-ledger li { display: flex; flex-direction: column; min-width: 0; }
+.door-ledger a { color: var(--fg); }
+.door-when { display: block; }
+.door-section { margin-top: var(--door-gap); scroll-margin-top: 72px; }
+.door-section > h2 + .door-support { margin-top: 12px; }
+.door-shelf { display: grid; margin-top: 44px; gap: 40px 24px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.door-shelf > .card { min-width: 0; margin: 0; padding-top: 14px; border: 0; border-top: 1px solid var(--border-strong); border-radius: 0; background: transparent; box-shadow: none; overflow: visible; }
+.door-kick { margin: 0 0 14px; font-family: var(--mono); font-size: 12.5px; color: var(--muted-fg); }
+.door-kick span { color: var(--fg); }
+.door-shelf .look { aspect-ratio: 16 / 9; transition: border-color 0.15s ease; }
+.door-shelf .look:hover { border-color: var(--border-strong); }
+.door-shelf .look img { height: 100%; object-fit: cover; object-position: top; }
+.door-shelf .card-body { padding: 14px 0 0; gap: 4px; }
+.door-shelf .card-body strong { font-size: 16px; font-weight: 500; letter-spacing: -0.015em; overflow-wrap: anywhere; }
+.door-line { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; min-height: 3em; line-height: 1.5; }
+.door-verbs { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 10px 0 0; font-family: var(--mono); font-size: 12.5px; }
+.door-verbs a { min-height: 24px; color: var(--muted-fg); }
+.door-verbs a:hover { color: var(--fg); }
+.door-verbs .door-verb-first { color: var(--fg); font-weight: 600; text-decoration: underline; text-underline-offset: 4px; }
+.door-more { margin-top: 36px; }
+.door-steps { display: grid; gap: 32px; margin: 44px 0 0; padding: 0; list-style: none; counter-reset: door-step; }
+.door-steps li { counter-increment: door-step; display: flex; flex-direction: column; gap: 6px; padding-top: 14px; border-top: 1px solid var(--border-strong); }
+.door-steps li::before { content: counter(door-step, decimal-leading-zero); margin-bottom: 18px; font-family: var(--mono); font-size: 12.5px; color: var(--muted-fg); }
+.door-steps p, .door-points dd { margin: 0; font-size: 15px; line-height: 1.55; color: var(--muted-fg); text-wrap: pretty; }
+.door-split { display: grid; gap: 32px; }
+.door-split > * { min-width: 0; }
+.door-plans { list-style: none; margin: 0; padding: 0; border-bottom: 1px solid var(--border); }
+.door-plans li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; padding: 10px 0; }
+.door-pulse { margin: 72px 0 0; }
+.door-pulse svg { display: block; width: 100%; height: clamp(72px, 10vw, 120px); fill: var(--fg); }
+.door-pulse-quiet { fill: var(--border-strong); }
+.door-pulse rect:hover { fill: var(--accent); }
+.door-pulse figcaption { margin-top: 10px; }
+.door-org { margin-top: 64px; padding-top: 18px; border-top: 1px solid var(--border); color: var(--muted-fg); }
+.door-org a { color: var(--fg); }
+.door-proof { display: flex; flex-wrap: wrap; gap: 4px 28px; margin: 28px 0 0; padding: 0; list-style: none; font-family: var(--mono); font-size: 12.5px; line-height: 1.8; color: var(--muted-fg); }
+.door-proof li::before { content: "[*] "; color: var(--fg); }
+.door-points { display: grid; gap: 28px; margin: 36px 0 0; }
+.door-points dt { margin-bottom: 4px; font-size: 16px; font-weight: 500; }
+.door-points dd { max-width: 58ch; }
+.door-code { margin: 0; padding: 18px 20px; overflow-x: auto; border-radius: var(--radius); background: var(--muted); font-family: var(--mono); font-size: 13px; line-height: 1.7; }
+.door-packs { margin: 8px 0 0; color: var(--muted-fg); }
+.door-packs .door-kick { display: block; margin-bottom: 8px; }
+.door-press-row { display: grid; gap: 12px; }
+.door-press { display: flex; flex-direction: column; gap: 6px; padding: 16px 18px; border: 1px solid var(--border); border-radius: var(--radius); }
+.door-press h3 { margin: 0; font-size: 16px; font-weight: 500; }
+.door-press p { margin: 0; }
+.door-press-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.door-press-actions [data-slot]:empty { display: none; }
+@media (max-width: 559px) {
+  .door-wide { display: none; }
+}
+@media (min-width: 720px) {
+  .door-shelf { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .door-points { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; }
+  .door-steps { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; }
+  .door-press-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .door-split { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 48px; }
+}
+@media (min-width: 1000px) {
+  .door-under:has(> .door-live) { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 72px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .door-now .dot { animation: door-pulse 2s ease-in-out infinite; }
+  @keyframes door-pulse { 50% { opacity: 0.35; } }
 }
 
 .front-admin { max-width: 1040px; margin-inline: auto; }
@@ -210,12 +363,39 @@ form.inline { display: inline; margin-left: auto; }
    than the phone rather than letting its own ellipsis do the work. A zero
    min-width is what makes truncation inside a grid actually truncate. */
 .split > * { min-width: 0; }
+.split { grid-template-columns: minmax(0, 1fr); overflow-wrap: anywhere; }
+
+/* A repository's head page at 390 px: the head, the About rail and the body
+   wrap an unbroken name, description or branch; the branch picker shrinks and
+   its label truncates; README code and tables scroll inside their own box. */
+.repo-head, .split > aside { overflow-wrap: anywhere; }
+.bar > .menu { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+.bar > .menu > summary { max-width: 100%; min-width: 0; }
+.bar > .menu > summary .truncate { min-width: 0; }
+.prose img { max-width: 100%; height: auto; }
+.prose pre, .prose table { max-width: 100%; overflow-x: auto; }
+.prose table { display: block; }
 
 /* The generic two-column page: content, then a sidebar that sticks. */
 .split { display: grid; gap: 16px; margin-top: 16px; align-items: start; }
 @media (min-width: 960px) {
   .split { grid-template-columns: minmax(0, 1fr) 260px; gap: 24px; }
   .split > aside { position: sticky; top: calc(var(--topbar-h) + 16px); }
+}
+
+/* Flows: sources left, the repository between, followers right (#9595). The
+   hub is a name and two text arrows, decoration only and hidden from reading order;
+   stacked on a phone, the arrows turn down. The name wraps and its column is
+   capped so a long one cannot squeeze the two sides. */
+.flow-map { display: grid; gap: 16px; margin-top: 16px; grid-template-columns: minmax(0, 1fr); overflow-wrap: anywhere; }
+.flow-map > * { min-width: 0; }
+.flow-hub { display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--muted); }
+.flow-hub .flow-arrow { display: inline-block; transform: rotate(90deg); }
+.flow-hub .flow-name { color: var(--fg); max-width: 100%; text-align: center; }
+@media (min-width: 900px) {
+  .flow-map { grid-template-columns: minmax(0, 1fr) minmax(0, max-content) minmax(0, 1fr); gap: 24px; align-items: start; }
+  .flow-hub { flex-direction: row; align-self: center; max-width: 24ch; gap: 12px; }
+  .flow-hub .flow-arrow { transform: none; }
 }
 
 /* The studio's wide rail (home, an app): a column of cards that runs taller
@@ -246,6 +426,41 @@ form.inline { display: inline; margin-left: auto; }
   background: color-mix(in srgb, var(--attn) 16%, transparent);
 }
 .code tr:target .ln, .code tr[data-hl] .ln { color: var(--attn); }
+
+/* ---- csv view: the header stays under the bar, the first column on phones ---- */
+.csv-tools { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.csv-tools[hidden], .csv-view tr[hidden] { display: none; }
+.csv-tools .input { max-width: 260px; }
+.csv-scroll { overflow: auto; max-height: 75vh; scrollbar-width: thin; }
+.csv-view th { position: sticky; top: 0; z-index: 2; background: var(--card); user-select: none; }
+.csv-sort {
+  font: inherit; color: inherit; background: none; border: 0; padding: 0;
+  text-align: inherit; cursor: pointer;
+}
+.csv-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+.csv-view th:first-child { z-index: 3; }
+.csv-view td { max-width: 40ch; overflow-wrap: anywhere; }
+.csv-view th[aria-sort="ascending"]::after { content: " \\25B2"; font-size: 12.5px; }
+.csv-view th[aria-sort="descending"]::after { content: " \\25BC"; font-size: 12.5px; }
+.csv-view .num { text-align: right; }
+.csv-more { padding: 10px 12px; margin: 0; }
+
+/* A notebook (render/notebook.ts): cells are rows with space between, never boxes. */
+.nb-cell { margin: 0 0 28px; min-width: 0; }
+.nb pre { max-width: 100%; overflow-x: auto; margin: 8px 0; }
+.nb-img { display: block; max-width: 100%; height: auto; margin: 8px 0; }
+.nb-cap { color: var(--muted-fg); font-size: 12.5px; margin-top: 8px; }
+
+/* A terminal log (render/log.ts): SGR colours as fixed classes, theme tokens only. */
+.ansi-red { color: var(--danger); }
+.ansi-green { color: var(--success); }
+.ansi-yellow { color: var(--attn); }
+.ansi-blue { color: var(--tok-number); }
+.ansi-magenta { color: var(--merged); }
+.ansi-cyan { color: var(--tok-property); }
+.ansi-gray { color: var(--tok-comment); }
+.ansi-b { font-weight: 700; }
+.ansi-u { text-decoration: underline; }
 
 /* ---- syntax tokens (colors come from the active theme) ----
    Two layers, exactly as the tokenizer emits them: a colour class every
@@ -280,6 +495,9 @@ form.inline { display: inline; margin-left: auto; }
 
 /* A rendered Markdown blob wears the same frame its source does: one card,
    one path header, and the switch between the two views in it. */
+.rail-facts { margin: 12px 0 0; display: grid; gap: 12px; font-size: 13px; }
+.rail-fact > dt { color: var(--muted-fg); font-size: 12.5px; }
+.rail-fact > dd { margin: 2px 0 0; min-width: 0; overflow-wrap: anywhere; }
 .blob-view { margin-left: 8px; }
 .blob-view .seg { font-size: 12.5px; }
 /* An audio or video file, played inline (render/player.ts). The video is as
@@ -287,8 +505,51 @@ form.inline { display: inline; margin-left: auto; }
 .media-pane .media-player { display: block; width: 100%; max-width: 100%; }
 .media-pane video.media-player { height: auto; max-height: 80vh; background: var(--muted); border-radius: var(--radius-sm); }
 
+/* An HTML file's page in a sandboxed frame: one hairline, a fixed height, so nothing shifts. */
+.html-frame { display: block; width: 100%; height: 80vh; min-height: 480px; border: 1px solid var(--border); border-radius: var(--radius-sm); color-scheme: light; }
+@media (max-width: 600px) { .html-frame { height: 60vh; min-height: 360px; } }
+/* A PDF in the browser's own viewer: a fixed frame, so nothing shifts. */
+.pdf-view { overflow: hidden; }
+.pdf-frame { display: block; width: 100%; height: 80vh; min-height: 480px; border: 0; }
+.pdf-fallback { padding: 16px 20px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+/* A phone: a shorter frame, so a thumb can scroll the page past it. */
+@media (max-width: 600px) { .pdf-frame { height: 60vh; min-height: 360px; } }
+
+/* A font specimen: set in the font itself once the script has loaded it from
+   the media route; until then (or without script) in the page's own face. */
+/* ---- gpx view: the outline scales to the column; its facts are status rows ---- */
+.gpx-view { margin: 0; }
+.gpx-view svg { display: block; max-width: 100%; height: auto; margin: 0 auto; color: var(--fg); }
+.gpx-view .status-rows { margin-top: 12px; }
+.har-view { overflow-x: auto; }
+.har-view .har-bar { display: block; width: 100%; height: 10px; margin-top: 4px; color: var(--muted-fg); }
+.har-view .har-url { overflow-wrap: anywhere; min-width: 200px; }
+.gj-view { margin: 0; }
+.gj-view svg { display: block; max-width: 100%; height: auto; margin: 0 auto; color: var(--fg); }
+.gj-table { overflow-x: auto; max-width: 100%; }
+.gj-table:focus-visible { outline: 1px solid var(--fg); outline-offset: 2px; }
+.gj-table table { width: 100%; font-size: 13px; }
+.gj-table th, .gj-table td { text-align: left; padding: 3px 8px; overflow-wrap: anywhere; }
+.font-view { padding: 16px 20px; }
+.font-name { margin: 0 0 12px; font-size: 1.75rem; line-height: 1.3; overflow-wrap: anywhere; }
+.font-line { margin: 0 0 10px; line-height: 1.4; overflow-wrap: anywhere; }
+.font-s { font-size: 14px; } .font-m { font-size: 1.5rem; } .font-l { font-size: 3rem; line-height: 1.2; }
+.font-view.font-ready .font-name, .font-view.font-ready .font-line { font-family: "ForgeSpecimen", sans-serif; }
+
+/* ---- image view ---- */
+.imgview-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 4px 16px; font-size: 12.5px; border-bottom: 1px solid var(--border); }
+.imgview-dim { min-width: 9ch; }
+.imgview-pane { overflow: auto; min-height: 160px; max-height: 80vh; text-align: center; padding: 12px;
+  background: repeating-conic-gradient(color-mix(in srgb, var(--fg) 8%, var(--bg)) 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
+.imgview-zoom { margin-left: auto; }
+.imgview-img { max-width: 100%; height: auto; cursor: zoom-in; vertical-align: middle; }
+.imgview-pane.is-actual { text-align: left; cursor: grab; }
+.imgview-pane.is-actual .imgview-img { max-width: none; cursor: zoom-out; }
+
 /* ---- prose (markdown) ---- */
-.prose { padding: 16px 20px; font-size: 15px; line-height: 1.65; overflow-wrap: break-word; }
+.prose { padding: 16px 20px; font-size: 15px; line-height: 1.65; overflow-wrap: anywhere; }
+/* Prose that is the page itself, not a card: it keeps the page's own edge and measure. */
+.prose.prose-page { padding: 0; max-width: 72ch; }
 .prose > * { max-width: var(--measure); }
 .prose h1, .prose h2, .prose h3, .prose h4 { margin: 24px 0 8px; }
 .prose h1 { font-size: 20px; }
@@ -312,6 +573,13 @@ form.inline { display: inline; margin-left: auto; }
   font-family: var(--mono); color: var(--muted-fg);
   white-space: pre-wrap; overflow-wrap: anywhere; overflow: visible;
 }
+/* A fold in prose (an issue's "Where this came from"): the global reset hides the marker, so the chevron is drawn here;
+   the summary is a native, focusable, Enter/Space control with a row-high target. */
+.prose details { margin: 12px 0; }
+.prose summary { cursor: pointer; padding: 10px 0; min-height: 44px; color: var(--muted-fg); font-size: 13px; }
+.prose summary::before { content: "\\25B8"; display: inline-block; width: 1.2em; }
+.prose details[open] > summary::before { content: "\\25BE"; }
+.prose details > ul { margin-top: 0; font-size: 13px; }
 .prose code { background: var(--muted); border: 1px solid var(--border); padding: 1px 5px; border-radius: 4px; }
 .prose pre code { background: none; border: none; padding: 0; }
 .prose blockquote {
@@ -336,10 +604,13 @@ form.inline { display: inline; margin-left: auto; }
 .diff { display: flex; flex-direction: column; gap: 12px; }
 .change-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 0 0 12px; font-size: 13px; }
 .change-line a { display: inline-flex; align-items: center; gap: 6px; padding: 12px 0; line-height: 16px; color: inherit; }
-@media (pointer: coarse) { .change-line a { padding: 14px 0; } }
+.change-files { list-style: none; margin: 0 0 12px; padding: 0; font-size: 13px; }
+.change-files li { display: flex; flex-wrap: wrap; gap: 0 8px; align-items: center; }
+.change-files a { padding: 12px 0; line-height: 16px; color: inherit; overflow-wrap: anywhere; }
+@media (pointer: coarse) { .change-line a, .change-files a { padding: 14px 0; } }
 .diff-summary { padding: 10px 14px; font-size: 13px; }
-.diff-summary .add, .change-line .add { color: var(--add-fg); font-weight: 600; font-variant-numeric: tabular-nums; }
-.diff-summary .del, .change-line .del { color: var(--del-fg); font-weight: 600; font-variant-numeric: tabular-nums; }
+.diff-summary .add, .change-line .add, .change-files .add { color: var(--add-fg); font-weight: 600; font-variant-numeric: tabular-nums; }
+.diff-summary .del, .change-line .del, .change-files .del { color: var(--del-fg); font-weight: 600; font-variant-numeric: tabular-nums; }
 
 .diff-file {
   /* Pure-CSS windowing: off-screen files cost nothing until scrolled to. */
@@ -370,6 +641,7 @@ form.inline { display: inline; margin-left: auto; }
 }
 .diff-stat .add { color: var(--add-fg); }
 .diff-stat .del { color: var(--del-fg); }
+.diff > p.muted { margin: 12px 0 0; padding: 0 4px; }
 .diff-note { padding: 20px 16px; text-align: center; color: var(--muted-fg); font-size: 13px; }
 .diff-stub p { margin: 0 0 10px; }
 .diff-stub .diff-stat { display: inline-flex; }
@@ -428,8 +700,11 @@ form.inline { display: inline; margin-left: auto; }
   padding: 8px 12px; background: var(--muted);
   border-left: 3px solid var(--accent); white-space: normal; font-family: var(--font);
 }
-.dc-review .card + .card, .dc-review .comment { margin-bottom: 8px; }
-.dc-review .comment-form { margin-top: 0; }
+.dc-review .comment-form { margin: 0; padding: 0; }
+/* An open thread is prose under its line, not a card: head and body start at the code column,
+   since .dc-review pads 12px past the 3px edge exactly as .dc does. */
+.dc-thread { display: grid; gap: 10px; min-width: 0; }
+.dc-thread .comment-body { overflow-wrap: anywhere; }
 /* A settled thread is one line plus a disclosure: the point of resolving is
    to get an answered question out of the way of the unanswered ones. */
 .dc-review .card-body > .muted .ico { width: 14px; height: 14px; color: var(--success); }
@@ -453,6 +728,8 @@ form.inline { display: inline; margin-left: auto; }
 .reviews-chip .bad { display: inline-flex; align-items: center; gap: 4px; color: var(--danger); }
 
 /* ---- apps, runs, and the crew ---- */
+/* Settings › Crew on a phone (#9373): a long name or brief breaks, never widens the page. */
+[data-crew-settings] { overflow-wrap: anywhere; min-width: 0; }
 /* The strip a repo home wears when it runs: state, commit, URL, previews,
    and the way to the App page — one line, in the repo header's own voice. */
 .app-strip {
@@ -467,7 +744,6 @@ form.inline { display: inline; margin-left: auto; }
    line to be read on. The facts and the error read the same wherever they
    are shown — a pull's preview, the studio head — so they are not scoped to
    the card. */
-.env-card .card-head { gap: 10px; }
 .env-facts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--muted-fg); overflow-wrap: anywhere; }
 .env-error { color: var(--danger); font-size: 13px; margin-top: 6px; overflow-wrap: anywhere; text-wrap: pretty; }
 /* The checks line inside the merge box, in the reviews chip's voice. */
@@ -490,11 +766,10 @@ form.inline { display: inline; margin-left: auto; }
    head stays reachable, and a composer that sits under it. */
 #run-live { position: relative; }
 .run-log {
-  margin: 0; padding: 10px 14px 8px; max-height: calc(100dvh - 300px); min-height: 12em; overflow: auto;
-  background: var(--muted); border: 1px solid var(--border); border-radius: var(--radius);
+  margin: 0; padding: 8px 0; max-height: calc(100dvh - 300px); min-height: 12em; overflow: auto;
+  background: none; border: 0; border-radius: 0;
   font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; tab-size: 4;
 }
-#run-live:has(#run-steer) .run-log { border-radius: var(--radius) var(--radius) 0 0; }
 .run-log .row { padding: 2px 0; min-height: 0; align-items: flex-start; }
 .run-log .row-lead { flex: 0 0 72px; justify-content: flex-start; overflow: hidden; }
 .run-log .row-lead .badge { overflow: hidden; text-overflow: ellipsis; }
@@ -511,7 +786,7 @@ form.inline { display: inline; margin-left: auto; }
 }
 #run-steer {
   position: sticky; bottom: 0; gap: 6px; padding: 10px 12px; background: var(--bg);
-  border-top: 0; border-radius: 0 0 var(--radius) var(--radius); box-shadow: none;
+  border: 0; border-top: 1px solid var(--border); border-radius: 0; box-shadow: none;
 }
 #run-steer textarea { min-height: 38px; max-height: 160px; resize: none; }
 #run-steer .bar .muted { flex: 1 1 200px; }
@@ -551,7 +826,11 @@ form.inline { display: inline; margin-left: auto; }
    tree's width is one custom property, \`--ex-w\`, so the divider's script
    has exactly one thing to set and the stylesheet keeps the fallback. */
 .code-layout { display: grid; gap: 12px; margin-top: 12px; align-items: start; }
+/* The files page (#9376): long names wrap, code scrolls in its own .code box. */
+.code-layout { overflow-wrap: anywhere; }
 .code-layout > #code-main { min-width: 0; }
+.code-layout #code-main > * { min-width: 0; }
+.code-layout #code-main .bar { flex-wrap: wrap; }
 .code-layout > #code-main[aria-busy="true"] { opacity: .55; transition: opacity 120ms var(--ease); }
 /* The divider is nothing until a script can drag it, and nothing on one
    column either. */
@@ -774,6 +1053,14 @@ textarea.editor:focus-visible { outline: none; }
 
 /* ---- branches ---- */
 .branch-row .row-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.branch-row .row-meta { white-space: normal; overflow-wrap: anywhere; }
+.branch-row .row-trail { flex: 0 1 auto; flex-wrap: wrap; gap: 4px 12px; }
+.branch-row .branch-del { color: var(--muted-fg); }
+.branch-row .branch-del:hover, .branch-row .branch-del:focus-visible { color: var(--danger); }
+@media (max-width: 719px) {
+  .branch-row { flex-wrap: wrap; }
+  .branch-row .row-trail { flex: 1 1 100%; justify-content: flex-start; }
+}
 .branch-div { display: inline-flex; gap: 8px; font-size: 12.5px; }
 .branch-div .ahead { color: var(--add-fg); }
 .branch-div .behind { color: var(--del-fg); }
@@ -811,6 +1098,38 @@ textarea.editor:focus-visible { outline: none; }
     #needs-you #asks-phone-more > .stack { margin-top: 0; }
   }
 }
+/* Flow (#8698): the week's pipes. Width is spend; a valve is drawn open,
+   half-open (a share) or shut, in tokens. */
+.pipes { width: 100%; height: auto; display: block; }
+.pipe { fill: none; stroke: currentColor; opacity: .5; }
+.pipe-out { color: var(--series-3); }
+.pipe-out.pipe-valve-shut { stroke-dasharray: 4 4; opacity: .35; }
+.pipe-valve rect { fill: var(--bg); stroke: var(--border); stroke-width: 1.5; }
+.pipe-valve-share rect { stroke: var(--series-1); }
+.pipe-valve-shut rect { stroke: var(--series-5); fill: var(--bg); }
+.pipe-label { font-size: 12.5px; fill: var(--fg); }
+.pipe-repo { font-size: 12.5px; fill: var(--muted-fg); }
+.valve-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0; }
+/* A valve row's name and body are sentences, not one clipped line (#9323): they wrap inside the row. */
+.valve-name, .valve-body { white-space: normal; overflow-wrap: anywhere; }
+.valve-name, .valve-body { display: block; }
+.valve-range { flex: 1 1 12rem; min-width: 8rem; }
+/* The week on Next up (#8704): the cut line and a row's cost range. */
+.next-week { opacity: 0.55; }
+.cut-line { list-style: none; padding: 6px 16px; font-size: 13px; color: var(--muted-fg); border-top: 2px dashed var(--series-1); border-bottom: 1px solid var(--border); background: var(--bg); }
+.estimate { color: var(--fg); font-variant-numeric: tabular-nums; }
+/* The config form (#7336): nested objects as quiet fieldsets, scalar
+   arrays as a wrapping row of chips, object arrays as cards. */
+.config-group { border-left: 2px solid var(--border); padding-left: 12px; }
+.config-group > legend { font-weight: 600; margin-bottom: 8px; }
+.config-card { border-top: 1px solid var(--border); padding: 12px 0; margin: 0; }
+.config-chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.config-chips > li { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.config-chips .input { width: auto; min-width: 8rem; }
+.config-chips .field { margin: 0; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.config-diff { overflow-x: auto; white-space: pre; margin: 0; }
+.config-diff > [data-op="add"] { background: var(--add-bg); color: var(--add-fg); }
+.config-diff > [data-op="del"] { background: var(--del-bg); color: var(--del-fg); }
 /* Reduced motion: the pulses hold still at a legible level, the scroll-tied
    fade stays at its resting width, and these transitions land at once. */
 @media (prefers-reduced-motion: reduce) {

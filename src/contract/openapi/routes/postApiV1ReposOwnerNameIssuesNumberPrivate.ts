@@ -5,6 +5,7 @@ export const route: Route = {
   path: `${REPO}/issues/{number}/private`,
   summary: "Make, or find, the private repository where a sealed report is fixed by hand; answers 201 { repo, clone }: `owner/name` and its clone URL",
   auth: true,
+  role: "member",
   status: 201,
   refusals: {
     not_found: "no such issue, or sealed reports are not the caller's to see",

@@ -1,5 +1,6 @@
 import { ABILITIES, roleOf, rowOf } from "../../../core/roles.ts";
-import { listPasskeys, removePasskey } from "../../../core/passkeys.ts";
+import { LAST_WAY_IN, removeOwnPasskey } from "../../../actions/passkeys.ts";
+import { listPasskeys } from "../../../core/passkeys.ts";
 import { scopeAllows } from "../../../core/tokens.ts";
 import { good, bad, type Tool } from "../shared.ts";
 
@@ -28,7 +29,9 @@ export const tool: Tool = {
           return bad("forbidden", "removing a passkey needs an admin-scope token");
         if (typeof remove !== "string" || remove === "" || remove.length > 64)
           return bad("bad_args", "remove is a passkey id");
-        if (!removePasskey(ctx.app.db, user.id, remove)) return bad("not_found", "No such passkey.");
+        const gone = removeOwnPasskey(ctx.app, user, remove);
+        if (!gone.ok)
+          return gone.error === "last_way_in" ? bad("refused", LAST_WAY_IN) : bad("not_found", "No such passkey.");
         return good({ id: remove, says: "Passkey removed." });
       }
       return good({

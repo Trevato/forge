@@ -5,5 +5,6 @@ export const route: Route = {
   path: `${REPO}/app`,
   summary: "Change the app's settings (admin scope); `access` is public or private, `previewData` is copy or empty",
   auth: true,
+  role: "member",
   body: { slug: "string", access: "string", previewData: "string" },
 };

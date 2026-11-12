@@ -28,14 +28,14 @@ export function mapSnapshots(db: Database): Stamped<Record<string, unknown>> {
 /** `build()` once per repository, scope and minute while nothing has been written. */
 export function cachedMap(
   db: Database,
-  key: { repoId: string; scope: { sealed?: true; sealedBy?: string }; now: Date },
+  key: { repoId: string; scope: { sealed?: true; sealedBy?: string }; now: Date; kind?: string },
   build: () => Record<string, unknown>,
 ): { value: Record<string, unknown>; hit: boolean } {
   const stamp = writeStamp(db);
   if (stamp === undefined) return { value: build(), hit: false };
   const cache = mapSnapshots(db);
   const before = cache.hits;
-  const k = `map:${key.repoId}:${scopeKey(key.scope)}:${key.now.toISOString().slice(0, 16)}`;
+  const k = `${key.kind ?? "map"}:${key.repoId}:${scopeKey(key.scope)}:${key.now.toISOString().slice(0, 16)}`;
   const value = cache.get(k, stamp, build);
   return { value, hit: cache.hits > before };
 }

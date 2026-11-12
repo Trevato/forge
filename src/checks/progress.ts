@@ -9,7 +9,7 @@
 
 import type { CheckSummary } from "../core/runs.ts";
 import { readLooks } from "./looks.ts";
-import { checkSteps, stepsWords, vitalsRows, type LookVitals } from "./summary.ts";
+import { checkSteps, sidewaysLine, stepsWords, vitalsRows, type LookVitals } from "./summary.ts";
 import { parseTestsRow, testsRowLine } from "./tests-row.ts";
 import { readRunLog } from "../runs/log.ts";
 
@@ -115,10 +115,13 @@ export function stepsLine(
 
 /** `vitals home: LCP 3100 ms needs-improvement, CLS 0.3 poor, TBT 100 ms good; mobile: skipped: no browser` */
 export function vitalsLine(looks: readonly LookVitals[]): string {
-  const groups = vitalsRows(looks).map((g) =>
-    g.skipped !== ""
-      ? `${g.look}: skipped: ${g.skipped}`
-      : `${g.look}: ${g.rows.map((r) => `${r.vital} ${r.value}${r.grade === "n/a" ? "" : ` ${r.grade}`}`).join(", ")}`,
-  );
-  return groups.length === 0 ? "" : `vitals ${groups.join("; ")}`;
+  const rows = vitalsRows(looks);
+  const groups = rows.map((g) => {
+    if (g.skipped !== "") return `${g.look}: skipped: ${g.skipped}`;
+    const vitals = g.rows.map((r) => `${r.vital} ${r.value}${r.grade === "n/a" ? "" : ` ${r.grade}`}`);
+    return `${g.look}: ${vitals.join(", ")}${g.screens === "" ? "" : `, ${g.screens} screens`}`;
+  });
+  if (groups.length === 0) return "";
+  const sideways = sidewaysLine(rows);
+  return `vitals ${groups.join("; ")}${sideways === "" ? "" : ` · ${sideways}`}`;
 }

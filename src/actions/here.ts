@@ -12,8 +12,12 @@
  * An action that needs an account is listed for someone without one,
  * saying so, because that is the next thing they need to know.
  */
+import { audienceFor } from "../core/audience.ts";
+import { lacks } from "../core/roles.ts";
+import { activeEdgeToken } from "../http/edge.ts";
 import { sshTellCommand } from "../ssh/command.ts";
-import { mcpPointers } from "../core/mcp_card.ts";
+import { getAgentStart } from "../settings/agent_start.ts";
+import { mcpPointers, TOKEN_FREE_TOOLS } from "../core/mcp_card.ts";
 import type { App } from "../app.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { isCrew } from "../core/agents.ts";
@@ -44,6 +48,10 @@ export interface Action {
   readonly http?: string;
   /** The MCP tool that does the same, when there is one. */
   readonly mcp?: string;
+  /** Why no MCP tool does the same, when none does: say so, never stay silent. */
+  readonly noMcp?: string;
+  /** The arguments that tool takes here, plain data (`{ q }` for a filter). */
+  readonly mcpArgs?: Readonly<Record<string, string>>;
   /** The shell command that does the same, when the forge's SSH is on. */
   readonly ssh?: string;
   /** `true`: needs an account the caller does not have; `false`: needs none. */
@@ -61,6 +69,8 @@ export interface Manifest {
         readonly kind: "repository";
         readonly name: string;
         readonly visibility: "public" | "private";
+        /** Who can see it, in the words its page and `GET` say (`core/audience.ts`). */
+        readonly audience: ReturnType<typeof audienceFor>;
         readonly app?: {
           readonly access: "public" | "private";
           readonly state?: string;
@@ -77,12 +87,18 @@ export interface Manifest {
         /** Only when the credential limits it: a read-only token acts on nothing. */
         readonly scope?: "ro";
       };
-  readonly actions: readonly Action[];
+  /** What this caller can do here: the verbs open to them, none they would be refused. */
+  readonly can: readonly Action[];
   readonly mcp: { readonly url: string; readonly oauth: string };
   readonly docs: string;
 }
 
 const SYSTEM = new Set(SYSTEM_NAMES);
+
+// `tell` and `plan` file issues too, but as directing the crew, a different
+// verb with a different check (`mayDirectCrew`).
+const NO_ISSUE_TOOL =
+  "no MCP tool opens a plain issue; tell and plan file one as directing the crew";
 
 /**
  * The manifest for a forge path, for `viewer` holding `scope`. `origin` is
@@ -131,7 +147,7 @@ export function manifestFor(
       return ok({
         here: { kind: "org", org: account.username },
         you,
-        actions: [
+        can: [
           {
             do: "list the organization's teams",
             http: `GET /api/v1/orgs/${account.username}/teams`,
@@ -147,7 +163,7 @@ export function manifestFor(
     return ok({
       here: { kind: "person", username: account.username },
       you,
-      actions: [
+      can: [
         {
           do: "read their public repositories",
           http: `GET /api/v1/users/${account.username}/repos`,
@@ -170,7 +186,7 @@ export function manifestFor(
     return ok({
       here: { kind: page ?? "forge" },
       you: youFor(viewer, scope, undefined, app),
-      actions:
+      can:
         page === undefined
           ? forgeActions(app, viewer, scope)
           : [
@@ -201,7 +217,7 @@ export function manifestFor(
           }),
     },
     you: youFor(viewer, scope, repo, app),
-    actions: repoActions(app, repo, viewer, scope),
+    can: repoActions(app, repo, viewer, scope),
     ...common,
   });
 }
@@ -238,6 +254,7 @@ function repoHere(
     kind: "repository" as const,
     name: `${repo.ownerName}/${repo.name}`,
     visibility: repo.visibility,
+    audience: audienceFor(app.db, repo, viewer),
   };
   // A private app the viewer may not enter is not there, to them.
   if (record === undefined || !canEnterApp(app.db, repo, record, viewer))
@@ -270,6 +287,7 @@ function pageRead(page: "explore" | "search", path: string): Action {
     do: `${page === "explore" ? "browse the forge" : "search the forge"}${q === "" ? "" : `: ${q.slice(0, 200)}`}`,
     http,
     mcp: page,
+    mcpArgs: { q: q.slice(0, 200) },
   };
 }
 
@@ -287,30 +305,68 @@ function forgeActions(
       do: "explore apps and repositories",
       http: "GET /api/v1/explore?q=",
       mcp: "explore",
+      mcpArgs: { q: "" },
     },
     {
       do: "search issues, pulls, repositories and code",
       http: "GET /api/v1/search?q=",
       mcp: "search",
+      mcpArgs: { q: "" },
     },
     { do: "list public repositories", http: "GET /api/v1/repos" },
     {
       do: "report a problem",
       http: "POST /api/v1/repos/{owner}/{name}/reports",
       mcp: "report",
-      account: false,
+      ...tokenFree("report"),
     },
     {
+      // The HTTP route is open, but the MCP tool is not, so no claim is made.
       do: "see how to help build this forge",
       http: "GET /api/v1/contribute",
       mcp: "contribute",
+      ...tokenFree("contribute"),
+    },
+    {
+      do: "see what went live",
+      http: "GET /api/v1/changelog",
+      mcp: "releases",
+    },
+    ...(getAgentStart(app.db) === "off"
+      ? []
+      : [
+          {
+            do: "start building with no account",
+            http: "POST /api/v1/start",
+            mcp: "start",
+            ...tokenFree("start"),
+          },
+        ]),
+    {
+      do: "read the HTTP contract",
+      http: "GET /contract/openapi.json",
       account: false,
     },
     ...(viewer === undefined
       ? [{ do: "use the MCP", http: "POST /mcp", account: true }]
       : [{ do: "use the MCP", http: "POST /mcp" }]),
     ...(tellSsh === undefined ? [] : [{ do: "tell the crew", ssh: tellSsh }]),
+    // How a stranger gets the account the rows above ask for. An edge-login
+    // forge makes no account at /signup, as the home page's buttons say.
+    ...(viewer !== undefined
+      ? []
+      : [
+          ...(activeEdgeToken(app) === undefined
+            ? [{ do: "make an account", http: "GET /signup", account: false }]
+            : []),
+          { do: "sign in", http: "GET /signin", account: false },
+        ]),
   ];
+}
+
+/** `account: false` only for an MCP tool the gate really lets through. */
+function tokenFree(tool: string): { account?: false } {
+  return TOKEN_FREE_TOOLS.includes(tool) ? { account: false } : {};
 }
 
 function repoActions(
@@ -325,13 +381,13 @@ function repoActions(
   // password act with the account's full authority.
   const acts =
     viewer !== undefined && (scope === undefined || scopeAllows(scope, "rw"));
-  const out: Action[] = [{ do: "read", http: `GET ${r}` }];
+  const out: Action[] = [{ do: "read", http: `GET ${r}`, mcp: "repo" }];
   if (canRead(db, repo, undefined))
     out.push({
       do: "report a problem",
       http: `POST ${r}/reports`,
       mcp: "report",
-      account: false,
+      ...tokenFree("report"),
     });
   // What creates or costs waits for a proven email (`requireVerified`).
   const unproven =
@@ -344,13 +400,15 @@ function repoActions(
   const participant: Action[] = [
     ...(talks
       ? [
-          { do: "open an issue", http: `POST ${r}/issues` },
-          { do: "comment", http: `POST ${r}/issues/{number}/comments` },
+          { do: "open an issue", http: `POST ${r}/issues`, noMcp: NO_ISSUE_TOOL },
+          // `say` writes through the same `addCommentThrough` as the route.
+          { do: "comment", http: `POST ${r}/issues/{number}/comments`, mcp: "say" },
         ]
       : []),
     {
       do: "offer a change",
       http: `POST ${r}/forks, then POST ${r}/pulls {headRepo}`,
+      mcp: "open_pull",
       ...unproven,
     },
   ];
@@ -359,7 +417,32 @@ function repoActions(
   else if (acts) out.push(...participant);
   const record = getAppByRepo(db, repo.id);
   if (record !== undefined && canEnterApp(db, repo, record, viewer))
-    out.push({ do: "open the app", http: `GET ${r}/app/production/open` });
+    out.push({
+      do: "open the app",
+      http: `GET ${r}/app/production/open`,
+      noMcp: "a link to the running app; there is nothing to call",
+    });
+  // The copy is for whoever cannot write the app (the web's button, `!canWrite`);
+  // its dry run is `ro`, so a read-only token sees it too.
+  if (
+    record !== undefined &&
+    canEnterApp(db, repo, record, viewer) &&
+    !canWrite(db, repo, viewer)
+  )
+    out.push({
+      do: "make it yours",
+      http: `POST ${r}/make-it-yours`,
+      mcp: "make_it_yours",
+      ...(viewer === undefined ? { account: true } : unproven),
+    });
+  // A guest on a public repository they cannot write: help build it.
+  if (
+    viewer !== undefined &&
+    repo.visibility === "public" &&
+    !canWrite(db, repo, viewer) &&
+    lacks(db, viewer, "make_it_yours")
+  )
+    out.push({ do: "help build this", http: `POST ${r}/forks`, ...unproven });
   if (!acts) return out;
   const tellSsh = sshTellCommand(app);
   if (mayDirectCrew(db, repo, viewer))
@@ -378,10 +461,35 @@ function repoActions(
     out.push({
       do: "approve a pull",
       http: `POST ${r}/pulls/{number}/reviews`,
+      mcp: "review",
     });
   if (canWrite(db, repo, viewer) && viewer?.kind === "user")
-    out.push({ do: "merge a pull", http: `POST ${r}/pulls/{number}/merge` });
+    out.push({
+      do: "merge a pull",
+      http: `POST ${r}/pulls/{number}/merge`,
+      mcp: "merge",
+    });
   if (canAdmin(db, repo, viewer))
-    out.push({ do: "change settings", http: `PATCH ${r}` });
+    out.push({
+      do: "change settings",
+      http: `PATCH ${r}`,
+      mcp: "repo_settings",
+    });
+  // How a native fork follows its parent: a writer's moves, the same rule
+  // `takeOrTell` and `proposeToParentForge` ask (`requireWriter`).
+  if (
+    repo.forkParentId !== null &&
+    repo.origin === null &&
+    canWrite(db, repo, viewer)
+  )
+    out.push(
+      { do: "read how it follows its parent", http: `GET ${r}/following`, mcp: "following" },
+      { do: "take the parent's updates", http: `POST ${r}/following/take`, mcp: "take_updates" },
+      {
+        do: "propose its changes to the parent",
+        http: `POST ${r}/following/propose-parent`,
+        mcp: "propose_to_parent_forge",
+      },
+    );
   return out;
 }

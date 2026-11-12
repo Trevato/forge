@@ -141,7 +141,10 @@ export function conflictScreen(
     if (flat.length === 0) return;
     at = Math.max(0, Math.min(flat.length - 1, at + by));
     const all = lines();
-    scroll.to(heads[at] ?? 0, all.length);
+    // Only when the block's header is out of sight: scrolling to a header that
+    // already shows would hide the file's "N of M resolved" row above it.
+    const head = heads[at] ?? 0;
+    if (head < scroll.top || head >= scroll.top + scroll.height) scroll.to(head, all.length);
   };
 
   return {

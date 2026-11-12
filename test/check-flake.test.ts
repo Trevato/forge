@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { redMain } from "../src/checks/red_main.ts";
-import { flakeList, flakeNeeds, passedAlone, recordFlakes, recordQueueFlakes, rerunCommand, rerunnable } from "../src/checks/flake.ts";
+import { flakeList, flakeNeeds, passedAlone, recordCrashFlakes, recordFlakes, recordQueueFlakes, rerunCommand, rerunnable } from "../src/checks/flake.ts";
 import { startChecks } from "../src/checks/service.ts";
 import { parseBunTestFailure } from "../src/checks/bun-test.ts";
 import { listRuns } from "../src/core/runs.ts";
@@ -24,7 +24,7 @@ const report = (names: string[], file = "t/a.test.ts"): string[] => [
 
 test("one or two named failures can be re-run; more, or a hook, cannot", () => {
   const one = report(["grp > flaky"]);
-  expect(rerunnable(one, parseBunTestFailure(one))).toEqual([{ file: "t/a.test.ts", name: "grp > flaky" }]);
+  expect(rerunnable(one, parseBunTestFailure(one))).toEqual([{ file: "t/a.test.ts", name: "grp > flaky", ms: 1 }]);
   const three = report(["a", "b", "c"]);
   expect(rerunnable(three, parseBunTestFailure(three))).toBeUndefined();
   const hook = ["t/a.test.ts:", "(fail) t/a.test.ts > beforeEach (timeout)", " 1 pass", " 1 fail"];
@@ -138,6 +138,7 @@ async function mainCheck(name: string, testBody: string) {
     const deadline = Date.now() + 40_000;
     const finished = () => listRuns(app.db, repo.id, { kind: "check", limit: 50 }).find((r) => r.commitOid === oid && (r.state === "ok" || r.state === "failed"));
     while (Date.now() < deadline && finished() === undefined) await Bun.sleep(100);
+    if (finished() === undefined) throw new Error(`never came: still waiting while finished() === undefined`);
     const run = finished()!;
     return { repo, run, log: readRunLog(app.config.dataDir, run.id).lines.join("\n") };
   } finally {
@@ -160,3 +161,14 @@ test("a test that fails alone too leaves main red", async () => {
   expect(redMain(app.db, repo.id)?.failing).toEqual(["grp > flaky"]);
   expect(flakeList(app.db, Date.now()).some((f) => f.repo === "alice/broken")).toBe(false);
 }, 60_000);
+
+test("a crash-flake line in a passing check's log is recorded as a file-less check_flake row; a failed check records nothing (#7781)", async () => {
+  const made = await createRepo(app, alice, { name: "crashes", visibility: "public" });
+  if (!made.ok) throw new Error("repo");
+  const log = ["noise", "test-shards: crash flake 4/9: error: Cannot use a closed database #", "ok"];
+  const rows = () => app.db.query<{ test: string; file: string }, [string]>("SELECT test, file FROM check_flake WHERE repo_id = ?1").all(made.value.id);
+  expect(recordCrashFlakes(app.db, app.bus, made.value, log, { runId: "r1", commit: "aaaaaaa1" }, false)).toBe(0);
+  expect(rows()).toEqual([]);
+  expect(recordCrashFlakes(app.db, app.bus, made.value, log, { runId: "r2", commit: "bbbbbbb2", pull: true }, true)).toBe(1);
+  expect(rows()).toEqual([{ test: "(crash outside any test) error: Cannot use a closed database #", file: "" }]);
+});

@@ -3,7 +3,6 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { snappyFixture, type SnappyFixture } from "../bench/snappy.ts";
 import { addComment, openIssue } from "../src/actions/issues.ts";
 import { listEvents } from "../src/core/events.ts";
-import { inlineIcons, referenced } from "../src/web/icons.ts";
 import { markdownMemoStats, renderMarkdown } from "../src/web/markdown.ts";
 import { seedBody } from "./thread-seed.ts";
 
@@ -79,31 +78,4 @@ test("listEvents with kinds is the unfiltered window, filtered", () => {
     }
   }
   expect(listEvents(f.app.db, { repoId, limit: 500, kinds: ["issue.commented"] }).length).toBe(200);
-});
-
-test("referenced() finds the icons the old pattern did", () => {
-  const old = (markup: string): string[] => {
-    const names: string[] = [];
-    for (const m of markup.matchAll(/<use href="#i-([A-Za-z]+)"\/>/g)) {
-      const name = m[1]!;
-      if (inlineIcons(`<use href="#i-${name}"/>`) !== `<use href="#i-${name}"/>` && !names.includes(name)) names.push(name);
-    }
-    return names;
-  };
-  const use = (name: string): string => `<use href="#i-${name}"/>`;
-  const cases = [
-    "",
-    use("comment") + use("issue") + use("comment"),
-    use("Comment") + use("COMMENT"),
-    '<use href="#i-comment">',
-    '<use href="#i-comment"',
-    '<use href="#i-comment2"/>',
-    '<use href="#i-"/>',
-    use("nosuchicon") + use("clock"),
-    '<use href="#i-<use href="#i-clock"/>',
-    "x" + use("clock") + "<use href=\"#i-" ,
-    use("constructor") + use("bot"),
-  ];
-  for (const markup of cases) expect([...referenced(markup)] as string[]).toEqual(old(markup));
-  expect(referenced(use("comment") + use("issue")).length).toBe(2);
 });

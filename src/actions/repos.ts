@@ -4,6 +4,11 @@
  * write path — committing files to a branch without a git client.
  */
 
+import { getOriginById } from "../core/origins.ts";
+import { isContributionFork, type GuestRefusal } from "../core/contribute.ts";
+import { contributionRefusal } from "../core/storage.ts";
+import { limitValue } from "../settings/limits.ts";
+import { forkLimitSpent, guestForkRefusal } from "./guests.ts";
 import { requireVerified } from "./verify.ts";
 import { requireAbility } from "./roles.ts";
 import type { App } from "../app.ts";
@@ -18,12 +23,9 @@ import { storageChanged, storageRefusal, storageSentence } from "../core/storage
 import {
   createLabel as insertLabel,
   deleteLabel as removeLabel,
-  getLabel,
   updateLabel as writeLabel,
   type Label,
 } from "../core/issues.ts";
-import { sweepAssigned } from "../crew/dispatch.ts";
-import { FLOW_LABEL } from "../crew/flow_only.ts";
 import { dropMirror } from "../crew/mirror.ts";
 import { accessAllows, getOrg, orgAccess } from "../core/orgs.ts";
 import {
@@ -43,11 +45,16 @@ import {
 } from "../core/repos.ts";
 import { MAX_COMMIT_BYTES, MAX_FILE_BYTES } from "./contents.ts";
 import { commitIdentity } from "../core/commit_identity.ts";
+import { currentDoor } from "../core/acting_via.ts";
 import type { User } from "../core/users.ts";
 import {
   createWebhook as insertWebhook,
   deleteWebhook as removeWebhook,
+  getWebhook,
+  redeliver,
+  setWebhookActive,
   type CreateWebhookError,
+  type RedeliverError,
   type Webhook,
 } from "../core/webhooks.ts";
 import { resolveOid } from "../git/merge.ts";
@@ -68,7 +75,10 @@ import {
   requireWriter,
   type AccessError,
 } from "./access.ts";
+import { validPolishShare } from "../crew/polish_share.ts";
 import { removeInstallCache } from "../crew/workdir.ts";
+import type { SettingsChanged } from "../core/settings_changed.ts";
+import { seatStarterCrew } from "../spawn/starter_crew.ts";
 
 export interface CreateRepoInput {
   /** Owner name: the actor themselves (default) or an org they can write to. */
@@ -171,13 +181,21 @@ export async function createRepo(
   });
   if (!created.ok) return created;
   storageChanged(app, ownerId);
+  seatStarterCrew(app.db, created.value, user.value.id);
   app.bus.append({
     kind: "repo.created",
     repoId: created.value.id,
     actorId: user.value.id,
+    payload: doorPayload(user.value.id),
   });
   return created;
 }
+
+/** How the actor came in (`core/acting_via.ts`); a conversation is the event's own `via`. */
+const doorPayload = (actorId: string): Record<string, string> => {
+  const door = currentDoor(actorId);
+  return door === undefined ? {} : { door };
+};
 
 /**
  * How many forks one person may make in any 24 hours (#853, #888): each may
@@ -195,15 +213,20 @@ export async function forkRepo(
   parent: Repo,
   name?: string,
   options: { visibility?: "public" | "private"; now?: number } = {},
-): Promise<Result<Repo, ForkRepoError | "not_found" | "unauthorized" | "unverified" | "refused" | "not_member" | "repository_limit" | "storage_limit">> {
+): Promise<Result<Repo, ForkRepoError | GuestRefusal | "not_found" | "unauthorized" | "unverified" | "refused" | "not_member" | "repository_limit" | "storage_limit">> {
   const user = requireParticipant(app, actor, parent);
   if (!user.ok) return user;
   const proven = requireVerified(app, user.value);
   if (!proven.ok) return proven;
   const guarded = requireNewAccountGuard(app, user.value);
   if (!guarded.ok) return guarded;
-  const member = requireAbility(app, user.value, "make_it_yours");
-  if (!member.ok) return member;
+  // A guest forks to contribute: public parents only, always public, marked in
+  // the row's own write so the fork is never an ordinary one for a moment.
+  const contribution = !requireAbility(app, user.value, "make_it_yours").ok;
+  if (contribution) {
+    const refused = await guestForkRefusal(app, user.value, parent, options.now ?? Date.now());
+    if (refused !== undefined) return err(refused);
+  }
   if (repositoryLimitRefusal(app, user.value) !== undefined) return err("repository_limit");
   if ((await storageRefusal(app, user.value, user.value.id)) !== undefined)
     return err("storage_limit");
@@ -213,14 +236,23 @@ export async function forkRepo(
     parent,
     user.value.id,
     name,
-    {
-      ...options,
-      ...(user.value.kind === "agent" || user.value.isAdmin
-        ? {}
-        : { perDay: FORKS_PER_DAY }),
-    },
+    contribution
+      ? {
+          ...options,
+          visibility: "public",
+          contribution: true,
+          perDay: limitValue(app.db, "guest.forks_per_day"),
+          forgePerDay: limitValue(app.db, "guest.forks_forge_per_day"),
+        }
+      : {
+          ...options,
+          ...(user.value.kind === "agent" || user.value.isAdmin ? {} : { perDay: FORKS_PER_DAY }),
+        },
   );
-  if (!forked.ok) return forked;
+  if (!forked.ok) {
+    if (!contribution || forked.error !== "limit") return forked;
+    return err(forkLimitSpent(app, options.now ?? Date.now()));
+  }
   storageChanged(app, user.value.id);
   app.bus.append({
     kind: "repo.forked",
@@ -284,7 +316,7 @@ export async function privateRepoForSealed(
   return sealedForkFor(app, actor, base);
 }
 
-export type UpdateSettingsError = "not_found" | "unknown_branch";
+export type UpdateSettingsError = "not_found" | "unknown_branch" | "polish_share" | "origin_read_only";
 
 /** Each repository's archive transitions, one after another. */
 const archiveTurns = new WeakMap<App, Map<string, Promise<void>>>();
@@ -310,7 +342,7 @@ function inTurn<T>(app: App, repoId: string, work: () => Promise<T>): Promise<T>
 }
 
 /**
- * Archive (true) or wake (false), and act on it only if this call moved the
+ * Archive (true) or restore (false), and act on it only if this call moved the
  * repository (`moveArchived`). The write and its effect take one turn per
  * repository, so a Wake asked while an Archive is still stopping the app
  * starts it after that stop, not before it. True when this call moved it.
@@ -336,6 +368,41 @@ function moveArchive(app: App, repoId: string, archived: boolean): Promise<boole
   });
 }
 
+/** The settings `updateRepoSettings` audits, in the order the trail names them. */
+const AUDITED = [
+  "visibility",
+  "description",
+  "protectDefault",
+  "defaultBranch",
+  "requireReview",
+  "requireChecks",
+  "crewOutsiders",
+  "decisionsBy",
+  "plansNeedNod",
+  "autonomySlots",
+  "plannerSlots",
+  "reviewerSlots",
+  "polishShare",
+] as const;
+
+export type { SettingsChanged };
+
+/** Each audited setting `settings` moves on `repo`, from what to what. */
+export function settingsChanged(repo: Repo, settings: RepoSettings): SettingsChanged {
+  const changed: SettingsChanged = {};
+  for (const k of AUDITED) {
+    const to = settings[k];
+    if (to !== undefined && to !== repo[k]) changed[k] = { from: repo[k], to };
+  }
+  return changed;
+}
+
+/** Whether `repo` mirrors an origin that was connected read-only. */
+export function mirrorsReadOnlyOrigin(app: App, repo: Repo): boolean {
+  if (repo.origin === null || repo.origin === undefined) return false;
+  return getOriginById(app.db, repo.origin.originId)?.readOnly === true;
+}
+
 /**
  * Change settings. A new default branch must exist; git HEAD is moved first
  * and the row follows (git is truth, the index is derived from it).
@@ -355,7 +422,6 @@ export async function updateRepoSettings(
     (settings.crewOutsiders !== undefined ||
       settings.decisionsBy !== undefined ||
       settings.plansNeedNod !== undefined ||
-      settings.flowOnly !== undefined ||
       settings.archived !== undefined) &&
     admin.value.kind === "agent"
   )
@@ -364,6 +430,12 @@ export async function updateRepoSettings(
   // base, whoever owns it (`core/sealed.ts`).
   if (repo.sealedFor !== null && settings.visibility === "public")
     return err("not_found");
+  // A repository mirrored from a read-only origin is private to its owner
+  // for as long as the origin is read-only (#10520).
+  if (settings.visibility === "public" && mirrorsReadOnlyOrigin(app, repo))
+    return err("origin_read_only");
+  if (settings.polishShare !== undefined && !validPolishShare(settings.polishShare))
+    return err("polish_share");
   const branch = settings.defaultBranch;
   if (branch !== undefined && branch !== repo.defaultBranch) {
     const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
@@ -374,32 +446,15 @@ export async function updateRepoSettings(
   }
   const { archived, ...rest } = settings;
   writeSettings(app.db, repo, rest);
-  // FLOW ONLY names its label (the label it makes is not in `changed`, below): on, the repository has a `flow` to put on work.
-  if (settings.flowOnly === true && getLabel(app.db, repo.id, FLOW_LABEL) === undefined)
-    insertLabel(app.db, repo.id, FLOW_LABEL, "d29922");
-  // Switched off: the assignments it held dispatch now.
-  if (settings.flowOnly === false && repo.flowOnly) sweepAssigned(app);
   const moved =
     archived === undefined ? false : await moveArchive(app, repo.id, archived);
   const updated = getRepoById(app.db, repo.id);
   if (updated === undefined) return err("not_found");
-  // `changed` is the audit line: it names settings, not the `flow` label
-  // that turning flowOnly on may have made.
-  const changed: string[] = (
-    [
-      "visibility",
-      "description",
-      "protectDefault",
-      "defaultBranch",
-      "requireReview",
-      "requireChecks",
-      "crewOutsiders",
-      "decisionsBy",
-      "plansNeedNod",
-      "flowOnly",
-    ] as const
-  ).filter((k) => settings[k] !== undefined && settings[k] !== repo[k]);
-  if (moved) changed.push("archived");
+  // `changed` is the audit line: each setting this call moved, from what to
+  // what. None of these is a secret; a secret setting would say only
+  // that it changed (`{ secret: true }`), never its value.
+  const changed = settingsChanged(repo, settings);
+  if (moved) changed["archived"] = { from: !archived, to: archived === true };
   app.bus.append({
     kind: "repo.settings_updated",
     repoId: repo.id,
@@ -408,7 +463,7 @@ export async function updateRepoSettings(
   });
   // Who may start and steer the crew is its own line in the record, on and
   // off: on is a door opened to everyone who can read (`crew/direct.ts`).
-  if (changed.includes("crewOutsiders"))
+  if ("crewOutsiders" in changed)
     app.bus.append({
       kind: "repo.crew_outsiders",
       repoId: repo.id,
@@ -490,7 +545,7 @@ export interface ArchiveAnswer {
 }
 
 /**
- * Archive (true) or wake (false) a repository, for the MCP: the same
+ * Archive (true) or restore (false) a repository, for the MCP: the same
  * `updateRepoSettings` the API's PATCH goes through. A repository admin's,
  * never an agent's; a dry run answers what would change and changes nothing.
  */
@@ -514,16 +569,31 @@ export async function deleteRepo(
   app: App,
   actor: User | undefined,
   repo: Repo,
-): Promise<Result<void, "not_found" | "delete_failed">> {
-  const admin = requireRepoAdmin(app, actor, repo);
+): Promise<Result<void, "not_found" | "delete_failed" | "has_pulls">> {
+  // A guest administers nothing, but may always delete their own fork: it is
+  // how they make room, and the day's count of forks stands.
+  const admin =
+    actor !== undefined && actor.id === repo.ownerId && isContributionFork(app.db, repo.id)
+      ? ok(actor)
+      : requireRepoAdmin(app, actor, repo);
   if (!admin.ok) return admin;
   const deleted = await destroyRepo(app.db, app.reposRoot, repo);
   if (!deleted.ok) return deleted;
   await removeInstallCache(app.config.dataDir, repo.id);
   dropMirror(app.config.dataDir, repo.id);
   storageChanged(app, repo.ownerId);
-  // The row is gone (events cascade with it), so this event carries no repo.
-  app.bus.append({ kind: "repo.deleted", actorId: admin.value.id });
+  // The row is gone (events cascade with it), so the event names it: a private
+  // one's name is for those who answer for it (`core/event_audience.ts`).
+  app.bus.append({
+    kind: "repo.deleted",
+    actorId: admin.value.id,
+    payload: {
+      repo: `${repo.ownerName}/${repo.name}`,
+      visibility: repo.visibility,
+      ownerId: repo.ownerId,
+      ...doorPayload(admin.value.id),
+    },
+  });
   return ok();
 }
 
@@ -644,12 +714,52 @@ export function deleteWebhook(
   return ok();
 }
 
+export function pauseWebhook(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  webhookId: string,
+  paused: boolean,
+): Result<void, "not_found"> {
+  const admin = requireRepoAdmin(app, actor, repo);
+  if (!admin.ok) return admin;
+  if (!setWebhookActive(app.db, repo.id, webhookId, !paused))
+    return err("not_found");
+  app.bus.append({
+    kind: paused ? "webhook.paused" : "webhook.resumed",
+    repoId: repo.id,
+    actorId: admin.value.id,
+    payload: { webhookId },
+  });
+  return ok();
+}
+
+/**
+ * Send a failed delivery of this repository's hook again (admins). The one
+ * action behind the Settings form, the API and MCP; `redeliver` does the
+ * checks (only `failed` moves, a sealed report stays refused).
+ */
+export function redeliverWebhook(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  webhookId: string,
+  deliveryId: string,
+): Result<void, RedeliverError | "no_admin"> {
+  const admin = requireRepoAdmin(app, actor, repo);
+  if (!admin.ok) return err("no_admin");
+  if (!getWebhook(app.db, repo.id, webhookId)) return err("not_found");
+  const done = redeliver(app.db, deliveryId, webhookId);
+  return done.ok ? ok() : done;
+}
+
 export type CommitToBranchError =
   | AccessError
   | CommitFilesError
   | { kind: "protected_branch"; branch: string }
   | { kind: "file_too_large"; path: string; bytes: number }
-  | { kind: "commit_too_large"; bytes: number };
+  | { kind: "commit_too_large"; bytes: number }
+  | { kind: "storage_limit" };
 
 export interface CommitToBranchInput {
   /** @default the repo's default branch */
@@ -676,6 +786,9 @@ export async function commitToBranch(
 ): Promise<Result<CommitResult, CommitToBranchError>> {
   const writer = requireWriter(app, actor, repo);
   if (!writer.ok) return writer;
+  // A commit through the API adds to a guest's fork as a push does.
+  if ((await contributionRefusal(app, writer.value.id, repo, writer.value)) !== undefined)
+    return err({ kind: "storage_limit" });
   const branch = input.branch || repo.defaultBranch;
   // The same mechanical rules `editFiles` applies: a protected default takes
   // commits from repo admins only, and no file or commit is unbounded.

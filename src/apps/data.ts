@@ -34,18 +34,84 @@ import {
 import { join } from "node:path";
 import { defect } from "../kernel/error.ts";
 
-/** `production`, or `pull-<n>` for the preview of pull `n`. */
-export type EnvName = "production" | `pull-${number}`;
+/**
+ * `production`, `pull-<n>` for the preview of pull `n`, or `build-<sha7>`
+ * for a build preview: one commit a writer asked to see now, short-lived.
+ */
+export type EnvName = "production" | `pull-${number}` | `build-${string}` | `variant-${string}`;
 
 export const previewEnv = (pullNumber: number): EnvName => `pull-${pullNumber}`;
 
-export function isEnvName(value: string): value is EnvName {
-  return value === "production" || /^pull-[1-9]\d*$/.test(value);
+/** A build preview's name: the commit's short sha, `build-1a2b3c4`. */
+export const buildEnv = (oid: string): EnvName => `build-${oid.slice(0, 7).toLowerCase()}`;
+
+/** The short sha a build preview serves; `undefined` for any other environment. */
+export function envBuild(env: EnvName): string | undefined {
+  return /^build-[0-9a-f]{7}$/.test(env) ? env.slice(6) : undefined;
 }
 
-/** The pull a preview environment belongs to, or `undefined` for production. */
+/** A variant's label: what its environment and hostname carry, `[a-z0-9]` and short. */
+export const VARIANT_LABEL = /^[a-z0-9]{1,16}$/;
+
+/** The environment of the variant `label` (`variant-print`): a branch kept running (`core/variants.ts`). */
+export const variantEnv = (label: string): EnvName => `variant-${label}`;
+
+/** The label a variant environment serves; `undefined` for any other environment. */
+export function envVariant(env: EnvName): string | undefined {
+  return env.startsWith("variant-") && VARIANT_LABEL.test(env.slice(8)) ? env.slice(8) : undefined;
+}
+
+/** A host label's tail read back as a variant: `v-print` → `variant-print`. */
+export function variantEnvFromLabel(tail: string): EnvName | undefined {
+  return tail.startsWith("v-") && VARIANT_LABEL.test(tail.slice(2)) ? variantEnv(tail.slice(2)) : undefined;
+}
+
+export function isEnvName(value: string): value is EnvName {
+  return (
+    value === "production" ||
+    /^variant-[a-z0-9]{1,16}$/.test(value) ||
+    /^pull-[1-9]\d*$/.test(value) ||
+    /^build-[0-9a-f]{7}$/.test(value)
+  );
+}
+
+/** The pull a preview environment belongs to; `undefined` for production and a build. */
 export function envPull(env: EnvName): number | undefined {
-  return env === "production" ? undefined : Number(env.slice(5));
+  return env.startsWith("pull-") ? Number(env.slice(5)) : undefined;
+}
+
+/**
+ * What follows the slug in an environment's hostname label and its ssh
+ * login: nothing for production, `--<n>` for a preview, or
+ * `--b<sha7>` for a build preview. One rule builds both, and
+ * `parseAppHost` reads it back.
+ */
+export function envHostLabel(slug: string, env: EnvName): string {
+  if (env === "production") return slug;
+  const build = envBuild(env);
+  if (build !== undefined) return `${slug}--b${build}`;
+  const variant = envVariant(env);
+  if (variant !== undefined) return `${slug}--v-${variant}`;
+  return `${slug}--${env.slice(5)}`;
+}
+
+/**
+ * A host label's tail read back as a build preview: `b1a2b3c4` →
+ * `build-1a2b3c4`. Slugs of that shape are reserved (`core/apps.ts`), so
+ * the tail is never an app.
+ */
+export function buildEnvFromLabel(tail: string): EnvName | undefined {
+  return /^b[0-9a-f]{7}$/.test(tail) ? `build-${tail.slice(1)}` : undefined;
+}
+
+/** An environment as a person reads its name: production, the preview of #n, or the build at <sha7>. */
+export function envWords(env: EnvName): string {
+  if (env === "production") return "production";
+  const build = envBuild(env);
+  if (build !== undefined) return `the build at ${build}`;
+  const variant = envVariant(env);
+  if (variant !== undefined) return `the ${variant} variant`;
+  return `the preview of #${env.slice(5)}`;
 }
 
 export const appsRoot = (dataDir: string): string => join(dataDir, "apps");

@@ -5,6 +5,7 @@
  * (#7450); the rules live in `actions/issues.ts` and its neighbours.
  */
 
+import { holds, weakEtag } from "../etag.ts";
 import { ISSUE_TEAMS_SAY, nameTeams } from "../../actions/issue_teams.ts";
 import { confirmIssue, dependencyWords, linkIssue, unlinkIssue } from "../../actions/dependencies.ts";
 import {
@@ -14,8 +15,10 @@ import {
   openIssueThrough,
   setIssueLabelsThrough,
   setIssueSealed,
+  plannerCloseRefusal,
   setIssueStateThrough,
 } from "../../actions/issues.ts";
+import { PLAN_SHAPE, readPlan, setPlan } from "../../actions/run_plan.ts";
 import { privateRepoForSealed } from "../../actions/repos.ts";
 import { dependenciesOf } from "../../core/dependencies.ts";
 import { teamsOfIssue } from "../../core/issue_teams.ts";
@@ -96,6 +99,18 @@ export async function labelsHandler(ctx: Ctx): Promise<Response> {
   return json(set.value);
 }
 
+/**
+ * A reader-scoped JSON answer tagged by its exact bytes: a repeat holding the
+ * tag gets 304. Callers check access first, so a 304 confirms nothing to
+ * someone who may not read it.
+ */
+function tagged(request: Request, text: string): Response {
+  const etag = weakEtag(text);
+  const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+  if (holds(request, etag)) return new Response(null, { status: 304, headers });
+  return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+}
+
 export function issueRoutes(router: Router<Handler>): void {
   router.add(
     "PUT",
@@ -137,6 +152,7 @@ export function issueRoutes(router: Router<Handler>): void {
     if (fields !== null && fields !== "brief")
       return apiError("invalid_fields", 422, "fields must be brief, or left out");
     const query = listQuery(ctx);
+    if (query instanceof Response) return query;
     const listed = timePhase(ctx.request, "list", () =>
       listIssues(ctx.app.db, repo.id, {
         ...query,
@@ -147,9 +163,12 @@ export function issueRoutes(router: Router<Handler>): void {
     const items = timePhase(ctx.request, "labels", () => withLabelsMany(ctx, listed));
     return timePhase(ctx.request, "render", () => {
       const page = paged(items, query.limit, (i) => i.number);
-      return json(
+      const text = JSON.stringify(
         fields === "brief" ? { ...page, items: page.items.map(briefIssue) } : page,
       );
+      // Scoped by who asks (sealed issues), so private to the reader; the tag
+      // is of the exact bytes sent, so each page, state and fields value has its own.
+      return tagged(ctx.request, text);
     });
   });
 
@@ -173,6 +192,25 @@ export function issueRoutes(router: Router<Handler>): void {
     });
     if (!created.ok) return originAware(created.error);
     return json(withLabels(ctx, created.value), 201);
+  });
+
+  // The plan a crew run keeps on its issue: replaced whole at each update (#8707).
+  router.add("GET", "/api/v1/repos/:owner/:name/issues/:number/plan", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const found = loadIssue(ctx);
+    if ("error" in found) return found.error;
+    return json({ plan: readPlan(ctx.app, found.repo, ctx.auth.user, found.issue) ?? null });
+  });
+  router.add("PUT", "/api/v1/repos/:owner/:name/issues/:number/plan", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const found = loadIssue(ctx);
+    if ("error" in found) return found.error;
+    const input = await body(ctx.request);
+    const set = setPlan(ctx.app, ctx.auth.user, found.repo, found.issue, { items: input.items, ask: input.ask });
+    if (!set.ok)
+      return set.error === "invalid" ? apiError("invalid", 422, PLAN_SHAPE) : originAware(set.error);
+    return json({ plan: set.value });
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/issues/:number", (ctx) => {
@@ -203,18 +241,19 @@ export function issueRoutes(router: Router<Handler>): void {
     });
     const labelled = timePhase(ctx.request, "labels", () => withLabels(ctx, issue));
     return timePhase(ctx.request, "render", () =>
-      json({
+      tagged(ctx.request, JSON.stringify({
         ...labelled,
         ...(issue.kind === "pull"
           ? {
               pull: `/api/v1/repos/${repo.ownerName}/${repo.name}/pulls/${issue.number}`,
             }
           : {}),
+        plan: readPlan(ctx.app, found.repo, ctx.auth.user, issue) ?? null,
         comments: shown,
         commentsTotal: total,
         commentsNext: shown.length > 0 && shown.length < total ? shown[0]!.id : null,
         ...(asked === null ? {} : { commentCount: total }),
-      }),
+      })),
     );
   });
 
@@ -245,10 +284,13 @@ export function issueRoutes(router: Router<Handler>): void {
       );
       const page = older.slice(older.length - Math.min(limit, older.length));
       return timePhase(ctx.request, "render", () =>
-        json({
-          comments: readerMarked(ctx, found.repo.id, page),
-          next: older.length > limit ? page[0]!.id : null,
-        }),
+        tagged(
+          ctx.request,
+          JSON.stringify({
+            comments: readerMarked(ctx, found.repo.id, page),
+            next: older.length > limit ? page[0]!.id : null,
+          }),
+        ),
       );
     }
     const { rows, page } = timePhase(ctx.request, "comments", () => {
@@ -259,10 +301,13 @@ export function issueRoutes(router: Router<Handler>): void {
       return { rows: read, page: read.slice(0, limit) };
     });
     return timePhase(ctx.request, "render", () =>
-      json({
-        comments: readerMarked(ctx, found.repo.id, page),
-        next: rows.length > limit ? page[page.length - 1]!.id : null,
-      }),
+      tagged(
+        ctx.request,
+        JSON.stringify({
+          comments: readerMarked(ctx, found.repo.id, page),
+          next: rows.length > limit ? page[page.length - 1]!.id : null,
+        }),
+      ),
     );
   });
 
@@ -462,7 +507,15 @@ export function issueRoutes(router: Router<Handler>): void {
           wanted,
           closing,
         );
-        if (!changed.ok) return originAware(changed.error, 409);
+        if (!changed.ok) {
+          // A planner told no learns which rule refused it.
+          const rule =
+            changed.error === "forbidden" && wanted === "closed" && ctx.auth.user
+              ? plannerCloseRefusal(ctx.app, found.repo, issue, ctx.auth.user, closing)
+              : undefined;
+          if (rule !== undefined) return apiError("forbidden", 403, rule);
+          return originAware(changed.error, 409);
+        }
         issue = changed.value;
       }
       return json(withLabels(ctx, issue));

@@ -21,7 +21,7 @@ import {
 import { composeLine } from "./code.ts";
 import type { Token } from "./highlight.ts";
 import { escapeHtml, html, raw, when, type Html } from "./html.ts";
-import { btn, card, disclosure, icon, time, userLink } from "./ui.ts";
+import { btn, card, disclosure, empty, icon, time, userLink } from "./ui.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { wordDiff, type Segment } from "./worddiff.ts";
 
@@ -161,9 +161,13 @@ function statusLabel(status: FileDiff["status"]): string {
   }
 }
 
-function fileAnchor(file: FileDiff): string {
+export function pathAnchor(path: string): string {
   // Stable per-path id for deep-linking; not security-sensitive.
-  return "d-" + escapeHtml(file.path).replace(/[^a-zA-Z0-9]+/g, "-");
+  return "d-" + escapeHtml(path).replace(/[^a-zA-Z0-9]+/g, "-");
+}
+
+function fileAnchor(file: FileDiff): string {
+  return pathAnchor(file.path);
 }
 
 /** Per-character changed mask for a line, from its word-diff segments. */
@@ -309,8 +313,8 @@ function reviewRows(
   const currentHash = hashLine(currentText);
   const thread = comments.map((c) => {
     const outdated = c.lineHash !== currentHash;
-    return html`<div class="card comment">
-      <div class="card-head">
+    return html`<div class="comment-row">
+      <div class="comment-head muted small">
         ${userLink(c.authorName, { mark: opts.marks?.get(c.authorName) })}
         ${time(c.createdAt)}
         ${when(
@@ -324,7 +328,7 @@ function reviewRows(
 
   const form = isActive
     ? html`<form
-        class="card comment-form"
+        class="comment-form"
         data-submit-key
         method="post"
         action="${opts.reviewBase}/review"
@@ -391,7 +395,7 @@ function reviewRows(
           )}`,
         toggle ? { foot: toggle } : {},
       )
-    : card(html`${thread}`, toggle ? { foot: toggle } : {});
+    : html`<div class="dc-thread">${thread}${toggle}</div>`;
 
   return html`<tr>
     <td class="dn"></td>
@@ -567,7 +571,7 @@ export function renderDiff(
   const opts: DiffViewOptions =
     options instanceof Map ? { syntax: options } : (options ?? {});
   if (diff.files.length === 0) {
-    return html`<div class="card empty">No changes.</div>`;
+    return empty({ title: "No changes." });
   }
   const shown = diff.files.slice(0, MAX_DIFF_FILES);
   const hidden = diff.files.length - shown.length;
@@ -583,10 +587,10 @@ export function renderDiff(
     ${when(
       hidden > 0,
       () =>
-        html`<div class="card diff-note">
+        html`<p class="muted small">
           ${hidden.toLocaleString()} more ${hidden === 1 ? "file" : "files"} not
           shown.
-        </div>`,
+        </p>`,
     )}
   </div>`;
 }

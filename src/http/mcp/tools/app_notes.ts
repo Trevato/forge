@@ -15,7 +15,7 @@ const refused = (error: "forbidden" | "not_found" | "unavailable"): Answer =>
 
 export const tool: Tool = {
   name: "app_notes",
-  doc: "`{ app, action?, note? }`: the notes sent from an app's forge button and its banned senders; `hide` a note, `ban` or `unban` its sender; an admin of the repository",
+  doc: "`{ app, action?, note? }`: the notes sent from an app's forge button, each with its latest `replies` (outsiders' `untrusted`), and its banned senders; `hide` a note, `ban` or `unban` its sender; an admin of the repository",
   description: "Notes from an app's forge button and banned senders; hide a note, ban or unban its sender. Admin.",
   inputSchema: {
     type: "object",

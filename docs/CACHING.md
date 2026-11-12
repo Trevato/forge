@@ -291,6 +291,17 @@ fixture; all three caches hit):
 The anonymous door (1.5 ms, 10 statements), the app shelf, and the
 "On you" card. Each costs less than its cache's key would.
 
+## Telemetry does not invalidate (#7896)
+
+The write clock counts every row the connection changes, and a signed-in
+visit itself writes: route timings a second after the request, usage
+counts, flag reads, the session's last-seen time, the home visit, page
+vitals, machine and memory samples. Counted, they kept every cache cold
+for the next visitor. These writers run inside `quietly` (`core/write_clock.ts`),
+which leaves their rows out of the stamp. Wrap only a write to a table no
+cached page is built from; a page that shows telemetry is bounded by the
+30 seconds a cache entry lives. `test/write-clock-quiet.test.ts` proves it.
+
 ## The writes that invalidate
 
 Each row is an action (or, for a push, the post-receive hook, the one
@@ -414,12 +425,15 @@ warm:
 
 ## Raw files at a full commit id (#3381)
 
-`GET /:owner/:name/raw/:ref/*path` is the one place the forge tells shared
-caches (browsers, a CDN, a proxy) to keep bytes for a year.
+`GET /:owner/:name/raw/:ref/*path` and `/media/:ref/*path` tell browsers to keep
+bytes at a full commit for a year and a shared cache (a CDN, a proxy) for a day:
+a repository can turn private, and there is no purge. Tree, blob and commit pages
+use the same rule (`http/addressed.ts`).
 
 | `ref` is                  | repository | `Cache-Control`                          |
 | ------------------------- | ---------- | ---------------------------------------- |
-| 40 hex digits (a commit)  | public     | `public, max-age=31536000, immutable`    |
+| 40 hex digits (a commit), no cookie or identity | public | `public, max-age=31536000, s-maxage=86400, immutable` |
+| 40 hex digits (a commit), any cookie or identity | public | `private, max-age=31536000, immutable` |
 | 40 hex digits (a commit)  | not public | `private, max-age=31536000, immutable`   |
 | a branch, tag or anything else | any   | `private, max-age=0` (revalidates)       |
 
@@ -509,7 +523,22 @@ figures read `run`, `pull`, `usage` and `page_vital` rows, some of which
 append no event, and a clock that moves on every row catches all of them.
 The KPI entry is keyed by UTC hour, ceiling and data directory; a panel by
 its board's slug and its own definition (an edited board is a new key, as
-the blob id would make it). Max age 30 s for both. Measured on
+the blob id would make it). The 60 s rule (#7624): the KPIs, panels and
+vitals are kept 60 s from when they were computed, whatever is written
+since (the forge writes every second, so the write stamp never hit). Past
+60 s the old answer is still served at once, counted a hit, and one refresh
+per key runs with `setTimeout(0)` after the response (#7625). A refresh that
+throws is logged (`home.refresh_failed`), keeps the old answer and frees the
+key for the next request. Only a cold start, or an answer past the 10 min
+ceiling (`HOME_STALE_CEILING_MS`, ten TTLs), computes inline, so refreshes
+that keep failing cannot pin an old answer forever. The refresh is off the
+request, not off the event loop: it runs on the same thread, so a request
+that lands while it runs waits for it, as it would have waited for an
+inline recompute. The waiting line stays on the write stamp, 30 s at most,
+so the asks count is exact. The builders figure is read fresh on every
+request (one query), so it agrees with the idle reason beside it; the
+terminal's dashboard reads `readKpis` uncached. Tests age these entries
+with `setHomeClock`, the one test seam in `home_cache.ts`. Measured on
 `bench/snappy.ts` (`--n 50`), `/` owner: 105.7 → 90.1 statements, p50
 16.0 → 15.5 ms, p95 22.5 → 20.7 ms; the fixture pins no panel, and a pin
 adds one query per panel on a miss and none on a hit.

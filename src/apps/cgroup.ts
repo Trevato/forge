@@ -20,8 +20,11 @@
  *                    cpu.weight and io.weight 1000 against the cells' 100
  *   R/cells/c<n>/    one per cell: memory.max, memory.swap.max = 0,
  *                    memory.oom.group = 1 (the whole cell dies together);
+ *                    pids.max the watch's process limit (#10518);
  *                    a step's cpu.weight and io.weight 10, below an app's
  *                    100, and cpu.max its declared cores (`apps/background.ts`)
+ *                    a child forge's io.max on the device under the
+ *                    forge's data, sized by its size (`spawn/sizes.ts`)
  *   R/cells/c<n>/    one per crew run, too: no memory cap, weight 10 and
  *                    cpu.max of `FORGE_CREW_CPUS` cores — out of the
  *                    forge's own leaf, where only nice told them apart
@@ -41,10 +44,12 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmdirSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 export type CgroupHost =
   | { readonly ok: true; readonly root: string }
@@ -57,6 +62,10 @@ export interface CellCgroup {
   readonly maxBytes: number;
   /** How many times the kernel OOM-killed in it (`memory.events` `oom_kill`). */
   readonly oomKills: () => number;
+  /** Whether the kernel holds its cores (`cpu.max` written): then a busy cell is throttled, never stopped. */
+  readonly cpuCapped: boolean;
+  /** Whether the kernel holds its disk bandwidth (`io.max` written). */
+  readonly ioCapped: boolean;
   /** Kill whatever is left and remove the cgroup, retrying while it empties. */
   readonly remove: () => void;
 }
@@ -80,6 +89,67 @@ export const CPU_PERIOD_US = 100_000;
  */
 export function cpuMax(cpus: number): string {
   return `${Math.max(1000, Math.round(cpus * CPU_PERIOD_US))} ${CPU_PERIOD_US}`;
+}
+
+/** A cell's disk bandwidth on one device: `io.max`'s keys, per second. */
+export interface IoMax {
+  readonly rbps: number;
+  readonly wbps: number;
+  readonly riops: number;
+  readonly wiops: number;
+}
+
+/** Where and how much: the device's `MAJ:MIN` and the cell's `IoMax` on it. */
+export interface IoCap {
+  readonly device: string;
+  readonly max: IoMax;
+}
+
+/**
+ * The `io.max` line for `max` on `device`: "MAJ:MIN rbps=… wbps=… riops=…
+ * wiops=…" (cgroup-v2.rst, "io.max"). A key that is not a positive integer
+ * is `max` (no limit); a device that is not `MAJ:MIN` is no line at all.
+ */
+export function ioMaxLine(cap: IoCap): string | undefined {
+  if (!/^\d+:\d+$/.test(cap.device)) return undefined;
+  const v = (n: number): string => (Number.isFinite(n) && n >= 1 ? String(Math.floor(n)) : "max");
+  const { rbps, wbps, riops, wiops } = cap.max;
+  return `${cap.device} rbps=${v(rbps)} wbps=${v(wbps)} riops=${v(riops)} wiops=${v(wiops)}`;
+}
+
+/** Linux's `dev_t` split into major and minor (glibc's gnu_dev_major/minor). */
+export function majorMinor(dev: number | bigint): string {
+  const d = BigInt(dev);
+  const major = ((d >> 8n) & 0xfffn) | ((d >> 32n) & ~0xfffn);
+  const minor = (d & 0xffn) | ((d >> 12n) & ~0xffn);
+  return `${major}:${minor}`;
+}
+
+/**
+ * The whole disk under `path`, as `MAJ:MIN`, or `undefined` where there is
+ * no block device to throttle (tmpfs, overlay, a network mount). io.max
+ * takes a disk, not a partition: a partition's `/sys/dev/block/MAJ:MIN`
+ * has a `partition` file, and its parent directory is the disk's.
+ */
+export function diskDevice(path: string, sysBlock = "/sys/dev/block"): string | undefined {
+  let dev: string;
+  try {
+    dev = majorMinor(statSync(path, { bigint: true }).dev);
+  } catch {
+    return undefined;
+  }
+  const at = join(sysBlock, dev);
+  if (!existsSync(at)) return undefined;
+  if (!existsSync(join(at, "partition"))) return dev;
+  // The link's target, not the link: `..` of /sys/dev/block/8:1 is /sys/dev.
+  let parent: string;
+  try {
+    parent = dirname(realpathSync(at));
+  } catch {
+    return undefined;
+  }
+  const disk = words(read(join(parent, "dev")))[0];
+  return disk !== undefined && /^\d+:\d+$/.test(disk) ? disk : undefined;
 }
 
 let host: CgroupHost | undefined;
@@ -172,16 +242,18 @@ export function prepare(
     const cells = join(root, "cells");
     mkdirSync(cells, { recursive: true });
     writeFileSync(join(cells, "cgroup.subtree_control"), "+memory");
-    // The forge outweighs every cell, and a step weighs less than an app
-    // (#3319). Asked for, never required: without the controller, nice and
-    // SCHED_BATCH still hold.
-    for (const controller of ["cpu", "io"]) {
+    // A cell's process count is the kernel's too (`pids.max`, #10518), and
+    // the forge outweighs every cell, a step less than an app (#3319).
+    // Asked for, never required: without pids the watch still counts every
+    // tick; without cpu or io, nice and SCHED_BATCH still hold.
+    for (const controller of ["pids", "cpu", "io"]) {
       if (!words(read(join(root, "cgroup.controllers"))).includes(controller)) continue;
       try {
         for (const dir of [root, cells])
           if (!words(read(join(dir, "cgroup.subtree_control"))).includes(controller))
             writeFileSync(join(dir, "cgroup.subtree_control"), `+${controller}`);
-        writeFileSync(join(root, "forge", `${controller}.weight`), `${controller === "io" ? "default " : ""}${FORGE_WEIGHT}`);
+        if (controller !== "pids")
+          writeFileSync(join(root, "forge", `${controller}.weight`), `${controller === "io" ? "default " : ""}${FORGE_WEIGHT}`);
       } catch {
         // not delegated here, or the forge's leaf is elsewhere: the memory cap still holds
       }
@@ -223,15 +295,29 @@ function removeDir(dir: string, tries = 10): void {
 }
 
 /**
+ * Whether cells get the pids controller here: `R/cells` lists it in its
+ * `cgroup.subtree_control`, as cgroupfs reads it back. Then each cell's
+ * `pids.max` is the kernel's; otherwise the watch alone counts processes.
+ */
+export function pidsDelegated(at: CgroupHost): boolean {
+  return at.ok && words(read(join(at.root, "cells", "cgroup.subtree_control"))).includes("pids");
+}
+
+/**
  * A cgroup of its own for one cell, capped at `memoryMiB` (`undefined`: no
  * cap, for a crew run); `undefined` where the host has none. `share` is its
  * `cpu.weight`, `io.weight` and `cpu.max` where those controllers reach it;
- * unset leaves the defaults, 100 and no quota.
+ * unset leaves the defaults, 100 and no quota. `processes` is its
+ * `pids.max` where the pids controller reaches it (`pidsDelegated`); unset
+ * or not a positive integer, no kernel cap. `io` is its `io.max` where the
+ * io controller reaches it; unset, no bandwidth cap.
  */
 export function openCellCgroup(
   memoryMiB: number | undefined,
   at: CgroupHost = cgroupHost(),
   share?: CpuShare,
+  processes?: number,
+  io?: IoCap,
 ): CellCgroup | undefined {
   if (!at.ok) return undefined;
   const dir = join(at.root, "cells", `c${nextCell++}-${process.pid}`);
@@ -252,6 +338,7 @@ export function openCellCgroup(
         // an older kernel: the cap still holds
       }
     }
+  let cpuCapped = false;
   // cgroupfs makes no file it does not have: a controller not delegated is a write refused.
   if (share !== undefined) {
     const files: [string, string][] = [
@@ -263,15 +350,35 @@ export function openCellCgroup(
     for (const [file, value] of files) {
       try {
         writeFileSync(join(dir, file), value);
+        if (file === "cpu.max") cpuCapped = true;
       } catch {
         // no cpu or io controller here: nice and SCHED_BATCH still hold
       }
+    }
+  }
+  if (processes !== undefined && Number.isInteger(processes) && processes > 0 && pidsDelegated(at)) {
+    try {
+      writeFileSync(join(dir, "pids.max"), String(processes));
+    } catch {
+      // no pids controller here: the watch still counts the cell's processes
+    }
+  }
+  let ioCapped = false;
+  const ioLine = io === undefined ? undefined : ioMaxLine(io);
+  if (ioLine !== undefined && words(read(join(at.root, "cells", "cgroup.subtree_control"))).includes("io")) {
+    try {
+      writeFileSync(join(dir, "io.max"), ioLine);
+      ioCapped = true;
+    } catch {
+      // the device is not one the io controller knows: io.weight still orders the queue
     }
   }
   return {
     dir,
     maxBytes,
     oomKills: () => oomKills(read(join(dir, "memory.events"))),
+    cpuCapped,
+    ioCapped,
     remove: () => removeDir(dir),
   };
 }

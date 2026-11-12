@@ -6,7 +6,7 @@ const R = "/api/v1/repos/{owner}/{name}/pulls/{number}";
 type Op = { security?: unknown; responses?: Record<string, unknown>; requestBody?: unknown };
 
 test("review-states and looks are described with their method, auth and refusals", () => {
-  const paths = openapi("http://x", "1").paths as Record<string, Record<string, Op>>;
+  const paths = openapi("http://x", "1", "admin").paths as Record<string, Record<string, Op>>;
   expect(paths[`${R}/review-states`]?.get).toBeDefined();
   const post = paths[`${R}/review-states`]?.post;
   expect(post?.requestBody).toBeDefined();
@@ -16,5 +16,5 @@ test("review-states and looks are described with their method, auth and refusals
   expect(look?.requestBody).toBeDefined();
   expect(look?.responses?.["201"]).toBeDefined();
   expect(JSON.stringify(look)).toContain("not_open");
-  expect(paths[`${R}/looks`]?.get).toBeUndefined();
+  expect(paths[`${R}/looks`]?.get).toBeDefined();
 });

@@ -139,6 +139,21 @@ export function pullCounts(
   return counts;
 }
 
+/** The most pulls a hold names. */
+export const PULLS_NAMED = 8;
+
+/** The numbers of the open pulls that touch `path`, oldest first, at most `PULLS_NAMED`. Memory only. */
+export function pullsTouching(
+  repoId: string,
+  path: string,
+  admit: (pullNumber: number) => boolean = () => true,
+): number[] {
+  const out: number[] = [];
+  for (const { files, number } of touched.get(repoId)?.values() ?? [])
+    if (files.length <= WIDE_PULL && admit(number) && files.includes(path)) out.push(number);
+  return out.sort((a, b) => a - b).slice(0, PULLS_NAMED);
+}
+
 /** Every file of `repo` that `HOT_PULLS` or more open pulls touch, with how many. */
 export function hotFiles(
   repoId: string,
@@ -288,4 +303,11 @@ export function hotSays(hold: HotHold): string {
     .map((f) => `${f.path} is in ${f.pulls} open pulls`)
     .join(", ");
   return `#${hold.number} waits: ${files === "" ? "a file it names is hot" : files} (hot at ${HOT_PULLS}).`;
+}
+
+/** Every learned open pull with its files, per repository; memory only, never git (#11454). */
+export function learnedPulls(): { repoId: string; number: number; files: readonly string[] }[] {
+  const out: { repoId: string; number: number; files: readonly string[] }[] = [];
+  for (const [repoId, pulls] of touched) for (const p of pulls.values()) out.push({ repoId, number: p.number, files: p.files });
+  return out;
 }

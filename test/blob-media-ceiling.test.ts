@@ -54,7 +54,7 @@ describe("the page ceiling, by kind", () => {
     const pdf = stub();
     const found = rendererFor("doc/big.pdf", capped(blob(PDF)), { pdf: pdf.render });
     expect(found).toBeDefined();
-    found!.render({ path: "doc/big.pdf", size: PDF.length, body: found!.body, media: "/m" });
+    found!.render({ path: "doc/big.pdf", size: PDF.length, body: found!.body, media: "/m", download: "/m?download=1" });
     expect(pdf.seen).toHaveLength(1);
     expect(pdf.seen[0]!.body.length).toBe(0);
     expect(pdf.seen[0]!.media).toBe("/m");

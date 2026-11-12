@@ -121,6 +121,10 @@ as failed. A put's deadline follows its size: its bytes at a floor of
 5 Mbit/s, plus 60 s. A fixed 180 s once failed every attempt at a 334 MB
 database behind a 15 Mbit/s uplink (#2536).
 
+## Backup lanes
+
+The platform's backup lanes (`FORGE_BACKUP_LANES`) and how each is judged: docs/features/backup-truth.md, "Platform backup lanes".
+
 ## Progress
 
 A snapshot uploads eight objects at a time. Run logs older than a day go up
@@ -245,3 +249,5 @@ sealed variable and an app's SQLite is snapshotted, restored into an empty
 directory with the passphrase and booted there as the same forge; restored
 without it, the repositories come back and the sealed variable is reported by
 name. It also checks that the raw key is in no file of the store.
+
+The dump, a line per lane and the platform-free drill: [backup-truth.md](features/backup-truth.md), _Leaving the platform_.

@@ -9,8 +9,12 @@ import { moderateNote, ownerNote, ownerNotes, unbanSender } from "../../actions/
 import { getAppByRepo } from "../../core/apps.ts";
 import { loadRepo } from "../api.ts";
 import type { Ctx, Handler } from "../context.ts";
-import { apiError, forbidden, json, notFound, requireScope } from "../respond.ts";
+import { holds, weakEtag } from "../etag.ts";
+import { forbidden, json, notFound, requireScope, tryAgain } from "../respond.ts";
 import type { Router } from "../router.ts";
+
+/** Moderation needs the builders, who are away just now; no clock says when they are back, so a short stated guess. */
+const NOTES_RETRY = 30;
 
 /** The repository and its app, or the refusal. */
 function target(ctx: Ctx) {
@@ -28,7 +32,13 @@ export function appNoteRoutes(router: Router<Handler>): void {
     const t = target(ctx);
     if (t instanceof Response) return t;
     const seen = ownerNotes(ctx.app, t.record, t.repo, ctx.auth.user);
-    return seen === undefined ? forbidden() : json(seen);
+    if (seen === undefined) return forbidden();
+    // Only after the access check: a refusal never carries or honours a tag.
+    const text = JSON.stringify(seen);
+    const etag = weakEtag(`${ctx.auth.user?.id ?? ""}\n${text}`);
+    const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+    if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+    return json(seen, 200, headers);
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/app/notes/:id/hide", moderation("hide"));
@@ -48,7 +58,7 @@ function moderation(action: "hide" | "ban" | "unban"): Handler {
     if (!done.ok) {
       if (done.error === "forbidden") return forbidden();
       if (done.error === "not_found") return notFound();
-      return apiError("unavailable", 503, "that could not be done just now");
+      return tryAgain("unavailable", 503, "that could not be done just now", NOTES_RETRY);
     }
     const note = ownerNote(ctx.app, t.record, t.repo, ctx.auth.user, id);
     return note === undefined ? notFound() : json(note);

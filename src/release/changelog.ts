@@ -7,7 +7,8 @@
  */
 
 import type { App } from "../app.ts";
-import { getRepo, type Repo } from "../core/repos.ts";
+import { publicForgeRepo } from "../core/forge_repo.ts";
+import type { Repo } from "../core/repos.ts";
 import { parseReleaseSubject, type ReleasePull } from "../core/release_subject.ts";
 import { runGit } from "../git/env.ts";
 import { commitLog } from "../git/read.ts";
@@ -38,13 +39,6 @@ export async function readChangelog(dir: string, branch: string): Promise<Releas
   }
   cache.set(dir, { oid: head.value, entries });
   return entries;
-}
-
-/** The forge's own repository, when it is public: the only one the changelog reads. */
-function publicForgeRepo(app: App): Repo | undefined {
-  const [owner = "", name = ""] = (app.config.forgeRepo ?? "").split("/");
-  const repo = owner === "" || name === "" ? undefined : getRepo(app.db, owner, name);
-  return repo !== undefined && repo.visibility === "public" ? repo : undefined;
 }
 
 /** What the page and the terminal both show: the repository and its newest releases. */

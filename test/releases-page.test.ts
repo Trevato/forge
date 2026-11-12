@@ -18,6 +18,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { releaseDir } from "../src/release/checkout.ts";
 import { beginSwap, endSwap } from "../src/release/swap.ts";
 import { recordRelease } from "../src/release/record.ts";
+import { NO_RELEASES_YET } from "../src/release/words.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -106,6 +107,59 @@ describe("the releases page", () => {
     expect(body).toContain('href="/alice/forge/pulls/6"');
   });
 
+  test("the release list is rows, not a table or a card; the version is the one link", async () => {
+    const body = await (await fetch(`${servers.url}/releases`, { headers: { cookie: aliceCookie } })).text();
+    expect(body).not.toContain("<table");
+    const list = body.slice(body.indexOf('<ul class="list setting-list">'));
+    expect(list).not.toContain('class="card');
+    expect(list).toContain('<a href="/alice/forge/pulls/7" class="row"');
+    expect(list.match(/<li[ >]/g)!.length).toBeGreaterThanOrEqual(3);
+    // The action stays a plain form beside the row, not inside its link.
+    expect(list).toMatch(new RegExp(`<form method="post" action="/releases/${KEPT}/rollback">`));
+  });
+
+  test("the meta line: healthy since on the live row only; a pull link only where there is a pull", async () => {
+    const body = await (await fetch(`${servers.url}/releases`, { headers: { cookie: aliceCookie } })).text();
+    const items = body.slice(body.indexOf('<ul class="list setting-list">')).split("<li").slice(1);
+    const rowOf = (s: string) => items.find((i) => i.includes(s))!;
+    expect(rowOf("aaaaaaa")).toContain("healthy since");
+    expect(rowOf("bbbbbbb")).not.toContain("healthy since");
+    expect(rowOf("ccccccc")).not.toContain("healthy since");
+    expect(rowOf("aaaaaaa")).toContain("#7 · ");
+    expect(rowOf("ccccccc")).not.toMatch(/#\d+ · /);
+    expect(rowOf("ccccccc")).not.toContain("/pulls/");
+  });
+
+  test("with no releases the page says so in one muted line, no list and no card", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "forge-releases-empty-"));
+    const empty = createApp({ dataDir: dir, port: 0, forgeRepo: "alice/forge" });
+    const s = await serve(empty);
+    try {
+      empty.db
+        .query("INSERT INTO user (id, username, email, password_hash, is_admin) VALUES ('u-alice','alice','alice@forge.local','x',1)")
+        .run();
+      markVerified(empty.db, "u-alice", new Date().toISOString());
+      const made = await createRepo(empty, { id: "u-alice", username: "alice" } as never, { name: "forge" });
+      if (!made.ok) throw new Error(made.error);
+      const cookie = `forge_session=${createSession(empty.db, "u-alice").token}`;
+      const res = await fetch(`${s.url}/releases`, { headers: { cookie } });
+      expect(res.status).toBe(200);
+      const body = await res.text();
+      const at = body.indexOf('<p class="mt muted">No releases yet. ');
+      expect(at).toBeGreaterThan(-1);
+      const line = body.slice(at, body.indexOf("</p>", at));
+      expect(line.replaceAll("&#39;", "'")).toContain(NO_RELEASES_YET);
+      // After the keeper panel, only the muted line: no list, no card.
+      const rest = body.slice(at, body.indexOf("</main>"));
+      expect(rest).not.toContain("<ul");
+      expect(rest).not.toContain('class="card');
+    } finally {
+      s.stop();
+      empty.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("a writer gets a button on a kept release, not on the live or a pruned one", async () => {
     const body = await (await fetch(`${servers.url}/releases`, { headers: { cookie: aliceCookie } })).text();
     expect(body).toContain(`/releases/${KEPT}/rollback`);
@@ -170,7 +224,8 @@ describe("the releases page", () => {
     const cookie = await login("alice", "a-good-passphrase");
     const body = await (await fetch(`${servers.url}/`, { headers: { cookie } })).text();
     expect(body).toContain('href="/releases"');
-    expect(body).toContain("live:");
+    // An admin's tile, or the plain line anyone else gets: both name the live version.
+    expect(body).toMatch(/live: <span class="sha">aaaaaaa|Live version: a{7}/);
     expect(body).toContain("aaaaaaa");
   });
 

@@ -30,7 +30,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import type { App } from "../app.ts";
-import { isEnvName, previewEnv, type EnvName } from "../apps/data.ts";
+import { envBuild, envPull, isEnvName, previewEnv, type EnvName } from "../apps/data.ts";
 import { signGrant, type GrantWho } from "../apps/proxy.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import {
@@ -42,6 +42,7 @@ import {
 import type { ForgeEvent } from "../core/events.ts";
 import {
   deleteLooks,
+  deleteStrangerThumbs,
   DEFAULT_PAGE,
   LEGACY_THUMB_WIDTH,
   DARK_KINDS,
@@ -61,13 +62,17 @@ import { getPull } from "../core/pulls.ts";
 import { frontPicks } from "../core/front.ts";
 import { getRepoById } from "../core/repos.ts";
 import { getUserById } from "../core/users.ts";
+import { ownerLooksFor, PREVIEW_NEWCOMER } from "../spawn/preview-looks.ts";
 import { thumbnail } from "../design/image/image.ts";
 import { decodePng, encodePng, pngHeader } from "../design/image/png.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { writeCommitLooks } from "../checks/looks.ts";
+import { addCommitLook } from "../checks/looks.ts";
 import type { LookVitals } from "../checks/summary.ts";
+import { keepAsMain } from "./main_looks.ts";
 import { findChromium, isNoBrowser, takeLook, type Capture } from "./capture.ts";
+import { backoff, type BackoffClock } from "./backoff.ts";
+import { during } from "../perf/jobs.ts";
 
 const log = createLog("looks");
 
@@ -83,6 +88,8 @@ export interface LooksOptions {
    * while two agent runs are at their peak rather than being the straw.
    */
   readonly pressure?: (() => number | undefined) | undefined;
+  /** The clock a failed look's backoff waits on: the real one unless a test says otherwise. */
+  readonly clock?: BackoffClock | undefined;
 }
 
 /** The share of the memory limit in use, read from cgroup v2, if this is a container. */
@@ -143,6 +150,12 @@ const FIRST_SWEEP_MS = 60_000;
 const CAPTURE_TIMEOUT_MS = 20_000;
 /** How long the grant in the URL is good for — the browser uses it at once. */
 const GRANT_TTL_MS = 60_000;
+/**
+ * After a picture fails, the whole look waits this long before the next
+ * try, and gives up after the last (#11509): an app that is not answering
+ * must not have a browser opened on it every second.
+ */
+export const LOOK_BACKOFF_MS: readonly number[] = [30_000, 120_000, 600_000];
 
 export const looksRoot = (dataDir: string): string => join(dataDir, "looks");
 
@@ -217,13 +230,30 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
   let pump: Promise<void> = Promise.resolve();
   let pumping = false;
   let stopped = false;
+  /** Failed looks by app, environment and head: each waits out its backoff (#11509). */
+  const failures = backoff(LOOK_BACKOFF_MS, options.clock);
+  const failKey = (q: { appId: string; env: EnvName; commitOid: string }): string =>
+    `${q.appId}/${q.env}/${q.commitOid}`;
+
+  /** A look failed: try again after the next backoff, or give up with one line. */
+  function failed(item: Pending): void {
+    const verdict = failures.failed(failKey(item), () => {
+      if (!stopped) enqueue({ ...item, at: Date.now() });
+    });
+    if (!verdict.retry)
+      log.warn("look given up: the picture failed every time", {
+        app: item.appId,
+        env: item.env,
+        tries: verdict.tries,
+      });
+  }
 
   prune();
   // Production missing a picture at its head — one never taken, or a
   // thumb from before thumbs were the page — gets one while it is up.
   // A woken app says nothing on the bus, so this is how it is pictured.
-  const firstSweep = setTimeout(sweep, FIRST_SWEEP_MS);
-  const sweeping = setInterval(sweep, SWEEP_MS);
+  const firstSweep = setTimeout(() => during("looks", sweep), FIRST_SWEEP_MS);
+  const sweeping = setInterval(() => during("looks", sweep), SWEEP_MS);
   firstSweep.unref?.();
   sweeping.unref?.();
 
@@ -275,6 +305,14 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         const number = payload["number"];
         const record = getAppByRepo(app.db, event.repoId);
         if (typeof number !== "number" || !record) return;
+        // Landed: its head's looks become main's before the sweep.
+        if (event.kind === "pull.merged") {
+          try {
+            keepAsMain(app.db, dataDir, record.id, previewEnv(number));
+          } catch (error) {
+            log.warn("main's looks not kept", { error: String(error) });
+          }
+        }
         forget(record.id, previewEnv(number));
         return;
       }
@@ -289,6 +327,9 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
    * `run.finished` for the one deploy — is one entry, not two.
    */
   function enqueue(item: Pending): void {
+    // A head whose picture failed waits out its backoff: an event for it
+    // (a deploy announced twice, a sweep) is not a reason to try sooner.
+    if (failures.waiting(failKey(item))) return;
     const at = queue.findIndex(
       (q) => q.appId === item.appId && q.env === item.env,
     );
@@ -347,11 +388,20 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
     const status = runtime.envStatus(record, item.env);
     if (status?.state !== "running" || status.commitOid !== item.commitOid)
       return;
+    // A preview of the forge itself always takes its named owner looks
+    // (`spawn/preview-looks.ts`), whatever its forge.json lists (#8974).
+    const ownerLooks = ownerLooksFor(app.config.forgeRepo, repo, item.env);
+    const pages = [
+      ...new Set([
+        ...(status.looks ?? [DEFAULT_PAGE]),
+        ...ownerLooks.map((l) => l.page),
+      ]),
+    ];
     const wanted = missing(
       item.appId,
       item.env,
       item.commitOid,
-      status.looks,
+      pages,
       item.swept === true,
     );
     if (wanted.length === 0) return;
@@ -368,25 +418,52 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
     const sealed = sealedPreview(app.db, repo.id, item.env);
     const everyone =
       !sealed && repo.visibility === "public" && record.access === "public";
-    const asNobody = (kind: LookKind): boolean =>
-      !sealed && (everyone || kind === "thumb");
+    // A private app turns a signed-out visitor away to sign in, on another
+    // host: its thumb is taken through the grant door as the owner, like
+    // its other pictures, and never leaves the app's host (#7830).
+    // A page the manifest names in `app.looksAsOwner` shows a stranger
+    // nothing worth a picture — an admin's own page — so its phone and
+    // desktop are the owner's, and stay the writers', even of a public app
+    // (#8812). Its thumb is still what a stranger sees.
+    const ownerPages = new Set(status.looksAsOwner ?? []);
+    const asNobody = (kind: LookKind, page: string): boolean =>
+      !sealed &&
+      !(kind !== "thumb" && ownerPages.has(page)) &&
+      !ownerLooks.some((l) => l.page === page && l.kind === kind) &&
+      (everyone || (kind === "thumb" && record.access === "public"));
     const owner = getUserById(app.db, repo.ownerId);
     const asOwner: GrantWho | undefined =
       owner === undefined
         ? undefined
         : { id: owner.id, name: owner.username, role: "admin" };
     const host = runtime.hostFor(record.slug, item.env);
+    const newcomer: GrantWho = { id: PREVIEW_NEWCOMER, name: PREVIEW_NEWCOMER, role: "admin" };
+    const isNewcomerLook = (page: string): boolean =>
+      ownerLooks.some((l) => l.page === page && l.as === "newcomer");
     let allOk = true;
-    // What each look's page recorded, for the check summary's vitals table.
-    const vitals: LookVitals[] = [];
+    let failedHere = false;
+    let verdict: string | undefined;
     for (const { page, kind, theme } of wanted) {
       if (stopped) return;
+      if (verdict !== undefined) {
+        recordLook(app.db, {
+          appId: item.appId,
+          env: item.env,
+          commitOid: item.commitOid,
+          page,
+          theme,
+          kind,
+          path: "",
+          error: verdict,
+        });
+        continue;
+      }
       const token = signGrant(
         dataDir,
         { app: record, env: item.env },
         GRANT_TTL_MS,
         Date.now(),
-        asNobody(kind) ? undefined : asOwner,
+        asNobody(kind, page) ? undefined : isNewcomerLook(page) ? newcomer : asOwner,
       );
       const url = `http://${host}:${port}/__forge/grant?t=${encodeURIComponent(token)}&to=${encodeURIComponent(page)}`;
       const path = lookPath(item.appId, item.env, item.commitOid, page, kind, theme);
@@ -408,11 +485,22 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         timeoutMs: CAPTURE_TIMEOUT_MS,
       });
       // The thumb is the desktop page again, as a stranger: it adds no row.
+      // What the page recorded is filed under the commit at once, for the
+      // check summary's vitals table: a round that ends early keeps it.
       if (kind !== "thumb" && theme === "light") {
         const look = page === "/" ? kind : `${kind} ${page}`;
-        if (shot.ok) vitals.push({ look, entries: shot.value.entries });
-        else if (isNoBrowser(shot.error))
-          vitals.push({ look, skipped: "no browser" });
+        const filed: LookVitals | undefined = shot.ok
+          ? { look, entries: shot.value.entries, ...(shot.value.size === undefined ? {} : { size: shot.value.size }) }
+          : isNoBrowser(shot.error)
+            ? { look, skipped: "no browser" }
+            : undefined;
+        if (filed !== undefined) {
+          try {
+            addCommitLook(dataDir, record.repoId, item.commitOid, filed);
+          } catch (error) {
+            log.warn("vitals not recorded", { commit: item.commitOid, error: String(error) });
+          }
+        }
       }
       const taken =
         shot.ok && kind === "thumb" ? reduceToThumb(staged) : shot;
@@ -441,11 +529,14 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
           ...row,
           kind,
           path,
-          takenAs: asNobody(kind) ? "nobody" : "owner",
+          takenAs: asNobody(kind, page) ? "nobody" : "owner",
+          ...(shot.ok && shot.value.size !== undefined ? { size: shot.value.size } : {}),
         });
       } else {
         rmSync(staged, { force: true });
         allOk = false;
+        const noBrowser = isNoBrowser(taken.error);
+        failedHere = failedHere || !noBrowser;
         log.warn("no picture", {
           app: record.slug,
           env: item.env,
@@ -455,16 +546,14 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
           error: taken.error,
         });
         recordLook(app.db, { ...row, kind, path: "", error: taken.error });
+        // One failure is the verdict for this try: the other pictures
+        // would meet the same page, so they are filed with its reason
+        // and no browser is opened for them.
+        if (!noBrowser) verdict = taken.error;
       }
     }
-    // Filed under the commit: the check of it shows them whenever it exists.
-    if (vitals.length > 0) {
-      try {
-        writeCommitLooks(dataDir, record.repoId, item.commitOid, vitals);
-      } catch (error) {
-        log.warn("vitals not recorded", { commit: item.commitOid, error: String(error) });
-      }
-    }
+    if (failedHere) failed(item);
+    else failures.succeeded(failKey(item));
     // A full set at this head is the environment's look now; the pictures
     // of heads before it have nothing left to say.
     if (allOk)
@@ -578,6 +667,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
 
   /** An environment is gone: so are its pictures, waiting or taken. */
   function forget(appId: string, env: EnvName): void {
+    failures.forget(`${appId}/${env}/`);
     const at = queue.findIndex((q) => q.appId === appId && q.env === env);
     if (at !== -1) queue.splice(at, 1);
     deleteLooks(app.db, appId, env);
@@ -590,6 +680,24 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
   function remove(looks: readonly { path: string }[]): void {
     for (const look of looks)
       if (look.path !== "") rmSync(join(dataDir, look.path), { force: true });
+  }
+
+  /**
+   * Before #7830 a private app's thumb was taken as a signed-out visitor,
+   * who is sent to sign in on another host: its picture is a certificate
+   * warning. Those thumbs are deleted, and the sweep takes them again as
+   * the owner. Returns how many went.
+   */
+  function retakeStrangerThumbs(record: AppRecord): number {
+    if (record.access === "public") return 0;
+    const bad = deleteStrangerThumbs(app.db, record.id);
+    if (bad.length === 0) return 0;
+    remove(bad);
+    log.info("thumbs of a private app taken as a stranger, to be retaken", {
+      app: record.slug,
+      count: bad.length,
+    });
+    return bad.length;
   }
 
   /**
@@ -612,8 +720,16 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         rmSync(join(root, appId), { recursive: true, force: true });
         continue;
       }
+      retakeStrangerThumbs(record);
       for (const env of readdirSync(join(root, appId))) {
-        if (!isEnvName(env) || env === "production") continue;
+        if (!isEnvName(env)) continue;
+        // A build preview is gone once the runtime no longer holds it.
+        if (envBuild(env) !== undefined) {
+          if (appsRuntime(app)?.envStatus(record, env) === undefined)
+            forget(appId, env);
+          continue;
+        }
+        if (envPull(env) === undefined) continue;
         const pull = getPull(app.db, record.repoId, Number(env.slice(5)));
         if (
           pull === undefined ||
@@ -632,6 +748,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
       stopped = true;
       clearTimeout(firstSweep);
       clearInterval(sweeping);
+      failures.stop();
       unsubscribe();
       queue.length = 0;
       await pump;

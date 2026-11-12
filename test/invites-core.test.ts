@@ -38,6 +38,7 @@ describe("an invite's life", () => {
   beforeEach(() => {
     db = new Database(":memory:");
     db.exec(invite);
+    db.exec("CREATE TABLE user (id TEXT PRIMARY KEY, username TEXT NOT NULL)");
   });
 
   test("open before its expiry, not at or after it", () => {
@@ -94,5 +95,19 @@ describe("an invite's life", () => {
     expect(redeemInvite(db, a.token, "cy", T0 + 1)).toBe(true);
     reopenInvite(db, "nobody");
     expect(inviteSpentBy(db, "cy")).toBe(a.invite.id);
+  });
+
+  test("a redeemed invite lists who joined with it and when; null when unused or the account is gone", () => {
+    db.query("INSERT INTO user (id, username) VALUES ('u1', 'ada')").run();
+    const used = mintInvite(db, "owner", 2, T0);
+    const gone = mintInvite(db, "owner", 2, T0);
+    const fresh = mintInvite(db, "owner", 2, T0);
+    redeemInvite(db, used.token, "u1", T0 + 1000);
+    redeemInvite(db, gone.token, "u-deleted", T0 + 2000);
+    const byId = new Map(listInvites(db, T0 + 3000).map((i) => [i.id, i]));
+    expect(byId.get(used.invite.id)).toMatchObject({ state: "used", usedBy: "ada", usedAt: new Date(T0 + 1000).toISOString() });
+    expect(byId.get(gone.invite.id)).toMatchObject({ state: "used", usedBy: null, usedAt: new Date(T0 + 2000).toISOString() });
+    expect(byId.get(fresh.invite.id)).toMatchObject({ state: "open", usedBy: null, usedAt: null });
+    expect(fresh.invite).toMatchObject({ usedBy: null, usedAt: null });
   });
 });

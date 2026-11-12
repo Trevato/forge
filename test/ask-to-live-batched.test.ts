@@ -9,7 +9,8 @@ import { closesFromBody } from "../src/core/pulls.ts";
 import { sealedScope } from "../src/core/sealed.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { askToLiveFor } from "../src/web/ask_to_live.ts";
-import { expectBudget } from "./helpers/budget.ts";
+import { expectWork } from "./helpers/work.ts";
+import { statements } from "./helpers/statements.ts";
 
 let root = "";
 let app: App;
@@ -140,14 +141,7 @@ test("the answer is the per-pull answer, for a writer and for a stranger", () =>
   expect(sealedScope(app.db, repo, undefined)).toEqual({});
 });
 
-test(`${PULLS} merged pulls over ${PILLARS} pillars answer within the budget`, async () => {
+test(`${PULLS} merged pulls over ${PILLARS} pillars answer in a bounded number of statements`, async () => {
   askToLiveFor(app, repo, view, undefined);
-  const base = 5; // ms
-  let best = Infinity;
-  for (let i = 0; i < 5; i++) {
-    const started = performance.now();
-    askToLiveFor(app, repo, view, undefined);
-    best = Math.min(best, performance.now() - started);
-  }
-  expectBudget(best, { ms: 50, against: base });
+  expectWork(await statements(app.db, () => void askToLiveFor(app, repo, view, undefined)), { max: 5 });
 });

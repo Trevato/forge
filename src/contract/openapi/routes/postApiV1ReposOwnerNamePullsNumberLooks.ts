@@ -5,6 +5,7 @@ export const route: Route = {
   path: `${REPO}/pulls/{number}/looks`,
   summary: "Attach a look to a pull: a base64 picture at a stated width with a line saying what it shows (rw scope); answers 201 with { id, width, says, by, commit, url }",
   auth: true,
+  role: "member",
   status: 201,
   body: { width: "string", says: "string", image: "string" },
   refusals: {

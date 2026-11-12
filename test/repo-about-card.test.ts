@@ -53,14 +53,17 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-test("the About column is a card with §5 rows and no .about", async () => {
+test("the About column is a settings block with stacked `dl` facts and no .about", async () => {
   const r = await fetch(`${servers.url}/olive/yard`);
   expect(r.status).toBe(200);
   const html = await r.text();
   expect(html).not.toMatch(/class="[^"]*\babout\b/);
-  expect(html).not.toContain("<dl");
   const rail = html.match(/<aside[^>]*>[\s\S]*?<\/aside>/)?.[0] ?? "";
-  expect(rail).toContain('class="card"');
+  expect(rail).toContain('class="settings-block"');
+  expect(rail).toContain('<dl class="rail-facts">');
+  expect(rail).toContain('<div class="rail-fact"><dt>Visibility</dt>');
+  expect(rail).not.toContain("status-row");
+  expect(rail).not.toContain('class="card"');
   expect(rail).toContain("<h2>About</h2>");
   expect(rail).toContain("a small yard");
   for (const word of ["Visibility", "Default", "Protection", "Branches"])

@@ -9,25 +9,32 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { statfsSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
+import { readDisk, type DiskReading } from "./disk_reading.ts";
+import { DISK_FLOOR } from "../spawn/disk_floor.ts";
 import { dirname } from "node:path";
 import { freemem, totalmem } from "node:os";
 import { refusedInternal, type RefusedLedger } from "./internal_refused.ts";
-import { recentErrors, type ErrorLedger, type ErrorLine } from "./log.ts";
+import { recentErrors, redactSecrets, type ErrorLedger, type ErrorLine } from "./log.ts";
 import {
   budgetFailures,
   leaseLapsed,
   listRunning,
   queueDepth,
+  queuedApart,
 } from "../core/runs.ts";
+import { HOLD_WORDS, heldRuns, type HoldCause } from "../runs/held.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { ownRepoPath } from "./own_repo.ts";
 import { BUDGETS } from "./budgets.ts";
 import { openDbFiles } from "./file_modes.ts";
+import { backupVerdict, isWatched } from "../snapshot/bucket.ts";
+import { lastDrill } from "../snapshot/drills.ts";
 import { lastMirror, mirrorNeed } from "../snapshot/mirror.ts";
 import { lastSnapshotOutcome, snapshotNeed } from "../snapshot/outcome.ts";
 import { drillNeed, firstSeen as drillFirstSeen, lastVerdict } from "../snapshot/verdict.ts";
 import { proofNeed } from "../release/prove.ts";
+import { running as runningVersion } from "./version.ts";
 import { rollbackNeed } from "../release/launch.ts";
 import { behindStanding } from "../release/behind.ts";
 import { newestDrills } from "../core/domain_drills.ts";
@@ -115,20 +122,7 @@ export interface Vitals {
   readonly at: string;
 }
 
-/** What a volume holds and has free. */
-export interface DiskReading {
-  readonly freeBytes: number;
-  readonly totalBytes: number;
-}
-
-/** The volume under `dir`, as the operating system reports it. */
-export function statDisk(dir: string): DiskReading {
-  const fs = statfsSync(dir);
-  return {
-    freeBytes: Number(fs.bavail) * Number(fs.bsize),
-    totalBytes: Number(fs.blocks) * Number(fs.bsize),
-  };
-}
+export { statDisk, readDisk, type DiskReading } from "./disk_reading.ts";
 
 export interface VitalsInput {
   readonly db: Database;
@@ -266,9 +260,17 @@ function holders(issues: (string | null)[], perIssue: boolean): number {
 }
 
 /** What a long queue is waiting behind: how many wait, how many run, and the slots in force. */
-function queueSentence(kind: string, queued: number, running: number, slots: number | null): string {
+function queueSentence(
+  kind: string,
+  queued: number,
+  running: number,
+  slots: number | null,
+  held: ReadonlyMap<HoldCause, number> = new Map(),
+): string {
   const behind = slots === null ? `${running} running` : `${running} of ${slots} slots running`;
-  return `The ${kind} queue has waited over ${QUEUE_WAIT_MAX_MS / 60_000} minutes: ${queued} queued, ${behind}.`;
+  const parts = [...held].map(([cause, n]) => `${n} by ${HOLD_WORDS[cause]}`);
+  const more = parts.length > 0 ? `; held on purpose: ${parts.join(", ")}` : "";
+  return `The ${kind} queue has waited over ${QUEUE_WAIT_MAX_MS / 60_000} minutes: ${queued} queued, ${behind}${more}.`;
 }
 
 /**
@@ -330,11 +332,18 @@ export function vitals(input: VitalsInput): Vitals {
     degraded.push({ cause, sentence, since, href });
   };
 
-  const disk = (input.disk ?? statDisk)(input.dataDir);
+  const disk = (input.disk ?? readDisk)(input.dataDir);
   if (disk.totalBytes > 0 && disk.freeBytes / disk.totalBytes < (input.diskFreeMin ?? DISK_FREE_MIN))
     need(
       "disk",
       `Disk is nearly full: ${Math.round((disk.freeBytes / disk.totalBytes) * 100)}% free.`,
+      undefined,
+      "/settings/capacity",
+    );
+  else if (disk.totalBytes > 0 && disk.freeBytes / disk.totalBytes < DISK_FLOOR)
+    need(
+      "disk-floor",
+      `Disk is under the ${DISK_FLOOR * 100}% the forge keeps for itself: ${Math.round((disk.freeBytes / disk.totalBytes) * 100)}% free. Child forges sleep, and no child forge, app or check starts, until room is made.`,
       undefined,
       "/settings/capacity",
     );
@@ -381,17 +390,35 @@ export function vitals(input: VitalsInput): Vitals {
         );
       continue;
     }
-    const waited = now - new Date(row.oldest).getTime();
+    // Agent runs the dispatcher holds on purpose (a shut valve, the week's
+    // pace, an account limit) are not waiting for a slot (#9403): age and
+    // "since" come from the rest, and the sentence names how many are held.
+    let waiting = row.queued;
+    let oldest: string | null = row.oldest;
+    const byCause = new Map<HoldCause, number>();
+    const holds = row.kind === "agent" ? heldRuns(input.db, now) : new Map<string, HoldCause>();
+    if (holds.size > 0) {
+      const apart = queuedApart(input.db, "agent", [...holds.keys()], now);
+      waiting = apart.waiting;
+      oldest = apart.oldest;
+      for (const id of apart.held) {
+        const cause = holds.get(id)!;
+        byCause.set(cause, (byCause.get(cause) ?? 0) + 1);
+      }
+    }
+    if (oldest === null) continue;
+    const waited = now - new Date(oldest).getTime();
     if (waited > QUEUE_WAIT_MAX_MS)
       need(
         `queue:${row.kind}`,
         queueSentence(
           row.kind,
-          row.queued,
+          waiting,
           holders(running.filter((r) => r.run.kind === row.kind).map((r) => r.run.issueId), row.kind === "agent"),
           row.kind === "agent" ? Number(capacityValue(input.db, "crew.concurrency")) : null,
+          byCause,
         ),
-        new Date(row.oldest).toISOString(),
+        new Date(oldest).toISOString(),
         "/settings/capacity",
       );
   }
@@ -474,17 +501,24 @@ export function vitals(input: VitalsInput): Vitals {
   const failing = snapshotNeed(lastSnapshotOutcome(input.dataDir));
   if (failing !== undefined) need("snapshot-failed", failing.sentence, failing.since, "/settings/backups");
 
+  // The bucket itself, read by this process: late, unreadable, a failed drill, or a check that stopped is one card.
+  if (isWatched(input.dataDir)) {
+    const backup = backupVerdict(input.dataDir, lastDrill(input.db), now);
+    if (backup.state === "red") need("backup", [...backup.reasons, ...(backup.reasons.some((r) => r.includes("last ran")) ? [] : [backup.checkLine])].join(" "), backup.checkedAt ?? undefined, "/settings/backups");
+  }
+
   // A snapshot that did not land off the box, or a mirror a day behind, is a card until it does.
   const behind = mirrorNeed(lastMirror(input.dataDir), now);
   if (behind !== undefined) need("mirror", behind.sentence, behind.since, "/settings/backups");
 
   // A release the forge could not prove against its own public URL is a card until a release does.
-  const unproven = proofNeed(input.dataDir);
+  const unproven = proofNeed(input.dataDir, runningVersion().version);
   if (unproven !== undefined) need("release", unproven.sentence, unproven.since, "/board");
 
-  // A roll the image's launcher undid is a card until a later version reads ready.
+  // A roll the image's launcher undid is a card until a later version reads ready. Its sentence
+  // carries the release's own last words (stderr), so anything credential-shaped is masked.
   const undone = rollbackNeed(input.dataDir);
-  if (undone !== undefined) need("release:rolled-back", undone.sentence, undone.since, "/board");
+  if (undone !== undefined) need("release:rolled-back", redactSecrets(undone.sentence), undone.since, "/board");
 
   // Production serving a version older than a release main has had over an hour is a card until they match.
   const lagging = behindStanding(now);

@@ -30,8 +30,9 @@ import { runGitCapture } from "../git/env.ts";
 import { isSafeRef } from "../git/guard.ts";
 import { repoDir } from "../git/repos.ts";
 import { GREP_LIMITS, grepSlots, type GrepSlots } from "../search/grep_slots.ts";
+import { appsForRepos } from "./apps.ts";
 import { likeEscape } from "./issues.ts";
-import { listReposVisibleTo, type Repo } from "./repos.ts";
+import { enterableApps, listReposVisibleTo, type Repo } from "./repos.ts";
 import type { User } from "./users.ts";
 
 /** The longest query we will run. Longer is a paste, not a search. */
@@ -49,6 +50,21 @@ export const CODE_BUDGET_MS = 30;
 /** A grep in a budgeted search is given up after this long and reported as `more`: a cold clone must not hold the page (#7198). */
 export const BUDGETED_GREP_MS = 400;
 
+/**
+ * The fewest characters a code search greps for. One letter matches nearly
+ * every line of every repository, so its grep is all cost and no answer
+ * (#11120); repositories and issues still answer it.
+ */
+export const MIN_CODE_QUERY = 2;
+
+/** Whether `raw`, cleaned, is long enough to grep the code for. */
+export function greppable(raw: string): boolean {
+  return [...cleanQuery(raw)].length >= MIN_CODE_QUERY;
+}
+
+/** What a reader is told when the query was too short to grep, in plain words. */
+export const CODE_TOO_SHORT = `Code is searched for ${MIN_CODE_QUERY} or more characters; this found apps, repositories, issues and pulls only.`;
+
 /** Longest line of code echoed back; the rest is off-screen anyway. */
 const MAX_LINE_CHARS = 400;
 
@@ -56,6 +72,18 @@ export type SearchKind = "repos" | "issues" | "code" | "all";
 
 export function searchKind(raw: string | null): SearchKind {
   return raw === "repos" || raw === "issues" || raw === "code" ? raw : "all";
+}
+
+/**
+ * What a caller who asked wrongly is told, in one sentence, or undefined when
+ * the request was fine (an unknown kind or limit is `searchRefusal`'s 422, not a note). Plain text: the caller escapes it where it draws it.
+ */
+export function searchNote(rawQ: string | null, kind: SearchKind = "all"): string | undefined {
+  if (cleanQuery(rawQ ?? "") === "")
+    return "q is empty — send what to find, e.g. q=parser&kind=code (kind=all|repos|issues|code)";
+  // Only a search that asked for code is told the code was not grepped.
+  if ((kind === "all" || kind === "code") && !greppable(rawQ ?? "")) return CODE_TOO_SHORT;
+  return undefined;
 }
 
 /** A repo here, or one cached from an origin the actor has connected. */
@@ -71,6 +99,8 @@ export type RepoHit =
       readonly archived: boolean;
       readonly openIssues: number;
       readonly openPulls: number;
+      /** The repository runs an app. */
+      readonly app: boolean;
     }
   | {
       readonly source: "origin";
@@ -157,7 +187,13 @@ export function searchLocalRepos(
   query: string,
   limit: number,
 ): RepoHit[] {
-  const repos = listReposVisibleTo(db, viewer, { query, limit });
+  // A wide page, then ranked: with many forks of similar names the newest
+  // `limit` would cut the repository whose name was typed.
+  const repos = rankByName(
+    listReposVisibleTo(db, viewer, { query, limit: 100 }),
+    viewer,
+    query,
+  );
   // `listReposVisibleTo` matches owner and name; description is the extra
   // reach a search box wants, so it is unioned in rather than replacing it.
   const byDescription = describedRepos(db, viewer, query, limit);
@@ -168,17 +204,58 @@ export function searchLocalRepos(
     seen.add(repo.id);
     repos.push(repo);
   }
-  return repos.slice(0, limit).map(toRepoHit);
+  const page = repos.slice(0, limit);
+  // A private app is the writers' to know of; to anyone else the row is plain.
+  const apps = appsForRepos(
+    db,
+    page.map((r) => r.id),
+  );
+  const enterable = enterableApps(
+    db,
+    page.flatMap((repo) => {
+      const app = apps.get(repo.id);
+      return app === undefined ? [] : [{ repo, app }];
+    }),
+    viewer,
+    { named: false },
+  );
+  return page.map((r) => {
+    const app = apps.get(r.id);
+    return toRepoHit(r, app !== undefined && enterable.has(app.id));
+  });
+}
+
+/**
+ * Exact name first, then names that begin with what was typed, then the
+ * rest; within a tier the viewer's own repositories lead. Stable, so the
+ * listing's newest-first order decides among equals.
+ */
+function rankByName(
+  repos: Repo[],
+  viewer: User | undefined,
+  query: string,
+): Repo[] {
+  const q = query.trim().toLowerCase();
+  const tier = (r: Repo): number => {
+    const name = r.name.toLowerCase();
+    const exact = name === q || `${r.ownerName}/${name}`.toLowerCase() === q;
+    const t = exact ? 0 : name.startsWith(q) ? 1 : 2;
+    return t * 2 + (viewer !== undefined && r.ownerId === viewer.id ? 0 : 1);
+  };
+  return repos
+    .map((r, i) => ({ r, i, t: tier(r) }))
+    .sort((a, b) => a.t - b.t || a.i - b.i)
+    .map((x) => x.r);
 }
 
 /** The one repository a scoped search is about, when its owner, name or description holds the words. */
-export function matchOneRepo(repo: Repo, query: string): RepoHit[] {
+export function matchOneRepo(repo: Repo, query: string, app: boolean): RepoHit[] {
   const needle = query.trim().toLowerCase();
   const hay = `${repo.ownerName}/${repo.name} ${repo.description}`.toLowerCase();
-  return needle !== "" && hay.includes(needle) ? [toRepoHit(repo)] : [];
+  return needle !== "" && hay.includes(needle) ? [toRepoHit(repo, app)] : [];
 }
 
-function toRepoHit(repo: Repo): RepoHit {
+function toRepoHit(repo: Repo, app: boolean): RepoHit {
   return {
     source: "local",
     id: repo.id,
@@ -189,6 +266,7 @@ function toRepoHit(repo: Repo): RepoHit {
     archived: repo.archivedAt !== null,
     openIssues: repo.counts?.openIssues ?? 0,
     openPulls: repo.counts?.openPulls ?? 0,
+    app,
   };
 }
 
@@ -280,9 +358,10 @@ export function searchOriginRepos(
 /**
  * Issues and pulls whose title matches, inside a bounded set of repos.
  *
- * `repo_id IN (...)` is not decoration: it is what lets SQLite walk the
- * `issue(repo_id, …)` indexes instead of scanning every conversation in the
- * forge, and `test/search.test.ts` asserts the plan stays that way.
+ * Each repository is its own arm, `repo_id = ?` walking `issue_repo_updated`
+ * newest first and stopping at `limit` matches: SQLite never scans every
+ * conversation in the forge, nor sorts every match of a one-letter query
+ * (#11168), and `test/search.test.ts` asserts the plan stays that way.
  */
 export function searchLocalIssues(
   db: Database,
@@ -296,8 +375,8 @@ export function searchLocalIssues(
 ): IssueHit[] {
   if (repos.length === 0) return [];
   const byId = new Map(repos.map((r) => [r.id, r]));
-  const ids = [...byId.keys()];
-  const holes = ids.map((_, i) => `?${i + 1}`).join(",");
+  // One arm a repository, so the compound stays far inside SQLite's 500.
+  const ids = [...byId.keys()].slice(0, MAX_SEARCH_REPOS);
   const open = [...sealedOk].filter((id) => byId.has(id));
   const extra: string[] = [...open, ...(sealedBy === undefined ? [] : [sealedBy])];
   const ors = [
@@ -308,6 +387,21 @@ export function searchLocalIssues(
     ...(sealedBy === undefined ? [] : [`author_id = ?${ids.length + 3 + open.length}`]),
   ];
   const sealedClause = `AND (${ors.join(" OR ")})`;
+  // One arm per repository, each walking `issue_repo_updated` newest first
+  // and stopping at `limit` matches: a one-letter query, which matches every
+  // title, reads at most `limit` rows a repository rather than sorting all of
+  // them (#11168). The arms are merged and cut to `limit` once more.
+  const arms = ids
+    .map(
+      (_, i) => `SELECT * FROM (SELECT repo_id, number, kind, title, state, updated_at
+         FROM issue
+         WHERE repo_id = ?${i + 1}
+           AND title LIKE ?${ids.length + 1} ESCAPE '\\' COLLATE NOCASE
+           ${sealedClause}
+         ORDER BY updated_at DESC
+         LIMIT ?${ids.length + 2})`,
+    )
+    .join("\nUNION ALL\n");
   const rows = db
     .query<
       {
@@ -320,13 +414,7 @@ export function searchLocalIssues(
       },
       (string | number)[]
     >(
-      `SELECT repo_id, number, kind, title, state, updated_at
-       FROM issue
-       WHERE repo_id IN (${holes})
-         AND title LIKE ?${ids.length + 1} ESCAPE '\\' COLLATE NOCASE
-         ${sealedClause}
-       ORDER BY updated_at DESC
-       LIMIT ?${ids.length + 2}`,
+      `SELECT * FROM (${arms}) ORDER BY updated_at DESC LIMIT ?${ids.length + 2}`,
     )
     .all(...ids, `%${likeEscape(query.trim())}%`, limit, ...extra);
 
@@ -356,7 +444,8 @@ export function searchLocalIssues(
  * a query starting with `-` a pattern rather than a flag; `--` ends the
  * options so a query containing `--` cannot re-open them; `-F` makes the
  * query a fixed string, so a search box cannot hand git a pathological
- * regex; `-I` skips binaries; `--max-count` and the timeout bound the work.
+ * regex; `-I` skips binaries; `--max-count` (per file), the read that stops
+ * after `maxCount` lines and the timeout bound the work.
  * The ref goes through `isSafeRef` like every other rev in the forge.
  */
 export async function grepRepo(
@@ -382,6 +471,7 @@ async function grepRun(
   query: string,
   maxCount: number,
   timeoutMs = GREP_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<RawHit[] | null | "timeout"> {
   const pattern = cleanQuery(query);
   if (pattern === "" || !isSafeRef(ref)) return [];
@@ -402,12 +492,15 @@ async function grepRun(
       "--",
       ".",
     ],
-    { cwd: dir, timeoutMs },
+    // `--max-count` is per file: `a` in a repository of thousands of files
+    // is megabytes of matches. Only the first `maxCount` are kept, so git is
+    // stopped once they are read rather than left to write the rest (#10395).
+    { cwd: dir, timeoutMs, stopAfterLines: maxCount, ...(signal === undefined ? {} : { signal }) },
   );
   // Exit 1 is "no match" — data, not failure. Anything else (a repo with no
   // commits, a killed process) is simply no results from this repo.
   if (run.timedOut === true) return "timeout";
-  if (run.code !== 0 && run.code !== 1) return null;
+  if (run.stopped !== true && run.code !== 0 && run.code !== 1) return null;
 
   // `-z` makes each record `ref:path NUL line NUL text`, so a path with a
   // colon in it (`a:1:b.txt`) cannot be split at the wrong colon.
@@ -476,13 +569,14 @@ async function grepCached(
   query: string,
   who: GrepWho,
   timeoutMs = GREP_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<RawHit[] | "skipped" | "timeout"> {
   const ref = repo.defaultBranch;
   const oid = await branchOid(dir, ref);
   const slotted = async (at: string): Promise<RawHit[] | null | "skipped" | "timeout"> => {
     const got = await (who.slots ?? grepSlots).run(who.memberId, () => {
       grepsRun++;
-      return (who.grep ?? grepRun)(dir, at, query, MAX_HITS_PER_REPO, timeoutMs);
+      return (who.grep ?? grepRun)(dir, at, query, MAX_HITS_PER_REPO, timeoutMs, signal);
     });
     return got.ran ? got.value : "skipped";
   };
@@ -517,7 +611,11 @@ export interface GrepWho {
   readonly now?: () => number;
   /** Resolves after `ms`; `clear` stops it. A `setTimeout` by default. */
   readonly timer?: (ms: number) => BudgetTimer;
+  /** The first batch's ceiling (`BUDGETED_GREP_MS`), kept apart from `timer` so tests fire each on its own. */
+  readonly firstTimer?: (ms: number) => BudgetTimer;
 }
+
+type Got = RawHit[] | "skipped" | "timeout";
 
 export interface BudgetTimer {
   readonly done: Promise<void>;
@@ -538,12 +636,13 @@ function budgetTimer(ms: number): BudgetTimer {
  * stops the moment the cap is reached — a common word in a monorepo costs
  * one repo's work, not fifty.
  *
- * With a finite budget the first batch is always waited for, so a cold search
- * shows what it finds however slow git is. Each later batch races the time
+ * With a finite budget the first batch is waited for up to `BUDGETED_GREP_MS`,
+ * queue for git's gate included, so a cold search shows what it finds without
+ * a busy forge holding the page; what answered by then is kept, the rest is
+ * `more` (#9402). Each later batch races the time
  * left: when the budget runs out first the answer goes back with `more`, and
- * the batch's greps are left to finish on their own. They keep the slot
- * `search/grep_slots.ts` gave them until git exits — that is the only cap on
- * abandoned greps, and it is charged to the caller who started them.
+ * the batch's greps are killed, so no abandoned git outlives the answer
+ * (#10730); the slot `search/grep_slots.ts` gave them is freed as git exits.
  */
 export async function grepRepos(
   reposRoot: string,
@@ -568,50 +667,64 @@ export async function grepRepos(
   // Set when this search answers at its budget: the batch it left behind
   // starts no further pair. Local to this call, never shared between callers.
   let answered = false;
+  // Fired when this search answers at its budget: the greps it leaves behind
+  // are killed (and not cached), so they stop holding git's gate and a slot.
+  const abandon = new AbortController();
   const more = () => {
     answered = true;
+    abandon.abort();
     return { hits, truncated: repos.length > MAX_SEARCH_REPOS, more: true, skipped };
   };
-  const grepBatch = async (slice: readonly Repo[]) => {
-    const found: (RawHit[] | "skipped" | "timeout")[] = [];
+  // Each grep writes its answer into its own place as it settles, so a batch
+  // cut at the clock still keeps the repositories that did answer.
+  const grepBatch = async (slice: readonly Repo[], found: (Got | undefined)[]) => {
     for (let k = 0; k < slice.length && !answered; k += width) {
-      found.push(
-        ...(await Promise.all(
-          slice
-            .slice(k, k + width)
-            .map((repo) =>
-              grepCached(
-                repo,
-                repoDir(reposRoot, repo.ownerName, repo.name),
-                query,
-                who,
-                timeoutMs,
-              ),
-            ),
-        )),
+      await Promise.all(
+        slice.slice(k, k + width).map((repo, j) =>
+          grepCached(
+            repo,
+            repoDir(reposRoot, repo.ownerName, repo.name),
+            query,
+            who,
+            timeoutMs,
+            abandon.signal,
+          ).then((got) => {
+            found[k + j] = got;
+          }),
+        ),
       );
     }
-    return found;
   };
   for (let i = 0; i < considered.length; i += batch) {
     const slice = considered.slice(i, i + batch);
-    let found: (RawHit[] | "skipped" | "timeout")[];
-    if (i === 0 || budgetMs === Infinity) {
-      found = await grepBatch(slice);
+    const found: (Got | undefined)[] = [];
+    let cut = false;
+    if (budgetMs === Infinity) {
+      await grepBatch(slice, found);
     } else {
-      const left = budgetMs - (now() - started);
-      if (left <= 0) return more();
-      const running = grepBatch(slice);
+      // Batch 0 is waited for, but never past BUDGETED_GREP_MS counted from
+      // here: a grep's own timeout starts only once git's gate admits it, so a
+      // forge busy with git could otherwise hold the page for seconds (#9402).
+      const wait = i === 0 ? BUDGETED_GREP_MS : budgetMs - (now() - started);
+      if (wait <= 0) return more();
+      const running = grepBatch(slice, found);
       // An abandoned batch settles on its own; a rejection then is nobody's.
       running.catch(() => {});
-      const timer = (who.timer ?? budgetTimer)(left);
-      const raced = await Promise.race([running, timer.done.then(() => "cut" as const)]);
+      const timer = (i === 0 ? (who.firstTimer ?? budgetTimer) : (who.timer ?? budgetTimer))(wait);
+      const raced = await Promise.race([
+        running.then(() => "done" as const),
+        timer.done.then(() => "cut" as const),
+      ]);
       timer.clear();
-      if (raced === "cut") return more();
-      found = raced;
+      if (raced === "cut") {
+        answered = true;
+        abandon.abort();
+        cut = true;
+      }
     }
     for (const [j, repo] of slice.entries()) {
-      const mine = found[j] ?? [];
+      const mine = found[j];
+      if (mine === undefined) continue;
       if (mine === "skipped") {
         skipped = true;
         continue;
@@ -629,6 +742,7 @@ export async function grepRepos(
         });
       }
     }
+    if (cut) return { hits, truncated: repos.length > MAX_SEARCH_REPOS, more: true, skipped };
   }
   return { hits, truncated: repos.length > MAX_SEARCH_REPOS, more: gaveUp, skipped };
 }

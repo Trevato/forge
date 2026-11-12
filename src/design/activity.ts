@@ -9,6 +9,8 @@
  * when the row has no actor: a deploy is the forge's own doing, and says so.
  */
 
+import { VIA_WORDS } from "../core/acting_via.ts";
+import { DETACH_RECEIPT } from "../actions/detach_words.ts";
 import type { ForgeEvent } from "../core/events.ts";
 
 /** The pull number an environment name carries, for `pull-12`. */
@@ -58,6 +60,21 @@ export function eventVerb(event: ForgeEvent): string {
       ? `set ${which} in the app's environment`
       : `removed ${which} from the app's environment`;
   }
+  // An app taken in as one of the forge's features.
+  if (kind === "app.absorbed") {
+    const name = payload["name"];
+    return `absorbed ${typeof name === "string" ? name : "the app"} as a forge feature`;
+  }
+  if (kind === "app.feature_declared") {
+    const name = payload["name"];
+    return `accepted the feature's declared name ${typeof name === "string" ? name : "and page"}`;
+  }
+  if (kind === "app.unabsorbed") return "put the app back as an ordinary app";
+  if (kind === "app.feature_settings") {
+    const keys = payload["keys"];
+    const which = Array.isArray(keys) && keys.every((k) => typeof k === "string") ? keys.join(", ") : "settings";
+    return `changed the feature's ${which}`;
+  }
   if (kind === "app.egress.granted" || kind === "app.egress.revoked") {
     const destination = payload["destination"];
     const which = typeof destination === "string" ? destination : "a destination";
@@ -72,6 +89,17 @@ export function eventVerb(event: ForgeEvent): string {
     if (kind === "app.domain.verified") return `verified the domain ${which}`;
     return `removed the domain ${which}`;
   }
+  if (kind === "build.shots") {
+    const label = payload["label"];
+    const pin = typeof label === "string" && label !== "" ? `the pin ${label}` : "a pin";
+    const change = payload["change"];
+    if (change === "added") return `added a screenshot to ${pin}`;
+    if (change === "picked") return `picked screenshots from the deploy for ${pin}`;
+    if (change === "moved") return `reordered the screenshots of ${pin}`;
+    if (change === "captioned") return `captioned a screenshot of ${pin}`;
+    if (change === "removed") return `removed a screenshot from ${pin}`;
+    return `changed the screenshots of ${pin}`;
+  }
   if (kind === "prompt.told") {
     const issue = payload["issue"];
     return typeof issue === "number"
@@ -81,12 +109,32 @@ export function eventVerb(event: ForgeEvent): string {
   return WORDS[kind] ?? "acted on this repository";
 }
 
+const KIND_LABELS: Record<string, string> = {
+  push: "Pushes",
+  "issue.opened": "Opened issues",
+  "issue.closed": "Closed issues",
+  "pull.opened": "Opened pulls",
+  "pull.merged": "Merged pulls",
+  "pull.closed": "Closed pulls",
+  "webhook.created": "New webhooks",
+  "repo.settings_updated": "Settings changes",
+};
+
+/** An event kind in a person's words, for a button that narrows to it: `Merged pulls`. */
+export function eventKindLabel(kind: string): string {
+  const known = KIND_LABELS[kind];
+  if (known !== undefined) return known;
+  const words = kind.replace(/[._]/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 /** Who to credit when the row names nobody. */
 export function eventActor(
   event: ForgeEvent,
   actorName: string | undefined,
 ): string {
-  if (actorName !== undefined) return actorName;
+  if (actorName !== undefined)
+    return event.via === undefined ? actorName : `${actorName} ${VIA_WORDS}`;
   return event.kind.startsWith("run.") ||
     event.kind.startsWith("app.") ||
     event.kind.startsWith("prompt.") ||
@@ -114,20 +162,27 @@ const WORDS: Record<string, string> = {
   "pull.commented": "commented on a pull request",
   "pull.reviewed": "reviewed a pull request",
   "pull.run_granted": "let a pull request's head run",
+  "pull.guest_approved": "approved a guest pull request",
   "pull.labeled": "labelled a pull request",
   "pull.held": "held a pull request",
+  "pull.team_waiting": "waits on a team's review",
+  "pull.team_answered": "was answered by a team's review",
   "pull.released": "released a pull request",
   "pull.thread_resolved": "resolved a review thread",
   "repo.created": "created a repository",
   "repo.forked": "forked a repository",
+  "repo.detached": DETACH_RECEIPT,
   "repo.settings_updated": "changed repository settings",
   "repo.upstream_follow": "changed which upstream the repository follows",
+  "repo.source_added": "followed another source",
+  "repo.source_removed": "stopped following a source",
   "repo.following": "turned following an upstream on or off",
   "repo.crew_outsiders": "changed who may trigger the crew",
   "repo.mirrored": "mirrored a repository",
   "repo.imported": "imported issues and pulls",
   "repo.pinned": "pinned a repository",
   "repo.unpinned": "unpinned a repository",
+  "board.pins": "changed their pinned panels",
   "branch.created": "created a branch",
   "branch.deleted": "deleted a branch",
   "label.created": "added a label",
@@ -135,10 +190,16 @@ const WORDS: Record<string, string> = {
   "label.deleted": "removed a label",
   "webhook.created": "added a webhook",
   "webhook.deleted": "removed a webhook",
+  "webhook.paused": "paused a webhook",
+  "webhook.resumed": "resumed a webhook",
+  "webhook.failing": "had a webhook fail three deliveries in a row",
   "origin.connected": "connected an origin",
   "origin.disconnected": "disconnected an origin",
   "origin.needs_reauth": "needs to reconnect an origin",
   "origin.mirror_reattached": "reconnected a frozen mirror to its origin",
+  "build.pinned": "pinned a build",
+  "build.deleted": "removed a build pin",
+  "build.noted": "noted a pinned build",
   "run.queued": "queued a run",
   "run.started": "started a run",
   "app.created": "made it an app",

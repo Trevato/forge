@@ -12,15 +12,19 @@
  * 404 for everyone.
  */
 
+import { crewKeyCard } from "../studio/crew_key.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
 import { repositoryLimitMessage } from "../../actions/repos.ts";
-import { REPO_INIT_FAILED, REPO_NAME_RULES } from "../../actions/repo_words.ts";
 import { appLimitWords } from "../../actions/app_limit.ts";
-import { NO_SUCH_AGENT } from "../../actions/crew_limit_words.ts";
+import { templateChoices, type TemplateChoice } from "../../apps/template_folders.ts";
 import { getUserByName } from "../../core/users.ts";
 import {
+  NEW_APP_ERRORS,
+  NO_NAME_ERROR,
   appView,
   newApp,
+  newAppFromSentence,
+  type NewAppResult,
   openEnvUrl,
   redeployEnv,
   stopEnv,
@@ -28,14 +32,15 @@ import {
 } from "../../actions/apps.ts";
 import { listAllAgents } from "../../actions/crew.ts";
 import { planningAvailable } from "../../crew/plan.ts";
-import { appNameJs, deriveAppName } from "./apps-name.ts";
+import { appNameJs } from "./apps-name.ts";
 import { STARTERS, starterFromQuery, starterHref } from "./apps-starters.ts";
 import { previewEnv, type EnvName } from "../../apps/data.ts";
 import { envRefusalText, redeployedText, stoppedText } from "../../actions/env_words.ts";
-import { appsRuntime, type EnvStatus, envsFor } from "../../apps/runtime.ts";
+import { appsRuntime, type EnvState, type EnvStatus, envsFor } from "../../apps/runtime.ts";
 import { firstPreviews, goldenPath, goldenPathLine } from "../../apps/golden_path.ts";
 import { appHostSuffix } from "../../apps/host.ts";
-import { appsForRepos, type AppRecord } from "../../core/apps.ts";
+import { appsForRepos, getAppByRepo, type AppRecord } from "../../core/apps.ts";
+import { shownProduction } from "../../core/forge_repo.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
 import type { Pull } from "../../core/pulls.ts";
 import {
@@ -48,6 +53,7 @@ import {
 import type { User } from "../../core/users.ts";
 import { safeBack, type Ctx } from "../../http/context.ts";
 import {
+  nameFrame,
   notePhase,
   takeSessionTime,
   timePhase,
@@ -60,6 +66,8 @@ import {
   pageHead,
   repoBase,
   signInFirst,
+  NOT_YOURS_TO_DO,
+  forbiddenPage,
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
@@ -71,12 +79,9 @@ import { shelfRows } from "../studio/shelf.ts";
 import {
   badge,
   btn,
-  card,
-  empty,
   envFacts,
   envStateBadge,
   icon,
-  listCard,
   previewDataNote,
   seg,
   selectField,
@@ -125,7 +130,7 @@ function appsForViewer(ctx: Ctx, archived: boolean): AppEntry[] {
       repo,
       production: envs.find((env) => env.env === "production"),
       previews: envs.filter((env) => env.env !== "production").length,
-      url: runtime?.urlFor(record, "production"),
+      url: shownProduction(ctx.app, repo, runtime?.urlFor(record, "production")).url,
     });
   }
   return out;
@@ -143,8 +148,8 @@ export function archivedAppCount(ctx: Ctx): number {
   ).size;
 }
 
-/** The archived list's Wake: a small form under each row the viewer administers. */
-function wakeForms(ctx: Ctx, repos: readonly Repo[]): Map<string, Html> {
+/** The archived list's Restore: a small form under each row the viewer administers. */
+function restoreForms(ctx: Ctx, repos: readonly Repo[]): Map<string, Html> {
   const out = new Map<string, Html>();
   for (const repo of repos) {
     if (!canAdmin(ctx.app.db, repo, ctx.auth.user)) continue;
@@ -154,13 +159,16 @@ function wakeForms(ctx: Ctx, repos: readonly Repo[]): Map<string, Html> {
         <form method="post" action="${repoBase(repo)}/settings/archive">
           <input type="hidden" name="archived" value="0" />
           <input type="hidden" name="to" value="/apps?archived=1" />
-          ${btn(html`Wake<span class="sr-only"> ${repo.ownerName}/${repo.name}</span>`)}
+          ${btn(html`Restore<span class="sr-only"> ${repo.ownerName}/${repo.name}</span>`)}
         </form>
       </li>`,
     );
   }
   return out;
 }
+
+/** The one sentence the page opens with: what it is for. */
+const APPS_PURPOSE = "Every app you can reach, and whether it is serving.";
 
 /**
  * GET /apps: every app the viewer can land, for every viewer, drawn as the
@@ -218,7 +226,7 @@ export async function appsList(ctx: Ctx): Promise<Response> {
             },
           ])}
         </div>`;
-  const wake = archivedView ? wakeForms(ctx, shown.map((e) => e.repo)) : undefined;
+  const wake = archivedView ? restoreForms(ctx, shown.map((e) => e.repo)) : undefined;
   const rows = await timePhaseAsync(ctx.request, "shelf", () =>
     shelfRows(
       ctx,
@@ -230,8 +238,16 @@ export async function appsList(ctx: Ctx): Promise<Response> {
     costLine(ctx.app.db, writableAppsOf(ctx, ctx.auth.user).repos),
   );
   const rendering = performance.now();
-  const body = html`${when(ctx.auth.user, (user) => homeTabs("apps", unshippedAsks(ctx.app.db, user)))}
-    ${pageHead("Apps", { actions: create })}
+  // The door to /data: an admin, or someone who writes an app (already counted
+  // above); no per-app work here, /data itself lists what exists.
+  const hasData =
+    ctx.auth.user !== undefined &&
+    (ctx.auth.user.isAdmin || writableAppsOf(ctx, ctx.auth.user).repos.length > 0);
+  const body = html`<div data-apps-page>${when(ctx.auth.user, (user) => homeTabs("apps", unshippedAsks(ctx.app.db, user)))}
+    ${pageHead("Apps", {
+      actions: hasData ? html`${btn("Data", { href: "/data", size: "sm" })}${create}` : create,
+      sub: APPS_PURPOSE,
+    })}
     ${cost}
     ${filters}
     ${archivedView
@@ -242,19 +258,20 @@ export async function appsList(ctx: Ctx): Promise<Response> {
           </p>`
         : null}
     ${shown.length === 0
-      ? empty({
-          icon: "rocket",
-          title: archivedView
+      ? html`<section class="stack">
+          <p><strong>${archivedView
             ? "Nothing is archived"
             : live
               ? "Nothing is live"
-              : "Nothing runs here yet",
-          note: live
-            ? "Nothing is serving right now — clear the filter to see every app."
-            : "A new app is a repository with a small working app in it, served at its own hostname a few seconds later.",
-          action: create,
-        })
-      : listCard(rows)}`;
+              : "Nothing runs here yet"}</strong></p>
+          <p class="muted small">${archivedView
+            ? "Apps you put away show up here."
+            : live
+              ? "Nothing is serving right now. Clear the filter to see every app."
+              : "A new app is a repository with a small working app in it. It is live at its own address seconds later."}</p>
+          ${archivedView ? null : create}
+        </section>`
+      : html`<ul class="list setting-list">${rows}</ul>`}</div>`;
   const response = page({ ctx, title: "Apps", body });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
@@ -268,6 +285,8 @@ interface NewAppValues {
   description: string;
   visibility: string;
   agent: string;
+  /** `owner/name` of a template to copy; empty for the starter app. */
+  template?: string;
 }
 
 /** The agent select's sentinel for "turn the sentence into a plan and pick". */
@@ -284,6 +303,7 @@ function newAppForm(
   ctx: Ctx,
   values: NewAppValues,
   canPlan: boolean,
+  offered: TemplateChoice[],
   error?: string,
 ): Html {
   const user = ctx.auth.user!;
@@ -298,7 +318,6 @@ function newAppForm(
   );
   const crew = agents.ok ? agents.value : [];
   const domain = appsRuntime(ctx.app)?.options.domain;
-
   // An org's form stays the org's: carry the owner only when it is one the
   // select offers, and only when it is not the viewer's own default.
   const carried =
@@ -308,10 +327,22 @@ function newAppForm(
 
   return html`<div class="narrow-wide">
     ${pageHead("New app", {
-      sub: "A repository with a small working app in it: a first issue from your sentence, a crew member on it, production at its hostname, and a preview for every change.",
+      sub: "Describe what it should do. You get a repository, a first issue, a crew member on it, a live app, and a preview for every change.",
     })}
-    ${card(
-      html`<form method="post" action="/apps/new">
+    ${crewKeyCard(ctx, true)}
+    ${html`<form method="post" action="/apps/new">
+        ${values.template
+          ? formField({ label: "Copy of", name: "template", value: values.template, readonly: true, mono: true })
+          : offered.length > 1
+            ? selectField({
+                label: "Start from",
+                name: "template",
+                options: offered.map((t) => ({
+                  value: t.value,
+                  label: t.line === "" ? t.title : `${t.title} — ${t.line}`,
+                })),
+              })
+            : html``}
         ${formField({
           label: "What should it do?",
           name: "description",
@@ -350,14 +381,14 @@ function newAppForm(
           pattern: "[A-Za-z0-9][A-Za-z0-9._-]*",
           hint:
             domain === undefined
-              ? "Left blank, it's made from your sentence above. Letters, digits, dots, dashes and underscores; the hostname is made from it."
-              : `Left blank, it's made from your sentence above. Letters, digits, dots, dashes and underscores; it runs at <name>${appHostSuffix(domain)}.`,
+              ? "Left blank, it comes from your sentence. Use letters, digits, dots, dashes and underscores. The address comes from it."
+              : `Left blank, it comes from your sentence. Use letters, digits, dots, dashes and underscores. It runs at <name>${appHostSuffix(domain)}.`,
           ...(error ? { error } : {}),
         })}
         ${selectField({
           label: "Visibility",
           name: "visibility",
-          hint: "A private app answers only to people who can see its repository; the forge vouches for them on the way in.",
+          hint: "Only people who can see the repository can open a private app.",
           options: [
             {
               value: "private",
@@ -415,16 +446,17 @@ function newAppForm(
           ${btn("Create app", { variant: "primary", icon: "rocket" })}
           ${btn("Cancel", { href: "/apps", variant: "ghost" })}
         </div>
-      </form>`,
-    )}
+      </form>`}
+    <p class="muted">Already have an app on another forge? <a href="/bring">Bring it here whole</a>.</p>
   </div>`;
 }
 
 // GET /apps/new
-export function newAppPage(ctx: Ctx): Response {
+export async function newAppPage(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const picks = plannerOffered(ctx);
+  const offered = await timePhaseAsync(ctx.request, "templates", () => templateChoices(ctx.app, ctx.auth.user));
   const rendering = performance.now();
   const response = page({
     ctx,
@@ -435,32 +467,13 @@ export function newAppPage(ctx: Ctx): Response {
       description: starterFromQuery(ctx.url.searchParams.get("description")),
       visibility: "private",
       agent: picks ? PICK_AGENT : "",
-    }, picks),
+      template: ctx.url.searchParams.get("template") ?? "",
+    }, picks, offered),
     scriptJs: appNameJs,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
 }
-
-/** Nothing in the sentence a slug can carry: punctuation only, or a script `[a-z0-9]` cannot. */
-const NO_NAME_ERROR =
-  "That doesn't leave anything to make a name from — type one below.";
-
-/** How many suffixed names (`x-2`, `x-3`, …) a derived name will try before giving up. */
-const MAX_NAME_ATTEMPTS = 30;
-
-const NEW_APP_ERRORS: Record<string, string> = {
-  name_taken: "That owner already has a repository by that name.",
-  invalid_name: REPO_NAME_RULES,
-  git_init_failed: REPO_INIT_FAILED,
-  invalid_slug:
-    "That name makes no usable hostname — start it with a letter or digit.",
-  slug_taken:
-    "Another app already answers to that hostname. Pick another name.",
-  already_app: "That repository is already an app.",
-  scaffold_failed: "The starter app could not be committed.",
-  no_such_agent: NO_SUCH_AGENT,
-};
 
 // POST /apps/new
 export async function newAppSubmit(ctx: Ctx): Promise<Response> {
@@ -475,50 +488,51 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
     description: field(form, "description"),
     visibility: field(form, "visibility") === "public" ? "public" : "private",
     agent: field(form, "agent"),
+    template: field(form, "template"),
   };
   const pickAgent = values.agent === PICK_AGENT;
   // An explicit name is never second-guessed; left blank, the sentence
   // names the app — and the server derives that name itself (never trusting
   // whatever the field carried in): the field is only a client-side preview.
   const explicitName = values.name.trim();
-  const base = explicitName === "" ? deriveAppName(values.description) : explicitName;
-  if (base === undefined) {
-    return page(
-      {
-        ctx,
-        title: "New app",
-        body: newAppForm(ctx, values, plannerOffered(ctx), NO_NAME_ERROR),
-        scriptJs: appNameJs,
-      },
-      422,
-    );
-  }
   const rest = {
     owner: values.owner,
-    description: values.description,
     visibility: values.visibility === "public" ? "public" : "private",
+    ...(values.template ? { template: values.template } : {}),
     ...(pickAgent
       ? { pickAgent: true }
       : values.agent === ""
         ? {}
         : { agent: values.agent }),
   } as const;
-  let made = await newApp(ctx.app, ctx.auth.user, { ...rest, name: base }, phase);
-  // A derived name that collides tries `base-2`, `base-3`, … — the same
-  // `name_taken` check an explicit name gets, just run more than once.
-  for (
-    let n = 2;
-    explicitName === "" && !made.ok && made.error === "name_taken" && n <= MAX_NAME_ATTEMPTS;
-    n++
-  ) {
-    made = await newApp(ctx.app, ctx.auth.user, {
-      ...rest,
-      name: `${base}-${n}`,
-    }, phase);
+  const made: { ok: true; value: NewAppResult } | { ok: false; error: string } =
+    explicitName === ""
+      ? await newAppFromSentence(
+          ctx.app,
+          ctx.auth.user,
+          { ...rest, sentence: values.description },
+          phase,
+        ).then((r) => (r.ok ? { ok: true as const, value: r } : { ok: false as const, error: r.code }))
+      : await newApp(
+          ctx.app,
+          ctx.auth.user,
+          { ...rest, description: values.description, name: explicitName },
+          phase,
+        );
+  if (!made.ok && made.error === "no_name") {
+    return page(
+      {
+        ctx,
+        title: "New app",
+        body: newAppForm(ctx, values, plannerOffered(ctx), await timePhaseAsync(ctx.request, "templates", () => templateChoices(ctx.app, ctx.auth.user)), NO_NAME_ERROR),
+        scriptJs: appNameJs,
+      },
+      422,
+    );
   }
   if (!made.ok) {
     if (made.error === "forbidden_owner" || made.error === "unauthorized")
-      return new Response("forbidden", { status: 403 });
+      return forbiddenPage(ctx, NOT_YOURS_TO_DO);
     const ownerId = getUserByName(
       ctx.app.db,
       values.owner || ctx.auth.user.username,
@@ -531,6 +545,7 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
           ctx,
           values,
           plannerOffered(ctx),
+          await timePhaseAsync(ctx.request, "templates", () => templateChoices(ctx.app, ctx.auth.user)),
           made.error === "repository_limit"
             ? `Not made: ${repositoryLimitMessage(ctx.app, ctx.auth.user!)}.`
             : made.error === "storage_limit"
@@ -541,7 +556,8 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
         ),
         scriptJs: appNameJs,
       },
-      422,
+      // A template the person cannot read answers as one that does not exist, as the API does.
+      made.error === "no_such_template" ? 404 : 422,
     );
   }
   const { repo, app: record, issue, plan } = made.value;
@@ -566,24 +582,55 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
 // ---- the repo home's strip ----
 
 /**
+ * The forge's own source runs a test copy of the forge (`shownProduction`):
+ * named plainly as one, and opened through `/apps/open`, which signs the
+ * visitor in to it as any app host does.
+ */
+export function testCopyLink(url: string): Html {
+  const host = new URL(url).host;
+  return html`<span class="muted"
+    >Test copy:
+    <a class="mono" href="/apps/open?host=${encodeURIComponent(host)}" title="A copy of the forge for testing, not production"
+      >${host}</a
+    ></span
+  >`;
+}
+
+/**
+ * What the strip says of production's state: the badge while it runs or
+ * deploys; a plain sentence, with what to do, when it is stopped, asleep or
+ * failed. `envStateBadge` is shared, so it is not reworded here.
+ */
+export function productionStrip(state: EnvState, dormant = false): Html {
+  if (state === "running" || state === "deploying") return envStateBadge(state);
+  if (state === "failed")
+    return html`<span class="muted">Failed to start. Deploy main to try again.</span>`;
+  // `dormant` is only ever set on a stopped env: it stopped for want of
+  // visitors, not because anyone stopped it, so it wakes the same way.
+  if (state === "asleep" || (state === "stopped" && dormant))
+    return html`<span class="muted">Asleep. Deploy main to wake it.</span>`;
+  return html`<span class="muted">Not running. Deploy main to start it.</span>`;
+}
+
+/**
  * One line under the repo header, for a repository that runs: production's
  * state, the commit it serves, its URL, how many previews are up, and the
  * way to the app's page in the studio, where its environments are run.
  * Nothing for a repository that is not an app.
  */
-export function appStrip(ctx: Ctx, repo: Repo): Html {
+export function appStrip(ctx: Ctx, repo: Repo, declares: boolean): Html {
   const view = appView(ctx.app, ctx.auth.user, repo);
   if (!view.ok) return html``;
   const { app: record, environments, serving } = view.value;
   const base = repoBase(repo);
   const production = environments.find((env) => env.env === "production");
   const previews = environments.length - (production === undefined ? 0 : 1);
-  const url = appsRuntime(ctx.app)?.urlFor(record, "production");
+  const { url, copy } = shownProduction(ctx.app, repo, appsRuntime(ctx.app)?.urlFor(record, "production"));
   const pace = goldenPathLine(goldenPath(ctx.app.db, record));
   return html`<div class="app-strip">
     ${icon("rocket")}
     ${serving
-      ? envStateBadge(production?.state ?? "stopped")
+      ? productionStrip(production?.state ?? "stopped", production?.dormant !== undefined)
       : badge("Not serving", { variant: "outline" })}
     ${when(production !== undefined && production.commitOid !== "", () =>
       sha(production!.commitOid, `${base}/commit/${production!.commitOid}`),
@@ -598,6 +645,7 @@ export function appStrip(ctx: Ctx, repo: Repo): Html {
           >${u}</a
         >`,
     )}
+    ${when(copy, (c) => testCopyLink(c))}
     ${when(
       previews > 0,
       () =>
@@ -606,6 +654,10 @@ export function appStrip(ctx: Ctx, repo: Repo): Html {
         >`,
     )}
     ${when(pace, (line) => html`<span class="muted">${line}</span>`)}
+    ${when(
+      declares, // already gated on a site admin by `declaresFeature`
+      () => html`<a href="/settings/features/${encodeURIComponent(record.slug)}" title="This app declares a feature: absorb it or change its settings">Features</a>`,
+    )}
   </div>`;
 }
 
@@ -639,10 +691,38 @@ export function appPage(ctx: Ctx): Response {
   return response;
 }
 
-// ---- the pull page's preview card ----
+// ---- the pull page's preview block ----
 
-/** Where this pull's preview stands, with the way in. */
-export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
+/** The block itself: a bar with the heading, a status line when it failed, then the body. */
+export function previewSection(
+  body: Html,
+  head: Html,
+  tone?: "danger" | "attn",
+): Html {
+  return html`<section
+    class="settings-block"
+    data-preview-block
+    ${tone ? html`data-tone="${tone}"` : null}
+  >
+    <div class="bar">${head}</div>
+    ${tone === "danger"
+      ? html`<p class="small" role="status">This preview has failed. Push again to redeploy it.</p>`
+      : tone === "attn"
+        ? html`<p class="muted small" role="status">The last deploy of this preview failed. Push again to redeploy it.</p>`
+        : null}
+    ${body}
+  </section>`;
+}
+
+/** How loud a preview reads: danger when it failed or errs, attn when only its last deploy failed. */
+export function envTone(env: EnvStatus): "danger" | "attn" | undefined {
+  if (env.state === "failed" || env.error !== undefined) return "danger";
+  if (env.failedDeploy !== undefined) return "attn";
+  return undefined;
+}
+
+/** Where this pull's preview stands, with the way in: a plain block under an h2, the home page's language. */
+export function previewBlock(ctx: Ctx, repo: Repo, pull: Pull): Html {
   const view = appView(ctx.app, ctx.auth.user, repo);
   if (!view.ok) return html``;
   const base = repoBase(repo);
@@ -653,9 +733,9 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
     <h2>Preview</h2>
     ${env === undefined ? null : envStateBadge(env.state, env.dormant !== undefined)}`;
   if (!view.value.serving)
-    return card(
+    return previewSection(
       html`<p class="muted small">Nothing is serving apps on this forge.</p>`,
-      { head },
+      head,
     );
   if (env === undefined) {
     const why =
@@ -664,13 +744,13 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
         : pull.state === "closed"
           ? "The preview was removed when this closed. Reopen the pull request and it comes back."
           : "No preview yet — one starts when this pull request's head deploys.";
-    return card(html`<p class="muted small">${why}</p>`, { head });
+    return previewSection(html`<p class="muted small">${why}</p>`, head);
   }
   // A preview's terminal is a different login from production's — its own
   // command, shown only to a writer, same as the app page's.
   const writer = canWrite(ctx.app.db, repo, ctx.auth.user);
   const dataNote = previewDataNote(view.value.app.previewData, pull.createdAt);
-  return card(
+  return previewSection(
     html`${envFacts(base, env)}
       ${dataNote === null ? null : html`<p class="muted small">${dataNote}</p>`}
       ${when(writer, () =>
@@ -691,15 +771,8 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
               icon: "external",
             })}
       </div>`,
-    {
-      head,
-      extra: "env-card",
-      ...(env.state === "failed" || env.error !== undefined
-        ? { tone: "danger" as const }
-        : env.failedDeploy !== undefined
-          ? { tone: "attn" as const }
-          : {}),
-    },
+    head,
+    envTone(env),
   );
 }
 
@@ -716,6 +789,7 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
  * theirs, nothing else is.
  */
 export function appsOpen(ctx: Ctx): Response {
+  nameFrame(ctx.request);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   return timePhase(ctx.request, "render", () => appsOpenResponse(ctx));
 }
@@ -740,10 +814,24 @@ function appsOpenResponse(ctx: Ctx): Response {
   });
 }
 
+/**
+ * Opening an app is the one place a forge page's address leaves the forge:
+ * the app's pill reads it to take the visitor back to that page (#11295).
+ * `origin-when-cross-origin` would send only the origin, so the redirect
+ * says `no-referrer-when-downgrade`: the full address, https to https only.
+ */
+const LEAVING_POLICY = "no-referrer-when-downgrade";
+
 export function appOpen(ctx: Ctx): Response {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
-  const link = openEnvUrl(ctx.app, ctx.auth.user, repo, ctx.params.env ?? "");
+  // The forge's own source: its production is the forge, not the test copy.
+  const env = ctx.params.env ?? "";
+  const record = env === "production" ? getAppByRepo(ctx.app.db, repo.id) : undefined;
+  const shown = record === undefined ? undefined : shownProduction(ctx.app, repo, appsRuntime(ctx.app)?.urlFor(record, "production"));
+  if (shown?.copy !== undefined && shown.url !== undefined)
+    return new Response(null, { status: 302, headers: { location: shown.url, "cache-control": "no-store", "referrer-policy": LEAVING_POLICY } });
+  const link = openEnvUrl(ctx.app, ctx.auth.user, repo, env);
   if (!link.ok) {
     if (link.error === "unauthorized") return signInFirst(ctx);
     if (link.error === "no_runtime")
@@ -755,7 +843,7 @@ export function appOpen(ctx: Ctx): Response {
   }
   return new Response(null, {
     status: 302,
-    headers: { location: link.value, "cache-control": "no-store" },
+    headers: { location: link.value, "cache-control": "no-store", "referrer-policy": LEAVING_POLICY },
   });
 }
 
@@ -781,7 +869,12 @@ async function envForm(
  * a form field; with no referer the fallback is the repository's home.
  */
 function envBack(ctx: Ctx, repo: Repo): string {
-  return safeBack(ctx) ?? repoBase(repo);
+  // Arriving from the confirm page, going "back" would ask again; the
+  // repository's page is where the person can see what changed.
+  const back = safeBack(ctx);
+  if (back === undefined || back.split("?")[0] === "/-/confirm")
+    return repoBase(repo);
+  return back;
 }
 
 function envFailure(ctx: Ctx, repo: Repo, error: string): Response {

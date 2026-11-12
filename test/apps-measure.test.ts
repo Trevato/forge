@@ -17,6 +17,7 @@ import { appVisitors } from "../src/actions/apps.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { appVitals, recordAppVital } from "../src/apps/vitals.ts";
+import { clearRelayWaits, noteRelayWait } from "../src/apps/relay_wait.ts";
 import { deleteApp, getAppByRepo } from "../src/core/apps.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -107,6 +108,17 @@ describe("a report through the proxy", () => {
     expect((await report("notes", { ...good, app: ids["diary"] })).status).toBe(400);
   });
 
+  test("its referrer and campaign are buffered against that app, as host and utm fields only (#9427)", async () => {
+    const { flushViews } = await import("../src/perf/views_store.ts");
+    await report("notes", { ...good, path: "/a?x=1", ref: "https://espodev.com/blog?secret=1", q: "?utm_source=post&utm_campaign=c1&token=zzz", out: "github.com" });
+    flushViews(app.db);
+    const row = app.db
+      .query<Record<string, unknown>, [string]>("SELECT path, ref_host, source, campaign, out_host FROM traffic_view WHERE scope = ?1 ORDER BY id DESC LIMIT 1")
+      .get(ids["notes"]!);
+    expect(row).toEqual({ path: "/a", ref_host: "espodev.com", source: "post", campaign: "c1", out_host: "github.com" });
+    expect(app.db.query("SELECT 1 FROM traffic_view WHERE scope = ?1").all(ids["diary"]!)).toEqual([]);
+  });
+
   test("keeps no address and refuses a foreign origin, a bad body and an opted-out visitor", async () => {
     expect((await report("notes", good, { origin: "http://evil.test" })).status).toBe(403);
     expect((await report("notes", "nope")).status).toBe(400);
@@ -162,6 +174,25 @@ describe("a report through the proxy", () => {
     const asAlice = await get(createToken(app.db, owner.id, "r", "ro").token);
     expect(await asAlice.json()).toMatchObject({ vitals: { today: 1 } });
     expect(((await (await get(createToken(app.db, owner.id, "r2", "ro").token)).json()) as { vitals: { loadDays: unknown[] } }).vitals.loadDays).toHaveLength(30);
+  });
+
+  test("the API's vitals carry the slowest relayed wait and whose it was (#10858)", async () => {
+    const owner = (await import("../src/core/users.ts")).getUserByName(app.db, "alice")!;
+    const get = async () =>
+      (await (
+        await fetch(`${servers.url}/api/v1/repos/alice/notes/app`, {
+          headers: { authorization: `Bearer ${createToken(app.db, owner.id, "wait", "ro").token}` },
+        })
+      ).json()) as { vitals: Record<string, unknown> };
+    clearRelayWaits();
+    expect((await get()).vitals).not.toHaveProperty("wait");
+    // 820 ms to headers, 600 ms of it the forge's loop: the forge's wait.
+    noteRelayWait(ids.notes!, 820, 600);
+    try {
+      expect((await get()).vitals.wait).toMatchObject({ ttfbMs: 820, lagMs: 600, forge: true });
+    } finally {
+      clearRelayWaits();
+    }
   });
 
   test("a sealed pull's preview refuses an anonymous report and stores nothing", async () => {
@@ -256,7 +287,14 @@ describe("what is kept", () => {
 
   test("the prune and the per-app reads use an index", () => {
     const plan = (sql: string) =>
-      app.db.query<{ detail: string }, []>(`EXPLAIN QUERY PLAN ${sql}`).all().map((r) => r.detail).join("\n");
+      {
+        const q = app.db.prepare<{ detail: string }, []>(`EXPLAIN QUERY PLAN ${sql}`);
+        try {
+          return q.all().map((r) => r.detail).join("\n");
+        } finally {
+          q.finalize();
+        }
+      };
     expect(plan("DELETE FROM app_vital WHERE at < 1")).toContain("app_vital_at");
     expect(plan("SELECT COUNT(*) FROM app_vital WHERE app_id = 'a' AND day = 'd'")).toContain("app_vital_app_day");
   });

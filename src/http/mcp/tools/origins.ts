@@ -7,7 +7,7 @@ import { good, bad, type Tool } from "../shared.ts";
 
 export const tool: Tool = {
   name: "origins",
-  doc: "`{ action, id?, hosts? }`: `list` your connected origins, `repos` the repositories one holds (`id`; `mirroredAs` says which are already here), `sync` one now, or `hosts`: with no `hosts`, read the internal hosts an origin may live on (a forge admin, `fromEnv` read-only), with `hosts` (one per line) replace them as Settings → Origins does, a rejected line named in the error; the same as `GET /api/v1/user/origins`, `…/:id/repos` and `POST …/:id/sync`, for you only, an admin token as there; never a credential in an answer",
+  doc: "`{ action, id?, hosts? }`: `list` your connected origins, `repos` the repositories one holds (`id`; `mirroredAs` says which are already here), `sync` one now, or `hosts`: with no `hosts`, read the internal hosts an origin may live on (a forge admin, `fromEnv` read-only), with `hosts` (one per line) replace them as Settings → Connected accounts does, a rejected line named in the error; the same as `GET /api/v1/user/origins`, `…/:id/repos` and `POST …/:id/sync`, for you only, an admin token as there; never a credential in an answer",
   description:
     "Origins: list, repos, sync, hosts.",
   inputSchema: {

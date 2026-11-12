@@ -57,8 +57,12 @@ export interface FakeRepo {
   openPulls?: number;
   /** KiB, as both forges report `size`. */
   sizeKb?: number;
-  /** Set by a successful `PATCH` with `archived: true`. */
+  /** Set by a successful `PATCH` with `archived`. */
   archived?: boolean;
+  /** What `archived_at` says. */
+  archivedAt?: string;
+  /** A `PATCH` answers 200 and changes nothing. */
+  ignoresPatch?: boolean;
 }
 
 export interface FakeIssue {
@@ -199,6 +203,10 @@ export interface FakeState {
   conditionalHits: number;
   /** Refuse the next write with this message. */
   refuseWrite: string;
+  /** Refuse (422) a review posted with `comments` inside it; a bare verdict goes through. */
+  refuseReviewComments?: boolean;
+  /** Forgejo webhooks as created, keyed `owner/name`. */
+  hooks: Map<string, Record<string, unknown>[]>;
   /**
    * How many `getRepo` calls a freshly forked repository 404s for before it
    * appears. GitHub creates a fork asynchronously and answers 202 with a
@@ -217,6 +225,26 @@ export interface FakeState {
   nextId: number;
   /** The OAuth endpoints, when a test wants the connect flows. */
   oauth?: FakeOAuth;
+  /**
+   * GitHub's `X-OAuth-Scopes` on every answer, as a classic token sends it;
+   * unset, the fake is a fine-grained token, which names none.
+   */
+  scopes?: string;
+  /**
+   * A scope the token lacks for `/user` (`read:user`): answered as Forgejo
+   * answers it, a 403 that names the scope.
+   */
+  userScopeMissing?: string;
+  /** A scope the token lacks for any repository write, checked before the lookup as Forgejo does. */
+  repoWriteScopeMissing?: string;
+  /** The account administers the instance: `is_admin` / `site_admin` on `/user`. */
+  siteAdmin?: boolean;
+  /** Called before each page of a repository listing is answered: the world moving mid-walk. */
+  onRepoPage?: (page: number) => void;
+  /** What `X-Total-Count` says on a repository listing, when it should lie. */
+  repoTotalOverride?: number;
+  /** Repositories (`owner/name`) whose `GET /repos/{o}/{r}` answers 500. */
+  failRepos?: Set<string>;
 }
 
 export interface FakeForge {
@@ -254,6 +282,7 @@ export function newFakeState(
     etagsEnabled: false,
     conditionalHits: 0,
     refuseWrite: "",
+    hooks: new Map(),
     forkDelayReads: 0,
     pendingForks: new Map(),
     refuseFork: "",
@@ -391,19 +420,64 @@ function route(
   if (rest === "/settings/api")
     return jsonResponse({ max_response_items: state.maxResponseItems });
 
+  if (rest === "/user" && state.userScopeMissing !== undefined)
+    return jsonResponse(
+      {
+        message: `token does not have at least one of required scope(s): [${state.userScopeMissing}]`,
+        url: `${url.origin}/api/swagger`,
+      },
+      403,
+    );
   if (rest === "/user")
-    return jsonResponse({
-      id: 7,
-      login: state.login,
-      full_name: state.login,
-      name: state.login,
-      html_url: `${url.origin}/${state.login}`,
-    });
+    return jsonResponse(
+      {
+        id: 7,
+        login: state.login,
+        full_name: state.login,
+        name: state.login,
+        html_url: `${url.origin}/${state.login}`,
+        ...(state.kind === "github"
+          ? { site_admin: state.siteAdmin === true }
+          : { is_admin: state.siteAdmin === true }),
+      },
+      200,
+      state.scopes === undefined ? {} : { "x-oauth-scopes": state.scopes },
+    );
 
   if (rest === "/user/repos" || rest === "/repos/search") {
-    const rows = state.repos.map((r) => repoJson(state, r));
+    // Paged as Forgejo pages: `limit` clamped to the instance's ceiling,
+    // `page` from 1, and `sort` (id, or updated: most recent first) when
+    // asked; with no `limit`, everything at once, as before.
+    const page = Math.max(1, Number(q.get("page") ?? "1") || 1);
+    state.onRepoPage?.(page);
+    const visibility = q.get("visibility");
+    const archivedOnly = q.get("archived") === "true";
+    const named = (q.get("q") ?? "").toLowerCase();
+    const ordered = state.repos.filter(
+      (r) =>
+        (visibility === null ||
+          visibility === "all" ||
+          (visibility === "private") === (r.private ?? false)) &&
+        (!archivedOnly || r.archived === true) &&
+        r.fullName.split("/")[1]!.toLowerCase().includes(named),
+    );
+    if (q.get("sort") === "id") ordered.sort((a, b) => a.id - b.id);
+    if (q.get("sort") === "updated")
+      ordered.sort((a, b) => (b.pushedAt ?? "").localeCompare(a.pushedAt ?? ""));
+    const asked = Number(q.get("limit") ?? "");
+    const limit =
+      Number.isFinite(asked) && asked > 0
+        ? Math.min(asked, state.maxResponseItems)
+        : ordered.length;
+    const rows = ordered
+      .slice((page - 1) * limit, page * limit)
+      .map((r) => repoJson(state, r));
     const payload = rest === "/repos/search" ? { ok: true, data: rows } : rows;
-    return jsonResponse(payload, 200, { "x-total-count": String(rows.length) });
+    return jsonResponse(payload, 200, {
+      "x-total-count": String(
+        state.repoTotalOverride ?? (archivedOnly ? ordered.length : state.repos.length),
+      ),
+    });
   }
 
   // Cross-repo issue search. Both forges hang it off a path that *looks*
@@ -422,6 +496,13 @@ function route(
 
   const repoMatch = /^\/repos\/([^/]+)\/([^/]+)(.*)$/.exec(rest);
   if (!repoMatch) return new Response("no route", { status: 404 });
+  if (method !== "GET" && state.repoWriteScopeMissing !== undefined)
+    return jsonResponse(
+      {
+        message: `token does not have at least one of required scope(s): [${state.repoWriteScopeMissing}]`,
+      },
+      403,
+    );
   const fullName = `${repoMatch[1]}/${repoMatch[2]}`;
   const tail = repoMatch[3] ?? "";
   const repo = state.repos.find(
@@ -438,21 +519,50 @@ function route(
     return jsonResponse({ message: "Not Found" }, 404);
   }
 
+  // Forgejo's webhooks: listed, and made with a `config` holding url and secret.
+  if (tail === "/hooks" && state.kind !== "github") {
+    const hooks = state.hooks.get(fullName) ?? [];
+    if (method === "GET") return jsonResponse(hooks);
+    if (method === "POST") {
+      if (state.refuseWrite !== "") return refuse(state);
+      const made = { id: state.nextId++, ...(parse(bodyText) as Record<string, unknown>) };
+      state.hooks.set(fullName, [...hooks, made]);
+      return jsonResponse(made, 201);
+    }
+  }
+
   if (tail === "" && method === "PATCH") {
     if (repo.admin === false)
       return jsonResponse({ message: "Must have admin rights to Repository." }, 403);
-    if (parse(bodyText).archived === true) repo.archived = true;
+    const archived = parse(bodyText).archived;
+    if (typeof archived === "boolean" && repo.ignoresPatch !== true)
+      repo.archived = archived;
     return jsonResponse(repoJson(state, repo));
   }
-  if (tail === "") return jsonResponse(repoJson(state, repo));
+  if (tail === "") {
+    if (state.failRepos?.has(fullName))
+      return jsonResponse({ message: "internal error" }, 500);
+    return jsonResponse(repoJson(state, repo));
+  }
 
   // ---- forking ----
+  if (tail === "/forks" && method === "GET") {
+    const forks = state.repos.filter((r) => r.parent === fullName);
+    return jsonResponse(forks.map((r) => repoJson(state, r)), 200, {
+      "x-total-count": String(forks.length),
+    });
+  }
   if (tail === "/forks" && method === "POST") {
     if (state.refuseFork !== "")
       return jsonResponse({ message: state.refuseFork }, 409);
-    const name = fullName.split("/")[1]!;
+    // `name` is the fork's own name when given (both forges take it).
+    const asked = parse(bodyText).name;
+    const name = typeof asked === "string" && asked !== "" ? asked : fullName.split("/")[1]!;
     const forkName = `${state.login}/${name}`;
     const already = state.repos.find((r) => r.fullName === forkName);
+    // A name the account already uses for something else: Forgejo's 409.
+    if (already !== undefined && already.parent !== fullName)
+      return jsonResponse({ message: "repository is already exist" }, 409);
     if (already === undefined) {
       state.repos.push({
         id: state.nextId++,
@@ -796,6 +906,8 @@ function route(
     if (suffix === "/reviews" && method === "POST") {
       if (state.refuseWrite !== "") return refuse(state);
       const input = parse(bodyText);
+      if (state.refuseReviewComments && Array.isArray(input.comments))
+        return jsonResponse({ message: "comments: unexpected" }, 422);
       const created: FakeReviewState = {
         id: state.nextId++,
         issueNumber: number,
@@ -981,6 +1093,8 @@ function repoJson(state: FakeState, repo: FakeRepo): Record<string, unknown> {
     id: repo.id,
     full_name: repo.fullName,
     name,
+    archived: repo.archived ?? false,
+    archived_at: repo.archivedAt ?? "1970-01-01T00:00:00Z",
     owner: { login: owner },
     description: repo.description ?? "",
     private: repo.private ?? false,
@@ -1152,6 +1266,8 @@ export interface FakeOAuth {
   expiresIn: number;
   /** Hand back a new refresh token on every refresh, as rotation does. */
   rotate: boolean;
+  /** Called while a refresh is being answered: something racing it. */
+  onRefresh?: () => void;
   /** Answer the next refresh with this OAuth error code. */
   refreshError: string;
   /** Every token-endpoint request body, parsed. */
@@ -1230,6 +1346,7 @@ export function oauthRoute(
         });
       if (form.refresh_token !== oauth.refreshToken)
         return jsonResponse({ error: "unauthorized_client" });
+      oauth.onRefresh?.();
       oauth.accessToken = `gho_refreshed${oauth.tokenRequests.length}00000000000000000`;
       if (oauth.rotate)
         oauth.refreshToken = `ghr_rotated${oauth.tokenRequests.length}0000000000000000000`;

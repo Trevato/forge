@@ -9,6 +9,7 @@ import { getHold } from "../core/holds.ts";
 import type { Pull } from "../core/pulls.ts";
 import { checkSummary, type RunState } from "../core/runs.ts";
 import { reviewSummary } from "../core/reviews.ts";
+import { wallAsk, wallWords } from "./wall_wait.ts";
 
 export type Actor = "builder" | "reviewer" | "queue" | "person";
 
@@ -27,6 +28,8 @@ export interface NextInput {
   readonly approvals: number;
   /** Verdicts passed on an older head: the pull was pushed to since. */
   readonly pushedSince: number;
+  /** What the access wall holds this head for, in plain words (#7847): a person decides it. */
+  readonly wall?: readonly string[] | null;
 }
 
 const WAITING = {
@@ -43,6 +46,7 @@ export function nextActor(i: NextInput): Next {
   if (i.changesRequested > 0)
     return { who: "builder", why: "changes were asked on this head" };
   if (i.check === "failed") return { who: "builder", why: "its check is red" };
+  if (i.wall != null && i.wall.length > 0) return { who: "person", why: wallAsk(i.wall) };
   if (i.approvals > 0) {
     if (i.check === "ok") return { who: "queue", why: "approved and green" };
     return { who: "queue", why: `approved, ${WAITING[i.check]}` };
@@ -69,5 +73,6 @@ export function nextOfPull(
     changesRequested: reviews.changesRequested,
     approvals: reviews.approvals,
     pushedSince: reviews.stale,
+    wall: wallWords(db, pull.id, live.headOid),
   });
 }

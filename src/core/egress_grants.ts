@@ -51,6 +51,14 @@ export function neverGrantable(address: string): boolean {
   return inCidrs(mapped?.[1] ?? address, refusedRanges());
 }
 
+/**
+ * The curated payment hosts, each named exactly, on 443 (#11142): the
+ * ceiling a child forge's cell may open (`children.paymentEgress`), and
+ * never let through by report mode in any cell, only by an app's own
+ * `forge.json` `egress`.
+ */
+export const PAYMENT_HOSTS: readonly string[] = ["api.stripe.com:443"];
+
 const NAME_RE = /^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)*[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 
 export interface Destination {

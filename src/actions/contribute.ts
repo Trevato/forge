@@ -35,7 +35,6 @@
 import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import {
-  findOriginFork,
   getOriginFor,
   getOriginRepo,
   mirrorOf,
@@ -50,36 +49,23 @@ import { isSafeRef } from "../git/guard.ts";
 import { repoDir } from "../git/repos.ts";
 import type { CommitResult } from "../git/write.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { providerForOrigin } from "../origins/credential.ts";
+import { providerForOrigin, writesPaused } from "../origins/credential.ts";
 import { fetchRefFrom } from "../origins/git-mirror.ts";
 import { importIssue } from "../origins/import.ts";
 import { settled, type MirrorJob } from "../origins/jobs.ts";
 import { mirrorRepo, startMirror } from "../origins/mirror.ts";
+import { ensureFork, forkDeadline } from "../origins/fork-route.ts";
+
+import { denied } from "../origins/operator.ts";
 import type { Provider, RemoteRepo } from "../origins/types.ts";
 import type { WriteThroughError } from "../origins/write-through.ts";
 import { createBranch } from "./branches.ts";
 import { editFiles, type EditFile, type EditFilesError } from "./contents.ts";
 import { requireUser } from "./access.ts";
 
+export { forkDeadline };
+
 // ---- forking at the origin ----
-
-/**
- * How long to wait for a fork to exist. GitHub's docs say most forks are
- * ready "within five minutes" and are in practice ready in one or two
- * seconds; thirty is long enough for the common case and short enough that a
- * request does not hang on the pathological one.
- */
-const FORK_DEADLINE_MS = 30_000;
-
-/**
- * The deadline `forkOrigin` uses when its caller names none. Mutable for the
- * same reason `firstFetchRetry` is: a test that wants the timeout shortens it
- * and puts back what it found.
- */
-export const forkDeadline: { ms: number } = { ms: FORK_DEADLINE_MS };
-
-/** Backoff between polls, in ms; the last value repeats until the deadline. */
-const FORK_BACKOFF = [250, 500, 1_000, 2_000, 3_000] as const;
 
 export type ForkOriginError =
   | "unauthorized"
@@ -87,6 +73,9 @@ export type ForkOriginError =
   | "not_found"
   | "origin_unreachable"
   | "origin_refused"
+  /** The connection is not verified against the operator's rules yet. */
+  | "origin_paused"
+  | "origin_read_only"
   /** The origin took the request and the fork never appeared in time. */
   | "fork_timeout";
 
@@ -135,6 +124,8 @@ export async function forkOrigin(
   // Somebody else's connected account does not exist for you (invariant 9).
   const origin = getOriginFor(app.db, user.value.id, originId);
   if (!origin) return err("not_found");
+  if (origin.readOnly) return err("origin_read_only");
+  if (writesPaused(app, origin.id) !== undefined) return err("origin_paused");
   const provider = providerForOrigin(app, origin);
   if (!provider.ok) return err("origin_unreachable");
 
@@ -144,62 +135,15 @@ export async function forkOrigin(
       upstream.error.error === "not_found" ? "not_found" : "origin_unreachable",
     );
 
-  const found = await existingFork(
+  const forked = await ensureFork(
     app,
     origin,
     provider.value,
     upstream.value.fullName,
+    options.waitMs ?? forkDeadline.ms,
   );
-  let existed = found !== undefined;
-  let remote = found;
-
-  if (remote === undefined) {
-    const asked = await provider.value.forkRepo(upstream.value.fullName);
-    if (!asked.ok) {
-      // An origin that forks in the request itself can take longer than we
-      // wait for an answer, and still have done it. Before calling that a
-      // failure, look for the fork under its conventional name.
-      const name = upstream.value.fullName.split("/")[1] ?? "";
-      const late =
-        asked.error.error === "unreachable" &&
-        name !== "" &&
-        origin.login !== ""
-          ? await awaitFork(
-              provider.value,
-              `${origin.login}/${name}`,
-              options.waitMs ?? forkDeadline.ms,
-            )
-          : undefined;
-      if (
-        late === undefined ||
-        !late.ok ||
-        !sameRepo(late.value.parent, upstream.value.fullName)
-      )
-        return err(
-          asked.error.error === "unreachable" ||
-            asked.error.error === "rate_limited"
-            ? "origin_unreachable"
-            : "origin_refused",
-        );
-      remote = late.value;
-    } else {
-      const ready = await awaitFork(
-        provider.value,
-        asked.value.fullName,
-        options.waitMs ?? forkDeadline.ms,
-      );
-      if (!ready.ok) return ready;
-      remote = ready.value;
-    }
-    existed = false;
-  }
-
-  rememberOriginRepo(app.db, origin.id, {
-    ...remote,
-    // Both forges report the parent on `getRepo`; if this one did not, we
-    // know it anyway, because we are the reason the fork exists.
-    parent: remote.parent ?? upstream.value.fullName,
-  });
+  if (!forked.ok) return forked;
+  const { remote, existed } = forked.value;
 
   app.bus.append({
     kind: "repo.forked",
@@ -249,58 +193,6 @@ export async function forkOrigin(
     : localMirror(app, origin, remote.fullName);
   if (mirror !== undefined) setRepoForkOf(app.db, mirror.id, upstreamName);
   return ok({ remote, mirror, job, existed });
-}
-
-/**
- * The fork of `upstream` this account already has, if any. The cache is
- * asked first (it is the picker's own answer and costs nothing); failing
- * that, the conventional name is asked for directly, because a fork made
- * outside this forge is not in the cache and forking again would be wrong.
- */
-async function existingFork(
-  app: App,
-  origin: Origin,
-  provider: Provider,
-  upstream: string,
-): Promise<RemoteRepo | undefined> {
-  const cached = findOriginFork(app.db, origin.id, upstream);
-  if (cached !== undefined) {
-    const fresh = await provider.getRepo(cached.fullName);
-    if (fresh.ok && sameRepo(fresh.value.parent, upstream)) return fresh.value;
-  }
-  const name = upstream.split("/")[1] ?? "";
-  if (name === "" || origin.login === "") return undefined;
-  const guess = await provider.getRepo(`${origin.login}/${name}`);
-  if (guess.ok && sameRepo(guess.value.parent, upstream)) return guess.value;
-  return undefined;
-}
-
-const sameRepo = (a: string | null, b: string): boolean =>
-  a !== null && a.toLowerCase() === b.toLowerCase();
-
-/** Poll until the origin admits the fork exists, or the deadline passes. */
-async function awaitFork(
-  provider: Provider,
-  fullName: string,
-  waitMs: number,
-): Promise<Result<RemoteRepo, ForkOriginError>> {
-  const deadline = Date.now() + waitMs;
-  for (let attempt = 0; ; attempt++) {
-    const found = await provider.getRepo(fullName);
-    // An empty fork is still a fork; what we are waiting for is the row.
-    if (found.ok) return ok(found.value);
-    if (found.error.error !== "not_found")
-      return err(
-        found.error.error === "unreachable" ||
-          found.error.error === "rate_limited"
-          ? "origin_unreachable"
-          : "origin_refused",
-      );
-    const wait =
-      FORK_BACKOFF[Math.min(attempt, FORK_BACKOFF.length - 1)] ?? 3_000;
-    if (Date.now() + wait > deadline) return err("fork_timeout");
-    await new Promise((resolve) => setTimeout(resolve, wait));
-  }
 }
 
 /** The local mirror of a remote repo at this origin, or undefined. */
@@ -381,6 +273,8 @@ export async function contribute(
   if (!proven.ok) return proven;
   const origin = getOriginFor(app.db, user.value.id, input.originId);
   if (!origin) return err("not_found");
+  if (origin.readOnly) return err("origin_read_only");
+  if (writesPaused(app, origin.id) !== undefined) return err("origin_paused");
   const branch = input.branch.trim();
   if (!isSafeRef(branch) || branch.startsWith("refs/"))
     return err("invalid_branch");
@@ -404,18 +298,30 @@ export async function contribute(
     if (!listed.value.some((b) => b.name === base)) return err("unknown_base");
   }
 
-  return upstream.value.permissions.push
-    ? await contributeDirect(app, user.value, origin, upstream.value, {
-        ...input,
-        branch,
-        base,
-      })
-    : await contributeViaFork(app, user.value, origin, upstream.value, {
-        ...input,
-        branch,
-        base,
-      });
+  // Push rights decide the shape — except on a repository the operator
+  // protects, which is never pushed to from here: always the fork.
+  const direct =
+    upstream.value.permissions.push && !denied(origin, upstream.value.fullName);
+  if (direct) {
+    const tried = await contributeDirect(app, user.value, origin, upstream.value, {
+      ...input,
+      branch,
+      base,
+    });
+    // A forge's JSON carries no rights, so push is assumed and tried. Its
+    // refusal means this account has none there: the way left is its own fork.
+    if (tried.ok || origin.software !== "forge" || !refusedAtOrigin(tried.error)) return tried;
+  }
+  return await contributeViaFork(app, user.value, origin, upstream.value, {
+    ...input,
+    branch,
+    base,
+  });
 }
+
+/** The origin said no to the branch or commit itself, not to anything here. */
+const refusedAtOrigin = (error: ContributeError): boolean =>
+  typeof error === "object" && error.kind === "edit_failed" && JSON.stringify(error.reason).includes("origin_refused");
 
 type Resolved = ContributeInput & { branch: string; base: string };
 

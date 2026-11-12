@@ -6,6 +6,7 @@
  * the resolution to the branch and its report becomes the note on the pull.
  */
 
+import { NOT_A_MEMBER } from "../core/roles.ts";
 import { requireAbility } from "../actions/roles.ts";
 import type { App } from "../app.ts";
 import { getIssueById, listComments } from "../core/issues.ts";
@@ -219,7 +220,7 @@ export const PROPOSE_WHY: Record<ProposeError, string> = {
   no_conflict: "That pull has no conflicts to resolve.",
   no_agent: "No agent holds this pull, so the crew has no hand to ask.",
   busy: "The crew is already working on this pull.",
-  not_member: "Starting a run is for members: the owner has not made this account a member.",
+  not_member: `Starting a run is for members: ${NOT_A_MEMBER}.`,
   archived: ARCHIVED_WHY,
   not_queued: "The crew could not take it on right now (its ceiling or breaker); try again later.",
 };

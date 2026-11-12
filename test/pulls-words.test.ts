@@ -1,6 +1,6 @@
 /**
  * A page of pulls is worded from batched reads (#6151): `pullWords` gives the
- * word `pullWord` gives for every state, in few queries and well under 5 ms.
+ * word `pullWord` gives for every state, in few queries.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -17,7 +17,8 @@ import { repoDir } from "../src/git/repos.ts";
 import { pullWord, pullWords, servingHistory, type WordCtx } from "../src/web/studio/words.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { adminCookie } from "./helpers/admin.ts";
-import { expectBudget } from "./helpers/budget.ts";
+import { expectWork } from "./helpers/work.ts";
+import { statements } from "./helpers/statements.ts";
 
 quietLogs();
 
@@ -121,23 +122,10 @@ describe("a page of pulls, worded in one batch", () => {
     expect(batched[1]).toEqual({ word: "waiting", note: "merged; waiting for production to redeploy" });
   });
 
-  test("the words phase for 50 pulls is under 5 ms", async () => {
+  test("the words phase for 50 pulls costs a bounded number of statements", async () => {
     const pulls = page();
     await pullWords(ctx(), pulls); // warm statement caches
-    let best = Infinity;
-    for (let n = 0; n < 5; n++) {
-      const c = ctx();
-      const at = performance.now();
-      await pullWords(c, pulls);
-      best = Math.min(best, performance.now() - at);
-    }
-    // The same-run baseline: the best of a few trivial reads on this machine, right now.
-    let against = Infinity;
-    for (let n = 0; n < 20; n++) {
-      const at = performance.now();
-      app.db.query("SELECT count(*) FROM issue").get();
-      against = Math.min(against, performance.now() - at);
-    }
-    expectBudget(best, { ms: 5, against });
+    const cost = await statements(app.db, async () => void (await pullWords(ctx(), pulls)));
+    expectWork(cost, { max: 5 });
   });
 });

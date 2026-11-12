@@ -15,6 +15,8 @@
  * links to #606's page. Signed out, the page is where you are and home.
  */
 
+import { HELP_BUILD } from "../../core/contribute.ts";
+import { lacks } from "../../core/roles.ts";
 import { addCommentThrough, openIssueThrough } from "../../actions/issues.ts";
 import { COMMENT_EMPTY, COMMENT_NOT_POSTED } from "../../actions/comment_words.ts";
 import { reportTitle } from "../../actions/page-report.ts";
@@ -33,8 +35,8 @@ import { commitLog } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
-import { notFoundPage, pageHead, loadRepo, repoBase } from "../chrome.ts";
-import { diffTotals } from "../diff-view.ts";
+import { notFoundPage, pageHead, loadRepo, repoBase, SIGN_IN_TO_DO, forbiddenPage } from "../chrome.ts";
+import { diffTotals, pathAnchor } from "../diff-view.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { page } from "../layout.ts";
@@ -69,7 +71,12 @@ interface Stat {
   readonly files: number;
   readonly additions: number;
   readonly deletions: number;
+  /** The first FILES_SHOWN files: the cache keeps no more than the page shows. */
+  readonly top: readonly { path: string; additions: number; deletions: number }[];
 }
+
+/** How many changed paths the page lists; the rest are "and K more". */
+export const FILES_SHOWN = 10;
 
 /** The diff stat per pull, head oid and base oid: git is asked once per pair. */
 const stats = new Map<string, Stat>();
@@ -89,13 +96,30 @@ async function statOf(ctx: Ctx, repo: Repo, pull: Pull): Promise<Stat | undefine
     statReads.count++;
     const { diff, failed } = await diffBetween(dir, baseOid, pull.headOid);
     if (failed) return undefined;
-    const found = { files: diff.files.length, additions: diff.additions, deletions: diff.deletions };
+    const found = { files: diff.files.length, additions: diff.additions, deletions: diff.deletions,
+      top: diff.files
+        .slice(0, FILES_SHOWN)
+        .map((f) => ({ path: f.path, additions: f.additions, deletions: f.deletions })),
+    };
     if (stats.size >= STATS_MAX) stats.delete(stats.keys().next().value!);
     stats.set(key, found);
     return found;
   } catch {
     return undefined;
   }
+}
+
+/** The first changed paths, each linking to its diff on the files page. */
+function changedFiles(stat: Stat, number: number, base: string): Html {
+  const files = `${base}/pulls/${number}/files`;
+  const more = stat.files - stat.top.length;
+  return html`<ul class="change-files" aria-label="Files this pull changed">
+    ${stat.top.map(
+      (f) => html`<li><a href="${files}#${pathAnchor(f.path)}" class="mono">${f.path}</a>
+        <span class="add" aria-label="${f.additions} added">+${f.additions}</span> <span class="del" aria-label="${f.deletions} removed">−${f.deletions}</span></li>`,
+    )}
+    ${when(more > 0, () => html`<li><a href="${files}">and ${more} more</a></li>`)}
+  </ul>`;
 }
 
 /** What the pull changed and where its latest check stands, each a link. */
@@ -113,7 +137,7 @@ async function changeLine(ctx: Ctx, repo: Repo, pull: Pull, base: string) {
     ${check.run
       ? html`<a href="${base}/runs/${check.run.id}">${runStateBadge(check.run.state, check.run.kind)}</a>`
       : badge("No check", { icon: "clock", variant: "outline" })}
-  </p>`;
+  </p>${stat && stat.top.length > 0 ? changedFiles(stat, pull.number, base) : html``}`;
 }
 
 /** The toolbar page's own path, for forms to come back to. */
@@ -243,7 +267,7 @@ export async function toolbarPage(ctx: Ctx): Promise<Response> {
     <div class="form-actions">
       ${when(
         !canWrite(db, repo, user),
-        () => btn("Make it yours", { href: `${base}/make-it-yours`, icon: "fork" }),
+        () => btn(user !== undefined && lacks(db, user, "make_it_yours") ? HELP_BUILD : "Make it yours", { href: `${base}/make-it-yours`, icon: "fork" }),
       )}
       ${other}${home}
     </div>
@@ -260,7 +284,7 @@ export async function toolbarComment(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   const user = ctx.auth.user;
-  if (!user) return new Response("forbidden", { status: 403 });
+  if (!user) return forbiddenPage(ctx, SIGN_IN_TO_DO);
   const where = parseEnv(field(form, "env"));
   if (where === undefined) return new Response("bad request", { status: 400 });
   const db = ctx.app.db;

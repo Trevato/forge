@@ -171,7 +171,7 @@ describe("the chips of a forge", () => {
   test("the home draws the chips, pressed unless switched off", async () => {
     const session = createSession(app.db, bob.id);
     setChip(app.db, bob.id, { kind: "kind", value: "crew" }, true);
-    const page = await (await fetch(`${servers.url}/`, { headers: { cookie: `forge_session=${session.token}` } })).text();
+    const page = await (await fetch(`${servers.url}/feed`, { headers: { cookie: `forge_session=${session.token}` } })).text();
     expect(page).toContain('data-value="crew"');
     expect(page).toMatch(/data-chip="kind"\s+data-value="crew"\s+aria-pressed="false"/);
     expect(page).toMatch(/data-chip="kind"\s+data-value="reviews"\s+aria-pressed="true"/);

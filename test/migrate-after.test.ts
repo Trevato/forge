@@ -116,7 +116,7 @@ describe("migrate: after", () => {
       kind: "github",
       token: secret,
     });
-    if (!connected.ok) throw new Error(connected.error);
+    if (!connected.ok) throw new Error(JSON.stringify(connected.error));
     originId = connected.value.id;
     stopMirror = startMirrorOut(app, async (a, repo) => {
       try {

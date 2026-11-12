@@ -64,25 +64,46 @@ describe("what I can do in the terminal", () => {
   test("a guest, a member and an admin each see their own row", async () => {
     const guest = await shown("bob");
     expect(guest).toContain("You are guest here.");
-    expect(guest).toContain("Create a repository, fork one or copy an app: no");
+    expect(guest).toContain("Create a repository or copy an app: no");
     setMember(forge.db, getUserByName(forge.db, "bob")!.id, true, "x", new Date());
     const member = await shown("bob");
     expect(member).toContain("You are member here.");
-    expect(member).toContain("Create a repository, fork one or copy an app: yes");
+    expect(member).toContain("Create a repository or copy an app: yes");
     expect(member).toContain("Administer the forge: no");
     const admin = await shown("alice");
     expect(admin).toContain("You are admin here.");
     expect(admin).toContain("Administer the forge: yes");
   });
 
+  test("with nothing linked, u and p are not offered and do nothing", async () => {
+    const bob = getUserByName(forge.db, "bob")!;
+    expect(linkedLogin(forge.db, bob.id)).toBeUndefined();
+    const plain = await shown("bob");
+    expect(plain).not.toContain("unlink open-platform.sh");
+    expect(plain).not.toContain("unlink parent forge");
+    const pressed = await shown("bob", ["u", "p"]);
+    expect(pressed).not.toContain("Unlink open-platform.sh login");
+    expect(pressed).not.toContain("Unlink the parent forge?");
+  });
+
   test("the screen shows the open-platform.sh link, and u unlinks it and says so on the bus", async () => {
     const bob = getUserByName(forge.db, "bob")!;
     expect(await shown("bob")).toContain("open-platform.sh: not linked");
     expect(linkEdgeLogin(forge.db, bob, "octo").ok).toBe(true);
-    expect(await shown("bob")).toContain("open-platform.sh: linked as octo");
+    const offered = await shown("bob");
+    expect(offered).toContain("open-platform.sh: linked as octo");
+    expect(offered).toContain("unlink open-platform.sh");
+    expect(offered).not.toContain("unlink parent forge");
     const seen: string[] = [];
     const stop = forge.bus.subscribe((e) => seen.push(e.kind));
-    const after = await shown("bob", ["u"]);
+    const asked = await shown("bob", ["u"]);
+    expect(asked).toContain("Unlink open-platform.sh login octo?");
+    expect(asked).toContain("linked again from Settings on the web");
+    expect(linkedLogin(forge.db, bob.id)).toBe("octo");
+    expect(await shown("bob", ["u", "n"])).toContain("open-platform.sh: linked as octo");
+    expect(await shown("bob", ["u", "esc"])).toContain("open-platform.sh: linked as octo");
+    expect(linkedLogin(forge.db, bob.id)).toBe("octo");
+    const after = await shown("bob", ["u", "y"]);
     stop();
     expect(after).toContain("open-platform.sh: not linked");
     expect(linkedLogin(forge.db, bob.id)).toBeUndefined();
@@ -97,14 +118,17 @@ describe("what I can do in the terminal", () => {
     expect(await shown("bob")).toContain("parent.example: linked");
     // No password and no passkey: the link is the only way in, and p refuses.
     forge.db.query("UPDATE user SET password_hash = '' WHERE id = ?1").run(bob.id);
-    const kept = await shown("bob", ["p"]);
+    expect(await shown("bob", ["p"])).toContain("Unlink the parent forge?");
+    expect(await shown("bob", ["p", "n"])).toContain("parent.example: linked");
+    expect(linkedParent(forge.db, bob.id, issuer)).toBe("sub1");
+    const kept = await shown("bob", ["p", "y"]);
     expect(kept).toContain("parent.example: linked");
     expect(kept).toContain("Add a passkey or a password first");
     expect(linkedParent(forge.db, bob.id, issuer)).toBe("sub1");
     forge.db.query("UPDATE user SET password_hash = 'x' WHERE id = ?1").run(bob.id);
     const seen: string[] = [];
     const stop = forge.bus.subscribe((e) => seen.push(e.kind));
-    const after = await shown("bob", ["p"]);
+    const after = await shown("bob", ["p", "y"]);
     stop();
     expect(after).toContain("parent.example: not linked");
     expect(linkedParent(forge.db, bob.id, issuer)).toBeUndefined();

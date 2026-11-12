@@ -10,12 +10,14 @@
  * the summary that says what failed.
  */
 
+import { STEER_SAYS, steerRepoRun } from "../../actions/runs.ts";
+import { steerRefusedWords } from "../../actions/steer_words.ts";
 import { placementWords } from "../../checks/placement.ts";
 import { getIssuesByIds, type Issue } from "../../core/issues.ts";
-import type { Repo } from "../../core/repos.ts";
+import { canWrite, type Repo } from "../../core/repos.ts";
 import type { Run, RunState } from "../../core/runs.ts";
 import { getUsersByIds } from "../../core/users.ts";
-import type { Ctx } from "../app/app.ts";
+import type { Ctx, Screen } from "../app/app.ts";
 import type { Rect, Screen as Surface } from "../term/screen.ts";
 import type { Tokens } from "../ui/theme.ts";
 import { icon, type IconSet } from "../ui/icons.ts";
@@ -25,6 +27,7 @@ import {
   drawList,
   hitList,
   metaOf,
+  promptScreen,
   relTime,
   type ListRow,
 } from "./common.ts";
@@ -174,4 +177,55 @@ export function openRunLog(
   run: Run,
 ): void {
   ctx.push(runLogScreen(f, ctx, repo, run.id));
+}
+
+/**
+ * Whether the viewer may say a word to this run: an agent's run that is
+ * running, and a person who may write here. An agent session is never
+ * offered it — a run costs money, and steering one is a person's call, as
+ * `steerRepoRun` refuses it too.
+ */
+export function maySteer(f: Session, repo: Repo, run: Run | undefined): boolean {
+  return (
+    run !== undefined &&
+    run.kind === "agent" &&
+    run.state === "running" &&
+    f.user !== undefined &&
+    f.user.kind !== "agent" &&
+    canWrite(f.db, repo, f.user)
+  );
+}
+
+/**
+ * Steer: a one-line composer whose enter sends the words through
+ * `steerRepoRun`, as the run page's steer box and MCP `steer` do. Empty text
+ * keeps the composer open with the refusal; the outcome is a toast in the
+ * words MCP answers with.
+ */
+export function steerPrompt(
+  f: Session,
+  ctx: Ctx,
+  parent: Screen,
+  repo: Repo,
+  run: Run,
+  after: () => void = () => {},
+): void {
+  ctx.push(
+    promptScreen(ctx, parent, {
+      title: "Steer the run",
+      label: `Say a word to ${runTitle(run, runActors(f, [run]))}`,
+      placeholder: "One sentence the agent hears next",
+      onSubmit: (text) => {
+        const steered = steerRepoRun(f.app, f.user, repo, run.id, text);
+        if (!steered.ok) {
+          if (steered.error === "empty") return steerRefusedWords("empty");
+          ctx.toast(steerRefusedWords(steered.error), "danger");
+          return undefined;
+        }
+        ctx.toast(`${steered.value === "sent" ? "Sent" : "Commented"}. ${STEER_SAYS[steered.value]}`);
+        after();
+        return undefined;
+      },
+    }),
+  );
 }

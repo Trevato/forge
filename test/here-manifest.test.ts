@@ -77,6 +77,18 @@ describe("the manifest: what you can do here, as who you are", () => {
       visibility: "private",
     });
     if (!vault.ok) throw new Error(String(vault.error));
+    const pub = await newApp(app, alice, {
+      name: "pub",
+      owner: "acme",
+      visibility: "public",
+    });
+    if (!pub.ok) throw new Error(String(pub.error));
+    const plain = await createRepo(app, alice, {
+      name: "plain",
+      owner: "acme",
+      visibility: "public",
+    });
+    if (!plain.ok) throw new Error(String(plain.error));
     const bot = await createAgent(app, alice, { username: "bot" });
     if (!bot.ok) throw new Error(String(bot.error));
     expect(addToCrew(app, alice, game.value.repo, "bot").ok).toBe(true);
@@ -110,7 +122,7 @@ describe("the manifest: what you can do here, as who you are", () => {
       text: "",
     };
   };
-  const does = (m: any): string[] => m.actions.map((a: any) => a.do);
+  const does = (m: any): string[] => m.can.map((a: any) => a.do);
 
   // ── refusals first ────────────────────────────────────────────────────
 
@@ -139,7 +151,7 @@ describe("the manifest: what you can do here, as who you are", () => {
     const { body } = await manifest("/acme/game");
     expect(body.you.as).toBe("anonymous");
     const byName = new Map<string, any>(
-      body.actions.map((a: any) => [a.do, a]),
+      body.can.map((a: any) => [a.do, a]),
     );
     expect(byName.get("report a problem").account).toBe(false);
     expect(byName.get("report a problem").mcp).toBe("report");
@@ -193,6 +205,32 @@ describe("the manifest: what you can do here, as who you are", () => {
     expect(list).not.toContain("change settings");
   });
 
+  test("a writer of a fork is offered how it follows its parent; a reader and a plain repository's writer are not", async () => {
+    const fork = await forkRepo(app, usersByName["wes"]!, getRepo(app.db, "acme", "game")!);
+    if (!fork.ok) throw new Error(String(fork.error));
+    const path = "/wes/game";
+    const moves = [
+      "read how it follows its parent",
+      "take the parent's updates",
+      "propose its changes to the parent",
+    ];
+    const { body } = await manifest(path, "wes");
+    for (const d of moves) expect(does(body)).toContain(d);
+    expect(body.can.find((a: any) => a.do === moves[1]).http).toBe(
+      "POST /api/v1/repos/wes/game/following/take",
+    );
+    expect(moves.map((d) => body.can.find((a: any) => a.do === d).mcp)).toEqual([
+      "following",
+      "take_updates",
+      "propose_to_parent_forge",
+    ]);
+    for (const who of ["carol", undefined])
+      for (const d of moves)
+        expect(does((await manifest(path, who)).body)).not.toContain(d);
+    for (const d of moves)
+      expect(does((await manifest("/acme/game", "wes")).body)).not.toContain(d);
+  });
+
   test("the owner also changes the settings", async () => {
     const { body } = await manifest("/acme/game", "alice");
     expect(body.you.as).toBe("owner");
@@ -218,11 +256,10 @@ describe("the manifest: what you can do here, as who you are", () => {
   test("the forge's manifest names how to help, for anyone; a repository's does not", async () => {
     for (const who of [undefined, "carol"]) {
       const { body, size } = await manifest("/", who);
-      expect(body.actions).toContainEqual({
+      expect(body.can).toContainEqual({
         do: "see how to help build this forge",
         http: "GET /api/v1/contribute",
         mcp: "contribute",
-        account: false,
       });
       expect(size).toBeLessThan(2048);
       expect(does((await manifest("/acme/game", who)).body)).not.toContain(
@@ -231,30 +268,102 @@ describe("the manifest: what you can do here, as who you are", () => {
     }
   });
 
+  test("the forge's manifest names the changelog, for anyone", async () => {
+    for (const who of [undefined, "carol"]) {
+      const { body, size } = await manifest("/", who);
+      expect(body.can).toContainEqual({
+        do: "see what went live",
+        http: "GET /api/v1/changelog",
+        mcp: "releases",
+      });
+      expect(size).toBeLessThan(2048);
+    }
+  });
+
+  test("an anonymous viewer is told how to get an account; a signed-in one is not", async () => {
+    const anon = (await manifest("/")).body.can;
+    expect(anon).toContainEqual({
+      do: "make an account",
+      http: "GET /signup",
+      account: false,
+    });
+    expect(anon).toContainEqual({
+      do: "sign in",
+      http: "GET /signin",
+      account: false,
+    });
+    expect(anon.findIndex((a: any) => a.do === "use the MCP")).toBeLessThan(
+      anon.findIndex((a: any) => a.do === "make an account"),
+    );
+    const signedIn = does((await manifest("/", "carol")).body);
+    expect(signedIn).not.toContain("make an account");
+    expect(signedIn).not.toContain("sign in");
+  });
+
+  test("an edge-login forge offers sign in but no sign-up", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-here-edge-"));
+    const edgeApp = createApp({ dataDir: dir, port: 0, edgeToken: "e" });
+    const edgeServers = await serve(edgeApp);
+    try {
+      const res = await fetch(`${edgeServers.url}/api/v1/here`);
+      const names = (await res.json() as any).can.map((a: any) => a.do);
+      expect(names).toContain("sign in");
+      expect(names).not.toContain("make an account");
+    } finally {
+      edgeServers.stop();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("the forge's manifest names the OpenAPI document, and it answers", async () => {
+    for (const who of [undefined, "carol"]) {
+      const { body, size } = await manifest("/", who);
+      expect(body.can).toContainEqual({
+        do: "read the HTTP contract",
+        http: "GET /contract/openapi.json",
+        account: false,
+      });
+      expect(size).toBeLessThan(2048);
+    }
+    const res = await fetch(`${base}/contract/openapi.json`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/json");
+  });
+
   test("/explore and /search name their query API and MCP tool, the query carried over", async () => {
     for (const who of [undefined, "carol"]) {
       const e = (await manifest("/explore?q=kind:app", who)).body;
       expect(e.here).toEqual({ kind: "explore" });
-      expect(e.actions[0].http).toBe("GET /api/v1/explore?q=kind:app");
-      expect(e.actions[0].mcp).toBe("explore");
+      expect(e.can[0].http).toBe("GET /api/v1/explore?q=kind:app");
+      expect(e.can[0].mcp).toBe("explore");
       const s = (await manifest("/search", who)).body;
       expect(s.here).toEqual({ kind: "search" });
-      expect(s.actions[0].http).toBe("GET /api/v1/search");
-      expect(s.actions[0].mcp).toBe("search");
+      expect(s.can[0].http).toBe("GET /api/v1/search");
+      expect(s.can[0].mcp).toBe("search");
       const f = (await manifest("/", who)).body;
       expect(f.here.kind).toBe("forge");
-      expect(f.actions.map((a: any) => a.mcp)).toEqual(
+      expect(f.can.map((a: any) => a.mcp)).toEqual(
         expect.arrayContaining(["explore", "search"]),
       );
-      for (const a of f.actions)
+      for (const a of f.can)
         if (a.mcp === "explore" || a.mcp === "search")
           expect(a.account).toBeUndefined();
     }
     const q = (await manifest("/search?q=a%20b%26c")).body;
-    expect(q.actions[0].http).toBe("GET /api/v1/search?q=a%20b%26c");
+    expect(q.can[0].http).toBe("GET /api/v1/search?q=a%20b%26c");
     const other = (await manifest("/settings")).body;
     expect(other.here).toEqual({ kind: "forge" });
-    expect(other.actions[0].do).toBe("explore apps and repositories");
+    expect(other.can[0].do).toBe("explore apps and repositories");
+  });
+
+  test("the explore and search verbs name the MCP argument q", async () => {
+    const e = (await manifest("/explore?q=kind:app")).body;
+    expect(e.can[0].mcpArgs).toEqual({ q: "kind:app" });
+    const long = (await manifest(`/search?q=${"x".repeat(300)}`)).body;
+    expect(long.can[0].mcpArgs.q).toHaveLength(200);
+    const f = (await manifest("/")).body;
+    for (const tool of ["explore", "search"])
+      expect(f.can.find((a: any) => a.mcp === tool).mcpArgs).toHaveProperty("q");
   });
 
   test("it is small", async () => {
@@ -317,10 +426,31 @@ describe("the manifest: what you can do here, as who you are", () => {
 
   test("an account whose email is unproven is told that offering a change needs a verified email", async () => {
     const una = (await manifest("/acme/game", "una")).body;
-    const offer = una.actions.find((a: any) => a.do === "offer a change");
+    const offer = una.can.find((a: any) => a.do === "offer a change");
     expect(offer.verify).toBe(true);
     const carol = (await manifest("/acme/game", "carol")).body;
-    expect(carol.actions.find((a: any) => a.do === "offer a change").verify).toBeUndefined();
+    expect(carol.can.find((a: any) => a.do === "offer a change").verify).toBeUndefined();
+  });
+
+  test("a repository with an app offers make it yours to whoever cannot write it", async () => {
+    const find = (m: any) => m.can.find((a: any) => a.do === "make it yours");
+    const carol = find((await manifest("/acme/pub", "carol")).body);
+    expect(carol).toEqual({
+      do: "make it yours",
+      http: "POST /api/v1/repos/acme/pub/make-it-yours",
+      mcp: "make_it_yours",
+    });
+    expect(find((await manifest("/acme/pub", "una")).body).verify).toBe(true);
+    const out = find((await manifest("/acme/pub")).body);
+    expect(out.account).toBe(true);
+    expect(out.verify).toBeUndefined();
+  });
+
+  test("a writer, and a repository without an app, are not offered make it yours", async () => {
+    expect(does((await manifest("/acme/pub", "wes")).body)).not.toContain("make it yours");
+    expect(does((await manifest("/acme/pub", "alice")).body)).not.toContain("make it yours");
+    expect(does((await manifest("/acme/plain", "carol")).body)).not.toContain("make it yours");
+    expect(does((await manifest("/acme/plain")).body)).not.toContain("make it yours");
   });
 
   test("an org's own pages are the org's, not a missing repository", async () => {
@@ -355,10 +485,10 @@ describe("the manifest: what you can do here, as who you are", () => {
   test("one segment is a person, an org, nobody, or one of the forge's own names", async () => {
     const person = (await manifest("/wes")).body;
     expect(person.here).toEqual({ kind: "person", username: "wes" });
-    expect(person.actions[0].http).toBe("GET /api/v1/users/wes/repos");
+    expect(person.can[0].http).toBe("GET /api/v1/users/wes/repos");
     const org = (await manifest("/ACME", "carol")).body;
     expect(org.here).toEqual({ kind: "org", org: "acme" });
-    expect(org.actions[0].http).toBe("GET /api/v1/orgs/acme/teams");
+    expect(org.can[0].http).toBe("GET /api/v1/orgs/acme/teams");
     const nobody = await here("/nope");
     expect(nobody.status).toBe(404);
     expect(await nobody.json()).toEqual(await (await here("/acme/nothing")).json());
@@ -421,9 +551,9 @@ describe("the manifest: what you can do here, as who you are", () => {
 
   test("on /explore the page read is not repeated by the generic one", async () => {
     const { body } = await manifest("/explore?q=kind:app");
-    const reads = body.actions.filter((a: any) => a.mcp === "explore");
+    const reads = body.can.filter((a: any) => a.mcp === "explore");
     expect(reads.length).toBe(1);
     expect(reads[0].http).toBe("GET /api/v1/explore?q=kind:app");
-    expect(body.actions.filter((a: any) => a.mcp === "search").length).toBe(1);
+    expect(body.can.filter((a: any) => a.mcp === "search").length).toBe(1);
   });
 });

@@ -4,6 +4,7 @@
  * action the pages call — so what a person may not do on a page they may
  * not do here.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { chmodSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -14,13 +15,13 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { pullDir } from "../src/core/pulls.ts";
 import { resolveOid } from "../src/git/merge.ts";
 import { openIssue } from "../src/actions/issues.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
 import { addComment, createIssue, listIssues } from "../src/core/issues.ts";
 import { addDependency } from "../src/core/dependencies.ts";
-import { getRepoById, updateRepoSettings, type Repo } from "../src/core/repos.ts";
+import { getRepo, getRepoById, updateRepoSettings, type Repo } from "../src/core/repos.ts";
 import { createRun, listRuns, setRunBase } from "../src/core/runs.ts";
 import { getAccountCeiling } from "../src/core/account_ceiling.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -33,11 +34,13 @@ import { promote } from "./helpers/members.ts";
 import { showBoard } from "../src/actions/boards.ts";
 import { panelData } from "../src/boards/panel_data.ts";
 import { listVia } from "./mcp-list.ts";
+import { adminOpenapi } from "./helpers/openapi-doc.ts";
 
 /** tools/list's order: the tools by name, then `report`. */
 const sortedThenReport = (names: string[]): string[] => [
-  ...names.filter((n) => n !== "report").sort((a, b) => a.localeCompare(b)),
+  ...names.filter((n) => n !== "report" && n !== "start").sort((a, b) => a.localeCompare(b)),
   "report",
+  "start",
 ];
 
 describe("the forge over MCP", () => {
@@ -146,6 +149,34 @@ describe("the forge over MCP", () => {
     expect(get.headers.get("allow")).toBe("POST");
   });
 
+  test("a browser opening /mcp reads what it is; a client still gets the bare 405", async () => {
+    const browser = await fetch(`${base}/mcp`, { headers: { accept: "text/html" } });
+    expect(browser.status).toBe(405);
+    expect(browser.headers.get("allow")).toBe("POST");
+    expect(browser.headers.get("x-content-type-options")).toBe("nosniff");
+    const text = await browser.text();
+    expect(text).toContain("This is the forge's MCP server");
+    expect(text).toContain("/llms.txt");
+    expect(text).toContain("/.well-known/mcp.json");
+    const stream = await fetch(`${base}/mcp`, { headers: { accept: "text/event-stream" } });
+    expect(stream.status).toBe(405);
+    expect(stream.headers.get("allow")).toBe("POST");
+    expect(await stream.text()).toContain("JSON-RPC over POST");
+    const bare = await fetch(`${base}/mcp`);
+    expect(bare.status).toBe(405);
+    expect(await bare.text()).toContain("MCP endpoint");
+    const anon = await (await fetch(`${base}/mcp`, { headers: { accept: "text/html" } })).text();
+    expect(anon).toContain('href="/signin"');
+    expect(anon).not.toContain('href="/settings/tokens">Settings');
+    const signedIn = await fetch(`${base}/mcp`, {
+      headers: { accept: "text/html", authorization: `Bearer ${rw}` },
+    });
+    expect(signedIn.status).toBe(405);
+    const page = await signedIn.text();
+    expect(page).toContain('<a href="/settings/tokens">Settings › Tokens</a>');
+    expect(page).not.toContain("to make a token");
+  });
+
   test("it speaks the protocol: initialize, a notification, ping, tools/list", async () => {
     const init = await call(rw, "initialize", {
       protocolVersion: "2025-03-26",
@@ -182,6 +213,7 @@ describe("the forge over MCP", () => {
     const names = listed.body.result.tools.map((t: { name: string }) => t.name);
     // Listed by name, one file each (#5924), and `report` last.
     expect(names).toEqual(sortedThenReport([
+      "data",
       "drills",
       "sizes",
       "releases",
@@ -191,6 +223,7 @@ describe("the forge over MCP", () => {
       "repo",
       "here",
       "tell",
+      "templates",
       "share",
       "say",
       "issue",
@@ -202,6 +235,7 @@ describe("the forge over MCP", () => {
       "edit",
       "close",
       "read_file",
+      "release_keeper",
       "write_file",
       "asks",
       "asks_act",
@@ -212,11 +246,17 @@ describe("the forge over MCP", () => {
       "seal",
       "secrets",
       "issue_teams",
+      "issues",
+      "iterations",
+      "keep_plan",
+      "knobs",
       "orgs",
       "now",
+      "open_pull",
       "org_create",
       "stop",
       "health",
+      "forge_view",
       "audit",
       "model_grant",
       "accounts",
@@ -227,6 +267,7 @@ describe("the forge over MCP", () => {
       "invites",
       "account_role",
       "account_suspend",
+      "account_requests",
       "flag_winner",
       "restore_drill",
       "model_ceiling",
@@ -235,11 +276,13 @@ describe("the forge over MCP", () => {
       "origins",
       "decisions_by",
       "archive",
+      "detach",
       "trail",
       "migrate",
       "events",
       "reports",
       "branches",
+      "builds",
       "commits",
       "waves",
       "probe",
@@ -252,13 +295,18 @@ describe("the forge over MCP", () => {
       "sync",
       "sever",
       "flag_set",
+      "economics",
       "follow_mode",
+      "fork",
       "forks",
+      "fork_tree",
       "upstream",
       "propose_to_parent_forge",
       "forge_proposals",
       "converge",
+      "crew",
       "family",
+      "features",
       "next_steps",
       "notify",
       "thought",
@@ -270,10 +318,15 @@ describe("the forge over MCP", () => {
       "egress_grants",
       "explore",
       "person",
+      "bets",
+      "bet",
+      "pinned_forge",
       "search",
       "feed",
       "feed_chips",
       "feed_dismiss",
+      "feed_like",
+      "maintenance",
       "make_it_yours",
       "origin_apps",
       "front_page",
@@ -292,18 +345,26 @@ describe("the forge over MCP", () => {
       "subscriptions",
       "usage",
       "labels",
+      "land_past_gate",
       "repo_labels",
       "wait_for",
+      "next_up",
+      "week",
+      "lift",
+      "held",
       "confirm_wait",
       "attach_look",
       "hold",
       "plan",
+      "atlas",
       "access",
       "capacity",
       "scorecard",
       "flags",
       "flow",
+      "valves",
       "system",
+      "backups",
       "telemetry_history",
       "contribute",
       "limits",
@@ -325,6 +386,7 @@ describe("the forge over MCP", () => {
       "pins",
       "board_delete",
       "report",
+      "start",
     ]));
     const byName = new Map<string, any>(
       listed.body.result.tools.map((t: any) => [t.name, t]),
@@ -527,7 +589,7 @@ describe("the forge over MCP", () => {
     const made = await createAgent(app, alice, { username: "closer", brief: "x" });
     if (!made.ok) throw new Error(String(made.error));
     expect(addToCrew(app, alice, game, "closer").ok).toBe(true);
-    setCrewRole(app.db, game.id, made.value.user.id, "planner");
+    seatAs(app.db, game.id, made.value.user.id, "planner");
     const botToken = createToken(app.db, made.value.user.id, "bot", "rw").token;
     const mine = (title: string) => {
       const o = openIssue(app, made.value.user, game, { title });
@@ -549,6 +611,8 @@ describe("the forge over MCP", () => {
     expect(viaApi.json.error).toBe("forbidden");
     const refused = await tool(botToken, "close", { repo: "alice/game", number: noNote.number, reason: "done" });
     expect(refused.error).toContain("forbidden");
+    expect(refused.error).toContain("already done on main");
+    expect(viaApi.json.message).toContain("already done on main");
 
     // Its own, dropped: closed, and the answer says so.
     const own = mine("a thing to drop");
@@ -564,7 +628,15 @@ describe("the forge over MCP", () => {
     if (!asked.ok) throw new Error(String(asked.error));
     expect(
       (await tool(botToken, "close", { repo: "alice/game", number: asked.value.number, reason: "dropped" })).error,
-    ).toContain("forbidden");
+    ).toContain("a person's ask stands in");
+    // Split into an issue that is not newer than the hand-over.
+    expect(
+      (await tool(botToken, "close", { repo: "alice/game", number: asked.value.number, reason: "split", into: [noNote.number] })).error,
+    ).toContain("opened after ");
+    // A closed issue is not the planner's to close again.
+    expect(
+      (await tool(botToken, "close", { repo: "alice/game", number: own.number })).error,
+    ).toContain("any other close is not the planner's");
     // Nor does an agent reopen.
     expect((await tool(botToken, "close", { repo: "alice/game", number: own.number, state: "open" })).error).toContain(
       "forbidden",
@@ -887,7 +959,8 @@ describe("the forge over MCP", () => {
         t.annotations?.readOnlyHint ?? false,
       ]),
     );
-    expect([hints.map, hints.wait_for]).toEqual([true, false]);
+    // map writes only when given `first`, so it spells no read-only hint.
+    expect([hints.map, hints.wait_for]).toEqual([false, false]);
 
     expect(
       (await tool(rw, "wait_for", { app: "alice/game", issue: b, blockedBy: a }))
@@ -925,7 +998,7 @@ describe("the forge over MCP", () => {
     const after = (await tool(ro, "map", { app: "alice/game" })).value;
     expect(after.edges).not.toContainEqual({ issue: b, blockedBy: a });
     expect(after.ready.map((i: any) => i.number)).toContain(b);
-  });
+  }, 30_000);
 
   test("with plans need a nod on, the plan tool stores one proposal and opens nothing", async () => {
     updateRepoSettings(app.db, getRepoById(app.db, game.id)!, { plansNeedNod: true });
@@ -1215,14 +1288,32 @@ describe("the forge over MCP", () => {
     expect(uris).toEqual([
       "ui://forge/app",
       "ui://forge/asked",
-      "ui://forge/decision",
+      "ui://forge/asks",
+      "ui://forge/board",
+      "ui://forge/capacity",
+      "ui://forge/crew",
+      "ui://forge/drill",
       "ui://forge/explore",
       "ui://forge/feed",
+      "ui://forge/flow",
+      "ui://forge/forges",
+      "ui://forge/forks",
+      "ui://forge/health",
+      "ui://forge/held",
       "ui://forge/issue",
+      "ui://forge/issues",
       "ui://forge/map",
+      "ui://forge/milestones",
       "ui://forge/pull",
       "ui://forge/pulls",
+      "ui://forge/release",
+      "ui://forge/releases",
+      "ui://forge/reports",
       "ui://forge/run",
+      "ui://forge/runs",
+      "ui://forge/scorecard",
+      "ui://forge/search",
+      "ui://forge/usage",
       "ui://forge/wave",
     ]);
     const read = await call(rw, "resources/read", { uri: "ui://forge/app" });
@@ -1236,16 +1327,21 @@ describe("the forge over MCP", () => {
     const meta = (n: string) => tools.find((t: any) => t.name === n)._meta?.ui?.resourceUri;
     expect(meta("apps")).toBe("ui://forge/app");
     expect(meta("new_app")).toBe("ui://forge/app");
-    expect(meta("now")).toBe("ui://forge/run");
-    expect(meta("asks")).toBe("ui://forge/decision");
-    expect(meta("milestones")).toBe("ui://forge/wave");
+    expect(meta("now")).toBe("ui://forge/crew");
+    expect(meta("asks")).toBe("ui://forge/asks");
+    expect(meta("milestones")).toBe("ui://forge/milestones");
+    expect(meta("asks_act")).toBe("ui://forge/asks");
     expect(meta("map")).toBe("ui://forge/map");
+    expect(meta("boards")).toBe("ui://forge/board");
     expect(meta("feed")).toBe("ui://forge/feed");
     expect(meta("issue")).toBe("ui://forge/issue");
     expect(meta("explore")).toBe("ui://forge/explore");
     expect(meta("pull")).toBe("ui://forge/pull");
     expect(meta("pulls")).toBe("ui://forge/pulls");
+    expect(meta("runs")).toBe("ui://forge/runs");
     expect(meta("asked")).toBe("ui://forge/asked");
+    expect(meta("flow")).toBe("ui://forge/flow");
+    expect(meta("scorecard")).toBe("ui://forge/scorecard");
   });
 
   test("tools/call pull carries the card beside an unchanged text answer", async () => {
@@ -1350,7 +1446,7 @@ describe("the forge over MCP", () => {
     expect(cardFor("issue", {}, "https://forge.test", { repo: "alice/game" })).toBeUndefined();
   });
 
-  test("the decision card links each ask to its pull or issue, and to nothing unsafe", async () => {
+  test("the asks card links each ask to its pull or issue, and to nothing unsafe", async () => {
     const { cardFor } = await import("../src/web/studio/cards.ts");
     const words = { decision: "Ship it?", options: ["ship", "close"] };
     const rows = [
@@ -1392,9 +1488,9 @@ describe("the forge over MCP", () => {
     expect(cardFor("asks", { rows: lines }, "javascript:x")!.rows.every((r) => r.link === undefined)).toBe(true);
   });
 
-  test("the feed card draws one linked row per item, ten at most, escaped as text", async () => {
+  test("the feed card draws one linked row per item, twenty at most, escaped as text", async () => {
     const { cardFor } = await import("../src/web/studio/cards.ts");
-    const items = Array.from({ length: 12 }, (_, n) => ({
+    const items = Array.from({ length: 25 }, (_, n) => ({
       actor: "scout",
       what: n === 0 ? "<b>shipped</b>" : `did ${n}`,
       app: "alice/game",
@@ -1405,7 +1501,7 @@ describe("the forge over MCP", () => {
     expect(card.kind).toBe("feed");
     expect(card.title).toBe("Feed");
     expect(card.status).toBe("Latest");
-    expect(card.rows).toHaveLength(10);
+    expect(card.rows).toHaveLength(20);
     expect(card.rows[0]).toEqual({
       label: "scout: <b>shipped</b>",
       value: "alice/game · just now",
@@ -1425,19 +1521,16 @@ describe("the forge over MCP", () => {
     const id = "01m23vygyffx5hg2f5vm8r74sr";
     runs[1]!.id = id;
     const card = cardFor("runs", { runs }, "https://f.example", { repo: "alice/game" })!;
-    expect(card.kind).toBe("run");
+    expect(card.kind).toBe("runs");
     expect(card.title).toBe("Runs");
     expect(card.rows[1]!.link).toBe(`https://f.example/alice/game/runs/${id}`);
     expect(card.rows[0]!.link).toBeUndefined();
     const nolink = cardFor("runs", { runs }, "https://f.example", { repo: "alice" })!;
     expect(nolink.rows[1]!.link).toBeUndefined();
-    expect(card.rows).toHaveLength(12);
-    expect(card.rows[0]).toEqual({ label: "agent r0", value: "done" });
-    expect(card.rows[1]).toMatchObject({ label: `agent ${id}`, value: "#1 — done" });
     const { body } = await call(rw, "tools/call", { name: "runs", arguments: { repo: "alice/game" } });
-    expect(body.result.structuredContent.card.kind).toBe("run");
+    expect(body.result.structuredContent.card.kind).toBe("runs");
     const tools = (await listCall(rw)).body.result.tools;
-    expect(tools.find((t: any) => t.name === "runs")._meta?.ui?.resourceUri).toBe("ui://forge/run");
+    expect(tools.find((t: any) => t.name === "runs")._meta?.ui?.resourceUri).toBe("ui://forge/runs");
   });
 
   test("a tool result carries the card it renders", async () => {
@@ -1446,7 +1539,7 @@ describe("the forge over MCP", () => {
     expect(card.kind).toBe("app");
     expect(card.rows.some((r: any) => r.label === "alice/game")).toBe(true);
     const asks = await call(rw, "tools/call", { name: "asks", arguments: {} });
-    expect(asks.body.result.structuredContent.card.kind).toBe("decision");
+    expect(asks.body.result.structuredContent.card.kind).toBe("asks");
   });
 
   test("ship and close card actions never apply at once and always meet the target tool's required fields", async () => {
@@ -1464,7 +1557,7 @@ describe("the forge over MCP", () => {
     ];
     let actions = 0;
     for (const card of cards)
-      for (const a of card!.actions) {
+      for (const a of [...card!.actions, ...card!.rows.flatMap((r) => r.actions ?? [])]) {
         actions++;
         expect(a.args["dryRun"]).not.toBe(false);
         const t = tools.find((x: any) => x.name === a.tool);
@@ -1505,14 +1598,14 @@ describe("the forge over MCP", () => {
   });
 
   test("GET /contract/openapi.json describes the public API", async () => {
-    const res = await fetch(`${base}/contract/openapi.json`);
+    const res = await adminOpenapi(app, base, "/contract/openapi.json");
     expect(res.status).toBe(200);
     const doc = (await res.json()) as any;
     expect(doc.openapi).toBe("3.1.0");
     expect(doc.paths["/mcp"].post).toBeDefined();
   });
   test("GET /contract/openapi.json serves the triage routes", async () => {
-    const doc = (await (await fetch(`${base}/contract/openapi.json`)).json()) as any;
+    const doc = (await (await adminOpenapi(app, base, "/contract/openapi.json")).json()) as any;
     const R = "/api/v1/repos/{owner}/{name}";
     expect(doc.paths[`${R}/issues/{number}/teams`].get).toBeDefined();
     expect(doc.paths[`${R}/issues/{number}/teams`].put).toBeDefined();
@@ -1565,11 +1658,11 @@ describe("the forge over MCP", () => {
     setMember(app.db, bob.id, false, alice.id, new Date());
     const guest = (await tool(bobRw, "whoami_can")).value;
     expect(guest.role).toBe("guest");
-    expect(guest.can).toEqual({ read: true, comment: true, make_it_yours: false, run_crew: false, administer: false });
+    expect(guest.can).toEqual({ read: true, comment: true, contribute: true, make_it_yours: false, run_crew: false, administer: false });
     setMember(app.db, bob.id, true, alice.id, new Date());
     const member = (await tool(bobRw, "whoami_can")).value;
     expect(member.role).toBe("member");
-    expect(member.can).toEqual({ read: true, comment: true, make_it_yours: true, run_crew: true, administer: false });
+    expect(member.can).toEqual({ read: true, comment: true, contribute: true, make_it_yours: true, run_crew: true, administer: false });
     const admin = (await tool(ro, "whoami_can")).value;
     expect(admin.role).toBe("admin");
     expect(admin.can.administer).toBe(true);
@@ -1648,6 +1741,35 @@ describe("the forge over MCP", () => {
     const denied = await tool(ro, "new_app", { name: "readonly" });
     expect(denied.error).toContain("forbidden");
     expect((await tool(rw, "apps") as any).value.some((r: any) => r.app === "alice/readonly")).toBe(false);
+  }, 30_000);
+
+  test("new_app names an app from a sentence alone, and -2 when taken", async () => {
+    const one = (await tool(rw, "new_app", { sentence: "a garden planner for my allotment" })) as any;
+    expect(one.value.repo).toMatch(/^alice\/[a-z0-9-]+$/);
+    expect(one.value.issue).toBe(1);
+    const two = (await tool(rw, "new_app", { sentence: "a garden planner for my allotment" })) as any;
+    expect(two.value.repo).toBe(`${one.value.repo}-2`);
+    const named = (await tool(rw, "new_app", { name: "keepname", sentence: "a garden planner" })) as any;
+    expect(named.value.repo).toBe("alice/keepname");
+    expect(named.value.issue).toBe(1);
+    // The derived path forwards visibility and agent, and `description` is the first issue over `sentence`.
+    const bot = await createAgent(app, alice, { username: "sentbot", brief: "builds" });
+    if (!bot.ok) throw new Error(String(bot.error));
+    const fwd = (await tool(rw, "new_app", {
+      sentence: "a recipe box for the family",
+      description: "Start with a list of recipes.",
+      visibility: "private",
+      agent: "sentbot",
+    })) as any;
+    expect(fwd.value.agent).toBe("sentbot");
+    const [slug] = fwd.value.repo.split("/").slice(1);
+    const made = getRepo(app.db, "alice", slug)!;
+    expect(made.visibility).toBe("private");
+    expect(listIssues(app.db, made.id, { state: "open" })[0]!.body).toContain("Start with a list of recipes.");
+    // A refusal maps as on the named path.
+    expect((await tool(rw, "new_app", { sentence: "a tide table", agent: "nobody-here" })).error).toContain("no_such_agent");
+    expect((await tool(rw, "new_app", { sentence: "!!!" })).error).toContain("no_name");
+    expect((await tool(rw, "new_app", {})).error).toContain("no_name");
   }, 30_000);
 
   test("new_app with pick lets the planner name the agent", async () => {

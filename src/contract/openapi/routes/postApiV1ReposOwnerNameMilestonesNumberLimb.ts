@@ -6,6 +6,7 @@ export const route: Route = {
   summary:
     "Act on a whole limb: defer, resume, close, raise, lower, replan or takeback. A dry run unless `dryRun` is false (ro scope); applied needs an admin token and answers 201 with the receipt, undone at /api/v1/fleet/ops/{id}/undo",
   auth: true,
+  role: "member",
   alsoStatus: [201],
   body: { action: "string", dryRun: "boolean", reason: "string", pillar: "string", under: "string" },
   refusals: {

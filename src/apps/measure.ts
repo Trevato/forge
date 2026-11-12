@@ -14,6 +14,8 @@ import { readBounded } from "../http/limits.ts";
 import { clientAddress, clientBucket } from "../http/peer.ts";
 import { optedOut, parseReport, REPORT_MAX } from "../web/measure.ts";
 import type { AppTarget } from "./proxy.ts";
+import { originOf } from "../perf/sources.ts";
+import { noteView } from "../perf/views_store.ts";
 import { recordAppVital } from "./vitals.ts";
 
 const PER_CLIENT = 30;
@@ -80,5 +82,12 @@ export async function appMeasure(
     clientAddress(request),
     request.headers.get("user-agent") ?? "",
   );
+  noteView(app.db, {
+    scope: target.app.id,
+    path: report.path.split(/[?#]/)[0] ?? "/",
+    origin: originOf(report.ref, report.q, request.headers.get("host") ?? "", report.out),
+    client: clientAddress(request),
+    agent: request.headers.get("user-agent") ?? "",
+  });
   return refuse(204);
 }

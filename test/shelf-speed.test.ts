@@ -1,4 +1,4 @@
-/** The shelf of 40 apps is drawn in a fixed number of reads, under 40 ms, and says what it said before (#6123). */
+/** The shelf of 40 apps is drawn in a fixed number of reads and says what it said before (#6123). */
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,7 +13,8 @@ import type { Repo } from "../src/core/repos.ts";
 import type { Ctx } from "../src/http/context.ts";
 import { takePhases } from "../src/core/route_timing.ts";
 import { shelfRows } from "../src/web/studio/shelf.ts";
-import { expectBudget } from "./helpers/budget.ts";
+import { expectWork } from "./helpers/work.ts";
+import { statements } from "./helpers/statements.ts";
 import { appsForRepos } from "../src/core/apps.ts";
 import { primaryHosts } from "../src/core/domains.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -73,26 +74,14 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test("40 apps are drawn within budget, in the phases Server-Timing names", async () => {
+test("40 apps are drawn in few statements, in the phases Server-Timing names", async () => {
   await shelfRows(ctx(), repos); // warm
-  let best = Infinity;
-  let phases: string[] = [];
-  for (let i = 0; i < 5; i++) {
-    const c = ctx();
-    const started = performance.now();
-    await shelfRows(c, repos);
-    best = Math.min(best, performance.now() - started);
-    phases = takePhases(c.request).map((p) => p.name);
-  }
+  const c = ctx();
+  await shelfRows(c, repos);
+  const phases = takePhases(c.request).map((p) => p.name);
   expect(phases).toEqual(["shelf-records", "shelf-runs", "shelf-production", "shelf-pulls", "shelf-rows"]);
-  // The yardstick is one batched read of the same shelf, taken in this run.
-  let against = Infinity;
-  for (let i = 0; i < 5; i++) {
-    const t = performance.now();
-    appsForRepos(app.db, repos.map((r) => r.id));
-    against = Math.min(against, performance.now() - t);
-  }
-  expectBudget(best, { ms: 40, against });
+  // Counted, not timed: the shelf reads in batches, so 40 apps cost no more statements than a handful.
+  expectWork(await statements(app.db, async () => void (await shelfRows(ctx(), repos))), { max: 10 });
 });
 
 test("its rows are byte-identical to the ones drawn before the batch", async () => {

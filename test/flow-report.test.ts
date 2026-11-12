@@ -12,7 +12,7 @@ import { flowReadings, flowReportLines } from "../src/flow/report.ts";
 const NOW = new Date("2026-10-26T12:00:00.000Z");
 const ago = (min: number) => new Date(NOW.getTime() - min * 60_000).toISOString();
 const ORDER = [
-  "build_yield", "review_latency", "outsiders", "checks_pile", "gate_minutes",
+  "build_yield", "review_latency", "outsiders", "checks_pile", "stale_reds", "gate_minutes",
   "oldest_approved", "idle_pulls", "lead_time", "openers",
 ];
 const name = (line: string) => line.split(":")[0]!;
@@ -58,6 +58,7 @@ beforeEach(async () => {
   bot = await mk("builder");
   carol = await mk("carol");
   app.db.query(`UPDATE user SET is_agent = 1 WHERE id = ?1`).run(bot);
+  app.db.query(`INSERT INTO agent (user_id, model, brief, budget_usd, created_by, roles) VALUES (?1, 'm', '', 1, ?2, 'builder')`).run(bot, alice);
   const repo = (rname: string, visibility: string) => {
     const rid = id();
     app.db.query(`INSERT INTO repo (id, owner_id, name, visibility) VALUES (?1, ?2, ?3, ?4)`).run(rid, alice, rname, visibility);
@@ -76,7 +77,7 @@ beforeEach(async () => {
   review(landed, "changes_requested", 2 * 60);
   const outsider = issue(priv, carol, 20); // an outsider's pull, red check, opened in the last hour
   pull(outsider, "h3");
-  run(priv, "check", { issue: outsider, oid: "h3", state: "failed", start: 30, end: 10 });
+  run(priv, "check", { issue: outsider, oid: "h3", state: "failed", start: 60, end: 40 });
   run(priv, "agent", { state: "ok", start: 180, end: 120, reason: "build" });
 });
 afterEach(() => {
@@ -102,6 +103,7 @@ describe("flowReportLines", () => {
       "review_latency: no first verdict in 24 h",
       "outsiders: 0 open, oldest 0 h",
       "checks_pile: 0 red, 0 queued",
+      "stale_reds: none",
       "gate_minutes: gates 0 min in 1 h, 0 min in 6 h; pull checks 0 min in 1 h, 0 min in 6 h",
       "oldest_approved: none waiting",
       "idle_pulls: none",
@@ -116,6 +118,7 @@ describe("flowReportLines", () => {
     expect(all.review_latency).toContain("over 1 pulls");
     expect(all.outsiders).toBe("outsiders: 1 open, oldest 0 h");
     expect(all.checks_pile).toBe("checks_pile: 1 red, 0 queued");
+    expect(all.stale_reds).toBe("stale_reds: 1 red with no run for 30 min, oldest 0.7 h");
     expect(all.gate_minutes).toContain("pull checks 20 min in 1 h");
     expect(all.oldest_approved).toContain("priv#1");
     expect(all.idle_pulls).toContain("priv#1");

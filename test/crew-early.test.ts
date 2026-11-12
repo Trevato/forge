@@ -20,11 +20,13 @@ import { answeredBeforeStop } from "../src/crew/already.ts";
 import { alreadyDone } from "../src/core/done_on_main.ts";
 import { updateRepoSettings } from "../src/actions/repos.ts";
 import { pullOfBranch, watchForPull } from "../src/crew/early.ts";
-import { resolveOid } from "../src/git/merge.ts";
+import { contentOnBase, resolveOid } from "../src/git/merge.ts";
+import { openPull } from "../src/actions/pulls.ts";
+import { readRepoFlow } from "../src/flow/repo_flow.ts";
 import { abortAgentRun } from "../src/crew/running.ts";
 import { getAgentByName } from "../src/core/agents.ts";
 import { createIssue, getIssue, listComments } from "../src/core/issues.ts";
-import { listPulls } from "../src/core/pulls.ts";
+import { listPulls, mergePull } from "../src/core/pulls.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { getForkOf, type Repo } from "../src/core/repos.ts";
 import { getRun, listRuns, type Run } from "../src/core/runs.ts";
@@ -71,6 +73,7 @@ describe("the crew, with a stand-in Claude Code: the early pull", () => {
     // The agent has pushed and is still working: the pull is already there.
     const deadline = Date.now() + 20_000;
     while (mine().length === 0 && Date.now() < deadline) await Bun.sleep(100);
+    if (mine().length === 0) throw new Error(`never came: still waiting while mine().length === 0`);
     const early = mine()[0]!;
     expect(early).toBeDefined();
     expect(early.title).toBe("Plant crocuses");
@@ -94,6 +97,25 @@ describe("the crew, with a stand-in Claude Code: the early pull", () => {
     expect(log).toContain(`opened pull #${early.number} at the first push`);
   }, 60_000);
 
+  test("a run whose branch is ahead by commits but level in content proposes nothing and opens no pull (#8628)", async () => {
+    rmSync(join(dataDir, "release"), { force: true });
+    const issue = openIssue(app, alice, repo, { title: "Plant lichen", body: "LEVEL-ME on the wall." });
+    if (!issue.ok) throw new Error("issue");
+    expect(assignIssue(app, alice, repo, issue.value, bot).ok).toBe(true);
+    const branch = `bot/${issue.value.number}-plant-lichen`;
+    const run = await settled((r) => r.branch === branch);
+    expect(run.summary).not.toMatch(/opened pull|updated pull/);
+    const fork = getForkOf(app.db, bot.id, repo.id)!;
+    const forkBare = repoDir(app.reposRoot, fork.ownerName, fork.name);
+    const bare = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    // The branch is ahead by a commit, yet holds nothing the base lacks.
+    const head = (await resolveOid(forkBare, `refs/heads/${branch}`))!;
+    const base = (await resolveOid(bare, `refs/heads/${repo.defaultBranch}`))!;
+    expect(await contentOnBase(forkBare, base, head)).toBe(true);
+    expect(pullOfBranch(app, repo, fork, branch)).toBeUndefined();
+    expect(readRunLog(dataDir, run.id).lines.join("\n")).toContain("nothing to propose");
+  }, 60_000);
+
   test("a body a person edited while the run was going is left alone at the run's end", async () => {
     rmSync(join(dataDir, "release"), { force: true });
     const issue = openIssue(app, alice, repo, {
@@ -109,6 +131,7 @@ describe("the crew, with a stand-in Claude Code: the early pull", () => {
       );
     const deadline = Date.now() + 20_000;
     while (mine().length === 0 && Date.now() < deadline) await Bun.sleep(100);
+    if (mine().length === 0) throw new Error(`never came: still waiting while mine().length === 0`);
     const early = mine()[0]!;
     expect(
       editIssue(app, alice, repo, early, { body: "My own words.\n\nCloses #1" }).ok,
@@ -190,6 +213,7 @@ describe("the crew, with a stand-in Claude Code: the early pull", () => {
       );
     const deadline = Date.now() + 20_000;
     while (mine().length === 0 && Date.now() < deadline) await Bun.sleep(100);
+    if (mine().length === 0) throw new Error(`never came: still waiting while mine().length === 0`);
     const early = mine()[0]!;
     expect(addComment(app, alice, repo, early, "I like where this goes.").ok).toBe(true);
     writeFileSync(join(dataDir, "release"), "");
@@ -266,7 +290,9 @@ describe("the crew, with a stand-in Claude Code: the early pull", () => {
       return out.trim();
     };
     const baseTip = (await resolveOid(bare, `refs/heads/${repo.defaultBranch}`))!;
-    const tree = await git("rev-parse", `${baseTip}^{tree}`);
+    // The empty tree: content the base does not hold (#8628 stops a branch
+    // whose content it does).
+    const tree = await git("hash-object", "-t", "tree", "/dev/null");
     const commit = await git("commit-tree", tree, "-p", baseTip, "-m", "ferns");
     await git("update-ref", `refs/heads/${branch}`, commit);
 
@@ -291,6 +317,75 @@ describe("the crew, with a stand-in Claude Code: the early pull", () => {
     await early.stop();
     expect(lines.length).toBe(1);
     expect(pullOfBranch(app, repo, fork, branch)).toBeUndefined();
+  }, 30_000);
+
+  test("a branch ahead by commits but level in content opens no pull, run after run, and a carried close is no landing (#8628)", async () => {
+    const agent = getAgentByName(app.db, "bot")!;
+    const fork = getForkOf(app.db, bot.id, repo.id)!;
+    const bare = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const forkBare = repoDir(app.reposRoot, fork.ownerName, fork.name);
+    const issue = openIssue(app, alice, repo, { title: "Plant moss", body: "Damp." });
+    if (!issue.ok) throw new Error("issue");
+    const git = async (...args: string[]) => {
+      const p = Bun.spawn(["git", ...args], {
+        cwd: forkBare,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: "t",
+          GIT_AUTHOR_EMAIL: "t@example.test",
+          GIT_COMMITTER_NAME: "t",
+          GIT_COMMITTER_EMAIL: "t@example.test",
+        },
+      });
+      const out = await new Response(p.stdout).text();
+      expect(await p.exited).toBe(0);
+      return out.trim();
+    };
+    // One commit beyond the base whose tree is the base's: its content is
+    // already there, as after a squash landed it.
+    const branch = "bot/already-carried";
+    const baseTip = (await resolveOid(bare, `refs/heads/${repo.defaultBranch}`))!;
+    const tree = await git("rev-parse", `${baseTip}^{tree}`);
+    const commit = await git("commit-tree", tree, "-p", baseTip, "-m", "moss");
+    await git("update-ref", `refs/heads/${branch}`, commit);
+    expect(await contentOnBase(forkBare, baseTip, commit)).toBe(true);
+
+    const run = listRuns(app.db, repo.id, { kind: "agent" })[0]!;
+    for (let again = 0; again < 3; again++) {
+      const lines: string[] = [];
+      const early = watchForPull({
+        app, repo, agent, issue: issue.value, run, fork, branch, forkBare, bare,
+        forgeUrl: "http://forge.test",
+        write: (l) => lines.push(l),
+        variantGroup: null,
+        continuing: false,
+        intervalMs: 10,
+      });
+      await Bun.sleep(100);
+      await early.stop();
+      expect(lines).toEqual([]);
+    }
+    expect(pullOfBranch(app, repo, fork, branch)).toBeUndefined();
+
+    // Opened anyway, a pull like it closes as merged, and landed counts none.
+    const opened = await openPull(app, bot, repo, {
+      title: "Plant moss",
+      body: `Closes #${issue.value.number}`,
+      baseBranch: repo.defaultBranch,
+      headBranch: branch,
+      headRepo: fork,
+    });
+    if (!opened.ok) throw new Error("pull");
+    const landed = await mergePull(app.db, bare, opened.value, {
+      strategy: "squash",
+      message: "moss",
+      actorId: alice.id,
+      author: { name: "t", email: "t@example.test" },
+    });
+    expect(landed.ok && landed.value.carried).toBe(true);
+    expect(readRepoFlow(app.db, repo.id).landed1h).toBe(0);
   }, 30_000);
 
   test("a run whose pull is closed under it, after it answered already done on main, notes and holds its issue", async () => {

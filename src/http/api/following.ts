@@ -18,8 +18,22 @@ import { chainOfRepo, forgeLinkOf } from "../../spawn/chain.ts";
 import { upstreamPayload } from "../../spawn/upstream.ts";
 import { loadRepo, respondTake } from "../api.ts";
 import type { Handler } from "../context.ts";
-import { apiError, body, json, notFound, requireScope, respondAccess } from "../respond.ts";
+import { holds, weakEtag } from "../etag.ts";
+import { apiError, body, json, notFound, requireScope, respondAccess, tryAgain, untilNextDay } from "../respond.ts";
 import type { Router } from "../router.ts";
+
+/**
+ * A body tagged by its own bytes (the standing, or the proposals to the parent): a push to the fork or to the parent's
+ * default branch, or a severed chain, changes them, and a viewer who cannot see
+ * the parent is rendered a different body, so never shares a tag with one who can.
+ */
+function tagged(request: Request, payload: unknown): Response {
+  const text = JSON.stringify(payload);
+  const etag = weakEtag(text);
+  const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+  if (holds(request, etag)) return new Response(null, { status: 304, headers });
+  return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+}
 
 export function followingRoutes(router: Router<Handler>): void {
   // ── following. A fork's standing against its parent, read from git each
@@ -36,7 +50,7 @@ export function followingRoutes(router: Router<Handler>): void {
       if (chain === undefined) return apiError("not_a_fork", 404, "this repository follows nothing");
       const upstream = await timePhaseAsync(ctx.request, "upstream", () => upstreamPayload(ctx.app));
       return timePhase(ctx.request, "render", () =>
-        json({ chain: chain.lines, severedAt: chain.severedAt, upstream }),
+        tagged(ctx.request, { chain: chain.lines, severedAt: chain.severedAt, upstream }),
       );
     }
     const converge =
@@ -47,7 +61,7 @@ export function followingRoutes(router: Router<Handler>): void {
       chain === undefined
         ? null
         : await timePhaseAsync(ctx.request, "upstream", () => upstreamPayload(ctx.app));
-    return timePhase(ctx.request, "render", () => json({
+    return timePhase(ctx.request, "render", () => tagged(ctx.request, {
       chain: chain?.lines ?? null,
       severedAt: chain?.severedAt ?? null,
       upstream,
@@ -68,6 +82,9 @@ export function followingRoutes(router: Router<Handler>): void {
       ahead: relation.ahead,
       clean: relation.clean,
       conflicts: relation.conflicts,
+      // The sync contract's one reconciling action and the words for it (src/git/sync_link.ts).
+      action: relation.action,
+      words: relation.words,
       forkTip: relation.forkTip,
       parentTip: relation.parentTip,
       parentForge: parentForgeFor(ctx.app.config),
@@ -197,7 +214,7 @@ export function followingRoutes(router: Router<Handler>): void {
     const items = await timePhaseAsync(ctx.request, "read", () =>
       forgeProposals(ctx.app, repo, Date.now(), ctx.auth.user !== undefined),
     );
-    return timePhase(ctx.request, "render", () => json({ items }));
+    return timePhase(ctx.request, "render", () => tagged(ctx.request, { items }));
   });
 
   router.add(
@@ -225,8 +242,7 @@ export function followingRoutes(router: Router<Handler>): void {
               : outcome.kind === "nobody" || outcome.kind === "forbidden" || outcome.kind === "not_member"
                 ? 403
                 : 409;
-      return json(
-        {
+      const payload = {
           kind: outcome.kind,
           issue: "issue" in outcome ? outcome.issue.number : null,
           pull: "pull" in outcome ? outcome.pull.number : null,
@@ -234,9 +250,11 @@ export function followingRoutes(router: Router<Handler>): void {
             "agent" in outcome && outcome.agent !== undefined
               ? outcome.agent.user.username
               : null,
-        },
-        status,
-      );
+        };
+      // The crew's ceiling is a day's spend: it starts over at the next UTC day.
+      if (outcome.kind === "ceiling")
+        return tryAgain("ceiling", 429, "the crew is at its ceiling for today", untilNextDay(), {}, payload);
+      return json(payload, status);
     },
   );
 }

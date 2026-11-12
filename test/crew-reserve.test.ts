@@ -4,6 +4,7 @@
  * brief names the target; the tick line says `reserve=startable/target`;
  * and only a pass that did not end well waits out the 20-minute floor.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,7 +13,7 @@ import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { addComment, openIssue, setIssueState } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/repos.ts";
-import { getAgentByName, setCrewRole } from "../src/core/agents.ts";
+import { getAgentByName } from "../src/core/agents.ts";
 import { getIssueById, type Issue } from "../src/core/issues.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
@@ -20,7 +21,7 @@ import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { autonomyTick, driveRepo, settleAgentRun } from "../src/crew/autonomy.ts";
 import { taskPrompt } from "../src/crew/brief.ts";
-import { reserveOf, reserveTarget, reserveWords } from "../src/crew/reserve.ts";
+import { due, reserveOf, reserveTarget, reserveWords } from "../src/crew/reserve.ts";
 import { logLevel, setLogLevel } from "../src/kernel/log.ts";
 
 describe("the reserve's size", () => {
@@ -30,6 +31,17 @@ describe("the reserve's size", () => {
     expect(reserveTarget(1)).toBe(3);
     expect(reserveTarget(0)).toBe(3);
     expect(reserveWords(reserveOf(5, 7))).toBe("5/14");
+  });
+
+  test("the planner is due at half the target, not one below it", () => {
+    expect(due(reserveOf(7, 7))).toBe(true);
+    expect(due(reserveOf(8, 7))).toBe(false);
+    expect(due(reserveOf(13, 7))).toBe(false);
+    expect(due(reserveOf(2, 2))).toBe(true);
+    expect(due(reserveOf(3, 2))).toBe(false);
+    // A thin map of three is still asked at two: there is no half to run down.
+    expect(due(reserveOf(2, 1))).toBe(true);
+    expect(due(reserveOf(3, 1))).toBe(false);
   });
 });
 
@@ -105,7 +117,7 @@ describe("a planner that keeps a standing reserve", () => {
     }
     mason = getUserByName(app.db, "mason")!;
     atlas = getUserByName(app.db, "atlas")!;
-    setCrewRole(app.db, repo.id, atlas.id, "planner");
+    seatAs(app.db, repo.id, atlas.id, "planner");
     // Seven slots, every one of them busy: seven issues with a run in flight.
     for (let n = 0; n < 7; n++) {
       const opened = openIssue(app, alice, repo, { title: `Busy ${n}` });

@@ -40,8 +40,10 @@ import { watchMilestone } from "../../actions/watches.ts";
 import { replanResult } from "../../actions/limb_replan.ts";
 import { given, pendingFor } from "../../core/limb_replan.ts";
 import type { Ctx } from "../../http/context.ts";
-import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
+import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { cachedPlan } from "../map_cache.ts";
+import { milestonePath } from "../../story/wave_plan.ts";
+import { lastWaves, type LastWave } from "../../story/wave_last.ts";
 import { askToLiveFor } from "../ask_to_live.ts";
 import {
   crumbsFor,
@@ -51,17 +53,18 @@ import {
   repoHeader,
   repoPalette,
   signInFirst,
+  NOT_YOURS_TO_DO,
+  forbiddenPage,
 } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { field, readForm } from "../form.ts";
 import { page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
-import { badge, btn, card, listCard, pill, row, time } from "../ui.ts";
-import { folded, issueRow, list, wrappedCard } from "./limb_view.ts";
+import { badge, btn, pill, row, time } from "../ui.ts";
+import { folded, issueRow, list, wrappedRows } from "./limb_view.ts";
 
 /** Where a milestone is: its own page. */
-export const milestoneHref = (base: string, number: number): string =>
-  `${base}/milestones/${number}`;
+export const milestoneHref = milestonePath;
 
 /** Where an action on the whole limb is previewed and confirmed (`limb.ts`). */
 export const limbHref = (
@@ -176,7 +179,7 @@ function weightWords(limb: Limb): Html {
 }
 
 /** How far a limb is, as a bar: the native element, named for a reader who cannot see it. */
-const progress = (done: number, total: number, label: string): Html =>
+export const progress = (done: number, total: number, label: string): Html =>
   html`<progress
     max="${Math.max(total, 1)}"
     value="${done}"
@@ -187,6 +190,7 @@ const progress = (done: number, total: number, label: string): Html =>
 function limbLine(base: string, limb: Limb, move: Html | null = null): Html {
   const w = limb.weight;
   return row({
+    nav: true,
     title: html`<a href="${milestoneHref(base, limb.issue.number)}"
       >${limb.name}</a
     >`,
@@ -200,7 +204,7 @@ function limbLine(base: string, limb: Limb, move: Html | null = null): Html {
 }
 
 /** The repository's plan, kept while nothing it reads changes. */
-const planFor = (ctx: Ctx, repo: Repo, spend: boolean, now: Date): Plan =>
+export const planFor = (ctx: Pick<Ctx, "app"> & { request?: Request }, repo: Repo, spend: boolean, now: Date, named = true): Plan =>
   cachedPlan(
     {
       repoId: repo.id,
@@ -212,7 +216,9 @@ const planFor = (ctx: Ctx, repo: Repo, spend: boolean, now: Date): Plan =>
       readPlan(ctx.app.db, repo, {
         spend,
         now,
-        stretch: (name, ms) => notePhase(ctx.request, `plan-${name}`, ms),
+        ...(named && ctx.request !== undefined
+          ? { stretch: (name: string, ms: number) => notePhase(ctx.request!, `plan-${name}`, ms) }
+          : {}),
       }),
   );
 
@@ -228,7 +234,7 @@ export function milestonesPage(ctx: Ctx): Response {
     moverFor(ctx.app.db, repo, ctx.auth.user, plan.read),
   );
   const rendering = performance.now();
-  const body = html`${repoHeader(ctx, repo, "map")}
+  const body = html`${repoHeader(ctx, repo, "map")}<div data-milestone>
     <div class="page-head mt">
       <h1>Milestones</h1>
       <p class="muted">
@@ -242,13 +248,13 @@ export function milestonesPage(ctx: Ctx): Response {
           show. <a href="${base}/map">See the map</a>.
         </p>`
       : html`<div id="ms-limbs">
-          ${wrappedCard(
+          ${wrappedRows(
             plan.limbs.map((limb) =>
               limbLine(base, limb, move?.(limb.issue, "top") ?? null),
             ),
           )}
         </div>`}
-    ${liveMount({ repo: base })}`;
+    ${liveMount({ repo: base })}</div>`;
   const response = page({
     ctx,
     title: `Milestones · ${repo.name}`,
@@ -323,7 +329,7 @@ function replanChanged(ctx: Ctx, repo: Repo, m: Milestone): Html | null {
       <span class="muted small">#${n.number}</span>`;
   return html`<section class="mt" id="ms-replanned">
     <h2 class="mb">Re-planned ${time(result.at)}</h2>
-    ${listCard(
+    ${wrappedRows(
       result.splits.map((s) =>
         row({
           title: link(s),
@@ -407,14 +413,11 @@ function milestoneBody(
         <a href="${base}/milestones">Milestones</a>
       </p>
       <h1>${m.name}</h1>
-      ${card(
-        html`<div class="stack stack-tight">
-          <span><b>${w.done}</b> of ${w.total} done</span>
-          ${progress(w.done, w.total, `${w.done} of ${w.total} done`)}
-          <span class="muted small">${weightWords(m)}</span>
-        </div>`,
-        m.trim === undefined ? {} : { tone: "attn" },
-      )}
+      <div class="stack stack-tight" id="ms-progress">
+        <span><b>${w.done}</b> of ${w.total} done</span>
+        ${progress(w.done, w.total, `${w.done} of ${w.total} done`)}
+        <span class="muted small">${weightWords(m)}</span>
+      </div>
       <p id="ms-estimate">${m.estimate}</p>
       ${paceLine(m.pace)}
       ${when(
@@ -433,7 +436,7 @@ function milestoneBody(
       () =>
         html`<section class="mt" id="ms-limbs">
           <h2 class="mb">Limbs</h2>
-          ${wrappedCard(
+          ${wrappedRows(
             m.limbs.map((limb) =>
               limbLine(base, limb, move?.(limb.issue, String(m.issue.number)) ?? null),
             ),
@@ -445,7 +448,7 @@ function milestoneBody(
       () =>
         html`<section class="mt" id="ms-building">
           <h2 class="mb">Building now</h2>
-          ${listCard(
+          ${wrappedRows(
             m.building.map((b) =>
               issueRow(
                 base,
@@ -497,7 +500,7 @@ function milestoneBody(
           </p>
           ${spend.costliest.length === 0
             ? html`<p class="muted small">Nothing has cost anything yet.</p>`
-            : listCard(
+            : wrappedRows(
                 spend.costliest.map((c) =>
                   issueRow(base, c.issue, undefined, pill(dollars(c.usd))),
                 ),
@@ -538,20 +541,20 @@ function milestoneBody(
           ${when(
             closed.length > 0,
             () =>
-              card(
-                html`<details>
-                  <summary class="small">${closed.length} closed</summary>
-                  ${list(closed.map((leaf) => leafRow(leaf, false)))}
-                </details>`,
-                { pad: false },
-              ),
+              html`<details>
+                <summary class="small muted">${closed.length} closed</summary>
+                ${list(closed.map((leaf) => leafRow(leaf, false)), true)}
+              </details>`,
           )}
         </section>`,
     )}`;
 }
 
 /** GET /:owner/:name/milestones/:number — one milestone, opened. */
-export function milestonePage(ctx: Ctx, now: Date = new Date()): Response {
+export async function milestonePage(
+  ctx: Ctx,
+  now: Date = new Date(),
+): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
   if (!repo) return notFoundPage(ctx);
@@ -562,8 +565,19 @@ export function milestonePage(ctx: Ctx, now: Date = new Date()): Response {
     : undefined;
   const milestone = plan?.milestone(number);
   if (plan === undefined || milestone === undefined) return notFoundPage(ctx);
-  const rendering = performance.now();
   const viewer = ctx.auth.user;
+  const wave = (
+    await timePhaseAsync(ctx.request, "waves", () =>
+      lastWaves({
+        db: ctx.app.db,
+        reposRoot: ctx.app.reposRoot,
+        repo,
+        viewer,
+        plan: () => plan,
+      }),
+    )
+  ).get(number);
+  const rendering = performance.now();
   // Watch is each person's own; acting on the whole limb is for whoever
   // administers the repository. One row, Watch first.
   const watch =
@@ -596,9 +610,10 @@ export function milestonePage(ctx: Ctx, now: Date = new Date()): Response {
     title: `${milestone.name} · ${repo.name}`,
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
-    body: html`${repoHeader(ctx, repo, "map")}
+    body: html`${repoHeader(ctx, repo, "map")}<div data-milestone>
     ${milestoneBody(repo, milestone, owner, actions, move)}
-    ${replanChanged(ctx, repo, milestone)}
+    ${wave === undefined ? null : html`<ul class="list setting-list" id="ms-wave">${row({ nav: true, href: wave.href, title: `Last moved in wave ${wave.version}`, meta: html`${wave.headline}`, trail: html`${wave.date}` })}</ul>`}
+    ${replanChanged(ctx, repo, milestone)}</div>
     ${liveMount({ repo: repoBase(repo) })}`,
     scriptJs: liveClientJs,
   });
@@ -624,7 +639,7 @@ export async function milestoneWatch(ctx: Ctx): Promise<Response> {
   if (!set.ok)
     return set.error === "not_found"
       ? notFoundPage(ctx)
-      : new Response("forbidden", { status: 403 });
+      : forbiddenPage(ctx, NOT_YOURS_TO_DO);
   return redirect(milestoneHref(repoBase(repo), number));
 }
 
@@ -641,14 +656,31 @@ export async function milestonesJson(
     spend: canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user),
   });
   const ask = askByUmbrella(ctx, repo);
+  const waves = await lastWaves({
+    db: ctx.app.db,
+    reposRoot: ctx.app.reposRoot,
+    repo,
+    viewer: ctx.auth.user,
+    plan: () => plan,
+  });
   return {
     repo: { owner: repo.ownerName, name: repo.name },
     limbs: plan.limbs.map((limb) => ({
       ...limbJson(limb),
       ...askOf(ask, limb.issue.number),
+      ...lastWaveOf(waves, limb.issue.number),
     })),
   };
 }
+
+/** The wave that last moved a milestone, as data: absent when none did. */
+const lastWaveOf = (
+  waves: ReadonlyMap<number, LastWave>,
+  number: number,
+): { lastWave?: LastWave } => {
+  const w = waves.get(number);
+  return w === undefined ? {} : { lastWave: w };
+};
 
 /** Each pillar's ask-to-live, by its umbrella's number: what its limb shows too. */
 function askByUmbrella(
@@ -682,16 +714,22 @@ export async function milestoneData(
   now: Date = new Date(),
 ): Promise<Record<string, unknown> | undefined> {
   const owner = canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user);
-  const milestone = readPlan(ctx.app.db, repo, { spend: owner, now }).milestone(
-    number,
-  );
+  const plan = readPlan(ctx.app.db, repo, { spend: owner, now });
+  const milestone = plan.milestone(number);
   const viewer = ctx.auth.user;
-  return milestone === undefined
-    ? undefined
-    : {
+  if (milestone === undefined) return undefined;
+  const waves = await lastWaves({
+    db: ctx.app.db,
+    reposRoot: ctx.app.reposRoot,
+    repo,
+    viewer,
+    plan: () => plan,
+  });
+  return {
         repo: { owner: repo.ownerName, name: repo.name },
         ...milestoneJson(milestone, owner),
         ...askOf(askByUmbrella(ctx, repo, number), number),
+        ...lastWaveOf(waves, number),
         // Whether the caller watches it; a caller who cannot has no answer.
         ...(viewer?.kind === "user"
           ? {

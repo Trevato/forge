@@ -16,6 +16,12 @@ import { seedAdmin } from "./helpers/admin.ts";
 // declared length and an undeclared (chunked) one are both stopped at the
 // route's cap, and a refused body ends its connection instead of riding
 // on into the next request.
+interface RawOutcome {
+  text: string;
+  closedByServer: boolean;
+  ms: number;
+}
+
 describe("request body limits", () => {
   let dataDir: string;
   let app: App;
@@ -23,6 +29,11 @@ describe("request body limits", () => {
   let base: string;
   let port: number;
   let ownerToken: string;
+  /** Connections the server must end, started together in beforeAll. */
+  let hangups: Record<
+    "stranger" | "endless" | "endlessUnread",
+    Promise<RawOutcome>
+  >;
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-body-limits-"));
@@ -42,6 +53,36 @@ describe("request body limits", () => {
       visibility: "public",
     });
     if (!repo.ok) throw new Error(repo.error);
+    // The listener ends a connection with \`server.timeout(request, 1)\`,
+    // and the runtime fires socket timeouts on a 4-second tick: each
+    // connection the server hangs up on costs up to 4 s of waiting,
+    // whatever the client sends. The three are started together here and
+    // awaited by their tests, so the file waits for that tick once.
+    hangups = {
+      stranger: raw(
+        pump(
+          chunkedPost("/api/v1/fleet/ops", "application/json"),
+          3 * 1024 * 1024,
+          1,
+        ),
+        10_000,
+      ),
+      endless: raw(
+        pump(chunkedPost("/oauth/register", "application/json"), Infinity, 5),
+        30_000,
+      ),
+      endlessUnread: raw(
+        pump(
+          chunkedPost(
+            "/ada/garden.git/git-receive-pack",
+            "application/x-git-receive-pack-request",
+          ),
+          Infinity,
+          5,
+        ),
+        30_000,
+      ),
+    };
   });
   afterAll(async () => {
     servers.stop();
@@ -124,7 +165,7 @@ describe("request body limits", () => {
   const raw = (
     write: (socket: ReturnType<typeof connect>) => void,
     waitMs = 2000,
-  ): Promise<{ text: string; closedByServer: boolean; ms: number }> =>
+  ): Promise<RawOutcome> =>
     new Promise((resolve) => {
       const started = Date.now();
       const socket = connect(port, "127.0.0.1");
@@ -146,13 +187,44 @@ describe("request body limits", () => {
       }, waitMs);
     });
 
+  /**
+   * A chunked request: `head`, then a 64 KiB chunk every `everyMs` until
+   * `total` bytes are sent and the body ends — or, when `total` is
+   * Infinity, until the server hangs up. Streamed, not one write: a single
+   * large write races the answer with EPIPE on the still-flushing send
+   * buffer and the client sees nothing.
+   */
+  const pump =
+    (head: string, total: number, everyMs: number) =>
+    (socket: ReturnType<typeof connect>): void => {
+      const chunk = "x".repeat(64 * 1024);
+      let left = total;
+      socket.write(head);
+      const timer = setInterval(() => {
+        if (socket.destroyed) return clearInterval(timer);
+        if (left <= 0) {
+          socket.write(`0\r\n\r\n`);
+          return clearInterval(timer);
+        }
+        const n = Math.min(left, chunk.length);
+        left -= n;
+        socket.write(`${n.toString(16)}\r\n${chunk.slice(0, n)}\r\n`);
+      }, everyMs);
+    };
+  const chunkedPost = (path: string, type: string): string =>
+    `POST ${path} HTTP/1.1\r\nHost: x\r\nContent-Type: ${type}\r\nTransfer-Encoding: chunked\r\n\r\n`;
+
   test("a request after a refused chunked body on the same connection is never misanswered", async () => {
+    // Invariant: a refused chunked body is drained, so the request behind
+    // it on the same connection is answered as itself (413, then 200).
+    // The trailing request asks to close, so the test ends on its answer
+    // instead of waiting out a kept-alive connection.
     const body = "x".repeat(big);
     const out = await raw((s) =>
       s.write(
-        `POST /oauth/register HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n` +
+        chunkedPost("/oauth/register", "application/json") +
           `${body.length.toString(16)}\r\n${body}\r\n0\r\n\r\n` +
-          `GET /api/v1/health HTTP/1.1\r\nHost: x\r\n\r\n`,
+          `GET /api/v1/health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`,
       ),
     );
     // Not anchored to a line: a body with no newline runs into the next
@@ -183,35 +255,6 @@ describe("request body limits", () => {
     expect(next.status).toBe(401);
   });
 
-  test("a stranger gets the stranger's cap on a route that reads its body before asking who is calling", async () => {
-    // POST /api/v1/fleet/ops reads its body, then refuses an anonymous
-    // caller. 3 MiB is under the signed-in cap (16 MiB) and well past the
-    // stranger's (64 KiB) plus the drain budget: the forge stops reading
-    // and ends the connection instead of reading it all to say 401.
-    // Streamed, not one write: a single 3 MiB write races the answer with
-    // EPIPE on the still-flushing send buffer and the client sees nothing.
-    const chunk = "x".repeat(64 * 1024);
-    let left = 3 * 1024 * 1024;
-    const out = await raw((s) => {
-      s.write(
-        `POST /api/v1/fleet/ops HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n`,
-      );
-      const timer = setInterval(() => {
-        if (s.destroyed) return clearInterval(timer);
-        if (left <= 0) {
-          s.write(`0\r\n\r\n`);
-          return clearInterval(timer);
-        }
-        const n = Math.min(left, chunk.length);
-        left -= n;
-        s.write(`${n.toString(16)}\r\n${chunk.slice(0, n)}\r\n`);
-      }, 1);
-    }, 10_000);
-    expect(out.text).toMatch(/^HTTP\/1\.1 (401|413)/);
-    expect(out.text.toLowerCase()).toContain("connection: close");
-    expect(out.closedByServer).toBe(true);
-  });
-
   test("an Idempotency-Key does not buy a read past the cap", async () => {
     const res = await fetch(`${base}/api/v1/repos`, {
       method: "POST",
@@ -223,40 +266,6 @@ describe("request body limits", () => {
       body: chunked(20 * 1024 * 1024),
     });
     expect(res.status).toBe(413);
-  });
-
-  test("a chunked body that never ends is cut off, not read until the idle timeout", async () => {
-    const chunk = "x".repeat(4096);
-    const out = await raw((s) => {
-      s.write(
-        `POST /oauth/register HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n`,
-      );
-      const timer = setInterval(() => {
-        if (s.destroyed) return clearInterval(timer);
-        s.write(`${chunk.length.toString(16)}\r\n${chunk}\r\n`);
-      }, 5);
-    }, 30_000);
-    expect(out.text).toStartWith("HTTP/1.1 413");
-    expect(out.closedByServer).toBe(true);
-    // Long before the 120 s idle timeout, with room for a loaded machine.
-    expect(out.ms).toBeLessThan(20_000);
-  });
-
-  test("an endless body a route never reads is cut off too (an anonymous push)", async () => {
-    const chunk = "x".repeat(4096);
-    const out = await raw((s) => {
-      s.write(
-        `POST /ada/garden.git/git-receive-pack HTTP/1.1\r\nHost: x\r\nContent-Type: application/x-git-receive-pack-request\r\nTransfer-Encoding: chunked\r\n\r\n`,
-      );
-      const timer = setInterval(() => {
-        if (s.destroyed) return clearInterval(timer);
-        s.write(`${chunk.length.toString(16)}\r\n${chunk}\r\n`);
-      }, 5);
-    }, 30_000);
-    expect(out.text).toMatch(/^HTTP\/1\.1 40[14]/);
-    expect(out.closedByServer).toBe(true);
-    // Long before the 120 s idle timeout, with room for a loaded machine.
-    expect(out.ms).toBeLessThan(20_000);
   });
 
   test("a fetch's compressed negotiation that inflates past its cap stops there", async () => {
@@ -307,4 +316,40 @@ describe("request body limits", () => {
       await rm(work, { recursive: true, force: true });
     }
   });
+
+  // These three await the connections started in beforeAll; last in the
+  // file, so every test above runs while the runtime's timer comes round.
+  test("a stranger gets the stranger's cap on a route that reads its body before asking who is calling", async () => {
+    // Invariant: an anonymous body past STRANGER_MAX + DRAIN_MAX is
+    // answered and its connection ended by the server, on a route that
+    // reads first and asks who is calling after.
+    // POST /api/v1/fleet/ops reads its body, then refuses an anonymous
+    // caller. 3 MiB is under the signed-in cap (16 MiB) and well past the
+    // stranger's (64 KiB) plus the drain budget: the forge stops reading
+    // and ends the connection instead of reading it all to say 401.
+    const out = await hangups.stranger;
+    expect(out.text).toMatch(/^HTTP\/1\.1 (401|413)/);
+    expect(out.text.toLowerCase()).toContain("connection: close");
+    expect(out.closedByServer).toBe(true);
+  }, 15_000);
+
+  test("a chunked body that never ends is cut off, not read until the idle timeout", async () => {
+    // Invariant: a body that never ends, on a route that reads it, is
+    // answered 413 and its connection ended long before the idle timeout.
+    const out = await hangups.endless;
+    expect(out.text).toStartWith("HTTP/1.1 413");
+    expect(out.closedByServer).toBe(true);
+    // Long before the 120 s idle timeout, with room for a loaded machine.
+    expect(out.ms).toBeLessThan(20_000);
+  }, 30_000);
+
+  test("an endless body a route never reads is cut off too (an anonymous push)", async () => {
+    // Invariant: a body that never ends, on a route that never reads it,
+    // is answered and its connection ended long before the idle timeout.
+    const out = await hangups.endlessUnread;
+    expect(out.text).toMatch(/^HTTP\/1\.1 40[14]/);
+    expect(out.closedByServer).toBe(true);
+    // Long before the 120 s idle timeout, with room for a loaded machine.
+    expect(out.ms).toBeLessThan(20_000);
+  }, 30_000);
 });

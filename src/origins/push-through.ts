@@ -37,9 +37,10 @@ import { FORWARDED_GIT_ENV, type RefUpdate } from "../git/hook-protocol.ts";
 import { fetchInto, resolveOid, writeRef } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { providerForOrigin } from "./credential.ts";
+import { providerForOrigin, READ_ONLY, writesPaused } from "./credential.ts";
 import { redact, secretsIn } from "./credentials.ts";
 import { pushToOrigin, snapshotRefs } from "./git-mirror.ts";
+import { denied } from "./operator.ts";
 
 /** A push-through must not outlive a pusher's patience. */
 const TIMEOUT_MS = 60_000;
@@ -47,6 +48,8 @@ const TIMEOUT_MS = 60_000;
 export interface PushThroughRefusal {
   /** Shown to the pusher verbatim; already scrubbed of credentials. */
   readonly message: string;
+  /** The origin itself refused the push (no rights there), not this forge. */
+  readonly byOrigin?: boolean;
 }
 
 /**
@@ -129,6 +132,10 @@ export async function carryBranchThrough(
 
 const ZERO_OID_STRING = "0".repeat(40);
 
+/** What a push to a protected repository is told, everywhere. */
+export const protectedMessage = (webUrl: string, fullName: string): string =>
+  `${fullName} on ${webUrl} is protected by this forge's operator: nothing is pushed to it from here. Propose the change from your fork instead.`;
+
 /** The origin's refusal, in its words, with the credential kept out of them. */
 function refusedBy(
   link: NonNullable<ReturnType<typeof originForRepo>>,
@@ -145,6 +152,7 @@ function refusedBy(
       `${link.fullName} on ${link.origin.webUrl} refused this push: ${message}`,
       ...secretsIn(authEnv),
     ),
+    byOrigin: true,
   };
 }
 
@@ -190,6 +198,16 @@ async function wayThrough(
     return err({
       message: "this mirror has no upstream clone URL; re-mirror it",
     });
+
+  if (link.origin.readOnly)
+    return err({ message: `${link.origin.webUrl}: ${READ_ONLY}` });
+  const paused = writesPaused(app, link.origin.id);
+  if (paused !== undefined)
+    return err({ message: `${link.origin.webUrl}: ${paused}` });
+  // A repository the operator protects is never pushed to from here, even
+  // by an account that could: changes to it go up as pulls from a fork.
+  if (denied(link.origin, link.fullName))
+    return err({ message: protectedMessage(link.origin.webUrl, link.fullName) });
 
   const provider = providerForOrigin(app, link.origin);
   if (!provider.ok)
@@ -242,6 +260,7 @@ export async function pushToMirrorTarget(
   };
   const origin = getOriginById(app.db, target.originId);
   if (!origin) return fail("the origin was disconnected; reconnect it");
+  if (origin.readOnly) return fail(READ_ONLY);
   const provider = providerForOrigin(app, origin);
   if (!provider.ok) return fail("the origin needs to be reconnected");
   const authEnv = await provider.value.gitAuthEnv(target.cloneUrl);

@@ -1,5 +1,5 @@
 /**
- * The boards the forge offers a new install: Usage, Serving, Crew, Releases, Apps, App restarts, Security, Throughput, Forges and Reach. They are plain
+ * The boards the forge offers a new install: Usage, Serving, Crew, Releases, Maintenance, Apps, App restarts, Security, Throughput, Forges and Reach. They are plain
  * boards in `forge/boards` once written, so a person edits or deletes them
  * like any other; `.offered` (a JSON list of slugs, committed with the
  * boards) records what was offered so a deletion sticks and an edit is
@@ -81,6 +81,18 @@ export const STARTING_BOARDS: Readonly<Record<string, Board>> = {
       }),
       panel("Slowest decision per day (ms)", "line", { source: "decisions", aggregate: "max", column: "ms", groupBy: { bucket: "day" } }, 2),
       panel("Decider time per hour (ms)", "line", { source: "decisions", aggregate: "avg", column: "ms", groupBy: HOUR, series: "kind" }, 2),
+    ],
+  },
+  // The release keeper (#7557): every release dark for 0 s is the target.
+  maintenance: {
+    title: "Maintenance",
+    range: "30d",
+    refresh: "1m",
+    panels: [
+      panel("Seconds dark per release", "bar", { source: "keeperReleases", aggregate: "max", column: "seconds_dark", groupBy: "version" }, 2),
+      panel("Worst latency per release (ms)", "bar", { source: "keeperReleases", aggregate: "max", column: "worst_ms", groupBy: "version" }, 2),
+      panel("Releases by outcome", "bar", { source: "keeperReleases", aggregate: "count", groupBy: "stage" }),
+      panel("Seconds dark (30 days)", "number", { source: "keeperReleases", aggregate: "sum", column: "seconds_dark" }),
     ],
   },
   apps: {

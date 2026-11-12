@@ -11,3 +11,5 @@ The spacing and layout utilities every page leans on: one component, styled in `
 - `.narrow` — a 400px column centred a little below the top, for a single short form or notice; `pages/oauth.ts` writes it. Styled in `style/base.ts`.
 - `.narrow-wide` — a 760px reading column for a page of one form or one text; `pages/edit.ts`, `pages/issues.ts` and `pages/forges.ts` write it. Styled in `style/base.ts`.
 - `.page-head-sub` — the one line under a page head's title: `flex-basis: 100%` and a −4px top margin, so it breaks onto its own full-width line. A layout hook, not a look: it rides with `muted small` (or `bar muted small` for a row of facts); `pageHead({ sub })` in `chrome.ts` and the run, tell, change and browse heads write it. Styled in `style/components.ts`; a `.muted.small` child of a page head without it (the system page's Processes sort row) stays beside its heading.
+
+- `[data-region]` — a late region of home (`#home-<name>`, `src/web/studio/home_last.ts`): `display: contents`, so the wrapper that lets the page swap it adds no box of its own and the layout is what it was without it.

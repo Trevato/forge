@@ -1,11 +1,11 @@
-import { changeCapacity, listCapacity } from "../../../actions/capacity.ts";
+import { DERIVED_WORDS, REASON_WORDS, SETTABLE_CAPACITY, changeCapacity, listCapacity } from "../../../actions/capacity.ts";
 import { SETTING_WORDS } from "../../../actions/setting_words.ts";
 import { scopeAllows } from "../../../core/tokens.ts";
 import { good, bad, type Tool } from "../shared.ts";
 
 export const tool: Tool = {
   name: "capacity",
-  doc: "`{ key?, value?, dryRun? }` (forge admin): the forge's capacity and guards, live (crew and checks concurrency, check shards, cell egress, the new-account guard, the sign-in edge, queue depth, child forges; only the first six are settable by `key`); with `key` and `value` (`\"\"` restores the default), planned first (`dryRun` is true unless `false`); applying needs an admin-scope token",
+  doc: "`{ key?, value?, reason?, dryRun? }` (forge admin): the forge's capacity and guards, live (crew and checks concurrency, check shards, cell egress, the new-account guard, the sign-in edge, whether a child forge needs its own filesystem, queue depth, child forges, `egress.npmBytesLastHour` and `npmTopRepoLastHour`, and `selfSwap: { enabled, migrateReq, blocked }`: whether `FORGE_SELF_SWAP=1`, the kernel's `tcp_migrate_req` (`1`, `0`, `unreadable`), and why this forge cannot swap itself, null when it can; only the first seven are settable by `key`); with `key` and `value` (`\"\"` restores the default) and `reason` (kept with who; required for `cells.egress`), planned first (`dryRun` is true unless `false`); applying needs an admin-scope token",
   description:
     "Forge capacity and guards, live. With `key` and `value` (\"\" restores default), plans.",
   inputSchema: {
@@ -13,9 +13,10 @@ export const tool: Tool = {
     properties: {
       key: {
         type: "string",
-        enum: ["crew.concurrency", "checks.concurrency", "checks.shards", "cells.egress", "guard_new_accounts", "signin.edge"],
+        enum: [...SETTABLE_CAPACITY],
       },
       value: { type: "string", maxLength: 16 },
+      reason: { type: "string", maxLength: 500 },
       dryRun: { type: "boolean" },
     },
   },
@@ -35,8 +36,13 @@ export const tool: Tool = {
       });
     if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
       return bad("forbidden", "changing the forge's capacity needs an admin-scope token");
-    const changed = changeCapacity(ctx.app, user, key, value);
-    if (!changed.ok) return bad(changed.error, SETTING_WORDS.outOfRange);
+    const reason = typeof args["reason"] === "string" ? args["reason"] : "";
+    const changed = changeCapacity(ctx.app, user, key, value, reason);
+    if (!changed.ok)
+      return bad(
+        changed.error,
+        changed.error === "derived" ? DERIVED_WORDS : changed.error === "reason_required" ? REASON_WORDS : SETTING_WORDS.outOfRange,
+      );
     return good({
       says: `${key}: ${changed.value.from || "auto"} → ${changed.value.to || "auto"}, from the next pick on.`,
       ...changed.value,

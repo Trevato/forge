@@ -267,7 +267,7 @@ describe("over HTTP", () => {
     const got = (await (await api(`/api/v1/repos/alice/lib/pulls/${proposedNumber}`, {}, writerToken())).json()) as {
       proposal: unknown;
     };
-    expect(got.proposal).toEqual({ child: "kid", origin: ORIGIN });
+    expect(got.proposal).toEqual({ child: "kid", origin: ORIGIN, folds: false });
 
     const called = await fetch(`${servers.url}/mcp`, {
       method: "POST",
@@ -284,7 +284,7 @@ describe("over HTTP", () => {
       }),
     });
     const result = ((await called.json()) as any).result.content[0].text as string;
-    expect(JSON.parse(result).proposal).toEqual({ child: "kid", origin: ORIGIN });
+    expect(JSON.parse(result).proposal).toEqual({ child: "kid", origin: ORIGIN, folds: false });
 
     const terminal = headlessTerminal(160, 44);
     const { app: tui, session } = createForgeApp(

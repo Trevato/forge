@@ -8,7 +8,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App as Forge } from "../src/app.ts";
-import { listInvites } from "../src/core/invites.ts";
+import { listInvites, mintInvite, redeemInvite } from "../src/core/invites.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { invitesScreen } from "../src/tui/screens/invites.ts";
@@ -91,8 +91,34 @@ describe("invite links in the terminal", () => {
     await h.press("j");
     expect(h.text()).not.toContain("invite_");
     await h.press("x");
-    expect(listInvites(forge.db)[0]!.state).toBe("revoked");
+    expect(h.text()).toContain(`Revoke invite ${made!.id}?`);
     expect(h.text()).not.toContain("invite_");
+    expect(listInvites(forge.db)[0]!.state).toBe("open");
+    await h.press("y");
+    expect(listInvites(forge.db)[0]!.state).toBe("revoked");
+    expect(h.text()).toContain(`Revoked ${made!.id}.`);
+    expect(h.text()).not.toContain("invite_");
+    await h.press("x");
+    expect(h.text()).not.toContain("Revoke invite");
+    expect(h.text()).toContain("not open");
+    h.stop();
+  });
+
+  test("n or esc on the revoke confirm keeps the link open", async () => {
+    const h = boot("alice");
+    await open(h);
+    await h.press("m");
+    await h.press("enter");
+    const made = listInvites(forge.db).find((i) => i.state === "open")!;
+    for (const k of ["n", "esc"]) {
+      await h.press("x");
+      expect(h.text()).toContain(`Revoke invite ${made.id}?`);
+      expect(h.text()).toContain(`Expires ${made.expiresAt.slice(0, 10)}; holder can no longer sign up.`);
+      expect(h.text()).not.toContain("invite_");
+      await h.press(k);
+      expect(h.text()).not.toContain("Revoke invite");
+      expect(listInvites(forge.db).find((i) => i.id === made.id)!.state).toBe("open");
+    }
     h.stop();
   });
 
@@ -128,5 +154,15 @@ describe("invite links in the terminal", () => {
       expect(pushed).toEqual([]);
     }
     expect(listInvites(forge.db).length).toBe(before);
+  });
+
+  test("a used link says who joined with it and when", async () => {
+    const bob = getUserByName(forge.db, "bob")!;
+    const { token } = mintInvite(forge.db, bob.id);
+    expect(redeemInvite(forge.db, token, bob.id, Date.parse("2026-10-05T09:00:00Z"))).toBe(true);
+    const h = boot("alice");
+    await open(h);
+    expect(h.text()).toContain("used by bob on 2026-10-05");
+    h.stop();
   });
 });

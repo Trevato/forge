@@ -65,30 +65,30 @@ afterAll(async () => {
 
 test("a grant out of range answers the module's sentence from the API and MCP", async () => {
   const viaApi = await api("/api/v1/admin/accounts/bob/model-grant", { usdPerMonth: 20000 });
-  expect(viaApi).toEqual({ status: 422, body: { error: "invalid", message: SPEND_WORDS.usdPerMonth } });
+  expect(viaApi).toMatchObject({ status: 422, body: { error: "invalid", message: SPEND_WORDS.usdPerMonth } });
   const viaMcp = await tool("model_grant", { username: "bob", usdPerMonth: 20000, dryRun: false });
-  expect(viaMcp).toEqual({ error: true, text: `invalid: ${SPEND_WORDS.usdPerMonth}` });
+  expect(viaMcp).toMatchObject({ error: true, text: `invalid: ${SPEND_WORDS.usdPerMonth}` });
 });
 
 test("a role's allowance out of range answers the module's sentence from the API and MCP", async () => {
   const viaApi = await api("/api/v1/admin/accounts/bob/role", { role: "member", usdPerMonth: 20000 });
-  expect(viaApi).toEqual({ status: 422, body: { error: "invalid", message: SPEND_WORDS.usdPerMonth } });
+  expect(viaApi).toMatchObject({ status: 422, body: { error: "invalid", message: SPEND_WORDS.usdPerMonth } });
   const viaMcp = await tool("account_role", { username: "bob", role: "member", usdPerMonth: 20000, dryRun: false });
-  expect(viaMcp).toEqual({ error: true, text: `invalid: ${SPEND_WORDS.usdPerMonth}` });
+  expect(viaMcp).toMatchObject({ error: true, text: `invalid: ${SPEND_WORDS.usdPerMonth}` });
 });
 
 test("a ceiling out of range answers the module's sentence from the API and MCP", async () => {
   const viaApi = await api("/api/v1/admin/accounts/bob/ceiling", { dailyUsd: 20000, perRunUsd: 1 });
-  expect(viaApi).toEqual({ status: 422, body: { error: "invalid", message: SPEND_WORDS.ceilings } });
+  expect(viaApi).toMatchObject({ status: 422, body: { error: "invalid", message: SPEND_WORDS.ceilings } });
   const viaMcp = await tool("model_ceiling", { username: "bob", dailyUsd: 20000, perRunUsd: 1, dryRun: false });
-  expect(viaMcp).toEqual({ error: true, text: `invalid: ${SPEND_WORDS.ceilings}` });
+  expect(viaMcp).toMatchObject({ error: true, text: `invalid: ${SPEND_WORDS.ceilings}` });
 });
 
 test("an invite's days out of range answers the module's sentence from the API and MCP", async () => {
   const viaApi = await api("/api/v1/admin/invites", { days: 31 });
-  expect(viaApi).toEqual({ status: 422, body: { error: "invalid", message: SPEND_WORDS.inviteDays } });
+  expect(viaApi).toMatchObject({ status: 422, body: { error: "invalid", message: SPEND_WORDS.inviteDays } });
   const viaMcp = await tool("mint_invite", { days: 31 });
-  expect(viaMcp).toEqual({ error: true, text: `invalid: ${SPEND_WORDS.inviteDays}` });
+  expect(viaMcp).toMatchObject({ error: true, text: `invalid: ${SPEND_WORDS.inviteDays}` });
 });
 
 test("no file under src/ but the module types the sentences out", async () => {

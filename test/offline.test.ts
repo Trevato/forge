@@ -15,6 +15,7 @@ import { listIssues } from "../src/core/issues.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { outboxJs } from "../src/web/outbox.ts";
 import { serviceWorker, swSource } from "../src/web/sw.ts";
+import { withScripts } from "./helpers/page-script.ts";
 
 type Send = (url: string, init: any) => Promise<{ status: number }>;
 const make = new Function(`${outboxJs}; return forgeOutbox;`)() as (
@@ -156,18 +157,20 @@ describe("the service worker and the server", () => {
   });
 
   test("the home page registers the worker, has the note, and allows workers", async () => {
-    const res = await fetch(`${servers.url}/`, { headers: { cookie } });
+    const res = await fetch(`${servers.url}/feed`, { headers: { cookie } });
     const text = await res.text();
-    expect(text).toContain("serviceWorker");
+    const all = await withScripts(servers.url, text);
+    expect(all).toContain("serviceWorker");
     expect(text).toContain('id="feed-note"');
-    expect(text).toContain("forgeOutbox");
+    expect(all).toContain("forgeOutbox");
     expect(res.headers.get("content-security-policy")).toContain("worker-src 'self'");
   });
 
   test("the live client resumes /events from the last seen id", async () => {
-    const text = await (await fetch(`${servers.url}/`, { headers: { cookie } })).text();
-    expect(text).toContain("/events?since=");
-    expect(text).toContain("'online'");
+    const text = await (await fetch(`${servers.url}/feed`, { headers: { cookie } })).text();
+    const all = await withScripts(servers.url, text);
+    expect(all).toContain("/events?since=");
+    expect(all).toContain("'online'");
   });
 
   test("a tell sent twice with one key makes one issue", async () => {

@@ -63,7 +63,7 @@ describe("one count on Home, /review and the MCP", () => {
       const cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0]!;
       const get = async (path: string) => await (await fetch(`${servers.url}${path}`, { headers: { cookie } })).text();
 
-      const home = await get("/");
+      const home = await get("/feed");
       const said = Number(/(\d+) waiting on you/.exec(home)?.[1]);
       expect(home).toContain("2 stale, archive?");
       expect(home).toContain('action="/asks/bulk"');

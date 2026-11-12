@@ -49,6 +49,7 @@ const SQL = `SELECT
      FROM team JOIN team_member ON team_member.team_id = team.id) AS team,
   (SELECT group_concat(repo_id || char(31) || user_id, char(30)) FROM repo_crew) AS crew,
   (SELECT group_concat(app_id || char(31) || user_id, char(30)) FROM app_member) AS named,
+  (SELECT count(*) || char(31) || COALESCE(max(rowid), 0) FROM feed_like) AS likes,
   (SELECT count(*) || char(31) || COALESCE(max(rowid), 0) || char(31) || count(merged_at) || char(31) || COALESCE(max(merged_at), '')
      FROM pull) AS pull,
   (SELECT group_concat(key || char(31) || value, char(30)) FROM front_setting) AS setting`;

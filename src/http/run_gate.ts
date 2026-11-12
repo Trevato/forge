@@ -23,6 +23,7 @@
 import type { App } from "../app.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import type { Auth } from "./context.ts";
+import { movedTarget } from "./moved.ts";
 import { apiError } from "./respond.ts";
 
 const hidden = (): Response => apiError("not_found", 404, "not found");
@@ -103,5 +104,11 @@ export function runGate(
       return undefined;
     if (gitRead(method, url, parent)) return undefined;
   }
+  // A path one of these repositories moved from (#570): the run was briefed
+  // before the move, so it passes on to the 308 that names the new path,
+  // which this gate then judges like any other. A push is refused there.
+  const moved = movedTarget(app.db, url);
+  if (moved !== undefined && (moved.id === repo.id || moved.id === fork.id || moved.id === parent?.id))
+    return undefined;
   return hidden();
 }

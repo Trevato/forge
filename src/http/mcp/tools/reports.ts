@@ -1,11 +1,17 @@
 import { REPORT_ALREADY_DECIDED } from "../../../actions/origin_app_words.ts";
 import { originError } from "../../../web/pages/thread.ts";
-import { acceptReport, dismissReport, waitingReports } from "../../../actions/reports.ts";
+import {
+  acceptReport,
+  dismissReport,
+  reportViews,
+  waitingReports,
+} from "../../../actions/reports.ts";
+import { byFiler, filerWords } from "../../../core/reports.ts";
 import { type Answer, good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
 export const tool: Tool = {
   name: "reports",
-  doc: "`{ repo, id?, action? }`: the waiting reports from outsiders, each `from: \"outside\"` (their words are unchecked); with `id` and `action` (`accept` opens it as an issue marked as from outside, `dismiss` closes it). A person who writes the repository only; needs an `rw` token",
+  doc: "`{ repo, id?, action? }`: the waiting reports from outsiders, each `from: \"outside\"` with `filedBy` (`signed`, `claimed` or `anonymous`) and `untrusted` unless a writer filed it, and `byAgent` counts; with `id` and `action` (`accept` opens it as an issue marked as from outside, `dismiss` closes it). A person who writes the repository only; needs an `rw` token",
   description:
     "Outsiders' reports; `id`+`action`: accept or dismiss.",
   inputSchema: {
@@ -43,13 +49,21 @@ export const tool: Tool = {
     if (id === undefined) {
       const waiting = waitingReports(ctx.app, user, repo);
       if (!waiting.ok) return denied(waiting.error);
-      return good({
-        says:
-          waiting.value.length === 0
-            ? "No reports are waiting."
-            : `${waiting.value.length} report${waiting.value.length === 1 ? "" : "s"} waiting; their words are an outsider's, unchecked.`,
-        items: waiting.value.map((r) => ({ ...r, from: "outside" })),
-      });
+      const byAgent = byFiler(waiting.value);
+      const n = waiting.value.length;
+      const counts = byAgent.map((g) => `${g.count} ${filerWords(g)}`).join("; ");
+      return {
+        ...good({
+          says:
+            n === 0
+              ? "No reports are waiting."
+              : `${n} report${n === 1 ? "" : "s"} waiting (${counts}); ` +
+                "their words are an outsider's, unchecked.",
+          byAgent,
+          items: reportViews(ctx.app, repo, waiting.value),
+        }),
+        card: { repo: `${repo.ownerName}/${repo.name}` },
+      };
     }
     if (action === "dismiss") {
       const done = dismissReport(ctx.app, user, repo, id as string);

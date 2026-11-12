@@ -13,15 +13,17 @@ import type { Database } from "bun:sqlite";
 import { diffRange, type Diff, type DiffLaps } from "../git/diff.ts";
 import { isSafeRef } from "../git/guard.ts";
 import { refTip } from "../git/read.ts";
+import { combine, combinedTip } from "../git/combined.ts";
+import { fromKeptFork } from "./landing_kind.ts";
 import { readTips } from "../git/tips.ts";
 import {
   aheadCount,
+  contentOnBase,
   fetchInto,
   merge,
   mergeBase,
   mergeable,
   resolveOid,
-  treeOf,
   writeRef,
   type MergeError,
   type MergeStrategy,
@@ -179,6 +181,12 @@ export interface CreatePullInput {
   revertsIssueId?: string;
   /** The variant group the pull joins; absent for an ordinary pull. */
   variantGroup?: string;
+  /**
+   * Who opened it on another forge, and where (#9011): written with the
+   * issue row, so the pull is a guest (`origins/guest.ts`) from its first
+   * moment and nothing can start it with secrets before it is marked.
+   */
+  origin?: { author: string; htmlUrl: string };
 }
 
 /**
@@ -290,6 +298,12 @@ export async function createPull(
     sealed,
   });
   if (!issue.ok) return err(issue.error);
+  if (input.origin !== undefined)
+    db.query("UPDATE issue SET origin_author = ?1, origin_html_url = ?2 WHERE id = ?3").run(
+      input.origin.author,
+      input.origin.htmlUrl,
+      issue.value.id,
+    );
 
   const headRepoId = input.headRepoId ?? input.repoId;
   db.query(
@@ -310,7 +324,11 @@ export async function createPull(
   // and (for cross-repo) the only place the base repo holds the fork's tip.
   await writeRef(at, `refs/pull/${issue.value.number}/head`, headOid);
 
-  return ok(join(db, issue.value)!);
+  const pull = join(db, issue.value)!;
+  // A kept fork's pull is combined with main on our side (#9012).
+  if (at === dir && fromKeptFork(db, pull))
+    await combine(dir, { number: pull.number, baseOid, headOid });
+  return ok(pull);
 }
 
 export function getPull(
@@ -520,6 +538,37 @@ export function openPullsForRepos(
     for (const pull of joinMany(db, [...issues.values()])) out.set(pull.repoId, pull);
   }
   return out;
+}
+
+/** An open, unmerged pull as the pile lists it before it is hydrated. */
+export interface PileRow {
+  readonly id: string;
+  readonly repoId: string;
+  readonly sealed: boolean;
+  readonly authorId: string;
+}
+
+/**
+ * Every open, unmerged pull on the forge, oldest first, in one query: the
+ * pile an MCP caller pages (#7655). Reading rights are the caller's to apply
+ * to the rows (`canRead`, `mayView`); no git is touched.
+ */
+export function openPullPileRows(db: Database): PileRow[] {
+  return db
+    .query<{ id: string; repo_id: string; sealed: number; author_id: string }, []>(
+      `SELECT issue.id, issue.repo_id, issue.sealed, issue.author_id
+         FROM issue JOIN pull ON pull.issue_id = issue.id
+        WHERE issue.state = 'open' AND pull.merged_at IS NULL
+        ORDER BY issue.created_at, issue.id`,
+    )
+    .all()
+    .map((r) => ({ id: r.id, repoId: r.repo_id, sealed: r.sealed === 1, authorId: r.author_id }));
+}
+
+/** These pulls by issue id, in the order asked. */
+export function pullsByIssueIds(db: Database, ids: readonly string[]): Pull[] {
+  const issues = getIssuesByIds(db, ids);
+  return joinMany(db, ids.flatMap((id) => issues.get(id) ?? []));
 }
 
 export type ListPullsOptions = Omit<ListIssuesOptions, "kind">;
@@ -747,6 +796,12 @@ export interface ReviewGate {
    * Read live inside the merge like the review verdict. @default false
    */
   readonly requireChecks?: boolean;
+  /**
+   * The names of the crew teams that still hold this head (#9930,
+   * `teamsHolding`), asked with the live head inside the merge. Absent
+   * means no team gate: the owner's break-glass passes it.
+   */
+  readonly teamsHolding?: (headOid: string) => readonly string[];
 }
 
 export interface PullStatus {
@@ -803,10 +858,14 @@ export async function pullStatus(
   const baseOid = liveBase ?? pull.baseOid;
   const headOid = liveHead ?? pull.headOid;
   const reviews = gate === undefined ? null : reviewGate(gate, pull, headOid);
+  // A fork's pull combined on our side merges as its combined branch (#9012).
+  const lands = pull.crossRepo
+    ? ((await combinedTip(dir, pull.number, headOid)) ?? headOid)
+    : headOid;
   const { ahead, mergeable: clean, conflicts } = await mergeReading(
     dir,
     baseOid,
-    headOid,
+    lands,
   );
   return { baseOid, headOid, ahead, mergeable: clean, conflicts, reviews };
 }
@@ -817,6 +876,9 @@ interface MergeReading {
   readonly conflicts: string[];
 }
 
+/** The merge check a reading runs: git's merge-tree, or a test's stand-in. */
+type MergeCheck = typeof mergeable;
+
 /** Readings by `head:base` oid: a merge-tree over two commits never changes. */
 const readings = new Map<string, MergeReading>();
 const READINGS_MAX = 500;
@@ -825,6 +887,7 @@ async function mergeReading(
   dir: string,
   baseOid: string,
   headOid: string,
+  check: MergeCheck = mergeable,
 ): Promise<MergeReading> {
   const key = `${headOid}:${baseOid}`;
   const known = readings.get(key);
@@ -833,16 +896,16 @@ async function mergeReading(
   let reading: MergeReading;
   if (ahead === 0) reading = { ahead, mergeable: false, conflicts: [] };
   else {
-    const check = await mergeable(dir, baseOid, headOid);
-    reading = check.ok
+    const merged = await check(dir, baseOid, headOid);
+    reading = merged.ok
       ? { ahead, mergeable: true, conflicts: [] }
       : {
           ahead,
           mergeable: false,
-          conflicts: check.error.kind === "conflict" ? check.error.files : [],
+          conflicts: merged.error.kind === "conflict" ? merged.error.files : [],
         };
     // A git failure is not a verdict about the commits: do not remember it.
-    if (!check.ok && check.error.kind !== "conflict") return reading;
+    if (!merged.ok && merged.error.kind !== "conflict") return reading;
   }
   if (readings.size >= READINGS_MAX)
     readings.delete(readings.keys().next().value!);
@@ -864,25 +927,100 @@ export async function pullMergeState(
   return { mergeable: clean, conflicts };
 }
 
-/** How many merge readings a list runs at once: a page is never a fork bomb. */
+/** How many merge readings run at once, across every list: never a fork bomb. */
 const READ_AT_ONCE = 4;
+
+/**
+ * How long a list waits for readings it does not have (#8156). Every landing
+ * moves the base and so invalidates every open pull's (head, base) pair; with
+ * 47 pulls, four readings at a time, a list waited 71 s. Past this budget
+ * the list answers what it knows and the readings finish in the background.
+ */
+export const MERGE_BUDGET_MS = 300;
+
+/** Readings in flight by `dir:head:base`: one per pair, however many lists ask. */
+const inflight = new Map<string, Promise<MergeReading>>();
+const waiting: (() => Promise<void>)[] = [];
+let running = 0;
+
+function pump(): void {
+  while (running < READ_AT_ONCE && waiting.length > 0) {
+    const job = waiting.shift()!;
+    running++;
+    void job().finally(() => {
+      running--;
+      pump();
+    });
+  }
+}
+
+/** A reading of the pair, queued behind at most `READ_AT_ONCE` others. */
+function readQueued(
+  dir: string,
+  baseOid: string,
+  headOid: string,
+  check: MergeCheck,
+): Promise<MergeReading> {
+  const key = `${dir}:${headOid}:${baseOid}`;
+  const known = inflight.get(key);
+  if (known !== undefined) return known;
+  const reading = new Promise<MergeReading>((resolve, reject) => {
+    waiting.push(() =>
+      mergeReading(dir, baseOid, headOid, check).then(resolve, reject),
+    );
+  }).finally(() => inflight.delete(key));
+  inflight.set(key, reading);
+  pump();
+  return reading;
+}
+
+/** Resolves when no reading is queued or running: for tests and shutdown. */
+export async function mergeReadingsSettled(): Promise<void> {
+  while (inflight.size > 0)
+    await Promise.allSettled([...inflight.values()]);
+}
+
+/**
+ * The last reading a list gave for a pull, by `dir:number`, and the head it
+ * was for. Kept so a pull whose base moved answers what it said a moment ago
+ * rather than nothing while its fresh reading runs.
+ */
+const lastByPull = new Map<string, { headOid: string; reading: MergeReading }>();
+
+function remember(key: string, headOid: string, reading: MergeReading): void {
+  lastByPull.delete(key);
+  if (lastByPull.size >= READINGS_MAX)
+    lastByPull.delete(lastByPull.keys().next().value!);
+  lastByPull.set(key, { headOid, reading });
+}
 
 /**
  * `pullMergeState` for a page of pulls: tips read from the ref files (no git
  * process), each answer remembered by (base tip, head tip) in `mergeReading`
- * so git runs only for a pair that moved, and at most `READ_AT_ONCE`
- * readings in flight. Same answers, same order as the input.
+ * so git runs only for a pair that moved, at most `READ_AT_ONCE` readings in
+ * flight, and at most one per pair.
+ *
+ * A list waits at most `budgetMs` for readings it has not got. A pair still
+ * reading after that answers the pull's last reading when its head has not
+ * moved — only the base moved, and what this head did against the base one
+ * landing ago is the best guess there is — and null when the head moved or
+ * the pull was never read: no reading of these commits exists, and a guess
+ * about new commits would be invented. A stale `mergeable: true` misleads
+ * nobody into a bad land: `mergePull` reads the pair afresh before it merges.
+ * The reading carries on in the background, so the next list has it.
  */
 export async function pullMergeStates(
   items: readonly { dir: string; pull: Pull }[],
+  opts: { budgetMs?: number; check?: MergeCheck } = {},
 ): Promise<({ mergeable: boolean; conflicts: string[] } | null)[]> {
+  const budgetMs = opts.budgetMs ?? MERGE_BUDGET_MS;
+  const check = opts.check ?? mergeable;
   const out: ({ mergeable: boolean; conflicts: string[] } | null)[] =
     new Array(items.length).fill(null);
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    for (let i = next++; i < items.length; i = next++) {
-      const { dir, pull } = items[i]!;
-      if (pull.state !== "open" || pull.mergedAt !== null) continue;
+  const pending: Promise<void>[] = [];
+  await Promise.all(
+    items.map(async ({ dir, pull }, i) => {
+      if (pull.state !== "open" || pull.mergedAt !== null) return;
       const baseRef = `refs/heads/${pull.baseBranch}`;
       const headRef = pull.crossRepo
         ? `refs/pull/${pull.number}/head`
@@ -890,14 +1028,37 @@ export async function pullMergeStates(
       const live = await readTips(dir, [baseRef, headRef]);
       const baseOid = live.get(baseRef) ?? pull.baseOid;
       const headOid = live.get(headRef) ?? pull.headOid;
-      const r = await mergeReading(dir, baseOid, headOid);
-      out[i] = { mergeable: r.mergeable, conflicts: r.conflicts };
-    }
-  };
-  await Promise.all(
-    Array.from({ length: Math.min(READ_AT_ONCE, items.length) }, worker),
+      const pullKey = `${dir}:${pull.number}`;
+      // A pair already read answers now, never queued behind slow ones.
+      const known = readings.get(`${headOid}:${baseOid}`);
+      if (known !== undefined) {
+        remember(pullKey, headOid, known);
+        out[i] = { mergeable: known.mergeable, conflicts: [...known.conflicts] };
+        return;
+      }
+      const last = lastByPull.get(pullKey);
+      if (last !== undefined && last.headOid === headOid)
+        out[i] = { mergeable: last.reading.mergeable, conflicts: [...last.reading.conflicts] };
+      pending.push(
+        readQueued(dir, baseOid, headOid, check).then((r) => {
+          remember(pullKey, headOid, r);
+          out[i] = { mergeable: r.mergeable, conflicts: [...r.conflicts] };
+        }),
+      );
+    }),
   );
-  return out;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  // An infinite budget waits for every reading (setTimeout would fire at once).
+  const budget = Number.isFinite(budgetMs)
+    ? new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, budgetMs);
+      })
+    : new Promise<void>(() => {});
+  // A failed reading is answered by what the pull already holds.
+  await Promise.race([Promise.allSettled(pending), budget]);
+  clearTimeout(timer);
+  // Copies: a reading that lands after the answer must not change it.
+  return out.map((m) => (m === null ? null : { ...m, conflicts: [...m.conflicts] }));
 }
 
 /**
@@ -906,15 +1067,27 @@ export async function pullMergeStates(
  * and a local merge would be overwritten by the next fetch. Merge there; the
  * next sync brings back the merge commit the origin actually made.
  */
+/** One path a stranger may not change, and why, as a person reads it (`crew/stranger.ts`). */
+export interface Guarded {
+  readonly path: string;
+  readonly why: string;
+}
+
 export type MergePullError =
   | MergeError
+  /** A stranger's pull changes guarded paths: it does not land, whatever its review says (#9575). */
+  | { readonly kind: "guarded"; readonly paths: readonly Guarded[] }
   | "already_merged"
   | "closed"
+  /** The head moved after it was judged (`headOid`): nothing landed (#9575). */
+  | "head_moved"
   | "mirrored"
   /** The repo requires an approval of this head, or a change was requested. */
   | "review_required"
   /** The repo requires a passing deploy of this head, and there is none yet. */
-  | "checks_required";
+  | "checks_required"
+  /** A team the pull's issue names has a reviewer here and has not approved this head (#10080). */
+  | { readonly kind: "team_review_required"; readonly teams: readonly string[] };
 
 /** The base a landing must find, and the tree it must write (#2036). */
 export interface LandingExpect {
@@ -945,6 +1118,12 @@ export async function mergePull(
      * merge must write `treeOid`, or nothing lands (`base_moved`).
      */
     expect?: LandingExpect;
+    /**
+     * The head that was judged (a stranger's guard, #9575): the head merged
+     * must be this one, or nothing lands (`head_moved`). A fork can push
+     * between the judging and the landing.
+     */
+    headOid?: string;
   },
 ): Promise<Result<{ mergeOid: string; carried: boolean }, MergePullError>> {
   // The row, not the caller's copy: a landing reads its pull, runs a gate
@@ -986,6 +1165,8 @@ export async function mergePull(
   const status = await pullStatus(dir, pull, input.gate);
   if (input.expect !== undefined && status.baseOid !== input.expect.baseOid)
     return err({ kind: "base_moved" });
+  if (input.headOid !== undefined && status.headOid !== input.headOid)
+    return err("head_moved");
   // What the pull proposes is already on the base: there is nothing to
   // land, so nothing is committed — the pull closes as merged into the
   // commit that carried it, and the base does not move.
@@ -996,11 +1177,14 @@ export async function mergePull(
       actorId: input.actorId,
       baseOid: status.baseOid,
       headOid: status.headOid,
+      carried: true,
     });
     return ok({ mergeOid: carrier, carried: true });
   }
   if (status.reviews !== null && !status.reviews.mergeable)
     return err("review_required");
+  const teams = input.gate?.teamsHolding?.(status.headOid) ?? [];
+  if (teams.length > 0) return err({ kind: "team_review_required", teams });
   // The check is the latest deploy run of *this* head. Read here, not
   // handed in, for the same reason as the review verdict above. A landing
   // the merge queue gated (`expect`) is not held for a green on an older
@@ -1017,10 +1201,16 @@ export async function mergePull(
     )
       return err("checks_required");
   }
+  // A kept fork lands its combined branch, brought up to the base first:
+  // the author's head is its ancestor, so it lands too (#9012).
+  const combined =
+    input.sealedFrom === undefined && fromKeptFork(db, pull)
+      ? await combine(dir, { number: pull.number, baseOid: status.baseOid, headOid: status.headOid })
+      : undefined;
   const landed = await merge(dir, {
     baseBranch: pull.baseBranch,
     baseOid: status.baseOid,
-    headOid: status.headOid,
+    headOid: combined?.oid ?? status.headOid,
     strategy: input.strategy,
     message: input.message,
     author: input.author,
@@ -1056,9 +1246,7 @@ async function carriedBy(
 ): Promise<string | undefined> {
   if (strategy !== "squash" || status.ahead === 0 || !status.mergeable)
     return undefined;
-  const merged = await mergeable(dir, status.baseOid, status.headOid);
-  if (!merged.ok) return undefined;
-  if (merged.value.treeOid !== (await treeOf(dir, status.baseOid)))
+  if (!(await contentOnBase(dir, status.baseOid, status.headOid)))
     return undefined;
   const landing = await resolveOid(dir, `refs/pull/${pull.number}/merged`);
   if (
@@ -1074,12 +1262,18 @@ async function carriedBy(
 function closeAsMerged(
   db: Database,
   pullId: string,
-  landed: { mergeOid: string; actorId: string; baseOid: string; headOid: string },
+  landed: {
+    mergeOid: string;
+    actorId: string;
+    baseOid: string;
+    headOid: string;
+    carried?: boolean;
+  },
 ): void {
   const now = new Date().toISOString();
   transact(db, () => {
     db.query(
-      "UPDATE pull SET merged_at = ?1, merged_oid = ?2, merged_by = ?3, base_oid = ?4, head_oid = ?5 WHERE issue_id = ?6 AND merged_at IS NULL",
+      "UPDATE pull SET merged_at = ?1, merged_oid = ?2, merged_by = ?3, base_oid = ?4, head_oid = ?5, carried = ?7 WHERE issue_id = ?6 AND merged_at IS NULL",
     ).run(
       now,
       landed.mergeOid,
@@ -1087,6 +1281,7 @@ function closeAsMerged(
       landed.baseOid,
       landed.headOid,
       pullId,
+      landed.carried === true ? 1 : 0,
     );
     setIssueState(db, pullId, "closed");
   });

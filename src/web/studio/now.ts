@@ -8,7 +8,7 @@
  */
 
 import { eventRows, mayView, sealedScope } from "../../core/sealed.ts";
-import { envPull } from "../../apps/data.ts";
+import { envPull, previewEnv } from "../../apps/data.ts";
 import { appsRuntime, envsFor } from "../../apps/runtime.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { listCrewRoles } from "../../core/agents.ts";
@@ -24,8 +24,9 @@ import { readRunLogTail } from "../../runs/log.ts";
 import { mayReadRunLog } from "../../actions/runs.ts";
 import { loadRepo, repoBase } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
+import { flatten, noteLine } from "./note.ts";
 import { fragment, missingFragment } from "../layout.ts";
-import { avatar, badge, btn, card, icon, listCard, row, time } from "../ui.ts";
+import { avatar, badge, btn, icon, listCard, row, time } from "../ui.ts";
 import { changeHref, tellHref } from "./nouns.ts";
 import { LOG_TAIL_CAP, logBox } from "./log.ts";
 import { appPanels } from "./previews.ts";
@@ -73,11 +74,14 @@ export async function nowCard(
     wordCtx: WordCtx;
     /** Whether the head card is tailing production's own deploy. */
     deployTailing: boolean;
+    /** A fresh app has no previews list, so each pull's row links its preview itself. */
+    previewLinks?: boolean;
   },
 ): Promise<{ card: Html }> {
   const db = ctx.app.db;
   const base = repoBase(repo);
   const { openPulls, builderCount, ownerFacts, wordCtx, deployTailing } = o;
+  const previewLinks = o.previewLinks === true && appsRuntime(ctx.app) !== undefined;
   // A run on a sealed report, and the report, are for who may see it.
   const recent = listRuns(db, repo.id, { kind: "agent", limit: 8 });
   const sealed = eventRows(
@@ -206,9 +210,9 @@ export async function nowCard(
         ...(stop ? {} : { href: `${base}/runs/${r.id}`, nav: true }),
         lead: avatar(who),
         title: stop
-          ? html`<a href="${base}/runs/${r.id}">${about?.title ?? note}</a>`
-          : (about?.title ?? note),
-        meta: html`${who} · ${word === "working" ? "working now" : note}
+          ? html`<a href="${base}/runs/${r.id}">${about?.title ?? flatten(note)}</a>`
+          : (about?.title ?? flatten(note)),
+        meta: html`${who} · ${word === "working" ? "working now" : noteLine(note)}
         ${word === "working"
           ? null
           : html` · ${time(r.finishedAt ?? r.createdAt)}`}`,
@@ -251,7 +255,7 @@ export async function nowCard(
       nav: true,
       lead: avatar(who),
       title: i.title,
-      meta: html`${who} · ${note} · ${time(i.createdAt)}`,
+      meta: html`${who} · ${noteLine(note)} · ${time(i.createdAt)}`,
       trail: wordBadge(word),
     });
   });
@@ -265,12 +269,21 @@ export async function nowCard(
           { name: p.authorName, isAgent: p.authorIsAgent },
           ownerFacts,
         );
+        const meta = html`${who} · ${noteLine(note)} · ${time(p.createdAt)}`;
+        if (previewLinks)
+          return row({
+            nav: true,
+            lead: avatar(who),
+            title: html`<a href="${changeHref(base, p.number)}">${p.title}</a>`,
+            meta: html`${meta} · <a href="${base}/app/${previewEnv(p.number)}/open">Preview</a>`,
+            trail: wordBadge(word),
+          });
         return row({
           href: changeHref(base, p.number),
           nav: true,
           lead: avatar(who),
           title: p.title,
-          meta: html`${who} · ${note} · ${time(p.createdAt)}`,
+          meta,
           trail: wordBadge(word),
         });
       }),
@@ -312,17 +325,14 @@ export async function nowCard(
   ];
   const now =
     nowRows.length === 0
-      ? card(
-          html`<p class="muted small">
+      ? html`<section class="stack">
+          <h2>Now</h2>
+          <p class="muted">
             ${deployTailing
               ? "Production is coming up — the log above has it."
               : "Nothing yet. Tell the crew something."}
-          </p>`,
-          {
-            head: html`${icon("activity")}
-              <h2>Now</h2>`,
-          },
-        )
+          </p>
+        </section>`
       : listCard(nowRows, {
           head: html`${icon("activity")}
             <h2>Now</h2>
@@ -357,10 +367,8 @@ export async function appNowFragment(ctx: Ctx): Promise<Response> {
   );
   // The one fact Now borrows from the head card, decided where the head
   // card decides it, so the two never disagree about what is tailing.
-  const deployTailing = timePhase(
-    req,
-    "panels",
-    () => appPanels(ctx, repo, record, openPulls).deployTailing,
+  const { deployTailing, fresh } = timePhase(req, "panels", () =>
+    appPanels(ctx, repo, record, openPulls),
   );
   const rendering = performance.now();
   const { card } = await nowCard(ctx, repo, record, {
@@ -376,6 +384,7 @@ export async function appNowFragment(ctx: Ctx): Promise<Response> {
       viewer: ctx.auth.user,
     },
     deployTailing,
+    previewLinks: fresh,
   });
   const response = fragment(nowRegion(repo, card), { request: req });
   notePhase(req, "render", performance.now() - rendering);

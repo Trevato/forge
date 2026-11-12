@@ -87,10 +87,12 @@ import {
 } from "./explorer.ts";
 import { accountOnly, hostLabel, originIcon } from "./origins.ts";
 import { refSetFrom } from "./refs.ts";
+import { kindByName, needsPaths } from "../render/kinds.ts";
 import { stageRow, stageStateFor } from "../stage-row.ts";
 import {
   blobView,
   codePage,
+  pathsAt,
   renderBlob,
   renderCode,
   rawResponse,
@@ -508,12 +510,15 @@ export async function browseBlob(ctx: Ctx): Promise<Response> {
   const blob = await scope.source.blob(ref, path);
   if (!blob.ok) return notFoundPage(ctx);
   const refs = await refSetFrom(scope.source);
+  const exists = needsPaths(kindByName(path)) ? await pathsAt(scope, ref) : undefined;
   const pane = renderBlob(scope, {
     refs,
     ref,
     path,
+    ...(exists !== undefined ? { exists } : {}),
     blob: blob.value,
     view: blobView(ctx.url.searchParams.get("view")),
+    all: ctx.url.searchParams.get("all") === "1",
   });
   if (ctx.url.searchParams.get("fragment") === "1")
     return fragment(pane, { request: ctx.request });
@@ -949,6 +954,10 @@ export function forkFailure(error: string): string {
     return "The origin could not be reached. Nothing was created.";
   if (error === "origin_refused")
     return "The origin refused to fork that repository.";
+  if (error === "origin_read_only")
+    return "This account was connected read-only, so nothing is written through it.";
+  if (error === "origin_paused")
+    return "This connection is not verified yet, so writes through it are paused. Check it again under Settings → Connected accounts.";
   if (error === "mirror_failed")
     return "The fork was made, but a local copy of it could not be.";
   if (error === "unauthorized") return "Sign in first.";
@@ -1010,13 +1019,14 @@ const STAGES: { name: MirrorStage; label: string }[] = [
 const ORDER = STAGES.map((s) => s.name);
 
 /** The checklist. Its shape is what `mirrorJs` updates in place. */
-export function stageList(job: MirrorJob, streamUrl: string): Html {
+export function stageList(job: MirrorJob, streamUrl: string, landing = ""): Html {
   return html`<ol
     class="list stages"
     aria-live="polite"
     id="stages"
     data-stream="${streamUrl}"
     data-stage="${job.stage}"
+    ${landing === "" ? null : html`data-landing="${landing}"`}
     data-repo="${job.repo === undefined
       ? ""
       : `/${job.repo.ownerName}/${job.repo.name}`}"

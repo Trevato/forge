@@ -11,6 +11,7 @@ import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { createIssue, setIssueState } from "../src/core/issues.ts";
 import { savePlacement } from "../src/core/placements.ts";
+import { linkThoughts } from "../src/core/thought_links.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp, forgeCommands, Session } from "../src/tui/forge.ts";
 import { askedLines, askedScreen } from "../src/tui/screens/asked.ts";
@@ -111,7 +112,7 @@ describe("the asked screen", () => {
 
   test("a placement in an unreadable repository shows no slug or state", async () => {
     const text = await screenText(alice);
-    expect(text).toContain("opened in a repository you cannot read");
+    expect(text).toContain("→ in a repository you cannot read");
     expect(text).not.toContain("bob/vault");
   });
 
@@ -123,7 +124,9 @@ describe("the asked screen", () => {
   });
 
   test("asks are unshipped, oldest first, with their address, and an unreadable repository's is absent", () => {
-    const { asks } = askedLines(app.db, alice);
+    // Only the asks this file filed up front: other tests file their own.
+    const filed = new Set(["Newer ask for the lobby", "Older ask for the lobby", "Already shipped ask", "Secret ask in the vault"]);
+    const asks = askedLines(app.db, alice).asks.filter((a) => filed.has(a.title));
     expect(asks.map((a) => a.title)).toEqual(["Older ask for the lobby", "Newer ask for the lobby"]);
     expect(asks[0]!.secondary).toContain("alice/lobby #");
     expect(asks[0]!.secondary).toContain("alice");
@@ -173,5 +176,33 @@ describe("the asked screen", () => {
     const ids = (u?: User) => forgeCommands(new Session(app, identity(u)))(ctx).map((c) => c.id);
     expect(ids(alice)).toContain("asked");
     expect(ids()).not.toContain("asked");
+  });
+  test("a thought says where it went in /asked's words: the issue, the question back, a note, or not yet (#7509)", () => {
+    const lobby = app.db.query<{ id: string }, []>("SELECT id FROM repo WHERE name = 'lobby'").get()!;
+    const issue = createIssue(app.db, { repoId: lobby.id, authorId: alice.id, title: "Louder lobby" });
+    if (!issue.ok) throw new Error(issue.error);
+    const n = issue.value.number;
+    const placed = (thoughtId: string, reply: string, asked: boolean, number?: number) =>
+      savePlacement(app.db, {
+        thoughtId, kind: number === undefined ? "decision" : "work", asked, decidedBy: "rule", reply,
+        placed: number === undefined ? [] : [{ action: "opened", repo: "alice/lobby", number }],
+        placedAt: new Date().toISOString(),
+      });
+    thought(alice, "t4", "a louder lobby, again");
+    thought(alice, "t5", "which one was it");
+    thought(alice, "t6", "we like plain words");
+    placed("t1", "ok", false, n);
+    placed("t4", "ok", false, n);
+    linkThoughts(app.db, "t4", "t1", "repeats");
+    placed("t5", "Do you mean the lobby or the vault?", true);
+    placed("t6", "ok", false);
+    thought(alice, "t7", "and a dark theme");
+
+    const by = new Map(askedLines(app.db, alice).thoughts.map((t) => [t.title, t.secondary]));
+    expect(by.get("make the lobby louder")).toBe(`→ alice/lobby#${n} Louder lobby`);
+    expect(by.get("a louder lobby, again")).toStartWith(`→ alice/lobby#${n} Louder lobby · repeats “make the lobby louder”`);
+    expect(by.get("which one was it")).toBe("Do you mean the lobby or the vault?");
+    expect(by.get("we like plain words")).toBe("kept as a note");
+    expect(by.get("and a dark theme")).toBe("not placed yet");
   });
 });

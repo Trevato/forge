@@ -22,6 +22,9 @@ const cases: [string, Partial<NextInput>, string, string][] = [
   ["approved, queued", { approvals: 1, check: "queued" }, "queue", "approved, its check is queued"],
   ["approved, cancelled", { approvals: 1, check: "cancelled" }, "queue", "approved, its check was cancelled"],
   ["approved, running", { approvals: 1, check: "running" }, "queue", "approved, its check is running"],
+  // The access wall (#7847): a person decides, however approved and green.
+  ["walled, approved and green", { approvals: 1, check: "ok", wall: ["anyone signed out could read pack records"] }, "person", "the access wall holds it for a person to decide: anyone signed out could read pack records. Allow it (merge) or send it back"],
+  ["walled, sent back", { approvals: 1, check: "ok", changesRequested: 1, wall: ["anyone signed out could read pack records"] }, "builder", "changes were asked on this head"],
 ];
 
 describe("nextActor", () => {

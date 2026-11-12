@@ -13,7 +13,7 @@ import type { App } from "../app.ts";
 import { spawnedOrg } from "../spawn/claim.ts";
 import { adminOf, everydayOf, keptAdmin } from "./everyday.ts";
 import { listReposByOwner, type Repo } from "./repos.ts";
-import { getUserSetting, setUserSetting } from "./settings.ts";
+import { PREVIEW_SEEDED, getUserSetting, setUserSetting } from "./settings.ts";
 import { getUserById, type User } from "./users.ts";
 
 export type StepKey = "everyday" | "apps" | "tell";
@@ -22,6 +22,21 @@ export interface NextStep {
   readonly key: StepKey;
   readonly title: string;
   readonly done: boolean;
+}
+
+const STEP_KEYS: readonly StepKey[] = ["everyday", "apps", "tell"];
+
+/** The three steps' words, the one source for the first-login card and the client list's line about it. */
+export const STEP_TITLES: Record<StepKey, string> = {
+  everyday: "Make your everyday account",
+  apps: "Open your apps",
+  tell: "Tell the crew something",
+};
+
+/** What the recipient of a sent forge sees first, in one line: the apps chosen, that the crew is working, the three steps. */
+export function firstScreenLine(apps: readonly string[]): string {
+  const chosen = apps.length === 0 ? "the apps you pick" : apps.join(", ");
+  return `They will see ${chosen}, their crew working, and three next steps: ${STEP_KEYS.map((k) => STEP_TITLES[k]).join("; ")}.`;
 }
 
 const OPENED_APP = "first_step_opened_app";
@@ -45,6 +60,9 @@ export async function nextStepsFor(
   if (!user) return undefined;
   const owner = ownerFor(app, user);
   if (!owner) return undefined;
+  // The preview admin is a site admin of a seeded world, not a newcomer: its
+  // home stays the full one though the preview has a parent.json (#11285).
+  if (getUserSetting(app.db, owner.id, PREVIEW_SEEDED) !== undefined) return undefined;
   if ((await spawnedOrg(app)) === undefined) return undefined;
   const daily = everydayOf(app.db, owner);
   const people = [owner.id, ...(daily ? [daily.id] : [])];
@@ -58,15 +76,15 @@ export async function nextStepsFor(
   return [
     {
       key: "everyday",
-      title: "Make your everyday account",
+      title: STEP_TITLES.everyday,
       done: daily !== undefined || keptAdmin(app.db, owner),
     },
     {
       key: "apps",
-      title: "Open your apps",
+      title: STEP_TITLES.apps,
       done: getUserSetting(app.db, owner.id, OPENED_APP) !== undefined,
     },
-    { key: "tell", title: "Tell the crew something", done: (told?.n ?? 0) > 0 },
+    { key: "tell", title: STEP_TITLES.tell, done: (told?.n ?? 0) > 0 },
   ];
 }
 

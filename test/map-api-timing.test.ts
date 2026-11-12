@@ -9,6 +9,7 @@ import { addDependency } from "../src/core/dependencies.ts";
 import { createIssue } from "../src/core/issues.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { seedAdmin } from "./helpers/admin.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 let dataDir = "";
 let app: App, servers: Servers, bearer = "";
@@ -50,7 +51,7 @@ test("the repository map names its phases in order, with durations", async () =>
   expect(res.status).toBe(200);
   const body = (await res.json()) as { ready: unknown[] };
   expect(body.ready.length).toBeGreaterThan(0);
-  const parts = (res.headers.get("server-timing") ?? "").split(", ");
+  const parts = requestTiming(res).split(", ");
   const names = parts.map((p) => p.split(";")[0]!);
   expect(names.filter((n) => n !== "app")).toEqual(["session", "graph", "marks", "pillars", "asktolive", "held", "render"]);
   for (const p of parts) expect(Number(/dur=([\d.]+)/.exec(p)?.[1])).not.toBeNaN();

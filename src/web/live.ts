@@ -190,6 +190,15 @@ export const liveClientJs = /* js */ `
     return isApp && data && data.kind && data.kind.indexOf('run.') === 0 &&
       data.payload && data.payload.kind === 'deploy';
   }
+  // While a new app's head carries where it stands ([data-onboarding],
+  // apps/onboarding.ts), the crew's runs and its pulls opening, landing or
+  // closing move it too. Once live the row is gone, and so is this.
+  function movesOnboarding(data) {
+    return isApp && data && data.kind &&
+      !!document.querySelector('#app-head [data-onboarding]') &&
+      (data.kind.indexOf('run.') === 0 || data.kind === 'pull.opened' ||
+       data.kind === 'pull.merged' || data.kind === 'pull.closed');
+  }
   // 'app.serving' fires at the swap-in — the instant a preview answers —
   // which is seconds to half a minute before its tests (and so its
   // run.finished) are done. It carries no run.kind, so it is matched on its
@@ -267,7 +276,7 @@ export const liveClientJs = /* js */ `
         });
         var mark = document.querySelector('#pull-check [data-head]');
         if (mark && mark.getAttribute('data-head')) head = mark.getAttribute('data-head');
-        var word = textOf(document.querySelector('#pull-check .badge'));
+        var word = textOf(document.querySelector('#pull-check [data-pull-word]'));
         if (status && word) status.textContent = word.charAt(0).toUpperCase() + word.slice(1);
       })
       .catch(function () {})
@@ -286,7 +295,7 @@ export const liveClientJs = /* js */ `
       // it still offers the refresh. A run or a serving moves only the swap.
       if (data.kind !== 'pull.merged') return;
     }
-    if (isDeploy(data) || isServing(data)) { refreshApp(); return; }
+    if (isDeploy(data) || isServing(data) || movesOnboarding(data)) { refreshApp(); return; }
     if (relevant(data) && conv && (data.kind === thread + '.commented')) {
       appendNew();
     } else if (relevant(data) || !thread) {
@@ -299,12 +308,12 @@ export const liveClientJs = /* js */ `
     'push', 'repo.created', 'repo.forked',
     'issue.opened', 'issue.closed', 'issue.reopened', 'issue.commented', 'issue.labeled', 'issue.teams', 'issue.edited',
     'pull.opened', 'pull.closed', 'pull.reopened', 'pull.merged', 'pull.commented', 'pull.reviewed',
-    'pull.held', 'pull.released', 'pull.edited', 'pull.run_granted',
+    'pull.held', 'pull.released', 'pull.edited', 'pull.run_granted', 'pull.guest_approved',
     'branch.created', 'branch.deleted',
     'label.created', 'label.updated', 'label.deleted',
     'run.queued', 'run.started', 'run.finished', 'app.serving',
     'app.created', 'app.updated', 'app.deleted', 'app.stopped',
-    'repo.upstream_checked', 'repo.upstream_follow', 'repo.following', 'limb.moved', 'limb.replan', 'limb.replan_taken_back', 'issue.assigned', 'pull.assigned', 'crew.added', 'crew.removed',
+    'repo.upstream_checked', 'repo.links_probed', 'repo.source_added', 'repo.source_removed', 'repo.upstream_follow', 'repo.following', 'limb.moved', 'limb.replan', 'limb.replan_taken_back', 'issue.assigned', 'pull.assigned', 'crew.added', 'crew.removed',
   ];
   var extra = (cfg.getAttribute('data-repos') || '').split(' ').filter(Boolean);
   var watching = [repo].concat(extra).filter(function (r, i, all) {

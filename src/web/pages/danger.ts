@@ -7,13 +7,14 @@
 import { deleteRepo } from "../../actions/repos.ts";
 import { notePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
-import { repoBase, repoNotFound } from "../chrome.ts";
+import { isContributionFork } from "../../core/contribute.ts";
+import { loadRepo, repoBase, repoNotFound } from "../chrome.ts";
 import { DELETE_REPO } from "../danger_words.ts";
-import { field } from "../form.ts";
+import { field, readForm } from "../form.ts";
 import { html } from "../html.ts";
-import { icon } from "../icons.ts";
 import { flashTo } from "../layout.ts";
-import { card, confirmAction } from "../ui.ts";
+import { confirmAction } from "../ui.ts";
+import { detachSection } from "./detach.ts";
 import { adminForm, settingsPageResponse, timedAdminRepo } from "./settings.ts";
 
 export function dangerPage(ctx: Ctx): Response {
@@ -23,31 +24,41 @@ export function dangerPage(ctx: Ctx): Response {
   const base = repoBase(repo);
   const full = `${repo.ownerName}/${repo.name}`;
 
-  const body = card(
-    html`<p>
-        Deleting <strong>${full}</strong> removes its issues, pull requests,
-        reviews, labels and webhooks, and erases the git objects from disk.
-      </p>
-      <p class="muted small mt">
-        Any fork of this repository is detached first — it repacks so it owns
-        its objects, then loses the link. Forks survive; this repository does
-        not. There is no undo and no backup.
-      </p>
-      <div class="form-actions">
-        ${confirmAction({
-          action: `${base}/settings/delete`,
-          verb: DELETE_REPO,
-        })}
-      </div>`,
-    {
-      tone: "danger",
-      head: html`${icon("alert")}
-        <h2>${DELETE_REPO}</h2>`,
-    },
+  const remove = html`<section class="settings-block" id="delete">
+    <h2>${DELETE_REPO}</h2>
+    <p>
+      Deleting <strong>${full}</strong> removes its issues, pull requests,
+      reviews, labels and webhooks, and erases the git objects from disk.
+    </p>
+    <p class="muted small">
+      Any fork of this repository is detached first — it repacks so it owns
+      its objects, then loses the link. Forks survive; this repository does
+      not. There is no undo and no backup.
+    </p>
+    <div class="form-actions">
+      ${confirmAction({ action: `${base}/settings/delete`, verb: DELETE_REPO })}
+    </div>
+  </section>`;
+  const response = settingsPageResponse(
+    ctx,
+    repo,
+    "danger",
+    "Danger zone",
+    html`${detachSection(ctx.app.db, repo, ctx.auth.user)}${remove}`,
   );
-  const response = settingsPageResponse(ctx, repo, "danger", "Danger zone", body);
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
+}
+
+const HAS_PULLS = "This repository stays: a pull request was sent from it, and that pull request needs it. Nothing was deleted.";
+
+/** The admin's form, or a guest's on their own fork: the one thing they may do to it besides push. */
+async function deleteForm(ctx: Ctx): ReturnType<typeof adminForm> {
+  const repo = loadRepo(ctx);
+  if (repo === undefined || repo.ownerId !== ctx.auth.user?.id || !isContributionFork(ctx.app.db, repo.id))
+    return adminForm(ctx);
+  const form = await readForm(ctx, "admin");
+  return form instanceof Response ? form : { repo, form };
 }
 
 /**
@@ -55,7 +66,7 @@ export function dangerPage(ctx: Ctx): Response {
  * the phrase, this handler is the one that refuses without it.
  */
 export async function repoDelete(ctx: Ctx): Promise<Response> {
-  const gate = await adminForm(ctx);
+  const gate = await deleteForm(ctx);
   if (gate instanceof Response) return gate;
   const { repo, form } = gate;
   const full = `${repo.ownerName}/${repo.name}`;
@@ -69,7 +80,7 @@ export async function repoDelete(ctx: Ctx): Promise<Response> {
   if (!deleted.ok) {
     return flashTo(ctx, `${repoBase(repo)}/settings/danger`, {
       tone: "danger",
-      message: "The repository could not be deleted.",
+      message: deleted.error === "has_pulls" ? HAS_PULLS : "The repository could not be deleted.",
     });
   }
   return flashTo(ctx, "/", { message: `${full} was deleted.` });

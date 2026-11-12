@@ -14,7 +14,7 @@ import { createApp, type App } from "../src/app.ts";
 import { sendNote, type Sender } from "../src/actions/app_notes.ts";
 import { isBanned } from "../src/core/app_notes.ts";
 import { getAppBySlug } from "../src/core/apps.ts";
-import { getIssue, labelsFor } from "../src/core/issues.ts";
+import { addComment, getIssue, labelsFor } from "../src/core/issues.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
@@ -22,7 +22,7 @@ import { repoScreen } from "../src/tui/screens/repo.ts";
 import { local } from "../src/tui/screens/where.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
-import { settleApp } from "./helpers/tui.ts";
+import { settleApp, settlePalette } from "./helpers/tui.ts";
 import { proveAll } from "./helpers/verified.ts";
 
 quietLogs();
@@ -46,7 +46,7 @@ async function palette(user: User, repo: Repo, keys: string[]): Promise<string> 
   await settleApp(tui);
   for (const k of keys) {
     terminal.feed(k);
-    await settleApp(tui);
+    await settlePalette(tui);
   }
   const text = tui.screen.toText();
   tui.stop?.();
@@ -84,20 +84,23 @@ describe("notes from the app, in the terminal", () => {
     // Filtered, so the row's presence does not depend on how many others the palette lists.
     expect(await palette(bob, notes, [":", "Tell the"])).toContain("alice/notes — Tell the builders");
     expect(await palette(bob, plain, [":", "Tell the"])).not.toContain("Tell the builders");
-  });
+  }, 30_000);
 
   test("a note files a from-app issue as the person", async () => {
     const text = await palette(bob, notes, [":", "Tell the", "\r", ..."the logo is blurry".split(""), "\r"]);
-    expect(text).toContain("Sent");
     const row = app.db.query<{ issue_number: number; name: string }, []>("SELECT issue_number, name FROM app_note").get()!;
+    // The sender is told the issue's number and where it is.
+    expect(text).toContain(`Sent as #${row.issue_number}`);
+    expect(text).toContain(`alice/notes/issues/${row.issue_number}`);
     expect(row.name).toBe("@bob");
     const issue = getIssue(app.db, notes.id, row.issue_number)!;
     expect(labelsFor(app.db, issue.id).map((l) => l.name)).toEqual(["from-app"]);
     expect(issue.body).toContain("by @bob.");
-  });
+  }, 30_000);
 
   test("a person sees their own with its status; the admin sees all and bans", async () => {
-    expect(await palette(bob, notes, [":", "Notes from", "\r"])).toContain("the logo is blurry");
+    const number = app.db.query<{ issue_number: number }, []>("SELECT issue_number FROM app_note").get()!.issue_number;
+    expect(await palette(bob, notes, [":", "Notes from", "\r"])).toContain(`#${number} the logo is blurry`);
     expect(await palette(alice, notes, [":", "Notes from", "\r"])).toContain("the logo is blurry");
     // alice has none of her own, bob picks and is only told the status; alice bans.
     const asBob = await palette(bob, notes, [":", "Notes from", "\r", "\r"]);
@@ -107,7 +110,7 @@ describe("notes from the app, in the terminal", () => {
     await palette(alice, notes, [":", "Notes from", "\r", "\r", "\x1b[C", "\x1b[C", "\r"]);
     const record = getAppBySlug(app.db, "notes")!;
     expect(isBanned(app.db, record.id, `u:${bob.id}`)).toBe(true);
-  });
+  }, 30_000);
 
   test("the admin lists the banned senders and unbans one; a reader has no such row", async () => {
     const record = getAppBySlug(app.db, "notes")!;
@@ -122,5 +125,18 @@ describe("notes from the app, in the terminal", () => {
     const again = await sendNote(app, record, notes, "production", undefined, sender, { text: "back again", page: "", viewport: "unknown" }, "ssh:again");
     expect(again.ok).toBe(true);
     expect(await palette(alice, notes, [":", "Banned", "\r"])).not.toContain("Unban this sender");
-  });
+  }, 30_000);
+
+  test("a writer's reply shows to the sender on picking the note, and in the admin's moderation body", async () => {
+    for (const row of app.db.query<{ issue_number: number }, []>("SELECT issue_number FROM app_note").all())
+      addComment(app.db, { issueId: getIssue(app.db, notes.id, row.issue_number)!.id, authorId: alice.id, body: "we are on it" });
+    const list = await palette(bob, notes, [":", "Notes from", "\r"]);
+    expect(list).toMatch(/#\d+ back again \(\d+ replies?\)/);
+    const asBob = await palette(bob, notes, [":", "Notes from", "\r", "\r"]);
+    expect(asBob).toContain("alice");
+    expect(asBob).toContain("we are on it");
+    const asAlice = await palette(alice, notes, [":", "Notes from", "\r", "\r"]);
+    expect(asAlice).toContain("Moderate this note");
+    expect(asAlice).toContain("we are on it");
+  }, 30_000);
 });

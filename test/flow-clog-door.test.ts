@@ -130,13 +130,11 @@ test("clogLines: the standing clog, then the last cleared note", () => {
   expect(clogLines({ standing: null, last: null }, T0.getTime())).toEqual([]);
 });
 
-test("the admin sees the clog on home and in the Flow dialog; a guest and an agent see neither", async () => {
+test("the clog is in the Flow dialog for the admin, never on home (#8015), never to a guest or an agent", async () => {
   reset();
   app.db.run("INSERT INTO clog_state (id, since, started_at, first_reasons, quiet) VALUES (1, ?1, ?1, ?2, 0)", [Date.now(), JSON.stringify(["31 pulls conflict <b>"])]);
   const home = async (cookie: string): Promise<string> => (await fetch(`${servers.url}/`, { headers: { cookie } })).text();
-  const mine = await home(adminCookie);
-  expect(mine).toContain("31 pulls conflict &lt;b&gt;");
-  expect(mine).not.toContain("<b>");
+  expect(await home(adminCookie)).not.toContain("pulls conflict");
   expect(await home(guestCookie)).not.toContain("pulls conflict");
   expect(flowLines(app.db, new Date(), [], undefined, []).join("\n")).toContain("31 pulls conflict");
   expect(flowLines(app.db, new Date(), [], { queues: [] }, []).join("\n")).not.toContain("31 pulls conflict");

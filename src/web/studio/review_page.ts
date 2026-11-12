@@ -18,6 +18,9 @@ import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { badge, empty, listCard, row, runStateBadge, time } from "../ui.ts";
 import { lookThumb, lookThumbPlain, thumbLook } from "../pages/looks.ts";
+import { stepOfStored } from "../../flow/path.ts";
+import { stepLink } from "./step_link.ts";
+import { isTrusted, pullSourceOf } from "../../core/trusted_sources.ts";
 import { actRow, rowId } from "./review_act.ts";
 import { reviewSet } from "./review_set.ts";
 import { staleArchive } from "./review_stale.ts";
@@ -119,7 +122,10 @@ export function reviewPage(ctx: Ctx): Response {
         : stat === "failed"
         ? " · Diff size unavailable — open the pull to see it"
         : "";
-    const act = actRow(a);
+    const from = a.pull === undefined ? undefined : pullSourceOf(ctx.app.db, a.pull.id);
+    // A guest's pull from another forge says Approve and Decline; a trusted source's (here for a wall) is a person's plain Merge.
+    const act = actRow(a, from !== undefined && !isTrusted(ctx.app.db, from.host, from.account));
+    const step = a.pull === undefined ? null : stepOfStored(ctx.app.db, a.repo, a.pull);
     return row({
       href,
       nav: true,
@@ -128,6 +134,7 @@ export function reviewPage(ctx: Ctx): Response {
       title: a.pull?.title ?? a.issue?.title ?? a.proposal?.title ?? `${a.repo.name} is waiting on you`,
       titleAttr: `${a.repo.ownerName}/${a.repo.name}: ${a.why ?? a.consequence.why}`,
       meta: html`${a.repo.ownerName}/${a.repo.name} · ${time(a.since)} · ${a.why ?? a.consequence.why} · ${advised}${pending}`,
+      ...(step === null ? {} : { after: stepLink(step) }),
       // The trail survives the meta line's ellipsis: the verdict and the size are the facts this row gives.
       ...(a.pull === undefined
         ? {}

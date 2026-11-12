@@ -12,9 +12,12 @@
  * idempotent — and a finished one is answered, not made twice.
  */
 
+import { nameShapeVerdict, nameVerdict, type NameVerdict } from "../spawn/name_verdict.ts";
+import { readdirSync, readFileSync } from "node:fs";
 import { mkdir, readdir, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { createApp, type App } from "../app.ts";
+import { tellPlan } from "../billing/notice.ts";
 import {
   addCrew,
   BRIEF_MAX,
@@ -37,6 +40,10 @@ import { createUser, getUserByName, type User } from "../core/users.ts";
 import { runGit } from "../git/env.ts";
 import { repoDir } from "../git/repos.ts";
 import { commitFiles } from "../git/write.ts";
+import { adoptForgeCode, forkForgeCode } from "../spawn/forge_code.ts";
+import { lendIncludedCredit } from "../spawn/included_credit.ts";
+import { seedStarterCrew } from "../spawn/starter_crew.ts";
+import { birthFromTemplate, type TemplateMark } from "../spawn/template_birth.ts";
 import { sha256 } from "../kernel/hash.ts";
 import { secret } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -45,6 +52,7 @@ import {
   addSubscription,
   getSubscriptionByName,
   lockBudget,
+  normalizeToken,
   setGrants,
   subscriptionAad,
 } from "../core/subscriptions.ts";
@@ -54,9 +62,13 @@ import { loadOrCreateHostKey } from "../ssh/keys.ts";
 import { claimLink, hasAdmin, mintClaim, spawnedOrg } from "../spawn/claim.ts";
 import { childPublicUrl, parentOrigin, type Placement, type PlacementKind } from "../spawn/placement.ts";
 import { quotaRefusal } from "../spawn/quota.ts";
+import { personRefusal, planRefusal } from "../spawn/sleep.ts";
+import { FREE, getPlan, PAID_PLAN_ADMIN_ONLY } from "../settings/plans.ts";
+import { setCap } from "../spawn/credit.ts";
+import { fundingOf, keepFunding } from "../spawn/funding.ts";
 import { planSpawn, type SpawnInput, type SpawnPlan, type SpawnSource } from "../spawn/plan.ts";
 import { DEFAULT_SIZE, isSize, type Size } from "../spawn/sizes.ts";
-import { chainForChild, DEFAULT_MODE, forgeLinkOf, type FollowMode, type Hop } from "../spawn/chain.ts";
+import { DEFAULT_MODE } from "../spawn/chain.ts";
 import { requireUser } from "./access.ts";
 
 export interface Spawned {
@@ -88,6 +100,8 @@ export interface SpawnDeps {
   /** The request that asked, for the same-origin check on this mutation. */
   readonly request: Request;
   readonly url: URL;
+  /** The plan was given by a gift code the caller has already claimed (`actions/codes.ts`): no admin, no payment. */
+  readonly gift?: boolean;
   /**
    * The child's own model key, when the spawner gives it one: an API key, or
    * a person's own setup-token under a budget (their choice), sealed in the child with the
@@ -112,8 +126,14 @@ interface Ledger {
   readonly forWhom?: string;
   readonly apps?: readonly string[];
   readonly createdAt?: string;
+  /** The person who made it, counted against their forges (`spawn/sleep.ts`); absent for a stranger's. */
+  readonly ownerId?: string;
   /** Absent on a ledger written before sizes; reads as small. */
   readonly size?: Size;
+  /** The template chosen (`spawn/templates.ts`); absent means `blank`. */
+  readonly template?: string;
+  /** The plan chosen (`settings/plans.ts`); absent means the free plan. */
+  readonly plan?: string;
   /** Absent on a ledger written before cells; reads as hosted. */
   readonly placement?: PlacementKind;
   /** Why a child that wanted a cell is hosted instead (`spawn/host.ts`). */
@@ -134,6 +154,8 @@ const SAFE_ID = /^[A-Za-z0-9_-]{1,80}$/;
 /** The name the child's sealed model key goes by. */
 export const STARTER_KEY = "starter";
 const inFlight = new Set<string>();
+/** Whether a child of this name is being made right now. */
+export const beingMade = (name: string): boolean => inFlight.has(name);
 
 /** A failure the boards count: the step that broke (a fixed few), never its words. */
 function failed(app: App, deps: SpawnDeps, step: "place" | "copy" | "health", message: string) {
@@ -152,11 +174,25 @@ const ledgerPath = (app: App, name: string): string =>
 export const liveChildUrl = (app: App, name: string): string =>
   childPublicUrl(name, parentOrigin(app.config));
 
+/** A ledger file's text as a `Ledger`, or undefined when it is not JSON or lacks name, bodyId and done: the one check every reader shares. */
+export function parseLedger(text: string): Ledger | undefined {
+  let v: unknown;
+  try {
+    v = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (typeof v !== "object" || v === null) return undefined;
+  const o = v as Record<string, unknown>;
+  if (typeof o.name !== "string" || typeof o.bodyId !== "string" || typeof o.done !== "boolean") return undefined;
+  return v as Ledger;
+}
+
 async function readLedger(app: App, name: string): Promise<Ledger | undefined> {
   const file = Bun.file(ledgerPath(app, name));
   if (!(await file.exists())) return undefined;
   try {
-    return (await file.json()) as Ledger;
+    return parseLedger(await file.text());
   } catch {
     return undefined;
   }
@@ -167,6 +203,30 @@ async function writeLedger(app: App, ledger: Ledger): Promise<void> {
   const path = ledgerPath(app, ledger.name);
   await Bun.write(`${path}.tmp`, JSON.stringify(ledger));
   await rename(`${path}.tmp`, path);
+}
+
+/**
+ * The child's founder account: the spawner's own name, or a placeholder
+ * for a stranger's child (`copyInto`).
+ */
+export const founderNameOf = (owner: User | undefined): string => owner?.username ?? "founder";
+
+/**
+ * A child whose organisation would take its founder's name can't be made:
+ * the founder is created first and holds the name, so the organisation
+ * would fail `name_taken` after the body was placed. Said here, so the
+ * dry run refuses what the spawn would fail on.
+ */
+export function founderClash(
+  plan: { readonly name: string; readonly org: string },
+  owner: User | undefined,
+): { field: "name" | "org"; reason: string } | undefined {
+  const founder = founderNameOf(owner);
+  if (plan.org.toLowerCase() !== founder.toLowerCase()) return undefined;
+  return {
+    field: plan.org === plan.name ? "name" : "org",
+    reason: `${plan.org} is the name of the child's founder account (${owner === undefined ? "a stranger's child starts with one" : "yours"}); its organisation needs another name`,
+  };
 }
 
 export async function spawnForge(
@@ -192,6 +252,9 @@ export async function spawnForge(
   const planned = planSpawn(input, source);
   if (!planned.ok) return err({ kind: "invalid", ...planned.error });
   const plan = planned.value;
+  // Before anything is placed: a clash would leave a half-made child.
+  const clash = founderClash(plan, owner);
+  if (clash !== undefined) return err({ kind: "invalid", ...clash });
 
   const names = new Set<string>();
   for (const a of plan.apps) {
@@ -224,6 +287,8 @@ async function make(
   plan: SpawnPlan,
   deps: SpawnDeps,
 ): Promise<Result<Spawned, SpawnError>> {
+  // The key as the person meant it: whitespace and a `Bearer ` prefix from the paste dropped.
+  if (deps.modelKey !== undefined) deps = { ...deps, modelKey: normalizeToken(deps.modelKey) };
   const planHash = sha256(JSON.stringify(plan));
   let ledger = await readLedger(app, plan.name);
   if (ledger) {
@@ -249,6 +314,21 @@ async function make(
     // A retry of an unfinished child is a new attempt: its failure has a start.
     app.bus.append({ kind: "forge.spawn.started", payload: { ...(deps.drill === true ? { drill: 1 } : {}) } });
   } else {
+    // A paid plan is held to its own count, never the free one; the free plan keeps today's per-person limits.
+    const chosen = plan.plan === undefined ? undefined : getPlan(app.db, plan.plan);
+    if (plan.plan !== undefined && chosen === undefined)
+      return err({ kind: "invalid", field: "plan", reason: `${plan.plan} is not a plan this forge offers` });
+    if (chosen !== undefined && chosen.key !== FREE && deps.gift === true) {
+      // A redeemed gift code (`actions/codes.ts`) or a paid order (`actions/order.ts`) is what lends this plan: it asks no admin.
+    } else if (chosen !== undefined && chosen.key !== FREE) {
+      if (owner === undefined) return err({ kind: "refused", reason: "plan", message: `the ${chosen.name} plan is for a signed-in person; sign in first` });
+      if (!owner.isAdmin) return err({ kind: "refused", reason: "plan", message: PAID_PLAN_ADMIN_ONLY(chosen.name) });
+      const many = planRefusal(app.config.dataDir, owner, chosen, FREE);
+      if (many !== undefined) return err({ kind: "refused", reason: "quota", message: many });
+    } else if (owner !== undefined) {
+      const many = personRefusal(app.db, app.config.dataDir, owner);
+      if (many !== undefined) return err({ kind: "refused", reason: "quota", message: many });
+    }
     const over = quotaRefusal(app.config.dataDir, plan.size ?? DEFAULT_SIZE);
     if (over !== undefined) return err({ kind: "refused", reason: "quota", message: over });
     const placed = await deps.placement.place(plan);
@@ -266,7 +346,10 @@ async function make(
       ...(plan.forWhom === undefined ? {} : { forWhom: plan.forWhom }),
       apps: plan.apps.map((a) => a.ref),
       createdAt: new Date().toISOString(),
+      ...(owner === undefined ? {} : { ownerId: owner.id }),
       size: plan.size ?? DEFAULT_SIZE,
+      ...(plan.template === undefined ? {} : { template: plan.template }),
+      ...(plan.plan === undefined ? {} : { plan: plan.plan }),
       placement: placed.value.kind ?? "hosted",
       statusToken: secret(),
       beatKey: secret(),
@@ -278,9 +361,13 @@ async function make(
   const copied = await copyInto(app, owner, plan, ledger, deps.modelKey, deps.modelEndpoint);
   if (!copied.ok) return failed(app, deps, "copy", copied.error);
   const claimUrl = claimLink(liveChildUrl(app, plan.name), copied.value);
+  // A plan carries its own credit (grantPlanCredit); the included credit is for a spawn on no plan.
+  if (plan.plan === undefined) lendIncludedCredit(app, plan.name, childDirOf(app, ledger.bodyId), deps.modelKey !== undefined);
 
+  grantPlanCredit(app, plan, ledger.bodyId);
   ledger.done = true;
   await writeLedger(app, ledger);
+  tellPlan(app, plan.name);
   app.bus.append({
     kind: "forge.spawned",
     actorId: owner?.id,
@@ -295,6 +382,25 @@ async function make(
     existed: false,
     claimUrl,
   });
+}
+
+/**
+ * The crew credit the child's plan carries, read now (so an edit on the plans
+ * page is what the next spawn gets): lent as a monthly cap, the spend counted
+ * again each calendar month (`spawn/credit.ts`). A plan with no credit lends
+ * none. A hand-off that cannot reach the child leaves it unfunded, and an
+ * admin can lend by hand (`PUT /api/v1/forges/:name/credit`).
+ */
+export function grantPlanCredit(app: App, plan: SpawnPlan, bodyId: string): void {
+  const chosen = plan.plan === undefined ? undefined : getPlan(app.db, plan.plan);
+  if (chosen === undefined || !(chosen.creditUsd > 0)) return;
+  const dir = childDirOf(app, bodyId);
+  const set = setCap(app, plan.name, chosen.creditUsd, fundingOf(dir) !== undefined, (token, credit) =>
+    keepFunding(dir, { token, capUsd: credit.capUsd, spentUsd: credit.spentUsd }),
+    true,
+  );
+  if (set === undefined || set === "unreachable") app.log.warn(`plan credit not lent to ${plan.name}`);
+  else app.bus.append({ kind: "forge.credit_set", payload: { name: plan.name, usd: set.capUsd, plan: chosen.key } });
 }
 
 /**
@@ -316,7 +422,7 @@ async function copyInto(
     // The founder is a name only: no password, no email worth mailing. The
     // child's first boot hands the account to a person (#422). A stranger's
     // child gets a placeholder; the claim names the real admin.
-    const founderName = owner?.username ?? "founder";
+    const founderName = founderNameOf(owner);
     const founder =
       getUserByName(child.db, founderName) ??
       (await (async () => {
@@ -344,6 +450,7 @@ async function copyInto(
       org = made.value;
     }
 
+    let templateMark: TemplateMark | undefined;
     const copiedRepos: { parent: Repo; child: Repo }[] = [];
     for (const a of plan.apps) {
       const [o, n] = a.ref.split("/") as [string, string];
@@ -382,7 +489,18 @@ async function copyInto(
 
     // A fresh app, begun from the spawner's sentence: a README and the
     // smallest app that answers, committed once.
-    if (plan.fresh !== undefined) {
+    // With a template, the sentence describes the template's app instead:
+    // one repository, not two (`spawn/template_birth.ts`).
+    if (plan.template !== undefined) {
+      const born = await birthFromTemplate(child, org, {
+        template: plan.template,
+        ...(plan.fresh === undefined ? {} : { fresh: plan.fresh }),
+        direction: plan.direction,
+        taken: new Set(plan.apps.map((a) => a.ref.split("/")[1]!)),
+      });
+      if (!born.ok) return err(born.error);
+      templateMark = born.value;
+    } else if (plan.fresh !== undefined) {
       const made = await startFresh(child, org, plan.fresh, plan.direction);
       if (!made.ok) return err(made.error);
     }
@@ -396,9 +514,11 @@ async function copyInto(
     if (!forgeCode.ok) return err(forgeCode.error);
 
     for (const b of plan.briefs) {
+      // The jobs it declares travel with it (#8907).
+      const roles = getAgentByName(app.db, b.agent)?.roles;
       const existing = getAgentByName(child.db, b.agent);
       if (existing) {
-        updateAgent(child.db, existing.user.id, { brief: b.text });
+        updateAgent(child.db, existing.user.id, { brief: b.text, ...(roles ? { roles } : {}) });
         continue;
       }
       const made = await createUser(child.db, {
@@ -408,7 +528,7 @@ async function copyInto(
         origin: "spawn",
       });
       if (!made.ok) return err(`could not make crew member ${b.agent}: ${made.error}`);
-      createAgentRow(child.db, { userId: made.value.id, brief: b.text, createdBy: founder.id });
+      createAgentRow(child.db, { userId: made.value.id, brief: b.text, roles, createdBy: founder.id });
     }
 
     // A carried crew member keeps its place on each app: the role it had on
@@ -422,6 +542,13 @@ async function copyInto(
         addCrew(child.db, repo.id, theirs.user.id, founder.id);
         setCrewRole(child.db, repo.id, theirs.user.id, role);
       }
+
+    // A forge with no crew of its own comes with a builder and a reviewer,
+    // seated on its apps with autonomy on (#11154).
+    await seedStarterCrew(child.db, org.id, founder.id);
+
+    // The fork is the child's own source: its `forgeRepo`, and the crew seated on it.
+    adoptForgeCode(child, org.username, founder.id);
 
     // The child's own keys, made in its own directory now, so they exist
     // before its first boot and are provably not the parent's: the key that
@@ -464,6 +591,7 @@ async function copyInto(
         url: liveChildUrl(app, plan.name),
         keepAccess: plan.keepAccess,
         size: plan.size ?? DEFAULT_SIZE,
+        ...(plan.template === undefined ? {} : { template: templateMark ?? { id: plan.template } }),
         // Each app is a fork: where it came from, so the child can follow it.
         apps: plan.apps.map((a) => ({ repo: `${plan.org}/${a.ref.split("/")[1]}`, upstream: a.ref })),
         ...(plan.fresh === undefined ? {} : { fresh: `${plan.org}/${plan.fresh.name}` }),
@@ -543,60 +671,6 @@ async function startFresh(
 }
 
 /**
- * The parent's own code, forked into the child's organisation with its full
- * history. Returns the parent's `owner/name` when forked, undefined when the
- * forge does not name its code (`forgeRepo`) or the repo is not there —
- * a child is still spawned, just without the fork.
- *
- * A cross-forge fork: git carries the history, and the upstream stays
- * reachable through the parent's address in `parent.json`. The in-database
- * follow (`fork_parent_id`) is for forks on one forge; across two, the
- * child pulls the parent's default branch when its owner asks.
- */
-async function forkForgeCode(
-  app: App,
-  child: App,
-  orgName: string,
-  mode: FollowMode,
-): Promise<Result<{ upstream: string; mode: FollowMode; tip: string; chain: readonly Hop[] } | undefined, string>> {
-  // A spawned forge names no `forgeRepo` of its own: its code is the fork
-  // it was born with, so a grandchild forks that.
-  const ref = app.config.forgeRepo ?? (await forgeLinkOf(app))?.repo;
-  if (ref === undefined) return ok(undefined);
-  const parts = ref.split("/");
-  if (parts.length !== 2 || !parts[0] || !parts[1]) return ok(undefined);
-  const [o, n] = parts as [string, string];
-  const parent = getRepo(app.db, o, n);
-  if (!parent) return ok(undefined);
-  const name = "forge";
-  let repo = getRepo(child.db, orgName, name);
-  if (!repo) {
-    const made = await createRepo(child.db, child.reposRoot, {
-      ownerId: getOrg(child.db, orgName)!.id,
-      name,
-      visibility: "public",
-      description: `A fork of ${o}/${n}: the forge's own code, following its parent.`,
-      defaultBranch: parent.defaultBranch,
-    });
-    if (!made.ok) return err(`could not make the child's forge repo: ${made.error}`);
-    repo = made.value;
-  }
-  const fetched = await runGit(
-    [
-      "fetch",
-      "--no-write-fetch-head",
-      repoDir(app.reposRoot, o, n),
-      "+refs/heads/*:refs/heads/*",
-      "+refs/tags/*:refs/tags/*",
-    ],
-    { cwd: repoDir(child.reposRoot, orgName, name), timeoutMs: 600_000 },
-  );
-  if (!fetched.ok) return err(`could not copy the forge's code: ${fetched.error.stderr}`);
-  const born = await chainForChild(app, `${o}/${n}`);
-  return ok({ upstream: `${o}/${n}`, mode, tip: born?.tip ?? "", chain: born?.chain ?? [] });
-}
-
-/**
  * The model key a child already holds, opened with the child's own key; or
  * undefined when it has none yet (or the child's database is not there).
  */
@@ -635,6 +709,20 @@ export async function reissueClaim(
   const user = requireUser(actor);
   if (!user.ok) return err({ kind: "unauthorized" });
   if (!user.value.isAdmin) return err({ kind: "forbidden" });
+  const made = await reissueClaimFor(app, name);
+  if (made.ok) app.bus.append({ kind: "forge.claim_reissued", actorId: user.value.id, payload: { name } });
+  return made;
+}
+
+/**
+ * A new claim link for an unclaimed child, with no actor: the caller has
+ * already decided who may have it (an admin above; the buyer of the forge in
+ * `actions/order.ts`). The old link stops working.
+ */
+export async function reissueClaimFor(
+  app: App,
+  name: string,
+): Promise<Result<{ readonly name: string; readonly claimUrl: string }, SpawnError | { readonly kind: "not_found" }>> {
   const ledger = /^[a-z0-9-]{1,39}$/.test(name) ? await readLedger(app, name) : undefined;
   if (!ledger || !ledger.done) return err({ kind: "not_found" });
   const child = createApp({ dataDir: childDirOf(app, ledger.bodyId) });
@@ -644,7 +732,6 @@ export async function reissueClaim(
     if (hasAdmin(child.db))
       return err({ kind: "refused", reason: "claimed", message: `${name} is already claimed; ask its owner to invite you` });
     const token = mintClaim(child.db, spawned.org.id);
-    app.bus.append({ kind: "forge.claim_reissued", actorId: user.value.id, payload: { name } });
     return ok({ name, claimUrl: claimLink(liveChildUrl(app, name), token) });
   } finally {
     child.close();
@@ -673,9 +760,32 @@ export interface Child {
   /** When it was begun; null on a ledger older than the client list. */
   readonly createdAt: string | null;
   readonly size: Size;
+  /** The template it started from; absent when `blank`. */
+  readonly template?: string;
   readonly placement: PlacementKind;
   /** Why it is hosted when it asked for a cell; null otherwise. */
   readonly placementNote: string | null;
+}
+
+/** One ledger as a `Child`. */
+const childOf = (app: App, ledger: Ledger): Child => ({
+  name: ledger.name,
+  url: liveChildUrl(app, ledger.name),
+  bodyId: ledger.bodyId,
+  done: ledger.done,
+  for: ledger.forWhom ?? null,
+  apps: ledger.apps ?? [],
+  createdAt: ledger.createdAt ?? null,
+  size: isSize(ledger.size) ? ledger.size : DEFAULT_SIZE,
+  ...(typeof ledger.template === "string" ? { template: ledger.template } : {}),
+  placement: ledger.placement ?? "hosted",
+  placementNote: ledger.placementNote ?? null,
+});
+
+/** One child by name, or undefined when this forge made none of that name. */
+export async function childNamed(app: App, name: string): Promise<Child | undefined> {
+  const ledger = await readLedger(app, name);
+  return ledger === undefined ? undefined : childOf(app, ledger);
 }
 
 /** The children this forge has made or begun, from its ledger, by name. */
@@ -685,19 +795,38 @@ export async function listChildren(app: App): Promise<Child[]> {
   const out: Child[] = [];
   for (const f of files.filter((f) => f.endsWith(".json")).sort()) {
     const ledger = await readLedger(app, f.slice(0, -".json".length));
-    if (ledger)
-      out.push({
-        name: ledger.name,
-        url: liveChildUrl(app, ledger.name),
-        bodyId: ledger.bodyId,
-        done: ledger.done,
-        for: ledger.forWhom ?? null,
-        apps: ledger.apps ?? [],
-        createdAt: ledger.createdAt ?? null,
-        size: isSize(ledger.size) ? ledger.size : DEFAULT_SIZE,
-        placement: ledger.placement ?? "hosted",
-        placementNote: ledger.placementNote ?? null,
-      });
+    if (ledger) out.push(childOf(app, ledger));
   }
   return out;
+}
+
+/** `listChildren`, read at once: for a terminal command that draws in the same turn (one small file per child). */
+export function listChildrenNow(app: App): Child[] {
+  const dir = join(app.config.dataDir, "spawn");
+  let files: string[];
+  try {
+    files = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const out: Child[] = [];
+  for (const f of files.filter((f) => f.endsWith(".json")).sort()) {
+    let ledger: Ledger | undefined;
+    try {
+      ledger = parseLedger(readFileSync(join(dir, f), "utf8"));
+    } catch {
+      ledger = undefined; // unreadable: skipped, as listChildren skips it
+    }
+    if (ledger) out.push(childOf(app, ledger));
+  }
+  return out;
+}
+
+/**
+ * Whether Start my forge would take `name`: the web route's answer and the
+ * terminal's. Only a name that passes the shape is looked up in the ledger.
+ */
+export async function forgeNameVerdict(app: App, name: string): Promise<NameVerdict> {
+  const exists = nameShapeVerdict(name) === undefined && (beingMade(name) || (await childNamed(app, name)) !== undefined);
+  return nameVerdict(name, exists);
 }

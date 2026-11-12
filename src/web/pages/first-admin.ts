@@ -17,7 +17,7 @@ import { FIRST_ADMIN_WORDS, firstAdminProblem, redeemFirstAdmin } from "../../ac
 import { addPasskey } from "../../core/passkeys.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { createSession } from "../../core/sessions.ts";
-import { pageHead } from "../chrome.ts";
+import { pageHead, CAME_FROM_ELSEWHERE } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
@@ -127,7 +127,7 @@ const statusOf = (error: string): number =>
 
 // POST /first-admin/options — a passkey challenge for a live code and a fit name. Nothing is spent.
 export async function firstAdminOptions(ctx: Ctx): Promise<Response> {
-  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return json({ error: "refused", message: "forbidden" }, 403);
+  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return json({ error: "refused", message: CAME_FROM_ELSEWHERE }, 403);
   const data = await boundedBody(ctx.request, STRANGER_MAX);
   if (data === "too_large") return json({ error: "refused", message: "payload too large" }, 413);
   const username = str(data.username).trim();

@@ -1,21 +1,25 @@
 /**
  * A repository's app over the API: `…/app` itself (read, enable, change,
  * disable), the people a private app names, its own domains, its
- * environment variables, and redeploying, stopping and opening one
+ * environment variables, pulling an adapter now, and redeploying, stopping and opening one
  * environment. The rules live in `actions/apps.ts`, `actions/app_members.ts`
  * and `actions/domains.ts`.
  */
 
 import { readAppMembers, setAppMembersThrough, type AppMembersError } from "../../actions/app_members.ts";
 import { appView, appVisitors, deleteAppEnvVar, disableApp, enableApp, listAppEnv, openEnvUrl, redeployEnv, setAppEnvVar, stopEnv, updateAppSettings, type AppSettingsInput } from "../../actions/apps.ts";
+import { pullNow, PULL_NOW_REFUSALS } from "../../actions/app_pull.ts";
 import { addAppDomain, checkAppDomain, listAppDomains, removeAppDomain } from "../../actions/domains.ts";
+import { previewBuild, previewBuildRefusalText } from "../../actions/build_preview.ts";
 import { SETTING_WORDS } from "../../actions/setting_words.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Result } from "../../kernel/result.ts";
 import { appJson, appLimitResponse, loadRepo } from "../api.ts";
-import type { Handler } from "../context.ts";
-import { apiError, body, json, notFound, requireScope, respondAccess, str, unauthorized } from "../respond.ts";
+import type { Ctx, Handler } from "../context.ts";
+import { holds, weakEtag } from "../etag.ts";
+import { BUILD_ASKS_WINDOW_MS } from "../../actions/build_preview.ts";
+import { apiError, body, json, notFound, requireScope, respondAccess, str, tryAgain, unauthorized } from "../respond.ts";
 import type { Router } from "../router.ts";
 
 function appPatch(input: Record<string, unknown>): AppSettingsInput {
@@ -45,6 +49,19 @@ function membersAnswer<T>(result: Result<T, AppMembersError>): Response {
   }
 }
 
+/**
+ * An access-checked read tagged by its own bytes (#9178): `private, no-cache`
+ * and varied on the credential, so a repeat holding the tag is a bodiless 304
+ * until the data moves. Called only after the access check passed.
+ */
+function tagged(ctx: Ctx, data: unknown): Response {
+  const text = JSON.stringify(data);
+  const etag = weakEtag(text);
+  const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+  if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+  return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+}
+
 export function appRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/repos/:owner/:name/app", (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -57,7 +74,7 @@ export function appRoutes(router: Router<Handler>): void {
     });
     if (!read) return notFound();
     return timePhase(ctx.request, "render", () =>
-      json({
+      tagged(ctx, {
         ...appJson(ctx, read.view.app, repo, appsRuntime(ctx.app)),
         ...(read.vitals === undefined ? {} : { vitals: read.vitals }),
       }),
@@ -118,7 +135,7 @@ export function appRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const read = timePhase(ctx.request, "members", () => readAppMembers(ctx.app, ctx.auth.user, repo));
-    return timePhase(ctx.request, "render", () => membersAnswer(read));
+    return timePhase(ctx.request, "render", () => (read.ok ? tagged(ctx, read.value) : membersAnswer(read)));
   });
 
   router.add("PUT", "/api/v1/repos/:owner/:name/app/members", async (ctx) => {
@@ -149,7 +166,7 @@ export function appRoutes(router: Router<Handler>): void {
     if (!repo) return notFound();
     const listed = timePhase(ctx.request, "domains", () => listAppDomains(ctx.app, ctx.auth.user, repo));
     if (!listed.ok) return respondAccess(listed.error, 422);
-    return timePhase(ctx.request, "render", () => json({ items: listed.value, next_cursor: null }));
+    return timePhase(ctx.request, "render", () => tagged(ctx, { items: listed.value, next_cursor: null }));
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/app/domains", async (ctx) => {
@@ -211,7 +228,7 @@ export function appRoutes(router: Router<Handler>): void {
     if (!repo) return notFound();
     const listed = timePhase(ctx.request, "env", () => listAppEnv(ctx.app, ctx.auth.user, repo));
     if (!listed.ok) return notFound();
-    return timePhase(ctx.request, "render", () => json({ items: listed.value, next_cursor: null }));
+    return timePhase(ctx.request, "render", () => tagged(ctx, { items: listed.value, next_cursor: null }));
   });
 
   router.add("PUT", "/api/v1/repos/:owner/:name/app/env/:var", async (ctx) => {
@@ -254,6 +271,21 @@ export function appRoutes(router: Router<Handler>): void {
     },
   );
 
+  // Pull now (#10084): one adapter pull through the schedule's own path,
+  // answered with the recorded run. A sleeping app is refused, never woken.
+  router.add("POST", "/api/v1/repos/:owner/:name/app/pull", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const pulled = await pullNow(ctx.app, ctx.auth.user, repo);
+    if (pulled.ok) return json({ run: pulled.value }, 200);
+    const error = pulled.error;
+    if (error === "no_adapter") return apiError(error, 404, PULL_NOW_REFUSALS[error]);
+    if (error === "asleep" || error === "in_flight") return apiError(error, 409, PULL_NOW_REFUSALS[error]);
+    return respondAccess(error, 422);
+  });
+
   router.add(
     "POST",
     "/api/v1/repos/:owner/:name/app/:env/redeploy",
@@ -291,6 +323,24 @@ export function appRoutes(router: Router<Handler>): void {
       return json({}, 200);
     },
   );
+
+  // Preview now: serve one commit `{ sha }` at its own short-lived
+  // environment (`actions/build_preview.ts`). Nothing is stored; the answer
+  // names the environment and where it is served.
+  router.add("POST", "/api/v1/repos/:owner/:name/builds/preview", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const input = await body(ctx.request);
+    const sha = typeof input["sha"] === "string" ? input["sha"] : "";
+    const preview = await previewBuild(ctx.app, ctx.auth.user, repo, sha);
+    if (!preview.ok)
+      return preview.error === "rate_limited"
+        ? tryAgain("rate_limited", 429, previewBuildRefusalText(preview.error), BUILD_ASKS_WINDOW_MS / 1000)
+        : respondAccess(preview.error, 422);
+    return json({ env: preview.value.env, url: preview.value.url }, 201);
+  });
 
   // The URL to open an environment at. For a private app it carries a
   // grant, so the answer is for the caller alone and is not cached.

@@ -5,6 +5,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { quietly } from "./write_clock.ts";
 
 export const VISIT_WRITE_GAP_MS = 60 * 1000;
 
@@ -16,9 +17,11 @@ export function lastVisit(db: Database, userId: string): number | undefined {
 export function noteVisit(db: Database, userId: string, now: number): number | undefined {
   const before = lastVisit(db, userId);
   if (before === undefined || now - before >= VISIT_WRITE_GAP_MS)
-    db.query(
-      "INSERT INTO home_visit (user_id, at) VALUES (?1, ?2) ON CONFLICT(user_id) DO UPDATE SET at = excluded.at",
-    ).run(userId, now);
+    quietly(db, () =>
+      db
+        .query("INSERT INTO home_visit (user_id, at) VALUES (?1, ?2) ON CONFLICT(user_id) DO UPDATE SET at = excluded.at")
+        .run(userId, now),
+    );
   return before;
 }
 

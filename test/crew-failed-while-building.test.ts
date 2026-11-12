@@ -4,6 +4,7 @@
  * decided again when the run ends.
  */
 
+import { pullCloses } from "./helpers/pull-closes.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { App } from "../src/app.ts";
 import { announceRun } from "../src/actions/runs.ts";
@@ -43,7 +44,7 @@ describe("a failure during the builder's run", () => {
       files: [{ path: `${branch}.md`, content: "x\n" }],
     });
     if (!c.ok) throw new Error(JSON.stringify(c.error));
-    const o = await openPull(app, alice, repo, { title: branch, baseBranch: "main", headBranch: branch, ...(body === undefined ? {} : { body }) });
+    const o = await openPull(app, bot, repo, { title: branch, baseBranch: "main", headBranch: branch, ...(body === undefined ? {} : { body }) });
     if (!o.ok) throw new Error(String(o.error));
     app.db.run("UPDATE issue SET assignee_id = ?1 WHERE id = ?2", [bot.id, o.value.id]);
     for (let i = 0; i < CHECK_FAILED_LIMIT; i++) {
@@ -66,6 +67,7 @@ describe("a failure during the builder's run", () => {
     return finishRun(app.db, run.id, { state: "failed", summary: `${kind} failed` })!;
   };
   const open = (pull: Pull) => getIssueById(app.db, pull.id)?.state === "open";
+  const closes = (pull: Pull) => pullCloses(app, pull);
 
   const building = (issueId: string): Run => {
     const run = createRun(app.db, { repoId: repo.id, kind: "agent", issueId, reason: "feedback" });
@@ -89,7 +91,7 @@ describe("a failure during the builder's run", () => {
     announceRun(app, failure(pull, "deploy"));
     expect(open(pull)).toBe(true);
     ends(run);
-    expect(open(pull)).toBe(false);
+    await closes(pull);
   });
 
   test("a queued run holds it too, and the end of that run decides it", async () => {
@@ -99,7 +101,7 @@ describe("a failure during the builder's run", () => {
     expect(open(pull)).toBe(true);
     claimRun(app.db, queued.id);
     ends(queued);
-    expect(open(pull)).toBe(false);
+    await closes(pull);
   });
 
   test("a run on the issue the pull closes holds it as well", async () => {
@@ -110,7 +112,7 @@ describe("a failure during the builder's run", () => {
     announceRun(app, failure(pull, "deploy"));
     expect(open(pull)).toBe(true);
     ends(run);
-    expect(open(pull)).toBe(false);
+    await closes(pull);
   });
 
   test("a push during the run makes the failure history: the run's end decides nothing", async () => {
@@ -138,6 +140,6 @@ describe("a failure during the builder's run", () => {
   test("the same failure after the run ended closes it as before", async () => {
     const pull = await spentPull();
     announceRun(app, failure(pull, "deploy"));
-    expect(open(pull)).toBe(false);
+    await closes(pull);
   });
 });

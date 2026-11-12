@@ -8,25 +8,29 @@
 import { contribute, forkOrigin } from "../../actions/contribute.ts";
 import { CAPPED_WORDS } from "../../actions/mail.ts";
 import { ORIGIN_UNREACHABLE } from "../../actions/origin_app_words.ts";
-import { connectOrigin, deleteOriginApp, disconnectOrigin, listOriginApps, listPinned, listRemoteRepos, listUserOrigins, mirrorJobFor, pinRepo, pollOAuthConnect, registerOriginApp, startMirrorJob, startOAuthConnect, syncOriginNow, unpinRepo } from "../../actions/origins.ts";
-import { addSshKey, changePassword, deleteSshKey, updateProfile } from "../../actions/users.ts";
+import { CONNECT_LIMITS, connectOrigin, connectRefusal, listOriginRepoGroup, deleteOriginApp, disconnectOrigin, listOriginApps, listPinned, listRemoteRepos, listUserOrigins, mirrorJobFor, pinRepo, pollOAuthConnect, registerOriginApp, startMirrorJob, startOAuthConnect, syncOriginNow, unpinRepo } from "../../actions/origins.ts";
+import { addSshKey, CHANGE_PASSWORD_WORDS, changePassword, deleteSshKey, updateProfile } from "../../actions/users.ts";
 import { VERIFY_WORDS } from "../../actions/verify_words.ts";
 import { resendVerification } from "../../actions/verify.ts";
+import { NOTIFY_ERRORS, notifyHost, notifyUrlOf, setNotifyUrl } from "../../crew/notify.ts";
 import { listAssignedTo } from "../../core/issues.ts";
+import { nextStepsFor } from "../../core/next-steps.ts";
 import { listKeys, publicKey } from "../../core/keys.ts";
 import { listOrgsForUser } from "../../core/orgs.ts";
 import { canRead, getReposByIds } from "../../core/repos.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { mayView } from "../../core/sealed.ts";
-import { emailVerified } from "../../core/verify.ts";
+import { emailVerified, RESEND_AFTER_MS } from "../../core/verify.ts";
 import type { Result } from "../../kernel/result.ts";
 import { subscribe as subscribeJob } from "../../origins/jobs.ts";
 import { sshCloneUrl } from "../../ssh/command.ts";
 import { type RepoSource, type SourceError, sourceFor } from "../../view/source.ts";
+import { REPO_GROUPS, type RepoGroup } from "../../origins/types.ts";
 import { connectMessage, contributeFailure, contributionJson, editFilesFrom, jobJson, keyedPage, keyedWindow, loadRepo, oauthCallbackUri, originFacts, originJson, remoteRepoJson } from "../api.ts";
 import type { Ctx, Handler } from "../context.ts";
+import { holds, weakEtag } from "../etag.ts";
 import { clientAddress } from "../peer.ts";
-import { apiError, body, json, notFound, publicProfile, publicUser, requireAccount, requireScope, respondAccess, str, unauthorized } from "../respond.ts";
+import { apiError, body, json, notFound, publicProfile, publicUser, requireAccount, requireScope, respondAccess, str, tryAgain, unauthorized, WINDOW } from "../respond.ts";
 import type { Router } from "../router.ts";
 import { eventStream } from "../sse.ts";
 
@@ -69,11 +73,7 @@ function sourceFailure(error: SourceError): Response {
     case "not_found":
       return notFound();
     case "rate_limited":
-      return apiError(
-        "rate_limited",
-        429,
-        "the origin is rate-limiting us; try again shortly",
-      );
+      return tryAgain("rate_limited", 429, "the origin is rate-limiting us; try again shortly", WINDOW.minute);
     case "unauthorized":
       return apiError(
         "origin_unauthorized",
@@ -90,6 +90,9 @@ function sourceFailure(error: SourceError): Response {
       );
   }
 }
+
+/** No mailer is set: an operator must configure one, no clock ends it; ask again in five minutes. */
+const NO_MAIL_RETRY = 300;
 
 export function userRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/user", (ctx) => {
@@ -108,11 +111,11 @@ export function userRoutes(router: Router<Handler>): void {
       return json({ outcome: sent.value }, sent.value === "sent" ? 202 : 200);
     if (sent.error === "unauthorized") return unauthorized();
     if (sent.error === "too_soon")
-      return apiError("too_soon", 429, VERIFY_WORDS.too_soon);
+      return tryAgain("too_soon", 429, VERIFY_WORDS.too_soon, RESEND_AFTER_MS / 1000);
     if (sent.error === "no_mail")
-      return apiError("no_mail", 503, VERIFY_WORDS.no_mail);
+      return tryAgain("no_mail", 503, VERIFY_WORDS.no_mail, NO_MAIL_RETRY);
     if (sent.error === "capped")
-      return apiError("capped", 429, CAPPED_WORDS);
+      return tryAgain("capped", 429, CAPPED_WORDS, WINDOW.day);
     return apiError("failed", 502, VERIFY_WORDS.failed);
   });
 
@@ -148,14 +151,14 @@ export function userRoutes(router: Router<Handler>): void {
       next: str(input.next),
       source: clientAddress(ctx.request),
     });
+    if (!changed.ok && changed.error === "throttled")
+      return tryAgain("throttled", 429, CHANGE_PASSWORD_WORDS.throttled, WINDOW.minute);
     if (!changed.ok)
       return respondAccess(
         changed.error,
         changed.error === "bad_credentials"
           ? 403
-          : changed.error === "throttled"
-            ? 429
-            : 422,
+          : 422,
       );
     return json({}, 200);
   });
@@ -181,7 +184,15 @@ export function userRoutes(router: Router<Handler>): void {
     const window = keyedWindow(ctx);
     if (window instanceof Response) return window;
     const keys = timePhase(ctx.request, "keys", () => listKeys(ctx.app.db, user.id));
-    return timePhase(ctx.request, "render", () => json(keyedPage(keys.map(publicKey), (k) => k.id, window)));
+    return timePhase(ctx.request, "render", () => {
+      // The body shows every key and its last use, so a tag over the body (and
+      // the viewer it was rendered for) moves whenever any of them does (#9243).
+      const page = keyedPage(keys.map(publicKey), (k) => k.id, window);
+      const etag = weakEtag(`${user.id}|${JSON.stringify(page)}`);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return json(page, 200, headers);
+    });
   });
   router.add("POST", "/api/v1/user/keys", async (ctx) => {
     const denied = requireScope(ctx, "rw");
@@ -200,6 +211,31 @@ export function userRoutes(router: Router<Handler>): void {
     const removed = deleteSshKey(ctx.app, ctx.auth.user, ctx.params.id!);
     if (!removed.ok) return respondAccess(removed.error, 422);
     return new Response(null, { status: 204 });
+  });
+
+  // The phone notify URL: a person's, and only its host is ever answered.
+  const notifyState = (ctx: Ctx, userId: string) => {
+    const host = notifyHost(notifyUrlOf(ctx.app.db, userId));
+    return json({ set: host !== undefined, host: host ?? null });
+  };
+  router.add("GET", "/api/v1/user/notify", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const user = ctx.auth.user;
+    if (!user) return unauthorized();
+    if (user.kind === "agent") return apiError("forbidden", 403, "a notify URL is a person's, not an agent's");
+    return notifyState(ctx, user.id);
+  });
+  router.add("PUT", "/api/v1/user/notify", async (ctx) => {
+    const user = ctx.auth.user;
+    if (user?.kind === "agent") return apiError("forbidden", 403, "a notify URL is a person's, not an agent's");
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    if (typeof input.url !== "string") return apiError("invalid", 422, "send url as text, or empty to turn it off");
+    const saved = setNotifyUrl(ctx.app.db, user!.id, input.url);
+    if (!saved.ok) return apiError("invalid_url", 422, NOTIFY_ERRORS[saved.error]);
+    ctx.app.bus.append({ kind: "account.notify_set", actorId: user!.id });
+    return notifyState(ctx, user!.id);
   });
 
   // ── origins ──────────────────────────────────────────────────────────
@@ -232,13 +268,20 @@ export function userRoutes(router: Router<Handler>): void {
         ? { kind }
         : {}),
       token: str(input.token),
+      readOnly: input.readOnly === true,
     });
-    if (!connected.ok)
+    if (!connected.ok) {
+      // A refusal that names its own reason (a missing scope) keeps it;
+      // every other code has its sentence here.
+      const refused = connectRefusal(connected.error);
+      if (refused.code === "rate_limited")
+        return tryAgain("rate_limited", 429, refused.message ?? connectMessage(refused.code), CONNECT_LIMITS.windowMs! / 1000);
       return apiError(
-        connected.error,
-        connected.error === "rate_limited" ? 429 : 422,
-        connectMessage(connected.error),
+        refused.code,
+        422,
+        refused.message ?? connectMessage(refused.code),
       );
+    }
     // The frozen mirrors connecting this account brought back, and the ones
     // it could not, each with its reason.
     return json(
@@ -266,11 +309,9 @@ export function userRoutes(router: Router<Handler>): void {
       redirectUri: callbackUri(ctx),
     });
     if (!started.ok)
-      return apiError(
-        started.error.error,
-        started.error.error === "rate_limited" ? 429 : 422,
-        started.error.message,
-      );
+      return started.error.error === "rate_limited"
+        ? tryAgain("rate_limited", 429, started.error.message, CONNECT_LIMITS.windowMs! / 1000)
+        : apiError(started.error.error, 422, started.error.message);
     return json(started.value, 201);
   });
 
@@ -344,6 +385,26 @@ export function userRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireAccount(ctx, { adminToken: true });
     if (denied) return denied;
+    const group = ctx.url.searchParams.get("group");
+    if (group !== null) {
+      if (!(REPO_GROUPS as readonly string[]).includes(group))
+        return apiError("invalid_group", 422, "group is yours, shared or public");
+      const q = ctx.url.searchParams.get("q") ?? "";
+      const cursor = ctx.url.searchParams.get("cursor") ?? undefined;
+      const read = await timePhaseAsync(ctx.request, "origin", () =>
+        listOriginRepoGroup(ctx.app, ctx.auth.user, ctx.params.id!, group as RepoGroup, {
+          q,
+          ...(cursor === undefined ? {} : { cursor }),
+        }),
+      );
+      if (!read.ok)
+        return read.error === "unreachable"
+          ? apiError("origin_unreachable", 502, ORIGIN_UNREACHABLE)
+          : respondAccess(read.error, 404);
+      return timePhase(ctx.request, "render", () =>
+        json({ items: read.value.items.map((row) => remoteRepoJson(ctx, row)), next_cursor: read.value.next }),
+      );
+    }
     const listed = await timePhaseAsync(ctx.request, "origin", () =>
       listRemoteRepos(
         ctx.app,
@@ -726,7 +787,26 @@ export function userRoutes(router: Router<Handler>): void {
       }
       return out;
     });
-    return timePhase(ctx.request, "render", () => json({ items, next_cursor: null }));
+    // Tagged by its own bytes: a retitle, a close or an assignment changes
+    // them, and the viewer's own list is all they cover. Only reached with
+    // a session or a token of `ro` or more.
+    return timePhase(ctx.request, "render", () => {
+      const text = JSON.stringify({ items, next_cursor: null });
+      const etag = weakEtag(text);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+    });
+  });
+
+  // The first three steps on a spawned forge, as MCP `next_steps`: empty
+  // elsewhere, for an agent, and for anyone but the forge's owner.
+  router.add("GET", "/api/v1/user/next-steps", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const denied = requireScope(ctx, "ro");
+    if (denied) return denied;
+    const steps = await nextStepsFor(ctx.app, ctx.auth.user);
+    return json({ steps: steps ?? [] });
   });
 
   router.add("DELETE", "/api/v1/user/pins/:owner/:name", (ctx) => {

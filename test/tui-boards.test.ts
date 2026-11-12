@@ -8,13 +8,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { listPinned, pinPanel, unpinPanel } from "../src/actions/board-pins.ts";
-import { deleteBoard, writeBoard } from "../src/actions/boards.ts";
+import { deleteBoard, listAllBoards, writeBoard } from "../src/actions/boards.ts";
 import { createAgent } from "../src/actions/crew.ts";
 import { createApp, type App } from "../src/app.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp, forgeCommands, Session } from "../src/tui/forge.ts";
 import { dashboardScreen } from "../src/tui/screens/dashboard.ts";
-import { boardRows, boardsScreen, dataLine, stepWords } from "../src/tui/screens/boards.ts";
+import { boardRows, boardsScreen, dataLine, refusal, stepWords } from "../src/tui/screens/boards.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
@@ -188,5 +188,50 @@ describe("tui boards", () => {
     expect(await order()).toEqual(["Failed runs", "Slow runs"]);
     unpinPanel(app, carol, "runs", "Failed runs");
     unpinPanel(app, carol, "runs", "Slow runs");
+  });
+
+  const slugs = async (): Promise<string[]> => {
+    const listed = await listAllBoards(app, carol);
+    return listed.ok ? listed.value.map((b) => b.slug) : [];
+  };
+
+  test("n makes a board from a title and opens it; c copies the marked board; D asks y/n and deletes", async () => {
+    expect(await slugs()).toEqual(["runs"]);
+    const made = await screenText(carol, "nFresh start\r");
+    expect(await slugs()).toEqual(["fresh-start", "runs"]);
+    expect(made).toContain("Fresh start");
+    expect(made).toContain("0 panels");
+
+    // The list is by slug: fresh-start, runs. Copy the second.
+    const copied = await screenText(carol, "jc");
+    expect(await slugs()).toEqual(["fresh-start", "runs", "runs-copy"]);
+    expect(copied).toContain("Runs this week (copy)");
+
+    // n answers nothing: the board stays.
+    expect(await screenText(carol, "Dn")).not.toContain("y/n");
+    expect(await slugs()).toContain("fresh-start");
+    expect(await screenText(carol, "D")).toContain("delete Fresh start? y/n");
+    await screenText(carol, "Dy");
+    expect(await slugs()).toEqual(["runs", "runs-copy"]);
+    await deleteBoard(app, carol, "runs-copy");
+  });
+
+  test("an empty title is refused in the action's words and nothing changes", async () => {
+    const text = await screenText(carol, "n\r");
+    expect(text).toContain("A title needs letters or digits.");
+    expect(await slugs()).toEqual(["runs"]);
+  });
+
+  test("a non-admin is refused: n shows the refusal and nothing is made; c and D have no row to act on", async () => {
+    for (const who of [bob, bot]) {
+      expect(await screenText(who, "nSneaky\r")).toContain("That board is gone.");
+      await screenText(who, "cDy");
+    }
+    expect(await slugs()).toEqual(["runs"]);
+  });
+
+  test("refusal words are the page's, cleaned for the terminal", () => {
+    expect(refusal("not_found")).toBe("That board is gone.");
+    expect(refusal({ refused: "bad\u001b[2J" })).toBe("That was refused: bad [2J.");
   });
 });

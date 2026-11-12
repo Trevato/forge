@@ -170,6 +170,23 @@ describe("the studio, continued", () => {
     expect(studioCookie).toContain("<h2>Depends on</h2>");
   });
 
+  test("the three studio lists carry one header, and only the issue list offers Not started (#175)", async () => {
+    const issues = await (await get("/alice/notes/issues")).text();
+    const pulls = await (await get("/alice/notes/pulls")).text();
+    const runs = await (await get("/alice/notes/runs")).text();
+    // The same header on all three: the description, not the compact one.
+    for (const page of [issues, pulls, runs])
+      expect(page).toContain('<p class="muted small">a place for notes</p>');
+    // No pull and no run is ever told, so only the issue list links to it.
+    expect(issues).toContain('href="/alice/notes/issues?word=told"');
+    expect(pulls).not.toContain("word=told");
+    expect(runs).not.toContain("word=told");
+    for (const page of [pulls, runs]) expect(page).not.toContain("Not started");
+    // A URL somebody holds still answers, never an error.
+    expect((await get("/alice/notes/pulls?word=told")).status).toBe(200);
+    expect((await get("/alice/notes/runs?word=told")).status).toBe(200);
+  });
+
   test("everything told is the one issue list, in the studio's own words; the word filter narrows it, and ?mode=dev changes nothing", async () => {
     const told = openIssue(app, alice, repo, {
       title: "List test: not picked up yet",
@@ -299,7 +316,7 @@ describe("the studio, continued", () => {
     expect(page).toContain('href="/alice/notes/runs?kind=check"');
     const deploys = await (await get("/alice/notes/runs?kind=deploy")).text();
     expect(deploys).not.toContain(`href="/alice/notes/runs/${run.id}"`);
-    expect(deploys).toContain('href="/alice/notes/runs?kind=deploy&amp;word=told"');
+    expect(deploys).toContain('href="/alice/notes/runs?kind=deploy&amp;word=stopped"');
   });
 
   test("the runs list shows agent runs, checks and deploys together, and each kind link narrows it", async () => {
@@ -323,8 +340,11 @@ describe("the studio, continued", () => {
     const all = await (await get("/alice/notes/runs")).text();
     for (const link of [agent, check, deploy]) expect(all).toContain(link);
     expect(all).toContain("Check of abcdef1");
-    expect(all).toContain("abcdef1 · passed");
-    expect(all).toContain("took ");
+    // A row is title, state word and time (#10415): no sha, no duration beside it.
+    expect(all).not.toContain("abcdef1 · passed");
+    expect(all).toContain("<time");
+    const checkId = /runs\/([^"]+)"/.exec(check)![1];
+    expect(await (await get(`/alice/notes/runs/${checkId}`)).text()).toContain("abcdef1");
 
     const only = async (kind: string) =>
       (await get(`/alice/notes/runs?kind=${kind}`)).text();
@@ -363,7 +383,7 @@ describe("the studio, continued", () => {
       expect(issues).toContain("Plain list: an issue");
       // A plain repository speaks of issues: an untouched one reads "open",
       // and neither Told nor Look is a filter there (#683 follow-up).
-      expect(issues).toMatch(/data-word="told"\s*>open</);
+      expect(issues).toMatch(/data-word="told"[^>]*aria-label="open\b/);
       expect(issues).toContain(`href="/alice/plainlists/issues?word=working"`);
       expect(issues).not.toContain(`href="/alice/plainlists/issues?word=told"`);
       expect(issues).not.toContain(`href="/alice/plainlists/issues?word=look"`);
@@ -666,8 +686,8 @@ describe("the studio, continued", () => {
     const tellHtml = await viaTell.text();
     expect(tellHtml).toContain("Door test: one tell");
     expect(tellHtml).toContain('data-word="told"');
-    // Still waiting, nobody assigned: the one case the line is true (#214).
-    expect(tellHtml).toContain("nobody has it yet");
+    // Still waiting: the state word says so; the page adds no second line (#10415).
+    expect(tellHtml).not.toContain("nobody has it yet");
     // The reply, the close and every Details form post to /issues/:number.
     expect(tellHtml).toContain(`action="/alice/notes/issues/${n}/comments"`);
     expect(tellHtml).toContain(`action="/alice/notes/issues/${n}/assignee"`);
@@ -1000,7 +1020,7 @@ describe("the studio, continued", () => {
         headers: { cookie: "forge_mode=studio" },
       })
     ).text();
-    expect(dev).toContain("<h1>Apps, live.</h1>");
+    expect(dev).toContain("Software for what you");
     expect(dev).toContain("a lighthouse in the fog");
     expect(dev).not.toContain("<h1>Your code, your machine.</h1>");
     await done();
@@ -1129,7 +1149,7 @@ describe("the studio, continued", () => {
 
     // Erin's front door: the empty state and New app, never alice's public
     // app — #69's case, finally reachable.
-    const erinHome = await (await erinGet("/")).text();
+    const erinHome = await (await erinGet("/feed")).text();
     expect(erinHome).toContain("No apps yet");
     expect(erinHome).toContain('href="/apps/new"');
     expect(erinHome).toContain('href="/erin"');
@@ -1186,7 +1206,7 @@ describe("the studio, continued", () => {
         });
         expect(response.status).toBe(200);
         const body = await response.text();
-        expect(body).toContain("<h1>Apps, live.</h1>");
+        expect(body).toContain("Software for what you");
         expect(body).toContain("Nothing public is up yet");
         expect(body).toContain('href="/signup"');
         expect(body).toContain('href="/signin"');
@@ -1302,14 +1322,19 @@ describe("the studio, continued", () => {
       const at = list.indexOf(title);
       return list.slice(at, list.indexOf("</a>", at + 400) + 4);
     };
-    expect(rowOf("Answers the tell")).toContain(`href="/alice/notes/issues/${n}"`);
-    expect(rowOf("Answers the tell")).not.toContain("already done");
-    expect(rowOf("Answers nothing")).not.toContain("for issue");
-    expect(rowOf("A person's branch")).not.toContain("for issue");
+    // The calm pass (#10415): a row is title, word and time; the tell it answers is on the pull.
+    for (const title of ["Answers the tell", "Answers nothing", "A person's branch"]) {
+      expect(rowOf(title.replace("'", "&#39;"))).toContain("<time");
+      expect(rowOf(title.replace("'", "&#39;"))).not.toContain("for issue");
+    }
+    expect(rowOf("Answers the tell")).toContain('data-word=');
+    expect(
+      await (await get(`/alice/notes/pulls/${answering.number}`)).text(),
+    ).toContain(`href="/alice/notes/issues/${n}"`);
 
     setIssueState(app, alice, repo, told.value, "closed");
     const closedList = await (await get("/alice/notes/pulls")).text();
-    expect(closedList).toContain("its issue is already done");
+    expect(closedList).not.toContain("its issue is already done");
     const page = await (
       await get(`/alice/notes/pulls/${answering.number}`)
     ).text();

@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
+import { envRefusalText } from "../src/actions/env_words.ts";
 import { newApp } from "../src/actions/apps.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch } from "../src/actions/repos.ts";
@@ -140,5 +141,19 @@ describe("MCP app_deploy", () => {
       expect(a.error).toContain("invalid_action");
     }
     expect(runCount()).toBe(before);
+  });
+
+  test("a refusal is said in the deploys page's words, the code unchanged", async () => {
+    for (const action of ["redeploy", "stop"]) {
+      const gone = await tool(aliceRw, { repo: "alice/nothing", env: "production", action });
+      expect(gone.error).toContain("no such app or repository");
+      const reader = await tool(bobRw, { repo: "alice/hello", env: "production", action });
+      expect(reader.error).toContain("forbidden");
+      expect(reader.error).toContain(envRefusalText("forbidden"));
+      const env = await tool(aliceRw, { repo: "alice/hello", env: "staging", action });
+      expect(env.error).toContain("no_such_env");
+      expect(env.error).toContain(envRefusalText("no_such_env"));
+    }
+    expect(envRefusalText("not_found")).toBe("This repository has no app.");
   });
 });

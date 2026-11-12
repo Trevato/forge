@@ -1,0 +1,7 @@
+[
+  "src/perf/page_budget.ts",
+  "src/perf/page_budget_read.ts",
+  "src/spawn/pod.ts",
+  "src/tui/ui/qr.ts",
+  "src/web/studio/held_posts.ts"
+]

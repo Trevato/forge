@@ -15,13 +15,19 @@ import { originForRepo, type Origin } from "../core/origins.ts";
 import type { Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { providerForOrigin } from "./credential.ts";
+import { providerForOrigin, writesPaused } from "./credential.ts";
 import type { Provider } from "./types.ts";
 
 export type WriteThroughError =
   | "origin_owner_only"
   | "origin_unreachable"
-  | "origin_refused";
+  | "origin_refused"
+  /** The account behind the origin is not verified against the operator's rules yet. */
+  | "origin_paused"
+  /** The origin was connected read-only: nothing is written through it. */
+  | "origin_read_only"
+  /** The operator protects the origin repository: propose from a fork. */
+  | "origin_protected";
 
 export interface WriteThrough {
   readonly provider: Provider;
@@ -49,6 +55,9 @@ export function writeThroughFor(
   const link = originForRepo(app.db, repo.id);
   if (!link) return ok(undefined);
   if (link.origin.userId !== actor.id) return err("origin_owner_only");
+  if (link.origin.readOnly) return err("origin_read_only");
+  if (writesPaused(app, link.origin.id) !== undefined)
+    return err("origin_paused");
   const provider = providerForOrigin(app, link.origin);
   if (!provider.ok) return err("origin_unreachable");
   return ok({

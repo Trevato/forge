@@ -74,7 +74,9 @@ one row per selected target: the value before, the value asked for, and
 `ok`, `failed`, `refused` or `unchanged` with the reason. One
 `fleet.operated` event — for its actor alone, since it names repositories
 across the forge — carries the counts. `GET /api/v1/fleet/ops` lists your
-operations; `GET /api/v1/fleet/ops/:id` is one receipt.
+operations; `GET /api/v1/fleet/ops/:id` is one receipt. In the terminal,
+Ctrl+K → **Bulk actions** lists the same receipts and `u` undoes one
+inside its day (`docs/CREW.md` says how).
 
 Undo is a new operation that writes each `ok` row's value from before,
 only where the row still holds what the operation left; a row someone

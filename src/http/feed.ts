@@ -5,17 +5,18 @@
 
 import {
   parseVariants,
-  parseFrom,
   FROM_WORDS,
   tell,
   UNVERIFIED_WORDS,
   VARIANTS_MAX,
 } from "../actions/tell.ts";
+import { parseFrom, TELL_TEXT_MAX } from "../actions/tell_from.ts";
 import { DIRECTION_NOTE } from "../crew/direct.ts";
-import { interactionTarget } from "../feed/interact.ts";
+import { readInteraction } from "../feed/interact.ts";
+import { likeLedger, parseLedgerBefore, setLike } from "../feed/likes.ts";
 import {
   ITEM_ID,
-  isInteractionKind,
+  INTERACTION_KINDS,
   recordInteraction,
 } from "../core/interactions.ts";
 import { chipsOf, isKindChip, setChip } from "../core/feed_chips.ts";
@@ -23,6 +24,8 @@ import { CURSOR_NOT_ISSUED, KIND_HAS_NO_CHIP } from "../actions/feed_words.ts";
 import { getUserByName, getUsersByIds } from "../core/users.ts";
 import { drainQueue } from "../core/shares.ts";
 import { feedTag, hasQueuedShares } from "../feed/feed_tag.ts";
+import { lastVisit } from "../core/home_visit.ts";
+import { feedDigest } from "../web/studio/since.ts";
 import { holds } from "../web/feeds.ts";
 import { share, RECIPIENTS_MAX } from "../feed/share.ts";
 import { canRead, getRepo } from "../core/repos.ts";
@@ -44,6 +47,7 @@ import type { FleetError } from "../actions/fleet.ts";
 import { notePhase, takeSessionTime, timePhase } from "../core/route_timing.ts";
 import type { Handler } from "./context.ts";
 import type { Router } from "./router.ts";
+import { parseBefore, readTimeline } from "../feed/timeline.ts";
 import { HIDDEN_WORDS } from "../core/arg_words.ts";
 import {
   apiError,
@@ -54,6 +58,13 @@ import {
   str,
   unauthorized,
 } from "./respond.ts";
+
+/** What a card may report: the interaction kinds, and a like or its taking back (ledger rows, `feed/likes.ts`). */
+const DOOR_KINDS = [...INTERACTION_KINDS, "liked" as const, "unliked" as const];
+
+/** An anonymous caller is told where to sign in, or to send a token. */
+const signInFirst401 = () =>
+  apiError("unauthorized", 401, "sign in at /signin, or send a bearer token with rw scope");
 
 export function feedRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/feed", (ctx) => {
@@ -72,6 +83,11 @@ export function feedRoutes(router: Router<Handler>): void {
     const cursor = rawCursor === null ? undefined : parseCursor(rawCursor);
     if (rawCursor !== null && cursor === undefined)
       return apiError("invalid_cursor", 422, CURSOR_NOT_ISSUED);
+    // `before=` is the timeline: newest first, paged by an event id (`feed/timeline.ts`).
+    const rawBefore = q.get("before");
+    const before = rawBefore === null ? undefined : parseBefore(rawBefore);
+    if (rawBefore !== null && (before === undefined || rawCursor !== null))
+      return apiError("invalid_cursor", 422, CURSOR_NOT_ISSUED);
     // A 304 only when nothing the viewer would read has changed (`feedTag`).
     // The queue drains first, as `readFeed` would; shares still waiting
     // depend on the clock, so they always get a page.
@@ -79,9 +95,10 @@ export function feedRoutes(router: Router<Handler>): void {
     drainQueue(ctx.app.db, viewer.id, now);
     const tag = feedTag(ctx.app.db, viewer, {
       chips: chipsOf(ctx.app.db, viewer.id),
-      cursor: rawCursor,
+      cursor: rawBefore === null ? rawCursor : `before:${rawBefore}`,
       limit: limit ?? null,
       now,
+      visit: rawCursor === null ? lastVisit(ctx.app.db, viewer.id) : undefined,
     });
     const headers: Record<string, string> = {
       "cache-control": "private, no-store",
@@ -94,6 +111,19 @@ export function feedRoutes(router: Router<Handler>): void {
       !hasQueuedShares(ctx.app.db, viewer.id)
     )
       return new Response(null, { status: 304, headers });
+    if (before !== undefined)
+      return json(
+        timePhase(ctx.request, "feed", () =>
+          readTimeline(ctx.app.db, viewer, {
+            chips: chipsOf(ctx.app.db, viewer.id),
+            phase: (name, ms) => notePhase(ctx.request, name, ms),
+            ...(limit === undefined ? {} : { limit }),
+            ...(before.id === undefined ? {} : { before: before.id }),
+          }),
+        ),
+        200,
+        headers,
+      );
     const page = timePhase(ctx.request, "feed", () =>
       readFeed(ctx.app.db, viewer, {
         phase: (name, ms) => notePhase(ctx.request, name, ms),
@@ -101,8 +131,13 @@ export function feedRoutes(router: Router<Handler>): void {
         ...(cursor === undefined ? {} : { cursor }),
       }),
     );
+    // The first page carries home's "Since you were here" card, as MCP `feed` does.
+    const digest =
+      cursor === undefined
+        ? timePhase(ctx.request, "digest", () => feedDigest(ctx.app.db, viewer, now))
+        : undefined;
     return timePhase(ctx.request, "render", () =>
-      json(page, 200, headers),
+      json(cursor === undefined ? { ...page, digest } : page, 200, headers),
     );
   });
 
@@ -227,20 +262,21 @@ export function feedRoutes(router: Router<Handler>): void {
   });
 
   router.add("POST", "/api/v1/feed/interactions", async (ctx) => {
+    if (!ctx.auth.user) return signInFirst401();
     const denied = requireScope(ctx, "rw");
     if (denied) return denied;
     const viewer = ctx.auth.user!;
     const db = ctx.app.db;
     const input = await body(ctx.request);
-    const itemId = str(input.item);
-    const kind = input.kind;
-    if (!ITEM_ID.test(itemId))
-      return apiError("invalid_item", 422, "item is a feed item id");
-    if (!isInteractionKind(kind))
-      return apiError("invalid_kind", 422, "kind is not one the feed knows");
-
-    const target = interactionTarget(db, viewer, itemId, str(input.app));
-    if (!target) return notFound();
+    const act = readInteraction(db, viewer, input, DOOR_KINDS);
+    if (!act.ok)
+      return apiError(act.error.code, act.error.code === "not_found" ? 404 : 422, act.error.message);
+    const { itemId, kind, target } = act.value;
+    // A like and its taking back are ledger rows; asking again for what stands is a no-op.
+    if (kind === "liked" || kind === "unliked") {
+      const now = setLike(db, viewer.id, itemId, target.repoId, kind === "liked" ? "like" : "unlike");
+      return json(now, 201);
+    }
     const made = recordInteraction(db, {
       viewerId: viewer.id,
       itemId,
@@ -251,6 +287,26 @@ export function feedRoutes(router: Router<Handler>): void {
     return json({ id: made.id }, 201);
   });
 
+  // The ledger of one item's likes and unlikes, newest first, 50 a page: `?item=event:…[&app=owner/name][&before=seq]`.
+  // Every liker's username is shown to anyone who may read the item, on purpose: a like is a public act
+  // on a post, as a comment is (docs/features/feed-like-ledger.md).
+  router.add("GET", "/api/v1/feed/likes", (ctx) => {
+    if (!ctx.auth.user) return signInFirst401();
+    const viewer = ctx.auth.user;
+    const act = readInteraction(
+      ctx.app.db,
+      viewer,
+      { item: ctx.url.searchParams.get("item"), kind: "liked", app: ctx.url.searchParams.get("app") },
+      ["liked"],
+    );
+    if (!act.ok)
+      return apiError(act.error.code, act.error.code === "not_found" ? 404 : 422, act.error.message);
+    const before = parseLedgerBefore(ctx.url.searchParams.get("before"));
+    if (before === null) return apiError("invalid_before", 422, "before is a ledger seq, a positive whole number");
+    const page = likeLedger(ctx.app.db, act.value.itemId, before);
+    return json({ item: act.value.itemId, ledger: page.rows, more: page.more });
+  });
+
   // A tell from a card, as JSON, so the outbox can replay it by key.
   router.add("POST", "/api/v1/feed/tells", async (ctx) => {
     const denied = requireScope(ctx, "rw");
@@ -258,8 +314,8 @@ export function feedRoutes(router: Router<Handler>): void {
     const viewer = ctx.auth.user!;
     const input = await body(ctx.request);
     const text = str(input.text).trim();
-    if (text === "" || text.length > 2000)
-      return apiError("invalid_text", 422, "text is 1 to 2000 characters");
+    if (text === "" || text.length > TELL_TEXT_MAX)
+      return apiError("invalid_text", 422, `text is 1 to ${TELL_TEXT_MAX} characters`);
     const variants = parseVariants(input.variants);
     if (variants === undefined)
       return apiError(

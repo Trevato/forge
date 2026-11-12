@@ -109,7 +109,27 @@ describe("the crew scorecard over the API and MCP", () => {
     expect(smith.splits[0]).toMatchObject({ model: "", prompt: "", opened: 1, meanLandMs: null });
     expect(smith.splits[0].recent.opened).toBe(1);
     const idle = body.agents.find((a) => a.username === "idle");
-    expect(idle).toEqual({ username: "idle", all: null, recent: null, splits: [] });
+    expect(idle).toEqual({ username: "idle", all: null, recent: null, week: { merged: 0, returned: 0, cost: 0 }, splits: [] });
+  });
+
+  test("wastedDays rides on the API and the MCP tool", async () => {
+    const issue = app.db.query<{ repo_id: string }, []>("SELECT repo_id FROM issue LIMIT 1").get()!;
+    const smith = app.db.query<{ id: string }, []>("SELECT id FROM user WHERE username = 'smith'").get()!;
+    const put = (summary: string, cost: number) =>
+      app.db
+        .query(
+          `INSERT INTO run (id, repo_id, kind, actor_id, state, summary, cost_usd)
+           VALUES (?1, ?2, 'agent', ?3, 'ok', ?4, ?5)`,
+        )
+        .run(crypto.randomUUID(), issue.repo_id, smith.id, summary, cost);
+    put("no changes pushed", 0.5);
+    put("opened pull #1", 1);
+    const day = new Date().toISOString().slice(0, 10);
+    const api = (await get(admin).then((r) => r.json())) as { wastedDays: any[] };
+    expect(api.wastedDays.find((d) => d.day === day)).toEqual({ day, wasted: 1, runs: 2, spentUsd: 0.5 });
+    const called = await rpc(admin, "tools/call", { name: "scorecard", arguments: {} });
+    expect(JSON.parse(called.result.content[0].text).wastedDays).toEqual(api.wastedDays);
+    app.db.query("DELETE FROM run WHERE kind = 'agent'").run();
   });
 
   test("a non-admin gets 403, no token 401", async () => {

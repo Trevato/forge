@@ -20,6 +20,7 @@ import { classifiedAudience, eventAudience } from "../src/core/event_audience.ts
  */
 const COMPUTED: Record<string, readonly string[]> = {
   "src/actions/runs.ts kind": ["run.queued", "run.started", "run.finished"],
+  "src/maintain/keeper/record.ts kind": ["forge_down", "forge_up", "keeper_lull", "keeper_rebase", "keeper_release", "keeper_said"],
 };
 
 /** The values of `${issue.kind}`: a thread is an issue or a pull. */

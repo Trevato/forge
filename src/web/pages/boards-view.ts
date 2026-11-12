@@ -13,19 +13,22 @@ import { CHART_NAMES } from "../../boards/chart.ts";
 import { MAX_H, MAX_PANELS, MAX_TITLE, MAX_W, RANGES, type Board, type Panel } from "../../boards/store.ts";
 import type { App } from "../../app.ts";
 import type { Ctx } from "../../http/context.ts";
+import { driftingPulls, readDrifts } from "../../flow/alarm_drift.ts";
+import { driftSection } from "./boards-drift.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { liveRegionsJs } from "../client.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { fragment, page } from "../layout.ts";
-import { btn, card, chartBox, empty, field, selectField } from "../ui.ts";
+import { btn, chartBox, confirmAction, field, row, selectField } from "../ui.ts";
 import { flowPanel } from "./flow-panel.ts";
 import { boardsHoldsCard } from "./boards-holds.ts";
 import { forgeCeiling } from "../../flow/ceiling.ts";
 import { alarmLines, cachedAlarms } from "../studio/alarm_lines.ts";
 import { isPinned, listPins } from "../../boards/pins.ts";
 import { panelData, runFor } from "../../boards/panel_data.ts";
-import { cellsOf, paramsOf, queryFields, readParams } from "./boards.ts";
+import { readParams } from "../../boards/params.ts";
+import { cellsOf, paramsOf, queryFields } from "./boards.ts";
 
 /** The events the panels' queries read (runs, pulls, checks, issues, usage): any of them may change a chart. */
 const READS = "run.queued,run.started,run.finished,pull.*,check.*,issue.*,usage.*";
@@ -92,33 +95,36 @@ export async function boardsList(ctx: Ctx): Promise<Response> {
     if (holds === null) return notFoundPage(ctx);
     return page({ ctx, title: "Boards", body: html`<div class="page-head"><h1>Boards</h1></div>${holds}` });
   }
-  const make = html`<form method="post" action="/boards/new" class="bar">
-    ${field({ label: "New board", name: "title", id: "new-board-title", required: true, maxlength: MAX_TITLE, placeholder: "Title" })}
-    ${btn("Make board", { variant: "primary" })}
-  </form>`;
-  const body =
+  const make = html`<section class="settings-block" id="boards-new"><h2>Make a board</h2>
+    <form method="post" action="/boards/new" class="bar">
+      ${field({ label: "New board", name: "title", id: "new-board-title", required: true, maxlength: MAX_TITLE, placeholder: "Title" })}
+      ${btn("Make board", { variant: "primary" })}
+    </form></section>`;
+  const body = html`<section class="settings-block" id="boards-all"><h2>Your boards</h2>${
     listed.value.length === 0
-      ? empty({ icon: "activity", title: "No boards yet", note: "Make one above; it is saved as a file in forge/boards." })
-      : card(
-          html`<ul class="list">
-            ${listed.value.map(
-              ({ slug, board }) => html`<li class="row">
-                <a href="/boards/${slug}"><strong>${board.title}</strong></a>
-                <span class="muted small">${String(board.panels.length)} panel${board.panels.length === 1 ? "" : "s"} · ${board.range} · refresh ${board.refresh}</span>
-              </li>`,
-            )}
-          </ul>`,
-          { pad: false },
-        );
+      ? html`<p class="muted">A board is a page of charts over the forge's own numbers. Make one below; it is saved as a file in forge/boards.</p>`
+      : html`<ul class="list setting-list">
+          ${listed.value.map(({ slug, board }) =>
+            row({
+              href: `/boards/${slug}`,
+              nav: true,
+              title: board.title,
+              meta: html`${String(board.panels.length)} panel${board.panels.length === 1 ? "" : "s"} · ${board.range} · refresh ${board.refresh}`,
+            }),
+          )}
+        </ul>`
+  }</section>`;
   const flow = timePhase(ctx.request, "flow", () => flowPanel(ctx.app, { kind: "owner" }, ctx.url, "/boards"));
+  const drift = driftSection(await timePhaseAsync(ctx.request, "drift", async () => driftingPulls(await readDrifts(ctx.app), Date.now())));
   const rendering = performance.now();
   const response = page({
     ctx,
     title: "Boards",
     body: html`<div class="page-head"><h1>Boards</h1>
+        ${btn("Flow", { href: "/flow", variant: "ghost" })}
         ${btn("Explore the data", { href: "/boards/data", variant: "ghost" })}</div>
-      ${alarmLines(cachedAlarms(ctx.app.db, new Date(), forgeCeiling(ctx.app.config)))}
-      ${card(make)} ${body} ${flow} ${boardsHoldsCard(ctx.app.db, ctx.auth.user, true)}`,
+      ${alarmLines(cachedAlarms(ctx.app.db, new Date(), forgeCeiling(ctx.app.config), ctx.app.config.dataDir))}
+      ${body} ${make} ${drift} ${flow} ${boardsHoldsCard(ctx.app.db, ctx.auth.user, true)}`,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
@@ -159,22 +165,17 @@ function manage(slug: string, board: Board, adding: Html, pins: ReturnType<typeo
         ${btn("Up", { size: "sm", name: "by", value: "-1", label: `Move ${p.title} up` })}
         ${btn("Down", { size: "sm", name: "by", value: "1", label: `Move ${p.title} down` })}
       </form>
-      <form method="post" action="/boards/${slug}/remove">
-        <input type="hidden" name="index" value="${String(i)}" />
-        ${btn("Remove", { size: "sm", variant: "danger", label: `Remove ${p.title}` })}
-      </form>
+      ${confirmAction({ action: `/boards/${slug}/remove?index=${String(i)}&title=${encodeURIComponent(p.title)}`, verb: "Remove", size: "sm", label: `Remove ${p.title}` })}
     </div>
   </li>`;
-  return html`${card(
-      html`<ul class="list setting-list">${board.panels.map(one)}</ul>`,
-      { head: html`<h2>Panels</h2>`, pad: false },
-    )}
+  return html`<section class="settings-block" id="board-panels"><h2>Panels</h2>
+      <ul class="list setting-list">${board.panels.map(one)}</ul></section>
     ${when(
       board.panels.length < MAX_PANELS,
-      () => card(panelForm(slug, "add", undefined, 0, adding), { head: html`<h2>Add a panel</h2>` }),
+      () => html`<section class="settings-block" id="board-add"><h2>Add a panel</h2>${panelForm(slug, "add", undefined, 0, adding)}</section>`,
     )}
-    ${card(
-      html`<div class="bar"><form method="post" action="/boards/${slug}/rename" class="bar">
+    <section class="settings-block" id="board-manage"><h2>Board</h2>
+      <div class="bar"><form method="post" action="/boards/${slug}/rename" class="bar">
           ${field({ label: "Board title", name: "title", id: "board-title", required: true, maxlength: MAX_TITLE, value: board.title })}
           ${btn("Rename")}
         </form>
@@ -187,9 +188,7 @@ function manage(slug: string, board: Board, adding: Html, pins: ReturnType<typeo
           ${btn("Save settings")}
         </form>
         <form method="post" action="/boards/${slug}/duplicate">${btn("Duplicate")}</form>
-        <form method="post" action="/boards/${slug}/delete">${btn("Delete this board", { variant: "danger" })}</form></div>`,
-      { head: html`<h2>Board</h2>` },
-    )}`;
+        ${confirmAction({ action: `/boards/${slug}/delete`, verb: "Delete this board" })}</div></section>`;
 }
 
 // GET /boards/:slug

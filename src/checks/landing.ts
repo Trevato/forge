@@ -21,7 +21,9 @@ import {
 } from "../release/checkout.ts";
 import { beginSwap, endSwap, handover, startRelease } from "../release/swap.ts";
 import { running } from "../kernel/version.ts";
+import { noteReleased } from "../crew/note_closed.ts";
 import { recordRelease, type Release } from "../release/record.ts";
+import { scanHold } from "../release/scan_hold.ts";
 import type { Pull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
 import { failuresOf } from "./failures.ts";
@@ -99,10 +101,10 @@ export async function adoptGate(
 }
 
 /** What the lane's answer on `commitOid` decides: its log kept, its red named. */
-function gateVerdict(app: App, repo: Repo, commitOid: string, done: GateDone): LandVerdict {
+function gateVerdict(app: App, repo: Repo, commitOid: string, done: GateDone, last = true): LandVerdict {
   // Cut off, not judged: no verdict, and not the gate log a red reads (#3155).
   if (done.interrupted === true) return { lands: false, interrupted: true };
-  keepForgeGate(app.config.dataDir, app.config.forgeRepo, `${repo.ownerName}/${repo.name}`, done.lines);
+  if (last) keepForgeGate(app.config.dataDir, app.config.forgeRepo, `${repo.ownerName}/${repo.name}`, done.lines);
   const slug = `${repo.ownerName}/${repo.name}`;
   const kept = keepGateLog(app.config.dataDir, slug, commitOid, done.ok, done.lines, Date.now());
   const failed = failuresOf(done.lines);
@@ -185,7 +187,15 @@ async function cut(
       `The landed tree ${sha.slice(0, 12)} failed its preflight, so it will not be released: ${verdict.line}`,
     );
   }
-  if (verdict.ok && out.ok) await swapIn(app, by, repo, pull, sha, out.value);
+  // A new high finding holds the release until a person accepts it (#9593).
+  const hold = verdict.ok && out.ok ? await scanHold(app, repo, sha) : { held: false as const };
+  if (hold.held) {
+    app.log.warn("release held by code scanning", { sha: sha.slice(0, 12), pull: pull.number, findings: hold.count });
+    addComment(app, by, repo, getIssueById(app.db, pull.id) ?? pull, `The landed tree ${sha.slice(0, 12)} is not released: ${hold.line}.`);
+  }
+  // The notes this pull closed learn which release carries their fix (#10564).
+  if (verdict.ok && !hold.held) noteReleased(app.db, release);
+  if (verdict.ok && out.ok && !hold.held) await swapIn(app, by, repo, pull, sha, out.value);
   return release;
 }
 

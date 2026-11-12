@@ -1,30 +1,61 @@
 import { updateRepoSettings } from "../../../actions/repos.ts";
+import { TRANSFER_SAID, transferRepository } from "../../../actions/transfer.ts";
+import { mirrorPacks, reportWords } from "../../../packs/mirror.ts";
+import { rejectedMarkedSentence } from "../../../packs/marked.ts";
+import { setPackRepos } from "../../../packs/set.ts";
 import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 import { VISIBILITY_WORDS } from "../../../core/arg_words.ts";
 
 export const tool: Tool = {
   name: "repo_settings",
-  doc: "`{ repo, description?, visibility?, flowOnly? }` (admin): change a repository's description, visibility and FLOW ONLY switch as `PATCH /api/v1/repos/:owner/:name` does, for the same callers (a repository admin); answers `{ repo, description, visibility, flowOnly }` (with none to change it only reads); a visibility other than public or private is `invalid`",
+  doc: "`{ packRepos: [\"packs/games\", …] }` (admin) sets the repositories /packs lists, as Settings › Packs does (public repos with a pack.json at the root; at most 20; an empty list lists none), and answers `{ repos, problems }` with the ones left out and why; it shows on /packs at once; a word that is not `owner/name` is `invalid`. `{ mirrorPacks: true }` (admin) brings each https source in a marked pack repo's pack.json in once as a read-only `packs/<app>` that follows its upstream, and answers `{ made, kept, failed, says }`; running it again makes nothing new. `{ repo, description?, visibility?, newOwner? }` (admin): `newOwner` moves the repository to that account or org as `POST /api/v1/repos/:owner/:name/transfer` does, with its codes and sentences (`name_taken`, `same_owner`, `move_failed`, `forbidden_owner`, `unknown_owner`) and answers `{ repo, description, visibility }` at the new path, and cannot be combined with the others; otherwise change a repository's description and visibility as `PATCH /api/v1/repos/:owner/:name` does, for the same callers (a repository admin); answers `{ repo, description, visibility }` (with none to change it only reads); a visibility other than public or private is `invalid`",
   description:
-    "Read or change a repo's description, visibility or flowOnly: PATCH /api/v1/repos/:owner/:name (admin).",
+    "Read, change or move (newOwner) a repo: PATCH /api/v1/repos/:owner/:name (admin); mirrorPacks mirrors the packs' upstreams.",
   inputSchema: {
     type: "object",
     properties: {
       repo: REPO_ARG,
       description: { type: "string", maxLength: 2000 },
       visibility: { type: "string", enum: ["public", "private"] },
-      flowOnly: { type: "boolean" },
+      newOwner: { type: "string", maxLength: 64 },
+      mirrorPacks: { type: "boolean" },
+      packRepos: { type: "array", items: { type: "string", maxLength: 100 }, maxItems: 20 },
     },
-    required: ["repo"],
   },
   writes: true,
   needsAdminScope: true,
   async run(ctx, user, args) {
+    const packRepos = args["packRepos"];
+    if (packRepos !== undefined) {
+      if (!Array.isArray(packRepos) || packRepos.length > 20 || packRepos.some((v) => typeof v !== "string"))
+        return bad("invalid", "packRepos is a list of owner/name words");
+      const done = await setPackRepos(ctx.app, user, packRepos.join(" "));
+      if (done.ok) return good({ repos: done.repos, problems: done.problems });
+      return done.error === "forbidden" ? bad("not_found", "no such tool here") : bad("invalid", rejectedMarkedSentence(done.rejected));
+    }
+    if (args["mirrorPacks"] === true) {
+      const done = await mirrorPacks(ctx.app, user);
+      return done.ok ? good({ ...done.value, says: reportWords(done.value) }) : bad("not_found", "no such tool here");
+    }
     const repo = repoArg(ctx, user, args);
     if (isAnswer(repo)) return repo;
-    const { description, visibility, flowOnly } = args;
-    if (flowOnly !== undefined && typeof flowOnly !== "boolean")
-      return bad("invalid", "flowOnly is true or false");
+    const { description, visibility, newOwner } = args;
+    if (newOwner !== undefined) {
+      if (typeof newOwner !== "string" || newOwner.length === 0 || newOwner.length > 64)
+        return bad("bad_new_owner", "newOwner is an account or organisation name");
+      if (description !== undefined || visibility !== undefined)
+        return bad("invalid", "newOwner moves the repository; give it alone");
+      const moved = await transferRepository(ctx.app, user, repo, newOwner);
+      if (!moved.ok)
+        return moved.error === "not_found"
+          ? bad("not_found", "no such app or repository (owner/name)")
+          : bad(moved.error, TRANSFER_SAID[moved.error]);
+      return good({
+        repo: `${moved.value.ownerName}/${moved.value.name}`,
+        description: moved.value.description,
+        visibility: moved.value.visibility,
+      });
+    }
     if (description !== undefined && typeof description !== "string")
       return bad("invalid", "description is text");
     if (visibility !== undefined && visibility !== "public" && visibility !== "private")
@@ -32,7 +63,6 @@ export const tool: Tool = {
     const updated = await updateRepoSettings(ctx.app, user, repo, {
       ...(visibility !== undefined ? { visibility } : {}),
       ...(description !== undefined ? { description } : {}),
-      ...(flowOnly !== undefined ? { flowOnly } : {}),
     });
     if (!updated.ok)
       return bad(updated.error === "not_found" ? "not_found" : "forbidden", updated.error);
@@ -40,7 +70,6 @@ export const tool: Tool = {
       repo: `${updated.value.ownerName}/${updated.value.name}`,
       description: updated.value.description,
       visibility: updated.value.visibility,
-      flowOnly: updated.value.flowOnly,
     });
   },
 };

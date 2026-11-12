@@ -9,8 +9,8 @@
  */
 
 import type { App } from "../app.ts";
-import { listAutonomousRepos } from "../core/repos.ts";
-import { heldCounts, heldNow, type HoldName } from "../crew/held.ts";
+import { listAutonomousRepos, type Repo } from "../core/repos.ts";
+import { admits, heldCounts, heldNow, mapHolds, type Held, type HoldName } from "../crew/held.ts";
 
 export interface HeldRow {
   /** `owner/name`. */
@@ -18,30 +18,43 @@ export interface HeldRow {
   readonly public: boolean;
   readonly startable: number;
   readonly counts: Readonly<Record<HoldName, number>>;
+  /** Issues a hot file holds, with the open pulls on that file, oldest first. */
+  readonly hot: readonly { readonly number: number; readonly detail: string; readonly pulls: readonly number[] }[];
 }
+
+/** The most hot-file holds a row lists. */
+const HOT_ROWS = 5;
 
 /** How long the rows are kept. */
 export const HELD_TTL_MS = 5_000;
 
-const kept = new WeakMap<App, { at: number; rows: readonly HeldRow[] }>();
+const kept = new WeakMap<App, { at: number; repos: readonly { repo: Repo; held: Held }[] }>();
 
-/** Each autonomous repository's ready list, sorted by what holds it; private ones for the owner only. */
+/**
+ * Each autonomous repository's ready list, sorted by what holds it; private ones for the owner only.
+ * The counts are the same for every reader. The pulls a hot file holds are resolved per reader on
+ * every call, from memory: a sealed pull is named, and counted, for the owner only.
+ */
 export function readHeld(app: App, owner: boolean, now = Date.now()): HeldRow[] {
   let entry = kept.get(app);
   if (entry === undefined || now - entry.at >= HELD_TTL_MS || now < entry.at) {
-    entry = {
-      at: now,
-      rows: listAutonomousRepos(app.db).map((repo) => {
-        const held = heldNow(app, repo);
-        return {
-          repo: `${repo.ownerName}/${repo.name}`,
-          public: repo.visibility === "public",
-          startable: held.startable.length,
-          counts: heldCounts(held),
-        };
-      }),
-    };
+    entry = { at: now, repos: listAutonomousRepos(app.db).map((repo) => ({ repo, held: heldNow(app, repo) })) };
     kept.set(app, entry);
   }
-  return entry.rows.filter((r) => owner || r.public);
+  return entry.repos
+    .filter(({ repo }) => owner || repo.visibility === "public")
+    .map(({ repo, held }) => {
+      const { holds } = mapHolds(repo, held, admits(app, repo, owner ? { sealed: true } : {}));
+      return {
+        repo: `${repo.ownerName}/${repo.name}`,
+        public: repo.visibility === "public",
+        startable: held.startable.length,
+        counts: heldCounts(held),
+        hot: [...holds].flatMap(([number, h]) =>
+          h.by === "hot_file" && h.pulls !== undefined && h.pulls.length > 0
+            ? [{ number, detail: h.detail, pulls: h.pulls }]
+            : [],
+        ).slice(0, HOT_ROWS),
+      };
+    });
 }

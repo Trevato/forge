@@ -7,7 +7,6 @@
  * long as anyone likes and is never the wrong commit's.
  */
 
-import { sealedPreview } from "../../core/sealed.ts";
 import { closeSync, existsSync, openSync, readSync } from "node:fs";
 import { jpegHeader } from "../../design/image/jpeg.ts";
 import { isPng, pngHeader } from "../../design/image/png.ts";
@@ -27,14 +26,15 @@ import {
   lookVersion,
 } from "../../core/looks.ts";
 import type { Pull } from "../../core/pulls.ts";
-import { canEnterApp, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
+import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFound } from "../../http/respond.ts";
-import { keepLook } from "../../looks/service.ts";
+import { pairCounts, pairsLine } from "../../looks/pairs.ts";
+import { mayFetchLook as mayFetchLookFor } from "../../looks/readable.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { loadRepo, repoBase } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
-import { card, disclosure, icon, sha, time } from "../ui.ts";
+import { disclosure, sha, time } from "../ui.ts";
 
 /** The newest picture at one width, when there is one. */
 export const pictured = (
@@ -106,35 +106,16 @@ export function lookImage(ctx: Ctx): Response {
   return new Response(Bun.file(path), { headers });
 }
 
-/**
- * Who may fetch a picture (#727, #738). Writers, all of them. Anyone else
- * only what was taken as nobody, and only of an app they may open (anyone
- * for a public app, a writer, the crew or a named person for a private
- * one): the thumb always, a public app's phone and desktop too. A picture
- * taken as the owner, an admin, stays the writers'; so does a thumb from
- * before thumbs were taken as nobody (`keepLook`), until it is retaken.
- */
-export function mayFetchLook(
+/** `mayFetchLook` for a request (`looks/readable.ts`). */
+export const mayFetchLook = (
   ctx: Ctx,
   repo: Repo,
   record: AppRecord,
   look: Look,
-): boolean {
-  const user = ctx.auth.user;
-  if (canSeeOwnerFacts(ctx.app.db, repo, user)) return true;
-  // A sealed pull's pictures are the writers' (`core/sealed.ts`).
-  if (sealedPreview(ctx.app.db, repo.id, look.env)) return false;
-  // A private app's pictures are for whoever may enter it (#620, #752): a
-  // person it names sees them; a reader who is not named does not.
-  if (!canEnterApp(ctx.app.db, repo, record, user)) return false;
-  // Phone and desktop are a reader's only when taken as nobody — a public
-  // app's, since #738; one taken as the owner stays the writers' (#727).
-  if (look.kind !== "thumb") return look.takenAs === "nobody";
-  return keepLook(ctx.app.config.dataDir, look);
-}
+): boolean => mayFetchLookFor(ctx.app, repo, record, look, ctx.auth.user);
 
 /**
- * The Look card on a pull: phone and desktop side by side, the commit
+ * The Look block on a pull: phone and desktop side by side, the commit
  * they are of, and a word when the head has moved since — or, honestly,
  * why there is no picture. More than one page in `app.looks` gets one
  * group per page, each labelled by its path, since each can be at a
@@ -151,7 +132,7 @@ export function lookCard(
   const base = repoBase(repo);
   const env = previewEnv(pull.number);
   // What this viewer may see: all of it for a writer; for a reader, only a
-  // phone or desktop picture taken as nobody (a public app's), and no card
+  // phone or desktop picture taken as nobody (a public app's), and no block
   // without one.
   const writer = canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user);
   const every = looksForEnv(ctx.app.db, record.id, env, "any").filter(
@@ -165,15 +146,18 @@ export function lookCard(
   if (!writer && looks.length === 0) return html``;
   const attached = looks.filter(isAttached).reverse();
   const taken = looks.filter((l) => !isAttached(l));
-  const head = html`${icon("eye")}
-    <h2>Look</h2>`;
+  // A block under an h2, the home page's language — not a card.
+  const block = (body: Html): Html =>
+    html`<section class="settings-block" id="look" data-look-block>
+      <h2>Look</h2>
+      ${body}
+    </section>`;
   if (taken.length === 0 && attached.length === 0) {
     if (pull.state !== "open" || pull.mergedAt !== null) return html``;
-    return card(
+    return block(
       html`<p class="muted small">
         No picture yet. One is taken when the preview comes up green.
       </p>`,
-      { head },
     );
   }
   // Home first, then the rest in the order the manifest is likeliest to
@@ -183,7 +167,7 @@ export function lookCard(
   );
   const labelled = pages.length > 1;
   // What main looks like, to set each page beside: only what this viewer may fetch.
-  const mainLooks = looksForEnv(ctx.app.db, record.id, "production").filter(
+  const mainLooks = looksForEnv(ctx.app.db, record.id, "production", "any").filter(
     (l) => !isAttached(l) && mayFetchLook(ctx, repo, record, l),
   );
   const picture = (
@@ -227,14 +211,13 @@ export function lookCard(
         </p>
       </section>`;
     const moved = shown.commitOid !== headOid;
+    // Beside the same page at the same width and theme: a width main lacks is left out.
     const mainOfPage = mainLooks.filter((l) => l.page === page);
-    const beforePhone = pictured(mainOfPage, "phone");
-    const beforeDesktop = pictured(mainOfPage, "desktop");
-    // Beside the same page at the same width: a width main lacks is left out.
-    const beforeShown = [
-      phone === undefined ? undefined : beforePhone,
-      desktop === undefined ? undefined : beforeDesktop,
-    ].filter((l): l is Look => l !== undefined);
+    const beforeOf = (theme: Look["theme"], headKinds: readonly Look["kind"][]): Look[] =>
+      headKinds
+        .map((kind) => pictured(mainOfPage.filter((l) => l.theme === theme), kind))
+        .filter((l): l is Look => l !== undefined);
+    const beforeShown = beforeOf("light", [phone, desktop].filter((l) => l !== undefined).map((l) => l.kind));
     // Only the dark pictures of the commit the caption names: after a push
     // the light pair is retaken first, and an old head's dark pair must not
     // sit under the new head's words.
@@ -243,38 +226,42 @@ export function lookCard(
     );
     const darkPhone = pictured(darkOfPage, "phone");
     const darkDesktop = pictured(darkOfPage, "desktop");
+    // Main's picture beside the head's; where main has none, the head stands alone.
+    const compare = (before: readonly Look[], after: readonly Look[]): Html =>
+      before.length === 0
+        ? html`<div class="looks">
+              ${after.map((l) => picture(l, l.kind, page))}
+            </div>
+            <p class="muted small" data-no-main>
+              main has no picture of ${page === DEFAULT_PAGE ? "this page" : page} yet.
+            </p>`
+        : html`<div class="looks" data-compare>
+            <div>
+              <p class="muted small">main</p>
+              <div class="looks">
+                ${before.map((l) => picture(l, l.kind, page, "main"))}
+              </div>
+              <p class="muted small">
+                at ${sha(before[0]!.commitOid, `${base}/commit/${before[0]!.commitOid}`)} ·
+                ${time(before[0]!.createdAt)}
+              </p>
+            </div>
+            <div>
+              <p class="muted small">this pull</p>
+              <div class="looks">
+                ${after.map((l) => picture(l, l.kind, page))}
+              </div>
+            </div>
+          </div>`;
+    const lightAfter = [phone, desktop].filter((l): l is Look => l !== undefined);
+    const darkAfter = [darkPhone, darkDesktop].filter((l): l is Look => l !== undefined);
     return html`<section class="stack stack-tight">
       ${label}
-      <div class="looks" data-compare>
-        <div>
-          <p class="muted small">Before · main</p>
-          ${beforeShown.length === 0
-            ? html`<p class="muted small">
-                Main has no look of ${page} yet.
-              </p>`
-            : html`<div class="looks">
-                  ${beforeShown.map((l) => picture(l, l.kind, page, "main"))}
-                </div>
-                <p class="muted small">
-                  at ${sha(beforeShown[0]!.commitOid, `${base}/commit/${beforeShown[0]!.commitOid}`)} ·
-                  ${time(beforeShown[0]!.createdAt)}
-                </p>`}
-        </div>
-        <div>
-          <p class="muted small">After · #${pull.number}</p>
-          <div class="looks">
-            ${when(phone, (l) => picture(l, "phone", page))}
-            ${when(desktop, (l) => picture(l, "desktop", page))}
-          </div>
-        </div>
-      </div>
-      ${when(darkPhone ?? darkDesktop, () =>
+      ${compare(beforeShown, lightAfter)}
+      ${when(darkAfter.length > 0, () =>
         disclosure(
           "In the dark",
-          html`<div class="looks">
-            ${when(darkPhone, (l) => picture(l, "phone", page))}
-            ${when(darkDesktop, (l) => picture(l, "desktop", page))}
-          </div>`,
+          compare(beforeOf("dark", darkAfter.map((l) => l.kind)), darkAfter),
           { small: true },
         ),
       )}
@@ -311,13 +298,17 @@ export function lookCard(
       </figcaption>
     </figure>`;
   };
-  return card(
+  // One line over the pictures, counted from the data `compare` uses.
+  const line = pairsLine(pairCounts(taken, mainLooks));
+  const summary = line === undefined
+    ? html``
+    : html`<p class="muted small" data-pairs>${line}</p>`;
+  return block(
     html`<div class="stack">
-      ${pages.map(group)}${when(attached.length > 0, () =>
+      ${summary}${pages.map(group)}${when(attached.length > 0, () =>
         html`<div class="looks">${attached.map(person)}</div>`,
       )}
     </div>`,
-    { head },
   );
 }
 

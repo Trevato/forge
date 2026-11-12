@@ -5,6 +5,7 @@ export const route: Route = {
   path: `${REPO}/issues/{number}/assignee`,
   summary: "Assign an issue to a person or crew member, or to no one with null (rw scope); answers the issue",
   auth: true,
+  role: "member",
   body: { assignee: "string" },
   refusals: {
     invalid_assignee: "`assignee` is neither a username nor null (422)",

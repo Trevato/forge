@@ -7,6 +7,7 @@
  * closes only as split into what is new; a person takes it back before it
  * runs; the milestone shows the change.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,7 +18,7 @@ import { linkIssue } from "../src/actions/dependencies.ts";
 import { openIssue, setIssueState } from "../src/actions/issues.ts";
 import { previewReplan, replanLimb, takeBackLimb } from "../src/actions/limb_replan.ts";
 import { createRepo, updateRepoSettings } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { readyNow, repoGraph } from "../src/core/dependencies.ts";
 import { getIssueById, type Issue } from "../src/core/issues.ts";
 import { pendingReplans, replanSince } from "../src/core/limb_replan.ts";
@@ -141,7 +142,7 @@ describe("a limb handed to the planner", () => {
     }
     atlas = getUserByName(app.db, "atlas")!;
     mason = getUserByName(app.db, "mason")!;
-    setCrewRole(app.db, repo.id, atlas.id, "planner");
+    seatAs(app.db, repo.id, atlas.id, "planner");
     const set = await updateRepoSettings(app, alice, repo, {
       autonomy: "autonomous",
       autonomyDirection: "Keep the engine small.",
@@ -210,6 +211,10 @@ describe("a limb handed to the planner", () => {
     for (const leaf of leaves) expect(html).toContain(leaf.title);
     expect(html).not.toContain("Unrelated work");
     expect(html).toContain("Hand to the planner");
+    const main = html.slice(html.indexOf("<main"), html.indexOf("</main>"));
+    expect(main).toContain('id="replan-issues"');
+    expect(main).toContain('class="list');
+    expect(main).not.toContain('class="card');
     expect(await (await page("alice", `/alice/engine/milestones/${limb.number}`)).text()).toContain("Re-plan");
     expect(pendingReplans(app.db, fresh())).toEqual([]);
   });

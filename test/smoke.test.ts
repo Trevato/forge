@@ -199,3 +199,26 @@ test("--app-host fails when an app host answers with the forge's page", async ()
     appPage.stop(true);
   }
 });
+
+test("an app host that gives no answer is asked again, then left out of the release verdict (#10189)", async () => {
+  const base = stub("text/css");
+  const timeout = () => Object.assign(new Error("The operation timed out."), { name: "TimeoutError" });
+  const make = (fails: number, body = "<title>notes</title>") => {
+    let hostCalls = 0;
+    const f = (async (input: string | URL, init?: RequestInit) => {
+      if (String(input).startsWith("http://app.invalid")) {
+        if (++hostCalls <= fails) throw timeout();
+        return new Response(body);
+      }
+      return fetch(input, init);
+    }) as unknown as typeof fetch;
+    return { f, calls: () => hostCalls };
+  };
+  const once = make(1, "<title>forge</title>");
+  // A wake-up timeout is asked again, and the second answer is still judged.
+  expect((await smoke(base, "t", { appHost: "http://app.invalid/", fetch: once.f })).map((f) => f.why)).toEqual(["an app host answered with the forge's page"]);
+  expect(once.calls()).toBe(2);
+  const silent = make(99);
+  expect(await smoke(base, "t", { appHost: "http://app.invalid/", fetch: silent.f })).toEqual([]);
+  expect(silent.calls()).toBe(2);
+});

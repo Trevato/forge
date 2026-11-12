@@ -354,14 +354,14 @@ describe("egress, reported: what an app reached is kept per repository and shown
       ["api.stripe.com", 443, 2],
     ]);
     expect(reachedHosts(dataDir, "01other")).toEqual([]);
-    const note = String(egressNote(dataDir, "01repo", []));
+    const note = String(egressNote(dataDir, "01repo", [], "report"));
     expect(note).toContain("api.stripe.com:443");
     expect(note).toContain("&quot;api.stripe.com&quot;");
     expect(note).toContain("db.example.com:5432");
-    const after = String(egressNote(dataDir, "01repo", ["api.stripe.com"]));
+    const after = String(egressNote(dataDir, "01repo", ["api.stripe.com"], "report"));
     expect(after).not.toContain("api.stripe.com");
     expect(
-      egressNote(dataDir, "01repo", ["api.stripe.com", "db.example.com:5432"]),
+      egressNote(dataDir, "01repo", ["api.stripe.com", "db.example.com:5432"], "report"),
     ).toBeNull();
   });
 });
@@ -840,7 +840,7 @@ describe.skipIf(noCells)("cells: limits stop a step, and say which", () => {
     expect(result.ok).toBe(false);
     if (!result.ok)
       expect(result.error).toMatch(
-        /^check stopped: it used [\d.]+ cores for \d+s, over its limit of 0\.02$/,
+        /^check stopped: it used [\d.]+ cores for \d+s, over its limit of 0\.02; the busiest process is \S+ \(pid \d+, \d+s of CPU\)$/,
       );
   }, 30_000);
 
@@ -906,10 +906,8 @@ describe.skipIf(noCells)(
         hostname: "127.0.0.1",
         fetch: () => new Response("inside"),
       });
-      process.env["FORGE_CELLS_EGRESS"] = "report";
     });
     afterAll(async () => {
-      delete process.env["FORGE_CELLS_EGRESS"];
       listener.stop(true);
       await rm(dir, { recursive: true, force: true });
     });
@@ -938,6 +936,7 @@ describe.skipIf(noCells)(
             egress: [],
             reach: [],
             limits: { memoryMiB: 1024, cpus: 2, diskMiB: 1024 },
+            egressMode: "report",
             onUndeclared: (host, port) => seen.push(`${host}:${port}`),
           },
         },
@@ -1077,3 +1076,42 @@ describe.skipIf(noCells)(
     }, 240_000);
   },
 );
+
+describe.skipIf(noCells)("cells: the shared install cache is read-only (#7543)", () => {
+  test("a revealed cache under a hidden data dir is readable and a write into it fails", async () => {
+    const data = await mkdtemp(join(tmpdir(), "forge-cell-cache-"));
+    const cache = join(data, "check-install", "r", "bun");
+    mkdirSync(cache, { recursive: true });
+    writeFileSync(join(cache, "pkg"), "x");
+    const dir = join(data, "..", `co-${Date.now()}`);
+    mkdirSync(dir);
+    const lines: string[] = [];
+    const result = await runStep(
+      "check",
+      `cat ${cache}/pkg && (echo y > ${cache}/new && echo WROTE || echo REFUSED)`,
+      {
+        cwd: dir,
+        env: childEnv({}),
+        log: (line) => lines.push(line),
+        signal: new AbortController().signal,
+        timeoutMs: 60_000,
+        cell: {
+          dir,
+          writable: [],
+          home: join(dir, ".home"),
+          hide: [data],
+          reveal: [cache],
+          egress: [],
+          reach: [],
+          limits: { memoryMiB: 1024, cpus: 2, diskMiB: 1024 },
+        },
+      },
+    );
+    expect(result.ok).toBe(true);
+    expect(lines).toContain("x");
+    expect(lines).toContain("REFUSED");
+    expect(lines).not.toContain("WROTE");
+    await rm(data, { recursive: true, force: true });
+    await rm(dir, { recursive: true, force: true });
+  }, 60_000);
+});

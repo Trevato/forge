@@ -7,6 +7,7 @@ export const route: Route = {
   summary:
     "Contribute to a repository you only browse (admin scope): fork it if you cannot push, branch, commit files and optionally open a pull upstream; answers 201 with the contribution",
   auth: true,
+  role: "member",
   status: 201,
   body: { branch: "string", base: "string", message: "string", files: "array", openPull: "object" },
   refusals: {

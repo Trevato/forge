@@ -19,6 +19,7 @@ import { crewRole } from "../core/agents.ts";
 import { canRead, canWrite, type Repo } from "../core/repos.ts";
 import type { Issue } from "../core/issues.ts";
 import { isProposed } from "../core/pull_trust.ts";
+import { foldsIn } from "../core/trusted_sources.ts";
 import { openPullsClosing, type Pull } from "../core/pulls.ts";
 import { getUserById, getUserByName, type User } from "../core/users.ts";
 
@@ -223,7 +224,10 @@ export function unadoptedAmong(
  * outsiders switch says — the switch lets a reader's words reach the
  * crew, not a reader's code reach the default branch unread by a person.
  */
-export function landsOnItsOwn(db: Database, repo: Repo, pull: Pull): boolean {
+export function landsOnItsOwn(db: Database, repo: Repo, pull: Pull, now: Date = new Date()): boolean {
+  // A trusted source's pull (#8937) lands on its checks, wall and boot proof
+  // alone; trust skips the person and nothing else.
+  if (foldsIn(db, pull.id, now)) return true;
   if (pull.originAuthor !== null) return false;
   // A child's code, whoever holds its token: a grant lets it run, a person's
   // review lands it.

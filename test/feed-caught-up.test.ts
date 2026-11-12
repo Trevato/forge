@@ -12,6 +12,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import type { FeedItem } from "../src/feed/rank.ts";
 import { caughtUp, FEED_FIRST_PAGE, feedJs } from "../src/web/studio/feed.ts";
 import { promote } from "./helpers/members.ts";
+import { freshHome } from "./helpers/home-fresh.ts";
 
 describe("the timeline's caught-up line", () => {
   let dataDir: string;
@@ -25,7 +26,7 @@ describe("the timeline's caught-up line", () => {
     for (let i = 0; i < n; i++)
       app.bus.append({ kind: "run.finished", repoId: repo.id, actorId: alice.id, payload: { kind: "agent", state: "ok", summary: `work ${i}`, runId: `r${i}` } });
   };
-  const home = async (path = "/") => (await fetch(`${servers.url}${path}`, { headers: { cookie } })).text();
+  const home = (path = "/feed") => freshHome(servers.url, cookie, path);
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-caught-up-"));
@@ -61,18 +62,18 @@ describe("the timeline's caught-up line", () => {
     const text = await home();
     expect(text).toContain("You're caught up to");
     expect(text).not.toContain("That's everything");
-    const href = /href="(\/\?cursor=[^"]+)"[^>]*>Older posts/.exec(text);
+    const href = /href="(\/feed\?cursor=[^"]+)"[^>]*>Older posts/.exec(text);
     expect(href).not.toBeNull();
     const older = await home(href![1]!.replaceAll("&amp;", "&"));
     expect(older).toContain("data-item=");
     expect(older).toContain("That's everything");
-    expect(older).toContain('<a href="/">Newest</a>');
+    expect(older).toContain('<a href="/feed">Newest</a>');
     expect(text).not.toContain(">Newest<");
   });
 
   test("a page after the first carries its own address, so a chip refetch stays on it", async () => {
-    const href = /href="(\/\?cursor=[^"]+)"[^>]*>Older posts/.exec(await home())![1]!.replaceAll("&amp;", "&");
-    const cursor = href.slice("/?cursor=".length).split("&day=")[0];
+    const href = /href="(\/feed\?cursor=[^"]+)"[^>]*>Older posts/.exec(await home())![1]!.replaceAll("&amp;", "&");
+    const cursor = href.slice("/feed?cursor=".length).split("&day=")[0];
     const older = await home(href);
     expect(older).toContain(`data-live-src="/live/feed?cursor=${cursor}&amp;day=`);
     expect(await home()).toContain('data-live-src="/live/feed"');
@@ -87,7 +88,7 @@ describe("the timeline's caught-up line", () => {
   });
 
   test("a cursor not issued here is the first page", async () => {
-    const text = await home("/?cursor=garbage");
+    const text = await home("/feed?cursor=garbage");
     expect(text).toContain("You're caught up to");
   });
 });

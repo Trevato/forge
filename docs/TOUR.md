@@ -1,6 +1,13 @@
 # A tour of the forge
 
-What each page, screen and door does, past the front door in the README. Each section is one feature with every door it has: the web, the terminal over SSH, the API and the MCP. The crew is in `docs/CREW.md`, apps in `docs/APPS.md`, origins in `docs/ORIGINS.md`, asks in `docs/ASKS.md`, and running the forge in `docs/OPERATING.md`.
+This document describes each page and screen beyond the studio, one feature per
+section. It is for people who want every way to reach a feature: the web, the
+terminal over SSH, the API and the MCP.
+
+Related documents cover the rest: [`STUDIO.md`](STUDIO.md) for the main pages,
+[`CREW.md`](CREW.md) for the crew, [`APPS.md`](APPS.md) for apps,
+[`ORIGINS.md`](ORIGINS.md) for connected forges, [`ASKS.md`](ASKS.md) for
+questions waiting on a person, and [`OPERATING.md`](OPERATING.md) for running it.
 
 ## Live in the terminal
 
@@ -93,11 +100,11 @@ a destination that is a bucket, `snapshot/state.json`; `src/snapshot/off_box.ts`
 The backup tile past 24 hours, or with none (`never`), takes the card's existing
 `data-tone="attn"` and says overdue in its label.
 The last three (`src/flow/reach.ts`, the `reach` board source's rows) are
-visitors (`5 today`, `31 in 7 days`), accounts (`1 of 2`, signed in today) and
-page speed (the slowest quarter's page load over 7 days, and `reacts in 180 ms`,
-the same for the delay after a tap), from the page-view beacon. Each links to
+reporting browsers (`5 today`, `31 in 7 days`), accounts (`1 of 2`, seen today) and
+page speed (the slowest quarter's page load over 7 days, and `LCP 2.4 s · INP 180 ms`,
+LCP and INP, the main content and a tap), from the page-view beacon. Each links to
 the Reach starting board (`/boards/reach`). The visitor hash rotates daily, so
-the 7-day visitors is each day's distinct count summed.
+the 7-day reporting browsers is each day's distinct count summed.
 They count every repository, so only a site admin sees them, on both doors;
 nobody else does, and neither does the lean client home. On the web each is a
 card linking to `/board`, `/releases`, `/boards` or `/boards/reach`. The terminal's first screen
@@ -195,7 +202,9 @@ door (`s`) cannot let that person in. They add an SSH key under Settings → Key
 once signed in on the web; after that the terminal signs them straight in as
 that account, as for anyone with a key.
 
-In the terminal the palette's `SSH keys` (ctrl+k) lists your own keys; `a` adds one (a title, then the authorized_keys line) and `d` removes the selected key after a confirm that warns when it is this session's key. Refusals read in MCP `ssh_keys`'s words (`keyWords`).
+In the terminal the palette's `SSH keys` (ctrl+k) lists your own keys; `a` adds one (a title, then the authorized_keys line), `e` renames the selected key (prefilled with its name; 1 to 64 printable characters, so each key can say which machine holds it; a name added from any door is fitted to the same rule, so the prefill always renames) and `d` removes the selected key after a confirm that warns when it is this session's key. Refusals read in MCP `ssh_keys`'s words (`keyWords`). Renaming is terminal-only for now: the web's Settings → Keys and MCP `ssh_keys` add and remove but do not rename.
+
+Beside it the palette's `Passkeys` (ctrl+k, people only, not agents or guests) lists your own passkeys, read only: each row is the name, then `added YYYY-MM-DD, used YYYY-MM-DD` (or `used never`). The head line says it is read only and points at Settings › Passkeys to add or remove one; with none it reads "None yet. Add one on the web: Settings › Passkeys." (`src/tui/screens/passkeys.ts`, the same rows as MCP `whoami_can kind: passkeys`).
 
 ## Page-view beacon
 
@@ -213,7 +222,9 @@ A writer of the app's repository redeploys production from the terminal's **Depl
 
 The app's admin also sees its own domains on that screen, one line with each domain's state (`live` or `waiting for DNS`), and presses `n` for the domains screen: `+` adds one, `c` checks the selected one's DNS proof now and says the record still needed, `-` removes it after `remove <host>? y/n`. They are the settings page's and MCP `app_domains`' actions (`src/actions/domains.ts`), answered in the page's words (`src/actions/domain_words.ts`); anyone `listAppDomains` refuses sees neither the domains nor `n`.
 
-A forge admin takes a snapshot from the terminal's **Resilience** dialog (`ctrl+k`, Resilience) with `n` and brings the off-box mirror level with `l`, each after a `y/n` asked on the dialog's first line. They are the Backups page's buttons' and MCP `snapshot_now`'s and `mirror_now`'s actions (`src/actions/backups_now.ts`), so all three doors say the same words; the dialog lists the three newest snapshots, newest first (or that they could not be read), and re-reads them after each. While one runs, neither key is offered. Nothing names a key or a secret. Anyone else has no Resilience command, and the actions refuse them with `not_found`.
+A forge admin takes a snapshot from the terminal's **Resilience** dialog (`ctrl+k`, Resilience) with `n`, brings the off-box mirror level with `l` and runs a restore drill with `r`, each after a `y/n` asked on the dialog's first line. They are the Backups page's buttons' and MCP `snapshot_now`'s and `mirror_now`'s actions (`src/actions/backups_now.ts`, `drillNow` for the drill), so every door says the same words, and the drill's verdict is the Backups page's; the dialog lists the three newest snapshots, newest first (or that they could not be read), and re-reads them after each. The three keys are shown only to a forge admin, and while one action runs none of them is offered. Nothing names a key or a secret. Anyone else has no Resilience command, and the actions refuse them with `not_found`.
+
+A forge admin signed in at the terminal who has not yet chosen how to work day to day sees one muted line at the head of the dashboard, the web home card's ask in its words (`askForEveryday` in `src/core/everyday.ts`): `E` opens Settings on the web to make the everyday account, because that account is made with a passkey and a terminal cannot hold one, so the terminal never makes it itself; `K` keeps working as admin through the same `keepAdmin` the web reads, so neither door asks again. Once an everyday account is linked the line names it instead (`Day to day you are <name>; this is the admin account.`). Anyone who is not an admin, and an agent, sees no line and neither key; `k` still moves the cursor.
 
 The `app_vital` board source (`src/boards/sources.ts`) charts those reports: one row per app per day with `app` (the app's id), `day`, `load_p75`, `inp_p75` (ms) and `reports` (rows kept that day), the percentiles nearest-rank per app per day as `reach` does. `max` or `avg` over several days summarises daily percentiles, not the percentile of the whole range. Its rows belong to the app's repository, so a query sees only the repos in its scope. Today boards query with `repoIds: "all"` (`src/web/pages/boards.ts`) and only a site admin reaches them; no non-admin scope exists, so nothing yet applies the settings page's `canAdmin` gate per repository, and whoever builds one must. Days older than the 90-day trim are gone, not zero. The slug and the visitor hash are not columns. No dependency was added. Left out: a starting board for it; pick `app_vital` in the `/boards` source picker.
 
@@ -253,13 +264,34 @@ The terminal's issue and pull screens stay whole on purpose: they are a
 scrolling text view of one thread already in memory, not a page a phone
 downloads, so there is no weight to cut and no second key to learn.
 
+## The front page
+
+What a stranger is shown at `/`, ranked with its numbers, and a site admin's
+say over it: pinned apps first (the first public pin is featured), hidden apps
+never, a private app never. Every door reads `frontJson` in
+`src/actions/front.ts` and sets through `setFront`, so they never disagree.
+
+- **Web:** `/` for everyone; the admin's front-page settings pin, hide and weigh.
+- **API:** `GET` and `PUT /api/v1/front`.
+- **MCP:** `front_page` reads the list; a site admin passes `pinned`, `hidden`
+  or `weights` (a dry run unless `dryRun: false`).
+- **Terminal:** palette → "Front page" lists the same apps in the same order,
+  each with forks, ships, use and fresh. For a site admin who is a person, `p`
+  pins the selected app first (or unpins it) and `h` hides it (or shows it
+  again, from the hidden rows at the end); each shows the plan, the dry run of
+  `setFront`, and applies on Apply. Anyone else, signed out included, has the
+  list and neither key.
+
 ## Who can see it
 
 Every repository page says, beside the Private/Public badge, who can see it in
 one sentence ("Private: only you and the crew."), and a writer's click goes to
 Settings. `GET /api/v1/repos/:owner/:name` returns the same words as
-`audience: { level, sentence }`, the MCP `repo` tool carries it too, and the
-terminal's About card (`I`) shows it. It gives counts, never names; site
+`audience: { level, who, sentence }` (`who` is `owner`, `members` or
+`anyone`), and so does a `PATCH` that changes its visibility, in the same
+answer. The MCP `repo` and `here` tools carry it too (`here` on a repository
+page, and on an app's link only for someone who may read the repository), and
+the terminal's About card (`I`) shows the sentence (`docs/features/visibility-line.md`). It gives counts, never names; site
 admins are not counted. All of them read `audienceFor` in `src/core/audience.ts`.
 
 ## Archive
@@ -268,16 +300,20 @@ An admin puts a repository away from **Settings → Archive**, with
 `PATCH /api/v1/repos/:owner/:name {"archived":true|false}` (admins only; anyone
 else gets 403), or in the terminal with `a` on the About card (`I`). The
 repository page and the card then say when it was archived, and an admin gets
-a Wake button or the same key to undo it. The archived list
-(`/apps?archived=1`) has a Wake button on each row its viewer administers, and
-returns to the list; the terminal wakes from the About card with the same key
+a Restore button or the same key to undo it. One tap from an app: an admin opens the app's page, presses Archive under
+the page, and confirms on the page that follows (`POST /:owner/:name/archive`,
+the same `updateRepoSettings` as the Settings form and the `archive` MCP tool).
+Production and previews stop, the app leaves home and `/apps`, and its address
+still answers. In the terminal the door is `a` on the About card. The archived list
+(`/apps?archived=1`) has a Restore button on each row its viewer administers, and
+returns to the list; the terminal restores from the About card with the same key
 (`src/tui/screens/about.ts`). Archiving twice keeps the first date.
 An archived repository starts no new crew run. Assigning an issue to an agent,
 queueing a run again, asking the crew to propose a resolution, redirecting a
-wave and converging a fork each answer "This repository is archived; wake it to
+wave and converging a fork each answer "This repository is archived; restore it to
 start a run."; the API answers 409 `archived`, and the terminal and MCP show
 the same line. The autonomy tick skips it. A run already going finishes, and
-Wake undoes all of it. Clone, push and links keep working, and the repository
+Restore undoes all of it. Clone, push and links keep working, and the repository
 page still answers.
 
 An archived repository leaves the web home's apps, the inbox (work assigned to
@@ -308,7 +344,7 @@ it (`undoFleetOp`). A non-admin has neither key.
 
 `docs/FLEET.md` is one change across many repositories, runs or issues: a
 query, a dry-run plan of every row before → after, a receipt, and undo.
-`archive` (true or false) archives or wakes many repositories; its undo is kept a day.
+`archive` (true or false) archives or restores many repositories; its undo is kept a day.
 
 ## Where it came from
 
@@ -356,7 +392,7 @@ measured slow.
 
 ## Search
 
-`/search` answers repositories and issues in full, and greps code repository by repository. A first search starts no new `git grep` after 30 ms (`codeBudgetMs` in the forge config; a soft stop, since the grep in flight still finishes, one batch of four) and shows what it has with one link, **More code results** (`?code=all`), that greps the rest. `GET /api/v1/search` applies the same budget and reports the cut as `moreCode`; `code=all` lifts it. MCP `search` does the same, and its `all` argument lifts it. The terminal palette greps everything.
+`/search` answers repositories and issues in full, and greps code repository by repository. A first search starts no new `git grep` after 30 ms (`codeBudgetMs` in the forge config; a soft stop, since the grep in flight still finishes, one batch of four) and shows what it has with one link, **More code results** (`?code=all`), that greps the rest. `GET /api/v1/search` applies the same budget and reports the cut as `moreCode`; `code=all` lifts it. MCP `search` does the same, and its `all` argument lifts it. The terminal palette greps everything. A one-letter query greps no code at all (`MIN_CODE_QUERY`, 2 characters): it would match every line, so the page, the API's `note` and MCP say code is searched for 2 or more characters when code was asked for (`kind=all` or `code`), and repositories and issues still answer it. The terminal palette shares the rule — one letter greps nothing and takes no guest slot — but prints no note: its sections simply show no code.
 
 The here-manifest (`GET /api/v1/here?path=…`) reads the same for guests and
 members. On `/explore` and `/search` it names the page's own read, `?q=` carried

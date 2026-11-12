@@ -132,7 +132,7 @@ describe("social cards: public refs, private refs, hostile titles", () => {
     const res = await get("/og/issue/alice~open~1.svg");
     const svg = await res.text();
     expect(svg).not.toContain("<script");
-    expect(svg).toContain("&lt;script&gt;alert(1)&lt;/scrip");
+    expect(svg).toContain("&lt;script&gt;alert(1)&lt;/scr");
     expect(svg).toContain("&amp; &quot;q&quot;");
   });
 });

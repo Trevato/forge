@@ -5,7 +5,12 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { getUserByName, type User } from "../src/core/users.ts";
-import { settled, subscribe, type MirrorStage } from "../src/origins/jobs.ts";
+import {
+  runningJob,
+  settled,
+  subscribe,
+  type MirrorStage,
+} from "../src/origins/jobs.ts";
 import { forgetProviders } from "../src/origins/providers/index.ts";
 import {
   clearViewCache,
@@ -19,7 +24,7 @@ import {
   serveFakeForge,
   type FakeForge,
 } from "./fake-origin.ts";
-import { fastFirstFetch } from "./helpers/globals.ts";
+import { fastFirstFetch, mirrorOutbound } from "./helpers/globals.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 
 /**
@@ -54,6 +59,15 @@ const text = (body: Uint8Array): string => new TextDecoder().decode(body);
 
 // A fetch that fails should say so now, not after the forge's patience.
 fastFirstFetch();
+// Both origins are on loopback. Asked for here, not inherited, so a file
+// earlier in the shard that left the vet tightened cannot refuse them (#7686).
+mirrorOutbound({ allow: ["127.0.0.1", "::1"] });
+
+// A test that runs a whole mirror spawns real git against a second forge and
+// then imports: ~0.2 s idle, past 2 s on a machine three times oversubscribed.
+// Bun's 5 s default would make the verdict a measure of the check machine's
+// load; what these tests judge is the order and the outcome, not the speed.
+const MIRROR_MS = 60_000;
 
 describe("RepoSource: one repository, two places to read it from", () => {
   let dataDir: string;
@@ -578,7 +592,7 @@ describe("RepoSource: one repository, two places to read it from", () => {
     );
     // And they carried something to read: "2 labels", "1 issue", …
     expect(seen).toContain("issues");
-  });
+  }, MIRROR_MS);
 
   test("mirroring busts what the browse cache believed", async () => {
     const source = live("octo/widgets");
@@ -619,7 +633,7 @@ describe("RepoSource: one repository, two places to read it from", () => {
         >("SELECT COUNT(*) AS n FROM repo WHERE origin_full_name = ?1")
         .get("octo/ghost")!.n,
     ).toBe(1);
-  });
+  }, MIRROR_MS);
 
   test("a failed fetch lands in the job and in fetch_error, scrubbed", async () => {
     const job = await settled(
@@ -648,11 +662,15 @@ describe("RepoSource: one repository, two places to read it from", () => {
       .get("octo/ghost")!;
     expect(row.fetch_error).not.toBe("");
     expect(row.fetch_error).not.toContain(ORIGIN_TOKEN);
-  });
+  }, MIRROR_MS);
 
   // ---- the equivalence that makes the interface worth having ----
 
   test("the mirror and the origin answer the same questions the same way", async () => {
+    // Compare against the finished mirror: if the test that started it ran
+    // out of time on a loaded machine, its import may still be running.
+    const importing = runningJob(originId, "octo/widgets");
+    if (importing !== undefined) await settled(importing.id);
     const here = local("alice", "widgets");
     const there = live("octo/widgets");
     expect(here.where.kind).toBe("local");
@@ -796,7 +814,10 @@ describe("RepoSource: one repository, two places to read it from", () => {
     // And the one thing that must differ: what you may do here.
     expect(here.capabilities.write).toBe(true);
     expect(there.capabilities.write).toBe(false);
-  });
+    // Eight rounds of git reads against HTTP reads: milliseconds when idle,
+    // past bun's 5 s default on a loaded check machine (#7686). The verdict
+    // is the answers', not the clock's.
+  }, 60_000);
 
   test("a local source refuses a repo the viewer cannot read", () => {
     app.db
@@ -1004,7 +1025,7 @@ describe("RepoSource: one repository, two places to read it from", () => {
         })
       ).status,
     ).toBe(404);
-  });
+  }, MIRROR_MS);
 
   test("the process-wide cache is the one the sources use", async () => {
     clearViewCache();

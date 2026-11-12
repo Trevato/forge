@@ -11,7 +11,8 @@
  * id, so the redirect itself says nothing about what exists.
  */
 
-import { SAY_SOMETHING_WORDS } from "../../actions/tell_words.ts";
+import { crewFace } from "../pixel.ts";
+import { steerRefusedWords } from "../../actions/steer_words.ts";
 import { readLooks } from "../../checks/looks.ts";
 import type { Database } from "bun:sqlite";
 import {
@@ -47,6 +48,16 @@ import {
   time,
   tokenCount,
 } from "../ui.ts";
+
+/**
+ * A run's page at a 390 px phone (#9347): its head (title, the issue it is
+ * about, summary, what it carries) and everything under the live region
+ * break a long word anywhere, so a pasted path or a 300-character token
+ * wraps in place and the page never scrolls sideways. The log box itself
+ * already wraps and scrolls inside its own bounds (`.run-log`,
+ * `style/content.ts`). Ids the page already carries; no new class.
+ */
+export const RUN_PAGE_CSS = `#run-head, #run-live { overflow-wrap: anywhere; }`;
 
 // ---- words ----
 
@@ -237,6 +248,13 @@ const kindIcon = (kind: RunKind) =>
 
 // ---- rows ----
 
+/** A crew member's face for their run, working only while it runs; the kind's icon otherwise. */
+function runLead(run: Run, actors: ReadonlyMap<string, User>): Html {
+  const who = run.actorId === null ? undefined : actors.get(run.actorId)?.username;
+  const face = run.kind === "agent" && who !== undefined ? crewFace(who, run.state === "running" ? "working" : "still", 16, true) : null;
+  return face ?? kindIcon(run.kind);
+}
+
 /** One run in a list: what it was, why, how it went, and when. */
 export function runRow(
   base: string,
@@ -249,7 +267,7 @@ export function runRow(
   return row({
     href: `${base}/runs/${run.id}`,
     nav: true,
-    lead: kindIcon(run.kind),
+    lead: runLead(run, actors),
     title,
     titleAttr: title,
     meta: html`<span title="${meta}">${meta}</span>`,
@@ -277,7 +295,7 @@ export function crewActivityCard(ctx: Ctx, repo: Repo, issue: Issue): Html {
           ?.username ?? "an agent";
       return row({
         href: `${base}/runs/${run.id}`,
-        lead: icon("bot"),
+        lead: crewFace(who, run.state === "running" ? "working" : "still", 16, true) ?? icon("bot"),
         title: html`${who}
           <span class="muted">${reasonWords(run.reason)}</span>`,
         meta: html`<span title="${run.summary}"
@@ -347,12 +365,7 @@ export async function runSteer(ctx: Ctx): Promise<Response> {
     if (steered.error === "not_found") return notFoundPage(ctx);
     return flashTo(ctx, dest, {
       tone: "danger",
-      message:
-        steered.error === "empty"
-          ? SAY_SOMETHING_WORDS
-          : steered.error === "not_agent"
-            ? "Only an agent's run can be steered."
-            : "You need write access to steer a run.",
+      message: steerRefusedWords(steered.error),
     });
   }
   return flashTo(ctx, dest, {

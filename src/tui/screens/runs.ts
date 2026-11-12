@@ -3,7 +3,9 @@
  * (All, Failed, Running, Succeeded) — the web runs page's `?state=` row.
  * Read through `listRepoRuns`, so it is gated like every other run read.
  * `x` cancels a run that has not finished; `a` queues a failed or cancelled
- * agent run's task again (`requeueRepoRun`), each after a confirm.
+ * agent run's task again (`requeueRepoRun`), each after a confirm; `S` says a
+ * word to a run while an agent runs it (`s` is the state row here; the crew
+ * cards steer with `s`).
  */
 
 import { cancelRepoRun, listRepoRuns, requeueRepoRun } from "../../actions/runs.ts";
@@ -20,7 +22,7 @@ import { truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { emptyState } from "../ui/widgets.ts";
 import { confirmScreen } from "./common.ts";
-import { RunList, openRunLog, runTitle } from "./runlist.ts";
+import { RunList, maySteer, openRunLog, runTitle, steerPrompt } from "./runlist.ts";
 
 const LIMIT = 50;
 
@@ -130,6 +132,7 @@ export function runsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         binding(["j", "k"], "move"),
         binding(["enter"], "open the log"),
         ...(cancellable() === undefined ? [] : [binding(["x"], "cancel")]),
+        ...(maySteer(f, repo, list.selected) ? [binding(["S"], "steer")] : []),
         ...(requeueable() === undefined ? [] : [binding(["a"], "run again")]),
         binding(["s"], "state: All, Failed, Running, Succeeded (cycle)"),
         binding(["r"], "refresh"),
@@ -168,6 +171,12 @@ export function runsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       }
       if (e.key === "x") {
         ask();
+        return true;
+      }
+      if (e.key === "S") {
+        const run = list.selected;
+        if (run !== undefined && maySteer(f, repo, run))
+          steerPrompt(f, ctx, self, repo, run, read);
         return true;
       }
       if (e.key === "a") {

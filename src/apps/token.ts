@@ -41,9 +41,15 @@ export function mintAppToken(
   env: string,
   now: number = Date.now(),
 ): AppToken {
-  return createToken(db, ownerId, appTokenName(slug, env), "ro", {
+  const token = createToken(db, ownerId, appTokenName(slug, env), "ro", {
     expiresAt: until(now),
   });
+  // Which app holds it: what the forge trusts when the process asks for a
+  // device (`core/device_grants.ts`), because only this function writes it.
+  db.query(
+    "INSERT INTO app_token (token_id, app_id) SELECT ?1, id FROM app WHERE slug = ?2",
+  ).run(token.id, slug);
+  return token;
 }
 
 export function renewAppToken(

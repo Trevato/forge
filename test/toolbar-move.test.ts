@@ -6,63 +6,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { toolbarJs } from "../src/apps/toolbar.ts";
-
-type L = Record<string, ((e?: any) => void)[]>;
-interface El {
-  tag: string;
-  style: Record<string, string>;
-  children: El[];
-  listeners: L;
-  hidden: boolean;
-  textContent: string;
-  [k: string]: any;
-}
-const make = (tag: string): El => ({
-  tag,
-  style: {},
-  children: [],
-  listeners: {},
-  hidden: false,
-  textContent: "",
-  attrs: {} as Record<string, string>,
-  setAttribute(k: string, v: string) { this.attrs[k] = v; },
-  appendChild(c: El) { this.children.push(c); return c; },
-  addEventListener(t: string, f: (e?: any) => void) { (this.listeners[t] ??= []).push(f); },
-  focus() {},
-  attachShadow() { return make("shadow"); },
-});
-const all = (el: El): El[] => [el, ...el.children.flatMap(all)];
-
-function boot(store: Record<string, string> | null, width = 400, height = 800) {
-  let root!: El;
-  const host = { el: null as El | null };
-  const doc = {
-    currentScript: { src: "https://forge.test/assets/t.js", dataset: { app: "notes", env: "production" } },
-    createElement: (tag: string) => {
-      const el = make(tag);
-      if (tag === "div" && !host.el) {
-        host.el = el;
-        el.attachShadow = () => (root = make("shadow"));
-      }
-      return el;
-    },
-    addEventListener() {},
-    body: { appendChild() {} },
-  };
-  const win: Record<string, any> = { innerWidth: width, innerHeight: height };
-  if (store)
-    win.localStorage = {
-      getItem: (k: string) => store[k] ?? null,
-      setItem: (k: string, v: string) => { store[k] = v; },
-    };
-  new Function("window", "document", "URL", toolbarJs)(win, doc, URL);
-  const els = all(root);
-  const pill = els.find((e) => e.tag === "button")!;
-  const box = root.children[0]!;
-  const panel = els.find((e) => e.attrs.role === "region")!;
-  const fire = (el: El, t: string, e: object = {}) => el.listeners[t]!.forEach((f) => f({ preventDefault() {}, type: t, ...e }));
-  return { host: host.el!, pill, box, panel, fire };
-}
+import { boot } from "./helpers/toolbar-boot.ts";
 
 describe("moving the pill", () => {
   test("starts bottom-right and the panel opens to its left", () => {
@@ -80,7 +24,7 @@ describe("moving the pill", () => {
     fire(pill, "pointermove", { clientX: 100, clientY: 60 });
     expect(host.style.left).toBe("78px"); // follows the pointer while dragging
     fire(pill, "pointerup", { clientX: 100, clientY: 60 });
-    expect(host.style.top).toBe("12px");
+    expect(host.style.top).toBe("48px");
     expect(host.style.left).toBe("12px");
     expect(host.style.right).toBe("auto");
     expect(box.style.flexDirection).toBe("row");
@@ -88,7 +32,7 @@ describe("moving the pill", () => {
     expect(store["forge-pill-corner"]).toBe("tl");
     // The next page load puts it there again.
     expect(boot(store).host.style.left).toBe("12px");
-    expect(boot(store).host.style.top).toBe("12px");
+    expect(boot(store).host.style.top).toBe("48px");
   });
 
   test("a press that barely moves is a tap, not a drag", () => {
@@ -124,6 +68,22 @@ describe("moving the pill", () => {
     expect(store["forge-pill-corner"]).toBe("br");
     fire(pill, "keydown", { key: "a" });
     expect(store["forge-pill-corner"]).toBe("br");
+  });
+
+  test("an arrow move is announced in plain words", () => {
+    const { box, pill, fire } = boot({});
+    const sr = box.children.find((c: any) => c.attrs.role === "status")!;
+    fire(pill, "keydown", { key: "ArrowLeft" });
+    expect(sr.textContent).toBe("Moved to the bottom left");
+    fire(pill, "keydown", { key: "ArrowUp" });
+    expect(sr.textContent).toBe("Moved to the top left");
+  });
+
+  test("an arrow that changes nothing says nothing", () => {
+    const { box, pill, fire } = boot({ "forge-pill-corner": "tl" });
+    const sr = box.children.find((c: any) => c.attrs.role === "status")!;
+    fire(pill, "keydown", { key: "ArrowLeft" });
+    expect(sr.textContent ?? "").toBe("");
   });
 
   test("a garbage stored corner is ignored; no storage at all still works", () => {

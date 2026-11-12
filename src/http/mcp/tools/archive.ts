@@ -1,4 +1,5 @@
 import { scopeAllows } from "../../../core/tokens.ts";
+import { getRepo } from "../../../core/repos.ts";
 import { setArchived } from "../../../actions/repos.ts";
 import { good, bad, type Tool, REPO_ARG, repoArg, MAX_ARCHIVE_REPOS, archiveMany, isAnswer } from "../shared.ts";
 
@@ -28,7 +29,7 @@ export const tool: Tool = {
     const repo = repoArg(ctx, user, args);
     if (isAnswer(repo)) return repo;
     const archived = args["archived"];
-    if (archived === undefined) return good({ archived: repo.archivedAt !== null });
+    if (archived === undefined) return good({ repo: `${repo.ownerName}/${repo.name}`, archived: repo.archivedAt !== null, since: repo.archivedAt });
     if (typeof archived !== "boolean")
       return bad("invalid", "`archived` is true or false");
     const dryRun = args["dryRun"] !== false;
@@ -37,13 +38,17 @@ export const tool: Tool = {
     const set = await setArchived(ctx.app, user, repo, archived, dryRun);
     if (!set.ok)
       return bad("forbidden", "only an admin of this repository archives or wakes it");
+    // The stored date, read back, so the card and a later read agree.
+    const stored = dryRun ? repo : (getRepo(ctx.app.db, repo.ownerName, repo.name) ?? repo);
     return good({
+      repo: `${repo.ownerName}/${repo.name}`,
       ...set.value,
+      since: set.value.archived ? stored.archivedAt : null,
       says: dryRun
         ? `This is the plan; nothing changed. It is ${set.value.was ? "archived" : "awake"} now; send dryRun: false to ${set.value.archived ? "archive" : "wake"} it.`
         : set.value.archived
           ? "Archived: put away, not deleted."
-          : "Awake again.",
+          : "Restored.",
     });
   },
 };

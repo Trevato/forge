@@ -15,6 +15,7 @@ import {
   listDeciderPile,
   type DeciderPile,
 } from "../../core/decisions.ts";
+import { efficiencyForRepos, perShippedWords } from "../../core/efficiency.ts";
 import { deciderSentence } from "../../story/words.ts";
 import { getIssuesByIds } from "../../core/issues.ts";
 import { getReposByIds } from "../../core/repos.ts";
@@ -46,6 +47,24 @@ export function deciderLine(app: App, viewer: User | undefined, now = new Date()
   return n.closed + n.deferred + n.asked === 0 ? null : deciderSentence((pile) => n[pile]).join("");
 }
 
+const COST_LINES = 3;
+
+/** One muted line per owned app that ran or shipped this week, at most three, then `+N more apps`. */
+export function efficiencyLines(app: App, viewer: User | undefined, now = new Date()): string[] {
+  const repos = viewer === undefined ? [] : returnsRepos(app, viewer);
+  const week = efficiencyForRepos(
+    app.db,
+    repos.map((r) => r.id),
+    new Date(now.getTime() - 7 * 86_400_000).toISOString(),
+  );
+  const lines = repos.flatMap((r) => {
+    const e = week.get(r.id);
+    return e === undefined ? [] : [`${r.name}: ${perShippedWords(e)} this week`];
+  });
+  const more = lines.length - COST_LINES;
+  return more <= 0 ? lines : [...lines.slice(0, COST_LINES), `+${more} more app${more === 1 ? "" : "s"}`];
+}
+
 /** The ledger rows behind one pile's count today, newest first. */
 export function deciderRows(app: App, viewer: User | undefined, pile: DeciderPile, now = new Date()): DeciderRow[] {
   const db: Database = app.db;
@@ -74,8 +93,10 @@ export function deciderScreen(f: Session, ctx: Ctx, first: DeciderPile = "closed
   let pile: DeciderPile = first;
   let rows: DeciderRow[] = [];
   let line: string | null = null;
+  let costs: string[] = [];
   const read = (): void => {
     line = deciderLine(f.app, f.user);
+    costs = efficiencyLines(f.app, f.user);
     rows = deciderRows(f.app, f.user, pile);
     state.clamp(rows.length);
   };
@@ -100,9 +121,10 @@ export function deciderScreen(f: Session, ctx: Ctx, first: DeciderPile = "closed
     load: async () => read(),
     render(area, s) {
       const c = ctx.theme.c;
-      const [head, body] = split(area, "v", [len(1), fill(1)]);
+      const [head, body] = split(area, "v", [len(1 + costs.length), fill(1)]);
       const sentence = `${line ?? "The decider has done nothing today."}  [${pile}]`;
       s.text(head!.x, head!.y, truncate(sentence, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
+      costs.forEach((t, i) => s.text(head!.x, head!.y + 1 + i, truncate(t, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w));
       if (rows.length === 0) {
         emptyState(s, body!, c, { title: PILE_EMPTY[pile], body: "Press 1, 2 or 3 for another pile." });
         return;

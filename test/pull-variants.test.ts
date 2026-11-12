@@ -155,11 +155,13 @@ describe("a tell asks for variants", () => {
   let repo: Repo;
   let auth: Record<string, string>;
 
+  // Each tell has its own words: the same words twice are one job (`crew/twin.ts`).
+  let told = 0;
   const tellOver = (body: Record<string, unknown>) =>
     fetch(`${servers.url}/api/v1/feed/tells`, {
       method: "POST",
       headers: { ...auth, "content-type": "application/json" },
-      body: JSON.stringify({ app: "alice/square", text: "Make it purple", ...body }),
+      body: JSON.stringify({ app: "alice/square", text: `Make it purple ${++told}`, ...body }),
     });
   const runs = () => listRuns(app.db, repo.id, { kind: "agent" });
 

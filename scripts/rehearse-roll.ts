@@ -22,9 +22,12 @@
 import { cpSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { freePort, lostPort, PORT_RETRIES } from "../src/kernel/port.ts";
 import {
   count,
   emptyTally,
+  type ForgeSeen,
+  goneLine,
   judge,
   parseArgs,
   report,
@@ -38,28 +41,30 @@ import {
 
 interface Forge {
   readonly name: "old" | "new";
+  readonly port: number;
   readonly url: string;
   readonly proc: Bun.Subprocess;
   readonly log: string;
+  readonly startedAt: number;
+  /** Fresh ports this forge was started on after losing one (`kernel/port.ts`). */
+  readonly portsLost: number;
 }
 
-/** A loopback port nobody holds right now. */
-function freePort(): number {
-  const probe = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() });
-  const port = probe.port ?? 0;
-  probe.stop(true);
-  return port;
-}
-
-function start(
+/**
+ * A forge on a port free a moment ago. Between the probe that found it and
+ * the forge's bind, another process can take it — a gate shard's listener,
+ * or one of the thousands of outgoing connections a roll makes.
+ */
+async function start(
   name: Forge["name"],
   checkout: string,
   dataDir: string,
   lingerS: number,
   logDir: string,
-): Forge {
-  const port = freePort();
-  const log = join(logDir, `${name}.log`);
+  portsLost = 0,
+): Promise<Forge> {
+  const port = await freePort();
+  const log = join(logDir, `${name}-${portsLost}.log`);
   const env: Record<string, string> = {
     PATH: process.env["PATH"] ?? "",
     HOME: process.env["HOME"] ?? "",
@@ -81,7 +86,39 @@ function start(
     stdout: Bun.file(log),
     stderr: Bun.file(`${log}.err`),
   });
-  return { name, url: `http://127.0.0.1:${port}`, proc, log };
+  return { name, port, url: `http://127.0.0.1:${port}`, proc, log, startedAt: Date.now(), portsLost };
+}
+
+const gone = (forge: Forge): boolean =>
+  forge.proc.exitCode !== null || forge.proc.signalCode !== null;
+
+/** What the forge wrote: its stderr, or its log when stderr is empty. */
+async function said(forge: Forge): Promise<string> {
+  const read = (path: string): Promise<string> => Bun.file(path).text().catch(() => "");
+  const err = await read(`${forge.log}.err`);
+  return err.trim() !== "" ? err : read(forge.log);
+}
+
+/** Whether a gone forge only lost its port, and has a retry left to take a fresh one. */
+async function retriable(forge: Forge): Promise<boolean> {
+  return forge.portsLost < PORT_RETRIES && gone(forge) && lostPort(await said(forge));
+}
+
+/** The error a gone forge raises: process, port, wait and its last words. */
+async function goneError(forge: Forge): Promise<Error> {
+  return new Error(
+    goneLine({
+      name: forge.name,
+      pid: forge.proc.pid,
+      port: forge.port,
+      exitCode: forge.proc.exitCode,
+      signal: forge.proc.signalCode,
+      waitedMs: Date.now() - forge.startedAt,
+      portsLost: forge.portsLost,
+      output: await said(forge),
+      log: forge.log,
+    }),
+  );
 }
 
 /** One readiness probe: ready, not ready (a 503, or nothing listening), or silent past its timeout. */
@@ -139,13 +176,18 @@ export async function rehearse(
   const timeline: Timeline = { newInRotationMs: null, oldOutOfRotationMs: null, oldExitMs: null };
   const forges: Forge[] = [];
   try {
-    const old = start("old", resolve(args.old), dataDir, args.lingerS, logs);
+    let old = await start("old", resolve(args.old), dataDir, args.lingerS, logs);
     forges.push(old);
     say(`old forge starting at ${old.url}`);
     const bootBy = Date.now() + 60_000;
     while (!(await ready(old, 1000))) {
-      if (old.proc.exitCode !== null || Date.now() > bootBy)
-        throw new Error(`the old forge did not come up; see ${old.log}.err`);
+      if (await retriable(old)) {
+        say(`old forge lost port ${old.port} to another process; starting it on a fresh one`);
+        old = await start("old", resolve(args.old), dataDir, args.lingerS, logs, old.portsLost + 1);
+        forges[0] = old;
+        continue;
+      }
+      if (gone(old) || Date.now() > bootBy) throw await goneError(old);
       await Bun.sleep(100);
     }
     rotation.saw(old, true);
@@ -181,7 +223,7 @@ export async function rehearse(
     // one beside the old, and signal the old one once the new is ready.
     const roll = async (): Promise<void> => {
       await Bun.sleep(Math.min(2000, (args.seconds * 1000) / 4));
-      const next = start("new", resolve(args.next), dataDir, args.lingerS, logs);
+      let next = await start("new", resolve(args.next), dataDir, args.lingerS, logs);
       forges.push(next);
       say(`new forge starting at ${next.url}`);
       old.proc.exited.then(() => {
@@ -207,8 +249,13 @@ export async function rehearse(
             say("old forge out of rotation");
           }
         }
-        if (next.proc.exitCode !== null)
-          throw new Error(`the new forge exited; see ${next.log}.err`);
+        // A new forge that never joined lost only its port; one that did is the roll's failure.
+        if (termAt === null && !rotation.has(next) && (await retriable(next))) {
+          say(`new forge lost port ${next.port} to another process; starting it on a fresh one`);
+          const again = await start("new", resolve(args.next), dataDir, args.lingerS, logs, next.portsLost + 1);
+          forges[forges.indexOf(next)] = again;
+          next = again;
+        } else if (gone(next)) throw await goneError(next);
         await Bun.sleep(args.probeMs);
       }
     };
@@ -222,7 +269,17 @@ export async function rehearse(
       await Promise.race([old.proc.exited, Bun.sleep(args.lingerS * 1000 + 30_000)]);
       if (old.proc.exitCode !== null) timeline.oldExitMs = Date.now() - termAt;
     }
-    return { ...judge(tally, timeline), logs };
+    // What each forge left, so a roll that rolled nothing names where and why.
+    const seenOf = async (f: Forge | undefined, since: number | null): Promise<ForgeSeen | undefined> =>
+      f === undefined
+        ? undefined
+        : { port: f.port, portsLost: f.portsLost, waitedMs: Date.now() - (since ?? f.startedAt), output: await said(f) };
+    const seen: Partial<Record<Forge["name"], ForgeSeen>> = {};
+    const oldSeen = await seenOf(forges.find((f) => f.name === "old"), termAt);
+    const newSeen = await seenOf(forges.find((f) => f.name === "new"), null);
+    if (oldSeen !== undefined) seen.old = oldSeen;
+    if (newSeen !== undefined) seen.new = newSeen;
+    return { ...judge(tally, timeline, seen), logs };
   } finally {
     for (const f of forges) if (f.proc.exitCode === null) f.proc.kill("SIGKILL");
     await Promise.all(forges.map((f) => f.proc.exited));

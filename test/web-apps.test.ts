@@ -18,6 +18,9 @@ import {
   STARTERS,
   starterHref,
 } from "../src/web/pages/apps-starters.ts";
+import { envTone, previewSection, productionStrip } from "../src/web/pages/apps.ts";
+import type { EnvStatus } from "../src/apps/runtime.ts";
+import { html } from "../src/web/html.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -31,7 +34,7 @@ import { getAgentByName, listCrew } from "../src/core/agents.ts";
 import { listAppEnvNames } from "../src/core/app_env.ts";
 import { spanWords } from "../src/apps/golden_path.ts";
 import { getAppByRepo } from "../src/core/apps.ts";
-import { getIssue } from "../src/core/issues.ts";
+import { createIssue, getIssue } from "../src/core/issues.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
 import { isTerminal, listRuns, type Run } from "../src/core/runs.ts";
 import { getUserByName, type User } from "../src/core/users.ts";
@@ -291,7 +294,7 @@ describe("apps, runs and the crew on the web", () => {
 
   test("the dashboard and /apps list the app with its state and URL", async () => {
     // The home's rail names your apps and offers New app (#625).
-    const dash = await bodyOf(alice, "/");
+    const dash = await bodyOf(alice, "/feed");
     expect(dash).toContain("<h2>Your apps</h2>");
     expect(dash).toContain("alice/hello");
     expect(dash).toContain('href="/apps/new"');
@@ -305,6 +308,32 @@ describe("apps, runs and the crew on the web", () => {
     const anonymous = await bodyOf("", "/apps");
     expect(anonymous).toContain('href="/alice/hello"');
     expect(anonymous).toContain("Sign in");
+  });
+
+  test("the apps list is rows, not a box, and so is the new-app step", async () => {
+    const list = await bodyOf(alice, "/apps");
+    expect(list).toContain('class="list setting-list"');
+    expect(list).not.toMatch(/class="card[ "]/);
+    expect(list).toMatch(
+      /<div class="page-head">[\s\S]*?<span class="page-head-sub[^"]*">Every app you can reach, and whether it is serving\.<\/span>/,
+    );
+    const form = await bodyOf(alice, "/apps/new");
+    expect(form).toContain('action="/apps/new"');
+    expect(form).not.toMatch(/class="card[ "]/);
+  });
+
+  test("an empty /apps says so in plain words, with no box", async () => {
+    const none = await bodyOf(alice, "/apps?archived=1");
+    expect(none).toContain("Nothing is archived");
+    expect(none).not.toMatch(/class="card[ "]/);
+  });
+
+  test("a preview's tone: danger when failed or erroring, attn after a failed deploy, none when quiet", () => {
+    const env = { env: "pull-1", state: "ok" } as unknown as EnvStatus;
+    expect(envTone(env)).toBeUndefined();
+    expect(envTone({ ...env, state: "failed" } as EnvStatus)).toBe("danger");
+    expect(envTone({ ...env, error: "boom" } as EnvStatus)).toBe("danger");
+    expect(envTone({ ...env, failedDeploy: {} } as unknown as EnvStatus)).toBe("attn");
   });
 
   // ---- the app page and the runs ----
@@ -454,7 +483,7 @@ describe("apps, runs and the crew on the web", () => {
     expect(list).toContain("Deploy production");
     expect(list).toContain(`href="/alice/hello/runs/${run!.id}"`);
     expect(await bodyOf(alice, "/alice/hello/runs?kind=agent")).toContain(
-      "Nothing open.",
+      "No run is open.",
     );
 
     const page = await bodyOf(alice, `/alice/hello/runs/${run!.id}`);
@@ -576,7 +605,9 @@ describe("apps, runs and the crew on the web", () => {
       await (await web(alice, "/alice/hello/settings/app")).text(),
     );
     expect(before).toContain("Environment");
-    expect(before).toContain("never shown again");
+    expect(before).toContain("values are write-only");
+    expect(before).toContain("wins there over one set everywhere");
+    expect(before).not.toMatch(/name="scope"[^>]*title=/);
     expect(before).toContain('type="password"');
 
     const set = await web(alice, "/alice/hello/settings/app/env", {
@@ -732,7 +763,7 @@ describe("apps, runs and the crew on the web", () => {
     expect(await bodyOf(alice, "/settings")).toContain('href="/settings/crew"');
 
     const bad = await web(alice, "/settings/crew", {
-      form: { username: "bot", budgetUsd: "-4" },
+      form: { username: "bot", budgetUsd: "-4", roles: "builder" },
     });
     expect(bad.status).toBe(422);
     const badPage = words(await bad.text());
@@ -751,6 +782,7 @@ describe("apps, runs and the crew on the web", () => {
         model: "",
         brief: "Be brief.",
         budgetUsd: "2",
+        roles: "builder",
       },
     });
     expect(made.status).toBe(303);
@@ -765,14 +797,14 @@ describe("apps, runs and the crew on the web", () => {
     expect(edit).toContain('value="bot"');
     expect(edit).toContain("Retire this agent");
     const updated = await web(alice, "/settings/crew/bot", {
-      form: { model: "sonnet", brief: "Be brief.", budgetUsd: "3" },
+      form: { model: "sonnet", brief: "Be brief.", budgetUsd: "3", roles: "builder" },
     });
     expect(updated.status).toBe(303);
     expect(getAgentByName(app.db, "bot")?.model).toBe("sonnet");
     expect(getAgentByName(app.db, "bot")?.budgetUsd).toBe(3);
     // A refused edit shows the error beside its field.
     const refused = await web(alice, "/settings/crew/bot", {
-      form: { model: "sonnet", brief: "Be brief.", budgetUsd: "-4" },
+      form: { model: "sonnet", brief: "Be brief.", budgetUsd: "-4", roles: "builder" },
     });
     expect(refused.status).toBe(422);
     const refusedPage = words(await refused.text());
@@ -900,9 +932,12 @@ describe("apps, runs and the crew on the web", () => {
 
     // The preview is on the change; the assignee, the checks line and the
     // merge box are its Files step, one tab under it.
-    expect(await bodyOf(alice, `/alice/hello/pulls/${number}`)).toContain(
-      "<h2>Preview</h2>",
-    );
+    const change = await bodyOf(alice, `/alice/hello/pulls/${number}`);
+    expect(change).toContain("<h2>Preview</h2>");
+    // a plain block under its heading, not a boxed card
+    expect(change).toMatch(/<section\s+class="settings-block"\s+data-preview-block\s*>\s*<div class="bar">\s*<svg[^]*?<h2>Preview<\/h2>/);
+    const block = change.slice(change.indexOf("data-preview-block"));
+    expect(block.slice(0, block.indexOf("</section>"))).not.toContain('class="card');
     const page = await bodyOf(alice, `/alice/hello/pulls/${number}/files`);
     expect(page).toContain("<h2>Assignee</h2>");
     // Checks are required: the line says so, and the box waits for them
@@ -977,6 +1012,7 @@ describe("apps, runs and the crew on the web", () => {
     const open = () =>
       app.db.query("SELECT 1 FROM run WHERE state IN ('queued','running') LIMIT 1").get();
     for (let i = 0; i < 200 && open() !== null; i++) await Bun.sleep(25);
+    if (open() !== null) throw new Error(`never came: still waiting while open() !== null`);
     app.db.query("UPDATE run SET serving_at = NULL WHERE env LIKE 'pull-%'").run();
   };
 
@@ -1037,5 +1073,57 @@ describe("apps, runs and the crew on the web", () => {
     expect(getAppByRepo(app.db, hello.id)?.slug).toBe("hello");
     expect(getAgentByName(app.db, "evil")).toBeUndefined();
     expect(getAgentByName(app.db, "bot")).toBeDefined();
+  });
+
+  test("the app page says in a sentence that production is not running, and what to do", async () => {
+    const stop = await web(alice, "/alice/hello/app/production/stop", { form: {} });
+    expect(stop.status).toBeLessThan(400);
+    try {
+      // /app is the app page's old address: it lands on the studio page.
+      const old = await web(alice, "/alice/hello/app");
+      expect(old.status).toBe(302);
+      const page = words(await (await web(alice, `${old.headers.get("location")!}/files`)).text());
+      const strip = page.slice(page.indexOf('class="app-strip"'));
+      expect(strip).toContain("Not running. Deploy main to start it.");
+    } finally {
+      // Leave production as found, so test order does not matter.
+      await web(alice, "/alice/hello/app/production/redeploy", { form: {} });
+    }
+    const say = (s: Parameters<typeof productionStrip>[0], d = false) =>
+      productionStrip(s, d).toString();
+    expect(say("failed")).toContain("Failed to start. Deploy main to try again.");
+    expect(say("stopped", true)).toContain("Asleep. Deploy main to wake it.");
+    expect(say("asleep")).toContain("Asleep. Deploy main to wake it.");
+    expect(say("running", true)).toContain("Running");
+    expect(say("failed", true)).toContain("Failed to start");
+  });
+
+  test("a pull with no preview yet says so as a plain block, no card", async () => {
+    const issue = createIssue(app.db, { repoId: hello.id, authorId: user("alice").id, title: "Quiet", kind: "pull" });
+    if (!issue.ok) throw new Error(issue.error);
+    app.db
+      .query(`INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid) VALUES (?1, 'main', 'quiet', 'a', 'b')`)
+      .run(issue.value.id);
+    const page = await bodyOf(alice, `/alice/hello/pulls/${issue.value.number}`);
+    const at = page.indexOf("data-preview-block");
+    expect(at).toBeGreaterThan(0);
+    const block = page.slice(at, page.indexOf("</section>", at));
+    expect(block).toContain("<h2>Preview</h2>");
+    expect(block).toContain("No preview yet");
+    expect(block).not.toContain('class="card');
+  });
+
+  test("a failed preview says so and what to do; a failed last deploy says it too; a healthy one is silent", () => {
+    const body = html`<p>body</p>`;
+    const head = html`<h2>Preview</h2>`;
+    const failed = previewSection(body, head, "danger").toString();
+    expect(failed).toContain('data-tone="danger"');
+    expect(failed).toContain("This preview has failed. Push again to redeploy it.");
+    const attn = previewSection(body, head, "attn").toString();
+    expect(attn).toContain('data-tone="attn"');
+    expect(attn).toContain("The last deploy of this preview failed. Push again to redeploy it.");
+    const ok = previewSection(body, head).toString();
+    expect(ok).not.toContain("data-tone");
+    expect(ok).not.toContain('role="status"');
   });
 });

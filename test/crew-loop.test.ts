@@ -4,6 +4,7 @@
  * leaves no comment; a finished planning run lets go of the direction; three
  * failed runs in an hour park the issue until a person speaks.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -18,7 +19,7 @@ import { HANDOVER_NOTE, handedOverPulls, handoverOf } from "../src/crew/guard.ts
 import { addReviewComment } from "../src/core/reviews.ts";
 import { sendToReview, waitsForPerson } from "../src/crew/review.ts";
 import { createRepo, updateRepoSettings } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { getIssueById, listComments, type Issue } from "../src/core/issues.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
@@ -74,7 +75,7 @@ describe("an agent's own comment never starts its next run", () => {
       expect(addToCrew(app, alice, repo, name).ok).toBe(true);
     }
     atlas = getUserByName(app.db, "atlas")!;
-    setCrewRole(app.db, repo.id, atlas.id, "planner");
+    seatAs(app.db, repo.id, atlas.id, "planner");
     const set = await updateRepoSettings(app, alice, repo, {
       autonomy: "autonomous",
       autonomyDirection: "Keep the engine small.",
@@ -138,13 +139,15 @@ describe("an agent's own comment never starts its next run", () => {
     if (!issued.ok) throw new Error(String(issued.error));
     const issue = issued.value;
     const { assignIssue } = await import("../src/actions/issues.ts");
-    assignIssue(app, alice, fresh(), issue, atlas);
+    // A builder: an issue assigned to the planner is explained, not run (#8907).
+    const builder = getUserByName(app.db, "mason")!;
+    assignIssue(app, alice, fresh(), issue, builder);
     await new Promise((r) => setTimeout(r, 50));
     // The person's assignment started one run; the agent's words add none.
     expect(agentRuns(issue).length).toBe(1);
     const before = agentRuns(issue).length;
     for (let i = 0; i < 5; i++) {
-      addComment(app, atlas, fresh(), issue, `Declined: not feedback ${i}`);
+      addComment(app, builder, fresh(), issue, `Declined: not feedback ${i}`);
       await new Promise((r) => setTimeout(r, 20));
     }
     expect(agentRuns(issue).length).toBe(before);
@@ -155,13 +158,13 @@ describe("an agent's own comment never starts its next run", () => {
     const issued = openIssue(app, alice, fresh(), { title: "Stuck", body: "" });
     if (!issued.ok) throw new Error(String(issued.error));
     const issue = issued.value;
-    const agent = getAgent(app.db, atlas.id)!;
+    const agent = getAgent(app.db, getUserByName(app.db, "mason")!.id)!;
     for (let i = 0; i < 3; i++) {
       const r = createRun(app.db, {
         repoId: repo.id,
         kind: "agent",
         issueId: issue.id,
-        actorId: atlas.id,
+        actorId: getUserByName(app.db, "mason")!.id,
         reason: "feedback",
       });
       claimRun(app.db, r.id);
@@ -245,7 +248,7 @@ describe("a crew reviewer's changes-requested wakes the builder", () => {
     }
     mason = getUserByName(app.db, "mason")!;
     sentinel = getUserByName(app.db, "sentinel")!;
-    setCrewRole(app.db, repo.id, sentinel.id, "reviewer");
+    seatAs(app.db, repo.id, sentinel.id, "reviewer");
     crew = await startCrew(app, {
       forgeUrl: "http://127.0.0.1:1",
       localUrl: "http://127.0.0.1:1",
@@ -253,6 +256,10 @@ describe("a crew reviewer's changes-requested wakes the builder", () => {
       concurrency: 0,
       budgetUsd: 1,
       runTimeoutMs: 60_000,
+      // No tick inside the suite: the first one runs the autonomy pass, whose
+      // `moveRequested` queues its own follow-up on a standing verdict, and on
+      // a loaded shard it landed mid-test and moved the counts these assert.
+      tickMs: 3_600_000,
     });
   });
 
@@ -403,6 +410,15 @@ describe("a crew reviewer's changes-requested wakes the builder", () => {
     }
   };
   const verdict = async (pull: Pull, body: string, state = "changes_requested") => {
+    // A review is news to the builder only when written after its last run
+    // began (`news.ts`, strictly later, to the millisecond). Claimed a moment
+    // ago by `settleFeedback`, that run's start can share this millisecond, or
+    // sit one ahead of it as SQLite rounds its clock: the round then reads as
+    // nothing new and queues no follow-up (#10486). Real rounds are minutes apart.
+    const begun = listRuns(app.db, repo.id, { issueId: pull.id })
+      .map((r) => r.startedAt ?? "")
+      .reduce((a, b) => (a > b ? a : b), "");
+    while (new Date().toISOString() <= begun) await Bun.sleep(1);
     await submitReview(app, sentinel, fresh(), pull, {
       state: state as "changes_requested",
       body,

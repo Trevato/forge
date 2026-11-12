@@ -7,7 +7,6 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { addComment, assignIssue, openIssue } from "../src/actions/issues.ts";
 import { listComments } from "../src/core/issues.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { getRepo } from "../src/core/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import {
   cancelRun,
@@ -19,11 +18,17 @@ import {
 } from "../src/core/runs.ts";
 import { listPulls } from "../src/core/pulls.ts";
 import { getAgent } from "../src/core/agents.ts";
-import { workdirFor } from "../src/crew/workdir.ts";
+import { readRunLog } from "../src/runs/log.ts";
+import { claimWorkdir, isClaimed, workdirFor } from "../src/crew/workdir.ts";
 import { STALE_AFTER_MS } from "../src/runs/lease.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { startCrew, type CrewHandle } from "../src/crew/dispatch.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+
+/** The crew's tick, injected short: every wait below is for the next tick (#11053). */
+const TICK_MS = 50;
+/** How often a test looks again at a run it waits on. */
+const POLL_MS = 20;
 
 describe("a run the last forge left running", () => {
   let dataDir: string;
@@ -59,14 +64,61 @@ describe("a run the last forge left running", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("is cancelled at boot and queued again under the same reason", async () => {
+  /**
+   * No crew left up and no run left queued or running by the test before:
+   * with no crew up, a running run is a leftover, and the next crew's tick
+   * would requeue it once its lease lapsed or count it against a slot. Each
+   * test starts from rest, so they pass in any order (`--randomize`).
+   */
+  const atRest = async () => {
+    await crew?.stop();
+    crew = undefined;
+    const left = app.db
+      .query<{ id: string }, []>(
+        "SELECT id FROM run WHERE state IN ('queued', 'running')",
+      )
+      .all();
+    for (const { id } of left) cancelRun(app.db, id, "cleared for the next test");
+  };
+
+  /** A repository of the test's own, with the bot on its crew: no case shares one. */
+  const crewedRepo = async (name: string) => {
     const created = await createRepo(app, alice, {
-      name: "garden",
+      name,
       visibility: "private",
     });
     if (!created.ok) throw new Error(String(created.error));
-    const repo = created.value;
-    expect(addToCrew(app, alice, repo, "bot").ok).toBe(true);
+    expect(addToCrew(app, alice, created.value, "bot").ok).toBe(true);
+    return created.value;
+  };
+
+  /** Poll a run until it ends (ok, failed or cancelled), or the deadline passes. */
+  const settled = async (id: string, withinMs: number) => {
+    const deadline = Date.now() + withinMs;
+    while (
+      !["ok", "failed", "cancelled"].includes(getRun(app.db, id)!.state) &&
+      Date.now() < deadline
+    )
+      await Bun.sleep(POLL_MS);
+    return getRun(app.db, id)!;
+  };
+
+  /** Concurrency 0: the crew boots, tidies, and starts nothing. */
+  const idleCrew = () =>
+    startCrew(app, {
+      forgeUrl: servers.url,
+      localUrl: servers.url,
+      binary: join(dataDir, "no-such-claude"),
+      concurrency: 0,
+      budgetUsd: 1,
+      runTimeoutMs: 60_000,
+      tickMs: TICK_MS,
+      networkRetryScale: 0,
+    });
+
+  test("is cancelled at boot and queued again under the same reason", async () => {
+    await atRest();
+    const repo = await crewedRepo("garden");
     const issued = openIssue(app, alice, repo, {
       title: "Plant something",
       body: "",
@@ -102,15 +154,7 @@ describe("a run the last forge left running", () => {
     });
     claimRun(app.db, alive.id);
 
-    // Concurrency 0: the crew boots, tidies, and starts nothing.
-    crew = await startCrew(app, {
-      forgeUrl: servers.url,
-      localUrl: servers.url,
-      binary: join(dataDir, "no-such-claude"),
-      concurrency: 0,
-      budgetUsd: 1,
-      runTimeoutMs: 60_000,
-    });
+    crew = await idleCrew();
 
     const after = getRun(app.db, orphan.id)!;
     expect(after.state).toBe("cancelled");
@@ -124,10 +168,13 @@ describe("a run the last forge left running", () => {
     expect(getRun(app.db, alive.id)?.state).toBe("running");
     // The other forge finishes it; here, it is simply out of the way.
     cancelRun(app.db, alive.id, "finished elsewhere");
-  });
+  }, 30_000);
 
   test("a run whose lease lapses while the crew is up is queued again on the next tick", async () => {
-    const repo = getRepo(app.db, "alice", "garden")!;
+    await atRest();
+    const repo = await crewedRepo("allotment");
+    // The crew is up before the lease lapses: only a tick can see it.
+    crew = await idleCrew();
     const issued = openIssue(app, alice, repo, {
       title: "Water it",
       body: "",
@@ -155,7 +202,7 @@ describe("a run the last forge left running", () => {
       getRun(app.db, orphan.id)?.state === "running" &&
       Date.now() < deadline
     )
-      await Bun.sleep(200);
+      await Bun.sleep(POLL_MS);
     const after = getRun(app.db, orphan.id)!;
     expect(after.state).toBe("cancelled");
     expect(after.summary).toContain("interrupted by a restart");
@@ -167,8 +214,7 @@ describe("a run the last forge left running", () => {
   }, 30_000);
 
   test("a run in flight when the crew stops goes back on the queue", async () => {
-    await crew?.stop();
-    crew = undefined;
+    await atRest();
     const created = await createRepo(app, alice, {
       name: "orchard",
       visibility: "private",
@@ -214,13 +260,15 @@ sleep 120
       concurrency: 1,
       budgetUsd: 1,
       runTimeoutMs: 60_000,
+      tickMs: TICK_MS,
+      networkRetryScale: 0,
     });
     const deadline = Date.now() + 20_000;
     while (
       getRun(app.db, queuedRun.id)?.state !== "running" &&
       Date.now() < deadline
     )
-      await Bun.sleep(100);
+      await Bun.sleep(POLL_MS);
     expect(getRun(app.db, queuedRun.id)?.state).toBe("running");
 
     await crew.stop();
@@ -238,9 +286,66 @@ sleep 120
     expect(again[0]!.summary).toContain("carries on");
   }, 40_000);
 
-  test("a draining crew lets a run in flight finish and land; nothing is queued again", async () => {
-    await crew?.stop();
+  test("a draining crew hands a long run back queued within its budget (#7799)", async () => {
+    await atRest();
+    const created = await createRepo(app, alice, { name: "thicket", visibility: "private" });
+    if (!created.ok) throw new Error(String(created.error));
+    const repo = created.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "# thicket\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    expect(addToCrew(app, alice, repo, "bot").ok).toBe(true);
+    const issued = openIssue(app, alice, repo, { title: "Clear", body: "" });
+    if (!issued.ok) throw new Error(String(issued.error));
+    const issue = issued.value;
+    const long = join(dataDir, "long-claude");
+    writeFileSync(
+      long,
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
+cat > /dev/null &
+echo '{"type":"system","subtype":"init","session_id":"long-1","model":"fake"}'
+sleep 120
+`,
+    );
+    chmodSync(long, 0o755);
+    const queuedRun = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: issue.id,
+      actorId: bot.id,
+      reason: "assigned",
+    });
+    crew = await startCrew(app, {
+      forgeUrl: servers.url,
+      localUrl: servers.url,
+      binary: long,
+      concurrency: 1,
+      budgetUsd: 1,
+      runTimeoutMs: 60_000,
+      tickMs: TICK_MS,
+      networkRetryScale: 0,
+    });
+    const deadline = Date.now() + 20_000;
+    while (getRun(app.db, queuedRun.id)?.state !== "running" && Date.now() < deadline) await Bun.sleep(POLL_MS);
+    expect(getRun(app.db, queuedRun.id)?.state).toBe("running");
+
+    const started = Date.now();
+    await crew.stop({ drain: true, drainMs: 250 });
     crew = undefined;
+    expect(Date.now() - started).toBeLessThan(15_000);
+
+    const ended = getRun(app.db, queuedRun.id)!;
+    expect(ended.state === "cancelled" || ended.state === "failed").toBe(true);
+    const again = listQueued(app.db, "agent").filter((r) => r.issueId === issue.id && r.state === "queued");
+    expect(again).toHaveLength(1);
+    expect(again[0]!.summary).toContain("carries on");
+  }, 40_000);
+
+  test("a draining crew lets a run in flight finish and land; nothing is queued again", async () => {
+    await atRest();
     const created = await createRepo(app, alice, {
       name: "grove",
       visibility: "private",
@@ -264,7 +369,7 @@ sleep 120
 if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
 cat > /dev/null &
 echo '{"type":"system","subtype":"init","session_id":"brief-1","model":"fake"}'
-sleep 2
+sleep 0.5
 echo "drained work" >> CREW.md
 git add -A && git commit -qm "drained" && git push -q -u origin HEAD
 echo '{"type":"result","subtype":"success","is_error":false,"result":"Done while draining.","total_cost_usd":0.01,"num_turns":2,"session_id":"brief-1","terminal_reason":"completed"}'
@@ -285,19 +390,22 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Done while
       concurrency: 1,
       budgetUsd: 1,
       runTimeoutMs: 60_000,
+      tickMs: TICK_MS,
+      networkRetryScale: 0,
     });
     const deadline = Date.now() + 20_000;
     while (
       getRun(app.db, queuedRun.id)?.state !== "running" &&
       Date.now() < deadline
     )
-      await Bun.sleep(100);
+      await Bun.sleep(POLL_MS);
     expect(getRun(app.db, queuedRun.id)?.state).toBe("running");
 
     await crew.stop({ drain: true, drainMs: 30_000 });
     crew = undefined;
 
-    const ended = getRun(app.db, queuedRun.id)!;
+    // The run's end, however long the machine took to reach it.
+    const ended = await settled(queuedRun.id, 20_000);
     expect(ended.state).toBe("ok");
     expect(ended.summary).toMatch(/^opened pull #\d+/);
     expect(
@@ -306,8 +414,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Done while
   }, 40_000);
 
   const keptClone = async (name: string) => {
-    await crew?.stop();
-    crew = undefined;
+    await atRest();
     const created = await createRepo(app, alice, {
       name,
       visibility: "private",
@@ -343,6 +450,8 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Done.","to
       concurrency: 1,
       budgetUsd: 1,
       runTimeoutMs: 60_000,
+      tickMs: TICK_MS,
+      networkRetryScale: 0,
     };
     const first = createRun(app.db, {
       repoId: repo.id,
@@ -352,16 +461,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Done.","to
       reason: "assigned",
     });
     crew = await startCrew(app, options);
-    const wait = async (id: string) => {
-      const deadline = Date.now() + 25_000;
-      while (
-        !["ok", "failed", "cancelled"].includes(getRun(app.db, id)!.state) &&
-        Date.now() < deadline
-      )
-        await Bun.sleep(100);
-      return getRun(app.db, id)!;
-    };
-    expect((await wait(first.id)).state).toBe("ok");
+    expect((await settled(first.id, 25_000)).state).toBe("ok");
 
     // The clone is kept while the pull is open; a cut-off run left a lock.
     const agent = getAgent(app.db, bot.id)!;
@@ -383,7 +483,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Done.","to
     while (Date.now() < deadline) {
       next = listRuns(app.db, repo.id, { issueId: pull!.id })[0];
       if (next && ["ok", "failed", "cancelled"].includes(next.state)) break;
-      await Bun.sleep(100);
+      await Bun.sleep(POLL_MS);
     }
     expect(next).toBeDefined();
     return next!;
@@ -407,6 +507,41 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Done.","to
     const next = await followUp(repo);
     expect(next.state).toBe("ok");
     expect(existsSync(lock)).toBe(false);
+  }, 60_000);
+
+  test("a leftover directory with files and no .git never fails the run (#8219)", async () => {
+    const { repo, clone } = await keptClone("bramble");
+    rmSync(join(clone, ".git"), { recursive: true, force: true });
+    const next = await followUp(repo);
+    expect(next.summary ?? "").not.toContain("clone failed");
+    expect(next.state).toBe("ok");
+    expect(existsSync(join(clone, ".git", "HEAD"))).toBe(true);
+  }, 60_000);
+
+  test("a run that finds the issue's clone held works in a clone of its own (#8219)", async () => {
+    const { repo, clone } = await keptClone("orchard-held");
+    // Another live run holds the clone, and has uncommitted work in it.
+    const other = claimWorkdir(clone, "otherrun");
+    writeFileSync(join(clone, "held.txt"), "mine");
+    const next = await followUp(repo);
+    expect(next.state).toBe("ok");
+    expect(readRunLog(app.config.dataDir, next.id).lines.some((l) => l.includes("another run holds the issue's clone"))).toBe(true);
+    // The held clone is untouched (a reset and clean would have taken the file)…
+    expect(existsSync(join(clone, "held.txt"))).toBe(true);
+    // …and the run's own clone is gone with it.
+    expect(readdirSync(dirname(clone)).some((n) => n.startsWith(`${basename(clone)}.run-`))).toBe(false);
+    await other.release();
+  }, 60_000);
+
+  test("a run that throws after claiming its clone frees the claim (#8219)", async () => {
+    const { repo, clone } = await keptClone("orchard-throw");
+    // A file where the clone should be: reading it as a directory throws.
+    rmSync(clone, { recursive: true, force: true });
+    writeFileSync(clone, "not a directory");
+    const next = await followUp(repo);
+    expect(next.state).toBe("failed");
+    expect(isClaimed(clone)).toBe(false);
+    rmSync(clone, { force: true });
   }, 60_000);
 
   test("a kept clone git no longer reads is moved aside and cloned afresh (#6263)", async () => {
@@ -471,6 +606,8 @@ describe("an issue handed to someone else", () => {
       concurrency: 0,
       budgetUsd: 1,
       runTimeoutMs: 60_000,
+      tickMs: TICK_MS,
+      networkRetryScale: 0,
     });
   });
 

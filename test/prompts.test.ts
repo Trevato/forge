@@ -5,7 +5,7 @@
  * network — the real client is exercised against a fake `fetch`.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,6 +37,7 @@ import {
 } from "../src/crew/instagram.ts";
 import {
   startPromptRoutine,
+  tellText,
   type PromptRoutineHandle,
 } from "../src/crew/prompts.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -87,6 +88,23 @@ describe("topComment", () => {
     expect(topComment([c])?.id).toBe("c");
     expect(topComment([blank])).toBeUndefined();
     expect(topComment([])).toBeUndefined();
+  });
+});
+
+describe("tellText", () => {
+  const reel = reelOf("r", "2026-09-27");
+  const from =
+    "From Instagram: the top comment (1 like) by @fan on the Reel of 2026-09-27. https://www.instagram.com/reel/r/";
+
+  test("puts the first line as the title above the whole comment", () => {
+    const c = comment("c", "  Add a boss\nIt feels empty.  ", 1, at("2026-09-27T18:00:00+0000"), "fan");
+    expect(tellText(reel, c)).toBe(`Add a boss\nAdd a boss\nIt feels empty.\n\n${from}`);
+  });
+
+  test("a first line too long for a title is not repeated", () => {
+    const long = "x".repeat(81);
+    const c = comment("c", `${long}\nmore`, 1, at("2026-09-27T18:00:00+0000"), "fan");
+    expect(tellText(reel, c)).toBe(`${long}\nmore\n\n${from}`);
   });
 });
 
@@ -348,7 +366,7 @@ describe("prompts from Instagram", () => {
   let rwToken = "";
   let bobToken = "";
   let sourceId = "";
-  const instagram = new FakeInstagram();
+  let instagram = new FakeInstagram();
   let clock = new Date("2026-09-28T14:59:00Z");
   const tick = (iso: string) => {
     clock = new Date(iso);
@@ -406,7 +424,47 @@ describe("prompts from Instagram", () => {
   const source = () => getPromptSource(app.db, sourceId)!;
   const openIssues = () => listIssues(app.db, repo.id, { limit: 50 });
 
-  beforeAll(async () => {
+  /** Connect the account the way a person would, on the test's own story. */
+  const connect = async (atUtc = "15:00") => {
+    const made = await api(PROMPTS, {
+      method: "POST",
+      body: JSON.stringify({ kind: "instagram", token: TOKEN, at: atUtc }),
+    });
+    expect(made.status).toBe(201);
+    sourceId = ((await made.json()) as { id: string }).id;
+    // The API stamps the real date; the story is told on the test's clock.
+    app.db
+      .query(
+        "UPDATE prompt_source SET token_refreshed_at = ?2, created_at = ?2 WHERE id = ?1",
+      )
+      .run(sourceId, "2026-09-28T14:00:00.000Z");
+  };
+  const reelOne = () => {
+    instagram.reel = reelOf("reel-1", "2026-09-27");
+    instagram.replies = [
+      comment("c2", "first!!", 2, at("2026-09-27T18:01:00+0000"), "quick_one"),
+      comment(
+        "c1",
+        "Add a boss fight at the end of level 3\nIt feels empty right now.",
+        5,
+        at("2026-09-27T18:05:00+0000"),
+        "fan_one",
+      ),
+      comment("c3", "", 99, at("2026-09-27T18:00:00+0000"), "blank"),
+    ];
+  };
+  /** An account connected whose first Reel has been told as #1. */
+  const firstTell = async () => {
+    await connect();
+    reelOne();
+    await tick("2026-09-28T15:00:00Z");
+    expect(source().lastIssueNumber).toBe(1);
+  };
+
+  beforeEach(async () => {
+    instagram = new FakeInstagram();
+    clock = new Date("2026-09-28T14:59:00Z");
+    sourceId = "";
     dataDir = await mkdtemp(join(tmpdir(), "forge-prompts-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
@@ -450,7 +508,7 @@ describe("prompts from Instagram", () => {
     expect(addToCrew(app, alice, repo, "scout").ok).toBe(true);
   });
 
-  afterAll(async () => {
+  afterEach(async () => {
     await routine.stop();
     servers.stop();
     app.close();
@@ -538,7 +596,7 @@ describe("prompts from Instagram", () => {
       >("SELECT token_enc FROM prompt_source WHERE id = ?1")
       .get(sourceId)!;
     expect(row.token_enc).not.toContain(TOKEN);
-    expect(row.token_enc.startsWith("v1:")).toBe(true);
+    expect(row.token_enc.startsWith("v2:")).toBe(true);
     expect(openPromptToken(app.db, dataDir, sourceId)).toEqual({
       ok: true,
       value: TOKEN,
@@ -568,18 +626,8 @@ describe("prompts from Instagram", () => {
   });
 
   test("nothing before the hour; once after it; not again the same day", async () => {
-    instagram.reel = reelOf("reel-1", "2026-09-27");
-    instagram.replies = [
-      comment("c2", "first!!", 2, at("2026-09-27T18:01:00+0000"), "quick_one"),
-      comment(
-        "c1",
-        "Add a boss fight at the end of level 3\nIt feels empty right now.",
-        5,
-        at("2026-09-27T18:05:00+0000"),
-        "fan_one",
-      ),
-      comment("c3", "", 99, at("2026-09-27T18:00:00+0000"), "blank"),
-    ];
+    await connect();
+    reelOne();
     await tick("2026-09-28T14:59:00Z");
     expect(instagram.names()).toEqual([]);
     expect(source().lastRanAt).toBeNull();
@@ -627,6 +675,7 @@ describe("prompts from Instagram", () => {
   });
 
   test("the same Reel is never told twice", async () => {
+    await firstTell();
     instagram.calls.length = 0;
     await tick("2026-09-29T15:00:00Z");
     // The account is known, so `me` is not asked again; the Reel is known,
@@ -640,6 +689,7 @@ describe("prompts from Instagram", () => {
   });
 
   test("a Reel with no comments yet is looked at again tomorrow", async () => {
+    await firstTell();
     instagram.calls.length = 0;
     instagram.reel = reelOf("reel-2", "2026-09-29");
     instagram.replies = [];
@@ -673,6 +723,11 @@ describe("prompts from Instagram", () => {
   });
 
   test("no Reel at all is a sentence", async () => {
+    await firstTell();
+    instagram.reel = reelOf("reel-2", "2026-09-29");
+    instagram.replies = [comment("c9", "Heavier jump", 1, at("2026-09-30T09:00:00+0000"), "ana")];
+    await tick("2026-10-01T15:00:00Z");
+    expect(source().lastMediaId).toBe("reel-2");
     instagram.reel = undefined;
     await tick("2026-10-02T15:00:00Z");
     expect(source().lastSaid).toBe("No Reel yet.");
@@ -680,6 +735,7 @@ describe("prompts from Instagram", () => {
   });
 
   test("Instagram's refusals are sentences, never throws", async () => {
+    await firstTell();
     instagram.failWith = new InstagramError(
       190,
       "Error validating access token: Session has expired",
@@ -704,10 +760,11 @@ describe("prompts from Instagram", () => {
     expect(source().lastSaid).toBe("The run failed: socket hang up.");
     instagram.failWith = undefined;
     // Nothing above told anybody anything.
-    expect(openIssues()).toHaveLength(2);
+    expect(openIssues()).toHaveLength(1);
   });
 
   test("a token older than fifty days is refreshed, and the new one is what runs from then on", async () => {
+    await connect();
     const before = source().tokenRefreshedAt;
     instagram.calls.length = 0;
     instagram.reel = reelOf("reel-3", "2026-11-19");
@@ -718,6 +775,7 @@ describe("prompts from Instagram", () => {
     await tick("2026-11-20T15:00:00Z");
     expect(instagram.calls).toEqual([
       { call: "refresh", token: TOKEN },
+      { call: "me", token: FRESH },
       { call: "reel", token: FRESH },
       { call: "comments:reel-3", token: FRESH },
     ]);
@@ -727,7 +785,7 @@ describe("prompts from Instagram", () => {
       ok: true,
       value: FRESH,
     });
-    expect(source().lastIssueNumber).toBe(3);
+    expect(source().lastIssueNumber).toBe(1);
 
     // The next day: fresh, no refresh.
     instagram.calls.length = 0;
@@ -745,7 +803,12 @@ describe("prompts from Instagram", () => {
   });
 
   test("Fetch now runs at once, whatever the hour, through the API", async () => {
-    // Already ran today; a new Reel is up.
+    await connect();
+    clock = new Date("2026-11-21T15:00:00Z");
+    // A token pasted the day before: no refresh is due.
+    app.db
+      .query("UPDATE prompt_source SET token_refreshed_at = ?2 WHERE id = ?1")
+      .run(sourceId, "2026-11-20T15:00:00.000Z");
     instagram.calls.length = 0;
     instagram.reel = reelOf("reel-4", "2026-11-21");
     instagram.replies = [
@@ -761,12 +824,12 @@ describe("prompts from Instagram", () => {
       account: string;
     };
     expect(item.lastSaid).toBe(
-      'Told the crew #4: "Co-op please" — @duo, 12 likes.',
+      'Told the crew #1: "Co-op please" — @duo, 12 likes.',
     );
-    expect(item.lastIssueNumber).toBe(4);
+    expect(item.lastIssueNumber).toBe(1);
     expect(item.account).toBe("gamehandle");
-    expect(instagram.names()).toEqual(["reel", "comments:reel-4"]);
-    expect(getIssue(app.db, repo.id, 4)?.title).toBe("Co-op please");
+    expect(instagram.names()).toEqual(["me", "reel", "comments:reel-4"]);
+    expect(getIssue(app.db, repo.id, 1)?.title).toBe("Co-op please");
 
     const unknown = await api(`${PROMPTS}/nope/run`, { method: "POST" });
     expect(unknown.status).toBe(422);
@@ -776,6 +839,7 @@ describe("prompts from Instagram", () => {
   });
 
   test("admin only, like the domains: scope, then admin over the repository", async () => {
+    await connect();
     expect((await api(PROMPTS, { token: rwToken })).status).toBe(403);
     expect((await api(PROMPTS, { token: null })).status).toBe(401);
     expect((await api(PROMPTS, { token: bobToken })).status).toBe(404);
@@ -857,12 +921,22 @@ describe("prompts from Instagram", () => {
   });
 
   test("the settings page: the card, the steps, the doors", async () => {
+    await connect();
+    clock = new Date("2026-11-21T15:00:00Z");
+    instagram.reel = reelOf("reel-4", "2026-11-21");
+    instagram.replies = [
+      comment("c30", "Co-op please", 12, at("2026-11-21T12:00:00+0000"), "duo"),
+    ];
+    await routine.runNow(sourceId);
+    app.db
+      .query("UPDATE prompt_source SET token_refreshed_at = ?2 WHERE id = ?1")
+      .run(sourceId, "2026-11-20T15:00:00.000Z");
     const page = words(await (await web(aliceCookie, SETTINGS)).text());
     expect(page).toContain(">Prompts<");
     expect(page).toContain("<h2>Instagram</h2>");
     expect(page).toContain("@gamehandle");
     expect(page).toContain("every day at 15:00 UTC");
-    expect(page).toContain("Told the crew #4");
+    expect(page).toContain("Told the crew #1");
     expect(page).toContain("Token refreshed");
     expect(page).toContain("refreshes it again around 2027-01-09");
     expect(page).toContain("Fetch now");
@@ -893,7 +967,7 @@ describe("prompts from Instagram", () => {
     expect(fetched.status).toBe(303);
     expect(fetched.headers.get("location")).toBe(SETTINGS);
     expect(flashOf(fetched)).toContain(
-      "No new Reel since 2026-11-21; the last one was told as #4.",
+      "No new Reel since 2026-11-21; the last one was told as #1.",
     );
     expect(instagram.names()).toEqual(["reel"]);
 
@@ -942,6 +1016,7 @@ describe("prompts from Instagram", () => {
   });
 
   test("the API removes, and says so once", async () => {
+    await connect("09:30");
     const listed = (await (await api(PROMPTS)).json()) as {
       items: { id: string; atUtc: string; account: string }[];
     };
@@ -992,6 +1067,7 @@ describe("prompts from Instagram", () => {
   });
 
   test("a sentence about an error never carries the token, even when Instagram's words quote the request", async () => {
+    await connect();
     instagram.failWith = new InstagramError(
       400,
       `Bad request to https://graph.instagram.com/v25.0/me/media?fields=id&access_token=${TOKEN}`,
@@ -1013,6 +1089,7 @@ describe("prompts from Instagram", () => {
   test("a run claims its row before any network work: two sweeps over one row tell the crew once", async () => {
     // A second routine over the same database — two forges over one data
     // directory, or a timer started twice — with a slow Instagram.
+    await connect();
     let release: (() => void) | undefined;
     const slow = new FakeInstagram();
     slow.reel = reelOf("reel-8", "2026-10-11");
@@ -1051,6 +1128,7 @@ describe("prompts from Instagram", () => {
   });
 
   test("stop waits for a run in flight, but not forever", async () => {
+    await connect();
     let hang: (() => void) | undefined;
     const stuck: InstagramClient = {
       me: (t) => instagram.me(t),

@@ -6,6 +6,7 @@
  */
 
 import { err, ok, type Result } from "../kernel/result.ts";
+import { diffMemoryKey, recalledBase, rememberBase } from "./diff-memory.ts";
 import { runGit, runGitCapture } from "./env.ts";
 import { isSafeOid, isSafeRef, isSafeTreePath } from "./guard.ts";
 
@@ -295,8 +296,15 @@ export async function mergeBase(
   b: string,
 ): Promise<string | undefined> {
   if (!isSafeOid(a) || !isSafeOid(b)) return undefined;
+  // Two commits' merge base never changes: the next asker reads it from memory.
+  const key = diffMemoryKey(dir, a, b);
+  const known = recalledBase(key);
+  if (known !== undefined) return known;
   const result = await runGit(["merge-base", a, b], { cwd: dir });
-  return result.ok ? result.value.trim() : undefined;
+  if (!result.ok) return undefined;
+  const base = result.value.trim();
+  rememberBase(key, base);
+  return base;
 }
 
 /**
@@ -311,6 +319,34 @@ export async function ancestorsOf(
   if (!isSafeOid(oid)) return undefined;
   const result = await runGit(["rev-list", oid], { cwd: dir });
   return result.ok ? new Set(result.value.split("\n")) : undefined;
+}
+
+/**
+ * The commits reachable from `oid` but not from `base`, and whether `base`
+ * is itself an ancestor of `oid` — one spawn whose cost is the commits
+ * between them, not the whole history. `base` is an ancestor exactly when
+ * one of the listed commits names it as a parent (or it is `oid`).
+ */
+export async function ancestorsSince(
+  dir: string,
+  oid: string,
+  base: string,
+): Promise<{ added: ReadonlySet<string>; reaches: boolean } | undefined> {
+  if (!isSafeOid(oid) || !isSafeOid(base)) return undefined;
+  if (oid === base) return { added: new Set(), reaches: true };
+  const result = await runGit(["rev-list", "--parents", oid, `^${base}`], {
+    cwd: dir,
+  });
+  if (!result.ok) return undefined;
+  const added = new Set<string>();
+  let reaches = false;
+  for (const line of result.value.split("\n")) {
+    if (line === "") continue;
+    const [commit, ...parents] = line.split(" ");
+    added.add(commit!);
+    if (parents.includes(base)) reaches = true;
+  }
+  return { added, reaches };
 }
 
 /** The commits reachable from head but not base — what a proposal carries. */
@@ -338,6 +374,21 @@ export async function aheadCount(
     { cwd: dir },
   );
   return result.ok ? Number(result.value.trim()) || 0 : 0;
+}
+
+/**
+ * The head is ahead of the base by commit count while merging it onto the
+ * base would write the base's own tree: its content is already there (a
+ * squash landed it), so there is nothing to propose. The one test `watchForPull`,
+ * `landWork` and the autonomy's carried check share.
+ */
+export async function contentOnBase(
+  dir: string,
+  baseOid: string,
+  headOid: string,
+): Promise<boolean> {
+  const merged = await mergeable(dir, baseOid, headOid);
+  return merged.ok && merged.value.treeOid === (await treeOf(dir, baseOid));
 }
 
 /**
@@ -370,4 +421,25 @@ export async function writeRef(
   if (!isSafeRef(ref) || !isSafeOid(oid)) return false;
   const result = await runGit(["update-ref", ref, oid], { cwd: dir });
   return result.ok;
+}
+
+/** Who wrote the commits a pull carries, and how many files they touch — for the note an author is sent. */
+export async function carriedSummary(
+  dir: string,
+  baseOid: string,
+  headOid: string,
+): Promise<{ commits: number; authors: string[]; files: number }> {
+  if (!isSafeOid(baseOid) || !isSafeOid(headOid))
+    return { commits: 0, authors: [], files: 0 };
+  const log = await runGit(
+    ["log", "--format=%an", `${baseOid}..${headOid}`],
+    { cwd: dir },
+  );
+  const names = log.ok ? log.value.split("\n").filter(Boolean) : [];
+  const diff = await runGit(
+    ["diff", "--name-only", `${baseOid}...${headOid}`],
+    { cwd: dir },
+  );
+  const files = diff.ok ? diff.value.split("\n").filter(Boolean).length : 0;
+  return { commits: names.length, authors: [...new Set(names)].slice(0, 10), files };
 }

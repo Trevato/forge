@@ -3,6 +3,8 @@
  * An admin promotes a guest to member (with a starter model allowance, none
  * by default) or demotes a member, in one same-origin form post. The guards
  * refuse what `CAN` withholds; the card says so in `roleLimits` (`docs/ROLES.md`).
+ * On a phone the table scrolls inside its own `data-people` box and a long
+ * username wraps anywhere, so the page never scrolls sideways (#9374).
  */
 
 import { setRole } from "../../actions/roles.ts";
@@ -15,8 +17,24 @@ import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { badge, btn, card, empty, userLink } from "../ui.ts";
+import { badge, btn, empty, userLink } from "../ui.ts";
 import { accountSections } from "./origins.ts";
+
+/**
+ * The apps each username made, by repo name. An admin sees every app, private
+ * ones included: this page is admin-only and an app is one row per repo, so
+ * no environment is counted twice.
+ */
+export function appsMade(ctx: Ctx): Map<string, string[]> {
+  const rows = ctx.app.db
+    .query<{ username: string; name: string }, []>(
+      `SELECT u.username, r.name FROM app a JOIN repo r ON r.id = a.repo_id JOIN user u ON u.id = r.owner_id ORDER BY r.name COLLATE NOCASE`,
+    )
+    .all();
+  const made = new Map<string, string[]>();
+  for (const r of rows) made.set(r.username, [...(made.get(r.username) ?? []), r.name]);
+  return made;
+}
 
 // GET /settings/people
 export function peoplePage(ctx: Ctx): Response {
@@ -24,6 +42,7 @@ export function peoplePage(ctx: Ctx): Response {
   if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const rows = timePhase(ctx.request, "people", () => listPeople(ctx.app.db));
+  const made = appsMade(ctx);
   const rendering = performance.now();
   const line = (p: Person) => {
     const role = p.role;
@@ -42,10 +61,15 @@ export function peoplePage(ctx: Ctx): Response {
               <input type="hidden" name="role" value="guest" />
               ${btn("Make guest", { type: "submit", size: "sm" })}
             </form>`;
+    const apps = made.get(p.username) ?? [];
+    const count = apps.length;
+    const shown = apps.slice(0, 3).map((n) => html`<a href="/${p.username}/${n}">${n}</a>`);
+    const standing = p.usdPerMonth === null ? "no allowance" : `$${p.usdPerMonth.toFixed(2)} a month`;
     return html`<tr>
-      <td>${userLink(p.username)}</td>
-      <td>${badge(role, { tone: role === "guest" ? "default" : "success" })}</td>
-      <td>${p.usdPerMonth === null ? "none" : `$${p.usdPerMonth.toFixed(2)} a month`}</td>
+      <td>${userLink(p.username, { nav: true })}<div class="small muted">${count === 0 ? "No apps yet" : count === 1 ? "1 app" : `${count} apps`}${
+        count === 0 ? "" : html`: ${shown.flatMap((a, i) => (i === 0 ? [a] : [", ", a]))}${count > 3 ? ` and ${count - 3} more` : ""}`
+      }</div></td>
+      <td>${badge(role, { tone: role === "guest" ? "default" : "success" })} <span class="small muted">${standing}</span></td>
       <td>${act}</td>
     </tr>`;
   };
@@ -55,19 +79,21 @@ export function peoplePage(ctx: Ctx): Response {
     body: html`<div class="page-head"><h1>People</h1></div>
       ${settingsLayout(
         accountSections("people", { admin: true }),
-        card(
-          rows.length === 0
-            ? empty({ icon: "users", title: "Nobody has joined yet." })
-            : html`<table class="table" id="people">
-                <thead><tr><th>Account</th><th>Role</th><th>Allowance</th><th></th></tr></thead>
-                <tbody>${rows.map(line)}</tbody>
-              </table>`,
-          {
-            head: html`<h2>Guests, members and admins</h2>
-              <p class="muted">A member may be given a starter model allowance (up to
-                $${GRANT_MAX_USD} a month). ${roleLimits()}</p>`,
-          },
-        ),
+        html`<section class="settings-block">
+          <h2>Guests, members and admins</h2>
+          <p class="muted">Make a guest a member, with an allowance if you like.</p>
+          ${
+            rows.length === 0
+              ? empty({ icon: "users", title: "Nobody has joined yet." })
+              : html`<div class="table-scroll" data-people>
+                  <table class="table" id="people">
+                    <thead><tr><th>Person</th><th>Standing</th><th></th></tr></thead>
+                    <tbody>${rows.map(line)}</tbody>
+                  </table>
+                </div>
+                <p class="small muted">Allowances go up to $${GRANT_MAX_USD} a month. ${roleLimits()}</p>`
+          }
+        </section>`,
         "Account settings",
       )}`,
   });

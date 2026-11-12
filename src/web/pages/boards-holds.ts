@@ -1,8 +1,8 @@
 /**
- * The Held files card on /boards: every file held in a repository the viewer
+ * The Held files section on /boards: every file held in a repository the viewer
  * administers (`adminRepoIds`), read in one statement with no per-row
  * `canRead` — the rule `listFileHolds` keeps, so a private repository's hold
- * shows to its admins only. The card shows with no holds yet, for it holds the
+ * shows to its admins only. The section shows with no holds yet, for it holds the
  * form. `POST /boards/holds` hands the form to the shared handler
  * (`file_holds.ts`) and returns to /boards.
  */
@@ -16,8 +16,7 @@ import { MAX_HOLD_PATH } from "../../crew/file_holds.ts";
 import type { Ctx } from "../../http/context.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
-import { icon } from "../icons.ts";
-import { btn, card, field as formField, row, time } from "../ui.ts";
+import { btn, field as formField, row, time } from "../ui.ts";
 import { fileHoldForm } from "./file_holds.ts";
 
 /** `owner/name`: two names and a slash. */
@@ -34,8 +33,9 @@ export function boardsHoldsCard(db: Database, viewer: User | undefined, withBoar
       <input type="hidden" name="verb" value="release" />
       ${btn("Release", { variant: "ghost" })}
     </form>`;
-  return card(
-    html`<p class="muted small">
+  return html`<section class="settings-block" id="board-holds">
+      <h2>Held files</h2>
+      <p class="muted small">
         No build starts on an issue that names a held path. Nothing already
         running is cut. Only repositories you administer are listed.
       </p>
@@ -44,7 +44,7 @@ export function boardsHoldsCard(db: Database, viewer: User | undefined, withBoar
         : null}
       ${holds.length === 0
         ? html`<p class="muted" data-no-holds>No file is held.</p>`
-        : html`<ul class="list setting-list">
+        : html`<ul class="list">
             ${holds.map((h) =>
               row({
                 title: html`<span class="mono">${h.path}</span> <span class="muted small">${h.repo}</span>`,
@@ -68,9 +68,8 @@ export function boardsHoldsCard(db: Database, viewer: User | undefined, withBoar
           hint: `A path in the repository, relative, at most ${MAX_HOLD_PATH} characters.`,
         })}
         <div class="form-actions">${btn("Hold file", { variant: withBoards ? "secondary" : "primary" })}</div>
-      </form>`,
-    { id: "board-holds", head: html`${icon("alert")}<h2>Held files</h2>` },
-  );
+      </form>
+    </section>`;
 }
 
 // POST /boards/holds

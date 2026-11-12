@@ -27,7 +27,9 @@ import { getRepo, listReposWritableTo, type Repo } from "./repos.ts";
 import { listActiveRuns } from "./runs.ts";
 import type { User } from "./users.ts";
 
-export type AskedState = "waiting" | "building" | "shipped" | "closed";
+/** Every state an ask can be in, in the order it moves through them. */
+export const ASKED_STATES = ["waiting", "building", "shipped", "closed"] as const;
+export type AskedState = (typeof ASKED_STATES)[number];
 
 export interface AskedPull {
   /** The pull's issue id, for reads; not part of the JSON. */
@@ -170,7 +172,9 @@ export function pullsByAsk(
               issue.created_at, issue.parked, pull.merged_at,
               user.username AS author
        FROM issue JOIN pull ON pull.issue_id = issue.id JOIN user ON user.id = issue.author_id
-       WHERE issue.repo_id IN (${placeholders(repoIds.length)})
+       WHERE issue.repo_id IN (${placeholders(repoIds.length)}) AND issue.kind = 'pull'
+         AND issue.body LIKE '%#%'
+         AND (issue.body LIKE '%close%' OR issue.body LIKE '%fix%' OR issue.body LIKE '%resolve%')
        ORDER BY issue.number`,
     )
     .all(...repoIds);

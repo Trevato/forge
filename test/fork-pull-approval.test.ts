@@ -5,7 +5,15 @@
  * pull and the crew's run as they always have.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  spyOn,
+  test,
+  type Mock,
+} from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,10 +30,40 @@ import type { Repo } from "../src/core/repos.ts";
 import { listRuns } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { quietLogs } from "./helpers/globals.ts";
+import { logLevel, setLogLevel, type LogLevel } from "../src/kernel/log.ts";
 import { promote } from "./helpers/members.ts";
 
-quietLogs();
+/**
+ * The forge's info lines, held instead of printed: the gate says "waits for a
+ * writer's approval" when it refuses, and that line is the witness that the
+ * event was handled. A fixed sleep only guessed it had been.
+ */
+const said: string[] = [];
+let foundLevel: LogLevel;
+const spies: Mock<(...a: unknown[]) => void>[] = [];
+beforeAll(() => {
+  foundLevel = logLevel();
+  setLogLevel("info");
+  for (const m of ["info", "warn"] as const)
+    spies.push(
+      spyOn(console, m).mockImplementation((...a: unknown[]) => {
+        said.push(a.join(" "));
+      }),
+    );
+});
+afterAll(() => {
+  for (const spy of spies) spy.mockRestore();
+  setLogLevel(foundLevel);
+});
+
+/** Poll every 5 ms until `ok`, or fail naming `what`. */
+async function until(ok: () => boolean, what: string, ms = 10_000) {
+  const deadline = Date.now() + ms;
+  while (!ok()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await Bun.sleep(5);
+  }
+}
 
 const checkJson = (run: string) =>
   `{"check": {"run": ${JSON.stringify(run)}, "install": ""}}\n`;
@@ -57,8 +95,63 @@ describe("a reader's fork pull runs nothing until a writer approves its head", (
 
   const forks = new Map<string, Repo>();
 
-  /** Long enough for the event handlers to have queued whatever they would. */
-  const settle = () => Bun.sleep(400);
+  /** Whether `line` carries the field `key=value` exactly. */
+  const field = (line: string, key: string, value: string) =>
+    ` ${line} `.includes(` ${key}=${value} `);
+
+  /**
+   * How many times the gate refused `env` in one repository — `scope` is
+   * `repo=owner/name` for a check, `app=slug` for a preview, since pull
+   * numbers repeat across repositories — at `commit`, when named.
+   */
+  const refusals = (
+    message: string,
+    scope: [string, string],
+    env: string,
+    commit?: string,
+  ) =>
+    said.filter(
+      (line) =>
+        line.includes(message) &&
+        field(line, ...scope) &&
+        field(line, "env", env) &&
+        (commit === undefined || field(line, "commit", commit.slice(0, 7))),
+    ).length;
+
+  /**
+   * The checks service has handled `pull`'s events up to the `times`th
+   * refusal — or, were the gate gone, queued a run the test then sees.
+   */
+  const checkDecided = (repo: Repo, pull: Pull, commit?: string, times = 1) =>
+    until(
+      () =>
+        refusals(
+          "check waits for a writer's approval",
+          ["repo", `${repo.ownerName}/${repo.name}`],
+          `pull-${pull.number}`,
+          commit,
+        ) >= times || runsFor(repo, "check", pull, commit).length > 0,
+      `the check gate on ${repo.name} pull ${pull.number}`,
+    );
+
+  /** The same for the apps runtime and `pull`'s preview on the notes app. */
+  const previewDecided = (repo: Repo, pull: Pull) =>
+    until(
+      () =>
+        refusals(
+          "preview waits for a writer's approval",
+          ["app", notesApp.slug],
+          `pull-${pull.number}`,
+        ) > 0 || runsFor(repo, "deploy", pull).length > 0,
+      `the preview gate on ${repo.name} pull ${pull.number}`,
+    );
+
+  /** Wait for a `kind` run of `pull` at `commit`. */
+  const ran = (repo: Repo, kind: "check" | "deploy", pull: Pull, commit: string) =>
+    until(
+      () => runsFor(repo, kind, pull, commit).length > 0,
+      `a ${kind} of pull ${pull.number}`,
+    );
 
   async function forkPull(
     who: User,
@@ -155,7 +248,7 @@ describe("a reader's fork pull runs nothing until a writer approves its head", (
     if (!madeApp.ok) throw new Error(String(madeApp.error));
     notes = madeApp.value.repo;
     notesApp = madeApp.value.app;
-  }, 120_000);
+  }, 20_000);
 
   afterAll(async () => {
     await checks.stop();
@@ -166,12 +259,14 @@ describe("a reader's fork pull runs nothing until a writer approves its head", (
   });
 
   test("a reader's fork pull queues no check", async () => {
+    // Invariant: opening a reader's fork pull queues no check run.
     const { pull } = await forkPull(carol, lib, "readers");
-    await settle();
+    await checkDecided(lib, pull);
     expect(runsFor(lib, "check", pull)).toHaveLength(0);
   });
 
   test("the pull's page says what it waits for, and stops saying it once approved", async () => {
+    // Invariant: the page says the pull waits for approval until a writer approves.
     const { pull } = await forkPull(carol, lib, "page");
     const page = () =>
       fetch(`${servers.url}/alice/lib/pulls/${pull.number}`, {
@@ -180,46 +275,47 @@ describe("a reader's fork pull runs nothing until a writer approves its head", (
     const first = await page();
     expect(first).toContain("wait for a writer to approve this head");
     await approve(alice, lib, pull);
-    await settle();
     expect(await page()).not.toContain("wait for a writer to approve this head");
   });
 
   test("a reader's fork pull on an app deploys no preview", async () => {
+    // Invariant: opening a reader's fork pull on an app deploys no preview.
     const { pull } = await forkPull(carol, notes, "readers");
-    await settle();
+    await previewDecided(notes, pull);
     expect(runsFor(notes, "deploy", pull)).toHaveLength(0);
   });
 
   test("a writer's approval of that head starts the check and the preview", async () => {
+    // Invariant: a writer's approval of the head runs its check and its preview.
     const one = await forkPull(carol, lib, "approved");
     const two = await forkPull(carol, notes, "approved");
-    await settle();
+    await checkDecided(lib, one.pull);
+    await previewDecided(notes, two.pull);
     expect(runsFor(lib, "check", one.pull)).toHaveLength(0);
+    expect(runsFor(notes, "deploy", two.pull)).toHaveLength(0);
     await approve(alice, lib, one.pull);
     await approve(alice, notes, two.pull);
-    await settle();
-    expect(runsFor(lib, "check", one.pull, one.head).length).toBeGreaterThan(0);
-    expect(runsFor(notes, "deploy", two.pull, two.head).length).toBeGreaterThan(
-      0,
-    );
-  }, 60_000);
+    await ran(lib, "check", one.pull, one.head);
+    await ran(notes, "deploy", two.pull, two.head);
+  });
 
   test("a new push is a new head, and needs a new approval", async () => {
+    // Invariant: an approval holds for its head only; a pushed head runs nothing.
     const { pull, fork, head } = await forkPull(carol, lib, "pushes");
     await approve(alice, lib, pull);
-    await settle();
-    expect(runsFor(lib, "check", pull, head).length).toBeGreaterThan(0);
+    await ran(lib, "check", pull, head);
     const again = await commitToBranch(app, carol, fork, {
       branch: "pushes",
       message: "Again",
       files: [{ path: "pushes.md", content: "again\n" }],
     });
     if (!again.ok) throw new Error(JSON.stringify(again.error));
-    await settle();
+    await checkDecided(lib, pull, again.value.commitOid);
     expect(runsFor(lib, "check", pull, again.value.commitOid)).toHaveLength(0);
-  }, 60_000);
+  });
 
   test("approval from the crew or from the pull's own reader does not count", async () => {
+    // Invariant: neither the crew's approval nor the author's own lets it run.
     const { pull } = await forkPull(carol, lib, "crewvote");
     const byBot = await submitReview(app, bot, lib, pull, {
       state: "approved",
@@ -229,27 +325,24 @@ describe("a reader's fork pull runs nothing until a writer approves its head", (
       state: "approved",
     });
     expect(byCarol.ok).toBe(false);
-    await settle();
+    // Refused once on opening, once more on the crew's approval.
+    await checkDecided(lib, pull, undefined, 2);
     expect(runsFor(lib, "check", pull)).toHaveLength(0);
   });
 
   test("a writer's own fork pull and the crew's run as before", async () => {
+    // Invariant: a writer's and the crew's fork pulls are checked without approval.
     const mine = await forkPull(alice, lib, "writers");
     const crews = await forkPull(bot, lib, "crews");
-    await settle();
-    expect(runsFor(lib, "check", mine.pull, mine.head).length).toBeGreaterThan(
-      0,
-    );
-    expect(
-      runsFor(lib, "check", crews.pull, crews.head).length,
-    ).toBeGreaterThan(0);
-  }, 60_000);
+    await ran(lib, "check", mine.pull, mine.head);
+    await ran(lib, "check", crews.pull, crews.head);
+  });
 
   test("a writer asking for changes on the approved head stops it running again", async () => {
+    // Invariant: a writer's changes request withdraws the approval of that head.
     const { pull, head } = await forkPull(carol, lib, "turned");
     await approve(alice, lib, pull);
-    await settle();
-    expect(runsFor(lib, "check", pull, head).length).toBeGreaterThan(0);
+    await ran(lib, "check", pull, head);
     const turned = await submitReview(app, alice, lib, pull, {
       state: "changes_requested",
       body: "Not this.",
@@ -264,14 +357,14 @@ describe("a reader's fork pull runs nothing until a writer approves its head", (
     const { pull, head } = await forkPull(carol, notes, branch);
     await approve(alice, notes, pull);
     const env = `pull-${pull.number}`;
-    const deadline = Date.now() + 90_000;
+    const deadline = Date.now() + 10_000;
     while (
       !listRuns(app.db, notes.id, { kind: "deploy", limit: 100 }).some(
         (r) => r.env === env && r.commitOid === head && r.state === "ok",
       )
     ) {
       if (Date.now() > deadline) throw new Error("preview did not deploy");
-      await Bun.sleep(200);
+      await Bun.sleep(5);
     }
     return { pull, head, env };
   }
@@ -292,6 +385,7 @@ describe("a reader's fork pull runs nothing until a writer approves its head", (
   }
 
   test("a preview asleep at a head nobody approved is taken down, not woken", async () => {
+    // Invariant: waking an asleep preview asks for approval again.
     const { pull, env } = await deployedPreview("sleeper");
     await restart();
     expect(envOf(env)?.state).toBe("asleep");
@@ -299,17 +393,19 @@ describe("a reader's fork pull runs nothing until a writer approves its head", (
     app.db.run("DELETE FROM review WHERE issue_id = ?1", [pull.id]);
     expect(await runtime.wake(notesApp, env as never)).toBeUndefined();
     expect(envOf(env)).toBeUndefined();
-  }, 120_000);
+  }, 20_000);
 
   test("at boot, a preview at a head nobody approved is taken down", async () => {
+    // Invariant: boot takes down a preview whose head nobody approved.
     const { pull, env } = await deployedPreview("booted");
     // As if it had been deployed before the gate: no approval stands.
     app.db.run("DELETE FROM review WHERE issue_id = ?1", [pull.id]);
     await restart();
     expect(envOf(env)).toBeUndefined();
-  }, 120_000);
+  }, 20_000);
 
   test("a writer asking for changes on a running preview's head takes it down at once", async () => {
+    // Invariant: a changes request takes a running reader's preview down.
     const { pull, env } = await deployedPreview("running");
     expect(["running", "deploying"]).toContain(envOf(env)?.state ?? "");
     const turned = await submitReview(app, alice, notes, pull, {
@@ -319,11 +415,12 @@ describe("a reader's fork pull runs nothing until a writer approves its head", (
     expect(turned.ok).toBe(true);
     const deadline = Date.now() + 10_000;
     while (envOf(env) !== undefined && Date.now() < deadline)
-      await Bun.sleep(100);
+      await Bun.sleep(5);
     expect(envOf(env)).toBeUndefined();
-  }, 120_000);
+  }, 20_000);
 
   test("a writer's own preview survives boot and a changes request", async () => {
+    // Invariant: a writer's own preview needs no approval to come back at boot.
     const mine = await commitToBranch(app, alice, notes, {
       branch: "own",
       message: "Own",
@@ -337,12 +434,12 @@ describe("a reader's fork pull runs nothing until a writer approves its head", (
     });
     if (!opened.ok) throw new Error(String(opened.error));
     const env = `pull-${opened.value.number}`;
-    const deadline = Date.now() + 90_000;
+    const deadline = Date.now() + 10_000;
     while (envOf(env)?.state !== "running") {
       if (Date.now() > deadline) throw new Error("preview did not deploy");
-      await Bun.sleep(200);
+      await Bun.sleep(5);
     }
     await restart();
     expect(envOf(env)?.state).toBe("asleep");
-  }, 120_000);
+  }, 20_000);
 });

@@ -5,6 +5,8 @@
  */
 export function editMessage(kind: string): string {
   switch (kind) {
+    case "storage_limit":
+      return "your forks are using all the space a guest gets; delete a fork to make room";
     case "protected_branch":
       return "the default branch is protected; only a repo admin may commit to it directly";
     case "file_too_large":

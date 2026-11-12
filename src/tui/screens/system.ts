@@ -15,11 +15,14 @@
  * its JS heap, an hour a row for the last 24 h, read through `memoryHours`
  * like the page. The gate is the page's (`canSeeMemory`): anyone but a forge
  * admin who is a person gets no rows. Read-only.
+ *
+ * Under the forge line, as /system says it (#10853): a child forge in a cell
+ * its own size and use against it (`selfLines`), and a parent each child's
+ * use against its size (`childLines`), both read through `spawn/usage.ts`.
  */
 
 import type { Ctx, Screen } from "../app/app.ts";
 import type { SystemView } from "../../system/view.ts";
-import type { readHealth } from "../../actions/health.ts";
 import { rolloutLine, type ForgeHealth } from "../../kernel/guard.ts";
 import { canSeeMemory, memoryHours } from "../../boards/memory.ts";
 import { telemetryReader } from "../../actions/telemetry.ts";
@@ -33,6 +36,14 @@ import { style } from "../term/style.ts";
 import { pad, truncate, wrap } from "../term/width.ts";
 import { dialog } from "../ui/widgets.ts";
 import { Scroll, confirmScreen, drawLines, hitScroll, later, pickerScreen } from "./common.ts";
+import type { PaletteEntry } from "./entries.ts";
+import { readHealth } from "../../actions/health.ts";
+import { egressReportedLine } from "../../system/egress_line.ts";
+import { featureHealth } from "../../system/feature_health.ts";
+import { readerPaces } from "../../system/telemetry_reads.ts";
+import { live as liveMachine } from "../../system/live.ts";
+import { childDirOf, listChildrenNow } from "../../actions/spawn.ts";
+import { childrenUse, realSelf, selfUse, sizeWords, useWords, type ChildUseRow, type SelfUse } from "../../spawn/usage.ts";
 
 const WIDTH = 72;
 const GROUPS = 6;
@@ -146,6 +157,46 @@ export function historyLines(session: Session, hours: number): string[] {
 /** Who may grant telemetry:read: the MCP tool's gate (`mayBoards`), a forge admin who is a person. */
 const mayGrant = (session: Session | undefined): boolean => session?.user?.isAdmin === true && session.user.kind !== "agent";
 
+const READER_ROWS = 6;
+
+/**
+ * Who read the telemetry routes in the last 10 minutes and how fast, as /system's
+ * "Telemetry readers" section says it (#9069): route, reader, reads, mean interval,
+ * and a flag for a flow reader under 5 s. Empty for anyone but a forge admin who is a person.
+ */
+export function readerLines(session: Session, now = Date.now()): string[] {
+  if (!mayGrant(session)) return [];
+  const rows = readerPaces(now);
+  if (rows.length === 0) return ["Telemetry readers: none in the last 10 minutes"];
+  const secs = (ms: number | null): string => (ms === null ? "—" : `${(ms / 1000).toFixed(1)} s`);
+  return [
+    "Telemetry readers, last 10 min (route, reader, reads, mean interval)",
+    ...rows.slice(0, READER_ROWS).map((r) =>
+      truncate(`${pad(r.route, 7)} ${pad(r.reader, 22)} ${pad(String(r.reads), 5, "right")} ${pad(secs(r.meanIntervalMs), 8, "right")}${r.tooFast ? "  TOO FAST" : ""}`, WIDTH - 6),
+    ),
+    ...(rows.length > READER_ROWS ? [`… and ${rows.length - READER_ROWS} more`] : []),
+  ];
+}
+
+/**
+ * Absorbed features and their production health, as /system's "Features from
+ * apps" says it (#9887): one line each, the problem after it only when there
+ * is one. Empty for anyone but the owner, and when nothing is absorbed.
+ */
+export function featuresLines(session: Session): string[] {
+  const reader = telemetryReader(session.app, session.user);
+  if (reader?.kind !== "owner") return [];
+  const rows = featureHealth(session.app, reader);
+  if (rows.length === 0) return [];
+  return [
+    "Features from apps",
+    ...rows.slice(0, READER_ROWS).map((r) =>
+      truncate(`${pad(r.name, 20)} ${pad(r.state, 8)} ${[r.commit, r.since].filter((x) => x !== null).join(" · ")}${r.problem === null ? "" : `  ${r.problem}`}`.trimEnd(), WIDTH - 6),
+    ),
+    ...(rows.length > READER_ROWS ? [`… and ${rows.length - READER_ROWS} more`] : []),
+  ];
+}
+
 /** The agents holding the grant, in one line. */
 export function grantLine(session: Session): string {
   const held = grantable(session.db).filter((a) => a.granted).map((a) => a.username);
@@ -195,12 +246,15 @@ export function systemScreen(ctx: Ctx, lines: readonly string[], session: Sessio
     title: "System",
     keys: [binding(["h"], "window"), ...(offered ? [binding(["g"], "grant or take back telemetry")] : []), binding(["enter", "esc", "q"], "close")],
     render(area, s) {
+      const features = featuresLines(session);
       const buttons = dialog(s, area, ctx.theme.c, {
         title: "System",
         body: [
           ...lines,
           "",
           ...history,
+          ...(offered ? ["", ...readerLines(session)] : []),
+          ...(features.length === 0 ? [] : ["", ...features]),
           ...(offered ? ["", grantLine(session), "g: grant or take back telemetry:read"] : []),
         ],
         actions: [{ label: "Close" }],
@@ -260,3 +314,63 @@ export function memoryScreen(session: Session, ctx: Ctx): Screen {
     },
   };
 }
+
+/** This forge's size and its use against it, a line each, as /system's "This forge's size" says it; none on a forge that is no cell child. */
+export function selfLines(self: SelfUse | null): string[] {
+  if (self === null) return [];
+  const w = useWords(self.use);
+  return [
+    `size ${sizeWords(self.size)}`,
+    `  memory ${w.memory}${self.from === "process" ? " (this process alone)" : ""}`,
+    `  cpu    ${self.use.cores === null ? `measuring · ${w.cpu}` : w.cpu}`,
+    `  disk   ${w.disk}`,
+  ];
+}
+
+/** Each child forge's use against its size, a line each, as /system's "Child forges" says it. */
+export function childLines(rows: readonly ChildUseRow[], inner = WIDTH - 6): string[] {
+  if (rows.length === 0) return [];
+  return [
+    "Child forges",
+    ...rows.flatMap((r) => {
+      if (r.use.kind === "shared") return [truncate(`${pad(r.name, 16)} ${r.size} · shared with this forge`, inner)];
+      const w = useWords(r.use);
+      const parts = r.use.kind === "idle" ? ["not running"] : [`memory ${w.memory}`, `cpu ${w.cpu}`, `disk ${w.disk}`];
+      // Figures go on whole, never split across lines: a part that does not fit starts the next line.
+      const lines: string[] = [];
+      for (const part of parts) {
+        const last = lines.length - 1;
+        if (last >= 0 && lines[last]!.length + 3 + part.length <= inner - 2) lines[last] += ` · ${part}`;
+        else lines.push(part);
+      }
+      return [truncate(`${pad(r.name, 16)} ${sizeWords(r.size)}`, inner), ...lines.map((l) => truncate(`  ${l}`, inner))];
+    }),
+  ];
+}
+
+/** The egress fault, one line, as /system says it; nothing when egress is enforced. */
+export function egressLines(session: Session): string[] {
+  const said = egressReportedLine(session.db);
+  return said === null ? [] : [said];
+}
+
+/** The machine, as /system says it, and which agents may read it: the owner's, a person (#1789). */
+export const entry: PaletteEntry = {
+  id: "system",
+  title: "System",
+  hint: "the machine now: CPU, memory, disks, processes",
+  after: ["flow", "system-memory", "boards"],
+  offered: (session) => session.user?.isAdmin === true && session.user.kind !== "agent",
+  run: (session, ctx) => {
+    const self = selfLines(selfUse(realSelf(session.app.config.dataDir)));
+    const kids = childLines(childrenUse(listChildrenNow(session.app), (bodyId) => childDirOf(session.app, bodyId)));
+    ctx.push(systemScreen(ctx, [
+      ...forgeLines(readHealth(session.app, session.user)),
+      ...egressLines(session),
+      ...(self.length === 0 ? [] : ["", ...self]),
+      ...(kids.length === 0 ? [] : ["", ...kids]),
+      "",
+      ...systemLines(liveMachine().read()),
+    ], session));
+  },
+};

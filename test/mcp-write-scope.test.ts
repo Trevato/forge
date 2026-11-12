@@ -1,7 +1,8 @@
 /**
  * Every MCP tool that writes, called with a read-only token, is refused
  * before it writes; every tool that needs an admin token is refused to an
- * `rw` one. The event log and every table's row count stay as they were.
+ * `rw` one. The event log, every table's row count and every counter row
+ * outside `/mcp` stay as they were (see test/helpers/write-snapshot.ts).
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -13,6 +14,7 @@ import { createRepo } from "../src/actions/repos.ts";
 import { createUser } from "../src/core/users.ts";
 import { toolRegistry, toolNames } from "../src/http/mcp.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { ownCount, snapshot } from "./helpers/write-snapshot.ts";
 
 /** Tools this test cannot call as a write, by name, and why. */
 const SKIPPED: Record<string, string> = {};
@@ -31,12 +33,18 @@ const ADMIN_ARGS: Record<string, Record<string, unknown>> = {
   subscription_wake: { id: "u1" },
   subscription_headroom: { id: "u1", percent: 30 },
   prompts: { repo: "alice/game", action: "remove", id: "p1" },
+  release_hold: { reason: "freeze for the demo" },
   telemetry_grant: { agent: "robo", on: true },
   hooks: { repo: "alice/game", action: "add", url: "https://example.com/h", secret: "0123456789abcdef0123" },
   app_domains: { repo: "alice/game", action: "add", host: "game.example.com" },
   backups_destination: { action: "set", bucket: "forge-snaps", accessKey: "AKIA", secretKey: "s3cr3t-key-0123456789" },
   backups_test: { endpoint: "http://127.0.0.1:1", bucket: "b", accessKey: "AKIA", secretKey: "s3cr3t-key-0123456789" },
   rollback: { sha: "a".repeat(40), dryRun: false },
+};
+
+/** Valid arguments for a tool whose write is one call among reads and plans (`readsWhen`): the generic arguments would only read. */
+const WRITE_ARGS: Record<string, Record<string, unknown>> = {
+  flow: { kind: "drift", action: "update", repo: "alice/game", pull: 1 },
 };
 
 /** What `visible()` answers for a tool the token's scope does not open. */
@@ -96,24 +104,10 @@ describe("a token that may only read cannot write through any tool", () => {
   /** Minimal arguments that make the call a real write, not a plan or a list. */
   const writing = (t: ReturnType<typeof toolRegistry>[number]) => {
     if (t.name in ADMIN_ARGS) return ADMIN_ARGS[t.name]!;
+    if (t.name in WRITE_ARGS) return WRITE_ARGS[t.name]!;
     const args: Record<string, unknown> = { dryRun: false, action: "x" };
     if (t.readsWithout !== undefined) args[[t.readsWithout].flat()[0]!] = "x";
     return args;
-  };
-
-  const snapshot = () => {
-    const tables = app.db
-      .query<{ name: string }, []>(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
-      )
-      .all()
-      .map((r) => r.name);
-    return Object.fromEntries(
-      tables.map((n) => [
-        n,
-        app.db.query<{ c: number }, []>(`SELECT count(*) AS c FROM "${n}"`).get()!.c,
-      ]),
-    );
   };
 
   test("the list of skipped tools names only tools that exist", () => {
@@ -124,12 +118,17 @@ describe("a token that may only read cannot write through any tool", () => {
   test("each write is refused for a read-only token, and nothing changes", async () => {
     const writes = toolRegistry().filter((t) => t.writes && !(t.name in SKIPPED));
     expect(writes.length).toBeGreaterThan(50);
-    const before = snapshot();
+    const before = snapshot(app.db);
+    const counted = ownCount(app.db);
     const events = app.db.query("SELECT * FROM event ORDER BY rowid").all();
     const unrefused: string[] = [];
+    const planned: string[] = [];
     for (const t of writes) {
       const args = writing(t);
-      expect(t.plansOnly(args)).toBe(false);
+      if (t.plansOnly(args)) {
+        planned.push(t.name);
+        continue;
+      }
       const body = await rpc(ro, t.name, args);
       const text: string | undefined = body.result?.content?.[0]?.text;
       const refused = t.needsAdminScope
@@ -137,8 +136,11 @@ describe("a token that may only read cannot write through any tool", () => {
         : body.result?.isError === true && text === "forbidden: this token may read, not act";
       if (!refused) unrefused.push(t.name);
     }
+    // A tool named here needs valid arguments in WRITE_ARGS: the generic ones only plan or read.
+    expect(planned).toEqual([]);
     expect(unrefused).toEqual([]);
-    expect(snapshot()).toEqual(before);
+    expect(snapshot(app.db)).toEqual(before);
+    expect(ownCount(app.db)).toBeGreaterThanOrEqual(counted);
     expect(app.db.query("SELECT * FROM event ORDER BY rowid").all()).toEqual(events);
   }, 60_000);
 
@@ -147,7 +149,8 @@ describe("a token that may only read cannot write through any tool", () => {
     expect(admin.length).toBeGreaterThan(0);
     // A new admin-scope tool must be given valid arguments here.
     expect(admin.map((t) => t.name).sort()).toEqual(Object.keys(ADMIN_ARGS).sort());
-    const before = snapshot();
+    const before = snapshot(app.db);
+    const counted = ownCount(app.db);
     const events = app.db.query("SELECT * FROM event ORDER BY rowid").all();
     const answered: string[] = [];
     for (const t of admin) {
@@ -155,7 +158,8 @@ describe("a token that may only read cannot write through any tool", () => {
       if (!notListed(body)) answered.push(t.name);
     }
     expect(answered).toEqual([]);
-    expect(snapshot()).toEqual(before);
+    expect(snapshot(app.db)).toEqual(before);
+    expect(ownCount(app.db)).toBeGreaterThanOrEqual(counted);
     expect(app.db.query("SELECT * FROM event ORDER BY rowid").all()).toEqual(events);
   }, 60_000);
 });

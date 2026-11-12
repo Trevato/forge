@@ -18,6 +18,7 @@
  * one.
  */
 
+import { shellCommand } from "./run_command.ts";
 import { killTree, openCell, type Cell } from "./contain.ts";
 import type { App as Forge } from "../app.ts";
 import { getAppBySlug, type AppRecord } from "../core/apps.ts";
@@ -27,13 +28,20 @@ import { canEnterApp, canRead, canWrite, getRepoById } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { SshSession } from "../ssh/server.ts";
-import { isEnvName, previewEnv, type EnvName } from "./data.ts";
+import {
+  buildEnvFromLabel,
+  isEnvName,
+  previewEnv,
+  type EnvName,
+} from "./data.ts";
 import { appEnv, signalGroup } from "./process.ts";
 import { appsRuntime } from "./runtime.ts";
+import { openAppTty, type AppTtyHandle } from "./tty_registry.ts";
+import { shellIdleMs } from "../machines/shell.ts";
 
 const CRLF = "\r\n";
 
-/** `notes` → production, `notes--12` → the preview of pull 12. */
+/** `notes` → production, `notes--12` → the preview of pull 12, `notes--b1a2b3c4` → the build at 1a2b3c4. */
 export function parseAppLogin(
   login: string,
 ): { slug: string; env: EnvName } | undefined {
@@ -43,6 +51,8 @@ export function parseAppLogin(
     return isSlugLike(name) ? { slug: name, env: "production" } : undefined;
   const slug = name.slice(0, at);
   const number = name.slice(at + 2);
+  const build = buildEnvFromLabel(number);
+  if (isSlugLike(slug) && build !== undefined) return { slug, env: build };
   if (!isSlugLike(slug) || !/^[1-9]\d*$/.test(number)) return undefined;
   const env = previewEnv(Number(number));
   return isEnvName(env) ? { slug, env } : undefined;
@@ -157,11 +167,6 @@ export async function runAppTty(
   }
   if (live.tty === null) return err({ refusal: "no_tty", detail: "" });
 
-  const terminal = new Bun.Terminal({
-    cols: Math.max(1, host.cols || 80),
-    rows: Math.max(1, host.rows || 24),
-    data: (_t, chunk) => host.write(chunk),
-  });
   const env = appEnv({
     port: live.port,
     dataDir: live.dataDir,
@@ -179,6 +184,8 @@ export async function runAppTty(
       target.app.id,
       target.env,
     ),
+    // An absorbed app's settings, as its process was started with.
+    feature: runtime.featureFor(repo, target.app.id, target.env, live.dir),
   });
   env["TERM"] = host.term;
   env["COLORTERM"] = "truecolor";
@@ -191,19 +198,65 @@ export async function runAppTty(
     user === undefined ? "" : canWrite(forge.db, repo, user) ? "admin" : "user";
   // The terminal is held exactly as the app is (`apps/contain.ts`).
   const cell = live.cell === undefined ? undefined : openCell(live.cell);
-  const program = startTerminal(`exec ${live.tty}`, {
-    terminal,
+  const code = await serveTerminal(host, {
+    command: shellCommand(live.tty),
     env,
     cwd: live.dir,
     cell,
+    register: (program) => {
+      forge.log.info("app terminal opened", {
+        app: target.app.slug,
+        env: target.env,
+        user: user?.username ?? "guest",
+      });
+      return openAppTty(forge, {
+        userId: user?.id,
+        repository: `${repo.ownerName}/${repo.name}`,
+        slug: target.app.slug,
+        env: target.env,
+        hangup: program.hangup,
+        idleMs: () => shellIdleMs(forge.db),
+      });
+    },
   });
-  forge.log.info("app terminal opened", {
-    app: target.app.slug,
-    env: target.env,
-    user: user?.username ?? "guest",
-  });
+  return ok(code);
+}
 
+/**
+ * Run `command` on a new pty for `host` until it exits: pty bytes to the
+ * host (stamping the registry's output), host bytes and resizes to the pty
+ * (stamping its input), a hangup when the host goes away, and the registry
+ * entry forgotten however the program ends. `register` is told the started
+ * program and returns the registry's handle for it.
+ */
+export async function serveTerminal(
+  host: TtyHost,
+  options: {
+    command: string;
+    env: Record<string, string>;
+    cwd: string;
+    cell: Cell | undefined;
+    register: (program: TerminalProgram) => AppTtyHandle;
+  },
+): Promise<number> {
+  let held: AppTtyHandle | undefined;
+  const terminal = new Bun.Terminal({
+    cols: Math.max(1, host.cols || 80),
+    rows: Math.max(1, host.rows || 24),
+    data: (_t, chunk) => {
+      held?.output();
+      host.write(chunk);
+    },
+  });
+  const program = startTerminal(options.command, {
+    terminal,
+    env: options.env,
+    cwd: options.cwd,
+    cell: options.cell,
+  });
+  held = options.register(program);
   host.onData((chunk) => {
+    held?.input();
     if (terminal.closed) return;
     try {
       terminal.write(chunk);
@@ -222,8 +275,9 @@ export async function runAppTty(
   host.onClose?.(program.hangup);
   try {
     // `exited`, never the pty's own exit callback (see runEditor).
-    return ok(await program.exited);
+    return await program.exited;
   } finally {
+    held.close();
     terminal.close();
   }
 }
@@ -236,6 +290,9 @@ export interface TerminalProgram {
   /** The host went away: what a closing terminal sends. */
   readonly hangup: () => void;
 }
+
+/** Where `setsid` is, found once; null on a host without util-linux. */
+const SETSID = Bun.which("setsid");
 
 /**
  * Start `command` (through `sh -c`) on `terminal`, held in `cell` when
@@ -256,11 +313,20 @@ export function startTerminal(
   },
 ): TerminalProgram {
   const { cell } = options;
-  const proc = Bun.spawn(cell?.argv(command) ?? ["/bin/sh", "-c", command], {
+  const argv = cell?.argv(command) ?? ["/bin/sh", "-c", command];
+  // Bun's `terminal` gives the child the pty as its stdio but not as its
+  // controlling terminal, so the kernel has no one to tell of a resize: no
+  // SIGWINCH, and tmux never redraws at the new size (#9472). `setsid -c`
+  // (util-linux, Essential on the image's Debian) makes the program lead a
+  // session whose controlling terminal is the pty, in place: it is not a
+  // group leader yet, so setsid execs rather than forks, the pid stays, and
+  // the group is the program's own as `detached` made it.
+  const ctty = SETSID !== null;
+  const proc = Bun.spawn(ctty ? [SETSID, "-c", ...argv] : argv, {
     terminal: options.terminal,
     env: cell?.env(options.env) ?? options.env,
     cwd: options.cwd,
-    detached: cell === undefined,
+    detached: !ctty && cell === undefined,
   });
   const exited = proc.exited.then((code) => {
     cell?.close();
@@ -270,8 +336,9 @@ export function startTerminal(
   cell?.watch(proc.pid, () => killTree(proc.pid));
   const hangup = (): void => {
     if (cell === undefined) {
+      // Hung up right after the start, `setsid` may not have made the group
+      // yet: signal the program itself too, so the hangup is never lost.
       signalGroup(proc.pid, "SIGHUP");
-      return;
     }
     try {
       proc.kill("SIGHUP");

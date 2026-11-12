@@ -16,6 +16,7 @@ import { initBareRepo, repoDir } from "../src/git/repos.ts";
 import { unwrap } from "../src/kernel/result.ts";
 import { anchorKey, type ReviewComment } from "../src/core/reviews.ts";
 import {
+  MAX_DIFF_FILES,
   MAX_FILE_BYTES,
   MAX_LINE_WIDTH,
   renderDiff,
@@ -252,6 +253,21 @@ describe("renderDiff stub budget (the view, not the engine)", () => {
     return { files: [f], additions: f.additions, deletions: f.deletions };
   }
 
+  function many(n: number): Diff {
+    const files = Array.from({ length: n }, (_, i) => file(`f${i}.txt`, []));
+    return { files, additions: 0, deletions: 0 };
+  }
+
+  test("a cut diff says so in one muted line, not a card", () => {
+    const out = renderDiff(many(MAX_DIFF_FILES + 1200)).toString();
+    expect(out).toMatch(
+      /<p class="muted small">\s*1,200 more files not\s+shown\./,
+    );
+    expect(out).not.toContain("card diff-note");
+    const one = renderDiff(many(MAX_DIFF_FILES + 1)).toString();
+    expect(one).toMatch(/1 more file not\s+shown\./);
+  });
+
   test("a normal small file renders its hunk, not a stub", () => {
     const f = file("small.txt", [
       hunk([
@@ -316,5 +332,18 @@ describe("renderDiff stub budget (the view, not the engine)", () => {
     const out = renderDiff(oneFile(f)).toString();
     expect(out).toContain("Diff not shown");
     expect(out).not.toContain("View file");
+  });
+});
+
+describe("renderDiff with no files", () => {
+  test("says No changes. in a plain empty block, not a card", () => {
+    const out = renderDiff({
+      files: [],
+      additions: 0,
+      deletions: 0,
+    } as Diff).toString();
+    expect(out).toContain("No changes.");
+    expect(out).toContain('<p class="empty-title">No changes.</p>');
+    expect(out).not.toMatch(/class="[^"]*\bcard\b/);
   });
 });

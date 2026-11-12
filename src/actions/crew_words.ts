@@ -23,13 +23,15 @@ export const crewRemovedWords = (username: string): string =>
 
 /** A refusal of `addToCrew` or `removeFromCrew`, in words. */
 export function crewRefusal(
-  error: "not_found" | "no_such_agent" | "not_an_agent" | "unverified",
+  error: "not_found" | "no_such_agent" | "not_an_agent" | "unverified" | "role_not_declared",
 ): string {
   switch (error) {
     case "not_an_agent":
       return CREW_NOT_AN_AGENT;
     case "unverified":
       return `${VERIFY_FIRST[0]!.toUpperCase()}${VERIFY_FIRST.slice(1)}.`;
+    case "role_not_declared":
+      return "That agent does not do that job.";
     case "not_found":
       return "Only this repository's admin changes its crew.";
     default:
