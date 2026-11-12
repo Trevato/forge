@@ -11,6 +11,7 @@
  */
 
 import type { App } from "../app.ts";
+import { activeCrewRuns, crewHoldsCore, forgeCpus, holdClock } from "../core/one_core.ts";
 import { createLog } from "../kernel/log.ts";
 import { firstSeen, reportVerdict, seedFirstSeen } from "./verdict.ts";
 import {
@@ -36,8 +37,6 @@ import { isOffBox } from "./off_box.ts";
 import { noteOffBox, recordSnapshotOutcome } from "./outcome.ts";
 import { s3FromEnv, type Store } from "./store.ts";
 import { during } from "../perf/jobs.ts";
-import { crewHoldsCore, forgeCpus } from "../core/one_core.ts";
-import { listActive } from "../core/runs.ts";
 
 const log = createLog("snapshots");
 
@@ -109,6 +108,8 @@ const CATCH_UP_MS = 5 * 60_000;
 const SNAPSHOT_CATCH_UP_MS = 2 * 60_000;
 /** A snapshot still owed is looked for again this often; one boot's look is not the last (#10167). */
 const SNAPSHOT_CHECK_MS = 30 * 60_000;
+/** A snapshot held for a crew run on one CPU looks again this often. */
+const HOLD_RETRY_MS = 30_000;
 
 export function untilDrill(now = Date.now()): number {
   const next = new Date(now);
@@ -153,9 +154,11 @@ export function startSnapshots(
     readonly bucketFirstMs?: number | undefined;
     /** Test seam: the clock `takeIfDue` judges by. */
     readonly now?: (() => number) | undefined;
-    /** Test seams: the forge's CPU count and how many crew runs are active (1 CPU: a run holds the core). */
+    /** Test seams: the forge's CPU count, crew runs working now, how soon a held snapshot looks again, and how long it waits at most. */
     readonly cpus?: (() => number) | undefined;
     readonly activeCrewRuns?: (() => number) | undefined;
+    readonly holdRetryMs?: number | undefined;
+    readonly holdMaxMs?: number | undefined;
     /** Test seam: how soon the first nightly timer fires. */
     readonly nightlyInMs?: number | undefined;
   } = {
@@ -178,6 +181,17 @@ export function startSnapshots(
     return resolvedMirror.store;
   };
   let stopped = false;
+  // On one CPU a due snapshot waits for the crew run to end, for at most
+  // `holdMaxMs`, then is taken anyway so back-to-back runs cannot starve it (#11599).
+  const wait = holdClock(options.holdMaxMs ?? MAX_DEFER_MS);
+  const crewHolds = (): boolean => {
+    if (!crewHoldsCore((options.cpus ?? forgeCpus)(), options.activeCrewRuns ?? (() => activeCrewRuns(app.db)))) {
+      wait.reset();
+      return false;
+    }
+    return wait.held("snapshot", (options.now ?? Date.now)());
+  };
+  const holdRetryMs = options.holdRetryMs ?? options.snapshotCheckMs ?? HOLD_RETRY_MS;
   let inFlight: Promise<Manifest> | undefined;
   let active = 0;
   let running: Progress | undefined;
@@ -189,6 +203,7 @@ export function startSnapshots(
     let offBox: boolean | undefined;
     // After the one before it, however that ended: chained on a failure as it
     // was, every later run failed at once with the old error until a restart.
+    wait.release("snapshot");
     const run = (inFlight ?? Promise.resolve()).catch(() => {}).then(async () => {
       // Resolved per run, so a destination saved on the Backups page is the
       // very next snapshot's.
@@ -271,26 +286,6 @@ export function startSnapshots(
     }
   };
 
-  // One core: a crew run has it, so a due snapshot waits and is taken on the
-  // next tick after the run ends (src/core/one_core.ts). Never forever: after
-  // MAX_DEFER_MS of waiting it is taken anyway. A snapshot running is untouched.
-  let deferredSince: number | undefined;
-  const deferred = (): boolean => {
-    const at = (options.now ?? Date.now)();
-    const held = crewHoldsCore(
-      (options.cpus ?? forgeCpus)(),
-      (options.activeCrewRuns ?? (() => listActive(app.db, "agent").length))(),
-    );
-    if (!held) {
-      deferredSince = undefined;
-      return false;
-    }
-    deferredSince ??= at;
-    if (at - deferredSince >= MAX_DEFER_MS) return false;
-    log.info("snapshot due; a crew run holds the one core, waiting");
-    return true;
-  };
-
   // A restart takes the night's snapshot if the store does not hold it: a
   // release at 08:21 killed the one in flight and nothing took it again (#8742).
   // The manifest is written last, so a snapshot cut short is not one.
@@ -305,9 +300,7 @@ export function startSnapshots(
       log.warn("snapshot catch-up: store unreadable, not taking one now", { error: String(error) });
       return false;
     }
-    if (stopped || active > 0 || !snapshotDue(newest?.finishedAt, (options.now ?? Date.now)())) return false;
-    if (deferred()) return false;
-    deferredSince = undefined;
+    if (stopped || active > 0 || !snapshotDue(newest?.finishedAt, (options.now ?? Date.now)()) || crewHolds()) return false;
     const cut = await cutShort(store, newest?.name);
     log.info("snapshot due or lost; taking one", { newest: newest?.name ?? "none", resuming: cut?.toISOString() ?? "no" });
     await take(cut).catch(() => {});
@@ -411,18 +404,12 @@ export function startSnapshots(
     if (timer !== undefined) clearTimeout(timer);
     timer = undefined;
     if (options.nightly === false || stopped) return;
-    timer = setTimeout(
-      () =>
-        void during("snapshot", () => {
-          if (active === 0 && deferred()) {
-            arm(options.snapshotCheckMs ?? SNAPSHOT_CHECK_MS);
-            return Promise.resolve();
-          }
-          deferredSince = undefined;
-          return take().then(() => {});
-        }).catch(() => {}),
-      ms,
-    );
+    timer = setTimeout(() => {
+      void during("snapshot", async () => {
+        if (active === 0 && crewHolds()) return arm(holdRetryMs);
+        await take();
+      }).catch(() => {});
+    }, ms);
   }
   arm(options.nightlyInMs ?? untilNightly());
 
@@ -496,7 +483,7 @@ export function startSnapshots(
         .catch(() => {})
         .finally(() => {
           bootLookAt = undefined;
-          scheduleCatchUp(options.snapshotCheckMs ?? SNAPSHOT_CHECK_MS);
+          scheduleCatchUp(crewHolds() ? holdRetryMs : (options.snapshotCheckMs ?? SNAPSHOT_CHECK_MS));
         });
     }, ms);
   };

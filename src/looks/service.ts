@@ -408,7 +408,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
       const cpus = options.cpus ?? forgeCpus;
       const active =
         options.activeCrewRuns ?? (() => listActive(app.db, "agent").length);
-      if (crewHoldsCore(cpus(), active())) {
+      if (crewHoldsCore(cpus(), active)) {
         queue.unshift(next);
         return;
       }
