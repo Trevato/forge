@@ -300,6 +300,7 @@ export { route as postApiV1Migrate } from "./postApiV1Migrate.ts";
 export { route as postApiV1Orgs } from "./postApiV1Orgs.ts";
 export { route as postApiV1OrgsOrgTeams } from "./postApiV1OrgsOrgTeams.ts";
 export { route as postApiV1OrgsOrgTeamsTeamMembers } from "./postApiV1OrgsOrgTeamsTeamMembers.ts";
+export { route as postApiV1ReleaseHeartbeat } from "./postApiV1ReleaseHeartbeat.ts";
 export { route as postApiV1Repos } from "./postApiV1Repos.ts";
 export { route as postApiV1ReposOwnerNameApp } from "./postApiV1ReposOwnerNameApp.ts";
 export { route as postApiV1ReposOwnerNameAppDomains } from "./postApiV1ReposOwnerNameAppDomains.ts";

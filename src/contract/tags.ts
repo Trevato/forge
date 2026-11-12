@@ -44,6 +44,7 @@ const ALIAS: Readonly<Record<string, string>> = {
   health: "meta",
   version: "meta",
   releases: "meta",
+  release: "meta",
   changelog: "meta",
   flags: "meta",
   here: "meta",

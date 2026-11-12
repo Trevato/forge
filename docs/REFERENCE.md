@@ -593,6 +593,7 @@ The release keeper (`src/keeper/`, #7557) cuts, promotes and verifies releases o
 - **Where to see it:** the **Release keeper** card on `/releases`, `Release keeper` in the terminal's palette, the **Maintenance** board under `/boards`, MCP `release_keeper` and `GET /api/v1/keeper` (JSON; 403 for a caller who may not read releases), each gated as `/releases` is: a guest sees none of it.
 
 How it works and how to turn it on: [`docs/features/release-keeper.md`](features/release-keeper.md).
+The release tick's heartbeat (`heartbeat`, and `POST /api/v1/release/heartbeat` for a release path outside the forge): [`docs/features/release-heartbeat.md`](features/release-heartbeat.md).
 
 `/changelog` lists the last 30 releases of `FORGE_REPO` (public only) with their pulls, for anyone; the terminal's palette has `Changelog` for the same list. In the terminal, `/` takes a word and keeps the releases whose version or pull titles contain it (`esc` clears it); Enter on a release lists its pulls, and Enter on a pull opens it (`docs/features/changelog.md`).
 

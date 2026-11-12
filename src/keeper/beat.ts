@@ -9,11 +9,13 @@
 
 import type { Database } from "bun:sqlite";
 
-export type Outcome = "cut" | "skipped" | "failed";
+export const OUTCOMES = ["cut", "skipped", "failed"] as const;
+export type Outcome = (typeof OUTCOMES)[number];
+export const isOutcome = (v: unknown): v is Outcome => typeof v === "string" && (OUTCOMES as readonly string[]).includes(v);
 
 /** No heartbeat for this long is itself said. */
 export const SILENT_MS = 60 * 60_000;
-const REASON_MAX = 300;
+export const REASON_MAX = 300;
 
 export interface Beat {
   readonly at: string;
