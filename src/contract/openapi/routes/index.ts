@@ -326,6 +326,7 @@ export { route as postApiV1ReposOwnerNameChecksRecheck } from "./postApiV1ReposO
 export { route as postApiV1ReposOwnerNameContents } from "./postApiV1ReposOwnerNameContents.ts";
 export { route as postApiV1ReposOwnerNameContribute } from "./postApiV1ReposOwnerNameContribute.ts";
 export { route as postApiV1ReposOwnerNameDataEnvFileQuery } from "./postApiV1ReposOwnerNameDataEnvFileQuery.ts";
+export { route as postApiV1ReposOwnerNameDataImport } from "./postApiV1ReposOwnerNameDataImport.ts";
 export { route as postApiV1ReposOwnerNameEdits } from "./postApiV1ReposOwnerNameEdits.ts";
 export { route as postApiV1ReposOwnerNameEgressGrants } from "./postApiV1ReposOwnerNameEgressGrants.ts";
 export { route as postApiV1ReposOwnerNameFollowingConverge } from "./postApiV1ReposOwnerNameFollowingConverge.ts";

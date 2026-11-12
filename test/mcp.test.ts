@@ -371,7 +371,7 @@ describe("the forge over MCP", () => {
       "contribute",
       "limits",
       "app_env",
-      "agents",
+      "agents", "app_data_import",
       "teams",
       "cloud_accounts",
       "cloud_account",

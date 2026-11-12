@@ -106,6 +106,7 @@ export const ASKING: Readonly<Record<string, Asking>> = {
   parent_unlink: { does: "unlink parent-forge sign-in" },
   quotas: { does: "change an account's quotas" },
   spawn: { does: "spawn a child forge" },
+  app_data_import: { does: "load a SQL dump into an app's database" },
   app_deploy: { does: "redeploy or stop an app's production or preview" },
   stop: { does: "stop a crew run" },
   converge: { does: "have a fork's crew merge the parent's updates" },

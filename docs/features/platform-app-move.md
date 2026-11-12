@@ -40,6 +40,43 @@ symlink is refused.
 Secrets: the owner sets each by name
 in the app's settings; they are never pasted into an issue, a pull or a run.
 
+### The database import (built, #11697)
+`POST /api/v1/repos/<owner>/<name>/data-import` with an admin-scope token (or a same-origin
+admin session) and `{ "dump": "<sql text>", "env": "production", "file": "app.db", "replace": false }`
+(`importAppData`, `src/actions/migrate.ts`; engine `src/apps/dump_import.ts`). Only a repository's
+admins; the repository must be an app. The dump is SQL text up to 16 MB (413 past it, counted by
+the bytes read), the kind `sqlite3 .dump` writes. A Postgres dump is not run as it is:
+`pg_dump --inserts --no-owner` output that SQLite accepts works, nothing else (#11698).
+
+What runs is narrower than a statement's first words. `CREATE TABLE` (never `AS`), `CREATE [UNIQUE]
+INDEX`, `BEGIN`, `COMMIT`, `PRAGMA foreign_keys`, and `INSERT INTO <table> [(columns)] VALUES (...)[, (...)]`
+whose values are literals: numbers, strings, `X'..'`, NULL, TRUE, FALSE. `SELECT` and `WITH` outside
+quotes, a function call in a `VALUES` list, and the functions that make a big value from a small
+statement (`randomblob`, `zeroblob`, `printf`, `replace`, `hex`...) are refused with the statement's
+number before anything is written. At most 1,000,000 statements, and each database is capped at
+16,384 pages (64 MiB).
+
+The dump is loaded into a scratch in-memory database (the dump side) and into a new file beside the
+target (the store side). The answer lists each table with its row count and a SHA-256 of its rows in
+rowid order, each value written as SQLite's `quote()` literal, for both sides, and `inserted`: the
+rows the dump's own text declares, counted from its `VALUES` tuples without SQLite. The file replaces
+the target only when the two loads agree on the checksum and each table's rows equal `inserted`;
+otherwise the answer is 409 `mismatch` and nothing changed. An existing file is refused (409
+`exists`) unless `replace` is true, which keeps it as `<file>.before-import-<ms>` (a name no earlier
+backup has; a hard link, so the target is never absent) and renames the new file over it. Put the
+counts and checksums in the migration issue, beside the old node's `SELECT count(*)` per table.
+
+Doors: the terminal's palette entry "Database import" on a repository's admin (`src/tui/screens/dataimport.ts`;
+`i` imports, `r` imports and replaces) reads a `.sql` file already in the app's `imports/` directory
+under the environment's data directory, since a terminal cannot paste 16 MB and must not read a path
+it is given; MCP `app_data_import` takes the text as the API does. All three are the admin's alone.
+
+Not done: the load runs on the request, not in a worker. With only literal values and the caps above
+its time is linear in the dump's bytes (about a second near 16 MB), which is why a worker with a
+timeout was left out; the running app keeps its old file open until it restarts, so import with the app
+stopped or restart it after; the proof shows the load agrees with itself and with the dump's row count,
+not that the old node's dump was complete: compare its row counts too. No web page yet.
+
 ## 4. Rehearse on a preview (person)
 Preview address, a copy of the data, the payment **sandbox** keys. The owner,
 or the shop's owner, places an order and the webhook lands. No cut-over before
@@ -199,7 +236,7 @@ carry a provider id, not a hash, and the new app needs the same client
 credentials set by name or those people sign in as new accounts.
 
 ## What the forge lacks (each is an issue)
-- A database import for an app (`migrate` has no data path): upload a dump, load it, report counts and checksums. (#11697)
+- ~~A database import for an app.~~ Built: see "The database import" above. (#11697)
 - ~~A file and upload copy with a manifest compared on both ends.~~ Done as a script a person runs (#11699); no page or upload from a browser yet.
 - ~~A Postgres app has no home here.~~ Decided, not built: no managed Postgres; port to `bun:sqlite` or keep an external one by `egress` (docs/APPS.md). (#11698)
 - Per-app encrypted backup with a restore proof (`docs/features/backup-truth.md` covers the forge's own, not an app's). (#11701)

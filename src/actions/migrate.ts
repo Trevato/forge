@@ -26,6 +26,10 @@
  * page can watch it. With a crew asked for, the same job then puts the
  * agent on the crew, makes the repository an app, and tells the crew one
  * thing: make it run here, adapting rather than rewriting.
+ *
+ * The data is a second step (`importAppData`, below): a dump a person
+ * uploads is loaded into the app's store and reported per table, counts and
+ * checksums, on both sides (`apps/dump_import.ts`).
  */
 
 import { NOT_A_MEMBER } from "../core/roles.ts";
@@ -77,6 +81,10 @@ import { tell, toldWords } from "./tell.ts";
 import { putFollow, upstreamUrl } from "../core/upstream_follow.ts";
 import { pinFor, remoteGitEnv, type Pin } from "../git/remote-env.ts";
 import { AT_REPOSITORY_LIMIT, NO_SUCH_AGENT } from "./crew_limit_words.ts";
+import { envDataDir, isEnvName } from "../apps/data.ts";
+import { IMPORT_FILE, MAX_STATEMENTS, importDump, type ImportError, type ImportReport } from "../apps/dump_import.ts";
+import { getAppByRepo } from "../core/apps.ts";
+import { canAdmin } from "../core/repos.ts";
 
 /** The whole clone — the HEAD probe and the fetch — gets this long. */
 export const MIGRATE_TIMEOUT_MS = 120_000;
@@ -900,3 +908,90 @@ Adapt, don't rewrite:
 Done means the pull's preview starts, answers its \`health\` path, and does what the original did.`;
 }
 
+
+export type ImportDataError =
+  | "unauthorized"
+  | "not_found"
+  | "no_app"
+  | "invalid_env"
+  | "invalid_file"
+  | ImportError;
+
+/**
+ * Load a SQL dump into an app's store (#11697). Admins of the repository
+ * only; anyone else is told `not_found`. `migrate` brings code and this
+ * brings rows: the dump is vetted, loaded into a scratch database and a new
+ * file, compared table by table, and only then put in place. A refusal
+ * leaves the app's data as it was.
+ */
+export function importAppData(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  input: {
+    readonly dump: string;
+    readonly env?: string;
+    readonly file?: string;
+    readonly replace?: boolean;
+  },
+): Result<ImportReport, ImportDataError> {
+  const user = requireUser(actor);
+  if (!user.ok) return user;
+  if (!canAdmin(app.db, repo, user.value)) return err("not_found");
+  const record = getAppByRepo(app.db, repo.id);
+  if (!record) return err("no_app");
+  const env = input.env ?? "production";
+  if (!isEnvName(env)) return err("invalid_env");
+  const file = input.file ?? "app.db";
+  if (!IMPORT_FILE.test(file)) return err("invalid_file");
+  const done = importDump(
+    envDataDir(app.config.dataDir, record.id, env),
+    file,
+    input.dump,
+    input.replace === true,
+  );
+  if (!done.ok) return err(done.error);
+  storageStale(app, repo.ownerId);
+  app.bus.append({
+    kind: "app.data_imported",
+    repoId: repo.id,
+    actorId: user.value.id,
+    payload: {
+      env,
+      file,
+      tables: done.value.tables.map((t) => ({ table: t.table, rows: t.rows, sha256: t.sha256 })),
+    },
+  });
+  return ok(done.value);
+}
+
+/** An import's refusal in words a person can act on. */
+export function importDataMessage(error: ImportDataError): string {
+  if (typeof error === "string")
+    switch (error) {
+      case "unauthorized":
+        return "Sign in first.";
+      case "not_found":
+        return "No such repository, or you are not its admin.";
+      case "no_app":
+        return "This repository is not an app yet: turn it on under Settings first.";
+      case "invalid_env":
+        return "env is production, or pull-<number> for a preview.";
+      case "invalid_file":
+        return "file is a name ending in .db, with letters, digits, dots, dashes and underscores only.";
+    }
+  switch (error.error) {
+    case "empty":
+      return "The dump has no statements.";
+    case "refused":
+      return `Statement ${error.statement} (${error.kind}) is not allowed: a dump may only CREATE TABLE (not AS), CREATE INDEX, INSERT INTO ... VALUES of plain values, BEGIN, COMMIT and PRAGMA foreign_keys; no SELECT, WITH or function that builds a large value.`;
+    case "invalid":
+      return `Statement ${error.statement} failed: ${error.message}`;
+    case "mismatch":
+      return `The store does not match the dump in ${error.tables.filter((t) => !t.match).map((t) => t.table).join(", ")} (rows or checksum, or not the rows the dump's INSERTs count). Nothing was changed.`;
+    case "too_large":
+      return `The dump has ${error.statements} statements; at most ${MAX_STATEMENTS} are loaded.`;
+    case "exists":
+      return `${error.file} already exists in that environment. Send replace to keep it as ${error.file}.before-import-<time> and load the dump in its place.`;
+  }
+}

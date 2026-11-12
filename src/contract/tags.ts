@@ -88,6 +88,7 @@ const ALIAS: Readonly<Record<string, string>> = {
   orgs: "forges",
   boards: "forges",
   data: "apps",
+  "data-import": "apps",
 };
 
 /** One line on each tag the document lists. */
