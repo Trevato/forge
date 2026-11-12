@@ -366,8 +366,12 @@ async function resolve(ctx: Ctx, kind: OgKind, ref: string): Promise<CardInput |
   if (kind === "audit") return ref === "" ? auditCards(ctx.app).get("", () => auditCardInput(ctx)) : undefined;
   if (kind === "site") return ref === "" ? siteCard(ctx) : undefined;
   if (kind === "repo") return repoCard(ctx, ref);
-  if (!isSlug(ref)) return undefined;
-  const record = getAppBySlug(db, ref);
+  // An app's card is addressed by its repository, never by the slug the
+  // platform runs it under; the slug form stays so cards already shared answer.
+  const [owner, name, extra] = ref.split("~");
+  const byRepo = owner && name && extra === undefined && isSafeName(owner) && isSafeName(name) ? getRepo(db, owner, name) : undefined;
+  if (!byRepo && !isSlug(ref)) return undefined;
+  const record = byRepo ? getAppByRepo(db, byRepo.id) : getAppBySlug(db, ref);
   if (!record || record.access !== "public") return undefined;
   const repo = publicRepo(ctx, getRepoById(db, record.repoId));
   if (!repo) return undefined;
@@ -377,7 +381,6 @@ async function resolve(ctx: Ctx, kind: OgKind, ref: string): Promise<CardInput |
   return {
     ...base,
     ...(images.length ? { images } : {}),
-    title: record.slug,
     lines: [
       ...(base.lines ?? []),
       `${live.state}${live.since ? ` · deployed ${live.since.slice(0, 10)}` : ""}`,

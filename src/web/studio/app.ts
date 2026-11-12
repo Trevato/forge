@@ -555,7 +555,8 @@ export async function studioApp(
     ${liveMount({ repo: base, app: true })}`;
   const response = page({
     ctx,
-    title: `${repo.name}`,
+    title: `${repo.ownerName}/${repo.name}`,
+    siteName: `${repo.ownerName}/${repo.name}`,
     description: appLine({
       private: repo.visibility === "private",
       name: repo.name,

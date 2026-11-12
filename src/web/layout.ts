@@ -117,6 +117,8 @@ export interface PageOptions {
    * signed-out unfurler; absent, the forge's own card (`/og/site.png`) stands in.
    */
   ogImage?: string | undefined;
+  /** The name a preview gives the place: a repository page passes `owner/name`; absent, "forge". */
+  siteName?: string;
   /** This page's feed, advertised in the head so a reader can find it. */
   feed?: { href: string; title: string };
   /** This page's JSON twin, advertised in the head for agents. */
@@ -801,7 +803,7 @@ export function page(options: PageOptions, status = 200): Response {
         />
         <title>${tabTitle(options.title)}</title>
         <meta name="description" content="${pageDescription(options)}" />
-        <meta property="og:site_name" content="Open Platform Forge" />
+        <meta property="og:site_name" content="${options.siteName ?? "Open Platform Forge"}" />
         <meta property="og:type" content="website" />
         <meta property="og:title" content="${options.title}" />
         <meta property="og:description" content="${pageDescription(options)}" />
