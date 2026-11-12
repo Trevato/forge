@@ -43,7 +43,7 @@ export function startForgeScreen(f: Session, ctx: Ctx): Screen {
           return;
         }
         ctx.toast(`${String(made.body["name"] ?? name)} is ready`, "success");
-        ctx.replace(linkScreen(ctx, link));
+        ctx.replace(linkScreen(ctx, link, undefined, { qr: true }));
       } finally {
         busy = false;
         ctx.invalidate();

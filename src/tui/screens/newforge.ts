@@ -156,7 +156,7 @@ export function newForgeScreen(f: Session, ctx: Ctx, initial: Record<string, str
         const name = String(body["name"] ?? val("name"));
         if (typeof link === "string") {
           ctx.toast(`${name} is ready`, "success");
-          ctx.replace(linkScreen(ctx, link));
+          ctx.replace(linkScreen(ctx, link, undefined, { qr: true }));
         } else {
           ctx.toast(`${name} already exists; its link is not shown again`, "attn");
           ctx.pop();
