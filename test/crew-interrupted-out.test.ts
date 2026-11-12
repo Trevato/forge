@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import type { Database } from "bun:sqlite";
+import { listActive, type RunKind } from "../src/core/runs.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,14 +8,17 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
-import { claimRun, createRun, getRun, listQueued } from "../src/core/runs.ts";
+import { claimRun, createRun, getRun } from "../src/core/runs.ts";
 import { createUser } from "../src/core/users.ts";
-import { requeueInterrupted } from "../src/crew/dispatch.ts";
+import { INTERRUPTED_OUT, MAX_INTERRUPTIONS, interruptionBackoffMs, requeue, requeueInterrupted } from "../src/crew/dispatch.ts";
 import { daySpent } from "../src/core/account_ceiling.ts";
 import { noteRunProgress } from "../src/core/runs.ts";
 import { recordUsage, usageTotals } from "../src/core/usage.ts";
 import { STALE_AFTER_MS } from "../src/runs/lease.ts";
 import type { User } from "../src/core/users.ts";
+
+/** Every queued run of one kind, those still waiting out a backoff included. */
+const queuedIncludingWaiting = (db: Database, kind: RunKind) => listActive(db, kind).filter((r) => r.state === "queued");
 
 describe("a run a restart cuts off", () => {
   let dataDir: string;
@@ -23,7 +28,7 @@ describe("a run a restart cuts off", () => {
   let n = 0;
 
   beforeAll(async () => {
-    dataDir = await mkdtemp(join(tmpdir(), "forge-stopped-twice-"));
+    dataDir = await mkdtemp(join(tmpdir(), "forge-interrupted-out-"));
     app = createApp({ dataDir, port: 0 });
     const a = await createUser(app.db, {
       origin: "seed", trusted: true, username: "alice",
@@ -60,8 +65,7 @@ describe("a run a restart cuts off", () => {
       .query("UPDATE run SET heartbeat_at = ?2 WHERE id = ?1")
       .run(id, new Date(Date.now() - STALE_AFTER_MS - 1_000).toISOString());
   };
-  const forIssue = (issueId: string) =>
-    listQueued(app.db, "agent").filter((r) => r.issueId === issueId);
+  const forIssue = (issueId: string) => queuedIncludingWaiting(app.db, "agent").filter((r) => r.issueId === issueId);
 
   test("once: cancelled and queued again", async () => {
     const { issue, run } = await setup();
@@ -73,16 +77,44 @@ describe("a run a restart cuts off", () => {
     expect(again[0]!.summary).toStartWith("interrupted by a restart; queued again");
   });
 
-  test("twice in a row: failed with its reason, nothing queued", async () => {
+  test("each interruption is counted as data and waits 15 s doubling to 4 min", async () => {
+    expect([1, 2, 3, 4, 5, 6, 9].map(interruptionBackoffMs)).toEqual([15_000, 30_000, 60_000, 120_000, 240_000, 240_000, 240_000]);
     const { issue, run } = await setup();
+    let cur = run;
+    for (let i = 1; i <= MAX_INTERRUPTIONS; i++) {
+      lapse(cur.id);
+      const lo = Date.now();
+      requeueInterrupted(app);
+      const hi = Date.now();
+      expect(getRun(app.db, cur.id)!.state).toBe("cancelled");
+      cur = forIssue(issue.id)[0]!;
+      expect(cur.interruptions).toBe(i);
+      const due = Date.parse(cur.notBefore!);
+      expect(due).toBeGreaterThanOrEqual(lo + interruptionBackoffMs(i));
+      expect(due).toBeLessThanOrEqual(hi + interruptionBackoffMs(i));
+    }
+  });
+
+  test("a graceful stop leaves the count and the wait alone, even past the budget", async () => {
+    const { issue, run } = await setup();
+    app.db.query("UPDATE run SET interruptions = ?2 WHERE id = ?1").run(run.id, MAX_INTERRUPTIONS);
+    const now = Date.parse("2026-01-01T00:00:00.000Z");
+    requeue(app, getRun(app.db, run.id)!, "stopped for a restart; queued again", false, now);
+    expect(getRun(app.db, run.id)!.state).toBe("cancelled");
+    const again = forIssue(issue.id);
+    expect(again).toHaveLength(1);
+    expect(again[0]!.interruptions).toBe(MAX_INTERRUPTIONS);
+    expect(again[0]!.notBefore).toBe(new Date(now).toISOString());
+  });
+
+  test("the sixth interruption fails the run with its reason, nothing queued", async () => {
+    const { issue, run } = await setup();
+    app.db.query("UPDATE run SET interruptions = ?2 WHERE id = ?1").run(run.id, MAX_INTERRUPTIONS);
     lapse(run.id);
     requeueInterrupted(app);
-    const second = forIssue(issue.id)[0]!;
-    lapse(second.id);
-    requeueInterrupted(app);
-    const after = getRun(app.db, second.id)!;
+    const after = getRun(app.db, run.id)!;
     expect(after.state).toBe("failed");
-    expect(after.summary).toBe("stopped twice by its forge restarting; not tried again");
+    expect(after.summary).toBe(INTERRUPTED_OUT);
     expect(forIssue(issue.id)).toEqual([]);
   });
 

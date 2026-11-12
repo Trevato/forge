@@ -360,7 +360,7 @@ export async function startCrew(
       for (const runId of inFlight.keys()) abortAgentRun(runId);
       await Promise.all(inFlight.values());
       for (const run of interrupted)
-        requeue(app, run, "stopped for a restart; queued again");
+        requeue(app, run, "stopped for a restart; queued again", false);
       handles.delete(app);
     },
   };
@@ -458,7 +458,7 @@ export function queueAgentRun(
   agent: Agent,
   reason: RunReason,
   actorId?: string,
-  again?: { notBefore: string; attempt: number; summary: string },
+  again?: { notBefore: string; attempt: number; summary: string; interruptions?: number },
   variantGroup?: string,
   retry = false,
   /** The run is this agent's own on the issue: another agent's run does not stand in its way (team reviews). */
@@ -1385,14 +1385,27 @@ function forgetWorkdir(app: App, repo: Repo, pull: Pull): void {
   });
 }
 
-/** What a run says when a restart cut it off a second time in a row. */
-export const STOPPED_TWICE = "stopped twice by its forge restarting; not tried again";
+/** What runs said before the count was kept (#11583): still read as given up on. */
+export const STOPPED_TWICE_LEGACY = "stopped twice by its forge restarting; not tried again";
+/** What a run says when the host cut it off every time it was tried. */
+export const INTERRUPTED_OUT = "the host stopped this run five times; not tried again";
+/** How many interruptions a task takes before it is given up (#11693). */
+export const MAX_INTERRUPTIONS = 5;
+const BACKOFF_FIRST_MS = 15_000;
+const BACKOFF_MAX_MS = 4 * 60_000;
+
+/** The wait before the nth queued-again try (n from 1): 15 s, doubling, at most 4 min. */
+export function interruptionBackoffMs(n: number): number {
+  return Math.min(BACKOFF_MAX_MS, BACKOFF_FIRST_MS * 2 ** Math.max(0, n - 1));
+}
 
 /**
  * A run a dead forge left `running` was cut off with it: its lease has
  * lapsed. Each ends here as cancelled, and the same task goes back on the
- * queue under the same reason — the run that starts reads the whole
- * conversation, so nothing a person said is lost. A run whose lease is
+ * queue after a backoff — the run that starts reads the whole
+ * conversation, so nothing a person said is lost. The interruptions are
+ * counted on the run (`interruptions`); after `MAX_INTERRUPTIONS` the task
+ * fails with `INTERRUPTED_OUT` and Try again. A run whose lease is
  * fresh is being worked by a forge still alive beside this one — the old
  * process of a release, finishing — and is left to it: that forge queues
  * the task again itself when it stops. Runs at boot and on every tick: a
@@ -1401,19 +1414,22 @@ export const STOPPED_TWICE = "stopped twice by its forge restarting; not tried a
 export function requeueInterrupted(app: App): void {
   for (const run of listActive(app.db, "agent")) {
     if (run.state !== "running" || !leaseLapsed(run, STALE_AFTER_MS)) continue;
-    // Queued by an interruption and cut off again: a forge stopped every
-    // 90 s would loop it until its credit is gone. Fail it, saying why.
-    if ((run.summary ?? "").startsWith(REQUEUED_SUMMARY)) {
-      finishRun(app.db, run.id, { state: "failed", summary: STOPPED_TWICE });
-      log.info("run failed, stopped twice", { run: run.id });
-      continue;
-    }
-    requeue(app, run, REQUEUED_SUMMARY);
+    requeue(app, run, REQUEUED_SUMMARY, true);
   }
 }
 
-/** End a run that cannot go on, and put its task back on the queue. */
-function requeue(app: App, run: Run, why: string): void {
+/**
+ * End a run that cannot go on, and put its task back on the queue. Only a
+ * run the host cut off (`interrupted`) spends the budget and waits; a
+ * graceful stop for a restart carries the count over and starts at once.
+ */
+export function requeue(app: App, run: Run, why: string, interrupted: boolean, now = Date.now()): void {
+  const interruptions = run.interruptions + (interrupted ? 1 : 0);
+  if (interrupted && interruptions > MAX_INTERRUPTIONS) {
+    finishRun(app.db, run.id, { state: "failed", summary: INTERRUPTED_OUT });
+    log.info("run given up after interruptions", { run: run.id, interruptions: run.interruptions });
+    return;
+  }
   cancelRun(app.db, run.id, why);
   const task = taskOf(app, run);
   if (task === undefined) return;
@@ -1427,8 +1443,9 @@ function requeue(app: App, run: Run, why: string): void {
     task.reason,
     undefined,
     {
-      notBefore: new Date().toISOString(),
+      notBefore: new Date(now + (interrupted ? interruptionBackoffMs(interruptions) : 0)).toISOString(),
       attempt: run.attempt + 1,
+      interruptions,
       summary: `${why}; carries on where it stopped`,
     },
   );

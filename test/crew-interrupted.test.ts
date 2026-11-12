@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import type { Database } from "bun:sqlite";
+import { listActive, type RunKind } from "../src/core/runs.ts";
 import { chmodSync, existsSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,7 +15,6 @@ import {
   claimRun,
   createRun,
   getRun,
-  listQueued,
   listRuns,
 } from "../src/core/runs.ts";
 import { listPulls } from "../src/core/pulls.ts";
@@ -25,10 +26,15 @@ import { createUser, type User } from "../src/core/users.ts";
 import { startCrew, type CrewHandle } from "../src/crew/dispatch.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
+/** Every queued run of one kind, those still waiting out a backoff included. */
+const queuedIncludingWaiting = (db: Database, kind: RunKind) => listActive(db, kind).filter((r) => r.state === "queued");
+
 /** The crew's tick, injected short: every wait below is for the next tick (#11053). */
 const TICK_MS = 50;
 /** How often a test looks again at a run it waits on. */
 const POLL_MS = 20;
+
+const waiting = (app: App) => queuedIncludingWaiting(app.db, "agent");
 
 describe("a run the last forge left running", () => {
   let dataDir: string;
@@ -159,7 +165,7 @@ describe("a run the last forge left running", () => {
     const after = getRun(app.db, orphan.id)!;
     expect(after.state).toBe("cancelled");
     expect(after.summary).toContain("interrupted by a restart");
-    const queued = listQueued(app.db, "agent").filter(
+    const queued = waiting(app).filter(
       (r) => r.issueId === issue.id && r.state === "queued",
     );
     expect(queued).toHaveLength(1);
@@ -206,7 +212,7 @@ describe("a run the last forge left running", () => {
     const after = getRun(app.db, orphan.id)!;
     expect(after.state).toBe("cancelled");
     expect(after.summary).toContain("interrupted by a restart");
-    const queued = listQueued(app.db, "agent").filter(
+    const queued = waiting(app).filter(
       (r) => r.issueId === issue.id && r.state === "queued",
     );
     expect(queued).toHaveLength(1);
@@ -276,7 +282,7 @@ sleep 120
 
     const ended = getRun(app.db, queuedRun.id)!;
     expect(ended.state === "cancelled" || ended.state === "failed").toBe(true);
-    const again = listQueued(app.db, "agent").filter(
+    const again = waiting(app).filter(
       (r) => r.issueId === issue.id && r.state === "queued",
     );
     expect(again).toHaveLength(1);
@@ -339,7 +345,7 @@ sleep 120
 
     const ended = getRun(app.db, queuedRun.id)!;
     expect(ended.state === "cancelled" || ended.state === "failed").toBe(true);
-    const again = listQueued(app.db, "agent").filter((r) => r.issueId === issue.id && r.state === "queued");
+    const again = waiting(app).filter((r) => r.issueId === issue.id && r.state === "queued");
     expect(again).toHaveLength(1);
     expect(again[0]!.summary).toContain("carries on");
   }, 40_000);
@@ -409,7 +415,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Done while
     expect(ended.state).toBe("ok");
     expect(ended.summary).toMatch(/^opened pull #\d+/);
     expect(
-      listQueued(app.db, "agent").filter((r) => r.issueId === issue.id),
+      waiting(app).filter((r) => r.issueId === issue.id),
     ).toHaveLength(0);
   }, 40_000);
 
@@ -650,7 +656,7 @@ describe("an issue handed to someone else", () => {
     const talk = addComment(app, alice, repo, issue, "I have this one");
     expect(talk.ok).toBe(true);
     expect(
-      listQueued(app.db, "agent").some((r) => r.issueId === issue.id),
+      waiting(app).some((r) => r.issueId === issue.id),
     ).toBe(false);
   });
 
@@ -660,7 +666,7 @@ describe("an issue handed to someone else", () => {
     claimRun(app.db, run.id);
     expect(assignIssue(app, alice, repo, issue, other).ok).toBe(true);
     expect(getRun(app.db, run.id)?.state).toBe("cancelled");
-    const queued = listQueued(app.db, "agent").filter(
+    const queued = waiting(app).filter(
       (r) => r.issueId === issue.id,
     );
     expect(queued).toHaveLength(1);
