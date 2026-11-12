@@ -8,6 +8,7 @@
  * page that sent them, or JSON when the asks panel asked in place.
  */
 
+import type { Routed } from "../../crew/route.ts";
 import { COMPOSER_FIELDS, claimShare, releaseShare } from "../share_target.ts";
 import { mayView } from "../../core/sealed.ts";
 import { holdPull, releasePull } from "../../actions/holds.ts";
@@ -87,7 +88,9 @@ function toldAnswer(
   told: Awaited<ReturnType<typeof tell>>,
   onTold: () => void,
   note = "",
+  subject = "",
 ): Promise<Response> | Response {
+  const named = (message: string): string => prefixed(message, subject);
   if (!told.ok && told.error === "body_too_long")
     return flashOrJson(ctx, back, {
       tone: "danger",
@@ -111,26 +114,28 @@ function toldAnswer(
   // The tell's own page, for a caller that asked for JSON (the palette's row).
   const at = { href: `${repoBase(repo)}/issues/${told.value.issue.number}` };
   // "Build" never silently does nothing: with no credit the person is told, with the way forward.
-  if (!crewCanRun(ctx.app)) return flashOrJson(ctx, back, noCreditFlash(ctx), at);
-  if (note !== "") return flashOrJson(ctx, back, { tone: "attn", message: note }, at);
+  if (!crewCanRun(ctx.app)) return flashOrJson(ctx, back, withSubject(noCreditFlash(ctx), subject), at);
+  if (note !== "") return flashOrJson(ctx, back, { tone: "attn", message: named(note) }, at);
+  return flashOrJson(ctx, back, { message: tellFlashWords(routed, from, subject) }, at);
+}
+
+/** The words for a tell that went: who is on it, or that nobody is on the crew yet; named by the subject. */
+export function tellFlashWords(routed: Routed | undefined, from: string | null, subject: string): string {
   if (routed === undefined)
-    return flashOrJson(
-      ctx,
-      back,
-      {
-        message: `Opened as an issue. Nobody is on the crew to take it yet — add someone under Settings → Crew.`,
-      },
-      at,
-    );
-  const builder = routed.builder;
-  return flashOrJson(
-    ctx,
-    back,
-    {
-      message: `${builder.user.username} is on it — ${routed.size} ${routed.kind}${routed.by === "rule" ? "" : `, ${routed.by} decided in ${routed.ms} ms`}.${from === null ? " Watch it work below." : ""}`,
-    },
-    at,
-  );
+    return prefixed("Opened as an issue. Nobody is on the crew to take it yet — add someone under Settings → Crew.", subject);
+  const decided = routed.by === "rule" ? "" : `, ${routed.by} decided in ${routed.ms} ms`;
+  const watch = from === null ? " Watch it work below." : "";
+  return prefixed(`${routed.builder.user.username} is on it — ${routed.size} ${routed.kind}${decided}.${watch}`, subject);
+}
+
+/** The first ask's flash names the app and the issue it made: "<subject>: <message>"; no subject, the message as is. */
+export function prefixed(message: string, subject: string): string {
+  return subject === "" ? message : `${subject}: ${message}`;
+}
+
+/** A flash with its message prefixed by the subject. */
+function withSubject<T extends { message: string }>(flash: T, subject: string): T {
+  return { ...flash, message: prefixed(flash.message, subject) };
 }
 
 /** The flash for words kept while the crew has no credit: saved, the crew cannot build yet, and the way forward. */
@@ -240,7 +245,9 @@ async function composerTell(ctx: Ctx, form: Form, target: string, home: string, 
     const first = await firstAsk(ctx.app, ctx.auth.user, field(form, COMPOSER_FIELDS.text), crewCanRun(ctx.app), from);
     if (!first.ok) return flashOrJson(ctx, home, { tone: "danger", message: first.error.words });
     const { repo, told, autonomyFailed } = first.value;
-    return toldAnswer(ctx, repo, form, repoBase(repo), from, told, onTold, autonomyFailed ? AUTONOMY_FAILED_WORDS : "");
+    const note = autonomyFailed ? AUTONOMY_FAILED_WORDS : "";
+    const subject = told.ok ? `${repo.name}, issue #${told.value.issue.number}` : "";
+    return toldAnswer(ctx, repo, form, repoBase(repo), from, told, onTold, note, subject);
   }
   // "the forge" is no app: the words are kept as a thought, exactly as typed.
   if (target === FORGE_TARGET) {

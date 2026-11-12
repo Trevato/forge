@@ -26,9 +26,10 @@ import { coveredByVerdict, forgeVerdict, verdictLine } from "../../kernel/guard_
 import { clientAppRows, clientDoings, clientFinished, doingLine, finishedLine } from "../../core/client-apps.ts";
 import { appCrew } from "../../core/app-crew.ts";
 import { nextStepsFor } from "../../core/next-steps.ts";
+import { askRepos, askStatus, askStatusLine } from "../../core/ask-status.ts";
 import { keepThought } from "../../actions/thought.ts";
 import { SAY_SOMETHING_WORDS } from "../../actions/tell_words.ts";
-import { crewFirstText } from "../../web/studio/crew_key.ts";
+import { crewCanRun, crewFirstText } from "../../web/studio/crew_key.ts";
 import { agentsLine } from "../../web/studio/client_home.ts";
 import { lastVisit } from "../../core/home_visit.ts";
 import { sinceDigest } from "../../web/studio/since.ts";
@@ -357,6 +358,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     const crewOf = new Map(appCrew(f.app.db, apps.map((a) => a.repo)).map((c) => [c.repo.id, c] as const));
     const doings = clientDoings(f.app.db, ids);
     const finished = clientFinished(f.app.db, ids);
+    const mine = await askRepos(f.app, f.user);
+    const asked = askStatus(f.app.db, mine, f.user.id, crewCanRun(f.app), f.user.isAdmin === true);
     clientLines =
       apps.length === 0
         ? ["Your apps will appear here."]
@@ -372,6 +375,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
             const crew = crewOf.get(a.repo.id)!.says;
             return `${line}${doing === "" ? "" : ` ${doing}`} ${crew[0]!.toUpperCase()}${crew.slice(1)}.`;
           });
+    if (asked) clientLines = [askStatusLine(asked), ...clientLines];
     ctx.invalidate();
   };
 
