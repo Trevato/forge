@@ -525,6 +525,9 @@ export const VANISHED_SUMMARY = "interrupted: its cluster job vanished; queued a
 /** What a check whose install the machine failed twice says as it is queued again (#5093). */
 export const INFRA_SUMMARY = "failed: infrastructure — the install failed twice on a transient error; queued again";
 
+/** What a check the cell's watch stopped for CPU says as it is queued again once on its own (#11617). */
+export const CPU_STOP_SUMMARY = "failed: infrastructure — stopped for CPU by the cell's watch; queued again";
+
 /**
  * How many times one check may be cut off by its forge going away and be
  * queued again. Past it the check fails once, saying so: a check that kills
@@ -590,6 +593,11 @@ export function vanishedBefore(db: Database, run: Run): boolean {
 /** Whether the attempt just before this one failed on infrastructure: it is queued again once. */
 export function infraBefore(db: Database, run: Run): boolean {
   return cutOffBefore(db, run, INFRA_SUMMARY);
+}
+
+/** Whether the attempt just before this one was stopped for CPU: it is queued again once, the second stop is reported. */
+export function cpuStopBefore(db: Database, run: Run): boolean {
+  return cutOffBefore(db, run, CPU_STOP_SUMMARY);
 }
 
 function cutOffBefore(db: Database, run: Run, prefix: string): boolean {

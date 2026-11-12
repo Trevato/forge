@@ -18,7 +18,7 @@ import { createApp, type App } from "../../src/app.ts";
 import { addToCrew, createAgent } from "../../src/actions/crew.ts";
 import { commitToBranch, createRepo } from "../../src/actions/repos.ts";
 import { startCrew, type CrewHandle } from "../../src/crew/dispatch.ts";
-import { startChecks, type ChecksHandle } from "../../src/checks/service.ts";
+import { startChecks, type ChecksHandle, type ChecksOptions } from "../../src/checks/service.ts";
 import type { Repo } from "../../src/core/repos.ts";
 import { listRuns, type Run } from "../../src/core/runs.ts";
 import { createUser, type User } from "../../src/core/users.ts";
@@ -53,6 +53,8 @@ export async function startStandInCrew(
     readonly installRunner?: InstallRunner;
     /** Files committed to main beside the README. */
     readonly files?: { path: string; content: string }[];
+    /** Stands in for the check step (`ChecksOptions.checkStep`). */
+    readonly checkStep?: ChecksOptions["checkStep"];
   } = {},
 ): Promise<StandInCrew> {
   const dataDir = await mkdtemp(join(tmpdir(), "forge-crew-"));
@@ -198,7 +200,11 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
 `,
   );
   chmodSync(fake, 0o755);
-  const checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
+  const checks = startChecks(app, {
+    forgeUrl: servers.url,
+    concurrency: 1,
+    ...(options.checkStep === undefined ? {} : { checkStep: options.checkStep }),
+  });
   const crew = await startCrew(app, {
     forgeUrl: servers.url,
     localUrl: servers.url,

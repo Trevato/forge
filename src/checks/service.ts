@@ -43,6 +43,7 @@ import {
   VANISHED_SUMMARY,
   infraBefore,
   INFRA_SUMMARY,
+  CPU_STOP_SUMMARY,
   requeueCheck,
   REQUEUED_SUMMARY,
   sweepAbandonedChecks,
@@ -97,6 +98,7 @@ import { CHECK_TIMEOUT_MAX, parseCheck } from "../apps/manifest.ts";
 import { workerCpus } from "../core/capacity.ts";
 import { accountActive } from "../core/accounts.ts";
 import { childEnv, killedStep, runStep } from "../apps/process.ts";
+import { requeueCpuStop } from "./cpu_stop.ts";
 import { noteReached } from "../apps/egress_report.ts";
 import {
   capacityCount,
@@ -110,6 +112,7 @@ import {
   limitWarnings,
   resolveLimits,
   STEP_HOSTS,
+  stoppedForCpu,
   type CellSpec,
 } from "../apps/contain.ts";
 import { summariseCheckFailure } from "./summary.ts";
@@ -173,6 +176,8 @@ export interface ChecksOptions {
   readonly job?: JobOptions | undefined;
   /** How long a transient install failure waits for its retry. @default INSTALL_RETRY_MS */
   readonly installRetryMs?: number | undefined;
+  /** Runs the check step itself; tests stand one in for a stop the cell's watch makes (#11617). @default runStep */
+  readonly checkStep?: typeof runStep | undefined;
   /**
    * How often the default branch is verified after landing at most
    * (`checks/verify.ts`). Unset, no timer asks; `verifyDue` still holds
@@ -863,6 +868,17 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           return;
         }
       }
+      // Stopped for CPU by the cell's watch: the machine's, not the pull's.
+      // Queued once more on its own, and no builder hears check_failed for
+      // it; a second stop in a row is reported as any red is (#11617).
+      if (!outcome.ok && outcome.cpuStop !== undefined) {
+        const moved = requeueCpuStop(app.db, claimed, outcome.cpuStop);
+        if (moved) {
+          write(CPU_STOP_SUMMARY);
+          announceRun(app, moved.again, run.actorId ?? undefined);
+          return;
+        }
+      }
       const seconds = Math.round((Date.now() - started) / 1000);
       const done = finishRun(app.db, run.id, {
         state: outcome.ok ? "ok" : "failed",
@@ -912,7 +928,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         /** A red it cleared as main's (#10304): `base_red.ts`'s words, kept in the summary. */
         cleared?: string;
       }
-    | { ok: false; error: string; detail?: CheckDetail | undefined; infrastructure?: boolean; passed?: readonly string[] }
+    | { ok: false; error: string; detail?: CheckDetail | undefined; infrastructure?: boolean; cpuStop?: string; passed?: readonly string[] }
   > {
     const bare = await runDir(app.db, app.reposRoot, repo, run.issueId);
     // A pull's check is the fast tier, judged against where the pull left
@@ -1004,6 +1020,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         /** A whole verification: the files its log ran to the end green (#9524). */
         passed?: readonly string[];
         infrastructure?: boolean;
+        /** The check step's error when the cell's watch stopped it for CPU (#11617). */
+        cpuStop?: string;
         /** Where it stopped red (#5276); none is before any step ran. */
         stage?: GateStage;
         /** The check step was ended by a signal from outside: no verdict (#6722). */
@@ -1350,7 +1368,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         // echoes the command as its first line before any output of the
         // command's own; that echo is not output to summarise from.
         let sawEcho = false;
-        ran = await runStep("check", command, {
+        ran = await (options.checkStep ?? runStep)("check", command, {
           cwd: dir,
           env,
           log: (line) => {
@@ -1476,6 +1494,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           ...(wholeVerify ? { passed: passedFiles(checkLines) } : {}),
           stage: checkStage(ran.error),
           ...(killed ? { killed } : {}),
+          ...(stoppedForCpu(ran.error) ? { cpuStop: ran.error } : {}),
         };
       }
       // Only a green check of the default branch is kept for the next.

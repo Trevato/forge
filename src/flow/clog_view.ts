@@ -10,6 +10,7 @@ import { getRepoById } from "../core/repos.ts";
 import { clogSays } from "./clog_words.ts";
 import { readClog } from "./clog_read.ts";
 import { conflictPairs } from "./conflict_pairs.ts";
+import { cpuStopReason, cpuStops } from "./cpu_stops.ts";
 import { conflictedPulls } from "./conflicted.ts";
 import { sharedRed } from "./shared_red.ts";
 import { readStranded } from "./stranded.ts";
@@ -74,13 +75,15 @@ export function readClogView(db: Database, now = new Date()): ClogView {
   const conflicted = conflictedPulls(db).filter((c) => approved.has(key(c))).length;
   const hot = warmFiles().sort((a, b) => b.pulls - a.pulls || a.path.localeCompare(b.path))[0];
   const standing = readClog(db, now).standing;
+  // Checks stopped for CPU come first when they are the lane's main failure (#11617).
+  const cpu = cpuStopReason(cpuStops(db, now));
   const says = clogSays({
-    reasons: standing?.reasons ?? [],
+    reasons: [...(cpu === undefined ? [] : [cpu]), ...(standing?.reasons ?? [])],
     conflictedApproved: conflicted,
     hottest: hot,
     strandedUsd: readStranded(db).usd,
   });
-  return { says: shared.length > 0 || pairs.length > 0 || standing || conflicted > 0 ? says : "", shared, pairs: pairs.slice(0, 20) };
+  return { says: shared.length > 0 || pairs.length > 0 || standing || conflicted > 0 || cpu !== undefined ? says : "", shared, pairs: pairs.slice(0, 20) };
 }
 
 

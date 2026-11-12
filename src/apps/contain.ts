@@ -1201,6 +1201,17 @@ export function cpuBreach(
   return `${why}; the busiest process is ${top.name} (pid ${top.pid}, ${spent}s of CPU)`;
 }
 
+/**
+ * Whether a step's error is the watch's CPU stop as `runStep` words it
+ * (`<step> stopped: it used 16.3 cores for 31s, over its limit of 16…`,
+ * #11617). Anchored at the start: a failed step's own output only ever
+ * follows `<step> exited with code N —`, so a check cannot print its way
+ * into reading as stopped for CPU.
+ */
+export function stoppedForCpu(error: string): boolean {
+  return /^[a-z-]+ stopped: it used \d+(?:\.\d+)? cores for \d+s, over its limit of \d/.test(error);
+}
+
 /** A process's command name, printable and short, or "?" once it is gone. */
 function commandName(pid: number): string {
   try {
