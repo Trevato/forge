@@ -1034,6 +1034,11 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     // before the base learned something is judged with it.
     let source = x.commitOid;
     let tip: string | undefined;
+    // The commit the checked tree builds on: the base tip for a merge made
+    // now, the base a combined commit names for a kept fork's pull. The fast
+    // tier diffs against it, so a combined built before main moved is not
+    // charged with main's later changes.
+    let builtOnBase: string | undefined;
     let mergeLine = "";
     if (x.tier === "fast" && x.pull !== undefined) {
       tip = await resolveOid(bare, `refs/heads/${x.pull.baseBranch}`);
@@ -1051,12 +1056,14 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           setRunBase(app.db, x.runId, builtOn);
           setRunCombined(app.db, x.runId, combined.oid);
         }
+        builtOnBase = builtOn;
         mergeLine = `checked as combined with ${x.pull.baseBranch} at ${builtOn.slice(0, 7)} (${combined.oid.slice(0, 7)})`;
       } else {
         const merged = await mergeForCheck(bare, x.pull.baseBranch, tip, x.commitOid);
         if (!merged.ok) return { ok: false, error: merged.error };
         source = merged.commit;
         if (x.runId !== undefined) setRunBase(app.db, x.runId, tip);
+        builtOnBase = tip;
         mergeLine = merged.line;
       }
     }
@@ -1126,10 +1133,10 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           : x.tier === "verify"
             ? manifest.verify!
             : manifest.run;
-    // The fast tier diffs what the pull changes against the base's tip,
-    // which the clone is given as a repository of its own: `origin/main` is
-    // not a ref there.
-    const base = manifest.fast !== null ? tip : undefined;
+    // The fast tier diffs what the pull changes against the commit it builds
+    // on, which the clone is given as a repository of its own: `origin/main`
+    // is not a ref there.
+    const base = manifest.fast !== null ? builtOnBase : undefined;
     // The tree this runs on under this gate has been green before: that is
     // the verdict, and nothing is checked out (#1795).
     const learned =
@@ -1172,7 +1179,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     const cached = restoreCache(
       app.config.dataDir,
       repo.id,
-      tip === undefined ? [] : [tip],
+      builtOnBase === undefined ? [] : [builtOnBase],
       dir,
     );
     if (cached !== undefined) write(`cache from ${cached.slice(0, 7)}`);

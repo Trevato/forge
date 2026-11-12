@@ -10,6 +10,7 @@ import { getPull } from "../src/core/pulls.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { checksForHead, getRun } from "../src/core/runs.ts";
 import { readRunLog } from "../src/runs/log.ts";
+import { readCombined } from "../src/git/combined.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { proveAll } from "./helpers/verified.ts";
 import { promote } from "./helpers/members.ts";
@@ -34,6 +35,8 @@ describe("a kept fork's pull is checked on its combined commit (#9932)", () => {
   let base = "";
   let alice = "";
   let bob = "";
+  /** The kept fork's pull the first test opens; the second checks it again. */
+  let forkPull = 0;
   const cells = process.env["FORGE_CELLS"];
 
   async function git(args: string[], cwd: string): Promise<string> {
@@ -143,6 +146,7 @@ describe("a kept fork's pull is checked on its combined commit (#9932)", () => {
     });
     expect(opened.status).toBe(201);
     const { number } = (await opened.json()) as { number: number };
+    forkPull = number;
     const bare = join(app.reposRoot, "alice", "app.git");
     const tip = await git(["rev-parse", `refs/heads/combined/${number}`], bare).catch(() => "");
     expect(tip).not.toBe("");
@@ -191,5 +195,56 @@ describe("a kept fork's pull is checked on its combined commit (#9932)", () => {
     const inRow = getPull(app.db, getRepo(app.db, "alice", "app")!.id, inNumber)!;
     expect(checksForHead(app.db, inRow.id, inRow.headOid).every((r) => r.combinedOid === "")).toBe(true);
     expect(own.baseOid).toBe(moved);
+  }, 60_000);
+  test("the fast tier diffs a combined commit against the base it was built on, not main's later tip", async () => {
+    const a = join(work, "a");
+    const b = join(work, "b");
+    const bare = join(app.reposRoot, "alice", "app.git");
+    await git(["checkout", "main"], a);
+    // The gate prints the base it was given and what the pull changes against it.
+    await Bun.write(
+      join(a, "forge.json"),
+      JSON.stringify({
+        check: {
+          fast: 'echo "fast base $FORGE_CHECK_BASE"; git diff --name-only "$FORGE_CHECK_BASE"..HEAD | sed "s/^/changed /"',
+          run: "true",
+        },
+      }),
+    );
+    await git(["add", "."], a);
+    await git(["commit", "-m", "a fast gate"], a);
+    await git(["push", "origin", "main"], a);
+    const builtOn = await git(["rev-parse", "HEAD"], a);
+
+    const number = forkPull;
+
+    // Bob pushes again: combined/N is rebuilt on main as it is now.
+    await Bun.write(join(b, "bob2.txt"), "bob\n");
+    await git(["add", "."], b);
+    await git(["commit", "-m", "bob's second"], b);
+    await git(["push", "origin", "main"], b);
+    const head = await git(["rev-parse", "HEAD"], b);
+    let combined = await readCombined(bare, number, head);
+    for (let i = 0; i < 200 && combined?.baseOid !== builtOn; i++) {
+      await Bun.sleep(50);
+      combined = await readCombined(bare, number, head);
+    }
+    expect(combined?.baseOid).toBe(builtOn);
+
+    // Main moves on with no recombine (as when one fails or has not run yet):
+    // the combined commit still names the base it was built on.
+    await git(["checkout", "-b", "late"], a);
+    await Bun.write(join(a, "late.txt"), "late\n");
+    await git(["add", "."], a);
+    await git(["commit", "-m", "late on main"], a);
+    await git(["push", "origin", "late"], a);
+    await git(["update-ref", "refs/heads/main", await git(["rev-parse", "HEAD"], a)], bare);
+
+    expect((await call(`/api/v1/repos/alice/app/pulls/${number}/review-states`, alice, { state: "approved", body: "" })).status).toBe(201);
+    const run = await checked(number);
+    expect(run.state).toBe("ok");
+    expect(run.log).toContain(`fast base ${builtOn}`);
+    expect(run.log).toContain("changed bob2.txt");
+    expect(run.log).not.toContain("changed late.txt");
   }, 60_000);
 });
