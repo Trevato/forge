@@ -15,7 +15,11 @@ the owner's records, put back by hand in one edit. In order:
 3. **Check** (`check`). The sentence says verified, or what is missing. The
    old site still answers: nothing has moved. `GET /__forge/domains/ask?domain=<host>`
    answering 200 is what lets the proxy issue the certificate on the first
-   request (docs/APPS.md, _Your own domain_).
+   request (docs/APPS.md, _Your own domain_). On a verified name the check
+   also asks the name for its certificate over TLS and appends the expiry to
+   the sentence (`Certificate valid until …`, or expired / due within 14
+   days, or not read yet). The proxy renews on its own; this is where a
+   failed renewal shows. It updates when someone presses Check.
 4. **Cut:** replace the old A/CNAME with the CNAME/ALIAS the forge gave. The
    first request to the new name pays for issuing the certificate (a second
    or two); request it once yourself, over https, before telling anyone.
@@ -27,7 +31,7 @@ the owner's records, put back by hand in one edit. In order:
    and the old host's certificate was never touched.
 
 Left out, on purpose: the forge does not edit DNS at a registrar (#11717),
-show the certificate's expiry (#11718), or store the old records for you
+or store the old records for you
 (#11719). This closes #11700 as a runbook over a feature that already ships,
 not as new code.
 

@@ -24,6 +24,7 @@ import {
   type DomainResolver,
 } from "../src/apps/domains.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
+import { certificateSaid, probeCertificate } from "../src/apps/certificate.ts";
 import { createApp as insertApp, type AppRecord } from "../src/core/apps.ts";
 import { addDomain, getDomain, TOKEN_LENGTH } from "../src/core/domains.ts";
 import { listEvents } from "../src/core/events.ts";
@@ -214,6 +215,9 @@ describe("an app gets its own domain", () => {
   let rwToken = "";
   let bobToken = "";
   const dns = new FakeDns();
+  let cert: { expires: Date } | { error: string } = {
+    expires: new Date(Date.now() + 60 * 86_400_000),
+  };
 
   const viaHost = (host: string, path = "/", init: RequestInit = {}) =>
     fetch(`${servers.url}${path}`, {
@@ -314,6 +318,7 @@ describe("an app gets its own domain", () => {
       forgeUrl: servers.url,
       concurrency: 1,
       dns,
+      certificate: async () => cert,
     });
     await runtime.start();
     const a = await createUser(app.db, { origin: "seed", trusted: true,
@@ -478,8 +483,19 @@ describe("an app gets its own domain", () => {
     expect(right.value.verified).toBe(true);
     expect(right.value.verifiedAt).not.toBeNull();
     expect(right.value.said).toBe(
-      `Verified; ${HOST} points at notes.${DOMAIN}.`,
+      `Verified; ${HOST} points at notes.${DOMAIN}. ${certificateSaid(
+        cert,
+        new Date(),
+      )}`,
     );
+    // A renewal that failed shows on the next check, not on expiry day.
+    cert = { expires: new Date(Date.now() - 86_400_000) };
+    const lapsed = await checkAppDomain(app, alice, repo, HOST);
+    expect(lapsed.ok && lapsed.value.said).toContain("renewal has failed");
+    cert = { error: "it could not be reached on port 443" };
+    const unread = await checkAppDomain(app, alice, repo, HOST);
+    expect(unread.ok && unread.value.said).toContain("Certificate: not read");
+    cert = { expires: new Date(Date.now() + 60 * 86_400_000) };
     expect(kinds("app.domain.verified")).toEqual(["app.domain.verified"]);
     // Verified once is verified: a later check leaves its sentence and
     // says so a second time to nobody.
@@ -801,5 +817,81 @@ describe("an app gets its own domain", () => {
     expect(getDomain(app.db, HOST)!.appId).toBe(other.id);
     expect(getDomain(app.db, HOST)!.token).not.toBe(oldToken);
     expect(removeAppDomain(app, alice, repo, HOST).ok).toBe(false);
+  });
+});
+
+describe("the certificate sentence", () => {
+  const now = new Date("2026-11-12T10:00:00Z");
+  const at = (days: number) => new Date(now.getTime() + days * 86_400_000);
+  test("each side of the boundaries says exactly one thing", () => {
+    expect(certificateSaid({ expires: at(-1) }, now)).toBe(
+      "Certificate expired on 2026-11-11: renewal has failed.",
+    );
+    expect(certificateSaid({ expires: at(0) }, now)).toBe(
+      "Certificate expires on 2026-11-12 (0 days): it expires soon.",
+    );
+    expect(certificateSaid({ expires: at(1) }, now)).toBe(
+      "Certificate expires on 2026-11-13 (1 day): it expires soon.",
+    );
+    expect(certificateSaid({ expires: at(14) }, now)).toBe(
+      "Certificate expires on 2026-11-26 (14 days): it expires soon.",
+    );
+    expect(certificateSaid({ expires: at(15) }, now)).toBe(
+      "Certificate valid until 2026-11-27.",
+    );
+    expect(certificateSaid({ error: "it did not resolve" }, now)).toBe(
+      "Certificate: not read — it did not resolve. The proxy issues it on the first https request.",
+    );
+  });
+
+  test("a name that resolves to a private address is never dialled", async () => {
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open() {
+          dialled = true;
+        },
+        data() {},
+      },
+    });
+    let dialled = false;
+    const refused = await probeCertificate("rebind.example.com", {
+      resolve: async () => ["127.0.0.1"],
+      port: server.port,
+    });
+    await Bun.sleep(50);
+    server.stop(true);
+    expect(refused).toEqual({ error: "it resolves to a private address" });
+    expect(dialled).toBe(false);
+    expect(
+      await probeCertificate("rebind.example.com", {
+        resolve: async () => ["93.184.216.34", "10.0.0.5"],
+      }),
+    ).toEqual({ error: "it resolves to a private address" });
+  });
+
+  test("a closed port and an unresolvable name give a sentence, not a throw", async () => {
+    const probe = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { open() {}, data() {} },
+    });
+    const port = probe.port;
+    probe.stop(true);
+    expect(
+      await probeCertificate("closed.example.com", {
+        resolve: async () => ["127.0.0.1"],
+        allow: ["127.0.0.1"],
+        port,
+      }),
+    ).toEqual({ error: "it could not be reached on port 443" });
+    expect(
+      await probeCertificate("nowhere.example.com", {
+        resolve: async () => {
+          throw new Error("ENOTFOUND");
+        },
+      }),
+    ).toEqual({ error: "it does not resolve" });
   });
 });

@@ -14,6 +14,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import type { CertificateProbe } from "./certificate.ts";
 import { cellHides, grantsHere } from "../spawn/hosted-mark.ts";
 import { VERIFYING_NOTE } from "./env_phrase.ts";
 import { listEgressGrants } from "../core/egress_grants.ts";
@@ -171,6 +172,11 @@ export interface RuntimeOptions {
    * its own, so proving `app.example.com` needs no network in a test.
    */
   readonly dns?: DomainResolver | undefined;
+  /**
+   * What a check asks of a verified domain to read its certificate's expiry:
+   * a TLS handshake unless a test hands in its own.
+   */
+  readonly certificate?: CertificateProbe | undefined;
   /**
    * Whether a cloud body can take a burst (`spawn/placement.ts`). Without
    * one every environment is placed on owned metal and a burst queues.
