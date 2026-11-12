@@ -49,9 +49,10 @@ import {
   type IoMax,
 } from "./cgroup.ts";
 import { during } from "../perf/jobs.ts";
+import { isSize, SIZES, type Size } from "../spawn/sizes.ts";
 
 /** `ceiling`: a declaration was cut to the machine's maximum; `declared`: forge.json's own; `default`: neither. */
-export type CeilingFrom = "env" | "pod" | "default";
+export type CeilingFrom = "env" | "pod" | "default" | "size";
 export type MemorySource = "ceiling" | "declared" | "default";
 
 export interface Limits {
@@ -82,13 +83,33 @@ export const DEFAULT_LIMITS: Record<"app" | "step", Limits> = {
 export const STEP_TIME_MAX_MS = 30 * 60_000;
 
 /** The most any declaration gets on this machine. */
-export function maxLimits(podFile = POD_MEMORY_FILE): Limits {
+export function maxLimits(podFile = POD_MEMORY_FILE, size = ownSize()): Limits {
+  const own = size === undefined ? undefined : SIZES[size];
+  const disk = positive(process.env["FORGE_CELL_DISK_MAX_MIB"]) ?? 16384;
   return {
-    memoryMiB: memoryCeiling(process.env["FORGE_CELL_MEMORY_MAX_MIB"], podFile),
-    cpus: availableParallelism(),
-    diskMiB: positive(process.env["FORGE_CELL_DISK_MAX_MIB"]) ?? 16384,
+    memoryMiB: memoryCeiling(process.env["FORGE_CELL_MEMORY_MAX_MIB"], podFile, size),
+    cpus: own === undefined ? availableParallelism() : Math.max(1, Math.min(availableParallelism(), own.cpu)),
+    diskMiB: own === undefined ? disk : Math.min(disk, ownShare(own.diskMiB)),
     timeMs: STEP_TIME_MAX_MS,
   };
+}
+
+/**
+ * The share of a child forge's own size one cell inside it may be given.
+ * A child is held to its size as a whole, the forge and every cell in it
+ * together (`spawn/cell.ts`); a check granted forge.json's 8 GiB in a large
+ * (8 GiB) child took the child over its size and its parent stopped the
+ * forge, check and all: "the forge kept going away under this check (4
+ * times)" on grokbot-agency. The rest is room for the forge itself.
+ */
+export const OWN_SIZE_SHARE = 3 / 4;
+
+const ownShare = (mib: number): number => Math.max(1, Math.floor(mib * OWN_SIZE_SHARE));
+
+/** This forge's size when it is a child in a cell (`FORGE_CELL_SIZE`, set by its parent: `cellEnv`); else none. */
+function ownSize(): Size | undefined {
+  const raw = process.env["FORGE_CELL_SIZE"];
+  return isSize(raw) ? raw : undefined;
 }
 
 /** The pod's own memory limit, where cgroup v2 states it. */
@@ -105,19 +126,33 @@ export const POD_MEMORY_SHARE = 0.75;
 export function memoryCeiling(
   env: string | undefined,
   podFile = POD_MEMORY_FILE,
+  size = ownSize(),
 ): number {
-  return ceiling(env, podFile).mib;
+  return ceiling(env, podFile, size).mib;
 }
 
 /** Where the ceiling comes from: the variable, the pod's `memory.max`, or the fixed default. */
 export function memoryCeilingSource(
   env: string | undefined,
   podFile = POD_MEMORY_FILE,
+  size = ownSize(),
 ): CeilingFrom {
-  return ceiling(env, podFile).from;
+  return ceiling(env, podFile, size).from;
 }
 
+/** The machine's ceiling, held under {@link OWN_SIZE_SHARE} of the forge's own size when it is a child. */
 function ceiling(
+  env: string | undefined,
+  podFile: string,
+  size: Size | undefined,
+): { mib: number; from: CeilingFrom } {
+  const machine = machineCeiling(env, podFile);
+  if (size === undefined) return machine;
+  const own = ownShare(SIZES[size].memoryMiB);
+  return own < machine.mib ? { mib: own, from: "size" } : machine;
+}
+
+function machineCeiling(
   env: string | undefined,
   podFile: string,
 ): { mib: number; from: CeilingFrom } {
@@ -149,9 +184,11 @@ export function limitWarnings(
 function ceilingText(from: CeilingFrom | undefined): string {
   return from === "env"
     ? "FORGE_CELL_MEMORY_MAX_MIB"
-    : from === "pod"
-      ? `${POD_MEMORY_SHARE * 100}% of the pod's memory.max`
-      : "the 4096 MiB default, the host states no memory limit";
+    : from === "size"
+      ? `${OWN_SIZE_SHARE * 100}% of this child forge's own size`
+      : from === "pod"
+        ? `${POD_MEMORY_SHARE * 100}% of the pod's memory.max`
+        : "the 4096 MiB default, the host states no memory limit";
 }
 
 /** Where a cell's memory limit came from, for the line that says it was exceeded. */
