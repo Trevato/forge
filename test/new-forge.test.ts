@@ -79,7 +79,7 @@ describe("+ New forge", () => {
       password: PASSWORD,
     });
     if (!a.ok || !b.ok) throw new Error("users");
-    const repo = await createRepo(app, a.value, { name: "bakery" });
+    const repo = await createRepo(app, a.value, { name: "bakery", visibility: "public" });
     if (!repo.ok) throw new Error("repo");
     const c = await commitFiles(repoDir(app.reposRoot, "alice", "bakery"), {
       branch: "main",

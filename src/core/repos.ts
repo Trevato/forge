@@ -905,6 +905,35 @@ export function listReposVisibleTo(
   return withCounts(db, rows);
 }
 
+/**
+ * What a new forge may take, each repository once, as its source (#11623):
+ * the viewer's own public repositories first, then other people's public
+ * source repositories that run an app. A crew agent's repositories, a fork
+ * of someone else's, and any fork whose parent is also listed are left out.
+ * Within each half, the most recently pushed first. A visitor gets none.
+ */
+export function listReposToTake(db: Database, viewer: User | undefined, limit = 200): Repo[] {
+  if (viewer === undefined) return [];
+  // The candidates are decided in SQL, and a fork whose parent is a candidate
+  // is dropped there too, before LIMIT, so the limit counts only shown rows.
+  const rows = db
+    .query<RepoRow, [string, number]>(
+      `WITH cand(id) AS (
+         SELECT repo.id FROM repo JOIN user ON user.id = repo.owner_id
+         WHERE ${PUBLIC_VISIBLE} AND user.is_agent = 0 AND repo.archived_at IS NULL
+           AND (repo.owner_id = ?1
+                OR (repo.fork_parent_id IS NULL AND EXISTS (SELECT 1 FROM app WHERE app.repo_id = repo.id))))
+       ${SELECT} WHERE repo.id IN (SELECT id FROM cand)
+         AND NOT EXISTS (SELECT 1 FROM cand WHERE cand.id = repo.fork_parent_id)
+       ORDER BY (repo.owner_id = ?1) DESC,
+         COALESCE((SELECT MAX(id) FROM event WHERE repo_id = repo.id AND kind = 'push'), repo.id) DESC
+       LIMIT ?2`,
+    )
+    .all(viewer.id, limit)
+    .map(toRepo);
+  return rows;
+}
+
 /** The columns `toRepo` shows; `issue_seq` is not one, since a sealed report moves it. */
 const SHOWN = [
   "repo.id", "repo.owner_id", "user.username", "repo.name", "repo.visibility", "repo.description",

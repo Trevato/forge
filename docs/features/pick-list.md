@@ -11,3 +11,5 @@
 **Screen readers.** The options are native checkboxes in a fieldset with the legend as its name. A refusal is read with the fieldset (`aria-describedby`). The count is announced when a pick changes, not while filtering.
 
 **The terminal.** `forge` TUI's new-forge screen takes `owner/name` apps as a comma-separated text field and has no checkboxes; it is unaffected.
+
+**Which repositories.** The apps list offers each repository once, as its source (#11623): your own public repositories first, then other people's public source repositories that run an app. A crew agent's repositories, archived ones, and any fork whose parent is also offered are left out, decided in SQL before the 200-row limit so a parent is never cut while its fork stays. The list is a convenience, not the boundary: the submit check still accepts any repository the person may read, because the terminal field and the API take free `owner/name`.
