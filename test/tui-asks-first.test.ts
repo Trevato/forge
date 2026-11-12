@@ -52,6 +52,7 @@ const allowed: readonly { file: string; action: string; reason: string }[] = [
   { file: "src/tui/screens/boards.ts", action: "deleteBoard", reason: "in `remove`, called only on the y of the delete y/n" },
   { file: "src/tui/screens/about.ts", action: "detachFromParent", reason: "the first call is the dry run; the real one is in onChoose" },
   { file: "src/tui/screens/codes.ts", action: "revoke", reason: "in `go`, passed to confirmScreen and yesNo as onChoose" },
+  { file: "src/tui/screens/crew.ts", action: "removeFromCrew", reason: "in `remove`, run only by the confirm helper's onChoose" },
 ];
 
 /** How many lines above a call a `y` key check still guards it. */
