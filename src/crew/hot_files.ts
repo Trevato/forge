@@ -304,3 +304,10 @@ export function hotSays(hold: HotHold): string {
     .join(", ");
   return `#${hold.number} waits: ${files === "" ? "a file it names is hot" : files} (hot at ${HOT_PULLS}).`;
 }
+
+/** Every learned open pull with its files, per repository; memory only, never git (#11454). */
+export function learnedPulls(): { repoId: string; number: number; files: readonly string[] }[] {
+  const out: { repoId: string; number: number; files: readonly string[] }[] = [];
+  for (const [repoId, pulls] of touched) for (const p of pulls.values()) out.push({ repoId, number: p.number, files: p.files });
+  return out;
+}

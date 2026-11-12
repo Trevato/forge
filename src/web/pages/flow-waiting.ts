@@ -22,7 +22,7 @@ export interface Waiting {
 }
 
 /** Open, unlanded pulls whose latest verdict is an approval, with when it came. */
-function approvedRows(db: Database): ApprovedRow[] {
+export function approvedRows(db: Database): ApprovedRow[] {
   return db
     .query<{ repo: string; number: number; at: string }, []>(
       `SELECT ro.username || '/' || r.name AS repo, i.number AS number, a.at AS at

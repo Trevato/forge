@@ -1,7 +1,4 @@
 [
-  "src/flow/clog_words.ts",
-  "src/flow/conflict_pairs.ts",
-  "src/flow/shared_red.ts",
   "src/perf/page_budget.ts",
   "src/spawn/pod.ts",
   "src/tui/ui/qr.ts",
