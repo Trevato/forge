@@ -59,6 +59,39 @@ describe("list price", () => {
   });
 });
 
+describe("list price per family", () => {
+  // 100k in + 20k out: in/1e6*rate_in + out/1e6*rate_out
+  const u = { inputTokens: 100_000, outputTokens: 20_000, cacheWriteTokens: 0, cacheReadTokens: 0 };
+  test.each([
+    ["claude-haiku-5-5", 0.2], // 0.1*1 + 0.02*5 = 0.2
+    ["claude-sonnet-5-5", 0.6], // 0.1*3 + 0.02*15 = 0.6
+    ["claude-opus-5-5", 1.0], // 0.1*5 + 0.02*25 = 1.0
+    ["claude-opus-4-5", 1.0],
+    ["claude-opus-4-1", 3.0], // 0.1*15 + 0.02*75 = 3.0
+    ["claude-opus-4-5-20251101", 1.0], // date-suffixed real id
+    ["claude-opus-4.5", 1.0],
+    ["claude-opus-4_5", 1.0],
+    ["claude-4-5-opus", 1.0],
+    ["claude-opus-4-20250514", 3.0], // Opus 4 stays 15 / 75
+    ["claude-opus-4-1-20250805", 3.0],
+    ["claude-fable-5-2", 3.0], // no published rate: the dearest fallback
+    ["mystery", 3.0], // unknown: dearest, on purpose
+  ])("%s costs $%d", (model, usd) => {
+    expect(listPriceUsd(model, u)).toBeCloseTo(usd, 10);
+  });
+});
+
+describe("list price on the new Opus rate", () => {
+  test("cache write 1.25x and read 0.1x of 5 in: 1M each is 5 + 6.25 + 0.5", () => {
+    expect(listPriceUsd("claude-opus-5-5", { inputTokens: 1e6, outputTokens: 0, cacheWriteTokens: 1e6, cacheReadTokens: 1e6 })).toBeCloseTo(11.75, 10);
+  });
+  test("the issue's case: 60k in + 7.2k out on Opus 5.5 is $0.30 + $0.18 = $0.48, not $1.44", () => {
+    const u = { inputTokens: 60_000, outputTokens: 7_200, cacheWriteTokens: 0, cacheReadTokens: 0 };
+    expect(listPriceUsd("claude-opus-5-5", u)).toBeCloseTo(0.48, 10);
+    expect(listPriceUsd("claude-opus-4-1", u)).toBeCloseTo(1.44, 10);
+  });
+});
+
 describe("a parent funds a child's crew", () => {
   let dir = "";
   let parent: App;
