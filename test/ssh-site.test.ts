@@ -61,13 +61,9 @@ describe("the terminal on the website", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("the landing page invites you in over ssh", async () => {
+  test("the landing page does not offer ssh to a stranger: there is no way to get a forge from it yet", async () => {
     const page = await fetch(`${base}/`).then((r) => r.text());
-    expect(page).toContain("ssh -p 2222 forge.example");
-    expect(page).not.toContain("terminal-line");
-    expect(page).toContain("your key is your identity");
-    expect(page).not.toContain("hero-terminal");
-    expect(page).not.toContain('class="hero');
+    expect(page).not.toContain("ssh -p 2222");
   });
 
   test("the dashboard has a Terminal card, with the host key", async () => {
