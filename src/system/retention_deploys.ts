@@ -17,7 +17,11 @@
 import type { Database } from "bun:sqlite";
 import { transact } from "../kernel/db.ts";
 
-/** Deploys this recent keep their rows. Above `PILLAR_DAYS` (7), the window ask-to-live reads. */
+/**
+ * Deploys this recent keep their rows, by default; an admin moves it with the
+ * `retention.deploy_pull_days` limit (`settings/limits.ts`), never below
+ * `PILLAR_DAYS` (7), the window ask-to-live reads.
+ */
 export const DEPLOY_PULL_KEEP_DAYS = 14;
 /** The least time between two slices of one pass. */
 const DEPLOY_PULL_PACE_MS = 5_000;
@@ -47,6 +51,7 @@ export function pruneDeploys(
   now: Date = new Date(),
   rowCap: number = DEPLOY_PULL_SCAN,
   after = 0,
+  keepDays: number = DEPLOY_PULL_KEEP_DAYS,
 ): Pruned & { readonly next: number } {
   const cap = Math.max(0, Math.floor(rowCap));
   if (cap === 0) return { deleted: 0, more: false, next: after };
@@ -56,7 +61,7 @@ export function pruneDeploys(
     )
     .all(after, cap);
   if (slice.length === 0) return { deleted: 0, more: false, next: 0 };
-  const cutoff = new Date(now.getTime() - DEPLOY_PULL_KEEP_DAYS * 86_400_000).toISOString();
+  const cutoff = new Date(now.getTime() - keepDays * 86_400_000).toISOString();
   const runIds = [...new Set(slice.map((row) => row.run_id))];
   const old = new Set<string>();
   const isOld = db.query<{ id: string; repo_id: string }, [string, string]>(
@@ -94,11 +99,13 @@ export function pruneDeploys(
 /**
  * The crew tick's view of the rule: a batch on each tick while the last one
  * was full, and otherwise one an hour. Returns the batch's result, or
- * undefined when this tick runs none.
+ * undefined when this tick runs none. `keepDays` is read as each slice runs,
+ * so a changed setting governs the next slice.
  */
 export function deployRetention(
   db: Database,
   every: number = 60 * 60_000,
+  keepDays: () => number = () => DEPLOY_PULL_KEEP_DAYS,
 ): (now?: Date) => Pruned | undefined {
   let more = true;
   let last = 0;
@@ -107,7 +114,7 @@ export function deployRetention(
     // Mid-pass, one slice at most every `DEPLOY_PULL_PACE_MS`; a finished pass waits `every`.
     if (now.getTime() - last < (more ? DEPLOY_PULL_PACE_MS : every)) return undefined;
     last = now.getTime();
-    const result = pruneDeploys(db, now, DEPLOY_PULL_SCAN, after);
+    const result = pruneDeploys(db, now, DEPLOY_PULL_SCAN, after, keepDays());
     more = result.more;
     after = result.next;
     return result;

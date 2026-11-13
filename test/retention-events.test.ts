@@ -4,6 +4,7 @@ import { migrations } from "../src/core/schema.ts";
 import { listEvents } from "../src/core/events.ts";
 import { countNotes } from "../src/maintain/keeper/record.ts";
 import { openDb } from "../src/kernel/db.ts";
+import { LIMITS } from "../src/settings/limits.ts";
 import { BATCH_ROWS, KEEP_MS, keptKind, pruneEvents, REST_MS } from "../src/system/retention_events.ts";
 
 const DAY = 86_400_000;
@@ -43,7 +44,9 @@ describe("pruneEvents", () => {
     put(db, "keeper_said", KEEP_MS + 10 * DAY, null, { key: "k1" });
     put(db, "push", KEEP_MS + 5 * DAY);
     const recent: string[] = [];
-    for (let d = 170; d >= 0; d -= 10) recent.push(put(db, d % 20 === 0 ? "secret.read" : "issue.reopened", d * DAY, "r1", { number: d }));
+    // Eighteen rows spread over the window, oldest first, alternating a windowed and a kept kind.
+    for (let i = 17; i >= 0; i--)
+      recent.push(put(db, i % 2 === 0 ? "secret.read" : "issue.reopened", Math.floor((i * (KEEP_MS - DAY)) / 17), "r1", { number: i }));
 
     const cutoff = iso(NOW - KEEP_MS);
     const readers = () => ({
@@ -95,7 +98,22 @@ describe("pruneEvents", () => {
     for (const k of ["issue.closed", "pull.pushed", "repo.detached", "user.created", "push", "keeper_lull", "forge_down", "app.egress.granted"])
       expect(keptKind(k)).toBe(true);
     for (const k of ["secret.read", "forge.spawn.live", "mail.ceiling", "measurement"]) expect(keptKind(k)).toBe(false);
-    expect(KEEP_MS).toBeGreaterThanOrEqual(90 * DAY);
+    // The longest fixed window over an unkept kind is a board's 30d range (`boards/store.ts`).
+    expect(KEEP_MS).toBeGreaterThanOrEqual(30 * DAY);
+    expect(LIMITS["retention.event_days"].default * DAY).toBe(KEEP_MS);
+  });
+
+  test("the keep window is the caller's: rows past it go, rows inside it stay, a batch is bounded", () => {
+    const db = seeded();
+    const keep = 60 * DAY;
+    const past = [put(db, "secret.read", keep + 2 * DAY), put(db, "secret.read", keep + DAY)];
+    // Past the default window, inside this one.
+    const inside = [put(db, "secret.read", KEEP_MS + DAY), put(db, "secret.read", DAY)];
+    expect(pruneEvents(db, NOW, 1, keep)).toMatchObject({ deleted: 1, more: true });
+    expect(pruneEvents(db, NOW, 1, keep)).toMatchObject({ deleted: 1, more: true });
+    expect(pruneEvents(db, NOW, 1, keep)).toMatchObject({ deleted: 0, more: false });
+    for (const id of past) expect(db.query("SELECT 1 FROM event WHERE id = ?1").get(id)).toBeNull();
+    for (const id of inside) expect(db.query("SELECT 1 FROM event WHERE id = ?1").get(id)).not.toBeNull();
   });
 
   test("one 5,000-row batch holds the write lock under 50 ms", () => {

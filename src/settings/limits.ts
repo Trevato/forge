@@ -21,6 +21,8 @@ import {
   type CapacityKey,
 } from "../core/capacity.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { DEPLOY_PULL_KEEP_DAYS } from "../system/retention_deploys.ts";
+import { KEEP_DAYS as EVENT_KEEP_DAYS } from "../system/retention_events.ts";
 
 export type LimitKey =
   | "crew.concurrency"
@@ -55,7 +57,9 @@ export type LimitKey =
   | "model_review.slack_pct"
   | "shell_idle_minutes"
   | "billing.grace_days"
-  | "billing.retention_days";
+  | "billing.retention_days"
+  | "retention.event_days"
+  | "retention.deploy_pull_days";
 
 export interface LimitDef {
   readonly label: string;
@@ -338,6 +342,22 @@ export const LIMITS: Record<LimitKey, LimitDef> = {
     min: 1,
     max: 365,
     reason: "A forge that lapsed may come back, so its data waits this long before anything is allowed to remove it; paying again makes it active at once.",
+  },
+  "retention.event_days": {
+    label: "Days the event log keeps what no page reads at any age",
+    unit: "days",
+    default: EVENT_KEEP_DAYS,
+    min: 7,
+    max: 3_650,
+    reason: "Issue, pull, push and account events are kept at any age; the rest feeds windows of 30 days at most, and kept longer they filled the database past the 2 GiB Bun maps.",
+  },
+  "retention.deploy_pull_days": {
+    label: "Days a deploy keeps the list of pulls it carried",
+    unit: "days",
+    default: DEPLOY_PULL_KEEP_DAYS,
+    min: 7,
+    max: 3_650,
+    reason: "The list is an index over git, rebuilt when an older deploy is opened, and it was the largest table in the database; a week is what ask-to-live reads.",
   },
 };
 

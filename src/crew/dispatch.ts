@@ -42,6 +42,7 @@ import {
 import { closesFromBody, getPull, pullDir, type Pull } from "../core/pulls.ts";
 import { claimedClones, sweepOrphanClones } from "./orphans.ts";
 import { pruneRunFiles } from "../runs/prune.ts";
+import { limitValue } from "../settings/limits.ts";
 import { deployRetention } from "../system/retention_deploys.ts";
 import { crewRoot, isClaimed } from "./workdir.ts";
 import { resolveOpen } from "../core/decisions.ts";
@@ -275,7 +276,7 @@ export async function startCrew(
   // same clock as the pump, so a pick becomes a run on the next tick.
   let lastAutonomy = 0;
   // deploy_pull keeps recent deploys only (#12009): a capped batch a tick while rows remain.
-  const trimDeploys = deployRetention(app.db);
+  const trimDeploys = deployRetention(app.db, undefined, () => limitValue(app.db, "retention.deploy_pull_days"));
   // The sweeps a tick started and has not seen settle: `stop()` waits for
   // them, so none reads `app.db` after its caller closed it (#9977).
   const sweeps = new Set<Promise<unknown>>();
