@@ -375,7 +375,18 @@ export function admits(app: App, repo: Repo, scope: { sealed?: true; sealedBy?: 
   };
 }
 
-/** The map's holds for one viewer: shared by the route and the MCP `map` tool. */
+/** How long a viewer's map holds are reused by the next reader of the same repository. Off under `bun test`. */
+export const mapHeldReuse = { ms: process.env["NODE_ENV"] === "test" ? 0 : 5_000 };
+const mapHeldKept = new WeakMap<App, Map<string, { at: number; holds: ReturnType<typeof mapHolds> }>>();
+
+/**
+ * The map's holds for one viewer: shared by the route and the MCP `map` tool.
+ * The map, the forge view, the terminal's plan and the asks each sorted the
+ * ready list for themselves on every look; a look within five seconds of
+ * another of the same viewer's reads that one. The crew's own tick never comes
+ * through here (it calls `heldBy`) and a question about named issues
+ * (`only`) is worked out fresh.
+ */
 export function mapHeldFor(
   app: App,
   repo: Repo,
@@ -384,12 +395,25 @@ export function mapHeldFor(
   /** Only these issue numbers are worked out: the cost grows with them, not with the ready list. */
   only?: ReadonlySet<number>,
 ): ReturnType<typeof mapHolds> {
+  const reuse = mapHeldReuse.ms > 0 && only === undefined;
+  const key = `${repo.id} ${scope.sealed === true ? "s" : "-"} ${scope.sealedBy ?? ""}`;
+  let kept = mapHeldKept.get(app);
+  if (reuse) {
+    if (kept === undefined) mapHeldKept.set(app, (kept = new Map()));
+    const hit = kept.get(key);
+    if (hit !== undefined && Date.now() - hit.at < mapHeldReuse.ms) return hit.holds;
+  }
   const admit = admits(app, repo, scope);
   const active = listActive(app.db, "agent").filter((r) => r.repoId === repo.id);
   const ready = readyNow(graph).filter((r) => only === undefined || only.has(r.issue.number));
-  return mapHolds(
+  const holds = mapHolds(
     repo,
     heldBy(app, repo, ready, listCrewRoles(app.db, repo.id), active, admit),
     admit,
   );
+  if (reuse && kept !== undefined) {
+    if (kept.size >= 512) kept.clear();
+    kept.set(key, { at: Date.now(), holds });
+  }
+  return holds;
 }

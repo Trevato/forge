@@ -88,3 +88,23 @@ test("the batched run cap agrees with capReached, with and without a director's 
   for (const i of issues) expect(batch.get(i.id)).toBe(capReached(app.db, repo, i, caps(i), now));
   expect(batch.get(issues[0]!.id)).toBe(true);
 });
+
+test("a viewer's map holds are reused inside the window, and named issues are worked out fresh", async () => {
+  const { mapHeldFor, mapHeldReuse } = await import("../src/crew/held.ts");
+  const { repoGraph } = await import("../src/core/dependencies.ts");
+  const { getRepo } = await import("../src/core/repos.ts");
+  const repo = getRepo(app.db, "alice", "shop")!;
+  const graph = repoGraph(app.db, repo.id, { sealed: true });
+  const was = mapHeldReuse.ms;
+  try {
+    mapHeldReuse.ms = 0;
+    expect(mapHeldFor(app, repo, graph, { sealed: true })).not.toBe(mapHeldFor(app, repo, graph, { sealed: true }));
+    mapHeldReuse.ms = 60_000;
+    const first = mapHeldFor(app, repo, graph, { sealed: true });
+    expect(mapHeldFor(app, repo, graph, { sealed: true })).toBe(first);
+    expect(mapHeldFor(app, repo, graph, {})).not.toBe(first);
+    expect(mapHeldFor(app, repo, graph, { sealed: true }, new Set([1]))).not.toBe(first);
+  } finally {
+    mapHeldReuse.ms = was;
+  }
+});
