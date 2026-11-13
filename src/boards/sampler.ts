@@ -29,10 +29,6 @@ import { cpuTarget, readCpus, readPoint, unreadable } from "./machine.ts";
 import { FINE_MS, record, type Point } from "./ring.ts";
 import { readHwmon, readTopology, temperatures } from "./thermal.ts";
 import { during } from "../perf/jobs.ts";
-import { withoutWaiting } from "../kernel/db.ts";
-import { limitValue } from "../settings/limits.ts";
-import { pruneEvents, TICK_ROWS } from "../system/retention_events.ts";
-import { drainSamples } from "../system/retention_samples.ts";
 
 export type Paths = { cgroup: string; proc: string; sys: string };
 export const SYSTEM: Paths = { cgroup: "/sys/fs/cgroup", proc: "/proc", sys: "/sys" };
@@ -151,41 +147,18 @@ export function gaps(paths: Paths): string[] {
   return out;
 }
 
-/**
- * What has left its window goes, a bounded batch at a time: one batch of old events (`system/retention_events.ts`;
- * a busy database skips it and the next call tries again) and the machine samples' (#12007; one drain at once).
- * The sampler's tick does both; with the engine on its own thread (`engine/`) the engine retires the events, and
- * the samples stay here: they are telemetry this connection leaves out of its write clock (`quietly`), which a
- * commit of the engine's connection could not be (`core/write_clock.ts`).
- */
-export function retire(app: App, now: number, what: { events: boolean; flight?: { draining: boolean } }): void {
-  if (what.events)
-    try {
-      withoutWaiting(app.db, () => pruneEvents(app.db, now, TICK_ROWS, limitValue(app.db, "retention.event_days") * 86_400_000));
-    } catch (error) {
-      app.log.warn("event prune failed", { error: String(error) });
-    }
-  const flight = what.flight;
-  if (flight === undefined || flight.draining) return;
-  flight.draining = true;
-  void drainSamples(app.db, () => now)
-    .catch((error) => app.log.warn("machine sample prune failed", { error: String(error) }))
-    .finally(() => { flight.draining = false; });
-}
-
 /** `gaps` is what this sampler cannot read, said once at start and kept here for whoever asks. */
 export type Sampler = { tick(now?: number): void; stop(): void; gaps: readonly string[] };
 
 /** Sample every 15 s into `app.db` until stopped. A failed tick is logged and the next one tries again. */
 export function startSampler(
   app: App,
-  options: { paths?: Paths; cells?: () => readonly CellCounter[]; everyMs?: number; lag?: LoopLag; engineRetiresEvents?: boolean } = {},
+  options: { paths?: Paths; cells?: () => readonly CellCounter[]; everyMs?: number; lag?: LoopLag } = {},
 ): Sampler {
   const paths = options.paths ?? SYSTEM;
   const cells = options.cells ?? cellCounters;
   const lag = options.lag ?? startLoopLag();
   let prev: Counters | undefined;
-  const flight = { draining: false };
   const missing = gaps(paths);
   if (missing.length > 0) app.log.info("machine series unreadable here", { gaps: missing.join("; ") });
   const tick = (now = Date.now()) => {
@@ -196,8 +169,6 @@ export function startSampler(
     } catch (error) {
       app.log.warn("machine sample failed", { error: String(error) });
     }
-    // The same tick retires what has left its window; the events are the engine's when it has a thread.
-    retire(app, now, { events: options.engineRetiresEvents !== true, flight });
   };
   during("sampler", tick);
   const timer = setInterval(() => during("sampler", tick), options.everyMs ?? FINE_MS);

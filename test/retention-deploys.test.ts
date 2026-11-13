@@ -1,9 +1,9 @@
 /**
- * deploy_pull is trimmed to recent deploys (#12009): a deploy whose rows
- * are gone is asked for through the function the run page and the run API
- * use, and the same list comes back from git; one batch deletes rows of old
- * deploys only, keeps the deploy an app is running, and a 5,000-row batch
- * costs a fixed handful of statements, not one per row (#7824: no clock).
+ * The old per-deploy ledger (deploy_pull) is trimmed to recent deploys (#12009) and nothing writes it
+ * any more: a deploy with no rows is asked for through the function the run page and the run API
+ * use, and its list comes from git; one slice deletes rows of old deploys only, keeps the deploy an
+ * app is running, starts only once deploy_landed is filled, and costs a fixed handful of statements,
+ * not one per row (#7824: no clock).
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -27,6 +27,7 @@ import type { Repo } from "../src/core/repos.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import {
   DEPLOY_PULL_KEEP_DAYS,
+  DEPLOY_PULL_SCAN,
   deployRetention,
   pruneDeploys,
 } from "../src/system/retention_deploys.ts";
@@ -111,25 +112,36 @@ describe("deploy_pull retention", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  const record = (runId: string, oid: string) =>
-    recordCarried(app.db, { runId, repoId: repo.id, commitOid: oid, dir });
+  /** What an older release wrote when a deploy finished: one row per pull its commit carries. */
+  const record = async (runId: string, oid: string): Promise<number[]> => {
+    const numbers = await recordCarried(app.db, { runId, repoId: repo.id, commitOid: oid, dir });
+    const insert = app.db.query(
+      "INSERT OR IGNORE INTO deploy_pull (run_id, issue_id, pull_number, merged_oid) VALUES (?1, ?2, ?3, 'o')",
+    );
+    for (const n of numbers) insert.run(runId, getPull(app.db, repo.id, n)!.id, n);
+    return numbers;
+  };
 
-  test("a deploy whose rows are gone gets the same list back from git", async () => {
+  test("a deploy with no rows gets its list from git, and none is written", async () => {
     deploy("rebuilt", merged[1]!.oid, ago(30));
-    const before = await record("rebuilt", merged[1]!.oid);
-    expect(before).toEqual([merged[0]!.number, merged[1]!.number]);
-    app.db.query("DELETE FROM deploy_pull WHERE run_id = 'rebuilt'").run();
-    expect(carriedBy(app.db, "rebuilt")).toEqual([]);
     const run = { id: "rebuilt", repoId: repo.id, kind: "deploy", env: "production", state: "ok", commitOid: merged[1]!.oid };
-    expect(await carriedFor(app.db, run, dir)).toEqual(before);
-    // Kept again, so the next view reads rows.
-    expect(carriedBy(app.db, "rebuilt")).toEqual(before);
+    expect(await carriedFor(app.db, run, dir)).toEqual([merged[0]!.number, merged[1]!.number]);
+    // Kept in memory: the next view is not another walk, and the table holds nothing for it.
+    expect(rows("rebuilt")).toBe(0);
+    expect(await carriedFor(app.db, { ...run, commitOid: start }, dir)).toEqual([merged[0]!.number, merged[1]!.number]);
+  });
+
+  test("a deploy an older release recorded reads its rows until retention trims them", async () => {
+    deploy("older", merged[1]!.oid, ago(0.5));
+    await record("older", merged[1]!.oid);
+    const run = { id: "older", repoId: repo.id, kind: "deploy", env: "production", state: "ok", commitOid: start };
+    // The commit named here carries none: the answer is the rows, not a walk.
+    expect(await carriedFor(app.db, run, dir)).toEqual([merged[0]!.number, merged[1]!.number]);
+    expect(carriedBy(app.db, "older")).toEqual([merged[0]!.number, merged[1]!.number]);
   });
 
   const trimmed = async (id: string): Promise<void> => {
     deploy(id, merged[1]!.oid, ago(30));
-    expect(await record(id, merged[1]!.oid)).toHaveLength(2);
-    app.db.query("DELETE FROM deploy_pull WHERE run_id = ?1").run(id);
   };
   const both = () => [merged[0]!.number, merged[1]!.number];
 
@@ -202,7 +214,7 @@ describe("deploy_pull retention", () => {
     app.db.query("DELETE FROM run").run();
     deploy("old", merged[0]!.oid, ago(DEPLOY_PULL_KEEP_DAYS + 5));
     deploy("running", merged[1]!.oid, ago(DEPLOY_PULL_KEEP_DAYS + 3));
-    deploy("recent-preview", merged[1]!.oid, ago(1), "pull-2");
+    deploy("recent-preview", merged[1]!.oid, ago(0.5), "pull-2");
     for (const id of ["old", "running", "recent-preview"]) await record(id, merged[1]!.oid);
     app.db
       .query("INSERT INTO app (id, repo_id, slug, access) VALUES ('app-1', ?1, 'engine', 'public')")
@@ -230,7 +242,8 @@ describe("deploy_pull retention", () => {
     expect(rows("recent-preview")).toBe(2);
   });
 
-  test("a slice costs a fixed handful of statements whatever the table holds, and a pass goes on a slice at a time at its pace", async () => {
+  test("a slice costs a fixed handful of statements whatever the table holds, and a pass goes on a slice at a time", async () => {
+    app.db.query("DELETE FROM deploy_pull").run();
     deploy("big", merged[0]!.oid, ago(DEPLOY_PULL_KEEP_DAYS + 10));
     const insert = app.db.query(
       "INSERT INTO deploy_pull (run_id, issue_id, pull_number, merged_oid) VALUES ('big', ?1, ?2, 'x')",
@@ -238,41 +251,70 @@ describe("deploy_pull retention", () => {
     app.db.transaction(() => {
       for (let i = 0; i < 7_000; i++) insert.run(`issue-${i}`, i);
     })();
-    const tick = deployRetention(app.db);
+    let ready = false;
+    const tick = deployRetention(app.db, undefined, undefined, () => ready);
+    // Nothing goes before deploy_landed has what the rows hold.
+    expect(tick(now)).toBeUndefined();
+    expect(app.db.query("SELECT COUNT(*) AS n FROM deploy_pull").get()).toEqual({ n: 7_000 });
+    ready = true;
     let first: ReturnType<typeof tick>;
     const cost = await once(app.db, () => {
       first = tick(now);
     });
     expect(first!.more).toBe(true);
-    expect(first!.deleted).toBeGreaterThan(1_900);
+    expect(first!.deleted).toBe(DEPLOY_PULL_SCAN);
     expectWork(cost, { max: 6 });
-    // Mid-pass a slice waits its pace: the same instant runs nothing.
-    expect(tick(now)).toBeUndefined();
-    const at = (s: number) => new Date(now.getTime() + s * 1000);
+    // Each call is one slice, the pacing is the caller's.
     let total = first!.deleted;
     let slices = 1;
-    for (let s = 11; ; s += 11) {
-      const r = tick(at(s))!;
+    for (;;) {
+      const r = tick(now)!;
       total += r.deleted;
       slices++;
       if (!r.more) break;
     }
     expect(total).toBe(7_000);
-    expect(slices).toBe(4);
+    // A slice that ends exactly on the last row cannot know it was the last: one more finds none.
+    expect(slices).toBe(Math.floor(7_000 / DEPLOY_PULL_SCAN) + 1);
     // The pass is over: the next one waits for the hour.
-    expect(tick(at(60))).toBeUndefined();
+    expect(tick(now)).toBeUndefined();
     expect(tick(new Date(now.getTime() + 62 * 60_000))).toMatchObject({ deleted: 0, more: false });
+  });
+
+  test("a slice out of its time budget ends after a chunk of 10 rows, and the next starts after the last row it passed", async () => {
+    app.db.query("DELETE FROM deploy_pull").run();
+    app.db.query("DELETE FROM run").run();
+    app.db.query("DELETE FROM app").run();
+    deploy("slow", merged[0]!.oid, ago(30));
+    const insert = app.db.query("INSERT INTO deploy_pull (run_id, issue_id, pull_number, merged_oid) VALUES ('slow', ?1, ?2, 'x')");
+    app.db.transaction(() => {
+      for (let i = 0; i < 100; i++) insert.run(`i-${i}`, i);
+    })();
+    // A budget already spent: a chunk of 10 rows is looked at, then the slice hands the thread back.
+    const first = pruneDeploys(app.db, now, 100, 0, 1, 0);
+    expect(first).toMatchObject({ deleted: 10, more: true });
+    expect(first.next).toBeGreaterThan(0);
+    let total = first.deleted;
+    let after = first.next;
+    for (;;) {
+      const r = pruneDeploys(app.db, now, 100, after, 1, 0);
+      total += r.deleted;
+      after = r.next;
+      if (!r.more) break;
+    }
+    expect(total).toBe(100);
+    expect(rows("slow")).toBe(0);
   });
 
   test("the keep window is the setting's: deploys past it go, deploys inside it stay, each slice bounded", async () => {
     app.db.query("DELETE FROM deploy_pull").run();
     app.db.query("DELETE FROM run").run();
     app.db.query("DELETE FROM app").run();
-    // Inside the default window, past a 7-day setting.
+    // Inside a 14-day window, past a 7-day setting.
     deploy("past", merged[0]!.oid, ago(9));
     deploy("inside", merged[1]!.oid, ago(3));
     for (const id of ["past", "inside"]) await record(id, merged[1]!.oid);
-    expect(pruneDeploys(app.db, now, 100)).toMatchObject({ deleted: 0 });
+    expect(pruneDeploys(app.db, now, 100, 0, 14)).toMatchObject({ deleted: 0 });
     const alice = getUserByName(app.db, "alice")!;
     expect(setLimit(app.db, "retention.deploy_pull_days", 7, alice.id).ok).toBe(true);
     const tick = deployRetention(app.db, undefined, () => limitValue(app.db, "retention.deploy_pull_days"));

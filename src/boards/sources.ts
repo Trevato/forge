@@ -203,8 +203,8 @@ export const SOURCES: Readonly<Record<string, Source>> = {
     },
   },
   // What the machine used (`boards/sampler.ts`, kept by `system/retention_samples.ts`):
-  // 15-s points for the last 48 h, 5-min points before that, hourly points
-  // past 30 days, never two for one moment.
+  // 15-s points for the last day, 5-min points before that to a week, hourly points
+  // past it, never two for one moment.
   machine: {
     table: "machine_sample",
     owner: "admin",

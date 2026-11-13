@@ -336,8 +336,8 @@ export async function seedHomeFlow(app: App): Promise<HomeFlowSeed> {
       actor: owner,
     });
     db.run(
-      "INSERT INTO deploy_pull (run_id, issue_id, pull_number, merged_oid) VALUES (?1, ?2, ?3, 'l-oid')",
-      [deploy, issue, 1],
+      "INSERT INTO deploy_landed (issue_id, run_id, pull_number, at) VALUES (?1, ?2, ?3, ?4)",
+      [issue, deploy, 1, ago(minutes)],
     );
   }
   return { owner, repos, pulls, issues };

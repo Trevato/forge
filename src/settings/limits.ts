@@ -355,9 +355,9 @@ export const LIMITS: Record<LimitKey, LimitDef> = {
     label: "Days a deploy keeps the list of pulls it carried",
     unit: "days",
     default: DEPLOY_PULL_KEEP_DAYS,
-    min: 7,
+    min: 1,
     max: 3_650,
-    reason: "The list is an index over git, rebuilt when an older deploy is opened, and it was the largest table in the database; a week is what ask-to-live reads.",
+    reason: "The list is an index over git, walked when a deploy is opened, and it was the largest table in the database; nothing writes it now, and ask-to-live reads one row per pull (deploy_landed), so this is how long an older release's rows linger.",
   },
 };
 

@@ -43,6 +43,13 @@
  * Newest-row readers (`web/map_cache.ts`, `spawn/clients.ts`) read MAX and never reach the old end.
  *
  * A new reader that reaches past the window names its kind in KEPT, or it is windowed.
+ *
+ * A third class is a wake-up: an event whose only reader is the live page or the redraw that
+ * hears it as it is appended (`LIVE_KINDS`). `run.shard` patches a pull's checks line when a
+ * shard of its check ends, `usage.delta` redraws the spend graph, `backup.progress` moves a
+ * progress bar; none is listed, counted or replayed for what it said, so each lives `LIVE_KEEP_MS`
+ * (long enough for a reconnecting page to replay what it missed) and not 30 days. On production
+ * `run.shard` alone was 57% of `event`'s rows (1.38M of 2.40M), and every row costs ten index entries.
  */
 import type { Database } from "bun:sqlite";
 
@@ -58,12 +65,26 @@ export const KEEP_DAYS = 30;
 export const KEEP_MS = KEEP_DAYS * DAY_MS;
 /** One batch: small enough to hold the write lock for milliseconds. */
 export const BATCH_ROWS = 5_000;
-/** Rows deleted per transaction: about 7 µs a row across the table's indexes. */
-export const CHUNK_ROWS = 1_000;
-/** What the sampler's 15-s tick asks for: 2.4M old rows in about ten hours, a few ms a tick. */
-export const TICK_ROWS = 1_000;
+/** Rows deleted per transaction: 60 µs a row across the table's ten indexes warm, so about 1 ms. */
+export const CHUNK_ROWS = 20;
+/**
+ * What one slice of the age rule walks: 200 rows took about 9 ms on a copy of production
+ * (a thousand took 43 ms at the median and 56 at the worst), and `retention.ts` runs a slice
+ * every twenty times as long as it took.
+ */
+export const TICK_ROWS = 200;
 /** After a pass reaches rows inside the rule it rests: the next pass starts a day later. */
 export const REST_MS = DAY_MS;
+
+/** The kinds that are wake-ups, not history: what hears one hears it as it is appended. */
+export const LIVE_KINDS: readonly string[] = ["run.shard", "usage.delta", "backup.progress"];
+/** How long a wake-up is kept: a page that reconnects inside it still replays what it missed. */
+export const LIVE_KEEP_MS = 6 * 3_600_000;
+/** Rows one slice of the wake-up rule deletes at most, in one transaction (about 60 µs a row across ten indexes). */
+export const LIVE_SLICE_ROWS = 400;
+/** The time a slice may spend deleting; the clock is read every `LIVE_CHUNK` rows (60 µs a row warm, 500 µs a row on a leaf not yet read). */
+export const LIVE_SLICE_MS = 10;
+const LIVE_CHUNK = 20;
 
 export const KEPT_PREFIXES: readonly string[] = ["issue.", "pull.", "repo.", "user.", "app.egress.", "keeper_"];
 export const KEPT_KINDS: readonly string[] = ["push", "forge_down", "forge_up", "pinned.check", "clog.cleared", "webhook.failing"];
@@ -88,6 +109,7 @@ export function pruneEvents(
   now: number,
   rowCap: number = BATCH_ROWS,
   keepMs: number = KEEP_MS,
+  budgetMs: number = LIVE_SLICE_MS,
 ): { deleted: number; more: boolean; lockMs: number } {
   const cap = Math.max(1, Math.min(BATCH_ROWS, Math.floor(rowCap)));
   const pass = passes.get(db) ?? { after: 0, restUntil: 0 };
@@ -108,10 +130,14 @@ export function pruneEvents(
     }
     old.push(row);
   }
-  const doomed = old.filter((r) => !keptKind(r.kind)).map((r) => r.rowid);
+  const doomedRows = old.filter((r) => !keptKind(r.kind));
+  const doomed = doomedRows.map((r) => r.rowid);
   let deleted = 0;
   let lockMs = 0;
-  // A chunk per transaction, so the write lock is never held for the whole batch.
+  let ranOut = false;
+  const sliceStarted = performance.now();
+  // A chunk per transaction, so the write lock is never held for the whole batch; the clock is read
+  // between chunks, and a slice out of its budget ends there and the pass goes on from the last row it took.
   for (let at = 0; at < doomed.length; at += CHUNK_ROWS) {
     const chunk = doomed.slice(at, at + CHUNK_ROWS);
     const started = performance.now();
@@ -131,7 +157,13 @@ export function pruneEvents(
       deleted += gone.length;
     })();
     lockMs = Math.max(lockMs, performance.now() - started);
+    if (performance.now() - sliceStarted >= budgetMs && at + CHUNK_ROWS < doomed.length) {
+      pass.after = doomedRows[at + chunk.length - 1]!.seq;
+      ranOut = true;
+      break;
+    }
   }
+  if (ranOut) return { deleted, more: true, lockMs };
   if (reached) {
     pass.after = 0;
     pass.restUntil = now + REST_MS;
@@ -139,4 +171,57 @@ export function pruneEvents(
   }
   pass.after = old[old.length - 1]!.seq;
   return { deleted, more: true, lockMs };
+}
+
+/**
+ * One slice of the wake-up rule: of each of `LIVE_KINDS`, its oldest rows by `seq` (the
+ * (kind, seq) index reads them in place, never a scan), those past `keepMs` deleted, at most
+ * `rowCap` in all in one transaction. Nothing is remembered between calls: what went is not
+ * there to be read again, so a slice starts where the last one ended and a repeat is harmless.
+ * `more` is whether a kind still has rows past the window; a row whose delivery is still pending is not offered, so a retry never loses what it sends.
+ */
+export function pruneLiveEvents(
+  db: Database,
+  now: number,
+  rowCap: number = LIVE_SLICE_ROWS,
+  keepMs: number = LIVE_KEEP_MS,
+  budgetMs: number = LIVE_SLICE_MS,
+): { deleted: number; more: boolean } {
+  const cap = Math.max(1, Math.floor(rowCap));
+  const cutoff = new Date(now - keepMs).toISOString();
+  const oldest = db.query<{ rowid: number; created_at: string }, [string, number]>(
+    `SELECT rowid, created_at FROM event
+      WHERE kind = ?1 AND NOT EXISTS (SELECT 1 FROM webhook_delivery d WHERE d.event_id = event.id AND d.state = 'pending')
+      ORDER BY seq LIMIT ?2`,
+  );
+  const doomed: number[] = [];
+  let more = false;
+  for (const kind of LIVE_KINDS) {
+    const room = cap - doomed.length;
+    if (room <= 0) {
+      more = true;
+      break;
+    }
+    const rows = oldest.all(kind, room);
+    const old = rows.filter((r) => r.created_at < cutoff);
+    for (const r of old) doomed.push(r.rowid);
+    // A full page of old rows may have more behind it; a page that met a young row has not.
+    if (old.length === rows.length && rows.length === room) more = true;
+  }
+  if (doomed.length === 0) return { deleted: 0, more };
+  // In chunks, the clock read between them: a slice out of budget ends there and the next starts at the oldest left.
+  const started = performance.now();
+  let deleted = 0;
+  db.transaction(() => {
+    for (let at = 0; at < doomed.length; at += LIVE_CHUNK) {
+      const chunk = doomed.slice(at, at + LIVE_CHUNK);
+      db.query<unknown, [string]>("DELETE FROM event WHERE rowid IN (SELECT value FROM json_each(?1))").run(JSON.stringify(chunk));
+      deleted += chunk.length;
+      if (performance.now() - started >= budgetMs) {
+        if (at + LIVE_CHUNK < doomed.length) more = true;
+        break;
+      }
+    }
+  })();
+  return { deleted, more };
 }

@@ -190,9 +190,9 @@ describe("the ring", () => {
     expect(coarse).toBe((2 * FINE_KEEP_MS) / 300_000);
   });
 
-  test("31 days of 15-s points keep at most 30 days of 5-min roll-ups, hourly past COARSE_KEEP_MS, within 5 s scaled to this machine", () => {
+  test("10 days of 15-s points keep at most a week of 5-min roll-ups, hourly past COARSE_KEEP_MS, within 5 s scaled to this machine", () => {
     const db = fresh();
-    const days = 31;
+    const days = 10;
     const end = T0 + days * 24 * 3_600_000;
     // The budget is 5 s where plain inserts of the same points, in the same
     // batches, take 250 ms; a slower machine gets the same multiple. A roll-up
@@ -222,16 +222,16 @@ describe("the ring", () => {
 
     const count = (step: number) =>
       db.query<{ n: number }, [number]>("SELECT COUNT(*) AS n FROM machine_sample WHERE step = ? AND target = 'forge'").get(step)!.n;
-    // 30 × 288 closed windows, plus those in the hour the edge of the window falls in.
-    expect(count(300)).toBeLessThanOrEqual(30 * 288 + 12);
-    expect(count(300)).toBeGreaterThan(29 * 288);
+    // 7 × 288 closed windows, plus those in the hour the edge of the window falls in.
+    expect(count(300)).toBeLessThanOrEqual(7 * 288 + 12);
+    expect(count(300)).toBeGreaterThan(6 * 288);
     expect(count(15)).toBeLessThanOrEqual(FINE_KEEP_MS / FINE_MS + 1);
     expect(count(15)).toBeGreaterThan(FINE_KEEP_MS / FINE_MS - 20);
     const oldest = db.query<{ at: string }, []>("SELECT MIN(at) AS at FROM machine_sample WHERE step = 300").get()!.at;
     expect(Date.parse(oldest)).toBeGreaterThanOrEqual(Math.floor((now - COARSE_KEEP_MS) / 3_600_000) * 3_600_000);
-    // The day before that is hourly rows, about 24 of them.
-    expect(count(3600)).toBeGreaterThanOrEqual(23);
-    expect(count(3600)).toBeLessThanOrEqual(25);
+    // The 3 days before that are hourly rows, 24 of them a day, all inside their 180 days.
+    expect(count(3600)).toBeGreaterThanOrEqual(3 * 24 - 1);
+    expect(count(3600)).toBeLessThanOrEqual(3 * 24 + 1);
   });
 });
 
@@ -272,7 +272,7 @@ describe("the machine source", () => {
 });
 
 describe("startSampler", () => {
-  test("a tick prunes what has left its window, a batch at a time", () => {
+  test("a tick records the machine and prunes nothing: what has left its window goes in `system/retention.ts`'s own slices", () => {
     const db = fresh();
     const app = { db, log: { warn: () => {}, info: () => {} } } as unknown as App;
     const put = db.prepare("INSERT INTO machine_sample (at, step, target) VALUES (?, ?, 'node')");
@@ -282,12 +282,11 @@ describe("startSampler", () => {
     put.run(new Date(T0).toISOString(), 300);
     const s = startSampler(app, { paths, everyMs: 3_600_000, cells: () => [] });
     try {
-      // The drain's first batch runs inside the tick; only further batches wait a turn.
       s.tick(T0);
     } finally {
       s.stop();
     }
-    expect(db.query("SELECT COUNT(*) AS n FROM machine_sample WHERE step = 15 AND at = ?").get(new Date(old).toISOString())).toEqual({ n: 0 });
+    expect(db.query("SELECT COUNT(*) AS n FROM machine_sample WHERE step = 15 AND at = ?").get(new Date(old).toISOString())).toEqual({ n: 1 });
   });
 
   test("ticks write the forge, its cells and the node into the ring", () => {

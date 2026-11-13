@@ -1868,8 +1868,9 @@ wake every 50 ms; `kernel/loop_lag.ts`), and `checks` and `agents`, the
 checks and crew runs running at the instant. The **Serving** starting board
 draws the lag beside them.
 `boards/ring.ts` keeps it in
-`machine_sample`: 15-s points for 24 h and 5-min mean and max for 30 days,
-dropping what leaves its window on every write. A file this machine lacks
+`machine_sample`: 15-s points for 24 h, 5-min mean and max for 7 days and hourly
+mean and max for 180 days, rolled up and dropped a slice at a time
+(`system/retention_samples.ts`, run by `system/retention.ts`). A file this machine lacks
 leaves its series absent, never zero, and `/boards/data?source=machine`
 names each one. Its rows belong to no repo, so only an every-repo scope
 reads them; the sources list carries each column's unit in `docs`.

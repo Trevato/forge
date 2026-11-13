@@ -5,7 +5,8 @@ import { listEvents } from "../src/core/events.ts";
 import { countNotes } from "../src/maintain/keeper/record.ts";
 import { openDb } from "../src/kernel/db.ts";
 import { LIMITS } from "../src/settings/limits.ts";
-import { BATCH_ROWS, KEEP_MS, keptKind, pruneEvents, REST_MS } from "../src/system/retention_events.ts";
+import { expectWork } from "./helpers/work.ts";
+import { BATCH_ROWS, KEEP_MS, keptKind, LIVE_KEEP_MS, LIVE_SLICE_ROWS, pruneEvents, pruneLiveEvents, REST_MS } from "../src/system/retention_events.ts";
 
 const DAY = 86_400_000;
 const NOW = Date.parse("2026-11-13T12:00:00.000Z");
@@ -125,31 +126,124 @@ describe("pruneEvents", () => {
     })();
     db.exec("PRAGMA foreign_keys = ON");
     pruneEvents(db, NOW, 100); // warm the statements
-    const { deleted, lockMs } = pruneEvents(db, NOW, BATCH_ROWS);
+    const { deleted, lockMs } = pruneEvents(db, NOW, BATCH_ROWS, KEEP_MS, Infinity);
     expect(deleted).toBe(BATCH_ROWS);
     expect(lockMs).toBeGreaterThan(0);
     expect(lockMs).toBeLessThan(50);
   });
 });
 
-describe("the sampler's tick", () => {
-  test("prunes a batch of old events, the same periodic job as the machine_sample rule", async () => {
-    const { startSampler } = await import("../src/boards/sampler.ts");
+describe("pruneEvents out of its time budget", () => {
+  test("ends after a chunk and the pass goes on from the last row it took, losing and repeating none", () => {
     const db = seeded();
-    // The sampler ticks once at start with the clock's own now, so the rows are aged from it.
-    const now = Date.now();
-    const gone = put(db, "secret.read", KEEP_MS + DAY + (NOW - now), null);
-    const kept = put(db, "secret.read", DAY + (NOW - now), null);
-    db.exec("PRAGMA foreign_keys = ON");
-    const app = { db, log: { warn: () => {}, info: () => {} } } as unknown as import("../src/app.ts").App;
-    const nowhere = { cgroup: "/nowhere", proc: "/nowhere", sys: "/nowhere" };
-    const s = startSampler(app, { paths: nowhere, everyMs: 3_600_000, cells: () => [] });
-    try {
-      s.tick(now);
-      expect(db.query("SELECT 1 FROM event WHERE id = ?1").get(gone)).toBeNull();
-      expect(db.query("SELECT 1 FROM event WHERE id = ?1").get(kept)).not.toBeNull();
-    } finally {
-      s.stop();
+    const all: string[] = [];
+    for (let i = 0; i < 200; i++) all.push(put(db, "secret.read", KEEP_MS + 2 * DAY + (200 - i) * 1000, null));
+    const young = put(db, "secret.read", DAY, null);
+    let deleted = 0;
+    let slices = 0;
+    for (;;) {
+      const r = pruneEvents(db, NOW, 100, KEEP_MS, 0);
+      deleted += r.deleted;
+      slices++;
+      if (!r.more) break;
     }
+    expect(deleted).toBe(200);
+    expect(slices).toBeGreaterThan(3);
+    expect(db.query("SELECT 1 FROM event WHERE id = ?1").get(young)).not.toBeNull();
+    expect(db.query("SELECT COUNT(*) AS n FROM event").get()).toEqual({ n: 1 });
+  });
+});
+
+describe("pruneLiveEvents: wake-ups live hours, not 30 days", () => {
+  const HOUR = 3_600_000;
+  const gone = (db: Database, id: string) => db.query("SELECT 1 FROM event WHERE id = ?1").get(id) === null;
+
+  test("run.shard, usage.delta and backup.progress older than the window go; history of any kind stays", () => {
+    const db = seeded();
+    const old = [
+      put(db, "run.shard", 30 * DAY, "r1", { shard: 1, of: 8 }),
+      put(db, "usage.delta", 20 * DAY, "r1", { runId: "x" }),
+      put(db, "backup.progress", 9 * HOUR, null, { objects: 1, bytes: 2 }),
+      put(db, "run.shard", LIVE_KEEP_MS + HOUR, "r1"),
+    ];
+    const young = [
+      put(db, "run.shard", LIVE_KEEP_MS - HOUR, "r1"),
+      put(db, "usage.delta", HOUR, "r1"),
+      // Not wake-ups: a run's own history is read by the boards at 30 days.
+      put(db, "run.started", 10 * DAY, "r1"),
+      put(db, "run.finished", 10 * DAY, "r1"),
+      put(db, "issue.opened", 100 * DAY, "r1"),
+    ];
+    const first = pruneLiveEvents(db, NOW);
+    expect(first).toEqual({ deleted: old.length, more: false });
+    for (const id of old) expect(gone(db, id)).toBe(true);
+    for (const id of young) expect(gone(db, id)).toBe(false);
+    // Idempotent: nothing is left to take, and nothing is remembered between slices.
+    expect(pruneLiveEvents(db, NOW)).toEqual({ deleted: 0, more: false });
+  });
+
+  test("a slice out of its time budget ends there and the next goes on from the oldest left", () => {
+    const db = seeded();
+    for (let i = 0; i < 200; i++) put(db, "run.shard", 2 * DAY + (200 - i) * 1000);
+    // A budget already spent: one chunk of 20 is taken, then the slice hands the thread back.
+    const first = pruneLiveEvents(db, NOW, 200, LIVE_KEEP_MS, 0);
+    expect(first).toEqual({ deleted: 20, more: true });
+    let total = first.deleted;
+    for (let more = true; more; ) {
+      const r = pruneLiveEvents(db, NOW, 200, LIVE_KEEP_MS, 0);
+      total += r.deleted;
+      more = r.more;
+    }
+    expect(total).toBe(200);
+  });
+
+  test("a slice is bounded by its cap, and a pass goes on until every kind is inside its window", () => {
+    const db = seeded();
+    const all: string[] = [];
+    for (let i = 0; i < 50; i++) all.push(put(db, i % 2 === 0 ? "run.shard" : "usage.delta", 2 * DAY + (50 - i) * 1000));
+    const young = put(db, "run.shard", HOUR);
+    let slices = 0;
+    let deleted = 0;
+    for (;;) {
+      const r = pruneLiveEvents(db, NOW, 8);
+      expect(r.deleted).toBeLessThanOrEqual(8);
+      deleted += r.deleted;
+      slices++;
+      if (!r.more) break;
+    }
+    expect(deleted).toBe(50);
+    expect(slices).toBeGreaterThan(5);
+    expect(gone(db, young)).toBe(false);
+  });
+
+  test("an event whose delivery is pending is not offered, so a retry never loses what it sends", () => {
+    const db = seeded();
+    const pending = put(db, "run.shard", 3 * DAY);
+    db.query("INSERT INTO webhook_delivery (id, webhook_id, event_id, state) VALUES ('dp', 'w1', ?1, 'pending')").run(pending);
+    const done = put(db, "run.shard", 3 * DAY);
+    db.query("INSERT INTO webhook_delivery (id, webhook_id, event_id, state) VALUES ('dd', 'w1', ?1, 'ok')").run(done);
+    db.exec("PRAGMA foreign_keys = ON");
+    // A pending one in front never stalls a pass behind it.
+    expect(pruneLiveEvents(db, NOW, 1)).toEqual({ deleted: 1, more: true });
+    expect(pruneLiveEvents(db, NOW)).toEqual({ deleted: 0, more: false });
+    expect(gone(db, pending)).toBe(false);
+    expect(gone(db, done)).toBe(true);
+  });
+
+  test("a slice of the cap is one transaction of a statement a chunk of rows, however many rows wait", async () => {
+    const db = seeded();
+    const insert = db.query("INSERT INTO event (id, kind, repo_id, payload, created_at) VALUES (?1, 'run.shard', 'r1', '{}', ?2)");
+    db.transaction(() => {
+      for (let i = 0; i < 6_000; i++) insert.run(`s${String(i).padStart(8, "0")}`, iso(NOW - 2 * DAY + i));
+    })();
+    pruneLiveEvents(db, NOW, 1);
+    let r = { deleted: 0, more: false };
+    const cost = await (await import("./helpers/statements.ts")).once(db, () => {
+      r = pruneLiveEvents(db, NOW);
+    });
+    expect(r.deleted).toBe(LIVE_SLICE_ROWS);
+    expect(r.more).toBe(true);
+    // Three reads, and a delete for each chunk of 20 of its 400 rows: fixed by the cap, not by the table.
+    expectWork(cost, { max: 26 });
   });
 });

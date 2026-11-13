@@ -113,10 +113,11 @@ function seedWeek(db: Fixture["app"]["db"], repoId: string, served: string[]): v
     `INSERT INTO run (id, repo_id, kind, env, state, serving_at, finished_at)
      VALUES (?1, ?2, 'deploy', 'production', 'ok', ?3, ?3)`,
   );
-  const carry = db.query(
-    "INSERT INTO deploy_pull (run_id, issue_id, pull_number, merged_oid) VALUES (?1, ?2, ?3, 'o')",
+  const landed = db.query(
+    "INSERT INTO deploy_landed (issue_id, run_id, pull_number, at) VALUES (?1, ?2, ?3, ?4)",
   );
   db.transaction(() => {
+    // The pulls merged since the last deploy: the ones it is the first to carry.
     const merged: { id: string; number: number }[] = [];
     const hours = 165;
     let next = 0;
@@ -138,7 +139,8 @@ function seedWeek(db: Fixture["app"]["db"], repoId: string, served: string[]): v
       }
       const rid = id();
       run.run(rid, repoId, at(when));
-      for (const m of merged) carry.run(rid, m.id, m.number);
+      for (const m of merged) landed.run(m.id, rid, m.number, at(when));
+      merged.length = 0;
     }
   })();
 }
@@ -162,7 +164,7 @@ test("the map of a forge the size of trevato/forge reads in under 300 ms, each s
   await hit(); // cold: fills the layout cache
   const phases = await hit();
   for (const step of STEPS) expect(phases.has(step)).toBe(true);
-  // The step that was 1.8 s on trevato/forge: one read of the deploys, a probe or two per pull.
+  // The step that was 1.8 s on trevato/forge: one read of when each pull went live.
   expect(phases.get("map-ask")!).toBeLessThan(100);
   expect(phases.get("map")!).toBeLessThan(300);
   // `map` is the sum of the named steps and a little glue, never more than they are.

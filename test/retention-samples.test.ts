@@ -1,6 +1,6 @@
 /**
- * The machine history's retention rule (#12007): 15-s points for 48 h, 5-min
- * roll-ups for 30 days, hourly after; one bounded batch at a time, never a
+ * The machine history's retention rule (#12007): 15-s points for a day, 5-min
+ * roll-ups for a week, hourly after for 180 days; one bounded batch at a time, never a
  * 15-s point its 5-min window does not hold yet, never an hour folded in two
  * halves, and the readers answer the same before and after.
  */
@@ -16,15 +16,27 @@ import { historyOver } from "../src/system/telemetry.ts";
 import { once } from "./helpers/statements.ts";
 import { expectWork } from "./helpers/work.ts";
 import {
-  drainSamples,
   FIVE_MIN_KEEP_MS,
   HOUR_MS,
+  HOURLY_KEEP_MS,
   pruneSamples,
   RAW_KEEP_MS,
   ROW_CAP,
 } from "../src/system/retention_samples.ts";
 
 const fresh = () => openDb(":memory:", migrations);
+
+/** Batches until none is left, as the job's slices are, at the clock `now`. */
+async function drainSamples(db: Database, now: () => number, rowCap: number = ROW_CAP) {
+  const sum = { rolled: 0, deleted: 0, batches: 0 };
+  for (;;) {
+    const b = pruneSamples(db, now(), rowCap);
+    sum.rolled += b.rolled;
+    sum.deleted += b.deleted;
+    sum.batches++;
+    if (!b.more) return sum;
+  }
+}
 const iso = (ms: number) => new Date(ms).toISOString();
 const NOW = Date.parse("2026-11-13T12:00:07.000Z");
 const count = (db: Database, step: number) =>
@@ -49,7 +61,7 @@ describe("pruneSamples", () => {
   test("one batch over 50k old 15-s points touches at most the cap in a few statements", async () => {
     const db = fresh();
     const targets = Array.from({ length: 20 }, (_, i) => `cpu:${String(i).padStart(3, "0")}`);
-    // 50,400 points (20 targets × 2,520 instants), all past 48 h, their windows rolled up.
+    // 50,400 points (20 targets × 2,520 instants), all past a day, their windows rolled up.
     seed(db, NOW - RAW_KEEP_MS - 2_520 * 15_000, NOW - RAW_KEEP_MS, targets, () => 1);
     expect(count(db, 15)).toBeGreaterThanOrEqual(50_000);
     record(db, [], NOW);
@@ -62,7 +74,7 @@ describe("pruneSamples", () => {
     expect(batch.more).toBe(true);
   });
 
-  test("a batch per call until `more` is false leaves no 15-s point past 48 h", async () => {
+  test("a batch per call until `more` is false leaves no 15-s point past a day", async () => {
     const db = fresh();
     seed(db, NOW - RAW_KEEP_MS - 6 * HOUR_MS, NOW, ["node", "forge"], () => 1);
     const sum = await drainSamples(db, () => NOW, 500);
@@ -79,7 +91,7 @@ describe("pruneSamples", () => {
     expect(count(db, 15)).toBe(1);
   });
 
-  test("5-min rows past 30 days become hourly means and maxes, whole hours whatever the cap", () => {
+  test("5-min rows past a week become hourly means and maxes, whole hours whatever the cap", () => {
     const build = () => {
       const db = fresh();
       const put = db.prepare(
@@ -116,10 +128,57 @@ describe("pruneSamples", () => {
     // Hour 0 of target a: k = 0..11, mean 5.5, max of maxes 22.
     expect(hourly[0]).toEqual({ at: iso(big.start), target: "a", cpu_cores: 5.5, cpu_cores_max: 22, memory_bytes: 100, load: null, celsius: 45.5 });
     expect(hourly[1]!.celsius).toBeNull();
-    // The hour the 30-day edge falls in stays 5-min, whole.
+    // The hour the week's edge falls in stays 5-min, whole.
     const edgeHour = Math.floor((NOW - FIVE_MIN_KEEP_MS) / HOUR_MS) * HOUR_MS;
     const oldest5 = big.db.query<{ at: string }, []>("SELECT MIN(at) AS at FROM machine_sample WHERE step = 300").get()!.at;
     expect(oldest5).toBe(iso(edgeHour));
+  });
+
+  test("an hour of more targets than the cap is folded a run of targets at a time, each hourly row whole", () => {
+    const build = () => {
+      const db = fresh();
+      const put = db.prepare("INSERT INTO machine_sample (at, step, target, cpu_cores, cpu_cores_max) VALUES (?, 300, ?, ?, ?)");
+      const start = Math.floor((NOW - FIVE_MIN_KEEP_MS) / HOUR_MS) * HOUR_MS - 2 * HOUR_MS;
+      for (let h = 0; h < 2; h++)
+        for (let w = 0; w < 12; w++)
+          for (let t = 0; t < 40; t++) put.run(iso(start + h * HOUR_MS + w * 300_000), `app:${String(t).padStart(2, "0")}`, w + t, 2 * w + t);
+      return db;
+    };
+    const whole = build();
+    while (pruneSamples(whole, NOW, 100_000).more);
+    const halves = build();
+    let batches = 0;
+    let most = 0;
+    for (;;) {
+      batches++;
+      const before = count(halves, 300);
+      const r = pruneSamples(halves, NOW, 48);
+      most = Math.max(most, before - count(halves, 300));
+      if (!r.more) break;
+    }
+    expect(batches).toBeGreaterThan(4);
+    // 48 rows is four targets of twelve windows; a batch never takes much more.
+    expect(most).toBeLessThanOrEqual(2 * 48);
+    const rows = (db: Database) => db.query("SELECT * FROM machine_sample ORDER BY step, at, target").all();
+    expect(rows(halves)).toEqual(rows(whole));
+    expect(count(halves, 3600)).toBe(80);
+  });
+
+  test("hourly rows past their window go, a bounded batch at a time, and the ones inside it stay", async () => {
+    const db = fresh();
+    const put = db.prepare("INSERT INTO machine_sample (at, step, target, cpu_cores) VALUES (?, 3600, ?, 1)");
+    const edge = Math.floor((NOW - HOURLY_KEEP_MS) / HOUR_MS) * HOUR_MS;
+    db.transaction(() => {
+      for (let h = 1; h <= 40; h++) for (const t of ["a", "b", "c"]) put.run(iso(edge - h * HOUR_MS), t);
+      for (let h = 0; h < 10; h++) for (const t of ["a", "b", "c"]) put.run(iso(edge + (h + 1) * HOUR_MS), t);
+    })();
+    // A batch stops at an instant, never in the middle of one: three targets share each.
+    const first = pruneSamples(db, NOW, 10);
+    expect(first).toEqual({ rolled: 0, deleted: 9, more: true });
+    const sum = await drainSamples(db, () => NOW, 10);
+    expect(sum.deleted).toBe(40 * 3 - 9);
+    expect(count(db, 3600)).toBe(30);
+    expect(pruneSamples(db, NOW)).toEqual({ rolled: 0, deleted: 0, more: false });
   });
 
   test("the table still refuses a step it does not know", () => {

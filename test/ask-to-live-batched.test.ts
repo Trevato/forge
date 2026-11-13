@@ -42,8 +42,8 @@ beforeAll(() => {
     `INSERT INTO run (id, repo_id, kind, env, state, serving_at, finished_at)
      VALUES (?1, 'r1', ?2, ?3, 'ok', ?4, ?4)`,
   );
-  const carry = db.query(
-    "INSERT INTO deploy_pull (run_id, issue_id, pull_number, merged_oid) VALUES (?1, ?2, 0, 'o')",
+  const landed = db.query(
+    "INSERT INTO deploy_landed (issue_id, run_id, pull_number, at) VALUES (?1, ?2, 0, ?3)",
   );
   const pillars = Array.from({ length: PILLARS }, (_, p) => ({
     short: `P${p}`,
@@ -62,16 +62,16 @@ beforeAll(() => {
       // Most are live a few hours after the merge; every 10th never is.
       if (i % 10 !== 0) {
         run.run(`d${i}`, "deploy", "production", at(90 - (i % 60)));
-        carry.run(`d${i}`, `pr${i}`);
+        landed.run(`pr${i}`, `d${i}`, at(90 - (i % 60)));
       }
     }
     // Noise a real repository carries: thousands of agent runs and previews.
     for (let n = 0; n < 5000; n++)
       run.run(`n${n}`, n % 2 ? "agent" : "deploy", n % 2 ? "" : "pull-1", at(n % 160));
-    // And the long history of successful production deploys, each carrying pulls merged before the window.
+    // And the long history of successful production deploys, each the first to carry a pull merged before the window.
     for (let n = 0; n < 40000; n++) {
       run.run(`h${n}`, "deploy", "production", at(n % 160));
-      carry.run(`h${n}`, `old${n}`);
+      landed.run(`old${n}`, `h${n}`, at(n % 160));
     }
   })();
   view = { set: { pillars, gate: undefined, later: undefined }, names: [], of, merged: [] };
@@ -101,11 +101,7 @@ function reference(sealedOk: boolean) {
       if (!ask || !pillar || (ask.sealed === 1 && !sealedOk)) continue;
       const live = db
         .query<{ at: string }, [string, string]>(
-          `SELECT COALESCE(r.serving_at, r.finished_at) AS at FROM deploy_pull dp
-             JOIN run r ON r.id = dp.run_id
-            WHERE dp.issue_id = ?1 AND r.kind = 'deploy' AND r.env = 'production' AND r.state = 'ok'
-              AND COALESCE(r.serving_at, r.finished_at) >= ?2
-            ORDER BY 1 LIMIT 1`,
+          `SELECT at FROM deploy_landed WHERE issue_id = ?1 AND at >= ?2`,
         )
         .get(p.id, p.at);
       if (!live) continue;

@@ -38,7 +38,8 @@ import {
   setIssueLabels,
   type Issue,
 } from "../src/core/issues.ts";
-import { pillarsOf, pillarView } from "../src/core/pillars.ts";
+import { backfillLanded } from "../src/core/carried.ts";
+import { pillarsOf, pillarView, pillarWindowStart } from "../src/core/pillars.ts";
 import { askToLiveFor } from "../src/web/ask_to_live.ts";
 import { getRepoById, updateRepoSettings, type Repo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -506,7 +507,7 @@ describe("pillars", () => {
     setCreated(parts[0]!, 10);
     setMerged(queuePull.id, 8);
     setMerged(composerPull.id, 6);
-    // A deploy and the merged pulls it carries (the `deploy_pull` record).
+    // A deploy and the merged pulls it carries (the old `deploy_pull` record, which `backfillLanded` reads).
     const deploy = (
       env: string,
       oid: string,
@@ -539,6 +540,8 @@ describe("pillars", () => {
     deploy("production", queuePull.oid, "ok", 18, [sandboxPull]);
     // Holds queue's merge, and sandbox's before it: queue was asked 10h ago, live 5h.
     deploy("production", queuePull.oid, "ok", 5, [sandboxPull, queuePull]);
+    // What an older release recorded per deploy becomes one row per pull: the first production deploy that held it.
+    backfillLanded(app.db, pillarWindowStart(new Date(T)), 1_000);
     const view = pillarView(app.db, fresh(), new Date(T))!;
     // The record answers: with no repository on disk, no git can have run.
     const realRoot = app.reposRoot;

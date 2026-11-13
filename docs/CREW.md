@@ -378,10 +378,10 @@ what "ready now" means to a person and to the crew. The map draws open
 issues by default; `?done=1` ("Show done") draws the closed ones on an edge too. The map also shows each
 pillar's ask-to-live: the median hours from an issue opening to its change live
 in production, over the last 7 days (also in the map and milestones API and MCP).
-It reads the `deploy_pull` record a production deploy writes when it finishes,
-so a page view runs no git; an issue closed by several pulls counts once, at
-its first time live. On boot the forge records what the last 7 days of earlier
-production deploys carried, so work that went live before the record is counted.
+It reads `deploy_landed`, one row per merged pull written by the first production
+deploy that carried it, so a page view runs no git; an issue closed by several pulls
+counts once, at its first time live. On boot the forge fills it from the per-deploy
+record an older release wrote, for the pulls merged in the last 7 days.
 
 ## The crew's shell
 

@@ -1,17 +1,23 @@
 /**
- * Retention for `deploy_pull` (#12009, part of #11973): the table is an
- * index over git (`core/carried.ts`), so it keeps only what pages read
- * often — the pulls of deploys from the last `DEPLOY_PULL_KEEP_DAYS` days,
- * and of the deploy each app is running now (live, or sleeping and woken
- * on it: the newest successful production deploy of its repository). An
- * older deploy's list is rebuilt from git when it is asked for
- * (`carriedFor`).
+ * Retention for `deploy_pull` (#12009, part of #11973): the old per-deploy
+ * ledger of which merged pulls each production deploy carried. Nothing writes
+ * it any more: what a deploy carries is a fact of git (`core/carried.ts`,
+ * walked when a page asks and kept in memory), and when each pull first went
+ * live is one row per pull in `deploy_landed`. The rows an older release wrote
+ * are trimmed here, in slices, to those of the deploys of the last
+ * `DEPLOY_PULL_KEEP_DAYS` days and of the deploy each app is running now (live,
+ * or sleeping and woken on it: the newest successful production deploy of its
+ * repository), and the table is dropped in a later release.
  *
- * The rule runs in capped batches, one per crew tick while rows remain:
- * the candidates are read first (a read holds no write lock under WAL),
- * then deleted by rowid in one short transaction, so no batch holds the
- * write lock for long. Rows of a deleted run are not swept here: finding
- * them is a scan of the whole table.
+ * The rule starts only once `deploy_landed` has been filled from the rows
+ * about to go (`ready`, `backfillLanded` in `core/carried.ts`).
+ *
+ * A slice reads `DEPLOY_PULL_SCAN` rows by rowid, looks up the few distinct
+ * runs they name once, and deletes the old ones by rowid in one short
+ * transaction, so the work of a slice is bounded by the cap whatever the table
+ * holds; `retention.ts` paces the slices so they take a tenth of the thread at
+ * most. Rows of a deleted run are not swept here: finding them is a scan of the
+ * whole table.
  */
 
 import type { Database } from "bun:sqlite";
@@ -19,12 +25,11 @@ import { transact } from "../kernel/db.ts";
 
 /**
  * Deploys this recent keep their rows, by default; an admin moves it with the
- * `retention.deploy_pull_days` limit (`settings/limits.ts`), never below
- * `PILLAR_DAYS` (7), the window ask-to-live reads.
+ * `retention.deploy_pull_days` limit (`settings/limits.ts`). It was 14 and
+ * floored at 7, the window ask-to-live read from the rows; that reads
+ * `deploy_landed` now, so a day is what a page that has not walked git yet may find.
  */
-export const DEPLOY_PULL_KEEP_DAYS = 14;
-/** The least time between two slices of one pass. */
-const DEPLOY_PULL_PACE_MS = 5_000;
+export const DEPLOY_PULL_KEEP_DAYS = 1;
 
 export interface Pruned {
   readonly deleted: number;
@@ -32,8 +37,20 @@ export interface Pruned {
   readonly more: boolean;
 }
 
-/** Rows one batch reads at most; what it deletes is those of them past the rule. */
-const DEPLOY_PULL_SCAN = 500;
+/**
+ * Rows one slice reads at most; what it deletes is those of them past the rule. 250 rows
+ * took 15 ms at the median on a copy of production (62 µs a row: the table, its key index and
+ * the issue index, whose entries for one deploy are 2,500 leaves apart).
+ */
+export const DEPLOY_PULL_SCAN = 250;
+/**
+ * The time a slice may spend deleting before it hands the thread back, and the rows it deletes between
+ * looks at the clock. On a copy of production a 250-row slice took 3 ms at the median, 34 at the 99th
+ * percentile and 136 at the worst (a leaf not yet read: the issue index's entries for one deploy lie
+ * 2,500 pages apart); checked every 10 rows, no slice goes past the budget by more than 10 rows' cost.
+ */
+export const DEPLOY_PULL_SLICE_MS = 10;
+const DEPLOY_PULL_CHUNK = 10;
 
 /**
  * Delete the rows past the rule among the next `rowCap` rows after `after`
@@ -52,6 +69,7 @@ export function pruneDeploys(
   rowCap: number = DEPLOY_PULL_SCAN,
   after = 0,
   keepDays: number = DEPLOY_PULL_KEEP_DAYS,
+  budgetMs: number = DEPLOY_PULL_SLICE_MS,
 ): Pruned & { readonly next: number } {
   const cap = Math.max(0, Math.floor(rowCap));
   if (cap === 0) return { deleted: 0, more: false, next: after };
@@ -82,37 +100,46 @@ export function pruneDeploys(
     if (!servingOf.has(run.repo_id)) servingOf.set(run.repo_id, serving.get(run.repo_id)?.id);
     if (servingOf.get(run.repo_id) !== id) old.add(id);
   }
-  const rowids = slice.filter((row) => old.has(row.run_id)).map((row) => row.rid);
   const remove = db.query("DELETE FROM deploy_pull WHERE rowid = ?1");
-  const deleted =
-    rowids.length === 0
-      ? 0
-      : transact(db, () => {
-          let n = 0;
-          for (const rid of rowids) n += remove.run(rid).changes;
-          return n;
-        });
-  const whole = slice.length === cap;
-  return { deleted, more: whole, next: whole ? slice[slice.length - 1]!.rid : 0 };
+  // Walk the slice in order, deleting what is old, and look at the clock between chunks of rows: a slice
+  // that runs out of its budget ends where it is, and the next one starts after the last row it passed.
+  const started = performance.now();
+  let deleted = 0;
+  let passed = 0;
+  transact(db, () => {
+    while (passed < slice.length) {
+      const end = Math.min(slice.length, passed + DEPLOY_PULL_CHUNK);
+      for (; passed < end; passed++) {
+        const row = slice[passed]!;
+        if (old.has(row.run_id)) deleted += remove.run(row.rid).changes;
+      }
+      if (performance.now() - started >= budgetMs) break;
+    }
+  });
+  const whole = slice.length === cap || passed < slice.length;
+  return { deleted, more: whole, next: whole ? slice[passed - 1]!.rid : 0 };
 }
 
 /**
- * The crew tick's view of the rule: a batch on each tick while the last one
- * was full, and otherwise one an hour. Returns the batch's result, or
- * undefined when this tick runs none. `keepDays` is read as each slice runs,
- * so a changed setting governs the next slice.
+ * The rule as a job's slice: one slice per call while the last one was full,
+ * and after a pass reaches its end one a time `every` later (an hour). Returns
+ * the slice's result, or undefined when this call runs none. `keepDays` is read
+ * as each slice runs, so a changed setting governs the next slice; `ready` says
+ * `deploy_landed` has what the rows hold, and nothing is deleted before it does.
  */
 export function deployRetention(
   db: Database,
   every: number = 60 * 60_000,
   keepDays: () => number = () => DEPLOY_PULL_KEEP_DAYS,
+  ready: () => boolean = () => true,
 ): (now?: Date) => Pruned | undefined {
   let more = true;
   let last = 0;
   let after = 0;
   return (now = new Date()) => {
-    // Mid-pass, one slice at most every `DEPLOY_PULL_PACE_MS`; a finished pass waits `every`.
-    if (now.getTime() - last < (more ? DEPLOY_PULL_PACE_MS : every)) return undefined;
+    if (!ready()) return undefined;
+    // A finished pass waits `every`; mid-pass the caller's pacing is the only wait.
+    if (!more && now.getTime() - last < every) return undefined;
     last = now.getTime();
     const result = pruneDeploys(db, now, DEPLOY_PULL_SCAN, after, keepDays());
     more = result.more;

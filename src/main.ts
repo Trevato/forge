@@ -21,7 +21,6 @@ import { warmDisplays } from "./display/known.ts";
 import { warmSearch } from "./search/warm.ts";
 import { warmFlow } from "./system/flow_cache.ts";
 import { noteDbSize } from "./system/db_size.ts";
-import { backfillCarried } from "./core/carried.ts";
 import { refreshCatalogQuietly } from "./packs/catalog.ts";
 import { loadTrustedHosts } from "./origins/trusted-hosts.ts";
 import { flushFlagUses, loadFlags } from "./core/flags.ts";
@@ -85,6 +84,7 @@ import { tailEvents } from "./core/event_tail.ts";
 import { engineMode } from "./engine/mode.ts";
 import { startEngine } from "./engine/host.ts";
 import { startDuties } from "./engine/duties.ts";
+import { startRetention } from "./system/retention.ts";
 import { publishObserved } from "./engine/observed.ts";
 import { startClogTick } from "./flow/clog_tick.ts";
 import { resumeAtBoot } from "./maintenance/service.ts";
@@ -474,10 +474,6 @@ await apps?.start();
 // so no request meets an app still starting (#4496). A cold start has no
 // one serving in its place, and is ready at once.
 if (apps && presence) warmBehind(app.log, presence, () => apps.startingCount());
-// What deploys before the record carried, so ask-to-live is not blank for them.
-void backfillCarried(app.db, app.reposRoot).catch((error) =>
-  app.log.error("could not backfill what deploys carried", { error: String(error) }),
-);
 // Children born before each came with its own source get it (#10989).
 void backfillChildren(app)
   .then((done) => {
@@ -567,7 +563,11 @@ const snapshots = startSnapshots(
 );
 // What the machine uses (boards/sampler.ts): the pod, each cell and the
 // node, every 15 s into a ring the `machine` board source reads.
-const sampler = startSampler(app, { engineRetiresEvents: engineOn });
+const sampler = startSampler(app, {});
+// What has left its window goes a bounded slice at a time on a pace (`system/retention.ts`). The machine
+// samples are this thread's always (telemetry kept out of the write clock); the rest, the events and the
+// deploy ledger, are the engine's when it has a thread of its own.
+const stopRetention = startRetention(app, { samples: true, rest: !engineOn });
 const memorySampler = startMemorySampler(app);
 // The starting boards, once each (actions/boards.ts).
 void offerStartingBoards(app)
@@ -983,6 +983,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
     nightly?.stop(),
     snapshots.stop(),
     sampler.stop(),
+    stopRetention(),
     memorySampler.stop(),
     engineStopped,
   ])

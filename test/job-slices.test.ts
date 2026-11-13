@@ -66,6 +66,7 @@ import { startNotifier } from "../src/crew/notify.ts";
 import { fireDue } from "../src/apps/feature_schedule.ts";
 import { pullDue } from "../src/apps/pull_schedule.ts";
 import { startMaintain } from "../src/maintain/runner.ts";
+import { retentionJobs } from "../src/system/retention.ts";
 
 /** Thousands of issues and pulls, as the issue asks; runs, comments and events thinned so the file runs in seconds (#1242). */
 const BUSY = { issues: 2000, pulls: 2000, requested: 100, runs: 5000, comments: 5000, events: 10000, reviewComments: 500 };
@@ -138,6 +139,7 @@ function jobs(): Record<string, () => unknown> {
   memory.stop();
   const maintainer = startMaintain(app, { everyMs: 1e9 });
   maintainer.stop();
+  const retention = retentionJobs(app);
   return {
     sampler: () => sampler.tick(),
     "memory-sampler": () => memory.tick(),
@@ -226,6 +228,12 @@ function jobs(): Record<string, () => unknown> {
     "feature-schedule": () => fireDue(app),
     "pull-schedule": () => pullDue(app),
     maintain: () => maintainer.tick(new Date(Date.now() + 1e9)),
+    // The retention slices, each as its timer calls it: bounded rows, paced by their own cost (`system/retention.ts`).
+    "retention-events": () => retention.events.slice(Date.now() + 40 * 86_400_000),
+    "retention-live": () => retention.live.slice(Date.now()),
+    "retention-samples": () => retention.samples.slice(Date.now()),
+    "landed-backfill": () => retention.backfill.slice(Date.now()),
+    "retention-deploys": () => retention.deploys.slice(Date.now()),
   };
 }
 
@@ -278,7 +286,6 @@ const UNTIMED: Record<string, string> = {
   "system-live": "reads /proc and the cgroup roots for the system page while someone watches it",
   entitlements: "reads each paid subscription from Stripe: network, daily, and the fixture has no entitlements",
   traffic: "a closure in createTrafficWriter over its in-memory minute ledger; follow-up",
-  retention: "the sampler's own batch (old events and samples), run by the engine thread when there is one; timed as part of `sampler`",
   "asks-ledger": "records the asks ledger and the database's size on the engine thread when there is one; both are timed as part of the asks tick's pieces elsewhere, and need the whole big forge",
   "observed-publish": "writes what changed in the thread's observations of the pulls to engine_observation, every two seconds; a diff of small maps",
   checkpoint: "a passive WAL checkpoint run by the engine thread every two seconds: I/O on the engine's thread, nothing to time on the serving one",
