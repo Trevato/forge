@@ -211,6 +211,8 @@ export interface CrewOptions {
   readonly localUrl: string;
   readonly binary: string;
   readonly concurrency: number;
+  /** How full this forge's memory is, 0 to 1: its cgroup's unless a test says otherwise. */
+  readonly pressure?: (() => number | undefined) | undefined;
   /** Spend per run when the agent's own budget is 0. */
   readonly budgetUsd: number;
   readonly runTimeoutMs: number;

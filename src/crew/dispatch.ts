@@ -46,6 +46,7 @@ import { resolveOpen } from "../core/decisions.ts";
 import { accountActive } from "../core/accounts.ts";
 import { runningLimitSentence, runningRuns } from "../settings/quotas.ts";
 import { appendRunLog } from "../runs/log.ts";
+import { memoryHold } from "../runs/memory_hold.ts";
 import { noteHeld, type HoldCause } from "../runs/held.ts";
 import { decideAndRecord } from "./ledger.ts";
 import { bugsFirst } from "../flow/bugs.ts";
@@ -1699,6 +1700,17 @@ export function pump(
       if (!noted.has(fresh.id)) {
         noted.add(fresh.id);
         appendRunLog(app.config.dataDir, fresh.id, `queued, not started: ${full}`);
+      }
+      continue;
+    }
+    // A child near its memory limit starts nothing new while a run is going
+    // (`runs/memory_hold.ts`).
+    const tight = memoryHold(inFlight.size + started.length, options.pressure);
+    if (tight !== undefined) {
+      held.set(fresh.id, "memory");
+      if (!noted.has(fresh.id)) {
+        noted.add(fresh.id);
+        appendRunLog(app.config.dataDir, fresh.id, `queued, not started: ${tight}`);
       }
       continue;
     }
