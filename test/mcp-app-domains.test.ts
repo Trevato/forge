@@ -170,4 +170,13 @@ describe("MCP app_domains", () => {
     expect(again.error).toContain(domainRefusalText("taken", ""));
     await tool(admin, { repo, action: "remove", host: "dup.example.com" });
   });
+
+  test("dns_proof is reachable and says when no registrar credential is held", async () => {
+    await tool(admin, { repo, action: "add", host: "shop.example.com" });
+    const r = await tool(admin, { repo, action: "dns_proof", host: "shop.example.com" });
+    expect(r.error).toContain("DNS_API_TOKEN");
+    const bad = await tool(admin, { repo, action: "dns_cut" });
+    expect(bad.error).toContain("host");
+    expect((await tool(bob, { repo, action: "dns_proof", host: "shop.example.com" })).error).toContain("no such app");
+  });
 });

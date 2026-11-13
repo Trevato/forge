@@ -2,7 +2,7 @@
 
 The step of a move that can strand a
 shop (`platform-app-move.md`). The forge serves a verified name
-and its proxy fetches the certificate; it never writes DNS, so the revert is
+and its proxy fetches the certificate; it writes DNS only when asked (below), so the revert is
 the owner's records, put back by hand in one edit. In order:
 
 1. **Write the old records down first.** Every record at the name (A, AAAA,
@@ -33,9 +33,36 @@ the owner's records, put back by hand in one edit. In order:
    (`remove`); removing it is only tidiness once DNS no longer points here,
    and the old host's certificate was never touched.
 
-Left out, on purpose: the forge does not edit DNS at a registrar (#11717),
-or read the old records itself: it keeps only
-what you wrote down (#11719). This closes #11700 as a runbook over a feature that already ships,
+## Editing DNS at the registrar (optional)
+
+The forge edits DNS only when asked, with a credential you hand it by name:
+set the secret `DNS_API_TOKEN` (a Cloudflare API token that edits DNS in the
+zone) for the repository itself. A forge-wide or organization token is not
+used: it would reach other tenants' zones. Then, as an admin of the
+repository, the MCP tool `app_domains` takes three more actions:
+- `dns_proof` publishes the TXT proof (step 2);
+- `dns_cut` (verified domains only) replaces the A, AAAA and CNAME at the name
+  with the CNAME to the app (step 4) and **answers the records it removed**:
+  paste them in the migration issue, they are the way back;
+- `dns_revert` (verified domains only) with `records: [{type, value, ttl?}]`
+  puts your step-1 list back (step 5).
+
+The terminal has the same three, on the domains screen (`n` on an app's
+deploys screen), for the same admins:
+- `p` publishes the TXT proof of the selected domain;
+- `x` asks `cut <host> over to the app? y/n`, then cuts it over and keeps
+  `Removed: A 203.0.113.5 ttl 60; …` on the screen's foot;
+- `v` asks for the old records and puts them back; type them as the cut
+  listed them (`A 203.0.113.5 ttl 60; AAAA 2001:db8::1`).
+
+Every edit is audited (`app.domain.dns`, and the secret read). A failed edit
+deletes what it put and puts back what it removed; any record it could not
+put back is named in the answer, to add by hand. Only Cloudflare is
+supported; the adapter is `src/apps/dns_provider.ts`. The settings page has
+no registrar button yet.
+
+Left out, on purpose: other registrars, or read the old records itself: it
+keeps only what you wrote down (#11719). This closes #11700 as a runbook over a feature that already ships,
 not as new code.
 
 ## What keeps these claims true
