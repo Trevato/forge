@@ -155,8 +155,10 @@ describe("the next-steps card of a spawned forge", () => {
     expect(told.status).toBeLessThan(400);
     const home = await page(owner);
     const main = home.slice(home.indexOf("<main"), home.indexOf("</main>"));
-    expect(main).toContain('action="/settings/everyday"');
-    expect(main).toContain("There is no password");
+    // The step is a way to its own page and a way to decline: never a form on the home.
+    expect(main).toContain('href="/settings/everyday"');
+    expect(main).toContain('action="/settings/everyday/keep"');
+    expect(main).not.toContain('action="/settings/everyday"');
   });
 
   test("the admin's first home carries exactly three steps, in order, none done", async () => {
@@ -189,9 +191,9 @@ describe("the next-steps card of a spawned forge", () => {
     expect(apps).toContain("/marias/bakery");
     // Tell the crew: the card points at the composer, which must be on the page.
     expect(home).toContain('id="composer"');
-    // Make your everyday account: the form lives in the card, which posts to a route only (no GET page); settings answers.
-    expect(card).toContain('action="/settings/everyday"');
-    const paths = [...new Set([...apps, "/settings"])];
+    // Make your everyday account: the card links to the step's own page.
+    expect(card).toContain('href="/settings/everyday"');
+    const paths = [...new Set([...apps, "/settings/everyday"])];
     for (const p of paths) {
       const res = await fetch(url(p), { headers: { cookie: owner }, redirect: "manual" });
       expect([p, res.status]).toEqual([p, 200]);

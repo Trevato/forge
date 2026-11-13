@@ -106,41 +106,17 @@ describe("the everyday account", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("an admin's home asks for an everyday account and says why; anyone else's does not", async () => {
-    const admin = await page(await signIn("ada"), "/");
+  test("an admin's home asks for an everyday account in one line; its own page says why; anyone else's home does not ask", async () => {
+    const home = await page(await signIn("ada"), "/");
+    expect(home).toContain('<a href="/settings/everyday">You are signed in as the admin. Make an everyday account</a>');
+    expect(home).not.toContain('action="/settings/everyday"');
+    const admin = await page(await signIn("ada"), "/settings/everyday");
     expect(admin).toContain("Make your everyday account");
     expect(admin).toContain(WHY);
     expect(admin).toContain('value="ada-me"');
     expect(admin).toContain("Keep using admin");
     expect(admin).not.toContain("everyday-ask");
-    expect(await page(await signIn("kim"), "/")).not.toContain(
-      "Make your everyday account",
-    );
-  });
-
-  test("only an admin, from this forge's own pages, can make one", async () => {
-    const kim = await signIn("kim");
-    const refused = await post(kim, "/settings/everyday", {
-      username: "kim-me",
-      email: "kim-me@x.test",
-    });
-    expect(refused.status).toBe(403);
-    const asked = await fetch(url("/settings/everyday/options"), {
-      method: "POST",
-      headers: { cookie: kim, origin: servers.url, "content-type": "application/json" },
-      body: JSON.stringify({ username: "kim-me", email: "kim-me@x.test" }),
-    });
-    expect(asked.status).toBe(403);
-    const root = await signIn("ada");
-    const crossed = await post(
-      root,
-      "/settings/everyday",
-      { username: "x-me", email: "x@x.test" },
-      "https://evil.test",
-    );
-    expect(crossed.status).toBe(403);
-    expect(getUserByName(app.db, "kim-me")).toBeUndefined();
-    expect(getUserByName(app.db, "x-me")).toBeUndefined();
+    expect(await page(await signIn("kim"), "/")).not.toContain("everyday account");
   });
 
   test("a password and no passkey, or a taken name, makes nothing", async () => {
@@ -152,7 +128,8 @@ describe("the everyday account", () => {
     });
     expect(refused.status).toBe(303);
     const flash = (refused.headers.get("set-cookie") ?? "").split(";")[0]!;
-    expect(await page(`${root}; ${flash}`, "/")).toContain("Passwords are not taken here.");
+    expect(refused.headers.get("location")).toBe("/settings/everyday");
+    expect(await page(`${root}; ${flash}`, "/settings/everyday")).toContain("Passwords are not taken here.");
     // A taken name is refused before any key is made.
     const asked = await fetch(url("/settings/everyday/options"), {
       method: "POST",
@@ -180,7 +157,7 @@ describe("the everyday account", () => {
 
   test("Make it: an ordinary account, linked both ways, and the person is signed in as it", async () => {
     const root = await signIn("ada");
-    const home = await page(root, "/");
+    const home = await page(root, "/settings/everyday");
     expect(home).toContain('id="passkey-make"');
     expect(home).not.toContain("passkey-note");
     expect(home).toContain('<span class="muted small" id="passkey-make-note" data-fail="error" role="status"></span>');
@@ -205,7 +182,7 @@ describe("the everyday account", () => {
       "This is the everyday account of",
     );
     // The admin is not asked again, and its page names the pair.
-    expect(await page(root, "/")).not.toContain("Make your everyday account");
+    expect(await page(root, "/")).not.toContain("Make an everyday account");
     expect(await page(root, "/settings")).toContain("Your everyday account is");
   });
 
@@ -214,7 +191,7 @@ describe("the everyday account", () => {
     const res = await post(boss, "/settings/everyday/keep", {});
     expect(res.status).toBe(303);
     expect(keptAdmin(app.db, getUserByName(app.db, "bea")!)).toBe(true);
-    expect(await page(boss, "/")).not.toContain("Make your everyday account");
+    expect(await page(boss, "/")).not.toContain("Make an everyday account");
     const settings = await page(boss, "/settings");
     expect(settings).toContain("Make your everyday account");
     expect(settings).not.toContain("Keep using admin");

@@ -9,10 +9,10 @@
 
 import {
   adminOf,
-  askForEveryday,
   everydayOf,
   EVERYDAY_WHY,
   keepAdmin,
+  keptAdmin,
   joinAsWriter,
   linkEveryday,
 } from "../../core/everyday.ts";
@@ -25,10 +25,11 @@ import { addPasskey } from "../../core/passkeys.ts";
 import { cookieValue, crossOrigin, type Ctx } from "../../http/context.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
 import { boundedBody, json, str } from "../../http/respond.ts";
-import { forbiddenPage, NOT_ADMIN_HERE, CAME_FROM_ELSEWHERE, signInFirst } from "../chrome.ts";
+import { forbiddenPage, NOT_ADMIN_HERE, CAME_FROM_ELSEWHERE, pageHead, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
-import { flashTo, redirect } from "../layout.ts";
+import { flashTo, page, redirect } from "../layout.ts";
+import { passkeyJs } from "../passkey-client.ts";
 import { makeOptions, PASSKEY_WORDS, passkeyFields, readPasskey } from "../passkey-ceremony.ts";
 import { passkeyNote } from "../passkey-state.ts";
 import { btn, card, field as formField } from "../ui.ts";
@@ -44,14 +45,24 @@ function suggestedName(ctx: Ctx, admin: User): string {
   return getUserByName(ctx.app.db, name) === undefined ? name : "";
 }
 
-/** The home section, for an admin with no everyday account and no recorded choice. */
-export function everydayCard(ctx: Ctx, user: User): Html | null {
-  if (!askForEveryday(ctx.app.db, user)) return null;
-  return html`<section class="settings-block" id="everyday">
-    <h2>Make your everyday account</h2>
-    <p>${EVERYDAY_WHY}</p>
-    ${everydayFields(ctx, user, true)}
-  </section>`;
+// GET /settings/everyday — the step on its own page: why, a username, one passkey button, and "Keep using admin".
+export function everydayPage(ctx: Ctx): Response {
+  const user = ctx.auth.user;
+  if (!user) return signInFirst(ctx);
+  // Nothing to ask: not an admin, has one already, or is one.
+  if (!user.isAdmin || user.kind !== "user" || everydayOf(ctx.app.db, user) !== undefined || adminOf(ctx.app.db, user) !== undefined) return redirect("/settings");
+  return page({
+    ctx,
+    title: "Make your everyday account",
+    scriptJs: passkeyJs,
+    body: html`<div class="narrow">
+      ${pageHead("Make your everyday account")}
+      <section class="settings-block" id="everyday">
+        <p class="mb">${EVERYDAY_WHY}</p>
+        ${everydayFields(ctx, user, !keptAdmin(ctx.app.db, user))}
+      </section>
+    </div>`,
+  });
 }
 
 /**
@@ -88,10 +99,6 @@ function everydayForm(ctx: Ctx, user: User, offerKeep: boolean): Html {
     { id: "everyday", head: html`<h2>Make your everyday account</h2>` },
   );
 }
-
-/** The form alone, for a card that says why itself (the first-login steps, #600). */
-export const everydayAsk = (ctx: Ctx, user: User): Html =>
-  everydayFields(ctx, user, true);
 
 function everydayFields(ctx: Ctx, user: User, offerKeep: boolean): Html {
   return html`<form method="post" action="/settings/everyday" class="stack">
@@ -180,7 +187,7 @@ export async function everydayCreate(ctx: Ctx): Promise<Response> {
   const username = field(form, "username");
   const email = mailConfigured(ctx.app) ? field(form, "email") : noEmail(username);
   const say = (message: string) =>
-    flashTo(ctx, "/", { tone: "danger", message });
+    flashTo(ctx, "/settings/everyday", { tone: "danger", message });
   const bad = nameProblem(ctx, username);
   if (bad !== undefined) return say(bad);
   // The key, or nothing: a password in the form is not read at all.

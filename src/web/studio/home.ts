@@ -80,7 +80,6 @@ import { crewKeyCard } from "./crew_key.ts";
 import { firstAskJs, nextStepsCard, nextStepsOf } from "../pages/next-steps.ts";
 import { spawnedForge } from "../../spawn/claim.ts";
 import { clientApps } from "./client_home.ts";
-import { passkeyJs } from "../passkey-client.ts";
 
 /** The events that can change what is on you. */
 const ON_YOU_LIVE =
@@ -312,8 +311,7 @@ export async function studioHome(
       ctx,
       title: "Home",
       body: lean,
-      // The everyday step makes its account with a passkey (#1890).
-      ...(firstSteps ? { scriptJs: firstTell ? firstAskJs : passkeyJs } : {}),
+      ...(firstSteps && firstTell ? { scriptJs: firstAskJs } : {}),
     });
   }
   // Everyone else gets the home: the pipeline as lanes or a table (`pages/home_flow.ts`).

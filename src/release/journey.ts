@@ -151,6 +151,8 @@ export async function walkJourney(options: JourneyOptions): Promise<JourneyResul
     const made = await step("the forge could not be named", async () => {
       const res = await form(new URL("/forges/start", hostUrl), { name });
       const text = await res.text();
+      // A refusal is a 303 back to the home with its reason in the address.
+      if (res.status === 303) throw new Step(`the forge could not be named: it sent the person somewhere else (${(res.headers.get("location") ?? "").slice(0, 40)})`);
       expect(res, "the forge could not be named", 200);
       forge = name;
       const link = /id="made-open"[^>]*href="([^"]+)"|href="([^"]+)"[^>]*id="made-open"/.exec(text);

@@ -24,7 +24,6 @@ import type { Ctx } from "../../http/context.ts";
 import { html, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { badge, btn, row } from "../ui.ts";
-import { everydayAsk } from "./everyday.ts";
 import { EVERYDAY_WHY } from "../../core/everyday.ts";
 import { askRepos, askStatus, type AskStatus } from "../../core/ask-status.ts";
 import { crewCanRun, crewFirstLine } from "../studio/crew_key.ts";
@@ -129,8 +128,13 @@ export async function nextStepsCard(
   const ask = askStatus(ctx.app.db, await askRepos(ctx.app, user), user.id, crewCanRun(ctx.app), user.isAdmin === true);
   const others = ask?.state === "building" ? crewAtWork(ctx, besideAsk(repos, ask)) : crew;
   const bodies: Record<NextStep["key"], Html | null> = {
+    // The account is made on its own page; here the step is one sentence, the way there, and the way to decline.
     everyday: html`<p class="muted small">${EVERYDAY_WHY}</p>
-      ${everydayAsk(ctx, user)}`,
+      <p>
+        ${btn("Make an everyday account", { href: "/settings/everyday", size: "sm", ...(primary === "everyday" ? { variant: "primary" as const } : {}) })}
+        ${btn("Keep using admin", { form: "everyday-keep", variant: "link", size: "sm" })}
+      </p>
+      <form id="everyday-keep" method="post" action="/settings/everyday/keep" hidden></form>`,
     apps:
       repos.length === 0
         ? html`<p class="muted small">

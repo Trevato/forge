@@ -58,7 +58,7 @@ import { listReposWritableTo } from "../../core/repos.ts";
 import { chart, figuresGrid, figuresSection } from "./home_figures.ts";
 import { tellBox } from "../studio/living.ts";
 import { requestsCard } from "../requests_card.ts";
-import { everydayCard } from "./everyday.ts";
+import { askForEveryday } from "../../core/everyday.ts";
 import { untoldAnswer, markTold } from "../../core/requests.ts";
 import { YOURE_IN_MESSAGE } from "../../actions/users.ts";
 import { spawnedForge } from "../../spawn/claim.ts";
@@ -238,7 +238,17 @@ interface Need {
 }
 
 /** What needs this person, most pressing first: alarms, then notices, then what waits on them. One line says the first two; the proof's own record is on /releases. */
-function needsOf(picture: LanePicture, viewer: { readonly id: string; readonly isAdmin: boolean }, dataDir: string, now: number): Need[] {
+/** Who the strip is drawn for; `everyday` is an admin with no everyday account and no recorded choice to keep working as admin. */
+interface StripViewer {
+  readonly id: string;
+  readonly isAdmin: boolean;
+  readonly everyday?: boolean;
+}
+
+/** The everyday account's one quiet line: the step is on its own page, where "Keep using admin" is remembered. */
+const EVERYDAY_NEED: Need = { says: "You are signed in as the admin. Make an everyday account", href: "/settings/everyday", tone: "notice" };
+
+function needsOf(picture: LanePicture, viewer: StripViewer, dataDir: string, now: number): Need[] {
   const proof = viewer.isAdmin ? proofNotice(dataDir, running().version, now) : undefined;
   const asks = picture.asks[viewer.id];
   const waiting = asks === undefined ? null : waitingWords(asks.count, asks.oldest, new Date(now));
@@ -250,6 +260,7 @@ function needsOf(picture: LanePicture, viewer: { readonly id: string; readonly i
     ...alarms,
     ...(proof?.tone === "notice" ? [{ says: proof.sentence, href: "/releases#proof", tone: "notice" as const }] : []),
     ...(waiting === null ? [] : [{ says: waiting, href: "/review", tone: "notice" as const }]),
+    ...(viewer.everyday === true ? [EVERYDAY_NEED] : []),
   ];
 }
 
@@ -267,7 +278,7 @@ function needLine(needs: readonly Need[]): Html {
  * figures, each with its unit and, where the data has one, a trend. Everyone
  * else gets the line alone: the figures are the forge's.
  */
-export function stripRegion(picture: LanePicture, viewer: { readonly id: string; readonly isAdmin: boolean }, dataDir: string, now: number): Html {
+export function stripRegion(picture: LanePicture, viewer: StripViewer, dataDir: string, now: number): Html {
   const strip = picture.strip;
   const version = running().version;
   const proof = proofWords(lastProof(dataDir), version);
@@ -437,14 +448,14 @@ export async function homeFlowPage(ctx: Ctx, known?: { readonly spawned: Awaited
   // A spawned forge's owner is a client: the forge-wide figures are not theirs to see, whole home or lean.
   const spawned = known !== undefined ? known.spawned : await timePhaseAsync(ctx.request, "spawned", () => spawnedForge(ctx.app));
   const wide = user.isAdmin && spawned === undefined;
-  const strip = picture === undefined ? readingStrip() : stripRegion(picture, { id: user.id, isAdmin: wide }, ctx.app.config.dataDir, now);
-  // What the old home also carried and is not a lane: the box that tells the crew (with Notes and Talk), the welcome after an account is allowed, a spawned forge's address, the everyday-account ask, and a stranger's request for an account.
+  const strip = picture === undefined ? readingStrip() : stripRegion(picture, { id: user.id, isAdmin: wide, everyday: askForEveryday(ctx.app.db, user) }, ctx.app.config.dataDir, now);
+  // What the old home also carried and is not a lane: the box that tells the crew (with Notes and Talk), the welcome after an account is allowed, a spawned forge's address, and a stranger's request for an account. The everyday-account ask is one line in the strip.
   const allowed = untoldAnswer(ctx.app.db, user.id) === "allowed";
   if (allowed) markTold(ctx.app.db, user.id, new Date().toISOString());
   const before = html`${allowed ? html`<div class="toast" data-tone="success" role="status" id="youre-in"><strong>${YOURE_IN_MESSAGE}</strong> Your account is open: tell the crew what you want to build.</div>` : null}
     <div class="hf-tell">${tellBox(ctx, user)}</div>`;
   // A client who asked for the whole home (`?all=1`) has a way back to their apps.
-  const after = html`${ctx.url.searchParams.has("all") ? html`<p class="small muted" id="lean-home"><a href="/">Just my apps</a></p>` : null}${requestsCard(ctx, "home")}${everydayCard(ctx, user)}
+  const after = html`${ctx.url.searchParams.has("all") ? html`<p class="small muted" id="lean-home"><a href="/">Just my apps</a></p>` : null}${requestsCard(ctx, "home")}
     ${spawned?.url === undefined ? null : html`<p class="small muted" id="forge-address">Your forge: <a href="${spawned.url}">${new URL(spawned.url).host}</a></p>`}`;
   // A run the host stopped is named, with its way to try again, while it is within the day: the one place the web offers that.
   const stopped = user.kind === "agent" ? null : timePhase(ctx.request, "stopped", () => interruptedOutLine(ctx, listReposWritableTo(ctx.app.db, user, { withoutArchived: true, limit: 200 })));
@@ -560,7 +571,7 @@ export async function liveStripFragment(ctx: Ctx): Promise<Response> {
   const picture = await timePhaseAsync(ctx.request, "picture", () => lanePicture(ctx.app.db, optionsOf(ctx, user), "lane", now));
   const rendering = performance.now();
   const wide = user.isAdmin && (await spawnedForge(ctx.app)) === undefined;
-  const res = fragment(picture === undefined ? readingStrip() : stripRegion(picture, { id: user.id, isAdmin: wide }, ctx.app.config.dataDir, now), { request: ctx.request });
+  const res = fragment(picture === undefined ? readingStrip() : stripRegion(picture, { id: user.id, isAdmin: wide, everyday: askForEveryday(ctx.app.db, user) }, ctx.app.config.dataDir, now), { request: ctx.request });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return res;
 }

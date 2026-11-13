@@ -18,6 +18,10 @@ An unknown, used or already-owned link says so in the same plain words as `/clai
 
 On a new forge's first screen the box under "What do you want built?" sends on Enter; Shift+Enter makes a newline, and so does Enter while composing text or with a modifier held (`firstAskJs`, `src/web/pages/next-steps.ts`). Without JavaScript Enter makes a newline and the **Tell the crew** button sends. No hint is printed about the key, since it would be false without the script. The line under the box says what pays for the crew and names no second next step: the box is the one thing to do.
 
+## The everyday account
+
+An admin with no everyday account and no recorded choice is asked in one line of the home's needs-you row: "You are signed in as the admin. Make an everyday account" (`EVERYDAY_NEED`, `src/web/pages/home_flow.ts`). It is never a form on the home. The line opens `/settings/everyday` (`everydayPage`, `src/web/pages/everyday.ts`): why, a username, **Make it with a passkey**, and **Keep using admin**, which is remembered (`keepAdmin`) and ends the asking. No email on a forge that sends no mail; never a password. On a spawned forge the first-login card's step is the same link and the same way to decline.
+
 ## The terminal
 
 The terminal does not reach `/welcome`: it is the screen where the first account is made, and the terminal needs an account to sign in. Once there is one, the first ask is the terminal's own first screen (`crewFirstText`).

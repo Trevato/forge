@@ -228,7 +228,8 @@ describe("the first login to a spawned forge", () => {
     expect(home).toContain("Open your apps");
     expect(home).toContain("Tell the crew something");
     expect(steps(home)).toEqual({ everyday: "no", apps: "no", tell: "yes" });
-    expect(home).toContain('action="/settings/everyday"');
+    expect(home).toContain('href="/settings/everyday"');
+    expect(home).not.toContain('action="/settings/everyday"');
     expect(home.split("Make your everyday account").length - 1).toBe(1);
     expect(home).not.toContain('data-first-tell');
     expect(home).not.toMatch(/class="[^"]*\bsteps\b/);

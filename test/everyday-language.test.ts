@@ -31,17 +31,26 @@ afterAll(async () => {
 const main = (page: string) => page.slice(page.indexOf("<main"), page.indexOf("</main>"));
 const home = async () => main(await (await fetch(`${servers.url}/`, { headers: { cookie: admin } })).text());
 
-test("home asks for an everyday account in a plain section, no card", async () => {
+const LINE = /<a href="\/settings\/everyday">You are signed in as the admin\. Make an everyday account<\/a>/;
+
+test("home asks for an everyday account in one line of the needs-you row, never a form", async () => {
   const m = await home();
-  const at = m.indexOf('id="everyday"');
-  expect(at).toBeGreaterThan(0);
-  const block = m.slice(m.lastIndexOf("<section", at), m.indexOf("</section>", at));
+  expect(m).toMatch(LINE);
+  expect(m).not.toContain('id="everyday"');
+  expect(m).not.toContain('action="/settings/everyday"');
+  expect(m).not.toContain('name="email"');
+});
+
+test("the step is on its own page: why, a username, one passkey button, and Keep using admin", async () => {
+  const block = main(await (await fetch(`${servers.url}/settings/everyday`, { headers: { cookie: admin } })).text());
   expect(block).toContain('class="settings-block"');
-  expect(block).toMatch(/<h2>Make your everyday account<\/h2>/);
+  expect(block).toMatch(/<h1>Make your everyday account<\/h1>/);
   expect(block).toContain(EVERYDAY_WHY);
   expect(block).not.toContain('class="card');
   expect(block).toContain('action="/settings/everyday"');
   expect(block).toContain('action="/settings/everyday/keep"');
+  expect(block).not.toContain('name="email"');
+  expect(block).not.toContain('type="password"');
 });
 
 test("dismissing is a same-origin POST, and home stops asking", async () => {
@@ -51,12 +60,12 @@ test("dismissing is a same-origin POST, and home stops asking", async () => {
     redirect: "manual",
   });
   expect(cross.status).toBe(403);
-  expect(await home()).toContain('id="everyday"');
+  expect(await home()).toMatch(LINE);
   const ok = await fetch(`${servers.url}/settings/everyday/keep`, {
     method: "POST",
     headers: { cookie: admin, origin: servers.url, "content-type": "application/x-www-form-urlencoded" },
     redirect: "manual",
   });
   expect(ok.status).toBeLessThan(400);
-  expect(await home()).not.toContain('id="everyday"');
+  expect(await home()).not.toContain("/settings/everyday");
 });

@@ -113,6 +113,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/admin/flows` — `pages/flows-all.ts` · every repository's flow lines with state and last moved, by kind and stale · `/:owner/:name/flows` · none seen.
 - `/admin/data` — `pages/data.ts` · the forge's own database: tables, rows, read-only SQL, secrets masked · `/data` (the Forge data button) · none seen; shares its body (`pages/data_view.ts`) with `/data` and `/:owner/:name/data`.
 - `/settings/appearance` — `pages/account.ts` · every theme as a card that wears its own colours · the Theme row of the account menu (Auto, Light, Dark only) · none seen.
+- `/settings/everyday` — `pages/everyday.ts` · an admin makes the everyday account with a passkey, or keeps working as admin · `/settings` (the pair, once made) · none seen.
 - `/settings/billing` — `pages/billing.ts` · each forge's plan, granted by hand · `/settings/economics` · none seen.
 - `/settings/economics` — `pages/economics.ts` · the profit slider's position and the margin, with the policy in words · `/admin/limits`, `/settings/capacity` · none seen.
 - `/settings/capacity` — `pages/capacity.ts` · how many runs and checks go at once · `/admin/limits`, `/settings/usage` · none seen.

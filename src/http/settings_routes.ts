@@ -84,6 +84,7 @@ import { peoplePage, roleAct } from "../web/pages/people.ts";
 import { ceilingAct, grantAct, modelAdd, modelPage } from "../web/pages/model.ts";
 import {
   everydayCreate,
+  everydayPage,
   everydayKeep,
   everydayOptions,
   everydaySwitch,
@@ -163,6 +164,7 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("GET", "/settings/password", passwordPage);
   router.add("POST", "/settings/password", passwordUpdate);
   // The everyday account: an admin's daily account, apart from admin (#596).
+  router.add("GET", "/settings/everyday", everydayPage);
   router.add("POST", "/settings/everyday", everydayCreate);
   router.add("POST", "/settings/everyday/options", everydayOptions);
   router.add("POST", "/settings/everyday/switch", everydaySwitch);

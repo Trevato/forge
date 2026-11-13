@@ -11,7 +11,7 @@ import { createApp, type App } from "../src/app.ts";
 import { addPasskey } from "../src/core/passkeys.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import type { Ctx } from "../src/http/context.ts";
-import { everydayAsk } from "../src/web/pages/everyday.ts";
+import { everydayPage } from "../src/web/pages/everyday.ts";
 import { secondPasskeyLine } from "../src/web/pages/next-steps.ts";
 
 let dir = "";
@@ -49,12 +49,21 @@ test("an owner with one passkey and no password is told once to add a second; wi
   expect(secondPasskeyLine(ctxOf(bo), bo)).toBeNull();
 });
 
-test("the everyday account asks for an email only on a forge that sends mail", async () => {
+test("the everyday account is made on its own page, and asks for an email only on a forge that sends mail", async () => {
   const cy = await person("cy");
-  expect(everydayAsk(ctxOf(cy), cy).text).not.toContain('name="email"');
+  const pageOf = async () => {
+    const url = new URL("http://localhost/settings/everyday");
+    return (await everydayPage({ app, auth: { user: cy, via: "session" }, request: new Request(url.href), url, params: {} } as unknown as Ctx).text());
+  };
+  const plain = await pageOf();
+  expect(plain).toContain("Make your everyday account");
+  expect(plain).toContain('id="passkey-make"');
+  expect(plain).toContain("Keep using admin");
+  expect(plain).not.toContain('name="email"');
+  expect(plain).not.toContain('type="password"');
   app.config.mailer = async () => true;
   try {
-    expect(everydayAsk(ctxOf(cy), cy).text).toContain('name="email"');
+    expect(await pageOf()).toContain('name="email"');
   } finally {
     delete app.config.mailer;
   }

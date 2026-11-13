@@ -4,6 +4,7 @@
  * Claude Code (a script that speaks stream-json and stays at work). Only the
  * child's address is a stand-in: its host name is routed to the local server.
  */
+import { setStrangerLimits, strangerLimits } from "../src/http/strangers.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chmodSync, existsSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -42,6 +43,8 @@ beforeAll(async () => {
   const alice = await createUser(parent.db, { origin: "seed", trusted: true, username: "alice", email: "a@f.test", password: "a-good-passphrase", adminIfFirst: true });
   if (!alice.ok) throw new Error(alice.error);
   adminToken = createToken(parent.db, alice.value.id, "journey", "admin").token;
+  // This file starts eleven forges from one address inside a minute: the walk is what is tested here, not the door's count.
+  setStrangerLimits(parent, { perAddress: { ...strangerLimits(parent).perAddress, plan: 1000 } });
   parentServers = await serve(parent);
 }, 30_000);
 
@@ -186,9 +189,9 @@ test("a walk that blows up half-way (outside any step) still removes its forge",
 
 test("a run sweeps the probe forges an interrupted run left over an hour ago, and only those", async () => {
   const start = async (name: string) => {
-    const res = await fetch(`${parentServers.url}/forges/start`, { method: "POST", redirect: "manual", headers: { origin: "https://forge.test" }, body: new URLSearchParams({ name, js: "1" }) });
+    const res = await fetch(`${parentServers.url}/forges/start`, { method: "POST", redirect: "manual", headers: { origin: "https://forge.test" }, body: new URLSearchParams({ name }) });
     await res.body?.cancel();
-    expect(res.status).toBe(303);
+    expect(res.status).toBe(200);
   };
   const age = async (name: string, ms: number) => {
     const file = join(dir, "spawn", `${name}.json`);
