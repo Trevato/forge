@@ -1135,13 +1135,15 @@ textarea.editor:focus-visible { outline: none; }
 }
 /* Flow (#8698): the week's pipes. Width is spend; a valve is drawn open,
    half-open (a share) or shut, in tokens. */
-.pipes { width: 100%; height: auto; display: block; }
+.pipes { display: block; width: 100%; max-width: 720px; height: auto; margin-inline: auto; }
+/* A phone has no room for the picture at a size its words can be read; the valves under it say the same numbers. */
+@media (max-width: 599px) { .pipes-block { display: none; } }
 .pipe { fill: none; stroke: currentColor; opacity: .5; }
 .pipe-out { color: var(--series-3); }
 .pipe-out.pipe-valve-shut { stroke-dasharray: 4 4; opacity: .35; }
-.pipe-valve rect { fill: var(--bg); stroke: var(--border); stroke-width: 1.5; }
+.pipe-valve rect { fill: var(--card); stroke: var(--border); stroke-width: 1.5; }
 .pipe-valve-share rect { stroke: var(--series-1); }
-.pipe-valve-shut rect { stroke: var(--series-5); fill: var(--bg); }
+.pipe-valve-shut rect { stroke: var(--series-5); fill: var(--card); }
 .pipe-label { font-size: 12.5px; fill: var(--fg); }
 .pipe-repo { font-size: 12.5px; fill: var(--muted-fg); }
 .valve-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0; }

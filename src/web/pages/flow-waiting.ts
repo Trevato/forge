@@ -13,7 +13,8 @@ import { alarmUnproposed, type UnproposedAlarm } from "../../flow/alarm_unpropos
 import { approvedWait, type ApprovedRow, type ApprovedWait } from "../../flow/approved_wait.ts";
 import { staleFold, type StaleFold } from "../../flow/stale_fold.ts";
 import { html, type Html } from "../html.ts";
-import { card, icon, row } from "../ui.ts";
+import { row } from "../ui.ts";
+import { span } from "../../flow/pipeline.ts";
 
 export interface Waiting {
   readonly approved: readonly ApprovedWait[];
@@ -89,38 +90,38 @@ export function forgetUnproposed(): void {
   scanned = undefined;
 }
 
-const hours = (h: number): string => (h >= 48 ? `${String(Math.floor(h / 24))} d` : `${String(h)} h`);
 const plural = (n: number, one: string): string => `${String(n)} ${n === 1 ? one : `${one}s`}`;
+
+/** One list of the section: its name, one sentence of what it is, and its rows, each a sentence that wraps. */
+const waitingList = (id: string, name: string, says: string, rows: readonly Html[]): Html =>
+  html`<section class="bd-block">
+    <header class="bd-head"><h2>${name}</h2><p class="bd-sub">${says}</p></header>
+    <ul class="list" id="${id}">${[...rows]}</ul>
+  </section>`;
 
 /** The section; empty html when all three are quiet. */
 export function waitingSection(w: Waiting): Html {
   const parts: Html[] = [];
   if (w.approved.length > 0) {
-    parts.push(html`<h2>Approved, waiting on the merge queue</h2>
-      <ul class="list mb" id="flow-approved">${w.approved.map((a) => row({
-        lead: icon("check"),
-        title: html`<a href="/${a.repo}/pulls/${String(a.oldest)}">${a.repo}</a>
-          <span class="muted small">${plural(a.waiting, "approved pull")} waiting; the oldest, #${String(a.oldest)}, for ${hours(a.oldestHours)}</span>`,
-      }))}</ul>`);
+    parts.push(waitingList("flow-approved", "Approved, waiting on the merge queue", "Reviewed and approved; the queue has not landed them yet.", w.approved.map((a) => row({
+        title: html`<span class="valve-name"><a href="/${a.repo}/pulls/${String(a.oldest)}">${a.repo}</a>
+          <span class="muted small">${plural(a.waiting, "approved pull")} waiting; the oldest, #${String(a.oldest)}, for ${span(a.oldestHours * 3_600_000)}</span></span>`,
+      }))));
   }
   if (w.stale.length > 0) {
-    parts.push(html`<h2>Stale crew pulls</h2>
-      <ul class="list mb" id="flow-stale">${w.stale.map((s) => row({
-        lead: icon("clock"),
-        title: html`<a href="/${s.repo}/pulls/${String(s.number)}">${s.repo} #${String(s.number)}</a>
-          <span class="muted small">${plural(s.days, "day")} without a push; a person closes it</span>`,
+    parts.push(waitingList("flow-stale", "Stale crew pulls", "Open with no push for days; a person closes one, and its work can fold back into its issue.", w.stale.map((s) => row({
+        title: html`<span class="valve-name"><a href="/${s.repo}/pulls/${String(s.number)}">${s.repo} #${String(s.number)}</a>
+          <span class="muted small">${plural(s.days, "day")} without a push; a person closes it</span></span>`,
         meta: s.note === null
-          ? html`<span class="muted small">No issue to fold back into.</span>`
-          : html`<span class="small"><a href="/${s.repo}/issues/${String(s.issueNumber)}">Fold back into #${String(s.issueNumber)}</a>: <code>${s.note}</code></span>`,
-      }))}</ul>`);
+          ? html`<span class="valve-body muted small">No issue to fold back into.</span>`
+          : html`<span class="valve-body small"><a href="/${s.repo}/issues/${String(s.issueNumber)}">Fold back into #${String(s.issueNumber)}</a>: <code>${s.note}</code></span>`,
+      }))));
   }
   if (w.unproposed.fires) {
-    parts.push(html`<h2>Work a crew fork never proposed</h2>
-      <ul class="list mb" id="flow-unproposed">${w.unproposed.branches.map((b) => row({
-        lead: icon("alert"),
-        title: html`<a class="mono" href="/${b.repo}/tree/${encodeURIComponent(b.branch)}">${b.repo}: ${b.branch}</a>
-          <span class="muted small">${hours(Math.floor(b.ageMs / 3_600_000))} old, no pull</span>`,
-      }))}</ul>`);
+    parts.push(waitingList("flow-unproposed", "Work a crew fork never proposed", "Branches with commits and no pull: work that was done and never offered.", w.unproposed.branches.map((b) => row({
+        title: html`<span class="valve-name"><a class="mono" href="/${b.repo}/tree/${encodeURIComponent(b.branch)}">${b.repo}: ${b.branch}</a>
+          <span class="muted small">${span(b.ageMs)} old, no pull</span></span>`,
+      }))));
   }
-  return parts.length === 0 ? html`` : card(html`${parts}`, { extra: "mb", attrs: html`id="flow-waiting"` });
+  return parts.length === 0 ? html`` : html`<div class="bd-live" id="flow-waiting">${parts}</div>`;
 }
