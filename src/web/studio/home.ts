@@ -386,7 +386,7 @@ export async function studioHome(
       steps,
       () => html`<p class="small muted" id="lean-home"><a href="/">Just my apps</a></p>`,
     )}
-    <p class="small muted"><a href="/feed">The feed</a></p>`;
+    <p class="small muted"><a href="/feed">The feed</a> · <a href="/home">Try the new home</a></p>`;
   const res = page({
     ctx,
     title: "Home",

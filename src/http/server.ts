@@ -377,6 +377,7 @@ import {
 import { lookImage } from "../web/pages/looks.ts";
 import { ogCard } from "../web/pages/og.ts";
 import { bigRedirect, boardPage } from "../web/pages/board.ts";
+import { homeFlowPage, liveForgesFragment, liveLaneFragment, liveStripFragment } from "../web/pages/home_flow.ts";
 import { returnsPage } from "../web/pages/returns.ts";
 import {
   fleetGraphCsv,
@@ -864,6 +865,8 @@ export function buildRouter(): Router<Handler> {
   // Stripe's signed events (http/stripe_hook.ts): public, no cookie read, each event id once.
   router.add("POST", "/hooks/stripe", stripeHook);
   router.add("GET", "/", home);
+  // The new home: the pipeline as six live lanes (web/pages/home_flow.ts). Literal, above /:owner.
+  router.add("GET", "/home", homeFlowPage);
   // A spawned child's claim link: GET shows, POST takes it (spawn/claim.ts).
   router.add("GET", "/claim", claimFragmentPage);
   router.add("POST", "/claim", claimSubmit);
@@ -1058,6 +1061,9 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/live/milestones", liveMilestonesFragment);
   router.add("GET", "/live/moving", liveMovingFragment);
   router.add("GET", "/live/chips", liveChipsFragment);
+  router.add("GET", "/live/lane", liveLaneFragment);
+  router.add("GET", "/live/strip", liveStripFragment);
+  router.add("GET", "/live/forges", liveForgesFragment);
   router.add("GET", "/feed", feedPage);
   // The home's late regions, each drawn alone (#7660).
   for (const name of HOME_REGIONS) router.add("GET", `/live/home/${name}`, (ctx) => liveHomeFragment(ctx, name));
