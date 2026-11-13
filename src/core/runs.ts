@@ -1059,7 +1059,7 @@ export function latestRunsForIssues(
     const rows = db
       .query<RunRow, string[]>(
         `SELECT run.* FROM run
-         JOIN (SELECT issue_id, MAX(id) AS id FROM run
+         JOIN (SELECT issue_id, MAX(id) AS id FROM run INDEXED BY run_issue
                WHERE kind IN (${kindList}) AND issue_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})
                GROUP BY issue_id) latest ON latest.id = run.id`,
       )
