@@ -217,6 +217,8 @@ export async function home(ctx: Ctx): Promise<Response> {
   // A gift link (`/?code=`) keeps the code in a cookie and opens the new-forge form, so the next address has no code in it (#11157).
   const gift = ctx.url.searchParams.get("code");
   if (gift !== null && gift !== "") return keepGift(gift.slice(0, 64), "/forges/new", ctx.url, ctx.app.config.url);
+  // `?home=new` opens the pipeline home (`pages/home_flow.ts`) and `?home=classic` this one: the switch a default will ride on later.
+  if (user !== undefined && ctx.url.searchParams.get("home") === "new") return redirect("/home");
   const res = user === undefined ? await studioDoor(ctx) : await studioHome(ctx, user);
   // RFC 9727 §3: where an agent that knows only the origin finds the API catalog.
   res.headers.append("link", API_CATALOG_LINK);

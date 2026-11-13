@@ -54,6 +54,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/pricing/resend` — `pages/pricing.ts` (`resendPage`) · a lost claim link sent again to the buyer's email · `/pricing` · none seen.
 - `/explore` — `studio/explore.ts` · browse what the forge holds · `/search`, `/apps` · colours 2.
 - `/board` — `pages/board.ts` (1,231 lines) · every app the viewer can see, with a wall mode · `/boards` (saved queries as panels), `/flow`, `/` · colour 1, sizes 6.
+- `/home` — `pages/home_flow.ts` · the new home: what the forge is doing now as six live lanes of tiles (asked, building, checks, review, landing, live) under a strip of today's figures, with a quiet filter to one app and the hosted forges in one line; each lane redraws from its own event · `/` links to it ("Try the new home"), `/?home=new` opens it · none seen; styles in `docs/design/areas/home-flow.md`.
 - `/board/returns` — `pages/returns.ts` · what the window's dollars bought · `/settings/subscriptions` spend tables, `/settings/usage` · none seen.
 - `/big` — `pages/board.ts` (`bigRedirect`) · a redirect kept for old addresses into the board's wall mode · it is `/board` · none (no page of its own).
 - `/bring` — `pages/bring.ts` · bring an app whole from another forge, with its history, as a private linked app · `/new`, the palette · none seen.

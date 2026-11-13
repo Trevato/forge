@@ -24,6 +24,7 @@
 
 import { swatchCss, themeCss } from "../design/themes.ts";
 import { boardCss } from "./pages/board_style.ts";
+import { homeFlowCss } from "./pages/home_flow_style.ts";
 import { base, layers, reset, utilities } from "./style/base.ts";
 import { components } from "./style/components.ts";
 import { content } from "./style/content.ts";
@@ -40,6 +41,7 @@ export const css = [
   components,
   studioCss,
   boardCss,
+  homeFlowCss,
   content,
   model3dCss,
   gcodeCss,
