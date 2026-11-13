@@ -167,6 +167,19 @@ describe("dependencies", () => {
     expect(getIssue(app.db, repo.id, 1)?.state).toBe("open");
   });
 
+  test("a blocker closed as dropped holds its issue on ask and frees it on go", () => {
+    app.db.run("UPDATE issue SET state = 'closed', close_reason = 'dropped' WHERE id = ?1", [issue(1).id]);
+    try {
+      app.db.run("UPDATE repo SET autonomy = 'autonomous', plans_need_nod = 1, decisions_by = 'me' WHERE id = ?1", [repo.id]);
+      expect(repoGraph(app.db, repo.id).held.length).toBeGreaterThan(0);
+      app.db.run("UPDATE repo SET plans_need_nod = 0, decisions_by = 'decider' WHERE id = ?1", [repo.id]);
+      expect(repoGraph(app.db, repo.id).held).toEqual([]);
+    } finally {
+      app.db.run("UPDATE issue SET state = 'open', close_reason = NULL WHERE id = ?1", [issue(1).id]);
+      app.db.run("UPDATE repo SET autonomy = 'off', plans_need_nod = 1, decisions_by = 'me' WHERE id = ?1", [repo.id]);
+    }
+  });
+
   test("the API links, lists, refuses a loop with the reason, and serves the map", async () => {
     const url = (n: number) =>
       `${base}/api/v1/repos/alice/engine/issues/${n}/dependencies`;
