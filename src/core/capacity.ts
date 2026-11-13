@@ -92,7 +92,7 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     env: "FORGE_WEEK_USE",
     kind: { type: "count", min: 10, max: 100 },
     fallback: "90",
-    help: "The weekly budget knob: how much of the week's subscription the crew may spend, evenly to the reset. The rest is kept for conversations and a person's own requests; the crew stops at it. Read on every pump.",
+    help: "The weekly budget knob: the most of the week's subscription the crew may spend. The rest is kept for conversations and a person's own requests; the crew stops at it. Read on every pump.",
   },
   "children.max": {
     label: "Forges this one may send",

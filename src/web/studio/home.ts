@@ -77,7 +77,7 @@ import { interruptedOutLine } from "./interrupted_out.ts";
 import { appChips, movingRegion, tellBox } from "./living.ts";
 import { alarmLines, cachedAlarms } from "./alarm_lines.ts";
 import { kpiRow, waitingLine } from "./kpi_row.ts";
-import { homeWeek } from "./week_line.ts";
+import { weekLine } from "./week_line.ts";
 import { feedCandidateCache } from "../../feed/feed.ts";
 import { notePhase, notePhaseRest, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { idleReason } from "../../crew/idle_reason.ts";
@@ -264,7 +264,7 @@ export function homeDraws(ctx: Ctx, user: User): Record<HomeRegion, () => Html |
       return html`${disclosure(
           "Figures",
           html`${timePhase(request, "kpis", () => kpiRow(db, kpiOpts), () => kpiCache(db))}
-            ${homeWeek(ctx.app, user)}`,
+            ${weekLine(ctx.app)}`,
           { small: true, id: "home-figures" },
         )}`;
     },

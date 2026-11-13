@@ -13,13 +13,13 @@ import { chapterHold } from "../core/chapters.ts";
 import { crewFilters, isStrangerPull } from "./stranger.ts";
 import { TEMP_FULL } from "../checks/disk_full.ts";
 import { freshPullFor } from "./fresh_pull.ts";
-import { PRIORITY_REASONS, weekHold } from "./week_hold.ts";
+import { weekHold } from "./week_hold.ts";
 import { weekFor } from "./week_read.ts";
 import { twinNote, twinOf, type Twin } from "./twin.ts";
 import { NO_MERGE } from "../checks/merged.ts";
 import { resolveListConflicts } from "../actions/list-conflicts.ts";
 import { markHeard } from "../core/issues.ts";
-import { capacityCount, noteBooted, paceFloor } from "../core/capacity.ts";
+import { capacityCount, noteBooted } from "../core/capacity.ts";
 import { tmpdir } from "node:os";
 import { emailVerified } from "../core/verify.ts";
 import { rmSync } from "node:fs";
@@ -89,7 +89,6 @@ import { detectClaude } from "./claude.ts";
 import { followDivergence, settleAll, settleOnPush } from "./converge.ts";
 import { breakerTripped } from "./breaker.ts";
 import { REPEAT_NOTE, repeatTripped } from "./repeat.ts";
-import { unstickOwed } from "./stalls.ts";
 import {
   CAP_NOTE,
   capNoted,
@@ -404,22 +403,6 @@ function handOver(
   });
 }
 
-/**
- * Whether a run on the direction is the planner's pass owed for an issue a
- * stall struck out since its last pass: that pass starts past the day's
- * planning cap, since unsticking is not planning (`stalls.ts`).
- */
-function unstickDue(app: App, repo: Repo, issue: Issue): boolean {
-  if (issue.id !== repo.directionIssueId) return false;
-  const last = app.db
-    .query<{ at: string }, [string]>(
-      `SELECT created_at AS at FROM run WHERE issue_id = ?1 AND kind = 'agent'
-        ORDER BY created_at DESC LIMIT 1`,
-    )
-    .get(issue.id);
-  return unstickOwed(app.db, repo, last?.at ?? "");
-}
-
 /** Whether `spentUsd` has reached the repository's daily ceiling: the test that stops a run being queued. */
 export function atCeiling(
   repo: Pick<Repo, "autonomyCeilingUsd">,
@@ -527,13 +510,9 @@ export function queueAgentRun(
   // A day's share of runs on one issue without a person's word: a loop,
   // parked once and asked about once (`guard.ts`). A run carrying on after
   // a pause or a restart is the same start, never a new one. The direction
-  // issue has its own, larger share (`runCapOf`).
+  // issue has no share: the budget bounds the planner (`runCapOf`).
   const cap = runCapOf(repo, issue, app.config);
-  if (
-    again === undefined &&
-    capReached(app.db, repo, issue, cap) &&
-    !unstickDue(app, repo, issue)
-  ) {
+  if (again === undefined && capReached(app.db, repo, issue, cap)) {
     if (
       !capNoted(app.db, repo, issue) &&
       parkForBreaker(app, repo, issue, agent, CAP_NOTE)
@@ -1610,21 +1589,6 @@ export function assignedByPerson(app: App, run: Run): boolean {
   return row?.person === 1;
 }
 
-/**
- * A review, or work a person assigned: the runs the pace leaves a floor for.
- * `memo` holds the answer per run for one pump pass, so the events are read
- * once for each run, and only for `assigned` ones.
- */
-export function isPriorityRun(app: App, run: Run, memo?: Map<string, boolean>): boolean {
-  if (!PRIORITY_REASONS.includes(run.reason)) return false;
-  if (run.reason !== "assigned") return true;
-  const known = memo?.get(run.id);
-  if (known !== undefined) return known;
-  const person = assignedByPerson(app, run);
-  memo?.set(run.id, person);
-  return person;
-}
-
 /** Per app, the runs already told why they wait, so the log says it once. */
 const notedBy = new WeakMap<App, Set<string>>();
 
@@ -1659,9 +1623,6 @@ export function pump(
     capacityCount(app.db, "crew.concurrency", options.concurrency) -
     runningIssues.size;
   const started: string[] = [];
-  const goingIn = new Map<string, number>();
-  const priorityIn = new Map<string, number>();
-  const priorityMemo = new Map<string, boolean>();
   const noted = notedBy.get(app) ?? new Set<string>();
   notedBy.set(app, noted);
   // Builder starts go to teams in proportion to their dials (`team_share.ts`),
@@ -1685,7 +1646,6 @@ export function pump(
   // One week read per repository per pass: past the slots the loop still
   // reads every queued run, to say which the pace or a limit holds (#11518).
   const weeks = new Map<string, ReturnType<typeof weekFor>>();
-  const floor = paceFloor(app.db);
   for (const queued of gated.order) {
     // One run per issue at a time: this one waits for its sibling, not for a slot.
     // A sibling that hangs is still caught: the running run goes stale on its
@@ -1708,15 +1668,11 @@ export function pump(
       }
       continue;
     }
-    // The week's pace holds every path that starts a run in an autonomous
+    // The week's ceiling holds every path that starts a run in an autonomous
     // repository: assigned, review, feedback and check runs as much as picks (#8873).
     if (home !== undefined && home.autonomy === "autonomous") {
-      const going = (goingIn.get(home.id) ?? 0) + active.filter((r) => r.state === "running" && r.repoId === home.id).length;
-      const priorityGoing =
-        (priorityIn.get(home.id) ?? 0) +
-        active.filter((r) => r.state === "running" && r.repoId === home.id && isPriorityRun(app, r, priorityMemo)).length;
       if (!weeks.has(home.id)) weeks.set(home.id, weekFor(app, home, new Date()));
-      const paced = weekHold(weeks.get(home.id)!, home.autonomySlots, going - priorityGoing, isPriorityRun(app, fresh, priorityMemo) ? fresh.reason : "pick", priorityGoing, floor);
+      const paced = weekHold(weeks.get(home.id)!);
       if (paced !== null) {
         held.set(fresh.id, "pace");
         if (!noted.has(fresh.id)) {
@@ -1759,8 +1715,6 @@ export function pump(
     // rest count as waiting for a slot (#11518).
     if (slots <= 0) continue;
     started.push(fresh.id);
-    goingIn.set(fresh.repoId, (goingIn.get(fresh.repoId) ?? 0) + 1);
-    if (isPriorityRun(app, fresh, priorityMemo)) priorityIn.set(fresh.repoId, (priorityIn.get(fresh.repoId) ?? 0) + 1);
     noted.delete(fresh.id);
     slots--;
     if (queued.issueId !== null) runningIssues.add(queued.issueId);

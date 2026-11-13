@@ -2,8 +2,8 @@
  * A stalled issue frees itself (#4073): a builder that left an issue
  * without a pull has it parked by the next tick — a note with who and why,
  * the assignee cleared — and another builder picks it; the builder that
- * stalled it leaves it for the hour; a second stall hands it to the planner
- * past the direction's day's planning cap; the tick line counts `unstuck`.
+ * stalled it leaves it for the hour; a second stall hands it to the planner;
+ * the tick line counts `unstuck`.
  * The repositories are assisted, where nothing parks a stall when its run
  * ends, so the tick is what frees it.
  */
@@ -38,7 +38,6 @@ import { leftWithoutPull, NO_PULL, SHUN_MS, stallReason } from "../src/crew/stal
 import { serve, type Servers } from "../src/http/server.ts";
 
 /** Planning passes the direction may start in a day, here: small enough to reach. */
-const DIRECTION_CAP = 2;
 
 let dataDir: string;
 let app: App;
@@ -145,7 +144,7 @@ async function tick(repo: Repo, now = new Date()): Promise<string> {
 
 beforeAll(async () => {
   dataDir = await mkdtemp(join(tmpdir(), "forge-stalls-"));
-  app = createApp({ dataDir, port: 0, directionRunCap: DIRECTION_CAP });
+  app = createApp({ dataDir, port: 0 });
   servers = await serve(app);
   const a = await createUser(app.db, {
     origin: "seed",
@@ -178,19 +177,12 @@ describe("a stall", () => {
 });
 
 describe("a stalled issue frees itself", () => {
-  test("the next tick parks it with who and why, and another builder picks it; a second stall goes to the planner past its cap", async () => {
+  test("the next tick parks it with who and why, and another builder picks it; a second stall goes to the planner", async () => {
     const repo = await crewed(["mason", "smith"]);
     const mason = getUserByName(app.db, "mason")!;
     const smith = getUserByName(app.db, "smith")!;
     const netcode = issue(repo, "Netcode");
-    // The planner's day is spent: its passes on the direction are at the cap.
     const direction = ensureDirectionIssue(app, alice, getRepoById(app.db, repo.id)!)!;
-    for (let n = 0; n < DIRECTION_CAP; n++) {
-      const run = createRun(app.db, { repoId: repo.id, kind: "agent", issueId: direction.id, actorId: getUserByName(app.db, "atlas")!.id, reason: "assigned" });
-      claimRun(app.db, run.id);
-      finishRun(app.db, run.id, { state: "ok", summary: "opened #9", costUsd: 0.1 });
-      app.db.query("UPDATE run SET created_at = ?2 WHERE id = ?1").run(run.id, new Date(Date.now() - (90 - n) * 60_000).toISOString());
-    }
 
     stall(netcode, mason, "declined: needs a protocol decision");
     expect(heldWords(heldNow(app, getRepoById(app.db, repo.id)!))).toBe("stalled=1");
@@ -203,11 +195,9 @@ describe("a stalled issue frees itself", () => {
     expect(note.body).toContain(`@mason's ${NO_PULL}: declined: needs a protocol decision`);
     // Another builder has it: the one that stalled it leaves it for the hour.
     expect(getIssueById(app.db, netcode.id)!.assigneeId).toBe(smith.id);
-    // One stall is no reason to plan: the cap holds the planner.
-    expect(getIssueById(app.db, direction.id)!.assigneeId).toBeNull();
 
     // The second builder stalls it too: the next tick hands it to the
-    // planner, whose day's cap does not stand in the way.
+    // planner.
     plannerDone(repo);
     stall(netcode, smith, "declined: still no protocol");
     const second = await tick(repo);

@@ -12,7 +12,7 @@ import type { Database } from "bun:sqlite";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { getIssuesByIds, getIssuesOfRepo, type CloseReason, type Issue } from "./issues.ts";
 import { pillarsOf, structuralIds, type Pillars } from "./pillars.ts";
-import { getRepoById, type Repo } from "./repos.ts";
+import { getRepoById, isGo, type Repo } from "./repos.ts";
 import { unadoptedAmong } from "../crew/direct.ts";
 import { flowLabelled } from "./flow_label.ts";
 import { raisedAt, raisedInRepo } from "./thought_links.ts";
@@ -419,7 +419,11 @@ export function repoGraph(
     )
     .all(repoId)
     .map((r) => ({ issueId: r.issue_id, blockedById: r.blocked_by_id }));
-  const heldRows = db
+  // On go nobody confirms a plan: a closed blocker, however it closed, frees the issue.
+  const repo = getRepoById(db, repoId);
+  const heldRows = repo !== undefined && isGo(repo)
+    ? []
+    : db
     .query<
       { issue_id: string; blocked_by_id: string; reason: Held["reason"] },
       [string]
@@ -475,7 +479,6 @@ export function repoGraph(
   const kept = edges.filter(
     (e) => present.has(e.issueId) && present.has(e.blockedById),
   );
-  const repo = getRepoById(db, repoId);
   const set =
     repo === undefined ? undefined : (options.pillars ?? pillarsOf(db, repo));
   const places = readPlaces(db, repoId);

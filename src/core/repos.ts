@@ -118,6 +118,10 @@ export function checkAutonomy(
 /** The most any pillar may be set to at once. */
 export const PILLAR_MAX = 8;
 
+/** The knob's `go`: autonomous, plans need no nod, decisions are the decider's. Anything else autonomous is `ask`. */
+export const isGo = (repo: Pick<Repo, "autonomy" | "plansNeedNod" | "decisionsBy">): boolean =>
+  repo.autonomy === "autonomous" && !repo.plansNeedNod && repo.decisionsBy !== "me";
+
 export interface Repo {
   readonly id: string;
   readonly ownerId: string;

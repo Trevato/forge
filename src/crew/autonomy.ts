@@ -106,17 +106,16 @@ import { grantedAccounts } from "../core/subscriptions.ts";
 import { reviewSummary } from "../core/reviews.ts";
 import { standing } from "../core/standing.ts";
 import { pace, type Pace } from "./pacing.ts";
-import { heldByGateAlone, releaseFromGate } from "./release_later.ts";
 import { staggeredUntil } from "./ceiling_stagger.ts";
-import { crewWeekFor, weekFor, weekScope } from "./week_read.ts";
+import { crewWeekFor } from "./week_read.ts";
 import { announceGovernor, governorFor } from "./governed.ts";
 import { BREAKER_NOTE, breakerTripped } from "./breaker.ts";
 import { REPEAT_NOTE } from "./repeat_note.ts";
 import { given, pendingReplans } from "../core/limb_replan.ts";
 import { handedOverPulls, SKIP_SUMMARY, skipsReplan } from "./guard.ts";
-import { atRunCap, type Held, heldBy, heldWords, replannable } from "./held.ts";
+import { type Held, heldBy, heldWords, replannable } from "./held.ts";
 import { holdHot, hotFiles, hotWords, learnPullFiles } from "./hot_files.ts";
-import { landedUnder, NO_PULL, stallReason, unstickOwed } from "./stalls.ts";
+import { landedUnder, NO_PULL, stallReason } from "./stalls.ts";
 import { alreadyDone, BY_CREW, DONE_LIKE } from "../core/done_on_main.ts";
 import { repoDir } from "../git/repos.ts";
 import { ALREADY_NOTE, alreadyDoneOids } from "./already.ts";
@@ -387,43 +386,9 @@ export function repoPace(app: App, repo: Repo, now = new Date(), crew = true, pi
   const until = staggeredUntil(app.db, repo, now);
   if (until !== null)
     return { ...limited, slots: 0, reason: `0 of ${repo.autonomySlots} slots until ${until.toISOString().slice(11, 16)} UTC: the daily ceilings reset together and each repository restarts at its own time` };
-  // The week is one budget for the whole crew on these accounts, and the repository's own slots are limits inside it (#8989).
+  // The week's ceiling is one budget for the whole crew on these accounts (#8989).
   const week = crewWeekFor(app, repo, now);
-  if (week === null) return limited;
-  const scope = weekScope(app, repo, now);
-  let others = 0;
-  for (const other of listAutonomousRepos(app.db)) {
-    if (other.id === repo.id || other.autonomy !== "autonomous" || other.archivedAt !== null) continue;
-    if (weekScope(app, other, now) !== scope) continue;
-    const active = activeRuns(app, other.id);
-    others += slottedRuns(active, listCrewRoles(app.db, other.id)).length;
-    // Picked earlier in this tick and not yet running: a slot of the crew's week already spent.
-    const running = new Set(active.map((r) => r.issueId));
-    others += [...(picked.get(other.id) ?? [])].filter((id) => !running.has(id)).length;
-  }
-  const here = Math.max(0, week.slots - others);
-  return here < limited.slots
-    ? { ...limited, slots: here, reason: `${here} of ${repo.autonomySlots} slots: the whole crew has ${week.slots} for the week, ${others} running elsewhere. ${week.sentence}` }
-    : limited;
-}
-
-/**
- * Behind the week's pace with builders idle and nothing startable, the next
- * gated issue (the lowest number the Later gate alone holds) is released:
- * one per look, each logged and noted on the issue with why (#8695).
- */
-function releaseForPace(app: App, repo: Repo, by: User, slotted: number, startable: number, now: Date): number | undefined {
-  const gated = heldByGateAlone(app.db, repo.id);
-  const week = weekFor(app, repo, now, { idleSlots: Math.max(0, repo.autonomySlots - slotted), startable, gated: gated.length });
-  const next = gated[0];
-  if (week === null || !week.release || next === undefined) return undefined;
-  const [number] = releaseFromGate(app.db, repo.id, [next.number], by.id);
-  if (number === undefined) return undefined;
-  const why = `Released from Later to use the week's subscription: ${week.sentence}`;
-  log.info("released", { repo: `${repo.ownerName}/${repo.name}`, issue: number, why });
-  const issue = getIssueById(app.db, next.id);
-  if (issue !== undefined) addComment(app, by, repo, issue, why);
-  return number;
+  return week !== null && week.slots === 0 ? { ...limited, slots: 0, reason: week.sentence } : limited;
 }
 
 /** The builder slots free now: none while paused, else the paced slots less what is slotted. */
@@ -441,7 +406,7 @@ export function inSlotOrder(app: App, repo: Repo, ready: readonly Ranked[], now:
   return pickOrder(allowed, ranked, (r) => r.issue.id, [], fromAppIssues(app.db, allowed.map((r) => r.issue.id)));
 }
 
-export type Drove = "off" | "paused" | "waiting" | "full" | "picked" | "planned" | "released" | "idle";
+export type Drove = "off" | "paused" | "waiting" | "full" | "picked" | "planned" | "idle";
 
 /**
  * One turn of the loop for one repository. Returns what it did, for the
@@ -517,8 +482,6 @@ async function driveOnce(
   );
   const ready = held.startable.filter((r) => !taken.has(r.issue.id));
   const used = slotted.length + pending;
-  if (used < paced.slots && releaseForPace(app, repo, by, used, ready.length, now) !== undefined)
-    return "released";
   if (used >= paced.slots) {
     // The builders are busy; the planner can still refill the map, when
     // the reserve is short — counted, never assumed: a full crew with a
@@ -812,10 +775,8 @@ async function planIfThin(
   const unstuck = stuck === null ? [] : replannable(stuck).filter((issue) => heldSince(app, issue, seen));
   const news = owed.length + unstuck.length + limbsOwed.length;
   // The direction is the planner's standing issue, not one issue retried:
-  // it is held to its own day's share, never the builders' cap (#2143).
-  // Except for an issue struck out by a stall: unsticking is not planning (#4073).
-  if (atRunCap(app, repo, direction) && !unstickOwed(app.db, repo, seen))
-    return notPlanned(repo, "parked: the direction is at its day's planning cap");
+  // no run count bounds it. The budget does, the breaker, and a pass that
+  // would plan the same input twice is skipped (`plannerNothingNew`).
   // An issue the crew handed over is owed its pass whatever the hold: the
   // planner splitting it is how work starts landing again.
   const hold = news === 0 ? plannerHold(app, repo, now) : null;

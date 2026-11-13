@@ -110,10 +110,9 @@ describe("the direction is paced, not capped", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("the direction has its own cap, larger than an issue's", () => {
-    expect(runCapOf(fresh(), direction, {})).toBeGreaterThan(ISSUE_RUN_CAP);
-    expect(runCapOf(fresh(), direction, { issueRunCap: 2 })).toBeGreaterThan(2);
-    expect(runCapOf(fresh(), direction, { directionRunCap: 5 })).toBe(5);
+  test("the direction has no cap; the budget bounds the planner", () => {
+    expect(runCapOf(fresh(), direction, {})).toBe(Number.POSITIVE_INFINITY);
+    expect(runCapOf(fresh(), direction, { issueRunCap: 2 })).toBe(Number.POSITIVE_INFINITY);
   });
 
   test("twenty passes with no person's word: the twenty-first still runs when the map is thin", async () => {
@@ -123,19 +122,6 @@ describe("the direction is paced, not capped", () => {
     await moveTheMap();
     expect(await driveRepo(app, fresh())).toBe("planned");
     expect(getIssueById(app.db, direction.id)!.assigneeId).toBe(atlas.id);
-  });
-
-  test("the direction's own day's share still parks it", async () => {
-    reset();
-    for (let n = 20; n >= 1; n--) pass(n * 40 * 60_000);
-    await moveTheMap();
-    app.config.directionRunCap = 20;
-    try {
-      expect(await driveRepo(app, fresh())).toBe("idle");
-      expect(getIssueById(app.db, direction.id)!.assigneeId).toBeNull();
-    } finally {
-      delete app.config.directionRunCap;
-    }
   });
 
   test("a tripped breaker still parks the planner", async () => {

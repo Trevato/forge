@@ -110,17 +110,13 @@ test("Reserve is a read-only row: 100 minus Weekly budget, and a set is refused 
   setCapacity(app.db, "week.use", before, admin.id);
 });
 
-test("Weekly budget sets the reserve the pacer holds back", () => {
+test("Weekly budget is the share of the week the crew may use, and it stops there", () => {
   expect(weekUse(app.db)).toBe(90);
   const week = (reserve: number) =>
     weekDecision({
-      meter: { freePct: 20, keptPct: 0, burnPctPerHour: 1, resetsAt: new Date(Date.now() + 3 * 86_400_000) },
+      meter: { freePct: 20, keptPct: 0, resetsAt: new Date(Date.now() + 3 * 86_400_000) },
       now: new Date(),
       ceiling: 4,
-      floorSlots: 1,
-      idleSlots: 0,
-      startable: 0,
-      gated: 0,
       reserve,
     })!;
   expect(week(0.1).slots).toBeGreaterThan(0);
