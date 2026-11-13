@@ -34,7 +34,15 @@ const MAX_HITS = 240;
 const clean = (s: string) =>
   s.replace(/[^\u0009\u000A\u000D\u0020-\uD7FF\uE000-\uFFFD]/gu, "").replace(/\s+/g, " ").trim();
 const num = (n: number) => String(Math.round(n * 100) / 100);
-const grouped = (n: number, digits: number) => n.toLocaleString("en-US", { maximumFractionDigits: digits });
+/** `n` to at most `digits` decimals, thousands grouped: 1,234.5. Written out, because a chart says thousands of these and `toLocaleString` costs several microseconds each. */
+export function grouped(n: number, digits: number): string {
+  if (!Number.isFinite(n)) return String(n);
+  const scale = 10 ** digits;
+  const r = Math.round(Math.abs(n) * scale) / scale;
+  const [whole = "0", frac] = String(r).split(".");
+  const head = whole.length > 3 && !whole.includes("e") ? whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",") : whole;
+  return `${n < 0 && r !== 0 ? "-" : ""}${head}${frac === undefined ? "" : `.${frac}`}`;
+}
 
 /** A number as a person reads it: 0.42 · 12.5 · 1,234 · 12.3k · 4.5M · 7.1G. */
 export function formatValue(v: number): string {

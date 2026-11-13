@@ -1,21 +1,20 @@
 /**
- * The worker side of `/boards` and `/flow` (`pages.ts`): read a page's
- * picture on a read-only handle of its own, so the forge's one thread never
- * walks the pulls and the ready lists, and never starts a git process, to
- * draw either page. The same pattern as `lanes_worker.ts`: the thread posts a
+ * The worker side of `/boards`, `/flow`, a board and the data page
+ * (`pages.ts`): read a page's picture on a read-only handle of its own, so
+ * the forge's one thread never walks the pulls, the ready lists, the events
+ * or the samples, and never starts a git process, to draw one. The same pattern as `lanes_worker.ts`: the thread posts a
  * job and receives the answer.
  */
 
 import { Database } from "bun:sqlite";
-import type { ForgeConfig } from "../app.ts";
-import { readPagePicture, type BoardsPicture, type FlowPicture, type PageJob, type PagesEnv } from "./pages_read.ts";
+import { readPagePicture, type PageJob, type PagesConfig, type PagesEnv, type Picture } from "./pages_read.ts";
 
 /** What the worker is asked. */
 export interface PagesAsk {
   readonly id: number;
   readonly path: string;
   readonly reposRoot: string;
-  readonly config: ForgeConfig;
+  readonly config: PagesConfig;
   readonly ceilingUsd: number | null;
   readonly job: PageJob;
   readonly learned: readonly { repoId: string; number: number; files: readonly string[] }[];
@@ -24,7 +23,7 @@ export interface PagesAsk {
 /** What it answers: the picture, or why it could not. */
 export interface PagesAnswer {
   readonly id: number;
-  readonly picture?: BoardsPicture | FlowPicture;
+  readonly picture?: Picture;
   readonly error?: string;
 }
 

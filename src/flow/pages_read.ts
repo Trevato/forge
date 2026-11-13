@@ -1,6 +1,6 @@
 /**
- * What `/boards` and `/flow` draw, read in one go: the picture of each page
- * as plain data. It is read by a worker on a read-only handle of its own
+ * What `/boards`, `/flow`, a board and the data page draw, read in one go:
+ * the picture of each page as plain data. It is read by a worker on a read-only handle of its own
  * (`pages_worker.ts`), never on a request, because on a forge of any size its
  * parts walk the pulls, the runs and the ready lists (a third of a second to
  * a second and more on production's copy) and three of them ask git: the
@@ -19,7 +19,12 @@
 
 import type { Database } from "bun:sqlite";
 import type { App, ForgeConfig } from "../app.ts";
-import { BOARDS_OWNER, BOARDS_REPO, listBoards, type Stored } from "../boards/store.ts";
+import { drawAnswer, type AnswerDrawn } from "../boards/answer.ts";
+import { GUIDE } from "../boards/guide.ts";
+import { toQuery, type Params } from "../boards/params.ts";
+import { drawnPanel, panelData, runFor, type PanelDrawn } from "../boards/panel_data.ts";
+import { runQuery } from "../boards/query.ts";
+import { BOARDS_OWNER, BOARDS_REPO, listBoards, readBoard, type Board, type Stored } from "../boards/store.ts";
 import { getRepo } from "../core/repos.ts";
 import { rememberPullFiles } from "../crew/hot_files.ts";
 import { driftingPulls, readDrifts, type DriftingPull, type RepoDrift } from "./alarm_drift.ts";
@@ -30,10 +35,10 @@ import { cpuClosedPulls, type CpuClosedPull } from "./cpu_closed.ts";
 import { readHandoverLists, type HandoverLists } from "./handover_read.ts";
 import { readHeld, type HeldRow } from "./held.ts";
 import { panelFigures, readPanelFigures, type PanelFigures, type PanelViewer } from "./panel_cache.ts";
-import { PIPELINE } from "./pipeline.ts";
+import { PIPELINE, type PipelineKey } from "./pipeline.ts";
 import { readPipes, type Pipes } from "./pipes.ts";
 import { readRepeats, type Repeats } from "./repeats.ts";
-import { readThroughput, type Throughput } from "./throughput.ts";
+import { readThroughput, type StageThroughput, type Throughput } from "./throughput.ts";
 import { readWaitingRows, type Waiting } from "./waiting_rows.ts";
 import { cachedAlarms } from "../web/studio/alarm_lines.ts";
 
@@ -47,10 +52,22 @@ export const DRIFT_KEEP_MS = 60_000;
 export const UNPROPOSED_KEEP_MS = 10 * 60_000;
 
 /** Where a reading reads from. `inline` reads everything now and keeps nothing. */
+/**
+ * The settings a reading reads, and no others: where the data is and the
+ * crew's daily run cap. The forge's whole settings never cross to a worker:
+ * they hold things a message cannot carry (the decider and the mailer are
+ * objects with methods) and secrets no reader here needs.
+ */
+export type PagesConfig = Pick<ForgeConfig, "dataDir" | "issueRunCap">;
+export const pagesConfig = (config: ForgeConfig): PagesConfig => ({
+  dataDir: config.dataDir,
+  ...(config.issueRunCap === undefined ? {} : { issueRunCap: config.issueRunCap }),
+});
+
 export interface PagesEnv {
   readonly db: Database;
   readonly reposRoot: string;
-  readonly config: ForgeConfig;
+  readonly config: PagesConfig;
   readonly ceilingUsd: number | null;
   readonly inline: boolean;
 }
@@ -61,20 +78,66 @@ export interface BoardsJob {
   readonly now: number;
   /** A board was changed at this time: a kept list older than it is read again. */
   readonly boardsSince: number;
+  /** The one stage whose items the page lists (`?out=`), or null: the others cross as counts alone. */
+  readonly out: PipelineKey | null;
 }
 export interface FlowJob {
   readonly kind: "flow";
   readonly userId: string;
   readonly now: number;
 }
-export type PageJob = BoardsJob | FlowJob;
+/** One board: its file and every panel's rows. */
+export interface BoardJob {
+  readonly kind: "board";
+  readonly slug: string;
+  readonly now: number;
+  /** A board was changed at this time: a picture read before it is not this board any more. */
+  readonly boardsSince: number;
+}
+/** One question of the data page, as its form says it: a chart's rows, or (`params.rows`) the rows behind one point. */
+export interface QueryJob {
+  readonly kind: "query";
+  readonly params: Params;
+  readonly now: number;
+}
+export type PageJob = BoardsJob | FlowJob | BoardJob | QueryJob;
+
+/** What a stage let out, as the panel draws it: the counts, and the items themselves only for the stage a reader asked to list. */
+export interface StageFlow extends StageThroughput {
+  /** Items out in 24 hours. */
+  readonly day: number;
+  /** Checks only: how many of them passed. */
+  readonly passed: number;
+}
+export interface PanelFlow {
+  readonly stages: readonly StageFlow[];
+  readonly medianAskToLiveMs: number | null;
+}
+
+/**
+ * The outflow without the items nobody listed: a day of checks is thousands
+ * of rows, and a picture that carries them costs the serving thread tens of
+ * milliseconds just to receive.
+ */
+export function panelFlow(flow: Throughput, keep: PipelineKey | null): PanelFlow {
+  return {
+    medianAskToLiveMs: flow.medianAskToLiveMs,
+    stages: flow.stages.map((t) => ({
+      key: t.key,
+      hours: t.hours,
+      day: t.items.length,
+      passed: t.items.reduce((n, i) => n + (i.outcome === "passed" ? 1 : 0), 0),
+      items: t.key === keep ? t.items : [],
+    })),
+  };
+}
 
 export interface BoardsPicture {
   readonly at: number;
   /** What the reading cost where it was read, ms. */
   readonly ms: number;
   readonly fig: PanelFigures;
-  readonly flow: Throughput;
+  readonly flow: PanelFlow;
   readonly repeats: Repeats;
   readonly alarms: readonly FiredAlarm[];
   readonly held: readonly HeldRow[];
@@ -96,7 +159,24 @@ export interface FlowPicture {
   readonly handover: HandoverLists;
 }
 
-export type PictureOf<J extends PageJob> = J extends BoardsJob ? BoardsPicture : FlowPicture;
+export interface BoardPicture {
+  readonly at: number;
+  readonly ms: number;
+  /** Null when there is no such board. */
+  readonly board: Board | null;
+  /** Every panel drawn, in the board's order: the rows stay with whoever read them, the markup crosses. */
+  readonly panels: readonly PanelDrawn[];
+}
+
+export interface QueryPicture {
+  readonly at: number;
+  readonly ms: number;
+  /** The answer read and drawn: the chart, the table of its points and what stands out. */
+  readonly answer: AnswerDrawn;
+}
+
+export type Picture = BoardsPicture | FlowPicture | BoardPicture | QueryPicture;
+export type PictureOf<J extends PageJob> = J extends BoardsJob ? BoardsPicture : J extends FlowJob ? FlowPicture : J extends BoardJob ? BoardPicture : QueryPicture;
 
 // ---- what is kept between readings (per process: the worker's, or nothing when inline) ----
 
@@ -160,7 +240,7 @@ export async function readBoardsPicture(env: PagesEnv, job: BoardsJob): Promise<
   const t0 = performance.now();
   // Inline (a test, a forge with no file) the figures keep the thread's own cache, as they always have.
   const fig = env.inline ? panelFigures(db, job.viewer, at) : readPanelFigures(db, at, publicOnly);
-  const flow = readThroughput(db, PIPELINE, at);
+  const flow = panelFlow(readThroughput(db, PIPELINE, at), job.out);
   const repeats = readRepeats(db, "", at, publicOnly);
   const alarms = publicOnly ? [] : alarmsOf(env, at);
   const held = (await later(env, `held:${job.viewer}`, HELD_KEEP_MS, job.now, "first", () => readHeld(appOf(env), !publicOnly, job.now))) ?? [];
@@ -188,6 +268,22 @@ export async function readFlowPicture(env: PagesEnv, job: FlowJob): Promise<Flow
   return { at: job.now, ms, pipes, clog, cpuClosed, approved: rows.approved, stale: rows.stale, unproposed: unproposed ?? null, handover };
 }
 
+/** A board's file (one git read) and its panels, read and drawn: a panel is a query over runs, events or samples, and on a forge of any size some take seconds. */
+export async function readBoardPicture(env: PagesEnv, job: BoardJob): Promise<BoardPicture> {
+  const t0 = performance.now();
+  const board = (await readBoard(env.reposRoot, job.slug)) ?? null;
+  const panels = board === null ? [] : board.panels.map((panel) => drawnPanel(panel, panelData(env.db, board, panel, {}, job.now)));
+  return { at: job.now, ms: performance.now() - t0, board, panels };
+}
+
+/** One query of the data page. */
+export function readQueryPicture(env: PagesEnv, job: QueryJob): QueryPicture {
+  const t0 = performance.now();
+  const p = job.params;
+  const rows = p.rows === "" ? runFor(env.db, p.chart, toQuery(p)) : runQuery(env.db, toQuery(p), { repoIds: "all" });
+  return { at: job.now, ms: performance.now() - t0, answer: drawAnswer(p, rows, GUIDE[p.source]?.name ?? p.source) };
+}
+
 /** One reading, by kind. `learned` is the serving thread's memory of which files each open pull touches: the ready lists read it. */
 export async function readPagePicture<J extends PageJob>(env: PagesEnv, job: J, learned?: readonly { repoId: string; number: number; files: readonly string[] }[]): Promise<PictureOf<J>> {
   if (learned !== undefined) {
@@ -195,5 +291,10 @@ export async function readPagePicture<J extends PageJob>(env: PagesEnv, job: J, 
     for (const p of learned) byRepo.set(p.repoId, [...(byRepo.get(p.repoId) ?? []), { number: p.number, files: p.files }]);
     for (const [repoId, pulls] of byRepo) rememberPullFiles(repoId, pulls);
   }
-  return (job.kind === "boards" ? await readBoardsPicture(env, job) : await readFlowPicture(env, job)) as PictureOf<J>;
+  const picture =
+    job.kind === "boards" ? await readBoardsPicture(env, job)
+    : job.kind === "flow" ? await readFlowPicture(env, job)
+    : job.kind === "board" ? await readBoardPicture(env, job)
+    : readQueryPicture(env, job);
+  return picture as PictureOf<J>;
 }

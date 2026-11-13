@@ -5,10 +5,11 @@
  * all draw their figures here, so a number reads the same on each
  * (docs/design/areas/home-flow.md, `.hf-figs`).
  */
+import { grouped } from "../boards/chart.ts";
 import { html, type Html } from "./html.ts";
 
 /** A count as a person reads it: 1,234. */
-export const count = (n: number): string => n.toLocaleString("en-US");
+export const count = (n: number): string => grouped(n, 3);
 
 export function figure(label: string, value: Html | string, note: Html | string, href: string, extra: Html | null = null, tone: "attn" | null = null): Html {
   return html`<a class="hf-fig" href="${href}" ${tone === null ? null : html`data-tone="${tone}"`}>
@@ -33,12 +34,29 @@ export function reading(words: string, src: string, again: string): Html {
   return html`<p class="bd-lead" data-reading-src="${src}" aria-busy="true">${words}</p>
     <noscript><p><a href="${again}">Show it now</a></p></noscript>`;
 }
+/** A page whose picture could not be read says so plainly, with why and the way to try again. */
+export function readingFailed(why: string, again: string): Html {
+  return html`<p class="bd-lead" role="alert">The forge could not read this page just now.</p>
+    <p>${why}</p>
+    <p><a class="btn" href="${again}">Try again</a></p>`;
+}
 export const readingJs = /* js */ `
 (function () {
   var r = document.querySelector('[data-reading-src]');
   if (!r || !window.fetch) return;
   fetch(r.getAttribute('data-reading-src'), { credentials: 'same-origin' })
     .then(function (x) { if (x.ok) location.replace(location.pathname); })
+    .catch(function () {});
+})();
+`;
+/** The same, for a page whose address carries its question: it draws the address the sentence links to. */
+export const readingReplaceJs = /* js */ `
+(function () {
+  var r = document.querySelector('[data-reading-src]');
+  if (!r || !window.fetch) return;
+  var src = r.getAttribute('data-reading-src');
+  fetch(src, { credentials: 'same-origin' })
+    .then(function (x) { if (x.ok) location.replace(src.replace(/&wait=1$/, '')); })
     .catch(function () {});
 })();
 `;

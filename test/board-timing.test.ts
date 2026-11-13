@@ -39,13 +39,13 @@ afterAll(async () => {
 
 const get = (path: string) => fetch(servers.url + path, { headers: { authorization: `Bearer ${bearer}` } });
 
-test("a board names session, board, grid and render once each", async () => {
+test("a board names session, picture, grid and render once each", async () => {
   const res = await get("/boards/ops");
   expect(res.status).toBe(200);
   expect(await res.text()).toContain("Runs");
   const parts = (res.headers.get("server-timing") ?? "").split(", ");
   const names = parts.map((p) => p.split(";")[0]!);
-  for (const n of ["session", "board", "grid", "render"]) {
+  for (const n of ["session", "picture", "grid", "render"]) {
     expect(names.filter((x) => x === n).length).toBe(1);
     const part = parts.find((p) => p.startsWith(`${n};`))!;
     expect(Number(/dur=([\d.]+)/.exec(part)?.[1])).not.toBeNaN();

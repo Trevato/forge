@@ -8,9 +8,8 @@
  * No client framework. Every form posts to `boards-edit.ts`. Anyone but a
  * person who is an admin gets the not-found page.
  */
-import { showBoard } from "../../actions/boards.ts";
 import { CHART_NAMES } from "../../boards/chart.ts";
-import { MAX_H, MAX_PANELS, MAX_TITLE, MAX_W, RANGES, type Board, type Panel } from "../../boards/store.ts";
+import { isSlug, MAX_H, MAX_PANELS, MAX_TITLE, MAX_W, RANGES, type Board, type Panel } from "../../boards/store.ts";
 import type { App } from "../../app.ts";
 import type { Ctx } from "../../http/context.ts";
 import { driftSection } from "./boards-drift.ts";
@@ -19,17 +18,17 @@ import { liveRegionsJs } from "../client.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { fragment, page } from "../layout.ts";
-import { btn, chartBox, confirmAction, field, selectField } from "../ui.ts";
-import { fold, reading, readingJs } from "../figure.ts";
+import { btn, chartFrame, confirmAction, field, selectField } from "../ui.ts";
+import { fold, reading, readingFailed, readingJs } from "../figure.ts";
 import { formatValue } from "../../boards/chart.ts";
-import { flowPanel } from "./flow-panel.ts";
+import { flowPanel, outAsked } from "./flow-panel.ts";
 import { boardsHoldsCard } from "./boards-holds.ts";
 import { alarmLines } from "../studio/alarm_lines.ts";
-import { boardsPicture, LONG_WAIT_MS } from "../../flow/pages.ts";
+import { boardPicture, boardsPicture, isFailed, LONG_WAIT_MS, waitAnswer } from "../../flow/pages.ts";
 import { isPinned, listPins } from "../../boards/pins.ts";
-import { panelData, runFor } from "../../boards/panel_data.ts";
+import { drawnPanel, panelData, runFor, type PanelDrawn } from "../../boards/panel_data.ts";
 import { readParams } from "../../boards/params.ts";
-import { cellsOf, paramsOf, queryFields } from "./boards.ts";
+import { paramsOf, queryFields } from "./boards.ts";
 
 /** The events the panels' queries read (runs, pulls, checks, issues, usage): any of them may change a chart. */
 const READS = "run.queued,run.started,run.finished,pull.*,check.*,issue.*,usage.*";
@@ -47,20 +46,17 @@ export function drawPanel(
   at: PanelAt,
   aside: Html | null = null,
   run: typeof runFor = runFor,
+  /** The panel as a worker read and drew it (`flow/pages.ts`); without it the rows are read and drawn here, for a direct caller. */
+  drawn: PanelDrawn = drawnPanel(panel, panelData(app.db, board, panel, {}, Date.now(), run)),
 ): Html {
-  const answer = panelData(app.db, board, panel, {}, Date.now(), run);
   const q = paramsOf(panel.query, panel.chart);
-  const body = !answer.ok
-    ? html`<p class="muted small">${answer.error}</p>`
-    : chartBox(panel.chart, cellsOf(answer.rows), panel.title);
-  // One series drawn over time says its latest value beside its name; a split or a table has no one latest.
-  const newest = answer.ok && (panel.chart === "line" || panel.chart === "bar") ? answer.rows[answer.rows.length - 1] : undefined;
-  const last = newest !== undefined && newest.series === undefined && /^\d{4}-\d{2}-\d{2}/.test(String(newest.group)) ? newest : undefined;
+  const body = !drawn.ok ? html`<p class="muted small">${drawn.error}</p>` : chartFrame(panel.chart, drawn.chart);
+  const latest = drawn.ok ? drawn.latest : null;
   const explore = new URLSearchParams(Object.entries(q).filter(([k, v]) => v !== "" && k !== "rows"));
   const data = `/api/v1/boards/${at.slug}/panels/${String(at.index)}`;
   return html`<div class="card bp bp-w${String(panel.w)} bp-h${String(panel.h)}">
     <div class="bp-head"><h2>${panel.title}</h2>
-      ${last === undefined ? null : html`<span class="bp-now"><span class="num">${formatValue(last.value ?? 0)}</span> latest</span>`}</div>
+      ${latest === null ? null : html`<span class="bp-now"><span class="num">${formatValue(latest)}</span> latest</span>`}</div>
     <div class="bp-body">${body}</div>
     <p class="bp-foot card-links"><a href="/boards/data?${explore.toString()}" aria-label="${panel.title}: explore">Explore</a>
         <a href="${data}" aria-label="${panel.title}: data as JSON">JSON</a>
@@ -70,7 +66,7 @@ export function drawPanel(
 }
 
 /** The grid alone: what the page shows and what the live address answers with. */
-function grid(app: App, slug: string, board: Board): Html {
+function grid(app: App, slug: string, board: Board, panels: readonly PanelDrawn[]): Html {
   return html`<section
     class="bgrid"
     id="board-grid"
@@ -80,7 +76,7 @@ function grid(app: App, slug: string, board: Board): Html {
   >
     ${board.panels.length === 0
       ? html`<p class="muted bp-w3">This board has no panel yet. Add the first one under "Add a panel" below, or pin a chart from <a href="/boards/data">Explore the data</a>.</p>`
-      : board.panels.map((p, index) => drawPanel(app, board, p, { slug, index }))}
+      : board.panels.map((p, index) => drawPanel(app, board, p, { slug, index }, null, runFor, panels[index]))}
   </section>`;
 }
 
@@ -97,9 +93,9 @@ const denied = (ctx: Ctx) => {
  */
 export function warmBoards(app: App): void {
   if (process.env["NODE_ENV"] === "test") return;
-  void boardsPicture(app, "owner", LONG_WAIT_MS)
+  void boardsPicture(app, "owner", null, LONG_WAIT_MS)
     .then((picture) => {
-      if (picture !== undefined) flowPanel(app, { kind: "owner" }, new URL("http://forge/boards"), "/boards", { picture });
+      if (picture !== undefined && !isFailed(picture)) flowPanel(app, { kind: "owner" }, new URL("http://forge/boards"), "/boards", { picture });
     })
     .catch(() => {});
 }
@@ -117,19 +113,19 @@ export async function boardsList(ctx: Ctx): Promise<Response> {
   }
   // What a "Reading…" page asks: it answers when the worker has the picture, and draws nothing.
   if (ctx.url.searchParams.has("wait")) {
-    const read = await boardsPicture(ctx.app, "owner", LONG_WAIT_MS);
-    return new Response(null, { status: read === undefined ? 503 : 204, headers: { "cache-control": "no-store" } });
+    return waitAnswer(await boardsPicture(ctx.app, "owner", outAsked(ctx.url), LONG_WAIT_MS));
   }
   // The page's picture is read by a worker and kept: nothing here walks the pulls, the runs or git.
-  const picture = await timePhaseAsync(ctx.request, "picture", () => boardsPicture(ctx.app, "owner"));
-  if (picture === undefined) {
+  const picture = await timePhaseAsync(ctx.request, "picture", () => boardsPicture(ctx.app, "owner", outAsked(ctx.url)));
+  if (picture === undefined || isFailed(picture)) {
+    const again = `/boards${ctx.url.search}`;
     return page({
       ctx,
       title: "Boards",
       wide: true,
       body: html`<div class="hf bd"><header class="hf-head"><div class="hf-title"><h1>Boards</h1></div></header>
-        <section class="bd-now">${reading("Reading how work is moving through the forge…", "/boards?wait=1", "/boards")}</section></div>`,
-      scriptJs: readingJs,
+        <section class="bd-now">${picture === undefined ? reading("Reading how work is moving through the forge…", `/boards${ctx.url.search === "" ? "?" : `${ctx.url.search}&`}wait=1`, again) : readingFailed(picture.failed, again)}</section></div>`,
+      ...(picture === undefined ? { scriptJs: readingJs } : {}),
     });
   }
   const listed = { value: picture.boards };
@@ -245,10 +241,27 @@ function manage(slug: string, board: Board, adding: Html, pins: ReturnType<typeo
 export async function boardShow(ctx: Ctx): Promise<Response> {
   const slug = ctx.params.slug ?? "";
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-  const shown = await timePhaseAsync(ctx.request, "board", () => showBoard(ctx.app, ctx.auth.user, slug));
-  if (!shown.ok) return notFoundPage(ctx);
-  const board = shown.value;
-  const panels = timePhase(ctx.request, "grid", () => grid(ctx.app, slug, board));
+  if (denied(ctx) || !isSlug(slug)) return notFoundPage(ctx);
+  // What a "Reading…" page asks: it answers when the worker has the board, and draws nothing.
+  if (ctx.url.searchParams.has("wait")) {
+    return waitAnswer(await boardPicture(ctx.app, slug, LONG_WAIT_MS));
+  }
+  // The board's file and every panel's rows are read by a worker and kept: no query and no git on this thread.
+  const picture = await timePhaseAsync(ctx.request, "picture", () => boardPicture(ctx.app, slug));
+  if (picture === undefined || isFailed(picture)) {
+    return page({
+      ctx,
+      title: "Boards",
+      wide: true,
+      body: html`<div class="hf bd"><header class="hf-head"><div class="hf-title"><h1>Boards</h1></div>
+          <nav class="bd-nav" aria-label="Elsewhere">${btn("All boards", { href: "/boards", variant: "ghost" })}</nav></header>
+        <section class="bd-now">${picture === undefined ? reading("Reading this board's charts…", `/boards/${slug}?wait=1`, `/boards/${slug}`) : readingFailed(picture.failed, `/boards/${slug}`)}</section></div>`,
+      ...(picture === undefined ? { scriptJs: readingJs } : {}),
+    });
+  }
+  if (picture.board === null) return notFoundPage(ctx);
+  const board = picture.board;
+  const panels = timePhase(ctx.request, "grid", () => grid(ctx.app, slug, board, picture.panels));
   const rendering = performance.now();
   const n = board.panels.length;
   const response = page({
@@ -273,7 +286,9 @@ export async function boardShow(ctx: Ctx): Promise<Response> {
 export async function boardLive(ctx: Ctx): Promise<Response> {
   if (denied(ctx)) return fragment(html``, { status: 404 });
   const slug = ctx.params.slug ?? "";
-  const shown = await showBoard(ctx.app, ctx.auth.user, slug);
-  if (!shown.ok) return fragment(html``, { status: 404 });
-  return fragment(grid(ctx.app, slug, shown.value), { request: ctx.request });
+  if (!isSlug(slug)) return fragment(html``, { status: 404 });
+  const picture = await boardPicture(ctx.app, slug);
+  if (picture === undefined || isFailed(picture)) return fragment(html``, { status: 503 });
+  if (picture.board === null) return fragment(html``, { status: 404 });
+  return fragment(grid(ctx.app, slug, picture.board, picture.panels), { request: ctx.request });
 }

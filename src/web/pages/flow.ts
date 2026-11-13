@@ -12,9 +12,9 @@ import { alarmBackup, type BackupAlarm } from "../../flow/alarm_backup.ts";
 import { acceptSuggestion, turnValveFor, type ValveError } from "../../actions/valves.ts";
 import type { Ctx } from "../../http/context.ts";
 import type { Pipes, ValveRow } from "../../flow/pipes.ts";
-import { flowPicture, LONG_WAIT_MS } from "../../flow/pages.ts";
+import { flowPicture, isFailed, LONG_WAIT_MS, waitAnswer } from "../../flow/pages.ts";
 import { usd } from "../../core/money.ts";
-import { count, figure, figures, reading, readingJs } from "../figure.ts";
+import { count, figure, figures, reading, readingFailed, readingJs } from "../figure.ts";
 import { levelWords } from "../../flow/valve.ts";
 import { notePhase, takeSessionTime, timePhaseAsync } from "../../core/route_timing.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
@@ -119,18 +119,17 @@ export async function flowPage(ctx: Ctx): Promise<Response> {
   if (!user.isAdmin || user.kind === "agent") return notFoundPage(ctx);
   // What a "Reading…" page asks: it answers when the worker has the picture, and draws nothing.
   if (waiting) {
-    const read = await flowPicture(ctx.app, user.id, LONG_WAIT_MS);
-    return new Response(null, { status: read === undefined ? 503 : 204, headers: { "cache-control": "no-store" } });
+    return waitAnswer(await flowPicture(ctx.app, user.id, LONG_WAIT_MS));
   }
   // The page's picture is read by a worker and kept: nothing here walks the runs, the pulls or git.
   const picture = await timePhaseAsync(ctx.request, "picture", () => flowPicture(ctx.app, user.id));
-  if (picture === undefined) {
+  if (picture === undefined || isFailed(picture)) {
     return page({
       ctx,
       title: "Flow",
       body: html`<div class="hf bd"><header class="hf-head"><div class="hf-title"><h1>Flow</h1></div></header>
-        <section class="bd-now">${reading("Reading what the week's money bought…", "/flow?wait=1", "/flow")}</section></div>`,
-      scriptJs: readingJs,
+        <section class="bd-now">${picture === undefined ? reading("Reading what the week's money bought…", "/flow?wait=1", "/flow") : readingFailed(picture.failed, "/flow")}</section></div>`,
+      ...(picture === undefined ? { scriptJs: readingJs } : {}),
     });
   }
   const p = picture.pipes;
