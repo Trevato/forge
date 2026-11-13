@@ -137,6 +137,16 @@ and its container (both default `forge`). The pod's service account needs
 `get` and `patch` on that Deployment; the chart does not grant them. The
 boot log says why it is off.
 
+While the release tick has never reported, /releases (the "Release tick"
+row) and the terminal's keeper screen say whether the keeper is off and
+why (for example "the in-process release keeper is off:
+FORGE_RELEASE_KEEPER is not on"), or on but not yet ticked. The why names
+only a variable's state, never its value. If main is then ahead of
+production past the limit, the owner gets the `main_ahead` flow alarm with
+the same line, and the sentinel files no crew issue: no code change fixes
+a keeper that is off (#11924). An issue filed before stays open until
+production catches up.
+
 Guardrail: the keeper writes only a tag, the Deployment's image, its own
 rows and issues. It has no account that may land a pull or push main.
 Rollback is the one action it takes without a canary, because the image it

@@ -10,6 +10,7 @@
 
 import type { Database } from "bun:sqlite";
 import { getRepo } from "../core/repos.ts";
+import { neverTickedLine } from "../keeper/at_boot.ts";
 import { agoWords, lastBeat } from "../keeper/beat.ts";
 import { ownRepoPath } from "../kernel/own_repo.ts";
 import { running } from "../kernel/version.ts";
@@ -25,6 +26,11 @@ export interface MainAheadAlarm {
   readonly says: string;
   /** Facts for the issue and the ask; only when fired. */
   readonly facts?: readonly string[];
+  /**
+   * Fired with no heartbeat ever recorded: no code here can fix it, so it is the owner's
+   * ask, not the crew's issue (#11924).
+   */
+  readonly neverHeard?: true;
 }
 
 /** The minutes main may be ahead and green before the alarm; a whole number of 1 or more is the owner's, else 90. */
@@ -76,11 +82,16 @@ export function mainAheadAlarm(db: Database, now: Date): MainAheadAlarm {
     // The tick's reason stays out: these facts are a Sentinel issue's, which may be public; /releases shows it to its readers.
     `the release tick was last heard from ${beat === null ? "never" : `${beat.at} (${beat.outcome})`}`,
   ];
+  // Never heard from: say what the keeper answered at boot, a variable's state and never
+  // its value (#11924).
+  const keeper = beat === null ? neverTickedLine() : undefined;
+  if (keeper !== undefined) facts.push(keeper);
   return {
     fired: true,
     since: first.at,
-    says: `Main is green and ${how} ahead of production (${prod.version} at ${prod.commit.slice(0, 7)}) for ${forHow}; the release tick was last heard from ${tick}.`,
+    says: `Main is green and ${how} ahead of production (${prod.version} at ${prod.commit.slice(0, 7)}) for ${forHow}; the release tick was last heard from ${tick}${keeper === undefined ? "" : `; ${keeper}`}.`,
     facts,
+    ...(beat === null ? { neverHeard: true as const } : {}),
   };
 }
 

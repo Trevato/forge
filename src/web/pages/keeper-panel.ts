@@ -8,6 +8,7 @@
 
 import type { Database } from "bun:sqlite";
 import { aheadLine } from "../../flow/alarm_main_ahead.ts";
+import { neverTickedLine } from "../../keeper/at_boot.ts";
 import { beatFact, lastBeat } from "../../keeper/beat.ts";
 import { blocking, MAX_REASON, standingHolds } from "../../keeper/hold.ts";
 import { pendingNow } from "../../keeper/now.ts";
@@ -37,6 +38,9 @@ export function keeperPanel(db: Database, mayHold = false, now: Date = new Date(
   const beat = lastBeat(db);
   const asked = pendingNow(db, now.getTime());
   const ahead = aheadLine(db, now);
+  // Never heard from: the same keeper line the main-ahead alarm names (#11924).
+  const never = beat === null ? neverTickedLine() : undefined;
+  const tick = never === undefined ? beatFact(beat, now) : `${beatFact(beat, now)}; ${never}`;
   if (releases.length === 0 && blocked === undefined && beat === null && ahead === undefined && !mayHold) return undefined;
   const rows = releases.map((r, i) => {
     const s = STAGE[r.stage];
@@ -56,7 +60,7 @@ export function keeperPanel(db: Database, mayHold = false, now: Date = new Date(
     <h2>Release keeper</h2>
     <p class="small ${blocked === undefined ? "muted" : ""}" id="keeper-blocked">${blocked ?? "Nothing holds the next cut."}</p>
     <dl class="status-rows" id="keeper-facts">
-      <div class="status-row"><dt>Release tick</dt><dd id="keeper-heartbeat">${beatFact(beat, now)}</dd></div>
+      <div class="status-row"><dt>Release tick</dt><dd id="keeper-heartbeat">${tick}</dd></div>
       ${when(asked !== undefined, () => html`<div class="status-row"><dt>Release now</dt><dd id="keeper-now">asked by ${asked!.by}: ${asked!.reason}</dd></div>`)}
       ${when(ahead !== undefined, () => html`<div class="status-row"><dt>Main vs production</dt><dd id="keeper-ahead">${ahead}</dd></div>`)}
     </dl>

@@ -101,6 +101,7 @@ import { ownTagsReader } from "./release/own_tags.ts";
 import { rollProbe, tickStep as keeperTick } from "./keeper/keeper.ts";
 import { stepWithBeat } from "./keeper/beat.ts";
 import { keeperEnv, keeperPorts } from "./keeper/wire.ts";
+import { noteKeeperAtBoot } from "./keeper/at_boot.ts";
 import { snapshotPlace } from "./actions/health.ts";
 import { capacityDefault, egressEnvIgnored } from "./core/capacity.ts";
 import { bootCounts, recordBoot, recordCleanExit } from "./kernel/boots.ts";
@@ -829,6 +830,7 @@ if (keeperOn.on) {
       ? { forgeUrl, deployment: "", container: "", swap: true }
       : { forgeUrl, deployment: keeperOn.deployment, container: keeperOn.container },
   );
+  noteKeeperAtBoot(typeof ports === "string" ? { on: false, why: ports } : { on: true });
   if (typeof ports === "string") app.log.warn("the release keeper is off", { why: ports });
   else {
     let said = "";
@@ -846,7 +848,10 @@ if (keeperOn.on) {
       1000,
     );
   }
-} else app.log.info("the release keeper is off", { why: keeperOn.why });
+} else {
+  noteKeeperAtBoot(keeperOn);
+  app.log.info("the release keeper is off", { why: keeperOn.why });
+}
 // Only an agent is on a crew (the `repo_crew_agents_only` trigger refuses anyone else). A person
 // put on one before that is reported here for the owner to take off — the
 // forge never removes it on its own.

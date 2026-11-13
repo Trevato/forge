@@ -11,6 +11,7 @@
  */
 
 import { aheadLine } from "../../flow/alarm_main_ahead.ts";
+import { neverTickedLine } from "../../keeper/at_boot.ts";
 import { beatLine, lastBeat } from "../../keeper/beat.ts";
 import { stallWords } from "../../perf/boot_stall.ts";
 import { blocking, holdAs, liftAs, standingHolds } from "../../keeper/hold.ts";
@@ -51,9 +52,12 @@ export function readKeeper(f: Session, now: Date = new Date()): KeeperRead | und
   if (!mayRead(f.app, f.user)) return undefined;
   const ahead = aheadLine(f.db, now);
   const asked = pendingNow(f.db, now.getTime());
+  const beat = lastBeat(f.db);
+  // Never heard from: the same keeper line /releases and the main-ahead alarm name (#11924).
+  const never = beat === null ? neverTickedLine() : undefined;
   return {
     blocked: blocking(standingHolds(f.db)) ?? "Nothing holds the next cut.",
-    heartbeat: beatLine(lastBeat(f.db), now),
+    heartbeat: never === undefined ? beatLine(beat, now) : `${beatLine(beat, now)} ${never[0]!.toUpperCase()}${never.slice(1)}.`,
     ...(ahead === undefined ? {} : { ahead }),
     ...(asked === undefined ? {} : { asked: `Release now asked by ${asked.by}: ${asked.reason}` }),
     releases: withLandedToLive(f.db, listKeeperReleases(f.db)),

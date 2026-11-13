@@ -17,6 +17,8 @@ import { keeperPanel } from "../src/web/pages/keeper-panel.ts";
 import { keeperAnswer } from "../src/keeper/landed.ts";
 import { tickStep } from "../src/keeper/keeper.ts";
 import { keeperForge } from "./helpers/keeper.ts";
+import { noteKeeperAtBoot } from "../src/keeper/at_boot.ts";
+import { keeperEnv } from "../src/keeper/wire.ts";
 import { id } from "../src/kernel/id.ts";
 import { forgetLive, keepLive } from "../src/release/landings.ts";
 import { alarmLines } from "../src/crew/notify.ts";
@@ -309,5 +311,82 @@ describe("the keeper's own outcome", () => {
     const held = await tickStep(f.ports);
     expect(held.line).toContain("failed");
     expect(held.outcome).toBe("skipped");
+  });
+});
+
+describe("a tick never heard from (#11924)", () => {
+  const open = () => app.db.query<{ id: string }, []>(`SELECT id FROM issue WHERE state = 'open' AND title LIKE 'Sentinel: Main is green and ahead%'`).all();
+  const closeAll = () => app.db.query(`UPDATE issue SET state = 'closed' WHERE title LIKE 'Sentinel: Main is green and ahead%'`).run();
+
+  test("the alarm and /releases name why the keeper is off, and the sentinel files no crew issue", () => {
+    reset();
+    closeAll();
+    app.db.query(`DELETE FROM keeper_beat_tick`).run();
+    check("ok", HEAD);
+    merge(120, "6".repeat(40));
+    noteKeeperAtBoot(keeperEnv({ FORGE_RELEASE_KEEPER: "secret-looking-value" }));
+    try {
+      const a = mainAheadAlarm(app.db, NOW);
+      expect(a.fired).toBe(true);
+      expect(a.facts).toContain("the in-process release keeper is off: FORGE_RELEASE_KEEPER is not on");
+      expect(a.says).toContain("the in-process release keeper is off: FORGE_RELEASE_KEEPER is not on");
+      expect(JSON.stringify(a)).not.toContain("secret-looking-value");
+      expect(String(keeperPanel(app.db, false, NOW))).toContain(
+        '<dd id="keeper-heartbeat">never reported; the in-process release keeper is off: FORGE_RELEASE_KEEPER is not on</dd>',
+      );
+      // The owner's ask: the flow alarm reaches the notifier, saying why.
+      const lines = alarmLines(app, owner, NOW.getTime());
+      expect(lines.find((l) => l.id.startsWith("alarm:main_ahead@"))?.line).toContain("FORGE_RELEASE_KEEPER is not on");
+      hunt(app, "trevato/forge", NOW.getTime() + 900_000);
+      expect(open()).toHaveLength(0);
+      noteKeeperAtBoot({ on: true });
+      expect(mainAheadAlarm(app.db, NOW).facts).toContain("the release keeper is on but has not ticked");
+    } finally {
+      noteKeeperAtBoot(undefined);
+    }
+  });
+
+  test("an issue filed before stays open while main is still ahead, and closes once production catches up", () => {
+    reset();
+    closeAll();
+    app.db.query(`DELETE FROM keeper_beat_tick`).run();
+    check("ok", HEAD);
+    merge(120, "8".repeat(40));
+    // Filed while a beat stood (as every never-heard finding was before #11924), then the
+    // beats are gone.
+    recordBeat(app.db, "skipped", "a hold stands", new Date(NOW.getTime() - 5 * 60_000));
+    hunt(app, "trevato/forge", NOW.getTime() + 1_100_000);
+    expect(open()).toHaveLength(1);
+    app.db.query(`DELETE FROM keeper_beat_tick`).run();
+    noteKeeperAtBoot({ on: false, why: "FORGE_RELEASE_KEEPER is not on" });
+    try {
+      hunt(app, "trevato/forge", NOW.getTime() + 1_200_000);
+      expect(open()).toHaveLength(1);
+      keepLive("trevato/forge", ["8".repeat(40)], NOW.getTime());
+      hunt(app, "trevato/forge", NOW.getTime() + 1_300_000);
+      expect(open()).toHaveLength(0);
+    } finally {
+      noteKeeperAtBoot(undefined);
+    }
+  });
+
+  test("with beats present the finding is filed as before, with no keeper line", () => {
+    reset();
+    closeAll();
+    app.db.query(`DELETE FROM keeper_beat_tick`).run();
+    check("ok", HEAD);
+    merge(120, "7".repeat(40));
+    recordBeat(app.db, "skipped", "a hold stands", new Date(NOW.getTime() - 5 * 60_000));
+    noteKeeperAtBoot({ on: false, why: "FORGE_RELEASE_KEEPER is not on" });
+    try {
+      const a = mainAheadAlarm(app.db, NOW);
+      expect(a.facts?.some((f) => f.includes("release keeper is"))).toBe(false);
+      expect(a.says).not.toContain("release keeper is");
+      expect(String(keeperPanel(app.db, false, NOW))).not.toContain("release keeper is off");
+      hunt(app, "trevato/forge", NOW.getTime() + 1_000_000);
+      expect(open()).toHaveLength(1);
+    } finally {
+      noteKeeperAtBoot(undefined);
+    }
   });
 });

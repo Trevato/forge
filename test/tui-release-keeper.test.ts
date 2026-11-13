@@ -8,6 +8,7 @@ import { tick } from "../src/keeper/keeper.ts";
 import type { User } from "../src/core/users.ts";
 import { createForgeApp, forgeCommands, Session } from "../src/tui/forge.ts";
 import type { Ctx } from "../src/tui/app/app.ts";
+import { noteKeeperAtBoot } from "../src/keeper/at_boot.ts";
 import { holdLine, keeperScreen, readKeeper } from "../src/tui/screens/keeper.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -65,5 +66,21 @@ describe("the release keeper screen", () => {
     expect(holdLine(session, "now: hotfix for the login page")).toEqual({ ok: true, says: "Release asked for now: hotfix for the login page" });
     expect(readKeeper(session)?.asked).toContain("hotfix for the login page");
     expect(holdLine(session, "now: ").ok).toBe(false);
+  });
+
+  test("a tick never heard from says the keeper is off and why, as /releases does (#11924)", async () => {
+    const f = await keeperForge();
+    noteKeeperAtBoot({ on: false, why: "FORGE_RELEASE_KEEPER is not on" });
+    try {
+      expect(readKeeper(new Session(f.app, identity(f.user)))?.heartbeat).toBe(
+        "The release tick has never reported a heartbeat. The in-process release keeper is off: FORGE_RELEASE_KEEPER is not on.",
+      );
+      noteKeeperAtBoot({ on: true });
+      expect(readKeeper(new Session(f.app, identity(f.user)))?.heartbeat).toBe(
+        "The release tick has never reported a heartbeat. The release keeper is on but has not ticked.",
+      );
+    } finally {
+      noteKeeperAtBoot(undefined);
+    }
   });
 });

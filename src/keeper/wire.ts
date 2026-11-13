@@ -106,7 +106,9 @@ export function keeperPorts(app: App, input: { forgeUrl: string; deployment: str
   if (named === undefined) return "FORGE_REPO is not set";
   const [owner = "", name = ""] = named.split("/");
   const repo = getRepo(app.db, owner, name);
-  if (repo === undefined) return `FORGE_REPO names ${named}, which is no repository on this forge`;
+  // The reason never carries the repository's name: it is noted at boot and may reach a
+  // public issue (#11924).
+  if (repo === undefined) return "FORGE_REPO names no repository on this forge";
   const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
   const deployer =
     input.swap === true
