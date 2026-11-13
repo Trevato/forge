@@ -5,8 +5,8 @@
  *
  * The path: the owner wants to send someone a forge; from the "+" menu he
  * fills in a name and ticks the apps, presses **See the plan** (nothing is
- * made), then **Spawn**, and copies the one link to send. The claim link is
- * shown once, in the answer's body — never in a URL, never cached.
+ * made), then **Spawn**, and copies the one link to send (`web/forge_made.ts`).
+ * The link is shown once, in the answer's body — never in a URL, never cached.
  */
 
 import { getPack, resolveRepos } from "../../packs/curated.ts";
@@ -35,10 +35,10 @@ import { notFoundPage, pageHead } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { noteForgeMade } from "../funnel_door.ts";
-import { page, redirect } from "../layout.ts";
-import { JS_FLAG_JS, waitingAddress } from "../claim_code.ts";
+import { page } from "../layout.ts";
+import { linkToSend, madeBody, madeJs } from "../forge_made.ts";
 import { pickList } from "../pick.ts";
-import { btn, field as formField, row, selectField } from "../ui.ts";
+import { btn, field as formField, selectField } from "../ui.ts";
 
 interface Values {
   readonly name: string;
@@ -218,7 +218,7 @@ function formView(
     ${plan}
     <section class="settings-block">
       <h2>Its name and apps</h2>
-      <form method="post" action="/forges/new" class="stack" id="new-forge" data-js>
+      <form method="post" action="/forges/new" class="stack" id="new-forge">
         ${formField({
           label: "Name",
           name: "name",
@@ -444,41 +444,18 @@ function sentLink(): Html {
   return btn("Forges you sent", { href: "/forges", size: "sm" });
 }
 
-/** The link, shown once: what to do with it, and a way to copy it; the list of forges sent only for an admin. */
-export function claimLinkBody(link: string, isAdmin: boolean, note?: string): Html {
-  return html`<p class="mb">
-      Send this link to the person it is for. It works once, for a day, and
-      is shown only now.
-    </p>
-    <p class="muted small mb">
-      Send it as you would a password: to them alone, not to a group.
-    </p>
-    <ul class="list setting-list">${
-      row({
-        title: html`<code class="mono" id="claim-link">${link}</code>`,
-        trail: btn("Copy the link", { type: "button", copy: "claim-link", icon: "copy", variant: "primary", size: "sm" }),
-      })
-    }</ul>
-    ${isAdmin ? html`<p class="mt">${sentLink()}</p>` : null}
-    ${note === undefined ? null : html`<p class="small mt">${note}</p>`}`;
+/** A link on its own (made again, or paid for): what to do with it, the link, and for an admin the way back to the list. */
+export function claimLinkBody(link: string, isAdmin: boolean): Html {
+  return linkToSend(link, isAdmin ? html`<p>${sentLink()}</p>` : null);
 }
 
-function madeView(body: Record<string, unknown>, isAdmin: boolean): Html {
-  const link = body["claimUrl"];
-  const note = body["keyNote"];
-  const name = String(body["name"] ?? "");
+/** The answer when the forge was there already: its link is not shown twice. */
+function existedView(name: string): Html {
   return html`<div class="narrow-wide" data-forges>
-    ${pageHead(
-      body["existed"] === true ? `${name} already exists` : `${name} is ready`,
-    )}
+    ${pageHead(`${name} already exists`)}
     <section class="settings-block">
-      <h2>${typeof link === "string" ? "The link to send" : "Its link"}</h2>
-      ${typeof link === "string"
-        ? claimLinkBody(link, isAdmin, typeof note === "string" ? note : undefined)
-        : html`<p>
-            It was made before, so its link is not shown again. Ask for a new
-            one if it was lost.
-          </p>`}
+      <h2>Its link</h2>
+      <p>It was made before, so its link is not shown again. Ask for a new one if it was lost.</p>
     </section>
   </div>`;
 }
@@ -517,7 +494,6 @@ export function newForgePage(ctx: Ctx): Response {
   const response = page({
     ctx,
     title: "New forge",
-    ...(user === undefined ? { scriptJs: JS_FLAG_JS } : {}),
     body: formView(ctx, user, { ...EMPTY, code, name: (ctx.url.searchParams.get("name") ?? "").slice(0, 38), ...fromPack(ctx, user) }, errors, gift, reads),
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
@@ -566,7 +542,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     ...(values.template === DEFAULT_TEMPLATE ? {} : { template: values.template }),
     ...(values.code === "" ? {} : { code: values.code }),
     dryRun: planOnly,
-  });
+  }, { page: true });
   if (door.status >= 400)
     return page(
       {
@@ -583,12 +559,22 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
       body: formView(ctx, user, values, {}, planView(ctx, user, values, door.body), readsFor(ctx, user)),
     });
   noteForgeMade(ctx);
-  // A stranger whose script ran is not handed a link: the waiting page carries the code in its fragment (#11202).
-  const waiting = user === undefined && field(form, "js") === "1" ? waitingAddress(door.body) : undefined;
-  const response =
-    waiting !== undefined
-      ? redirect(waiting)
-      : page({ ctx, title: "New forge", body: madeView(door.body, ctx.auth.user?.isAdmin === true) }, door.status);
+  const link = door.body["claimUrl"];
+  const note = door.body["keyNote"];
+  const name = String(door.body["name"] ?? values.name);
+  // A stranger made it for themselves and opens it; a signed-in person made it to send.
+  const body =
+    typeof link !== "string"
+      ? existedView(name)
+      : user === undefined
+        ? madeBody({ name, link: link.replace(/\/claim#/, "/welcome#"), own: true })
+        : madeBody({
+            name,
+            link,
+            own: false,
+            after: html`${typeof note === "string" ? html`<p class="small">${note}</p>` : null}${user.isAdmin ? html`<p>${sentLink()}</p>` : null}`,
+          });
+  const response = page({ ctx, title: typeof link !== "string" ? "New forge" : user === undefined ? "Your new forge" : "A forge to send", body, ...(typeof link === "string" ? { scriptJs: madeJs } : {}) }, door.status);
   // The link is in this body only: never kept by a cache.
   response.headers.set("cache-control", "no-store");
   if (values.code !== "") response.headers.append("set-cookie", dropGift(ctx.url, ctx.app.config.url));

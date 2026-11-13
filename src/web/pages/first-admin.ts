@@ -23,7 +23,7 @@ import { html, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
 import { makeOptions, PASSKEY_WORDS, passkeyFields, readPasskey } from "../passkey-ceremony.ts";
 import { passkeyJs } from "../passkey-client.ts";
-import { passkeyNote, passkeyState } from "../passkey-state.ts";
+import { passkeyNote } from "../passkey-state.ts";
 import { card, field as formField } from "../ui.ts";
 import { sessionCookie } from "./site.ts";
 
@@ -75,7 +75,6 @@ function form(values: Values, errors: Errors): Html {
             ...(errors.email ? { error: errors.email } : {}),
           })}
           ${passkeyFields()}
-          <div class="stack stack-tight mb">${passkeyState()}</div>
           <p class="muted small mb">
             You sign in with a passkey: a fingerprint, face or device PIN.
             There is no password to remember.

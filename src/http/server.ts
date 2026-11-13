@@ -293,7 +293,6 @@ import { forgesRefusedPage } from "../web/pages/forges-refused.ts";
 import { forgeItSubmit } from "../web/pages/forge-it.ts";
 import { funnelSubmit } from "./funnel.ts";
 import { pricingDone, pricingOrder, pricingPage, resendPage, resendSubmit } from "../web/pages/pricing.ts";
-import { forgeWaitingPage } from "../web/pages/forge-waiting.ts";
 import { startForgeSubmit } from "../web/pages/start-forge.ts";
 import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
@@ -876,6 +875,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/claim/options", claimOptions);
   router.add("GET", "/welcome", welcomePage);
   router.add("POST", "/welcome", welcomeSubmit);
+  router.add("POST", "/welcome/options", claimOptions);
   // The operator's first-admin code, redeemed with a passkey (core/first_admin.ts).
   router.add("GET", "/first-admin", firstAdminPage);
   router.add("POST", "/first-admin", firstAdminSubmit);
@@ -898,7 +898,6 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/pricing/done", pricingDone);
   router.add("GET", "/pricing/resend", resendPage);
   router.add("POST", "/pricing/resend", resendSubmit);
-  router.add("GET", "/forges/:name/waiting", forgeWaitingPage);
   router.add("GET", "/forges/new", newForgePage);
   router.add("POST", "/forges/new", newForgeSubmit);
   router.add("POST", "/forges/start", startForgeSubmit);

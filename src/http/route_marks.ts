@@ -215,7 +215,6 @@ export const ROUTES: Readonly<Record<string, Mark>> = {
   "/forges/:name/own-code": "admin",
   "/forges/:name/remove": "admin",
   "/forges/:name/ready": "open",
-  "/forges/:name/waiting": "open",
   "/forges/new": "open",
   "/forges/start": "open",
   "/live/apps": "open",

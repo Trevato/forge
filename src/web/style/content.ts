@@ -89,6 +89,9 @@ a.where-place:hover, button.where-place:hover {
 .step-body > :first-child { margin-top: 0; }
 .step-body > :last-child { margin-bottom: 0; }
 @media (max-width: 719px) { .step-body { padding-left: 16px; } }
+/* A code a phone's camera opens (forge_made.ts): shown only where the person is not already on the phone. */
+.to-phone svg { display: block; border-radius: var(--radius); }
+@media (max-width: 719px) { .to-phone { display: none; } }
 .tell-box .input { min-width: 0; max-width: 100%; }
 .row-trail form { display: inline-flex; }
 

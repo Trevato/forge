@@ -392,7 +392,7 @@ test("signed out, the palette offers sign-in and the public entries", () => {
     ["send-change", "Send a change", "fork, patch, pull: no forge of your own"],
     ["interrupted-out", "Stopped runs", "runs the host stopped five times, with Try again"],
     ["get-a-forge", "Get your own forge", "the plans, where to get a hosted forge, how to run one yourself"],
-    ["start-forge", "Start my forge", "a free forge of your own; you choose a username and password next"],
+    ["start-forge", "Start my forge", "a free forge of your own; you pick a username and create your passkey next"],
     ["pricing", "Get a forge (plans)", "pick a plan, name it, pay at the checkout address"],
     ["forge-name", "Is a forge name free?", "ask whether Start my forge would take a name"],
     ["fleet", "Fleet rows", "the rows a fleet query line selects"],

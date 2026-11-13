@@ -75,13 +75,12 @@ export const NO_CREDIT_WORDS = "The crew cannot build until you add a model key 
 
 /** The first screen's line as plain text, for the terminal: the same words as `crewFirstLine`, no links. */
 export function crewFirstText(app: App): string {
-  return crewCanRun(app) ? `${crewNote(app)} Next: make an app or bring a repository.` : NO_CREDIT_WORDS;
+  return crewCanRun(app) ? crewNote(app) : NO_CREDIT_WORDS;
 }
 
-/** The first screen's one line: with credit the next step, without it the two ways forward, each a link (#11240). */
+/** The first screen's one line: with credit what pays for the crew (the box above is the one next step), without it the two ways forward, each a link (#11240). */
 export function crewFirstLine(app: App, admin: boolean): Html {
-  if (crewCanRun(app))
-    return html`${crewNote(app)} Next: <a href="/apps/new">make an app</a> or <a href="/new">bring a repository</a>.`;
+  if (crewCanRun(app)) return html`${crewNote(app)}`;
   return html`The crew cannot build until you ${admin ? html`<a href="/settings/subscriptions">add a model key</a>` : "add a model key"} or <a href="/pricing">pick a plan</a>.`;
 }
 

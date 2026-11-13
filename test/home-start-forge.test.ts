@@ -66,7 +66,7 @@ test("the plans button goes to the start form, not to /forges/new", async () => 
   expect(body).toContain('id="start-name-says"');
 });
 
-test("starting holds on 'Setting up', waits on ready, and leads to the claim page", async () => {
+test("starting answers the page that says the forge is starting and holds its link", async () => {
   const res = await fetch(`${servers.url}/forges/start`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded", origin: servers.url },
@@ -75,12 +75,10 @@ test("starting holds on 'Setting up', waits on ready, and leads to the claim pag
   const body = await res.text();
   if (res.status >= 400) throw new Error(`refused ${res.status}: ${body.slice(0, 300)}`);
   expect(res.headers.get("cache-control")).toBe("no-store");
-  expect(body).toContain("Setting up sunny-day.");
-  expect(body).not.toContain("btn-primary");
-  expect(body).toContain('id="start-go"');
-  expect(body).toContain("/forges/");
-  expect(body).toMatch(/data-href="[^"]*claim/);
-  // No link to copy, no "What it is for", no apps to fork on this path.
+  expect(body).toContain("sunny-day is made and is starting. This usually takes about 15 seconds.");
+  expect(body).toMatch(/id="made-open"[^>]*>\s*Open sunny-day|Open sunny-day/);
+  expect(body).toMatch(/href="[^"]*sunny-day--[^"]*\/welcome#[A-Za-z0-9_-]{43}"/);
+  // Their own forge: nothing to send, no "What it is for", no apps to fork on this path.
   expect(body).not.toContain("Send this link");
   expect(body).not.toContain("What it is for");
   expect(body).not.toContain("Apps to fork");
@@ -231,38 +229,6 @@ test("the live check: free, taken and why read in words, a 429 reads nothing, a 
   } finally {
     run.restore();
   }
-});
-
-test("the wait script goes to the claim page when ready, and says so when it takes too long", async () => {
-  const { startWaitJs } = await import("../src/web/pages/start-forge.ts");
-  const attrs = { "data-name": "sunny-day", "data-href": "/forges/sunny-day/claim?t=x" };
-  let n = 0;
-  const ready = runScript(startWaitJs, { "start-go": fake(attrs), "start-wait": fake() }, () => (++n < 3 ? { status: 200, json: { ready: false } } : { status: 200, json: { ready: true } }));
-  try {
-    await settle();
-    expect(ready.asked.every((u) => u === "/forges/sunny-day/ready")).toBe(true);
-    expect(ready.gone).toEqual(["/forges/sunny-day/claim?t=x"]);
-  } finally {
-    ready.restore();
-  }
-  const wait = fake();
-  const slow = runScript(startWaitJs, { "start-go": fake(attrs), "start-wait": wait }, () => "fail");
-  try {
-    await settle();
-    await settle();
-    expect(slow.gone).toEqual([]);
-    expect(wait.textContent).toBe("sunny-day is taking longer than usual. Use the link to open it.");
-  } finally {
-    slow.restore();
-  }
-});
-
-test("the waiting body escapes its name and link", async () => {
-  const { startWaitBody } = await import("../src/web/pages/start-forge.ts");
-  const out = startWaitBody('"><script>x</script>', '/c?a="><img src=x onerror=1>').toString();
-  expect(out).not.toContain("<script>");
-  expect(out).not.toContain("<img");
-  expect(out).toContain("&quot;&gt;&lt;img");
 });
 
 // ---- a signed-in poster goes to the fuller form, with a checked name only ----

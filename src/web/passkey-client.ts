@@ -11,8 +11,8 @@ export const passkeyJs = /* js */ `
   if (window.PublicKeyCredential && navigator.credentials) doc.documentElement.classList.add('passkey');
   if (window.PublicKeyCredential && navigator.credentials) {
     each('[data-passkey="on"]', function (el) { el.hidden = false; });
-    each('[data-passkey="off"]', function (el) { el.hidden = true; });
-    each('[data-passkey-state] .badge', function (el) { el.textContent = 'Passkey on'; el.setAttribute('data-variant', 'success'); });
+    // A password fallback goes, unless the page came back with a word about the password (data-keep).
+    each('[data-passkey="off"]', function (el) { if (!el.hasAttribute('data-keep')) el.hidden = true; });
   }
   function bytes(s) {
     s = s.replace(/-/g, '+').replace(/_/g, '/');
@@ -145,14 +145,6 @@ export const passkeyJs = /* js */ `
   wire('passkey-make', function () {
     var el = doc.getElementById('passkey-make'), form = el.form;
     function val(n) { var f = form.elements[n]; return f ? f.value : ''; }
-    var note = doc.getElementById('passkey-make-note');
-    // A passkey needs an address where the password does not: say so here, not after a round trip.
-    if (el.hasAttribute('data-needs-email') && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(val('email').trim())) {
-      if (note) note.textContent = 'A passkey needs an email address above.';
-      if (form.elements.email) form.elements.email.focus();
-      el.disabled = false;
-      return Promise.resolve();
-    }
     if (form.reportValidity && !form.reportValidity()) { el.disabled = false; return Promise.resolve(); }
     var who = { token: val('token'), username: val('username'), email: val('email') };
     return post(el.getAttribute('data-options'), who).then(function (o) {
@@ -164,7 +156,14 @@ export const passkeyJs = /* js */ `
         authenticatorSelection: { residentKey: 'preferred', userVerification: 'required' },
         attestation: 'none',
         timeout: 120000
-      } }).then(function (cred) {
+      } }).catch(function (err) {
+        // No passkey was made on this device: the form's password, where it has one, comes out.
+        var why = doc.getElementById('password-why');
+        if (why) why.textContent = 'No passkey on this device? Choose a password instead.';
+        each('[data-passkey="off"]', function (off) { off.hidden = false; off.classList.add('mt'); });
+        each('[data-passkey="off"] [data-variant="primary"]', function (b) { b.setAttribute('data-variant', 'outline'); });
+        throw err;
+      }).then(function (cred) {
         form.elements.challenge.value = o.challenge;
         form.elements.clientDataJSON.value = text(cred.response.clientDataJSON);
         form.elements.attestationObject.value = text(cred.response.attestationObject);

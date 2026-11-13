@@ -38,10 +38,11 @@ test("a child that does not answer yet is not ready; once it does, it is", async
   up = false;
   let res = await ready("acme");
   expect(res.status).toBe(200);
-  expect(await res.json()).toEqual({ ready: false });
+  // Not answering, and its process not up here yet: starting.
+  expect(await res.json()).toEqual({ ready: false, step: "starting" });
   up = true;
   res = await ready("acme");
-  expect(await res.json()).toEqual({ ready: true });
+  expect(await res.json()).toEqual({ ready: true, step: "ready" });
   expect(asked.length).toBe(2);
 });
 

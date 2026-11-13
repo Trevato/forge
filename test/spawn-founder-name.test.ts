@@ -131,7 +131,8 @@ describe("a child's founder holds the spawner's name", () => {
     // The same account, not a second one: what the spawn made under it stays its.
     expect(now.id).toBe(founder!.id);
     expect(now.isAdmin).toBe(true);
-    expect(now.email).toBe("alice@x.test");
+    // This forge sends no mail, so the address posted is not read.
+    expect(now.email).toBe("alice@no-email.invalid");
     // Its new password signs in.
     const signin = await fetch(`${kid.servers.url}/signin`, {
       method: "POST",

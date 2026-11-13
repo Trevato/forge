@@ -80,10 +80,11 @@ describe("the claim page's access sentence", () => {
     const started = await fetch(`${parentServers.url}/forges/start`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ name, js: "1" }),
+      body: new URLSearchParams({ name }),
       redirect: "manual",
     });
-    expect(started.status).toBe(303);
+    expect(started.status).toBe(200);
+    await started.body?.cancel();
     const made = await childNamed(parent, name);
     if (made === undefined) throw new Error("no child");
     return claimPage(made.bodyId, before);

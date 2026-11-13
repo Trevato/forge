@@ -73,7 +73,7 @@ function journeyProblems(
   if (seconds.crew >= b.firstCrewActivitySeconds) {
     out.push(`first crew activity in ${seconds.crew} s, budget ${b.firstCrewActivitySeconds}`);
   }
-  // The way in is a password on the claim form: a walk that never met that form has none.
+  // A person with no passkey to make still gets in: the account form carries a password. A walk that never met that form has none.
   if (!screens.some((s) => CLAIM_FORM.test(s.html) && /type="password"/.test(s.html))) {
     out.push("no screen with a password way in");
   }
@@ -86,7 +86,8 @@ function journeyProblems(
     if (/type="password"/.test(s.html) === false && CLAIM_FORM.test(s.html)) {
       out.push(`${s.name}: no password way in`);
     }
-    if (/cop(y|ied) (the |this |your )?(link|address|url)|send (the|this) link/i.test(text)) {
+    // A link to copy is a step only where nothing opens it: the page that hands the forge over has Open, and offers the copy beside it.
+    if (/cop(y|ied) (the |this |your )?(link|address|url)|send (the|this) link/i.test(text) && !/id="made-open"/.test(s.html)) {
       out.push(`${s.name}: a copy-the-link step`);
     }
     const word = s.words === false ? undefined : BANNED.exec(text)?.[0];
@@ -139,14 +140,14 @@ test("the walk: link, first screen, one sentence, the crew at work", async () =>
   const started = await fetch(`${parentServers.url}/forges/start`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ name: "asker", js: "1" }),
+    body: new URLSearchParams({ name: "asker" }),
     redirect: "manual",
   });
-  expect(started.status).toBe(303);
-  const to = started.headers.get("location") ?? "";
-  expect(to).toMatch(/^\/forges\/asker\/waiting#[A-Za-z0-9_-]{43}$/);
-  const token = to.split("#")[1] ?? "";
-  await record("waiting", await fetch(`${parentServers.url}${to.split("#")[0]}`), false);
+  expect(started.status).toBe(200);
+  // The answer is the page that waits and holds the link: not a screen of its own to act on.
+  const waiting = await record("waiting", started, false);
+  const token = /href="[^"]*\/welcome#([A-Za-z0-9_-]{43})"/.exec(waiting)?.[1] ?? "";
+  expect(token).not.toBe("");
 
   // The child boots (the probe says it is up); screen 2 is its form.
   const made = await childNamed(parent, "asker");

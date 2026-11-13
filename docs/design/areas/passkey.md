@@ -13,5 +13,14 @@ empty-state box: with none, one plain sentence says so. `test/passkeys-page.test
 
 The claim page (`/claim`, `claimForm()` and `dead()` in `src/web/pages/claim.ts`) adds no component class and no card: a
 `pageHead`, then one `<section class="settings-block">` holding the plain sentence of what this forge is, the
-`#claim-access` sentence and the form (every id kept for the passkey script). The used, expired, made-up and owned states
+`#claim-access` sentence and the form (every id kept for the passkey script). The form is a username and one primary
+button, **Create your passkey**, in a `data-passkey="on"` block the script shows where a passkey can run; the password
+field sits in a `data-passkey="off"` block the script hides there, so the page never offers both as a choice and never
+says which state it is in (no badge). The used, expired, made-up and owned states
 are the same section with their sentence and, for used and owned, the Sign in action. `test/claim-link.test.ts` holds it.
+
+The page that answers "make me a forge" (`madeBody()` in `src/web/forge_made.ts`) is a `.narrow .stack`: a `pageHead`,
+one `role="status"` sentence that changes with the real step, then the link as a `.setting-list` row with its copy button.
+
+- `.to-phone` — the QR code that opens the link on a phone, with its one muted sentence. Black on white whatever the
+  theme, since a scanner needs it so; not shown under 720px, where the person is already on the phone.

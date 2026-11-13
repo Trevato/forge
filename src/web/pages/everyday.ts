@@ -17,7 +17,8 @@ import {
   linkEveryday,
 } from "../../core/everyday.ts";
 import { spawnedOrg } from "../../spawn/claim.ts";
-import { requireVerified } from "../../actions/verify.ts";
+import { mailConfigured, requireVerified } from "../../actions/verify.ts";
+import { noEmail } from "../../actions/users.ts";
 import { createSession } from "../../core/sessions.ts";
 import { createUser, discardFreshUser, getUserByName, type User } from "../../core/users.ts";
 import { addPasskey } from "../../core/passkeys.ts";
@@ -102,13 +103,15 @@ function everydayFields(ctx: Ctx, user: User, offerKeep: boolean): Html {
           required: true,
           pattern: "[A-Za-z0-9][A-Za-z0-9._-]*",
         })}
-        ${formField({
-          label: "Email",
-          name: "email",
-          type: "email",
-          autocomplete: "email",
-          required: true,
-        })}
+        ${mailConfigured(ctx.app)
+          ? formField({
+              label: "Email",
+              name: "email",
+              type: "email",
+              autocomplete: "email",
+              required: true,
+            })
+          : null}
         ${passkeyFields()}
         <p class="muted small">
           It signs in with a passkey of its own: a fingerprint, face or
@@ -156,7 +159,8 @@ export async function everydayOptions(ctx: Ctx): Promise<Response> {
   const data = await boundedBody(ctx.request, STRANGER_MAX);
   if (data === "too_large") return refuse(413, "payload too large");
   const username = str(data.username).trim();
-  const bad = nameProblem(ctx, username) ?? (str(data.email).includes("@") ? undefined : EMAIL_WANTED);
+  // An address is asked for only on a forge that sends mail.
+  const bad = nameProblem(ctx, username) ?? (!mailConfigured(ctx.app) || str(data.email).includes("@") ? undefined : EMAIL_WANTED);
   if (bad !== undefined) return refuse(422, bad);
   return json(makeOptions(ctx, "everyday", username));
 }
@@ -174,7 +178,7 @@ export async function everydayCreate(ctx: Ctx): Promise<Response> {
       message: `You already have an everyday account, ${existing.username}: sign in as it below.`,
     });
   const username = field(form, "username");
-  const email = field(form, "email");
+  const email = mailConfigured(ctx.app) ? field(form, "email") : noEmail(username);
   const say = (message: string) =>
     flashTo(ctx, "/", { tone: "danger", message });
   const bad = nameProblem(ctx, username);

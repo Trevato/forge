@@ -18,7 +18,8 @@ import {
   spawnedRepos,
   type NextStep,
 } from "../../core/next-steps.ts";
-import type { User } from "../../core/users.ts";
+import { hasPassword, type User } from "../../core/users.ts";
+import { passkeyIds } from "../../core/passkeys.ts";
 import type { Ctx } from "../../http/context.ts";
 import { html, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
@@ -89,6 +90,16 @@ export const firstAskJs = /* js */ `
 })();
 `;
 
+/**
+ * An owner whose only way in is one passkey is one lost device from locked
+ * out, and this forge may send no mail to recover by: one quiet line says so,
+ * with the way to add another, until a second passkey (or a password) exists.
+ */
+export function secondPasskeyLine(ctx: Ctx, user: User): Html | null {
+  if (hasPassword(ctx.app.db, user.id) || passkeyIds(ctx.app.db, user.id).length !== 1) return null;
+  return html`<p class="small muted" id="second-passkey">You sign in with one passkey. <a href="/settings/passkeys">Add a second</a> on another device, so losing this one never locks you out.</p>`;
+}
+
 /** Before the first tell: one box, "say what you want built", and one line about what pays for the crew. */
 function firstTell(ctx: Ctx, user: User, crew: Html[]): Html {
   return html`<section id="next-steps" data-first-tell>
@@ -99,6 +110,7 @@ function firstTell(ctx: Ctx, user: User, crew: Html[]): Html {
       <div class="bar">${btn("Tell the crew", { variant: "primary" })}</div>
     </form>
     <p class="small muted" id="crew-credit-note">${crewFirstLine(ctx.app, ctx.auth.user?.isAdmin === true)}</p>
+    ${secondPasskeyLine(ctx, user)}
     ${crew.length > 0 ? html`<ul class="list">${crew}</ul>` : null}
   </section>`;
 }
@@ -148,6 +160,7 @@ export async function nextStepsCard(
     ${ask ? askBlock(ask) : null}
     ${others.length > 0 ? html`<ul class="list">${others}</ul>` : null}
     ${steps.map((s) => stepBlock(s, s.key === primary, bodies[s.key]))}
+    ${secondPasskeyLine(ctx, user)}
   </section>`;
 }
 

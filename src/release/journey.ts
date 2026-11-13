@@ -4,8 +4,8 @@
  * goes — the same requests `test/stranger-three-screens.test.ts` follows by hand.
  *
  *   1. open `/`                       (screen 1)
- *   2. name a throwaway forge         POST /forges/start, then wait on /forges/<name>/ready
- *   3. choose a username + password   the new forge's /claim   (screen 2)
+ *   2. name a throwaway forge         POST /forges/start (the page with its link), then wait on /forges/<name>/ready
+ *   3. choose a username + password   the new forge's /claim   (screen 2; a person makes a passkey there, this walk has none to make)
  *   4. land in the forge              (screen 3)
  *   5. say one tiny thing to build    POST /tell on the new forge
  *   6. poll the forge's home until the crew's activity shows
@@ -145,34 +145,27 @@ export async function walkJourney(options: JourneyOptions): Promise<JourneyResul
       screens.push("home");
     });
 
-    // 2. Name a throwaway forge, as the browser does (js=1: a 303 to the waiting page).
+    // 2. Name a throwaway forge, as the browser does: the answer is the page that waits and holds the link.
     const name = probeName();
     const t0 = now();
-    const claimCode = await step("the forge could not be named", async () => {
-      const res = await form(new URL("/forges/start", hostUrl), { name, js: "1" });
-      await res.body?.cancel();
-      expect(res, "the forge could not be named", 303);
+    const made = await step("the forge could not be named", async () => {
+      const res = await form(new URL("/forges/start", hostUrl), { name });
+      const text = await res.text();
+      expect(res, "the forge could not be named", 200);
       forge = name;
-      const to = res.headers.get("location") ?? "";
-      const code = /^\/forges\/[a-z0-9-]+\/waiting#([A-Za-z0-9_-]{43})$/.exec(to)?.[1];
-      if (code === undefined) throw new Step(`the forge could not be named: it sent the person somewhere else (${to.slice(0, 40)})`);
-      return code;
+      const link = /id="made-open"[^>]*href="([^"]+)"|href="([^"]+)"[^>]*id="made-open"/.exec(text);
+      const at = (link?.[1] ?? link?.[2])?.replaceAll("&amp;", "&");
+      let to: URL | undefined;
+      try {
+        to = at === undefined ? undefined : new URL(at);
+      } catch {}
+      const code = to?.hash.slice(1) ?? "";
+      const lives = to !== undefined && (to.protocol === "http:" || to.protocol === "https:") && (to.hostname.startsWith(`${name}--`) || to.hostname.startsWith(`${name}.`));
+      if (to === undefined || !lives || !/^[A-Za-z0-9_-]{43}$/.test(code)) throw new Step("the page did not say where the forge is");
+      return { code, child: new URL("/", to) };
     });
-
-    // Where it will live: the waiting page names it (never the code).
-    const waiting = await step("the waiting page did not open", async () => {
-      const res = await call(new URL(`/forges/${name}/waiting`, hostUrl));
-      expect(res, "the waiting page did not open", 200);
-      return res.text();
-    });
-    const claimAt = /data-claim="([^"]+)"/.exec(waiting)?.[1]?.replaceAll("&amp;", "&");
-    let claim: URL | undefined;
-    try {
-      claim = claimAt === undefined ? undefined : new URL(claimAt);
-    } catch {}
-    const lives = (u: URL) => (u.protocol === "http:" || u.protocol === "https:") && (u.hostname.startsWith(`${name}--`) || u.hostname.startsWith(`${name}.`));
-    if (claim === undefined || !lives(claim)) throw new Step("the waiting page did not say where the forge is");
-    child = new URL("/", claim);
+    const claimCode = made.code;
+    child = made.child;
     const childUrl = child;
 
     // Ready within the budget.
@@ -192,7 +185,7 @@ export async function walkJourney(options: JourneyOptions): Promise<JourneyResul
       await sleep(pollMs);
     }
 
-    // 3. The claim form, then a username and a password.
+    // 3. The account form, then a username and a password: the way in for a walker with no passkey to make.
     await step("the account form did not open", async () => {
       const res = await call(new URL("/claim", childUrl));
       expect(res, "the account form did not open", 200);

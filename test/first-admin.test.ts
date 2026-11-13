@@ -7,7 +7,6 @@
  * `POST /api/v1/first-admin`. Ordinary signup still takes a passkey only.
  */
 
-import { insideHiddenDiv } from "./helpers/hidden.ts";
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -285,13 +284,12 @@ describe("a person: /first-admin with a passkey", () => {
     expect(await (await fetch(`${servers.url}/signin`)).text()).toContain('href="/first-admin"');
   });
 
-  test("the page draws the passkey state as a badge, not a passkey-on class", async () => {
+  test("the page draws no passkey state badge: it offers the passkey and never says on or off", async () => {
     const html = await (await fetch(`${servers.url}/first-admin`)).text();
-    expect(html).toContain("Passkey off");
-    expect(html).toMatch(/<span\s+class="badge"\s+data-variant="outline"\s*>\s*Passkey off/);
+    expect(html).not.toMatch(/Passkey o(n|ff)/);
+    expect(html).not.toContain("data-passkey-state");
     expect(html).not.toContain("passkey-on");
     expect(html).not.toContain('class="passkey');
-    expect(insideHiddenDiv(html, "data-passkey-state")).toBe(false);
   });
 
   test("the page holds no code and takes it from the fragment", async () => {

@@ -88,10 +88,9 @@ describe("the next-steps card of a spawned forge", () => {
           expect(main).toContain('href="/pricing"');
           expect(main.match(/cannot build/g)?.length).toBe(1);
         } else {
-          // Credit: the next step instead.
-          expect(main).toContain("Next:");
-          expect(main).toContain('href="/apps/new"');
-          expect(main).toContain('href="/new"');
+          // Credit: what pays for the crew, and no second next step beside the box.
+          expect(main).not.toContain("Next:");
+          expect(main).not.toContain('href="/apps/new"');
           expect(main).not.toContain("cannot build");
         }
         expect(main).not.toContain('action="/settings/crew/key"');

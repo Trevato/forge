@@ -183,8 +183,12 @@ export async function spawnDoor(
   ctx: Ctx,
   user: User | undefined,
   raw: Record<string, unknown>,
-  /** `paid`: the plan was bought (`actions/order.ts`), so a paid plan needs no admin and a stranger's rate limits do not apply. */
-  opts: { readonly paid?: boolean } = {},
+  /**
+   * `paid`: the plan was bought (`actions/order.ts`), so a paid plan needs no admin and a stranger's rate limits do not apply.
+   * `page`: a person is waiting on this answer in a browser, so it does not wait on the first reach proof: the page shows
+   * the forge starting (`web/forge_made.ts`) and the proof goes on behind it, an alarm if it never comes.
+   */
+  opts: { readonly paid?: boolean; readonly page?: boolean } = {},
 ): Promise<Door> {
   const paid = opts.paid === true;
   const anon = user === undefined;
@@ -391,8 +395,8 @@ export async function spawnDoor(
   // Proven from outside before it is called done: the child's home and each
   // app's public address, each with what came back. What does not answer yet
   // is kept proving behind this answer, and is an alarm if it never does.
-  const proved = made.value.existed ? undefined : await firstProof(ctx.app, made.value.name);
-  if (proved !== undefined) void settleChild(ctx.app, made.value.name);
+  const proved = made.value.existed || opts.page === true ? undefined : await firstProof(ctx.app, made.value.name);
+  if (proved !== undefined || (opts.page === true && !made.value.existed)) void settleChild(ctx.app, made.value.name);
   return {
     status: made.value.existed ? 200 : 201,
     body: {

@@ -491,7 +491,7 @@ export function scanCards(root: string): string[] {
  * attributes), `${}` code, comments, CSS and scripts left out. "claim" stays a
  * fine route name and class; it is a refusal only where it is read.
  */
-export const STRANGER_FILES = ["src/web/pages/claim.ts", "src/web/pages/start-forge.ts", "src/web/pages/new-forge.ts", "src/web/pages/forge-waiting.ts"];
+export const STRANGER_FILES = ["src/web/pages/claim.ts", "src/web/pages/start-forge.ts", "src/web/pages/new-forge.ts", "src/web/forge_made.ts"];
 const STRANGER_RE = new RegExp(`(?<![A-Za-z0-9_-])(?:${STRANGER_NEVER_SEES.join("|")})(?:s|ed|ing)?(?![A-Za-z0-9_-])`, "gi");
 export type StrangerFinding = { line: number; word: string; text: string };
 

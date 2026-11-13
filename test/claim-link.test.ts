@@ -8,7 +8,6 @@
  * for there on purpose (#839). The account a link makes has a password or a passkey (#2924).
  */
 
-import { insideHiddenDiv } from "./helpers/hidden.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -154,13 +153,16 @@ describe("the claim link in the fragment, and its re-issue", () => {
     expect(await dead.text()).not.toContain('class="card');
   });
 
-  test("the claim page draws the passkey state as a badge, not a passkey-on class", async () => {
+  test("the claim page is one action, Create your passkey: no state badge, no email on a forge that sends no mail, the password only as the fallback", async () => {
     const html = await (await fetch(`${childServers.url}/claim`)).text();
-    expect(html).toContain("Passkey off");
-    expect(html).toMatch(/<span\s+class="badge"\s+data-variant="outline"\s*>\s*Passkey off/);
+    expect(html).not.toMatch(/Passkey o(n|ff)/);
+    expect(html).not.toContain("data-passkey-state");
     expect(html).not.toContain("passkey-on");
     expect(html).not.toContain('class="passkey');
-    expect(insideHiddenDiv(html, "data-passkey-state")).toBe(false);
+    expect(html).toMatch(/<div data-passkey="on" hidden>[^]*id="passkey-make"[^]*Create your passkey/);
+    expect(html).toMatch(/<div data-passkey="off"\s*>[^]*This browser cannot create a passkey, so choose a password\.[^]*name="password"/);
+    expect(html).not.toContain('name="email"');
+    expect(html).not.toContain("Use a passkey instead");
   });
 
   test("an unclaimed forge's sign-in page leads to the claim page; the parent's does not", async () => {
@@ -259,23 +261,21 @@ describe("the claim link in the fragment, and its re-issue", () => {
     expect(long.status).toBe(422);
     expect(await long.text()).toContain("Use 1024 bytes or fewer.");
     expect(getUserByName(child.db, "maria-owner")).toBeUndefined();
-    // A malformed address is refused on the password door, and so is a stand-in typed by hand.
+    // Where the forge sends mail, a malformed address is refused on the password door, and so is a stand-in typed by hand.
+    child.config.mailer = async () => true;
     for (const email of ["not-an-address", "me@no-email.invalid"]) {
       const bad = await claim({ token: tokenOf(second), username: "maria-owner", email, password: PASSWORD });
       expect(bad.status).toBe(422);
       expect(await bad.text()).toContain("That does not look like an email address.");
     }
-    // The passkey door needs an address: no challenge without one, and a filled form that lost it is refused.
+    delete child.config.mailer;
+    // The passkey door needs no address: a name and a live link get a challenge.
     const noMail = await fetch(`${childServers.url}/claim/options`, {
       method: "POST",
       headers: { origin: childServers.url, "content-type": "application/json" },
       body: JSON.stringify({ token: tokenOf(second), username: "maria-owner" }),
     });
-    expect(noMail.status).toBe(422);
-    const keyed = { token: tokenOf(second), username: "maria-owner", email: "m@x.test" };
-    const lost = await claim({ ...(await passkeyFields(childServers.url, "/claim/options", keyed)), token: keyed.token, username: keyed.username });
-    expect(lost.status).toBe(422);
-    expect(await lost.text()).toContain("That does not look like an email address.");
+    expect(noMail.status).toBe(200);
     expect(getUserByName(child.db, "maria-owner")).toBeUndefined();
     const ok = await claimWithKey({
       token: tokenOf(second),
@@ -401,8 +401,8 @@ describe("the claim link in the fragment, and its re-issue", () => {
     expect(ro.text).not.toContain("/claim#");
   });
 
-  test("a username, an email and a password make the first admin, who can sign in with it", async () => {
-    const kid = createApp({ dataDir: childDirOf(parent, kaiBody), port: 0 });
+  test("on a forge that sends mail, a username, an email and a password make the first admin, who can sign in with it", async () => {
+    const kid = createApp({ dataDir: childDirOf(parent, kaiBody), port: 0, mailer: async () => true });
     await firstBoot(kid);
     const kidServers = await serve(kid);
     try {
@@ -429,8 +429,12 @@ describe("the claim link in the fragment, and its re-issue", () => {
     }
   });
 
-  test("the passkey button asks for the email in the browser, before any round trip", async () => {
+  test("the passkey button asks for no email, and a passkey that could not be made brings the password out", async () => {
     const { passkeyJs } = await import("../src/web/passkey-client.ts");
-    expect(passkeyJs).toContain("data-needs-email");
+    expect(passkeyJs).not.toContain("needs-email");
+    expect(passkeyJs).toContain("No passkey on this device? Choose a password instead.");
+    // The browser may offer a phone by its own QR code: no attachment is asked for, a resident key is preferred.
+    expect(passkeyJs).not.toContain("authenticatorAttachment");
+    expect(passkeyJs).toContain("residentKey: 'preferred'");
   });
 });

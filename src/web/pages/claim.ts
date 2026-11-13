@@ -1,11 +1,14 @@
 /**
- * `/claim`: the page a spawned child's link opens (`spawn/claim.ts`).
- * The link is `/claim#<token>`, so the secret never leaves the browser in a
- * request line. The person a forge was made for opens it, reads who will be
- * able to see the forge, and makes their account with a username and a
- * password (email optional, the checks signup's own) or with a passkey
- * (`passkey-ceremony.ts`; that one needs an email). They land in their
- * forge as its admin.
+ * `/claim` and `/welcome`: where a new forge gets its owner (`spawn/claim.ts`).
+ * `/claim#<token>` is the link someone was sent; `/welcome#<token>` is the same
+ * link for the person who started the forge themselves, with nothing said of a
+ * sender. The secret rides the fragment, so it never leaves the browser in a
+ * request line. The person picks a username and presses **Create your
+ * passkey** (`passkey-ceremony.ts`): the browser offers this device or, by its
+ * own QR code, a phone. A browser that cannot make a passkey is asked for a
+ * password instead. No email is asked for on a forge that sends no mail, and
+ * none is ever needed: the link is the proof, so the account is not held
+ * behind a verification. They land in their forge as its admin.
  *
  * The GET only shows the form — a link unfurled in a chat app must not
  * spend itself — and the POST, same-origin, makes the account and burns the
@@ -18,7 +21,6 @@
  * so before anyone submits, and where to remove it.
  */
 
-import { crewCanRun, hasCrew } from "../studio/crew_key.ts";
 import { PASSWORD_TOO_LONG, withinPasswordCap } from "../../core/hash-gate.ts";
 import { givenEmail, MIN_SIGNUP_PASSWORD, noEmail } from "../../actions/users.ts";
 import type { Credential } from "../../auth/webauthn.ts";
@@ -62,7 +64,8 @@ import { html, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
 import { makeOptions, PASSKEY_WORDS, passkeyFields, readPasskey } from "../passkey-ceremony.ts";
 import { passkeyJs } from "../passkey-client.ts";
-import { passkeyNote, passkeyState } from "../passkey-state.ts";
+import { passkeyNote } from "../passkey-state.ts";
+import { mailConfigured } from "../../actions/verify.ts";
 import { btn, field as formField } from "../ui.ts";
 import { sessionCookie, signinAllowed } from "./site.ts";
 import { EMAIL_TAKEN_MESSAGE, NAME_RESERVED, USERNAME_TAKEN } from "../../actions/signup_words.ts";
@@ -202,126 +205,95 @@ function claimForm(
   expiresAt?: string,
   own = false,
 ): Html {
-  if (own) return welcomeForm(values, errors);
+  if (own)
+    return html`<div class="narrow">
+      ${pageHead("Make your account")}
+      <section class="settings-block">
+        <p class="mb">Pick a username, then create your passkey. You will be the admin of this forge.</p>
+        ${accountForm(ctx, "/welcome", values, errors)}
+      </section>
+    </div>`;
   return html`<div class="narrow">
     ${pageHead("This forge is yours")}
     <section class="settings-block">
-      <p class="mb">
-          ${spawned.org.username} was made for you, with its apps and
-          ${crewCanRun(ctx.app) && hasCrew(ctx.app)
-            ? "a crew ready to build them"
-            : "a crew that builds them once you add a model key"}. Make your account to take it: this first account
-          is the forge's admin, so it can change everything here.
-        </p>
-        ${expiresAt === undefined
-          ? null
-          : html`<p class="mb" id="claim-expiry">This link works until
-              <time datetime="${expiresAt}">${whenWords(expiresAt)}</time>
-              (${relativeWords(Date.parse(expiresAt) - Date.now())}). After that, ask
-              ${spawner?.username ?? "whoever sent it"} to send you a new one.</p>`}
-        <p class="mb" id="claim-access">${accessSentence(spawned, spawner)}</p>
-        ${takeover(ctx, spawned, spawner)}
-        <form method="post" action="/claim">
-          <div id="claim-token-field">
-            ${formField({
-              label: "Link code",
-              name: "token",
-              value: values.token ?? "",
-              required: true,
-              hint: "The part of your link after the #. Opening the link fills it in.",
-            })}
-          </div>
-          ${formField({
-            label: "Username",
-            name: "username",
-            value: values.username ?? "",
-            autocomplete: "username",
-            required: true,
-            autofocus: true,
-            hint: "Letters, digits, dots and dashes.",
-            pattern: "[A-Za-z0-9][A-Za-z0-9._-]*",
-            ...(errors.username ? { error: errors.username } : {}),
-          })}
-          ${formField({
-            label: "Email",
-            name: "email",
-            type: "email",
-            value: values.email ?? "",
-            autocomplete: "email",
-            hint: "Optional. A passkey needs one.",
-            ...(errors.email ? { error: errors.email } : {}),
-          })}
-          ${formField({
-            label: "Password",
-            name: "password",
-            type: "password",
-            autocomplete: "new-password",
-            minlength: MIN_SIGNUP_PASSWORD,
-            hint: `At least ${MIN_SIGNUP_PASSWORD} characters.`,
-            ...(errors.password ? { error: errors.password } : {}),
-          })}
-          ${passkeyFields()}
-          <div class="form-actions">
-            <button type="submit" class="btn" data-variant="primary">Make this forge mine</button>
-          </div>
-          <div class="stack stack-tight">
-            ${passkeyState()}
-            <div data-passkey="on" hidden>
-            <p class="muted small mb">
-              Or skip the password: a passkey signs you in with a fingerprint,
-              face or device PIN. It needs an email address above.
-            </p>
-            ${passkeyNote("passkey-make-note", errors.passkey)}
-            <button type="button" id="passkey-make" class="btn" data-variant="outline" data-options="/claim/options" data-needs-email>Use a passkey instead</button>
-            </div>
-          </div>
-        </form>
+      <p class="mb">${spawned.org.username} was made for you. Your account will be its admin, so it can change everything here.</p>
+      ${expiresAt === undefined
+        ? null
+        : html`<p class="mb" id="claim-expiry">This link works until
+            <time datetime="${expiresAt}">${whenWords(expiresAt)}</time>
+            (${relativeWords(Date.parse(expiresAt) - Date.now())}). After that, ask
+            ${spawner?.username ?? "whoever sent it"} to send you a new one.</p>`}
+      <p class="mb" id="claim-access">${accessSentence(spawned, spawner)}</p>
+      ${takeover(ctx, spawned, spawner)}
+      ${accountForm(ctx, "/claim", values, errors)}
     </section>
   </div>`;
 }
 
-/** The screen for the person who started this forge themselves: a username and a password, nothing about anyone else. */
-function welcomeForm(values: Values, errors: Errors): Html {
-  return html`<div class="narrow">
-    ${pageHead("Make your account")}
-    <section class="settings-block">
-      <p class="mb">Choose a username and a password. This account is yours alone, and you are the admin of this forge.</p>
-      <form method="post" action="/welcome">
-        <div id="claim-token-field">
-          ${formField({
-            label: "Link code",
-            name: "token",
-            value: values.token ?? "",
-            required: true,
-            hint: "The part of your link after the #. Opening the link fills it in.",
-          })}
-        </div>
-        ${formField({
-          label: "Username",
-          name: "username",
-          value: values.username ?? "",
-          autocomplete: "username",
-          required: true,
-          autofocus: true,
-          hint: "Letters, digits, dots and dashes.",
-          pattern: "[A-Za-z0-9][A-Za-z0-9._-]*",
-          ...(errors.username ? { error: errors.username } : {}),
-        })}
-        ${formField({
-          label: "Password",
-          name: "password",
-          type: "password",
-          autocomplete: "new-password",
-          minlength: MIN_SIGNUP_PASSWORD,
-          hint: `At least ${MIN_SIGNUP_PASSWORD} characters.`,
-          ...(errors.password ? { error: errors.password } : {}),
-        })}
-        <div class="form-actions">
-          <button type="submit" class="btn" data-variant="primary">Done</button>
-        </div>
-      </form>
-    </section>
-  </div>`;
+/**
+ * The one form both screens share: a username and one button, **Create your
+ * passkey**. A browser that cannot make a passkey (or runs no script) is shown
+ * a password field instead, never both as a choice; a passkey that could not
+ * be made on this device brings the password out (`passkey-client.ts`). An
+ * email is asked for only on a forge that can send mail, and never needed.
+ */
+function accountForm(ctx: Ctx, action: "/claim" | "/welcome", values: Values, errors: Errors): Html {
+  return html`<form method="post" action="${action}">
+    <div id="claim-token-field" ${values.token ? html`hidden` : null}>
+      ${formField({
+        label: "Link code",
+        name: "token",
+        value: values.token ?? "",
+        required: true,
+        hint: "The part of your link after the #. Opening the link fills it in.",
+      })}
+    </div>
+    ${formField({
+      label: "Username",
+      name: "username",
+      value: values.username ?? "",
+      autocomplete: "username",
+      required: true,
+      autofocus: true,
+      hint: "Letters, digits, dots and dashes.",
+      pattern: "[A-Za-z0-9][A-Za-z0-9._-]*",
+      ...(errors.username ? { error: errors.username } : {}),
+    })}
+    ${mailConfigured(ctx.app)
+      ? formField({
+          label: "Email",
+          name: "email",
+          type: "email",
+          value: values.email ?? "",
+          autocomplete: "email",
+          hint: "Optional. It gets you back in if you lose your passkey.",
+          ...(errors.email ? { error: errors.email } : {}),
+        })
+      : null}
+    ${passkeyFields()}
+    <div data-passkey="on" hidden>
+      <p class="muted small mb">A passkey is your device's fingerprint, face or PIN. There is nothing to remember.</p>
+      ${passkeyNote("passkey-make-note", errors.passkey)}
+      <div class="form-actions">
+        <button type="button" id="passkey-make" class="btn" data-variant="primary" data-size="lg" data-options="${action}/options">Create your passkey</button>
+      </div>
+    </div>
+    <div data-passkey="off" ${errors.password ? html`data-keep` : null}>
+      <p class="muted small mb" id="password-why">This browser cannot create a passkey, so choose a password.</p>
+      ${formField({
+        label: "Password",
+        name: "password",
+        type: "password",
+        autocomplete: "new-password",
+        minlength: MIN_SIGNUP_PASSWORD,
+        hint: `At least ${MIN_SIGNUP_PASSWORD} characters.`,
+        ...(errors.password ? { error: errors.password } : {}),
+      })}
+      <div class="form-actions">
+        <button type="submit" class="btn" data-variant="primary">Make my account</button>
+      </div>
+    </div>
+  </form>`;
 }
 
 /**
@@ -370,22 +342,18 @@ async function fragmentPage(ctx: Ctx, own: boolean): Promise<Response> {
     ctx,
     title: own ? "Make your account" : "This forge is yours",
     body: claimForm(ctx, spawned, spawner, {}, {}, link?.expiresAt, own),
-    scriptJs: own ? fragmentJs : fragmentJs + passkeyJs,
+    scriptJs: fragmentJs + passkeyJs,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
 }
 
-/**
- * Whether a name and address are fit for the first admin; else the words.
- * The address is optional unless a passkey is being made.
- */
+/** Whether a name and an address (optional, and read only where the forge sends mail) are fit for the first admin; else the words. */
 function problems(
   ctx: Ctx,
   spawned: Spawned,
   username: string,
   email: string,
-  needEmail: boolean,
 ): Errors {
   const errors: Errors = {};
   if (!USERNAME.test(username))
@@ -398,10 +366,13 @@ function problems(
     !isForgeName(spawned, username)
   )
     errors.username = USERNAME_TAKEN;
-  if (email !== "" ? !givenEmail(email) : needEmail)
+  if (email !== "" && !givenEmail(email))
     errors.email = "That does not look like an email address.";
   return errors;
 }
+
+/** The address the form gave, on a forge that sends mail; nothing on one that does not, whatever was posted. */
+const emailGiven = (ctx: Ctx, raw: string): string => (mailConfigured(ctx.app) ? raw.trim() : "");
 
 /** Why a passkey challenge was refused, in the passkey note's plain words. */
 const LINK_REFUSED: Record<Exclude<ClaimState["state"], "ok">, string> = {
@@ -412,7 +383,7 @@ const LINK_REFUSED: Record<Exclude<ClaimState["state"], "ok">, string> = {
   owned: "This forge already has an owner.",
 };
 
-// POST /claim/options — a passkey challenge, for a live link and a fit name.
+// POST /claim/options, /welcome/options — a passkey challenge, for a live link and a fit name.
 // Nothing is spent: the link burns only when the key comes back.
 export async function claimOptions(ctx: Ctx): Promise<Response> {
   const refuse = (status: number, message: string) =>
@@ -428,7 +399,7 @@ export async function claimOptions(ctx: Ctx): Promise<Response> {
   const state = readClaim(ctx.app.db, spawned.org.id, str(data.token)).state;
   if (state !== "ok") return refuse(state === "unknown" ? 404 : 410, LINK_REFUSED[state]);
   const username = str(data.username).trim();
-  const bad = problems(ctx, spawned, username, str(data.email).trim(), true);
+  const bad = problems(ctx, spawned, username, emailGiven(ctx, str(data.email)));
   const first = bad.username ?? bad.email;
   if (first !== undefined) return refuse(422, first);
   return json(makeOptions(ctx, "claim", username));
@@ -455,7 +426,7 @@ async function submit(ctx: Ctx, own: boolean): Promise<Response> {
 
   const values = {
     username: field(form, "username"),
-    email: field(form, "email"),
+    email: emailGiven(ctx, field(form, "email")),
     token,
   };
   const again = (e: Errors) =>
@@ -464,13 +435,13 @@ async function submit(ctx: Ctx, own: boolean): Promise<Response> {
         ctx,
         title: own ? "Make your account" : "This forge is yours",
         body: claimForm(ctx, spawned, spawner, values, e, linkOf(ctx.app.db)?.expiresAt, own),
-        scriptJs: own ? fragmentJs : passkeyJs,
+        scriptJs: fragmentJs + passkeyJs,
       },
       422,
     );
   const password = typeof form.get("password") === "string" ? (form.get("password") as string) : "";
   const withKey = field(form, "attestationObject") !== "";
-  const errors = problems(ctx, spawned, values.username, values.email.trim(), withKey);
+  const errors = problems(ctx, spawned, values.username, values.email);
   if (!withKey && password.length < MIN_SIGNUP_PASSWORD)
     errors.password = `Passwords need at least ${MIN_SIGNUP_PASSWORD} characters.`;
   else if (!withinPasswordCap(password)) errors.password = PASSWORD_TOO_LONG;
@@ -483,7 +454,7 @@ async function submit(ctx: Ctx, own: boolean): Promise<Response> {
     credential = key.value;
   }
 
-  const email = values.email.trim() === "" ? noEmail(values.username) : values.email.trim();
+  const email = values.email === "" ? noEmail(values.username) : values.email;
   // Hashed before the link is spent: nothing is awaited between the burn
   // and the takeover.
   const founder = founderToTake(ctx.app, spawned, values.username);

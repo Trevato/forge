@@ -90,15 +90,20 @@ const spawn = (name: string) =>
     body: new URLSearchParams({ name }),
   });
 
-test("the answer holds the claim link in a headed section, once, never cached", async () => {
+test("the answer says the forge is starting and holds the link to send, once, never cached", async () => {
   const res = await spawn("made-lang");
   spawned.push("made-lang");
   expect(res.status).toBe(201);
   expect(res.headers.get("cache-control")).toBe("no-store");
   const page = main(await res.text());
-  expect(page).toContain('<section class="settings-block">');
-  expect(page).toContain("<h2>The link to send</h2>");
-  expect(page).toContain('id="claim-link"');
+  expect(page).toContain("<h1>A forge to send</h1>");
+  expect(page).toMatch(/<p id="made-says" role="status">\s*made-lang is made and is starting\. This usually takes about 15 seconds\./);
+  expect(page.replace(/\s+/g, " ")).toContain("whoever opens it first owns the forge");
+  expect(page.match(/id="claim-link"/g)?.length).toBe(1);
+  // The link to send is the page's one primary action, and a phone's camera can open it.
+  expect(page.match(/data-variant="primary"/g)?.length).toBe(1);
+  expect(page).toMatch(/data-copy="claim-link"/);
+  expect(page).toMatch(/class="to-phone[^"]*"[^]*<svg/);
   for (const b of boxed) expect(page).not.toContain(b);
 });
 

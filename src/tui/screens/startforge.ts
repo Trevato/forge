@@ -56,7 +56,7 @@ export function startForgeScreen(f: Session, ctx: Ctx): Screen {
     keys: [binding(["enter"], "start"), binding(["esc"], "back")],
     render(area, s) {
       const c = ctx.theme.c;
-      s.text(area.x, area.y, truncate("Start your own forge, free. Next you choose a username and password.", area.w), style(c.fg, c.bg), area.x + area.w);
+      s.text(area.x, area.y, truncate("Start your own forge, free. Next you pick a username and create your passkey.", area.w), style(c.fg, c.bg), area.x + area.w);
       const at = field(s, { x: area.x, y: area.y + 2, w: Math.min(60, area.w), h: 3 }, c, {
         label: "Forge name",
         value: name,
@@ -103,4 +103,4 @@ export function startForgeScreen(f: Session, ctx: Ctx): Screen {
 export const startForgeCommand = (session: Session, ctx: Ctx) =>
   session.signedIn
     ? []
-    : [{ id: "start-forge", title: "Start my forge", hint: "a free forge of your own; you choose a username and password next", run: () => ctx.push(startForgeScreen(session, ctx)) }];
+    : [{ id: "start-forge", title: "Start my forge", hint: "a free forge of your own; you pick a username and create your passkey next", run: () => ctx.push(startForgeScreen(session, ctx)) }];
