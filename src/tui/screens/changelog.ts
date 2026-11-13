@@ -5,6 +5,8 @@
  * pull title; Enter lists a release's pulls, and Enter on a pull opens it.
  */
 
+import { listChapters, type Chapter } from "../../core/chapters.ts";
+import { inChapter, isDrawable, noteWords } from "../../release/chapter_words.ts";
 import { gather, plainTitle } from "../../story/gather.ts";
 import { forgeChangelog, type ReleaseEntry } from "../../release/changelog.ts";
 import { readLandings } from "../../release/landings.ts";
@@ -34,6 +36,36 @@ export function changelogRows(entries: readonly ReleaseEntry[]): ListRow[] {
       e.pulls.map((p) => `#${p.number} ${plainTitle(p.title)}`.trim()).join("; "),
     ),
   }));
+}
+
+/** One line of the list: a release, or the chapter heading over the releases it closed. */
+export interface Line {
+  readonly row: ListRow;
+  readonly entry?: ReleaseEntry;
+}
+
+/**
+ * The releases (newest first) as lines, each run that fell in a closed chapter under a heading line
+ * with the chapter's name, its closing note's first sentence in plain words and its count, as the
+ * page groups them (`release/chapter_words.ts` decides membership). Releases outside any chapter
+ * stay flat. A chapter with none of the shown releases draws no heading.
+ */
+export function changelogLines(entries: readonly ReleaseEntry[], chapters: readonly Chapter[], now: Date = new Date()): Line[] {
+  const usable = chapters.filter((c) => isDrawable(c, now));
+  const out: Line[] = [];
+  let at: Chapter | undefined;
+  for (const e of entries) {
+    const c = usable.find((u) => inChapter(u, e.date));
+    if (c !== undefined && c !== at) {
+      const n = entries.filter((x) => inChapter(c, x.date)).length;
+      const said = noteWords(c.notes);
+      out.push({ row: { title: `Chapter ${c.name}`, meta: metaOf(`${n} ${n === 1 ? "release" : "releases"}`, said) } });
+    }
+    at = c;
+    const [row] = changelogRows([e]);
+    out.push({ row: c === undefined ? row! : { ...row!, title: `  ${row!.title}` }, entry: e });
+  }
+  return out;
 }
 
 /** The open milestones as lines above the releases: "name  N of M done", at most `MOST` of them. */
@@ -97,6 +129,8 @@ export function changelogScreen(f: Session, ctx: Ctx): Screen {
   let repoRef: Repo | undefined;
   let credits = new Map<number, string>();
   let near: string[] = [];
+  let chapters: Chapter[] = [];
+  const lines = (): Line[] => changelogLines(shown(), chapters);
   const shown = (): ReleaseEntry[] => entries.filter((e) => releaseMatches(filter, e));
   return {
     title: "Changelog",
@@ -119,6 +153,7 @@ export function changelogScreen(f: Session, ctx: Ctx): Screen {
           if (words !== "" && l.repo.toLowerCase() === repoName) credits.set(l.number, words);
         }
       }
+      chapters = read === undefined ? [] : listChapters(f.app.db, read.repo.id);
       near = nearLines(nearMilestones(f.app, f.app.config.forgeRepo, f.user)?.near ?? []);
       state.clamp(entries.length);
       loaded = true;
@@ -143,21 +178,22 @@ export function changelogScreen(f: Session, ctx: Ctx): Screen {
         emptyState(s, body!, c, { title: "No release matches", body: "Esc clears the word." });
         return;
       }
-      drawList(s, body!, c, state, changelogRows(list));
+      const shownLines = lines();
+      drawList(s, body!, c, state, shownLines.map((l) => l.row));
     },
     key(e) {
       if (filter.key(e)) {
-        state.clamp(shown().length);
+        state.clamp(lines().length);
         return true;
       }
       if (e.key === "esc" && filter.query !== "") {
         filter.query = "";
-        state.clamp(shown().length);
+        state.clamp(lines().length);
       } else if (e.key === "esc" || e.key === "q") ctx.pop();
       else if (e.key === "enter") {
-        const entry = shown()[state.index];
+        const entry = lines()[state.index]?.entry;
         if (entry !== undefined && repoRef !== undefined) ctx.push(releasePulls(f, ctx, repoRef, entry, credits));
-      } else state.key(e, shown().length);
+      } else state.key(e, lines().length);
       return true;
     },
   };
