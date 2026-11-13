@@ -188,6 +188,62 @@ describe("growth and the need", () => {
     });
   });
 
+  const MiB = 1024 ** 2;
+  const GiB = 1024 ** 3;
+  const fixedWalk = {
+    at: "2026-11-13T13:00:41.000Z",
+    pageSize: 4096,
+    freeBytes: 0.4 * GiB,
+    tables: [
+      { name: "run_log", bytes: 2.1 * GiB, rows: 3_200_000 },
+      { name: "event", bytes: 812 * MiB, rows: 41_300 },
+      { name: "check_run", bytes: 300 * MiB, rows: 9_000 },
+      { name: "comment", bytes: 120 * MiB, rows: 812 },
+      { name: "issue", bytes: 40 * MiB, rows: 12_000 },
+      { name: "user", bytes: 1 * MiB, rows: 30 },
+    ],
+    indexes: [],
+  };
+
+  test("with a walk, the need names the five largest tables, their bytes and rows, and the freelist (#12051)", () => {
+    expect(dbSizeNeed(4.6 * GiB, { perDay: null, days: 0 }, fixedWalk)).toEqual({
+      cause: "db-size",
+      sentence:
+        "The database is 4.6 GiB, past the 2 GiB Bun maps: as of 13:00Z its largest tables are run_log 2.1 GiB (3.2M rows), event 812 MiB (41k rows), check_run 300 MiB (9k rows), comment 120 MiB (812 rows), issue 40 MiB (12k rows); 410 MiB free.",
+    });
+    expect(dbSizeNeed(GiB, { perDay: DB_GROWTH_MAX + 1, days: 3.5 }, fixedWalk)?.sentence).toBe(
+      "The database grows 64 MiB a day over 3.5 days, past the 64 MiB a day worth a look: as of 13:00Z its largest tables are run_log 2.1 GiB (3.2M rows), event 812 MiB (41k rows), check_run 300 MiB (9k rows), comment 120 MiB (812 rows), issue 40 MiB (12k rows); 410 MiB free.",
+    );
+    // Quiet stays quiet, walk or no walk.
+    expect(dbSizeNeed(GiB, { perDay: null, days: 0 }, fixedWalk)).toBeUndefined();
+  });
+
+  test("without a walk, the need keeps pointing at /system", () => {
+    for (const w of [null, { ...fixedWalk, tables: [] }])
+      expect(dbSizeNeed(4.6 * GiB, { perDay: null, days: 0 }, w)?.sentence).toBe(
+        "The database is 4.6 GiB, past the 2 GiB Bun maps; /system names its largest tables.",
+      );
+  });
+
+  test("the vitals' db need carries the walk, the sentence the Sentinel issue quotes", () => {
+    const now = Date.now();
+    let asked = 0;
+    const dbWalk = () => {
+      asked++;
+      return fixedWalk;
+    };
+    const cause = () => vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, now, dbWalk }).degraded.find((d) => d.cause.startsWith("db-"));
+    app.db.run("DELETE FROM db_size_day");
+    expect(cause()).toBeUndefined();
+    // No need, no walk asked for.
+    expect(asked).toBe(0);
+    const then = now - 2 * DAY;
+    app.db.query("INSERT INTO db_size_day (day, at, bytes) VALUES (?, ?, ?)").run(new Date(then).toISOString().slice(0, 10), new Date(then).toISOString(), -300 * 1024 ** 2);
+    expect(cause()?.sentence).toContain(": as of 13:00Z its largest tables are run_log 2.1 GiB (3.2M rows)");
+    expect(asked).toBe(1);
+    app.db.run("DELETE FROM db_size_day");
+  });
+
   test("the vitals carry the growth need to /system, and drop it when growth is quiet", () => {
     const now = Date.now();
     const cause = () => vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, now }).degraded.find((d) => d.cause.startsWith("db-"));
@@ -221,6 +277,22 @@ describe("growth and the need", () => {
     expect(walks).toBe(1);
     expect(read.walk?.tables.length).toBe(10);
     expect(cache.peek(app.db, dataDir).walk).toBe(read.walk);
+  });
+
+  test("last gives the cached walk without waiting, and starts the first one", async () => {
+    let walks = 0;
+    let finish = (): void => {};
+    const cache = dbSizeCache(async (db, d) => {
+      walks++;
+      await new Promise<void>((r) => (finish = r));
+      return measureDbWalk(db, d);
+    });
+    expect(cache.last(app.db, dataDir)).toBeNull();
+    expect(walks).toBe(1);
+    finish();
+    const read = await cache.read(app.db, dataDir, 5_000);
+    expect(cache.last(app.db, dataDir)).toBe(read.walk);
+    expect(walks).toBe(1);
   });
 
   test("a walk that fails is said in the log, not swallowed, and the page keeps no walk", async () => {
