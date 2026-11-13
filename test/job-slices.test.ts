@@ -251,6 +251,7 @@ const UNTIMED: Record<string, string> = {
   "cell-watch": "watches running app cells' cgroups; needs cells, skipped in this sandbox mode",
   "cell-probe-deadline": "a cell's start probe running out of time: needs cells, skipped in this sandbox mode",
   "cell-kill-root": "kills a cell's root process after its grace: needs cells, skipped in this sandbox mode",
+  "cell-duty-resume": "sends SIGCONT to a cell tree the duty pause stopped: needs cells, skipped in this sandbox mode",
   "apps-restart": "restarts an app process after it exits; the fixture has no apps",
   "app-tty-idle": "closes an app terminal left idle; the fixture has no app terminals",
   "route-timing-flush": "a debounced write of route timings: runs after requests, the jobs here make none",
