@@ -48,6 +48,7 @@ import {
 import { unwrapKey, WRAPPED_KEY } from "./wrap.ts";
 import { isPackedFile, partPaths, unpacker, type PackedFile, type Unpacker } from "./parts.ts";
 import { resolveDestination } from "./destination.ts";
+import { offsiteFromEnv } from "./mirror.ts";
 import type { Store } from "./store.ts";
 
 export interface Restored {
@@ -393,17 +394,26 @@ if (import.meta.main) {
     }
     args.splice(at, 2);
   }
+  // `--offsite`: read the sealed off-site lane (FORGE_MIRROR_S3_*) in place of the destination (#11805).
+  const offsite = args.indexOf("--offsite");
+  if (offsite >= 0) args.splice(offsite, 1);
   const [name, dataDir] = args;
   if (!name || !dataDir || args.length > 2) {
     // CLI usage on stderr for the person at the terminal, not a forge event.
     console.error(
-      "usage: bun run src/snapshot/restore.ts <snapshot-name|latest> <data-dir> [--clones N]",
+      "usage: bun run src/snapshot/restore.ts <snapshot-name|latest> <data-dir> [--clones N] [--offsite]",
     );
     process.exit(2);
   }
   // A restore starts from an empty directory, so nothing is sealed yet: the
   // same resolver answers from the environment alone.
-  const store = resolveDestination()?.store;
+  const lane = offsite >= 0 ? offsiteFromEnv() : undefined;
+  if (typeof lane === "string") {
+    // CLI message on stderr for the person at the terminal.
+    console.error(lane);
+    process.exit(2);
+  }
+  const store = lane ?? resolveDestination()?.store;
   if (store === undefined) {
     // CLI message on stderr for the person at the terminal.
     console.error(

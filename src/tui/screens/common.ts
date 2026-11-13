@@ -999,6 +999,7 @@ const MESSAGES: Record<string, string> = {
   review_required: "this needs an approval of its current head first",
   self_review: "you cannot approve your own change",
   invalid_state: "that is not a review verdict",
+  looks_required: "a stylesheet change waits for its home-page looks at phone and desktop width",
   // The fork flow. Each of these leaves the world in a different place, so
   // each keeps its own sentence.
   fork_timeout: "the origin took the fork and it never appeared — try again",

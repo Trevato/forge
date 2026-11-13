@@ -9,7 +9,7 @@
 import { readAppMembers, setAppMembersThrough, type AppMembersError } from "../../actions/app_members.ts";
 import { appView, appVisitors, deleteAppEnvVar, disableApp, enableApp, listAppEnv, openEnvUrl, redeployEnv, setAppEnvVar, stopEnv, updateAppSettings, type AppSettingsInput } from "../../actions/apps.ts";
 import { pullNow, PULL_NOW_REFUSALS } from "../../actions/app_pull.ts";
-import { addAppDomain, checkAppDomain, listAppDomains, removeAppDomain } from "../../actions/domains.ts";
+import { addAppDomain, checkAppDomain, keepOldRecords, listAppDomains, removeAppDomain } from "../../actions/domains.ts";
 import { previewBuild, previewBuildRefusalText } from "../../actions/build_preview.ts";
 import { SETTING_WORDS } from "../../actions/setting_words.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
@@ -175,7 +175,7 @@ export function appRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const input = await body(ctx.request);
-    const added = addAppDomain(ctx.app, ctx.auth.user, repo, str(input.host));
+    const added = addAppDomain(ctx.app, ctx.auth.user, repo, str(input.host), input.old_records);
     if (!added.ok) return respondAccess(added.error, 422);
     return json(added.value, 201);
   });
@@ -198,6 +198,17 @@ export function appRoutes(router: Router<Handler>): void {
       return json(checked.value);
     },
   );
+
+  router.add("PUT", "/api/v1/repos/:owner/:name/app/domains/:host/old-records", async (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const input = await body(ctx.request);
+    const kept = keepOldRecords(ctx.app, ctx.auth.user, repo, ctx.params.host ?? "", input.records);
+    if (!kept.ok) return respondAccess(kept.error, 422);
+    return json(kept.value);
+  });
 
   router.add(
     "DELETE",

@@ -107,6 +107,24 @@ describe("the releases page", () => {
     expect(body).toContain('href="/alice/forge/pulls/6"');
   });
 
+  test("a proven stranger's journey is one line on the page; no timings, no line", async () => {
+    const was = process.env["FORGE_VERSION"];
+    process.env["FORGE_VERSION"] = "9.9.9";
+    try {
+      const get = async () => (await fetch(`${servers.url}/releases`, { headers: { cookie: aliceCookie } })).text();
+      mkdirSync(join(root, "release"), { recursive: true });
+      writeFileSync(join(root, "release", "proof.json"), JSON.stringify({ version: "9.9.9", at: new Date().toISOString(), ok: true }));
+      expect(await get()).not.toContain("a stranger&#39;s forge");
+      writeFileSync(join(root, "release", "proof.json"), JSON.stringify({ version: "9.9.9", at: new Date().toISOString(), ok: true, journey: { readyMs: 12_000, firstActivityMs: 41_000, screens: [] } }));
+      const body = await get();
+      expect(body).toMatch(/id="journey-proof">a stranger(&#39;|')s forge was ready in 12 s and the crew working in 41 s/);
+    } finally {
+      if (was === undefined) delete process.env["FORGE_VERSION"];
+      else process.env["FORGE_VERSION"] = was;
+      rmSync(join(root, "release", "proof.json"), { force: true });
+    }
+  });
+
   test("the release list is rows, not a table or a card; the version is the one link", async () => {
     const body = await (await fetch(`${servers.url}/releases`, { headers: { cookie: aliceCookie } })).text();
     expect(body).not.toContain("<table");

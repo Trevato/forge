@@ -89,9 +89,9 @@ describe("Settings → Backups mirror", () => {
 
   test("a non-admin and a cross-origin post are refused and change nothing", async () => {
     const asBob = await post("/settings/backups/mirror", GOOD, bob);
-    expect(asBob.status).toBe(404);
+    expect(asBob.status).toBe(403);
     const asBobClear = await post("/settings/backups/mirror/clear", {}, bob);
-    expect(asBobClear.status).toBe(404);
+    expect(asBobClear.status).toBe(403);
     const cross = await post("/settings/backups/mirror", GOOD, admin, "https://evil.example");
     expect(cross.status).toBe(403);
     expect(mirrorSealedSet(app.db)).toEqual([]);

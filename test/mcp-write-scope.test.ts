@@ -34,6 +34,7 @@ const ADMIN_ARGS: Record<string, Record<string, unknown>> = {
   subscription_headroom: { id: "u1", percent: 30 },
   prompts: { repo: "alice/game", action: "remove", id: "p1" },
   release_hold: { reason: "freeze for the demo" },
+  release_now: { reason: "hotfix for the demo" },
   telemetry_grant: { agent: "robo", on: true },
   hooks: { repo: "alice/game", action: "add", url: "https://example.com/h", secret: "0123456789abcdef0123" },
   app_domains: { repo: "alice/game", action: "add", host: "game.example.com" },
@@ -45,6 +46,7 @@ const ADMIN_ARGS: Record<string, Record<string, unknown>> = {
 /** Valid arguments for a tool whose write is one call among reads and plans (`readsWhen`): the generic arguments would only read. */
 const WRITE_ARGS: Record<string, Record<string, unknown>> = {
   flow: { kind: "drift", action: "update", repo: "alice/game", pull: 1 },
+  repo: { repo: "alice/game", action: "open", chapter: "v1", confirm: true },
 };
 
 /** What `visible()` answers for a tool the token's scope does not open. */

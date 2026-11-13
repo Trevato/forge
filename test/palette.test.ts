@@ -175,7 +175,7 @@ describe("the page runs the same functions", () => {
     expect(shellJs).toContain("function openModal(");
     // Escape is consumed on keydown and the dialog's own cancel is ours.
     expect(shellJs).toMatch(
-      /if \(e\.key !== 'Escape'\) return;\s*e\.preventDefault\(\);\s*e\.stopPropagation\(\);/,
+      /if \(e\.key === 'Escape'\) \{[^}]*e\.preventDefault\(\); e\.stopPropagation\(\);/,
     );
     expect(shellJs).toContain(
       "function onCancel(e) { e.preventDefault(); close(); }",

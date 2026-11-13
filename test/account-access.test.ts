@@ -86,20 +86,20 @@ describe("an admin resets a person's access", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("a profile offers Manage account to an admin only, and the page answers 404 to anyone else", async () => {
+  test("a profile offers Manage account to an admin only, and the page refuses anyone else", async () => {
     const asAdmin = await (await get("/bob", owner)).text();
     expect(asAdmin).toContain("/settings/accounts/bob");
     expect(asAdmin).toContain("Manage account");
     expect(await (await get("/bob", bobCookie)).text()).not.toContain("Manage account");
     expect(await (await get("/bob")).text()).not.toContain("Manage account");
-    expect((await get("/settings/accounts/bob", bobCookie)).status).toBe(404);
+    expect((await get("/settings/accounts/bob", bobCookie)).status).toBe(403);
     const page = await get("/settings/accounts/bob", owner);
     expect(page.status).toBe(200);
     const text = await page.text();
     for (const word of ["Role", "bob@f.dev", "Verified", "a password is set", "Owns", "Signed in now", "Reset access", "End all sessions", "Model budget"])
       expect(text).toContain(word);
     expect(text).not.toContain("bob-old-passphrase");
-    expect((await post("/settings/accounts/bob/reset", bobCookie)).status).toBe(404);
+    expect((await post("/settings/accounts/bob/reset", bobCookie)).status).toBe(403);
   });
 
   test("the accounts list searches by name", async () => {
@@ -217,7 +217,7 @@ describe("an admin resets a person's access", () => {
     expect(ended.sessionsEnded).toBe(0);
   });
 
-  test("only the forge's owner manages another admin; a member is told 404", async () => {
+  test("only the forge's owner manages another admin; a member is refused with 403", async () => {
     const olive = createToken(app.db, getUserByName(app.db, "olive")!.id, "t", "admin").token;
     const refused = await api("/api/v1/admin/accounts/olive/reset", adminTwo);
     expect(refused.status).toBe(422);

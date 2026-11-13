@@ -472,6 +472,11 @@ describe("web ui", () => {
     expect(signedIn).toContain('href="/explore"');
   });
 
+  test("the signed-out home links to /pricing in the top bar", async () => {
+    const out = await (await fetch(`${base}/`)).text();
+    expect(out).toContain('<a class="small" href="/pricing">Pricing</a>');
+  });
+
   test("a 404 offers a search for what was asked, and a stranger an account", async () => {
     const out = await (await fetch(`${base}/kim/nothing`)).text();
     expect(out).toContain('href="/search?q=nothing"');

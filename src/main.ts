@@ -94,12 +94,14 @@ import { running } from "./kernel/version.ts";
 import { record as recordDegraded } from "./kernel/degraded_history.ts";
 import { vitals } from "./kernel/vitals.ts";
 import { proveRunning } from "./release/prove.ts";
+import { walkJourney } from "./release/journey.ts";
 import { CHECK_EVERY_MS, setBehind, watchBehind } from "./release/behind.ts";
 import { readLandings } from "./release/landings.ts";
 import { ownTagsReader } from "./release/own_tags.ts";
 import { rollProbe, tickStep as keeperTick } from "./keeper/keeper.ts";
 import { stepWithBeat } from "./keeper/beat.ts";
 import { keeperEnv, keeperPorts } from "./keeper/wire.ts";
+import { noteKeeperAtBoot } from "./keeper/at_boot.ts";
 import { snapshotPlace } from "./actions/health.ts";
 import { capacityDefault, egressEnvIgnored } from "./core/capacity.ts";
 import { bootCounts, recordBoot, recordCleanExit } from "./kernel/boots.ts";
@@ -527,8 +529,14 @@ const snapshots = startSnapshots(
     })?.store,
   {
     version: running().version,
+    // The off-site lane (#11805): sealed under the passphrase before it leaves.
     mirror: () =>
-      resolveMirror({ db: app.db, dataDir: app.config.dataDir, bus: app.bus })?.store,
+      resolveMirror({
+        db: app.db,
+        dataDir: app.config.dataDir,
+        bus: app.bus,
+        passphrase: process.env["FORGE_SNAPSHOT_PASSPHRASE"] || undefined,
+      })?.store,
     passphrase: process.env["FORGE_SNAPSHOT_PASSPHRASE"] || undefined,
   },
 );
@@ -785,6 +793,7 @@ proveRunning({
   version: running().version,
   url: forgeUrl,
   token: process.env["FORGE_TOKEN"],
+  journey: walkJourney,
   // The first app's production host: it must never answer as the forge (#6726).
   appHost: (() => {
     const first = listApps(app.db)[0];
@@ -821,6 +830,7 @@ if (keeperOn.on) {
       ? { forgeUrl, deployment: "", container: "", swap: true }
       : { forgeUrl, deployment: keeperOn.deployment, container: keeperOn.container },
   );
+  noteKeeperAtBoot(typeof ports === "string" ? { on: false, why: ports } : { on: true });
   if (typeof ports === "string") app.log.warn("the release keeper is off", { why: ports });
   else {
     let said = "";
@@ -838,7 +848,10 @@ if (keeperOn.on) {
       1000,
     );
   }
-} else app.log.info("the release keeper is off", { why: keeperOn.why });
+} else {
+  noteKeeperAtBoot(keeperOn);
+  app.log.info("the release keeper is off", { why: keeperOn.why });
+}
 // Only an agent is on a crew (the `repo_crew_agents_only` trigger refuses anyone else). A person
 // put on one before that is reported here for the owner to take off — the
 // forge never removes it on its own.

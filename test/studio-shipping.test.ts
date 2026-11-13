@@ -1064,7 +1064,7 @@ describe("the studio's crew panel on a forge with no agents yet", () => {
     expect(settings).not.toContain('href="/settings/crew"');
 
     const refused = await get("/settings/crew", teamAdminCookie);
-    expect(refused.status).toBe(404);
+    expect(refused.status).toBe(403);
   });
 
   test("the app page's way to add a crew member leads unbroken to the door an agent is made through, with nothing dev-only in the way", async () => {

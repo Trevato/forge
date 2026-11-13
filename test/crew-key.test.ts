@@ -61,8 +61,8 @@ describe("adding the crew's key", () => {
     expect(listSubscriptions(app.db)).toEqual([]);
   });
 
-  test("a non-admin gets the not-found page", async () => {
-    expect((await post(plain, GOOD)).status).toBe(404);
+  test("a non-admin gets the 403 page", async () => {
+    expect((await post(plain, GOOD)).status).toBe(403);
     expect(listSubscriptions(app.db)).toEqual([]);
   });
 

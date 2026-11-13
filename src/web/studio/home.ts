@@ -936,6 +936,7 @@ bun run src/main.ts</code></pre>
     ...(visitor
       ? {
           tools: html`<a class="small door-wide" href="#made">Made here</a>
+            <a class="small" href="/pricing">Pricing</a>
             <a class="small door-wide" href="${FORGE_REPO}">Code</a>
             ${signup
               ? html`<a class="small" href="/signin${nextQuery}">Sign in</a>

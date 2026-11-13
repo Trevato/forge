@@ -175,7 +175,7 @@ describe("accounts: the owner sees, suspends and removes", () => {
     const page = await fetch(`${base}/settings/accounts`, {
       headers: { authorization: `Bearer ${token}` },
     });
-    expect(page.status).toBe(404);
+    expect(page.status).toBe(403);
   });
 
   test("the owner's list shows each account, how it came, and what it holds", async () => {

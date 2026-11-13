@@ -52,14 +52,14 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `agents` | — | Agents you may see, as GET /api/v1/agents | 160 |
 | `app_data_import` | — | Load a SQL dump into an app's database and report per-table counts and checksums; admins only | 339 |
 | `app_deploy` | `redeploy`, `stop`, `pull`, `schedules`, `run_schedule`, `pause_schedule`, `resume_schedule`, `jobs`, `cancel_job`, `retry_job` | Redeploy or stop an env, pull, list and steer schedules and jobs | 408 |
-| `app_domains` | — | App domains: list, add, check, remove | 201 |
+| `app_domains` | — | App domains: list, add, check, keep, remove; dns_proof, dns_cut, dns_revert | 266 |
 | `app_env` | `list`, `set`, `unset` | An app's environment variables: list names, set or unset by scope; write-only | 393 |
 | `app_members` | — | People a private app names, who may enter it and its previews | 297 |
 | `app_notes` | `hide`, `ban`, `unban` | Notes from an app's forge button and banned senders; hide a note, ban or unban its sender | 306 |
 | `apps` | — | Apps you can see: live or not, where served, how each runs, what works | 343 |
 | `archive` | — | Archive or wake a repository (`archived`) | 380 |
 | `asked` | — | What people asked the crew for: unmerged by default, oldest first | 372 |
-| `asks` | — | What waits on you, most important first; saved filter applies | 453 |
+| `asks` | `stopped`, `look`, `review`, `paused`, `parked`, `declined`, `handover`, `waiting`, `assigned`, `proposal` | What waits on you, most important first; saved filter applies; `filter` sets or clears one | 707 |
 | `asks_act` | `dismiss`, `decline`, `mute`, `listen`, `undo`, `ship`, `close`, `replan` | Decide asks (`items`): dismiss, ship, close (`reason`), mute, replan; `listen` (`repo`) unmutes; `undo` (`operation`) | 535 |
 | `asks_decide` | — | Answer a hand-over: the decider (`parked:<id>`), or `give_back` to its builder (`handover:`/`assigned:<id>`) | 270 |
 | `asks_proposal` | — | Act on a wave proposal: `approve`, `redirect` (`words`), `later` (`again`) | 315 |
@@ -109,7 +109,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `flag_set` | — | Set or clear a flag (admin) | 209 |
 | `flag_winner` | — | An A/B flag winner becomes default | 206 |
 | `flags` | — | Declared flags: why, default, owner issue, live value | 171 |
-| `flow` | `bugs`, `drift`, `growth` | Pipeline (admin); `q`: `/fleet` rows, `action` plans an op, `apply` does it; `kind:bugs`; `repo`: why stuck | 482 |
+| `flow` | `bugs`, `cpu`, `drift`, `growth` | Pipeline (admin); `q`: `/fleet` rows, `action` plans an op, `apply` does it; `kind:bugs`; `repo`: why stuck | 488 |
 | `follow_mode` | — | How a fork follows its parent: take updates, tell me, or don't follow | 281 |
 | `following` | — | Where a fork stands against what it follows: in step, behind, ahead, diverged | 243 |
 | `forge_proposals` | — | What this forge proposed to its parent; `reachable` false if it is silent | 245 |
@@ -139,7 +139,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `maintenance` | `status`, `prepare`, `resume`, `pause-duty`, `resume-duty` | Prepare the forge for a power-off, check the drain, or end maintenance (admin) | 308 |
 | `make_it_yours` | — | Fork an app you can see: code and history, following the original | 337 |
 | `map` | — | An app's plan: ready or waiting, critical path, crew, parkedTwice; `done` adds closed; `first: N` ranks N first | 375 |
-| `merge` | — | Land a pull, as its page's Merge button does; a person's only | 319 |
+| `merge` | `land` | Land a pull, as its page's Merge button does; a person's only | 362 |
 | `migrate` | — | Bring a repo in by public `url` (`name`, `crew`), history and all | 269 |
 | `milestones` | — | How far each ask is | 391 |
 | `mint_invite` | — | Mint a one-use invite link, shown once, valid `days` (1–30, default 7) | 225 |
@@ -152,7 +152,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `next_up` | — | The ranked list the crew builds from; `issue` + `to` (top, not-now, after:N) moves one | 349 |
 | `notify` | — | Read, set or clear your phone notify URL | 146 |
 | `now` | — | What the crew does across your apps: who, on what, since when, cost; what awaits review | 252 |
-| `open_pull` | — | Open a pull request, from a branch or from your fork | 327 |
+| `open_pull` | — | Open a pull request, from a branch or from your fork | 449 |
 | `org_create` | — | Make an organization | 151 |
 | `org_teams` | `create`, `add_member`, `members`, `metrics`, `remove_member`, `remove` | An org's teams: create, add member with a role, list members, remove | 682 |
 | `orgs` | — | Your orgs; with org, its teams | 170 |
@@ -177,8 +177,9 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `read_file` | — | Read a file or list a directory at a ref (default branch); over 5 MB answers tooLarge | 307 |
 | `release_hold` | — | Hold or release the release keeper's cuts (admin) | 202 |
 | `release_keeper` | — | The release keeper's releases, holds and what blocks the next cut | 192 |
+| `release_now` | — | Cut a release now, with a reason (admin) | 176 |
 | `releases` | — | Kept releases, newest first | 253 |
-| `repo` | — | One repository you can read, as GET /api/v1/repos/:owner/:name | 296 |
+| `repo` | `open`, `add`, `remove`, `close` | One repository you can read, as GET /api/v1/repos/:owner/:name | 383 |
 | `repo_labels` | — | Repo labels: list (default), create, update, remove (admin token) | 351 |
 | `repo_settings` | — | Read, change or move (newOwner) a repo: PATCH /api/v1/repos/:owner/:name (admin); mirrorPacks mirrors the packs' upstreams | 444 |
 | `reports` | `accept`, `dismiss` | Outsiders' reports; `id`+`action`: accept or dismiss | 310 |
@@ -199,7 +200,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `signup` | — | Sign-ups: open (default); invite lets in only a person with an open invite link; closed refuses every new account | 324 |
 | `sizes` | — | A child forge's sizes: small, medium and large, each with CPU, memory and disk | 196 |
 | `snapshot_now` | — | Take a snapshot now, as Backups does (admin) | 133 |
-| `spawn` | — | Spawn a child forge | 871 |
+| `spawn` | — | Spawn a child forge | 946 |
 | `spend` | — | Report what your session spent outside forge runs: who, model, tokens or dollars, issue | 470 |
 | `ssh_keys` | `list`, `add`, `remove` | Your SSH keys; add: key, remove: id | 250 |
 | `steer` | — | Say a word to one crew run by its id | 224 |
@@ -211,7 +212,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `subscription_wake` | — | Admin: wake a resting subscription | 168 |
 | `subscriptions` | — | Claude accounts: scopes, budgets | 158 |
 | `sync` | — | Sync a mirror now; `originId` reconnects it | 197 |
-| `system` | `csp`, `routes`, `footing` | The forge machine now: CPU, memory, disk, network | 296 |
+| `system` | `csp`, `routes`, `footing`, `offsite` | The forge machine now: CPU, memory, disk, network | 306 |
 | `take_back` | — | Open the pull that undoes a shipped pull | 219 |
 | `take_updates` | — | Take the parent forge's updates into a fork | 176 |
 | `teams` | — | Crew teams for person admins: charter, dial (0–100) and member agents | 338 |
@@ -518,7 +519,7 @@ answers
 | --- | --- | --- |
 | `ui://forge/app` | `apps`, `new_app` | Your apps, or the app just made: live or not, what is working, a Tell box. |
 | `ui://forge/run` | — | Legacy running-now list; `now` draws `crew` instead. |
-| `ui://forge/asks` | `asks`, `asks_act` | One row per waiting decision with its button; after a press, the receipt. |
+| `ui://forge/asks` | `asks`, `asks_act` | One row per waiting decision with its button; a press plans, the Confirm card (the page's own, e.g. "Close 1") does it, then the receipt. |
 | `ui://forge/wave` | `waves` | One wave: headline, highlights with their why, pull numbers. |
 | `ui://forge/map` | `map` | The plan: per pillar ready, working and waiting counts, the first ready issues. |
 | `ui://forge/feed` | `feed` | The newest timeline items, at most 20, each linked; how many are new. |

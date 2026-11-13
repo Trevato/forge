@@ -113,7 +113,7 @@ describe("what the crew handed on", () => {
 
   test("a non-admin gets neither", async () => {
     const { status, text } = await crewPage("bob");
-    expect(status).toBe(404);
+    expect(status).toBe(403);
     expect(text).not.toContain("Handed to the planner");
     expect(text).not.toContain("Restore drill");
     expect(await terminal("bob")).not.toContain("Handed to the planner: ");

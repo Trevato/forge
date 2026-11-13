@@ -27,6 +27,14 @@ export interface Store {
    * that does not retry has nothing to bound and leaves this out.
    */
   bounded?(leftMs: () => number): Store;
+  /**
+   * The form `list` gives `key` in, when the store renames what it holds
+   * (the sealed lane hides paths); a store that keeps keys as given leaves
+   * this out.
+   */
+  storedKey?(key: string): Promise<string>;
+  /** True when every object is encrypted before it reaches the store (the off-site lane, #11805). */
+  readonly sealed?: boolean;
 }
 
 /** The S3 credentials as the platform hands them to an app. */

@@ -199,7 +199,7 @@ describe("capacity: only a forge admin reads or changes it", () => {
           headers: { cookie: bobCookie },
         })
       ).status,
-    ).toBe(404);
+    ).toBe(403);
     const bobPost = await fetch(`${servers.url}/settings/capacity`, {
       method: "POST",
       redirect: "manual",
@@ -210,7 +210,7 @@ describe("capacity: only a forge admin reads or changes it", () => {
       },
       body: new URLSearchParams({ key: "checks.concurrency", value: "9" }),
     });
-    expect(bobPost.status).toBe(404);
+    expect(bobPost.status).toBe(403);
 
     for (const token of [bobAdmin, agentRw]) {
       // A person who is not an admin is refused; an agent is told it is not there.

@@ -9,7 +9,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { NOT_AN_ADMIN, setMember } from "../src/core/roles.ts";
+import { SIGN_IN_AS_ADMIN, setMember } from "../src/core/roles.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
@@ -118,7 +118,7 @@ describe("the admin gate", () => {
       const res = await api("GET", "/api/v1/admin/settings", u);
       expect(res.status).toBe(403);
       expect(res.headers.get("content-type")).toContain("application/json");
-      expect(await res.json()).toMatchObject({ error: "not_admin", message: NOT_AN_ADMIN });
+      expect(await res.json()).toMatchObject({ error: "not_admin", message: SIGN_IN_AS_ADMIN });
     }
   });
 
@@ -130,7 +130,7 @@ describe("the admin gate", () => {
         expect(res.headers.get("content-type")).toContain("text/html");
         const body = await res.text();
         expect(body).toContain("<h1>You can't do that here</h1>");
-        expect(body).toContain(NOT_AN_ADMIN.replace("'", "&#39;"));
+        expect(body).toContain(SIGN_IN_AS_ADMIN.replace("'", "&#39;"));
       }
     }
   });

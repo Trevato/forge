@@ -99,8 +99,8 @@ describe("GET /system", () => {
     expect(body).toContain("Heap max");
   });
 
-  test("a non-admin gets 404 and an anonymous visitor is sent to sign in", async () => {
-    expect((await get("bob")).status).toBe(404);
+  test("a non-admin gets 403 and an anonymous visitor is sent to sign in", async () => {
+    expect((await get("bob")).status).toBe(403);
     const anon = await fetch(servers.url + "/system", { redirect: "manual" });
     expect(anon.status).toBe(303);
   });
@@ -144,7 +144,7 @@ describe("reaching /system", () => {
 
   test("a refused visitor gets a page, not bare text", async () => {
     const res = await get("bob");
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(403);
     expect(await res.text()).toContain("<h1>");
   });
 });

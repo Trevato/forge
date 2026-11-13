@@ -122,7 +122,7 @@ describe("teams in the terminal", () => {
     const bob = getUserByName(forge.db, "bob")!;
     const cookie = (id: string) => `forge_session=${createSession(forge.db, id).token}`;
     const denied = await fetch(`${servers.url}/settings/teams/stream`, { headers: { cookie: cookie(bob.id) } });
-    expect(denied.status).toBe(404);
+    expect(denied.status).toBe(403);
     await denied.body?.cancel();
     const res = await fetch(`${servers.url}/settings/teams/stream`, { headers: { cookie: cookie(alice.id) } });
     expect(res.headers.get("content-type")).toContain("text/event-stream");

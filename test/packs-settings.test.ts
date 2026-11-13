@@ -53,7 +53,7 @@ test("nothing is marked, so /packs lists no pack even though the repos exist", a
 });
 
 test("only an admin sees the page or saves; a cross-origin post is refused", async () => {
-  expect((await fetch(`${servers.url}/settings/packs`, { headers: { cookie: plain } })).status).toBe(404);
+  expect((await fetch(`${servers.url}/settings/packs`, { headers: { cookie: plain } })).status).toBe(403);
   expect((await save(plain, "packs/games")).status).not.toBe(303);
   expect((await save(admin, "packs/games", "https://evil.example")).status).toBeGreaterThanOrEqual(400);
   expect(markedRepos(app.db)).toEqual([]);

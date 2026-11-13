@@ -2,7 +2,8 @@
  * The sentinel's half of the main-ahead alarm (#11507): main green and ahead
  * of production past the setting is one finding, and its issue closes itself
  * at the next hunt after production catches up — unless a person spoke on it,
- * then it is theirs to close.
+ * then it is theirs to close. When the release tick was never heard from,
+ * nothing is filed: the flow alarm asks the owner, naming the keeper's state.
  */
 
 import type { Database } from "bun:sqlite";
@@ -22,7 +23,10 @@ export const MAIN_AHEAD_KEY = "main-ahead";
 
 export function mainAhead(db: Database, now: number): Finding[] {
   const a = mainAheadAlarm(db, new Date(now));
-  if (!a.fired) return [];
+  // A tick never heard from is the deployment's, not the code's (#11924): no builder can
+  // fix it, so no issue; the `main_ahead` flow alarm is the owner's ask on home and
+  // through the notifier, and says why.
+  if (!a.fired || a.neverHeard === true) return [];
   return [{
     key: MAIN_AHEAD_KEY,
     title: "Main is green and ahead of production: the release tick has not cut",
@@ -45,6 +49,9 @@ export function closeCaughtUp(
   cleared: string = "Production caught up with main",
 ): void {
   if (active.has(key)) return;
+  // Unfiled because the tick was never heard from is not caught up (#11924): an issue
+  // opened before stays open while main is still ahead.
+  if (key === MAIN_AHEAD_KEY && mainAheadAlarm(app.db, new Date(now)).fired) return;
   const open = app.db
     .query<{ issue_id: string }, [string]>(
       `SELECT t.issue_id FROM sentinel_finding t JOIN issue i ON i.id = t.issue_id WHERE i.state = 'open' AND t.key = ?1`,

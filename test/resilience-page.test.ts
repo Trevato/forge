@@ -80,7 +80,7 @@ describe("Settings → Backups → Failure domains", () => {
     const bob = await fetch(`${servers.url}/settings/backups`, {
       headers: { cookie: await login("bob") },
     });
-    expect(bob.status).toBe(404);
+    expect(bob.status).toBe(403);
     expect(await bob.text()).not.toContain("Failure domains");
     const anon = await fetch(`${servers.url}/settings/backups`, { redirect: "manual" });
     expect(anon.status).toBe(303);

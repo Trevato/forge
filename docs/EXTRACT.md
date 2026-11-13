@@ -128,10 +128,28 @@ Steps 1–3 as files: `scripts/box-install.sh` (user, `/var/lib/forge`,
 killed process or a reboot brings it back). Then the lines of
 [RESTORE.md](RESTORE.md) with `<data-dir>` = `/var/lib/forge` as the `forge`
 user, and `systemctl enable --now forge`. Nothing points at the box; compare
-repository and app counts with production, kill the process and reboot to see
-it return. Restoring reads the bucket by the card's lines only — no platform
-service is involved. `test/forge-box-unit.test.ts` parses the unit.
+repository and app counts with production, then run the drill below. Restoring
+reads the bucket by the card's lines only — no platform service is involved.
+`test/forge-box-unit.test.ts` parses the unit (`Restart=always`, `RestartSec`
+between 1 and 10 seconds, `WantedBy=multi-user.target`).
 Done on a machine: the drill itself (restore, counts, reboot) is the owner's to run.
+
+### The drill: it comes back by itself
+
+As root on the box, from the checkout (`/opt/forge`):
+
+1. `scripts/box-drill.sh kill` sends SIGKILL to the forge's main process,
+   waits for a new process to answer `/` with a 2xx or 3xx, and prints
+   `back: pid N answers http://127.0.0.1:3000/ 3.1s after the kill`. It fails
+   if `/` does not answer first, or not within 120 s (`DRILL_LIMIT=`).
+2. `reboot`. Log back in and run `scripts/box-drill.sh boot`: it fails unless
+   the unit is `enabled` and active and `/` answers, then prints when the
+   forge came up, in seconds after the boot (`ActiveEnterTimestampMonotonic`).
+   Nobody started it by hand, so that line is the proof.
+
+Both take the URL as a second argument when the forge listens elsewhere
+(default `http://127.0.0.1:${PORT:-3000}/`). Post both outputs on the issue
+the drill closes. `test/box-drill.test.ts` drives the script against stubs.
 
 ## The vxrail is the box
 
@@ -145,5 +163,6 @@ things differ from the recipe above:
   moved, so the cutover copies nothing.
 - The unit starts `src/release/launch.ts` with `Delegate=yes`, because swaps
   and cells need their supervisor and their cgroup.
+- `infra/forge-box/` also holds `cloudflared-forge.service` (+ its config) and the `forge-github-mirror` timer; the install script installs them and starts none. `scripts/box-install.sh <dir> <uid>` takes the pod's uid.
 - The unit sets `FORGE_CELL_MOUNTS=allow-list`, because a host's mounts are
   not a pod's (#11823).

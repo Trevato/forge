@@ -27,7 +27,7 @@ import { clientAppRows, clientDoings, clientFinished, doingLine, finishedLine } 
 import { appCrew } from "../../core/app-crew.ts";
 import { nextStepsFor } from "../../core/next-steps.ts";
 import { askRepos, askStatus, askStatusLine } from "../../core/ask-status.ts";
-import { keepThought } from "../../actions/thought.ts";
+import { AUTONOMY_FAILED_WORDS, firstAsk } from "../../actions/first_ask.ts";
 import { SAY_SOMETHING_WORDS } from "../../actions/tell_words.ts";
 import { crewCanRun, crewFirstText } from "../../web/studio/crew_key.ts";
 import { agentsLine } from "../../web/studio/client_home.ts";
@@ -44,6 +44,8 @@ import { pinRepo, unpinRepo } from "../../actions/origins.ts";
 import { getProposal } from "../../core/proposals.ts";
 import { getIssueById, listAssignedTo, type Issue } from "../../core/issues.ts";
 import { askLinesFor } from "../../web/studio/asks.ts";
+import { applyAskFilter } from "../../actions/ask_filter.ts";
+import { askFiltersOf, hasAskFilters, hiddenLine, HIDE_APP_DAY_WORDS, SHOW_ALL_WORDS } from "../../core/ask_filters.ts";
 import { waitingFor, type WaitingFor } from "../../core/waiting_for.ts";
 import { giveBack } from "../../actions/give_back.ts";
 import { passReasonOf } from "../../crew/guard.ts";
@@ -200,6 +202,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let asideWaves: Proposal[] = [];
   /** Repositories the viewer muted that hold work assigned to them: said, never silent. */
   let silenced = new Map<string, Repo>();
+  /** How many asks the viewer's filters hide; undefined when none is set. `H` hides an app for a day, `F` shows all. */
+  let hidden: number | undefined;
   /** The rows marked for one verb, by issue id. */
   const marked = new Set<string>();
   let lastSet: Operation | undefined;
@@ -517,7 +521,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
    */
   const assignedToMe = (): OnYouItem[] => {
     if (f.user === undefined) return [];
-    const rows = askLinesFor(f.db, f.user);
+    let hiddenRows = 0;
+    const rows = askLinesFor(f.db, f.user, undefined, (n) => (hiddenRows = n));
     /** The ask row's word for an issue or pull, by its id; a plain assignment says so. */
     const waitingOf = (id: string): WaitingFor =>
       rows.find((row) => row.items.some((item) => item.slice(item.indexOf(":") + 1) === id))
@@ -534,7 +539,13 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       if (repo !== undefined && canRead(f.db, repo, f.user)) silenced.set(id, repo);
     }
     const off = chipsOf(f.db, f.user.id).people;
+    const filters = askFiltersOf(f.db, f.user.id);
+    hidden = hasAskFilters(filters) ? hiddenRows : undefined;
+    // A filtered ask is not in `rows`; one that is there (a trust alarm) always shows.
+    const asked = (id: string): boolean =>
+      rows.some((row) => row.items.some((item) => item.slice(item.indexOf(":") + 1) === id));
     const assigned = issues.flatMap((issue) => {
+      if ((filters.apps.has(issue.repoId) || filters.kinds.has("assigned")) && !asked(issue.id)) return [];
       if (off.has(issue.authorId)) return [];
       const repo = byId.get(issue.repoId);
       if (
@@ -903,6 +914,21 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     ctx.toast("listening again", "success");
   };
 
+  /** `H`: hide the app of the row under the cursor for a day: the web's "Hide for a day", the same table. */
+  const hideAppForADay = (): void => {
+    const item = onYou[at("onyou").index];
+    if (f.user === undefined || item === undefined) return;
+    ctx.toast(applyAskFilter(f.db, f.user, { do: "hide_app_day", repo: item.repo }), "success");
+    reload();
+  };
+
+  /** `F`: every ask filter off; one tap. */
+  const showAll = (): void => {
+    if (f.user === undefined || hidden === undefined) return;
+    ctx.toast(applyAskFilter(f.db, f.user, { do: "clear" }), "success");
+    reload();
+  };
+
   /** `1`–`4` switch a kind chip off or on, `P` brings back every person; the web's chips, the same table. */
   const toggleChip = (n: number): void => {
     if (f.user === undefined) return;
@@ -1085,12 +1111,14 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
               binding(["space"], "mark"),
               binding(["x"], "close"),
               binding(["m"], "mute"),
+              binding(["H"], HIDE_APP_DAY_WORDS.toLowerCase()),
               binding(["S"], "ship"),
             ]
           : []),
         ...(focus === "onyou" && (waitingSet?.stale.length ?? 0) > 0 ? [binding(["Z"], "archive stale")] : []),
         ...(lastSet !== undefined || lastArchive !== undefined ? [binding(["u"], "undo")] : []),
         ...(silenced.size > 0 ? [binding(["L"], "listen again")] : []),
+        ...(hidden !== undefined ? [binding(["F"], SHOW_ALL_WORDS.toLowerCase())] : []),
         binding(["d"], "unpin", {
           disabled: focus !== "machine" || pins.length === 0,
         }),
@@ -1303,6 +1331,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         if (e.key === "D" && item !== undefined) return handToDecider(), true;
         if (e.key === "b" && item !== undefined) return giveBackHere(), true;
         if (e.key === "h") return hideAuthor(), true;
+        if (e.key === "H" && item !== undefined) return hideAppForADay(), true;
         if (e.key === "y") return actOnWave("approve"), true;
         if (e.key === "R") return redirectWave(), true;
         if (e.key === "l") return actOnWave("later"), true;
@@ -1327,6 +1356,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       }
       if (e.key === "U" && f.user) return undoHand(), true;
       if (e.key === "L" && f.user) return listenAgain(), true;
+      if (e.key === "F" && f.user) return showAll(), true;
       if (e.key === "C" && f.user) return ctx.push(deciderScreen(f, ctx)), true;
       if (e.key === "P" && f.user) return showPeople(), true;
       if (f.user && e.key >= "1" && e.key <= String(KIND_CHIPS.length))
@@ -1357,10 +1387,19 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
             hint: "enter sends",
             onSubmit: (said) => {
               if (said.trim() === "") return SAY_SOMETHING_WORDS;
-              const kept = keepThought(f.app, f.user, said, "composer");
-              ctx.toast(kept.ok ? "Received." : "That could not be kept.", kept.ok ? "success" : "danger");
-              if (kept.ok) void loadClientLines().then(reload);
-              return undefined;
+              // The page's own first ask: one new app made from the sentence, the ask filed on it.
+              return (async () => {
+                const first = await firstAsk(f.app, f.user, said, crewCanRun(f.app));
+                if (!first.ok) return ctx.toast(first.error.words, "danger");
+                const { repo, told, autonomyFailed } = first.value;
+                if (!told.ok) return ctx.toast(`Made ${repo.ownerName}/${repo.name}, but the ask could not be filed there.`, "danger");
+                ctx.toast(
+                  `Made ${repo.ownerName}/${repo.name} and filed your ask there as issue #${told.value.issue.number}.${autonomyFailed ? ` ${AUTONOMY_FAILED_WORDS}` : ""}`,
+                  autonomyFailed ? "danger" : "success",
+                );
+                openRepo(repo);
+                void loadClientLines().then(reload);
+              })();
             },
           }),
         );
@@ -1511,6 +1550,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     if (doneNow !== undefined && !doneNow.undo) parts.push(doneNow.line);
     else if (lastSet !== undefined) parts.push(`${doneNow === undefined ? "" : `${doneNow.line} · `}u undo ${lastSet.verb}`);
     if (asideWaves.length > 0) parts.push(`${asideWaves.length} ${asideWaves.length === 1 ? "wave" : "waves"} put aside · B bring back`);
+    if (hidden !== undefined) parts.unshift(`${hiddenLine(hidden)} · F ${SHOW_ALL_WORDS.toLowerCase()}`);
     return parts.length > 0 ? parts.join(" · ") : undefined;
   }
 

@@ -19,6 +19,10 @@
  * Under the forge line, as /system says it (#10853): a child forge in a cell
  * its own size and use against it (`selfLines`), and a parent each child's
  * use against its size (`childLines`), both read through `spawn/usage.ts`.
+ *
+ * Below the telemetry history, the five largest directories under the
+ * forge's data (#11800, `largestLines`), read through the cache /system and
+ * the MCP `system` tool share and gated as they are (`telemetryReader`).
  */
 
 import type { Ctx, Screen } from "../app/app.ts";
@@ -35,7 +39,8 @@ import { bytes, spark } from "../../system/format.ts";
 import { style } from "../term/style.ts";
 import { pad, truncate, wrap } from "../term/width.ts";
 import { dialog } from "../ui/widgets.ts";
-import { Scroll, confirmScreen, drawLines, hitScroll, later, pickerScreen } from "./common.ts";
+import { Scroll, ago, confirmScreen, drawLines, hitScroll, later, pickerScreen } from "./common.ts";
+import { largestDirs, type LargestDirs } from "../../system/largest_dirs.ts";
 import type { PaletteEntry } from "./entries.ts";
 import { readHealth } from "../../actions/health.ts";
 import { egressReportedLine } from "../../system/egress_line.ts";
@@ -154,6 +159,23 @@ export function historyLines(session: Session, hours: number): string[] {
   return [head, ...rows];
 }
 
+/**
+ * The five largest directories under the forge's data, as /system's
+ * "Largest under the forge's data" says them (#11800): a name and its size a
+ * line, then when it was measured. Empty for anyone the page refuses.
+ */
+export function largestLines(session: Session, found: LargestDirs | null, inner = WIDTH - 6): string[] {
+  if (!telemetryReader(session.app, session.user)) return [];
+  const head = "Largest under the forge's data";
+  if (found === null) return [head, "being measured; open again in a moment"];
+  if (found.dirs.length === 0) return [head, "no directories under the forge's data"];
+  return [
+    head,
+    ...found.dirs.map((d) => truncate(`${pad(truncate(d.name, inner - 12), inner - 12)} ${pad(bytes(d.bytes), 11, "right")}`, inner)),
+    `measured ${ago(found.at)}`,
+  ];
+}
+
 /** Who may grant telemetry:read: the MCP tool's gate (`mayBoards`), a forge admin who is a person. */
 const mayGrant = (session: Session | undefined): boolean => session?.user?.isAdmin === true && session.user.kind !== "agent";
 
@@ -247,12 +269,15 @@ export function systemScreen(ctx: Ctx, lines: readonly string[], session: Sessio
     keys: [binding(["h"], "window"), ...(offered ? [binding(["g"], "grant or take back telemetry")] : []), binding(["enter", "esc", "q"], "close")],
     render(area, s) {
       const features = featuresLines(session);
+      // Never waits on the walk: the last measurement, a new one started behind it when stale.
+      const largest = largestLines(session, largestDirs.peek(session.app.config.dataDir));
       const buttons = dialog(s, area, ctx.theme.c, {
         title: "System",
         body: [
           ...lines,
           "",
           ...history,
+          ...(largest.length === 0 ? [] : ["", ...largest]),
           ...(offered ? ["", ...readerLines(session)] : []),
           ...(features.length === 0 ? [] : ["", ...features]),
           ...(offered ? ["", grantLine(session), "g: grant or take back telemetry:read"] : []),

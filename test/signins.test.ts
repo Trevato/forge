@@ -214,14 +214,14 @@ describe("sign-ins: tokens and browsers, seen and ended", () => {
     expect(
       (await fetch(`${base}/settings/accounts/bo`, { headers: { cookie: adaCookie } }))
         .status,
-    ).toBe(404);
+    ).toBe(403);
     expect(
       (await post(`/settings/accounts/bo/tokens/${victimToken.id}/delete`, adaCookie))
         .status,
-    ).toBe(404);
+    ).toBe(403);
     expect(
       (await post(`/settings/accounts/bo/sessions/${id}/delete`, adaCookie)).status,
-    ).toBe(404);
+    ).toBe(403);
     // Strangers too.
     expect(
       (await fetch(`${base}/api/v1/users/bo/signins`)).status,

@@ -13,6 +13,7 @@
  * `FORGE_SELF_SWAP=1`: the keeper swaps main's tree in place (`swapper.ts`).
  */
 
+import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { originPush } from "../actions/branches.ts";
@@ -30,11 +31,15 @@ import { running } from "../kernel/version.ts";
 import { compareVersions, readTags, recordFor } from "../release/shipped.ts";
 import { checkoutRelease, preflightRelease } from "../release/checkout.ts";
 import { handover } from "../release/swap.ts";
+import { runningChildren } from "../boards/sampler.ts";
 import { snapshotsOf } from "../snapshot/service.ts";
 import { kubeDeployer } from "./deploy.ts";
-import { swapper } from "./swapper.ts";
+import { inFlight, keepInterrupted, keepRollback, keepTimings } from "./record.ts";
+import { runningAgentRuns } from "../crew/running.ts";
+import { swapper, type Timing } from "./swapper.ts";
 import type { KeeperPorts } from "./keeper.ts";
 import { timedGet, verifyUnderLoad } from "./verify.ts";
+import { phoneGate, probeCentre } from "./covered.ts";
 import { diskUnder, roomy } from "../spawn/disk_floor.ts";
 
 const LABEL = /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/;
@@ -77,12 +82,33 @@ export function loadPages(repo: Pick<Repo, "ownerName" | "name">): string[] {
   return ["/boards", `/${encodeURIComponent(repo.ownerName)}/${encodeURIComponent(repo.name)}`, "/explore", "/"];
 }
 
+/**
+ * What the swap reports just before this process drains (#11839, #11917): the stage timings, and the crew
+ * runs still running here, the ones the switch interrupts, kept on the release still rolling.
+ */
+export function switched(db: Database, runs: () => number): (t: Timing) => void {
+  return (t) => {
+    const flying = inFlight(db);
+    if (flying === undefined) return;
+    if ("rollbackMs" in t) return keepRollback(db, flying.id, t.rollbackMs);
+    keepTimings(db, flying.id, t);
+    keepInterrupted(db, flying.id, runs());
+  };
+}
+
+/** The pages looked at on a phone: home, the forge's repository, the apps page. */
+export function phonePages(repo: Pick<Repo, "ownerName" | "name">): string[] {
+  return ["/", `/${encodeURIComponent(repo.ownerName)}/${encodeURIComponent(repo.name)}`, "/apps"];
+}
+
 export function keeperPorts(app: App, input: { forgeUrl: string; deployment: string; container: string; swap?: boolean }): KeeperPorts | string {
   const named = app.config.forgeRepo;
   if (named === undefined) return "FORGE_REPO is not set";
   const [owner = "", name = ""] = named.split("/");
   const repo = getRepo(app.db, owner, name);
-  if (repo === undefined) return `FORGE_REPO names ${named}, which is no repository on this forge`;
+  // The reason never carries the repository's name: it is noted at boot and may reach a
+  // public issue (#11924).
+  if (repo === undefined) return "FORGE_REPO names no repository on this forge";
   const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
   const deployer =
     input.swap === true
@@ -96,6 +122,7 @@ export function keeperPorts(app: App, input: { forgeUrl: string; deployment: str
           checkout: (sha) => checkoutRelease(app.config.dataDir, dir, sha),
           preflight: (tree) => preflightRelease(tree, app.config.dataDir),
           drain: () => handover.drain?.(),
+          timed: switched(app.db, runningAgentRuns),
           probe: ownProbeHeaders(app.config.dataDir),
           ...(app.config.swapBudgetMs === undefined ? {} : { budgetMs: app.config.swapBudgetMs }),
         })
@@ -124,6 +151,7 @@ export function keeperPorts(app: App, input: { forgeUrl: string; deployment: str
     },
     gating: gatesInFlight,
     snapshotting: () => snapshotsOf(app)?.takingMs(),
+    crewRuns: () => runningChildren(app.db).agents,
     diskUsed: () => {
       const disk = diskUnder(app.config.dataDir);
       return disk === undefined || !(disk.totalBytes > 0) || roomy(disk) ? undefined : 1 - disk.freeBytes / disk.totalBytes;
@@ -159,13 +187,17 @@ export function keeperPorts(app: App, input: { forgeUrl: string; deployment: str
       const session = admin === undefined ? undefined : createSession(app.db, admin.id);
       const cookie = session === undefined ? {} : { cookie: `forge_session=${session.token}` };
       try {
-        return await verifyUnderLoad({
+        const loaded = await verifyUnderLoad({
           get: timedGet(input.forgeUrl, (asAdmin) => (asAdmin ? cookie : probeHeaders)),
           now: () => Date.now(),
           sleep: (ms) => Bun.sleep(ms),
           pages: loadPages(repo),
           onProbe,
         });
+        if (!loaded.ok) return loaded;
+        // A 200 is not proof a person can use the page: look at a phone (#11855).
+        const look = probeCentre(input.forgeUrl, session === undefined ? undefined : { name: "forge_session", value: session.token });
+        return phoneGate(loaded, phonePages(repo), look);
       } finally {
         if (session !== undefined) destroySession(app.db, session.token);
       }

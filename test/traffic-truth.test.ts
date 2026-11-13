@@ -339,7 +339,7 @@ test("a stranger's deep read reaches the record with its class, and the board an
   expect(text).not.toContain("203.0.113.200");
   expect(board.headers.get("cache-control") ?? "").not.toContain("public");
 
-  expect((await get("/settings/traffic", { cookie: notAdmin })).status).toBe(404);
+  expect((await get("/settings/traffic", { cookie: notAdmin })).status).toBe(403);
   expect((await get("/settings/traffic")).status).toBeGreaterThanOrEqual(300);
   expect((await get("/api/v1/admin/kpis/probe")).status).toBe(404);
   expect((await get("/api/v1/admin/kpis/probe", { authorization: `Bearer ${await mintToken("bob", "read")}` })).status).toBe(404);

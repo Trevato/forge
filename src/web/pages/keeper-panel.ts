@@ -8,9 +8,11 @@
 
 import type { Database } from "bun:sqlite";
 import { aheadLine } from "../../flow/alarm_main_ahead.ts";
+import { neverTickedLine } from "../../keeper/at_boot.ts";
 import { beatFact, lastBeat } from "../../keeper/beat.ts";
 import { blocking, MAX_REASON, standingHolds } from "../../keeper/hold.ts";
-import { secondsWords, withLandedToLive } from "../../keeper/landed.ts";
+import { pendingNow } from "../../keeper/now.ts";
+import { secondsWords, stagesLine, withLandedToLive } from "../../keeper/landed.ts";
 import { listKeeperReleases, type Stage } from "../../keeper/record.ts";
 import { stallWords } from "../../perf/boot_stall.ts";
 import { html, when, type Html } from "../html.ts";
@@ -23,13 +25,22 @@ const STAGE: Record<Stage, { label: string; tone: Tone }> = {
   rolled_back: { label: "rolled back", tone: "danger" },
 };
 
+/** One muted line under a release: its stages, why it was cut now, its keeper's reason. */
+function notes(r: { stages: Parameters<typeof stagesLine>[0]; hotfix: string; reason: string }): string {
+  return [stagesLine(r.stages) === "" ? "" : `Stages: ${stagesLine(r.stages)}`, r.hotfix === "" ? "" : `Cut now: ${r.hotfix}`, r.reason].filter((x) => x !== "").join(" · ");
+}
+
 /** `mayHold` is `mayRollBack`: the section then offers the owner's hold and its lift. */
 export function keeperPanel(db: Database, mayHold = false, now: Date = new Date()): Html | undefined {
   const releases = withLandedToLive(db, listKeeperReleases(db));
   const holds = standingHolds(db);
   const blocked = blocking(holds);
   const beat = lastBeat(db);
+  const asked = pendingNow(db, now.getTime());
   const ahead = aheadLine(db, now);
+  // Never heard from: the same keeper line the main-ahead alarm names (#11924).
+  const never = beat === null ? neverTickedLine() : undefined;
+  const tick = never === undefined ? beatFact(beat, now) : `${beatFact(beat, now)}; ${never}`;
   if (releases.length === 0 && blocked === undefined && beat === null && ahead === undefined && !mayHold) return undefined;
   const rows = releases.map((r, i) => {
     const s = STAGE[r.stage];
@@ -43,13 +54,14 @@ export function keeperPanel(db: Database, mayHold = false, now: Date = new Date(
       <td>${r.worstMs} ms</td>
       <td>${stallWords(r.worstStallMs, releases[i + 1]?.worstStallMs)}</td>
       <td>${r.secondsDark} s</td>
-    </tr>${when(r.reason !== "", () => html`<tr><td colspan="9" class="small muted">${r.reason}</td></tr>`)}`;
+    </tr>${when(notes(r) !== "", () => html`<tr><td colspan="9" class="small muted">${notes(r)}</td></tr>`)}`;
   });
   return html`<section class="settings-block" id="keeper">
     <h2>Release keeper</h2>
     <p class="small ${blocked === undefined ? "muted" : ""}" id="keeper-blocked">${blocked ?? "Nothing holds the next cut."}</p>
     <dl class="status-rows" id="keeper-facts">
-      <div class="status-row"><dt>Release tick</dt><dd id="keeper-heartbeat">${beatFact(beat, now)}</dd></div>
+      <div class="status-row"><dt>Release tick</dt><dd id="keeper-heartbeat">${tick}</dd></div>
+      ${when(asked !== undefined, () => html`<div class="status-row"><dt>Release now</dt><dd id="keeper-now">asked by ${asked!.by}: ${asked!.reason}</dd></div>`)}
       ${when(ahead !== undefined, () => html`<div class="status-row"><dt>Main vs production</dt><dd id="keeper-ahead">${ahead}</dd></div>`)}
     </dl>
     ${when(rows.length > 0, () => html`<div class="table-scroll" role="region" tabindex="0" aria-label="Keeper releases"><table class="table" data-sticky-lead>
@@ -60,7 +72,8 @@ export function keeperPanel(db: Database, mayHold = false, now: Date = new Date(
       (h) => html`<form method="post" action="/releases/hold/${h.id}/lift" class="small">Owner hold ${h.id}: ${h.reason} ${btn("Lift", { type: "submit" })}</form>`,
     )}
     <form method="post" action="/releases/hold" class="small">
-      <label>Hold releases <input name="reason" maxlength="${MAX_REASON}" required placeholder="why"></label> ${btn("Hold", { type: "submit" })}
-    </form>`)}
+      <label>Reason <input name="reason" maxlength="${MAX_REASON}" required placeholder="why"></label> ${btn("Hold", { type: "submit" })} ${btn("Release now", { type: "submit", formaction: "/releases/now" })}
+    </form>
+    `)}
   </section>`;
 }

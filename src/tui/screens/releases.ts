@@ -10,7 +10,8 @@ import { getRepoById } from "../../core/repos.ts";
 import { running } from "../../kernel/version.ts";
 import { BOOTED, canRollBackTo, mayRead, mayRollBack, rollBackTo } from "../../release/gate.ts";
 import { listReleases, type Release } from "../../release/record.ts";
-import { liveSince, NO_RELEASES_YET, plain } from "../../release/words.ts";
+import { lastProof } from "../../release/prove.ts";
+import { journeyLine, liveSince, NO_RELEASES_YET, plain } from "../../release/words.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
@@ -31,6 +32,13 @@ export interface ReleaseLine {
 export function liveText(f: Session): string | undefined {
   const live = running().commit;
   return live === null || !mayRead(f.app, f.user) ? undefined : liveSince(plain, live.slice(0, 7), ago(BOOTED));
+}
+
+/** The proven stranger's journey line for the serving version (`journeyLine`), or undefined without timings. */
+export function journeyText(f: Session): string | undefined {
+  const p = lastProof(f.app.config.dataDir);
+  if (p === undefined || !p.ok || p.version !== running().version || !mayRead(f.app, f.user)) return undefined;
+  return journeyLine(plain, p.journey, (n) => n);
 }
 
 /** The kept releases this person may see; none at all for anyone the page would 404. */
@@ -84,7 +92,7 @@ export function releasesScreen(f: Session, ctx: Ctx): Screen {
     render(area, s) {
       const c = ctx.theme.c;
       const [head, body] = split(area, "v", [len(1), fill(1)]);
-      s.text(head!.x, head!.y, truncate(liveText(f) ?? "", head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
+      s.text(head!.x, head!.y, truncate([liveText(f), journeyText(f)].filter((x) => x !== undefined).join(" · "), head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       if (lines.length === 0) {
         emptyState(s, body!, c, {
           title: loaded ? "No releases yet" : "Reading…",

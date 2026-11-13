@@ -206,7 +206,7 @@ describe("Settings › Captain", () => {
     expect(text).toContain("Memory");
     expect(text).toContain("Morning paper");
     expect(text).toContain(STARTING_RULES[0]!);
-    expect((await fetch(`${servers.url}/settings/captain`, { headers: { cookie: cookie(other) } })).status).toBe(404);
+    expect((await fetch(`${servers.url}/settings/captain`, { headers: { cookie: cookie(other) } })).status).toBe(403);
     expect((await fetch(`${servers.url}/settings/captain`, { redirect: "manual" })).status).not.toBe(200);
 
     expect((await post(owner, { do: "add", text: "Lend credit only to friends." })).status).toBe(303);
@@ -220,7 +220,7 @@ describe("Settings › Captain", () => {
     expect((await post(owner, { do: "routine", kind: "checkin", enabled: "1", every: "30", hour: "" })).status).toBe(303);
     expect(listRoutines(app.db, owner.id).find((r) => r.kind === "checkin")?.everyMin).toBe(30);
     expect((await post(owner, { do: "routine", kind: "checkin", enabled: "1", every: "3", hour: "" })).status).toBe(422);
-    expect((await post(other, { do: "add", text: "mine" })).status).toBe(404);
+    expect((await post(other, { do: "add", text: "mine" })).status).toBe(403);
   });
 
   test("a post from another origin changes nothing", async () => {

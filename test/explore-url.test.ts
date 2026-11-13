@@ -74,8 +74,20 @@ test("an unknown parameter is ignored; an invalid value is named and the default
   expect(extra.status).toBe(200);
   expect(listed(extra.html)).toEqual(listed(plain.html));
   const bad = await page("?sort=bogus");
-  expect(bad.status).toBe(400);
+  expect(bad.status).toBe(200);
   expect(listed(bad.html)).toEqual(listed(plain.html));
+});
+
+test("an unknown kind, sort or updated is a 200 with a plain note and the unfiltered list, escaped (#11819)", async () => {
+  const plain = listed((await page("")).html);
+  for (const qs of ["?kind=bogus", "?sort=bogus", "?updated=9y", "?since=9y", `?kind=${encodeURIComponent("<script>x</script>")}`]) {
+    const res = await page(qs);
+    expect(res.status).toBe(200);
+    expect(res.html).toContain('role="status"');
+    expect(res.html).toMatch(/is not a (kind|sort|window)/);
+    expect(res.html).not.toContain("<script>x</script>");
+    expect(listed(res.html)).toEqual(plain);
+  }
 });
 
 test("a value is one word and is escaped", async () => {
@@ -92,13 +104,13 @@ test("the chips link with separate parameters", async () => {
   expect(exploreParams(readExploreLine("kind:app sort:forks owner:olive garden").query)).toBe("kind=app&sort=forks&owner=olive&q=garden");
 });
 
-test("`since` is the `updated` window: same line, bad value is a 400 (#11232)", async () => {
+test("`since` is the `updated` window: same line, bad value is a noted 200 (#11232)", async () => {
   expect(exploreLineFrom((n) => (n === "since" ? "7d" : null))).toBe("updated:7d");
   expect(exploreLineFrom((n) => (n === "since" ? "9y" : null))).toBe("updated:9y");
   const ok = await fetch(`${servers.url}/explore?kind=app&since=7d`);
   expect(ok.status).toBe(200);
   const bad = await fetch(`${servers.url}/explore?since=9y`);
-  expect(bad.status).toBe(400);
+  expect(bad.status).toBe(200);
   expect(await bad.text()).toContain("1d, 7d, 30d");
 });
 
@@ -132,4 +144,18 @@ test("the chips link with since=, and updated wins when both are given (#11232)"
   expect(res.html).toContain("since=7d");
   expect(res.html).not.toContain("updated=");
   expect(exploreLineFrom((n) => (n === "updated" ? "7d" : n === "since" ? "30d" : null))).toBe("updated:7d");
+});
+
+test("active filters show as a chip row whose removes are links, escaped (#11819)", async () => {
+  expect((await page("")).html).not.toContain("data-filter-chips");
+  const { html } = await page("?kind=app&sort=forks&owner=olive&q=garden");
+  const row = /data-filter-chips[\s\S]*?<\/div>/.exec(html)![0];
+  expect(row).toContain('href="/explore?sort=forks&amp;owner=olive&amp;q=garden"');
+  expect(row).toContain("Remove kind:app");
+  expect(row).toContain('role="group"');
+  expect(row).toContain("Remove sort:forks");
+  expect(row).toContain("Remove owner:olive");
+  expect(row).toContain("Remove garden");
+  const hostile = await page(`?q=${encodeURIComponent('"><img src=x onerror=1>')}`);
+  expect(hostile.html).not.toContain("<img src=x");
 });

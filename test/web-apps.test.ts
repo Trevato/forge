@@ -749,7 +749,7 @@ describe("apps, runs and the crew on the web", () => {
   // ---- the crew ----
 
   test("the crew section: admin only, and an agent made on the web", async () => {
-    expect((await web(bob, "/settings/crew")).status).toBe(404);
+    expect((await web(bob, "/settings/crew")).status).toBe(403);
     expect(await bodyOf(bob, "/settings")).not.toContain(
       'href="/settings/crew"',
     );
@@ -817,7 +817,7 @@ describe("apps, runs and the crew on the web", () => {
     const forged = await web(bob, "/settings/crew/bot", {
       form: { model: "opus" },
     });
-    expect(forged.status).toBe(404);
+    expect(forged.status).toBe(403);
     expect(getAgentByName(app.db, "bot")?.model).toBe("sonnet");
   });
 

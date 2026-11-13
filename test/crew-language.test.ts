@@ -60,9 +60,10 @@ const speaksPlainly = (main: string): void => {
   expect(main).not.toContain("card-body");
   expect(main).toMatch(/runner is up|cannot run|Ready<\/strong>|hosted inside/);
   expect(main).toContain('action="/settings/crew"');
-  // The danger notice (no runner in this test) wears a class the stylesheet really styles.
-  expect(main).toContain('class="toast" data-tone="danger" role="alert"');
-  expect(components).toContain('.toast[data-tone="danger"]');
+  // The danger notice (no runner in this test) is one line wearing a pill the stylesheet really styles (#11870).
+  expect(main).toContain('<span class="pill" data-tone="danger">');
+  expect(main).not.toContain('role="alert"');
+  expect(components).toContain('.pill[data-tone="danger"]');
   expect(main).not.toContain('class="error');
 };
 
@@ -80,7 +81,7 @@ test("with an agent: its link is on the page, still no card", async () => {
   expect(main).toContain('href="/settings/crew/bot"');
 });
 
-test("a non-admin still gets 404", async () => {
+test("a non-admin is refused with 403", async () => {
   const res = await fetch(`${servers.url}/settings/crew`, { headers: { cookie: other }, redirect: "manual" });
-  expect(res.status).toBe(404);
+  expect(res.status).toBe(403);
 });

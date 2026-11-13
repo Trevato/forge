@@ -285,6 +285,7 @@ const ORIGIN = "needs a connected origin account; the seed connects none";
 const NOT_WALKED: Record<string, string> = {
   "/:owner/-/teams/:team": "needs an organization and a team",
   "/:owner/:name/app/:env/open": "needs a running app environment to open",
+  "/:owner/:name/archive/:file": "a tarball download, not a page; the file name is one the seed cannot guess",
   "/:owner/:name/bets/:id": "needs a proposed bet",
   "/:owner/:name/builds/:label/cart": "needs a pinned build with a cart",
   "/:owner/:name/builds/:label/cart.png": "needs a pinned build with a cart",

@@ -81,7 +81,7 @@ test("a ceiling still posts for an admin only, behind the same-origin check", as
   const asBob = await fetch(url, {
     method: "POST", redirect: "manual", body, headers: { ...headers, cookie: cookies.bob!, origin: servers.url },
   });
-  expect(asBob.status).toBe(404);
+  expect(asBob.status).toBe(403);
   const foreign = await fetch(url, {
     method: "POST", redirect: "manual", body, headers: { ...headers, cookie: cookies.alice!, origin: "https://evil.test" },
   });

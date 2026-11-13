@@ -60,7 +60,7 @@ test("GET /settings/people names its phases", async () => {
     expect(parts.find((p) => p.startsWith(`${name};`))).toMatch(/^[a-z]+;dur=\d+\.\d$/);
 });
 
-test("a non-admin gets the 404 without the admin phases", async () => {
+test("a non-admin gets the 403 without the admin phases", async () => {
   const b = await createUser(app.db, {
     origin: "seed",
     trusted: true,
@@ -72,7 +72,7 @@ test("a non-admin gets the 404 without the admin phases", async () => {
   proveAll(app);
   const cookie = await signIn("bob");
   const get = await fetch(`${servers.url}/settings/people`, { headers: { cookie } });
-  expect(get.status).toBe(404);
+  expect(get.status).toBe(403);
   for (const name of ["people", "render", "role"]) expect(phase(get, name)).toBeUndefined();
   const post = await fetch(`${servers.url}/settings/people/alice/role`, {
     method: "POST",
@@ -80,7 +80,7 @@ test("a non-admin gets the 404 without the admin phases", async () => {
     body: new URLSearchParams({ role: "guest" }),
     redirect: "manual",
   });
-  expect(post.status).toBe(404);
+  expect(post.status).toBe(403);
   for (const name of ["session", "role"]) expect(phase(post, name)).toBeUndefined();
 });
 

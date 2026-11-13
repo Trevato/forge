@@ -67,6 +67,10 @@ import {
 } from "../core/reviews.ts";
 import { isProposed } from "../core/pull_trust.ts";
 import { approveGuest } from "../origins/guest.ts";
+import { previewEnv } from "../apps/data.ts";
+import { getAppByRepo } from "../core/apps.ts";
+import { looksForEnv } from "../core/looks.ts";
+import { missingHomeLooks, touchesStylesheet } from "../looks/style_looks.ts";
 import { grantRun } from "../core/run_grant.ts";
 import { commitIdentity } from "../core/commit_identity.ts";
 import { getUserById, getUserByName, type User } from "../core/users.ts";
@@ -681,7 +685,9 @@ export type SubmitReviewActionError =
   | "empty_body"
   /** A line comment's anchor is not a row of the pull's current diff. */
   | "bad_anchor"
-  | "too_many_lines";
+  | "too_many_lines"
+  /** A stylesheet change is approved only beside the home page's looks at its head. */
+  | "looks_required";
 
 /** The most line comments one review may carry. */
 export const MAX_REVIEW_LINES = 50;
@@ -749,6 +755,10 @@ export async function submitReview(
 
   const through = writeThroughFor(app, user, repo);
   if (!through.ok) return through;
+  if (through.value === undefined && input.state === "approved") {
+    const unseen = await styleLooksMissing(app, repo, pull, status.headOid);
+    if (unseen) return err("looks_required");
+  }
   if (through.value !== undefined) {
     const sent = await through.value.provider.submitReview(
       through.value.fullName,
@@ -862,6 +872,28 @@ export async function submitReview(
     else holdPass(app, pull, user, status.headOid, input.pass);
   }
   return recorded;
+}
+
+/**
+ * Whether the pull changes a stylesheet source and its app's preview has no
+ * home-page look at phone and desktop width for this head: such a change is
+ * not approved unseen. A repository with no app has no looks to wait for.
+ */
+async function styleLooksMissing(
+  app: App,
+  repo: Repo,
+  pull: Pull,
+  headOid: string,
+): Promise<boolean> {
+  const record = getAppByRepo(app.db, repo.id);
+  if (!record) return false;
+  const { diff } = await pullDiff(
+    await pullDir(app.db, app.reposRoot, repo, pull),
+    pull,
+  );
+  if (!touchesStylesheet(diff.files.map((f) => f.path))) return false;
+  const taken = looksForEnv(app.db, record.id, previewEnv(pull.number));
+  return missingHomeLooks(taken, headOid).length > 0;
 }
 
 export type ThreadActionError = AccessError;

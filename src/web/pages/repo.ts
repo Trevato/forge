@@ -1211,6 +1211,7 @@ export function renderBlob(
           all: o.all === true,
           ...(o.table !== undefined ? { table: o.table } : {}),
           ...(o.layer !== undefined ? { layer: o.layer } : {}),
+          ...(scope.caps.write && scope.kind === "local" ? { shift: { action: `${base}/edit`, ref: o.ref, path: o.path } } : {}),
         })
       : undefined;
   const fellBack = drawn?.fallback;

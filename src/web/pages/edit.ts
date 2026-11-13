@@ -19,9 +19,10 @@
 
 import { fileKind, NO_BYTES } from "../render/kinds.ts";
 import { editFiles, MAX_FILE_BYTES } from "../../actions/contents.ts";
+import { shiftSubtitles } from "../../actions/subtitle_shift.ts";
 import { contribute } from "../../actions/contribute.ts";
 import { NO_WRITE_ACCESS } from "../../actions/pull_words.ts";
-import { canAdmin, getRepoById } from "../../core/repos.ts";
+import { canAdmin, getRepoById, type Repo } from "../../core/repos.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { isSafeRef, isSafeTreePath } from "../../git/guard.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -843,6 +844,44 @@ export async function contributeSubmit(ctx: Ctx): Promise<Response> {
   return runContribute(ctx, scope, scope.propose, form);
 }
 
+/** A shift that was refused: one sentence why, and the way back to the file. */
+function shiftRefused(ctx: Ctx, scope: RepoScope, ref: string, path: string, why: string): Response {
+  return page(
+    {
+      ctx,
+      title: "Not shifted",
+      crumbs: scope.crumbs,
+      palette: scope.palette,
+      body: html`${pageHead("Nothing was shifted")}
+        <p role="alert">${why}</p>
+        <p>${btn("Back to the file", { href: `${scope.base}/blob/${encodeURIComponent(ref)}/${path}`, variant: "primary" })}</p>`,
+    },
+    400,
+  );
+}
+
+/** The subtitle page's shift form: the action reads the file and writes the moved text as one commit. */
+async function shiftSubmit(ctx: Ctx, scope: RepoScope, repo: Repo, form: Form): Promise<Response> {
+  const ref = formValue(form, "ref");
+  const path = formValue(form, "path").trim().replace(/^\/+/, "");
+  const done = await shiftSubtitles(ctx.app, ctx.auth.user, repo, { ref, path, offset: formValue(form, "shift") });
+  if (!done.ok) {
+    const e = done.error;
+    if (typeof e === "object" && e.kind === "refused") return shiftRefused(ctx, scope, ref, path, e.why);
+    if (typeof e === "object" && e.kind === "missing") return notFoundPage(ctx);
+    if (e === "not_found" || e === "unauthorized") return notFoundPage(ctx);
+    return shiftRefused(ctx, scope, ref, path, editErrorText(e));
+  }
+  const landed = done.value;
+  if (landed.pull !== undefined)
+    return flashTo(ctx, `${scope.base}/pulls/${landed.pull.number}`, {
+      message: `Committed to ${landed.branch} and opened this pull request.`,
+    });
+  return flashTo(ctx, `${scope.base}/blob/${encodeURIComponent(landed.branch)}/${path}`, {
+    message: `Committed to ${landed.branch}.`,
+  });
+}
+
 /**
  * POST /:owner/:name/edit — the one write.
  *
@@ -857,6 +896,7 @@ export async function editSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const scope = localScope(ctx, repo);
   if (!scope.caps.write) return notFoundPage(ctx);
+  if (form.has("shift")) return shiftSubmit(ctx, scope, repo, form);
 
   const ref = formValue(form, "ref");
   const path = formValue(form, "path").trim().replace(/^\/+/, "");

@@ -1,7 +1,8 @@
 /** A Markdown file as prose, framed exactly the way a README is. */
 
 import { html } from "../html.ts";
-import { renderMarkdown } from "../markdown.ts";
+import { markdownTasks, renderMarkdown } from "../markdown.ts";
+import { fileSize } from "../ui.ts";
 import type { Rendered, RenderInput } from "./renderers.ts";
 
 export function markdown(input: RenderInput): Rendered {
@@ -11,8 +12,16 @@ export function markdown(input: RenderInput): Rendered {
       ? undefined
       : { ...input.repo, dir: slash < 0 ? "" : input.path.slice(0, slash) };
   const text = new TextDecoder().decode(input.body);
+  const lines = text === "" ? 0 : text.replace(/\n$/, "").split("\n").length;
+  const body = renderMarkdown(text, repo);
+  const tasks = markdownTasks(body);
   return {
-    lines: text === "" ? 0 : text.replace(/\n$/, "").split("\n").length,
-    content: html`<div class="card prose">${renderMarkdown(text, repo)}</div>`,
+    lines,
+    content: html`<div class="card prose">${body}</div>`,
+    ...(tasks === undefined
+      ? {}
+      : {
+          summary: `${lines.toLocaleString()} lines · ${tasks.done} of ${tasks.total} done · ${fileSize(input.size)}`,
+        }),
   };
 }

@@ -10,6 +10,7 @@
 import { html, raw } from "../html.ts";
 import { CARD_PALETTE } from "../../http/mcp/card_palette.ts";
 import { timeAgo } from "../ui.ts";
+import { VERB_WORDS } from "../../actions/asks_words.ts";
 import { span, STAGE_LABEL, verdict, type PipelineKey, type PipelineStage } from "../../flow/pipeline.ts";
 
 export type CardKind = "app" | "run" | "asks" | "wave" | "map" | "feed" | "pull" | "pulls" | "runs" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones" | "release" | "releases" | "search" | "issues" | "forges" | "held" | "drill" | "reports" | "usage" | "health" | "capacity";
@@ -416,6 +417,31 @@ export function cardFor(
     // A plan (`dryRun`) or a `listen` has no `receipt`.
     const v = obj(value);
     const operation = text(v["id"]);
+    // A plan (`dryRun`) is the page's confirm: what each ask would become, and the one button that does it.
+    if (text(v["receipt"]) === "" && obj(v["counts"])["change"] !== undefined && Array.isArray(v["rows"])) {
+      const verb = VERB_WORDS[text(extra["action"])] ?? text(extra["action"]);
+      const items = list(extra["items"]).map(text).filter((i) => i !== "").slice(0, 100); // asks_act accepts at most 100
+      const change = Number(obj(v["counts"])["change"]);
+      const skipped = list(v["skipped"]).map(obj);
+      const shown = (x: unknown): string => (x === null || x === undefined ? "nobody" : Array.isArray(x) ? x.map(text).join(", ") : text(x));
+      for (const r of list(v["rows"]).map(obj).slice(0, LIMIT))
+        rows.push({ label: text(r["label"]), value: `${shown(r["before"])} → ${shown(r["after"])}${text(r["reason"]) === "" ? "" : ` · ${text(r["reason"])}`} · ${text(r["outcome"])}` });
+      for (const s of skipped.slice(0, LIMIT)) rows.push({ label: text(s["item"]), value: `${text(s["reason"])} · skipped` });
+      const refused = (Number(obj(v["counts"])["refused"]) || 0) + skipped.length;
+      if (change > 0 && items.length > 0)
+        actions.push({
+          label: `${verb} ${change}`,
+          tool: "asks_act",
+          args: { action: text(extra["action"]), items, ...(text(extra["reason"]) === "" ? {} : { reason: text(extra["reason"]) }), dryRun: false },
+        });
+      return {
+        kind,
+        title: "Confirm",
+        status: `${verb}: ${change} of ${items.length} · ${refused} refused or skipped · ${v["reversible"] === true ? "undo afterwards" : "not undone afterwards"}`,
+        rows,
+        actions,
+      };
+    }
     if (text(v["receipt"]) === "" || operation === "") return undefined;
     rows.push({ label: "Receipt", value: text(v["receipt"]) });
     if (v["undoOf"] == null && v["undoneBy"] == null)

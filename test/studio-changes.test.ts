@@ -1234,6 +1234,7 @@ describe("the studio, continued", () => {
       });
       if (!made.ok) throw new Error(made.error);
       promote(app2.db, made.value);
+      app2.db.query(`UPDATE user SET is_admin = 1 WHERE id = ?1`).run(made.value.id);
       const pia = made.value;
       const appOf = async (name: string) => {
         const created = await createRepo(app2, pia, {

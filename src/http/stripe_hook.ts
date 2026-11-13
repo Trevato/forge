@@ -5,7 +5,7 @@
  * checked with `verifyStripeSignature` against the sealed webhook secret, and
  * only then parsed. A bad or stale signature is 400 and counted per UTC day
  * (`stripe_hook_refused`). A verified event's id is stored once; a repeated id
- * is 200 and does nothing, and so is an event type nobody acts on yet.
+ * is 200 saying "already handled" and does nothing; so is an event type nobody acts on yet.
  * `checkout.session.completed` binds its forge (`billing/checkout_completed.ts`).
  * A `customer.subscription.*` or `invoice.*` event only names a subscription: the
  * hook re-reads it from Stripe and writes the entitlement from that, one
@@ -53,8 +53,11 @@ export function setStripeHookCaps(app: App, perClient: number, wholeForge: numbe
   bucketsOf(app, perClient, wholeForge);
 }
 
-const answer = (status: number, headers?: Record<string, string>): Response =>
-  new Response(null, { status, headers: { "cache-control": "no-store", ...headers } });
+const answer = (status: number, headers?: Record<string, string>, body: string | null = null): Response =>
+  new Response(body, { status, headers: { "cache-control": "no-store", ...headers } });
+
+/** What a redelivered event id is told: a 200, so Stripe stops, and these words, so a person reading the log knows. */
+export const ALREADY_HANDLED = "already handled";
 
 /** Bad and stale signatures refused today and earlier, by kind. */
 export function refusedCount(app: App, kind: "bad" | "stale"): number {
@@ -128,7 +131,8 @@ export async function stripeHook(ctx: Ctx): Promise<Response> {
       if (settled?.state === "spawned") bindCheckout(app, event);
     }
   }
-  if (fresh && (type.startsWith("customer.subscription.") || type.startsWith("invoice."))) {
+  if (!fresh) return answer(200, { "content-type": "text/plain; charset=utf-8" }, ALREADY_HANDLED);
+  if ((type.startsWith("customer.subscription.") || type.startsWith("invoice."))) {
     try {
       await syncSubscription(app, subscriptionIdOf(event));
     } catch (cause) {

@@ -41,7 +41,7 @@ test("GET /system names its phases", async () => {
     expect(parts.find((p) => p.startsWith(`${name};`))).toMatch(/^[a-z]+;dur=\d+\.\d$/);
 });
 
-test("a non-owner gets the 404 page and no sample or memory phase", async () => {
+test("a non-admin is refused at the admin gate, before any reader, sample or memory phase", async () => {
   const r = await createUser(app.db, {
     origin: "everyday",
     username: "bob",
@@ -51,8 +51,7 @@ test("a non-owner gets the 404 page and no sample or memory phase", async () => 
   if (!r.ok) throw new Error(r.error);
   const bob = createToken(app.db, r.value.id, "t", "admin").token;
   const res = await fetch(`${servers.url}/system`, { headers: { authorization: `Bearer ${bob}` } });
-  expect(res.status).toBe(404);
+  expect(res.status).toBe(403);
   const names = (res.headers.get("server-timing") ?? "").split(", ").map((p) => p.split(";")[0]);
-  expect(names).toContain("reader");
-  for (const name of ["sample", "caps", "memory", "render"]) expect(names).not.toContain(name);
+  for (const name of ["reader", "sample", "caps", "memory", "render"]) expect(names).not.toContain(name);
 });

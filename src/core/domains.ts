@@ -24,6 +24,17 @@ export interface AppDomain {
   readonly checkedAt: string | null;
   /** What the last check said, one sentence for a person. */
   readonly said: string;
+  /** The records the name carried before the cut-over: the way back. */
+  readonly oldRecords: readonly OldRecord[];
+}
+
+/** One DNS record as the old host served it, written down before the cut. */
+export interface OldRecord {
+  readonly type: string;
+  readonly name: string;
+  readonly value: string;
+  /** Seconds, when the old zone said. */
+  readonly ttl?: number;
 }
 
 interface DomainRow {
@@ -36,6 +47,61 @@ interface DomainRow {
   verified_at: string | null;
   checked_at: string | null;
   said: string;
+  old_records: string;
+}
+
+function parseOldRecords(text: string): OldRecord[] {
+  try {
+    const kept = parseRecordsInput(JSON.parse(text) as unknown);
+    return kept.ok ? kept.value : [];
+  } catch {
+    return [];
+  }
+}
+
+const RECORD_TYPES = new Set(["A", "AAAA", "CNAME", "ALIAS", "TXT", "MX", "NS", "CAA", "SRV"]);
+export const MAX_OLD_RECORDS = 50;
+
+/**
+ * Records written down by hand, checked at the boundary: a known type, a
+ * name and a value of plain length, a TTL that is whole seconds. Anything
+ * else is refused whole, so what is stored is what the owner meant.
+ */
+export function parseRecordsInput(input: unknown): Result<OldRecord[], "invalid_records"> {
+  if (!Array.isArray(input) || input.length > MAX_OLD_RECORDS) return err("invalid_records");
+  const out: OldRecord[] = [];
+  for (const item of input) {
+    if (typeof item !== "object" || item === null) return err("invalid_records");
+    const r = item as Record<string, unknown>;
+    const type = typeof r["type"] === "string" ? r["type"].trim().toUpperCase() : "";
+    const name = typeof r["name"] === "string" ? r["name"].trim() : "";
+    const value = typeof r["value"] === "string" ? r["value"].trim() : "";
+    const ttl = r["ttl"];
+    if (!RECORD_TYPES.has(type)) return err("invalid_records");
+    if (name === "" || name.length > 253 || value === "" || value.length > 2048) return err("invalid_records");
+    if (ttl !== undefined && (typeof ttl !== "number" || !Number.isInteger(ttl) || ttl < 0 || ttl > 2_147_483_647))
+      return err("invalid_records");
+    out.push(ttl === undefined ? { type, name, value } : { type, name, value, ttl });
+  }
+  return ok(out);
+}
+
+/** `A app.example.com 203.0.113.7 300; CNAME www.example.com host.example.net`: the terminal's way to type records. */
+export function recordsFromLine(line: string): unknown[] {
+  return line
+    .split(";")
+    .map((part) => part.trim().split(/\s+/))
+    .filter((f) => f[0] !== "")
+    .map(([type, name, value, ttl]) => ({ type, name, value, ...(ttl === undefined ? {} : { ttl: Number(ttl) }) }));
+}
+
+/** Keep the old records with the row, replacing what was kept. False when no such host. */
+export function setOldRecords(db: Database, host: string, records: readonly OldRecord[]): boolean {
+  return (
+    db
+      .query("UPDATE app_domain SET old_records = ?2 WHERE host = ?1")
+      .run(normalizeHost(host), JSON.stringify(records)).changes > 0
+  );
 }
 
 const toDomain = (r: DomainRow): AppDomain => ({
@@ -48,6 +114,7 @@ const toDomain = (r: DomainRow): AppDomain => ({
   verifiedAt: r.verified_at,
   checkedAt: r.checked_at,
   said: r.said,
+  oldRecords: parseOldRecords(r.old_records),
 });
 
 const now = (): string => new Date().toISOString();

@@ -7,7 +7,10 @@ import { expect, test } from "bun:test";
 import {
   addDomain,
   getVerifiedDomain,
+  getDomain,
   listDomains,
+  parseRecordsInput,
+  setOldRecords,
   primaryDomain,
   recordCheck,
   removeDomain,
@@ -80,4 +83,18 @@ test("primaryDomain names the verified one and removeDomain unserves it", () => 
   expect(primaryDomain(db, "a1")).toBeUndefined();
   expect(listDomains(db, "a1")).toEqual([]);
   expect(removeDomain(db, "app.example.com")).toBe(false);
+});
+
+test("old records are checked at the boundary, kept with the row, and replaced whole", () => {
+  const db = fresh();
+  add(db, "shop.example.net");
+  expect(getDomain(db, "shop.example.net")?.oldRecords).toEqual([]);
+  const parsed = parseRecordsInput([{ type: "aaaa", name: " shop.example.net ", value: "2001:db8::1", ttl: 60 }]);
+  expect(parsed).toEqual({ ok: true, value: [{ type: "AAAA", name: "shop.example.net", value: "2001:db8::1", ttl: 60 }] });
+  for (const bad of ["x", [1], [{ type: "A", name: "", value: "v" }], [{ type: "A", name: "n", value: "v", ttl: 1.5 }], Array(51).fill({ type: "A", name: "n", value: "v" })])
+    expect(parseRecordsInput(bad)).toEqual({ ok: false, error: "invalid_records" });
+  if (!parsed.ok) throw new Error("unreachable");
+  expect(setOldRecords(db, "Shop.Example.Net.", parsed.value)).toBe(true);
+  expect(getDomain(db, "shop.example.net")?.oldRecords).toEqual(parsed.value);
+  expect(setOldRecords(db, "none.example.net", parsed.value)).toBe(false);
 });

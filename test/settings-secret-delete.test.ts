@@ -82,7 +82,7 @@ test("a non-admin, a signed-out caller and a cross-origin post are refused; the 
     await post(undefined, servers.url),
     await post(admin, "https://evil.example"),
   ];
-  expect(refused[0]!.status).toBe(404);
+  expect(refused[0]!.status).toBe(403);
   expect(refused[1]!.headers.get("location")).toStartWith("/signin");
   expect(refused[2]!.status).toBe(403);
   for (const res of refused) {

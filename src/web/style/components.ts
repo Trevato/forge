@@ -814,8 +814,8 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 /* A dialog centres itself with its own auto margins, which the reset zeroes
    — so anything that wants to be centred has to say so again. */
 .palette { width: min(620px, calc(100vw - 24px)); margin: 12dvh auto auto; }
-/* No scrolling the page behind an open palette. */
-html:has(.palette[open]) { overflow: hidden; }
+/* No scrolling the page behind an open modal layer: the overlay host sets the attribute. */
+html[data-overlay] { overflow: hidden; }
 .palette [data-palette-close] { display: none; }
 .palette .palette-input {
   width: 100%; border: 0; border-bottom: 1px solid var(--border); border-radius: 0;

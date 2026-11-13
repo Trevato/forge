@@ -165,7 +165,7 @@ describe("an account's whole-life budget", () => {
         redirect: "manual",
       },
     );
-    expect(refused.status).toBe(404);
+    expect(refused.status).toBe(403);
     expect(budgetsOf(app.db).get(starter)!.budgetUsd).toBe(1);
     const admin = await signIn("alice");
     const set = await fetch(

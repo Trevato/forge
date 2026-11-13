@@ -412,6 +412,7 @@ export { route as putApiV1ForgesNameCredit } from "./putApiV1ForgesNameCredit.ts
 export { route as putApiV1ForgesNamePlan } from "./putApiV1ForgesNamePlan.ts";
 export { route as putApiV1Front } from "./putApiV1Front.ts";
 export { route as putApiV1PacksName } from "./putApiV1PacksName.ts";
+export { route as putApiV1ReposOwnerNameAppDomainsHostOldRecords } from "./putApiV1ReposOwnerNameAppDomainsHostOldRecords.ts";
 export { route as putApiV1ReposOwnerNameAppEnvVar } from "./putApiV1ReposOwnerNameAppEnvVar.ts";
 export { route as putApiV1ReposOwnerNameAppMembers } from "./putApiV1ReposOwnerNameAppMembers.ts";
 export { route as putApiV1ReposOwnerNameCrewUsername } from "./putApiV1ReposOwnerNameCrewUsername.ts";

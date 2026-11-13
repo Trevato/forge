@@ -107,11 +107,11 @@ test("the suspend confirm, the removal refusal, the retire page and the removed 
   expect(main).toContain("<h2>Removed</h2>");
 });
 
-test("a non-admin still gets the 404, and the page costs a handful of statements", async () => {
+test("a non-admin is refused with 403, and the page costs a handful of statements", async () => {
   const mallory = await createUser(app.db, { origin: "seed", trusted: true, username: "mallory", email: "m@forge.local", password: "correct-horse-battery" });
   if (!mallory.ok) throw new Error(mallory.error);
   const theirs = `forge_session=${createSession(app.db, getUserByName(app.db, "mallory")!.id).token}`;
-  expect((await fetch(`${servers.url}/settings/accounts`, { headers: { cookie: theirs } })).status).toBe(404);
+  expect((await fetch(`${servers.url}/settings/accounts`, { headers: { cookie: theirs } })).status).toBe(403);
   await fetch(`${servers.url}/settings/accounts`, { headers: { cookie } });
   expectWork(await requestStatements(app.db, `${servers.url}/settings/accounts`, { headers: { cookie } }), { max: 25 });
 });

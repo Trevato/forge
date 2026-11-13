@@ -5,15 +5,18 @@
  * its short commit, landed to live (#8042), the known-good version it rolls
  * back to and what the probes counted.
  * Gated by `release/gate.ts` as the page is. `h` holds releases with a
- * reason and `h` with `lift N` lifts an owner's hold, through the same
- * functions the card and MCP `release_hold` call.
+ * reason and `h` with `lift N` lifts an owner's hold; `now: reason` asks
+ * for a cut at the next tick (#11839), through the same functions the card and
+ * MCP `release_hold` and `release_now` call.
  */
 
 import { aheadLine } from "../../flow/alarm_main_ahead.ts";
+import { neverTickedLine } from "../../keeper/at_boot.ts";
 import { beatLine, lastBeat } from "../../keeper/beat.ts";
 import { stallWords } from "../../perf/boot_stall.ts";
 import { blocking, holdAs, liftAs, standingHolds } from "../../keeper/hold.ts";
 import { secondsWords, withLandedToLive, type LandedRelease } from "../../keeper/landed.ts";
+import { releaseNowAs, pendingNow } from "../../keeper/now.ts";
 import { listKeeperReleases, type Stage } from "../../keeper/record.ts";
 import { mayRead, mayRollBack } from "../../release/gate.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -39,6 +42,8 @@ export interface KeeperRead {
   readonly heartbeat: string;
   /** Main green and ahead of production, and for how long; absent when it is not. */
   readonly ahead?: string;
+  /** A standing release-now request, said plainly; absent when there is none. */
+  readonly asked?: string;
   readonly releases: readonly LandedRelease[];
 }
 
@@ -46,10 +51,15 @@ export interface KeeperRead {
 export function readKeeper(f: Session, now: Date = new Date()): KeeperRead | undefined {
   if (!mayRead(f.app, f.user)) return undefined;
   const ahead = aheadLine(f.db, now);
+  const asked = pendingNow(f.db, now.getTime());
+  const beat = lastBeat(f.db);
+  // Never heard from: the same keeper line /releases and the main-ahead alarm name (#11924).
+  const never = beat === null ? neverTickedLine() : undefined;
   return {
     blocked: blocking(standingHolds(f.db)) ?? "Nothing holds the next cut.",
-    heartbeat: beatLine(lastBeat(f.db), now),
+    heartbeat: never === undefined ? beatLine(beat, now) : `${beatLine(beat, now)} ${never[0]!.toUpperCase()}${never.slice(1)}.`,
     ...(ahead === undefined ? {} : { ahead }),
+    ...(asked === undefined ? {} : { asked: `Release now asked by ${asked.by}: ${asked.reason}` }),
     releases: withLandedToLive(f.db, listKeeperReleases(f.db)),
   };
 }
@@ -80,6 +90,11 @@ export function holdLine(f: Session, text: string): { ok: boolean; says: string 
     const done = liftAs(f.app, f.user, Number(lifting[1]));
     return done.ok ? { ok: true, says: `Hold ${done.value} lifted.` } : { ok: false, says: done.message };
   }
+  const now = /^now:\s*(.*)$/is.exec(text.trim());
+  if (now !== null) {
+    const asked = releaseNowAs(f.app, f.user, now[1]!);
+    return asked.ok ? { ok: true, says: `Release asked for now: ${asked.value.reason}` } : { ok: false, says: asked.message };
+  }
   const held = holdAs(f.app, f.user, text);
   return held.ok ? { ok: true, says: `Releases held: ${held.value.reason}` } : { ok: false, says: held.message };
 }
@@ -94,7 +109,7 @@ export function keeperScreen(f: Session, ctx: Ctx): Screen {
   };
   const screen: Screen = {
     title: "Release keeper",
-    keys: [binding(["j", "k"], "move"), ...(mayRollBack(f.app, f.user) ? [binding(["h"], "hold / lift")] : []), binding(["esc", "q"], "close")],
+    keys: [binding(["j", "k"], "move"), ...(mayRollBack(f.app, f.user) ? [binding(["h"], "hold / lift / now")] : []), binding(["esc", "q"], "close")],
     load: async () => refresh(),
     render(area, s) {
       const c = ctx.theme.c;
@@ -107,6 +122,7 @@ export function keeperScreen(f: Session, ctx: Ctx): Screen {
         ...wrap(read.blocked, area.w).slice(0, 3),
         ...wrap(read.heartbeat, area.w).slice(0, 2),
         ...(read.ahead === undefined ? [] : wrap(read.ahead, area.w).slice(0, 2)),
+        ...(read.asked === undefined ? [] : wrap(read.asked, area.w).slice(0, 2)),
       ];
       const [head, body] = split(area, "v", [len(lines.length + 1), fill(1)]);
       lines.forEach((l, i) => s.text(head!.x, head!.y + i, truncate(l, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w));
@@ -122,7 +138,7 @@ export function keeperScreen(f: Session, ctx: Ctx): Screen {
         ctx.push(
           promptScreen(ctx, screen, {
             title: "Hold releases",
-            label: "a reason holds the next cut · lift N lifts an owner hold",
+            label: "a reason holds the next cut · lift N lifts a hold · now: reason cuts now",
             onSubmit: (text) => {
               const done = holdLine(f, text);
               if (!done.ok) return done.says;

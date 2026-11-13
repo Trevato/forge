@@ -56,6 +56,13 @@ test("a healthy forge's home and board have no alert, banner or danger notice", 
   }
 });
 
+test("/crew's readiness faults are one line each, never an alert or a toast (#11870)", async () => {
+  const body = await get("/settings/crew");
+  expect(body).toContain("crew runner");
+  expect(alarming(body)).toBe(false);
+  expect(body).not.toMatch(/class="toast"[^>]*data-tone="danger"/);
+});
+
 test("with egress enforced, System and Capacity say nothing about it, and neither does the terminal", async () => {
   expect(await get("/system")).not.toContain("egress-reported");
   expect(await get("/settings/capacity")).not.toContain("egress-reported");

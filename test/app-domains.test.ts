@@ -28,6 +28,7 @@ import { certificateSaid, probeCertificate } from "../src/apps/certificate.ts";
 import { createApp as insertApp, type AppRecord } from "../src/core/apps.ts";
 import { addDomain, getDomain, TOKEN_LENGTH } from "../src/core/domains.ts";
 import { listEvents } from "../src/core/events.ts";
+import { eventVerb } from "../src/design/activity.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { listRuns, type Run } from "../src/core/runs.ts";
 import { readRunLogTail } from "../src/runs/log.ts";
@@ -792,6 +793,82 @@ describe("an app gets its own domain", () => {
     expect(removed.status).toBe(200);
     expect(await removed.json()).toEqual({});
     expect(getDomain(app.db, "api.example.com")).toBeUndefined();
+  });
+
+  test("the old records are kept with the domain: written before the cut, read back in one list", async () => {
+    const old = [
+      { type: "a", name: "shop.example.net", value: "203.0.113.7", ttl: 300 },
+      { type: "CNAME", name: "www.shop.example.net", value: "shop.example.net" },
+    ];
+    const NEW = "shop.example.net";
+    const added = await api(DOMAINS, {
+      method: "POST",
+      body: JSON.stringify({ host: NEW, old_records: old }),
+    });
+    expect(added.status).toBe(201);
+    const listed = (await (await api(DOMAINS)).json()) as {
+      items: { host: string; oldRecords: unknown[] }[];
+    };
+    expect(listed.items.find((d) => d.host === NEW)?.oldRecords).toEqual([
+      { type: "A", name: NEW, value: "203.0.113.7", ttl: 300 },
+      { type: "CNAME", name: "www.shop.example.net", value: NEW },
+    ]);
+    // Replaced whole, by admins only, and bad input changes nothing.
+    const KEEP = `${DOMAINS}/${NEW}/old-records`;
+    const put = (token: string | null, records: unknown) =>
+      api(KEEP, { method: "PUT", token, body: JSON.stringify({ records }) });
+    expect((await put(rwToken, [])).status).toBe(403);
+    expect((await put(bobToken, [])).status).toBe(404);
+    expect((await put(adminToken, [{ type: "BOGUS", name: "x", value: "y" }])).status).toBe(422);
+    expect((await put(adminToken, [{ type: "A", name: "x", value: "y", ttl: -1 }])).status).toBe(422);
+    expect(getDomain(app.db, NEW)?.oldRecords).toHaveLength(2);
+    expect((await put(adminToken, [{ type: "A", name: NEW, value: "198.51.100.2" }])).status).toBe(200);
+    expect(getDomain(app.db, NEW)?.oldRecords).toEqual([
+      { type: "A", name: NEW, value: "198.51.100.2" },
+    ]);
+    expect(
+      (await api(`${DOMAINS}/nobody.example.net/old-records`, {
+        method: "PUT",
+        body: JSON.stringify({ records: [] }),
+      })).status,
+    ).toBe(422);
+    app.db.query("DELETE FROM app_domain WHERE host = ?1").run(NEW);
+  });
+
+  test("bad old records on add are refused and no domain is created; a non-admin is never shown them; the activity says it", async () => {
+    const HOST2 = "bad-records.example.net";
+    const bad = await api(DOMAINS, {
+      method: "POST",
+      body: JSON.stringify({ host: HOST2, old_records: [{ type: "BOGUS", name: "x", value: "y" }] }),
+    });
+    expect(bad.status).toBe(422);
+    expect(getDomain(app.db, HOST2)).toBeUndefined();
+    const notList = await api(DOMAINS, {
+      method: "POST",
+      body: JSON.stringify({ host: HOST2, old_records: "A 1.2.3.4" }),
+    });
+    expect(notList.status).toBe(422);
+    expect(getDomain(app.db, HOST2)).toBeUndefined();
+
+    const KEPT = "kept-records.example.net";
+    expect(
+      (await api(DOMAINS, { method: "POST", body: JSON.stringify({ host: KEPT }) })).status,
+    ).toBe(201);
+    const keep = await api(`${DOMAINS}/${KEPT}/old-records`, {
+      method: "PUT",
+      body: JSON.stringify({ records: [{ type: "A", name: KEPT, value: "203.0.113.9" }] }),
+    });
+    expect(keep.status).toBe(200);
+    // Neither the list nor the text of an answer reaches anyone who is not the app's admin.
+    for (const token of [rwToken, bobToken, null]) {
+      const res = await api(DOMAINS, { token });
+      expect(await res.text()).not.toContain("203.0.113.9");
+    }
+    const verb = listEvents(app.db, { limit: 50 })
+      .filter((e) => e.kind === "app.domain.old_records")
+      .map((e) => eventVerb(e));
+    expect(verb).toContain(`wrote down the old DNS records of ${KEPT}`);
+    app.db.query("DELETE FROM app_domain WHERE host = ?1").run(KEPT);
   });
 
   test("removal makes the host unknown again", async () => {

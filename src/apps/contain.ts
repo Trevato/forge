@@ -51,6 +51,7 @@ import {
 import { during } from "../perf/jobs.ts";
 import { isSize, SIZES, type Size } from "../spawn/sizes.ts";
 import { cpuWatch } from "./cpu_rule.ts";
+import { dutyTick, newDuty, resumeNow, type Duty, type DutyLater, type Signaller } from "./cpu_duty.ts";
 
 /** `ceiling`: a declaration was cut to the machine's maximum; `declared`: forge.json's own; `default`: neither. */
 export type CeilingFrom = "env" | "pod" | "default" | "size";
@@ -313,6 +314,8 @@ export interface CellSpec {
    * it is busy rather than stopped.
    */
   readonly cpuQuota?: boolean | undefined;
+  /** Where the signals of the pausing fallback go; tests only. */
+  readonly signal?: Signaller | undefined;
   /**
    * Disk bandwidth the kernel holds the cell to (`io.max`) on the disk
    * under `dir` — the forge's data volume — where io is delegated. A child
@@ -326,8 +329,12 @@ export interface CellSpec {
  * does not already hold them. A cell under `cpu.max` cannot run over its
  * cores, and a sampled 4.1 of 4 is the sampling, not the cell.
  */
-export function watchedLimits(limits: Limits, cgroup: { readonly cpuCapped: boolean } | undefined): Limits {
-  return cgroup?.cpuCapped === true ? { ...limits, cpus: Number.POSITIVE_INFINITY } : limits;
+export function watchedLimits(
+  limits: Limits,
+  cgroup: { readonly cpuCapped: boolean } | undefined,
+  pausing = false,
+): Limits {
+  return cgroup?.cpuCapped === true || pausing ? { ...limits, cpus: Number.POSITIVE_INFINITY } : limits;
 }
 
 export interface Cell {
@@ -633,6 +640,22 @@ export function cellCgroup(
   );
 }
 
+const cpuHolder: { said: string | undefined } = { said: undefined };
+
+/**
+ * Who holds a quota cell's cores: said once per process, and again only if
+ * it changes. `forget` starts over (tests).
+ */
+export function noteCpuHolder(kernel: boolean, log: (line: string) => void, forget = false): string {
+  if (forget) cpuHolder.said = undefined;
+  const who = kernel ? "the kernel" : "the forge, by pausing";
+  if (cpuHolder.said !== who) {
+    cpuHolder.said = who;
+    log(`cpu: a child forge's cores are held by ${who}`);
+  }
+  return who;
+}
+
 /** Where the next pinned cell's cores begin; `affinityArgv` advances it. */
 export interface CoreRotor {
   next: number;
@@ -730,6 +753,7 @@ export function openCell(
   const SMALL = String(1 << 20);
 
   const cgroup = cellCgroup(spec);
+  if (spec.cpuQuota === true) noteCpuHolder(cgroup?.cpuCapped === true, log);
   const argv = (command: string): string[] => cellArgv(bwrapArgv(command), spec, cgroup);
   const rlimits = cellRlimits(spec.limits);
   const bwrapArgv = (command: string): string[] => [
@@ -795,12 +819,21 @@ export function openCell(
       cgroup === undefined
         ? { bytes: Math.floor(spec.limits.memoryMiB * 1024 * 1024), by: "watch" }
         : { bytes: cgroup.maxBytes, by: "kernel" };
-    unwatch = watchTree(pid, watchedLimits(spec.limits, cgroup), cap, writable, spec.label, (why) => {
-      if (breach !== undefined) return;
-      breach = why;
-      log(`stopped: ${why}`);
-      stop(why);
-    });
+    const paused = spec.cpuQuota === true && cgroup?.cpuCapped !== true;
+    unwatch = watchTree(
+      pid,
+      watchedLimits(spec.limits, cgroup, paused),
+      cap,
+      writable,
+      spec.label,
+      (why) => {
+        if (breach !== undefined) return;
+        breach = why;
+        log(`stopped: ${why}`);
+        stop(why);
+      },
+      paused ? { cores: spec.limits.cpus, ...(spec.signal === undefined ? {} : { signal: spec.signal }) } : undefined,
+    );
   };
   return {
     argv,
@@ -957,6 +990,11 @@ interface Watched {
   overSince: number | null;
   readonly key: number;
   readonly label: string | undefined;
+  /** Set where the watch holds the cores by pausing the tree (`apps/cpu_duty.ts`). */
+  readonly duty?: Duty | undefined;
+  readonly signal?: Signaller | undefined;
+  /** How the resume is scheduled; the real timer when unset (tests step a clock). */
+  readonly later?: DutyLater | undefined;
   /** The memory cap, and who holds it: the kernel (a cgroup) or this watch alone. */
   readonly cap: MemoryCap;
   /** The tree's CPU ticks so far and resident KiB, at the last tick. */
@@ -1129,6 +1167,7 @@ export function watchTree(
   writable: readonly string[],
   label: string | undefined,
   breach: (why: string) => void,
+  pause?: { readonly cores: number; readonly signal?: Signaller; readonly later?: DutyLater },
 ): () => void {
   const entry: Watched = {
     root,
@@ -1142,10 +1181,14 @@ export function watchTree(
     key: nextKey++,
     label,
     cap,
+    ...(pause === undefined ? {} : { duty: newDuty(pause.cores), signal: pause.signal, later: pause.later }),
   };
+  const signal = pause?.signal ?? signalTree;
   watched.add(entry);
   timer ??= setInterval(() => during("cell-watch", tick), WATCH.tickMs);
   return () => {
+    // A paused tree is always resumed when the watch ends.
+    if (entry.duty !== undefined) resumeNow(entry.duty, root, signal);
     watched.delete(entry);
     if (watched.size === 0 && timer !== undefined) {
       clearInterval(timer);
@@ -1164,7 +1207,7 @@ export function watchLabelled(pid: number, label: string): () => void {
   return watchTree(pid, unlimited, { bytes: Infinity, by: "watch" }, [], label, () => {});
 }
 
-interface ProcessRow {
+export interface ProcessRow {
   ppid: number;
   ticks: number;
 }
@@ -1334,9 +1377,20 @@ export function cpuSample(
 }
 
 function tick(): void {
+  watchTick();
+}
+
+/**
+ * One tick of the watch over every watched cell, at `now` against `table`.
+ * The interval calls it with the clock and `/proc`; tests drive it with a
+ * table and a clock of their own.
+ */
+export function watchTick(
+  now = Date.now(),
+  table?: { rows: Map<number, ProcessRow>; children: Map<number, number[]> },
+): void {
   if (watched.size === 0) return;
-  const { rows, children } = processTable();
-  const now = Date.now();
+  const { rows, children } = table ?? processTable();
   for (const entry of [...watched]) {
     const tree: number[] = [];
     const walk = (pid: number): void => {
@@ -1360,6 +1414,7 @@ function tick(): void {
       ticks += rows.get(pid)?.ticks ?? 0;
     }
     entry.last = { ticks, kib };
+    if (entry.duty !== undefined) dutyTick(entry.duty, entry.root, ticks, now, CLK_TCK, entry.signal ?? signalTree, entry.later);
     if (kib > limits.memoryMiB * 1024) {
       entry.breach(
         `used ${mib(kib * 1024)} of memory, over its ${limits.memoryMiB} MiB limit (${memorySource(limits.memorySource, limits.ceilingFrom)})`,

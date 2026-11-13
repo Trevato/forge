@@ -10,6 +10,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GIVE_UP_MS, isNewer, lastProof, proofDue, proofNeed, proveRelease, proveRunning, QUICK_RETRIES, retryAfter, RETRY_MS, startProving, type Proof, type ProveOptions } from "../src/release/prove.ts";
+import { journeyLine, plain } from "../src/release/words.ts";
+import type { JourneyResult } from "../src/release/journey.ts";
 import { owned } from "../src/crew/incidents.ts";
 
 const CSS = '<html><link rel="stylesheet" href="/a.css"></html>';
@@ -86,6 +88,32 @@ describe("proving a release", () => {
     expect(await run("1.2.4", again.fake)).toBeUndefined();
     expect(again.hits).toEqual([]);
     expect(proofNeed(dir)?.since).toBe(need.since);
+  });
+
+  const walk = (over: Partial<JourneyResult>) => async (): Promise<JourneyResult> => ({ ok: true, screens: ["home", "claim", "forge"], readyMs: 12_000, firstActivityMs: 41_000, forge: "probe-1", removed: true, ...over });
+
+  test("a failed stranger's journey leaves the release unproven, retried on the schedule", async () => {
+    const p = await run("4.0.0", site("4.0.0").fake, { journey: walk({ ok: false, failure: "the forge never answered", readyMs: null, firstActivityMs: null }) });
+    expect(p?.ok).toBe(false);
+    expect(p?.failure).toBe("a stranger's journey failed: the forge never answered");
+    expect(proofNeed(dir)?.sentence).toContain("never answered");
+    expect(p?.failures).toBe(1);
+    // not asked again before retryAfter, and then once
+    expect(await run("4.0.0", site("4.0.0").fake, { journey: walk({}) })).toBeUndefined();
+    const later = await run("4.0.0", site("4.0.0").fake, { journey: walk({ ok: false, failure: "x" }), now: () => Date.now() + retryAfter(1) + 1 });
+    expect(later?.failures).toBe(2);
+  });
+
+  test("a passing walk keeps its timings, and they reach the card", async () => {
+    const p = await run("4.0.1", site("4.0.1").fake, { journey: walk({}) });
+    expect(p?.ok).toBe(true);
+    expect(lastProof(dir)?.journey).toEqual({ readyMs: 12_000, firstActivityMs: 41_000, screens: ["home", "claim", "forge"] });
+    expect(journeyLine(plain, lastProof(dir)?.journey, (n) => n)).toBe("a stranger's forge was ready in 12 s and the crew working in 41 s");
+  });
+
+  test("an older proof without timings reads as before", () => {
+    expect(journeyLine(plain, undefined, (n) => n)).toBeUndefined();
+    expect(journeyLine(plain, { readyMs: 5, firstActivityMs: null }, (n) => n)).toBeUndefined();
   });
 
   test("the same version on restart does not run again", async () => {

@@ -22,6 +22,7 @@ The page a visitor reads first runs past §3's working scale on purpose, in `cla
 - `.door-when` — where a change was made and how long ago.
 - `.door-section` — one section after the hero, with room above it and an offset for anchors.
 - `.door-shelf` — the apps, pinned ones first in the owner's order: two columns on a phone, four from 720px, each a §5 card with its frame taken off.
+  Who is shown (#11902): only apps owned by a forge admin and apps an admin pinned; a signed-up stranger's unpinned app is on `/explore`, never here. The filter runs before the ranking is cached, the signed-out palette offers the same set (`doorRepos`), and with none the shelf reads "Nothing public is up yet".
 - `.door-kick` — a small monospace label: an app's number and state, or a note that something is coming.
 - `.door-line` — an app's description, two lines at most, holding its height so the doors line up.
 - `.door-verbs` — an app's doors in plain monospace words; the first, `.door-verb-first`, is the one that opens it.

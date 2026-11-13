@@ -1,3 +1,4 @@
+import { SIGN_IN_AS_ADMIN } from "../../core/roles.ts";
 import { mayView } from "../../core/sealed.ts";
 import { getIssue, LIST_LIMIT_MAX } from "../../core/issues.ts";
 import { canRead, canWrite, getRepo, type Repo } from "../../core/repos.ts";
@@ -73,6 +74,9 @@ export interface Tool {
   run(ctx: Ctx, user: User, args: Args): Promise<Answer> | Answer;
 }
 
+/** What an everyday account calling an admin's tool by name is told: not here, and the one sentence on what to do next. */
+export const notAdminTool = (name: string): string => `no tool named ${name} for this account. ${SIGN_IN_AS_ADMIN}`;
+
 /** Whether this caller is shown the tool and may call it: one rule for the manifest and dispatch. */
 export const visible = (tool: Tool, ctx: Ctx, user: User): boolean =>
   (tool.adminOnly !== true || user.isAdmin) &&
@@ -125,8 +129,6 @@ function askedWork(ctx: Ctx, user: User, via: string, tool: Tool, args: Args, wo
 export function heldWrite(ctx: Ctx, user: User, tool: Tool, args: Args): Record<string, unknown> | undefined {
   const via = ctx.auth.through;
   if (via === undefined || !tool.writes || plansOnly(tool, args)) return undefined;
-  // An admin-only tool stays unknown to a person who is not one.
-  if (tool.adminOnly === true && !user.isAdmin) return undefined;
   const words = fenceUp(ctx.app.db, via);
   if (words === undefined || named(words, tool.name, args) || askedWork(ctx, user, via, tool, args, words)) return undefined;
   if (tooBigToApprove(args)) return tooBig(tool.name);
@@ -184,7 +186,8 @@ export function askedFirst(ctx: Ctx, user: User, tool: Tool, args: Args): Record
   const via = ctx.auth.through;
   if (via === undefined) return undefined;
   // What the person may not do stays unknown to their agent.
-  if ((tool.adminOnly === true || tool.needsAdminScope === true) && !user.isAdmin) return undefined;
+  // An admin-only tool is refused before this, in mcp.ts (#11818).
+  if (tool.needsAdminScope === true && !user.isAdmin) return undefined;
   const short = tool.needsAdminScope === true && !scopeAllows(ctx.auth.scope ?? "ro", "admin");
   if (!short && (!tool.writes || plansOnly(tool, args) || !asksFirst(tool.name, args))) return undefined;
   if (tooBigToApprove(args)) return tooBig(tool.name);

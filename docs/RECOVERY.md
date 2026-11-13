@@ -35,10 +35,10 @@ A machine with `git`, `bun` and a clone of the forge (`bun install`).
 
 ## Route 1 — the restore command
 
-    bun run src/snapshot/restore.ts <snapshot-name|latest> <data-dir> [--clones N]
+    bun run src/snapshot/restore.ts <snapshot-name|latest> <data-dir> [--clones N] [--offsite]
 
-`<data-dir>` must be empty or new. `--clones N` (1–32) sets how many
-repositories clone at once (default: cores less one, 2–16).
+`<data-dir>` must be empty or new. `--clones N` (1–32): repositories cloned at once
+(default: cores less one, 2–16). `--offsite`: from the sealed lane, [features/offsite-lane.md](features/offsite-lane.md).
 
 Then boot the forge on that directory, on a side port, off the public one:
 

@@ -54,6 +54,8 @@ function foreignNote(repo: string): string {
 
 /** Free disk under this share of the volume is something to say. */
 export const DISK_FREE_MIN = 0.1;
+/** Used shares of the disk under the forge's data the owner hears of, highest first (#11800). */
+export const DISK_USED_MARKS = [0.8, 0.7] as const;
 /** This many error lines in an hour is a burst worth saying. */
 export const ERROR_BURST = 20;
 /** A run still running this long after it started is stuck even if it breathes. */
@@ -71,7 +73,7 @@ export interface EnvCount {
 
 /**
  * One cause of the forge being off: the `needs` sentence, a `cause` key that
- * holds for as long as its condition does (`disk`, `errors`, `internal`,
+ * holds for as long as its condition does (`disk`, `disk-floor`, `disk-80`, `disk-70`, `errors`, `internal`,
  * `queue:<kind>`, `release`, `stuck:<runId>`, `red:<repoId>`, `shared:<repoId>:<test>`), when it began by the forge's own evidence
  * (the oldest evidence the forge holds, else the first time this process saw
  * it, held until the cause clears; `at` is never the answer to a repeat
@@ -333,6 +335,9 @@ export function vitals(input: VitalsInput): Vitals {
   };
 
   const disk = (input.disk ?? readDisk)(input.dataDir);
+  // Room to spare (#11940): at 100 GiB free no share-of-the-disk guard speaks,
+  // the floor and the marks alike.
+  const room = roomy(disk);
   if (disk.totalBytes > 0 && disk.freeBytes / disk.totalBytes < (input.diskFreeMin ?? DISK_FREE_MIN))
     need(
       "disk",
@@ -340,13 +345,25 @@ export function vitals(input: VitalsInput): Vitals {
       undefined,
       "/settings/capacity",
     );
-  else if (disk.totalBytes > 0 && !roomy(disk) && disk.freeBytes / disk.totalBytes < DISK_FLOOR)
+  else if (disk.totalBytes > 0 && !room && disk.freeBytes / disk.totalBytes < DISK_FLOOR)
     need(
       "disk-floor",
       `Disk is under the ${DISK_FLOOR * 100}% the forge keeps for itself: ${Math.round((disk.freeBytes / disk.totalBytes) * 100)}% free. Child forges sleep, and no child forge, app or check starts, until room is made.`,
       undefined,
       "/settings/capacity",
     );
+  else if (disk.totalBytes > 0 && !room) {
+    // The owner hears well before the floor (#11800): one need for the highest mark passed.
+    const used = 1 - disk.freeBytes / disk.totalBytes;
+    const mark = DISK_USED_MARKS.find((m) => used >= m);
+    if (mark !== undefined)
+      need(
+        `disk-${Math.round(mark * 100)}`,
+        `Disk under the forge's data is ${Math.floor(used * 100)}% used, past the ${Math.round(mark * 100)}% mark.`,
+        undefined,
+        "/system",
+      );
+  }
 
   for (const file of openDbFiles(input.dataDir))
     need(`file:${file.name}`, file.sentence, undefined, "/settings/capacity");

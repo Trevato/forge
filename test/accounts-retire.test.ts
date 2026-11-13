@@ -125,8 +125,8 @@ describe("accounts: the confirm page for removing an organization too", () => {
 
   test("a non-admin and a cross-origin post are refused, changing nothing", async () => {
     await seed("rc");
-    expect((await fetch(`${base}/settings/accounts/rc/retire`, { headers: other })).status).toBe(404);
-    expect((await post("rc", other)).status).toBe(404);
+    expect((await fetch(`${base}/settings/accounts/rc/retire`, { headers: other })).status).toBe(403);
+    expect((await post("rc", other)).status).toBe(403);
     expect((await post("rc", { ...admin, origin: "https://evil.example" })).status).toBe(403);
     expect(getUserByName(app.db, "rc")?.removedAt).toBeNull();
     expect(existsSync(repoDir(app.reposRoot, "rcco", "ledger"))).toBe(true);

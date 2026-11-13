@@ -51,8 +51,10 @@ test("one <h2> per part, each in a settings-block, and no card", async () => {
   expect(heads).toEqual([
     "Machine",
     "Disks and network",
+    "Largest under the forge's data",
     "Processes",
     "What the forge stands on",
+    "Off-site backup",
     "Loop lag, last 20 minutes",
     "Main-thread stalls, last hour",
     "Telemetry readers",

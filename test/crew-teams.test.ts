@@ -79,10 +79,10 @@ describe("crew teams", () => {
     expect(text).not.toContain("Owns <b>looks");
   });
 
-  test("a non-admin gets the 404 on read and write, and a cross-origin post is refused", async () => {
+  test("a non-admin gets 403 on read and write, and a cross-origin post is refused", async () => {
     const page = await fetch(`${servers.url}/settings/teams`, { headers: { cookie: cookie(bob) } });
-    expect(page.status).toBe(404);
-    expect((await post(bob, "design", new URLSearchParams({ dial: "90" }))).status).toBe(404);
+    expect(page.status).toBe(403);
+    expect((await post(bob, "design", new URLSearchParams({ dial: "90" }))).status).toBe(403);
     expect(dialOf("design")).toBe(30);
     expect((await post(alice, "design", new URLSearchParams({ dial: "5" }), "http://evil.example")).status).toBe(403);
     expect(dialOf("design")).toBe(30);

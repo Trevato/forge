@@ -38,6 +38,7 @@ export type FileKind =
   | "contacts"
   | "mail"
   | "gcode"
+  | "dxf"
   | "sarif"
   | "lcov"
   | "junit"
@@ -86,6 +87,7 @@ export const RENDER_CAP: Readonly<Record<FileKind, number>> = {
   contacts: 5 * MB,
   mail: 5 * MB,
   gcode: 50 * MB,
+  dxf: 5 * MB,
   sarif: 5 * MB,
   lcov: 5 * MB,
   junit: 5 * MB,
@@ -220,6 +222,7 @@ const TEXTUAL: Readonly<Record<string, FileKind>> = {
   eml: "mail",
   gcode: "gcode",
   gco: "gcode",
+  dxf: "dxf",
   sarif: "sarif",
   lcov: "lcov",
   sql: "sql",
@@ -268,6 +271,10 @@ const isArchive = (path: string, head: Uint8Array): boolean => {
   if (ext === "gz" && !/\.tar\.gz$/i.test(path)) return false;
   return ARCHIVES[ext]?.(head) === true;
 };
+
+/** An ASCII DXF opens on group code 0, then `SECTION`, whatever the file is named. */
+const isDxfHead = (head: Uint8Array): boolean =>
+  /^\uFEFF?\s*0\r?\nSECTION\r?\n/.test(new TextDecoder().decode(head.subarray(0, 64)));
 
 /** For a caller that has only a name: the kind its extension gives. */
 export const NO_BYTES: Uint8Array = new Uint8Array(0);
@@ -325,7 +332,7 @@ export function fileKind(path: string, head: Uint8Array): FileKind {
   if (isDockerfileName(path)) return "dockerfile";
   if (isWorkflowName(path)) return "workflow";
   if (isComposeName(path)) return "compose";
-  return TEXTUAL[extension(path)] ?? "text";
+  return TEXTUAL[extension(path)] ?? (isDxfHead(head) ? "dxf" : "text");
 }
 
 /** Kinds whose renderer links paths to files in the repository, so the page reads the ref's file list. */

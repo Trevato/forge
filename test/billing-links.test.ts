@@ -198,7 +198,7 @@ test("Settings → Billing: set three links, the home shows them; clear, the hom
   const page = await (await fetch(`${servers.url}/settings/billing`, { headers: { cookie: adminCookie } })).text();
   expect(page).toContain("Payment links");
   for (const z of ["small", "medium", "large"]) expect(page).toContain(`name="${z}"`);
-  expect((await links(memberCookie, LINKS)).status).toBe(404);
+  expect((await links(memberCookie, LINKS)).status).toBe(403);
   const bad = await links(adminCookie, { ...LINKS, large: "http://nope.test" });
   expect(bad.status).toBe(422);
   const badPage = await bad.text();

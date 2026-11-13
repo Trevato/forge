@@ -167,8 +167,8 @@ describe("the page a nightly issue links to", () => {
     expect(await res.text()).toContain("No output here yet");
   });
 
-  test("anyone but an admin, and any job that is not one, is not found", async () => {
-    expect((await fetch(`${servers.url}${runPath("outside-gate")}`, { headers: { cookie: await login("bob") } })).status).toBe(404);
+  test("anyone but an admin is refused, and any job that is not one is not found", async () => {
+    expect((await fetch(`${servers.url}${runPath("outside-gate")}`, { headers: { cookie: await login("bob") } })).status).toBe(403);
     expect((await fetch(`${servers.url}${runPath("sync-env")}`, { headers: { cookie: await login("alice") } })).status).toBe(404);
     const anon = await fetch(`${servers.url}${runPath("outside-gate")}`, { redirect: "manual" });
     expect(anon.status).not.toBe(200);

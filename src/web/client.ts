@@ -16,51 +16,10 @@ import { actNowJs } from "./act_now.ts";
 import { pickJs } from "./pick.ts";
 import { imageViewJs } from "./render/image.ts";
 import { STAGE_BADGE_JS } from "./stage-row.ts";
+import { overlayHostJs } from "./overlay_host.ts";
 import { paletteHelpersJs } from "./palette.ts";
 import { MEDIA_PLAY_JS } from "./render/player.ts";
 import { NOT_TOLD_WORDS } from "../actions/tell_words.ts";
-
-/**
- * A native `<dialog>` opened as a modal that owns its Escape. Shared by the
- * scripts that open one (the palette, the help, the finder), because the
- * leak is the same for each: a `showModal()` dialog closes on Escape through
- * the browser's default action, and the *keydown itself* is left unhandled —
- * which a fullscreen browser window on macOS reads as "leave fullscreen".
- * So Escape is consumed on keydown and the dialog is closed by hand; the
- * dialog's own `cancel` is caught the same way for the browsers that raise
- * it regardless. Nothing is listened for while the dialog is closed, and on
- * close the focus goes back to where it was.
- *
- * Returns `close`, which is safe to call more than once.
- */
-const modalJs = /* js */ `
-  function openModal(dlg, onClose) {
-    var was = document.activeElement;
-    var done = false;
-    function onKey(e) {
-      if (e.key !== 'Escape') return;
-      e.preventDefault();
-      e.stopPropagation();
-      close();
-    }
-    function onCancel(e) { e.preventDefault(); close(); }
-    function close() {
-      if (done) return;
-      done = true;
-      dlg.removeEventListener('keydown', onKey);
-      dlg.removeEventListener('cancel', onCancel);
-      dlg.removeEventListener('close', close);
-      if (dlg.open) dlg.close();
-      if (onClose) onClose();
-      if (was && was.focus && document.contains(was)) { try { was.focus(); } catch (_) {} }
-    }
-    dlg.addEventListener('keydown', onKey);
-    dlg.addEventListener('cancel', onCancel);
-    dlg.addEventListener('close', close);
-    dlg.showModal();
-    return close;
-  }
-`;
 
 /**
  * The device-code page's only enhancement: listen on the page's own stream
@@ -518,7 +477,7 @@ export const appTailJs = /* js */ `
 export const codeJs = /* js */ `
 (function () {
   var doc = document;
-  ${modalJs}
+  ${overlayHostJs}
   var cfg = doc.getElementById('code');
   if (!cfg || typeof fetch === 'undefined') return;
   var nav = doc.querySelector('.explorer');
@@ -1295,7 +1254,7 @@ export const moduleLoaderJs = /* js */ `
 const shellCore = /* js */ `
 (function () {
   var doc = document;
-  ${modalJs}
+  ${overlayHostJs}
   ${imageViewJs}
 
   // Controls that only mean something with a script running stay hidden
@@ -1305,35 +1264,7 @@ const shellCore = /* js */ `
   // ---- a file the browser cannot play: its note, with Download ----
   ${MEDIA_PLAY_JS}
 
-  // ---- menus (details) ----
-  function closeMenus(except) {
-    doc.querySelectorAll('details.menu[open]').forEach(function (m) {
-      if (m !== except) m.removeAttribute('open');
-    });
-  }
-  doc.addEventListener('click', function (e) {
-    var t = e.target;
-    closeMenus(t && t.closest ? t.closest('details.menu') : null);
-  });
-  doc.addEventListener('keydown', function (e) {
-    if (e.key !== 'Escape') return;
-    var open = doc.querySelector('details.menu[open]');
-    if (open) {
-      open.removeAttribute('open');
-      var s = open.querySelector('summary');
-      if (s) s.focus();
-      // Consumed: an Escape the page lets through leaves fullscreen on macOS.
-      e.preventDefault();
-      e.stopPropagation();
-    }
-  });
-  doc.addEventListener('toggle', function (e) {
-    var m = e.target;
-    if (!m || !m.matches || !m.matches('details.menu[open]')) return;
-    closeMenus(m);
-    var first = m.querySelector('.menu-panel .menu-item, .menu-panel input');
-    if (first && !first.closest('.theme-form')) first.focus();
-  }, true);
+  // ---- menus (details): opened, dismissed and focused by the overlay host ----
   doc.addEventListener('keydown', function (e) {
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     var panel = e.target && e.target.closest ? e.target.closest('.menu-panel') : null;
@@ -2193,22 +2124,12 @@ const shellCore = /* js */ `
       dlg.style.setProperty('--vv-h', Math.max(0, vv.height) + 'px');
     }
     if (vv) { fit(); vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); }
-    // A press anywhere but the input would move the focus off it. Where it
-    // began is remembered: a drag that starts inside and ends on the
-    // backdrop is a selection, not a dismissal.
-    var pressedOutside = false;
-    function outside(e) {
-      var r = dlg.getBoundingClientRect();
-      return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
-    }
-    dlg.onpointerdown = function (e) {
-      pressedOutside = e.target === dlg && outside(e);
-      if (e.target !== input) e.preventDefault();
-    };
+    // A press anywhere but the input would move the focus off it; a press
+    // outside the box is the overlay host's to dismiss.
+    dlg.onpointerdown = function (e) { if (e.target !== input) e.preventDefault(); };
     dlg.onclick = function (e) {
       var x = e.target && e.target.closest ? e.target.closest('[data-palette-close]') : null;
-      if (x || (e.target === dlg && pressedOutside && outside(e))) { e.preventDefault(); close(); }
-      pressedOutside = false;
+      if (x) { e.preventDefault(); close(); }
     };
     input.oninput = function () { ask(input.value.trim()); render(false); };
     list.onpointermove = function (e) {

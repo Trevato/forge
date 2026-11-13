@@ -233,6 +233,6 @@ describe("connecting stripe", () => {
     const saved = await form("secret", { secret: "whsec_another12345" });
     expect(await flashOf(saved)).toContain("Signing secret saved.");
     const asBob = await fetch(`${servers.url}/settings/billing/stripe/connect`, { method: "POST", redirect: "manual", headers: { authorization: `Bearer ${createToken(app.db, bob.id, "bob", "admin").token}`, "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ key: KEY }) });
-    expect(asBob.status).toBe(404);
+    expect(asBob.status).toBe(403);
   });
 });

@@ -1,5 +1,5 @@
 [Unit]
-Description=The forge, restored from a snapshot, beside production
+Description=The forge: the supervisor of swaps (launch.ts), as in the image
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=0
@@ -11,9 +11,23 @@ Group=forge
 WorkingDirectory=/opt/forge
 EnvironmentFile=/etc/forge/forge.env
 Environment=FORGE_DATA=/var/lib/forge
-ExecStart=/usr/local/bin/bun run src/main.ts
+# Defaults; /etc/forge/forge.env overrides them (systemd: EnvironmentFile
+# settings win over Environment=), e.g. PORT=3100 and FORGE_SSH_PORT=0.
+Environment=PORT=3000
+Environment=FORGE_SSH_PORT=2222
+Environment=FORGE_CELL_MOUNTS=allow-list
+ExecStart=/usr/local/bin/bun run src/release/launch.ts
 Restart=always
 RestartSec=2
+# Cells (bubblewrap, per-cell limits) get their own cgroup under this unit.
+Delegate=yes
+# A swapped release is not launch.ts's child but lives in this unit's cgroup
+# (release/serving.json names it). Stopping or restarting the unit stops all of
+# them; on start launch.ts runs the kept swapped tree first (src/release/launch.ts),
+# so a restart returns to the same release. A swap in progress survives only
+# while the unit runs.
+KillMode=control-group
+TimeoutStopSec=60
 NoNewPrivileges=true
 ProtectSystem=full
 ReadWritePaths=/var/lib/forge

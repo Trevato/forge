@@ -170,13 +170,13 @@ test("the stall section lists route, ms and count, the route escaped", () => {
   expect(text).toContain('<td class="mono">/api/v1/telemetry/flow</td><td class="num mono">0</td><td class="num mono">0</td>');
 });
 
-test("/system shows the owner the stall section with the flow route; a member gets 404", async () => {
+test("/system shows the owner the stall section with the flow route; a member gets 403", async () => {
   const page = await fetch(`${servers.url}/system`, { headers: { cookie: await login("alice") } });
   expect(page.status).toBe(200);
   const html = await page.text();
   expect(html).toContain('id="sys-stalls"');
   expect(html).toContain('<tr data-route="/api/v1/telemetry/flow">');
-  expect((await fetch(`${servers.url}/system`, { headers: { cookie: await login("bob") } })).status).toBe(404);
+  expect((await fetch(`${servers.url}/system`, { headers: { cookie: await login("bob") } })).status).toBe(403);
 });
 
 const identity = (user?: User) => ({ sshUsername: user?.username ?? "git", remoteAddress: "127.0.0.1", fingerprint: "SHA256:test", user });

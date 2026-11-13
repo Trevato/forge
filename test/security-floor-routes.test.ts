@@ -68,6 +68,7 @@ const UNSEEDED: Record<string, string> = {
   "/docs/:file": "a file name of the documentation folder; the seed supplies no :file",
   "/bring/:id/:job": "needs a bring job of the signed-in person; the seed brings nothing",
   "/fleet/ops/:id": FLEET,
+  "/:owner/:name/archive/:file": "a tarball download of a ref, not a page; the file name is one the seed cannot guess",
   "/:owner/:name/bets/:id": BET,
   "/:owner/:name/chapters/:chapter": "needs a chapter, which the seed does not draft (test/chapters.test.ts covers it)",
   "/:owner/:name/builds/:label/cart": CART,

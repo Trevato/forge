@@ -6,6 +6,7 @@ import { createApp, type App } from "../src/app.ts";
 import { suspendAccount, unsuspendAccount } from "../src/actions/accounts.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { resolveAppHostname } from "../src/apps/proxy.ts";
+import { setFront } from "../src/actions/front.ts";
 import { createApp as createAppRecord } from "../src/core/apps.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
@@ -159,6 +160,11 @@ describe("a suspended account's repositories leave every list", () => {
     });
     if (ritaFork.status !== 201 && ritaFork.status !== 202)
       throw new Error(`fork: ${ritaFork.status} ${await ritaFork.text()}`);
+    // The door and the signed-out palette show the owner's apps and pins (#11902):
+    // pin sam's repository so a stranger's sighting of it is the door's, and
+    // suspension must remove it from there too.
+    const pinned = setFront(app, owner, { pinned: ["sam/tools"], hidden: [] });
+    if (!pinned.ok) throw new Error(JSON.stringify(pinned.error));
     readerCookie = `forge_session=${createSession(app.db, rita.id).token}`;
     ownerCookie = `forge_session=${createSession(app.db, owner.id).token}`;
   });

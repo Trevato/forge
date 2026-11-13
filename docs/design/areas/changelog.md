@@ -16,3 +16,7 @@ Each day is a `<section data-day>` with an `<h2>` (the day, the UTC mark when th
 ## Releases as rows (#9753)
 
 `/releases` is one `list setting-list` of `row()`s, no table, no card. The title is the short sha with its `live` and `preflight failed` badges; the meta line is the pull (`#7`), when it landed and, for the live one, since when it has been healthy. A release with a pull is one `<a>` to that pull; the Roll back form sits in the row's `after` slot, outside the link, so it posts with JavaScript off. The empty state is one muted line. No new class; `test/releases-page.test.ts` holds the shape.
+
+## Chapters on the changelog (#11868)
+
+A closed chapter is one `row()` in a `list setting-list` (its name as the title, the closing note's first sentence in plain words as the meta, `Means` and `Pulls` as the row's `facts` dl, the close date as the trail), followed by the pulls under the same day headings as everywhere else. The closing note is never shown as raw markdown: `noteWords` drops the headings and marks and keeps one sentence. No new class; `test/changelog-chapters.test.ts` holds it.

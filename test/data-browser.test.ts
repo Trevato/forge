@@ -24,6 +24,7 @@ quietLogs();
 const AUDITED_CLEAR: string[] = [
   "app_domain.said",
   "app_feature_setting.value",
+  "ask_filter.value",
   "comment.body",
   "degraded_span.sentence",
   "efficiency_sample.value",

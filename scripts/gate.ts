@@ -244,6 +244,18 @@ export function reviewRefusal(root = "."): string[] {
   return reviewProblems([...tests, ...code]);
 }
 
+/** What the pull adds, judged by `addedProblems` (#11884). Passes when no base resolves, like the rest. */
+export async function addedRefusal(cwd: string = process.cwd()): Promise<string[]> {
+  const { addedProblems, parseAdded } = await import("../src/kernel/review_rules.ts");
+  const base =
+    process.env.FORGE_CHECK_BASE ||
+    git(["merge-base", "origin/main", "HEAD"], cwd).out ||
+    git(["merge-base", "main", "HEAD"], cwd).out;
+  if (!base) return [];
+  const diff = git(["diff", "-U0", "--no-color", "--no-ext-diff", `${base}..HEAD`, "--", "src", "test"], cwd);
+  return diff.ok ? addedProblems(parseAdded(diff.out)) : [];
+}
+
 /**
  * A pull that changes a reachable surface must say how to try it on its
  * preview (#8889). Same base and same pass-when-unknown as `pinRefusal`.
@@ -295,7 +307,7 @@ export async function directionRefusal(cwd: string = process.cwd()): Promise<str
 // `bun scripts/gate.ts`: the audit alone, first in `forge.json`'s check, so
 // a stale exclusion fails in under a second — not after install and tsc.
 if (import.meta.main) {
-  const refusal = [...gateRefusal(presentTests()), ...(await pinRefusal()), ...(await tryItRefusal()), ...(await bothDoorsRefusal()), ...(await directionRefusal()), ...strayTestRefusal(), ...reviewRefusal(), ...billingDeletesRefusal()];
+  const refusal = [...gateRefusal(presentTests()), ...(await pinRefusal()), ...(await tryItRefusal()), ...(await bothDoorsRefusal()), ...(await directionRefusal()), ...strayTestRefusal(), ...reviewRefusal(), ...(await addedRefusal()), ...billingDeletesRefusal()];
   for (const line of refusal) console.error(`gate: ${line}`);
   process.exit(refusal.length === 0 ? 0 : 2);
 }

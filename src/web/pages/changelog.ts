@@ -11,6 +11,10 @@ import type { Ctx } from "../../http/context.ts";
 import { betNamesOfPulls } from "../../core/bets.ts";
 import { sourcesOfPulls } from "../../core/trusted_sources.ts";
 import { canRead, getRepo, type Repo } from "../../core/repos.ts";
+import { listChapters, type Chapter } from "../../core/chapters.ts";
+import { inChapter, isDrawable, noteWords } from "../../release/chapter_words.ts";
+import type { Database } from "bun:sqlite";
+import type { User } from "../../core/users.ts";
 import { newestLive, secondsWords } from "../../keeper/landed.ts";
 import { dayHeading, dayOf, daysJs, shippedToday } from "../../release/days.ts";
 import { chosenRepo, readLandings, type Landing, type Landings } from "../../release/landings.ts";
@@ -71,6 +75,104 @@ function gatheredRow(g: Gathered<Landing>, own: string | undefined, showRepo: bo
   });
 }
 
+/** A repository's chapter, with whether the reader may see that repository. */
+export interface ChapterEntry {
+  readonly repo: string;
+  readonly chapter: Chapter;
+  readonly canSee: boolean;
+}
+
+export type Group =
+  | { readonly kind: "chapter"; readonly repo: string; readonly chapter: Chapter; readonly landings: readonly Landing[] }
+  | { readonly kind: "loose"; readonly landings: readonly Landing[] };
+
+/**
+ * Landings (newest first) grouped under the chapter they closed (#11868). A landing belongs to a
+ * closed chapter of its repository when it merged after the chapter opened and no later than it
+ * closed (the tag stands at the default branch's tip at that close). Everything else is loose, in
+ * runs. A chapter is placed at its newest landing; one with no landing is not drawn; one the
+ * reader may not see, or that closes after `now`, is ignored. The words are the chapter's own
+ * (`chapter_notes.ts` wrote them at close); nothing is recomputed here.
+ */
+export function groupLandings(landings: readonly Landing[], entries: readonly ChapterEntry[], now: Date): Group[] {
+  const usable = entries.filter((e) => e.canSee && isDrawable(e.chapter, now));
+  const closes = (e: ChapterEntry): number => Date.parse(e.chapter.closedAt!);
+  const owner = (l: Landing): ChapterEntry | undefined => {
+    return usable
+      .filter((e) => e.repo.toLowerCase() === l.repo.toLowerCase() && inChapter(e.chapter, l.at))
+      .sort((a, b) => closes(a) - closes(b))[0];
+  };
+  const out: Group[] = [];
+  const placed = new Map<ChapterEntry, Landing[]>();
+  let run: Landing[] | undefined;
+  for (const l of landings) {
+    const e = owner(l);
+    if (e === undefined) {
+      if (run === undefined) {
+        run = [];
+        out.push({ kind: "loose", landings: run });
+      }
+      run.push(l);
+      continue;
+    }
+    run = undefined;
+    const members = placed.get(e);
+    if (members !== undefined) members.push(l);
+    else {
+      const first = [l];
+      placed.set(e, first);
+      out.push({ kind: "chapter", repo: e.repo, chapter: e.chapter, landings: first });
+    }
+  }
+  return out;
+}
+
+/**
+ * One query that moves whenever a chapter closes, is reopened or deleted, or a repository with
+ * one changes visibility: what the page's tag holds in place of the chapters themselves.
+ */
+export function chapterStamp(db: Database): string {
+  const r = db
+    .query<{ n: number; last: string | null; seen: string | null }, []>(
+      `SELECT count(*) AS n, max(chapter.closed_at) AS last, group_concat(DISTINCT repo.id || ':' || repo.visibility) AS seen
+         FROM chapter JOIN repo ON repo.id = chapter.repo_id WHERE chapter.state = 'closed'`,
+    )
+    .get();
+  return `${r?.n ?? 0}|${r?.last ?? ""}|${r?.seen ?? ""}`;
+}
+
+/** The closed chapters of the repositories the live landings came from, each marked with whether `user` may read its repository. */
+export function chapterEntries(db: Database, live: readonly Landing[], user: User | undefined): ChapterEntry[] {
+  const out: ChapterEntry[] = [];
+  for (const name of new Set(live.map((l) => l.repo))) {
+    const [o = "", n = ""] = name.split("/");
+    const repo = getRepo(db, o, n);
+    if (repo === undefined) continue;
+    const canSee = canRead(db, repo, user);
+    for (const chapter of listChapters(db, repo.id)) if (chapter.state === "closed") out.push({ repo: name, chapter, canSee });
+  }
+  return out;
+}
+
+/**
+ * A chapter's releases: the chapter is one row (its name linked to its page, the first sentence of
+ * its closing note in plain words, what it means and how many pulls it carried as facts), then the
+ * pulls under day headings as everywhere else, so each keeps its date.
+ */
+function chapterSection(g: Extract<Group, { kind: "chapter" }>, own: string | undefined, showRepo: boolean, zone: string, today: string): Html {
+  const c = g.chapter;
+  const said = noteWords(c.notes);
+  const head = row({
+    href: `/${g.repo}/chapters/${c.name}`,
+    nav: true,
+    title: c.name,
+    ...(said === "" ? {} : { meta: html`${said}` }),
+    facts: [...(c.means === "" ? [] : [{ label: "Means", value: c.means }]), { label: "Pulls", value: String(g.landings.length) }],
+    ...(c.closedAt === null ? {} : { trail: time(c.closedAt) }),
+  });
+  return html`<section class="mt" data-chapter="${c.name}"><ul class="list setting-list">${head}</ul>${byDay(g.landings, own, showRepo, zone, today)}</section>`;
+}
+
 /** Day sections in `zone`; the browser regroups them in its own (see `localDaysJs`), so the zone is named while it has not. */
 function byDay(list: readonly Landing[], own: string | undefined, showRepo: boolean, zone: string, today: string): Html[] {
   const days = new Map<string, Landing[]>();
@@ -91,6 +193,8 @@ export const localDaysJs = /* js */ `
   function regroup() {
     var root = document.getElementById('shipped');
     if (!root) return;
+    // Under chapter headings the server's grouping stands: moving rows between days would break the order.
+    if (root.querySelector('[data-chapter]')) return;
     var cards = root.querySelectorAll('[data-day]');
     var top = document.getElementById('shipped-today');
     if (!cards.length && !top) return;
@@ -156,11 +260,12 @@ export function shippedRegion(
   zone = "UTC",
   toLive?: { version: string; seconds: number },
   readable = true,
+  chapters: readonly ChapterEntry[] = [],
 ): Html {
-  const key = `${Bun.hash(JSON.stringify([read, choice, zone, toLive ?? null, readable])).toString(36)}:${Math.floor(now.getTime() / 60_000)}`;
+  const key = `${Bun.hash(JSON.stringify([read, choice, zone, toLive ?? null, readable, chapters])).toString(36)}:${Math.floor(now.getTime() / 60_000)}`;
   const kept = rendered.get(key);
   if (kept !== undefined) return kept;
-  const made = renderRegion(read, choice, now, zone, toLive, readable);
+  const made = renderRegion(read, choice, now, zone, toLive, readable, chapters);
   if (rendered.size >= REGIONS) rendered.delete(rendered.keys().next().value as string);
   rendered.set(key, made);
   return made;
@@ -174,6 +279,7 @@ function renderRegion(
   zone = "UTC",
   toLive?: { version: string; seconds: number },
   readable = true,
+  chapters: readonly ChapterEntry[] = [],
 ): Html {
   const keep = (l: Landing) => choice === "all" || l.repo === choice;
   const live = read.live.filter(keep);
@@ -193,10 +299,14 @@ function renderRegion(
     onItsWay.length === 0
       ? null
       : html`<h2 class="mt">On its way</h2><ul class="list setting-list">${onItsWay.map((l) => landingRow(l, read.own, choice === "all"))}</ul>`;
+  const groups = groupLandings(live, chapters, now);
+  const grouped = groups.some((g) => g.kind === "chapter");
   const gone =
     live.length === 0
       ? html`<p class="mt muted">Nothing has shipped yet.</p>`
-      : html`${byDay(live, read.own, choice === "all", zone, todayIs)}`;
+      : !grouped
+        ? html`${byDay(live, read.own, choice === "all", zone, todayIs)}`
+        : html`${groups.map((g) => (g.kind === "chapter" ? chapterSection(g, read.own, choice === "all", zone, todayIs) : byDay(g.landings, read.own, choice === "all", zone, todayIs)))}`;
   return html`${top}${way}${gone}`;
 }
 
@@ -211,15 +321,18 @@ export async function changelogPage(ctx: Ctx): Promise<Response> {
   const planned = nearMilestones(ctx.app, landed.own ?? ctx.app.config.forgeRepo, ctx.auth.user);
   const near = planned?.near ?? [];
   const everything = [...read.onItsWay, ...read.live];
+  // One aggregate read stands for the chapters in the tag; the per-repository reads wait until the tag has missed.
+  const stamp = chapterStamp(ctx.app.db);
   const choice = chosenRepo(new URL(ctx.request.url).searchParams.get("repo"), everything, read.own);
   const others = [...new Set(everything.map((l) => l.repo))].filter((r) => r !== read.own).slice(0, FILTERS);
   // The tag comes from what the page would say, before any of it is rendered:
   // a match answers 304 without building the page.
   const toLive = newestLive(ctx.app.db);
   const flashed = readFlash(ctx.request) !== undefined;
-  const tag = flashed ? undefined : changelogTag(read.version, everything, [choice, bet, read.commit, read.live.map((l) => `${l.repo}#${l.number}`), readable, toLive ?? null, everything.map((l) => timeAgo(l.at)), new Date().toISOString().slice(0, 10), ctx.auth.user?.id ?? null, ctx.auth.user?.isAdmin === true, ctx.theme ?? null, near]);
+  const tag = flashed ? undefined : changelogTag(read.version, everything, [choice, bet, read.commit, read.live.map((l) => `${l.repo}#${l.number}`), readable, toLive ?? null, everything.map((l) => timeAgo(l.at)), new Date().toISOString().slice(0, 10), ctx.auth.user?.id ?? null, ctx.auth.user?.isAdmin === true, ctx.theme ?? null, near, stamp]);
   const keep = tag === undefined ? undefined : cacheHeaders(ctx, tag);
   if (keep !== undefined && keep.matched) return keep.response;
+  const chapters = chapterEntries(ctx.app.db, read.live, ctx.auth.user);
   const rendering = performance.now();
   const filters = seg([
     ...(read.own === undefined ? [] : [{ label: "This forge", href: "/changelog", current: choice === read.own }]),
@@ -234,7 +347,7 @@ export async function changelogPage(ctx: Ctx): Promise<Response> {
           ...bets.map((b) => ({ label: b, href: `/changelog?bet=${encodeURIComponent(b)}`, current: bet === b })),
         ]);
   const body = html`${pageHead("Changelog", { sub: "What went live, as it happens." })}${nearBlock(planned === undefined ? "" : repoBase(planned.repo), near)}${filters}${betFilters}${read.own !== undefined && readable ? html`<p class="small"><a href="/${read.own}/waves" data-waves-link>Read it by wave</a></p>` : null}
-    <div id="shipped" data-live="${LIVE}" aria-live="polite">${shippedRegion(read, choice, new Date(), "UTC", toLive, readable)}</div>`;
+    <div id="shipped" data-live="${LIVE}" aria-live="polite">${shippedRegion(read, choice, new Date(), "UTC", toLive, readable, chapters)}</div>`;
   const response = page({ ctx, title: "Changelog", body, feed: { href: "/changelog.atom", title: "Changelog" }, json: { href: `/api/v1/changelog${choice === read.own ? "" : `?repo=${encodeURIComponent(choice)}`}`, title: "Changelog (JSON)" }, scriptJs: `${liveRegionsJs}\n${localDaysJs}` });
   notePhase(ctx.request, "render", performance.now() - rendering);
   if (keep === undefined) return response;

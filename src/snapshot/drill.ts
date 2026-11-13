@@ -3,7 +3,7 @@
  * takes the newest snapshot, restores it into a fresh directory, opens the
  * database read-only, counts what is in it, opens one sealed value with the
  * restored key, boots the restored directory on a side port and reads
- * `/api/v1/health`, and removes the directory whatever happened.
+ * `/api/v1/health` and `/`, and removes the directory whatever happened.
  *
  * Plain data out: when it ran, which snapshot, how long, what it counted,
  * and a verdict. A red verdict names the step that failed; a step that
@@ -19,6 +19,7 @@ import { bootRestored } from "./boot.ts";
 import { forgetKey, open } from "../kernel/secret.ts";
 import { countRows, mismatched, type DrillCounts } from "./counts.ts";
 import { restoreSnapshot, type Progress } from "./restore.ts";
+import { isOffBox } from "./off_box.ts";
 import { listSnapshots } from "./snapshot.ts";
 import type { Store } from "./store.ts";
 
@@ -155,6 +156,17 @@ export interface DrillResult {
   readonly budgetMs: number;
   /** Why it is red, for the person reading; never a value. */
   readonly reason: string | null;
+  /** The store it restored from (`Store.where`, never a key); absent on drills kept before #11805. */
+  readonly from?: string | undefined;
+  /** Whether that store is off the forge's machine (`isOffBox`). */
+  readonly offSite?: boolean | undefined;
+}
+
+/** The restored forge's front door: `/` answers below 400 (a redirect to sign in is an answer), or this throws. */
+export async function answersRoot(base: string): Promise<void> {
+  const res = await fetch(`${base}/`, { redirect: "manual", signal: AbortSignal.timeout(5_000) });
+  await res.body?.cancel();
+  if (res.status >= 400) throw new Error(`the restored forge answered / with ${res.status}`);
 }
 
 class StepTimeout extends Error {}
@@ -276,7 +288,7 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
     step = "health";
     bootStart = performance.now();
     const booted = await within(
-      (deps.boot ?? bootRestored)(target, left()),
+      (deps.boot ?? bootRestored)(target, left(), undefined, answersRoot),
       left(),
       budget,
     );
@@ -323,6 +335,8 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
       phases,
       budgetMs,
       reason,
+      from: deps.store.where,
+      offSite: isOffBox(deps.store),
     };
   }
 }

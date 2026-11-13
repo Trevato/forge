@@ -95,7 +95,7 @@ describe("the mirror's admin routes", () => {
       const guest = await post(path, full);
       expect(guest.status).toBe(303);
       expect(guest.headers.get("location")).toContain("/signin");
-      expect((await post(path, full, bob)).status).toBe(404);
+      expect((await post(path, full, bob)).status).toBe(403);
     }
     expect(sealed()).toEqual([]);
   });

@@ -17,7 +17,7 @@ import { mayRead, mayRollBack } from "../src/release/gate.ts";
 import { recordRelease } from "../src/release/record.ts";
 import { createForgeApp, forgeCommands, Session } from "../src/tui/forge.ts";
 import type { Ctx } from "../src/tui/app/app.ts";
-import { readReleases, releasesScreen } from "../src/tui/screens/releases.ts";
+import { journeyText, readReleases, releasesScreen } from "../src/tui/screens/releases.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
@@ -156,6 +156,34 @@ describe("the releases screen", () => {
       expect(offered(alice)).toBe(true);
     } finally {
       app.config.forgeRepo = "alice/forge";
+    }
+  });
+
+  test("the stranger's journey line: present with a passing proof of the serving version, absent without, nothing for one who may not read", () => {
+    const was = process.env["FORGE_VERSION"];
+    process.env["FORGE_VERSION"] = "9.9.9";
+    const proof = (o: object) => {
+      mkdirSync(join(root, "release"), { recursive: true });
+      writeFileSync(join(root, "release", "proof.json"), JSON.stringify({ at: new Date().toISOString(), ...o }));
+    };
+    const journey = { readyMs: 12_000, firstActivityMs: 41_000, screens: [] };
+    try {
+      const a = new Session(app, identity(alice));
+      expect(journeyText(a)).toBeUndefined();
+      proof({ version: "9.9.9", ok: true, journey });
+      expect(journeyText(a)).toBe("a stranger's forge was ready in 12 s and the crew working in 41 s");
+      expect(journeyText(new Session(app, identity(carol)))).toBeUndefined();
+      expect(journeyText(new Session(app, identity(undefined)))).toBeUndefined();
+      proof({ version: "9.9.9", ok: true });
+      expect(journeyText(a)).toBeUndefined();
+      proof({ version: "9.9.8", ok: true, journey });
+      expect(journeyText(a)).toBeUndefined();
+      proof({ version: "9.9.9", ok: false, journey });
+      expect(journeyText(a)).toBeUndefined();
+    } finally {
+      if (was === undefined) delete process.env["FORGE_VERSION"];
+      else process.env["FORGE_VERSION"] = was;
+      rmSync(join(root, "release", "proof.json"), { force: true });
     }
   });
 });

@@ -93,5 +93,5 @@ test("the phone sheet's rules come after every base rule they override", () => {
     expect(components.indexOf(base)).toBeGreaterThan(-1);
     expect(components.indexOf(base)).toBeLessThan(sheet);
   }
-  expect(components).toContain("html:has(.palette[open]) { overflow: hidden; }");
+  expect(components).toContain("html[data-overlay] { overflow: hidden; }");
 });

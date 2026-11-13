@@ -13,8 +13,21 @@
  */
 
 import type { Credentials } from "../cluster/jobs.ts";
+import type { Stored } from "./prune.ts";
+
+/** Where a deployer keeps its releases, so the keeper can prune them (#11801). */
+export interface ReleaseStore {
+  /** Every release stored now, with when it was made. */
+  list(): Promise<Stored[]>;
+  /** The store id a reference names (`image()`, `refFor`, a known-good image); undefined when it names none here. */
+  idOf(ref: string): string | undefined;
+  /** Delete one stored release. */
+  remove(id: string): Promise<void>;
+}
 
 export interface Deployer {
+  /** Its stored releases, when it keeps any the keeper should prune. */
+  readonly store?: ReleaseStore;
   /** The image the Deployment's forge container names now. */
   image(): Promise<string>;
   /** Name this image on the forge container; the Deployment rolls to it with surge. */

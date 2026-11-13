@@ -139,7 +139,7 @@ describe("billing seam", () => {
     expect(text).toContain("Choose the plan each forge is on.");
     expect(text).toContain("Paste a Stripe secret or restricted key");
     expect(text).toContain('data-forge="kid"');
-    expect((await send("GET", "/settings/billing", bob)).status).toBe(404);
+    expect((await send("GET", "/settings/billing", bob)).status).toBe(403);
   });
 
   test("the Billing page says the last Stripe event and the refused signatures, or that none came", async () => {
@@ -157,9 +157,9 @@ describe("billing seam", () => {
     expect(after).toContain("<dt>Refused today</dt>");
   });
 
-  test("a non-admin gets 404 and no event data on the Billing page", async () => {
+  test("a non-admin gets 403 and no event data on the Billing page", async () => {
     const res = await send("GET", "/settings/billing", bob);
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(403);
     const text = await res.text();
     expect(text).not.toContain("invoice.paid");
     expect(text).not.toContain("Refused today");

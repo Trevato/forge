@@ -124,7 +124,7 @@ describe("self-swap on /capacity and MCP capacity", () => {
     }
   });
 
-  test("a member gets no selfSwap from the tool and a 404 from the page", async () => {
+  test("a member gets no selfSwap from the tool and a 403 from the page", async () => {
     const bob = await createUser(app.db, { origin: "seed", trusted: true, username: "bob", email: "b@forge.local", password: "a-good-passphrase" });
     if (!bob.ok) throw new Error(bob.error);
     const token = createToken(app.db, bob.value.id, "t", "admin").token;
@@ -132,7 +132,7 @@ describe("self-swap on /capacity and MCP capacity", () => {
     expect(result.isError).toBe(true);
     expect(result.content[0]!.text).not.toContain("selfSwap");
     const res = await fetch(`${servers.url}/settings/capacity`, { headers: { authorization: `Bearer ${token}` } });
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(403);
     expect(await res.text()).not.toContain("self-swap");
   });
 });

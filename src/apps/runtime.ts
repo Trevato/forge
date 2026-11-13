@@ -172,6 +172,8 @@ export interface RuntimeOptions {
    * its own, so proving `app.example.com` needs no network in a test.
    */
   readonly dns?: DomainResolver | undefined;
+  /** What the registrar adapter calls (`apps/dns_provider.ts`); the global `fetch` unless a test hands in its own. */
+  readonly dnsFetch?: typeof fetch | undefined;
   /**
    * What a check asks of a verified domain to read its certificate's expiry:
    * a TLS handshake unless a test hands in its own.
