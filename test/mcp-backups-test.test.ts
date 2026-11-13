@@ -119,21 +119,21 @@ describe("MCP backups_test", () => {
   test("a non-admin is refused and does not see the tool", async () => {
     const r = await test_(plain, fields("http://127.0.0.1:1"));
     expect(r.error).toBe(true);
-    const listed = await rpc(plain, "tools/list");
+    const listed = await rpc(plain, "tools/list", { all: true });
     expect(listed.result.tools.map((t: any) => t.name)).not.toContain("backups_test");
   });
 
   test("an admin's rw token neither sees nor can call it; an admin-scope token can", async () => {
-    const listed = await rpc(rw, "tools/list");
+    const listed = await rpc(rw, "tools/list", { all: true });
     expect(listed.result.tools.map((t: any) => t.name)).not.toContain("backups_test");
     const r = await test_(rw, fields("ftp://x"));
     expect(r.error).toBe(true);
-    const seen = await rpc(admin, "tools/list");
+    const seen = await rpc(admin, "tools/list", { all: true });
     expect(seen.result.tools.map((t: any) => t.name)).toContain("backups_test");
   });
 
   test("listed to an admin, not as a read", async () => {
-    const listed = await rpc(admin, "tools/list");
+    const listed = await rpc(admin, "tools/list", { all: true });
     const tool = listed.result.tools.find((t: any) => t.name === "backups_test");
     expect(tool.annotations?.readOnlyHint).not.toBe(true);
   });

@@ -65,6 +65,7 @@ export { tool as feed } from "./feed.ts";
 export { tool as feed_chips } from "./feed_chips.ts";
 export { tool as feed_dismiss } from "./feed_dismiss.ts";
 export { tool as feed_like } from "./feed_like.ts";
+export { tool as find_tool } from "./find_tool.ts";
 export { tool as flag_set } from "./flag_set.ts";
 export { tool as flag_winner } from "./flag_winner.ts";
 export { tool as flags } from "./flags.ts";

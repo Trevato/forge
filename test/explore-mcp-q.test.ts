@@ -68,7 +68,7 @@ test("explore with q filters; query is an alias; q wins", async () => {
 });
 
 test("tools/list shows q first", async () => {
-  const r = await rpc("tools/list", {});
+  const r = await rpc("tools/list", { all: true });
   const t = r.tools.find((x: any) => x.name === "explore");
   expect(Object.keys(t.inputSchema.properties)[0]).toBe("q");
 });

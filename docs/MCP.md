@@ -106,6 +106,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `feed_chips` | `kind`, `person` | Feed chips you switched off | 262 |
 | `feed_dismiss` | `dismissed`, `muted` | Dismiss a feed item or mute its app; `feed` then leaves it out | 280 |
 | `feed_like` | — | Like or unlike a feed item as a ledger row, or read its ledger | 308 |
+| `find_tool` | — | Find a tool by what it does; returns name, description and schema | 263 |
 | `flag_set` | — | Set or clear a flag (admin) | 209 |
 | `flag_winner` | — | An A/B flag winner becomes default | 206 |
 | `flags` | — | Declared flags: why, default, owner issue, live value | 171 |
@@ -174,7 +175,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `pulls` | — | A repository's pulls, newest first; no `repo`: all open pulls you may read, oldest first | 411 |
 | `queue_gates` | — | Recent merge-queue gates: pulls, verdicts, failing tests | 277 |
 | `quotas` | — | Enforced per-account quotas (never an admin): repositories, apps, storage, previews, runs, checks | 342 |
-| `read_file` | — | Read a file or list a directory at a ref (default branch); over 5 MB answers tooLarge | 307 |
+| `read_file` | — | No shell? Read a file or list a directory at a ref (default branch); over 5 MB answers tooLarge | 317 |
 | `release_hold` | — | Hold or release the release keeper's cuts (admin) | 202 |
 | `release_keeper` | — | The release keeper's releases, holds and what blocks the next cut | 192 |
 | `release_now` | — | Cut a release now, with a reason (admin) | 176 |
@@ -234,7 +235,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `waves` | — | Waves; `version`: one | 260 |
 | `week` | — | The week's retrospective; `take` accepts one proposal | 226 |
 | `whoami_can` | `role`, `passkeys` | What you can do: your role and its roles-table row, yes or no each | 231 |
-| `write_file` | — | Commit one file to a branch | 302 |
+| `write_file` | — | No shell? Commit one file to a branch | 342 |
 | `report` | — | Report a problem in a public repository, no account needed | 468 |
 | `start` | — | Start building with no account: an account, a repo, a live app and a token in one call | 358 |
 <!-- mcp-tools:end -->
@@ -397,6 +398,32 @@ longer sentences:
 - `model_ceiling.dailyUsd`/`perRunUsd`: 0.01–10000; both null clears; one null is refused. `model_grant.usdPerMonth`: 0 takes the grant back. `account_role.usdPerMonth`: omit or null for none.
 - `hold.why`: why, in one line; it shows on the pull. `runs.limit`: how many, 1 to 50; 20 when absent.
 - `boards.step`: with `panel`, seconds per bucket, or a count of `s`, `m`, `h` or `d`. `access.since`: ISO time; default a day, max 14 days.
+
+## Ask for less: the default list and `find_tool` (#11957)
+
+The MCP is the forge's control surface; repo work is git's (clone and push).
+`tools/list` opens with the tools that direct and watch a forge: `tell`,
+`say`, `next_up`, `now`, `runs`, `knobs`, `usage`, `apps`, `app_deploy`,
+`forges`, `find_tool`, plus `report` and `start` (`DEFAULT_TOOLS` in
+`src/http/mcp/catalog.ts`; `api` joins when it exists). `read_file` and
+`write_file` are not in it: they are the fallback for an agent with no shell
+("No shell? ..."), reached by `find_tool`, and no diff, blame, tree or
+multi-file tool is added on that side. The server instructions say so in two
+sentences. Every tool stays callable by name. `find_tool({ query })` returns
+up to eight tools whose name or description match every word, each with its
+description and schema, so a tool found is callable at once. A client that
+wants today's list sends `tools/list` with `{"all": true}` (paged as before).
+
+| What | Before | After |
+| --- | --- | --- |
+| `tools/list`, admin | ~62 KB, 196 tools (~15k tokens) | 5.6 KB, 13 tools (~1.4k tokens) |
+| A session that manages a forge (direct the crew, watch runs, deploy an app) and never loads a file tool | ~62 KB of tools | the same 5.6 KB list, no file tool in it |
+
+`test/mcp-size.test.ts` caps the default list at 6 KB and asserts the file
+tools are absent from it. Not done yet: the "full list" token setting, `api`,
+`run_wait`, `since`/`fields`, the card only for a client that renders cards,
+the `asks*`/`feed*` collapse; the cost of five common answers is measured
+when those land.
 
 ## Connecting
 

@@ -41,6 +41,7 @@ import { claimDone, completeWrite, dropWrite, recordWrite } from "../core/conver
 import { type Args, alreadyDone, notAdminTool, visible, plansOnly, str, REPO_ARG, lean, fenceAnswer, heldWrite, askedFirst, readThrough } from "./mcp/shared.ts";
 import { CONVERSATION_BRIEF } from "../crew/conversation_brief.ts";
 import { TOOLS } from "./mcp/tools.ts";
+import { DEFAULT_TOOLS, wantsAll } from "./mcp/catalog.ts";
 
 const PROTOCOLS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
 /** The tools/list entries for these tools, then `report`: what is served, and what docs/MCP.md measures. */
@@ -60,6 +61,9 @@ export function toolEntries(tools: readonly (typeof TOOLS)[number][]) {
     ...[REPORT_TOOL, START_TOOL].map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
   ];
 }
+
+/** The entries this caller may call, `report` and `start` included: what find_tool searches. */
+export const entriesFor = (ctx: Ctx, user: User) => toolEntries(TOOLS.filter((t) => visible(t, ctx, user)));
 
 // One page of tools/list stays within this many bytes of tools; `nextCursor`
 // names the rest, so adding a tool never busts one response.
@@ -137,7 +141,7 @@ function rpcOne(
           : PROTOCOLS[0],
         capabilities: { tools: {}, resources: {} },
         serverInfo: server(),
-        instructions: `This is a person's forge: their apps, and the crew that builds them. \`tell\` and \`say\` are how they direct it. Keep what you relay short — three sentences and the real options. A tool with \`dryRun\` plans unless it is \`false\`.${adminNote(ctx, user)}${hidden === "" ? "" : ` ${hidden}`}${
+        instructions: `This is a person's forge: their apps, and the crew that builds them. \`tell\` and \`say\` are how they direct it. Keep what you relay short — three sentences and the real options. This door runs the forge (crew, apps, forges). With a shell, clone and push for repo work; \`read_file\` and \`write_file\` are for agents with none. A tool with \`dryRun\` plans unless it is \`false\`.${adminNote(ctx, user)}${hidden === "" ? "" : ` ${hidden}`}${
           ctx.auth.through === undefined ? "" : ` ${CONVERSATION_BRIEF}`
         }`,
       });
@@ -145,7 +149,12 @@ function rpcOne(
     case "ping":
       return reply({});
     case "tools/list": {
-      const all = toolEntries(TOOLS.filter((t) => visible(t, ctx, user)));
+      // By default a short list (docs/MCP.md, "Ask for less"); `all: true` is every tool, paged.
+      const everything = wantsAll(params);
+      const listed = entriesFor(ctx, user);
+      const all = everything
+        ? listed
+        : listed.filter((t) => DEFAULT_TOOLS.includes(t.name));
       // The cursor is the name of the last tool of the page before, so a tool
       // added between two requests moves nothing.
       const cursor = params["cursor"];

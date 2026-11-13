@@ -127,7 +127,7 @@ describe("MCP backups", () => {
       const res = await fetch(`${servers.url}/mcp`, {
         method: "POST",
         headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}` },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: { all: true } }),
       });
       return ((await res.json()) as any).result.tools.map((t: { name: string }) => t.name) as string[];
     };

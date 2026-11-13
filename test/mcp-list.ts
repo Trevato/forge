@@ -2,16 +2,16 @@
 
 /** Every page of `send({ cursor })`, merged into one answer shaped like a page. */
 export async function listVia(
-  send: (params: { cursor?: string }) => Promise<any>,
+  send: (params: { cursor?: string; all?: true }) => Promise<any>,
 ): Promise<{ result: { tools: any[] } }> {
   const tools: any[] = [];
-  let params: { cursor?: string } = {};
+  let params: { cursor?: string; all?: true } = { all: true };
   for (;;) {
     const page = await send(params);
     if (page.error) throw new Error(`tools/list: ${page.error.message}`);
     tools.push(...page.result.tools);
     if (typeof page.result.nextCursor !== "string") return { result: { tools } };
-    params = { cursor: page.result.nextCursor };
+    params = { all: true, cursor: page.result.nextCursor };
   }
 }
 
