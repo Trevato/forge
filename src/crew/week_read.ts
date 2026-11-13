@@ -153,3 +153,8 @@ export function weekBlock(app: App, now: Date = new Date()): string[] {
 export function budgetEffect(app: App, now: Date = new Date()): string {
   return busiest(app, now, (_repo, week) => week.sentence.replace(/\.$/, "")) ?? "the week is not measured yet; nothing holds the crew but the provider";
 }
+
+/** The week as two numbers for a meter: the share used and the most the crew may use, for the busiest autonomous repository; null while no week is measured. */
+export function weekShare(app: App, now: Date = new Date()): { readonly usedPct: number; readonly mayUsePct: number } | null {
+  return busiest(app, now, (_repo, week) => ({ usedPct: week.usedPct, mayUsePct: week.mayUsePct }));
+}
