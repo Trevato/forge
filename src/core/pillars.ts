@@ -440,7 +440,7 @@ function firstLiveOf(
 ): (pullId: string, mergedAt: string) => string | undefined {
   const deploys = db
     .query<{ id: string; at: string }, [string, string]>(
-      `SELECT id, COALESCE(serving_at, finished_at) AS at FROM run
+      `SELECT id, COALESCE(serving_at, finished_at) AS at FROM run INDEXED BY run_deploy_live_at
         WHERE repo_id = ?1 AND kind = 'deploy' AND env = 'production' AND state = 'ok'
           AND COALESCE(serving_at, finished_at) >= ?2
         ORDER BY 2, id`,

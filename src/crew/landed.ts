@@ -36,7 +36,7 @@ export function landedUnanswered(db: Database, repo: Repo, issue: Issue): Pull |
   if (pull === undefined || pull.mergedAt === null) return undefined;
   const actors = db
     .query<{ actor: string }, [string, number, string]>(
-      `SELECT DISTINCT e.actor_id AS actor FROM event e
+      `SELECT DISTINCT e.actor_id AS actor FROM event e INDEXED BY event_repo_kind_number_at
         WHERE e.repo_id = ?1 AND e.kind IN ('issue.commented', 'issue.edited', 'issue.reopened')
           AND json_extract(e.payload, '$.number') = ?2 AND e.created_at >= ?3
           AND e.actor_id IS NOT NULL AND ${NOT_THE_NOTE}`,
