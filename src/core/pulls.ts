@@ -44,6 +44,7 @@ import {
 import { reviewSummary } from "./reviews.ts";
 import { checkStale, checksHold } from "../checks/stale.ts";
 import { checkSummary } from "./runs.ts";
+import { writeStamp } from "./write_clock.ts";
 
 export interface Pull extends Issue {
   readonly baseBranch: string;
@@ -1339,12 +1340,25 @@ export const CLOSERS_REUSE_MS = process.env["NODE_ENV"] === "test" ? 0 : 300_000
 
 const closersKept = new WeakMap<Database, Map<string, { at: number; sig: string; closers: Map<number, number> }>>();
 
-function closersOf(db: Database, repoId: string): Map<number, number> {
-  if (CLOSERS_REUSE_MS === 0) return mergedClosers(db, repoId);
+/** The merged-pull signature last read, and the write clock it was read at: nothing written since means the same signature. */
+const signatures = new WeakMap<Database, { clock: string; sig: string }>();
+
+/** How many pulls are merged and when the last was: one scan of `pull`, read again only after a write. */
+function mergedSignature(db: Database): string {
+  const clock = writeStamp(db);
+  const known = signatures.get(db);
+  if (clock !== undefined && known?.clock === clock) return known.sig;
   const m = db
     .query<{ c: number; m: string | null }, []>("SELECT COUNT(merged_at) AS c, MAX(merged_at) AS m FROM pull")
     .get();
   const sig = `${m?.c ?? 0}|${m?.m ?? ""}`;
+  if (clock !== undefined) signatures.set(db, { clock, sig });
+  return sig;
+}
+
+function closersOf(db: Database, repoId: string): Map<number, number> {
+  if (CLOSERS_REUSE_MS === 0) return mergedClosers(db, repoId);
+  const sig = mergedSignature(db);
   let kept = closersKept.get(db);
   if (kept === undefined) closersKept.set(db, (kept = new Map()));
   const now = Date.now();

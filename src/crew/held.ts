@@ -102,7 +102,7 @@ export function lastAgentRuns(app: App, ids: readonly string[]): Map<string, Las
         `SELECT issue_id, state, summary, created_at FROM (
            SELECT issue_id, state, summary, created_at,
                   ROW_NUMBER() OVER (PARTITION BY issue_id ORDER BY created_at DESC, id DESC) AS rn
-             FROM run WHERE kind = 'agent' AND issue_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")}))
+             FROM run INDEXED BY run_agent_issue_latest WHERE kind = 'agent' AND issue_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")}))
           WHERE rn = 1`,
       )
       .all(...batch))

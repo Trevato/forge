@@ -610,7 +610,7 @@ export function capReachedFor(
     const counts = new Map<string, number>();
     for (const r of db
       .query<{ issue_id: string; created_at: string }, string[]>(
-        `SELECT issue_id, created_at FROM run
+        `SELECT issue_id, created_at FROM run INDEXED BY run_agent_issue_latest
           WHERE issue_id IN (${marks}) AND kind = 'agent' AND created_at > ?1
             AND attempt = 0
             AND reason NOT IN ('review', 'conflict', 'check_failed')
