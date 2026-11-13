@@ -23,6 +23,7 @@ import { openPull } from "../src/actions/pulls.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { addTeamMember, createOrg, createTeam } from "../src/core/orgs.ts";
 import type { Repo } from "../src/core/repos.ts";
+import { createSession } from "../src/core/sessions.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { id } from "../src/kernel/id.ts";
@@ -52,7 +53,6 @@ describe("surfaces adversarial: web", () => {
   let servers: Servers;
   let base = "";
   let alice = "";
-  let alicePassword = "alice-adversarial-pass";
 
   const web = (
     cookie: string,
@@ -81,29 +81,13 @@ describe("surfaces adversarial: web", () => {
     return await response.text();
   };
 
-  const signUp = async (
-    username: string,
-    password = "a-good-passphrase-1",
-  ): Promise<string> => {
-    const response = await fetch(`${base}/signup`, {
-      method: "POST",
-      body: new URLSearchParams({
-        username,
-        email: `${username}@forge.test`,
-        password,
-      }),
-      redirect: "manual",
-    });
-    return `${(response.headers.get("set-cookie") ?? "").split(";")[0]!}; forge_mode=dev`;
-  };
-
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-surfaces-adv-"));
     // The standing sweep queries on a timer; the N+1 counts are of requests alone.
     app = createApp({ dataDir, port: 0, standingSweepMs: 3_600_000 });
     servers = await serve(app);
     base = servers.url;
-    alice = `${await adminCookie(app, { username: "alice", email: "alice@forge.test", password: alicePassword })}; forge_mode=dev`;
+    alice = `${await adminCookie(app, { username: "alice", email: "alice@forge.test", password: "alice-adversarial-pass" })}; forge_mode=dev`;
   }, 30_000);
 
   afterAll(async () => {
@@ -325,6 +309,7 @@ describe("surfaces adversarial: web", () => {
   // ---- 5. N+1 ----
 
   test("N+1: /apps does not cost more queries as private, org-visible apps grow", async () => {
+    // Invariant: a listing of private org apps costs the same statements at 30 apps as at 5. Users here are passwordless with a session row (no argon2); 2 measured runs.
     const org = createOrg(app.db, "acme-apps", aliceUser().id);
     expect(org.ok).toBe(true);
     if (!org.ok) return;
@@ -334,14 +319,11 @@ describe("surfaces adversarial: web", () => {
     const viewer = await createUser(app.db, { origin: "seed", trusted: true,
       username: "viewer1",
       email: "viewer1@forge.test",
-      password: "viewer-pass-1234",
     });
     expect(viewer.ok).toBe(true);
     if (!viewer.ok) return;
     expect(addTeamMember(app.db, team.value, viewer.value.id)).toBe(true);
-    const viewerCookie = await signUp("viewer1-cookie"); // unused path, just to reuse signUp's cookie header shape
-    void viewerCookie;
-    const cookie = await loginAs(base, "viewer1", "viewer-pass-1234");
+    const cookie = sessionFor(viewer.value.id);
 
     const seedApps = (n: number): void => {
       for (let i = 0; i < n; i++) {
@@ -367,20 +349,20 @@ describe("surfaces adversarial: web", () => {
     const small = await statements(app.db, async () => {
       const response = await web(cookie, "/apps");
       expect(response.status).toBe(200);
-    });
+    }, 2);
     seedApps(25); // 30 total now
     const large = await statements(app.db, async () => {
       const response = await web(cookie, "/apps");
       expect(response.status).toBe(200);
-    });
+    }, 2);
     expect(large).toBe(small);
   });
 
   test("N+1: the dashboard's Apps and On-you cards stay flat with 30 apps and 30 assigned issues", async () => {
+    // Invariant: the dashboard cards cost the same statements at 30 apps and 30 assigned issues as at 5. Users here are passwordless with a session row (no argon2); 2 measured runs.
     const owner = await createUser(app.db, { origin: "seed", trusted: true,
       username: "dashowner",
       email: "dashowner@forge.test",
-      password: "dashowner-pass-123",
     });
     expect(owner.ok).toBe(true);
     if (!owner.ok) return;
@@ -393,12 +375,11 @@ describe("surfaces adversarial: web", () => {
     const viewer = await createUser(app.db, { origin: "seed", trusted: true,
       username: "dashviewer",
       email: "dashviewer@forge.test",
-      password: "dashviewer-pass-1",
     });
     expect(viewer.ok).toBe(true);
     if (!viewer.ok) return;
     expect(addTeamMember(app.db, team.value, viewer.value.id)).toBe(true);
-    const cookie = await loginAs(base, "dashviewer", "dashviewer-pass-1");
+    const cookie = sessionFor(viewer.value.id);
 
     const seed = (n: number, offset: number): void => {
       for (let i = 0; i < n; i++) {
@@ -438,12 +419,12 @@ describe("surfaces adversarial: web", () => {
     const small = await statements(app.db, async () => {
       const response = await web(cookie, "/");
       expect(response.status).toBe(200);
-    });
+    }, 2);
     seed(25, 5); // 30 total of each
     const large = await statements(app.db, async () => {
       const response = await web(cookie, "/");
       expect(response.status).toBe(200);
-    });
+    }, 2);
     expect(large).toBe(small);
   });
 
@@ -453,10 +434,10 @@ describe("surfaces adversarial: web", () => {
   // `writableRepoIds` query (`REPO_WRITABLE`, the SQL twin of `canWrite`),
   // so the count must not move with the number of distinct repositories.
   test("N+1: needsYouCard does not cost more as agent pulls span more distinct repos", async () => {
+    // Invariant: needsYouCard costs the same statements at 30 distinct repos as at 5. Users here are passwordless with a session row (no argon2); 2 measured runs.
     const owner = await createUser(app.db, { origin: "seed", trusted: true,
       username: "needsowner",
       email: "needsowner@forge.test",
-      password: "needsowner-pass-1",
     });
     if (!owner.ok) return;
     const org = createOrg(app.db, "acme-needs", owner.value.id);
@@ -466,7 +447,6 @@ describe("surfaces adversarial: web", () => {
     const viewer = await createUser(app.db, { origin: "seed", trusted: true,
       username: "needsviewer",
       email: "needsviewer@forge.test",
-      password: "needsviewer-pass-1",
     });
     if (!viewer.ok) return;
     addTeamMember(app.db, team.value, viewer.value.id);
@@ -474,7 +454,7 @@ describe("surfaces adversarial: web", () => {
       username: "needsbot",
     });
     if (!agent.ok) return;
-    const cookie = await loginAs(base, "needsviewer", "needsviewer-pass-1");
+    const cookie = sessionFor(viewer.value.id);
 
     const seed = (n: number, offset: number): void => {
       for (let i = 0; i < n; i++) {
@@ -501,15 +481,16 @@ describe("surfaces adversarial: web", () => {
     await web(cookie, "/");
     const small = await statements(app.db, async () => {
       await web(cookie, "/");
-    });
+    }, 2);
     seed(25, 5);
     const large = await statements(app.db, async () => {
       await web(cookie, "/");
-    });
+    }, 2);
     expect(large).toBe(small);
   });
 
   test("N+1: the runs list does not cost more at 50 rows than at 5", async () => {
+    // Invariant: the runs list costs the same statements at 50 rows as at 5. Users here are passwordless with a session row (no argon2); 2 measured runs.
     const madeRepo = await createRepo(app, aliceUser(), {
       name: "runs-n1",
       visibility: "public",
@@ -530,16 +511,17 @@ describe("surfaces adversarial: web", () => {
     const small = await statements(app.db, async () => {
       const response = await web(alice, "/alice/runs-n1/runs");
       expect(response.status).toBe(200);
-    });
+    }, 2);
     seedRuns(45); // 50 total
     const large = await statements(app.db, async () => {
       const response = await web(alice, "/alice/runs-n1/runs");
       expect(response.status).toBe(200);
-    });
+    }, 2);
     expect(large).toBe(small);
   });
 
   test("N+1: a pull's crew activity does not cost more as its agent runs grow", async () => {
+    // Invariant: a pull page costs the same statements however many agent runs it has. Users here are passwordless with a session row (no argon2); 2 measured runs.
     const agent = await createAgent(app, aliceUser(), {
       username: "crewn1bot",
     });
@@ -598,7 +580,7 @@ describe("surfaces adversarial: web", () => {
         `/alice/crew-n1/pulls/${opened.value.number}`,
       );
       expect(response.status).toBe(200);
-    });
+    }, 2);
     seedActivity(20);
     const large = await statements(app.db, async () => {
       const response = await web(
@@ -606,7 +588,7 @@ describe("surfaces adversarial: web", () => {
         `/alice/crew-n1/pulls/${opened.value.number}`,
       );
       expect(response.status).toBe(200);
-    });
+    }, 2);
     expect(large).toBe(small);
   });
 
@@ -630,24 +612,15 @@ describe("surfaces adversarial: web", () => {
     expect(wide).toEqual([]);
   });
 
+  // A passwordless seeded user signed in by session row: no argon2 per user.
+  const sessionFor = (userId: string): string =>
+    `forge_session=${createSession(app.db, userId).token}; forge_mode=dev`;
+
   function aliceUser(): User {
     return getUserByName(app.db, "alice")!;
   }
 });
 
-/** Sign in over the API and return the session cookie's `cookie:` value. */
-async function loginAs(
-  base: string,
-  username: string,
-  password: string,
-): Promise<string> {
-  const response = await fetch(`${base}/signin`, {
-    method: "POST",
-    body: new URLSearchParams({ username, password }),
-    redirect: "manual",
-  });
-  return `${(response.headers.get("set-cookie") ?? "").split(";")[0]!}; forge_mode=dev`;
-}
 
 // ============================================================================
 // TUI
