@@ -7,6 +7,12 @@
  * app, then asks `<app>--<child>--<parent>` through that server until the
  * app's own body comes back. Nothing is faked: not the cell, not the child's
  * runtime, not the route. Printed: one JSON line of what was seen.
+ *
+ * With the argument `recover` (test/spawn-small-cell.test.ts, #11981) it also
+ * reads the child's cell limits, then stops the child as the host does for a
+ * memory breach (a recorded stop and its process tree killed) and polls every
+ * 100 ms until the app answers again, noting every status seen from the
+ * first request on, so a 429 at any moment is reported.
  */
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,13 +20,14 @@ import { join } from "node:path";
 import { createRepo } from "../../src/actions/repos.ts";
 import { spawnForge } from "../../src/actions/spawn.ts";
 import { createApp } from "../../src/app.ts";
-import { cellsAvailable } from "../../src/apps/contain.ts";
+import { cellsAvailable, killTree } from "../../src/apps/contain.ts";
 import { createUser, type User } from "../../src/core/users.ts";
 import { repoDir } from "../../src/git/repos.ts";
 import { commitFiles } from "../../src/git/write.ts";
 import { serve } from "../../src/http/server.ts";
-import { cellPlacement, stopCellChildren } from "../../src/spawn/cell.ts";
+import { cellChildren, cellPlacement, stopCellChildren } from "../../src/spawn/cell.ts";
 import { bootHostedChild } from "../../src/spawn/host.ts";
+import { noteStop } from "../../src/spawn/stopped.ts";
 import { memoryBodies } from "../../src/spawn/placement.ts";
 import "./roomy-disk.ts";
 
@@ -29,7 +36,9 @@ import "./roomy-disk.ts";
 // and a run that ran out says which phase did. The test's timeout is their sum
 // plus slack (see test/spawn-cell-e2e.test.ts).
 const SPAWN_MS = 120_000;
-const POLL_MS = 150_000;
+const POLL_MS = 60_000;
+const RECOVER_MS = 60_000;
+const recover = process.argv[2] === "recover";
 // A killed run (the test's timeout sends SIGTERM) still stops its cell children.
 let cleanup: () => Promise<void> = async () => {};
 // The spawn and boot work, kept so a teardown after its budget ran out waits
@@ -105,21 +114,36 @@ try {
   const spawning = spawnAndBoot(alice.value);
   pending = spawning;
   const made = await within(SPAWN_MS, "spawn and boot", spawning);
-  let status = 0;
-  let body = "";
-  let app: string | null = null;
-  const until = Date.now() + POLL_MS;
-  while (Date.now() < until) {
-    const res = await fetch(`${servers.url}/`, { headers: { host: "bakery--kid--forge.test" }, redirect: "manual" }).catch(() => undefined);
-    if (res !== undefined) {
-      status = res.status;
-      body = await res.text();
-      app = res.headers.get("x-forge-app");
-      if (status === 200 && app === "bakery") break;
+  const seen = new Set<number>();
+  // Asks the app's address until it answers 200 from the app, every `everyMs`; every status is
+  // noted.
+  async function pollApp(budgetMs: number, everyMs: number) {
+    let last = { status: 0, body: "", app: null as string | null };
+    const until = Date.now() + budgetMs;
+    while (Date.now() < until) {
+      const res = await fetch(`${servers.url}/`, { headers: { host: "bakery--kid--forge.test" }, redirect: "manual" }).catch(() => undefined);
+      if (res !== undefined) {
+        last = { status: res.status, body: await res.text(), app: res.headers.get("x-forge-app") };
+        seen.add(last.status);
+        if (last.status === 200 && last.app === "bakery") break;
+      }
+      await Bun.sleep(everyMs);
     }
-    await Bun.sleep(1000);
+    return last;
   }
-  console.log(JSON.stringify({ placement: made.value.placement, status, body: body.slice(0, 200), app }));
+  const first = await pollApp(POLL_MS, recover ? 100 : 1000);
+  let limits = null;
+  let after = null;
+  if (recover) {
+    const held = cellChildren(parent).list()[0];
+    limits = held?.limits ?? null;
+    if (held !== undefined) {
+      noteStop(parent, held.bodyId, "kid", "used 2374 MiB of memory, over its 2048 MiB limit", Date.now(), 1_000);
+      killTree(held.pid);
+      after = (await pollApp(RECOVER_MS, 100)).status;
+    }
+  }
+  console.log(JSON.stringify({ placement: made.value.placement, status: first.status, body: first.body.slice(0, 200), app: first.app, ...(recover ? { limits, after, statuses: [...seen] } : {}) }));
 } finally {
   await cleanup();
   parent.close();

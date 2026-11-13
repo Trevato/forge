@@ -22,7 +22,7 @@ import { openBeatDoor, parentLocal, type BeatDoor } from "./beat-door.ts";
 import { hostedPlacement, parentOrigin, childPublicUrl, type BodyStore, type Placement } from "./placement.ts";
 import { SIZE_IO, SIZES, type Size } from "./sizes.ts";
 import { floorRefusal } from "./disk_floor.ts";
-import { noteStop } from "./stopped.ts";
+import { markStopped, noteStop } from "./stopped.ts";
 import { CGROUP_DIR_ENV, SIZE_ENV } from "./usage.ts";
 import { childModelHosts, childPaymentHosts, childRegistryHosts } from "../core/capacity.ts";
 import { liveChildDisk, type ChildDisk } from "./disk_mount.ts";
@@ -224,7 +224,7 @@ export function cellSpecFor(input: {
  * its cgroup's directory (when the kernel holds the caps) let it read its own
  * use against its size (`selfUse`, `spawn/usage.ts`; #10853).
  */
-export function cellEnv(input: { port: number; dataDir: string; url: string; parentPort?: number; size?: Size; cgroupDir?: string }): Record<string, string> {
+export function cellEnv(input: { port: number; dataDir: string; url: string; parentPort?: number; size?: Size; cgroupDir?: string; claude?: string }): Record<string, string> {
   const env = childEnv({
     PORT: String(input.port),
     FORGE_HOST: "127.0.0.1",
@@ -234,10 +234,23 @@ export function cellEnv(input: { port: number; dataDir: string; url: string; par
     ...(input.size === undefined ? {} : { [SIZE_ENV]: input.size }),
     ...(input.cgroupDir === undefined ? {} : { [CGROUP_DIR_ENV]: input.cgroupDir }),
     ...(input.parentPort === undefined ? {} : { FORGE_PARENT_LOCAL: parentLocal(input.parentPort) }),
+    // Which Claude Code its crew runs: the parent's own choice, a path and not
+    // a secret, so a test can put a stand-in in the cell (#12001).
+    ...(input.claude === undefined || input.claude === "" ? {} : { FORGE_CLAUDE: input.claude }),
   });
   delete env["USER"];
   delete env["LOGNAME"];
   return env;
+}
+
+/**
+ * What a child is started with: `cellEnv`, plus the parent's `FORGE_CLAUDE`
+ * when it has one. The child's crew reads it (`main.ts`), so a parent run with
+ * Claude Code somewhere off `PATH` has children that find it too.
+ */
+export function childEnvFor(input: Parameters<typeof cellEnv>[0], parentEnv: Record<string, string | undefined> = process.env): Record<string, string> {
+  const claude = parentEnv["FORGE_CLAUDE"];
+  return cellEnv({ ...input, ...(claude === undefined ? {} : { claude }) });
 }
 
 export interface CellChild {
@@ -397,7 +410,7 @@ export function makeRegistry(parent: App, launcher?: Launcher): CellChildren {
     const command = `exec ${JSON.stringify(process.execPath)} ${JSON.stringify(source.main)}`;
     const proc = Bun.spawn(cell.argv(command), {
       cwd: dirname(source.main),
-      env: cell.env(cellEnv({ port, dataDir: dir, url, parentPort, size: input.size, ...(cell.cgroupDir === undefined ? {} : { cgroupDir: cell.cgroupDir }) })),
+      env: cell.env(childEnvFor({ port, dataDir: dir, url, parentPort, size: input.size, ...(cell.cgroupDir === undefined ? {} : { cgroupDir: cell.cgroupDir }) })),
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
@@ -406,6 +419,7 @@ export function makeRegistry(parent: App, launcher?: Launcher): CellChildren {
       const why = cell.breach();
       if (why !== undefined) {
         parent.log.warn("child forge stopped", { name: input.name, why });
+        markStopped(dir, { at: Date.now(), why });
         noteStop(parent, input.bodyId, input.name, why);
       }
       cell.close();

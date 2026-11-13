@@ -20,8 +20,7 @@ import type { User } from "../core/users.ts";
 import type { EnvName } from "../apps/data.ts";
 import type { SshSession } from "../ssh/server.ts";
 import { tellAnswer } from "./screens/tell.ts";
-import { AUTONOMY_FAILED_WORDS, firstAsk } from "../actions/first_ask.ts";
-import { nextStepsFor } from "../core/next-steps.ts";
+import { AUTONOMY_FAILED_WORDS, asksMakeANewApp, firstAsk } from "../actions/first_ask.ts";
 import { crewCanRun } from "../web/studio/crew_key.ts";
 
 const CRLF = "\r\n";
@@ -98,9 +97,8 @@ async function told(
 }
 
 /** Whether this is the person's first ask on a forge spawned for them: it makes an app. */
-async function isFirstAsk(app: App, user: User): Promise<boolean> {
-  const steps = await nextStepsFor(app, user);
-  return steps?.some((s) => s.key === "tell" && !s.done) === true;
+function isFirstAsk(app: App, user: User): Promise<boolean> {
+  return asksMakeANewApp(app, user);
 }
 
 async function firstTold(app: App, session: SshSession, user: User, said: string): Promise<void> {

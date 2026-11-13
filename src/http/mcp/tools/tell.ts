@@ -1,4 +1,6 @@
 import { contextNote, parseContext } from "../../../actions/tell_context.ts";
+import { asksMakeANewApp, firstAsk } from "../../../actions/first_ask.ts";
+import { crewCanRun } from "../../../web/studio/crew_key.ts";
 import { keepThought } from "../../../actions/thought.ts";
 import { parseFrom } from "../../../actions/tell_from.ts";
 import { FROM_WORDS, tell, toldWords, UNVERIFIED_WORDS } from "../../../actions/tell.ts";
@@ -37,6 +39,18 @@ export const tool: Tool = {
   writes: true,
   async run(ctx, user, args) {
     if (args["repo"] === undefined || args["repo"] === null) {
+      // No repository named: a person with no app but the forge's own copy makes a new app.
+      if (await asksMakeANewApp(ctx.app, user)) {
+        const first = await firstAsk(ctx.app, user, str(args["text"]), crewCanRun(ctx.app));
+        if (!first.ok) return bad("invalid", first.error.words);
+        const { repo, told } = first.value;
+        if (!told.ok) return bad(told.error, "that could not be told here");
+        return good({
+          says: toldWords(told.value),
+          issue: told.value.issue.number,
+          page: `${ctx.url.origin}/${repo.ownerName}/${repo.name}/issues/${told.value.issue.number}`,
+        });
+      }
       const kept = keepThought(ctx.app, user, args["text"], "mcp");
       return kept.ok
         ? good({ thought: kept.value.id })

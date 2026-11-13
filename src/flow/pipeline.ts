@@ -150,13 +150,12 @@ export function waitingOffThread(db: Database, sql: string, ...args: string[]): 
  * first count (nothing to serve yet), a database with no file, or a worker
  * that has failed for long is counted on the thread.
  */
-function waitingTally(db: Database, sql: string, ...args: string[]): Tally {
+function waitingTally(db: Database, now: number, sql: string, ...args: string[]): Tally {
   if (WAITING_REUSE_MS === 0) return countWaiting(db, sql, ...args);
   let kept = waitingKept.get(db);
   if (kept === undefined) waitingKept.set(db, (kept = new Map()));
   // A `since` cutoff argument moves every call; the stage, not the instant, is the key.
   const hit = kept.get(sql);
-  const now = Date.now();
   if (hit !== undefined && now - hit.at < WAITING_REUSE_MS) return hit.tally;
   const filed = db.filename !== "" && db.filename !== ":memory:";
   if (hit !== undefined && filed && now - hit.at < WAITING_REUSE_MS * WAITING_STALE_PERIODS) {
@@ -164,7 +163,7 @@ function waitingTally(db: Database, sql: string, ...args: string[]): Tally {
       hit.asking = true;
       waitingOffThread(db, sql, ...args).then(
         (tally) => {
-          kept.set(sql, { at: Date.now(), tally, asking: false });
+          kept.set(sql, { at: now, tally, asking: false });
         },
         () => {
           hit.asking = false;
@@ -246,7 +245,7 @@ function tally(db: Database, key: PipelineKey, now: Date): Tally {
   const iso = now.toISOString();
   switch (key) {
     case "ready":
-      return waitingTally(db, READY);
+      return waitingTally(db, now.getTime(), READY);
     case "building":
       return runTally(db, "agent", "reason != 'review'", iso);
     case "check-queue":
@@ -256,9 +255,9 @@ function tally(db: Database, key: PipelineKey, now: Date): Tally {
     case "review":
       return runTally(db, "agent", "reason = 'review'", iso);
     case "approved":
-      return waitingTally(db, APPROVED);
+      return waitingTally(db, now.getTime(), APPROVED);
     case "landed":
-      return waitingTally(db, LANDED, new Date(now.getTime() - 7 * DAY_MS).toISOString());
+      return waitingTally(db, now.getTime(), LANDED, new Date(now.getTime() - 7 * DAY_MS).toISOString());
     case "live":
       return liveTally(db, new Date(now.getTime() - DAY_MS).toISOString());
   }

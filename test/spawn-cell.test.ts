@@ -10,7 +10,7 @@ import { createRun, queueDepth } from "../src/core/runs.ts";
 import { createApp } from "../src/app.ts";
 import { childEnv } from "../src/apps/process.ts";
 import { watchedLimits } from "../src/apps/contain.ts";
-import { childLog, plainLine, cellChildren, crewAtWork, nextRunDue, type CellChild, stopCellChildren, stopGently, cellEnv, cellLimits, cellPlacement, cellSpecFor, forward, launchSpecFor, ownsBody } from "../src/spawn/cell.ts";
+import { childLog, plainLine, cellChildren, crewAtWork, nextRunDue, type CellChild, stopCellChildren, stopGently, cellEnv, childEnvFor, cellLimits, cellPlacement, cellSpecFor, forward, launchSpecFor, ownsBody } from "../src/spawn/cell.ts";
 import { fallbackPlacement, hostedPlacement, memoryBodies } from "../src/spawn/placement.ts";
 import type { SpawnPlan } from "../src/spawn/plan.ts";
 import { SIZES } from "../src/spawn/sizes.ts";
@@ -309,6 +309,16 @@ describe("a child reaching its parent from inside its cell", () => {
       door.close();
       parent.close();
     }
+  });
+
+  test("cellEnv carries FORGE_CLAUDE only when the parent names one (#12001)", () => {
+    const base = { port: 4100, dataDir: "/d/c", url: "https://kid--f.test" };
+    expect(cellEnv({ ...base, claude: "/d/c/build-claude" })["FORGE_CLAUDE"]).toBe("/d/c/build-claude");
+    expect(cellEnv(base)["FORGE_CLAUDE"]).toBeUndefined();
+    expect(cellEnv({ ...base, claude: "" })["FORGE_CLAUDE"]).toBeUndefined();
+    // The call site `startOn` uses: the parent's own environment decides.
+    expect(childEnvFor(base, { FORGE_CLAUDE: "/opt/claude" })["FORGE_CLAUDE"]).toBe("/opt/claude");
+    expect(childEnvFor(base, {})["FORGE_CLAUDE"]).toBeUndefined();
   });
 
   test("a heartbeat goes to the relayed port when one is named, and to the public address otherwise", async () => {

@@ -10,6 +10,7 @@
  * header, and a log page is read by people the token was never meant for.
  */
 
+import { during } from "../perf/jobs.ts";
 import {
   appendFileSync,
   existsSync,
@@ -146,7 +147,7 @@ function enqueue(dataDir: string, runId: string, clean: string): void {
   pendingBytes += clean.length + 1;
   if (pendingBytes >= FLUSH_BYTES) flushRunLogs();
   else if (flushTimer === undefined) {
-    flushTimer = setTimeout(flushRunLogs, FLUSH_MS);
+    flushTimer = setTimeout(() => void during("run-log-flush", flushRunLogs), FLUSH_MS);
     flushTimer.unref?.();
   }
 }

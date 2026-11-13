@@ -6,6 +6,7 @@ test("the wait doubles per stop and stops at the ceiling", () => {
   expect(backoffMs(1)).toBe(5_000);
   expect(backoffMs(2)).toBe(10_000);
   expect(backoffMs(30)).toBe(RESTART_MAX_MS);
+  expect(RESTART_MAX_MS).toBe(600_000);
 });
 
 test("a stop is restarted through the parent's own restarter, and the sentence says stopped, not restarted", async () => {
@@ -23,7 +24,7 @@ test("a stop is restarted through the parent's own restarter, and the sentence s
   const stop = noteStop(parent, "b1", "probe", "used 2374 MiB of memory, over its 2048 MiB limit", at, 5);
   expect(lastStop(parent, "b1", at)).toEqual(stop);
   expect(lastStop(other, "b1", at)).toBeUndefined();
-  expect(stopSentence(stop)).toBe("This forge ran out of memory and was stopped at 06:33 UTC; the host starts it again by itself.");
+  expect(stopSentence(stop)).toBe("This forge ran out of memory and was stopped at 06:33 UTC; the host starts it again within a minute.");
   await done;
   expect(restarted).toEqual(["probe"]);
   expect(noteStop(parent, "b1", "probe", "memory", at + 1000, 60_000).stops).toBe(2);

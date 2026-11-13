@@ -92,6 +92,7 @@ import { transact } from "../kernel/db.ts";
 import { createLog } from "../kernel/log.ts";
 import { holdLease, STALE_AFTER_MS } from "../runs/lease.ts";
 import { appendRunLog } from "../runs/log.ts";
+import { memoryHold } from "../runs/memory_hold.ts";
 import { cancelledLine } from "../runs/cancelled.ts";
 import { trackRun, untrackRun } from "../runs/stoppable.ts";
 import { runningLimitSentence, runningRuns } from "../settings/quotas.ts";
@@ -145,6 +146,8 @@ const INTERRUPTED = "this forge is stopping";
 export interface ChecksOptions {
   /** How many checks may run at once. @default 1 */
   readonly concurrency?: number | undefined;
+  /** How full this forge's memory is, 0 to 1: its cgroup's unless a test says otherwise. */
+  readonly pressure?: (() => number | undefined) | undefined;
   /** The forge's public URL, told to the check as `FORGE_URL`. */
   readonly forgeUrl: string;
   /** The parent's gate, for a hosted child: its checks take their turn in the parent's lane. */
@@ -489,6 +492,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   const waiting = new Set<string>();
   /** Queued checks a full disk holds that have said so once (#11799); apart from `waiting`, so neither line hides the other. */
   const diskWaiting = new Set<string>();
+  const memoryWaiting = new Set<string>();
   /** The verification-lane run in flight, which holds no check slot. */
   let verifying: string | undefined;
   const slotted = (): number => inFlight.size - (verifying === undefined ? 0 : 1);
@@ -582,6 +586,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     if (inFlight.has(run.id)) return;
     waiting.delete(run.id);
     diskWaiting.delete(run.id);
+    memoryWaiting.delete(run.id);
     const abort = new AbortController();
     const low = inVerifyLane(run.env);
     if (low) verifying = run.id;
@@ -639,6 +644,16 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         if (!diskWaiting.has(run.id)) {
           diskWaiting.add(run.id);
           appendRunLog(app.config.dataDir, run.id, `queued, ${full}`);
+        }
+      return undefined;
+    }
+    // A child near its memory limit runs one check at a time (`runs/memory_hold.ts`).
+    const tight = memoryHold(slotted(), options.pressure);
+    if (tight !== undefined) {
+      for (const run of queued)
+        if (!memoryWaiting.has(run.id)) {
+          memoryWaiting.add(run.id);
+          appendRunLog(app.config.dataDir, run.id, `queued, ${tight}`);
         }
       return undefined;
     }

@@ -93,7 +93,7 @@ import { homeTabs, unshippedAsks } from "./home_tabs.ts";
 import { crewKeyCard } from "./crew_key.ts";
 import { everydayCard } from "../pages/everyday.ts";
 import { firstAskJs, nextStepsCard, nextStepsOf } from "../pages/next-steps.ts";
-import { spawnedOrg } from "../../spawn/claim.ts";
+import { spawnedForge } from "../../spawn/claim.ts";
 import { clientApps } from "./client_home.ts";
 import { passkeyJs } from "../passkey-client.ts";
 
@@ -305,7 +305,7 @@ export async function studioHome(
   user: User,
 ): Promise<Response> {
   // A spawned forge says where it lives: the address its person shares.
-  const spawned = await timePhaseAsync(ctx.request, "spawned", () => spawnedOrg(ctx.app));
+  const spawned = await timePhaseAsync(ctx.request, "spawned", () => spawnedForge(ctx.app));
   const address = when(
     spawned?.url,
     (url) =>
