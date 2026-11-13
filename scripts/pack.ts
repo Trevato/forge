@@ -16,6 +16,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ForgeApi } from "../src/cli/api.ts";
+import { guardSource, type SourceGuardOptions } from "../src/packs/source_guard.ts";
 import { deployPack, type Hands } from "../src/packs/deploy.ts";
 import { parsePack, type Pack } from "../src/packs/pack.ts";
 import { finishWords, OWNER, prepareOwner } from "../src/packs/up.ts";
@@ -84,6 +85,8 @@ async function git(args: string[], env: Record<string, string>, cwd?: string): P
 export interface HandsOptions {
   /** Where to clone a pack's source from, when not the address the pack names (a test's local repository). */
   readonly cloneFrom?: (source: string) => string;
+  /** How a source's host is judged (resolver, exempt addresses): a test's seam. The forge's own address is always let through. */
+  readonly guard?: SourceGuardOptions;
 }
 
 async function gitOut(args: string[], env: Record<string, string>, cwd: string): Promise<string | null> {
@@ -128,7 +131,13 @@ export function realHands(url: string, token: string, options: HandsOptions = {}
       try {
         const bare = join(dir, "src.git");
         // Source history is fetched without hooks or templates and pushed as plain branches and tags.
-        const cloned = await git(["clone", "--bare", "--quiet", ...(branch === undefined ? [] : ["--branch", branch]), options.cloneFrom?.(source) ?? cloneUrl(source), bare], cloneEnv());
+        const from = options.cloneFrom?.(source) ?? cloneUrl(source);
+        // The address the pack names is judged and pinned before any connection, whatever is cloned
+        // in its place: no internal host, no redirect, port 443 (#11971). A test's local clone keeps
+        // git's plain environment, since the pinned one allows only http and https.
+        const guarded = await guardSource(cloneUrl(source), cloneEnv(), { forge: url, ...options.guard });
+        if (!guarded.ok) return { ok: false, why: guarded.error };
+        const cloned = await git(["clone", "--bare", "--quiet", ...(branch === undefined ? [] : ["--branch", branch]), from, bare], options.cloneFrom === undefined ? guarded.value : cloneEnv());
         if (cloned !== null) return { ok: false, why: cloned };
         const pushed = await git(
           ["push", "--quiet", "--force", `${url}/${owner}/${name}.git`, "refs/heads/*:refs/heads/*", "refs/tags/*:refs/tags/*"],
@@ -201,6 +210,8 @@ export interface UpOptions {
   readonly dataDir: string;
   /** Where to clone a pack's source from (a test's local repository). */
   readonly cloneFrom?: (source: string) => string;
+  /** How a source's host is judged: a test's seam, passed to the hands. */
+  readonly guard?: SourceGuardOptions;
   /** Where the words go; the console by default. */
   readonly say?: (line: string) => void;
   /** Aborting stops the forge and ends `up`; Ctrl-C and SIGTERM do the same. */
@@ -238,7 +249,10 @@ export async function up(pack: Pack, options: UpOptions): Promise<number> {
       await child.exited;
       return 1;
     }
-    const steps = await deployPack(pack, realHands(url, prepared.token, options.cloneFrom === undefined ? {} : { cloneFrom: options.cloneFrom }));
+    const steps = await deployPack(pack, realHands(url, prepared.token, {
+        ...(options.cloneFrom === undefined ? {} : { cloneFrom: options.cloneFrom }),
+        ...(options.guard === undefined ? {} : { guard: options.guard }),
+      }));
     for (const s of steps) say(`${mark(s)} ${s.what}${s.note ? ` — ${s.note}` : ""}`);
     if (prepared.passphrase !== undefined) say(`\nSign in as "${OWNER}" with the passphrase kept in ${prepared.passphraseFile}`);
     for (const line of finishWords(url, prepared.credential)) say(line);

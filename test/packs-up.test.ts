@@ -45,6 +45,7 @@ let app: App;
 let servers: Servers;
 let token: string;
 let passphrase: string | undefined;
+const PUBLIC = { resolve: async () => ["93.184.216.34"] };
 const fake = new Map<string, string>();
 
 beforeAll(async () => {
@@ -104,7 +105,7 @@ describe("the one command, against a fake source", () => {
   for (const name of ["games", "business"]) {
     test(`${name}: every app arrives with history, followed; the crew is configured; no secret or variable travels`, async () => {
       const pack = fixturePacks().find((p) => p.name === name)!;
-      const steps = await deployPack(pack, realHands(servers.url, token, { cloneFrom: (s) => fake.get(s)! }));
+      const steps = await deployPack(pack, realHands(servers.url, token, { cloneFrom: (s) => fake.get(s)!, guard: PUBLIC }));
       expect(steps.filter((s) => s.state !== "done")).toEqual([]);
       for (const a of pack.apps) {
         const repo = getRepo(app.db, OWNER, a.name)!;
@@ -131,7 +132,7 @@ describe("the one command, against a fake source", () => {
 
   test("running it again keeps what exists", async () => {
     const pack = fixturePacks()[0]!;
-    const steps = await deployPack(pack, realHands(servers.url, token, { cloneFrom: (s) => fake.get(s)! }));
+    const steps = await deployPack(pack, realHands(servers.url, token, { cloneFrom: (s) => fake.get(s)!, guard: PUBLIC }));
     expect(steps.map((s) => `${s.what} ${s.state} ${s.note}`)).toEqual(steps.map((s) => `${s.what} kept already here`));
   });
 
@@ -160,7 +161,7 @@ describe("the one command, against a fake source", () => {
 
   test("a partial deploy is finished by running it again: a kept app that was never followed is followed", async () => {
     const pack = fixturePacks()[0]!;
-    const hands = realHands(servers.url, token, { cloneFrom: (s) => fake.get(s)! });
+    const hands = realHands(servers.url, token, { cloneFrom: (s) => fake.get(s)!, guard: PUBLIC });
     // First run: the follow of the first app fails after the app and its history are in.
     const one = { ...pack, apps: [{ ...pack.apps[0]!, name: "partial-app" }], crew: [] };
     let fail = true;
@@ -235,7 +236,7 @@ describe("up() itself", () => {
     for (const n of ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "FORGE_CLAUDE_CONFIG_DIR"]) delete env[n];
     try {
       const pack = fixturePacks()[0]!;
-      const running = up(pack, { port, dataDir: d, cloneFrom: (s) => fake.get(s)!, say: (l) => lines.push(l), signal: stop.signal, env });
+      const running = up(pack, { port, dataDir: d, cloneFrom: (s) => fake.get(s)!, guard: PUBLIC, say: (l) => lines.push(l), signal: stop.signal, env });
       let ended: number | undefined;
       void running.then((c) => (ended = c));
       for (let i = 0; i < 700 && ended === undefined && !lines.some((l) => l.startsWith("Your forge is serving")); i++) await Bun.sleep(100);

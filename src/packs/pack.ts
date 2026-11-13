@@ -7,6 +7,8 @@
  * like one is refused, never ignored, so a published pack cannot ask for them.
  */
 
+import { isIP } from "node:net";
+import { isRefusedAddress } from "../kernel/outbound.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { CREW_ROLES, type CrewRole } from "../core/agents.ts";
 
@@ -67,6 +69,10 @@ export function sourceOf(v: unknown): string | undefined {
   const url = raw === undefined ? null : URL.parse(raw);
   if (url === null || url.protocol !== "https:" || url.username !== "" || url.password !== "") return undefined;
   if (url.search !== "" || url.hash !== "") return undefined;
+  // An internal address literal is refused at once; a name and a port are judged when it is
+  // cloned (`source_guard.ts`), which alone knows the forge's own address.
+  const literal = url.hostname.replace(/^\[|\]$/g, "");
+  if ((isIP(literal) !== 0 && isRefusedAddress(literal))) return undefined;
   const parts = url.pathname.split("/").filter((s) => s !== "");
   if (parts.length !== 2) return undefined;
   const repo = parts[1]!.replace(/\.git$/, "");
