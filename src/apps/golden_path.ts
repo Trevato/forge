@@ -12,7 +12,30 @@ export interface GoldenPath {
   readonly firstProductionChangeMs?: number;
 }
 
+/**
+ * Both figures are firsts, so once an app has them they never change, and
+ * until then a minute-old answer is as good. The apps list asked three
+ * questions per app per request (560 a minute, 16 s of every 120 on the
+ * forge's one thread, 2026-11-13). Off under `bun test` (NODE_ENV=test).
+ */
+const GOLDEN_REUSE_MS = process.env["NODE_ENV"] === "test" ? 0 : 60_000;
+const goldenKept = new WeakMap<Database, Map<string, { at: number; path: GoldenPath }>>();
+
 export function goldenPath(db: Database, app: Pick<AppRecord, "repoId" | "createdAt">): GoldenPath {
+  if (GOLDEN_REUSE_MS === 0) return readGoldenPath(db, app);
+  let kept = goldenKept.get(db);
+  if (kept === undefined) goldenKept.set(db, (kept = new Map()));
+  const key = `${app.repoId} ${app.createdAt}`;
+  const hit = kept.get(key);
+  const now = Date.now();
+  const whole = (p: GoldenPath): boolean => p.firstPreviewMs !== undefined && p.firstProductionChangeMs !== undefined;
+  if (hit !== undefined && (whole(hit.path) || now - hit.at < GOLDEN_REUSE_MS)) return hit.path;
+  const path = readGoldenPath(db, app);
+  kept.set(key, { at: now, path });
+  return path;
+}
+
+function readGoldenPath(db: Database, app: Pick<AppRecord, "repoId" | "createdAt">): GoldenPath {
   const born = Date.parse(app.createdAt);
   if (Number.isNaN(born)) return {};
   const preview = db
