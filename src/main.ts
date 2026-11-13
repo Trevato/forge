@@ -733,7 +733,7 @@ const followTimer = setInterval(
 // An app landing on this forge is told to the children awake here that follow it at once.
 const landingsWatch = watchLandings(app);
 // A child born before its apps were linked is offered the link, and a child offered one takes it: at boot, then every tick.
-void followTick(app).catch((error) => app.log.error("could not link the apps", { error: String(error) }));
+void followTick(app, true).catch((error) => app.log.error("could not link the apps", { error: String(error) }));
 const staleTimer = setInterval(() => void during("asks", tickAsks), 120_000);
 // Every paid entitlement is re-read from Stripe once a day, so a missed webhook heals (#11247).
 const entitlementTimer = setInterval(() => void during("entitlements", () => sweepEntitlements(app)), 86_400_000);

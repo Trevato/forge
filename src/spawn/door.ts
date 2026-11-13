@@ -6,6 +6,7 @@
  * the caller says `false` — returns the plan and changes nothing.
  */
 
+import { dropServed } from "./clients.ts";
 import { contributeAnswer, wantsToContribute } from "./contribute_words.ts";
 import { nameShapeVerdict } from "./name_verdict.ts";
 import { linkRequestVisitor } from "../perf/visitor_link.ts";
@@ -419,6 +420,7 @@ export async function spawnDoor(
 /** A new claim link for an unclaimed child (#729): the old one dies. */
 export async function reissueDoor(ctx: Ctx, user: User, name: string): Promise<Door> {
   const made = await reissueClaim(ctx.app, user, name, { request: ctx.request, url: ctx.url });
+  dropServed(ctx.app);
   if (made.ok) return { status: 201, body: { ...made.value } };
   if (made.error.kind === "not_found")
     return { status: 404, body: { error: "not_found", message: `no child forge named ${name}` } };
@@ -430,6 +432,7 @@ export async function changeDoor(ctx: Ctx, user: User, name: string, act: "revok
   if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return spawnWords({ kind: "cross_origin" });
   if (!user.isAdmin) return { status: 403, body: { error: "forbidden", message: "only a site admin can end or bring back a claim link" } };
   const done = await changeLink(ctx.app, user.id, name, act);
+  dropServed(ctx.app);
   if (done.ok) return { status: 200, body: { name, says: done.says } };
   if (done.missing) return { status: 404, body: { error: "not_found", message: `no child forge named ${name}` } };
   return spawnWords({ kind: "refused", reason: "not_open", message: done.says });

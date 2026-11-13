@@ -51,6 +51,10 @@ import { sendBeat } from "../src/spawn/heartbeat.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { bootHostedChild, openChildren } from "../src/spawn/host.ts";
 import { watchLandings } from "../src/spawn/app_follow.ts";
+import { chmodSync } from "node:fs";
+import { forgetKey } from "../src/kernel/secret.ts";
+import { dropServed, refreshServed, servedRows, servedWindow } from "../src/spawn/clients.ts";
+import { appLinkWords, reasonOf } from "../src/spawn/app_links.ts";
 
 quietLogs();
 mirrorOutbound({ allow: ["127.0.0.1"] });
@@ -607,6 +611,88 @@ describe("apps sent down by a spawn follow their parent", () => {
       expect(await reconcileAppLinks(parent, true)).toEqual({});
       expect((await applyAppLinks(old.child)).linked).toEqual([]);
     }, 240_000);
+
+    test("a child whose key file the forge refuses does not stop its other apps or other children, says why once by name, and links when the key is fixed", async () => {
+      const stiff = await spawn("stiff", ["alice/notes", "alice/vault"]);
+      const fine = await bare("fine");
+      // What an older child could carry: a key file the forge refuses to open (mode 660).
+      stiff.child.db.query("DELETE FROM repo_upstream").run();
+      revokeFollowTokens(parent.db, notes.id, "stiff");
+      revokeFollowTokens(parent.db, vault.id, "stiff");
+      const doc = (await Bun.file(join(stiff.dataDir, "parent.json")).json()) as Record<string, unknown>;
+      await Bun.write(
+        join(stiff.dataDir, "parent.json"),
+        JSON.stringify({ ...doc, apps: [{ repo: "stiff/notes", upstream: "alice/notes" }, { repo: "stiff/vault", upstream: "alice/vault" }] }),
+      );
+      forgetKey(stiff.dataDir);
+      chmodSync(join(stiff.dataDir, "secret.key"), 0o660);
+      const warned: string[] = [];
+      const log = stiff.child.log as unknown as { warn: (...a: unknown[]) => void };
+      const was = log.warn;
+      log.warn = (...a: unknown[]) => void warned.push(JSON.stringify(a));
+      try {
+        await reconcileAppLinks(parent, true);
+        const first = await applyAppLinks(stiff.child, "stiff");
+        // The public app is linked; the private one waits, and the others are unaffected.
+        expect(first.linked).toEqual(["stiff/notes"]);
+        expect(getFollow(stiff.child.db, childRepo(stiff.child, "stiff", "vault").id)).toBeUndefined();
+        expect((await applyAppLinks(fine.child, "fine")).linked).toEqual(["fine/notes", "fine/vault"]);
+        await applyAppLinks(stiff.child, "stiff");
+        await applyAppLinks(stiff.child, "stiff");
+        // Said once, by name, with no path in it.
+        expect(warned).toHaveLength(1);
+        expect(warned[0]).toContain('"forge":"stiff"');
+        expect(warned[0]).toContain("mode 660; it must be 600");
+        expect(warned[0]).not.toContain(stiff.dataDir);
+      } finally {
+        log.warn = was;
+      }
+      // The parent's list says which app and why, from the child's own record.
+      const kid = (await (await import("../src/actions/spawn.ts")).listChildren(parent)).find((c) => c.name === "stiff")!;
+      const lines = await appLinkLines(parent, kid);
+      expect(lines.find((l) => l.upstream === "alice/notes")!.state).toBe("following");
+      const vaultLine = lines.find((l) => l.upstream === "alice/vault")!;
+      expect(vaultLine.state).toBe("failed");
+      expect(vaultLine.why).toBe("its secret key file is mode 660; it must be 600");
+      expect(appLinkWords(vaultLine)).toBe("alice/vault: could not offer the link: its secret key file is mode 660; it must be 600");
+      // Fixed on the host, the next pass links it, and the failure is gone from the record.
+      chmodSync(join(stiff.dataDir, "secret.key"), 0o600);
+      forgetKey(stiff.dataDir);
+      expect((await applyAppLinks(stiff.child, "stiff")).linked).toEqual(["stiff/vault"]);
+      const after = (await appLinkLines(parent, kid)).find((l) => l.upstream === "alice/vault")!;
+      expect(after.state).toBe("following");
+      expect(entriesOf(await Bun.file(join(stiff.dataDir, "parent.json")).json()).every((e) => e.failed === undefined)).toBe(true);
+    }, 240_000);
+
+    test("a reason has no path in it", () => {
+      expect(reasonOf(new Error("/data/children/hosted-26d4fc08-aaaa/secret.key is mode 660; it must be 0600 — fix the permissions and restart"))).toBe(
+        "its secret key file is mode 660; it must be 600",
+      );
+      expect(reasonOf(new Error("cannot open /data/children/x/forge.db now"))).toBe("cannot open <file> now");
+    });
+
+    test("the /forges list is served from memory: a change on disk shows at the next pass, not on the request", async () => {
+      servedWindow.ms = 60_000;
+      try {
+        dropServed(parent);
+        const before = await servedRows(parent);
+        const row = before.find((r) => r.name === "kid")!;
+        expect(row.appLinks!.find((l) => l.upstream === "alice/notes")!.state).toBe("following");
+        // The child severs on its own disk; a request reads nothing of it.
+        const dir = childDirOf(parent, (await (await import("../src/actions/spawn.ts")).listChildren(parent)).find((c) => c.name === "kid")!.bodyId);
+        const doc = (await Bun.file(join(dir, "parent.json")).json()) as Record<string, unknown>;
+        const apps = entriesOf(doc).map((e) => (e.upstream === "alice/notes" ? { ...e, severedAt: new Date().toISOString() } : e));
+        await Bun.write(join(dir, "parent.json"), JSON.stringify({ ...doc, apps }));
+        const during = await servedRows(parent);
+        expect(during).toBe(before);
+        // The pass (the minute's clock) reads it; the next request serves that.
+        await refreshServed(parent, { probe: false });
+        const after = (await servedRows(parent)).find((r) => r.name === "kid")!;
+        expect(after.appLinks!.find((l) => l.upstream === "alice/notes")!.state).toBe("severed");
+      } finally {
+        servedWindow.ms = 0;
+      }
+    });
 
     test("a repository that only shares the name is never linked", async () => {
       const odd = await bare("odd");

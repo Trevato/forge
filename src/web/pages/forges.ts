@@ -7,7 +7,7 @@
  */
 
 import type { Ctx } from "../../http/context.ts";
-import { ATTENTION_WORDS, firstScreenOf, CLAIM_WORDS, claimState, clientRows, creditWords, graceWords, runningWords, spendWords, type ClientRow } from "../../spawn/clients.ts";
+import { ATTENTION_WORDS, firstScreenOf, CLAIM_WORDS, claimState, servedRows, dropServed, creditWords, graceWords, runningWords, spendWords, type ClientRow } from "../../spawn/clients.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
@@ -157,7 +157,7 @@ export async function forgesPage(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
   if (!user?.isAdmin) return notFoundPage(ctx);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-  const rows = await timePhaseAsync(ctx.request, "clients", () => clientRows(ctx.app));
+  const rows = await timePhaseAsync(ctx.request, "clients", () => servedRows(ctx.app));
   const full = timePhase(ctx.request, "room", () => noRoom(ctx.app));
   const rendering = performance.now();
   const action =
@@ -368,5 +368,6 @@ export async function forgeOwnCodeSubmit(ctx: Ctx): Promise<Response> {
   if (want !== "on" && want !== "off") return notFoundPage(ctx);
   const name = ctx.params["name"] ?? "";
   const done = await ownCode(ctx.app, name, want === "on");
+  dropServed(ctx.app);
   return redirect(`/forges?code=${done.ok ? want : "refused"}&forge=${encodeURIComponent(name)}#forge-code`);
 }

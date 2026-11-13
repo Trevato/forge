@@ -17,7 +17,8 @@ import { getRepo, getRepoById } from "../core/repos.ts";
 import { getFollow, listFollowing } from "../core/upstream_follow.ts";
 import { resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
-import { applyAppLinks, entriesOf, reconcileAppLinks } from "./app_links.ts";
+import { applyAppLinks, entriesOf, reasonOf, reconcileAppLinks } from "./app_links.ts";
+import { refreshServed } from "./clients.ts";
 import { hostedChildOpen, openChildren } from "./host.ts";
 
 /** Look at every app this forge follows from its parent, now, whatever the clock says. */
@@ -48,7 +49,7 @@ export async function followOnWake(parent: App, child: App): Promise<void> {
  * The follow clock's tick, one minute: take an offer if this forge is a child, offer and end
  * credentials if it is a parent (paced), and drive the hosted children awake in this process.
  */
-export async function followTick(app: App): Promise<void> {
+export async function followTick(app: App, boot = false): Promise<void> {
   const applied = await applyAppLinks(app);
   for (const name of applied.linked) {
     const [o, n] = name.split("/") as [string, string];
@@ -56,12 +57,21 @@ export async function followTick(app: App): Promise<void> {
     if (repo !== undefined) await checkUpstream(app, repo);
   }
   await reconcileAppLinks(app);
-  for (const { app: child } of openChildren(app)) {
-    if (!hostedChildOpen(app, child)) continue;
-    const linked = await applyAppLinks(child);
-    if (linked.linked.length > 0) await followParentNow(child);
-    else await checkDue(child);
+  // One child that cannot be opened or linked is that child's trouble: the rest are looked at all the same.
+  for (const { name, app: child } of openChildren(app)) {
+    try {
+      if (!hostedChildOpen(app, child)) continue;
+      const linked = await applyAppLinks(child, name);
+      if (linked.linked.length > 0) await followParentNow(child);
+      else await checkDue(child);
+    } catch (error) {
+      app.log.warn("a hosted child's follow pass failed", { forge: name, reason: reasonOf(error) });
+    }
   }
+  // The list /forges serves is read here, off any request: with a question to each child at a start, never after.
+  await refreshServed(app, { probe: boot }).catch((error) =>
+    app.log.warn("the forges list was not read", { reason: reasonOf(error) }),
+  );
 }
 
 /**

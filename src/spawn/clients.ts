@@ -199,6 +199,7 @@ const asking = new WeakMap<App, Map<string, Promise<ForgeState | undefined>>>();
 /** Forget what a child last said, so the next list asks it again (after its link changed). */
 export function forgetHeard(app: App, name: string): void {
   heard.get(app)?.delete(name);
+  dropServed(app);
 }
 
 function ask(app: App, child: Child): Promise<ForgeState | undefined> {
@@ -223,13 +224,16 @@ function ask(app: App, child: Child): Promise<ForgeState | undefined> {
  * before answers from what it said, and is asked again in the background
  * when that is no longer fresh, so the list never waits on a known child.
  */
-export async function clientRows(app: App): Promise<ClientRow[]> {
+export async function clientRows(app: App, options: { probe?: boolean } = {}): Promise<ClientRow[]> {
+  const probing = options.probe !== false;
   const children = await listChildren(app);
   const known = heard.get(app);
   const now = Date.now();
   const states = await Promise.all(
     children.map((c) => {
       const last = known?.get(c.name);
+      // Not asking (a clock's pass, which must not wake a sleeping forge): what each last said, or nothing.
+      if (!probing) return last?.state;
       if (last === undefined) return ask(app, c);
       if (now - last.at > FRESH_MS) void ask(app, c);
       return last.state;
@@ -267,6 +271,55 @@ export async function clientRows(app: App): Promise<ClientRow[]> {
     })),
     now,
   );
+}
+
+interface Served {
+  readonly rows: ClientRow[];
+  readonly at: number;
+}
+const served = new WeakMap<App, Served>();
+const building = new WeakMap<App, Promise<ClientRow[]>>();
+/**
+ * The list a page serves is looked at again in the background when it is older than `ms`. At 0
+ * (the suite's setting) a read waits for a fresh one: a test changes a forge and reads the list at once.
+ */
+export const servedWindow = { ms: 15_000 };
+
+/**
+ * Read every row now, off the request: what `servedRows` answers from. One at a time; a caller
+ * that comes while one is being made takes that one. `probe: false` asks no child anything.
+ */
+export function refreshServed(app: App, options: { probe?: boolean } = {}): Promise<ClientRow[]> {
+  const running = building.get(app);
+  if (running !== undefined) return running;
+  const made = clientRows(app, options)
+    .then((rows) => {
+      served.set(app, { rows, at: Date.now() });
+      return rows;
+    })
+    .finally(() => building.delete(app));
+  building.set(app, made);
+  return made;
+}
+
+/**
+ * The list the `/forges` page shows: what the last pass read (boot, then every minute, then each
+ * time the page finds it older than 15 s), from memory. It touches no child's files, ledger or
+ * address on the request; only the first call after a start that no pass has covered builds it.
+ */
+export async function servedRows(app: App): Promise<ClientRow[]> {
+  const have = served.get(app);
+  if (have === undefined) return refreshServed(app);
+  if (Date.now() - have.at <= servedWindow.ms) return have.rows;
+  const fresh = refreshServed(app);
+  if (servedWindow.ms === 0) return fresh;
+  void fresh.catch(() => {});
+  return have.rows;
+}
+
+/** A forge was changed here (stopped, removed, a link made): the next list is read afresh. */
+export function dropServed(app: App): void {
+  served.delete(app);
 }
 
 /** Why a row needs its owner, in the order that matters; null when it does not. */

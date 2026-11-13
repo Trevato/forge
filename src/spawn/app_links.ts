@@ -73,6 +73,8 @@ export interface AppEntry {
   readonly severedAt?: string;
   /** Why the child did not link it: its history does not hold `anchor`, or its owner had set the repository up otherwise. */
   readonly refused?: "history" | "own";
+  /** Why the child could not link it yet (one line, no path); the offer stands and is tried again. */
+  readonly failed?: string;
 }
 
 const REPO = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
@@ -106,6 +108,10 @@ function readEntry(v: unknown): AppEntry | undefined {
     e["refused"] === "history" || e["refused"] === "own"
       ? e["refused"]
       : undefined;
+  const failed =
+    typeof e["failed"] === "string" && e["failed"] !== ""
+      ? e["failed"].slice(0, 200)
+      : undefined;
   return {
     repo: e["repo"],
     upstream: e["upstream"],
@@ -126,6 +132,7 @@ function readEntry(v: unknown): AppEntry | undefined {
       ? {}
       : { severedAt: iso(e["severedAt"])! }),
     ...(refused === undefined ? {} : { refused }),
+    ...(failed === undefined ? {} : { failed }),
   };
 }
 
@@ -321,6 +328,8 @@ export async function offerAppLinks(app: App, child: Child): Promise<Offered> {
 }
 
 let lastReconcile = 0;
+/** Why the parent could not offer a child its links, by child name, as the last pass found it. */
+const offerFailed = new Map<string, string>();
 /** How often the parent looks over its children's app links. */
 export const RECONCILE_EVERY_MS = 5 * 60_000;
 
@@ -344,6 +353,7 @@ export async function reconcileAppLinks(
         const r = await offerAppLinks(app, child);
         if (r.offered.length > 0 || r.revoked.length > 0) {
           done[child.name] = r;
+          app.log.info("app links offered", { forge: child.name, offered: r.offered.join(","), revoked: r.revoked.join(",") });
           app.bus.append({
             kind: "forge.app_links",
             payload: {
@@ -353,11 +363,14 @@ export async function reconcileAppLinks(
             },
           });
         }
+        offerFailed.delete(child.name);
       } catch (error) {
-        app.log.warn("app links not offered", {
-          child: child.name,
-          error: String(error),
-        });
+        const why = reasonOf(error);
+        offerFailed.set(child.name, why);
+        if (!said.has(`${child.name}:offer:${why}`)) {
+          said.add(`${child.name}:offer:${why}`);
+          app.log.warn("app links not offered", { forge: child.name, reason: why });
+        }
       }
     }
   } catch (error) {
@@ -463,95 +476,110 @@ export interface Applied {
 }
 
 /**
- * The child's side of an offer: link each offered app whose repository's default branch still
- * holds `anchor`, unless its owner severed or set it up otherwise; record the answer. Never
- * throws. Answers the repositories linked, so the caller can look upstream at once.
+ * One line, with no path in it, for why an app could not be linked: it is shown on the parent's
+ * /forges row and logged once, and a path names a directory id, not a forge.
  */
-export async function applyAppLinks(app: App): Promise<Applied> {
+export function reasonOf(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error);
+  const open = /is mode (\d+); it must be 0600/.exec(text);
+  if (open !== null) return `its secret key file is mode ${open[1]}; it must be 600`;
+  return text.replace(/\/[^\s"']+/g, "<file>").replace(/\s+/g, " ").trim().slice(0, 160) || "failed";
+}
+
+/** What was said in the log already, by forge name and reason: a failure that stays is said once, not each minute. */
+const said = new Set<string>();
+
+/**
+ * The child's side of an offer: link each offered app whose repository's default branch still
+ * holds `anchor`, unless its owner severed or set it up otherwise; record the answer. Each app is
+ * its own try: one that cannot be linked (a key file the forge refuses, a repository it cannot
+ * read) is left offered, with the reason on its entry for the parent to show, and the rest go on.
+ * Never throws. `label` is the forge's name in the log. Answers the repositories linked, so the
+ * caller can look upstream at once.
+ */
+export async function applyAppLinks(app: App, named?: string): Promise<Applied> {
   const done: Applied = { linked: [], refused: [] };
+  const dir = app.config.dataDir;
+  let todo: AppEntry[] = [];
+  let label = named ?? "this forge";
   try {
-    const dir = app.config.dataDir;
     const doc = await readDoc(dir);
-    const todo = entriesOf(doc).filter(
-      (e) =>
-        e.url !== undefined &&
-        e.appliedAt === undefined &&
-        e.severedAt === undefined &&
-        e.refused === undefined,
+    if (named === undefined && typeof doc?.["name"] === "string") label = doc["name"];
+    todo = entriesOf(doc).filter(
+      (e) => e.url !== undefined && e.appliedAt === undefined && e.severedAt === undefined && e.refused === undefined,
     );
-    for (const e of todo) {
-      const [o, n] = e.repo.split("/") as [string, string];
-      const repo = getRepo(app.db, o, n);
-      if (repo === undefined) continue; // not there (yet): the offer stands
-      const row = getFollow(app.db, repo.id);
-      if (row?.severedAt !== null && row?.severedAt !== undefined) {
-        await patchEntry(dir, e.upstream, (x) => ({
-          ...withoutToken(x),
-          severedAt: row.severedAt!,
-        }));
-        continue;
-      }
-      if (row !== undefined) {
-        // A person already set this repository up (an upstream of their own, or turned following off): theirs stands.
-        const same = row.enabled && row.via === "parent" && row.url === e.url;
-        await patchEntry(dir, e.upstream, (x) =>
-          same
-            ? {
-                ...withoutToken(x),
-                appliedAt: x.appliedAt ?? new Date().toISOString(),
-              }
-            : { ...withoutToken(x), refused: "own" },
-        );
-        continue;
-      }
-      const home = repoDir(app.reposRoot, repo.ownerName, repo.name);
-      const tip = await resolveOid(home, `refs/heads/${repo.defaultBranch}`);
-      const holds =
-        tip !== undefined &&
-        e.anchor !== undefined &&
-        isSafeOid(e.anchor) &&
-        (
-          await runGit(["merge-base", "--is-ancestor", e.anchor, tip], {
-            cwd: home,
-          })
-        ).ok;
-      if (!holds) {
-        await patchEntry(dir, e.upstream, (x) => ({
-          ...withoutToken(x),
-          refused: "history",
-        }));
-        done.refused.push(e.repo);
-        continue;
-      }
-      const by = ownerOf(app, repo);
-      if (by === undefined) continue;
-      putFollow(app.db, {
-        repoId: repo.id,
-        url: e.url!,
-        branch: e.branch ?? repo.defaultBranch,
-        enabled: true,
-        byId: by.id,
-        originId: "",
-        mode: e.mode ?? DEFAULT_MODE,
-        via: "parent",
-        credentialEnc:
-          e.token === undefined ? "" : seal(dir, e.token, followAad(repo.id)),
-      });
-      await patchEntry(dir, e.upstream, (x) => ({
-        ...withoutToken(x),
-        appliedAt: new Date().toISOString(),
-      }));
-      announce(app, repo, by, e);
-      done.linked.push(e.repo);
-    }
   } catch (error) {
-    app.log.warn("app links not applied", { error: String(error) });
+    app.log.warn("app links not read", { forge: label, reason: reasonOf(error) });
+    return done;
+  }
+  for (const e of todo) {
+    try {
+      await applyOne(app, dir, e, done, label);
+    } catch (error) {
+      const why = reasonOf(error);
+      if (!said.has(`${label}:${e.repo}:${why}`)) {
+        said.add(`${label}:${e.repo}:${why}`);
+        app.log.warn("app link not applied", { forge: label, repo: e.repo, reason: why });
+      }
+      if (e.failed !== why) await patchEntry(dir, e.upstream, (x) => ({ ...x, failed: why })).catch(() => {});
+    }
   }
   return done;
 }
 
+async function applyOne(app: App, dir: string, e: AppEntry, done: Applied, label: string): Promise<void> {
+  const [o, n] = e.repo.split("/") as [string, string];
+  const repo = getRepo(app.db, o, n);
+  if (repo === undefined) return; // not there (yet): the offer stands
+  const row = getFollow(app.db, repo.id);
+  if (row?.severedAt !== null && row?.severedAt !== undefined) {
+    await patchEntry(dir, e.upstream, (x) => ({ ...withoutToken(x), severedAt: row.severedAt! }));
+    return;
+  }
+  if (row !== undefined) {
+    // A person already set this repository up (an upstream of their own, or turned following off): theirs stands.
+    const same = row.enabled && row.via === "parent" && row.url === e.url;
+    await patchEntry(dir, e.upstream, (x) =>
+      same ? { ...withoutToken(x), appliedAt: x.appliedAt ?? new Date().toISOString() } : { ...withoutToken(x), refused: "own" },
+    );
+    return;
+  }
+  const home = repoDir(app.reposRoot, repo.ownerName, repo.name);
+  const tip = await resolveOid(home, `refs/heads/${repo.defaultBranch}`);
+  const holds =
+    tip !== undefined &&
+    e.anchor !== undefined &&
+    isSafeOid(e.anchor) &&
+    (await runGit(["merge-base", "--is-ancestor", e.anchor, tip], { cwd: home })).ok;
+  if (!holds) {
+    await patchEntry(dir, e.upstream, (x) => ({ ...withoutToken(x), refused: "history" }));
+    done.refused.push(e.repo);
+    return;
+  }
+  const by = ownerOf(app, repo);
+  if (by === undefined) return;
+  // Sealed by this forge's own app instance, with its own key: the parent never opens a child's key for this.
+  const credentialEnc = e.token === undefined ? "" : seal(dir, e.token, followAad(repo.id));
+  putFollow(app.db, {
+    repoId: repo.id,
+    url: e.url!,
+    branch: e.branch ?? repo.defaultBranch,
+    enabled: true,
+    byId: by.id,
+    originId: "",
+    mode: e.mode ?? DEFAULT_MODE,
+    via: "parent",
+    credentialEnc,
+  });
+  await patchEntry(dir, e.upstream, (x) => ({ ...withoutToken(x), appliedAt: new Date().toISOString() }));
+  announce(app, repo, by, e);
+  app.log.info("app linked to its upstream", { forge: label, repo: e.repo, upstream: e.upstream, mode: e.mode ?? DEFAULT_MODE });
+  done.linked.push(e.repo);
+}
+
+/** An entry answered: the plain credential is gone with it, and so is any failure it had. */
 const withoutToken = (e: AppEntry): AppEntry => {
-  const { token: _gone, ...rest } = e;
+  const { token: _gone, failed: _failed, ...rest } = e;
   return rest;
 };
 
@@ -590,7 +618,10 @@ export interface AppLinkLine {
     | "offered"
     | "severed"
     | "not-linked"
-    | "not-yet";
+    | "not-yet"
+    | "failed";
+  /** For `failed`: why, in one line with no path. */
+  readonly why?: string;
   readonly mode: FollowTaking | null;
   readonly severedAt: string | null;
   /** Whether this forge holds a live read credential for it. */
@@ -611,8 +642,11 @@ export async function appLinkLines(
     const credential =
       parent !== undefined &&
       followTokenCount(app.db, parent.id, child.name) > 0;
+    const why = e?.failed ?? offerFailed.get(child.name);
     const state: AppLinkLine["state"] =
-      e === undefined
+      e?.severedAt === undefined && e?.appliedAt === undefined && why !== undefined
+        ? "failed"
+        : e === undefined
         ? "not-yet"
         : e.severedAt !== undefined
           ? "severed"
@@ -627,6 +661,7 @@ export async function appLinkLines(
       upstream: ref,
       repo: e?.repo ?? ref,
       state,
+      ...(state === "failed" && why !== undefined ? { why } : {}),
       mode: e?.mode ?? null,
       severedAt: e?.severedAt ?? null,
       credential,
@@ -647,6 +682,8 @@ export function appLinkWords(l: AppLinkLine): string {
       return `${l.upstream}: not linked; the child's copy is not this repository's history`;
     case "not-yet":
       return `${l.upstream}: not linked yet`;
+    case "failed":
+      return `${l.upstream}: could not offer the link: ${l.why ?? "unknown"}`;
   }
 }
 

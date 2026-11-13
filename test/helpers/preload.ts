@@ -7,6 +7,7 @@ import { provideCpusForTest } from "../../src/core/capacity.ts";
 import { provideMirrorOutboundForTest } from "../../src/origins/git-mirror.ts";
 import { installCheapHash } from "./cheap-hash.ts";
 import { useReachByDefault } from "../../src/spawn/reach.ts";
+import { servedWindow } from "../../src/spawn/clients.ts";
 import "./roomy-disk.ts";
 
 installCheapHash();
@@ -23,6 +24,9 @@ process.env.FORGE_DEV = "1";
 
 // A suite has no public network to prove a child through (`spawn/reach.ts`); a test of reach injects its own fetch.
 useReachByDefault({ off: true });
+
+// The /forges list is served from memory in production; a test reads what it just changed (`spawn/clients.ts`).
+servedWindow.ms = 0;
 
 // `FORGE_SQL_LOG=<file>`: each distinct statement the run prepares, for
 // `scripts/index-use.ts --log` (#12011). Off unless asked for.
