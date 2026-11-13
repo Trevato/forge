@@ -16,7 +16,6 @@
  * history of the running commit, and the stuck, silent, lane and paid-order
  * alarms; every flow alarm draws through the same `alarmLines`, which the
  * three raised here hold to one line each.
- * Known exception, tracked in #11870: the crew-readiness danger toasts on /crew.
  */
 import { afterAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -164,7 +163,7 @@ const ALARMS: readonly { readonly alarm: string; readonly says: string; readonly
   { alarm: "sentinel finding", says: "The sentinel has 1 open finding", pages: ["/board"] },
   { alarm: "egress reported", says: "Egress is reported, not enforced", pages: ["/system"] },
 ];
-const PAGES = ["/", "/alice/forge/next", "/alice/forge", "/board", "/system"];
+const PAGES = ["/", "/alice/forge/next", "/alice/forge", "/board", "/system", "/settings/crew"];
 
 test("each alarm is raised, said on its page, and no page draws a banner for any of them", async () => {
   const w = await open(0);
@@ -205,6 +204,4 @@ test("the detector names a banner and passes the lines the forge really draws", 
   expect(offenders("/", '<span class="menu-item" aria-disabled="true" title="this host&#39;s disk has 0.0% free">New forge</span>')).toEqual([]);
   expect(offenders("/", '<p class="error" role="alert" hidden></p>')).toEqual([]);
   expect(offenders("/", '<a class="stat" data-tone="attn" href="/x">Backup overdue</a>')).toEqual([]);
-  // The known exception (#11870): the crew-readiness toast is a banner, and the detector sees it.
-  expect(offenders("/crew", '<div class="toast" data-tone="danger" role="alert"><div class="toast-body">No crew runner is up</div></div>')).toHaveLength(1);
 });
