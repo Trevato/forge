@@ -9,9 +9,10 @@ import { HOLDS } from "../../crew/held.ts";
 import type { HeldRow } from "../../flow/held.ts";
 import { html, type Html } from "../html.ts";
 import { meter } from "../ui.ts";
+import { count, fold } from "../figure.ts";
 
 function heldCount(kind: string, n: number): Html {
-  return html`<span data-held="${kind}"><span class="mono">${kind}=${String(n)}</span></span>`;
+  return html`<span class="held-n" data-held="${kind}"><span class="num">${String(n)}</span> ${kind.replaceAll("_", " ")}</span>`;
 }
 
 /** The startable share of the ready list; `attn` when none of it can start. */
@@ -31,12 +32,15 @@ export const HELD_EXPLAINED =
 
 /** Why ready issues cannot start, per autonomous repository (#2244). */
 export function heldCard(rows: readonly HeldRow[]): Html {
-  return html`<section class="settings-block" id="held">
-      <h2>Ready, and why it waits</h2>
-      ${rows.length === 0
+  const can = rows.reduce((n, r) => n + r.startable, 0);
+  const held = rows.reduce((n, r) => n + HOLDS.reduce((m, h) => m + r.counts[h], 0), 0);
+  return fold(
+    "Ready, and why it waits",
+    rows.length === 0 ? "no repository runs on its own" : `${count(can)} can start now, ${count(held)} ${held === 1 ? "is" : "are"} held`,
+    html`${rows.length === 0
         ? html`<p class="muted">No repository runs on its own.</p>`
         : html`<div class="table-scroll">
-            <table class="table" aria-label="Ready, and why it waits">
+            <table class="table" data-dense aria-label="Ready, and why it waits">
               <thead>
                 <tr>
                   <th scope="col">Repository</th>
@@ -68,6 +72,7 @@ export function heldCard(rows: readonly HeldRow[]): Html {
                 )}
               </tbody>
             </table>
-          </div>`}
-    </section>`;
+          </div>`}`,
+    { id: "held" },
+  );
 }

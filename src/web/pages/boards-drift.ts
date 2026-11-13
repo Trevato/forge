@@ -8,12 +8,11 @@
 import type { DriftingPull } from "../../flow/alarm_drift.ts";
 import { html, type Html } from "../html.ts";
 import { btn } from "../ui.ts";
+import { fold } from "../figure.ts";
 
 export function driftSection(pulls: readonly DriftingPull[]): Html | null {
   if (pulls.length === 0) return null;
-  return html`<section class="settings-block" id="drifting">
-    <h2>Drifting from main</h2>
-    <ul class="list" data-drifting="${String(pulls.length)}">
+  return fold("Drifting from main", `${String(pulls.length)} open ${pulls.length === 1 ? "pull is" : "pulls are"} far behind main`, html`<ul class="list" data-drifting="${String(pulls.length)}">
       ${pulls.map(
         (p) => html`<li data-drift="${p.repo}#${String(p.number)}">
           <a href="/${p.repo}/pulls/${String(p.number)}">${p.repo} #${String(p.number)}</a>
@@ -24,6 +23,5 @@ export function driftSection(pulls: readonly DriftingPull[]): Html | null {
           </form>
         </li>`,
       )}
-    </ul>
-  </section>`;
+    </ul>`, { id: "drifting", open: true });
 }

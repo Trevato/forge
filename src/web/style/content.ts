@@ -201,19 +201,48 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 
 .direction-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; color: var(--muted-fg); margin: 6px 0 0; }
 
-.chart-box { color: var(--accent); aspect-ratio: 720 / 260; max-width: 720px; }
-.chart-box .chart { display: block; width: 100%; height: auto; }
-.chart-box text { fill: var(--muted-fg); font-family: var(--mono); }
-.chart-box circle { fill: var(--accent); }
-.chart-box .big { fill: var(--fg); font-family: inherit; }
-.chart-box.is-table { aspect-ratio: auto; height: 260px; overflow: auto; }
-/* A board panel sizes its chart from here, after .chart-box: the grid itself
-   is §5's board (components.ts), but this layer is where .chart-box is drawn. */
-.bgrid .chart-box { max-width: none; }
-.bp-h2 .chart-box { aspect-ratio: 720 / 400; }
-.bp-h3 .chart-box { aspect-ratio: 720 / 540; }
-.bp-h2 .chart-box.is-table { height: 400px; }
-.bp-h3 .chart-box.is-table { height: 540px; }
+/* The one chart (boards/chart.ts): the plot stretches to its box and its strokes
+   do not scale; the axis values, the labels under it and the legend are the
+   page's own text, so nothing is scaled, clipped or wrapped at any width. The
+   plot's height is --chart-h, the same for every chart; a taller panel sets it. */
+.chart-box { --chart-h: 168px; min-width: 0; color: var(--accent); container-type: inline-size; }
+.chart { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 8px; font-size: var(--fs-min); line-height: 16px; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
+.chart-y { display: flex; flex-direction: column; align-items: flex-end; justify-content: space-between; height: calc(var(--chart-h) + 16px); margin-block: -8px; white-space: nowrap; }
+.chart-y.is-rows { justify-content: space-around; height: var(--chart-h); max-width: 112px; margin-block: 0; }
+.chart-y.is-rows span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.chart-plot { grid-column: 2; grid-row: 1; display: block; width: 100%; height: var(--chart-h); overflow: visible; color: var(--accent); }
+.chart-grid { stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.chart-line { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.chart-wash { fill: currentColor; fill-opacity: 0.08; }
+.chart-hit { fill: currentColor; fill-opacity: 0; }
+.chart-hit:hover, .chart a:focus-visible > .chart-hit { fill-opacity: 0.14; }
+.chart .bar, .chart .cell { fill: currentColor; }
+.chart .bar:hover, .chart a:focus-visible > .bar { fill-opacity: 0.7; }
+.chart .cell { stroke: var(--card); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.chart .cell:hover, .chart a:focus-visible > .cell { stroke: var(--fg); }
+.chart .area { fill-opacity: 0.85; }
+.chart a:focus-visible { outline: none; }
+.chart-x { grid-column: 2; display: flex; justify-content: space-between; height: 16px; }
+.chart-x > span { display: flex; justify-content: center; width: 0; white-space: nowrap; }
+.chart-x > span:first-child { justify-content: flex-start; }
+.chart-x > span:last-child { justify-content: flex-end; }
+.chart-x.is-one > span, .chart-x.is-slots > span { justify-content: center; }
+.chart-x.is-one { justify-content: center; }
+.chart-x.is-slots > span { flex: 1; }
+.chart-key { grid-column: 2; display: flex; flex-wrap: wrap; gap: 0 16px; margin: 4px 0 0; padding: 0; list-style: none; }
+.chart-key li { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
+.chart-key span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chart-key svg { flex: none; }
+.chart-big { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; margin: 0; }
+.chart-big .big { font-size: 20px; font-weight: 600; line-height: 28px; letter-spacing: -0.01em; color: var(--fg); }
+.chart[data-chart="number"] .chart-plot { grid-column: 1 / -1; grid-row: auto; height: calc(var(--chart-h) - 12px); }
+.chart-none { grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; height: calc(var(--chart-h) + 20px); margin: 0; }
+.chart-box.is-table { height: calc(var(--chart-h) + 20px); overflow: auto; }
+.bp-h2 .chart-box { --chart-h: 352px; }
+.bp-h3 .chart-box { --chart-h: 536px; }
+/* A narrow chart keeps three of its five labels: the first, the middle and the last. */
+@container (max-width: 440px) { .chart-x:not(.is-slots) > span:nth-child(2):nth-last-child(4), .chart-x:not(.is-slots) > span:nth-child(4):nth-last-child(2) { display: none; } }
+@media (forced-colors: active) { .chart-hit:hover, .chart a:focus-visible > .chart-hit { fill: Highlight; fill-opacity: 0.4; } }
 #summary { display: flex; flex-wrap: wrap; gap: 6px; }
 #summary .pill { max-width: 100%; white-space: normal; }
 /* The stacked bar chart's series colours, for its bars (fleet-graph.ts).

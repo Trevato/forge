@@ -52,8 +52,8 @@ describe("layout", () => {
 
 describe("flow panel", () => {
   const src = read("src/web/pages/flow-panel.ts");
-  test("the summary sits in a card, and Live shows no 'active' count", () => {
-    expect(src).toContain('id: "flow-summary"');
+  test("the summary is a section of its own, and Live shows no 'active' count", () => {
+    expect(src).toContain('<section class="bd-now" id="flow-summary"');
     expect(src).toContain('s.key === "live" ? "—"');
   });
 });

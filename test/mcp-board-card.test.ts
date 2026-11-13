@@ -79,7 +79,7 @@ describe("MCP boards card", () => {
     if (!shown.ok) throw new Error("show");
     shown.value.panels.forEach((p, i) => {
       const page = drawPanel(app, shown.value, p, { slug: "fixture", index: i }).text;
-      expect(page).toContain(`>${card.rows[i].value}</text>`);
+      expect(page).toContain(`<span class="big num">${card.rows[i].value}</span>`);
     });
     // Two runs, one in a private repository: the page counts both, so does the card.
     expect(card.rows[0]).toEqual({ label: "Runs", value: "2" });

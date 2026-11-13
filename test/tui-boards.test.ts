@@ -117,7 +117,7 @@ describe("tui boards", () => {
     expect(text).toContain("no points · step 1h · 0 points");
     expect(text).toContain("0 rows");
     expect(dataLine({ ok: true, rows: [{ group: "2026-10-20T21:45:00Z", value: 1500 }], from: null, to: null, step: 300 }))
-      .toBe("last 2026-10-20T21:45:00Z: 1500 · step 5m · 1 point");
+      .toBe("last 2026-10-20T21:45:00Z: 1,500 · step 5m · 1 point");
     expect(dataLine({ ok: false, error: "too\u001b[2Jmany" })).toBe("refused: too [2Jmany");
     expect([15, 300, 3600, 86_400, 90].map(stepWords)).toEqual(["15s", "5m", "1h", "1d", "90s"]);
     await deleteBoard(app, carol, "weekly");

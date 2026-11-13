@@ -20,7 +20,9 @@ import { liveRegionsJs } from "../client.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { fragment, page } from "../layout.ts";
-import { btn, chartBox, confirmAction, field, row, selectField } from "../ui.ts";
+import { btn, chartBox, confirmAction, field, selectField } from "../ui.ts";
+import { fold } from "../figure.ts";
+import { formatValue } from "../../boards/chart.ts";
 import { flowPanel } from "./flow-panel.ts";
 import { boardsHoldsCard } from "./boards-holds.ts";
 import { forgeCeiling } from "../../flow/ceiling.ts";
@@ -52,14 +54,18 @@ export function drawPanel(
   const body = !answer.ok
     ? html`<p class="muted small">${answer.error}</p>`
     : chartBox(panel.chart, cellsOf(answer.rows), panel.title);
+  // One series drawn over time says its latest value beside its name; a split or a table has no one latest.
+  const newest = answer.ok && (panel.chart === "line" || panel.chart === "bar") ? answer.rows[answer.rows.length - 1] : undefined;
+  const last = newest !== undefined && newest.series === undefined && /^\d{4}-\d{2}-\d{2}/.test(String(newest.group)) ? newest : undefined;
   const explore = new URLSearchParams(Object.entries(q).filter(([k, v]) => v !== "" && k !== "rows"));
   const data = `/api/v1/boards/${at.slug}/panels/${String(at.index)}`;
-  return html`<div class="card bp-w${String(panel.w)} bp-h${String(panel.h)}">
-    <div class="card-head"><h2>${panel.title}</h2>
-      <span class="card-links muted small"><a href="/boards/data?${explore.toString()}">explore</a>
-        <a href="${data}" aria-label="${panel.title}: data as JSON">json</a>
-        <a href="${data}?format=csv" download="${at.slug}-${String(at.index)}.csv" aria-label="${panel.title}: data as CSV">csv</a></span></div>
-    <div class="card-body">${body}</div>
+  return html`<div class="card bp bp-w${String(panel.w)} bp-h${String(panel.h)}">
+    <div class="bp-head"><h2>${panel.title}</h2>
+      ${last === undefined ? null : html`<span class="bp-now"><span class="num">${formatValue(last.value ?? 0)}</span> latest</span>`}</div>
+    <div class="bp-body">${body}</div>
+    <p class="bp-foot card-links"><a href="/boards/data?${explore.toString()}" aria-label="${panel.title}: explore">Explore</a>
+        <a href="${data}" aria-label="${panel.title}: data as JSON">JSON</a>
+        <a href="${data}?format=csv" download="${at.slug}-${String(at.index)}.csv" aria-label="${panel.title}: data as CSV">CSV</a></p>
     ${aside}
   </div>`;
 }
@@ -74,7 +80,7 @@ function grid(app: App, slug: string, board: Board): Html {
       : html`data-live="${READS}" data-live-src="/boards/${slug}/live"`}
   >
     ${board.panels.length === 0
-      ? html`<p class="muted">No panels yet. Add one below.</p>`
+      ? html`<p class="muted bp-w3">This board has no panel yet. Add the first one under "Add a panel" below, or pin a chart from <a href="/boards/data">Explore the data</a>.</p>`
       : board.panels.map((p, index) => drawPanel(app, board, p, { slug, index }))}
   </section>`;
 }
@@ -95,40 +101,47 @@ export async function boardsList(ctx: Ctx): Promise<Response> {
     if (holds === null) return notFoundPage(ctx);
     return page({ ctx, title: "Boards", body: html`<div class="page-head"><h1>Boards</h1></div>${holds}` });
   }
-  const make = html`<section class="settings-block" id="boards-new"><h2>Make a board</h2>
-    <form method="post" action="/boards/new" class="bar">
-      ${field({ label: "New board", name: "title", id: "new-board-title", required: true, maxlength: MAX_TITLE, placeholder: "Title" })}
-      ${btn("Make board", { variant: "primary" })}
-    </form></section>`;
-  const body = html`<section class="settings-block" id="boards-all"><h2>Your boards</h2>${
-    listed.value.length === 0
-      ? html`<p class="muted">A board is a page of charts over the forge's own numbers. Make one below; it is saved as a file in forge/boards.</p>`
-      : html`<ul class="list setting-list">
-          ${listed.value.map(({ slug, board }) =>
-            row({
-              href: `/boards/${slug}`,
-              nav: true,
-              title: board.title,
-              meta: html`${String(board.panels.length)} panel${board.panels.length === 1 ? "" : "s"} · ${board.range} · refresh ${board.refresh}`,
-            }),
+  const boards = html`<section class="bd-block" id="boards-all" aria-labelledby="boards-all-h">
+    <header class="bd-head"><h2 id="boards-all-h">Your boards</h2><p class="bd-sub">A board is a page of charts over the forge's own numbers, saved as a file in forge/boards.</p></header>
+    ${listed.value.length === 0
+      ? html`<p class="muted">No board yet. Make one below, or start from a question on <a href="/boards/data">Explore the data</a>.</p>`
+      : html`<ul class="bd-boards">
+          ${listed.value.map(
+            ({ slug, board }) => html`<li class="tile"><a href="/boards/${slug}" class="tile-link" data-nav tabindex="-1">
+              <span class="tile-top"><span class="tile-app">${board.title}</span><span class="tile-clock">${String(board.panels.length)} ${board.panels.length === 1 ? "chart" : "charts"}</span></span>
+              <span class="tile-hint">${RANGE_WORDS[board.range]}${board.refresh === "off" ? "" : ", redrawn as things happen"}</span>
+            </a></li>`,
           )}
-        </ul>`
-  }</section>`;
-  const flow = timePhase(ctx.request, "flow", () => flowPanel(ctx.app, { kind: "owner" }, ctx.url, "/boards"));
+        </ul>`}
+    <details class="disclosure" id="boards-new"><summary>Make a board</summary>
+      <form method="post" action="/boards/new" class="bar">
+        ${field({ label: "New board", name: "title", id: "new-board-title", required: true, maxlength: MAX_TITLE, placeholder: "Title" })}
+        ${btn("Make board", { variant: "primary" })}
+      </form></details>
+  </section>`;
   const drift = driftSection(await timePhaseAsync(ctx.request, "drift", async () => driftingPulls(await readDrifts(ctx.app), Date.now())));
+  const flow = timePhase(ctx.request, "flow", () =>
+    flowPanel(ctx.app, { kind: "owner" }, ctx.url, "/boards", { now: alarmLines(cachedAlarms(ctx.app.db, new Date(), forgeCeiling(ctx.app.config), ctx.app.config.dataDir)), between: boards, first: drift, last: boardsHoldsCard(ctx.app.db, ctx.auth.user, true) }));
   const rendering = performance.now();
   const response = page({
     ctx,
     title: "Boards",
-    body: html`<div class="page-head"><h1>Boards</h1>
-        ${btn("Flow", { href: "/flow", variant: "ghost" })}
-        ${btn("Explore the data", { href: "/boards/data", variant: "ghost" })}</div>
-      ${alarmLines(cachedAlarms(ctx.app.db, new Date(), forgeCeiling(ctx.app.config), ctx.app.config.dataDir))}
-      ${body} ${make} ${drift} ${flow} ${boardsHoldsCard(ctx.app.db, ctx.auth.user, true)}`,
+    wide: true,
+    body: html`<div class="hf bd">
+      <header class="hf-head">
+        <div class="hf-title"><h1>Boards</h1><p class="hf-live muted">How work is moving through the forge right now, and the charts behind it.</p></div>
+        <nav class="bd-nav" aria-label="Deeper">${btn("Flow", { href: "/flow", variant: "ghost" })}${btn("Explore the data", { href: "/boards/data", variant: "ghost" })}</nav>
+      </header>
+      ${flow}
+    </div>`,
+    scriptJs: liveRegionsJs,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
 }
+
+/** A board's range as words. */
+const RANGE_WORDS: Readonly<Record<Board["range"], string>> = { "1h": "The last hour", "24h": "The last 24 hours", "7d": "The last 7 days", "30d": "The last 30 days", all: "All of time" };
 
 function panelForm(slug: string, op: string, p: Panel | undefined, index: number, fields: Html): Html {
   const id = op === "edit" ? `panel-${String(index)}` : "panel-new";
@@ -168,13 +181,16 @@ function manage(slug: string, board: Board, adding: Html, pins: ReturnType<typeo
       ${confirmAction({ action: `/boards/${slug}/remove?index=${String(i)}&title=${encodeURIComponent(p.title)}`, verb: "Remove", size: "sm", label: `Remove ${p.title}` })}
     </div>
   </li>`;
-  return html`<section class="settings-block" id="board-panels"><h2>Panels</h2>
-      <ul class="list setting-list">${board.panels.map(one)}</ul></section>
+  const n = board.panels.length;
+  return html`<section class="bd-block" id="board-edit" aria-labelledby="board-edit-h">
+    <header class="bd-head"><h2 id="board-edit-h">Change this board</h2><p class="bd-sub">It is saved as a file in forge/boards, so every change is a commit.</p></header>
+    <div class="folds">
+    ${n === 0 ? null : fold("Panels", `${String(n)} ${n === 1 ? "panel" : "panels"}: edit, move, pin to home or remove`, html`<ul class="list setting-list">${board.panels.map(one)}</ul>`, { id: "board-panels" })}
     ${when(
-      board.panels.length < MAX_PANELS,
-      () => html`<section class="settings-block" id="board-add"><h2>Add a panel</h2>${panelForm(slug, "add", undefined, 0, adding)}</section>`,
+      n < MAX_PANELS,
+      () => fold("Add a panel", `room for ${String(MAX_PANELS - n)} more`, panelForm(slug, "add", undefined, 0, adding), { id: "board-add", open: n === 0 }),
     )}
-    <section class="settings-block" id="board-manage"><h2>Board</h2>
+    ${fold("Board", `${RANGE_WORDS[board.range].toLowerCase()}, ${board.refresh === "off" ? "not redrawn until reloaded" : "redrawn as things happen"}`, html`
       <div class="bar"><form method="post" action="/boards/${slug}/rename" class="bar">
           ${field({ label: "Board title", name: "title", id: "board-title", required: true, maxlength: MAX_TITLE, value: board.title })}
           ${btn("Rename")}
@@ -188,7 +204,9 @@ function manage(slug: string, board: Board, adding: Html, pins: ReturnType<typeo
           ${btn("Save settings")}
         </form>
         <form method="post" action="/boards/${slug}/duplicate">${btn("Duplicate")}</form>
-        ${confirmAction({ action: `/boards/${slug}/delete`, verb: "Delete this board" })}</div></section>`;
+        ${confirmAction({ action: `/boards/${slug}/delete`, verb: "Delete this board" })}</div>`, { id: "board-manage" })}
+    </div>
+  </section>`;
 }
 
 // GET /boards/:slug
@@ -200,13 +218,19 @@ export async function boardShow(ctx: Ctx): Promise<Response> {
   const board = shown.value;
   const panels = timePhase(ctx.request, "grid", () => grid(ctx.app, slug, board));
   const rendering = performance.now();
+  const n = board.panels.length;
   const response = page({
     ctx,
     title: board.title,
-    body: html`<div class="page-head"><h1>${board.title}</h1>
-        ${btn("All boards", { href: "/boards", variant: "ghost" })}</div>
+    wide: true,
+    body: html`<div class="hf bd">
+      <header class="hf-head">
+        <div class="hf-title"><h1>${board.title}</h1><p class="hf-live muted">${String(n)} ${n === 1 ? "chart" : "charts"} over ${RANGE_WORDS[board.range].toLowerCase()}${board.refresh === "off" ? "" : ", redrawn as things happen"}. Times are UTC.</p></div>
+        <nav class="bd-nav" aria-label="Elsewhere">${btn("All boards", { href: "/boards", variant: "ghost" })}${btn("Explore the data", { href: "/boards/data", variant: "ghost" })}</nav>
+      </header>
       ${panels}
-      ${manage(slug, board, queryFields(readParams(ctx.url.searchParams)), listPins(ctx.app.db, ctx.auth.user?.id ?? ""))}`,
+      ${manage(slug, board, queryFields(readParams(ctx.url.searchParams)), listPins(ctx.app.db, ctx.auth.user?.id ?? ""))}
+    </div>`,
     scriptJs: liveRegionsJs,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);

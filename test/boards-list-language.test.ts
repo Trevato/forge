@@ -43,37 +43,39 @@ const block = (html: string, id: string) => {
   return html.slice(at, html.indexOf("</section>", at));
 };
 
-test("/boards with no board: a heading, one plain sentence, the form under its own heading", async () => {
+test("/boards with no board: a heading, one plain sentence, the form closed under it", async () => {
   const html = await (await call("/boards")).text();
   const all = block(html, "boards-all");
-  expect(all).toContain("<h2>Your boards</h2>");
+  expect(all).toContain(">Your boards</h2>");
   expect(all).toContain("A board is a page of charts");
+  expect(all).toContain("No board yet.");
   expect(all).not.toContain("card");
-  expect(block(html, "boards-new")).toContain("<h2>Make a board</h2>");
-  expect(block(html, "boards-new")).not.toContain("card");
+  expect(all).toMatch(/<details class="disclosure" id="boards-new"><summary>Make a board<\/summary>\s*<form method="post" action="\/boards\/new"/);
 });
 
-test("/boards with a board: one row under the heading, the name escaped, no card", async () => {
+test("/boards with a board: one tile under the heading, the name escaped, no card", async () => {
   expect((await call("/boards/new", { title: "<b>Mine</b>" })).status).toBe(303);
   const html = await (await call("/boards")).text();
   const all = block(html, "boards-all");
-  expect(all).toContain("<h2>Your boards</h2>");
+  expect(all).toContain(">Your boards</h2>");
   expect(all).toContain("&lt;b&gt;Mine&lt;/b&gt;");
   expect(all).not.toContain("<b>Mine");
-  expect(all.match(/<li/g)?.length).toBe(1);
+  expect(all.match(/<li class="tile"/g)?.length).toBe(1);
+  expect(all).toContain("0 charts");
   expect(all).not.toContain("card");
-  expect(all).not.toContain("A board is a page of charts");
+  expect(all).not.toContain("No board yet.");
 });
 
-test("a board's management is sections with headings; its panels keep their cards", async () => {
+test("a board's management is folds with headings; its panels keep their cards", async () => {
   const slug = (await (await call("/boards")).text()).match(/<li[^>]*>\s*<a[^>]*href="\/boards\/([^"]+)"/)![1]!;
   const q = { source: "runs", aggregate: "count", column: "", by: "day", from: "", to: "", fcolumn: "state", fop: "eq", fvalue: "ok" };
   expect((await call(`/boards/${slug}/add`, { ...q, title: "P", w: "1", h: "1" })).status).toBe(303);
   const html = await (await call(`/boards/${slug}`)).text();
-  expect(html).toContain('class="card bp-w1');
+  expect(html).toContain('class="card bp bp-w1');
+  // Each part of the management is closed until asked for, under its own name with one sentence of how it stands.
   for (const [id, h] of [["board-panels", "Panels"], ["board-add", "Add a panel"], ["board-manage", "Board"]] as const) {
     const b = block(html, id);
-    expect(b).toContain(`<h2>${h}</h2>`);
+    expect(b).toMatch(new RegExp(`^id="${id}"\\s*>\\s*<summary><h2 class="fold-title">${h}</h2><span class="fold-state">[^<]+</span></summary>`));
     expect(b).not.toContain('class="card');
   }
 });

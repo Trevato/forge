@@ -49,7 +49,7 @@ const draw = (kind: "owner" | "agent") => String(flowPanel(app, { kind }, new UR
 
 test("the owner sees both lines across all repositories, names linked", () => {
   const page = draw("owner");
-  expect(page).toContain("time to land:");
+  expect(page).toContain("Opened to landed");
   expect(page).toMatch(/data-median-hours>\d/);
   expect(page).toMatch(/data-max-hours>\d/);
   expect(page).toContain(`<a href="/scout">scout</a> 2 (0 flow)`);
@@ -57,9 +57,9 @@ test("the owner sees both lines across all repositories, names linked", () => {
 
 test("a non-admin reads public repositories alone", () => {
   const page = draw("agent");
-  expect(page).toMatch(/opened in the last hour:\s+no pulls/);
-  expect(page).toContain("data-median-hours>2.8h<");
-  expect(page).toContain("data-max-hours>2.8h<");
+  expect(page).toMatch(/Opened in the last hour:\s+no pulls/);
+  expect(page).toMatch(/data-median-hours>2h \d+m</);
+  expect(page).toMatch(/data-max-hours>2h \d+m</);
   expect(page).not.toContain("(0 flow)");
 });
 

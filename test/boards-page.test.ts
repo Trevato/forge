@@ -9,7 +9,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/app.ts";
-import { barChart, drawChart, CHARTS, gridOf, heatStrip, lineChart, numberChart, stackedArea, tableChart } from "../src/boards/chart.ts";
+import { barChart, drawChart, CHARTS, formatValue, gridOf, heatStrip, labelWords, lineChart, niceTop, numberChart, stackedArea, tableChart } from "../src/boards/chart.ts";
+
+/** A point's hover column: what says its value and links to its rows. */
+const HIT = /<rect class="chart-hit"/g;
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { makeBoard } from "../src/actions/boards.ts";
@@ -110,9 +113,10 @@ describe("/boards/data", () => {
     const res = await get("/boards/data?source=runs&by=day", "admin");
     expect(res.status).toBe(200);
     const body = await res.text();
-    expect(body.match(/<path d="M[^"]*" fill="none" stroke="currentColor" stroke-width="2"/g)?.length).toBe(1);
-    expect(body.match(/<circle cx="[^"]*" cy="[^"]*" r="4">/g)?.length).toBe(3);
-    expect(body).toContain("2026-10-02T00:00:00Z");
+    expect(body.match(/<path class="chart-line" d="M[^"]*"/g)?.length).toBe(1);
+    expect(body.match(HIT)?.length).toBe(3);
+    // A day is said as a day, under the plot and in the point's own words.
+    expect(body).toContain("<title>Oct 2: 2</title>");
   });
 
   test("a point links to the rows behind it", async () => {
@@ -120,12 +124,12 @@ describe("/boards/data", () => {
     const m = body.match(/href="(\/boards\/data\?[^"]*rows=1[^"]*)"/);
     expect(m).not.toBeNull();
     const rows = await (await get(m![1]!.replaceAll("&amp;", "&"), "admin")).text();
-    expect(rows).not.toContain('r="4">');
+    expect(rows).not.toContain('class="chart-hit"');
     expect(rows).toContain("<table");
   });
 
   const pointLinks = (body: string) =>
-    [...body.matchAll(/<a href="(\/boards\/data\?[^"]*rows=1[^"]*)"><circle/g)].map((m) => m[1]!.replaceAll("&amp;", "&"));
+    [...body.matchAll(/<a href="(\/boards\/data\?[^"]*rows=1[^"]*)"><rect class="chart-hit"/g)].map((m) => m[1]!.replaceAll("&amp;", "&"));
 
   test("a column point keeps the user's filter and adds its group", async () => {
     const body = await (await get("/boards/data?source=runs&by=kind&fcolumn=state&fvalue=failed&from=2026-10-04T12:00:00Z", "admin")).text();
@@ -152,7 +156,7 @@ describe("/boards/data", () => {
 
   test("a filter narrows the points", async () => {
     const body = await (await get("/boards/data?source=runs&by=day&from=2026-10-02&to=2026-10-03", "admin")).text();
-    expect(body.match(/<circle cx="[^"]*" cy="[^"]*" r="4">/g)?.length).toBe(1);
+    expect(body.match(HIT)?.length).toBe(1);
   });
 
   test("hostile params are escaped", async () => {
@@ -218,27 +222,27 @@ describe("every chart type from one seeded query", () => {
 
   test("line draws one point per day, the series set aside", async () => {
     const body = await drawn("line");
-    expect(count(body, /<circle cx="[^"]*" cy="[^"]*" r="4">/g)).toBe(3);
-    expect(count(body, /<div class="chart-box"><svg [^>]*class="chart"/g)).toBe(1);
+    expect(count(body, HIT)).toBe(3);
+    expect(count(body, /<div class="chart-box"><div class="chart" data-chart="line"/g)).toBe(1);
   });
   test("bar draws one bar per day", async () => {
     expect(count(await drawn("bar"), /<rect class="bar"/g)).toBe(3);
   });
   test("stacked area draws one band per kind, with a legend", async () => {
     const body = await drawn("area");
-    expect(count(body, /<path class="area"/g)).toBe(3);
-    expect(count(body, /<rect class="key"/g)).toBe(3);
+    expect(count(body, /<path class="area fg-s\d"/g)).toBe(3);
+    expect(count(body.match(/<ul class="chart-key">[\s\S]*?<\/ul>/)![0], /<li /g)).toBe(3);
   });
   test("number draws the latest day's count and a three-point sparkline", async () => {
     const body = await drawn("number");
-    expect(body).toMatch(/<text class="big"[^>]*>5<\/text>/);
-    expect(body).toContain("latest of 3: 2026-10-04T00:00:00Z");
-    const spark = body.match(/<path class="spark" d="([^"]*)"/)![1]!;
+    expect(body).toContain('<span class="big num">5</span>');
+    expect(body).toContain("Oct 4, the latest of 3");
+    const spark = body.match(/<path class="chart-line spark" d="([^"]*)"/)![1]!;
     expect(spark.split(" L").length).toBe(3);
   });
   test("table draws one row per day and kind, and no second table under it", async () => {
     const body = await drawn("table");
-    const table = body.match(/<table class="table chart-table">[\s\S]*?<\/table>/)![0];
+    const table = body.match(/<table class="table chart-table" data-dense>[\s\S]*?<\/table>/)![0];
     expect(count(table, /<tr>/g)).toBe(1 + 5);
     expect(count(body, /<table/g)).toBe(1);
     // The panel is chartBox()'s frame, marked as a table (#4282).
@@ -253,7 +257,7 @@ describe("every chart type from one seeded query", () => {
     expect(await listed(check)).toEqual(["m3", "m4"]);
   });
   test("an unknown chart falls back to line", async () => {
-    expect(count(await drawn("pie"), /<circle cx="[^"]*" cy="[^"]*" r="4">/g)).toBe(3);
+    expect(count(await drawn("pie"), HIT)).toBe(3);
   });
   test("the chart is chosen beside the query", async () => {
     const body = await drawn("heat");
@@ -264,12 +268,33 @@ describe("every chart type from one seeded query", () => {
 });
 
 describe("chart geometry", () => {
-  // The plot is 648 × 204 (720 − 56 − 16 by 260 − 16 − 40), its top-left at (56, 16).
-  test("bars: two slots of 324, bars 70% wide, heights in proportion", () => {
-    const svg = barChart([{ label: "a", value: 1 }, { label: "b", value: 3 }], "t");
-    // scale 204/3 = 68 per unit; slot centres 218 and 542; bar 226.8 wide.
-    expect(svg).toContain('<rect class="bar" x="104.6" y="152" width="226.8" height="68">');
-    expect(svg).toContain('<rect class="bar" x="428.6" y="16" width="226.8" height="204">');
+  // The plot is 100 × 100 and stretches to its box; the y axis tops out at a round number at or above the largest value.
+  test("bars: two slots of 50, bars 70% wide, heights in proportion", () => {
+    const svg = barChart([{ label: "a", value: 1 }, { label: "b", value: 4 }], "t");
+    // top 4, so 25 per unit; slots start at 0 and 50; a bar is 35 wide, 7.5 in.
+    expect(svg).toContain('<rect class="bar" x="7.5" y="75" width="35" height="25">');
+    expect(svg).toContain('<rect class="bar" x="57.5" y="0" width="35" height="100">');
+  });
+  test("the y axis tops out at a round number, and says its three values as text", () => {
+    expect([4.26, 7307, 0.69, 136, 0].map(niceTop)).toEqual([5, 8000, 0.8, 150, 1]);
+    expect(lineChart([{ label: "a", value: 1 }, { label: "b", value: 7307 }], "t")).toContain('<div class="chart-y" aria-hidden="true"><span>8,000</span><span>4,000</span><span>0</span></div>');
+  });
+  test("numbers and times are said the way a person reads them", () => {
+    expect([0.4234, 12.52, 1234, 12345, 123456, 4_500_000, 7.11e9].map(formatValue)).toEqual(["0.42", "12.5", "1,234", "12.3k", "123k", "4.5M", "7.11G"]);
+    expect(["2026-11-13", "2026-11-13T00:00:00Z", "2026-11-13T16:40:00Z", "2026-11-13T16", "check"].map(labelWords)).toEqual(["Nov 13", "Nov 13, 00:00", "Nov 13, 16:40", "Nov 13, 16:00", "check"]);
+    // Under the plot a day is said once, where it starts; the times after it stand alone.
+    const hours = lineChart(["2026-11-12T23:00:00Z", "2026-11-13T00:00:00Z", "2026-11-13T01:00:00Z"].map((label, value) => ({ label, value })), "t");
+    expect([...hours.matchAll(/<span><span>([^<]*)<\/span><\/span>/g)].map((m) => m[1])).toEqual(["Nov 12, 23:00", "Nov 13, 00:00", "01:00"]);
+    // Ticks that each fall on a day of their own say the day: a time alone would not say which.
+    const week = lineChart(Array.from({ length: 5 }, (_, d) => ({ label: `2026-11-0${d + 1}T17:00:00Z`, value: d })), "t");
+    expect([...week.matchAll(/<span><span>([^<]*)<\/span><\/span>/g)].map((m) => m[1])).toEqual(["Nov 1", "Nov 2", "Nov 3", "Nov 4", "Nov 5"]);
+  });
+  test("a chart says in a sentence what its picture shows", () => {
+    expect(lineChart([{ label: "2026-11-12", value: 3 }, { label: "2026-11-13", value: 1 }], "Runs")).toContain('<p class="sr-only">Runs: 2 points from Nov 12 to Nov 13; lowest 1, highest 3, latest 1.</p>');
+  });
+  test("past 240 points one hover column stands for several, so a long series stays light", () => {
+    const many = lineChart(Array.from({ length: 1000 }, (_, i) => ({ label: String(i), value: i })), "t");
+    expect(many.match(HIT)?.length).toBe(200);
   });
   test("stacked area: bands sit on the ones before them", () => {
     const cells = [
@@ -277,9 +302,9 @@ describe("chart geometry", () => {
       { label: "t2", series: "a", value: 3 }, { label: "t2", series: "b", value: 1 },
     ];
     const svg = stackedArea(cells, "t");
-    // tallest stack 4 → y(v) = 220 − 51v; x is 56 and 704.
-    expect(svg).toContain('d="M56 169 L704 67 L704 220 L56 220 Z"');
-    expect(svg).toContain('d="M56 67 L704 16 L704 67 L56 169 Z"');
+    // tallest stack 4 → y(v) = 100 − 25v; x is 0 and 100.
+    expect(svg).toContain('d="M0 75 L100 25 L100 100 L0 100 Z"');
+    expect(svg).toContain('d="M0 25 L100 0 L100 25 L0 75 Z"');
   });
   test("heat: opacity is 0.06 + 0.94 × value / largest", () => {
     const svg = heatStrip([
@@ -298,7 +323,7 @@ describe("chart geometry", () => {
     expect(g.values).toEqual([[9], [6]]);
   });
   test("number with one point, and every type with none, still draws", () => {
-    expect(numberChart([{ label: "x", value: 12345 }], "t")).toContain(">12.35k</text>");
+    expect(numberChart([{ label: "x", value: 12345 }], "t")).toContain('<span class="big num">12.3k</span>');
     for (const c of CHARTS) expect(drawChart(c, [], "t")).toContain("No points");
   });
   test("every type escapes its labels and series", () => {
@@ -319,7 +344,7 @@ describe("lineChart", () => {
     const svg = lineChart([{ label: "<b>&", value: 1 }, { label: "x", value: 2 }], "t");
     expect(svg).not.toContain("<b>");
     expect(svg).toContain("&lt;b&gt;&amp;");
-    expect(svg).toContain('viewBox="0 0 720 260"');
+    expect(svg).toContain('viewBox="0 0 100 100" preserveAspectRatio="none"');
   });
   test("no points still draws", () => {
     expect(lineChart([], "t")).toContain("No points");

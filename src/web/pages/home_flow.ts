@@ -44,6 +44,7 @@ import { running, UNSTAMPED } from "../../kernel/version.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { signInFirst } from "../chrome.ts";
+import { figure as fig } from "../figure.ts";
 import { homeFlowJs } from "./home_flow_client.ts";
 import { liveRegionsJs } from "../client.ts";
 import { html, type Html } from "../html.ts";
@@ -203,15 +204,6 @@ const optionsOf = (ctx: Ctx): PictureOptions => pictureOptions(ctx.app);
 const healthOf = (view: LaneView, picture: LanePicture, now: number): Health => laneHealth(view, { now, builders: picture.builders, moved: picture.moved });
 
 // ---- the strip: today's figures, and the one line that needs the owner ----
-
-function fig(label: string, value: Html | string, note: Html | string, href: string, extra: Html | null = null, tone: "attn" | null = null): Html {
-  return html`<a class="hf-fig" href="${href}" ${tone === null ? null : html`data-tone="${tone}"`}>
-    <span class="hf-fig-label">${label}</span>
-    <span class="hf-fig-value num">${value}</span>
-    <span class="hf-fig-note">${note}</span>
-    ${extra === null ? null : html`<span class="hf-fig-spark">${extra}</span>`}
-  </a>`;
-}
 
 function proofWords(proof: Proof | undefined, version: string): { text: string; tone: "attn" | null } {
   if (proof === undefined) return { text: "not proven yet", tone: null };
