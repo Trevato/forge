@@ -79,7 +79,19 @@ describe("spawnForge", () => {
     expect(db.query("SELECT brief FROM agent").all()).toEqual([{ brief: "ship small" }]);
     db.close();
     expect(JSON.parse(await Bun.file(join(child, "parent.json")).text())).toEqual({
-      apps: [{ repo: "kids/notes", upstream: "alice/notes" }],
+      // Where it came from and that the child follows it, taking updates (`spawn/app_links.ts`).
+      apps: [
+        {
+          repo: "kids/notes",
+          upstream: "alice/notes",
+          url: "https://forge.test/alice/notes.git",
+          branch: "main",
+          mode: "take-updates",
+          anchor: expect.stringMatching(/^[0-9a-f]{40,64}$/),
+          offeredAt: expect.any(String),
+          appliedAt: expect.any(String),
+        },
+      ],
       upstream: "https://forge.test",
       name: "kid",
       org: "kids",

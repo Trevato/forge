@@ -24,6 +24,7 @@ import { ownCode, removeForge, stopForge, type Managed } from "../../spawn/manag
 import { readOwnCode } from "../../spawn/own_code.ts";
 import { countRefusals, mayReadRefusals } from "../../core/first_ask_refusals.ts";
 import { claimLinkBody } from "./new-forge.ts";
+import { appLinkWords } from "../../spawn/app_links.ts";
 
 
 /** "3 apps running", or which one is not and why. */
@@ -76,6 +77,8 @@ export function forgeRow(r: ClientRow, now: number): Html {
     data: { forge: r.name, claimed: state },
     children: [
       ...(firstScreenOf(r) === null ? [] : [row({ title: html`${firstScreenOf(r)}`, data: { "first-screen": "" } })]),
+      // Each app it was sent, and whether it still follows it: its owner may have severed.
+      ...(r.appLinks ?? []).map((l) => row({ title: html`${appLinkWords(l)}`, data: { "app-link": l.state } })),
       ...(r.reach?.proofs ?? []).map((p) =>
         // One row per public address; the word in the trail, not a colour, says which failed.
         row({

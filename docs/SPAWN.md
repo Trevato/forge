@@ -62,7 +62,7 @@ A hosted forge gets the same one-click connect for origins its parent holds an O
 
 ## A client's forge in one form (#1608)
 
-`/forges/new` is the whole path: a name, the owner's apps to fork, optionally one fresh app from a one-line description (`fresh`, at most 200 characters, one line), a budget with a model key; it ends in one claim link, shown once. Each picked app is a fork: its full history is copied and `parent.json` lists `apps: [{repo, upstream}]` so the child knows what it follows. A fresh app is a private repository in the child with a README, a `forge.json` and a tiny `index.ts` that answers `/` with the sentence, escaped; its name is the sentence's slug, never one of the forked names. A custom domain is not part of this: the child is reached at `<name>--<host>` and nothing else is promised. The same field is on `POST /api/v1/forges` and the MCP `spawn` (`fresh`). It is absent from the plan when unsaid, so older plan hashes are unchanged.
+`/forges/new` is the whole path: a name, the owner's apps to fork, optionally one fresh app from a one-line description (`fresh`, at most 200 characters, one line), a budget with a model key; it ends in one claim link, shown once. Each picked app is a fork: its full history is copied (the same commit ids) and the child follows it from the first minute ("Apps stay linked", below). A fresh app is a private repository in the child with a README, a `forge.json` and a tiny `index.ts` that answers `/` with the sentence, escaped; its name is the sentence's slug, never one of the forked names. A custom domain is not part of this: the child is reached at `<name>--<host>` and nothing else is promised. The same field is on `POST /api/v1/forges` and the MCP `spawn` (`fresh`). It is absent from the plan when unsaid, so older plan hashes are unchanged.
 
 ## Choices
 
@@ -116,6 +116,16 @@ and `conflict` when it carries a fork; `/family` on the parent shows
 updates · 3 commits behind · conflict open` (`tells its owner` for
 `tell-me`, `up to date` at zero behind). `conflict` is the state at the
 child's last hourly check, not a live look at whether the issue is still open.
+
+## Apps stay linked (`spawn/app_links.ts`)
+
+An app a spawn sends down is the parent's repository with its whole history, and it stays linked to it: in the child it is an ordinary followed upstream (`repo_upstream`, the `upstream` tool) at `<parent>/<owner>/<name>.git`, with `via: parent` and the follow mode `take-updates` (or the `followMode` chosen at spawn). There is one follow mechanism for an app, an outside upstream and a connected origin; the forge's own code (`forgeCode` above) is the other record, and `follow_mode` and `sever` answer for both.
+
+- **Taking updates.** When the parent's default branch is ahead and the child's holds nothing the parent lacks, the child's branch moves to the parent's tip (a fast-forward, the same commit ids, a `push` and a `forge.updates_taken` event, so the app redeploys). When the child has commits of its own nothing is rewritten: the new commits come as the `Upstream: N new commits` pull, or, when they conflict, as the converge issue for the crew. `tell-me` only ever proposes.
+- **When it looks.** The parent says so: a hosted child awake in its process is checked the moment an app lands (`watchLandings`) and when it wakes; a child in a cell hears the tips in the answer to its heartbeat; otherwise the existing 30-minute follow poll.
+- **A private app** is read with a follow token: a read-only proposal token (`proposal_token.read_only`) bound to that one repository, which fetches it and does nothing else (no push, no pull, no other repository). The child seals it with its own key (`repo_upstream.credential_enc`); the plain copy is never kept. The parent ends it with `proposal_tokens`, and by the child's sever.
+- **Severing** is one action, `sever` (a button on the repository page, `POST /settings/upstream/sever`, `follow_mode` `dont-follow`): the link goes off, the credential is forgotten, the day is kept so a repair never links it again, and the parent's next pass (`reconcileAppLinks`, five minutes) ends the token it minted. History and files stay. The parent never gains access: `keepAccess` is a separate choice.
+- **Children made before this** are repaired by their parent: `reconcileAppLinks` offers each child, from its ledger, the link to every app it was given that has none (written into the child's `parent.json` `apps` entries as `url`, `branch`, `mode`, `anchor` and, for a private app, `token`); the child applies the offer (`applyAppLinks`, at boot and every minute) only when the repository's history holds `anchor`, the parent repository's first commit, and its owner has not severed or set the repository up otherwise. The owner sees a `repo.upstream_follow` event saying "`<repo>` now follows `<upstream>` on `<host>`: ... Sever it". `/forges` lists, per child, each app it was sent and whether it still follows.
 
 ## Following the parent forge
 

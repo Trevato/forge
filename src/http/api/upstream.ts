@@ -19,7 +19,7 @@ import { driftOfForks, MAX_RANKED_FORKS, type RankedFork } from "../../actions/f
 import { canAdmin, forkParentFor, visibleForks } from "../../core/repos.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
-import { getFollow } from "../../core/upstream_follow.ts";
+import { getFollow, isFollowTaking } from "../../core/upstream_follow.ts";
 import { holds, weakEtag } from "../etag.ts";
 import { loadRepo, pageParams, slicePage } from "../api.ts";
 import type { Handler } from "../context.ts";
@@ -68,6 +68,7 @@ export function upstreamRoutes(router: Router<Handler>): void {
       url: str(input.url),
       branch: str(input.branch),
       enabled: input.enabled,
+      ...(isFollowTaking(input.mode) ? { mode: input.mode } : {}),
     });
     if (!saved.ok)
       return saved.error === "not_found" || saved.error === "unauthorized" || saved.error === "forbidden"

@@ -109,10 +109,12 @@ describe("a forge with forked and fresh apps", () => {
     const ledger = await Bun.file(join(dir, "spawn", "kai.json")).json();
     const child = childDirOf(app, ledger.bodyId);
     const meta = await Bun.file(join(child, "parent.json")).json();
-    expect(meta.apps).toEqual([
-      { repo: "kai/bakery", upstream: "alice/bakery" },
-      { repo: "kai/shop", upstream: "alice/shop" },
+    // Each app records where it came from and that it follows it, taking updates (`spawn/app_links.ts`).
+    expect(meta.apps).toMatchObject([
+      { repo: "kai/bakery", upstream: "alice/bakery", url: "https://forge.test/alice/bakery.git", branch: "main", mode: "take-updates" },
+      { repo: "kai/shop", upstream: "alice/shop", url: "https://forge.test/alice/shop.git", branch: "main", mode: "take-updates" },
     ]);
+    expect(meta.apps.every((a: { appliedAt?: string; token?: string }) => a.appliedAt !== undefined && a.token === undefined)).toBe(true);
     expect(meta.fresh).toBe("kai/a-booking-page-b-x-y");
     expect("domain" in meta).toBe(false);
 

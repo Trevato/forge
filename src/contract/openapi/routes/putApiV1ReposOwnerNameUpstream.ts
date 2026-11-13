@@ -7,7 +7,7 @@ export const route: Route = {
   summary: "Follow an outside upstream, or stop (admin scope, repository admin); answers { following }",
   auth: true,
   role: "member",
-  body: { url: "string", branch: "string", enabled: "boolean" },
+  body: { url: "string", branch: "string", enabled: "boolean", mode: "take-updates or tell-me, optional" },
   refusals: {
     bad_enabled: `422: ${ENABLED_WORDS}`,
     invalid_url: "422: not an https or http git address",

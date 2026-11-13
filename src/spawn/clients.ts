@@ -25,6 +25,7 @@ import { firstScreenLine } from "../core/next-steps.ts";
 import { lapseFor } from "../billing/lapse.ts";
 import { lastStop, stopSentence } from "./stopped.ts";
 import { forgeUse, type ForgeUse } from "./usage.ts";
+import { appLinkLines, type AppLinkLine } from "./app_links.ts";
 
 /** What a spawned forge says about itself to anyone: nothing more. */
 export interface ForgeState {
@@ -40,6 +41,8 @@ export interface ClientRow {
   readonly url: string;
   readonly for: string | null;
   readonly apps: readonly string[];
+  /** Whether the child still follows each app it was sent (`spawn/app_links.ts`); empty when it was sent none. */
+  readonly appLinks?: readonly AppLinkLine[];
   readonly sentAt: string | null;
   /** False while the child is still being made (a resumed spawn finishes it). */
   readonly made: boolean;
@@ -233,6 +236,7 @@ export async function clientRows(app: App): Promise<ClientRow[]> {
     }),
   );
   const beats = await Promise.all(children.map((c) => lastHeard(app, c.name)));
+  const links = await Promise.all(children.map((c) => (c.apps.length === 0 ? [] : appLinkLines(app, c))));
   // One read of the mount table for every row.
   const mountinfo = children.length === 0 ? "" : readMountinfo();
   return orderRows(
@@ -241,6 +245,7 @@ export async function clientRows(app: App): Promise<ClientRow[]> {
       url: c.url,
       for: c.for,
       apps: c.apps,
+      appLinks: links[i] ?? [],
       sentAt: c.createdAt,
       made: c.done,
       claimed: states[i]?.claimed ?? null,

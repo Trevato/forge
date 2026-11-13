@@ -64,7 +64,7 @@ import { forgeState, PARENT_HEADER } from "../spawn/clients.ts";
 import { familyView } from "../spawn/family.ts";
 import { HOOK_BODY_MAX, receiveOriginHook, signatureOf } from "../origins/hook.ts";
 import { receiveMirrorHook } from "../origins/mirror-pulls.ts";
-import { receiveBeat, SIGNATURE_HEADER } from "../spawn/heartbeat.ts";
+import { beatAnswer, receiveBeat, SIGNATURE_HEADER } from "../spawn/heartbeat.ts";
 import { answerBrokerCall, CALL_BODY_MAX } from "../spawn/origin_broker.ts";
 import { takeOrTell } from "../actions/follow.ts";
 import { noteRead, telemetryReader, type Reader } from "../actions/telemetry.ts";
@@ -3658,7 +3658,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (bytes === "too_large") return apiError("not_found", 404, "no such door");
     const raw = new TextDecoder().decode(bytes);
     const kept = await receiveBeat(ctx.app, raw, ctx.request.headers.get(SIGNATURE_HEADER));
-    return kept ? json({ ok: true }) : apiError("not_found", 404, "no such door");
+    return kept ? json(await beatAnswer(ctx.app, raw)) : apiError("not_found", 404, "no such door");
   });
 
   // A child asking its parent to broker an origin sign-in (`spawn/origin_broker.ts`): signed with the

@@ -18,6 +18,8 @@ export interface Proposal {
   readonly repoId: string;
   readonly child: string;
   readonly origin: string;
+  /** A follow token: it fetches this one repository and does nothing else. */
+  readonly readOnly?: boolean;
 }
 
 /** How long a proposal token lives: a child re-mints rather than keeps one. */
@@ -68,31 +70,60 @@ export function mintProposalToken(
   db: Database,
   userId: string,
   repoId: string,
-  input: { child: string; origin: string; childRepoId?: string },
+  input: { child: string; origin: string; childRepoId?: string; readOnly?: boolean },
   now: number = Date.now(),
 ): Result<{ id: string; token: string }, "invalid_child" | "invalid_origin"> {
   if (!isChildName(input.child)) return err("invalid_child");
   const origin = parseOrigin(input.origin);
   if (origin === undefined) return err("invalid_origin");
-  const minted = createToken(db, userId, `proposal:${input.child}`, "rw", {
-    expiresAt: new Date(now + PROPOSAL_TTL_MS).toISOString(),
+  // A follow token is read-only and has no end date: a child that follows an app must keep
+  // reading it without anyone remembering a renewal; the parent ends it (`revokeFollowTokens`)
+  // and so does the child's sever.
+  const readOnly = input.readOnly === true;
+  const minted = createToken(db, userId, `${readOnly ? "follow" : "proposal"}:${input.child}`, "rw", {
+    ...(readOnly ? {} : { expiresAt: new Date(now + PROPOSAL_TTL_MS).toISOString() }),
   });
   db.query(
-    "INSERT INTO proposal_token (token_id, repo_id, child, child_repo_id, origin) VALUES (?1, ?2, ?3, ?4, ?5)",
-  ).run(minted.id, repoId, input.child, input.childRepoId ?? null, origin);
+    "INSERT INTO proposal_token (token_id, repo_id, child, child_repo_id, origin, read_only) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+  ).run(minted.id, repoId, input.child, input.childRepoId ?? null, origin, readOnly ? 1 : 0);
   return ok(minted);
+}
+
+/** End every follow token a child holds for one repository; how many ended. */
+export function revokeFollowTokens(db: Database, repoId: string, child: string): number {
+  return db
+    .query(
+      `DELETE FROM token WHERE id IN
+         (SELECT token_id FROM proposal_token WHERE repo_id = ?1 AND child = ?2 AND read_only = 1)`,
+    )
+    .run(repoId, child).changes;
+}
+
+/** How many live follow tokens a child holds for one repository. */
+export function followTokenCount(db: Database, repoId: string, child: string): number {
+  return db
+    .query<{ n: number }, [string, string]>(
+      "SELECT COUNT(*) AS n FROM proposal_token WHERE repo_id = ?1 AND child = ?2 AND read_only = 1",
+    )
+    .get(repoId, child)!.n;
 }
 
 /** What a token is limited to, or undefined for an ordinary token. */
 export function proposalOf(db: Database, tokenId: string): Proposal | undefined {
   const row = db
     .query<
-      { token_id: string; repo_id: string; child: string; origin: string },
+      { token_id: string; repo_id: string; child: string; origin: string; read_only: number },
       [string]
-    >("SELECT token_id, repo_id, child, origin FROM proposal_token WHERE token_id = ?1")
+    >("SELECT token_id, repo_id, child, origin, read_only FROM proposal_token WHERE token_id = ?1")
     .get(tokenId);
   return row
-    ? { tokenId: row.token_id, repoId: row.repo_id, child: row.child, origin: row.origin }
+    ? {
+        tokenId: row.token_id,
+        repoId: row.repo_id,
+        child: row.child,
+        origin: row.origin,
+        ...(row.read_only === 1 ? { readOnly: true } : {}),
+      }
     : undefined;
 }
 

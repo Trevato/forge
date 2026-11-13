@@ -197,7 +197,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `search` | `all`, `issues`, `repos`, `code` | Find issues, pulls, repositories and code you can read; `kind` and `repo` narrow | 473 |
 | `secrets` | — | Admin: list\|set\|remove sealed secrets | 248 |
 | `sessions` | `list`, `end`, `end_idle`, `signins`, `shells` | Where you are signed in: your tokens and browsers, never a secret; `username` for a person as owner; action end + id signs a browser out | 385 |
-| `sever` | — | Unlink a spawned forge from its parent (owner of its `forge` repo only) | 214 |
+| `sever` | — | Unlink a spawned forge from its parent, or an app from the repository it came from | 225 |
 | `share` | — | Share a feed item: no `to` tells the app's crew and owners, else followers; budgeted | 258 |
 | `signup` | — | Sign-ups: open (default); invite lets in only a person with an open invite link; closed refuses every new account | 324 |
 | `sizes` | — | A child forge's sizes: small, medium and large, each with CPU, memory and disk | 196 |
@@ -226,7 +226,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `threads` | — | A pull's review threads; with `anchor`, resolve one or reopen it (`resolved` false) | 317 |
 | `tokens` | — | Your API tokens, no secrets | 146 |
 | `trail` | — | A migrated repository's source and forks; `shown` shows or hides them (admin) | 258 |
-| `upstream` | — | Read, set (`enabled`) or `check` the upstream a repository follows | 302 |
+| `upstream` | — | Read, set (`enabled`) or `check` the upstream a repository follows | 361 |
 | `usage` | — | Crew spend: with `repo`, `days` (1–90) by agent, issue; without, today, last24h, headroom % | 388 |
 | `valves` | — | The week's pipes and valves; with `repo` and `level`, turns a valve (plans first) | 269 |
 | `variant` | — | Like or dislike a pull among its variants; a later vote replaces; dislike closes it | 349 |

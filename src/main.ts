@@ -36,6 +36,7 @@ import { previewIdentityKey } from "./spawn/preview-owner.ts";
 import { PREVIEW_ADMIN, seedPreview } from "./spawn/preview-seed.ts";
 import { startHeartbeat } from "./spawn/heartbeat.ts";
 import { startUpstreamWatch } from "./spawn/upstream.ts";
+import { followTick, watchLandings } from "./spawn/app_follow.ts";
 import { startReachWatch } from "./spawn/reach.ts";
 import { isHookName, runHookClient } from "./git/hooks.ts";
 import { drainBudgets } from "./drain.ts";
@@ -716,9 +717,18 @@ const tickAsks = async (): Promise<void> => {
 // Followed upstreams are read on a slow tick (`actions/upstream_follow.ts`):
 // the tip and how far behind land on the follow row; nothing is opened.
 const followTimer = setInterval(
-  () => void during("follow", () => checkDue(app)),
+  () =>
+    void during("follow", async () => {
+      await checkDue(app);
+      // The apps a spawn sent down: offered, taken and kept current (`spawn/app_follow.ts`).
+      await followTick(app);
+    }),
   60_000,
 );
+// An app landing on this forge is told to the children awake here that follow it at once.
+const landingsWatch = watchLandings(app);
+// A child born before its apps were linked is offered the link, and a child offered one takes it: at boot, then every tick.
+void followTick(app).catch((error) => app.log.error("could not link the apps", { error: String(error) }));
 const staleTimer = setInterval(() => void during("asks", tickAsks), 120_000);
 // Every paid entitlement is re-read from Stripe once a day, so a missed webhook heals (#11247).
 const entitlementTimer = setInterval(() => void during("entitlements", () => sweepEntitlements(app)), 86_400_000);
@@ -934,6 +944,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
   clearInterval(staleTimer);
   clearInterval(entitlementTimer);
   clearInterval(followTimer);
+  landingsWatch();
   stopClogTick();
   stopKeeper();
   clearInterval(processTimer);

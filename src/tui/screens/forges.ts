@@ -20,6 +20,7 @@ import type { App } from "../../app.ts";
 import { undoable, type LinkInfo } from "../../spawn/claim.ts";
 import { confirmScreen, pickerScreen } from "./common.ts";
 import type { Session } from "../session.ts";
+import { appLinkWords } from "../../spawn/app_links.ts";
 
 /** [name, "Not reporting · for Maria · Claimed · 3 apps running"] per row; an empty line when none. */
 export function forgeLines(rows: readonly ClientRow[]): [string, string][] {
@@ -29,7 +30,7 @@ export function forgeLines(rows: readonly ClientRow[]): [string, string][] {
     [r.made ? (r.awake === true ? "awake" : "asleep") : null, r.stopped ?? null, r.attention === null ? null : ATTENTION_WORDS[r.attention], r.for === null ? null : `for ${r.for}`, CLAIM_WORDS[claimState(r)], linkWords(r.link), runningWords(r), r.stage?.words ?? null, r.nextStep.words, spendWords(r)?.words ?? null, creditWords(r), graceWords(r), useLine(r.size, r.use), r.made ? diskWords(r.disk) : null, r.lastHeartbeatAt === null ? "no heartbeat yet" : `heartbeat ${timeAgo(r.lastHeartbeatAt)}`]
       .filter((m): m is string => m !== null)
       .join(" · "),
-  ], ...firstScreenLines(r), ...addressLines(r)]);
+  ], ...firstScreenLines(r), ...appLinkLines(r), ...addressLines(r)]);
 }
 
 /** "link open", "link ended (undo with u)": what the sender can do about the link, as /forges shows it. */
@@ -42,6 +43,11 @@ function linkWords(link: LinkInfo | null): string | null {
 function firstScreenLines(r: ClientRow): [string, string][] {
   const line = firstScreenOf(r);
   return line === null ? [] : [["", `  ${line}`]];
+}
+
+/** Under a forge: each app it was sent and whether it still follows it, as /forges says it. */
+function appLinkLines(r: ClientRow): [string, string][] {
+  return (r.appLinks ?? []).map((l): [string, string] => ["", `  ${appLinkWords(l)}`]);
 }
 
 /** Under a forge that is running, not reachable: each public address and what it answered (#7959), as /forges lists them. */

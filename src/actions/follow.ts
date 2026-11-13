@@ -17,6 +17,8 @@ import { FAMILY_WORDS } from "./family_words.ts";
 import { FOLLOWS_NOTHING, followModeWords, followStandingLine } from "./follow_words.ts";
 import { FORK_FOLLOW_MODES, forkFollowMode, lastTookAt, isForkFollowMode, setForkFollowMode, type ForkFollowMode } from "../core/fork_follow.ts";
 import { requireUser } from "./access.ts";
+import { getFollow, setFollowTaking } from "../core/upstream_follow.ts";
+import { severUpstream } from "./upstream_follow.ts";
 import { takeFromParent, type Taken } from "../spawn/take.ts";
 import { takeUpdates, type ForkSync, type TakeUpdatesError } from "./forks.ts";
 
@@ -45,7 +47,11 @@ export async function takeOrTell(
 
 export type SeverError = "unauthorized" | "forbidden" | "not_following";
 
-/** Cut a forge's link to its parent's code: the repository's owner only. Nothing is deleted. */
+/**
+ * Cut a link, the one action for every follow: a forge's link to its parent's code, or an app's
+ * link to the repository it came from (`actions/upstream_follow.ts`). An admin of the repository
+ * only. Nothing is deleted.
+ */
 export async function severForge(
   app: App,
   actor: User | undefined,
@@ -53,7 +59,15 @@ export async function severForge(
 ): Promise<Result<string, SeverError>> {
   const who = requireUser(actor);
   if (!who.ok) return err("unauthorized");
-  if ((await chainOfRepo(app, repo)) === undefined) return err("not_following");
+  if ((await chainOfRepo(app, repo)) === undefined) {
+    // Not the forge's own code: an app that follows the repository it came from, or any upstream an admin set.
+    const upstream = getFollow(app.db, repo.id);
+    if (upstream === undefined) return err("not_following");
+    if (!canAdmin(app.db, repo, who.value) || !canWrite(app.db, repo, who.value)) return err("forbidden");
+    if (upstream.severedAt !== null) return ok(upstream.severedAt);
+    const cutUp = await severUpstream(app, who.value, repo);
+    return cutUp.ok ? ok(cutUp.value.severedAt ?? new Date().toISOString()) : err("not_following");
+  }
   if (!canAdmin(app.db, repo, who.value) || !canWrite(app.db, repo, who.value)) return err("forbidden");
   const cut = await severChain(app);
   if (!cut.ok) return err("not_following");
@@ -102,9 +116,9 @@ export function takeForgeWords(r: TakeForgeResult): { tone?: "danger"; message: 
 /** How a repository follows its parent now: the forge chain's record when it carries one, else the fork's own choice. */
 export async function followModeOf(app: App, repo: Repo): Promise<ForkFollowMode> {
   const link = await forgeLinkOf(app);
-  return link !== undefined && link.repo === `${repo.ownerName}/${repo.name}`
-    ? link.mode
-    : forkFollowMode(app.db, repo.id);
+  if (link !== undefined && link.repo === `${repo.ownerName}/${repo.name}`) return link.mode;
+  const upstream = repo.forkParentId === null ? getFollow(app.db, repo.id) : undefined;
+  return upstream !== undefined && upstream.severedAt === null ? upstream.mode : forkFollowMode(app.db, repo.id);
 }
 
 /**
@@ -148,10 +162,16 @@ export async function setFollowMode(
   const who = requireUser(actor);
   if (!who.ok) return err("unauthorized");
   const carries = (await chainOfRepo(app, repo)) !== undefined;
-  if (!carries && repo.forkParentId === null) return err("not_following");
+  // A repository that is no fork but follows an upstream (an app a spawn sent down) takes the same choice.
+  const upstream = !carries && repo.forkParentId === null ? getFollow(app.db, repo.id) : undefined;
+  if (!carries && repo.forkParentId === null && upstream === undefined) return err("not_following");
   if (!canAdmin(app.db, repo, who.value) || !canWrite(app.db, repo, who.value)) return err("forbidden");
   if (!isForkFollowMode(mode)) return err("invalid_mode");
-  if (carries) {
+  if (upstream !== undefined) {
+    if (upstream.severedAt !== null) return err("severed");
+    if (mode === "dont-follow") await severUpstream(app, who.value, repo);
+    else setFollowTaking(app.db, repo.id, mode);
+  } else if (carries) {
     if (!isFollowMode(mode)) return err("invalid_mode");
     const set = await setChainMode(app, mode);
     if (!set.ok) return err(set.error);

@@ -87,6 +87,7 @@ export function verifyToken(
         p_repo: string | null;
         p_child: string | null;
         p_origin: string | null;
+        p_read_only: number | null;
         r_repo: string | null;
         r_fork: string | null;
         v_via: string | null;
@@ -96,7 +97,7 @@ export function verifyToken(
       [string]
     >(
       `SELECT t.id, t.user_id, t.name, t.scope, t.last_used_at, t.expires_at,
-              p.repo_id AS p_repo, p.child AS p_child, p.origin AS p_origin,
+              p.repo_id AS p_repo, p.child AS p_child, p.origin AS p_origin, p.read_only AS p_read_only,
               r.repo_id AS r_repo, r.fork_id AS r_fork, v.via AS v_via,
               c.repo_id AS c_repo, c.agent AS c_agent
          FROM token t LEFT JOIN proposal_token p ON p.token_id = t.id
@@ -134,6 +135,7 @@ export function verifyToken(
         repoId: row.p_repo,
         child: row.p_child!,
         origin: row.p_origin!,
+        ...(row.p_read_only === 1 ? { readOnly: true } : {}),
       },
     });
   // A run's token is bound to its repository (`http/run_gate.ts`).

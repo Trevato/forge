@@ -11,7 +11,7 @@
 import type { App } from "../app.ts";
 import { securityFloor } from "../http/respond.ts";
 import { readCapped } from "./bounded_read.ts";
-import { receiveBeat, SIGNATURE_HEADER } from "./heartbeat.ts";
+import { beatAnswer, receiveBeat, SIGNATURE_HEADER } from "./heartbeat.ts";
 import { answerBrokerCall, CALL_BODY_MAX } from "./origin_broker.ts";
 import { BROKER_CALL } from "./origin_broker_wire.ts";
 import { creditAnswer, lendModel, MODEL_BODY_MAX, type ModelDeps } from "./model_door.ts";
@@ -59,6 +59,7 @@ async function answerBeat(app: App, deps: { readonly model?: ModelDeps }, req: R
   if (signature === null) return refused;
   const bytes = await readCapped(req, MAX_BODY);
   if (bytes === undefined) return refused;
-  const kept = await receiveBeat(app, new TextDecoder().decode(bytes), signature);
-  return kept ? Response.json({ ok: true }) : refused;
+  const raw = new TextDecoder().decode(bytes);
+  const kept = await receiveBeat(app, raw, signature);
+  return kept ? Response.json(await beatAnswer(app, raw)) : refused;
 }

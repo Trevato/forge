@@ -65,7 +65,7 @@ export function proposalGate(
   // A child may read back the state of a pull it opened, and no other.
   const tail = method === "GET" && path.startsWith(`${pulls}/`) ? path.slice(pulls.length + 1) : "";
   const own = /^[1-9][0-9]{0,8}$/.test(tail) ? Number(tail) : undefined;
-  if (own !== undefined) {
+  if (own !== undefined && proposal.readOnly !== true) {
     const pull = getPull(app.db, parent.id, own);
     if (pull !== undefined && pullProposalOf(app.db, pull.id)?.child === proposal.child)
       return undefined; // reading back spends none of the minute a press needs
@@ -79,6 +79,13 @@ export function proposalGate(
       verdict.retryAfter,
     );
 
+  // A follow token (`readOnly`) fetches this repository and does nothing else: no push, no pull.
+  if (proposal.readOnly === true) {
+    if (method === "GET" && path === `${at}/info/refs` && url.searchParams.get("service") === "git-upload-pack")
+      return undefined;
+    if (method === "POST" && path === `${at}/git-upload-pack`) return undefined;
+    return apiError("forbidden", 403, "a follow token can only read this repository's code");
+  }
   if (method === "GET" && path === `${at}/info/refs`) {
     const service = url.searchParams.get("service");
     if (service === "git-receive-pack" || service === "git-upload-pack") return undefined;

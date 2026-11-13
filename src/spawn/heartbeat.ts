@@ -23,6 +23,7 @@ import { shippedReleases } from "../release/shipped.ts";
 import { forgeLinkOf, forgeTipOf, FOLLOW_MODES, type FollowMode, type ForgeLink } from "./chain.ts";
 import { isParentLocal } from "./beat-door.ts";
 import { refreshFunding } from "./funding.ts";
+import { appTipsFor } from "./app_links.ts";
 import { upstreamState } from "./upstream.ts";
 import { progress } from "../core/next-steps.ts";
 import { running } from "../kernel/version.ts";
@@ -203,6 +204,17 @@ export function receiveBeat(
 
 const turns = new Map<string, Promise<void>>();
 
+/**
+ * What a kept beat is answered with: ok, and the tip each app the child follows now stands at on
+ * this forge (`spawn/app_links.ts`), so a child in a cell of its own looks at an app that landed
+ * without waiting for its clock. Nothing secret; only for a child this forge made.
+ */
+export async function beatAnswer(app: App, raw: string): Promise<Record<string, unknown>> {
+  const name = parseBeat(raw)?.name;
+  const tips = name === undefined ? {} : await appTipsFor(app, name).catch(() => ({}));
+  return Object.keys(tips).length === 0 ? { ok: true } : { ok: true, follow: tips };
+}
+
 async function takeBeat(
   app: App,
   raw: string,
@@ -316,7 +328,13 @@ export async function sendBeat(
       signal: AbortSignal.timeout(5000),
       redirect: "error",
     });
-    if (res.ok) await refreshFunding(app, fetcher);
+    if (res.ok) {
+      await refreshFunding(app, fetcher);
+      // The parent says where the apps this forge follows stand: look at one that moved.
+      const said = (await res.json().catch(() => undefined)) as { follow?: unknown } | undefined;
+      const { hearLandings, parseHints } = await import("./app_follow.ts");
+      await hearLandings(app, parseHints(said?.follow)).catch(() => {});
+    }
     return res.ok;
   } catch {
     return false;

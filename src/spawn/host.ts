@@ -36,6 +36,7 @@ import { lapsedResponse, payAgainRoute, PAY_AGAIN_PATH } from "../web/pages/laps
 import { lapseFor, type Lapse } from "../billing/lapse.ts";
 import { takeDoor } from "../http/strangers.ts";
 import { vouched } from "./vouch.ts";
+import { followOnWake } from "./app_follow.ts";
 import { during } from "../perf/jobs.ts";
 import { readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -108,6 +109,16 @@ export function watchHostedChildClose(parent: App, onClose: (child: App) => void
 export function hostedChildOpen(parent: App, child: App): boolean {
   for (const open of caches.get(parent)?.values() ?? []) if (open === child) return true;
   return false;
+}
+
+/** The hosted children open in this process now, by the name each goes by; a sleeping child or one in a cell is not here. */
+export function openChildren(parent: App): { name: string; app: App }[] {
+  const out: { name: string; app: App }[] = [];
+  for (const [bodyId, child] of caches.get(parent) ?? []) {
+    const name = touched.get(parent)?.get(bodyId)?.name;
+    if (name !== undefined) out.push({ name, app: child });
+  }
+  return out;
 }
 
 /** When a request last reached each open hosted child, by body id, with the name it goes by. */
@@ -644,6 +655,8 @@ function openOnce(parent: App, ledger: ChildLedger): Promise<App> | App {
     flight = openChild(parent, ledger).then((opened) => {
       cache.set(ledger.bodyId, opened);
       touch(parent, ledger);
+      // A child that woke looks at what it follows, now: its apps may have moved while it slept.
+      void followOnWake(parent, opened);
       return opened;
     });
     flight.finally(() => flights.delete(ledger.bodyId)).catch(() => {});

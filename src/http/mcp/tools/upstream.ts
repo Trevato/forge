@@ -1,5 +1,5 @@
 import { checkUpstreamNow, FOLLOW_REFUSALS, followJson, setFollowUpstream } from "../../../actions/upstream_follow.ts";
-import { getFollow } from "../../../core/upstream_follow.ts";
+import { getFollow, isFollowTaking } from "../../../core/upstream_follow.ts";
 import { canAdmin } from "../../../core/repos.ts";
 import { scopeAllows } from "../../../core/tokens.ts";
 import { good, bad, type Tool, str, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
@@ -7,7 +7,7 @@ import { ENABLED_WORDS } from "../../../core/arg_words.ts";
 
 export const tool: Tool = {
   name: "upstream",
-  doc: "`{ repo, enabled?, url?, branch?, check? }`: the repository a fork follows (an admin reads it); with `enabled` sets it, with `check: true` checks it now; setting and checking need an admin token",
+  doc: "`{ repo, enabled?, url?, branch?, mode?, check? }`: the repository a fork follows (`mode`: `take-updates` moves the default branch to the upstream's when it has nothing the upstream lacks, `tell-me` only proposes) (an admin reads it); with `enabled` sets it, with `check: true` checks it now; setting and checking need an admin token",
   description:
     "Read, set (`enabled`) or `check` the upstream a repository follows.",
   inputSchema: {
@@ -17,6 +17,7 @@ export const tool: Tool = {
       enabled: { type: "boolean" },
       url: { type: "string" },
       branch: { type: "string" },
+      mode: { type: "string", enum: ["take-updates", "tell-me"] },
       check: { type: "boolean" },
     },
     required: ["repo"],
@@ -45,7 +46,12 @@ export const tool: Tool = {
     if (typeof enabled !== "boolean") return bad("bad_enabled", ENABLED_WORDS);
     if ((url !== undefined && typeof url !== "string") || (branch !== undefined && typeof branch !== "string"))
       return bad("invalid", "url and branch are text");
-    const saved = setFollowUpstream(ctx.app, user, repo, { url: str(url), branch: str(branch), enabled });
+    const saved = setFollowUpstream(ctx.app, user, repo, {
+      url: str(url),
+      branch: str(branch),
+      enabled,
+      ...(isFollowTaking(args["mode"]) ? { mode: args["mode"] } : {}),
+    });
     return saved.ok ? good({ following: followJson(saved.value) }) : refuse(saved.error);
   },
 };

@@ -31,13 +31,18 @@ import { canAdmin, canWrite, getRepoById, type Repo } from "../core/repos.ts";
 import { storageStale } from "../core/storage.ts";
 import {
   getFollow,
+  followAad,
   listFollowing,
   noteCheck,
   putFollow,
+  severFollow,
   upstreamUrl,
   type FollowCheck,
+  type FollowTaking,
   type UpstreamFollow,
 } from "../core/upstream_follow.ts";
+import { open as openSealed } from "../kernel/secret.ts";
+import { followsAs, markAppSevered } from "../spawn/app_links.ts";
 import { getUserById, type User } from "../core/users.ts";
 import { runGit, runGitCapture } from "../git/env.ts";
 import { isSafeOid, isSafeRef } from "../git/guard.ts";
@@ -68,7 +73,7 @@ import {
 } from "../core/follow_sources.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { providerForOrigin } from "../origins/credential.ts";
-import { redact, secretsIn } from "../origins/credentials.ts";
+import { basicHeader, gitAuthEnv, redact, secretsIn } from "../origins/credentials.ts";
 import { vettedEnv } from "../origins/git-mirror.ts";
 import { openIssue } from "./issues.ts";
 import { migrateUrl } from "./migrate.ts";
@@ -84,6 +89,19 @@ const SWEEP_BUDGET_MS = 10 * 60_000;
 
 /** Where the upstream tip is staged: not a branch, so a check moves nothing of ours. */
 export const stagedRef = (branch: string): string => `refs/upstream-follow/${branch}`;
+
+/**
+ * Whether the credential a parent forge sent may travel to this address: https, or a loopback
+ * address (a forge beside its parent, a test). A plain-http address elsewhere is read without it.
+ */
+export function mayCarryFollowCredential(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" || (u.protocol === "http:" && /^(127\.0\.0\.1|localhost|\[::1\])$/.test(u.hostname));
+  } catch {
+    return false;
+  }
+}
 
 export type CheckError = "off" | "nobody" | "unreadable" | "no_branch" | "git" | "busy" | "squatted";
 
@@ -102,8 +120,8 @@ export const CHECK_REFUSALS: Record<CheckError, string> = {
 export interface Checked {
   readonly tip: string;
   readonly behind: number;
-  /** What the check did about the commits: nothing new, opened or moved a pull, or found a conflict. */
-  readonly outcome: "none" | "proposed" | "conflict";
+  /** What the check did about the commits: nothing new, took them in, opened or moved a pull, or found a conflict. */
+  readonly outcome: "none" | "forwarded" | "proposed" | "conflict";
   /** The pull carrying the proposal, when there is one. */
   readonly pull?: number;
 }
@@ -316,6 +334,12 @@ interface Target {
   /** The forge and account the work is stamped as. */
   readonly stamp: { host: string; account: string } | undefined;
   readonly sourceId?: string;
+  /** What the forge does with new commits; a source only proposes. */
+  readonly mode?: FollowTaking;
+  /** This forge's sealed credential for the address, "" for none. */
+  readonly credentialEnc?: string;
+  readonly via?: string;
+  readonly repoRowId?: string;
 }
 
 async function checkOnce(app: App, repo: Repo): Promise<Result<Checked, CheckError>> {
@@ -324,6 +348,7 @@ async function checkOnce(app: App, repo: Repo): Promise<Result<Checked, CheckErr
     return err("off");
   return checkTarget(app, repo, {
     ...follow,
+    repoRowId: follow.repoId,
     staged: stagedRef(follow.branch),
     proposal: proposalBranch,
     note: (r) => noteCheck(app.db, repo.id, r),
@@ -353,18 +378,30 @@ export async function checkSource(app: App, repo: Repo, source: FollowSource): P
   }
 }
 
-async function checkTarget(app: App, repo: Repo, follow: Target): Promise<Result<Checked, CheckError>> {
+async function checkTarget(app: App, repo: Repo, initial: Target): Promise<Result<Checked, CheckError>> {
+  let follow = initial;
   const at = new Date().toISOString();
   const failed = (error: CheckError, why = ""): Result<Checked, CheckError> => {
     follow.note({ at, error: why || CHECK_REFUSALS[error] });
     return err(error);
   };
-  const by = getUserById(app.db, follow.byId);
+  let by = getUserById(app.db, follow.byId);
+  // A link the parent sent acts as whoever owns the repository now: the spawner may have handed it over.
+  if ((by === undefined || !canWrite(app.db, repo, by)) && follow.via === "parent") by = followsAs(app, repo, follow.byId);
   if (by === undefined || !canWrite(app.db, repo, by)) return failed("nobody");
 
   // The credential of a private upstream: the connected origin's, scoped to
   // this one git invocation, and only when the upstream is that origin's https origin.
   let authEnv: Record<string, string> = {};
+  // A credential the parent forge sent for this one address, sealed here: opened for this git call only.
+  let sent: string | undefined;
+  if (follow.credentialEnc !== undefined && follow.credentialEnc !== "" && follow.repoRowId !== undefined) {
+    const opened = openSealed(app.config.dataDir, follow.credentialEnc, followAad(follow.repoRowId));
+    if (opened.ok && mayCarryFollowCredential(follow.url)) {
+      sent = opened.value;
+      authEnv = gitAuthEnv(new URL(follow.url).origin, basicHeader("follow", opened.value));
+    }
+  }
   if (follow.originId !== "") {
     const origin = getOriginFor(app.db, by.id, follow.originId);
     const provider = origin === undefined ? undefined : providerForOrigin(app, origin);
@@ -376,7 +413,7 @@ async function checkTarget(app: App, repo: Repo, follow: Target): Promise<Result
   if (!pinned.ok) return failed("unreadable", pinned.error.message);
   const env = pinned.value;
   const said = (stderr: string): string =>
-    redact(stderr.trim(), ...secretsIn(authEnv)).split("\n").find((l) => l.trim() !== "") ?? "";
+    redact(stderr.trim(), ...secretsIn(authEnv), ...(sent === undefined ? [] : [sent])).split("\n").find((l) => l.trim() !== "") ?? "";
 
   const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
   const deadline = Date.now() + CHECK_TIMEOUT_MS;
@@ -426,9 +463,24 @@ async function checkTarget(app: App, repo: Repo, follow: Target): Promise<Result
   const main = await resolveOid(dir, `refs/heads/${repo.defaultBranch}`);
   if (main === undefined) return failed("git", "The default branch has no commits yet.");
   const behind = await aheadCount(dir, main, staged);
+  // What this repository holds that the upstream does not: told on the page, never acted on.
+  const ahead = await aheadCount(dir, staged, main);
+  const noted = follow.note;
+  follow = { ...follow, note: (r) => noted({ ahead, ...r }) };
   if (behind === 0) {
     follow.note({ at, tip: staged, behind, error: "" });
     return ok({ tip: staged, behind, outcome: "none" });
+  }
+
+  // A forge that takes updates, whose default branch holds nothing the upstream lacks: the branch
+  // moves to the upstream's tip, the same commits under the same ids. Never the other way round,
+  // and never a rewrite: a branch with a commit of its own goes through the proposal below.
+  if (follow.mode === "take-updates" && follow.sourceId === undefined) {
+    const forwarded = await forwardTo(app, repo, dir, by, follow.url, main, staged, behind);
+    if (forwarded) {
+      follow.note({ at, tip: staged, behind: 0, error: "", forwarded: behind });
+      return ok({ tip: staged, behind: 0, outcome: "forwarded" });
+    }
   }
 
   // Work that already landed here and came back round a ring of forges is not taken again (#8937).
@@ -500,6 +552,40 @@ async function checkTarget(app: App, repo: Repo, follow: Target): Promise<Result
   return ok({ tip: staged, behind, outcome: "proposed", pull: number });
 }
 
+/**
+ * Move the default branch from `main` to `staged` when `main` is an ancestor of it. Compare-and-swap:
+ * a push to the branch since `main` was read wins and the next check looks again. Says the push as
+ * a followed one, so the repository's deploy and its record see it as any push.
+ */
+async function forwardTo(
+  app: App,
+  repo: Repo,
+  dir: string,
+  by: User,
+  url: string,
+  main: string,
+  staged: string,
+  behind: number,
+): Promise<boolean> {
+  if (!isSafeOid(main) || !isSafeOid(staged)) return false;
+  if (!(await runGit(["merge-base", "--is-ancestor", main, staged], { cwd: dir })).ok) return false;
+  const ref = `refs/heads/${repo.defaultBranch}`;
+  if (!(await runGit(["update-ref", ref, staged, main], { cwd: dir })).ok) return false;
+  const upstream = upstreamShort(url);
+  app.bus.append({
+    kind: "push",
+    repoId: repo.id,
+    actorId: by.id,
+    payload: { updates: [{ ref, oldOid: main, newOid: staged }], followed: upstream },
+  });
+  app.bus.append({
+    kind: "forge.updates_taken",
+    repoId: repo.id,
+    payload: { repo: `${repo.ownerName}/${repo.name}`, upstream, from: main, to: staged, commits: behind, pull: null },
+  });
+  return true;
+}
+
 export type FollowError = "invalid_url" | "invalid_branch" | "not_found" | "unauthorized" | "forbidden";
 
 /** What each refusal of a save says, at every door; a check's are `CHECK_REFUSALS`. */
@@ -523,7 +609,7 @@ export function setFollowUpstream(
   app: App,
   actor: User | undefined,
   repo: Repo,
-  input: { readonly url: string; readonly branch: string; readonly enabled: boolean },
+  input: { readonly url: string; readonly branch: string; readonly enabled: boolean; readonly mode?: FollowTaking },
 ): Result<UpstreamFollow, FollowError> {
   if (actor === undefined || !canAdmin(app.db, repo, actor)) return err("not_found");
   const was = getFollow(app.db, repo.id);
@@ -542,6 +628,7 @@ export function setFollowUpstream(
     enabled: input.enabled,
     byId: actor.id,
     originId: was?.url === url ? was.originId : "",
+    ...(input.mode === undefined ? {} : { mode: input.mode }),
   });
   app.bus.append({
     kind: "repo.upstream_follow",
@@ -557,6 +644,36 @@ export function setFollowUpstream(
     payload: { enabled: saved.enabled },
   });
   return ok(saved);
+}
+
+/** What cutting a link says, at every door. */
+export const SEVER_WORDS =
+  "Severed. This repository follows nothing now: its history and files stay as they are, the credential it held is gone, and the forge it followed is told.";
+
+/**
+ * Cut a repository's followed upstream, once, for every door: off, the credential forgotten, the
+ * day kept so a repair never links it again, and the forge that sent it (a parent) told to end the
+ * credential it minted. Admins only. Nothing of the repository changes.
+ */
+export async function severUpstream(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+): Promise<Result<UpstreamFollow, "not_found" | "not_following">> {
+  if (actor === undefined || !canAdmin(app.db, repo, actor)) return err("not_found");
+  const was = getFollow(app.db, repo.id);
+  if (was === undefined) return err("not_following");
+  const cut = severFollow(app.db, repo.id);
+  if (cut === undefined) return err("not_following");
+  if (was.via === "parent") await markAppSevered(app, repo, cut.severedAt ?? new Date().toISOString());
+  app.bus.append({
+    kind: "repo.upstream_follow",
+    repoId: repo.id,
+    actorId: actor.id,
+    payload: { enabled: false, branch: cut.branch, severed: true, ...(was.via === "" ? {} : { via: was.via }) },
+  });
+  app.bus.append({ kind: "repo.following", repoId: repo.id, actorId: actor.id, payload: { enabled: false } });
+  return ok(cut);
 }
 
 /** "Check upstream now": an admin's, through the same claim as the clock. */
@@ -581,6 +698,11 @@ export function followJson(f: UpstreamFollow): Record<string, unknown> {
     error: f.error === "" ? null : f.error,
     pending_id: f.pendingId,
     opened: f.opened,
+    mode: f.mode,
+    // Where the link came from, and whether its owner cut it; never the credential.
+    from_parent: f.via === "parent",
+    severed_at: f.severedAt,
+    has_credential: f.credentialEnc !== "",
   };
 }
 
@@ -653,7 +775,7 @@ export const clockWords = (iso: string): string => {
 
 /** Where a following stands: what the last check read. */
 export function standing(f: UpstreamFollow): string {
-  if (!f.enabled) return "off";
+  if (!f.enabled) return f.severedAt === null ? "off" : "severed";
   if (f.error !== "") return f.error === "conflict" ? `${f.behind} behind, conflicts` : "last check failed";
   if (f.checkedAt === null) return "not checked yet";
   return f.behind === 0 ? "up to date" : `${f.behind} behind`;
@@ -661,6 +783,7 @@ export function standing(f: UpstreamFollow): string {
 
 /** One line of the record: `2 h ago · 3 behind · merged`. */
 export function checkLine(c: FollowCheck, ago: string): string {
+  if (c.outcome === "forwarded") return `${ago} · took ${c.detail} commit${c.detail === "1" ? "" : "s"} from the upstream`;
   const what =
     c.outcome === "conflict"
       ? `conflict in ${c.detail} file${c.detail === "1" ? "" : "s"}`
@@ -675,6 +798,7 @@ export function checkLine(c: FollowCheck, ago: string): string {
 /** What "Check upstream now" found, in a sentence. */
 export function checkedWords(c: Checked): string {
   if (c.outcome === "none") return "Up to date: nothing new upstream.";
+  if (c.outcome === "forwarded") return "Took the upstream's new commits: the default branch is at the upstream's tip.";
   if (c.outcome === "conflict") return `${c.behind} new upstream commits conflict with the default branch.`;
   return `${c.behind} new upstream commit${c.behind === 1 ? "" : "s"} proposed${c.pull === undefined ? "" : ` in #${c.pull}`}.`;
 }

@@ -14,6 +14,8 @@ import {
   FOLLOW_REFUSALS,
   followShown,
   setFollowUpstream,
+  severUpstream,
+  SEVER_WORDS,
   standing,
   upstreamLabel,
   upstreamShort,
@@ -57,7 +59,26 @@ function clock(iso: string): Html {
 /** The About card's line, for admins; null for everyone else. */
 export function followingLine(ctx: Ctx, repo: Repo): Html | null {
   const follow = followShown(ctx.app, repo, ctx.auth.user);
-  if (follow === undefined || !follow.enabled) return null;
+  if (follow === undefined) return null;
+  const base = repoBase(repo);
+  if (!follow.enabled)
+    return follow.severedAt === null
+      ? null
+      : html`<p class="mt small muted" data-following-upstream data-severed>
+          ${icon("sync")} Severed from ${upstreamLabel(follow.url)} on ${follow.severedAt.slice(0, 10)}: nothing is followed, its history stays here.
+        </p>`;
+  // An app a spawn sent down: where it comes from, how it stands, and the one way to cut it.
+  if (follow.via === "parent")
+    return html`<p class="mt small muted" data-following-upstream data-from-parent>
+      ${icon("sync")} Follows
+      <a href="${follow.url}" rel="noreferrer noopener">${upstreamLabel(follow.url)}</a>,
+      the forge that sent it · ${follow.mode === "take-updates" ? "takes its updates" : "tells you of its updates"}
+      · ${standing(follow)}${follow.ahead > 0 ? ` · ${follow.ahead} commit${follow.ahead === 1 ? "" : "s"} of its own` : ""}
+      <form method="post" action="${base}/settings/upstream/sever" class="inline">
+        <input type="hidden" name="back" value="${base}" />
+        ${btn("Sever", { size: "sm", variant: "outline", label: `Stop following ${upstreamLabel(follow.url)}` })}
+      </form>
+    </p>`;
   return html`<p class="mt small muted" data-following-upstream>
     ${icon("sync")} Following
     <a href="${follow.url}" rel="noreferrer noopener">${upstreamLabel(follow.url)}</a>
@@ -159,6 +180,12 @@ export function followUpstreamCard(ctx: Ctx, repo: Repo): Html | null {
             <span>Follow upstream</span>
           </label>
         </div>
+        <div class="field">
+          <label class="check">
+            <input type="checkbox" name="take" ${follow?.mode === "take-updates" ? html`checked` : null} />
+            <span>Take its updates by itself when this branch has nothing the upstream lacks; otherwise they come as a pull, and nothing of yours is rewritten</span>
+          </label>
+        </div>
         ${when(
           follow,
           (f) => html`<p class="hint" data-following-standing>${standing(f)}${
@@ -172,6 +199,10 @@ export function followUpstreamCard(ctx: Ctx, repo: Repo): Html | null {
         follow?.enabled === true,
         () => html`<form method="post" action="${base}/settings/upstream/check" class="mt">
           ${btn("Check upstream now", { size: "sm", icon: "sync" })}
+        </form>
+        <form method="post" action="${base}/settings/upstream/sever" class="mt">
+          <p class="muted small">Sever: stop following, and forget any credential held for it. History and files stay as they are.</p>
+          ${btn("Sever", { size: "sm", variant: "outline" })}
         </form>`,
       )}
   </section>`;
@@ -187,6 +218,7 @@ export async function followUpstreamUpdate(ctx: Ctx): Promise<Response> {
     url: field(form, "url"),
     branch: field(form, "branch"),
     enabled: form.get("enabled") !== null,
+    mode: form.get("take") !== null ? "take-updates" : "tell-me",
   });
   return flashTo(
     ctx,
@@ -198,6 +230,20 @@ export async function followUpstreamUpdate(ctx: Ctx): Promise<Response> {
             : "Following the upstream is off. Nothing is checked or proposed.",
         }
       : { tone: "danger", message: FOLLOW_REFUSALS[saved.error] },
+  );
+}
+
+// POST /:owner/:name/settings/upstream/sever
+export async function followUpstreamSever(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo || !canAdmin(ctx.app.db, repo, ctx.auth.user)) return repoNotFound(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const cut = await severUpstream(ctx.app, ctx.auth.user, repo);
+  return flashTo(
+    ctx,
+    backTo(form, `${repoBase(repo)}/settings#upstream`),
+    cut.ok ? { message: SEVER_WORDS } : { tone: "danger", message: FOLLOW_REFUSALS.off },
   );
 }
 

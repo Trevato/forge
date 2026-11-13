@@ -69,6 +69,7 @@ import { fundingOf, keepFunding } from "../spawn/funding.ts";
 import { planSpawn, type SpawnInput, type SpawnPlan, type SpawnSource } from "../spawn/plan.ts";
 import { DEFAULT_SIZE, isSize, type Size } from "../spawn/sizes.ts";
 import { DEFAULT_MODE } from "../spawn/chain.ts";
+import { linkAppAtBirth, type AppEntry } from "../spawn/app_links.ts";
 import { requireUser } from "./access.ts";
 
 export interface Spawned {
@@ -452,6 +453,9 @@ async function copyInto(
 
     let templateMark: TemplateMark | undefined;
     const copiedRepos: { parent: Repo; child: Repo }[] = [];
+    // Each app's link to the parent's repository: the whole history is copied below, and the
+    // child follows it from the first minute (`spawn/app_links.ts`).
+    const appEntries: AppEntry[] = [];
     for (const a of plan.apps) {
       const [o, n] = a.ref.split("/") as [string, string];
       const parent = getRepo(app.db, o, n);
@@ -484,6 +488,19 @@ async function copyInto(
       // boot opens the direction issue from them (`spawn/first-boot.ts`).
       if (plan.direction !== "" && repo.autonomyDirection !== plan.direction)
         repo = updateRepoSettings(child.db, repo, { autonomyDirection: plan.direction });
+      appEntries.push(
+        await linkAppAtBirth(app, child, dir, {
+          org: org.username,
+          upstream: a.ref,
+          parent,
+          repo,
+          by: founder,
+          name: plan.name,
+          url: liveChildUrl(app, plan.name),
+          ownerId: owner?.id,
+          mode: plan.followMode ?? DEFAULT_MODE,
+        }),
+      );
       copiedRepos.push({ parent, child: repo });
     }
 
@@ -594,8 +611,8 @@ async function copyInto(
         anonymous: owner === undefined,
         size: plan.size ?? DEFAULT_SIZE,
         ...(plan.template === undefined ? {} : { template: templateMark ?? { id: plan.template } }),
-        // Each app is a fork: where it came from, so the child can follow it.
-        apps: plan.apps.map((a) => ({ repo: `${plan.org}/${a.ref.split("/")[1]}`, upstream: a.ref })),
+        // Each app: where it came from and that the child follows it (`spawn/app_links.ts`).
+        apps: appEntries,
         ...(plan.fresh === undefined ? {} : { fresh: `${plan.org}/${plan.fresh.name}` }),
         // The forge's code, forked into the child: where it came from, so
         // the child can follow its parent's updates.
@@ -767,6 +784,8 @@ export interface Child {
   readonly placement: PlacementKind;
   /** Why it is hosted when it asked for a cell; null otherwise. */
   readonly placementNote: string | null;
+  /** The person who made it (their id here); absent for a stranger's or a ledger from before it was kept. */
+  readonly ownerId?: string;
 }
 
 /** One ledger as a `Child`. */
@@ -782,6 +801,7 @@ const childOf = (app: App, ledger: Ledger): Child => ({
   ...(typeof ledger.template === "string" ? { template: ledger.template } : {}),
   placement: ledger.placement ?? "hosted",
   placementNote: ledger.placementNote ?? null,
+  ...(typeof ledger.ownerId === "string" ? { ownerId: ledger.ownerId } : {}),
 });
 
 /** One child by name, or undefined when this forge made none of that name. */
