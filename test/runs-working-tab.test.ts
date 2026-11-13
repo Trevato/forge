@@ -93,6 +93,6 @@ test("a queued run is listed by its state word; only a paused one says why", asy
   const body = await page("?state=queued");
   expect(rowCount(body)).toBeGreaterThan(0);
   expect(body).toContain("queued");
-  expect(body).toMatch(/paused, resumes \d\d:\d\d UTC/);
+  expect(body).toMatch(/paused, resumes (\d{4}-\d\d-\d\d )?\d\d:\d\d UTC/);
   expect(body).not.toContain("waiting for");
 });
