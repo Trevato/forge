@@ -24,7 +24,7 @@ import { ownCode, removeForge, stopForge, type Managed } from "../../spawn/manag
 import { readOwnCode } from "../../spawn/own_code.ts";
 import { countRefusals, mayReadRefusals } from "../../core/first_ask_refusals.ts";
 import { claimLinkBody } from "./new-forge.ts";
-import { appLinkWords } from "../../spawn/app_links.ts";
+import { appLinkSummary, appLinkWords } from "../../spawn/app_links.ts";
 
 
 /** "3 apps running", or which one is not and why. */
@@ -51,6 +51,7 @@ export function forgeRow(r: ClientRow, now: number): Html {
   const meta = [
     r.for === null ? null : html`for ${r.for}`,
     r.apps.length === 0 ? null : html`${r.apps.join(", ")}`,
+    appLinkSummary(r.appLinks ?? []) === null ? null : html`<span data-app-links>${appLinkSummary(r.appLinks ?? [])}</span>`,
     state === "unknown" ? html`it did not answer just now` : null,
     r.made ? badge(r.awake === true ? "awake" : "asleep", r.awake === true ? { tone: "success" } : { variant: "outline" }) : null,
     r.made ? html`${sizeWords(r.size)}` : null,

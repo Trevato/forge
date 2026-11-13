@@ -656,7 +656,7 @@ function openOnce(parent: App, ledger: ChildLedger): Promise<App> | App {
       cache.set(ledger.bodyId, opened);
       touch(parent, ledger);
       // A child that woke looks at what it follows, now: its apps may have moved while it slept.
-      void followOnWake(parent, opened);
+      void followOnWake(parent, opened, ledger.name);
       return opened;
     });
     flight.finally(() => flights.delete(ledger.bodyId)).catch(() => {});

@@ -54,7 +54,8 @@ import { watchLandings } from "../src/spawn/app_follow.ts";
 import { chmodSync } from "node:fs";
 import { forgetKey } from "../src/kernel/secret.ts";
 import { dropServed, refreshServed, servedRows, servedWindow } from "../src/spawn/clients.ts";
-import { appLinkWords, reasonOf } from "../src/spawn/app_links.ts";
+import { anchorsOf, appLinkSummary, appLinkWords, reasonOf } from "../src/spawn/app_links.ts";
+import { setFollowTaking } from "../src/core/upstream_follow.ts";
 
 quietLogs();
 mirrorOutbound({ allow: ["127.0.0.1"] });
@@ -498,6 +499,8 @@ describe("apps sent down by a spawn follow their parent", () => {
       const res = await fetch(`${address}/forges`, { headers: { cookie: mine } });
       const html = (await res.text()).replace(/\s+/g, " ");
       expect(html).toContain('data-app-link="severed"');
+      // The row itself says it, in its own line, not only under it.
+      expect(html).toContain("<span data-app-links>follows 1 of 2 apps; 1 severed by its owner</span>");
       expect(html).toContain("alice/notes: severed by its owner");
     }, 60_000);
 
@@ -694,6 +697,105 @@ describe("apps sent down by a spawn follow their parent", () => {
       }
     });
 
+    /** Everything a forge says in its log while `run` runs: the warnings and the infos. */
+    async function logged(app: App, run: () => Promise<unknown>): Promise<string[]> {
+      const said: string[] = [];
+      const log = app.log as unknown as Record<"info" | "warn", (...a: unknown[]) => void>;
+      const was = { info: log.info, warn: log.warn };
+      log.info = (...a) => void said.push(JSON.stringify(a));
+      log.warn = (...a) => void said.push(JSON.stringify(a));
+      try {
+        await run();
+      } finally {
+        log.info = was.info;
+        log.warn = was.warn;
+      }
+      return said;
+    }
+
+    test("the repair takes updates by default whatever the child's code mode was, and brings an earlier repair's tell-me to it", async () => {
+      const tm = await bare("tm");
+      const doc = (await Bun.file(join(tm.dataDir, "parent.json")).json()) as Record<string, unknown>;
+      // An older child's code link says tell-me: that was the default then, not a person's word about apps.
+      await Bun.write(join(tm.dataDir, "parent.json"), JSON.stringify({ ...doc, forgeCode: { repo: "tm/forge", upstream: "alice/forge", mode: "tell-me", tip: "a".repeat(40), chain: [] } }));
+      await reconcileAppLinks(parent, true);
+      const said = await logged(tm.child, () => applyAppLinks(tm.child, "tm"));
+      const notesRow = () => getFollow(tm.child.db, childRepo(tm.child, "tm", "notes").id)!;
+      expect(notesRow().mode).toBe("take-updates");
+      expect(said.join("\n")).toContain("take-updates");
+      // What the first repair wrote: tell-me on the row and in the entry, applied after it was offered.
+      setFollowTaking(tm.child.db, notesRow().repoId, "tell-me");
+      const file = join(tm.dataDir, "parent.json");
+      const now = (await Bun.file(file).json()) as Record<string, unknown>;
+      await Bun.write(file, JSON.stringify({ ...now, apps: entriesOf(now).map((e) => ({ ...e, mode: "tell-me", offeredAt: "2026-11-13T18:00:00.000Z", appliedAt: "2026-11-13T18:05:00.000Z" })) }));
+      const fixed = await logged(tm.child, () => applyAppLinks(tm.child, "tm"));
+      expect(notesRow().mode).toBe("take-updates");
+      expect(fixed.join("\n")).toContain("app link now takes updates");
+      // A person's own choice afterwards is theirs: the entry no longer says tell-me.
+      setFollowTaking(tm.child.db, notesRow().repoId, "tell-me");
+      await applyAppLinks(tm.child, "tm");
+      expect(notesRow().mode).toBe("tell-me");
+    }, 240_000);
+
+    test("a copy that moved is found by its history; one that cannot be found says so, once, and the parent shows why", async () => {
+      const lost = await bare("lost");
+      await reconcileAppLinks(parent, true);
+      const file = join(lost.dataDir, "parent.json");
+      const doc = (await Bun.file(file).json()) as Record<string, unknown>;
+      // notes is recorded under a name that is not here (the owner moved it); vault's copy is gone.
+      await Bun.write(file, JSON.stringify({ ...doc, apps: entriesOf(doc).map((e) => ({ ...e, repo: e.upstream === "alice/notes" ? "elsewhere/notes" : e.repo })) }));
+      lost.child.db.query("UPDATE repo SET name = 'gone-vault' WHERE name = 'vault'").run();
+      const said = await logged(lost.child, async () => {
+        expect((await applyAppLinks(lost.child, "lost")).linked).toEqual(["lost/notes"]);
+        await applyAppLinks(lost.child, "lost");
+      });
+      expect(entriesOf(await Bun.file(file).json()).find((e) => e.upstream === "alice/notes")!.repo).toBe("lost/notes");
+      const waiting = said.filter((l) => l.includes("waiting"));
+      expect(waiting).toHaveLength(1);
+      expect(waiting[0]).toContain('"forge":"lost"');
+      expect(waiting[0]).toContain("no repository here holds alice/vault");
+      const kid = (await (await import("../src/actions/spawn.ts")).listChildren(parent)).find((c) => c.name === "lost")!;
+      const lines = await appLinkLines(parent, kid);
+      expect(lines.map((l) => [l.upstream, l.state])).toEqual([["alice/notes", "following"], ["alice/vault", "failed"]]);
+      expect(appLinkSummary(lines)).toBe("follows 1 of 2 apps; vault: no repository here holds alice/vault's history (lost/vault is gone, renamed to something that is not it, or never copied)");
+    }, 240_000);
+
+    test("every app the parent sent ends the pass in one stated condition, the unoffered ones with the reason", async () => {
+      const odd = await bare("said");
+      // The ledger names an app that is no longer here.
+      const ledgerFile = join(parent.config.dataDir, "spawn", "said.json");
+      const ledger = (await Bun.file(ledgerFile).json()) as Record<string, unknown>;
+      await Bun.write(ledgerFile, JSON.stringify({ ...ledger, apps: ["alice/notes", "alice/vault", "alice/ghost"] }));
+      const said = await logged(parent, () => reconcileAppLinks(parent, true));
+      const mine = said.filter((l) => l.includes('"forge":"said"'));
+      expect(mine.some((l) => l.includes("alice/ghost: not offered: alice/ghost no longer exists on this forge"))).toBe(true);
+      expect(mine.some((l) => l.includes("alice/notes: offered the link"))).toBe(true);
+      // Said once while it holds.
+      expect((await logged(parent, () => reconcileAppLinks(parent, true))).filter((l) => l.includes('"forge":"said"'))).toEqual([]);
+      const kid = (await (await import("../src/actions/spawn.ts")).listChildren(parent)).find((c) => c.name === "said")!;
+      const lines = await appLinkLines(parent, kid);
+      expect(lines.map((l) => l.state)).toEqual(["offered", "offered", "not-offered"]);
+      expect(appLinkSummary(lines)).toContain("follows 0 of 3 apps");
+      expect(appLinkSummary(lines)).toContain("ghost: alice/ghost no longer exists");
+      void odd;
+    }, 240_000);
+
+    test("the forge's own code sent as an app is not followed twice, and the parent says so", async () => {
+      const code = await createRepo(parent, alice, { name: "forge", visibility: "public" });
+      if (!code.ok) throw new Error("repo");
+      await land(code.value, "README.md");
+      const born = await spawn("codey", ["alice/forge"]);
+      expect(getFollow(born.child.db, childRepo(born.child, "codey", "forge").id)).toBeUndefined();
+      const kid = (await (await import("../src/actions/spawn.ts")).listChildren(parent)).find((c) => c.name === "codey")!;
+      expect(appLinkWords((await appLinkLines(parent, kid))[0]!)).toContain("refused: it is the forge's own code");
+    }, 240_000);
+
+    test("an anchor is the first commit and commits spread through the history", async () => {
+      const found = await anchorsOf(parent, notes);
+      expect(found.length).toBeGreaterThan(1);
+      expect(found[0]).toBe(await git(parentDir(notes), "rev-list", "--max-parents=0", "refs/heads/main"));
+    });
+
     test("a repository that only shares the name is never linked", async () => {
       const odd = await bare("odd");
       // Its notes is somebody's own, unrelated history under the same name.
@@ -709,7 +811,9 @@ describe("apps sent down by a spawn follow their parent", () => {
       );
       await git(mine, "update-ref", "refs/heads/main", root);
       await reconcileAppLinks(parent, true);
-      const applied = await applyAppLinks(odd.child);
+      let applied!: Awaited<ReturnType<typeof applyAppLinks>>;
+      const said = await logged(odd.child, async () => void (applied = await applyAppLinks(odd.child, "odd")));
+      expect(said.join("\n")).toContain("refused: no commit of the parent's repository is in this copy");
       expect(applied.refused).toEqual(["odd/notes"]);
       expect(applied.linked).toEqual(["odd/vault"]);
       expect(

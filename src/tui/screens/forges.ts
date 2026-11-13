@@ -20,7 +20,7 @@ import type { App } from "../../app.ts";
 import { undoable, type LinkInfo } from "../../spawn/claim.ts";
 import { confirmScreen, pickerScreen } from "./common.ts";
 import type { Session } from "../session.ts";
-import { appLinkWords } from "../../spawn/app_links.ts";
+import { appLinkSummary, appLinkWords } from "../../spawn/app_links.ts";
 
 /** [name, "Not reporting · for Maria · Claimed · 3 apps running"] per row; an empty line when none. */
 export function forgeLines(rows: readonly ClientRow[]): [string, string][] {
@@ -47,7 +47,8 @@ function firstScreenLines(r: ClientRow): [string, string][] {
 
 /** Under a forge: each app it was sent and whether it still follows it, as /forges says it. */
 function appLinkLines(r: ClientRow): [string, string][] {
-  return (r.appLinks ?? []).map((l): [string, string] => ["", `  ${appLinkWords(l)}`]);
+  const head = appLinkSummary(r.appLinks ?? []);
+  return [...(head === null ? [] : [["", `  ${head}`] as [string, string]]), ...(r.appLinks ?? []).map((l): [string, string] => ["", `  ${appLinkWords(l)}`])];
 }
 
 /** Under a forge that is running, not reachable: each public address and what it answered (#7959), as /forges lists them. */

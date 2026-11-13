@@ -22,14 +22,28 @@ import { refreshServed } from "./clients.ts";
 import { hostedChildOpen, openChildren } from "./host.ts";
 
 /** Look at every app this forge follows from its parent, now, whatever the clock says. */
-export async function followParentNow(app: App): Promise<number> {
+export async function followParentNow(app: App, label = "this forge"): Promise<number> {
   let checked = 0;
   for (const f of listFollowing(app.db)) {
     if (f.via !== "parent") continue;
     const repo = getRepoById(app.db, f.repoId);
     if (repo === undefined) continue;
     try {
-      if ((await checkUpstream(app, repo)).ok) checked++;
+      const result = await checkUpstream(app, repo);
+      if (result.ok) {
+        checked++;
+        // What taking it did, said when it did something: moved the branch, or (the app has commits of its own) proposed a pull.
+        if (result.value.outcome !== "none")
+          app.log.info("app followed", {
+            forge: label,
+            repo: `${repo.ownerName}/${repo.name}`,
+            outcome: result.value.outcome,
+            behind: result.value.behind,
+            ...(result.value.outcome === "proposed" ? { why: "the app has commits of its own, so the parent's come as a pull" } : {}),
+          });
+      } else if (result.error !== "busy" && result.error !== "off") {
+        app.log.warn("app not followed", { forge: label, repo: `${repo.ownerName}/${repo.name}`, why: result.error });
+      }
     } catch (error) {
       app.log.warn("followed app not checked", { repo: `${repo.ownerName}/${repo.name}`, error: String(error) });
     }
@@ -38,11 +52,11 @@ export async function followParentNow(app: App): Promise<number> {
 }
 
 /** A hosted child has woken: take any offer, then look at its apps. */
-export async function followOnWake(parent: App, child: App): Promise<void> {
+export async function followOnWake(parent: App, child: App, name: string): Promise<void> {
   if (!hostedChildOpen(parent, child)) return;
-  await applyAppLinks(child);
+  await applyAppLinks(child, name);
   if (!hostedChildOpen(parent, child)) return;
-  await followParentNow(child);
+  await followParentNow(child, name);
 }
 
 /**
@@ -51,18 +65,14 @@ export async function followOnWake(parent: App, child: App): Promise<void> {
  */
 export async function followTick(app: App, boot = false): Promise<void> {
   const applied = await applyAppLinks(app);
-  for (const name of applied.linked) {
-    const [o, n] = name.split("/") as [string, string];
-    const repo = getRepo(app.db, o, n);
-    if (repo !== undefined) await checkUpstream(app, repo);
-  }
+  if (applied.linked.length > 0) await followParentNow(app);
   await reconcileAppLinks(app);
   // One child that cannot be opened or linked is that child's trouble: the rest are looked at all the same.
   for (const { name, app: child } of openChildren(app)) {
     try {
       if (!hostedChildOpen(app, child)) continue;
       const linked = await applyAppLinks(child, name);
-      if (linked.linked.length > 0) await followParentNow(child);
+      if (linked.linked.length > 0) await followParentNow(child, name);
       else await checkDue(child);
     } catch (error) {
       app.log.warn("a hosted child's follow pass failed", { forge: name, reason: reasonOf(error) });
