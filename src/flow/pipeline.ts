@@ -89,8 +89,33 @@ function runTally(db: Database, kind: string, where: string, now: string): Tally
     .get(kind, now) ?? { waiting: 0, active: 0, oldest: null };
 }
 
+/**
+ * How long a waiting stage's count is reused. The ready count walks every open
+ * issue with its blockers and runs (1.6 s on production, 2026-11-13) and was
+ * asked for about fifteen times a minute by health, flow, the crew tick and
+ * every open screen: 48 of every 120 seconds of the forge's one thread. The
+ * stage a person looks at changes by the minute, not the second. Off under
+ * `bun test` (NODE_ENV=test), where a test writes a row and reads the count.
+ */
+export const WAITING_REUSE_MS = process.env["NODE_ENV"] === "test" ? 0 : 20_000;
+
+const waitingKept = new WeakMap<Database, Map<string, { at: number; tally: Tally }>>();
+
 /** Rows that all wait: `since` is when each entered the stage. */
 function waitingTally(db: Database, sql: string, ...args: string[]): Tally {
+  if (WAITING_REUSE_MS === 0) return countWaiting(db, sql, ...args);
+  let kept = waitingKept.get(db);
+  if (kept === undefined) waitingKept.set(db, (kept = new Map()));
+  // A `since` cutoff argument moves every call; the stage, not the instant, is the key.
+  const hit = kept.get(sql);
+  const now = Date.now();
+  if (hit !== undefined && now - hit.at < WAITING_REUSE_MS) return hit.tally;
+  const tally = countWaiting(db, sql, ...args);
+  kept.set(sql, { at: now, tally });
+  return tally;
+}
+
+function countWaiting(db: Database, sql: string, ...args: string[]): Tally {
   const r = db
     .query<{ n: number; oldest: string | null }, string[]>(
       `SELECT COUNT(*) AS n, MIN(since) AS oldest FROM (${sql})`,
