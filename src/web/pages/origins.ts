@@ -54,6 +54,8 @@ import {
 import { reattachMessage } from "./frozen.ts";
 import { replaceTokenMessage } from "../../origins/token-reach.ts";
 import { writesPaused } from "../../origins/credential.ts";
+import { brokerOffers, knownOffers, offerFor } from "../../origins/broker.ts";
+import type { BrokerOffer } from "../../spawn/origin_broker_wire.ts";
 import {
   listDetachedMirrors,
   mirrorsByOrigin,
@@ -379,6 +381,7 @@ const blankValues = (): ConnectValues => ({
 export function githubConnectable(ctx: Ctx): boolean {
   return (
     (process.env.FORGE_GITHUB_CLIENT_ID ?? "").trim() !== "" ||
+    knownOffers(ctx.app).some((o) => o.kind === "github") ||
     listOriginApps(ctx.app, ctx.auth.user!).some((a) => a.kind === "github")
   );
 }
@@ -771,6 +774,32 @@ function tokenNeeds(host: string): Html {
 
 // ---- the page ----
 
+/**
+ * The one-click buttons a hosted forge shows when its parent can sign people
+ * in to an origin for it (`origins/broker.ts`): one each, the same form the
+ * parent's own page posts, and a line that says what is kept here.
+ */
+function parentButtons(offers: readonly BrokerOffer[]): Html | null {
+  if (offers.length === 0) return null;
+  return html`<div class="bar mb" data-parent-signin>
+      ${offers.map(
+        (o) => html`<form method="post" action="/settings/origins/oauth">
+          ${o.kind === "github"
+            ? html`<input type="hidden" name="kind" value="github" />`
+            : html`<input type="hidden" name="host" value="${o.host}" />`}
+          ${btn(`Connect ${o.name}`, {
+            variant: "primary",
+            icon: o.kind === "github" ? "github" : "forgejo",
+          })}
+        </form>`,
+      )}
+    </div>
+    <p class="muted small mb">
+      You sign in there; this forge keeps only your token, and nothing else of
+      yours leaves it.
+    </p>`;
+}
+
 function originsView(
   ctx: Ctx,
   values: ConnectValues,
@@ -786,6 +815,15 @@ function originsView(
   const frozen = read("frozen", () => readFrozen(ctx));
   if (timing !== undefined) timing.rendering = performance.now();
   const githubConfigured = githubConnectable(ctx);
+  const offers = knownOffers(ctx.app);
+  // The token form is the way that always works. Under a one-click button it is the quiet way, not an equal one.
+  const tokenPath = connectPath(
+    "connect-token",
+    "key",
+    offers.length > 0 ? "Or paste a token" : "A token for GitHub, Forgejo or Gitea",
+    values.offerToken === true || values.tokenError !== undefined,
+    tokenSection(values),
+  );
   const matched =
     values.host === ""
       ? undefined
@@ -825,28 +863,25 @@ function originsView(
       : null}
     <section class="settings-block" id="connect">
       <h2>Connect an account</h2>
+      ${parentButtons(offers)}
       <ul class="list">
         ${connectPath(
           "connect-forge",
           "globe",
           html`Another forge ${badge("a friend's", { tone: "success" })}`,
-          true,
+          offers.length === 0,
           forgeSection(ctx, values),
         )}
-        ${connectPath(
-          "connect-token",
-          "key",
-          "A token for GitHub, Forgejo or Gitea",
-          values.offerToken === true || values.tokenError !== undefined,
-          tokenSection(values),
-        )}
-        ${connectPath(
-          "connect-github",
-          "github",
-          "GitHub, one click",
-          values.mode !== "none",
-          githubSection(githubConfigured, callbackUri(ctx)),
-        )}
+        ${offers.length > 0 ? null : tokenPath}
+        ${offers.some((o) => o.kind === "github")
+          ? null
+          : connectPath(
+              "connect-github",
+              "github",
+              "GitHub, one click",
+              values.mode !== "none",
+              githubSection(githubConfigured, callbackUri(ctx)),
+            )}
         ${connectPath(
           "connect-forgejo",
           "forgejo",
@@ -864,6 +899,7 @@ function originsView(
                 },
           ),
         )}
+        ${offers.length > 0 ? tokenPath : null}
       </ul>
       <p class="muted small">
         <strong>One-click sign-in.</strong> Another forge needs nothing set
@@ -945,10 +981,12 @@ export function shell(
 }
 
 // GET /settings/origins
-export function originsPage(ctx: Ctx): Response {
+export async function originsPage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const denied = accountOnly(ctx);
   if (denied) return denied;
+  // A hosted forge learns what its parent can sign people in to (kept five minutes); a forge with no parent does not wait.
+  await brokerOffers(ctx.app);
   const params = ctx.url.searchParams;
   const values = blankValues();
   const host = params.get("host") ?? "";
@@ -1108,7 +1146,9 @@ export async function originOAuthStart(ctx: Ctx): Promise<Response> {
     return shell(ctx, originsView(ctx, values), 422);
   }
   const back = callbackUri(ctx);
-  if (back === "" && kind !== "github") {
+  // A parent that runs the sign-in needs no address of this forge's own for the provider.
+  const brokered = offerFor(await brokerOffers(ctx.app), host || kind) !== undefined;
+  if (back === "" && kind !== "github" && !brokered) {
     const values = blankValues();
     values.tokenHost = host;
     values.hostError =
@@ -1141,6 +1181,8 @@ export async function originOAuthStart(ctx: Ctx): Promise<Response> {
           : connectMessage(started.error.error);
     return shell(ctx, originsView(ctx, values), 422);
   }
+  // A parent's sign-in is one click: the browser goes straight to the parent, which sends it to the provider.
+  if (started.value.brokered === true && started.value.flow === "code") return redirect(started.value.url);
   // The flow's page knows where to go from the flow itself, not the link.
   const qs = then === undefined ? "" : `?${thenQuery(then, link)}`;
   return redirect(`/settings/origins/flows/${started.value.flowId}${qs}`);

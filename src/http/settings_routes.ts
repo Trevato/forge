@@ -119,7 +119,10 @@ import {
   tokenDelete,
   tokensPage,
 } from "../web/pages/account.ts";
-import { completeOAuthCallback } from "../actions/origins.ts";
+import { completeBrokeredCallback, completeOAuthCallback } from "../actions/origins.ts";
+import { brokerCallback, brokerStart } from "../spawn/origin_broker.ts";
+import { BROKER_CALLBACK } from "../spawn/origin_broker_wire.ts";
+import { oauthCallbackUri } from "./api.ts";
 import { mirrorJobPage } from "../web/pages/browse.ts";
 import {
   callbackLanding,
@@ -315,6 +318,10 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   // and not an API one: it is a browser redirect, possibly from a phone, and
   // the only thing it carries is a `state` this forge issued minutes ago.
   router.add("GET", "/settings/origins/callback", async (ctx) => {
+    // A sign-in this forge runs for a child (`spawn/origin_broker.ts`) comes back here, since the provider
+    // has this one address registered; its state is not a person's, so it is told apart before the session.
+    const brokered = await brokerCallback(ctx);
+    if (brokered !== undefined) return brokered;
     const done = await completeOAuthCallback(ctx.app, ctx.auth.user, {
       state: ctx.url.searchParams.get("state") ?? "",
       code: ctx.url.searchParams.get("code") ?? "",
@@ -323,6 +330,25 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
     return new Response(null, {
       status: 303,
       headers: { location: callbackLanding(ctx, done) },
+    });
+  });
+  // A hosted forge's person, sent here by their forge to sign in to an origin through this one, and the
+  // way back: this forge's callback sends the browser to the child's, where the code is redeemed.
+  router.add("GET", "/broker/origins/start", (ctx) => brokerStart(ctx, oauthCallbackUri(ctx.url, ctx.app.config.host)));
+  router.add("GET", BROKER_CALLBACK, async (ctx) => {
+    const done = await completeBrokeredCallback(ctx.app, ctx.auth.user, {
+      state: ctx.url.searchParams.get("state") ?? "",
+      code: ctx.url.searchParams.get("code") ?? "",
+      error: ctx.url.searchParams.get("error") ?? "",
+    });
+    return new Response(null, {
+      status: 303,
+      headers: {
+        // Signed out, the code is not carried through the sign-in page: it dies unredeemed in a minute.
+        location: !done.ok && done.error === "unauthorized" ? "/settings/origins" : callbackLanding(ctx, done),
+        "referrer-policy": "no-referrer",
+        "cache-control": "no-store",
+      },
     });
   });
   // Origins. Literal thirds first, so `flows` and `apps` can never be

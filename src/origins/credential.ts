@@ -31,8 +31,9 @@ import {
 import { createLog } from "../kernel/log.ts";
 import { open } from "../kernel/secret.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { VIA_PARENT, refreshViaParent } from "./broker.ts";
 import { appFor, refresh, type AppRegistration } from "./oauth.ts";
-import { checkCredential, guarded } from "./operator.ts";
+import { checkCredential, guarded, hostnameOf } from "./operator.ts";
 import { forgetProvider, providerFor } from "./providers/index.ts";
 import {
   staticCredential,
@@ -152,13 +153,17 @@ async function refreshOnce(app: App, originId: string): Promise<void> {
   const origin = getOriginById(app.db, originId);
   if (!origin) return;
 
-  const registration = appFor(app.db, app.config.dataDir, origin.userId, {
-    kind: origin.kind,
-    apiUrl: origin.apiUrl,
-    webUrl: origin.webUrl,
-    software: origin.software,
-  });
-  if (!registration.ok) {
+  // A token the parent's sign-in issued refreshes through the parent: the client secret is its.
+  const viaParent = getCursor(app.db, originId, VIA_PARENT) === "1";
+  const registration = viaParent
+    ? undefined
+    : appFor(app.db, app.config.dataDir, origin.userId, {
+        kind: origin.kind,
+        apiUrl: origin.apiUrl,
+        webUrl: origin.webUrl,
+        software: origin.software,
+      });
+  if (registration !== undefined && !registration.ok) {
     markNeedsReauth(
       app.db,
       originId,
@@ -179,7 +184,10 @@ async function refreshOnce(app: App, originId: string): Promise<void> {
     return;
   }
 
-  const next = await refresh(registration.value, refreshToken.value);
+  const next =
+    registration === undefined
+      ? await refreshViaParent(app, { host: hostnameOf(origin.webUrl), refreshToken: refreshToken.value })
+      : await refresh(registration.value, refreshToken.value);
   if (!next.ok) {
     // `invalid_grant` is terminal: the refresh token is spent or revoked and
     // no amount of retrying brings it back. Anything else is worth another

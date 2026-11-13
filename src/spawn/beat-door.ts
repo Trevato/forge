@@ -1,6 +1,7 @@
 /**
  * The one door a cell child has to its parent: a loopback listener that
- * answers `POST /api/v1/heartbeat`, and the lent model endpoint
+ * answers `POST /api/v1/heartbeat`, `POST /api/v1/broker/origins` (a signed ask to
+ * broker an origin sign-in, `spawn/origin_broker.ts`), and the lent model endpoint
  * (`spawn/model_door.ts`: `POST /v1/messages`, `GET /api/v1/credit`), and nothing else. The child's cell relays
  * only this port in, so untrusted child code never reaches the parent's web
  * surface, and since the door never asks who the client is, no forwarding
@@ -11,6 +12,8 @@ import type { App } from "../app.ts";
 import { securityFloor } from "../http/respond.ts";
 import { readCapped } from "./bounded_read.ts";
 import { receiveBeat, SIGNATURE_HEADER } from "./heartbeat.ts";
+import { answerBrokerCall, CALL_BODY_MAX } from "./origin_broker.ts";
+import { BROKER_CALL } from "./origin_broker_wire.ts";
 import { creditAnswer, lendModel, MODEL_BODY_MAX, type ModelDeps } from "./model_door.ts";
 
 const MAX_BODY = 1024;
@@ -43,6 +46,13 @@ async function answerBeat(app: App, deps: { readonly model?: ModelDeps }, req: R
   const path = new URL(req.url).pathname;
   if (req.method === "POST" && path === "/v1/messages") return lendModel(app, req, deps.model);
   if (req.method === "GET" && path === "/api/v1/credit") return creditAnswer(app, req);
+  if (req.method === "POST" && path === BROKER_CALL) {
+    // A signed call to broker an origin sign-in, and small: no signature, no read.
+    const shown = req.headers.get(SIGNATURE_HEADER);
+    if (shown === null) return refused;
+    const bytes = await readCapped(req, CALL_BODY_MAX);
+    return bytes === undefined ? refused : answerBrokerCall(app, new TextDecoder().decode(bytes), shown);
+  }
   if (req.method !== "POST" || path !== "/api/v1/heartbeat") return refused;
   // A beat is signed and small: no signature, no read; then at most MAX_BODY bytes, counted as they arrive.
   const signature = req.headers.get(SIGNATURE_HEADER);

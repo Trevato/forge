@@ -224,7 +224,7 @@ async function takeBeat(
 }
 
 /** What a child knows of its parent from `parent.json`, when it has all of it. */
-async function parentLink(
+export async function parentLink(
   app: App,
 ): Promise<{ name: string; upstream: string; key: string } | undefined> {
   try {
@@ -278,7 +278,7 @@ async function forkReport(app: App, forge: ForgeLink) {
 }
 
 /** In a cell the parent's public address is out of reach; its relayed loopback port (`FORGE_PARENT_LOCAL`) is not. */
-function beatBase(upstream: string): string {
+export function beatBase(upstream: string): string {
   const local = process.env["FORGE_PARENT_LOCAL"] ?? "";
   return isParentLocal(local) ? local : upstream;
 }

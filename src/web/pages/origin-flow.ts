@@ -9,6 +9,7 @@
  */
 
 import { pollOAuthConnect } from "../../actions/origins.ts";
+import { BROKERED } from "../../origins/broker.ts";
 import { flowExpired, flowTarget, getFlowFor } from "../../origins/oauth.ts";
 import type { Ctx } from "../../http/context.ts";
 import { forgeBaseUrl } from "../../http/api.ts";
@@ -227,6 +228,8 @@ function authorizeFor(
   ctx: Ctx,
   flow: { id: string; webUrl: string; clientId: string; redirectUri: string },
 ): string | undefined {
+  // A sign-in the parent runs is begun by the click that made it; its start is signed for minutes, not a page.
+  if (flow.redirectUri === BROKERED) return undefined;
   const stored = flowTarget(ctx.app.db, ctx.app.config.dataDir, flow.id);
   if (stored === undefined) return undefined;
   const asked = ctx.url.searchParams.get("to");

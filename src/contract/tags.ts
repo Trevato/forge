@@ -56,6 +56,7 @@ const ALIAS: Readonly<Record<string, string>> = {
   packs: "meta",
   keeper: "meta",
   heartbeat: "meta",
+  broker: "meta",
   telemetry: "meta",
   drills: "meta",
   maintenance: "meta",

@@ -211,8 +211,11 @@ export interface PkcePair {
 /** S256 only. `plain` exists in the spec and has no reason to exist here. */
 export function pkce(): PkcePair {
   const verifier = `${randomSecret()}${randomSecret()}`.slice(0, 96);
-  return { verifier, challenge: base64url(sha256Bytes(verifier)) };
+  return { verifier, challenge: s256(verifier) };
 }
+
+/** The S256 challenge a verifier answers: base64url of its SHA-256. A server checks a presented verifier with this. */
+export const s256 = (verifier: string): string => base64url(sha256Bytes(verifier));
 
 export function authorizeUrl(
   app: AppRegistration,

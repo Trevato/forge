@@ -24,6 +24,7 @@ import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import {
   cacheOriginRepos,
+  clearCursor,
   createOrigin,
   deleteOrigin,
   detachedMirror,
@@ -43,6 +44,7 @@ import {
   rememberOriginRepo,
   renewOrigin,
   sealedSecrets,
+  setCursor,
   type Origin,
   type OriginRepoRow,
 } from "../core/origins.ts";
@@ -95,7 +97,19 @@ import {
   type AppRow,
   type FlowRow,
 } from "../origins/oauth.ts";
-import { checkCredential, type GuardRefusal } from "../origins/operator.ts";
+import {
+  BROKERED,
+  VIA_PARENT,
+  brokerOffers,
+  deviceGrant,
+  forgetOffers,
+  FAILURE_WORDS,
+  offerFor,
+  redeemCode,
+  startUrl,
+} from "../origins/broker.ts";
+import type { BrokerFailure } from "../spawn/origin_broker_wire.ts";
+import { checkCredential, hostnameOf, type GuardRefusal } from "../origins/operator.ts";
 import { forgetProvider, providerFor } from "../origins/providers/index.ts";
 import { forgetTokenReach } from "../origins/token-reach.ts";
 import { scopeWords } from "../origins/providers/http.ts";
@@ -532,6 +546,8 @@ export interface OAuthStart {
   readonly shortCode: string;
   readonly intervalSecs: number;
   readonly expiresAt: string;
+  /** The parent forge brokers this sign-in: the browser goes straight to `url`, the parent's. */
+  readonly brokered?: true;
 }
 
 /**
@@ -589,6 +605,9 @@ export async function startOAuthConnect(
     registration = appFor(app.db, app.config.dataDir, user.value.id, target);
   }
   if (!registration.ok) {
+    // A hosted forge holds no application of its own: its parent may run the sign-in for it.
+    const brokered = await startBrokered(app, user.value, target, input.returnQuery ?? "");
+    if (brokered !== undefined) return brokered;
     return err({
       error: "no_app",
       kind: found.value.kind,
@@ -659,6 +678,81 @@ export async function startOAuthConnect(
     shortCode: flow.shortCode,
     intervalSecs: 0,
     expiresAt: flow.expiresAt,
+  });
+}
+
+/**
+ * The sign-in a parent forge runs for this one (`origins/broker.ts`): undefined
+ * when this forge has no parent, or its parent holds no application for the
+ * host. GitHub's device grant is begun by the parent and polled here; a code
+ * flow sends the browser to the parent, whose start URL this forge signs.
+ */
+async function startBrokered(
+  app: App,
+  user: User,
+  target: { kind: OriginKind; apiUrl: string; webUrl: string; software: string },
+  returnQuery: string,
+): Promise<Result<OAuthStart, { error: OAuthStartError; message: string; kind?: OriginKind }> | undefined> {
+  const offer = offerFor(await brokerOffers(app), hostnameOf(target.webUrl));
+  if (offer === undefined) return undefined;
+  const refused = (message: string) => err({ error: "provider_refused" as const, message });
+  const registration = { kind: target.kind, apiUrl: target.apiUrl, webUrl: target.webUrl, software: target.software };
+
+  if (flowFor(target.kind) === "device") {
+    const grant = await deviceGrant(app, offer.host, target.kind);
+    if (!grant.ok) {
+      // A parent that no longer offers it is asked again next time, not remembered as offering.
+      if (grant.error.error === "not_offered") forgetOffers(app);
+      return refused("this forge's host could not start the sign-in; paste a token instead");
+    }
+    const flow = createFlow(app.db, app.config.dataDir, {
+      userId: user.id,
+      flow: "device",
+      app: { ...registration, clientId: grant.value.clientId, clientSecret: "" },
+      deviceCode: grant.value.deviceCode,
+      userCode: grant.value.userCode,
+      verificationUri: grant.value.verificationUri,
+      target: grant.value.verificationUri,
+      intervalSecs: grant.value.intervalSecs,
+      redirectUri: BROKERED,
+      returnQuery,
+      ttlMs: grant.value.expiresInSecs * 1000,
+    });
+    return ok({
+      flowId: flow.id,
+      flow: "device",
+      userCode: grant.value.userCode,
+      url: grant.value.verificationUri,
+      shortCode: flow.shortCode,
+      intervalSecs: grant.value.intervalSecs,
+      expiresAt: flow.expiresAt,
+      brokered: true,
+    });
+  }
+
+  const state = newState();
+  const challenge = pkce();
+  const url = await startUrl(app, { host: offer.host, state, challenge: challenge.challenge });
+  if (url === undefined) return undefined;
+  const flow = createFlow(app.db, app.config.dataDir, {
+    userId: user.id,
+    flow: "code",
+    app: { ...registration, clientId: "", clientSecret: "" },
+    state,
+    verifier: challenge.verifier,
+    redirectUri: BROKERED,
+    returnQuery,
+    target: url,
+  });
+  return ok({
+    flowId: flow.id,
+    flow: "code",
+    userCode: "",
+    url,
+    shortCode: flow.shortCode,
+    intervalSecs: 0,
+    expiresAt: flow.expiresAt,
+    brokered: true,
   });
 }
 
@@ -747,6 +841,7 @@ export async function pollOAuthConnect(
     user.value,
     registration,
     polled.value,
+    flow.redirectUri === BROKERED,
   );
   finishFlow(app.db, flow.id, stored);
   return ok(statusOf(getFlowFor(app.db, user.value.id, flowId)!));
@@ -771,6 +866,11 @@ export async function completeOAuthCallback(
   // "that is not yours", which would confirm it exists.
   const flow = claimFlowByState(app.db, input.state, user.value.id);
   if (!flow) return err("not_found");
+  // A sign-in the parent runs comes back to its own path, never this one.
+  if (flow.redirectUri === BROKERED) {
+    finishFlow(app.db, flow.id, { status: "failed", detail: FAILURE_WORDS.failed });
+    return err("not_found");
+  }
   if (flowExpired(flow)) {
     finishFlow(app.db, flow.id, {
       status: "failed",
@@ -821,6 +921,49 @@ export async function completeOAuthCallback(
   return ok(statusOf(getFlowFor(app.db, user.value.id, flow.id)!));
 }
 
+/**
+ * The return leg of a sign-in the parent ran. The state must be this
+ * person's, unspent and unexpired (claimed in the statement that finds it, as
+ * the ordinary callback's is); the code is then redeemed with the parent,
+ * server to server, with the verifier that only this forge holds. What comes
+ * back ends in `completeConnect`, the function a pasted token's sibling flows
+ * end in. A failure the parent names is shown in its words; a code or token
+ * is never in what is stored.
+ */
+export async function completeBrokeredCallback(
+  app: App,
+  actor: User | undefined,
+  input: { state: string; code: string; error?: string },
+): Promise<Result<FlowStatus, "unauthorized" | "not_found">> {
+  const user = requireUser(actor);
+  if (!user.ok) return user;
+  const flow = claimFlowByState(app.db, input.state, user.value.id);
+  if (!flow || flow.redirectUri !== BROKERED || flow.flow !== "code") return err("not_found");
+  const fail = (detail: string) => {
+    finishFlow(app.db, flow.id, { status: "failed", detail });
+    return ok(statusOf(getFlowFor(app.db, user.value.id, flow.id)!));
+  };
+  if (flowExpired(flow)) return fail(FAILURE_WORDS.expired);
+  if (input.code === "") {
+    const named = (input.error ?? "") in FAILURE_WORDS ? (input.error as BrokerFailure) : "failed";
+    return fail(FAILURE_WORDS[named]);
+  }
+  const secrets = flowSecrets(app.db, app.config.dataDir, flow.id);
+  if (secrets === undefined || secrets.verifier === "") return fail(FAILURE_WORDS.failed);
+  const redeemed = await redeemCode(app, { code: input.code, verifier: secrets.verifier, host: hostnameOf(flow.webUrl) });
+  if (!redeemed.ok) return fail(FAILURE_WORDS.failed);
+
+  const stored = await completeConnect(
+    app,
+    user.value,
+    { kind: flow.kind, apiUrl: flow.apiUrl, webUrl: flow.webUrl, clientId: "", clientSecret: "", software: flow.software },
+    redeemed.value.tokens,
+    true,
+  );
+  finishFlow(app.db, flow.id, stored);
+  return ok(statusOf(getFlowFor(app.db, user.value.id, flow.id)!));
+}
+
 /** Validate a freshly issued token and store the origin it belongs to. */
 async function completeConnect(
   app: App,
@@ -838,6 +981,8 @@ async function completeConnect(
     refreshToken: string;
     expiresAt: string | null;
   },
+  /** The parent ran the sign-in: the token refreshes through it, since the secret is its. */
+  viaParent = false,
 ): Promise<{ status: "done" | "failed"; detail: string; originId?: string }> {
   const provider = providerFor(
     staticCredential({
@@ -887,6 +1032,8 @@ async function completeConnect(
   });
   if (!stored.ok)
     return { status: "failed", detail: ORIGIN_ALREADY_CONNECTED };
+  if (viaParent) setCursor(app.db, stored.value.id, VIA_PARENT, "1");
+  else clearCursor(app.db, stored.value.id, VIA_PARENT);
   if (guard.value.checked) noteGuardPassed(app, stored.value.id);
   await afterConnect(app, user, stored.value, guard.value.listed);
   return { status: "done", detail: "", originId: stored.value.id };

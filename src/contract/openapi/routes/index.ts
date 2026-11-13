@@ -277,6 +277,7 @@ export { route as postApiV1AsksGiveBack } from "./postApiV1AsksGiveBack.ts";
 export { route as postApiV1AsksProposalIdVerb } from "./postApiV1AsksProposalIdVerb.ts";
 export { route as postApiV1BoardsPins } from "./postApiV1BoardsPins.ts";
 export { route as postApiV1BoardsQuery } from "./postApiV1BoardsQuery.ts";
+export { route as postApiV1BrokerOrigins } from "./postApiV1BrokerOrigins.ts";
 export { route as postApiV1Builds } from "./postApiV1Builds.ts";
 export { route as postApiV1Codes } from "./postApiV1Codes.ts";
 export { route as postApiV1Contribute } from "./postApiV1Contribute.ts";
