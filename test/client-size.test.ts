@@ -2,7 +2,9 @@
  * Each first page's client JavaScript and CSS, gzip bytes, stay under the
  * ceiling in docs/design/size-budget.json (#12018). Same pages as the
  * page-load budget. FORGE_SIZE_WRITE=1 rewrites the file with today's numbers
- * (only ever to lower them; raising one needs a note in the pull).
+ * plus headroom (2 %, up to the next 256 B: `ceilingFor`, #12040); raising one
+ * needs a note in the pull. Each page is rendered twice and its counted inline
+ * code must be identical, so the verdict is the same on every run.
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -14,7 +16,7 @@ import { createOrg } from "../src/core/orgs.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { clientSize, sizeFindings, type Ceilings } from "../src/measure/client_size.ts";
+import { ceilingFor, ceilingsFor, clientSize, inlineDrift, sizeFindings, SIZE_WRITE_COMMAND, type Ceilings } from "../src/measure/client_size.ts";
 import { PAGE_BUDGETS, pagePath } from "../src/perf/page_budget.ts";
 import { mintClaim } from "../src/spawn/claim.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -72,26 +74,34 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-async function measure(): Promise<Ceilings> {
-  const out: Ceilings = {};
+async function render(b: (typeof PAGE_BUDGETS)[number]): Promise<string> {
+  const res = await fetch(`${servers.url}${pagePath(b, "alice", "notes")}`, {
+    headers: b.signedOut ? { "accept-encoding": "identity" } : { cookie, "accept-encoding": "identity" },
+  });
+  if (res.status !== 200) throw new Error(`${b.pattern} answered ${res.status}`);
+  return res.text();
+}
+
+async function measure(): Promise<{ sizes: Ceilings; drift: string[] }> {
+  const sizes: Ceilings = {};
+  const drift: string[] = [];
   for (const b of PAGE_BUDGETS) {
-    const res = await fetch(`${servers.url}${pagePath(b, "alice", "notes")}`, {
-      headers: b.signedOut ? { "accept-encoding": "identity" } : { cookie, "accept-encoding": "identity" },
-    });
-    if (res.status !== 200) throw new Error(`${b.pattern} answered ${res.status}`);
-    out[b.pattern] = await clientSize(await res.text(), async (path) => {
+    const html = await render(b);
+    drift.push(...inlineDrift(`${b.pattern} (${b.page})`, html, await render(b)));
+    sizes[b.pattern] = await clientSize(html, async (path) => {
       const asset = await fetch(`${servers.url}${path}`, { headers: { "accept-encoding": "identity" }, redirect: "follow" });
       if (asset.status !== 200) throw new Error(`${path} answered ${asset.status}`);
       return asset.text();
     });
   }
-  return out;
+  return { sizes, drift };
 }
 
-test("no first page's client JavaScript or CSS passes its ceiling", async () => {
-  const sizes = await measure();
+test("no first page's client JavaScript or CSS passes its ceiling, and each page measures the same twice", async () => {
+  const { sizes, drift } = await measure();
+  expect(drift).toEqual([]);
   if (process.env["FORGE_SIZE_WRITE"] === "1") {
-    writeFileSync(FILE, `${JSON.stringify(sizes, null, 2)}\n`);
+    writeFileSync(FILE, `${JSON.stringify(ceilingsFor(sizes), null, 2)}\n`);
     return;
   }
   const ceilings = JSON.parse(readFileSync(FILE, "utf8")) as Ceilings;
@@ -105,11 +115,45 @@ test("the ceiling file names exactly the budgeted pages", () => {
   expect(Object.keys(ceilings).sort()).toEqual(PAGE_BUDGETS.map((b) => b.pattern).sort());
 });
 
-test("a page over its ceiling is named with the bytes over", () => {
+test("a page over its ceiling is named with the bytes over and the command that raises it", () => {
   expect(sizeFindings("/explore (explore)", { js: 1500, css: 900 }, { js: 1000, css: 900 })).toEqual([
-    "/explore (explore): js 1500 B gzip, 500 B over its ceiling of 1000 B",
+    "/explore (explore): js 1500 B gzip, 500 B over its ceiling of 1000 B; raise it in this pull with `FORGE_SIZE_WRITE=1 bun test test/client-size.test.ts` and say why",
   ]);
-  expect(sizeFindings("/x (x)", { js: 1, css: 1 }, undefined)[0]).toContain("no ceiling");
+  expect(SIZE_WRITE_COMMAND).toBe("FORGE_SIZE_WRITE=1 bun test test/client-size.test.ts");
+  const none = sizeFindings("/x (x)", { js: 1, css: 1 }, undefined)[0]!;
+  expect(none).toContain("no ceiling");
+  expect(none).toContain(SIZE_WRITE_COMMAND);
+});
+
+test("a written ceiling is the measure plus 2 %, rounded up to the next 256 B", () => {
+  // by hand: 1000 × 1.02 = 1020 → 1024; 1004 × 1.02 = 1024.08 → 1280;
+  // 0 → 0; 251 × 1.02 = 256.02 → 512; 250 × 1.02 = 255 → 256;
+  // 20824 × 1.02 = 21240.48 → 21248 (83 × 256).
+  expect(ceilingFor(1000)).toBe(1024);
+  expect(ceilingFor(1004)).toBe(1280);
+  expect(ceilingFor(0)).toBe(0);
+  expect(ceilingFor(250)).toBe(256);
+  expect(ceilingFor(251)).toBe(512);
+  expect(ceilingFor(20824)).toBe(21248);
+  expect(() => ceilingFor(-1)).toThrow();
+  expect(() => ceilingFor(1.5)).toThrow();
+  expect(ceilingsFor({ "/": { js: 1000, css: 1004 } })).toEqual({ "/": { js: 1024, css: 1280 } });
+  for (let n = 0; n < 50_000; n += 7) {
+    const c = ceilingFor(n);
+    expect(c % 256).toBe(0);
+    expect(c).toBeGreaterThanOrEqual(n * 1.02);
+    expect(c - 256).toBeLessThan(n * 1.02);
+  }
+});
+
+test("two renders that differ in counted inline code are named by page and block; data blocks may differ", () => {
+  const page = (nonce: string, t: string) =>
+    `<script nonce="${nonce}">let a=1;</script><script type="application/json">{"t":"${t}"}</script><style>b{c:d}</style><script>let t="${t}";</script>`;
+  expect(inlineDrift("/ (home)", page("n1", "x"), page("n2", "x"))).toEqual([]);
+  const d = inlineDrift("/ (home)", page("n1", "10:00"), page("n1", "10:01"));
+  expect(d).toHaveLength(1);
+  expect(d[0]).toStartWith("/ (home): inline script #2 differs");
+  expect(inlineDrift("/ (home)", "<style>a{}</style>", "")).toEqual(["/ (home): 1 counted inline blocks on one render, 0 on the next"]);
 });
 
 test("the count is gzip of linked and inline code, and leaves data blocks out", async () => {
