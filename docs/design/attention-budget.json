@@ -173,15 +173,15 @@
   "system": {
     "390": {
       "words": 212,
-      "blocks": 67,
+      "blocks": 69,
       "colours": 0
     },
     "1280": {
       "words": 212,
-      "blocks": 67,
+      "blocks": 69,
       "colours": 0
     },
-    "note": "Measured on the test forge's empty state with the machine reading replaced by an empty one and the two cell-cap sentences fixed (the live page's counts depend on the host's cores, disks, processes and cgroups); nothing seeded or waited for. Blocks 65 -> 67 (#11805): the off-site backup section's heading and one-sentence state stay on first view so a red lane is seen without a click; its rows sit behind the disclosure."
+    "note": "Measured on the test forge's empty state with the machine reading replaced by an empty one and the two cell-cap sentences fixed (the live page's counts depend on the host's cores, disks, processes and cgroups); nothing seeded or waited for. Blocks 65 -> 67 (#11805): the off-site backup section's heading and one-sentence state stay on first view so a red lane is seen without a click; its rows sit behind the disclosure. Blocks 67 -> 69 (#12010): the database size section's heading and its one-sentence state (the file's size and growth, a badge when either is worth a look) stay on first view, as the off-site lane's do; its fact rows and the table of the ten largest tables and indexes sit behind the disclosure."
   },
   "explore": {
     "390": {

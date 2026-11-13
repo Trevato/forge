@@ -1,9 +1,8 @@
 /**
- * The machine's history on disk (`machine_sample`): every 15-s point for a
- * day, and every 5-min point — the mean and the max of the 15-s points in
- * it — for 30 days. Each write rolls up the 5-min windows that have closed
- * and drops what has left its window, so the table never grows past
- * 24 h / 15 s + 30 d / 5 min = 5,760 + 8,640 rows per target.
+ * The machine's history on disk (`machine_sample`): every 15-s point, and every
+ * 5-min point — the mean and the max of the 15-s points in it. Each write rolls
+ * up the 5-min windows that have closed. How long each is kept, and the hourly
+ * rows after that, is `system/retention_samples.ts`, which prunes in batches.
  */
 import type { Database } from "bun:sqlite";
 import { withoutWaiting } from "../kernel/db.ts";
@@ -11,8 +10,6 @@ import { quietly } from "../core/write_clock.ts";
 
 export const FINE_MS = 15_000;
 export const COARSE_MS = 300_000;
-export const FINE_KEEP_MS = 24 * 3_600_000;
-export const COARSE_KEEP_MS = 30 * 24 * 3_600_000;
 
 /** One target at one instant. A null is a series this machine cannot read. */
 export type Point = {
@@ -95,7 +92,7 @@ type FineRow = {
 };
 
 /**
- * Keep `points` (taken at `now`), roll up the windows that closed, drop what is past its window. One transaction,
+ * Keep `points` (taken at `now`) and roll up the windows that closed. One transaction,
  * never waiting on another process's write lock: behind one it throws at once and the sampler's next tick tries again (#6957).
  */
 export function record(db: Database, points: readonly Point[], now: number): void {
@@ -136,7 +133,5 @@ export function record(db: Database, points: readonly Point[], now: number): voi
         r.celsius, r.celsiusMax, r.lagMs, r.lagMsMax, r.checks, r.agents,
       );
     }
-    db.query("DELETE FROM machine_sample WHERE step = 15 AND at < ?").run(iso(now - FINE_KEEP_MS));
-    db.query("DELETE FROM machine_sample WHERE step = 300 AND at < ?").run(iso(now - COARSE_KEEP_MS));
   })));
 }

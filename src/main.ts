@@ -23,6 +23,7 @@ import { readOnlyFrom } from "./http/read_only.ts";
 import { warmDisplays } from "./display/known.ts";
 import { warmSearch } from "./search/warm.ts";
 import { warmFlow } from "./system/flow_cache.ts";
+import { noteDbSize } from "./system/db_size.ts";
 import { backfillCarried } from "./core/carried.ts";
 import { refreshCatalogQuietly } from "./packs/catalog.ts";
 import { loadTrustedHosts } from "./origins/trusted-hosts.ts";
@@ -686,6 +687,13 @@ const tickAsks = async (): Promise<void> => {
     recordAskLedger(app.db);
   } catch (error) {
     app.log.error("asks ledger failed", { error: String(error) });
+  }
+  // The database's size, its first reading each UTC day (#12010): growth for /system and the
+  // vitals.
+  try {
+    noteDbSize(app.db, app.config.dataDir);
+  } catch (error) {
+    app.log.warn("database size reading failed", { error: String(error) });
   }
   // The degraded history rides the same tick; it catches its own errors.
   try {

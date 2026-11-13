@@ -18,3 +18,8 @@
   and inset (−2px) on full-bleed rows so nothing reflows. Never `outline: none`.
 - **Sticky, and only these**: the topbar, a diff file's header, the file path
   header. Everything anchorable carries `scroll-margin-top`.
+- **Layout is tokens.** A `z-index` is `var(--z-…)`, spacing is on the scale above,
+  and `position: fixed` or a full-viewport box belongs to `src/web/overlay_host.ts`
+  (open a layer with `forgeOverlay.open`). Enforced: `src/design/layout.ts`, run by
+  `bun scripts/design-lint.ts`; today's debt is named per file under `layout` in
+  `docs/design/baseline.json` and only shrinks.

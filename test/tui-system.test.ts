@@ -16,7 +16,8 @@ import { createForgeApp, forgeCommands, Session } from "../src/tui/forge.ts";
 import { setTelemetryGrant } from "../src/actions/telemetry.ts";
 import { hasGrant } from "../src/core/telemetry.ts";
 import { countRead, resetTelemetryReads } from "../src/system/telemetry_reads.ts";
-import { forgeLines, historyLines, largestLines, readerLines, memoryLines, memoryScreen, systemScreen } from "../src/tui/screens/system.ts";
+import { dbSizeLines, dbSizeScreen, forgeLines, historyLines, largestLines, readerLines, memoryLines, memoryScreen, systemScreen } from "../src/tui/screens/system.ts";
+import type { DbSize } from "../src/system/db_size.ts";
 import { changeCapacity } from "../src/actions/capacity.ts";
 import { EGRESS_REPORTED } from "../src/system/egress_line.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -136,6 +137,73 @@ describe("tui system largest directories (#11800)", () => {
     tui.ctx.push(systemScreen(tui.ctx, ["CPU"], session));
     await settleApp(tui);
     expect(tui.screen.toText()).toContain("Largest under the forge's data");
+    tui.stop?.();
+  });
+});
+
+describe("tui system database size (#12010)", () => {
+  const size: DbSize = {
+    fileBytes: 3 * 1024 ** 3,
+    walBytes: 4 * MiB,
+    growth: { perDay: 10 * MiB, days: 7, readings: [] },
+    walk: {
+      at: new Date(Date.now() - 3 * 60_000).toISOString(),
+      pageSize: 4096,
+      freeBytes: 30 * MiB,
+      tables: [{ name: "event", bytes: 2 * 1024 ** 3, rows: 1_234_567 }],
+      indexes: [{ name: "event_at", table: "event", bytes: 512 * MiB }],
+    },
+  };
+
+  test("an admin and a granted agent read the file, its growth, the largest tables and indexes", () => {
+    const lines = dbSizeLines(new Session(app, identity(carol)), size);
+    expect(lines[0]).toBe("Database size");
+    const said = lines.join(" ").replace(/\s+/g, " ");
+    expect(said).toContain("forge.db 3.0 GiB, WAL 4.0 MiB, 30 MiB free inside; grows 10 MiB a day over 7 days");
+    expect(said).toContain("past the 2 GiB Bun maps");
+    const table = lines.find((l) => l.startsWith("event (1,234,567 rows)"));
+    expect(table).toContain("2.0 GiB");
+    expect(lines.find((l) => l.startsWith("event_at on event"))).toContain("512 MiB");
+    expect(lines.at(-1)).toBe("measured 3m ago, at most once an hour");
+    expect(dbSizeLines(new Session(app, identity(carol)), { ...size, walk: null }).at(-1)).toContain("being measured");
+    const brief = dbSizeLines(new Session(app, identity(carol)), size, true);
+    expect(brief[0]).toBe("database 3.0 GiB, grows 10 MiB a day · d: its largest tables");
+    expect(brief.join(" ")).toContain("past the 2 GiB Bun maps");
+    expect(brief.some((l) => l.includes("event_at"))).toBe(false);
+    setTelemetryGrant(app, carol, "sysbot", true);
+    try {
+      expect(dbSizeLines(new Session(app, identity(bot)), size)[0]).toBe("Database size");
+    } finally {
+      setTelemetryGrant(app, carol, "sysbot", false);
+    }
+  });
+
+  test("a member, an ungranted agent and a guest read nothing, brief or whole", () => {
+    for (const who of [bob, bot, undefined])
+      for (const brief of [false, true]) expect(dbSizeLines(new Session(app, identity(who)), size, brief)).toEqual([]);
+  });
+
+  test("the System dialog says it in brief from the shared cache, and d opens the whole", async () => {
+    const terminal = headlessTerminal(120, 80);
+    const { app: tui, session } = createForgeApp(app, identity(carol), { terminal, exitHooks: false });
+    tui.start();
+    tui.ctx.push(systemScreen(tui.ctx, ["CPU"], session));
+    await settleApp(tui);
+    expect(tui.screen.toText()).toContain("d: its largest tables");
+    tui.dispatch({ type: "key", key: "d", ctrl: false, alt: false, shift: false });
+    await settleApp(tui);
+    expect(tui.screen.toText()).toContain("Tables");
+    expect(tui.screen.toText()).toContain("sqlite_schema");
+    tui.stop?.();
+  });
+
+  test("the whole screen is the reader's only", async () => {
+    const terminal = headlessTerminal(120, 40);
+    const { app: tui, session } = createForgeApp(app, identity(bob), { terminal, exitHooks: false });
+    tui.start();
+    tui.ctx.push(dbSizeScreen(session, tui.ctx));
+    await settleApp(tui);
+    expect(tui.screen.toText()).not.toContain("forge.db");
     tui.stop?.();
   });
 });

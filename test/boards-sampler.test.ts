@@ -1,8 +1,8 @@
 /**
  * The machine sampler and its ring: a fake cgroup and /proc tree yields
  * hand-calculated rates, a missing file is an absent series (never a
- * zero), the 5-min roll-up of known points is exact, and the ring drops
- * what has left its window. The `machine` source reads it like any other.
+ * zero), the 5-min roll-up of known points is exact, and the retention rule
+ * (`system/retention_samples.ts`) drops what has left its window. The `machine` source reads it like any other.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Database } from "bun:sqlite";
@@ -10,7 +10,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runQuery } from "../src/boards/query.ts";
-import { COARSE_KEEP_MS, COARSE_MS, FINE_KEEP_MS, FINE_MS, record, rollUp, type Point } from "../src/boards/ring.ts";
+import { COARSE_MS, FINE_MS, record, rollUp, type Point } from "../src/boards/ring.ts";
+import { FIVE_MIN_KEEP_MS as COARSE_KEEP_MS, pruneSamples, RAW_KEEP_MS as FINE_KEEP_MS } from "../src/system/retention_samples.ts";
 import { gaps, pointsOf, readCounters, startSampler, type Paths } from "../src/boards/sampler.ts";
 import { SOURCES } from "../src/boards/sources.ts";
 import type { CellCounter } from "../src/apps/contain.ts";
@@ -164,28 +165,32 @@ describe("the ring", () => {
     put.run(iso(now - COARSE_KEEP_MS - 1), 300);
     put.run(iso(now - COARSE_KEEP_MS), 300);
     record(db, [], now);
+    while (pruneSamples(db, now).more);
     const at = (step: number) =>
       db.query<{ at: string }, [number]>("SELECT at FROM machine_sample WHERE step = ? ORDER BY at").all(step).map((r) => r.at);
     expect(at(15)).toEqual([iso(now - FINE_KEEP_MS)]);
-    // The kept 15-s point was rolled up into its window as well; the old 5-min point is gone, the edge one stays.
+    // The kept 15-s point was rolled up into its window as well; the old 5-min point
+    // became an hourly one, the edge one stays.
     expect(at(300)).toContain(iso(now - COARSE_KEEP_MS));
     expect(at(300)).not.toContain(iso(now - COARSE_KEEP_MS - 1));
+    expect(at(3600)).toEqual([iso(Math.floor((now - COARSE_KEEP_MS - 1) / 3_600_000) * 3_600_000)]);
   });
 
-  test("a day of 15-s samples stays bounded at a day", () => {
+  test("15-s samples stay bounded at 48 h", () => {
     const db = fresh();
-    // Two days, one point a minute (×4 fewer than real, same bound).
+    // Twice the window, one point a minute (×4 fewer than real, same bound).
     for (let t = 0; t <= 2 * FINE_KEEP_MS; t += 60_000) {
       record(db, [{ at: T0 + t, target: "forge", cpuCores: 1, memoryBytes: 1, load: null }], T0 + t);
+      while (pruneSamples(db, T0 + t).more);
     }
     const fine = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM machine_sample WHERE step = 15").get()!.n;
     expect(fine).toBe(FINE_KEEP_MS / 60_000 + 1);
-    // Every closed 5-min window of the two days was rolled up, and kept.
+    // Every closed 5-min window was rolled up, and kept.
     const coarse = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM machine_sample WHERE step = 300").get()!.n;
     expect(coarse).toBe((2 * FINE_KEEP_MS) / 300_000);
   });
 
-  test("31 days of 15-s points keep at most 30 days of 5-min roll-ups, none past COARSE_KEEP_MS, within 5 s scaled to this machine", () => {
+  test("31 days of 15-s points keep at most 30 days of 5-min roll-ups, hourly past COARSE_KEEP_MS, within 5 s scaled to this machine", () => {
     const db = fresh();
     const days = 31;
     const end = T0 + days * 24 * 3_600_000;
@@ -210,19 +215,23 @@ describe("the ring", () => {
         batch.push({ at: t, target: "forge", cpuCores: 1, memoryBytes: 1, load: null });
       }
       record(db, batch, w + COARSE_MS - FINE_MS);
+      while (pruneSamples(db, w + COARSE_MS - FINE_MS).more);
     }
     const now = end - FINE_MS;
     expect(performance.now() - started).toBeLessThan(budget);
 
     const count = (step: number) =>
       db.query<{ n: number }, [number]>("SELECT COUNT(*) AS n FROM machine_sample WHERE step = ? AND target = 'forge'").get(step)!.n;
-    // 30 × 288 closed windows, plus the one the edge of the window falls in.
-    expect(count(300)).toBeLessThanOrEqual(30 * 288 + 1);
+    // 30 × 288 closed windows, plus those in the hour the edge of the window falls in.
+    expect(count(300)).toBeLessThanOrEqual(30 * 288 + 12);
     expect(count(300)).toBeGreaterThan(29 * 288);
     expect(count(15)).toBeLessThanOrEqual(FINE_KEEP_MS / FINE_MS + 1);
     expect(count(15)).toBeGreaterThan(FINE_KEEP_MS / FINE_MS - 20);
     const oldest = db.query<{ at: string }, []>("SELECT MIN(at) AS at FROM machine_sample WHERE step = 300").get()!.at;
-    expect(Date.parse(oldest)).toBeGreaterThanOrEqual(now - COARSE_KEEP_MS);
+    expect(Date.parse(oldest)).toBeGreaterThanOrEqual(Math.floor((now - COARSE_KEEP_MS) / 3_600_000) * 3_600_000);
+    // The day before that is hourly rows, about 24 of them.
+    expect(count(3600)).toBeGreaterThanOrEqual(23);
+    expect(count(3600)).toBeLessThanOrEqual(25);
   });
 });
 
@@ -263,6 +272,24 @@ describe("the machine source", () => {
 });
 
 describe("startSampler", () => {
+  test("a tick prunes what has left its window, a batch at a time", () => {
+    const db = fresh();
+    const app = { db, log: { warn: () => {}, info: () => {} } } as unknown as App;
+    const put = db.prepare("INSERT INTO machine_sample (at, step, target) VALUES (?, ?, 'node')");
+    const old = T0 - FINE_KEEP_MS - 60_000;
+    put.run(new Date(old).toISOString(), 15);
+    put.run(new Date(Math.floor(old / COARSE_MS) * COARSE_MS).toISOString(), 300);
+    put.run(new Date(T0).toISOString(), 300);
+    const s = startSampler(app, { paths, everyMs: 3_600_000, cells: () => [] });
+    try {
+      // The drain's first batch runs inside the tick; only further batches wait a turn.
+      s.tick(T0);
+    } finally {
+      s.stop();
+    }
+    expect(db.query("SELECT COUNT(*) AS n FROM machine_sample WHERE step = 15 AND at = ?").get(new Date(old).toISOString())).toEqual({ n: 0 });
+  });
+
   test("ticks write the forge, its cells and the node into the ring", () => {
     const db = fresh();
     const warnings: string[] = [];

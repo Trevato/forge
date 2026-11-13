@@ -46,7 +46,9 @@ const section = (body: string): string[] => {
 test("the anonymous text is small, varies by reader, and lists report and start plus one line", async () => {
   const res = await fetch(`${servers.url}/llms.txt`);
   const body = await res.text();
-  expect(Buffer.byteLength(body)).toBeLessThan(6.5 * 1024);
+  // 6.5 KiB until the three doors (#12015, about 440 bytes) opened the text;
+  // nothing else was cut to make room.
+  expect(Buffer.byteLength(body)).toBeLessThan(7 * 1024);
   expect(res.headers.get("vary")).toContain("Cookie");
   expect(res.headers.get("vary")).toContain("Authorization");
   const listed = section(body);

@@ -31,6 +31,5 @@
   "test/shelf-forty.test.ts",
   "test/spawn-cell.test.ts",
   "test/thread-render-timing.test.ts",
-  "test/traffic-truth.test.ts",
-  "test/vitals.test.ts"
+  "test/traffic-truth.test.ts"
 ]

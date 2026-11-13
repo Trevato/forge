@@ -549,6 +549,7 @@ import { carryPeer, clientAddress, notePeer, wasInternal, wasViaEdge, type Proxy
 import { isProbe } from "../kernel/probe.ts";
 import { strangerCode } from "./stranger_code.ts";
 import { sourceArchive } from "./archive.ts";
+import { agentsMd } from "./agents_md.ts";
 import { takeStrangerRead } from "./stranger_reads.ts";
 import { parseCidrs } from "../kernel/cidr.ts";
 import {
@@ -1485,6 +1486,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/blob/:ref/*path", strangerCode(blobPage));
   router.add("GET", "/:owner/:name/raw/:ref/*path", strangerCode(rawBlob));
   router.add("GET", "/:owner/:name/archive/:file", strangerCode(sourceArchive));
+  router.add("GET", "/:owner/:name/AGENTS.md", strangerCode(agentsMd));
   router.add("GET", "/:owner/:name/media/:ref/*path", strangerCode(mediaBlob));
   // Every file path at a ref, for the fuzzy finder. JSON, `canRead`-gated.
   router.add("GET", "/:owner/:name/paths/:ref", pathsJson);

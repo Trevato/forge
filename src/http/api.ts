@@ -289,7 +289,7 @@ import { readReturns, reportSpend, RETURNS_DAYS } from "../actions/returns.ts";
 import { COLUMNS, readSort, sortRows } from "../fleet/columns.ts";
 import { viewFleet } from "../fleet/rows.ts";
 import { fleetSelection, readFleetGraph } from "../actions/fleet-graph.ts";
-import { carriedBy } from "../core/carried.ts";
+import { carriedFor } from "../core/carried.ts";
 import { readGateLog } from "../checks/gate_log.ts";
 import { recentGates } from "../checks/gate_result.ts";
 import { readRunLog, subscribeRunLog } from "../runs/log.ts";
@@ -4049,16 +4049,18 @@ export function apiRoutes(router: Router<Handler>): void {
     return timePhase(ctx.request, "render", () => json(paged(runs, limit, (r) => r.id), 200, headers));
   });
 
-  router.add("GET", "/api/v1/repos/:owner/:name/runs/:id", (ctx) => {
+  router.add("GET", "/api/v1/repos/:owner/:name/runs/:id", async (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const found = timePhase(ctx.request, "run", () => {
-      const run = getRepoRun(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
-      // The merged pulls a finished production deploy carries (`core/carried.ts`).
-      return run.ok ? { ...run.value, carries: carriedBy(ctx.app.db, run.value.id) } : null;
-    });
-    if (!found) return notFound();
+    const run = timePhase(ctx.request, "run", () =>
+      getRepoRun(ctx.app, ctx.auth.user, repo, ctx.params.id ?? ""),
+    );
+    if (!run.ok) return notFound();
+    // The merged pulls a finished production deploy carries (`core/carried.ts`),
+    // rebuilt from git when retention has trimmed an older deploy's rows.
+    const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
+    const found = { ...run.value, carries: await carriedFor(ctx.app.db, run.value, dir) };
     return timePhase(ctx.request, "render", () => json(found));
   });
 

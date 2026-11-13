@@ -23,6 +23,9 @@
  * Below the telemetry history, the five largest directories under the
  * forge's data (#11800, `largestLines`), read through the cache /system and
  * the MCP `system` tool share and gated as they are (`telemetryReader`).
+ * Under them, the database's size (#12010, `dbSizeLines`): the file, its
+ * WAL and growth, then its largest tables and indexes, through the same
+ * `dbSize` cache and gate as /system and the MCP tool, never waited on.
  */
 
 import type { Ctx, Screen } from "../app/app.ts";
@@ -41,6 +44,7 @@ import { pad, truncate, wrap } from "../term/width.ts";
 import { dialog } from "../ui/widgets.ts";
 import { Scroll, ago, confirmScreen, drawLines, hitScroll, later, pickerScreen } from "./common.ts";
 import { largestDirs, type LargestDirs } from "../../system/largest_dirs.ts";
+import { dbSize, dbSizeNeed, type DbSize } from "../../system/db_size.ts";
 import type { PaletteEntry } from "./entries.ts";
 import { readHealth } from "../../actions/health.ts";
 import { egressReportedLine } from "../../system/egress_line.ts";
@@ -176,6 +180,73 @@ export function largestLines(session: Session, found: LargestDirs | null, inner 
   ];
 }
 
+/**
+ * The database's size, as /system's "Database size" says it (#12010): the
+ * file, its WAL, the room inside and its growth, then the largest tables
+ * (rows, bytes) and indexes (the table each serves, bytes). `brief` is the
+ * System dialog's few lines, which name `d` for the rest (`dbSizeScreen`).
+ * Empty for anyone the page and the MCP tool refuse.
+ */
+export function dbSizeLines(session: Session, size: DbSize, brief = false, inner = WIDTH - 6): string[] {
+  if (!telemetryReader(session.app, session.user)) return [];
+  const g = size.growth;
+  const grows =
+    g.perDay === null ? "growth needs a day of readings" : `${g.perDay < 0 ? "shrinks" : "grows"} ${bytes(Math.abs(g.perDay))} a day over ${String(g.days)} days`;
+  const said = dbSizeNeed(size.fileBytes, g);
+  const w = size.walk;
+  const head = [
+    "Database size",
+    ...wrap(`forge.db ${bytes(size.fileBytes)}, WAL ${bytes(size.walBytes)}${w === null ? "" : `, ${bytes(w.freeBytes)} free inside`}; ${grows}`, inner),
+    ...(said === undefined ? [] : wrap(said.sentence, inner)),
+  ];
+  // One line in the dialog, which does not scroll: the rest is a key away.
+  if (brief) {
+    const day = g.perDay === null ? "growth needs a day" : `${g.perDay < 0 ? "shrinks" : "grows"} ${bytes(Math.abs(g.perDay))} a day`;
+    return [truncate(`database ${bytes(size.fileBytes)}, ${day} · d: its largest tables`, inner), ...(said === undefined ? [] : wrap(said.sentence, inner))];
+  }
+  const line = (name: string, value: string): string => truncate(`${pad(truncate(name, inner - 12), inner - 12)} ${pad(value, 11, "right")}`, inner);
+  if (w === null) return [...head, "", "its tables are being measured; open again in a moment"];
+  return [
+    ...head,
+    "",
+    "Tables",
+    ...w.tables.map((t) => line(`${t.name} (${t.rows.toLocaleString("en-US")} rows)`, bytes(t.bytes))),
+    "",
+    "Indexes",
+    ...w.indexes.map((i) => line(`${i.name} on ${i.table}`, bytes(i.bytes))),
+    "",
+    `measured ${ago(w.at)}, at most once an hour`,
+  ];
+}
+
+/**
+ * The whole of `dbSizeLines`, scrolled, through the shared cache; `d` on the
+ * System dialog opens it.
+ */
+export function dbSizeScreen(session: Session, ctx: Ctx): Screen {
+  const scroll = new Scroll();
+  const lines = (): string[] => dbSizeLines(session, dbSize.peek(session.app.db, session.app.config.dataDir, session.app.log));
+  return {
+    title: "Database size",
+    keys: [binding(["j", "k"], "scroll"), binding(["esc", "q"], "back")],
+    render(area, s) {
+      const c = ctx.theme.c;
+      const now = lines();
+      const spans = now.map((text, i) => [{ text, style: style(i === 0 ? c.fg : c.mutedFg, c.bg) }]);
+      drawLines(s, area, c, scroll, spans);
+      hitScroll(ctx, area, scroll, now.length);
+    },
+    key(e) {
+      if (scroll.key(e, lines().length)) return true;
+      if (e.key === "esc" || e.key === "q") {
+        ctx.pop();
+        return true;
+      }
+      return false;
+    },
+  };
+}
+
 /** Who may grant telemetry:read: the MCP tool's gate (`mayBoards`), a forge admin who is a person. */
 const mayGrant = (session: Session | undefined): boolean => session?.user?.isAdmin === true && session.user.kind !== "agent";
 
@@ -234,6 +305,7 @@ export function systemScreen(ctx: Ctx, lines: readonly string[], session: Sessio
   // read on open and when `h` moves the window, not on every paint
   let history = historyLines(session, WINDOWS[span]!);
   const offered = mayGrant(session);
+  const reads = telemetryReader(session.app, session.user) !== undefined;
   const askGrant = (): void => {
     if (!mayGrant(session)) return ctx.toast("telemetry:read is a forge admin's to grant", "danger");
     const agents = grantable(session.db);
@@ -266,11 +338,14 @@ export function systemScreen(ctx: Ctx, lines: readonly string[], session: Sessio
   };
   const screen: Screen = {
     title: "System",
-    keys: [binding(["h"], "window"), ...(offered ? [binding(["g"], "grant or take back telemetry")] : []), binding(["enter", "esc", "q"], "close")],
+    keys: [binding(["h"], "window"), ...(reads ? [binding(["d"], "database size")] : []), ...(offered ? [binding(["g"], "grant or take back telemetry")] : []), binding(["enter", "esc", "q"], "close")],
     render(area, s) {
       const features = featuresLines(session);
       // Never waits on the walk: the last measurement, a new one started behind it when stale.
       const largest = largestLines(session, largestDirs.peek(session.app.config.dataDir));
+      // The cache /system reads (#12010); a stale walk starts behind it,
+      // and only for a reader.
+      const db = reads ? dbSizeLines(session, dbSize.peek(session.app.db, session.app.config.dataDir, session.app.log), true) : [];
       const buttons = dialog(s, area, ctx.theme.c, {
         title: "System",
         body: [
@@ -278,6 +353,8 @@ export function systemScreen(ctx: Ctx, lines: readonly string[], session: Sessio
           "",
           ...history,
           ...(largest.length === 0 ? [] : ["", ...largest]),
+          // Under the largest directories with no blank between: the dialog does not scroll.
+          ...db,
           ...(offered ? ["", ...readerLines(session)] : []),
           ...(features.length === 0 ? [] : ["", ...features]),
           ...(offered ? ["", grantLine(session), "g: grant or take back telemetry:read"] : []),
@@ -293,6 +370,7 @@ export function systemScreen(ctx: Ctx, lines: readonly string[], session: Sessio
         span = (span + 1) % WINDOWS.length;
         history = historyLines(session, WINDOWS[span]!);
       } else if (e.key === "g") askGrant();
+      else if (e.key === "d" && reads) later(ctx, () => dbSizeScreen(session, ctx));
       else if (e.key === "enter" || e.key === "esc" || e.key === "q") ctx.pop();
       return true;
     },
