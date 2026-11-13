@@ -89,6 +89,15 @@ Unset, only this machine may say so, and the named header is never read. Everyth
 instance _is_ lives under the data directory — the SQLite index, the bare
 repos, and the SSH host key, in plain layout. Tar it up and it moves.
 
+The SSH host key is `<data>/ssh/host_ed25519`, and the snapshot carries it (`ssh/`), so a restore
+keeps the fingerprint people have trusted; lose both and every client sees "host key changed". The
+home page shows the fingerprint beside the ssh command, to compare with what `ssh` prints on
+a first connection. The SSH door refuses, before any key work, past 256 open connections, 32 from one address
+or 20 new handshakes from one address (120 overall) per 10 s (`src/ssh/limits.ts`); the address is the
+TCP peer's, a proxy's when one fronts the port, since SSH has no header to carry a client address. A
+guest's `tell`/`talk` are 5 a minute per key or address (`src/tui/ssh-guest-rate.ts`), and the server
+starts a rekey itself after 1 GiB or an hour.
+
 ## What the forge stands on
 
 Each thing the forge needs to answer a request, sign a person in, build,

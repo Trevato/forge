@@ -18,6 +18,7 @@
 
 import type { Database } from "bun:sqlite";
 import { capacityValue } from "../core/capacity.ts";
+import type { WaitingAnswer, WaitingJob } from "./pipeline_worker.ts";
 
 export const PIPELINE = [
   "ready",
@@ -99,9 +100,56 @@ function runTally(db: Database, kind: string, where: string, now: string): Tally
  */
 export const WAITING_REUSE_MS = process.env["NODE_ENV"] === "test" ? 0 : 20_000;
 
-const waitingKept = new WeakMap<Database, Map<string, { at: number; tally: Tally }>>();
+const waitingKept = new WeakMap<Database, Map<string, { at: number; tally: Tally; asking: boolean }>>();
 
-/** Rows that all wait: `since` is when each entered the stage. */
+/** A kept count this many reuse periods old is not served while a worker catches up: it is counted here. */
+const WAITING_STALE_PERIODS = 15;
+
+let waitingWorker: Worker | undefined;
+let waitingId = 0;
+const waitingOpen = new Map<number, { resolve: (t: Tally) => void; reject: (e: Error) => void }>();
+
+function waitingWorkerOf(): Worker {
+  if (waitingWorker !== undefined) return waitingWorker;
+  const w = new Worker(new URL("./pipeline_worker.ts", import.meta.url).href);
+  w.onmessage = (e: MessageEvent<WaitingAnswer>) => {
+    const open = waitingOpen.get(e.data.id);
+    waitingOpen.delete(e.data.id);
+    if (open === undefined) return;
+    if (e.data.error !== undefined) open.reject(new Error(e.data.error));
+    else open.resolve({ waiting: e.data.n ?? 0, active: 0, oldest: e.data.oldest ?? null });
+  };
+  w.onerror = (e) => {
+    if (waitingWorker === w) waitingWorker = undefined;
+    for (const [id, open] of waitingOpen) {
+      waitingOpen.delete(id);
+      open.reject(new Error(String(e.message ?? "the waiting-count worker failed")));
+    }
+  };
+  w.unref();
+  return (waitingWorker = w);
+}
+
+/** The count of `sql`, taken by a worker on a read-only handle of the same file: the one thread only receives the answer. */
+export function waitingOffThread(db: Database, sql: string, ...args: string[]): Promise<Tally> {
+  return new Promise((resolve, reject) => {
+    const id = ++waitingId;
+    waitingOpen.set(id, { resolve, reject });
+    try {
+      waitingWorkerOf().postMessage({ id, path: db.filename, sql, args } satisfies WaitingJob);
+    } catch (error) {
+      waitingOpen.delete(id);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
+}
+
+/**
+ * Rows that all wait: `since` is when each entered the stage. The last count
+ * is served; once it is old a worker recounts and the thread goes on. Only the
+ * first count (nothing to serve yet), a database with no file, or a worker
+ * that has failed for long is counted on the thread.
+ */
 function waitingTally(db: Database, sql: string, ...args: string[]): Tally {
   if (WAITING_REUSE_MS === 0) return countWaiting(db, sql, ...args);
   let kept = waitingKept.get(db);
@@ -110,8 +158,23 @@ function waitingTally(db: Database, sql: string, ...args: string[]): Tally {
   const hit = kept.get(sql);
   const now = Date.now();
   if (hit !== undefined && now - hit.at < WAITING_REUSE_MS) return hit.tally;
+  const filed = db.filename !== "" && db.filename !== ":memory:";
+  if (hit !== undefined && filed && now - hit.at < WAITING_REUSE_MS * WAITING_STALE_PERIODS) {
+    if (!hit.asking) {
+      hit.asking = true;
+      waitingOffThread(db, sql, ...args).then(
+        (tally) => {
+          kept.set(sql, { at: Date.now(), tally, asking: false });
+        },
+        () => {
+          hit.asking = false;
+        },
+      );
+    }
+    return hit.tally;
+  }
   const tally = countWaiting(db, sql, ...args);
-  kept.set(sql, { at: now, tally });
+  kept.set(sql, { at: now, tally, asking: false });
   return tally;
 }
 
@@ -133,7 +196,7 @@ function countWaiting(db: Database, sql: string, ...args: string[]): Tally {
 // latest of its opening, the close of a blocker that held it, and the end of
 // the last agent run on it. An old issue whose blocker closed an hour ago has
 // waited an hour for a builder, not fifty-six days.
-const READY = `
+export const READY = `
   SELECT MAX(i.created_at,
              COALESCE((SELECT MAX(b.closed_at) FROM issue_dependency d JOIN issue b ON b.id = d.blocked_by_id
                         WHERE d.issue_id = i.id), ''),
@@ -151,12 +214,15 @@ const READY = `
                       WHERE x.issue_id = i.id AND x.kind = 'agent' AND x.branch != ''
                         AND pi.state = 'open')`;
 
-const APPROVED = `
+// `i.kind = 'pull'` lets SQLite walk the open pulls' own small index instead of
+// every issue (25 ms to 0.3 ms on production's copy); a pull is the issue of a
+// pull, and the ten that are not on production are closed.
+export const APPROVED = `
   SELECT v.created_at AS since
     FROM issue i JOIN pull p ON p.issue_id = i.id
     JOIN review v ON v.id = (SELECT id FROM review WHERE issue_id = i.id AND state != 'commented'
                               ORDER BY created_at DESC, id DESC LIMIT 1)
-   WHERE i.state = 'open' AND v.state = 'approved'`;
+   WHERE i.kind = 'pull' AND i.state = 'open' AND v.state = 'approved'`;
 
 const LANDED = `
   SELECT p.merged_at AS since

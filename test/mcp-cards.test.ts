@@ -105,7 +105,7 @@ describe("explore, pulls and feed cards", () => {
     expect(c.kind).toBe("pulls");
     const row = c.rows.find((r: any) => r.label.includes("pull of openapp"));
     expect(row).toBeDefined();
-    expect(row.value).toBe("open · none · no review");
+    expect(row.value).toBe("no check · no review");
     expect(row.link).toBe(`${servers.url}/alice/openapp/pulls/1`);
     expect(JSON.stringify(c)).not.toContain("hiddenapp");
     expect(c.rows).toHaveLength(1);
@@ -113,8 +113,8 @@ describe("explore, pulls and feed cards", () => {
 
   test("a pull row says state, check and review, linked to its pull", () => {
     const c = cardFor("pulls", { pulls: [{ repo: "alice/game", number: 3, title: EVIL, check: "ok", verdict: "approved" }, { repo: "alice/game", number: 4, title: "t", check: "failed", verdict: "changes_requested" }] }, "https://forge.test", {})!;
-    expect(c.rows[0]).toEqual({ label: `#3 ${EVIL}`, value: "open · green · approved", link: "https://forge.test/alice/game/pulls/3" });
-    expect(c.rows[1]!.value).toBe("open · red · changes requested");
+    expect(c.rows[0]).toEqual({ label: `#3 ${EVIL}`, value: "check green · approved", link: "https://forge.test/alice/game/pulls/3" });
+    expect(c.rows[1]!.value).toBe("check red · changes requested");
   });
 
   test("each card stops at 20 rows", () => {
