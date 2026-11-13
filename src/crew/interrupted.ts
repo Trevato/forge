@@ -78,3 +78,64 @@ export function interruptionsOn(
     )
     .all(issueId);
 }
+
+/** What a run reads as once its pull has landed: done, never failed, interrupted or in progress. */
+export const landedSummary = (number: number): string => `Landed: pull #${number} is live`;
+
+/**
+ * The number of the merged pull this run worked on — by its issue, else its
+ * branch — or undefined while none has landed.
+ */
+export function landedPullOf(
+  db: Database,
+  run: { repoId: string; issueId: string | null; branch: string | null; createdAt: string },
+): number | undefined {
+  const row = db
+    .query<{ number: number }, [string, string | null, string | null, string]>(
+      `SELECT issue.number AS number FROM pull JOIN issue ON issue.id = pull.issue_id
+       WHERE pull.merged_at IS NOT NULL AND issue.repo_id = ?1
+         AND pull.merged_at >= ?4
+         AND (pull.issue_id = ?2 OR (?3 IS NOT NULL AND pull.head_branch = ?3))
+       ORDER BY pull.merged_at DESC LIMIT 1`,
+    )
+    .get(run.repoId, run.issueId, run.branch, run.createdAt);
+  return row?.number;
+}
+
+/**
+ * Record a run whose pull landed as done: `ok`, "Landed: pull #N is live".
+ * Only a run not finished, or one the landing or a restart ended as cancelled
+ * or interrupted, is touched; a run that really failed keeps its words.
+ * Returns whether a row changed.
+ */
+export function settleLanded(db: Database, runId: string, number: number): boolean {
+  return (
+    db
+      .query(
+        `UPDATE run SET state = 'ok', summary = ?2,
+           finished_at = COALESCE(finished_at, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+         WHERE id = ?1 AND (state IN ('queued','running','cancelled')
+           OR (state = 'failed' AND summary LIKE 'interrupted: %'))`,
+      )
+      .run(runId, landedSummary(number)).changes > 0
+  );
+}
+
+/**
+ * A pull just landed: every agent run still queued or running on its issue
+ * or its branch reads as done at once, not "In progress" until it ends.
+ * Answers the runs it settled.
+ */
+export function settleLandedRuns(
+  db: Database,
+  pull: { issueId: string; headBranch: string; number: number; repoId: string },
+): string[] {
+  const ids = db
+    .query<{ id: string }, [string, string, string]>(
+      `SELECT id FROM run WHERE repo_id = ?1 AND kind = 'agent'
+         AND state IN ('queued','running')
+         AND (issue_id = ?2 OR branch = ?3)`,
+    )
+    .all(pull.repoId, pull.issueId, pull.headBranch);
+  return ids.filter(({ id }) => settleLanded(db, id, pull.number)).map(({ id }) => id);
+}

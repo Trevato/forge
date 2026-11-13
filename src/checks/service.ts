@@ -136,6 +136,7 @@ import { checkStage, type GateStage } from "./gate_reason.ts";
 import { extraGates, GATE_DEADLINE_MS, gateQueued, gateRunId, gatesInFlight, watchGates } from "./queue.ts";
 import type { JobOptions } from "../cluster/jobs.ts";
 import type { CheckDetail } from "../core/runs.ts";
+import { settleLandedRuns } from "../crew/interrupted.ts";
 import { during } from "../perf/jobs.ts";
 
 const log = createLog("checks");
@@ -1739,6 +1740,12 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           inFlight.get(run.id)?.abort.abort();
           announceRun(app, run);
         }
+        // A builder run still in flight when its pull lands reads as done now (#12049).
+        if (event.kind === "pull.merged")
+          for (const id of settleLandedRuns(app.db, { issueId: pull.id, headBranch: pull.headBranch, repoId: repo.id, number })) {
+            const done = getRun(app.db, id);
+            if (done) announceRun(app, done);
+          }
         // A land moves the default branch without a push event: check its
         // new head, or a red main stays red until someone pushes to it. The
         // check settles first: a candidate's next step supersedes it.

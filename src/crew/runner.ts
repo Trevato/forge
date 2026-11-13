@@ -150,7 +150,7 @@ import {
   whenText,
 } from "./limits.ts";
 import { clearStaleLocks, lockedOut } from "./locks.ts";
-import { interruptedSummary } from "./interrupted.ts";
+import { interruptedSummary, interruptionOf, landedPullOf, landedSummary, settleLanded } from "./interrupted.ts";
 import { laterGate } from "./later.ts";
 import { MERGES_CLEAN_NOW, mergesCleanNow } from "./clean_now.ts";
 import { handedLimbs } from "./handed_limbs.ts";
@@ -551,6 +551,18 @@ async function runClaimed(
       attempt: run.attempt + 1,
       summary: outcome.summary,
     };
+  }
+  // A run whose pull landed is done, not interrupted: only a run the provider,
+  // the network or a restart cut short is settled; a real outcome keeps its words (#12049).
+  const landedNumber =
+    outcome.state === "failed" && interruptionOf(outcome.summary) !== undefined
+      ? landedPullOf(app.db, run)
+      : undefined;
+  if (landedNumber !== undefined && settleLanded(app.db, run.id, landedNumber)) {
+    write(`done: ${landedSummary(landedNumber)}`);
+    const landed = getRun(app.db, run.id);
+    if (landed) announceRun(app, landed);
+    return undefined;
   }
   // A run the provider or a restart cut short says so, and when it goes
   // on: interrupted, never a park (`interrupted.ts`).
