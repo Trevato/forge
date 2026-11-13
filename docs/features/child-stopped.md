@@ -1,0 +1,3 @@
+# A child forge the host stopped
+
+`src/spawn/stopped.ts` records a stop (one state object per parent; the host passes in how a forge starts again) and arms a restart after a backoff (5 s, doubling per stop in the hour, to 5 min). The restart goes through the due-wake path, so the awake ceiling and the disk floor still apply. A stop is forgotten when the forge wakes, when the restart is skipped (lapsed, refused), and after an hour. While it stands, the wake page and the terminal's forges list say "ran out of memory and was stopped at HH:MM UTC; the host starts it again by itself" instead of "the forge is full".

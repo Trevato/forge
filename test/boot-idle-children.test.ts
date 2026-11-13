@@ -4,6 +4,7 @@
  * because of forges nobody is using.
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +12,10 @@ import { spawnForge } from "../src/actions/spawn.ts";
 import { createApp, type App } from "../src/app.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser } from "../src/core/users.ts";
-import { awakeCount, bootHostedChildren, childAwake, resolveHostedChild, sleepChild, sleepIdleChildren, wakeGate } from "../src/spawn/host.ts";
+import { clientRows } from "../src/spawn/clients.ts";
+import { lastStop, noteStop } from "../src/spawn/stopped.ts";
+import { forgeLines } from "../src/tui/screens/forges.ts";
+import { awakeCount, closeHostedChildren, bootHostedChildren, childAwake, resolveHostedChild, sleepChild, sleepIdleChildren, wakeGate } from "../src/spawn/host.ts";
 import { hostedPlacement } from "../src/spawn/placement.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
@@ -102,4 +106,42 @@ test("an unasked boot-opened child put to sleep leaves the exempt set, so its ne
   expect(awakeCount(parent)).toBe(1); // reopened by a request, not by the boot: counted
   await sleepChild(parent, "idle-b");
   expect(awakeCount(parent)).toBe(0);
+});
+
+const bodyOf = (name: string): string => JSON.parse(readFileSync(join(dir, "spawn", `${name}.json`), "utf8")).bodyId;
+const say = async (name: string): Promise<string> => (await gate(name, { accept: "text/plain" })!.text()) ?? "";
+
+test("a refused wake of a forge the host stopped says why it stopped, not that the host is full; a woken forge forgets it", async () => {
+  await reset();
+  process.env["FORGE_CHILD_AWAKE_MAX"] = "1";
+  await sleepChild(parent, "sleeper");
+  await sleepChild(parent, "idle-b");
+  await sleepChild(parent, "idle-a");
+  expect(gate("sleeper")).toBeUndefined(); // the ceiling of 1 is now full
+  const full = await say("idle-b");
+  expect(full).toContain("the forge is full");
+  noteStop(parent, bodyOf("idle-b"), "idle-b", "used 2374 MiB of memory", Date.now(), 3_600_000);
+  const stopped = await say("idle-b");
+  expect(stopped).toContain("ran out of memory and was stopped at");
+  expect(stopped).not.toContain("the forge is full");
+  // Room appears and the forge wakes: the stop is forgotten, and a later full host says so again.
+  process.env["FORGE_CHILD_AWAKE_MAX"] = "3";
+  expect(gate("idle-b")).toBeUndefined();
+  expect(lastStop(parent, bodyOf("idle-b"))).toBeUndefined();
+  await resolveHostedChild(parent, new Request("https://forge.test/healthz", { headers: { host: hostOf("idle-b") } }));
+  await sleepChild(parent, "idle-b");
+  process.env["FORGE_CHILD_AWAKE_MAX"] = "1";
+  expect(await say("idle-b")).toContain("the forge is full");
+  // The forges list for the terminal carries the sentence while it is asleep and stopped.
+  noteStop(parent, bodyOf("idle-b"), "idle-b", "used 2374 MiB of memory", Date.now(), 3_600_000);
+  const rows = await clientRows(parent);
+  expect(rows.find((r) => r.name === "idle-b")?.stopped).toContain("ran out of memory");
+  expect(forgeLines(rows).find(([n]) => n === "idle-b")![1]).toContain("ran out of memory");
+  expect(rows.find((r) => r.name === "sleeper")?.stopped).toBeNull();
+});
+
+test("closing the hosted children forgets stops and cancels the restarts", () => {
+  noteStop(parent, "zz", "zz", "memory", Date.now(), 3_600_000);
+  closeHostedChildren(parent);
+  expect(lastStop(parent, "zz")).toBeUndefined();
 });

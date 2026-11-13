@@ -22,6 +22,7 @@ import { openBeatDoor, parentLocal, type BeatDoor } from "./beat-door.ts";
 import { hostedPlacement, parentOrigin, childPublicUrl, type BodyStore, type Placement } from "./placement.ts";
 import { SIZE_IO, SIZES, type Size } from "./sizes.ts";
 import { floorRefusal } from "./disk_floor.ts";
+import { noteStop } from "./stopped.ts";
 import { CGROUP_DIR_ENV, SIZE_ENV } from "./usage.ts";
 import { childModelHosts, childPaymentHosts, childRegistryHosts } from "../core/capacity.ts";
 import { liveChildDisk, type ChildDisk } from "./disk_mount.ts";
@@ -403,7 +404,10 @@ export function makeRegistry(parent: App, launcher?: Launcher): CellChildren {
     });
     const exited = proc.exited.then((code) => {
       const why = cell.breach();
-      if (why !== undefined) parent.log.warn("child forge stopped", { name: input.name, why });
+      if (why !== undefined) {
+        parent.log.warn("child forge stopped", { name: input.name, why });
+        noteStop(parent, input.bodyId, input.name, why);
+      }
       cell.close();
       door.close();
       release();
