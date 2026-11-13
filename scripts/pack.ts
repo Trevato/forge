@@ -4,9 +4,11 @@
  *   bun scripts/pack.ts up games        # the one command: boots a forge, deploys, asks nothing
  *   bun scripts/pack.ts show games
  *   FORGE_URL=http://localhost:3000 FORGE_TOKEN=forge_… bun scripts/pack.ts deploy games
+ *   FORGE_URL=… FORGE_TOKEN=… bun scripts/pack.ts deploy games --org leagues
+ *   # or set FORGE_ORG=leagues; the flag wins when both are set
  *
  * `<pack>` is the name of a pack repo (`packs/<name>` on FORGE_PACKS_FROM, default the public forge), or the path of a pack.json. `deploy` makes
- * each app in the forge at FORGE_URL (the token's owner owns them), copies the
+ * each app in the forge at FORGE_URL (the token's account owns them, or FORGE_ORG/--org when set), copies the
  * source's whole history in, and adds the crew. It brings no data, secret or
  * variable, and leaves the model credential to you. Run it again to finish a
  * partial deploy: what exists is kept. Docs: docs/features/packs.md.
@@ -15,6 +17,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parseArgs } from "../src/cli/args.ts";
 import { ForgeApi } from "../src/cli/api.ts";
 import { guardSource, type SourceGuardOptions } from "../src/packs/source_guard.ts";
 import { deployPack, type Hands } from "../src/packs/deploy.ts";
@@ -85,8 +88,19 @@ async function git(args: string[], env: Record<string, string>, cwd?: string): P
 export interface HandsOptions {
   /** Where to clone a pack's source from, when not the address the pack names (a test's local repository). */
   readonly cloneFrom?: (source: string) => string;
+  /** Create apps in this organization instead of the token's account. */
+  readonly org?: string;
   /** How a source's host is judged (resolver, exempt addresses): a test's seam. The forge's own address is always let through. */
   readonly guard?: SourceGuardOptions;
+}
+
+/**
+ * The organization `deploy` installs into, if any: `--org` wins over `FORGE_ORG`.
+ * An empty value is no target. The name is handed to the forge as `owner`.
+ */
+export function deployOrg(flag: string | undefined, env: Record<string, string | undefined> = process.env): string | undefined {
+  const raw = (flag ?? env.FORGE_ORG ?? "").trim();
+  return raw === "" ? undefined : raw;
 }
 
 async function gitOut(args: string[], env: Record<string, string>, cwd: string): Promise<string | null> {
@@ -99,11 +113,17 @@ export function realHands(url: string, token: string, options: HandsOptions = {}
   const api = new ForgeApi(url, token);
   return {
     async makeApp(name, description) {
-      const made = await api.newApp({ name, description, visibility: "public" });
+      const made = await api.newApp({
+        name,
+        description,
+        visibility: "public",
+        ...(options.org === undefined ? {} : { owner: options.org }),
+      });
       if (made.ok) return { ok: true, owner: made.value.pin.owner };
       const e = made.error;
       const exists = e.status === 409 || e.code === "name_taken";
       if (!exists) return { ok: false, exists, why: e.message };
+      if (options.org !== undefined) return { ok: false, exists, why: e.message, owner: options.org };
       const me = await api.whoami();
       return me.ok && me.value.username !== "" ? { ok: false, exists, why: e.message, owner: me.value.username } : { ok: false, exists, why: e.message };
     },
@@ -203,7 +223,7 @@ export function realHands(url: string, token: string, options: HandsOptions = {}
   };
 }
 
-const USAGE = "usage: bun scripts/pack.ts <show|deploy|up> <pack>";
+const USAGE = "usage: bun scripts/pack.ts <show|deploy|up> <pack> [--org <org>]";
 
 export interface UpOptions {
   readonly port: number;
@@ -265,7 +285,9 @@ export async function up(pack: Pack, options: UpOptions): Promise<number> {
 }
 
 if (import.meta.main) {
-  const [verb, which] = process.argv.slice(2);
+  const args = parseArgs(process.argv.slice(2), { values: ["org"] });
+  const verb = args.command;
+  const which = args.positional[0];
   const pack = which === undefined ? USAGE : await load(which);
   if (typeof pack === "string" || (verb !== "show" && verb !== "deploy" && verb !== "up")) {
     console.error(typeof pack === "string" ? pack : USAGE);
@@ -281,10 +303,11 @@ if (import.meta.main) {
   const url = (process.env.FORGE_URL ?? "").replace(/\/+$/, "");
   const token = process.env.FORGE_TOKEN ?? "";
   if (url === "" || token === "") {
-    console.error("deploy needs FORGE_URL and FORGE_TOKEN: the forge to fill and a token of the account that will own the apps");
+    console.error("deploy needs FORGE_URL and FORGE_TOKEN: the forge to fill and a token that can create the apps (in FORGE_ORG or --org, when set)");
     process.exit(2);
   }
-  const steps = await deployPack(pack, realHands(url, token));
+  const org = deployOrg(args.value("org"));
+  const steps = await deployPack(pack, realHands(url, token, org === undefined ? {} : { org }));
   for (const s of steps) console.log(`${mark(s)} ${s.what}${s.note ? ` — ${s.note}` : ""}`);
   const failed = steps.some((s) => s.state === "failed");
   console.log(failed ? "\nSome steps failed; run it again to finish." : `\n${pack.title} is deployed. Add your model credential in Settings to start the crew.`);
