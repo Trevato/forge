@@ -37,6 +37,7 @@ import { inFlight, keepTimings } from "./record.ts";
 import { swapper } from "./swapper.ts";
 import type { KeeperPorts } from "./keeper.ts";
 import { timedGet, verifyUnderLoad } from "./verify.ts";
+import { phoneGate, probeCentre } from "./covered.ts";
 import { diskUnder, roomy } from "../spawn/disk_floor.ts";
 
 const LABEL = /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/;
@@ -77,6 +78,11 @@ function anAdmin(app: App): User | undefined {
 /** The pages a release is verified under, one at a time: the ones people open. */
 export function loadPages(repo: Pick<Repo, "ownerName" | "name">): string[] {
   return ["/boards", `/${encodeURIComponent(repo.ownerName)}/${encodeURIComponent(repo.name)}`, "/explore", "/"];
+}
+
+/** The pages looked at on a phone: home, the forge's repository, the apps page. */
+export function phonePages(repo: Pick<Repo, "ownerName" | "name">): string[] {
+  return ["/", `/${encodeURIComponent(repo.ownerName)}/${encodeURIComponent(repo.name)}`, "/apps"];
 }
 
 export function keeperPorts(app: App, input: { forgeUrl: string; deployment: string; container: string; swap?: boolean }): KeeperPorts | string {
@@ -166,13 +172,17 @@ export function keeperPorts(app: App, input: { forgeUrl: string; deployment: str
       const session = admin === undefined ? undefined : createSession(app.db, admin.id);
       const cookie = session === undefined ? {} : { cookie: `forge_session=${session.token}` };
       try {
-        return await verifyUnderLoad({
+        const loaded = await verifyUnderLoad({
           get: timedGet(input.forgeUrl, (asAdmin) => (asAdmin ? cookie : probeHeaders)),
           now: () => Date.now(),
           sleep: (ms) => Bun.sleep(ms),
           pages: loadPages(repo),
           onProbe,
         });
+        if (!loaded.ok) return loaded;
+        // A 200 is not proof a person can use the page: look at a phone (#11855).
+        const look = probeCentre(input.forgeUrl, session === undefined ? undefined : { name: "forge_session", value: session.token });
+        return phoneGate(loaded, phonePages(repo), look);
       } finally {
         if (session !== undefined) destroySession(app.db, session.token);
       }

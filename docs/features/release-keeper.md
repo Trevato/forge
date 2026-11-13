@@ -45,6 +45,14 @@ keyboard. It does what the steward's `release.sh`, `verify-after.sh` and
      the verify and deleted after it);
    - it probes `/healthz` once a second.
 
+   When the ten minutes pass clean, it looks at a phone (`keeper/covered.ts`,
+   #11855): `/`, the forge's repository page and `/apps` are opened at
+   390×844 in headless Chromium as the same admin, and the element at the
+   centre of the screen must not be a dialog, a popover, a hidden element or
+   a `position: fixed` layer over a quarter of the viewport. One that is fails
+   the verify and rolls the release back, naming the page. A forge with no
+   Chromium cannot look and says nothing failed.
+
    A probe is bad when it is not a 200 or takes over 10 s. Three bad probes
    in a row fail the release.
 4. **Verified live**, or **roll back and hold**. On a failure, the keeper
