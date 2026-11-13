@@ -739,6 +739,10 @@ export interface ListRunsOptions {
   cursor?: string | undefined;
 }
 
+/** `run`, named with the index a state filter walks: `run_repo` alone reads every run of the repository to find the rare state. */
+const runsFrom = (options: ListRunsOptions): string =>
+  options.state === undefined ? "run" : "run INDEXED BY run_repo_state";
+
 function runsWhere(repoId: string, options: ListRunsOptions): { where: string; params: (string | number)[]; limit: number } {
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
   const params: (string | number)[] = [repoId];
@@ -775,7 +779,7 @@ export function listRuns(
   params.push(limit);
   return db
     .query<RunRow, (string | number)[]>(
-      `SELECT * FROM run WHERE ${where} ORDER BY id DESC LIMIT ?${params.length}`,
+      `SELECT * FROM ${runsFrom(options)} WHERE ${where} ORDER BY id DESC LIMIT ?${params.length}`,
     )
     .all(...params)
     .map(toRun);
@@ -797,7 +801,7 @@ export function runsMarker(db: Database, repoId: string, options: ListRunsOption
           || '|' || COALESCE(r.serving_at, '') || '|' || COALESCE(r.turns, '') || '|' || COALESCE(r.cost_usd, '') || '|' || COALESCE(r.attempt, '')
           || '|' || COALESCE(r.not_before, '') || '|' || COALESCE(r.summary, '') || '|' || COALESCE(r.error_line, '') || '|' || COALESCE(r.error_at, '')
           || '|' || COALESCE(r.check_detail, '') || '|' || COALESCE(i.title, '') AS m
-         FROM (SELECT * FROM run WHERE ${where} ORDER BY id DESC LIMIT ?${params.length}) r
+         FROM (SELECT * FROM ${runsFrom(options)} WHERE ${where} ORDER BY id DESC LIMIT ?${params.length}) r
          LEFT JOIN issue i ON i.id = r.issue_id
         ORDER BY r.id DESC`,
     )
@@ -1385,7 +1389,7 @@ export function listActiveRuns(
   if (unique.length === 0) return [];
   return db
     .query<RunRow, string[]>(
-      `SELECT * FROM run WHERE kind = 'agent' AND state IN ('queued','running')
+      `SELECT * FROM run INDEXED BY run_queue WHERE kind = 'agent' AND state IN ('queued','running')
          AND repo_id IN (${unique
            .slice(0, 400)
            .map((_, n) => `?${n + 1}`)
