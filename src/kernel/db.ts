@@ -32,6 +32,19 @@ const BUSY_TIMEOUT_MS = 15_000;
 const CACHE_KIB = 64 * 1024;
 
 /**
+ * The forge's own handle keeps this much of the database in memory
+ * (`FORGE_DB_CACHE_MIB`, default 1024): pages are taken only as they are read,
+ * so a small forge uses little, and a 4.5 GB one stops asking the kernel for
+ * the same 4 KiB page again (the main thread made 236,000 `read` calls in 10 s
+ * at 64 MiB; 90,000 a round of heavy reads became 210 at 1 GiB). SQLite's
+ * `mmap_size` stops at 2 GB in Bun, so the cache is the only way to cover it.
+ */
+function mainCacheKiB(): number {
+  const mib = Number(process.env["FORGE_DB_CACHE_MIB"]);
+  return Number.isFinite(mib) && mib >= 8 ? Math.floor(mib) * 1024 : 1024 * 1024;
+}
+
+/**
  * Map the database file instead of read()ing it. Reads become page-cache
  * hits with no syscall; a database larger than this simply falls back to
  * normal I/O beyond the mapped prefix, so the number is a ceiling and not a
@@ -62,7 +75,7 @@ export function openDb(path: string, migrations: readonly Migration[]): Database
     if (image !== undefined) writeFileSync(path, image, { flag: "wx", mode: 0o600 });
     db = new Database(path, { create: true, strict: true });
   }
-  applyPragmas(db);
+  applyPragmas(db, memory ? CACHE_KIB : mainCacheKiB());
   // Only files this call made: one that already exists is tightened below if
   // too open (`file_modes.ts`; vitals names any it could not). The umask can widen
   // the mode at creation, so it is set again.
@@ -117,7 +130,7 @@ function rollbackJournal(image: Uint8Array): Uint8Array {
  * the difference between a forge that shrugs at two hundred agents and one
  * that spends its life in `fsync`.
  */
-export function applyPragmas(db: Database): void {
+export function applyPragmas(db: Database, cacheKiB: number = CACHE_KIB): void {
   // Readers never block the writer and the writer never blocks readers —
   // the only journal mode in which a busy forge is a pleasant place to be.
   db.exec("PRAGMA journal_mode = WAL");
@@ -127,7 +140,7 @@ export function applyPragmas(db: Database): void {
   db.exec("PRAGMA synchronous = NORMAL");
   db.exec("PRAGMA foreign_keys = ON");
   db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
-  db.exec(`PRAGMA cache_size = -${CACHE_KIB}`);
+  db.exec(`PRAGMA cache_size = -${cacheKiB}`);
   db.exec(`PRAGMA mmap_size = ${MMAP_BYTES}`);
   // Temp b-trees (the ORDER BY a query cannot get from an index) belong in
   // memory; spilling them to disk is how a list page acquires a mystery
