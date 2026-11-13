@@ -10,6 +10,7 @@
  * header, and a log page is read by people the token was never meant for.
  */
 
+import { during } from "../perf/jobs.ts";
 import {
   appendFileSync,
   existsSync,
@@ -20,7 +21,6 @@ import {
   closeSync,
 } from "node:fs";
 import { join } from "node:path";
-import { during } from "../perf/jobs.ts";
 import { redactHeld } from "../kernel/log.ts";
 import { noteActivity } from "./activity.ts";
 
