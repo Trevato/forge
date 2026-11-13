@@ -65,6 +65,7 @@ import { schedulesCard } from "./schedules.ts";
 import { appPanels } from "./previews.ts";
 import { noCrewLine, pausedWords, servingHistory, type WordCtx } from "./words.ts";
 import { crewKeyCard, includedCredit } from "./crew_key.ts";
+import { landOnApp } from "./land_as_is.ts";
 import { usdWords } from "../../spawn/credit.ts";
 import {
   notePhase,
@@ -510,6 +511,7 @@ export async function studioApp(
       : followingCard(ctx, repo, following)}
     <div id="app-head">${head}</div>
     ${ownerFacts ? crewKeyCard(ctx, true) : null}
+    ${ownerFacts ? landOnApp(ctx, repo) : null}
     <div class="stack">
       ${adapter}
       ${schedules}
@@ -531,6 +533,7 @@ export async function studioApp(
     ${askingLine(ctx, repo)}
     ${policy}
     ${ownerFacts ? crewKeyCard(ctx, true) : null}
+    ${ownerFacts ? landOnApp(ctx, repo) : null}
     ${ownerFacts
       ? egressNote(
           ctx.app.config.dataDir,

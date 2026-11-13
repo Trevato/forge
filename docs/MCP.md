@@ -139,7 +139,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `maintenance` | `status`, `prepare`, `resume`, `pause-duty`, `resume-duty` | Prepare the forge for a power-off, check the drain, or end maintenance (admin) | 308 |
 | `make_it_yours` | — | Fork an app you can see: code and history, following the original | 337 |
 | `map` | — | An app's plan: ready or waiting, critical path, crew, parkedTwice; `done` adds closed; `first: N` ranks N first | 375 |
-| `merge` | — | Land a pull, as its page's Merge button does; a person's only | 319 |
+| `merge` | `land` | Land a pull, as its page's Merge button does; a person's only | 362 |
 | `migrate` | — | Bring a repo in by public `url` (`name`, `crew`), history and all | 269 |
 | `milestones` | — | How far each ask is | 391 |
 | `mint_invite` | — | Mint a one-use invite link, shown once, valid `days` (1–30, default 7) | 225 |

@@ -3,6 +3,7 @@ import { mergePull } from "../../../actions/pulls.ts";
 import { getPull, pullDir, pullMergeState } from "../../../core/pulls.ts";
 import { checkSummary } from "../../../core/runs.ts";
 import { mergeFailure } from "../../../web/pages/pull.ts";
+import { LAND_AS_IS, stalledWords } from "../../../web/studio/land_as_is.ts";
 import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
 /**
@@ -13,7 +14,7 @@ import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts"
  */
 export const tool: Tool = {
   name: "merge",
-  doc: "`{ repo, number, strategy?, dryRun? }` (a person, never an agent: a person merges): land a pull as its page's Merge button does, `merge` (default) or `squash`; planned unless `dryRun` is false: the plan is the pull's `head`, `base`, `mergeable`, `conflicts` and `check` as `pull` reads them; landing is `mergePull`'s, with its refusals (conflict, review or check required, not a writer) in the page's words, and takes an rw token",
+  doc: "`{ repo, number, strategy?, action?, dryRun? }` (a person, never an agent: a person merges): land a pull as its page's Merge button does, `merge` (default) or `squash`; `action: \"land\"` is the page's Land it as it is (squash, and only while the check is green); plans carry `crew` when the crew cannot go on; planned unless `dryRun` is false: the plan is the pull's `head`, `base`, `mergeable`, `conflicts` and `check` as `pull` reads them; landing is `mergePull`'s, with its refusals (conflict, review or check required, not a writer) in the page's words, and takes an rw token",
   description: "Land a pull, as its page's Merge button does; a person's only.",
   inputSchema: {
     type: "object",
@@ -21,6 +22,7 @@ export const tool: Tool = {
       repo: REPO_ARG,
       number: { type: "integer", minimum: 1 },
       strategy: { type: "string", enum: ["merge", "squash"] },
+      action: { type: "string", enum: ["land"] },
       dryRun: { type: "boolean" },
     },
     required: ["repo", "number"],
@@ -35,7 +37,9 @@ export const tool: Tool = {
     const s = args["strategy"];
     if (s !== undefined && s !== "merge" && s !== "squash")
       return bad("invalid", "strategy is merge or squash");
-    const strategy = s === "squash" ? "squash" : "merge";
+    const act = args["action"];
+    if (act !== undefined && act !== "land") return bad("invalid", "action is land");
+    const strategy = s === "squash" || act === "land" ? "squash" : "merge";
     const n = args["number"];
     const pull =
       typeof n === "number" && Number.isInteger(n) && n > 0
@@ -43,6 +47,7 @@ export const tool: Tool = {
         : undefined;
     if (pull === undefined || !mayView(ctx.app.db, repo, pull, user))
       return bad("no_such_pull", `no pull #${String(n)}`);
+    const stalled = stalledWords(ctx.app);
     const url = `/${repo.ownerName}/${repo.name}/pulls/${pull.number}`;
     if (args["dryRun"] !== false) {
       // The `pull` tool's reads, so the plan and the reading never disagree.
@@ -60,9 +65,12 @@ export const tool: Tool = {
         conflicts: state?.conflicts ?? [],
         check: { state: check.state, baseOid: check.run?.baseOid ?? "" },
         url,
+        ...(stalled === null ? {} : { crew: stalled }),
         says: "This is the plan; nothing changed. Send dryRun: false to merge.",
       });
     }
+    if (act === "land" && checkSummary(ctx.app.db, pull.id, pull.headOid).state !== "ok")
+      return bad("check_required", `${LAND_AS_IS} waits for a green check`);
     const merged = await mergePull(ctx.app, user, repo, pull, strategy);
     if (!merged.ok) {
       const error = merged.error;
@@ -80,7 +88,7 @@ export const tool: Tool = {
       strategy,
       mergeOid: merged.value.mergeOid,
       url,
-      says: `Merged #${pull.number} into ${pull.baseBranch}.`,
+      says: act === "land" ? `Landed #${pull.number} as it is.` : `Merged #${pull.number} into ${pull.baseBranch}.`,
     });
   },
 };
