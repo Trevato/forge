@@ -86,6 +86,7 @@ test("a stopped forge is started again at once when the ceiling is full of forge
     // The first start is a due run's, which is also what tells the host how to restart a stopped forge.
     await sleepIdleChildren(parent, 0);
     for (let i = 0; i < 100 && starts.length === 0; i++) await Bun.sleep(50);
+    expect(starts.length).toBeGreaterThan(0);
     expect(starts).toEqual(["kid"]);
     // It dies of memory while another forge, quiet and with no crew at work, holds the only slot.
     awake.delete("cell-kid");
@@ -129,6 +130,7 @@ test("a restart turned away for room says the time it will try again", async () 
   try {
     await sleepIdleChildren(parent, 0);
     for (let i = 0; i < 100 && starts.length === 0; i++) await Bun.sleep(50);
+    expect(starts.length).toBeGreaterThan(0);
     awake.delete("cell-kid");
     awake.add("cell-busy");
     arm = false;
