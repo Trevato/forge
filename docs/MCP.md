@@ -59,7 +59,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `apps` | — | Apps you can see: live or not, where served, how each runs, what works | 343 |
 | `archive` | — | Archive or wake a repository (`archived`) | 380 |
 | `asked` | — | What people asked the crew for: unmerged by default, oldest first | 372 |
-| `asks` | — | What waits on you, most important first; saved filter applies | 453 |
+| `asks` | `stopped`, `look`, `review`, `paused`, `parked`, `declined`, `handover`, `waiting`, `assigned`, `proposal` | What waits on you, most important first; saved filter applies; `filter` sets or clears one | 707 |
 | `asks_act` | `dismiss`, `decline`, `mute`, `listen`, `undo`, `ship`, `close`, `replan` | Decide asks (`items`): dismiss, ship, close (`reason`), mute, replan; `listen` (`repo`) unmutes; `undo` (`operation`) | 535 |
 | `asks_decide` | — | Answer a hand-over: the decider (`parked:<id>`), or `give_back` to its builder (`handover:`/`assigned:<id>`) | 270 |
 | `asks_proposal` | — | Act on a wave proposal: `approve`, `redirect` (`words`), `later` (`again`) | 315 |

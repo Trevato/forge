@@ -22,6 +22,7 @@ import { issueTitles, proposalsFor, type Proposal } from "../../core/proposals.t
 import { chipsOf, type Chips } from "../../core/feed_chips.ts";
 import { chipHides } from "../../feed/chips.ts";
 import { askDismissals, mutedRepos } from "../../core/interactions.ts";
+import { askFiltersOf, filterHides, hasAskFilters, hiddenLine, TRUST_ALARM_SCORE, type AskKind } from "../../core/ask_filters.ts";
 import { ASKS_WINDOW_DAYS, askMeasureWeek, syncAskLedger, type AskEnd } from "../../core/ask_ledger.ts";
 import {
   getIssueById,
@@ -108,7 +109,7 @@ export function writableAppsOf(ctx: Pick<Ctx, "app">, user: User | undefined) {
   );
 }
 
-export type DecisionKind = "stopped" | "look" | "review" | "paused" | "parked" | "declined" | "handover" | "waiting" | "assigned" | "proposal";
+export type DecisionKind = AskKind;
 
 export interface Decision {
   readonly kind: DecisionKind;
@@ -740,7 +741,7 @@ function consequencesOf(
         numbers.length === 0
           ? 0
           : (blocks.get(a.repo.id, JSON.stringify(numbers))?.n ?? 0);
-      if (security) c = { score: 100, why: "security" };
+      if (security) c = { score: TRUST_ALARM_SCORE, why: "security" };
       else if (waiting > 0 && c.score < 60)
         c = {
           score: 60,
@@ -911,7 +912,35 @@ export function repoAsks(
   };
 }
 
-/** What asks the viewer now: candidates, less what they set aside. */
+/**
+ * What asks the viewer now, from one scoring pass: the candidates less what
+ * they set aside (`open`), then less what their ask filters hide (`shown`),
+ * and how many rows the filters took out. Nothing hidden is lost.
+ */
+export function waitingSplit(
+  db: Database,
+  user: User,
+  repos: readonly Repo[],
+  chips?: Chips,
+): { shown: Scored[]; hidden: number } {
+  return splitByFilters(db, user, notDismissed(db, user, scoredFor(db, user, repos), chips));
+}
+
+/** Apply the viewer's ask filters to asks already not set aside; a trust alarm always stays. */
+function splitByFilters(
+  db: Database,
+  user: User,
+  open: readonly Scored[],
+): { shown: Scored[]; hidden: number } {
+  const filters = askFiltersOf(db, user.id);
+  if (!hasAskFilters(filters)) return { shown: [...open], hidden: 0 };
+  const shown = open.filter(
+    (a) => !filterHides(filters, { kind: a.kind, repoId: a.repo.id, consequence: a.consequence }),
+  );
+  return { shown, hidden: askRows(open).length - askRows(shown).length };
+}
+
+/** What asks the viewer now: candidates, less what they set aside or filtered out. */
 export function waitingOn(
   db: Database,
   user: User | undefined,
@@ -919,7 +948,7 @@ export function waitingOn(
   chips?: Chips,
 ): Scored[] {
   if (!user) return [];
-  return notDismissed(db, user, scoredFor(db, user, repos), chips);
+  return waitingSplit(db, user, repos, chips).shown;
 }
 
 /** How an ask that is no longer asked ended, when nobody dismissed it. */
@@ -992,7 +1021,7 @@ export function recordAskLedger(db: Database, now = new Date()): void {
     if (!user) continue;
     const repos = listReposVisibleTo(db, user, { limit: 200, withoutArchived: true });
     const all = scoredFor(db, user, repos, now.getTime());
-    const shown = notDismissed(db, user, all);
+    const shown = splitByFilters(db, user, notDismissed(db, user, all)).shown;
     const brief = (a: Scored) => ({ id: a.id, repoId: a.repo.id, kind: a.kind });
     syncAskLedger(
       db,
@@ -1062,6 +1091,8 @@ export function askLinesFor(
   db: Database,
   user: User,
   chips?: Chips,
+  /** Told how many rows the viewer's ask filters hid, from the same pass. */
+  onHidden?: (rows: number) => void,
 ): {
   id: string;
   line: string;
@@ -1092,7 +1123,9 @@ export function askLinesFor(
   recommendation?: Recommendation;
 }[] {
   const repos = listReposVisibleTo(db, user, { limit: 200, withoutArchived: true });
-  return askRows(waitingOn(db, user, repos, chips)).map((row) => {
+  const { shown, hidden } = waitingSplit(db, user, repos, chips);
+  onHidden?.(hidden);
+  return askRows(shown).map((row) => {
     const base = `/${row.repo.ownerName}/${row.repo.name}`;
     const about = {
       id: row.id,
@@ -1187,12 +1220,15 @@ export function askSentence(count: number): string {
  */
 export function asksAnswer(ctx: Ctx, user: User, chips?: Chips) {
   const set = reviewSet(ctx, user);
+  let hidden = 0;
+  const rows = askLinesFor(ctx.app.db, user, chips, (n) => (hidden = n));
   return {
     // The very figures Home's line and /review show: `count` is live asks plus the forge's needs; `stale` are older than 30 days.
     waiting: { count: set.count, stale: set.stale.length },
-    rows: askLinesFor(ctx.app.db, user, chips),
+    rows,
     forge: forgeNeedsFor(ctx, user).map((d) => needLine(d)),
     measure: { days: ASKS_WINDOW_DAYS, ...askMeasureWeek(ctx.app.db, user.id) },
+    ...(hasAskFilters(askFiltersOf(ctx.app.db, user.id)) ? { filters: { hidden, line: hiddenLine(hidden) } } : {}),
   };
 }
 

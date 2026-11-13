@@ -306,6 +306,7 @@ import {
   asksDecideUndo,
   asksListen,
   asksMute,
+  asksFilter,
   asksPage,
 } from "../web/studio/asks_page.ts";
 import { keeperAnswer } from "../web/studio/keeper_row.ts";
@@ -939,6 +940,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/asks/bulk/:id/undo", asksBulkUndo);
   router.add("POST", "/asks/listen", asksListen);
   router.add("POST", "/asks/mute", asksMute);
+  router.add("POST", "/asks/filter", asksFilter);
   router.add("POST", "/asks/proposal/:id/approve", asksProposal("approve"));
   router.add("POST", "/asks/proposal/:id/redirect", asksProposal("redirect"));
   router.add("POST", "/asks/proposal/:id/later", asksProposal("later"));

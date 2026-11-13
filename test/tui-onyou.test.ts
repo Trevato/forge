@@ -13,6 +13,7 @@ import { assignIssue, openIssue } from "../src/actions/issues.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { signUp } from "../src/actions/users.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
+import { askFiltersOf } from "../src/core/ask_filters.ts";
 import { chipsOf, setChip } from "../src/core/feed_chips.ts";
 import { createIssue, getIssue } from "../src/core/issues.ts";
 import { mutedRepos, recordInteraction } from "../src/core/interactions.ts";
@@ -134,6 +135,21 @@ describe("terminal On you: mutes and many in one move", () => {
     await h.press("L");
     expect(mutedRepos(forge.db, alice.id).size).toBe(0);
     expect(h.text()).not.toContain("repository muted");
+    h.stop();
+  });
+
+  test("H hides the row's app for a day, says how many are hidden, and F shows all (#11820)", async () => {
+    issueIn(vault, "Vault hinge squeaks");
+    const h = await boot();
+    expect(h.text()).toContain("Vault hinge squeaks");
+    await h.press("H");
+    expect(askFiltersOf(forge.db, alice.id).apps.size).toBe(1);
+    expect(h.text()).toContain("hidden by your filters");
+    expect(h.text()).toContain("F show all");
+    await h.press("F");
+    expect(askFiltersOf(forge.db, alice.id).apps.size).toBe(0);
+    expect(h.text()).not.toContain("hidden by your filters");
+    expect(h.text()).toContain("Vault hinge squeaks");
     h.stop();
   });
 

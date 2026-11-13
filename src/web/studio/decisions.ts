@@ -22,10 +22,20 @@ import { changeHref } from "./nouns.ts";
 import { flatten } from "./note.ts";
 import { testsClause } from "./words.ts";
 import { reviewerPaused } from "../../crew/reviewer_paused.ts";
-import { reviewWhy, scoredFor, waitingOn, type Decision, type Scored } from "./asks.ts";
+import type { Database } from "bun:sqlite";
+import type { User } from "../../core/users.ts";
+import { reviewWhy, scoredFor, waitingSplit, type Decision, type Scored } from "./asks.ts";
 
 /** Dollars as a person reads them: cents when small, whole when not. */
 const dollars = (n: number): string => (n < 10 ? n.toFixed(2) : n.toFixed(0));
+
+/** What asks the viewer now, and, when `onHidden` is given, how many rows their filters hid in the same pass. */
+function withoutHidden(db: Database, user: User | undefined, repos: readonly Repo[], onHidden?: (rows: number) => void): Scored[] {
+  if (!user) return [];
+  const { shown, hidden } = waitingSplit(db, user, repos);
+  onHidden?.(hidden);
+  return shown;
+}
 
 /**
  * The decisions waiting on the viewer, worded and pictured. A change's own
@@ -36,12 +46,12 @@ const dollars = (n: number): string => (n < 10 ? n.toFixed(2) : n.toFixed(0));
 export function decisionsFor(
   ctx: Ctx,
   allRepos: readonly Repo[],
-  options: { evenDismissed?: boolean; pull?: string } = {},
+  options: { evenDismissed?: boolean; pull?: string; onHidden?: (rows: number) => void } = {},
 ): Decision[] {
   const db = ctx.app.db;
   const candidates = options.evenDismissed
     ? scoredFor(db, ctx.auth.user, allRepos, Date.now(), options.pull)
-    : waitingOn(db, ctx.auth.user, allRepos);
+    : withoutHidden(db, ctx.auth.user, allRepos, options.onHidden);
   // The pictures, in one read: a green pull's row leads with its preview.
   const repoIds = [...new Set(candidates.map((c) => c.repo.id))];
   const records = appsForRepos(db, repoIds);
