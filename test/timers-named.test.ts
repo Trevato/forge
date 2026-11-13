@@ -125,6 +125,7 @@ const ALLOWED: readonly Allowed[] = [
     ["src/snapshot/store.ts", "() => reject("],
     ["src/snapshot/lanes.ts", "() => reject("],
     ["src/system/footing.ts", "() => r(null)"],
+    ["src/system/largest_dirs.ts", "() => r(null)"],
     ["src/release/devtools.ts", "() => { if (pending.delete(n))"],
     ["src/release/devtools.ts", "() => { waiting.set(event"],
     ["src/release/prove.ts", "() => resolve(\"hung\")"],

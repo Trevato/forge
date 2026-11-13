@@ -49,6 +49,7 @@ import { featureHealth, type FeatureHealth } from "../../system/feature_health.t
 import { egressReportedLine } from "../../system/egress_line.ts";
 import { BREAK_STEPS, MACHINES, declaredFooting, footing, offMachine, whereWords, type Footing, type Machine } from "../../system/footing.ts";
 import { badge, chartBox, disclosure, meter, pill, row, time } from "../ui.ts";
+import { LARGEST_DIRS, largestDirs, type LargestDirs } from "../../system/largest_dirs.ts";
 import { childDirOf, listChildren } from "../../actions/spawn.ts";
 import { childrenUse, realSelf, selfUse, shareOf, sizeWords, useWords, type ChildUseRow, type SelfUse } from "../../spawn/usage.ts";
 
@@ -77,6 +78,17 @@ const meterRow = (name: string, value: number | null, max: number, figure: strin
 /** A name and one figure, no bar: load, a disk's I/O, a link's rates. */
 const figureRow = (name: string, figure: string, data: Record<string, string> = {}): Html =>
   row({ title: name, trail: html`<span class="mono">${figure}</span>`, data });
+
+/** The five largest directories under the forge's data (#11800), measured at most once a minute, never waited on. */
+export function largestDirsSection(found: LargestDirs | null): Html {
+  return html`<section class="settings-block" id="sys-largest"><h2>Largest under the forge's data</h2>
+    ${found === null
+      ? html`<p class="muted small">Being measured; reload in a moment.</p>`
+      : found.dirs.length === 0
+        ? html`<p class="muted small">No directories under the forge's data.</p>`
+        : html`<ul class="list" aria-label="The ${String(LARGEST_DIRS)} largest directories under the forge's data">${found.dirs.map((d) => figureRow(d.name, bytes(d.bytes), { dir: d.name, bytes: String(d.bytes) }))}</ul>
+          <p class="muted small">Measured ${time(found.at)}</p>`}</section>`;
+}
 
 /** This forge's own size and use when it is a child in a cell (#10853); nothing on any other forge. */
 export function selfSection(self: SelfUse | null): Html {
@@ -405,6 +417,8 @@ export async function systemPage(ctx: Ctx): Promise<Response> {
   const worst = stallBlame.worst(nowMono, HOUR_MS, WORST_STALLS);
   // Never waits on the cluster: the last reading, or the declared rows while the first read runs behind.
   const standsOn = footing.peek() ?? declaredFooting("the cluster is being read; reload in a moment");
+  // Never waits on the walk: the last measurement, a new one started behind it when stale.
+  const largestUnder = largestDirs.peek(ctx.app.config.dataDir);
   const rendering = performance.now();
   const r = regions(v);
   const at = (id: string): Html => raw(r[id]!);
@@ -434,6 +448,7 @@ export async function systemPage(ctx: Ctx): Promise<Response> {
     ${childrenSection(children)}
     <section class="settings-block"><h2>Disks and network</h2>
       <ul class="list" id="sys-disks">${at("sys-disks")}</ul></section>
+    ${largestDirsSection(largestUnder)}
     <section class="settings-block"><h2>Processes</h2>
       <div class="js-only small muted">Sort by <button class="btn" data-size="sm" type="button" data-sort="cpu" aria-pressed="true"><kbd>c</kbd> CPU</button>
         <button class="btn" data-size="sm" type="button" data-sort="mem" aria-pressed="false"><kbd>m</kbd> memory</button></div>
