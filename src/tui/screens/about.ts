@@ -75,6 +75,7 @@ import { truncate, wrap } from "../term/width.ts";
 import { badge, card } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
 import { PIN_MARK, ago, confirmScreen, drawFacts, later, pickerScreen, plural, promptScreen, yesNo } from "./common.ts";
+import { crewScreen } from "./crew.ts";
 import { connectionsScreen, egressScreen } from "./egress.ts";
 import { eventsScreen } from "./events.ts";
 import { newPullScreen } from "./newpull.ts";
@@ -200,8 +201,10 @@ export function aboutScreen(
     title: "About",
     get keys() {
       return [
-        binding(["y"], "copy the clone URL", { disabled: cloneUrl === "" }),
-        ...(repo === undefined ? [] : [binding(["v"], "events")]),
+        binding(["y"], "copy URL", { disabled: cloneUrl === "" }),
+        ...(repo === undefined
+          ? []
+          : [binding(["v"], "events"), binding(["C"], "crew")]),
         // A site admin also reaches (early, so a narrow footer keeps them) the repository's private egress grants.
         ...(f.user?.isAdmin === true && repo !== undefined
           ? [binding(["e"], "egress"), binding(["c"], "connections")]
@@ -640,6 +643,10 @@ export function aboutScreen(
       }
       if (e.key === "v" && repo !== undefined) {
         ctx.push(eventsScreen(f, ctx, repo));
+        return true;
+      }
+      if (e.key === "C" && repo !== undefined) {
+        ctx.push(crewScreen(f, ctx, repo));
         return true;
       }
       if (e.key === "e" && repo !== undefined && f.user?.isAdmin === true) {
