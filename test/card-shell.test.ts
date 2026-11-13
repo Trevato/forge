@@ -141,7 +141,10 @@ describe("the card shell", () => {
     // Every text-bearing element takes --c-fg or --c-link on --c-bg; no literal colour is set outside the palette lines.
     const outside = CARD_CSS.replace(/--c-(bg|fg|link):#[0-9a-f]{6}/g, "");
     expect(outside).not.toMatch(/#[0-9a-f]{3,6}\b/i);
-    expect(outside.match(/(?<![-\w])color:[^;}]+/g)!.every((d) => d === "color:var(--c-fg)" || d === "color:var(--c-link)")).toBe(true);
+    expect(outside.match(/(?<![-\w])color:[^;}]+/g)!.every((d) => ["color:var(--c-fg)", "color:var(--c-link)", "color:var(--c-mute)", "color:var(--c-bg)"].includes(d))).toBe(true);
+    // The muted text is 78% of the text colour over the background: it reads at 4.5:1 too, and the primary button's bg-on-link is the link pair.
+    const mix = (a: string, b: string) => "#" + hex(a).map((v, i) => Math.round(v * 0.78 + hex(b)[i]! * 0.22).toString(16).padStart(2, "0")).join("");
+    for (const t of ["light", "dark"] as const) expect(ratio(mix(CARD_PALETTE[t].fg, CARD_PALETTE[t].bg), CARD_PALETTE[t].bg)).toBeGreaterThanOrEqual(4.5);
     expect(CARD_CSS).toContain("min-height:44px");
   });
 

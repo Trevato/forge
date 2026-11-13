@@ -65,6 +65,8 @@ describe("MCP cards coverage", () => {
     expect(uri("forks")).toBe("ui://forge/forks");
     expect(uri("explore")).toBe("ui://forge/explore");
     expect(uri("feed")).toBe("ui://forge/feed");
+    // ChatGPT reads the same template through its compatibility alias.
+    for (const t of tools.filter((t: any) => t._meta?.ui?.resourceUri !== undefined)) expect(t._meta["openai/outputTemplate"]).toBe(t._meta.ui.resourceUri);
   });
 
   test("every card a tool names is a card kind", () => {
@@ -82,6 +84,9 @@ describe("MCP cards coverage", () => {
       expect(read.error).toBeUndefined();
       expect(read.result.contents[0].uri).toBe(uri);
       expect(read.result.contents[0].text.length).toBeGreaterThan(0);
+      // MCP Apps (Claude) and the Apps SDK (ChatGPT) read one document: `text/html;profile=mcp-app`, no network, no border added.
+      expect(read.result.contents[0].mimeType).toBe("text/html;profile=mcp-app");
+      expect(read.result.contents[0]._meta.ui).toEqual({ prefersBorder: false, csp: { connectDomains: [], resourceDomains: [] } });
     }
   });
 });
