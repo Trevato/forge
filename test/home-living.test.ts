@@ -190,9 +190,10 @@ describe("home", () => {
 
   test("a warm home costs a bounded number of statements, the two scans read once per write", async () => {
     await home(aliceCookie);
-    // Calm pass (#10298): home now also reads what waits on the owner, the last visit (a write) and the digest since: 3 more statements, bound raised 40 to 46.
+    // Calm pass (#10298): home also reads what waits on the owner, the last visit (a write) and the
+    // digest since: bound 40 to 46. The tell box reads the forge-copy setting once (#12037): 47.
     const warm = await requestStatements(app.db, `${servers.url}/`, { headers: { cookie: aliceCookie } });
-    expectWork(warm, { max: 46 });
+    expectWork(warm, { max: 47 });
     const scans = await statements(app.db, async () => void (await get("/live/moving", aliceCookie).then((r) => r.text())));
     const again = await statements(app.db, async () => void (await get("/live/moving", aliceCookie).then((r) => r.text())));
     expect(again).toBeLessThanOrEqual(scans);

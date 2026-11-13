@@ -35,7 +35,7 @@ import { avatar, btn, card, disclosure, empty, hintAttr, nameMark, row, stateBad
 import { heldPostsJs } from "./held_posts.ts";
 import { stepLink } from "./step_link.ts";
 import { writableAppsOf } from "./asks.ts";
-import { isForgeCopy } from "../../actions/first_ask.ts";
+import { appsFirst } from "../../actions/first_ask.ts";
 
 /** Events that can change what the feed says. */
 export const FEED_LIVE =
@@ -249,8 +249,7 @@ export function composer(ctx: Ctx, user: User): Html {
   })}`;
   // The forge's own copy is never the default target: a person with no other app asks for a new one,
   // and a person with apps sees theirs first.
-  const onlyForgeCopy = repos.length > 0 && repos.every((r) => isForgeCopy(ctx.app, r));
-  const ordered = [...repos.filter((r) => !isForgeCopy(ctx.app, r)), ...repos.filter((r) => isForgeCopy(ctx.app, r))];
+  const { ordered, onlyForgeCopy } = appsFirst(ctx.app, repos);
   const shared = sharedDraft(ctx.url.searchParams);
   const form = html`<form id="composer" class="stack" method="post" action="/tell">
     <input type="hidden" name="${COMPOSER_FIELDS.back}" value="/feed" />

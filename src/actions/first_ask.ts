@@ -9,7 +9,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { appsForRepos } from "../core/apps.ts";
-import { isForgeSource } from "../core/forge_repo.ts";
+import { isNamed } from "../core/forge_repo.ts";
+import { forgeSource } from "../settings/forge_source.ts";
 import { nextStepsFor } from "../core/next-steps.ts";
 import { listReposWritableTo } from "../core/repos.ts";
 import { FORGE_CODE_NAME } from "../spawn/forge_code.ts";
@@ -102,10 +103,27 @@ function spawnedName(app: App): string | undefined {
  * that names no repository never lands on it. An ask that names it still does.
  */
 export function isForgeCopy(app: App, repo: Pick<Repo, "ownerName" | "name">): boolean {
-  return (
-    isForgeSource(app, repo) ||
-    (repo.name === FORGE_CODE_NAME && repo.ownerName.toLowerCase() === spawnedName(app))
-  );
+  return forgeCopyTest(app)(repo);
+}
+
+/** `isForgeCopy` for many repositories: the source setting is read once, not per repository. */
+export function forgeCopyTest(app: App): (repo: Pick<Repo, "ownerName" | "name">) => boolean {
+  const own = forgeSource(app.db, app.config.forgeRepo);
+  const spawned = spawnedName(app);
+  return (repo) => isNamed(own, repo) || (repo.name === FORGE_CODE_NAME && repo.ownerName.toLowerCase() === spawned);
+}
+
+/**
+ * Repositories apps first, the forge's own copy last, and whether nothing but the copy is there;
+ * the setting is read once.
+ */
+export function appsFirst<R extends Pick<Repo, "ownerName" | "name">>(
+  app: App,
+  repos: readonly R[],
+): { ordered: R[]; onlyForgeCopy: boolean } {
+  const isCopy = forgeCopyTest(app);
+  const ordered = [...repos.filter((r) => !isCopy(r)), ...repos.filter(isCopy)];
+  return { ordered, onlyForgeCopy: repos.length > 0 && ordered.every(isCopy) };
 }
 
 /**

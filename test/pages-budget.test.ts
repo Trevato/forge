@@ -38,8 +38,8 @@ const DEFAULT = { statements: 60, git: 8 };
 const HEAVIER: Record<string, { statements?: number; git?: number }> = {
   "/:owner/:name/issues/:number": { statements: 70 },
   "/:owner/:name/next": { statements: 64 },
-  "/:owner/:name/pulls/:number": { statements: 112 }, // +1: the paused sentence, one read of a queued paused run on the pull (#12010); +1: the header Talk count (#10327); +1: the landing line (#10860); +1: whether a reviewer is seated, read only when Require review is off and the pull would otherwise wait on one; the page loads no crew besides (#11666)
-  "/board": { statements: 71 }, // +1: the vitals read the database's growth (#12025); +6: the money line (#510) — one settings read, then the month's and the 30 days' meter, storage and ledger reads; constant in the number of apps
+  "/:owner/:name/pulls/:number": { statements: 113 }, // +1: whether a repository is the forge's own copy, one read of the source setting for the tell box (#12037); +1: the paused sentence, one read of a queued paused run on the pull (#12010); +1: the header Talk count (#10327); +1: the landing line (#10860); +1: whether a reviewer is seated, read only when Require review is off and the pull would otherwise wait on one; the page loads no crew besides (#11666)
+  "/board": { statements: 72 }, // +1: the forge-copy read for the tell box (#12037); +1: the vitals read the database's growth (#12025); +6: the money line (#510) — one settings read, then the month's and the 30 days' meter, storage and ledger reads; constant in the number of apps
   "/settings/capacity": { statements: 71 },
 };
 

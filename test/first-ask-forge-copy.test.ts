@@ -4,7 +4,7 @@
  * without a repo, and one that names the copy still files there.
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { asksMakeANewApp, isForgeCopy } from "../src/actions/first_ask.ts";
+import { appsFirst, asksMakeANewApp, forgeCopyTest, isForgeCopy } from "../src/actions/first_ask.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { listIssues } from "../src/core/issues.ts";
 import { deleteRepo, getRepo, listReposOwnedBy } from "../src/core/repos.ts";
@@ -95,4 +95,21 @@ test("naming the forge copy still files the ask on it", async () => {
   const res = await forge.post(cookie, "/tell", { app: `${name}/forge`, text: "Fix the footer on the forge" });
   expect(res.status).toBe(303);
   expect(listIssues(forge.child.db, copy.id, {}).length).toBe(1);
+});
+
+test("forgeCopyTest agrees with isForgeCopy on several repositories, and appsFirst orders by it", () => {
+  const repos = [
+    { ownerName: name, name: "forge" },
+    { ownerName: name.toUpperCase(), name: "FORGE" },
+    { ownerName: name, name: "bakery" },
+    { ownerName: "someone", name: "forge" },
+  ];
+  const test = forgeCopyTest(forge.child);
+  for (const r of repos) expect(test(r)).toBe(isForgeCopy(forge.child, r));
+  expect(repos.map(test)).toEqual([true, true, false, false]);
+  const { ordered, onlyForgeCopy } = appsFirst(forge.child, repos);
+  expect(ordered.map((r) => r.name)).toEqual(["bakery", "forge", "forge", "FORGE"]);
+  expect(onlyForgeCopy).toBe(false);
+  expect(appsFirst(forge.child, repos.slice(0, 2)).onlyForgeCopy).toBe(true);
+  expect(appsFirst(forge.child, []).onlyForgeCopy).toBe(false);
 });
