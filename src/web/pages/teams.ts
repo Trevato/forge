@@ -166,7 +166,7 @@ export function teamsStream(ctx: Ctx): Response {
     };
     return ctx.app.bus.subscribe((event) => {
       if (event.kind === "team.changed") send();
-    });
+    }, "ordered");
   });
 }
 

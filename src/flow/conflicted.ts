@@ -100,3 +100,12 @@ export function rebaseLaneSays(lane: RebaseLane): string | null {
   if (lane.conflicted === 0 && lane.rebasing === 0) return null;
   return `conflicted ${lane.conflicted}, rebasing ${lane.rebasing}, room ${lane.room}`;
 }
+
+/** The finishing pass's last findings as plain data, and their adoption by a thread that does not make them (`engine/observed.ts`). */
+export const observedWaiting = (db: Database): Map<string, unknown> => new Map(waiting.get(db) ?? []);
+export function adoptWaiting(db: Database, repoId: string, value: unknown): void {
+  let mine = waiting.get(db);
+  if (!mine) waiting.set(db, (mine = new Map()));
+  if (value === undefined) mine.delete(repoId);
+  else mine.set(repoId, value as readonly WaitingToFinish[]);
+}

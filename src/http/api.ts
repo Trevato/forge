@@ -4230,7 +4230,7 @@ export function apiRoutes(router: Router<Handler>): void {
           !stillLive()
         )
           finish(getRun(ctx.app.db, run.id) ?? run);
-      });
+      }, "ordered");
       if (isTerminal(run.state) && !stillLive()) finish(run);
       return () => {
         controller.abort();

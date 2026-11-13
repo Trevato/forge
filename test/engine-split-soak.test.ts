@@ -38,6 +38,7 @@ let app: App;
 let servers: Servers;
 let tail: EventTail | undefined;
 let engine: Engine | undefined;
+const heard = { ms: 0, events: 0 };
 let stopWriter: (() => void) | undefined;
 let tokens: string[] = [];
 let owner = "";
@@ -73,6 +74,16 @@ beforeAll(async () => {
   if (INLINE) stopWriter = startWriter(app);
   else {
     tail = tailEvents(app.db, app.bus);
+    // As main.ts does it: the engine checkpoints, this thread's commits never do (`SPLIT_CKPT=serve` leaves it as it was).
+    if (process.env["SPLIT_CKPT"] !== "serve") app.db.exec("PRAGMA wal_autocheckpoint = 0");
+    // What the serving thread spends hearing the engine's events (every listener): the cost of a second writer.
+    const hear = app.bus.deliver.bind(app.bus);
+    app.bus.deliver = (event) => {
+      const began = performance.now();
+      hear(event);
+      heard.ms += performance.now() - began;
+      heard.events++;
+    };
     engine = startEngine(app.config, tail, { extra: [WRITER] });
     await engine.ready();
   }
@@ -247,6 +258,7 @@ test(`${TRIPS} write-then-read round trips beside a writing engine: none stale, 
         streamFrames: frames.length,
         eventsFirstLast: [first, last],
         engineRows: wrote,
+        tail: { events: heard.events, ms: Math.round(heard.ms), usPerEvent: heard.events === 0 ? 0 : Math.round((heard.ms / heard.events) * 1000) },
         integrity,
       }),
     );

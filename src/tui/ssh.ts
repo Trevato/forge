@@ -182,7 +182,7 @@ export function endOnSuspension(
       stop();
       end();
     }
-  });
+  }, "ordered");
   // And held open under the account, so a suspension another process
   // wrote ends it on this one's sweep (\`http/caller.ts\`).
   const end = (): void => {

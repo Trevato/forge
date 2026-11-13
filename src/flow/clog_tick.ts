@@ -88,10 +88,14 @@ export function startClogTick(
   bus: Pick<EventBus, "append">,
   onError: (error: unknown) => void,
   everyMs = 60_000,
+  prepare: () => void = () => {},
 ): () => void {
   const timer = setInterval(() => {
     try {
-      during("clog", () => tickClog(db, bus));
+      during("clog", () => {
+        prepare();
+        tickClog(db, bus);
+      });
     } catch (error) {
       onError(error);
     }

@@ -81,3 +81,11 @@ export function warmingLine(db: Database, now: number, current: (repoId: string)
   };
   return hotTrendSays(warmingFiles(now, current, allow), (w) => names.get(w.repoId) ?? w.repoId);
 }
+
+/** The samples as plain data, and their adoption by a thread that does not take them (`engine/observed.ts`). */
+export const observedHeat = (): Map<string, unknown> =>
+  new Map([...samples].map(([repoId, kept]) => [repoId, kept.map((s) => ({ at: s.at, counts: [...s.counts] }))]));
+export function adoptHeat(repoId: string, value: unknown): void {
+  if (value === undefined) samples.delete(repoId);
+  else samples.set(repoId, (value as { at: number; counts: [string, number][] }[]).map((s) => ({ at: s.at, counts: new Map(s.counts) })));
+}

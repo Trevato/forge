@@ -2531,7 +2531,7 @@ export async function serve(app: App): Promise<Servers> {
       typeof name === "string" ? getUserByName(app.db, name) : undefined;
     if (user === undefined) return;
     closeStreamsOf(app.db, user.id, unclosed);
-  });
+  }, "ordered");
   const prerender = prerenderComments(app);
   // And every process holds what it has open against the database, so a
   // suspension or sign-out another process wrote reaches it too (#846).

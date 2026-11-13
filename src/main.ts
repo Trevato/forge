@@ -83,6 +83,7 @@ import { tailEvents } from "./core/event_tail.ts";
 import { engineMode } from "./engine/mode.ts";
 import { startEngine } from "./engine/host.ts";
 import { startDuties } from "./engine/duties.ts";
+import { publishObserved } from "./engine/observed.ts";
 import { startClogTick } from "./flow/clog_tick.ts";
 import { resumeAtBoot } from "./maintenance/service.ts";
 import { startKeeper } from "./flow/keeper.ts";
@@ -348,6 +349,9 @@ const tail = engineOn ? tailEvents(app.db, app.bus) : undefined;
 // A write of the engine's is a few milliseconds. This thread waits for one with every request behind it, so
 // it waits seconds, not the fifteen of a forge whose only other writer is itself: a stuck engine is ended (`engine/host.ts`).
 if (engineOn) app.db.exec("PRAGMA busy_timeout = 2000");
+// One side checkpoints the log, and it is the engine's (`engine/duties.ts`): a commit of this thread that crossed
+// the threshold paid for the checkpoint, fsync and all, with every request behind it.
+if (engineOn) app.db.exec("PRAGMA wal_autocheckpoint = 0");
 await refreshCatalogQuietly(app);
 if (readOnly) {
   const servers = await serve(app);
@@ -555,7 +559,7 @@ const snapshots = startSnapshots(
 );
 // What the machine uses (boards/sampler.ts): the pod, each cell and the
 // node, every 15 s into a ring the `machine` board source reads.
-const sampler = startSampler(app, { retention: !engineOn });
+const sampler = startSampler(app, { engineRetiresEvents: engineOn });
 const memorySampler = startMemorySampler(app);
 // The starting boards, once each (actions/boards.ts).
 void offerStartingBoards(app)
@@ -637,7 +641,9 @@ const notifier = startNotifier(app, { forgeUrl });
 // starts sweep, holds, the model review, the week, retention. On this thread
 // unless the engine has one of its own.
 const engine = engineOn && tail !== undefined ? startEngine(app.config, tail) : undefined;
-const stopDuties = engine === undefined ? startDuties(app, { retention: false }) : () => {};
+const stopDuties = engine === undefined ? startDuties(app, { onWorker: false }) : () => {};
+// What this thread observes of the pulls and the runs, for the engine's keeper, clog watch and asks ledger to read.
+const observedTimer = engine === undefined ? undefined : setInterval(() => during("observed-publish", () => void publishObserved(app.db)), 2_000);
 
 function positive(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
@@ -674,17 +680,19 @@ const tickAsks = async (): Promise<void> => {
   } catch (error) {
     app.log.error("standing rule sweep failed", { error: String(error) });
   }
-  try {
-    recordAskLedger(app.db);
-  } catch (error) {
-    app.log.error("asks ledger failed", { error: String(error) });
-  }
-  // The database's size, its first reading each UTC day (#12010): growth for /system and the
-  // vitals.
-  try {
-    noteDbSize(app.db, app.config.dataDir);
-  } catch (error) {
-    app.log.warn("database size reading failed", { error: String(error) });
+  // The ledger and the database's size (its first reading each UTC day, #12010) are the engine's
+  // duties when it has a thread (`engine/duties.ts`).
+  if (!engineOn) {
+    try {
+      recordAskLedger(app.db);
+    } catch (error) {
+      app.log.error("asks ledger failed", { error: String(error) });
+    }
+    try {
+      noteDbSize(app.db, app.config.dataDir);
+    } catch (error) {
+      app.log.warn("database size reading failed", { error: String(error) });
+    }
   }
   // The degraded history rides the same tick; it catches its own errors.
   try {
@@ -746,9 +754,10 @@ const processTick = (): void => {
   }
 };
 // The clog watch (#6524, #6757) reads the flow every minute; its state is the database's.
-const stopClogTick = startClogTick(app.db, app.bus, (error) => app.log.warn("clog tick failed", { error: String(error) }), 60_000);
+// With an engine thread both are its duties (`engine/duties.ts`), reading what this thread observed from rows.
+const stopClogTick = engineOn ? () => {} : startClogTick(app.db, app.bus, (error) => app.log.warn("clog tick failed", { error: String(error) }), 60_000);
 // The throughput keeper (#7645) names what binds landings each minute and lifts what is its to lift.
-const stopKeeper = startKeeper(app, () => sweepAssigned(app));
+const stopKeeper = engineOn ? () => {} : startKeeper(app, () => sweepAssigned(app));
 // A forge that went down prepared for maintenance comes back by itself. The
 // listener is up (`serve` above) and the checks service started; the tunnel
 // is outside this process and may come up later, so its probe asks again.
@@ -915,6 +924,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
   // process that replaced this one, not to this one while it finishes.
   drainStreams();
   stopDuties();
+  if (observedTimer !== undefined) clearInterval(observedTimer);
   const engineStopped = engine?.stop();
   clearInterval(nightlyScanTimer);
   clearInterval(heartbeatTimer);

@@ -47,3 +47,16 @@ export function heldRuns(db: Database, now = Date.now()): ReadonlyMap<string, Ho
   if (pass === undefined || now - pass.at > HELD_FRESH_MS || pass.at - now > HELD_FRESH_MS) return new Map();
   return pass.held;
 }
+
+/** The latest pass as plain data (one scope), and its adoption by a thread that does not make passes (`engine/observed.ts`). */
+export const observedPass = (db: Database): Map<string, unknown> => {
+  const pass = passes.get(db);
+  return pass === undefined ? new Map() : new Map([["", { at: pass.at, held: [...pass.held] }]]);
+};
+export function adoptPass(db: Database, value: unknown): void {
+  if (value === undefined) passes.delete(db);
+  else {
+    const v = value as { at: number; held: [string, HoldCause][] };
+    passes.set(db, { at: v.at, held: new Map(v.held) });
+  }
+}

@@ -820,7 +820,7 @@ export function live(
           timer = null;
         });
     }, liveDelay(Date.now(), lastEnd, lastCostMs));
-  });
+  }, "ordered");
   signal.addEventListener("abort", () => {
     off();
     if (timer !== null) clearTimeout(timer);
