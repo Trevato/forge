@@ -55,7 +55,24 @@ export interface JourneyResult {
   readonly forge: string | null;
   /** Whether the throwaway forge was removed afterwards (true when none was made). */
   readonly removed: boolean;
+  /** `probe-` forges an interrupted run left (older than `STALE_PROBE_MS`) this run removed. */
+  readonly swept?: readonly string[];
+  /** Why the sweep stopped early, when it did; the walk's verdict never depends on it. */
+  readonly sweepError?: string;
 }
+
+/** The sweep as a whole may take this long, however many it finds: it never slows the proof. */
+export const SWEEP_BUDGET_MS = 5_000;
+/** At most this many stale forges are removed per run; a host with more clears over several. */
+export const SWEEP_MAX = 5;
+/** Pauses between removal attempts: a transient failure is not hit again within milliseconds. */
+export const REMOVE_BACKOFF_MS: readonly number[] = [250, 1000];
+
+/** A probe forge older than this was left by a run that never finished: an hour. */
+export const STALE_PROBE_MS = 60 * 60 * 1000;
+
+/** What a probe forge is called; its account goes with it (the forge's data is its only home). */
+const PROBE_NAME = /^probe-[0-9a-f]{8}$/;
 
 /** The longest any one request may take. */
 export const REQUEST_TIMEOUT_MS = 10_000;
@@ -240,15 +257,74 @@ export async function walkJourney(options: JourneyOptions): Promise<JourneyResul
     }
   } catch (e) {
     failure = e instanceof Step ? e.message : "the walk stopped unexpectedly";
+  } finally {
+    // Afterwards, passed or failed: stop the crew's run, then remove the forge and its account.
+    if (forge !== null) {
+      if (child !== undefined && cookie !== "") await cancelRuns(doFetch, child, cookie);
+      removed = await removeForge(doFetch, hostUrl, forge, options.adminToken, sleep);
+    }
   }
-
-  // Afterwards, passed or failed: stop the crew's run, then remove the forge.
-  if (forge !== null) {
-    if (child !== undefined && cookie !== "") await cancelRuns(doFetch, child, cookie);
-    removed = await removeForge(doFetch, hostUrl, forge, options.adminToken);
-  }
-  const result = { ok: failure === undefined, screens, readyMs, firstActivityMs, forge, removed };
+  // What an interrupted run left: swept after this walk's own cleanup, never its own forge.
+  // Bounded (`SWEEP_BUDGET_MS`, `SWEEP_MAX`) and never part of the verdict.
+  const sweep = await sweepProbes(doFetch, hostUrl, options.adminToken, Date.now(), forge, sleep);
+  const result = {
+    ok: failure === undefined,
+    screens,
+    readyMs,
+    firstActivityMs,
+    forge,
+    removed,
+    swept: sweep.gone,
+    ...(sweep.error === undefined ? {} : { sweepError: sweep.error }),
+  };
   return failure === undefined ? result : { ...result, failure };
+}
+
+/**
+ * Removes the `probe-` forges the host lists that were begun more than an hour ago
+ * (`STALE_PROBE_MS`): what a run killed or timed out part-way left behind. The scope is
+ * this proof's own namespace: `probe-` plus eight hex digits is the name `probeName` gives
+ * a throwaway forge, and an hour is far past the proof's own budget, so a run still in
+ * progress is never touched. A forge with no begun-at, a name of any other shape, and
+ * `except` are left alone. Reads `GET /api/v1/forges` (an admin's token). Never throws: what
+ * stopped it comes back in `error`. `at` is the wall clock in ms (the forge's `createdAt` is
+ * wall-clock time, not the walk's monotonic one). Bounded by `SWEEP_BUDGET_MS` and `SWEEP_MAX`.
+ */
+export async function sweepProbes(
+  doFetch: typeof fetch,
+  host: URL,
+  token: string | undefined,
+  at: number,
+  except: string | null = null,
+  sleep: (ms: number) => Promise<void> = (ms) => Bun.sleep(ms),
+): Promise<{ gone: string[]; error?: string }> {
+  const gone: string[] = [];
+  if (token === undefined || token === "") return { gone };
+  const deadline = AbortSignal.timeout(SWEEP_BUDGET_MS);
+  try {
+    const res = await doFetch(new URL("/api/v1/forges", host).href, {
+      redirect: "manual",
+      signal: deadline,
+      headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+    });
+    if (res.status !== 200) {
+      await res.body?.cancel();
+      return { gone, error: `the forge list answered ${res.status}` };
+    }
+    const items = ((await res.json()) as { items?: unknown }).items;
+    if (!Array.isArray(items)) return { gone, error: "the forge list had no items" };
+    for (const item of items as { name?: unknown; createdAt?: unknown }[]) {
+      const { name, createdAt } = item ?? {};
+      if (typeof name !== "string" || !PROBE_NAME.test(name) || name === except) continue;
+      const begun = typeof createdAt === "string" ? Date.parse(createdAt) : Number.NaN;
+      if (!Number.isFinite(begun) || at - begun < STALE_PROBE_MS) continue;
+      if (gone.length >= SWEEP_MAX || deadline.aborted) break;
+      if (await removeForge(doFetch, host, name, token, sleep, [])) gone.push(name);
+    }
+    return { gone };
+  } catch (e) {
+    return { gone, error: e instanceof Error ? e.message : "the sweep stopped unexpectedly" };
+  }
 }
 
 /** Cancels each run the forge's home links to; a miss is never an error (the forge's removal ends them anyway). */
@@ -266,8 +342,25 @@ async function cancelRuns(doFetch: typeof fetch, child: URL, cookie: string): Pr
 }
 
 /** Removes the throwaway forge from the host; true when the host said it is gone. */
-async function removeForge(doFetch: typeof fetch, host: URL, name: string, token: string | undefined): Promise<boolean> {
+async function removeForge(
+  doFetch: typeof fetch,
+  host: URL,
+  name: string,
+  token: string | undefined,
+  sleep: (ms: number) => Promise<void>,
+  backoff: readonly number[] = REMOVE_BACKOFF_MS,
+): Promise<boolean> {
   if (token === undefined || token === "") return false;
+  if (await removeOnce(doFetch, host, name, token)) return true;
+  // Each retry waits first (`backoff`); the sweep passes none, so a stale forge is tried once.
+  for (const ms of backoff) {
+    await sleep(ms);
+    if (await removeOnce(doFetch, host, name, token)) return true;
+  }
+  return false;
+}
+
+async function removeOnce(doFetch: typeof fetch, host: URL, name: string, token: string): Promise<boolean> {
   try {
     const url = new URL(`/forges/${name}/remove`, host);
     const res = await doFetch(url.href, {
