@@ -538,7 +538,8 @@ describe("what the open web expects", () => {
     // A repository page carries its own card (/og/repo), not the icon.
     expect(html).toContain(`content="${base}/og/repo/alice~open.png"`);
     expect(html).toContain('name="twitter:card" content="summary_large_image"');
-    expect(html).toContain("viewport-fit=cover");
+    // The page stays inside the browser's own safe area: an app's embedded browser draws its bar over a page that asks to cover.
+    expect(html).not.toContain("viewport-fit");
   });
 
   test("the page's own policy lets a browser read what it links", async () => {

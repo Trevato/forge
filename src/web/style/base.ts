@@ -221,10 +221,10 @@ export const utilities = /* css */ `
   .hide-lg { display: none; }
 }
 
-/* viewport-fit=cover lets the page run to the glass, so the chrome steps
-   in from the notch, the rounded corners and the home indicator itself.
-   max() keeps the ordinary gutter wherever the inset is zero, which is
-   everywhere but a phone held sideways or an installed app. */
+/* The page does not ask to cover the screen (no viewport-fit): inside another
+   app's embedded browser that put its top under the app's own bar (2026-11-13).
+   The browser keeps the page inside its safe area; these insets are zero then,
+   and max() keeps the ordinary gutter. */
 @supports (padding: max(0px)) {
   .topbar {
     padding-top: max(8px, env(safe-area-inset-top));
