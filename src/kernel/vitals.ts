@@ -218,7 +218,7 @@ function readLane(
   const queued =
     db
       .query<{ n: number }, []>(
-        "SELECT COUNT(*) AS n FROM run INDEXED BY run_kind_state WHERE kind = 'check' AND state = 'queued'",
+        "SELECT COUNT(*) AS n FROM run INDEXED BY run_queued WHERE kind = 'check' AND state = 'queued'",
       )
       .get()?.n ?? 0;
   const first = running.find(

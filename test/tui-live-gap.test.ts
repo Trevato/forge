@@ -19,7 +19,7 @@ test("the three hot questions of run are answered from an index, not a scan", ()
   db.run(hotIndexes);
   const plan = (sql: string) =>
     db.query<{ detail: string }, []>(`EXPLAIN QUERY PLAN ${sql}`).all().map((r) => r.detail).join(" | ");
-  expect(plan("SELECT COUNT(*) AS n FROM run INDEXED BY run_kind_state WHERE kind = 'check' AND state = 'queued'")).toContain("COVERING INDEX run_kind_state");
+  expect(plan("SELECT COUNT(*) AS n FROM run INDEXED BY run_queued WHERE kind = 'check' AND state = 'queued'")).toContain("COVERING INDEX run_queued");
   expect(plan("SELECT DISTINCT repo_id FROM run INDEXED BY run_check_verify_repo WHERE kind = 'check' AND env = 'verify'")).toContain("COVERING INDEX run_check_verify_repo");
   expect(plan("SELECT MAX(COALESCE(started_at, created_at)) AS at FROM run INDEXED BY run_agent_last_start WHERE kind = 'agent'")).toContain("run_agent_last_start");
 });

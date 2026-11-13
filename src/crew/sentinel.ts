@@ -305,7 +305,7 @@ export function runStreaks(db: Database): Finding[] {
   // the window sorted all of them, 150 ms on a production-sized table (#8848).
   const pairs = db
     .query<{ repo_id: string; kind: string }, []>(
-      "SELECT DISTINCT repo_id, kind FROM run WHERE kind IN ('check', 'agent') AND state IN ('ok', 'failed')",
+      "SELECT r.id AS repo_id, k.kind AS kind FROM repo r CROSS JOIN (SELECT 'check' AS kind UNION ALL SELECT 'agent') k",
     )
     .all();
   const latest = db.query<SummaryRow, [string, string, number]>(
