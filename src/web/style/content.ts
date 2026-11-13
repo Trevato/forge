@@ -558,8 +558,11 @@ form.inline { display: inline; margin-left: auto; }
 .prose h1:first-child, .prose h2:first-child, .prose h3:first-child { margin-top: 0; }
 .prose h1, .prose h2 { padding-bottom: 6px; border-bottom: 1px solid var(--border); }
 .prose p, .prose ul, .prose ol, .prose blockquote { margin: 12px 0; text-wrap: pretty; }
-.prose ul { list-style: disc; padding-left: 24px; }
-.prose ol { list-style: decimal; padding-left: 24px; }
+.prose { --list-indent: 24px; }
+.prose ul { list-style: disc; padding-left: var(--list-indent); }
+.prose ol { list-style: decimal; padding-left: var(--list-indent); }
+.prose li.task { list-style: none; margin-left: calc(-1 * var(--list-indent)); }
+.prose li.task input { margin: 0 6px 0 0; vertical-align: -1px; }
 .prose li::marker { color: var(--faint); }
 .prose pre {
   background: var(--muted); border: 1px solid var(--border);
