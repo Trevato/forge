@@ -238,7 +238,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `whoami_can` | `role`, `passkeys` | What you can do: your role and its roles-table row, yes or no each | 231 |
 | `write_file` | — | No shell? Commit one file to a branch | 342 |
 | `report` | — | Report a problem in a public repository, no account needed | 468 |
-| `start` | — | Start building with no account: an account, a repo, a live app and a token in one call | 358 |
+| `start` | `contribute` | Start building with no account: an account, a repo, a live app and a token in one call | 387 |
 <!-- mcp-tools:end -->
 
 The complete list, with schemas, is MCP `tools/list` called with a token.

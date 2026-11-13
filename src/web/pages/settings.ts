@@ -111,6 +111,8 @@ import {
   tlEvent,
 } from "../ui.ts";
 import { cutWaveFor } from "../../actions/cut_wave.ts";
+import { liveClientJs } from "../live.ts";
+import { outsideAgentsJs } from "./outside-agents-live.ts";
 import { proposalTokensSection } from "./proposal-tokens.ts";
 import { secretsSection } from "./secrets.ts";
 import { checkMemoryAt } from "../../apps/check-memory.ts";
@@ -204,7 +206,7 @@ export function settingsPageResponse(
       crumbs: crumbsFor(repo),
       palette: repoPalette(ctx, repo),
       ...(styleCss !== undefined ? { styleCss } : {}),
-      scriptJs: teamJs,
+      scriptJs: `${teamJs}\n${liveClientJs}\n${outsideAgentsJs}`,
       body: html`${repoHeader(ctx, repo, "settings", { compact: true })}
       ${settingsLayout(sections(repoBase(repo), active), body)}`,
     },

@@ -5,7 +5,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { lastFires } from "../core/feature_fires.ts";
+import { lastFires, type How } from "../core/feature_fires.ts";
 import { fireOne, type Reach } from "./feature_schedule.ts";
 
 export const RUN_REFUSALS = {
@@ -16,8 +16,8 @@ export const RUN_REFUSALS = {
 } as const;
 
 /** Call `tool` now and say how it went; `ok` is false for a refusal or a failed call. */
-export async function runNow(db: Database, appId: string, tool: string, reach: Reach): Promise<{ ok: boolean; message: string }> {
-  const fired = await fireOne(db, appId, tool, reach);
+export async function runNow(db: Database, appId: string, tool: string, reach: Reach, how: How = "page"): Promise<{ ok: boolean; message: string }> {
+  const fired = await fireOne(db, appId, tool, reach, Date.now, how);
   if (!fired.ok) return { ok: false, message: RUN_REFUSALS[fired.why] };
   const fire = lastFires(db, appId).find((f) => f.tool === tool);
   return fire?.ok === false ? { ok: false, message: `${tool} ran and failed: ${fire.error ?? "failed"}.` } : { ok: true, message: `${tool} ran.` };

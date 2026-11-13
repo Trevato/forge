@@ -12,7 +12,8 @@
  * settings files of the operator's, a spend budget, and a deadline.
  */
 
-import { measureOf, type Measure } from "../core/measure.ts";
+import { clearedOf, measureOf, type Measure } from "../core/measure.ts";
+import type { LimitWindow } from "../core/standing.ts";
 import { backgroundArgv, crewCpus } from "../apps/background.ts";
 import { cgroupHost } from "../apps/cgroup.ts";
 import { openRunCell, type RunLimits } from "./run-cell.ts";
@@ -58,6 +59,8 @@ export interface ClaudeInput {
   readonly onUsage?: ((spent: Spent) => void) | undefined;
   /** The provider's measurement of a window, each time the session reports one (#8960). */
   readonly onMeasure?: ((measure: Measure) => void) | undefined;
+  /** The provider said this window is under its thresholds: a stored reading of it is stale. */
+  readonly onCleared?: ((window: LimitWindow) => void) | undefined;
   /**
    * Talks to the forge through MCP alone (#7651): no file or shell tools, no
    * clone, the one server named in `config` (`--mcp-config` JSON) allowed.
@@ -372,6 +375,8 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
     if (type === "rate_limit_event") {
       const measure = measureOf(e, new Date());
       if (measure !== undefined) input.onMeasure?.(measure);
+      const cleared = clearedOf(e);
+      if (cleared !== undefined) input.onCleared?.(cleared);
       return;
     }
     if (type === "system") {

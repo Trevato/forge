@@ -270,6 +270,8 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind === "repo.source_added" ||
     kind === "repo.source_removed" ||
     kind === "repo.crew_outsiders" ||
+    // An outside agent's token and the owner's yes to them are the admins' (#12012).
+    kind.startsWith("contribute.") ||
     // A valve turn names a repository and the owner's budget: for those who administer it (`actions/valves.ts`).
     kind === "valve.turned" ||
     // A clog starting names the forge's own pile-up: the owner's to hear (#6524).

@@ -3,6 +3,7 @@
  * route params, and authentication resolved once as plain data.
  */
 
+import type { ContributeScope } from "../core/contribute_token.ts";
 import type { Proposal } from "../core/proposal_token.ts";
 import type { App } from "../app.ts";
 import type { RunScope } from "../core/run_token.ts";
@@ -29,6 +30,8 @@ export interface Auth {
   /** Set for a crew run's token: the repositories it may reach
    * (`http/run_gate.ts`). */
   readonly run?: RunScope;
+  /** Set for an outside agent's contribute token (`http/contribute_gate.ts`). */
+  readonly contribute?: ContributeScope;
   /** Set for a via token: the forge's own agent, speaking for this person in
    * this conversation (`conversation:<id>`, `core/via_token.ts`). */
   readonly through?: string;

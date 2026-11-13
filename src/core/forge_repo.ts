@@ -19,7 +19,11 @@ export function publicForgeRepo(app: App): Repo | undefined {
  * forge's own lookups do.
  */
 export function isForgeSource(app: App, repo: Pick<Repo, "ownerName" | "name">): boolean {
-  const own = forgeSource(app.db, app.config.forgeRepo);
+  return isNamed(forgeSource(app.db, app.config.forgeRepo), repo);
+}
+
+/** The one match of a repository against a configured `owner/name`, without case. */
+export function isNamed(own: string | undefined, repo: Pick<Repo, "ownerName" | "name">): boolean {
   return own !== undefined && own.toLowerCase() === `${repo.ownerName}/${repo.name}`.toLowerCase();
 }
 

@@ -97,6 +97,8 @@ import { readOnlyRefusal } from "./read_only.ts";
 import { running } from "../kernel/version.ts";
 import { runGit } from "../git/env.ts";
 import { noteRefusedInternal } from "../kernel/internal_refused.ts";
+import { CONTRIBUTE_PUSH_MAX_BYTES } from "../core/contribute_token.ts";
+import { contribPushPulls, contribPushRefusal } from "../actions/contribute_push.ts";
 import { pushCap, storageChanged, storageRefusal, storageRefusedText, storageSentence } from "../core/storage.ts";
 import { hookEnv, ZERO_OID, type HookRequest } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
@@ -498,11 +500,14 @@ import { targetForShortCode } from "../origins/oauth.ts";
 import { apiRoutes } from "./api.ts";
 import { pageParamRefused } from "./cursor_lists.ts";
 import { inNamespace } from "../core/proposal_token.ts";
-import { proposalTokenMint, proposalTokenRevoke } from "../web/pages/proposal-tokens.ts";
+import { inContribNamespace } from "../core/contribute_token.ts";
+import { takesOutside } from "../actions/contribute_token.ts";
+import { contributeOpenSet, contributeTokenRevoke, proposalTokenMint, proposalTokenRevoke } from "../web/pages/proposal-tokens.ts";
 import { adminGate } from "./admin_gate.ts";
 import { movedResponse } from "./moved.ts";
 import { originGate } from "./origin_gate.ts";
 import { proposalGate } from "./proposal_gate.ts";
+import { contributeGate } from "./contribute_gate.ts";
 import { runGate } from "./run_gate.ts";
 import { viaGate } from "./via_gate.ts";
 import { checksRecheckRoutes } from "./checks_recheck.ts";
@@ -693,6 +698,7 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
         tokenName: verified.value.name,
         ...(verified.value.proposal ? { proposal: verified.value.proposal } : {}),
         ...(verified.value.run ? { run: verified.value.run } : {}),
+        ...(verified.value.contribute ? { contribute: verified.value.contribute } : {}),
         ...(verified.value.via ? { through: verified.value.via } : {}),
       };
     }
@@ -721,6 +727,7 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
             ? { proposal: verified.value.proposal }
             : {}),
           ...(verified.value.run ? { run: verified.value.run } : {}),
+          ...(verified.value.contribute ? { contribute: verified.value.contribute } : {}),
           ...(verified.value.via ? { through: verified.value.via } : {}),
         };
       }
@@ -1213,6 +1220,9 @@ export function buildRouter(): Router<Handler> {
             repoId,
             actorId: ctx.auth.user?.id ?? "",
             ...(ctx.auth.proposal ? { proposalChild: ctx.auth.proposal.child } : {}),
+            ...(ctx.auth.contribute
+              ? { contribAgent: ctx.auth.contribute.namespace, pushOrigin: publicUrl(ctx.request, ctx.app.config.url).origin }
+              : {}),
           }),
           ...cap,
         },
@@ -1582,6 +1592,8 @@ export function buildRouter(): Router<Handler> {
     "/:owner/:name/settings/proposal-tokens/:id/delete",
     proposalTokenRevoke,
   );
+  router.add("POST", "/:owner/:name/settings/contribute-tokens/open", contributeOpenSet);
+  router.add("POST", "/:owner/:name/settings/contribute-tokens/:id/delete", contributeTokenRevoke);
   router.add("GET", "/:owner/:name/settings/app", appSettingsPage);
   router.add("GET", "/:owner/:name/settings/app/traffic", appSourcesPage);
   router.add("GET", "/:owner/:name/settings/app/statement", statementPage);
@@ -1787,8 +1799,11 @@ async function withGitAccess(
   if (write) {
     if (!ctx.auth.user) return gitChallenge();
     if (isPacksMirror(repo) && canRead(ctx.app.db, repo, ctx.auth.user)) return gitRefused(ctx, MIRROR_PUSH_REFUSED);
+    // An outside agent's token may push its one repository;
+    // which refs is the hook's (`contribAgent`).
+    const outside = ctx.auth.contribute?.repoId === repo.id && takesOutside(ctx.app, repo);
     if (
-      !canWrite(ctx.app.db, repo, ctx.auth.user) ||
+      !(outside || canWrite(ctx.app.db, repo, ctx.auth.user)) ||
       !scopeAllows(ctx.auth.scope ?? "ro", "rw")
     ) {
       return notFound();
@@ -1805,6 +1820,22 @@ async function withGitAccess(
   const refused = await storageRefusal(ctx.app, user, repo.ownerId, repo);
   if (refused !== undefined) return gitRefused(ctx, storageRefusedText(refused));
   const cap = await pushCap(ctx.app, user, repo.ownerId, repo);
+  // An outside agent's push is small: git stops reading past the cap and says the number.
+  if (ctx.auth.contribute !== undefined) {
+    // Merged into whatever pushCap set: its own cap is read by key, ours appended at COUNT
+    // (a later value of a key wins in git).
+    const n = Number(cap.GIT_CONFIG_COUNT ?? "0");
+    let room = CONTRIBUTE_PUSH_MAX_BYTES;
+    for (let i = 0; i < n; i++)
+      if (cap[`GIT_CONFIG_KEY_${i}`] === "receive.maxInputSize")
+        room = Math.min(room, Number(cap[`GIT_CONFIG_VALUE_${i}`] ?? Infinity));
+    // index-pack (unpackLimit 1), not unpack-objects, is the one whose refusal names the size.
+    cap[`GIT_CONFIG_KEY_${n}`] = "receive.maxInputSize";
+    cap[`GIT_CONFIG_VALUE_${n}`] = String(room);
+    cap[`GIT_CONFIG_KEY_${n + 1}`] = "receive.unpackLimit";
+    cap[`GIT_CONFIG_VALUE_${n + 1}`] = "1";
+    cap.GIT_CONFIG_COUNT = String(n + 2);
+  }
   const served = await serve(dir, repo.id, cap);
   return ctx.request.method === "POST" && served.body !== null
     ? new Response(afterBody(served.body, () => storageChanged(ctx.app, repo.ownerId)), served)
@@ -2108,6 +2139,22 @@ async function handleHook(app: App, request: Request): Promise<Response> {
           { status: 403 },
         );
       }
+      // An outside agent's token pushes inside `contrib/<agent>/` and nowhere else.
+      if (
+        input.contribAgent !== undefined &&
+        !inContribNamespace(update.ref, input.contribAgent)
+      ) {
+        return new Response(
+          `${update.ref}: this token pushes only contrib/${input.contribAgent}/… branches`,
+          { status: 403 },
+        );
+      }
+      // New branches of an outside agent's open pulls: the push is refused, with the
+      // number, when its caps are spent or it makes more branches than there is room for.
+      if (input.contribAgent !== undefined && actor !== undefined) {
+        const spent = contribPushRefusal(app, repo, actor.id, input.updates);
+        if (spent !== undefined) return new Response(spent, { status: 403 });
+      }
       // The pull namespace belongs to the forge, never to pushers.
       if (update.ref.startsWith("refs/pull/")) {
         return new Response(`${update.ref}: refs/pull/* is reserved`, {
@@ -2205,6 +2252,24 @@ async function handleHook(app: App, request: Request): Promise<Response> {
     );
   }
 
+  // An outside agent's push opens its pull (or finds it) and prints where it is.
+  let printed = "";
+  if (input.contribAgent !== undefined) {
+    const origin = (() => {
+      try {
+        return new URL(input.pushOrigin ?? "").origin;
+      } catch {
+        return app.config.url !== undefined ? new URL(app.config.url).origin : `http://localhost:${app.config.port}`;
+      }
+    })();
+    const actor = input.actorId ? getUserById(app.db, input.actorId) : undefined;
+    printed = (await contribPushPulls(app, repo, actor, input.updates, origin)
+      .catch((error) => {
+        app.log.warn("could not open the outside agent's pull", { repo: `${repo.ownerName}/${repo.name}`, error: String(error) });
+        return [];
+      })).join("\n");
+  }
+
   // post-receive: the push is durable — record it and wake listeners.
   app.bus.append({
     kind: "push",
@@ -2247,7 +2312,7 @@ async function handleHook(app: App, request: Request): Promise<Response> {
       error: String(error),
     }),
   );
-  return new Response("");
+  return new Response(printed);
 }
 
 // ---- wiring ----
@@ -3019,6 +3084,9 @@ async function answerGet(
   // request it makes ends here, before the limiter or any handler.
   const proposalRefusal = proposalGate(app, request, url, auth);
   if (proposalRefusal !== undefined) return proposalRefusal;
+  // An outside agent's token reaches public reads and its one repository.
+  const contributeRefusal = contributeGate(app, request, url, auth);
+  if (contributeRefusal !== undefined) return contributeRefusal;
   // A crew run's token reaches its own repository and nothing else.
   const runRefusal = runGate(app, request, url, auth);
   if (runRefusal !== undefined) return runRefusal;

@@ -10,6 +10,7 @@
 import { PUBLIC_VISIBLE } from "./visibility.ts";
 import type { Database } from "bun:sqlite";
 import { id } from "../kernel/id.ts";
+import { clearFires } from "./feature_fires.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { PreviewData } from "../apps/data.ts";
 
@@ -235,7 +236,7 @@ export function deleteApp(db: Database, appId: string): boolean {
     db.run("DELETE FROM app_vital WHERE app_id = ?1", [appId]);
     db.run("DELETE FROM app_feature WHERE app_id = ?1", [appId]);
     db.run("DELETE FROM app_feature_setting WHERE app_id = ?1", [appId]);
-    db.run("DELETE FROM feature_fire WHERE app_id = ?1", [appId]);
+    clearFires(db, appId);
     db.run("DELETE FROM pull_run WHERE app_id = ?1", [appId]);
     for (const t of ["timer", "timer_run", "timer_sync"]) db.run(`DELETE FROM ${t} WHERE app_id = ?1`, [appId]);
     return db.query("DELETE FROM app WHERE id = ?1").run(appId).changes > 0;

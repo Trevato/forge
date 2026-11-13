@@ -42,6 +42,36 @@ export function measureOf(event: Record<string, unknown>, now: Date): Measure | 
   };
 }
 
+/**
+ * How long a measurement is believed. The provider only reports a window when
+ * a threshold is near, so a reading of 99% is never followed by "you are at
+ * 5% again": on 2026-11-13 the owner reset his week and the forge held the
+ * crew at "99% used" for twenty hours, and a held crew makes no run that
+ * could hear otherwise. Past this age the reading is dropped; the next run
+ * is the probe, and if the limit is real the provider says so again.
+ */
+export const MEASURE_TRUST_MS = 6 * 3_600_000;
+
+/**
+ * The window a `rate_limit_event` speaks of when it carries NO utilization:
+ * the provider's way of saying that window is under its thresholds. A stored
+ * reading for it is then stale.
+ */
+export function clearedOf(event: Record<string, unknown>): LimitWindow | undefined {
+  if (event["type"] !== "rate_limit_event") return undefined;
+  const info = event["rate_limit_info"];
+  if (typeof info !== "object" || info === null) return undefined;
+  const i = info as Record<string, unknown>;
+  if (typeof i["utilization"] === "number") return undefined;
+  if (typeof i["status"] === "string" && i["status"] !== "allowed") return undefined;
+  return i["rateLimitType"] === "seven_day" ? "week" : i["rateLimitType"] === "five_hour" ? "5h" : undefined;
+}
+
+/** Drop the stored reading of a window: the provider has since said it is under its thresholds. */
+export function forgetMeasure(db: Database, subscriptionId: string, window: LimitWindow): void {
+  db.query("DELETE FROM subscription_measure WHERE subscription_id = ?1 AND span = ?2").run(subscriptionId, window);
+}
+
 /** The newest word for a window replaces the last; an unknown subscription is ignored. */
 export function noteMeasure(db: Database, subscriptionId: string, m: Measure): void {
   db.query(
@@ -60,5 +90,6 @@ export function measureFor(db: Database, subscriptionId: string, window: LimitWi
     )
     .get(subscriptionId, window);
   if (row === null || Date.parse(row.resets_at) <= now.getTime()) return null;
+  if (now.getTime() - Date.parse(row.observed_at) > MEASURE_TRUST_MS) return null;
   return { window, usedPct: row.used_pct, resetsAt: row.resets_at, observedAt: row.observed_at };
 }

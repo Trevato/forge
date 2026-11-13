@@ -19,7 +19,8 @@ import {
   provenanceFacts,
 } from "../../actions/features.ts";
 import { runNow } from "../../apps/feature_run.ts";
-import { runtimeReach, scheduleMeta, type Reach } from "../../apps/feature_schedule.ts";
+import { runtimeReach, scheduleMeta, scheduleWhen, type Reach } from "../../apps/feature_schedule.ts";
+import type { Run } from "../../core/feature_fires.ts";
 import { getAppBySlug, type AppRecord } from "../../core/apps.ts";
 import { DAYS } from "../../apps/feature.ts";
 import type { FeedItem } from "../../feed/rank.ts";
@@ -186,6 +187,21 @@ function typedValue(s: SettingView, raw: unknown): string {
   return text;
 }
 
+/** Rows of a tool's history shown at once on the page; the older ones are behind a disclosure. */
+const HISTORY_SHOWN = 5;
+
+/** The history (already in tool order, newest first) as one list per tool. */
+function historyByTool(history: readonly Run[]): [string, Run[]][] {
+  const by = new Map<string, Run[]>();
+  for (const r of history) by.set(r.tool, [...(by.get(r.tool) ?? []), r]);
+  return [...by];
+}
+
+const historyRow = (r: Run) => row({
+  title: html`${r.how}`,
+  meta: html`${time(new Date(r.at).toISOString(), { date: true })} · ${r.ok ? "ok" : html`<span class="danger">${r.error ?? "failed"}</span>`}${r.how === "skipped" ? "" : ` · ${r.durationMs} ms`}`,
+});
+
 function featureView(ctx: Ctx, f: FeatureView, refused?: Refused, items: readonly FeedItem[] = []): Response {
   const base = `/settings/features/${encodeURIComponent(f.slug)}`;
   const settings = f.settings.map((shown) => {
@@ -229,10 +245,17 @@ function featureView(ctx: Ctx, f: FeatureView, refused?: Refused, items: readonl
     ${when(f.schedule.length > 0, () => html`<section class="settings-block">
       <h3>Scheduled</h3>
       <ul class="list">${f.schedule.map((x) => row({
-        title: html`<span class="mono">${x.tool}</span> every ${x.every}`,
+        title: html`<span class="mono">${x.tool}</span> ${scheduleWhen(x)}`,
         meta: html`${scheduleMeta(x).map((p) => typeof p === "string" ? p : "error" in p ? html`<span class="danger">${p.error}</span>` : "last" in p ? time(new Date(p.last).toISOString()) : time(new Date(p.next).toISOString(), { date: true }))}`,
         trail: html`<form method="post" action="${base}/run/${encodeURIComponent(x.tool)}">${btn("Run now", { label: `Run ${x.tool} now` })}</form>`,
       }))}</ul>
+    </section>`)}
+    ${when(f.history.length > 0, () => html`<section class="settings-block">
+      <h3>Run history</h3>
+      ${historyByTool(f.history).map(([tool, runs]) => html`<h4 class="mono">${tool}</h4>
+      <ul class="list">${runs.slice(0, HISTORY_SHOWN).map(historyRow)}</ul>
+      ${when(runs.length > HISTORY_SHOWN, () => html`<details><summary>${runs.length - HISTORY_SHOWN} older</summary>
+      <ul class="list">${runs.slice(HISTORY_SHOWN).map(historyRow)}</ul></details>`)}`)}
     </section>`)}
     <p class="muted small">
       Saving restarts ${f.name}: its process reads each setting as an environment variable, named on the right.

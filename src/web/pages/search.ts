@@ -668,6 +668,15 @@ const DESTRUCTIVE: {
     }),
   },
   {
+    pattern: /^\/([^/]+)\/([^/]+)\/settings\/contribute-tokens\/([^/]+)\/delete$/,
+    describe: (m) => ({
+      verb: "Revoke",
+      title: "Revoke this outside agent's token?",
+      detail: `The agent can no longer push contrib/<name>/… branches or open pulls on ${m[1]}/${m[2]}. Pulls it already opened stay.`,
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/mirror\/stop$/,
     describe: (m, ctx) => {
       // The mirror's name is read fresh, and only for someone who could

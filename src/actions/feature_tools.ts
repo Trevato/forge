@@ -7,6 +7,7 @@
  */
 
 import type { App } from "../app.ts";
+import { runRecorded } from "../apps/feature_schedule.ts";
 import { callTool } from "../apps/feature_tools.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { getAbsorbed } from "../core/features.ts";
@@ -37,6 +38,15 @@ export async function callFeatureTool(
   if (port === undefined) return refuse("not_running", "The app is not running.");
   // A plan is told only once the call could be made: allowed, absorbed, running.
   if (spec.writes && dryRun) return ok({ planned: `Would call ${tool} on ${found.record.slug}: ${spec.description} Send dryRun: false to do it.` });
-  const answer = await callTool(port, tool, args);
-  return answer.ok ? ok({ answer: answer.value }) : refuse("failed", answer.error);
+  // A tool the schedule names is the same recorded run as the schedule's and the page's, so it
+  // shows in the tool's line and history; any other tool (a read like `latest`) is called and not
+  // recorded.
+  const scheduled = declared.ok && declared.value?.schedule.some((e) => e.tool === tool) === true;
+  if (!scheduled) {
+    const answer = await callTool(port, tool, args);
+    return answer.ok ? ok({ answer: answer.value }) : refuse("failed", answer.error);
+  }
+  const ran = await runRecorded(app.db, found.record.id, tool, port, args, "mcp");
+  if (!ran.ran) return refuse("failed", `${tool} is already running.`);
+  return ran.answer.ok ? ok({ answer: ran.answer.value }) : refuse("failed", ran.answer.error);
 }

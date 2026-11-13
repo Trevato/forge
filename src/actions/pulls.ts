@@ -128,6 +128,11 @@ async function proposalRoute(
 }
 
 export interface OpenPullInput {
+  /**
+   * Set by the handler for an outside agent's contribute token (`http/api.ts`):
+   * its limits are the token's, not a guest's.
+   */
+  outsideAgent?: boolean;
   title: string;
   body?: string;
   baseBranch: string;
@@ -173,6 +178,7 @@ export async function openPull(
   // A guest who cannot write here sends from their own contribution fork, and
   // a low number of pulls a day. Asked first, so a mirror's path never starts.
   const guest =
+    input.outsideAgent !== true &&
     !requireAbility(app, user.value, "make_it_yours").ok &&
     (!canWrite(app.db, baseRepo, user.value) || isContributionFork(app.db, baseRepo.id))
       ? takeGuestPull(app, user.value, baseRepo, input.headRepo, Date.now())

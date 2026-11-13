@@ -28,7 +28,7 @@ import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { ownRepoPath } from "./own_repo.ts";
 import { BUDGETS } from "./budgets.ts";
 import { openDbFiles } from "./file_modes.ts";
-import { dbFile, dbGrowth, dbSizeNeed, fileBytes } from "../system/db_size.ts";
+import { dbFile, dbGrowth, dbSize, dbSizeNeed, fileBytes, type DbWalk } from "../system/db_size.ts";
 import { backupVerdict, isWatched } from "../snapshot/bucket.ts";
 import { lastDrill } from "../snapshot/drills.ts";
 import { lastMirror, mirrorNeed } from "../snapshot/mirror.ts";
@@ -141,6 +141,11 @@ export interface VitalsInput {
   readonly disk?: (dir: string) => DiskReading;
   /** The free-disk share below which the disk is a need; `DISK_FREE_MIN` unless a test says. */
   readonly diskFreeMin?: number;
+  /**
+   * The last walk of the database file, asked for only while a db-size need
+   * fires; `dbSize.last` unless a test gives one.
+   */
+  readonly dbWalk?: (db: Database, dataDir: string) => DbWalk | null;
   /** One forge's own signals (`App.signals`). */
   readonly signals: { errors: ErrorLedger; refused: RefusedLedger };
   /** Where snapshots go: the directory, when the store is one, and whether an off-box mirror copies them. */
@@ -370,9 +375,13 @@ export function vitals(input: VitalsInput): Vitals {
   for (const file of openDbFiles(input.dataDir))
     need(`file:${file.name}`, file.sentence, undefined, "/settings/capacity");
 
-  // A database past the 2 GiB Bun maps, or growing faster than 64 MiB a day, is said (#12010).
+  // A database past the 2 GiB Bun maps, or growing faster than 64 MiB a day, is said (#12010),
+  // with what fills it from the last walk once there is one (#12051): the sentence is the
+  // Sentinel issue's evidence, so it names the tables. The walk is only asked for then.
   const dbBytes = fileBytes(dbFile(input.dataDir));
-  const dbBig = dbSizeNeed(dbBytes, dbGrowth(input.db, dbBytes, now));
+  const dbGrows = dbGrowth(input.db, dbBytes, now);
+  let dbBig = dbSizeNeed(dbBytes, dbGrows);
+  if (dbBig !== undefined) dbBig = dbSizeNeed(dbBytes, dbGrows, (input.dbWalk ?? dbSize.last)(input.db, input.dataDir));
   if (dbBig !== undefined) need(dbBig.cause, dbBig.sentence, undefined, "/system");
 
   // Snapshots on the volume they copy, and no mirror, share its one point of failure.

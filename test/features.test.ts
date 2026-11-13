@@ -362,6 +362,22 @@ describe("absorbing an app", () => {
     expect(idle.ok && idle.value.schedule[0]!.line).toBe("scan every 1h · never run · next soon");
   });
 
+  test("the page words a clock-time schedule in its zone, and groups the run history per tool, the older ones behind a disclosure", async () => {
+    const clock = JSON.stringify({ app: { run: "x" }, feature: { ...FEATURE, schedule: [{ tool: "scan", at: "07:15", tz: "America/Chicago" }] } });
+    await commitToBranch(app, cy, repo, { message: "clock", files: [{ path: "forge.json", content: clock }] });
+    for (let i = 0; i < 7; i++) recordFire(app.db, appId, { tool: "scan", at: Date.now() - (10 - i) * 60_000, ok: i !== 6, error: i === 6 ? "<i>boom</i>" : null, durationMs: 5 }, "page");
+    const page = await (await web(adaCookie, "/settings/features/radar")).text();
+    expect(page).toMatch(/at 07:15 America\/Chicago/);
+    expect(page).not.toMatch(/every 1h/);
+    expect(page).toContain("<h3>Run history</h3>");
+    expect(page.match(/<h4 class="mono">scan<\/h4>/g)).toHaveLength(1);
+    expect(page).toContain("2 older</summary>");
+    expect(page).toContain("&lt;i&gt;boom&lt;/i&gt;");
+    expect(page).not.toContain("<i>boom");
+    clearFires(app.db, appId);
+    await commitToBranch(app, cy, repo, { message: "back", files: [{ path: "forge.json", content: FORGE_JSON }] });
+  });
+
   test("the features tool with a slug says each scheduled tool's last and next run, as the page does", async () => {
     const at = Date.now() - 120_000;
     recordFire(app.db, appId, { tool: "scan", at, ok: false, error: "the app answered 500", durationMs: 7 });
@@ -825,9 +841,19 @@ describe("absorbing an app", () => {
       const done = await mcpTool(servers.url, cyRw, "features", { slug: "radar", tool: "scan", args: { depth: 2 }, dryRun: false });
       expect(done.value).toEqual({ tool: "scan", result: { found: 3 } });
       expect(hits).toEqual(['/forge/tools/scan {"args":{"depth":2}}']);
+      // The call is a recorded run: it is the tool's last fire, in its line and its history,
+      // started by mcp.
+      const after = await getFeature(app, ada, "radar");
+      expect(after.ok && after.value.fires.map((f) => [f.tool, f.ok])).toEqual([["scan", true]]);
+      expect(after.ok && after.value.history.map((r) => [r.tool, r.how, r.ok])).toEqual([["scan", "mcp", true]]);
+      expect(after.ok && after.value.schedule[0]!.line).toMatch(/^scan every 1h · last \d\d:\d\d, ok · \d+ ms · next \d\d:\d\d$/);
       // A reader still reads with a read tool.
       const read = await mcpTool(servers.url, bobRw, "features", { slug: "radar", tool: "latest" });
       expect(read.value).toEqual({ tool: "latest", result: { found: 3 } });
+      // A tool the schedule does not name is not a recorded run: history keeps only the scheduled
+      // one.
+      const kept = await getFeature(app, ada, "radar");
+      expect(kept.ok && kept.value.history.map((r) => r.tool)).toEqual(["scan"]);
       // A stopped app is told nothing of a plan.
       serving(false);
       const stopped = await mcpTool(servers.url, cyRw, "features", { slug: "radar", tool: "scan" });

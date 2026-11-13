@@ -331,22 +331,52 @@ export function dbGrowth(db: Database, bytesNow: number, now: number = Date.now(
   };
 }
 
-/** One sentence for the vitals when the file is past the map's cap or grows too fast. */
+/** Bytes said short: GiB with one decimal from 1 GiB, else whole MiB. */
+const sizeSaid = (n: number): string => (n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GiB` : `${Math.round(n / 1024 ** 2)} MiB`);
+
+/** Rows said short: 812, 41k, 3.2M. */
+const rowsSaid = (n: number): string =>
+  n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n);
+
+/** How many tables the alarm names. */
+export const NEED_TABLES = 5;
+
+/**
+ * What fills the file, from a walk (#12051): its five largest tables, their
+ * bytes and rows, and the freelist, as of the walk's own time, since the walk
+ * may be up to an hour old.
+ */
+export function walkSaid(walk: DbWalk): string {
+  const tables = walk.tables
+    .slice(0, NEED_TABLES)
+    .map((t) => `${t.name} ${sizeSaid(t.bytes)} (${rowsSaid(t.rows)} rows)`)
+    .join(", ");
+  return `as of ${walk.at.slice(11, 16)}Z its largest tables are ${tables}; ${sizeSaid(walk.freeBytes)} free.`;
+}
+
+/**
+ * One sentence for the vitals when the file is past the map's cap or grows
+ * too fast. With a walk it names what fills the file, so the alarm (and the
+ * Sentinel issue that quotes it) carries its own evidence; without one it
+ * points at /system.
+ */
 export function dbSizeNeed(
   fileBytes: number,
   growth: Pick<DbGrowth, "perDay" | "days">,
+  walk: DbWalk | null = null,
 ): { cause: "db-size" | "db-growth"; sentence: string } | undefined {
   const gib = (n: number): string => (n / 1024 ** 3).toFixed(1);
   const mib = (n: number): string => String(Math.round(n / 1024 ** 2));
+  const tail = walk === null || walk.tables.length === 0 ? "; /system names its largest tables." : `: ${walkSaid(walk)}`;
   if (fileBytes > DB_FILE_CAP)
     return {
       cause: "db-size",
-      sentence: `The database is ${gib(fileBytes)} GiB, past the 2 GiB Bun maps; /system names its largest tables.`,
+      sentence: `The database is ${gib(fileBytes)} GiB, past the 2 GiB Bun maps${tail}`,
     };
   if (growth.perDay !== null && growth.perDay > DB_GROWTH_MAX)
     return {
       cause: "db-growth",
-      sentence: `The database grows ${mib(growth.perDay)} MiB a day over ${growth.days} days, past the ${mib(DB_GROWTH_MAX)} MiB a day worth a look; /system names its largest tables.`,
+      sentence: `The database grows ${mib(growth.perDay)} MiB a day over ${growth.days} days, past the ${mib(DB_GROWTH_MAX)} MiB a day worth a look${tail}`,
     };
   return undefined;
 }
@@ -392,6 +422,14 @@ export function dbSizeCache(
     return { fileBytes: file, walBytes: fileBytes(`${dbFile(dataDir)}-wal`), growth: dbGrowth(db, file, clock()), walk: w };
   };
   return {
+    /**
+     * The last walk alone, for the vitals' db-size alarm (#12051); a new walk
+     * starts behind it when that is an hour old, never waited on.
+     */
+    last(db: Database, dataDir: string, log?: Warn): DbWalk | null {
+      if (due(dataDir)) void refresh(db, dataDir, log);
+      return current(dataDir);
+    },
     /** The size now with the last walk; a new walk starts behind it when that is an hour old. */
     peek(db: Database, dataDir: string, log?: Warn): DbSize {
       if (due(dataDir)) void refresh(db, dataDir, log);

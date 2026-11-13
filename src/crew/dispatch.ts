@@ -24,6 +24,7 @@ import { tmpdir } from "node:os";
 import { emailVerified } from "../core/verify.ts";
 import { rmSync } from "node:fs";
 import type { App } from "../app.ts";
+import { landedPullOf, settleLanded } from "./interrupted.ts";
 import { transact } from "../kernel/db.ts";
 import { addComment } from "../actions/issues.ts";
 import { planAnotherRound } from "../actions/give_back.ts";
@@ -1454,6 +1455,15 @@ function stoppedForMemory(app: App, run: Run): boolean {
  * graceful stop for a restart carries the count over and starts at once.
  */
 export function requeue(app: App, run: Run, why: string, interrupted: boolean, now = Date.now()): void {
+  // A run whose pull landed is done, not interrupted, and is not queued again (#12049).
+  const landed = landedPullOf(app.db, run);
+  if (landed !== undefined) {
+    if (settleLanded(app.db, run.id, landed)) {
+      const done = getRun(app.db, run.id);
+      if (done) announceRun(app, done);
+    }
+    return;
+  }
   const interruptions = run.interruptions + (interrupted ? 1 : 0);
   if (interrupted && interruptions > MAX_INTERRUPTIONS) {
     finishRun(app.db, run.id, { state: "failed", summary: INTERRUPTED_OUT });

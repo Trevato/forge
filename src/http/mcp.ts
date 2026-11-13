@@ -34,6 +34,7 @@ import { TOKEN_FREE_TOOLS } from "../core/mcp_card.ts";
 import { proofOf } from "./report_filer.ts";
 import { fileReport } from "../actions/reports.ts";
 import { START_HINT, START_WORDS, startBuilding } from "../actions/start.ts";
+import { CONTRIBUTE_TOKEN_HINT, CONTRIBUTE_TOKEN_WORDS, mintContributeToken } from "../actions/contribute_token.ts";
 import { REPORT_RECEIVED } from "../actions/report_words.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 import { everydayOf } from "../core/everyday.ts";
@@ -317,8 +318,8 @@ export const START_TOOL = {
       description: { type: "string", maxLength: 2000 },
       agent: { type: "string", maxLength: 64 },
       code: { type: "string", maxLength: 100 },
+      action: { type: "string", enum: ["contribute"] },
     },
-    required: ["name"],
   },
 } as const;
 
@@ -408,6 +409,16 @@ async function startAnswer(ctx: Ctx, id: unknown, args: Args): Promise<unknown> 
     id,
     result: { content: [{ type: "text", text: t }], ...(isError ? { isError } : {}) },
   });
+  if (args["action"] === "contribute") {
+    const made = await mintContributeToken(ctx.app, args, clientBucket(ctx.request), ctx.url.origin);
+    if (made.ok) return text(JSON.stringify(made.value));
+    const said = CONTRIBUTE_TOKEN_WORDS[made.error.error];
+    return text(
+      `${made.error.error}: ${said}${made.error.retryAfter === undefined ? "" : ` (try again in ${made.error.retryAfter} seconds)`} ${CONTRIBUTE_TOKEN_HINT}`,
+      true,
+    );
+  }
+  if (typeof args["name"] !== "string") return text(`invalid_name: ${START_WORDS.invalid_name} ${START_HINT}`, true);
   const started = await startBuilding(ctx.app, args, clientBucket(ctx.request), ctx.url.origin);
   if (started.ok) return text(JSON.stringify(started.value));
   const e = started.error;
