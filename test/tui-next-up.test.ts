@@ -138,6 +138,17 @@ describe("next up in the terminal", () => {
     h.stop();
   });
 
+  test("a row a person ranked wears the owner's pick, as on the page", async () => {
+    const h = boot(alice);
+    await h.toNext("alice/plan");
+    const last = order().at(-1)!;
+    expect(rankIssue(forge, alice, repo, last, { to: "top" }).ok).toBe(true);
+    await new Promise((r) => setTimeout(r, 120));
+    await h.press("j", "k");
+    expect(h.text()).toContain("Owner's pick");
+    h.stop();
+  });
+
   test("an unranked row that waits is on the screen, last, and the rank keys still move rows around it", async () => {
     const waiting = open(repo, "Waits on a");
     addDependency(forge.db, getIssue(forge.db, repo.id, waiting)!, getIssue(forge.db, repo.id, n.a!)!, alice.id);

@@ -434,7 +434,7 @@ function freeSlots(app: App, repo: Repo, now: Date): number {
 
 /** The pickable issues in slot order: the order Next up shows. */
 export function inSlotOrder(app: App, repo: Repo, ready: readonly Ranked[], now: Date = new Date()): Ranked[] {
-  const ranked = ranksInRepo(app.db, repo.id);
+  const ranked = ranksInRepo(app.db, repo.id).places;
   const { allowed } = pickFilter(app, repo, ready, now);
   // The order is the one Next up shows (#8826): ranked by place, then the ready order.
   return pickOrder(allowed, ranked, (r) => r.issue.id, [], fromAppIssues(app.db, allowed.map((r) => r.issue.id)));

@@ -37,6 +37,7 @@ export const NEXT_CSS = `[data-next] { overflow-wrap: anywhere; }
 [data-next] .list > li.has-after > .row { flex: 1 1 14rem; }
 [data-next] .row-after { display: flex; flex-wrap: wrap; gap: 6px; max-width: 100%; padding: 0 14px 8px; }
 [data-next] summary h2 { display: inline; margin: 0; }
+[data-next] .mine { font-weight: 600; }
 [data-next] .cut-line { overflow-wrap: anywhere; }`;
 
 export const KEYS_JS = `
@@ -151,6 +152,7 @@ function line(
   cost: number | undefined = undefined,
   position: number | null = null,
   state: string | null = null,
+  mine = false,
 ): Html {
   const r = rows[at]!;
   const n = r.issue.number;
@@ -169,7 +171,7 @@ function line(
     title: r.issue.title,
     titleAttr: r.issue.title,
     lead: html`${position === null ? "·" : String(position)}`,
-    meta: html`${r.role === "blocker" ? "Blocker" : "Enabler"} · #${n}${state === null ? "" : ` · ${state} · ${r.onIt ?? "next"}`} · ${r.roleWhy}${away ? null : html` · <span class="estimate">${rangeWords(priced.find((p) => p.number === n)?.estimate ?? { known: false, samples: 0, basis: "no estimate" })}</span>`}${state !== null || r.onIt === null ? "" : ` · on it: ${r.onIt}`}${r.why === null ? "" : ` · ${r.why}`}`,
+    meta: html`${mine ? html`<span class="mine">Owner's pick</span> · ` : null}${r.role === "blocker" ? "Blocker" : "Enabler"} · #${n}${state === null ? "" : ` · ${state} · ${r.onIt ?? "next"}`} · ${r.roleWhy}${away ? null : html` · <span class="estimate">${rangeWords(priced.find((p) => p.number === n)?.estimate ?? { known: false, samples: 0, basis: "no estimate" })}</span>`}${state !== null || r.onIt === null ? "" : ` · on it: ${r.onIt}`}${r.why === null ? "" : ` · ${r.why}`}`,
     nav: true,
     data: { number: String(n), ...(cost === undefined ? {} : { cost: String(cost) }) },
     ...(controls === null ? {} : { after: controls }),
@@ -207,7 +209,7 @@ export function nextPage(ctx: Ctx): Response {
         ${list.flatMap((_, i) => {
           const at = start + i;
           const mark = at === cut.fits.length && cut.unsure === null && id !== undefined && i > 0 ? [cutMark(cut, false)] : [];
-          return [...mark, line(base, rows, at, writer, back, false, priced, costs?.[at], at + 1, stateWord(rows[at]!, facts(rows[at]!)))];
+          return [...mark, line(base, rows, at, writer, back, false, priced, costs?.[at], at + 1, stateWord(rows[at]!, facts(rows[at]!)), rows[at]!.byOwner)];
         })}
       </ul></details>`;
   const body = html`${repoHeader(ctx, repo, "issues")}

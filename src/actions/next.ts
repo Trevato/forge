@@ -71,7 +71,7 @@ export function rankIssue(
   // The list is ranked down to where it was dropped, and whatever was ranked stays.
   const ranked = ranksInRepo(app.db, repo.id);
   const order = [...rest.slice(0, at), issue, ...rest.slice(at)]
-    .filter((i, n) => n <= at || ranked.has(i.id))
+    .filter((i, n) => n <= at || ranked.places.has(i.id))
     .map((i) => i.id);
   if (place.to !== "not_now" && order.length > MAX_RANKED) return invalid(NEXT_FULL);
   const moved = app.db.transaction((): Result<void, NextError> => {
@@ -82,7 +82,7 @@ export function rankIssue(
       return ok(undefined);
     }
     lift(app.db, repo, issue.id);
-    writeOrder(app.db, repo, order, actor.id);
+    writeOrder(app.db, repo, order, actor.id, undefined, { owner: actor.kind === "user", moved: issue.id });
     return ok(undefined);
   }).immediate();
   if (!moved.ok) return moved;

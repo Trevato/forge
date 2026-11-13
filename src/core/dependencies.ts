@@ -285,6 +285,8 @@ export interface Graph {
   readonly first?: ReadonlyMap<string, string>;
   /** The owner's ranked list (#8694): an issue's place, 1 at the top. Ready, ranked issues go before all else. */
   readonly ranked?: ReadonlyMap<string, number>;
+  /** Of those, the issues a person placed: the planner leaves them where they are. */
+  readonly ownerRanked?: ReadonlySet<string>;
 }
 
 /**
@@ -460,6 +462,7 @@ export function repoGraph(
     else found.set(id, issue);
   }
   for (const [id, issue] of getIssuesByIds(db, strays)) found.set(id, issue);
+  const ranks = ranksInRepo(db, repoId);
   const issues = [...found.values()]
     .filter(
       (i) =>
@@ -490,7 +493,8 @@ export function repoGraph(
         ? raisedAt(db, issues.map((i) => i.id))
         : raisedInRepo(db, repoId),
     flow: flowLabelled(db, repoId),
-    ranked: ranksInRepo(db, repoId),
+    ranked: ranks.places,
+    ownerRanked: ranks.owners,
     first:
       whole === undefined
         ? firstAt(db, issues.map((i) => i.id))

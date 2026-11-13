@@ -38,6 +38,8 @@ export interface NextRow {
   readonly roleWhy: string;
   /** Place on the owner's list, 1 at the top; null for ready work nobody ranked. */
   readonly place: number | null;
+  /** True when a person chose that place: the planner leaves it. */
+  readonly byOwner: boolean;
   /** Who is on it: the crew member running it, else its assignee. */
   readonly onIt: string | null;
   /** In one line, why it cannot start yet; null when it can. A ready row has one whenever a builder will not start it. */
@@ -151,6 +153,7 @@ export function nextUp(
       issue,
       ...roleOf(holds.get(issue.id)?.size ?? 0, serves.get(issue.id), ranks.has(issue.id)),
       place: ranks.get(issue.id) ?? null,
+      byOwner: graph.ownerRanked?.has(issue.id) ?? false,
       onIt: crew.get(issue.id) ?? issue.assigneeName,
       why,
       state: why === null ? "ready" : blockedByOpen ? "blocked" : "held",

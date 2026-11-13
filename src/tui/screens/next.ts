@@ -97,7 +97,7 @@ export function nextScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       const ends = cut !== undefined && cut.unsure === null && cut.fits.length > 0 && at === cut.fits.length - 1;
       return {
         title: `${at + 1}. #${r.issue.number} ${r.issue.title}`,
-        secondary: r.role === "blocker" ? "Blocker" : "Enabler",
+        secondary: `${r.byOwner ? "Owner's pick · " : ""}${r.role === "blocker" ? "Blocker" : "Enabler"}`,
         meta: [stateWord(r, { stage: stages.get(r.issue.number) ?? "issue", waits: r.waits, held: r.state === "held", onIt: r.onIt !== null }), r.onIt ?? "next", estimate === undefined ? "" : rangeWords(estimate), r.why ?? ""]
           .filter((x) => x !== "")
           .join(" · "),
