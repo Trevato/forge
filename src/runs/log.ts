@@ -20,6 +20,7 @@ import {
   closeSync,
 } from "node:fs";
 import { join } from "node:path";
+import { during } from "../perf/jobs.ts";
 import { redactHeld } from "../kernel/log.ts";
 import { noteActivity } from "./activity.ts";
 
@@ -146,7 +147,7 @@ function enqueue(dataDir: string, runId: string, clean: string): void {
   pendingBytes += clean.length + 1;
   if (pendingBytes >= FLUSH_BYTES) flushRunLogs();
   else if (flushTimer === undefined) {
-    flushTimer = setTimeout(flushRunLogs, FLUSH_MS);
+    flushTimer = setTimeout(() => void during("run-log-flush", flushRunLogs), FLUSH_MS);
     flushTimer.unref?.();
   }
 }

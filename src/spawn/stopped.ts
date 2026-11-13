@@ -4,6 +4,7 @@
  * backoff and its pages say so instead of "the forge is full".
  */
 import type { App } from "../app.ts";
+import { during } from "../perf/jobs.ts";
 
 export type Stop = { name: string; at: number; why: string; stops: number };
 
@@ -51,7 +52,7 @@ export function noteStop(parent: App, bodyId: string, name: string, why: string,
   s.stops.set(bodyId, stop);
   const was = s.timers.get(bodyId);
   if (was !== undefined) clearTimeout(was);
-  const timer = setTimeout(() => {
+  const timer = setTimeout(() => void during("spawn-restart", () => {
     s.timers.delete(bodyId);
     const restart = s.restart;
     if (restart === undefined) return clearStop(parent, bodyId);
@@ -59,7 +60,7 @@ export function noteStop(parent: App, bodyId: string, name: string, why: string,
       (coming) => coming || clearStop(parent, bodyId),
       () => clearStop(parent, bodyId),
     );
-  }, waitMs ?? backoffMs(stop.stops));
+  }), waitMs ?? backoffMs(stop.stops));
   timer.unref?.();
   s.timers.set(bodyId, timer);
   return stop;
