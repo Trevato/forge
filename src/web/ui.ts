@@ -767,7 +767,12 @@ export function meter(percent: number, label: string, tone?: "attn"): Html {
  * inside `.chart-box`, which a table panel marks `.is-table`.
  */
 export function chartBox(chart: Chart, cells: readonly Cell[], title: string): Html {
-  return html`<div class="chart-box${chart === "table" ? " is-table" : ""}">${raw(drawChart(chart, cells, title))}</div>`;
+  return chartFrame(chart, drawChart(chart, cells, title));
+}
+
+/** The same box around a chart already drawn (`drawChart`'s own markup, from whoever read its rows). */
+export function chartFrame(chart: Chart, drawn: string): Html {
+  return html`<div class="chart-box${chart === "table" ? " is-table" : ""}">${raw(drawn)}</div>`;
 }
 
 /** A short object id in a monospace chip — always the first 7 characters. */

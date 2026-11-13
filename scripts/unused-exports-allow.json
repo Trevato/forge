@@ -85,6 +85,7 @@
   "src/flow/handovers.ts handoversSays",
   "src/flow/keeper.ts listAttempts",
   "src/flow/kpi_words.ts trafficWords",
+  "src/flow/pages.ts usePagesReader",
   "src/flow/reach.ts NO_REACH",
   "src/flow/shared_red.ts sharedRedSays",
   "src/git/coauthors.ts creditsOf",

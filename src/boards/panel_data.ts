@@ -8,7 +8,7 @@
  * checked the asker is an admin.
  */
 import type { Database } from "bun:sqlite";
-import { usesSeries, type Chart } from "./chart.ts";
+import { drawChart, usesSeries, type Cell, type Chart } from "./chart.ts";
 import { BUCKETS, MAX_STEP, oldestTime, runQuery, type Answer, type Bucket, type Row } from "./query.ts";
 import type { Board, Panel } from "./store.ts";
 
@@ -122,6 +122,27 @@ export function panelData(
     if (answer.tooMany !== true || coarser === undefined) return { ok: false, error: answer.error };
     step = coarser;
   }
+}
+
+/** Rows as the cells a chart draws: a null group or series reads "all"/"none". */
+export const cellsOf = (rows: readonly Row[], hrefs: readonly (string | null)[] = []): Cell[] =>
+  rows.map((r, i) => ({
+    label: String(r.group ?? "all"),
+    value: r.value ?? 0,
+    ...(r.series !== undefined ? { series: String(r.series ?? "none") } : {}),
+    ...(hrefs[i] ? { href: hrefs[i]! } : {}),
+  }));
+
+/** A panel as it is drawn: its chart's markup and, for one series over time, its latest value; or why it could not be read. */
+export type PanelDrawn = { ok: true; chart: string; latest: number | null } | { ok: false; error: string };
+
+/** Draw `panel` from its rows: the chart is markup from here on, so whoever reads the rows off the serving thread draws them there too. */
+export function drawnPanel(panel: Panel, answer: PanelData): PanelDrawn {
+  if (!answer.ok) return answer;
+  const newest = panel.chart === "line" || panel.chart === "bar" ? answer.rows[answer.rows.length - 1] : undefined;
+  // One series drawn over time says its latest value beside its name; a split, a table or groups of anything else have no one latest.
+  const latest = newest !== undefined && newest.series === undefined && /^\d{4}-\d{2}-\d{2}/.test(String(newest.group)) ? (newest.value ?? 0) : null;
+  return { ok: true, chart: drawChart(panel.chart, cellsOf(answer.rows), panel.title), latest };
 }
 
 /** A text cell a spreadsheet will not read as a formula, quoted when it holds a comma, quote or newline. */

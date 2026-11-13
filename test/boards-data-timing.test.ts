@@ -29,13 +29,13 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-test("the boards data page names session, query, boards and render once each", async () => {
+test("the boards data page names session, query and render once each (the boards to pin to come from a kept picture, never a read here)", async () => {
   const res = await fetch(`${servers.url}/boards/data`, { headers: { authorization: `Bearer ${bearer}` } });
   await res.arrayBuffer();
   expect(res.status).toBe(200);
   const parts = (res.headers.get("server-timing") ?? "").split(", ");
   const names = parts.map((p) => p.split(";")[0]!);
-  for (const n of ["session", "query", "boards", "render"]) {
+  for (const n of ["session", "query", "render"]) {
     expect(names.filter((x) => x === n).length).toBe(1);
     const part = parts.find((p) => p.startsWith(`${n};`))!;
     expect(Number(/dur=([\d.]+)/.exec(part)?.[1])).not.toBeNaN();

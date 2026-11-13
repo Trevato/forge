@@ -7,22 +7,21 @@
  * narrowed to that point's window and listed by the source's first column.
  * Anyone else gets the not-found page.
  */
-import { CHART_NAMES, CHARTS, formatValue, sayLabels, type Cell, type Chart } from "../../boards/chart.ts";
-import { runFor } from "../../boards/panel_data.ts";
-import { runQuery, type Row } from "../../boards/query.ts";
+import { CHART_NAMES, CHARTS, type Chart } from "../../boards/chart.ts";
+import { dataLink } from "../../boards/answer.ts";
 import { gaps, SYSTEM } from "../../boards/sampler.ts";
 import { SOURCES } from "../../boards/sources.ts";
-import { BUCKET_MS, isBucket, MAX_PARAM, readParams, toQuery, type Bucket, type Params } from "../../boards/params.ts";
+import { BUCKET_MS, MAX_PARAM, readParams, type Bucket, type Params } from "../../boards/params.ts";
 import { fillFromSentence, MODEL_FILLED, unreadWords } from "../../boards/model_fill.ts";
 import { aggregateOption, ask as askOf, columnNote, columnOption, columnWords, unitOf, GUIDE, QUESTIONS, sentence } from "../../boards/guide.ts";
-import { listAllBoards } from "../../actions/boards.ts";
+import { boardsKept, isFailed, LONG_WAIT_MS, PAGE_WAIT_MS, queryPicture, waitAnswer } from "../../flow/pages.ts";
 import type { Ctx } from "../../http/context.ts";
-import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
+import { notePhase, takeSessionTime, timePhaseAsync } from "../../core/route_timing.ts";
 import { notFoundPage } from "../chrome.ts";
-import { html, type Html } from "../html.ts";
+import { html, raw, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { btn, card, chartBox, empty, field, selectField } from "../ui.ts";
-import { count, figure, figures, fold } from "../figure.ts";
+import { btn, card, chartFrame, empty, field, selectField } from "../ui.ts";
+import { count, figure, figures, fold, reading, readingFailed, readingReplaceJs } from "../figure.ts";
 import { readForm } from "../form.ts";
 
 const AGGREGATES = ["count", "sum", "avg", "max"] as const;
@@ -31,46 +30,7 @@ const OP_LABEL = { eq: "eq — is", ne: "ne — is not", lt: "lt — below", lte
 /** The fields a panel is made from: its chart and its query. */
 export const PANEL_FIELDS = ["chart", "source", "aggregate", "column", "by", "series", "from", "to", "fcolumn", "fop", "fvalue"] as const;
 
-/** Rows as the cells a chart draws: a null group or series reads "all"/"none". */
-export const cellsOf = (rows: readonly Row[], hrefs: readonly (string | null)[] = []): Cell[] =>
-  rows.map((r, i) => ({
-    label: String(r.group ?? "all"),
-    value: r.value ?? 0,
-    ...(r.series !== undefined ? { series: String(r.series ?? "none") } : {}),
-    ...(hrefs[i] ? { href: hrefs[i]! } : {}),
-  }));
-
-const link = (p: Params) => {
-  const s = new URLSearchParams();
-  for (const [k, v] of Object.entries(p)) if (v !== "") s.set(k, v);
-  return `/boards/data?${s}`;
-};
-
-/**
- * The rows behind one point, or null when the point has no rows to name (a
- * null group). The user's own filter stays; a column group joins it as a
- * second filter (`gcolumn`/`gvalue`), a bucket group as a time window. The
- * rows view counts rows by the source's first column, so it lists that
- * column's values, not whole rows.
- */
-function behind(p: Params, row: Row): string | null {
-  const { group } = row;
-  const first = Object.keys(SOURCES[p.source]!.columns)[0]!;
-  const rows = { ...p, rows: "1", by: first, aggregate: "count", column: "", series: "" };
-  if (!isBucket(p.by)) {
-    // A column group and a series would be two filters beside the user's; the rows view says one.
-    if (group === null || row.series !== undefined) return null;
-    return link({ ...rows, gcolumn: p.by, gvalue: String(group) });
-  }
-  if (typeof group !== "string") return null;
-  if (row.series === null) return null;
-  const start = new Date(group);
-  return link({
-    ...rows,
-    from: start.toISOString(), to: new Date(start.getTime() + BUCKET_MS[p.by]).toISOString(),
-    ...(row.series === undefined ? {} : { gcolumn: p.series, gvalue: String(row.series) }),
-  });
-}
+const link = dataLink;
 
 /**
  * Ready-made queries over the machine's cores and thermometers, from `now`:
@@ -169,11 +129,25 @@ async function explorer(ctx: Ctx, user: NonNullable<Ctx["auth"]["user"]>, asked:
   const modelFilled = filled?.ok === true;
   const p = readParams(filled?.ok ? new URLSearchParams(filled.fill) : ctx.url.searchParams);
   const src = Object.hasOwn(SOURCES, p.source) ? SOURCES[p.source]! : undefined;
-  const answer = timePhase(ctx.request, "query", () =>
-    p.rows === "" ? runFor(ctx.app.db, p.chart, toQuery(p)) : runQuery(ctx.app.db, toQuery(p), { repoIds: "all" }),
-  );
+  // What a "Reading…" page asks: it answers when the worker has the answer, and draws nothing.
+  const waiting = ctx.request.method === "GET" && ctx.url.searchParams.has("wait");
+  // The query is run by a worker and its answer kept: it walks runs, events or samples, and never on this thread.
+  // A sentence a model filled cannot be asked again by address, so its page waits for its answer.
+  const picture = await timePhaseAsync(ctx.request, "query", () => queryPicture(ctx.app, p, waiting || modelFilled ? LONG_WAIT_MS : PAGE_WAIT_MS));
+  if (waiting) return waitAnswer(picture);
+  if (picture === undefined || isFailed(picture)) {
+    const again = link(p);
+    return page({
+      ctx,
+      title: "Explore the data",
+      body: html`<div class="hf bd"><header class="hf-head"><div class="hf-title"><h1>Explore the data</h1></div>
+          <nav class="bd-nav" aria-label="Elsewhere">${btn("All boards", { href: "/boards", variant: "ghost" })}</nav></header>
+        <section class="bd-now">${picture === undefined ? reading(`Reading: ${sentence(p)}`, `${again}&wait=1`, again) : readingFailed(picture.failed, again)}</section></div>`,
+      ...(picture === undefined ? { scriptJs: readingReplaceJs } : {}),
+    });
+  }
+  const answer = picture.answer;
   const rendering = performance.now();
-  let boardsMs = 0;
   const cols = src ? Object.keys(src.columns) : [];
   const named = GUIDE[p.source]?.name ?? p.source;
 
@@ -195,60 +169,21 @@ async function explorer(ctx: Ctx, user: NonNullable<Ctx["auth"]["user"]>, asked:
   let result: Html;
   let facts: Html | null = null;
   let pointsFold: Html | null = null;
-  const cap = (w: string): string => w.charAt(0).toUpperCase() + w.slice(1);
   if (!answer.ok) {
     result = empty({ icon: "activity", title: "That query was refused", note: answer.error });
-  } else if (answer.rows.length === 0) {
+  } else if (answer.points === 0) {
     result = empty({ icon: "activity", title: "No rows", note: "Nothing matches this query. Change the question below, or start from one of the questions above." });
+  } else if (answer.chart === null) {
+    result = html`<p class="bd-sub">The rows behind one point, as the values of ${columnWords(cols[0] ?? "")} with how many rows have each. <a href="${link({ ...p, rows: "" })}">Back to the chart</a>.</p>${raw(answer.table)}`;
   } else {
-    const hrefs = answer.rows.map((r) => (p.rows === "" ? behind(p, r) : null));
-    const points = cellsOf(answer.rows, hrefs);
-    const split = answer.rows[0]?.series !== undefined;
-    const say = sayLabels(points.map((c) => c.label));
-    const where = (i: number): string => `${say(points[i]!.label)}${split ? `, ${points[i]!.series ?? ""}` : ""}`;
-    const table = html`<div class="table-scroll"><table class="table" data-dense id="points">
-        <thead><tr><th scope="col">${cap(columnWords(p.by))}</th>${split ? html`<th scope="col">${cap(columnWords(p.series))}</th>` : null}<th scope="col" class="num">${cap(p.aggregate)}</th></tr></thead>
-        <tbody>
-          ${answer.rows.map(
-            (r, i) => html`<tr>
-              <td ${p.rows === "" ? null : html`class="mono"`}>${hrefs[i] ? html`<a href="${hrefs[i]!}">${say(points[i]!.label)}</a>` : say(points[i]!.label)}</td>
-              ${split ? html`<td>${points[i]!.series ?? ""}</td>` : null}
-              <td class="num">${r.value === null ? "" : count(r.value)}</td>
-            </tr>`,
-          )}
-        </tbody>
-      </table></div>`;
-    if (p.rows !== "") {
-      result = html`<p class="bd-sub">The rows behind one point, as the values of ${columnWords(cols[0] ?? "")} with how many rows have each. <a href="${link({ ...p, rows: "" })}">Back to the chart</a>.</p>${table}`;
-    } else {
-      // The figures name what stands out in the answer: where it is now, its highest and its lowest.
-      let hi = 0;
-      let lo = 0;
-      points.forEach((c, i) => {
-        if (c.value > points[hi]!.value) hi = i;
-        if (c.value < points[lo]!.value) lo = i;
-      });
-      const last = points.length - 1;
-      const timed = isBucket(p.by);
-      const at = (i: number): string => hrefs[i] ?? "#points";
-      facts = figures([
-        // "Latest" is true of a series over time alone; groups of anything else are counted.
-        split || !timed
-          ? figure(split ? "Points" : "Groups", count(points.length), split ? `across ${count(new Set(points.map((c) => c.series)).size)} series` : `one for each ${columnWords(p.by)}`, "#points")
-          : figure("Latest", formatValue(points[last]!.value), where(last), at(last)),
-        figure("Highest", formatValue(points[hi]!.value), where(hi), at(hi)),
-        figure("Lowest", formatValue(points[lo]!.value), where(lo), at(lo)),
-        figure(p.aggregate === "count" || p.aggregate === "sum" ? "In all" : "Points", p.aggregate === "count" || p.aggregate === "sum" ? formatValue(points.reduce((n, c) => n + c.value, 0)) : count(points.length), p.aggregate === "count" || p.aggregate === "sum" ? `over ${count(points.length)} ${points.length === 1 ? "point" : "points"}` : `from ${say(points[0]!.label)} to ${say(points[last]!.label)}`, "#points"),
-      ], "What stands out");
-      result = card(chartBox(p.chart, points, named));
-      if (p.chart !== "table") pointsFold = fold(`The ${count(points.length)} ${points.length === 1 ? "point" : "points"}`, hrefs.some((h) => h !== null) ? "every value, each a link to the rows behind it" : "every value, exactly", table, { id: "points-fold" });
-    }
+    // The worker read the rows and drew them (`boards/answer.ts`): the page frames the chart, the facts and the table.
+    facts = answer.facts === null ? null : figures(answer.facts.map((f) => figure(f.label, f.value, f.note, f.href)), "What stands out");
+    result = card(chartFrame(p.chart, answer.chart));
+    if (p.chart !== "table") pointsFold = fold(`The ${count(answer.points)} ${answer.points === 1 ? "point" : "points"}`, answer.linked ? "every value, each a link to the rows behind it" : "every value, exactly", raw(answer.table), { id: "points-fold" });
   }
 
-  const listing = performance.now();
-  const listed = await timePhaseAsync(ctx.request, "boards", () => listAllBoards(ctx.app, user));
-  boardsMs = performance.now() - listing;
-  const boards = listed.ok ? listed.value : [];
+  // The boards to pin to come from /boards' kept picture, never from git here; before its first reading there is nothing to pin to yet.
+  const boards = await boardsKept(ctx.app);
   const form = fold(
     "Change the question",
     `drawn as a ${CHART_NAMES[p.chart]}; pick the chart, the source, what to count and how to group it`,
@@ -256,7 +191,7 @@ async function explorer(ctx: Ctx, user: NonNullable<Ctx["auth"]["user"]>, asked:
       ${queryFields(p)}
       ${btn("Draw")}
     </form>`,
-    { id: "query", open: !answer.ok || answer.rows.length === 0 },
+    { id: "query", open: !answer.ok || answer.points === 0 },
   );
   const pin =
     boards.length === 0 || !answer.ok
@@ -326,6 +261,6 @@ async function explorer(ctx: Ctx, user: NonNullable<Ctx["auth"]["user"]>, asked:
       <div class="folds">${pointsFold} ${form} ${pin} ${absent} ${sources}</div>
     </div>`,
   });
-  notePhase(ctx.request, "render", Math.max(0, performance.now() - rendering - boardsMs));
+  notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
 }

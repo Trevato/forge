@@ -32,7 +32,6 @@ import {
   OUTFLOW,
   readThroughput,
   stageOf,
-  type StageThroughput,
 } from "../../flow/throughput.ts";
 import { type QueueRow, redBatchWords } from "../../flow/queue.ts";
 import { HOT_PULLS, pullCounts, warmFiles } from "../../crew/hot_files.ts";
@@ -56,7 +55,7 @@ import { gatesSection } from "./boards-gates.ts";
 import { heldCard } from "./boards-held.ts";
 import { badge, card, meter } from "../ui.ts";
 import { count, figure, figures, fold } from "../figure.ts";
-import type { BoardsPicture } from "../../flow/pages_read.ts";
+import { panelFlow, type BoardsPicture, type StageFlow } from "../../flow/pages_read.ts";
 import { sparkline as homeSpark } from "../studio/kpi_row.ts";
 
 /** What the panel draws that is read off the thread: the figures, what each stage let out, what reviewers repeated and why ready issues wait. */
@@ -64,6 +63,9 @@ export type PanelPicture = Pick<BoardsPicture, "fig" | "flow" | "repeats" | "hel
 
 /** The events that move work between stages. The region has no address of its own, so the page's script refetches the page for it at most once in 30 s (`liveRegionsJs`). */
 const FLOW_LIVE = "run.queued,run.started,run.finished,pull.opened,pull.reviewed,pull.merged,pull.closed,queue.*,app.serving";
+
+/** The stage `?out=` asks to list, or null: the one stage whose items a page's picture must carry. */
+export const outAsked = (url: URL): PipelineKey | null => asked(url)?.key ?? null;
 
 /** What `?out=` and `?hour=` ask to list, checked: an unknown stage or hour lists nothing. */
 function asked(url: URL): { key: PipelineKey; hour: number | null } | null {
@@ -85,7 +87,7 @@ const hourWords = (hour: number | null): string =>
  * 24 bars, oldest on the left: a picture only, hidden from assistive tech and
  * out of the tab order. The two counts beside it are the way in (#1786).
  */
-function sparkline(t: StageThroughput): Html {
+function sparkline(t: StageFlow): Html {
   const max = Math.max(1, ...t.hours);
   const bars = t.hours.map((n, hour) => {
     const x = (HOURS - 1 - hour) * 3;
@@ -96,9 +98,8 @@ function sparkline(t: StageThroughput): Html {
 }
 
 /** What a stage let out: the last hour, the day, and the day's 24 hours as bars. Both counts list what they counted. */
-function outCells(base: string, t: StageThroughput): Html {
-  const day = t.items.length;
-  const passed = t.items.filter((i) => i.outcome === "passed").length;
+function outCells(base: string, t: StageFlow): Html {
+  const { day, passed } = t;
   const what = `${OUTFLOW[t.key].label}${t.key === "checking" && day > 0 ? `: ${passed} passed, ${day - passed} failed` : ""}`;
   return html`<td class="num" data-label="Out, 1 h" data-out="${OUTFLOW[t.key].out}">
       <a href="${outHref(base, t.key, 0)}" data-hour="0" title="${what}, in the last hour">${count(t.hours[0] ?? 0)}</a>
@@ -118,15 +119,15 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string, slot
   // A page hands in the picture a worker read (`flow/pages.ts`); only a direct caller (a test) reads it here.
   const pic: PanelPicture = slots.picture ?? {
     fig: panelFigures(app.db, reader.kind, new Date(now)),
-    flow: readThroughput(app.db, stages.map((s) => s.key), new Date(now)),
+    flow: panelFlow(readThroughput(app.db, stages.map((s) => s.key), new Date(now)), asked(url)?.key ?? null),
     repeats: readRepeats(app.db, "", new Date(now), !owner),
     held: readHeld(app, owner, now),
   };
   const { flow, fig } = pic;
   const out = new Map(flow.stages.map((t) => [t.key, t]));
   const landed = out.get("approved");
-  const checked = out.get("checking")?.items ?? [];
-  const passed = checked.filter((i) => i.outcome === "passed").length;
+  const checked = out.get("checking")?.day ?? 0;
+  const passed = out.get("checking")?.passed ?? 0;
   const ready = stages.find((s) => s.key === "ready");
   const conflicted = conflictedSays(fig.conflicted, now);
   const lane = rebaseLaneSays(fig.lane);
@@ -145,13 +146,13 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string, slot
     ["Verified after landing", html`A repository that declares <span class="mono">check.verify</span> in forge.json has its main verified after landing.`],
     ["Elsewhere", html`Limits are set on <a href="/settings/capacity">Capacity</a>. How the forge stands against its threats is on <a href="/resilience">Resilience</a>; where an outside agent can help is on <a href="/contribute">Contribute</a>.`],
   ], helpAsked(url));
-  const landedDay = landed?.items.length ?? 0;
+  const landedDay = landed?.day ?? 0;
   const strip = figures([
     figure("Landed, last hour", html`<span data-landed-hour>${count(landed?.hours[0] ?? 0)}</span>`, html`<span data-landed-day>${count(landedDay)}</span> ${landedDay === 1 ? "change" : "changes"} landed on main in 24 hours`, outHref(base, "approved", null), landed === undefined ? null : homeSpark(landed.hours)),
     figure("Asked to live", html`<span data-median>${flow.medianAskToLiveMs === null ? "—" : span(flow.medianAskToLiveMs)}</span>`, flow.medianAskToLiveMs === null ? "nothing asked for went live in 24 hours" : "median from an ask to it serving, last 24 hours", outHref(base, "live", null)),
     figure("Opened to landed", lead.medianHours === null ? "—" : html`<span data-median-hours>${span(lead.medianHours * 3_600_000)}</span>`, lead.medianHours === null ? "nothing landed in 24 hours" : html`median for a pull; the slowest took <span data-max-hours>${span((lead.maxHours ?? 0) * 3_600_000)}</span>`, outHref(base, "approved", null)),
     figure("Waiting to start", count(ready?.waiting ?? 0), ready === undefined || ready.waiting === 0 ? "no ready issue waits for a builder" : `ready ${ready.waiting === 1 ? "issue" : "issues"}; the oldest has waited ${waited(ready, now) ?? "no time"}`, "#held", null, worst?.key === "ready" ? "attn" : null),
-    figure("Checks passing", checked.length === 0 ? "—" : `${Math.round((passed / checked.length) * 100)}%`, checked.length === 0 ? "no check finished in 24 hours" : `${count(passed)} of ${count(checked.length)} checks passed in 24 hours`, outHref(base, "checking", null), null, checked.length > 0 && passed / checked.length < 0.5 ? "attn" : null),
+    figure("Checks passing", checked === 0 ? "—" : `${Math.round((passed / checked) * 100)}%`, checked === 0 ? "no check finished in 24 hours" : `${count(passed)} of ${count(checked)} checks passed in 24 hours`, outHref(base, "checking", null), null, checked > 0 && passed / checked < 0.5 ? "attn" : null),
   ], "The last 24 hours");
   return html`<div class="bd-live" id="flow-live" data-live="${FLOW_LIVE}">
     <section class="bd-now" id="flow-summary" aria-label="How the pipeline stands">
@@ -353,7 +354,7 @@ function queueCard(rows: readonly QueueRow[]): Html {
 }
 
 /** The items one count counted, newest first, each linked to where it lives. */
-function outList(t: StageThroughput, hour: number | null, now: number): Html {
+function outList(t: StageFlow, hour: number | null, now: number): Html {
   const items = itemsIn(t, hour, now);
   return card(
     html`<h2>${STAGE_LABEL[t.key]}: ${String(items.length)} ${OUTFLOW[t.key].label} ${hourWords(hour)}</h2>
