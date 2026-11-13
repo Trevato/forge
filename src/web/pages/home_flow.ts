@@ -17,8 +17,9 @@
 
 import type { App } from "../../app.ts";
 import { usd } from "../../core/money.ts";
-import { childStandings } from "../../spawn/heartbeat.ts";
-import { childAwake } from "../../spawn/host.ts";
+import { listChildren } from "../../actions/spawn.ts";
+import { lastHeard, MAX_CHILDREN, QUIET_MS } from "../../spawn/heartbeat.ts";
+import { isAwakeBody } from "../../spawn/host.ts";
 import { sparkline } from "../studio/kpi_row.ts";
 import { forgeCeiling } from "../../flow/ceiling.ts";
 import { hoursWords } from "../../flow/lead_time.ts";
@@ -27,6 +28,7 @@ import {
   LANE_HOLDS,
   LANE_NAME,
   lanePicture,
+  warmLanes,
   laneHealth,
   viewFor,
   type Health,
@@ -50,8 +52,8 @@ import { BOOTED } from "../../release/gate.ts";
 import { nowHref } from "./now.ts";
 import { secureFor } from "../../http/cookie_secure.ts";
 import { cookieValue } from "../../http/context.ts";
-import { parseTable, tableRows } from "../../flow/lanes_table.ts";
-import { tableRegion, tableTag, tableTools } from "./home_table.ts";
+import { parseTable, tableParams, tableRows, type TableQuery } from "../../flow/lanes_table.ts";
+import { TABLE_LIVE, tableRegion, tableTag, tableTools } from "./home_table.ts";
 
 /** The median as a person says it: minutes under an hour, else hours. */
 const leadWords = (h: number): string => (h < 1 ? `${Math.max(1, Math.round(h * 60))}m` : hoursWords(h));
@@ -195,7 +197,8 @@ export function laneRegion(
 
 
 /** What the lanes' reading needs of the forge. */
-const optionsOf = (ctx: Ctx): PictureOptions => ({ dataDir: ctx.app.config.dataDir, ceilingUsd: forgeCeiling(ctx.app.config) });
+const pictureOptions = (app: App): PictureOptions => ({ dataDir: app.config.dataDir, ceilingUsd: forgeCeiling(app.config) });
+const optionsOf = (ctx: Ctx): PictureOptions => pictureOptions(ctx.app);
 
 const healthOf = (view: LaneView, picture: LanePicture, now: number): Health => laneHealth(view, { now, builders: picture.builders, moved: picture.moved });
 
@@ -257,6 +260,29 @@ export function stripRegion(picture: LanePicture, dataDir: string, now: number):
   </section>`;
 }
 
+// ---- before the first reading: the same regions, saying so ----
+
+/** A lane before the picture exists: its name, "reading…", and the address that fills it. The page's script fetches that address at once. */
+function readingLane(key: LaneKey, only: string | null, admin: boolean): Html {
+  const scope = only === null ? null : html` data-live-repo="${only}"`;
+  return html`<section class="lane" id="lane-${key}" data-lane="${key}" data-tone="quiet" data-count="" data-reading aria-busy="true"
+    data-live="${LANE_LIVE[key]}" data-live-src="/live/lane?s=${key}${query(only)}"${scope}>
+    <header class="lane-head">
+      <h2 class="lane-name"><a class="lane-name-link" href="${moreHref(key, admin)}" title="${LANE_HOLDS[key]}">${LANE_NAME[key]}</a></h2>
+      <span class="lane-count num" aria-hidden="true">…</span>
+    </header>
+    <p class="lane-health">Reading what the forge is doing…</p>
+  </section>`;
+}
+
+const readingStrip = (): Html =>
+  html`<section class="hf-strip" id="hf-strip" data-reading aria-busy="true" aria-label="Today's figures" data-live="${STRIP_LIVE}" data-live-src="/live/strip"><p class="hf-calm"><span class="dot"></span>Reading today's figures…</p></section>`;
+
+const readingTable = (q: TableQuery): Html => {
+  const params = tableParams(q);
+  return html`<section class="tb-region" id="hf-table" data-reading aria-busy="true" data-live="${TABLE_LIVE}" data-live-src="/live/table${params === "" ? "" : `?${params}`}"><p class="tb-empty">Reading what the forge is doing…</p></section>`;
+};
+
 // ---- hosted forges, in one line ----
 
 interface Forges {
@@ -266,27 +292,72 @@ interface Forges {
   readonly quiet: readonly string[];
 }
 const forgesKept = new WeakMap<App, Forges>();
+const forgesReading = new WeakMap<App, Promise<Forges | undefined>>();
 const FORGES_REUSE_MS = process.env["NODE_ENV"] === "test" ? 0 : 20_000;
 
-async function forgesOf(app: App, now = Date.now()): Promise<Forges> {
-  const kept = forgesKept.get(app);
-  if (kept !== undefined && now - kept.at < FORGES_REUSE_MS) return kept;
-  const { items, more } = await childStandings(app, now);
-  const awakeNow = items.filter((c) => childAwake(app, c.name));
-  // An awake forge that has stopped reporting to this one is the one worth a name.
-  const quiet = awakeNow.filter((c) => c.state === "quiet").map((c) => c.name);
-  const out: Forges = { at: now, total: items.length + more, awake: awakeNow.length, quiet };
-  forgesKept.set(app, out);
-  return out;
+/**
+ * The hosted forges as the ledgers and the last heartbeats say: every file is
+ * read at once (on a cold disk a hundred small reads one after another were
+ * 1.6 s), and awake is a look at what this process holds open, never a read.
+ * One reading at a time; it is started after a response or at boot, never
+ * waited for by a page.
+ */
+function readForges(app: App, now: number): Promise<Forges | undefined> {
+  const going = forgesReading.get(app);
+  if (going !== undefined) return going;
+  const reading = (async (): Promise<Forges | undefined> => {
+    const children = await listChildren(app);
+    const listed = children.slice(0, MAX_CHILDREN);
+    const heard = await Promise.all(listed.map((c) => lastHeard(app, c.name)));
+    const awake = listed.flatMap((c, i) => (isAwakeBody(app, c.bodyId) ? [{ name: c.name, heard: heard[i] }] : []));
+    // An awake forge that has stopped reporting to this one is the one worth a name.
+    const quiet = awake.filter((c) => c.heard !== undefined && now - c.heard.receivedAt > QUIET_MS).map((c) => c.name);
+    const out: Forges = { at: now, total: children.length, awake: awake.length, quiet };
+    forgesKept.set(app, out);
+    return out;
+  })().catch(() => undefined).finally(() => forgesReading.delete(app));
+  forgesReading.set(app, reading);
+  return reading;
 }
 
-export async function forgesRegion(app: App): Promise<Html> {
-  const f = await forgesOf(app);
+/** Start reading the hosted forges now: the forge calls this once it is listening. */
+export function warmHome(app: App): void {
+  if (process.env["NODE_ENV"] === "test") return;
+  warmLanes(app.db, pictureOptions(app), Date.now());
+  void readForges(app, Date.now());
+}
+
+function forgesHtml(f: Forges): Html {
   const words =
     f.total === 0
       ? "No hosted forges yet."
       : `${f.total} hosted ${f.total === 1 ? "forge" : "forges"}: ${f.awake} awake, ${f.total - f.awake} asleep (a sleeping forge wakes when someone opens it). ${f.quiet.length === 0 ? "None is stuck." : `${f.quiet.join(", ")} ${f.quiet.length === 1 ? "is" : "are"} awake but not reporting.`}`;
   return html`<p class="hf-forges" id="hf-forges" data-live="${FORGES_LIVE}" data-live-src="/live/forges" data-tone="${f.quiet.length === 0 ? "ok" : "attn"}"><span class="dot" ${f.quiet.length === 0 ? null : html`data-tone="attn"`}></span><a href="/forges">${words}</a></p>`;
+}
+
+const readingForges = (): Html =>
+  html`<p class="hf-forges" id="hf-forges" data-reading data-live="${FORGES_LIVE}" data-live-src="/live/forges"><span class="dot"></span><span>Reading the hosted forges…</span></p>`;
+
+/**
+ * The hosted forges' line from the last reading, never a probe on a request:
+ * older than 20 s, a new reading starts behind it; before any, the line says
+ * it is reading and the page's script fetches it. A fragment (`wait`) waits
+ * for the reading, off the thread. `bun test` waits, so a test reads what it wrote.
+ */
+export async function forgesRegion(app: App, wait: boolean): Promise<Html> {
+  const now = Date.now();
+  const kept = forgesKept.get(app);
+  if (kept === undefined) {
+    const reading = readForges(app, now);
+    if (!wait && process.env["NODE_ENV"] !== "test") return readingForges();
+    const f = await reading;
+    return f === undefined ? readingForges() : forgesHtml(f);
+  }
+  if (now - kept.at >= FORGES_REUSE_MS) {
+    const reading = readForges(app, now);
+    if (process.env["NODE_ENV"] === "test") return forgesHtml((await reading) ?? kept);
+  }
+  return forgesHtml(kept);
 }
 
 // ---- the page ----
@@ -330,12 +401,14 @@ export async function homeFlowPage(ctx: Ctx): Promise<Response> {
   const now = Date.now();
   const picture = await timePhaseAsync(ctx.request, "picture", () => lanePicture(ctx.app.db, optionsOf(ctx), "page", now));
   const rendering = performance.now();
-  const viewing = timePhase(ctx.request, "viewing", () => viewFor(ctx.app.db, user, picture, view === "table" ? null : only));
-  const strip = user.isAdmin ? stripRegion(picture, ctx.app.config.dataDir, now) : null;
-  const forges = user.isAdmin ? await timePhaseAsync(ctx.request, "forges", () => forgesRegion(ctx.app)) : null;
+  const viewing = picture === undefined ? undefined : timePhase(ctx.request, "viewing", () => viewFor(ctx.app.db, user, picture, view === "table" ? null : only));
+  const strip = !user.isAdmin ? null : picture === undefined ? readingStrip() : stripRegion(picture, ctx.app.config.dataDir, now);
+  const forges = user.isAdmin ? await timePhaseAsync(ctx.request, "forges", () => forgesRegion(ctx.app, false)) : null;
   let main: Html;
-  if (view === "table") {
-    const q = parseTable(ctx.url.searchParams);
+  const q = parseTable(ctx.url.searchParams);
+  if (picture === undefined || viewing === undefined) {
+    main = view === "table" ? html`${tableTools(q)}${readingTable(q)}` : html`<div class="hf-lanes">${LANES.map((k) => readingLane(k, only, user.isAdmin))}</div>`;
+  } else if (view === "table") {
     main = html`${tableTools(q)}${tableRegion(tableRows(viewing, tableInput(picture, now)), q, now)}`;
   } else {
     main = html`<div class="hf-lanes">${LANES.map((k) => laneRegion(viewing.lanes[k], healthOf(viewing.lanes[k], picture, now), only, user.isAdmin, now))}</div>`;
@@ -347,7 +420,7 @@ export async function homeFlowPage(ctx: Ctx): Promise<Response> {
         <p class="hf-live muted" id="hf-live" data-state="connecting"><span class="dot"></span><span class="hf-live-text">Updates as it happens</span></p>
       </div>
       ${viewSwitch(view, only)}
-      ${view === "lanes" ? filterForm(viewing.repos, only) : null}
+      ${view === "lanes" ? filterForm(viewing?.repos ?? [], only) : null}
     </header>
     ${strip}
     ${main}
@@ -383,6 +456,7 @@ export async function liveTableFragment(ctx: Ctx): Promise<Response> {
   const now = Date.now();
   const picture = await timePhaseAsync(ctx.request, "picture", () => lanePicture(ctx.app.db, optionsOf(ctx), "lane", now));
   const rendering = performance.now();
+  if (picture === undefined) return fragment(readingTable(q), { request: ctx.request });
   const tag = tableTag(picture, user.isAdmin ? "admin" : user.id, q, now);
   if (ctx.request.headers.get("if-none-match") === `"${tag}"`) {
     notePhase(ctx.request, "render", performance.now() - rendering);
@@ -413,6 +487,7 @@ export async function liveLaneFragment(ctx: Ctx): Promise<Response> {
   const now = Date.now();
   const picture = await timePhaseAsync(ctx.request, "picture", () => lanePicture(ctx.app.db, optionsOf(ctx), "lane", now));
   const rendering = performance.now();
+  if (picture === undefined) return fragment(readingLane(key, only, user.isAdmin), { request: ctx.request });
   const tag = laneTag(picture, key, user.isAdmin ? "admin" : user.id, only, now);
   if (ctx.request.headers.get("if-none-match") === `"${tag}"`) {
     notePhase(ctx.request, "render", performance.now() - rendering);
@@ -436,7 +511,7 @@ export async function liveStripFragment(ctx: Ctx): Promise<Response> {
   const now = Date.now();
   const picture = await timePhaseAsync(ctx.request, "picture", () => lanePicture(ctx.app.db, optionsOf(ctx), "lane", now));
   const rendering = performance.now();
-  const res = fragment(stripRegion(picture, ctx.app.config.dataDir, now), { request: ctx.request });
+  const res = fragment(picture === undefined ? readingStrip() : stripRegion(picture, ctx.app.config.dataDir, now), { request: ctx.request });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return res;
 }
@@ -450,7 +525,7 @@ export async function liveForgesFragment(ctx: Ctx): Promise<Response> {
     return fragment(html``, { status: 404 });
   }
   const rendering = performance.now();
-  const res = fragment(await timePhaseAsync(ctx.request, "forges", () => forgesRegion(ctx.app)), { request: ctx.request });
+  const res = fragment(await timePhaseAsync(ctx.request, "forges", () => forgesRegion(ctx.app, true)), { request: ctx.request });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return res;
 }

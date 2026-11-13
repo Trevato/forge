@@ -50,6 +50,7 @@ import { checkDue } from "./actions/upstream_follow.ts";
 import { runSync } from "./origins/sync.ts";
 import { runAheadReads } from "./origins/ahead.ts";
 import { runGuardSweep } from "./origins/credential.ts";
+import { warmHome } from "./web/pages/home_flow.ts";
 import { startForgeSsh } from "./tui/ssh.ts";
 import { AppsRuntime, IDLE_PULL_DAYS } from "./apps/runtime.ts";
 import { previewIdleMs } from "./apps/sleep_window.ts";
@@ -393,6 +394,8 @@ const appDomain = appsOn
   : undefined;
 if (appDomain?.ok === true) holdAppHosts(app, appDomain.domain);
 const servers = await serve(app);
+// The home's picture is read by a worker from here, so the first page finds it (web/pages/home_flow.ts).
+warmHome(app);
 const sshStarted =
   sshPort > 0 ? await startForgeSsh(app, { port: sshPort }) : undefined;
 if (sshStarted && !sshStarted.ok)

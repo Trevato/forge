@@ -12,6 +12,8 @@
  *            spent in a lane is always as old as the last thing that happened.
  *   stream   the dot beside the title says whether the stream is connected.
  *   filter   the select lists the other apps only when it is first used.
+ *   reading  a region drawn as "reading…" (the first page after a restart, before the worker
+ *            has read the picture) fetches its own address once and takes the answer in place.
  *   table    on the table view: instant search, picking rows, and the action bar
  *            that previews, applies and receipts a bulk action (`home_table.ts`).
  *
@@ -273,6 +275,26 @@ export const homeFlowJs = /* js */ `
     filter();
     sync();
   }
+
+  // ---- before the first reading: each "reading…" region asks for itself once, and takes the answer in place ----
+  Array.prototype.forEach.call(root.querySelectorAll('[data-reading]'), function (region) {
+    var src = region.getAttribute('data-live-src');
+    if (!src || !window.fetch) return;
+    fetch(src, { credentials: 'same-origin', headers: { accept: 'text/html' } })
+      .then(function (r) { return r.ok ? r.text() : ''; })
+      .then(function (text) {
+        var holder = doc.createElement('template');
+        holder.innerHTML = text;
+        var fresh = holder.content.querySelector('#' + region.id);
+        if (!fresh || fresh.hasAttribute('data-reading')) return;
+        region.innerHTML = fresh.innerHTML;
+        Array.prototype.forEach.call(fresh.attributes, function (a) { if (a.name !== 'id') region.setAttribute(a.name, a.value); });
+        region.removeAttribute('data-reading');
+        region.removeAttribute('aria-busy');
+        region.dispatchEvent(new CustomEvent('forge:swapped', { bubbles: true }));
+      })
+      .catch(function () {});
+  });
 
   remember();
   clocks(true);

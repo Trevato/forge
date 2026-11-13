@@ -794,12 +794,10 @@ export async function childNamed(app: App, name: string): Promise<Child | undefi
 export async function listChildren(app: App): Promise<Child[]> {
   const dir = join(app.config.dataDir, "spawn");
   const files = await readdir(dir).catch(() => [] as string[]);
-  const out: Child[] = [];
-  for (const f of files.filter((f) => f.endsWith(".json")).sort()) {
-    const ledger = await readLedger(app, f.slice(0, -".json".length));
-    if (ledger) out.push(childOf(app, ledger));
-  }
-  return out;
+  // Every ledger is read at once: one after another, a hundred of them on a cold disk are seconds.
+  const names = files.filter((f) => f.endsWith(".json")).sort().map((f) => f.slice(0, -".json".length));
+  const ledgers = await Promise.all(names.map((name) => readLedger(app, name)));
+  return ledgers.flatMap((ledger) => (ledger ? [childOf(app, ledger)] : []));
 }
 
 /** `listChildren`, read at once: for a terminal command that draws in the same turn (one small file per child). */
