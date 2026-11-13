@@ -28,6 +28,7 @@ export type CapacityKey =
   | "children.modelEgress"
   | "children.registryEgress"
   | "children.paymentEgress"
+  | "children.originEgress"
   | "children.ownFilesystem"
   | "guard_new_accounts"
   | "signin.edge"
@@ -130,6 +131,13 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     kind: { type: "choice", values: ["off", "stripe"] },
     fallback: "stripe",
     help: "stripe lets a child forge's cell reach api.stripe.com on 443, so an app a customer builds there can take a payment; off closes it. Only an app whose forge.json egress names the host reaches it: an app that does not, and the child's crew sandbox, get none of it. Nothing else opens, and the cell enforces this even when cells.egress is report. Takes effect on the next child cell started.",
+  },
+  "children.originEgress": {
+    label: "Git hosts a child forge cell may reach",
+    env: "FORGE_CHILDREN_ORIGIN_EGRESS",
+    kind: { type: "choice", values: ["off", "git"] },
+    fallback: "git",
+    help: "git lets a child forge's cell reach the public git hosts on 443 (GitHub, GitLab, Codeberg, Bitbucket) and the forges beside it on this host, so a person can connect an origin, mirror a repository they already have, and send a change back; off keeps it from all of them. Nothing else opens.",
   },
   "children.ownFilesystem": {
     label: "Child forges need a filesystem of their own",
@@ -462,6 +470,29 @@ export function childRegistryHosts(db: Database): readonly string[] {
   const value = capacityValue(db, "children.registryEgress");
   return value === "build" ? BUILD_HOSTS : value === "npm" ? ["registry.npmjs.org:443"] : [];
 }
+
+/**
+ * The git hosts a child forge's cell may reach (`children.originEgress`): a
+ * forge is for a person who already has repositories, and a hosted one that
+ * cannot reach them, or the forge next door, cannot connect an origin at all
+ * (ada, 2026-11-13). The parent's own address and its other children ride
+ * along: they share the parent's host, one label down.
+ */
+export function childOriginHosts(db: Database, parentUrl: string): readonly string[] {
+  if (capacityValue(db, "children.originEgress") !== "git") return [];
+  let host = "";
+  try {
+    host = new URL(parentUrl).hostname;
+  } catch {
+    host = "";
+  }
+  const labels = host.split(".");
+  // `name--forge.example.com` sits beside `forge.example.com`; a two-label host has no such room to name.
+  const beside = host === "" ? [] : labels.length >= 3 ? [host, `*.${labels.slice(1).join(".")}`] : [host];
+  return [...GIT_HOSTS, ...beside].map((name) => `${name}:443`);
+}
+
+const GIT_HOSTS: readonly string[] = ["github.com", "api.github.com", "codeload.github.com", "gitlab.com", "codeberg.org", "bitbucket.org"];
 
 /** The payment provider hosts a child forge cell may reach (`children.paymentEgress`); the cell's ceiling, each app still declares its own. */
 export function childPaymentHosts(db: Database): readonly string[] {
