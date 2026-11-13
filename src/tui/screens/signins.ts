@@ -95,7 +95,7 @@ export function signInsOf(f: Session): SignIn[] {
 }
 
 /** Cut into rows of `width` characters: wrapped, never truncated, so a hand-copied line is the whole line. */
-function hardWrap(text: string, width: number): string[] {
+export function hardWrap(text: string, width: number): string[] {
   const w = Math.max(1, width);
   const rows: string[] = [];
   for (let i = 0; i < text.length; i += w) rows.push(text.slice(i, i + w));

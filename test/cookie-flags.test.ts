@@ -35,7 +35,7 @@ const WALKED: Record<string, number> = {
   "src/http/server.ts": 1, // the mode switch
   "src/http/rp.ts": 6, // parent sign-in and link: state cookie set and cleared
   "src/apps/proxy.ts": 2, // app grant, app sign-out
-  "src/web/pages/passkeys.ts": 4, // import, passkey sign-in, passkey add/recovery-link sign-in (+1 mention)
+  "src/web/pages/passkeys.ts": 5, // import, passkey sign-in, passkey add/recovery-link sign-in, access-link sign-in (+1 mention)
   "src/web/pages/site.ts": 4, // sessionCookie() itself and its uses: password sign-in/sign-up, logout; the theme cookie
   "src/web/layout.ts": 4, // the flash set on, and cleared from, a redirect
   "src/web/flash.ts": 2, // forge_flash
@@ -51,6 +51,7 @@ const UNREACHED: Record<string, { sites: number; why: string }> = {
   "src/http/measure.ts": { sites: 1, why: "the page-view beacon answers with the visitor cookie line from src/http/visitor.ts; HttpOnly, Lax, Secure over https from cookieLine; covered by test/visitors.test.ts" },
   "src/http/visitor.ts": { sites: 1, why: "the doc comment's mention of the Set-Cookie line it returns; covered by test/visitors.test.ts" },
   "src/perf/visitor_id.ts": { sites: 1, why: "cookieLine itself, the Set-Cookie line for forge_visitor: HttpOnly, SameSite=Lax, Secure over https; covered by test/visitors.test.ts" },
+  "src/release/journey.ts": { sites: 1, why: "reads the Set-Cookie of the sign-in response to carry the session through the walk; sets none; covered by test/release-journey.test.ts" },
   "src/web/gift_cookie.ts": { sites: 1, why: "the gift code rides an HttpOnly, Lax cookie (Secure over https) and grants nothing by itself; covered by the gift code tests" },
   "src/web/pages/new-forge.ts": { sites: 1, why: "appends dropGift(), the gift cookie's clearing line from src/web/gift_cookie.ts" },
   "src/web/pages/everyday.ts": { sites: 2, why: "the admin/everyday switch needs a paired account; same sessionCookie() as the walked doors" },

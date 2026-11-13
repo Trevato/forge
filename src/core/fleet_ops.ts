@@ -181,6 +181,28 @@ export function listOperations(
     .map((op) => toOperation(op, []));
 }
 
+/**
+ * An actor's newest operation that is not an undo, of one kind, whose query
+ * starts with `queryPrefix` and whose verb is one of `verbs`; asked of the
+ * table by those columns, so any number of undos between never hides it.
+ */
+export function latestDecision(
+  db: Database,
+  actorId: string,
+  where: { kind: string; queryPrefix: string; verbs: readonly string[] },
+): Operation | undefined {
+  const marks = where.verbs.map((_, i) => `?${i + 4}`).join(", ");
+  const op = db
+    .query<OperationRecord, (string | number)[]>(
+      `${SELECT} WHERE fleet_operation.actor_id = ?1 AND fleet_operation.kind = ?2
+         AND fleet_operation.undo_of IS NULL AND substr(fleet_operation.query, 1, length(?3)) = ?3
+         AND fleet_operation.verb IN (${marks})
+       ORDER BY fleet_operation.id DESC LIMIT 1`,
+    )
+    .get(actorId, where.kind, where.queryPrefix, ...where.verbs);
+  return op === null || op === undefined ? undefined : toOperation(op, []);
+}
+
 function toOperation(op: OperationRecord, rows: RowRecord[]): Operation {
   return {
     id: op.id,

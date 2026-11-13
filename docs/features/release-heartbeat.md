@@ -1,6 +1,6 @@
 # Release heartbeat and the main-ahead alarm (#11507)
 
-The release tick records a heartbeat each time it runs (`src/keeper/beat.ts`, table `keeper_beat`): when, whether it cut, skipped or failed, and why. The outcome is the keeper's own (`tickStep` in `src/keeper/keeper.ts` says it where it decides), never read back from the line's words; a tick that throws is recorded as failed (`stepWithBeat`). None for 60 minutes is said plainly ("No heartbeat from the release tick for …").
+The release tick records a heartbeat each time it runs (`src/keeper/beat.ts`, table `keeper_beat_tick`): when, whether it cut, skipped or failed, and why. The last 50 are kept (`KEPT`); each new one drops the oldest beyond that, and every reader shows the newest (#11794). The outcome is the keeper's own (`tickStep` in `src/keeper/keeper.ts` says it where it decides), never read back from the line's words; a tick that throws is recorded as failed (`stepWithBeat`). None for 60 minutes is said plainly ("No heartbeat from the release tick for …").
 
 Where to see it:
 
@@ -14,7 +14,7 @@ The flow alarm `main_ahead` (`src/flow/alarm_main_ahead.ts`) fires when main's l
 
 ## Recording a tick from outside (#11674)
 
-A release path that runs outside the forge (a workflow, a script) leaves the same heartbeat, replacing the last one:
+A release path that runs outside the forge (a workflow, a script) leaves the same heartbeat: it adds a row, and the oldest beyond 50 goes:
 
 ```sh
 curl -X POST "$FORGE_URL/api/v1/release/heartbeat" \

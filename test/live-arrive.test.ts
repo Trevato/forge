@@ -6,10 +6,14 @@
  */
 import { expect, test } from "bun:test";
 import { liveClientJs, liveMount } from "../src/web/live.ts";
+import { pager } from "../src/web/ui.ts";
 
 const li = (n: number, extra = "") =>
   `<li><a href="/a/b/issues/${n}" class="row"><span class="row-title">Issue ${n}${extra}</span></a></li>`;
 const list = (ns: number[], extra = "") => `<ul class="list">${ns.map((n) => li(n, extra)).join("")}</ul>`;
+
+/** The pager the list pages draw when there is more to see. */
+const more = String(pager({ next: "/a/b/issues?before=1" }));
 
 async function boot(initial: number[]) {
   const { Window } = await import("happy-dom");
@@ -174,4 +178,118 @@ test("arrived rows lose their class on a timer, so reduced motion never strands 
   expect(t.doc.querySelector("ul.list li")!.classList.contains("live-arrived")).toBe(false);
   const css = await Bun.file(new URL("../src/web/style/components.ts", import.meta.url)).text();
   expect(css).toMatch(/prefers-reduced-motion: reduce\) \{[^}]*animation-duration: \.01ms !important/);
+});
+
+test("a row the server no longer lists is removed on the next catch-up", async () => {
+  const t = await boot([3, 2, 1]);
+  t.setPage(list([3, 1]));
+  t.send("issue.closed");
+  await t.wait(700);
+  expect(t.titles()).toEqual(["Issue 3", "Issue 1"]);
+});
+
+test("a removed row above the reader's place compensates the scroll by exactly its height", async () => {
+  const t = await boot([3, 2, 1]);
+  t.state.scrollY = 150; // Issue 3 (0-100) is above the viewport, Issue 2 is the reader's row
+  t.setPage(list([2, 1]));
+  t.send("issue.closed");
+  await t.wait(700);
+  expect(t.titles()).toEqual(["Issue 2", "Issue 1"]);
+  expect(t.state.scrolled).toEqual([-100]);
+});
+
+test("a row the reader is in is never removed", async () => {
+  const t = await boot([2, 1]);
+  (t.doc.querySelectorAll("ul.list a")[1] as unknown as { focus(): void }).focus();
+  t.setPage(list([2]));
+  t.send("issue.closed");
+  await t.wait(700);
+  expect(t.titles()).toEqual(["Issue 2", "Issue 1"]);
+});
+
+test("a complete page with no rows removes every unheld row; nothing is scrolled and nothing throws", async () => {
+  const t = await boot([2, 1]);
+  t.state.scrollY = 500;
+  t.setPage(`<ul class="list"></ul>`);
+  t.send("issue.closed");
+  await t.wait(700);
+  expect(t.titles()).toEqual([]);
+  expect(t.state.scrolled).toEqual([]);
+  expect(t.doc.getElementById("live-status")!.textContent).toBe("2 items removed");
+});
+
+test("the last row of a short list goes when the page offers no more", async () => {
+  const t = await boot([3, 2, 1]);
+  t.setPage(list([3, 2]));
+  t.send("issue.closed");
+  await t.wait(700);
+  expect(t.titles()).toEqual(["Issue 3", "Issue 2"]);
+});
+
+test("the only row of a filtered list goes when it is closed out of the filter", async () => {
+  const t = await boot([1]);
+  t.setPage(`<ul class="list"></ul>`);
+  t.send("issue.closed");
+  await t.wait(700);
+  expect(t.titles()).toEqual([]);
+});
+
+test("a truncated page that lists none of ours removes nothing", async () => {
+  const t = await boot([2, 1]);
+  t.setPage(`<ul class="list"></ul>${more}`);
+  t.send("issue.closed");
+  await t.wait(700);
+  expect(t.titles()).toEqual(["Issue 2", "Issue 1"]);
+});
+
+test("when no kept row is on screen the scroll is compensated against a kept row, never a removed one", async () => {
+  const t = await boot([3, 2, 1]);
+  // Every row is above the viewport (tops -1000, -900, -800).
+  t.win.HTMLElement.prototype.getBoundingClientRect = function (this: { tagName: string; parentElement: { children: ArrayLike<unknown> } | null }) {
+    const at = this.parentElement ? Array.from(this.parentElement.children).indexOf(this) : 0;
+    const top = this.parentElement ? at * 100 - 1000 : 0;
+    return { top, bottom: top + 100, left: 0, right: 0, width: 0, height: 100, x: 0, y: top } as never;
+  } as never;
+  t.state.scrollY = 500;
+  t.setPage(list([2, 1]));
+  t.send("issue.closed");
+  await t.wait(700);
+  expect(t.titles()).toEqual(["Issue 2", "Issue 1"]);
+  expect(t.state.scrolled).toEqual([-100]);
+});
+
+test("inserts and removals in one catch-up compensate the scroll by the net shift of the reader's row", async () => {
+  const t = await boot([3, 2, 1]);
+  t.state.scrollY = 500;
+  t.setPage(list([5, 4, 2, 1])); // 3 gone above, 4 and 5 arrive above
+  t.send("issue.closed");
+  await t.wait(700);
+  expect(t.titles()).toEqual(["Issue 5", "Issue 4", "Issue 2", "Issue 1"]);
+  expect(t.state.scrolled).toEqual([100]);
+  expect(t.doc.getElementById("live-above")!.textContent).toBe("2 above");
+});
+
+test("a row pushed off the fetched page, or loaded past it, is not removed", async () => {
+  const t = await boot([3, 2, 1]);
+  t.setPage(list([4, 3]) + more); // page of two with an Older link: 2 and 1 are past its end, not deleted
+  t.send("issue.opened");
+  await t.wait(700);
+  expect(t.titles()).toEqual(["Issue 4", "Issue 3", "Issue 2", "Issue 1"]);
+});
+
+test("a truncated page still removes a row it lacks before its last listed row", async () => {
+  const t = await boot([3, 2, 1]);
+  t.setPage(list([3, 1]) + more);
+  t.send("issue.closed");
+  await t.wait(700);
+  expect(t.titles()).toEqual(["Issue 3", "Issue 1"]);
+});
+
+test("an \"and N more\" row marks the list truncated, so its tail is kept", async () => {
+  const t = await boot([3, 2, 1]);
+  t.setPage(`<ul class="list">${li(3)}<li><a href="/a/b/issues?all" data-more>and 2 more</a></li></ul>`);
+  t.send("issue.opened");
+  await t.wait(700);
+  expect(t.titles()).toContain("Issue 2");
+  expect(t.titles()).toContain("Issue 1");
 });

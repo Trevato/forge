@@ -11,7 +11,7 @@
 import type { Database } from "bun:sqlite";
 import { statSync } from "node:fs";
 import { readDisk, type DiskReading } from "./disk_reading.ts";
-import { DISK_FLOOR } from "../spawn/disk_floor.ts";
+import { DISK_FLOOR, roomy } from "../spawn/disk_floor.ts";
 import { dirname } from "node:path";
 import { freemem, totalmem } from "node:os";
 import { refusedInternal, type RefusedLedger } from "./internal_refused.ts";
@@ -340,7 +340,7 @@ export function vitals(input: VitalsInput): Vitals {
       undefined,
       "/settings/capacity",
     );
-  else if (disk.totalBytes > 0 && disk.freeBytes / disk.totalBytes < DISK_FLOOR)
+  else if (disk.totalBytes > 0 && !roomy(disk) && disk.freeBytes / disk.totalBytes < DISK_FLOOR)
     need(
       "disk-floor",
       `Disk is under the ${DISK_FLOOR * 100}% the forge keeps for itself: ${Math.round((disk.freeBytes / disk.totalBytes) * 100)}% free. Child forges sleep, and no child forge, app or check starts, until room is made.`,

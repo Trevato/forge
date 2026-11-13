@@ -56,6 +56,8 @@ export interface KeeperPorts {
   readonly gating: () => number;
   /** How long the snapshot being taken has run, ms; undefined when none is (#9653). */
   readonly snapshotting?: () => number | undefined;
+  /** The share of the forge's disk in use, 0..1; undefined when unread (#11686). */
+  readonly diskUsed?: () => number | undefined;
   readonly deployer: Deployer;
   /** Make the annotated tag `v<version>` on `sha` and send it where the release workflow starts; why not. */
   readonly tag: (version: string, sha: string) => Promise<string | undefined>;
@@ -213,6 +215,7 @@ export async function tickStep(p: KeeperPorts): Promise<Step> {
     inFlight: false,
     gating: p.gating(),
     snapshotMs: p.snapshotting?.(),
+    diskUsed: p.diskUsed?.(),
     lastCutAt: last === undefined ? undefined : Date.parse(last.cutAt),
     hold: blocking(standingHolds(p.db)),
     now: p.now(),

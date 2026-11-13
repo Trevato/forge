@@ -63,6 +63,23 @@ export function deliveryHeaders(key: string, t: Timer, attempt: number, expires:
   };
 }
 
+/** The `error` an app's JSON answer names, when it names one. */
+function failureText(head: string): string | undefined {
+  try {
+    const e = (JSON.parse(head) as { error?: unknown }).error;
+    return typeof e === "string" && e !== "" ? e : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The headers of a request the forge makes of an app outside a timer (listing or steering its jobs): the same signature, an idempotency key of its own. */
+export function controlHeaders(key: string, now: number): Record<string, string> {
+  const idem = `control:${crypto.randomUUID()}`;
+  const identity = `forge-timer|${idem}|timer|${now + 60_000}`;
+  return { "idempotency-key": idem, "x-forge-identity": identity, "x-forge-signature": createHmac("sha256", key).update(identity).digest("base64url") };
+}
+
 async function readHead(res: Response): Promise<string> {
   const reader = res.body?.getReader();
   if (reader === undefined) return "";
@@ -78,7 +95,7 @@ async function readHead(res: Response): Promise<string> {
   return new TextDecoder().decode(Buffer.concat(chunks)).slice(0, RESPONSE_KEPT).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "?");
 }
 
-interface Attempt { readonly ok: boolean; readonly status: number | null; readonly response: string | null; readonly error: string | null }
+interface Attempt { readonly final?: boolean; readonly ok: boolean; readonly status: number | null; readonly response: string | null; readonly error: string | null }
 
 async function attemptOnce(reach: Reach, app: AppRecord, t: Timer, attempt: number, now: () => number): Promise<Attempt> {
   const port = await reach.ensure(app, t.env).catch(() => undefined);
@@ -94,6 +111,8 @@ async function attemptOnce(reach: Reach, app: AppRecord, t: Timer, attempt: numb
     });
     const head = await readHead(res);
     if (res.status >= 200 && res.status < 300) return { ok: true, status: res.status, response: head, error: null };
+    // An app that says `x-forge-no-retry` has decided: delivering again would only repeat it (a durable job that failed, #11596).
+    if (res.headers.get("x-forge-no-retry") === "1") return { ok: false, final: true, status: res.status, response: head, error: failureText(head) ?? `the app answered ${res.status}` };
     return { ok: false, status: res.status, response: head, error: `the app answered ${res.status}` };
   } catch (e) {
     const timedOut = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
@@ -153,10 +172,10 @@ export async function fireTimer(db: Database, reach: Reach, t: Timer, now: () =>
       finishTimer(db, t, next);
       return;
     }
-    if (attempt <= t.retries) return retryTimer(db, t.id, finished + backoffFor(t.attempt), attempt);
+    if (result.final !== true && attempt <= t.retries) return retryTimer(db, t.id, finished + backoffFor(t.attempt), attempt);
     recordRun(db, {
       ...base, startedAt: started, finishedAt: finished, attempts: attempt, status: "failed", httpStatus: result.status, response: result.response,
-      error: `${result.error ?? "failed"}, after ${attempt} ${attempt === 1 ? "attempt" : "attempts"}`, ...late, durationMs: finished - started,
+      error: result.final === true ? (result.error ?? "failed") : `${result.error ?? "failed"}, after ${attempt} ${attempt === 1 ? "attempt" : "attempts"}`, ...late, durationMs: finished - started,
     });
     finishTimer(db, t, next);
     if (t.kind === "schedule" && failingDays(runsOf(db, t.appId, t.name, 30).filter((r) => r.env === t.env)) >= PAUSE_AFTER_DAYS) {

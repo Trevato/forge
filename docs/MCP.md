@@ -42,6 +42,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | Tool | Actions / kinds | Purpose | Bytes |
 | --- | --- | --- | ---: |
 | `access` | — | Non-browser public-path requests, redacted, newest first (max 500) | 235 |
+| `account_access` | `reset`, `end_sessions` | Reset a person's access with a one-time link, or end their sessions | 339 |
 | `account_requests` | — | List who asked for an account and wait; `answer: allow\|decline` answers one | 250 |
 | `account_role` | — | Make a person a member or a guest; promoting may grant `usdPerMonth` | 374 |
 | `account_suspend` | — | Suspend an account; `suspended: false` lifts | 231 |
@@ -49,7 +50,8 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `accounts` | — | Accounts, newest first: role, verified, suspended; `cursor` pages | 264 |
 | `agent` | — | Admin: create\|update\|remove an agent | 371 |
 | `agents` | — | Agents you may see, as GET /api/v1/agents | 160 |
-| `app_deploy` | `redeploy`, `stop`, `pull`, `schedules`, `run_schedule`, `pause_schedule`, `resume_schedule` | Redeploy or stop production or a pull-N preview, pull an adapter now, or list and steer the app's schedules | 419 |
+| `app_data_import` | — | Load a SQL dump into an app's database and report per-table counts and checksums; admins only | 339 |
+| `app_deploy` | `redeploy`, `stop`, `pull`, `schedules`, `run_schedule`, `pause_schedule`, `resume_schedule`, `jobs`, `cancel_job`, `retry_job` | Redeploy or stop an env, pull, list and steer schedules and jobs | 408 |
 | `app_domains` | — | App domains: list, add, check, remove | 201 |
 | `app_env` | `list`, `set`, `unset` | An app's environment variables: list names, set or unset by scope; write-only | 393 |
 | `app_members` | — | People a private app names, who may enter it and its previews | 297 |
@@ -107,7 +109,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `flag_set` | — | Set or clear a flag (admin) | 209 |
 | `flag_winner` | — | An A/B flag winner becomes default | 206 |
 | `flags` | — | Declared flags: why, default, owner issue, live value | 171 |
-| `flow` | `bugs`, `drift` | Pipeline (admin); `q`: `/fleet` rows, `action` plans an op, `apply` does it; `kind:bugs`; `repo`: why stuck | 473 |
+| `flow` | `bugs`, `drift`, `growth` | Pipeline (admin); `q`: `/fleet` rows, `action` plans an op, `apply` does it; `kind:bugs`; `repo`: why stuck | 482 |
 | `follow_mode` | — | How a fork follows its parent: take updates, tell me, or don't follow | 281 |
 | `following` | — | Where a fork stands against what it follows: in step, behind, ahead, diverged | 243 |
 | `forge_proposals` | — | What this forge proposed to its parent; `reachable` false if it is silent | 245 |
@@ -176,7 +178,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `release_hold` | — | Hold or release the release keeper's cuts (admin) | 202 |
 | `release_keeper` | — | The release keeper's releases, holds and what blocks the next cut | 192 |
 | `releases` | — | Kept releases, newest first | 253 |
-| `repo` | — | One repository you can read, as GET /api/v1/repos/:owner/:name | 223 |
+| `repo` | — | One repository you can read, as GET /api/v1/repos/:owner/:name | 296 |
 | `repo_labels` | — | Repo labels: list (default), create, update, remove (admin token) | 351 |
 | `repo_settings` | — | Read, change or move (newOwner) a repo: PATCH /api/v1/repos/:owner/:name (admin); mirrorPacks mirrors the packs' upstreams | 444 |
 | `reports` | `accept`, `dismiss` | Outsiders' reports; `id`+`action`: accept or dismiss | 310 |
@@ -209,7 +211,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `subscription_wake` | — | Admin: wake a resting subscription | 168 |
 | `subscriptions` | — | Claude accounts: scopes, budgets | 158 |
 | `sync` | — | Sync a mirror now; `originId` reconnects it | 197 |
-| `system` | `csp`, `routes` | The forge machine now: CPU, memory, disk, network | 286 |
+| `system` | `csp`, `routes`, `footing` | The forge machine now: CPU, memory, disk, network | 296 |
 | `take_back` | — | Open the pull that undoes a shipped pull | 219 |
 | `take_updates` | — | Take the parent forge's updates into a fork | 176 |
 | `teams` | — | Crew teams for person admins: charter, dial (0–100) and member agents | 338 |
@@ -568,6 +570,13 @@ answers
   words action shows one text field: **Tell <app>** (app card) sends the
   words to `tell` as `text` with `repo` and `context.said`.
   Empty words send nothing.
+  **What a card sends and expects (MCP Apps handshake).**
+  1. On load it posts `ui/initialize` as a request with an id (`protocolVersion`, `appInfo`, `appCapabilities`).
+  2. On the host's reply (matching id, `result` object) it applies `hostContext`, then posts `ui/notifications/initialized`.
+  3. `hostContext.theme` (`light`/`dark`) sets the colour scheme; without it the OS scheme decides. `styles.variables` (only `--name` keys, string values) become CSS variables, except that `--color-background-primary` and `--color-text-primary` are used only as a pair at 4.5:1 or better (else the card's own palette, `src/http/mcp/card_palette.ts`, stands, so never dark on dark); `styles.css.fonts` is added as a style. `ui/notifications/host-context-changed` does the same later, no reload. Links and buttons are 44 px tall; an empty result is one line; more than ten rows show ten and a "Show N more" button.
+  4. `ui/notifications/tool-result` draws the card, before or after the reply; a host that sends none of this still shows the card's content.
+  5. It posts `ui/notifications/size-changed` (`width`, `height` of the body box, so it can shrink) on load, on content or width change, at most once a frame.
+  6. Only messages from the parent with `jsonrpc: "2.0"` and the expected shape are read; the rest are ignored.
 - **The manifest's shape.** `GET /api/v1/here?path=/owner/name` (or the
   `here` tool with the page URL) answers `{ here, you, can, mcp, docs }`.
   `you.as` is `anonymous`, `reader`, `writer`, `owner` or `agent`; `can` is

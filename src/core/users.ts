@@ -479,11 +479,17 @@ export async function changePassword(
 ): Promise<Result<void, "weak_password" | "password_too_long" | "no_such_user">> {
   if (next.length < MIN_PASSWORD) return err("weak_password");
   if (!withinPasswordCap(next)) return err("password_too_long");
-  const hash = await Bun.password.hash(next, "argon2id");
-  const changed = db
-    .query("UPDATE user SET password_hash = ?1 WHERE id = ?2 AND kind = 'user'")
-    .run(hash, userId).changes;
-  return changed > 0 ? ok() : err("no_such_user");
+  return setPasswordHash(db, userId, await hashPassword(next)) ? ok() : err("no_such_user");
+}
+
+/** A password's stored form, made apart from the write so a caller can hash first and write inside its own transaction. */
+export function hashPassword(password: string): Promise<string> {
+  return Bun.password.hash(password, "argon2id");
+}
+
+/** Store a hash made by `hashPassword`; whether a person was there to take it. */
+export function setPasswordHash(db: Database, userId: string, hash: string): boolean {
+  return db.query("UPDATE user SET password_hash = ?1 WHERE id = ?2 AND kind = 'user'").run(hash, userId).changes > 0;
 }
 
 export function getUserById(db: Database, userId: string): User | undefined {
@@ -517,10 +523,18 @@ export function ensureEdgeUser(db: Database, login: string): User | undefined {
   const link = db
     .query<{ user_id: string }, [string]>("SELECT user_id FROM edge_link WHERE login = ?")
     .get(login);
-  const existing = (link === null ? undefined : getUserById(db, link.user_id)) ?? getUserByName(db, login);
-  return existing && existing.kind === "user" && isActive(existing)
-    ? existing
-    : undefined;
+  const linked = link === null ? undefined : getUserById(db, link.user_id);
+  const existing = linked ?? getUserByName(db, login);
+  if (!(existing && existing.kind === "user" && isActive(existing))) return undefined;
+  // Found by name: map the login to the account once, so the mapping
+  // outlives the edge (#11802). An account linked to another login, or a
+  // login another account holds, keeps what it has.
+  if (linked === undefined)
+    db.query(
+      `INSERT OR IGNORE INTO edge_link (login, user_id)
+       SELECT ?1, ?2 WHERE NOT EXISTS (SELECT 1 FROM edge_link WHERE user_id = ?2)`,
+    ).run(login, existing.id);
+  return existing;
 }
 
 /** Why a password was not accepted: wrong, or tried too often to check. */

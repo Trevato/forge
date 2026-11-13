@@ -17,6 +17,7 @@ import {
   spendRecovery,
   resetVerification,
 } from "../core/verify.ts";
+import { handoverOwner, spendHandover } from "../core/edge_handover.ts";
 import { listSecretNames, resolveSecrets } from "../core/secret_store.ts";
 import { getUserById, isActive, type User } from "../core/users.ts";
 import { sendMail, type Mailer } from "../kernel/mail.ts";
@@ -209,16 +210,22 @@ export function requestRecovery(
   }, now).catch(() => undefined);
 }
 
-/** The account a recovery link is for, if it still works; nothing is spent. */
+/**
+ * The account a recovery link is for, if it still works; nothing is spent.
+ * A way-back link an admin minted for an edge account (`core/edge_handover.ts`)
+ * opens the same step.
+ */
 export function recoveryAccount(app: App, token: string): User | undefined {
-  const id = recoveryOwner(app.db, token, Date.now());
+  const now = Date.now();
+  const id = recoveryOwner(app.db, token, now) ?? handoverOwner(app.db, token, now);
   const user = id === undefined ? undefined : getUserById(app.db, id);
   return user !== undefined && isActive(user) ? user : undefined;
 }
 
 /** Spend the link: the account to sign in, or `invalid` for a used or stale one. */
 export function spendRecoveryLink(app: App, token: string): Result<User, "invalid"> {
-  const id = spendRecovery(app.db, token, Date.now());
+  const now = Date.now();
+  const id = spendRecovery(app.db, token, now) ?? spendHandover(app.db, token, now);
   const user = id === undefined ? undefined : getUserById(app.db, id);
   if (user === undefined || !isActive(user)) return err("invalid");
   app.bus.append({ kind: "account.recovered", actorId: user.id });

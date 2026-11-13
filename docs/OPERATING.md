@@ -89,6 +89,156 @@ Unset, only this machine may say so, and the named header is never read. Everyth
 instance _is_ lives under the data directory — the SQLite index, the bare
 repos, and the SSH host key, in plain layout. Tar it up and it moves.
 
+## What the forge stands on
+
+Each thing the forge needs to answer a request, sign a person in, build,
+release and back up, the machine it runs on, what happens to the forge if
+that machine dies, and the issue that removes the dependency. The list is the
+steward's read-only inventory of both machines on 2026-11-12 (#11685), the day
+pg-grand took the forge off the internet for 24 minutes while the forge itself
+ran fine on the vxrail, and the day the owner decided to drop pg-grand
+(#11686). Every row on pg-grand is a way that machine takes the forge
+down.
+
+<!-- footing:start — written by footingTable() in src/system/footing.ts; test/footing.test.ts holds it equal -->
+- **pg-grand**: DigitalOcean. The k3s server, a single control plane with no HA. The owner decided on 2026-11-12 to drop it.
+- **vxrail**: A k3s agent joined to pg-grand. The forge runs here.
+
+| Needed to | Piece | Runs on | If that machine dies | Breaks | Removed by |
+|---|---|---|---|---|---|
+| (a) answer a request | The forge's pod (git.open-platform.sh/trevato-apps/forge:&lt;version&gt;) and its data, PVC forge-data-vxrail (60 Gi) | vxrail | The forge is down, and its data is on that disk. | — | — |
+| (a) answer a request | Cloudflare tunnel carrying forge.open-platform.sh (standby/cloudflared), moved to the vxrail by hand on 2026-11-12; its last-applied manifest still says 0 replicas, so a re-render moves it back | vxrail | It goes with the forge, which runs beside it. | — | #8948, #11686 |
+| (a) answer a request | The vxrail's own tunnel (standby/cloudflared-forge-home, 2 replicas): it too sends *.open-platform.sh to Traefik; only forge-home-test.open-platform.sh and arm--forge-trevato-apps.open-platform.sh go straight to the forge | vxrail | It goes with the forge, which runs beside it. | — | — |
+| (a) answer a request | Traefik (kube-system/traefik): every public request goes tunnel → Traefik → the forge's Service | pg-grand | The forge is off the internet; it keeps running inside. | 1 | #11686, #8946 |
+| (a) answer a request | Child and app hosts, Traefik IngressRoutes forge-children (&lt;name&gt;--forge.open-platform.sh), forge-apps (*--forge-trevato-apps.open-platform.sh) and forge-old-host, and game.cheffryjames.com and www.cheffryjames.com in the forge's namespace | pg-grand | No child forge, app or custom domain answers. | 1 | #11686, #8946 |
+| (a) answer a request | forge-ssh, a host socket proxy (:2222 → the forge's ssh service) | pg-grand | git over ssh and the terminal stop answering. | 7 | #11686 |
+| (a) answer a request | The k3s API server (the vxrail is an agent joined to it) | pg-grand | Running pods keep running, but nothing reschedules, Services stop updating, and no release rolls or Job runs. | 5 | #11686 |
+| (b) sign a person in | Sign-in edge: a forwardAuth middleware on the forge's Ingress, answered by mcp/plat-auth | pg-grand | Every request through the edge answers 500, /healthz too. | 2 | #11686 |
+| (b) sign a person in | forge-signup-gate, the pod /signup is routed to | pg-grand | No one can sign up. | 3 | #11686 |
+| (c) build | Forgejo (git.open-platform.sh) and its Actions, which build the release image | pg-grand | No release image is built. | 4 | #11686, #8941 |
+| (c) build | Forgejo's database, a single instance under CloudNativePG (cnpg-system) | pg-grand | Forgejo stops, and with it builds. | 4 | #11686, #8941 |
+| (c) build | forgejo-runner-vxrail, a Forgejo Actions runner | vxrail | It goes with the forge, which runs beside it. | — | — |
+| (d) release | Forgejo's registry (git.open-platform.sh), which the forge's image is pulled from | pg-grand | A pod that restarts on a node without the image cached cannot start; nothing new is released. | 4 | #11686, #8941, #8942 |
+| (d) release | registry-node, a registry on the vxrail | vxrail | It goes with the forge, which runs beside it. | — | — |
+| (d) release | forge-release-tick, a host timer every 5 min | pg-grand | Nothing is released; production keeps the release it has. | 7 | #11686, #8942 |
+| (d) release | standby-reconcile, a host timer every 2 min that applies the forge's manifests from Forgejo; Flux's Kustomization for the forge is suspended | pg-grand | A changed manifest is not applied; the running pod is untouched. | 7 | #8948, #11686 |
+| (d) release | Host timers forge-watchdog, forge-github-mirror and forge-prune-images | pg-grand | The watchdog, the GitHub mirror and image pruning stop. | 7 | #11686 |
+| (e) back up | The backup namespace's CronJobs (FORGE_BACKUP_LANES) | pg-grand | No new backup is taken. | 6 | #11686 |
+| (e) back up | MinIO, where the backup lanes store the forge's backups | pg-grand | No new backup is stored, and those it holds go with the machine. | 6 | #11686 |
+
+If pg-grand were switched off now, the forge breaks in this order (the Breaks column):
+
+1. Traefik: nothing public reaches the forge
+2. plat-auth: no one signs in
+3. the signup gate: no one signs up
+4. image pulls and releases
+5. the control plane: nothing reschedules, Services stop updating
+6. local backups
+7. the host timers
+
+Also on pg-grand, not in the forge's path: Forgejo and its database, the platform's mcp/plat-auth and www, the CloudNativePG operator with the tenant apps' databases, their local-path volumes pinned to that node, and MinIO.
+<!-- footing:end -->
+
+The same list is read from the live cluster on `/system`, under "What the
+forge stands on", on the terminal's screen of that name, and from the MCP
+`system` tool with `{ kind: "footing" }`; how to read each is in
+[docs/features/footing.md](features/footing.md). The probe
+(`src/system/footing.ts`) asks the kube API, with the forge's own service
+account, for the forge's node, the nodes labelled control-plane, and the pods
+in each namespace above; it never lists every pod in the cluster. What the
+cluster cannot show keeps its declared machine and says why. To see every
+row from the cluster, the forge's service account needs `get` on its own pod,
+`list` on `nodes`, and `list` on `pods` in those namespaces (#8948). The
+reading is held 60 s, a page waits at most 0.8 s for it, and a probe that
+fails is not retried for a minute.
+
+## The vxrail without a control plane
+
+**The choice: no Kubernetes for the forge.** On the vxrail the forge runs as
+one process (`src/release/launch.ts` under a systemd unit), on one data
+directory (`/var/lib/forge`), with the self-swap keeper (#8941) as its release
+path. This is [EXTRACT.md](EXTRACT.md)'s box, and the vxrail is that box.
+The other option was a k3s server of the vxrail's own. Of the two, no
+Kubernetes is the simpler, and here is why. The forge already holds
+everything it runs: apps, previews, checks, child forges and the crew's
+shells all run in its own bubblewrap cells (`src/apps/contain.ts`), not as
+pods. All Kubernetes gives the forge is a supervisor and a volume, and
+systemd and a directory do the same. A k3s server of its own would be one
+more control plane on the same single machine. Someone would have to back it
+up, upgrade it and renew its certificates, and it would have no HA, so it
+would be exactly the single point of failure pg-grand was, just moved. It
+would also keep the image, registry and manifest path that #8942 deletes. And
+the swap's one kernel setting, `net.ipv4.tcp_migrate_req=1`, is a kubelet
+unsafe-sysctl flag inside a pod but one line in `/etc/sysctl.d` on a host.
+What the forge gives up: `FORGE_CHECKS_PLACEMENT=job` (no cluster to send a
+Job to, and under `cells.egress` `enforce` it never sends one anyway), the
+Deployment-patch keeper (`FORGE_RELEASE_KEEPER=on`), and the footing probe's
+live reading (it says "not running in a cluster" and keeps the declared
+machines). Off Kubernetes a cell's mounts default to `deny-list`, so the unit
+sets `FORGE_CELL_MOUNTS=allow-list` to keep what cells see on the host as
+narrow as in the pod.
+
+**The steps.** Each step is an issue that waits for this one. Nothing moves
+without the owner's go, and every step keeps the one before it as its
+rollback. #11803 (tunnel straight to the forge), #11802 (its own sign-in) and
+#11805 (an off-site backup with a drilled restore) come first.
+
+1. **The host can run it, taking no traffic** (#11823). The unit runs
+   `launch.ts` with `Delegate=yes` (cells get their cgroup) and
+   `FORGE_CELL_MOUNTS=allow-list`. The install script checks for bubblewrap,
+   chromium and socat, writes the sysctl, and makes the `forge` user with the
+   pod's uid. A `cloudflared-forge` unit carries the tunnel to
+   `http://127.0.0.1:3000`, and `forge-github-mirror` becomes a timer here.
+   The proof is a restore of the newest backup into a scratch directory,
+   served on another port. *Rollback:* `systemctl disable --now forge
+   cloudflared-forge`; nothing pointed at it.
+2. **The cutover, same data, same version** (#11824, a quiet hour). First
+   the reconcile must stop owning the forge Deployment's replicas (#8948).
+   Otherwise it brings the pod back, and two processes write one SQLite file.
+   Then: scale the Deployment to 0 and wait until the pod is gone.
+   Bind-mount the PVC's local-path directory at `/var/lib/forge` (a bind,
+   not a copy). Check out the image's commit at `/opt/forge`, start `forge`,
+   then `cloudflared-forge`, and scale the cluster's tunnels to 0. Git over
+   ssh then answers on the vxrail's own :2222, with no `forge-ssh` proxy. The
+   seconds dark are measured. *Rollback:* stop both units, then scale the
+   Deployment to 1 and the tunnels back. The pod mounts the same directory,
+   so nothing is copied back. This needs pg-grand's API, so the step is
+   taken while pg-grand runs. Releases by swap (#8941) wait for this step and
+   then run on the host.
+3. **Leave the cluster** (#11825, after a week on the unit). The data comes
+   out of k3s storage first, because `k3s-agent-uninstall.sh` deletes
+   `/var/lib/rancher`. With the forge stopped, `mv` the directory to
+   `/var/lib/forge` on the same filesystem and drop the bind. Next, the owner
+   deletes the forge's objects from gitops. Then `kubectl drain`/`delete
+   node vxrail`, and `k3s-agent` is disabled and uninstalled.
+   `forgejo-runner-vxrail` and `registry-node` go with it, after #8942.
+   *Rollback:* before the uninstall, `systemctl enable --now k3s-agent`
+   rejoins. After it, the forge needs no cluster, and the k3s installer with
+   `K3S_URL` and the node token the owner keeps rejoins.
+4. **pg-grand's other tenants** (#11826). None of them comes to the vxrail
+   as a cluster service. The steps below delete nothing on pg-grand, so each
+   one rolls back by restoring from its dump while pg-grand still runs.
+   - **Forgejo:** once no release reaches it (#8942) and outside pulls go to
+     the forge (#8950), a final `forgejo dump` and a `pg_dump` of its
+     CloudNativePG database go, encrypted, to the off-site bucket of #11805.
+     trevato-apps/gitops is mirrored into the forge before that (#8948).
+   - **Tenant apps' CloudNativePG databases:** the owner decides per app
+     (#8951). The app is either brought into the forge (Bring or Migrate,
+     with SQLite under `FORGE_APP_DATA`; see [APPS.md](APPS.md)) or archived
+     as an encrypted `pg_dump` in the same bucket. No CloudNativePG operator
+     and no Postgres for them on the vxrail: that would bring back the
+     operator this move takes out.
+   - **MinIO** is copied once into the off-site bucket.
+   - **What else pg-grand runs for the forge:** the backup CronJobs go to
+     #11805 and `forge-prune-images` to #11801. `forge-release-tick` and
+     `standby-reconcile` go to the swap (#8941, #8942). `forge-watchdog` is
+     replaced by `Restart=always` and the launcher. `plat-auth`, the signup
+     gate and Traefik leave the forge's path with #11802 and #11803.
+
+The thirty-minute proof (#11806) waits for step 2 and for releases by swap
+(#8941). With both in place, the forge runs, releases and is supervised on
+the vxrail alone.
+
 ## Health
 
 `GET /api/v1/health` (and the MCP `health` tool) answer a site admin with

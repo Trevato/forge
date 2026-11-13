@@ -529,7 +529,7 @@ describe("what the open web expects", () => {
 
   test("every page carries the metadata a link needs to unfurl", async () => {
     const html = await fetch(`${base}/alice/open`).then((r) => r.text());
-    expect(html).toMatch(/property="og:title"\s+content="open"/);
+    expect(html).toMatch(/property="og:title"\s+content="alice\/open"/);
     expect(html).toContain(`content="${base}/alice/open"`);
     expect(html).toContain('rel="manifest" href="/manifest.webmanifest"');
     expect(html).toContain(

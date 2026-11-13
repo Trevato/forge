@@ -52,6 +52,7 @@ test("one <h2> per part, each in a settings-block, and no card", async () => {
     "Machine",
     "Disks and network",
     "Processes",
+    "What the forge stands on",
     "Loop lag, last 20 minutes",
     "Main-thread stalls, last hour",
     "Telemetry readers",

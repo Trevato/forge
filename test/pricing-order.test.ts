@@ -80,7 +80,7 @@ describe("/pricing", () => {
     expect(res.status).toBe(200);
     const text = await res.text();
     expect(text).toContain("$19 a month");
-    expect(text).toContain("Start free");
+    expect(text).toContain("Start my forge");
     expect(res.headers.get("content-security-policy")).toBeTruthy();
   });
 

@@ -7,12 +7,13 @@
  * (`actions/asks_bulk.ts`). `/asks` was its own screen; it lands here now.
  */
 
-import { VERB_WORDS } from "../../actions/asks_words.ts";
+import { UNDO_LABEL, VERB_WORDS } from "../../actions/asks_words.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { WaitingFor } from "../../core/waiting_for.ts";
 import {
   applyAsksBulk,
   BULK_MAX,
+  doneLine,
   latestUndoable,
   ownAsksOperation,
   undoAsksBulk,
@@ -425,6 +426,28 @@ function handedTop(ctx: Ctx, decisionId: string): AsksTop | undefined {
   };
 }
 
+/**
+ * The one status bar a decision leaves, always in this slot so nothing moves:
+ * for a minute the Done line (`Done.` and an Undo, or why a landed merge has
+ * none), then, up to a day, the receipt with its Undo.
+ */
+function undoSlot(ctx: Ctx, user: User | undefined): Html | null {
+  const done = doneLine(ctx.app, user);
+  if (done !== undefined) return undoBar(done.say, done.undo ? done.operation.id : undefined);
+  const last = latestUndoable(ctx.app, user);
+  return last === undefined ? null : undoBar(receiptOf(last), last.id, "kept for a day");
+}
+
+/** One bar: what was done, and, when it can be taken back, the Undo (a same-origin POST) and a note. */
+function undoBar(say: string, operationId?: string, note?: string): Html {
+  if (operationId === undefined) return html`<p class="bar small" role="status">${say}</p>`;
+  return html`<form class="bar" method="post" action="/asks/bulk/${operationId}/undo" role="status">
+    <span class="small">${say}</span>
+    ${btn(UNDO_LABEL, { size: "sm" })}
+    ${note === undefined ? null : html`<span class="muted small">${note}</span>`}
+  </form>`;
+}
+
 /** What needs you, as the home's pinned section: what asks you, with a
  * bulk step's preview or receipt on top. Nothing on screen when nothing
  * asks — the header's Asks link says so — but the sentence stays for a
@@ -471,15 +494,7 @@ export function needsYouSection(
             </form>`,
           )}
         </details>`;
-  const last = latestUndoable(ctx.app, user);
-  const undo =
-    last === undefined
-      ? null
-      : html`<form class="bar" method="post" action="/asks/bulk/${last.id}/undo" role="status">
-          <span class="small">${receiptOf(last)}</span>
-          ${btn("Undo", { size: "sm" })}
-          <span class="muted small">kept for a day</span>
-        </form>`;
+  const undo = undoSlot(ctx, user);
   const count = rows.length + needs.length;
   if (count === 0 && top === undefined)
     return {

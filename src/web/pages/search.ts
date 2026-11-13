@@ -857,6 +857,25 @@ const DESTRUCTIVE: {
     }),
   },
   {
+    pattern: /^\/settings\/accounts\/([^/]+)\/reset$/,
+    describe: (m) => ({
+      verb: "Reset access",
+      title: `Reset ${decodeURIComponent(m[1] ?? "")}'s access?`,
+      detail: "Makes a one-hour, one-use link that lets them set a new password and sign in; whoever opens it first takes the account, and they are told you did it.",
+      phrase: "",
+      carries: "endSessions",
+    }),
+  },
+  {
+    pattern: /^\/settings\/accounts\/([^/]+)\/end-sessions$/,
+    describe: (m) => ({
+      verb: "End all sessions",
+      title: `Sign ${decodeURIComponent(m[1] ?? "")} out everywhere?`,
+      detail: "Every browser they are signed in on stops working at once; they can sign in again.",
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/settings\/accounts\/([^/]+)\/remove$/,
     describe: (m) => {
       const name = decodeURIComponent(m[1] ?? "");

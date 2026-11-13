@@ -1,3 +1,5 @@
+import { childNamed } from "../../../actions/spawn.ts";
+import { firstScreenLine } from "../../../core/next-steps.ts";
 import { changeDoor, reissueDoor } from "../../../spawn/door.ts";
 import { good, bad, type Tool, str, REVEAL_ARG, LINK_KEPT, LINK_REVEALED } from "../shared.ts";
 
@@ -26,6 +28,8 @@ export const tool: Tool = {
     const door = await reissueDoor(ctx, user, str(args["name"]));
     if (door.status >= 400)
       return bad(String(door.body["error"]), String(door.body["message"]));
-    return good({ says: LINK_REVEALED, ...door.body });
+    const child = await childNamed(ctx.app, str(args["name"]));
+    const firstScreen = child === undefined ? {} : { firstScreen: firstScreenLine(child.apps) };
+    return good({ says: LINK_REVEALED, ...door.body, ...firstScreen });
   },
 };

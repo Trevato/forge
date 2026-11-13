@@ -78,7 +78,7 @@ test("above the fold the page is the form and three steps; the whole guide is be
   expect(open).toBeGreaterThan(0);
   const outside = main.slice(0, open);
   expect(main.match(/<details/g)?.length).toBe(1);
-  expect(outside).toContain('action="/forges/new"');
+  expect(outside).toContain('action="/forges/start"');
   expect(outside).toContain('href="/llms.txt"');
   // Real list numbering: an <ol> inside .prose, no hand-written "1." in the items.
   const steps = outside.slice(outside.indexOf('<ol id="agent-steps"'));
@@ -102,8 +102,7 @@ test("above the fold the page is the form and three steps; the whole guide is be
   expect(inside).toContain(guideHtml(plain).toString());
   for (const sentence of [
     "Give claim.url to the person who takes it over. Unclaimed: asleep in 7 days, archived in 30.",
-    "Or a hosted one, plans on",
-    "It sleeps when idle and wakes on its next page load, push or API call; the person brings their own model credential, or its crew stays off.",
+    "A hosted forge sleeps when idle and wakes on its next page load, push or API call; on the free plan the person brings their own model credential, or its crew stays off.",
   ]) {
     expect(plain).toContain(sentence);
     expect(inside).toContain(sentence);

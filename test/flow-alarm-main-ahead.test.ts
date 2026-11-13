@@ -146,7 +146,7 @@ describe("main ahead alarm", () => {
 
 describe("heartbeat", () => {
   test("release_keeper shows the last heartbeat and its reason, and says when it is quiet", () => {
-    app.db.query(`DELETE FROM keeper_beat`).run();
+    app.db.query(`DELETE FROM keeper_beat_tick`).run();
     expect(keeperAnswer(app.db, NOW).heartbeat).toBeNull();
     recordBeat(app.db, "skipped", "not cut: a hold stands", new Date(NOW.getTime() - 5 * 60_000));
     const h = keeperAnswer(app.db, NOW).heartbeat!;

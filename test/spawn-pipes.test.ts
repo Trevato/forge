@@ -16,6 +16,7 @@ import { join } from "node:path";
  * drained. Re-piping a stream that was ignored changes a site's entry.
  */
 const PIPING: Record<string, { sites: string[]; reason: string }> = {
+  "src/apps/backup_door.ts": { sites: ["stdout+stderr"], reason: "both read to their end alongside the exit: stdout's last line is the proof, stderr the refusal" },
   "src/apps/contain.ts": { sites: ["stderr"], reason: "stderr awaited with the exit; stdout ignored" },
   "src/apps/process.ts": { sites: ["stdout+stderr", "stdout+stderr"], reason: "pump() reads stdout and stderr of the app until exit" },
   "src/spawn/cell.ts": { sites: ["stdout+stderr"], reason: "drain() reads the child forge's stdout and stderr to its log until exit" },

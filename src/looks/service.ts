@@ -58,7 +58,9 @@ import {
   type Look,
   type LookKind,
 } from "../core/looks.ts";
+import { crewHoldsCore, forgeCpus } from "../core/one_core.ts";
 import { getPull } from "../core/pulls.ts";
+import { listActive } from "../core/runs.ts";
 import { frontPicks } from "../core/front.ts";
 import { getRepoById } from "../core/repos.ts";
 import { getUserById } from "../core/users.ts";
@@ -98,6 +100,10 @@ export interface LooksOptions {
   /** How long a look waits for the app to answer, and how often it asks. */
   readonly answerWaitMs?: number | undefined;
   readonly answerPollMs?: number | undefined;
+  /** The forge's CPU count: the machine's unless a test says otherwise. */
+  readonly cpus?: (() => number) | undefined;
+  /** Crew runs queued or running: the database's unless a test says otherwise. */
+  readonly activeCrewRuns?: (() => number) | undefined;
 }
 
 /** The app answers when its page comes back with anything but a server error. */
@@ -382,7 +388,11 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
       queue.splice(at, 1);
     }
     queue.push(item);
-    if (pumping) return;
+    kick();
+  }
+
+  function kick(): void {
+    if (pumping || stopped || queue.length === 0) return;
     pumping = true;
     pump = drain().finally(() => {
       pumping = false;
@@ -393,6 +403,15 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
     for (;;) {
       const next = queue.shift();
       if (next === undefined || stopped) return;
+      // One core: a crew run has it. The look keeps its place and the next
+      // sweep takes it once the run has ended (src/core/one_core.ts).
+      const cpus = options.cpus ?? forgeCpus;
+      const active =
+        options.activeCrewRuns ?? (() => listActive(app.db, "agent").length);
+      if (crewHoldsCore(cpus(), active)) {
+        queue.unshift(next);
+        return;
+      }
       if (Date.now() - next.at > MAX_WAIT_MS) {
         log.warn("look dropped: waited too long", {
           app: next.appId,
@@ -677,6 +696,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
   /** Queue every running production whose head lacks a picture to keep. */
   function sweep(): void {
     if (stopped) return;
+    kick();
     const runtime = appsRuntime(app);
     if (runtime === undefined) return;
     try {

@@ -533,7 +533,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
         // tabs are words only since #8774, so the eye is simply absent.
         word: "app",
         path: repoPath,
-        title: "vocab",
+        title: "alice/vocab",
         shows: [">Issues", ">Pulls"],
         hides: [`#i-eye"/></svg>Look`, `>Look<`, 'class="where"'],
         // #630: the app page is the home in every mode; its code, with dev's

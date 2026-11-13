@@ -168,7 +168,7 @@ describe("every kind of page unfurls", () => {
     expect(t.get("og:description")).toMatch(/Status: .+\.$/);
     expect(t.get("twitter:card")).toBe("summary_large_image");
     const image = new URL(t.get("og:image")!).pathname;
-    expect(image).toBe("/og/app/widget.png");
+    expect(image).toBe("/og/app/alice~widget.png");
     const card = await fetch(base + image);
     expect(card.status).toBe(200);
     expect(card.headers.get("content-type")).toBe("image/png");
@@ -196,4 +196,35 @@ describe("every kind of page unfurls", () => {
       await card.arrayBuffer();
     });
   }
+});
+
+describe("a preview names the repository, never the platform slug (#11689)", () => {
+  test("repository and app pages carry owner/name in every preview tag", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-ogname-"));
+    const app = createForge({ dataDir, port: 0 });
+    const servers = await serve(app);
+    try {
+      const u = await createUser(app.db, { origin: "seed", trusted: true, username: "alice", email: "a@forge.local", password: "alice-passphrase", adminIfFirst: true });
+      if (!u.ok) throw new Error(u.error);
+      const names = ["forge", "one", "two", "three"];
+      for (const name of names) {
+        const made = await createRepo(app, u.value, { name, visibility: "public", description: `The ${name} thing` });
+        if (!made.ok) throw new Error(String(made.error));
+      }
+      for (const name of names.slice(1))
+        createAppRecord(app.db, { repoId: getRepo(app.db, "alice", name)!.id, slug: `lab-${name}`, access: "public" });
+      for (const name of names) {
+        const html = await (await fetch(`${servers.url}/alice/${name}`)).text();
+        const t = tags(html);
+        expect(t.get("og:title")).toBe(`alice/${name}`);
+        expect(t.get("og:site_name")).toBe(`alice/${name}`);
+        expect(html.match(/<title>([^<]*)<\/title>/)![1]).toContain(`alice/${name}`);
+        expect(new URL(t.get("og:image")!).pathname).not.toContain("lab");
+        expect(html).not.toMatch(/\blab\b/);
+      }
+    } finally {
+      await servers.stop();
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
 });

@@ -39,3 +39,18 @@ export function receiptSentence(verb: string, done: number, undo: boolean): stri
   const word = Object.hasOwn(VERB_WORDS, verb) ? VERB_WORDS[verb]! : verb;
   return undo ? `${word} undone: ${done}` : `${word}: ${done} done`;
 }
+
+/** How long, after a decision, the page keeps its one "Done. Undo" line (#11814). */
+export const DONE_LINE_MS = 60_000;
+
+/** The first word of the line after a decision, and what the line says alone when nothing can be taken back. */
+export const DONE = "Done.";
+
+/** The label of the button (and the terminal's key) that takes a decision back. */
+export const UNDO_LABEL = "Undo";
+
+/** The line after a decision that can be taken back, as MCP returns it: the page shows `DONE` and a button labelled `UNDO_LABEL`. */
+export const DONE_UNDO = `${DONE} ${UNDO_LABEL}`;
+
+/** The line after a decision that cannot be taken back: a landed merge stays landed. */
+export const DONE_NO_UNDO = `${DONE} A merge that has landed cannot be taken back, so there is no Undo.`;

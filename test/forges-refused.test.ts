@@ -82,3 +82,21 @@ describe("doors to /forges/refused", () => {
     expect(as({ id: "b", isAdmin: false })).toEqual([]);
   });
 });
+
+describe("the link on /forges", () => {
+  test("an admin sees one link, with the count, only when there are refusals", async () => {
+    const app = fresh();
+    const admin = { id: "a", isAdmin: true, kind: "user" };
+    let body = await (await forgesPage(ctxOf(app, admin))).text();
+    expect(body).not.toContain('href="/forges/refused"');
+    recordRefusal(app.db, { actorId: "u1", ask: "x", words: "no" }, Date.now());
+    recordRefusal(app.db, { actorId: "u2", ask: "y", words: "no" }, Date.now());
+    body = await (await forgesPage(ctxOf(app, admin))).text();
+    expect(body.match(/href="\/forges\/refused"/g)).toHaveLength(1);
+    expect(body).toContain("Refused first asks (2)");
+  });
+  test("a non-admin sees no link", async () => {
+    const body = await (await forgesPage(ctxOf(fresh(), { id: "b", isAdmin: false }))).text();
+    expect(body).not.toContain("/forges/refused");
+  });
+});

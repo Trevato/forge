@@ -39,11 +39,14 @@ export function planLine(dataDir: string): string | undefined {
   return `${n.name}${size}. ${statusWords(n)}.${credit}`;
 }
 
-/** One `dl` row for a forge's admins; null for anyone else or a forge told nothing. */
-export function planRow(dataDir: string, parentOrigin: string | undefined, admin: boolean): Html | null {
+/**
+ * One `dl` row for a forge's admins; null for anyone else or a forge told nothing. `more` is a row to share the same `dl`
+ * (the Cores row), so the facts read as one list.
+ */
+export function planRow(dataDir: string, parentOrigin: string | undefined, admin: boolean, more: Html | null = null): Html | null {
   if (!admin) return null;
   const line = planLine(dataDir);
-  if (line === undefined) return null;
+  if (line === undefined) return more === null ? null : html`<dl class="status-rows">${more}</dl>`;
   const n = noticeOf(dataDir);
   const portal = n?.portalUrl;
   // In grace the one link that matters is Pay: the provider's portal, else the host's pricing page.
@@ -55,5 +58,5 @@ export function planRow(dataDir: string, parentOrigin: string | undefined, admin
   }${
     // One link per place: when Pay already goes to the host's pricing page, Change size would repeat it.
     parentOrigin === undefined || pay === `${parentOrigin}/pricing` ? "" : html` <a href="${parentOrigin}/pricing">Change size</a>`
-  }</dd></div></dl>`;
+  }</dd></div>${more}</dl>`;
 }

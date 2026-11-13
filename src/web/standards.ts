@@ -42,7 +42,9 @@ import { publicForgeRepo } from "../core/forge_repo.ts";
 import type { Ctx } from "../http/context.ts";
 import { notFound } from "../http/respond.ts";
 import { SHARE_TARGET } from "./share_target.ts";
-import { SITE_LINE } from "./site_line.ts";
+import { offerTable } from "./offer.ts";
+import { getPlans } from "../settings/plans.ts";
+import { SITE_PATH, SITE_LINE } from "./site_line.ts";
 import { holds } from "./feeds.ts";
 import { mcpToolsSection } from "./llms_tools.ts";
 import { apiCatalog, cardsLine, DISCOVERY, mcpCard, offeredPlugins, mcpPointers, offeredPluginRepo, pluginSource } from "../core/mcp_card.ts";
@@ -386,7 +388,7 @@ function runningSentence(): string {
 }
 
 /** llms.txt and its ETag per origin, valid while the listing read, the build, the tell command and the plugin source being public are the same. */
-const llmsBodies = new Map<string, { signedIn: boolean; repos: LlmsListing; running: string; tell: string | undefined; plugins: string | undefined; body: string; etag: string }>();
+const llmsBodies = new Map<string, { signedIn: boolean; repos: LlmsListing; running: string; tell: string | undefined; plugins: string | undefined; plans: string; body: string; etag: string }>();
 
 /**
  * GET /llms.txt — the forge as an agent should meet it (llmstxt.org): what
@@ -418,11 +420,12 @@ export function llmsBody(ctx: Ctx): { body: string; etag: string } {
   // The tools section depends on who asks, so the signed-in and the anonymous body are kept apart.
   const signedIn = ctx.auth.user !== undefined;
   const key = `${o} ${signedIn}`;
+  const plans = JSON.stringify(getPlans(ctx.app.db));
   let kept = llmsBodies.get(key);
-  if (kept === undefined || kept.repos !== repos || kept.running !== running || kept.tell !== tell || kept.plugins !== plugins) {
+  if (kept === undefined || kept.repos !== repos || kept.running !== running || kept.tell !== tell || kept.plugins !== plugins || kept.plans !== plans) {
     const body = timePhase(ctx.request, "render", () => renderLlmsTxt(ctx, o, tell, running, repos, signedIn, plugins));
     const etag = timePhase(ctx.request, "etag", () => `"${new Bun.CryptoHasher("sha256").update(body).digest("hex").slice(0, 32)}"`);
-    kept = { signedIn, repos, running, tell, plugins, body, etag };
+    kept = { signedIn, repos, running, tell, plugins, plans, body, etag };
     // Origins come from the Host header: keep a handful, not one per guess.
     if (llmsBodies.size >= 16) llmsBodies.clear();
     llmsBodies.set(key, kept);
@@ -448,7 +451,9 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
       "",
       running,
       "",
-      `> ${SITE_LINE} A self-hosted forge in one Bun process and one SQLite file that hosts code and runs apps, with AI agents that build. Forges connect to one another. Part of Open Platform (https://www.open-platform.sh). Anyone may read a public repository, and report a problem in it without an account.`,
+      SITE_PATH(o),
+      "",
+      `> ${SITE_LINE} A self-hosted forge in one Bun process and one SQLite file that hosts code and runs apps, with AI agents that build. Forges connect. Part of Open Platform (https://www.open-platform.sh). Anyone may read a public repository and report a problem in it.`,
       "",
       "## Start here",
       "",
@@ -456,9 +461,13 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
       "",
       `- Build now, no account: \`curl -sX POST ${o}/api/v1/start -d '{"name":"my-app"}'\` -> {user, token, repo, git, app, claim}. Clone git.url (user:token@), \`git push\` to main: app.url is live. Give claim.url to the person who takes it over. Unclaimed: asleep in 7 days, archived in 30.`,
       `- Or with an account: sign up at ${o}/signup, then follow "Offer a change" below. By request, POST ${o}/api/v1/users gives 202 {state:"waiting"}. If /signup says 403, use "Report a problem".`,
-      `- Get your own forge: \`git clone ${UPSTREAM_REPO}.git && cd forge && bun install && bun run src/main.ts\`, then in a second terminal \`bun src/main.ts --first-admin\`, which prints a one-time link that makes you the admin. It needs Bun; its crew needs the claude CLI and a model credential. Or a hosted one, plans on ${o}: sign in and open ${o}/forges/new (or call the MCP \`spawn\` tool with the person's consent). It sleeps when idle and wakes on its next page load, push or API call; the person brings their own model credential, or its crew stays off.`,
+      `- Run it yourself instead: \`git clone ${UPSTREAM_REPO}.git && cd forge && bun install && bun run src/main.ts\`, then in a second terminal \`bun src/main.ts --first-admin\`, which prints a one-time link that makes you the admin. It needs Bun; its crew needs the claude CLI and a model credential. Or hosted (plans below): ${o}/forges/new, or MCP \`spawn\` with the person's consent. A hosted forge sleeps when idle and wakes on its next page load, push or API call; on the free plan the person brings their own model credential, or its crew stays off.`,
       `- Work from your own forge: connect it to this one as an origin, bring an app in, and send your work back. How: ${UPSTREAM_REPO}/raw/main/docs/ORIGINS.md`,
       `- Connect an assistant that uses tools: custom connector URL ${mcp.url} (OAuth); start and report need no account.`,
+      "",
+      "## Plans",
+      "",
+      ...offerTable(getPlans(ctx.app.db)),
       "",
       "## Report a problem (no account)",
       "",

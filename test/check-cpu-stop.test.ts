@@ -23,7 +23,7 @@ const STOP = `check stopped: it ${cpuBreach(16.3, 31, 16, { pid: 52062, ticks: 4
 
 describe("stoppedForCpu", () => {
   test("reads runStep's CPU stop, and nothing a check could print", () => {
-    expect(STOP).toBe("check stopped: it used 16.3 cores for 31s, over its limit of 16; the busiest process is sh (pid 52062, 462s of CPU)");
+    expect(STOP).toBe("check stopped: it used 16.3 cores for 31s, over twice its limit of 16; the busiest process is sh (pid 52062, 462s of CPU)");
     expect(stoppedForCpu(STOP)).toBe(true);
     expect(stoppedForCpu(`check stopped: it ${cpuBreach(3, 300, 2, undefined)}`)).toBe(true);
     // The check's own output follows "exited with code": it cannot pose as the watch.

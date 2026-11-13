@@ -15,6 +15,10 @@ keyboard. It does what the steward's `release.sh`, `verify-after.sh` and
    - no merge-queue gate is running;
    - no snapshot is being taken, unless it has run two hours and is stuck
      (a release drains the process the snapshot runs in; #9653);
+   - the disk under the forge's data is less than 80% full (a release
+     writes a new tree beside the live one; at 80% the tick says
+     "the disk is N% full; releases pause at 80% until room is made" and
+     cuts on the first tick with room; #11686);
    - 30 minutes have passed since the last cut;
    - no hold stands.
 

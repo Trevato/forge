@@ -1,10 +1,10 @@
-import { explorePage, exploreLine, exploreLineFrom, EXPLORE_PARAMS, exploreNote, exploreSuggestion, readExploreLine, rowsWithWhy } from "../../../actions/explore.ts";
+import { explorePage, exploreLine, exploreCount, exploreFiltered, exploreLineFrom, EXPLORE_PARAMS, exploreNote, exploreSuggestion, readExploreLine, rowsWithWhy } from "../../../actions/explore.ts";
 import { forkTreeRows } from "../../../actions/fork_tree_rows.ts";
 import { bad, good, type Tool, str, repoArg, isAnswer } from "../shared.ts";
 
 export const tool: Tool = {
   name: "explore",
-  doc: "`{ kind: tree, app }`: `{ app, upstream, forks, truncated }`, rows `{ repo, follows, standing, updatedAt }` for the app, the chain above it (nearest first) and its direct forks, in the words of the forks page, only what you may read, drawn on the `ui://forge/explore` card as upstream, this and fork rows; else `{ q?, cursor? }` (`query` is the same, `q` wins): the apps and people you can see, ranked, with their numbers and `why` (a short line on the ranking, absent when none); `kind:` `sort:` `updated:` `owner:` `archived:` and words in one line; each also as its own argument (`since` = `updated`); page on with `cursor`",
+  doc: "`{ kind: tree, app }`: `{ app, upstream, forks, truncated }`, rows `{ repo, follows, standing, updatedAt }` for the app, the chain above it (nearest first) and its direct forks, in the words of the forks page, only what you may read, drawn on the `ui://forge/explore` card as upstream, this and fork rows; else `{ q?, cursor? }` (`query` is the same, `q` wins): the apps and people you can see, ranked, with `total` and `line` (how many the filter leaves, in the page's words) and, when filtered, `clear` (the call that drops it), with their numbers and `why` (a short line on the ranking, absent when none); `kind:` `sort:` `updated:` `owner:` `archived:` and words in one line; each also as its own argument (`since` = `updated`); page on with `cursor`",
   description:
     "The apps, people (and, for an admin, forges) you can see, ranked.",
   inputSchema: {
@@ -44,6 +44,9 @@ export const tool: Tool = {
     if (page === null) return bad("invalid_cursor", "cursor is not the next_cursor of a page before");
     return good({
       query: exploreLine(query),
+      total: page.total,
+      line: exploreCount(query, page.total),
+      ...(exploreFiltered(query) ? { clear: { tool: "explore", arguments: {} } } : {}),
       items: rowsWithWhy(ctx.app, query, page.items),
       next_cursor: page.nextCursor,
     });

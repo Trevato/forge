@@ -132,3 +132,18 @@ repository and app counts with production, kill the process and reboot to see
 it return. Restoring reads the bucket by the card's lines only — no platform
 service is involved. `test/forge-box-unit.test.ts` parses the unit.
 Done on a machine: the drill itself (restore, counts, reboot) is the owner's to run.
+
+## The vxrail is the box
+
+The forge's production machine, the vxrail, becomes this box itself, so no
+second machine is needed. It drops Kubernetes for the forge rather than
+running a k3s server of its own. The why, and the steps with their rollbacks,
+are in [OPERATING.md](OPERATING.md#the-vxrail-without-a-control-plane). Three
+things differ from the recipe above:
+
+- The data is not restored. The pod's own directory is bind-mounted and then
+  moved, so the cutover copies nothing.
+- The unit starts `src/release/launch.ts` with `Delegate=yes`, because swaps
+  and cells need their supervisor and their cgroup.
+- The unit sets `FORGE_CELL_MOUNTS=allow-list`, because a host's mounts are
+  not a pod's (#11823).

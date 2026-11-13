@@ -59,7 +59,7 @@ import {
 import { Database } from "bun:sqlite";
 import { loadKey, open } from "../kernel/secret.ts";
 import { loadOrCreateHostKey } from "../ssh/keys.ts";
-import { claimLink, hasAdmin, mintClaim, spawnedOrg } from "../spawn/claim.ts";
+import { claimLink, hasAdmin, mintClaim, PLACEHOLDER_FOUNDER, spawnedOrg } from "../spawn/claim.ts";
 import { childPublicUrl, parentOrigin, type Placement, type PlacementKind } from "../spawn/placement.ts";
 import { quotaRefusal } from "../spawn/quota.ts";
 import { personRefusal, planRefusal } from "../spawn/sleep.ts";
@@ -209,7 +209,7 @@ async function writeLedger(app: App, ledger: Ledger): Promise<void> {
  * The child's founder account: the spawner's own name, or a placeholder
  * for a stranger's child (`copyInto`).
  */
-export const founderNameOf = (owner: User | undefined): string => owner?.username ?? "founder";
+export const founderNameOf = (owner: User | undefined): string => owner?.username ?? PLACEHOLDER_FOUNDER;
 
 /**
  * A child whose organisation would take its founder's name can't be made:
@@ -590,6 +590,8 @@ async function copyInto(
         // The child's own address: <name>--<parent's host>.
         url: liveChildUrl(app, plan.name),
         keepAccess: plan.keepAccess,
+        // No spawner signed in: the founder account is a placeholder (#11785).
+        anonymous: owner === undefined,
         size: plan.size ?? DEFAULT_SIZE,
         ...(plan.template === undefined ? {} : { template: templateMark ?? { id: plan.template } }),
         // Each app is a fork: where it came from, so the child can follow it.

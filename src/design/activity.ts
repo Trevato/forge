@@ -180,6 +180,7 @@ const WORDS: Record<string, string> = {
   "repo.crew_outsiders": "changed who may trigger the crew",
   "repo.mirrored": "mirrored a repository",
   "repo.imported": "imported issues and pulls",
+  "app.data_imported": "loaded a database dump into an app",
   "repo.pinned": "pinned a repository",
   "repo.unpinned": "unpinned a repository",
   "board.pins": "changed their pinned panels",

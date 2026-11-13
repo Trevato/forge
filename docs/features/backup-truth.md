@@ -134,3 +134,5 @@ network blocked (egress allowed to B2 only, e.g. a firewall rule on the box):
 
 Not done here: the drill itself, the dump decision, and the lane rows. Each
 needs the box or the owner; this section is what they follow.
+
+An app's own data has its own encrypted backup and restore proof: `app-backup.md` (#11701).

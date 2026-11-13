@@ -157,6 +157,8 @@ import {
   recoverFinish,
   recoverOptions,
   recoverPage,
+  accessPage,
+  accessSubmit,
   recoverRequest,
   signinOptions,
   signinPasskey,
@@ -240,6 +242,7 @@ import {
   newIssueSubmit,
 } from "../web/pages/issues.ts";
 import { adapterPull } from "../web/studio/adapter.ts";
+import { jobsPage, steerJobPage } from "../web/studio/jobs.ts";
 import { steerSchedulePage } from "../web/studio/schedules.ts";
 import { noteModerate } from "../web/studio/notes.ts";
 import { tellPage } from "../web/studio/tell.ts";
@@ -659,13 +662,14 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
 
   const session = cookieValue(request, "forge_session");
   if (session !== undefined) {
-    const found = sessionOf(app.db, session);
+    const found = sessionOf(app.db, session, clientAddress(request));
     if (found.ok)
       return {
         user: found.value.user,
         scope: "admin",
         via: "session",
         sessionId: found.value.id,
+        ...(found.value.notice ? { noticeWaiting: true as const } : {}),
       };
   }
 
@@ -914,6 +918,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/signin/parent", parentStart);
   router.add("GET", "/signin/parent/callback", parentCallback);
   router.add("GET", "/signup", signupPage);
+  router.add("GET", "/signin/access/:token", accessPage);
+  router.add("POST", "/signin/access/:token", accessSubmit);
   router.add("GET", "/claim/start/:token", startClaimPage);
   router.add("POST", "/claim/start/:token", startClaimSubmit);
   router.add("POST", "/claim/start/:token/account", startClaimAccountSubmit);
@@ -1410,6 +1416,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/apps/open", appsOpen);
   router.add("POST", "/:owner/:name/app/notes", noteModerate);
   router.add("POST", "/:owner/:name/app/pull", adapterPull);
+  router.add("GET", "/:owner/:name/app/jobs", jobsPage);
+  router.add("POST", "/:owner/:name/app/jobs/:id/:action", steerJobPage);
   router.add("POST", "/:owner/:name/app/schedules/:schedule/:action", steerSchedulePage);
   router.add("POST", "/:owner/:name/app/:env/redeploy", appRedeploy);
   router.add("POST", "/:owner/:name/app/:env/stop", appStop);
@@ -2246,7 +2254,9 @@ export interface Servers {
    * Stop taking connections and let those in flight finish: what a process
    * handing its port to a release beside it does at drain start (#2040).
    * Resolves once no request is in flight, or `budgetMs` has passed; `stop`
-   * then cuts whatever is left.
+   * then cuts whatever is left. From then on every answer still given on a
+   * kept-alive connection says `connection: close`, so a router holding one
+   * redials and reaches the release instead of this process (#11682).
    */
   stopAccepting(budgetMs: number): Promise<void>;
   stop(): void;
@@ -2768,6 +2778,8 @@ export async function serve(app: App): Promise<Servers> {
       return withHeader(response, "connection", "close");
   };
 
+  // Set by `stopAccepting`: the port is the release's now.
+  let handedOver = false;
   const web = Bun.serve({
     port: app.config.port ?? 3000,
     // A release swaps in beside this process on the same port (#1663).
@@ -2781,7 +2793,12 @@ export async function serve(app: App): Promise<Servers> {
     // proxy; its own live surfaces are SSE (`sse.ts`) and stay so.
     websocket: withShells(appWebSocketWith(app.config.wsMaxMessage)),
     // Open until it is answered, so a stall while it runs names it (#11478).
-    fetch: (request, server) => inFlight.during(request, performance.now(), () => handle(request, server)),
+    // Once the port is handed over, an answer on a connection opened before ends it (#11682).
+    fetch: (request, server) =>
+      inFlight.during(request, performance.now(), async () => {
+        const response = await handle(request, server);
+        return handedOver && response !== undefined ? withHeader(response, "connection", "close") : response;
+      }),
     // A last resort: `handle` answers a throw itself, so it is counted.
     error: (error) => failure(app, error),
   });
@@ -2796,7 +2813,10 @@ export async function serve(app: App): Promise<Servers> {
     },
     async stopAccepting(budgetMs) {
       // Closing the listener leaves the port to the process beside this one;
-      // the connections already here are answered to the end.
+      // the connections already here are answered to the end, each closed
+      // after its next answer: a router's pooled connection would otherwise
+      // keep hearing this version for the whole drain (#11682).
+      handedOver = true;
       web.stop(false).catch(() => {});
       const deadline = Date.now() + budgetMs;
       while (web.pendingRequests > 0 && Date.now() < deadline)

@@ -159,6 +159,9 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "label.deleted",
   "telemetry.granted",
   "telemetry.revoked",
+  "account.access_reset",
+  "account.sessions_ended",
+  "account.access_redeemed",
   "account.suspended",
   "account.unsuspended",
   "org.retired",
@@ -233,6 +236,8 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     // Who is trusted to fold in, and the switch that stops it, are the owner's (`actions/trusted_sources.ts`).
     kind.startsWith("trust.") ||
     kind.startsWith("foldin.") ||
+    // A way-back link minted for an account the platform edge signed in (#11802).
+    kind === "account.way_back_minted" ||
     // The owner's planner switch is the admins' to hear (#11604).
     kind === "planner.paused" ||
     kind === "planner.resumed" ||

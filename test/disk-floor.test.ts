@@ -24,6 +24,8 @@ import { quietLogs } from "./helpers/globals.ts";
 import { provideDiskForTest, type DiskReading } from "../src/kernel/disk_reading.ts";
 import { vitals } from "../src/kernel/vitals.ts";
 import { cellChildren, stopCellChildren } from "../src/spawn/cell.ts";
+import { usedRefusal } from "../src/apps/disk_guard.ts";
+import { RELEASE_DISK_USED_MAX } from "../src/keeper/cadence.ts";
 import { DISK_FLOOR, floorRefusal } from "../src/spawn/disk_floor.ts";
 import { quotaFull, quotaRefusal } from "../src/spawn/quota.ts";
 
@@ -238,5 +240,43 @@ describe("the owner hears once per crossing (#10873)", () => {
     step(60, [floor]);
     step(6, [floor]);
     expect(pages).toEqual(["disk-floor", "disk", "disk-floor"]);
+  });
+});
+
+describe("no step's cell starts at 80% used (#11799)", () => {
+  test("the guard is 80% and the child floor stays 15%", () => {
+    expect(RELEASE_DISK_USED_MAX).toBe(0.8);
+    expect(DISK_FLOOR).toBe(0.15);
+  });
+
+  test("81% used is refused with one line; 79% is not", () => {
+    expect(usedRefusal(tmp, reading(19))).toContain("81.0% used");
+    expect(usedRefusal(tmp, reading(21))).toBeUndefined();
+    expect(usedRefusal(tmp, undefined)).toBeUndefined();
+  });
+
+  test("a step at 81% logs the line and fails with it; at 79% it runs", async () => {
+    const lines: string[] = [];
+    const step = (cell?: CellSpec) =>
+      runStep("check", "true", { cwd: tmp, env: childEnv({}), log: (l) => lines.push(l), signal: new AbortController().signal, cell });
+    provideDiskForTest(() => reading(19));
+    const refused = await step({} as CellSpec);
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) expect(refused.error).toBe(`check ${usedRefusal(tmp, reading(19))}`);
+    expect(lines).toEqual([`check ${usedRefusal(tmp, reading(19))}`]);
+    provideDiskForTest(() => reading(21));
+    expect((await step()).ok).toBe(true);
+  });
+});
+
+describe("a big disk with plenty of room (the vxrail: 348 GiB free of 2198, 84% used)", () => {
+  const vxrail = { freeBytes: 348 * GiB, totalBytes: 2198 * GiB };
+  test("neither the floor nor the build guard refuses at 100 GiB free or more, whatever the share", () => {
+    expect(floorRefusal("/", { freeBytes: 100 * GiB, totalBytes: 2198 * GiB })).toBeUndefined();
+    expect(usedRefusal("/", vxrail)).toBeUndefined();
+  });
+  test("under 100 GiB free the shares decide again", () => {
+    expect(floorRefusal("/", { freeBytes: 99 * GiB, totalBytes: 2198 * GiB })).toContain("under the 15%");
+    expect(usedRefusal("/", { freeBytes: 99 * GiB, totalBytes: 2198 * GiB })).toContain("builds wait for");
   });
 });

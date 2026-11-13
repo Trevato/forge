@@ -47,6 +47,7 @@ import { KEPT_PAGE_BYTES, keptPageStats } from "./kept_page.ts";
 import { COLUMN_BYTES, PARTS_BYTES, keptPartsStats, treeCacheStats } from "./tree_cache.ts";
 import { featureHealth, type FeatureHealth } from "../../system/feature_health.ts";
 import { egressReportedLine } from "../../system/egress_line.ts";
+import { BREAK_STEPS, MACHINES, declaredFooting, footing, offMachine, whereWords, type Footing, type Machine } from "../../system/footing.ts";
 import { badge, chartBox, disclosure, meter, pill, row, time } from "../ui.ts";
 import { childDirOf, listChildren } from "../../actions/spawn.ts";
 import { childrenUse, realSelf, selfUse, shareOf, sizeWords, useWords, type ChildUseRow, type SelfUse } from "../../spawn/usage.ts";
@@ -202,6 +203,38 @@ export function featuresSection(rows: readonly FeatureHealth[]): Html {
       }),
     )}</ul>
     <p class="small"><a href="/settings/features">Settings › Features</a></p></section>`;
+}
+
+/**
+ * What the forge stands on (#11685): each piece it needs to answer, sign in,
+ * build, release and back up, and where it was found. The summary gives the
+ * one count; inside, each piece on another machine, in the order switching
+ * pg-grand off would break the forge, one fact a line; then the pieces on the
+ * forge's own machine, by name. `system/footing.ts`'s rows.
+ */
+export function footingSection(f: Footing): Html {
+  const off = offMachine(f);
+  const home = f.rows.filter((r) => !r.risk);
+  // First sight (#11111): the heading and one count stay; the rows open behind one disclosure.
+  const count = off.length === 0 ? "Every piece runs on the forge's own machine" : `${off.length} of ${f.rows.length} pieces run on another machine`;
+  return html`<section class="settings-block" id="sys-footing" data-off="${String(off.length)}" data-forge-node="${f.forgeNode ?? ""}"><h2>What the forge stands on</h2>
+    ${disclosure(count, html`<p class="small">${f.forgeNode === null ? html`The forge's node was not read (${f.unread ?? "unknown"}), so each piece shows the machine written in <code>docs/OPERATING.md</code>.` : html`The forge runs on <span class="mono">${f.forgeNode}</span>.`}
+      ${off.length === 0 ? null : "If that machine stops, each piece below stops with it; they are listed in the order the forge would lose them."}</p>
+    ${off.length === 0 ? null : html`<ul class="list" aria-label="Pieces on another machine">${off.map((r) =>
+      row({
+        title: r.what,
+        facts: [
+          { label: "Needed to", value: r.need },
+          { label: "Runs on", value: html`<span class="mono">${whereWords(r)}</span>` },
+          { label: "If it stops", value: r.ifDies },
+          ...(r.breaks ? [{ label: "Order", value: `${r.breaks} of ${BREAK_STEPS.length}: ${BREAK_STEPS[r.breaks - 1]}` }] : []),
+          ...(r.issues.length ? [{ label: "Fixed by", value: r.issues.map((n) => `#${n}`).join(", ") }] : []),
+        ],
+        data: { piece: r.id, off: "true", seen: r.seen.by, ...(r.breaks ? { breaks: String(r.breaks) } : {}) },
+      }),
+    )}</ul>`}
+    ${home.length === 0 ? null : html`<p class="small muted">On the forge's own machine: ${home.map((r, i) => html`${i ? ", " : ""}<span data-piece="${r.id}" data-off="false">${r.what}</span>`)}.</p>`}
+    ${(Object.keys(MACHINES) as Machine[]).map((m) => html`<p class="small muted" data-machine="${m}"><span class="mono">${m}</span>: ${MACHINES[m]}</p>`)}`, { id: "sys-footing-more" })}</section>`;
 }
 
 /** The last hour's stalls by route, most milliseconds first; the rows are `stallHour`'s. */
@@ -370,6 +403,8 @@ export async function systemPage(ctx: Ctx): Promise<Response> {
   const stalls = timePhase(ctx.request, "stalls", () => stallHour(loopWatch.tally(performance.now())));
   const nowMono = performance.now();
   const worst = stallBlame.worst(nowMono, HOUR_MS, WORST_STALLS);
+  // Never waits on the cluster: the last reading, or the declared rows while the first read runs behind.
+  const standsOn = footing.peek() ?? declaredFooting("the cluster is being read; reload in a moment");
   const rendering = performance.now();
   const r = regions(v);
   const at = (id: string): Html => raw(r[id]!);
@@ -403,6 +438,7 @@ export async function systemPage(ctx: Ctx): Promise<Response> {
       <div class="js-only small muted">Sort by <button class="btn" data-size="sm" type="button" data-sort="cpu" aria-pressed="true"><kbd>c</kbd> CPU</button>
         <button class="btn" data-size="sm" type="button" data-sort="mem" aria-pressed="false"><kbd>m</kbd> memory</button></div>
       <div id="sys-procs" data-live-hold>${at("sys-procs")}</div></section>
+    ${footingSection(standsOn)}
     ${featuresSection(timePhase(ctx.request, "features", () => featureHealth(ctx.app, reader)))}
     ${lagSection(lagMinutes.readings())}
     <div id="sys-stalls">${stallSection(stalls, worstStallsTable(worst, nowMono, Date.now()))}</div>

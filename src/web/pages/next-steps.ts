@@ -25,7 +25,8 @@ import { icon } from "../icons.ts";
 import { badge, btn, row } from "../ui.ts";
 import { everydayAsk } from "./everyday.ts";
 import { EVERYDAY_WHY } from "../../core/everyday.ts";
-import { crewFirstLine } from "../studio/crew_key.ts";
+import { askRepos, askStatus, type AskStatus } from "../../core/ask-status.ts";
+import { crewCanRun, crewFirstLine } from "../studio/crew_key.ts";
 import { NEW_APP_TARGET } from "../studio/feed.ts";
 import { COMPOSER_FIELDS, TELL_MAX } from "../share_target.ts";
 
@@ -39,6 +40,19 @@ export function crewAtWork(ctx: Ctx, repos: Awaited<ReturnType<typeof spawnedRep
       meta: html`${c.who === null ? c.says : c.repo.name}`,
     });
   });
+}
+
+/** The apps whose crew row shows beside the ask's: a builder at work is said once, so while the ask is building, its app's row goes. */
+export function besideAsk<R extends { readonly id: string }>(repos: readonly R[], ask: AskStatus | null): R[] {
+  return ask?.state === "building" ? repos.filter((r) => r.id !== ask.repoId) : [...repos];
+}
+
+/** The status block; its action is a quiet link so the step keeps the one primary. */
+export function askBlock(s: AskStatus): Html {
+  return html`<div class="step-body" data-ask-status>
+    <ul class="list">${row({ href: s.href, title: html`${s.says}`, meta: html`${s.app} · issue #${String(s.issueNumber)}` })}</ul>
+    ${s.action ? html`<p>${btn(s.action.label, { href: s.action.href, size: "sm", variant: "link" })}</p>` : null}
+  </div>`;
 }
 
 /** One step: its row (title, "Done" trail; the primary one in bold), then its
@@ -100,6 +114,8 @@ export async function nextStepsCard(
   const crew = crewAtWork(ctx, repos);
   if (steps.some((s) => s.key === "tell" && !s.done)) return firstTell(ctx, user, crew);
   const primary = steps.find((s) => !s.done)?.key;
+  const ask = askStatus(ctx.app.db, await askRepos(ctx.app, user), user.id, crewCanRun(ctx.app), user.isAdmin === true);
+  const others = ask?.state === "building" ? crewAtWork(ctx, besideAsk(repos, ask)) : crew;
   const bodies: Record<NextStep["key"], Html | null> = {
     everyday: html`<p class="muted small">${EVERYDAY_WHY}</p>
       ${everydayAsk(ctx, user)}`,
@@ -129,7 +145,8 @@ export async function nextStepsCard(
   };
   return html`<section id="next-steps">
     <h2>Your next steps</h2>
-    ${crew.length > 0 ? html`<ul class="list">${crew}</ul>` : null}
+    ${ask ? askBlock(ask) : null}
+    ${others.length > 0 ? html`<ul class="list">${others}</ul>` : null}
     ${steps.map((s) => stepBlock(s, s.key === primary, bodies[s.key]))}
   </section>`;
 }

@@ -26,9 +26,10 @@ import { coveredByVerdict, forgeVerdict, verdictLine } from "../../kernel/guard_
 import { clientAppRows, clientDoings, clientFinished, doingLine, finishedLine } from "../../core/client-apps.ts";
 import { appCrew } from "../../core/app-crew.ts";
 import { nextStepsFor } from "../../core/next-steps.ts";
+import { askRepos, askStatus, askStatusLine } from "../../core/ask-status.ts";
 import { keepThought } from "../../actions/thought.ts";
 import { SAY_SOMETHING_WORDS } from "../../actions/tell_words.ts";
-import { crewFirstText } from "../../web/studio/crew_key.ts";
+import { crewCanRun, crewFirstText } from "../../web/studio/crew_key.ts";
 import { agentsLine } from "../../web/studio/client_home.ts";
 import { lastVisit } from "../../core/home_visit.ts";
 import { sinceDigest } from "../../web/studio/since.ts";
@@ -53,6 +54,8 @@ import type { Proposal } from "../../core/proposals.ts";
 import type { App } from "../../app.ts";
 import {
   applyAsksBulk,
+  doneLine,
+  inDoneMinute,
   BULK_MAX,
   latestUndoable,
   previewAsksBulk,
@@ -200,6 +203,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** The rows marked for one verb, by issue id. */
   const marked = new Set<string>();
   let lastSet: Operation | undefined;
+  /** The decision's Done line, as the page keeps it for a minute (`doneLine`). */
+  let doneSet: ReturnType<typeof doneLine>;
   /** What Home and /review count: live asks waiting on the viewer, and the stale ones folded apart. */
   let waitingSet: ReviewSet | undefined;
   /** The repositories marked for archiving, by id; only ones the viewer administers. */
@@ -357,6 +362,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     const crewOf = new Map(appCrew(f.app.db, apps.map((a) => a.repo)).map((c) => [c.repo.id, c] as const));
     const doings = clientDoings(f.app.db, ids);
     const finished = clientFinished(f.app.db, ids);
+    const mine = await askRepos(f.app, f.user);
+    const asked = askStatus(f.app.db, mine, f.user.id, crewCanRun(f.app), f.user.isAdmin === true);
     clientLines =
       apps.length === 0
         ? ["Your apps will appear here."]
@@ -372,6 +379,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
             const crew = crewOf.get(a.repo.id)!.says;
             return `${line}${doing === "" ? "" : ` ${doing}`} ${crew[0]!.toUpperCase()}${crew.slice(1)}.`;
           });
+    if (asked) clientLines = [askStatusLine(asked), ...clientLines];
     ctx.invalidate();
   };
 
@@ -432,6 +440,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     for (const id of [...marked])
       if (!onYou.some((item) => item.issue.id === id)) marked.delete(id);
     lastSet = f.user ? latestUndoable(f.app, f.user) : undefined;
+    doneSet = f.user ? doneLine(f.app, f.user) : undefined;
     const now = new Date();
     holds = new Map(
       all.flatMap((repo) => {
@@ -1497,7 +1506,10 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       parts.push(
         `${silenced.size} ${silenced.size === 1 ? "repository" : "repositories"} muted · L listen again`,
       );
-    if (lastSet !== undefined) parts.push(`u undo ${lastSet.verb}`);
+    // The minute's Done line leads the undo, the page's words and gate; after the minute the day's undo stays.
+    const doneNow = doneSet !== undefined && inDoneMinute(doneSet.operation.createdAt) ? doneSet : undefined;
+    if (doneNow !== undefined && !doneNow.undo) parts.push(doneNow.line);
+    else if (lastSet !== undefined) parts.push(`${doneNow === undefined ? "" : `${doneNow.line} · `}u undo ${lastSet.verb}`);
     if (asideWaves.length > 0) parts.push(`${asideWaves.length} ${asideWaves.length === 1 ? "wave" : "waves"} put aside · B bring back`);
     return parts.length > 0 ? parts.join(" · ") : undefined;
   }

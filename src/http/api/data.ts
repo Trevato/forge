@@ -15,6 +15,7 @@ import {
   sourceList,
   tableList,
 } from "../../data/repo_scope.ts";
+import { importAppData, importDataMessage } from "../../actions/migrate.ts";
 import { loadRepo } from "../api.ts";
 import type { Ctx, Handler } from "../context.ts";
 import { QUERY_TIMEOUT_MS } from "../../data/query.ts";
@@ -61,6 +62,28 @@ export function dataRoutes(router: Router<Handler>): void {
     if (raw !== null && page === undefined) return apiError("invalid_page", 422, "page is a whole number from 0 to 1000");
     const result = rowPage(found.source, table, page);
     return result ? reply(result) : notFound();
+  });
+
+  // A dump in, loaded and reported per table on both sides (#11697). Body: { dump, env?, file?, replace? }.
+  router.add("POST", "/api/v1/repos/:owner/:name/data-import", async (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const input = await body(ctx.request);
+    if (typeof input["dump"] !== "string") return apiError("invalid_dump", 422, "dump is the SQL text");
+    const done = importAppData(ctx.app, ctx.auth.user, repo, {
+      dump: input["dump"],
+      ...(typeof input["env"] === "string" ? { env: input["env"] } : {}),
+      ...(typeof input["file"] === "string" ? { file: input["file"] } : {}),
+      replace: input["replace"] === true,
+    });
+    if (!done.ok) {
+      if (done.error === "not_found") return notFound();
+      const code = typeof done.error === "string" ? done.error : done.error.error;
+      return apiError(code, code === "exists" || code === "mismatch" ? 409 : code === "too_large" ? 413 : 422, importDataMessage(done.error));
+    }
+    return json(done.value, 200, PRIVATE);
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/data/:env/:file/query", async (ctx) => {

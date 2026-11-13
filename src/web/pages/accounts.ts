@@ -14,19 +14,22 @@ import {
   unsuspendAccount,
   verifyAccount,
 } from "../../actions/accounts.ts";
-import {
-  accountSignIns,
-  endAccountSession,
-  revokeAccountToken,
-} from "../../actions/signins.ts";
+import { ACCESS_WORDS, accessUrl, endAllSessions, manageable, resetAccess } from "../../actions/account_access.ts";
+import { endAccountSession, revokeAccountToken } from "../../actions/signins.ts";
+import { listPasskeys } from "../../core/passkeys.ts";
+import { roleOf } from "../../core/roles.ts";
+import { listSessions } from "../../core/sessions.ts";
+import { listTokensWithClients } from "../../core/oauth.ts";
+import { emailVerified } from "../../core/verify.ts";
 import { mailConfigured } from "../../actions/verify.ts";
-import { originOf, signinReach, type AccountRow } from "../../core/accounts.ts";
+import { listAccounts as readAccounts, originOf, signinReach, type AccountRow } from "../../core/accounts.ts";
 import {
   OWNERS_TEAM,
   ownerlessOrgs,
   soleOwnedOrgs,
 } from "../../core/orgs.ts";
-import { getUserByName } from "../../core/users.ts";
+import { getUserByName, hasPassword, isStandInEmail } from "../../core/users.ts";
+import { mintWayBack, wayBackAccounts } from "../../actions/edge_handover.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
@@ -37,6 +40,8 @@ import {
   badge,
   btn,
   confirmAction,
+  copyField,
+  field as formField,
   row,
   time,
   userLink,
@@ -97,7 +102,7 @@ function personRow(a: AccountRow, sole: readonly string[]): Html {
         : null}`,
     ...(actionable
       ? { after: html`
-          ${btn("Sign-ins", { href: at, size: "sm", variant: "ghost" })}
+          ${btn("Manage account", { href: at, size: "sm", variant: "ghost" })}
           ${a.verified
             ? null
             : html`<form method="post" action="${at}/verify">
@@ -114,6 +119,55 @@ function personRow(a: AccountRow, sole: readonly string[]): Html {
   });
 }
 
+/**
+ * Once the edge is gone, a person it signed in who added no passkey gets in
+ * by a way-back link an admin hands over (#11802): one button per account
+ * `wayBackAccounts` names. An admin is not offered one; they add a passkey.
+ */
+function wayBackForms(ctx: Ctx): Html | null {
+  const listed = wayBackAccounts(ctx.app, ctx.auth.user);
+  if (!listed.ok || listed.value.length === 0) return null;
+  return html`<div class="form-actions" id="way-back">
+    ${listed.value.map(
+      (a) => html`<form method="post" action="/settings/accounts/${encodeURIComponent(a.username)}/way-back">
+        ${btn(`Way-back link for ${a.username}`, { type: "submit", size: "sm" })}
+      </form>`,
+    )}
+  </div>`;
+}
+
+// POST /settings/accounts/:username/way-back — the link, shown once on the page.
+export async function wayBackAct(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const username = ctx.params.username ?? "";
+  const minted = mintWayBack(ctx.app, ctx.auth.user, username);
+  if (!minted.ok) {
+    if (minted.error === "not_found") return notFoundPage(ctx);
+    return flashTo(ctx, "/settings/accounts", {
+      message: `${username} already signs in without the edge; no link was made.`,
+      tone: "danger",
+    });
+  }
+  const w = minted.value;
+  const response = accountsView(
+    ctx,
+    html`<section class="settings-block" id="way-back-link">
+      <h2>Way-back link for ${w.username}</h2>
+      <p>
+        Hand this to ${w.username} (edge login <code>${w.login}</code>) by a
+        channel you trust: it works once, until ${time(w.expiresAt)}, and is
+        not shown again.
+      </p>
+      ${copyField("way-back-url", w.url, `Way-back link for ${w.username}`, "Copy the link")}
+    </section>`,
+  );
+  response.headers.set("cache-control", "no-store");
+  return response;
+}
+
 // GET /settings/accounts
 export function accountsPage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -128,7 +182,8 @@ function accountsView(ctx: Ctx, notice?: Html, status = 200): Response {
     listAccounts(ctx.app, user),
   );
   if (!listed.ok) return notFoundPage(ctx);
-  const people = listed.value;
+  const query = (ctx.url.searchParams.get("q") ?? "").trim().slice(0, 64).toLowerCase();
+  const people = query === "" ? listed.value : listed.value.filter((a) => a.username.toLowerCase().includes(query) || a.displayName.toLowerCase().includes(query));
   // Without mail a newcomer cannot prove an address; the owner's word is
   // the only way in, and the page says so where it is given.
   const mail = timePhase(ctx.request, "mail", () => mailConfigured(ctx.app));
@@ -188,6 +243,7 @@ function accountsView(ctx: Ctx, notice?: Html, status = 200): Response {
                   : ""}`,
             )}.
           </p>
+          ${wayBackForms(ctx)}
         </section>`;
   const sole = timePhase(ctx.request, "owned", () =>
     people.map((a) => {
@@ -202,7 +258,11 @@ function accountsView(ctx: Ctx, notice?: Html, status = 200): Response {
     ctx,
     html`${notice ?? null}${requestsCard(ctx)}${ownerless}${edgeOnly}${noMail}<section class="settings-block" id="accounts">
       <h2>Who is on this forge</h2>
-      <p class="muted">Newest first.</p>
+      <form method="get" action="/settings/accounts" class="form-actions" role="search">
+        <input class="input" name="q" type="search" maxlength="64" value="${query}" placeholder="Search by name" aria-label="Search accounts" autocomplete="off" />
+        ${btn("Search", { type: "submit", size: "sm" })}
+      </form>
+      <p class="muted">${query === "" ? "Newest first." : `${people.length} matching.`}</p>
       <ul class="list setting-list" id="accounts-list">
         ${people.map((a, i) => personRow(a, sole[i] ?? []))}
       </ul>
@@ -264,49 +324,142 @@ function refuseRemove(username: string): Html {
     </section>`;
 }
 
-// GET /settings/accounts/:username — where one person is signed in
+/** One labelled line of the account card. */
+function fact(label: string, value: Html, meta: Html | null): Html {
+  return row({ title: html`${label}: ${value}`, ...(meta === null ? {} : { meta }) });
+}
+
+/** Whether `username` is another admin, which only the forge's owner may manage. */
+function isOtherAdmin(ctx: Ctx, username: string): boolean {
+  const named = getUserByName(ctx.app.db, username);
+  return named !== undefined && named.kind === "user" && named.isAdmin && named.id !== ctx.auth.user?.id;
+}
+
+// GET /settings/accounts/:username — one person, on one screen, with what an admin may do
 export function personSignInsPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
   if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
-  const named = getUserByName(ctx.app.db, ctx.params.username ?? "");
+  const username = ctx.params.username ?? "";
+  const named = getUserByName(ctx.app.db, username);
   // An organization has no sign-ins: its page is its model grant and spend ceilings.
   if (named?.kind === "org" && ctx.auth.user.kind === "user")
     return shell(ctx, grantCard(ctx, named, `/settings/accounts/${encodeURIComponent(named.username)}`));
-  const seen = accountSignIns(ctx.app, ctx.auth.user, ctx.params.username ?? "");
-  // Yourself is your own settings; another admin, an agent, nobody: no page.
-  if (!seen.ok || seen.value.user.id === ctx.auth.user.id)
-    return notFoundPage(ctx);
-  const { user, tokens, sessions } = seen.value;
+  // Yourself is your own settings; an agent or a removed account, nobody: no page.
+  const found = manageable(ctx.app, ctx.auth.user, username);
+  if (!found.ok && !(found.error === "not_allowed" && isOtherAdmin(ctx, username))) return notFoundPage(ctx);
+  if (!found.ok)
+    return shell(ctx, html`<section class="settings-block"><h2>${userLink(username)}</h2><p class="muted">${ACCESS_WORDS.notAllowed}</p></section>`);
+  const user = found.value.user;
   const at = `/settings/accounts/${encodeURIComponent(user.username)}`;
-  return shell(
-    ctx,
-    html`<section class="settings-block" id="tokens">
-      <h2>${userLink(user.username)}: where they are signed in</h2>
-      <p class="muted">
-        Revoking a token or signing out a browser ends it at once; the person
-        can sign in again. To stop them signing in, suspend the account.
-      </p>
-      <h3>Access tokens</h3>
+  const db = ctx.app.db;
+  const owned = readAccounts(db, user.username)[0];
+  const sessions = listSessions(db, user.id);
+  const passkeys = listPasskeys(db, user.id);
+  const tokens = listTokensWithClients(db, user.id);
+  const verified = emailVerified(db, user.id);
+  const role = roleOf(db, user);
+  const account = html`<section class="settings-block" id="account">
+      <h2>${userLink(user.username)}</h2>
+      <ul class="list setting-list">
+        ${fact("Role", html`${role} ${user.suspendedAt === null ? null : badge("Suspended", { tone: "danger" })}`, html`joined ${time(user.createdAt)}`)}
+        ${fact("Email", html`${isStandInEmail(user.email) ? "none" : user.email} ${verified ? badge("Verified") : badge("Not verified", { variant: "outline" })}`, null)}
+        ${fact("Signs in with", html`${passkeys.length === 0 ? "no passkeys" : `${passkeys.length} ${passkeys.length === 1 ? "passkey" : "passkeys"}`} · ${hasPassword(db, user.id) ? "a password is set" : "no password"}`, html`never the secrets themselves`)}
+        ${owned === undefined
+          ? null
+          : fact(
+              "Owns",
+              html`${owned.repos} ${owned.repos === 1 ? "repository" : "repositories"} · ${owned.apps} ${owned.apps === 1 ? "app" : "apps"}`,
+              html`${owned.spentUsd > 0 ? `$${owned.spentUsd.toFixed(2)} spent by their crew` : "no crew spend"}`,
+            )}
+      </ul>
+    </section>`;
+  const signIns = html`<section class="settings-block" id="sign-ins">
+      <h2>Signed in now</h2>
+      ${sessions.length === 0
+        ? html`<p class="muted">Not signed in on any browser.</p>`
+        : html`<ul class="list setting-list">
+            ${sessions.slice(0, 5).map((x) =>
+              row({
+                title: html`${time(x.createdAt)}`,
+                meta: html`${x.address === null ? "from an unknown address" : `from ${x.address}`} · last seen ${x.lastSeenAt ? time(x.lastSeenAt) : "not since"}`,
+              }),
+            )}
+          </ul>`}
+    </section>`;
+  const ordinary = !user.isAdmin;
+  const actions = html`<section class="settings-block" id="actions">
+      <h2>Actions</h2>
+      <form method="get" action="/-/confirm" class="stack">
+        <input type="hidden" name="to" value="${at}/reset" />
+        ${formField({ label: "Also sign them out everywhere", name: "endSessions", type: "checkbox", value: "1", checked: true })}
+        <div class="form-actions">
+          ${btn("Reset access", { type: "submit", variant: "danger", size: "sm" })}
+          ${confirmAction({ action: `${at}/end-sessions`, verb: "End all sessions", size: "sm" })}
+        </div>
+      </form>
+      ${ordinary
+        ? html`<div class="form-actions">
+            ${verified
+              ? null
+              : html`<form method="post" action="${at}/verify">${btn("Verify email", { type: "submit", size: "sm" })}</form>`}
+            <form method="post" action="/settings/people/${encodeURIComponent(user.username)}/role">
+              <input type="hidden" name="role" value="${role === "member" ? "guest" : "member"}" />
+              <input type="hidden" name="back" value="${at}" />
+              ${btn(role === "member" ? "Make guest" : "Make member", { type: "submit", size: "sm" })}
+            </form>
+            ${user.suspendedAt === null
+              ? confirmAction({ action: `${at}/suspend`, verb: "Suspend", size: "sm" })
+              : html`<form method="post" action="${at}/unsuspend">${btn("Unsuspend", { type: "submit", size: "sm" })}</form>`}
+            ${confirmAction({ action: `${at}/remove`, verb: "Remove account", size: "sm" })}
+          </div>`
+        : null}
+    </section>`;
+  const tokenList = html`<section class="settings-block" id="tokens">
+      <h2>Access tokens</h2>
+      <p class="muted">Revoking one ends it at once; the person can sign in again.</p>
       ${tokens.length === 0
         ? html`<p class="muted">No access tokens.</p>`
         : html`<ul class="list setting-list">
             ${tokens.map((t) =>
               row({
                 title: html`${t.name} ${badge(t.scope)}`,
-                meta: html`made ${time(t.createdAt)} · last used
-                ${t.lastUsedAt ? time(t.lastUsedAt) : "never"}`,
-                after: confirmAction({
-                  action: `${at}/tokens/${t.id}/delete`,
-                  verb: "Revoke",
-                  size: "sm",
-                }),
+                meta: html`made ${time(t.createdAt)} · last used ${t.lastUsedAt ? time(t.lastUsedAt) : "never"}`,
+                after: confirmAction({ action: `${at}/tokens/${t.id}/delete`, verb: "Revoke", size: "sm" }),
               }),
             )}
           </ul>`}
-    </section>
-    ${grantCard(ctx, user, at)}
-    ${sessionsCard(sessions, at)}`,
+    </section>`;
+  return shell(
+    ctx,
+    html`${account}${actions}${signIns}${ordinary ? html`${grantCard(ctx, user, at)}${tokenList}${sessionsCard(sessions, at)}` : null}`,
   );
+}
+
+// POST /settings/accounts/:username/(reset|end-sessions)
+export function accessAct(act: "reset" | "end-sessions") {
+  return async (ctx: Ctx): Promise<Response> => {
+    if (!ctx.auth.user) return signInFirst(ctx);
+    if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
+    const form = await readForm(ctx, "admin");
+    if (form instanceof Response) return form;
+    const username = ctx.params.username ?? "";
+    const back = `/settings/accounts/${encodeURIComponent(username)}`;
+    const refused = (error: "not_found" | "not_allowed"): Response =>
+      error === "not_found" ? notFoundPage(ctx) : flashTo(ctx, back, { tone: "danger", message: ACCESS_WORDS.notAllowed });
+    const browsers = (n: number): string => `${n} ${n === 1 ? "browser" : "browsers"}`;
+    if (act === "end-sessions") {
+      const done = endAllSessions(ctx.app, ctx.auth.user, username);
+      if (!done.ok) return refused(done.error);
+      return flashTo(ctx, back, { message: `${username} is signed out of ${browsers(done.value.sessionsEnded)}.` });
+    }
+    const done = await resetAccess(ctx.app, ctx.auth.user, username, { endAll: field(form, "endSessions") === "1" });
+    if (!done.ok) return refused(done.error);
+    const link = done.value.token === undefined ? undefined : accessUrl(ctx.app, done.value.token);
+    return flashTo(ctx, back, {
+      message: `Link made for ${username}; it works once, for an hour.${done.value.mailed ? " It was also mailed to them." : ""}${done.value.sessionsEnded > 0 ? ` Signed out of ${browsers(done.value.sessionsEnded)}.` : ""}`,
+      ...(link === undefined ? {} : { code: link }),
+    });
+  };
 }
 
 // POST /settings/accounts/:username/(tokens|sessions)/:id/delete

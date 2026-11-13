@@ -32,10 +32,12 @@ import { sourcesPage } from "../web/pages/sources.ts";
 import { requestAct } from "../web/requests_card.ts";
 import { captureStart, captureStop, networksImport, scrapesExport, scrapesPage } from "../web/pages/scrapes.ts";
 import {
+  accessAct,
   accountAct,
   retireAct,
   retirePage,
   accountsPage,
+  wayBackAct,
   personSignInsPage,
   signInAct,
 } from "../web/pages/accounts.ts";
@@ -270,6 +272,8 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("POST", "/settings/accounts/:username/model", grantAct);
   router.add("POST", "/settings/accounts/:username/ceiling", ceilingAct);
   router.add("GET", "/settings/accounts/:username", personSignInsPage);
+  router.add("POST", "/settings/accounts/:username/reset", accessAct("reset"));
+  router.add("POST", "/settings/accounts/:username/end-sessions", accessAct("end-sessions"));
   router.add(
     "POST",
     "/settings/accounts/:username/tokens/:id/delete",
@@ -294,6 +298,7 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("GET", "/settings/accounts/:username/retire", retirePage);
   router.add("POST", "/settings/accounts/:username/retire", retireAct);
   router.add("POST", "/settings/accounts/:username/verify", accountAct("verify"));
+  router.add("POST", "/settings/accounts/:username/way-back", wayBackAct);
   router.add("GET", "/settings/crew", crewPage);
   router.add("POST", "/settings/crew/knobs", knobSet);
   router.add("POST", "/settings/crew", agentCreate);

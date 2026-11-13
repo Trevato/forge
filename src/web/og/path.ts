@@ -26,8 +26,8 @@ export function runCardPath(repo: Where, runId: string, visible: boolean): strin
   return `/og/run/${repo.ownerName}~${repo.name}~${runId}.png`;
 }
 
-/** An app's card, by slug: only a public app of a public repo has one. */
-export function appCardPath(repo: Where, app: { slug: string; access: string }): string | undefined {
+/** An app's card, by its repository (never the platform slug): only a public app of a public repo has one. */
+export function appCardPath(repo: Where, app: { access: string }): string | undefined {
   if (repo.visibility !== "public" || app.access !== "public") return undefined;
-  return `/og/app/${app.slug}.png`;
+  return `/og/app/${repo.ownerName}~${repo.name}.png`;
 }

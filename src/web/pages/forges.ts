@@ -22,6 +22,7 @@ import { diskWords } from "../../spawn/disk_mount.ts";
 import { listChildren } from "../../actions/spawn.ts";
 import { ownCode, removeForge, stopForge, type Managed } from "../../spawn/manage.ts";
 import { readOwnCode } from "../../spawn/own_code.ts";
+import { countRefusals, mayReadRefusals } from "../../core/first_ask_refusals.ts";
 import { claimLinkBody } from "./new-forge.ts";
 
 
@@ -141,6 +142,13 @@ export function sideBySide(rows: readonly ClientRow[]): Html {
   </div>`;
 }
 
+/** The link to the refused first asks, only when there are any, with their count; it shares the paragraph of the other link so the page gains no block. */
+function refusedLink(ctx: Ctx): Html | null {
+  if (!mayReadRefusals(ctx.auth.user)) return null;
+  const n = countRefusals(ctx.app.db, Date.now());
+  return n === 0 ? null : html` <a href="/forges/refused">Refused first asks (${n})</a>`;
+}
+
 // GET /forges — an admin's only.
 export async function forgesPage(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
@@ -179,7 +187,7 @@ export async function forgesPage(ctx: Ctx): Promise<Response> {
               </ul>
             </section>`}
       ${await ownCodeSection(ctx)}
-      <p class="mt"><a href="/fleet/graph">Fleet graph</a></p>
+      <p class="mt"><a href="/fleet/graph">Fleet graph</a>${refusedLink(ctx)}</p>
     </div>`,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);

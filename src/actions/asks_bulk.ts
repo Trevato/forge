@@ -9,12 +9,14 @@
  */
 
 import type { App } from "../app.ts";
-import { listOperations, type Operation } from "../core/fleet_ops.ts";
+import { latestDecision, type Operation } from "../core/fleet_ops.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { askTargetsFor } from "../web/studio/asks.ts";
 import {
   applyFleetIds,
+  ASK_VERBS,
+  ASKS_QUERY_PREFIX,
   getFleetOp,
   isAsksOperation,
   UNDO_WINDOW_MS,
@@ -23,7 +25,7 @@ import {
   type FleetError,
   type Plan,
 } from "./fleet.ts";
-import { NO_SUCH_OPERATION, receiptSentence, SIGN_IN_TO_ACT } from "./asks_words.ts";
+import { DONE, DONE_LINE_MS, DONE_NO_UNDO, DONE_UNDO, NO_SUCH_OPERATION, receiptSentence, SIGN_IN_TO_ACT } from "./asks_words.ts";
 
 /**
  * What a bulk action on asks may be: the fleet verb each one is. Decline is
@@ -92,7 +94,7 @@ function resolve(
       : verb,
     ids: issueIds,
     skipped: refused,
-    query: `asks: ${list.length} selected`,
+    query: `${ASKS_QUERY_PREFIX}${list.length} selected`,
   });
 }
 
@@ -125,7 +127,7 @@ export async function applyAsksBulk(
   action: unknown,
   items: unknown,
   reason?: unknown,
-): Promise<Result<Operation & { skipped: Skipped[] }, FleetError>> {
+): Promise<Result<Operation & { skipped: Skipped[]; line: string }, FleetError>> {
   const r = resolve(app, actor, action, items, reason);
   if (!r.ok) return r;
   const op = await applyFleetIds(
@@ -137,7 +139,7 @@ export async function applyAsksBulk(
     r.value.verb,
   );
   if (!op.ok) return op;
-  return ok({ ...op.value, skipped: r.value.skipped });
+  return ok({ ...op.value, skipped: r.value.skipped, line: doneWords(op.value.reversible) });
 }
 
 /**
@@ -166,6 +168,10 @@ export const undoable = (op: Operation, now = Date.now()): boolean =>
   op.undoneBy === null &&
   now - Date.parse(op.createdAt) <= UNDO_WINDOW_MS;
 
+/** The viewer's newest bulk action on asks that is not an undo, read by kind, never from a window of recent receipts. */
+const latestAsksDecision = (app: App, actor: User): Operation | undefined =>
+  latestDecision(app.db, actor.id, { kind: "issue", queryPrefix: ASKS_QUERY_PREFIX, verbs: ASK_VERBS });
+
 /**
  * The viewer's latest bulk action on asks that can still be undone — the
  * one undo link the home's On you list keeps for a day. Nothing when none.
@@ -176,11 +182,36 @@ export function latestUndoable(
   now = Date.now(),
 ): Operation | undefined {
   if (!actor) return undefined;
-  const op = listOperations(app.db, actor.id, 5).find(
-    (o) => isAsksOperation(o) && o.undoOf === null,
-  );
+  const op = latestAsksDecision(app, actor);
   if (op === undefined || !undoable(op, now)) return undefined;
   return ownAsksOperation(app, actor, op.id);
+}
+
+/** Whether a decision taken at `createdAt` is still inside the minute its Done line is kept. */
+export const inDoneMinute = (createdAt: string, now = Date.now()): boolean =>
+  now - Date.parse(createdAt) <= DONE_LINE_MS;
+
+/** The line a decision leaves: `Done. Undo` when it can be taken back, the reason it cannot when a merge landed. */
+export const doneWords = (reversible: boolean): string => (reversible ? DONE_UNDO : DONE_NO_UNDO);
+
+/**
+ * The one line a decision leaves for a minute (#11814), for the page and the
+ * terminal alike. Keyed to the operation's row, so a restart keeps it;
+ * nothing once it was undone, changed nothing, or the minute has passed.
+ * `undo` says whether the Undo is offered; `say` is what the line says apart
+ * from the Undo button.
+ */
+export function doneLine(
+  app: App,
+  actor: User | undefined,
+  now = Date.now(),
+): { operation: Operation; line: string; say: string; undo: boolean } | undefined {
+  if (!actor) return undefined;
+  const op = latestAsksDecision(app, actor);
+  if (op === undefined || op.undoneBy !== null || !inDoneMinute(op.createdAt, now)) return undefined;
+  const own = ownAsksOperation(app, actor, op.id);
+  if (own === undefined || !own.rows.some((r) => r.outcome === "ok")) return undefined;
+  return { operation: own, line: doneWords(own.reversible), say: own.reversible ? DONE : DONE_NO_UNDO, undo: own.reversible };
 }
 
 /** Undo one's own bulk action on asks, once, within a day (`undoFleetOp` holds the window). */

@@ -1420,7 +1420,8 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
       </div>`;
     const emptyResponse = page({
       ctx,
-      title: repo.name,
+      title: `${repo.ownerName}/${repo.name}`,
+      siteName: `${repo.ownerName}/${repo.name}`,
       description: repoLine({ private: repo.visibility === "private", name: repo.name, description: repo.description }),
       ogImage: `/og/repo/${repo.ownerName}~${repo.name}.png`,
       about: `${repo.ownerName}/${repo.name}`,
@@ -1508,7 +1509,8 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
   ${codeMount(scope, ref)} ${finderDialog()} ${liveMount({ repo: scope.base })}`;
   const response = page({
     ctx,
-    title: repo.name,
+    title: `${repo.ownerName}/${repo.name}`,
+    siteName: `${repo.ownerName}/${repo.name}`,
     description: repoLine({ private: repo.visibility === "private", name: repo.name, description: repo.description }),
     ogImage: `/og/repo/${repo.ownerName}~${repo.name}.png`,
     about: `${repo.ownerName}/${repo.name}`,

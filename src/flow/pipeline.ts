@@ -103,8 +103,17 @@ function waitingTally(db: Database, sql: string, ...args: string[]): Tally {
 // their open issues by `issue_repo_kind_state_number`, never every issue
 // (#7896); and the ask's runs, their branch's pulls by `pull_head_branch`,
 // then each pull's issue, never every open issue (#3693).
+//
+// `since` is when the issue became ready, not when it was opened (#11834): the
+// latest of its opening, the close of a blocker that held it, and the end of
+// the last agent run on it. An old issue whose blocker closed an hour ago has
+// waited an hour for a builder, not fifty-six days.
 const READY = `
-  SELECT i.created_at AS since
+  SELECT MAX(i.created_at,
+             COALESCE((SELECT MAX(b.closed_at) FROM issue_dependency d JOIN issue b ON b.id = d.blocked_by_id
+                        WHERE d.issue_id = i.id), ''),
+             COALESCE((SELECT MAX(COALESCE(x.finished_at, x.created_at)) FROM run x
+                        WHERE x.issue_id = i.id AND x.kind = 'agent'), '')) AS since
     FROM repo r CROSS JOIN issue i ON i.repo_id = r.id
    WHERE i.kind = 'issue' AND i.state = 'open' AND r.autonomy != 'off'
      AND (r.direction_issue_id IS NULL OR r.direction_issue_id != i.id)

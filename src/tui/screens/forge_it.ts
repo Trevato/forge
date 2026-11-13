@@ -42,7 +42,7 @@ export function forgeItScreen(f: Session, ctx: Ctx, repo: Repo, parent: Screen):
         if (typeof link !== "string")
           return ctx.toast(`${String(made.body["name"])} was forged before; its link is not shown again`, "attn");
         ctx.toast(`${String(made.body["name"])} is ready`, "success");
-        ctx.replace(linkScreen(ctx, link));
+        ctx.replace(linkScreen(ctx, link, undefined, { qr: true }));
       });
     },
   });

@@ -22,6 +22,9 @@ import { getAgentByName } from "../src/core/agents.ts";
 import { getIssueById, listComments, type Issue } from "../src/core/issues.ts";
 import { assignIssue } from "../src/actions/issues.ts";
 import { mutedRepos, recordInteraction, removeMutes } from "../src/core/interactions.ts";
+import { listOperations } from "../src/core/fleet_ops.ts";
+import { doneLine } from "../src/actions/asks_bulk.ts";
+import { DONE_NO_UNDO, DONE_UNDO } from "../src/actions/asks_words.ts";
 import { needsYouSection } from "../src/web/studio/asks_page.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
@@ -765,6 +768,72 @@ describe("acting on many asks at once", () => {
     const text = res.status === 200 ? await res.text() : "";
     expect(res.status === 422 || /not done/.test(text)).toBe(true);
     expect(getIssueById(app.db, a.id)!.state).toBe("open");
+  });
+
+  describe("the one Done line after a decision (#11814)", () => {
+    const page = async () =>
+      (await fetch(`${servers.url}/live/on-you`, { headers: { cookie: `${aliceCookie}; forge_mode=studio`, origin: servers.url, "x-forge-fragment": "1" } })).text();
+    const ageIt = (id: string, ms: number) =>
+      app.db.query("UPDATE fleet_operation SET created_at = ?1 WHERE id = ?2").run(new Date(Date.now() - ms).toISOString(), id);
+
+    test("decline: Done. Undo for a minute, kept by the row; its undo writes its own receipt", async () => {
+      const pull = await greenPull(open, "Done line decline");
+      const ask = items(alice).filter((i) => i.endsWith(pull.id));
+      const done = await api(aliceRw, "/api/v1/asks/bulk", { action: "decline", items: ask, preview: false });
+      expect(done.body.line).toBe(DONE_UNDO);
+      expect(doneLine(app, alice)?.line).toBe(DONE_UNDO);
+      expect(await page()).toContain(`/asks/bulk/${done.body.id}/undo`);
+      // After the minute the Done line is gone (the day's undo stays).
+      ageIt(done.body.id, 61_000);
+      expect(doneLine(app, alice)).toBeUndefined();
+      ageIt(done.body.id, 1_000);
+      const undone = await api(aliceRw, `/api/v1/asks/bulk/${done.body.id}/undo`, {});
+      expect(undone.status).toBe(201);
+      expect(undone.body.id).not.toBe(done.body.id);
+      expect(undone.body.undoOf).toBe(done.body.id);
+      expect(doneLine(app, alice)).toBeUndefined();
+    });
+
+    test("the operation log keeps the decision and its undo, and the line finds the decision past any run of undos", async () => {
+      const pull = await greenPull(open, "Done line trail");
+      const ask = items(alice).filter((i) => i.endsWith(pull.id));
+      const done = await api(aliceRw, "/api/v1/asks/bulk", { action: "decline", items: ask, preview: false });
+      const undone = await api(aliceRw, `/api/v1/asks/bulk/${done.body.id}/undo`, {});
+      const log = listOperations(app.db, alice.id, 50);
+      expect(log.find((o) => o.id === done.body.id)).toMatchObject({ undoneBy: undone.body.id, undoOf: null });
+      expect(log.find((o) => o.id === undone.body.id)).toMatchObject({ undoOf: done.body.id });
+      // Six undo receipts after a fresh decision: it is still the latest decision, read by kind.
+      const fresh = await api(aliceRw, "/api/v1/asks/bulk", { action: "decline", items: ask, preview: false });
+      expect(fresh.status).toBe(201);
+      for (let i = 0; i < 6; i++)
+        app.db
+          .query(
+            `INSERT INTO fleet_operation (id, actor_id, kind, query, verb, value, reversible, undo_of, created_at)
+             VALUES (?1, ?2, 'issue', 'asks: 1 selected', 'dismiss', '', 0, ?3, ?4)`,
+          )
+          .run(`zz-undo-${i}-${fresh.body.id}`, alice.id, done.body.id, new Date().toISOString());
+      expect(doneLine(app, alice)?.operation.id).toBe(fresh.body.id);
+    });
+
+    test("close: the same line and the same undo", async () => {
+      const pull = await greenPull(open, "Done line close");
+      const ask = items(alice).filter((i) => i.endsWith(pull.id));
+      const done = await api(aliceRw, "/api/v1/asks/bulk", { action: "close", items: ask, reason: "not now", preview: false });
+      expect(done.body.line).toBe(DONE_UNDO);
+      expect(doneLine(app, alice)?.operation.id).toBe(done.body.id);
+    });
+
+    test("ship: a landed merge shows no Undo and says why in one sentence", async () => {
+      const pull = await greenPull(open, "Done line ship");
+      const ask = items(alice).filter((i) => i.endsWith(pull.id));
+      const done = await api(aliceRw, "/api/v1/asks/bulk", { action: "ship", items: ask, preview: false });
+      expect(done.status).toBe(201);
+      expect(done.body.line).toBe(DONE_NO_UNDO);
+      expect(doneLine(app, alice)).toMatchObject({ line: DONE_NO_UNDO, undo: false });
+      const html = await page();
+      expect(html).toContain("cannot be taken back");
+      expect(html).not.toContain(`/asks/bulk/${done.body.id}/undo`);
+    });
   });
 
   test("undoing a bulk mute leaves a mute made elsewhere", () => {

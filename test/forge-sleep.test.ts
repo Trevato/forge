@@ -319,7 +319,7 @@ describe("a hosted forge scales to zero", () => {
   test("/agents makes a forge in one step: its form posts the name straight to the spawn", async () => {
     const aliceToken = tokenFor(parent, "alice", "admin");
     const agents = await (await fetch(`${servers.url}/agents`)).text();
-    expect(agents).toContain('<form method="post" action="/forges/new" class="stack" id="agent-forge">');
+    expect(agents).toContain('<form method="post" action="/forges/start" class="stack" id="agent-forge">');
     // What that form sends, and nothing else: the forge is made, its claim link in the answer.
     const made = await fetch(`${servers.url}/forges/new`, {
       method: "POST",

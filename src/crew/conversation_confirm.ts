@@ -106,6 +106,7 @@ export const ASKING: Readonly<Record<string, Asking>> = {
   parent_unlink: { does: "unlink parent-forge sign-in" },
   quotas: { does: "change an account's quotas" },
   spawn: { does: "spawn a child forge" },
+  app_data_import: { does: "load a SQL dump into an app's database" },
   app_deploy: { does: "redeploy or stop an app's production or preview" },
   stop: { does: "stop a crew run" },
   converge: { does: "have a fork's crew merge the parent's updates" },
@@ -117,6 +118,10 @@ export const ASKING: Readonly<Record<string, Asking>> = {
   seal: { does: "seal or unseal an issue or pull" },
   migrate: { does: "bring a repository in from a public address" },
   account_suspend: { does: "suspend an account or lift its suspension" },
+  account_access: {
+    does: "reset a person's access with a one-time link, or sign them out",
+    once: "The link was shown once, to you, and is not kept here.",
+  },
   account_role: { does: "make a person a member or a guest" },
   // Every admin-scope tool.
   agent: { does: "create, change or remove a crew agent" },

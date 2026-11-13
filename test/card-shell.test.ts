@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { SHELL_JS, cardFor } from "../src/web/studio/cards.ts";
+import { CARD_CSS, CARD_KINDS, CARD_SHELL, SHELL_JS, cardFor } from "../src/web/studio/cards.ts";
+import { CARD_PALETTE } from "../src/http/mcp/card_palette.ts";
 import { NO_MARKS, mapJson } from "../src/web/pages/map.ts";
 
 class Node {
@@ -20,25 +21,44 @@ class Node {
   all(): Node[] { return [this, ...this.children.flatMap((c) => c.all())]; }
 }
 
-function shell() {
+function shell(opts: { handshake?: boolean } = {}) {
   const root = new Node("div");
-  const posted: any[] = [];
-  const parent = { postMessage: (m: unknown) => posted.push(m) };
+  const all: any[] = [];
+  const posted: any[] = []; // what the card asks the host to do; lifecycle messages are in `all`
+  const life = ["ui/initialize", "ui/notifications/initialized", "ui/notifications/size-changed"];
+  const parent = { postMessage: (m: any) => { all.push(m); if (!life.includes(m.method)) posted.push(m); } };
   let listener: (e: any) => void = () => {};
-  const document = { getElementById: () => root, createElement: (t: string) => new Node(t) };
-  new Function("document", "parent", "addEventListener", SHELL_JS)(
-    document, parent, (_: string, f: (e: any) => void) => (listener = f),
+  const vars: Record<string, string> = {};
+  const attrs: Record<string, string> = {};
+  const documentElement = { clientWidth: 400, style: { colorScheme: "", setProperty: (k: string, v: string) => (vars[k] = v), removeProperty: (k: string) => delete vars[k] }, setAttribute: (k: string, v: string) => (attrs[k] = v) };
+  const box = { height: 100 };
+  const body = { getBoundingClientRect: () => ({ height: box.height }) };
+  const head = new Node("head");
+  const document = {
+    getElementById: (id: string) => (id === "card" ? root : null),
+    createElement: (t: string) => new Node(t), documentElement, body, head,
+  };
+  const frames: (() => void)[] = [];
+  let resized: () => void = () => {};
+  class RO { constructor(f: () => void) { resized = f; } observe() {} }
+  new Function("document", "parent", "addEventListener", "requestAnimationFrame", "ResizeObserver", SHELL_JS)(
+    document, parent, (_: string, f: (e: any) => void) => (listener = f), (f: () => void) => frames.push(f), RO,
   );
   const send = (data: unknown, source: unknown = parent) => listener({ source, data });
+  const frame = () => frames.splice(0).forEach((f) => f());
   const result = (card: unknown) =>
-    ({ method: "ui/notifications/tool-result", params: { structuredContent: { card } } });
-  return { root, posted, parent, send, result };
+    ({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: { structuredContent: { card } } });
+  const reply = (hostContext: unknown = {}) =>
+    send({ jsonrpc: "2.0", id: all.find((m) => m.method === "ui/initialize").id, result: { protocolVersion: "2026-01-26", hostInfo: { name: "t", version: "1" }, hostCapabilities: {}, hostContext } });
+  if (opts.handshake !== false) { reply(); frame(); }
+  const sizes = () => all.filter((m) => m.method === "ui/notifications/size-changed").map((m) => m.params.height);
+  return { root, posted, all, parent, send, result, reply, frame, vars, attrs, box, resized: () => resized(), sizes, head };
 }
 
 describe("the card shell", () => {
   test("announces itself, draws with textContent, ignores other sources, posts tools/call", () => {
     const s = shell();
-    expect(s.posted[0].method).toBe("ui/notifications/initialized");
+    expect(s.all[0].method).toBe("ui/initialize");
     const card = {
       kind: "run", title: "<b>T</b>", status: "ok",
       rows: [{ label: "<img src=x onerror=1>", value: "v" }],
@@ -51,10 +71,149 @@ describe("the card shell", () => {
     expect(nodes.find((n) => n.tag === "h2")!.textContent).toBe("<b>T</b>");
     expect(nodes.find((n) => n.tag === "dt")!.textContent).toBe("<img src=x onerror=1>");
     nodes.find((n) => n.tag === "button")!.onclick!();
-    expect(s.posted[1]).toMatchObject({
+    expect(s.posted[0]).toMatchObject({
       method: "tools/call",
       params: { name: "stop", arguments: { repo: "a/b", run: "r1" } },
     });
+  });
+
+  test("the handshake: ui/initialize is a request with an id, initialized follows only the host's reply", () => {
+    const s = shell({ handshake: false });
+    expect(s.all.map((m) => m.method)).toEqual(["ui/initialize"]);
+    expect(s.all[0]).toMatchObject({ jsonrpc: "2.0", params: { protocolVersion: "2026-01-26", appInfo: { name: "forge-card" }, appCapabilities: {} } });
+    expect(typeof s.all[0].id).toBe("string");
+    s.send({ jsonrpc: "2.0", id: "other", result: {} });
+    s.send({ jsonrpc: "2.0", id: s.all[0].id, result: {} }, {}); // not the parent
+    s.send({ jsonrpc: "2.0", id: s.all[0].id, result: "nope" });
+    expect(s.all.length).toBe(1);
+    s.reply({});
+    expect(s.all.map((m) => m.method)).toEqual(["ui/initialize", "ui/notifications/initialized"]);
+  });
+
+  test("a host that sends no handshake still gets its card drawn", () => {
+    const s = shell({ handshake: false });
+    s.send(s.result({ kind: "run", title: "T", status: "ok", rows: [], actions: [] }));
+    expect(s.root.all().find((n) => n.tag === "h2")!.textContent).toBe("T");
+  });
+
+  test("a tool result before the reply is kept; malformed messages are ignored", () => {
+    const s = shell({ handshake: false });
+    s.send(null); s.send("x"); s.send({ method: "ui/notifications/tool-result" });
+    s.send({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: { structuredContent: { card: { title: 1 } } } });
+    expect(s.root.all().some((n) => n.tag === "h2")).toBe(false);
+    s.send(s.result({ kind: "run", title: "Early", status: "", rows: [], actions: [] }));
+    s.reply({ theme: "dark" });
+    expect(s.root.all().find((n) => n.tag === "h2")!.textContent).toBe("Early");
+    expect(s.attrs["data-theme"]).toBe("dark");
+  });
+
+  test("the host's theme and variables apply, later changes too; bad names and values do not", () => {
+    const s = shell({ handshake: false });
+    s.reply({ theme: "dark", styles: { variables: { "--color-background-primary": "#111", "color": "red", "--x": 5, "--font-sans": "Inter" }, css: { fonts: "@font-face{}" } } });
+    expect(s.attrs["data-theme"]).toBe("dark");
+    expect(s.vars).toEqual({ "--font-sans": "Inter" }); // a lone background is not a pair that reads: the card's own palette stands
+    expect(s.head.children[0]!.textContent).toBe("@font-face{}");
+    s.send({ jsonrpc: "2.0", method: "ui/notifications/host-context-changed", params: { theme: "light", styles: { variables: { "--color-background-primary": "#fff" } } } });
+    expect(s.attrs["data-theme"]).toBe("light");
+    expect(s.vars).toEqual({ "--font-sans": "Inter" });
+    s.send({ jsonrpc: "2.0", method: "ui/notifications/host-context-changed", params: { theme: "dark" } }, {});
+    expect(s.attrs["data-theme"]).toBe("light");
+  });
+
+  test("a host's colours are used when they read, and dropped when they do not (dark text on a dark surface)", () => {
+    const s = shell({ handshake: false });
+    s.reply({ theme: "dark", styles: { variables: { "--color-background-primary": "#101010", "--color-text-primary": "#202020" } } });
+    expect(s.vars["--c-bg"]).toBeUndefined();
+    s.send({ jsonrpc: "2.0", method: "ui/notifications/host-context-changed", params: { styles: { variables: { "--color-background-primary": "rgb(16, 16, 16)", "--color-text-primary": "#eee", "--color-text-info": "#222" } } } });
+    expect(s.vars).toMatchObject({ "--c-bg": "rgb(16, 16, 16)", "--c-fg": "#eee", "--c-link": "#eee" }); // an unreadable link colour falls back to the text colour
+    s.send({ jsonrpc: "2.0", method: "ui/notifications/host-context-changed", params: { styles: { variables: { "--color-background-primary": "light-dark(#fff,#000)", "--color-text-primary": "#eee" } } } });
+    expect(s.vars["--c-bg"]).toBeUndefined();
+  });
+
+  test("the card's own palette reads at 4.5:1 in both schemes, and no rule draws a colour outside it", () => {
+    const hex = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+    const lum = (c: number[]) => { const f = c.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * f[0]! + 0.7152 * f[1]! + 0.0722 * f[2]!; };
+    const ratio = (a: string, b: string) => { const x = lum(hex(a)), y = lum(hex(b)); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+    for (const t of ["light", "dark"] as const) {
+      expect(ratio(CARD_PALETTE[t].fg, CARD_PALETTE[t].bg)).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(CARD_PALETTE[t].link, CARD_PALETTE[t].bg)).toBeGreaterThanOrEqual(4.5);
+    }
+    // Every text-bearing element takes --c-fg or --c-link on --c-bg; no literal colour is set outside the palette lines.
+    const outside = CARD_CSS.replace(/--c-(bg|fg|link):#[0-9a-f]{6}/g, "");
+    expect(outside).not.toMatch(/#[0-9a-f]{3,6}\b/i);
+    expect(outside.match(/(?<![-\w])color:[^;}]+/g)!.every((d) => d === "color:var(--c-fg)" || d === "color:var(--c-link)")).toBe(true);
+    expect(CARD_CSS).toContain("min-height:44px");
+  });
+
+  test("an empty result is one short line; more than ten rows show ten and a button for the rest", () => {
+    const s = shell();
+    const empty = cardFor("search", { repos: [], issues: [], code: [] }, "https://f.test", { q: "zzz" })!;
+    expect(empty.rows).toEqual([]);
+    expect(empty.status).toBe("No results for “zzz”. Try fewer or different words, or name a repository.");
+    s.send(s.result(empty));
+    expect(s.root.all().some((n) => n.tag === "dl")).toBe(false);
+    expect(s.root.children.length).toBe(2);
+    const rows = Array.from({ length: 17 }, (_, i) => ({ label: `r${i}`, value: "v" }));
+    s.send(s.result({ kind: "search", title: "Search: x", status: "17 hits", rows, actions: [] }));
+    expect(s.root.all().filter((n) => n.tag === "dt").length).toBe(10);
+    const more = s.root.all().find((n) => n.tag === "button")!;
+    expect(more.textContent).toBe("Show 7 more");
+    more.onclick!();
+    expect(s.root.all().filter((n) => n.tag === "dt").length).toBe(17);
+    expect(s.root.all().some((n) => n.tag === "button")).toBe(false);
+  });
+
+  test("host fonts keep only @font-face blocks: an @import or a stray rule is dropped", () => {
+    const s = shell({ handshake: false });
+    s.reply({ styles: { css: { fonts: '@import url(https://evil.test/x.css);@font-face{font-family:A;src:url(https://h.test/a.woff2)}body{background:url(https://evil.test/b)}' } } });
+    expect(s.head.children[0]!.textContent).toBe("@font-face{font-family:A;src:url(https://h.test/a.woff2)}");
+  });
+
+  test("Show more keeps the words typed in the field", () => {
+    const s = shell();
+    const rows = Array.from({ length: 12 }, (_, i) => ({ label: `r${i}`, value: "v" }));
+    s.send(s.result({ kind: "apps", title: "t", status: "s", rows, actions: [{ label: "Tell", tool: "tell", args: { repo: "a/b" }, words: true }] }));
+    const input = s.root.all().find((n) => n.tag === "input")!;
+    input.value = "keep me";
+    s.root.all().find((n) => n.textContent === "Show 2 more")!.onclick!();
+    expect(s.root.all().filter((n) => n.tag === "dt").length).toBe(12);
+    const after = s.root.all().find((n) => n.tag === "input")!;
+    expect(after).toBe(input);
+    expect(after.value).toBe("keep me");
+  });
+
+  test("height is the body box, reported on load, growth and shrink, once a frame", () => {
+    const s = shell();
+    expect(s.sizes()).toEqual([100]);
+    s.box.height = 300; s.resized(); s.resized(); s.resized();
+    s.frame();
+    expect(s.sizes()).toEqual([100, 300]);
+    s.box.height = 120; s.resized(); s.frame();
+    expect(s.sizes()).toEqual([100, 300, 120]);
+    s.resized(); s.frame(); // unchanged: nothing sent
+    expect(s.sizes().length).toBe(3);
+  });
+
+  test("after the handshake is answered, every kind is drawn and the theme applied", () => {
+    for (const kind of CARD_KINDS) {
+      const s = shell({ handshake: false });
+      const card = { kind, title: `Card ${kind}`, status: "s", rows: [{ label: "l", value: "v" }], actions: [] };
+      expect(s.all[0].method).toBe("ui/initialize");
+      s.reply({ theme: "dark" });
+      expect(s.all.some((m) => m.method === "ui/notifications/initialized")).toBe(true);
+      s.send(s.result(card));
+      expect(s.root.all().find((n) => n.tag === "h2")!.textContent).toBe(`Card ${kind}`);
+      expect(s.attrs["data-theme"]).toBe("dark");
+    }
+  });
+
+  test("the served page for every kind wears the host's variables", () => {
+    for (const kind of CARD_KINDS) {
+      const page = CARD_SHELL(kind);
+      expect(page).toContain("color:var(--c-fg)");
+      expect(page).toContain("prefers-color-scheme:dark");
+      expect(page).toContain("ui/initialize");
+    }
   });
 
   test("Tell sends the typed words, and nothing when empty", () => {
@@ -64,11 +223,11 @@ describe("the card shell", () => {
     const input = s.root.all().find((n) => n.tag === "input")!;
     const tell = s.root.all().find((n) => n.tag === "button")!;
     tell.onclick!();
-    expect(s.posted.length).toBe(1);
+    expect(s.posted.length).toBe(0);
     expect(input.focused).toBe(true);
     input.value = " make it blue ";
     tell.onclick!();
-    expect(s.posted[1].params).toEqual({
+    expect(s.posted[0].params).toEqual({
       name: "tell",
       arguments: { repo: "alice/game", context: { said: "make it blue" }, text: "make it blue" },
     });
@@ -147,7 +306,7 @@ describe("the card shell", () => {
     let prevented = false;
     a.onclick!({ preventDefault: () => (prevented = true) });
     expect(prevented).toBe(true);
-    expect(s.posted[1]).toMatchObject({ method: "ui/open-link", params: { url: "https://f.example/a/b/issues/1" } });
+    expect(s.posted[0]).toMatchObject({ method: "ui/open-link", params: { url: "https://f.example/a/b/issues/1" } });
     expect(dts[1]!.children.length).toBe(0);
     expect(dts[1]!.textContent).toBe("#2");
     expect(s.root.all().filter((n) => n.tag === "a").length).toBe(1);
@@ -166,7 +325,7 @@ describe("the card shell", () => {
     let prevented = false;
     anchor.onclick!({ preventDefault: () => (prevented = true) });
     expect(prevented).toBe(true);
-    expect(s.posted[1]).toMatchObject({ method: "ui/open-link", params: { url: "https://forge.test/a/b/pulls/1" } });
+    expect(s.posted[0]).toMatchObject({ method: "ui/open-link", params: { url: "https://forge.test/a/b/pulls/1" } });
     expect(dts[1]!.children).toHaveLength(0);
     expect(dts[2]!.children).toHaveLength(0);
     expect(s.root.all().filter((n) => n.tag === "a")).toHaveLength(1);

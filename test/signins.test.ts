@@ -288,13 +288,15 @@ describe("sign-ins: tokens and browsers, seen and ended", () => {
     expect(await signedIn({ cookie: browser })).toBe(false);
   });
 
-  test("the owner has no such page for another admin", async () => {
+  // The account page now opens for another admin, for the forge's owner alone, to reset their
+  // access (#11688); the list of their tokens and browsers stays closed.
+  test("the owner has no sign-ins list for another admin", async () => {
     const ownerToken = createToken(app.db, owner.id, "o2", "admin").token;
     expect((await api("/api/v1/users/hal/signins", ownerToken)).status).toBe(404);
-    expect(
-      (await fetch(`${base}/settings/accounts/hal`, {
-        headers: { cookie: cookieFor(owner) },
-      })).status,
-    ).toBe(404);
+    const page = await fetch(`${base}/settings/accounts/hal`, { headers: { cookie: cookieFor(owner) } });
+    expect(page.status).toBe(200);
+    const text = await page.text();
+    expect(text).not.toContain("Access tokens");
+    expect(text).not.toContain("Signed-in browsers");
   });
 });

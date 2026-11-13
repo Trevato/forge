@@ -109,7 +109,8 @@ describe("the watch's tick feeds the rule (cpuSample)", () => {
       const over = cpuSample(state, Math.round((cores * CLK_TCK * t) / 1000), cpus, t);
       if (over !== null) {
         expect(over.cores).toBeCloseTo(cores, 5);
-        expect(over.seconds).toBe(WATCH.cpuWindowMs / 1000);
+        // Held from the first full window (30 s) to the stop: the hold, not the window.
+        expect(over.seconds).toBe((t - WATCH.cpuWindowMs) / 1000);
         return { stoppedAt: t, state };
       }
     }

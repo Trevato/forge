@@ -17,6 +17,17 @@ import { readDisk, type DiskReading } from "../kernel/disk_reading.ts";
 /** Free disk under this share of the volume and nothing new starts. */
 export const DISK_FLOOR = 0.15;
 
+/**
+ * Room that is plenty whatever share of the volume it is. The shares were set
+ * on a 150 GiB disk, where 15% is 22 GiB; on a 2 TiB disk 15% is 330 GiB, and
+ * a forge with 348 GiB free read as 84% used and held every check. At or over
+ * this much free, no share-of-the-disk guard refuses.
+ */
+export const DISK_ROOMY_BYTES = 100 * 1024 ** 3;
+
+/** Whether the volume has room that no share-of-the-disk guard should refuse. */
+export const roomy = (disk: DiskReading): boolean => disk.freeBytes >= DISK_ROOMY_BYTES;
+
 /** The volume under `dir` (`readDisk`, which the suite's preload makes roomy), or undefined when it cannot be read. */
 export function diskUnder(dir: string): DiskReading | undefined {
   try {
@@ -34,7 +45,7 @@ const gib = (bytes: number): string => (bytes / 1024 ** 3).toFixed(1);
  * refused: the floor protects a disk it can see, it does not guess.
  */
 export function floorRefusal(dir: string, disk: DiskReading | undefined = diskUnder(dir)): string | undefined {
-  if (disk === undefined || !(disk.totalBytes > 0)) return undefined;
+  if (disk === undefined || !(disk.totalBytes > 0) || roomy(disk)) return undefined;
   const share = disk.freeBytes / disk.totalBytes;
   if (share >= DISK_FLOOR) return undefined;
   return `this host's disk has ${(share * 100).toFixed(1)}% free (${gib(disk.freeBytes)} of ${gib(disk.totalBytes)} GiB), under the ${DISK_FLOOR * 100}% it keeps for itself: nothing new starts until room is made`;

@@ -78,6 +78,8 @@ export interface Run {
   readonly notBefore: string | null;
   /** How many times this task has been paused and queued again. */
   readonly attempt: number;
+  /** How many times the host cut this task off and it was queued again (#11693). */
+  readonly interruptions: number;
   /** When the process working this run last said it still was. */
   readonly heartbeatAt: string | null;
   /** For an agent run: how many turns the model took. */
@@ -125,6 +127,7 @@ interface RunRow {
   cost_usd: number;
   not_before: string | null;
   attempt: number;
+  interruptions: number;
   heartbeat_at: string | null;
   turns: number;
   context_tokens: number;
@@ -159,6 +162,7 @@ const toRun = (r: RunRow): Run => ({
   costUsd: r.cost_usd,
   notBefore: r.not_before,
   attempt: r.attempt,
+  interruptions: r.interruptions,
   heartbeatAt: r.heartbeat_at,
   turns: r.turns,
   contextTokens: r.context_tokens,
@@ -190,6 +194,8 @@ export interface CreateRunInput {
   /** For a run queued again after a pause: when it may start, and the count. */
   notBefore?: string | undefined;
   attempt?: number | undefined;
+  /** How many times the host interrupted this task before (#11693). */
+  interruptions?: number | undefined;
   /** What the card says while it waits. */
   summary?: string | undefined;
   /** The variant group the run belongs to, when it is one of several tries. */
@@ -200,8 +206,8 @@ export function createRun(db: Database, input: CreateRunInput): Run {
   const runId = id();
   db.query(
     `INSERT INTO run (id, repo_id, kind, issue_id, env, commit_oid, branch, actor_id, reason,
-                      not_before, attempt, summary, variant_group)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`,
+                      not_before, attempt, summary, variant_group, interruptions)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)`,
   ).run(
     runId,
     input.repoId,
@@ -216,6 +222,7 @@ export function createRun(db: Database, input: CreateRunInput): Run {
     input.attempt ?? 0,
     input.summary ?? "",
     input.variantGroup ?? null,
+    input.interruptions ?? 0,
   );
   return getRun(db, runId)!;
 }
@@ -527,6 +534,9 @@ export const INFRA_SUMMARY = "failed: infrastructure — the install failed twic
 
 /** What a check the cell's watch stopped for CPU says as it is queued again once on its own (#11617). */
 export const CPU_STOP_SUMMARY = "failed: infrastructure — stopped for CPU by the cell's watch; queued again";
+
+/** What a check says as it is queued again because the disk was 80% used (#11799): the machine's wait, not the pull's. */
+export const DISK_USED_SUMMARY = "waiting: the forge's disk is 80% used; queued again when there is room";
 
 /**
  * How many times one check may be cut off by its forge going away and be

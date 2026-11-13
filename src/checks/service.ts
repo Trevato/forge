@@ -18,6 +18,7 @@ import { chmod, lstat, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { releaseOnGreen } from "../actions/holds.ts";
+import { activeCrewRuns, crewHoldsCore, forgeCpus, holdClock } from "../core/one_core.ts";
 import { announceRun } from "../actions/runs.ts";
 import { announceShard } from "./shard_event.ts";
 import type { ForgeEvent } from "../core/events.ts";
@@ -44,6 +45,7 @@ import {
   infraBefore,
   INFRA_SUMMARY,
   CPU_STOP_SUMMARY,
+  DISK_USED_SUMMARY,
   requeueCheck,
   REQUEUED_SUMMARY,
   sweepAbandonedChecks,
@@ -99,6 +101,7 @@ import { workerCpus } from "../core/capacity.ts";
 import { accountActive } from "../core/accounts.ts";
 import { childEnv, killedStep, runStep } from "../apps/process.ts";
 import { requeueCpuStop } from "./cpu_stop.ts";
+import { isUsedRefusal, usedRefusal } from "../apps/disk_guard.ts";
 import { noteReached } from "../apps/egress_report.ts";
 import {
   capacityCount,
@@ -184,6 +187,15 @@ export interface ChecksOptions {
    * to `VERIFY_EVERY_MS`. The forge sets it to `VERIFY_EVERY_MS`.
    */
   readonly verifyEveryMs?: number | undefined;
+  /** Test seam: how often the queue is looked at. @default TICK_MS */
+  readonly tickMs?: number | undefined;
+  /** The forge's CPU count; a 1-CPU forge holds pull checks for a crew run. @default forgeCpus */
+  readonly cpus?: (() => number) | undefined;
+  /** Crew runs working now. @default the running agent runs */
+  readonly activeCrewRuns?: (() => number) | undefined;
+  /** Test seams: how long a held pull check waits at most, and the clock it is judged by. */
+  readonly holdMaxMs?: number | undefined;
+  readonly holdNow?: (() => number) | undefined;
 }
 
 /** A gate's answer from the lane: `interrupted` is no verdict (#3155). */
@@ -475,6 +487,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   >();
   /** Checks already told why they wait, so the log says it once. */
   const waiting = new Set<string>();
+  /** Queued checks a full disk holds that have said so once (#11799); apart from `waiting`, so neither line hides the other. */
+  const diskWaiting = new Set<string>();
   /** The verification-lane run in flight, which holds no check slot. */
   let verifying: string | undefined;
   const slotted = (): number => inFlight.size - (verifying === undefined ? 0 : 1);
@@ -567,6 +581,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   function start(run: Run, repo: Repo): void {
     if (inFlight.has(run.id)) return;
     waiting.delete(run.id);
+    diskWaiting.delete(run.id);
     const abort = new AbortController();
     const low = inVerifyLane(run.env);
     if (low) verifying = run.id;
@@ -617,6 +632,16 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
    */
   /** `pickNext` among `queued`, passing over any whose account is at its limit. */
   function startable(queued: readonly Run[]): Run | undefined {
+    // At 80% used no check starts (#11799): they stay queued, one line each, and the tick asks again.
+    const full = usedRefusal(app.config.dataDir);
+    if (full !== undefined) {
+      for (const run of queued)
+        if (!diskWaiting.has(run.id)) {
+          diskWaiting.add(run.id);
+          appendRunLog(app.config.dataDir, run.id, `queued, ${full}`);
+        }
+      return undefined;
+    }
     let rest = queued;
     const isApproved = approvedOnce(app.db);
     let next = pickNext(rest, Date.now(), isApproved);
@@ -628,10 +653,20 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     return next;
   }
 
+  const pullHold = holdClock(options.holdMaxMs);
+
   function schedule(): void {
     if (stopped) return;
     const limit = capacity();
     if (options.gate === undefined) gate.resize(limit);
+    // On one CPU a pull's check waits while a crew run works, for at most
+    // `holdMaxMs`; the verify lane, a rebase's check and a main check are the
+    // pipeline and never wait (#11599).
+    const crewHolds = crewHoldsCore((options.cpus ?? forgeCpus)(), options.activeCrewRuns ?? (() => activeCrewRuns(app.db)));
+    // The clock counts one continuous hold: it starts again once no crew run
+    // holds, and forgets checks that are no longer queued.
+    if (!crewHolds) pullHold.reset();
+    else pullHold.keep(new Set(listActive(app.db, "check").filter((run) => run.state === "queued").map((run) => run.id)));
     startVerify();
     // Every merge-queue gate in flight holds a slot, a line's first too (#6376).
     while (slotted() < limit - gatesInFlight()) {
@@ -655,10 +690,14 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       // While a gate is about to start, the last free slot is its: a pull's
       // check waits for it, a rebase's and a main check do not.
       const held = holdsLastSlot(limit - gatesInFlight() - slotted(), gateQueued());
-      const next = startable(rebases) ?? startable(held ? others.filter((run) => run.issueId === null) : others);
+      const waiting = crewHolds
+        ? others.filter((run) => run.issueId === null || !pullHold.held(run.id, (options.holdNow ?? Date.now)()))
+        : others;
+      const next = startable(rebases) ?? startable(held ? waiting.filter((run) => run.issueId === null) : waiting);
       if (!next) return;
       const repo = getRepoById(app.db, next.repoId);
       if (!repo) return;
+      pullHold.release(next.id);
       start(next, repo);
     }
   }
@@ -864,6 +903,16 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         const moved = requeueCheck(app.db, run.id, undefined, INFRA_SUMMARY);
         if (moved) {
           write(INFRA_SUMMARY);
+          announceRun(app, moved.again, run.actorId ?? undefined);
+          return;
+        }
+      }
+      // The disk was 80% used when the step would have started (#11799):
+      // the machine's wait. Queued again, not red; the pick holds it until there is room.
+      if (!outcome.ok && isUsedRefusal(outcome.error)) {
+        const moved = requeueCheck(app.db, run.id, undefined, DISK_USED_SUMMARY);
+        if (moved) {
+          write(DISK_USED_SUMMARY);
           announceRun(app, moved.again, run.actorId ?? undefined);
           return;
         }
@@ -1711,7 +1760,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
 
   const timer = setInterval(() => {
     if (!stopped) during("lane", schedule);
-  }, TICK_MS);
+  }, options.tickMs ?? TICK_MS);
   // Main is verified after landing on a schedule, when the forge says how often.
   const sweeper =
     options.verifyEveryMs === undefined

@@ -162,6 +162,7 @@ export { route as getApiV1ReposOwnerNameIssuesNumberDependencies } from "./getAp
 export { route as getApiV1ReposOwnerNameIssuesNumberPlan } from "./getApiV1ReposOwnerNameIssuesNumberPlan.ts";
 export { route as getApiV1ReposOwnerNameIssuesNumberTeams } from "./getApiV1ReposOwnerNameIssuesNumberTeams.ts";
 export { route as getApiV1ReposOwnerNameIterations } from "./getApiV1ReposOwnerNameIterations.ts";
+export { route as getApiV1ReposOwnerNameJobs } from "./getApiV1ReposOwnerNameJobs.ts";
 export { route as getApiV1ReposOwnerNameLabels } from "./getApiV1ReposOwnerNameLabels.ts";
 export { route as getApiV1ReposOwnerNameMap } from "./getApiV1ReposOwnerNameMap.ts";
 export { route as getApiV1ReposOwnerNameMilestones } from "./getApiV1ReposOwnerNameMilestones.ts";
@@ -247,7 +248,9 @@ export { route as patchApiV1ReposOwnerNameLabelsId } from "./patchApiV1ReposOwne
 export { route as patchApiV1ReposOwnerNamePullsNumber } from "./patchApiV1ReposOwnerNamePullsNumber.ts";
 export { route as patchApiV1User } from "./patchApiV1User.ts";
 export { route as postApiV1AdminAccountsUsernameCeiling } from "./postApiV1AdminAccountsUsernameCeiling.ts";
+export { route as postApiV1AdminAccountsUsernameEndSessions } from "./postApiV1AdminAccountsUsernameEndSessions.ts";
 export { route as postApiV1AdminAccountsUsernameModelGrant } from "./postApiV1AdminAccountsUsernameModelGrant.ts";
+export { route as postApiV1AdminAccountsUsernameReset } from "./postApiV1AdminAccountsUsernameReset.ts";
 export { route as postApiV1AdminAccountsUsernameRole } from "./postApiV1AdminAccountsUsernameRole.ts";
 export { route as postApiV1AdminAccountsUsernameSuspend } from "./postApiV1AdminAccountsUsernameSuspend.ts";
 export { route as postApiV1AdminAccountsUsernameUnsuspend } from "./postApiV1AdminAccountsUsernameUnsuspend.ts";
@@ -325,6 +328,7 @@ export { route as postApiV1ReposOwnerNameChecksRecheck } from "./postApiV1ReposO
 export { route as postApiV1ReposOwnerNameContents } from "./postApiV1ReposOwnerNameContents.ts";
 export { route as postApiV1ReposOwnerNameContribute } from "./postApiV1ReposOwnerNameContribute.ts";
 export { route as postApiV1ReposOwnerNameDataEnvFileQuery } from "./postApiV1ReposOwnerNameDataEnvFileQuery.ts";
+export { route as postApiV1ReposOwnerNameDataImport } from "./postApiV1ReposOwnerNameDataImport.ts";
 export { route as postApiV1ReposOwnerNameEdits } from "./postApiV1ReposOwnerNameEdits.ts";
 export { route as postApiV1ReposOwnerNameEgressGrants } from "./postApiV1ReposOwnerNameEgressGrants.ts";
 export { route as postApiV1ReposOwnerNameFollowingConverge } from "./postApiV1ReposOwnerNameFollowingConverge.ts";
@@ -343,6 +347,7 @@ export { route as postApiV1ReposOwnerNameIssuesNumberComments } from "./postApiV
 export { route as postApiV1ReposOwnerNameIssuesNumberDependencies } from "./postApiV1ReposOwnerNameIssuesNumberDependencies.ts";
 export { route as postApiV1ReposOwnerNameIssuesNumberDependenciesBlockerConfirm } from "./postApiV1ReposOwnerNameIssuesNumberDependenciesBlockerConfirm.ts";
 export { route as postApiV1ReposOwnerNameIssuesNumberPrivate } from "./postApiV1ReposOwnerNameIssuesNumberPrivate.ts";
+export { route as postApiV1ReposOwnerNameJobsIdAction } from "./postApiV1ReposOwnerNameJobsIdAction.ts";
 export { route as postApiV1ReposOwnerNameLabels } from "./postApiV1ReposOwnerNameLabels.ts";
 export { route as postApiV1ReposOwnerNameMakeItYours } from "./postApiV1ReposOwnerNameMakeItYours.ts";
 export { route as postApiV1ReposOwnerNameMilestonesNumberLimb } from "./postApiV1ReposOwnerNameMilestonesNumberLimb.ts";

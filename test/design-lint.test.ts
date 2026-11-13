@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { areaFiles, classesIn, compare, compareQuiet, quiet, scanQuiet, scanCards, scanStranger, strangerWords, STRANGER_FILES, countFile, designText, documentedClasses, locate, loneSentenceCards, registeredClasses, scan, sectionLinks, webCss } from "../scripts/design-lint.ts";
+import { areaFiles, classesIn, compare, compareQuiet, quiet, scanQuiet, scanCards, scanStranger, strangerWords, STRANGER_FILES, countFile, designText, documentedClasses, locate, loneSentenceCards, registeredClasses, overlay, overlayClassesIn, scanOverlay, scan, sectionLinks, webCss } from "../scripts/design-lint.ts";
 
 /** A DESIGN.md in miniature: the §5 table, a §5d register, and a §6 that names a class too. */
 const DESIGN = [
@@ -308,5 +308,43 @@ describe("the stranger's words (#11458)", () => {
   test("the stranger-path builders on main are clean", () => {
     expect(STRANGER_FILES.length).toBe(4);
     expect(scanStranger(process.cwd())).toEqual([]);
+  });
+});
+
+describe("overlay: nothing closed is drawn (#11831)", () => {
+  const css = (body: string) => `export const c = /* css */ \`${body}\`;`;
+  test("bare .palette display inside a media query is named", () => {
+    const f = overlay(css("@media (max-width: 719px) {\n  .palette { display: flex; }\n}"));
+    expect(f.map((x) => x.selector)).toEqual([".palette"]);
+    expect(f[0]!.decl).toBe("display: flex");
+  });
+  test("selectors that require the open state, and display none, pass", () => {
+    expect(overlay(css(".palette[open] { display: flex; } .palette:not([open]) { display: none; } dialog:modal { display: grid } .x:not([hidden]) { display: flex }"))).toEqual([]);
+    expect(overlay(css(".palette-item[hidden] { display: none; }"))).toEqual([]);
+  });
+  test("dialog, [popover] and [hidden] with display, visibility or fixed opacity are named", () => {
+    const f = overlay(css("dialog { display: block } [popover] { visibility: visible } .row[hidden] { display: flex } .sheet { position: fixed; opacity: 1 }"));
+    expect(f.length).toBe(4);
+  });
+  test("ordinary components are left alone", () => {
+    expect(overlay(css(".dialog-foot { display: flex } .card { display: flex }"))).toEqual([]);
+  });
+  test("an unlisted class is caught once a <dialog> or [popover] carries it", () => {
+    const html = '<dialog class="dialog zorp" id="z"></dialog><div popover class="flyout"></div>';
+    const extra = overlayClassesIn(html);
+    expect(extra.sort()).toEqual(["dialog", "flyout", "zorp"]);
+    expect(overlay(css(".zorp { display: flex } .flyout { display: grid }"), extra).length).toBe(2);
+    expect(overlay(css(".zorp { display: flex }"))).toEqual([]);
+  });
+  test("the open state must be on the last compound, not an ancestor", () => {
+    expect(overlay(css(".x[open] .toast { display: flex }")).map((x) => x.selector)).toEqual([".x[open] .toast"]);
+    expect(overlay(css(".toast:not([hidden]) { display: flex } .x .palette[open] { display: flex }"))).toEqual([]);
+  });
+  test("an interpolated ${...} is blanked and does not hide the rule after it", () => {
+    const f = overlay(css(".a { width: ${1 + 1}px; } .palette { display: flex }"));
+    expect(f.map((x) => x.selector)).toEqual([".palette"]);
+  });
+  test("today's stylesheets pass", () => {
+    expect(scanOverlay(process.cwd())).toEqual([]);
   });
 });

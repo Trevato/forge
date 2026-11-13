@@ -24,7 +24,9 @@ import { requestOf } from "../../core/requests.ts";
 import { createSession } from "../../core/sessions.ts";
 import { LAST_WAY_IN, removeOwnPasskey } from "../../actions/passkeys.ts";
 import { recoveryAccount, requestRecovery, spendRecoveryLink } from "../../actions/verify.ts";
-import { getUserById, isActive } from "../../core/users.ts";
+import { getUserById, isActive, MIN_PASSWORD } from "../../core/users.ts";
+import { accessLinkPerson, redeemAccessLink } from "../../actions/account_access.ts";
+import { CHANGE_PASSWORD_WORDS } from "../../actions/users.ts";
 import { crossOrigin, type Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { clientAddress, clientBucket } from "../../http/peer.ts";
@@ -33,10 +35,10 @@ import { boundedBody, json, str } from "../../http/respond.ts";
 import { CAME_FROM_ELSEWHERE, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html } from "../html.ts";
-import { flashTo, page } from "../layout.ts";
+import { flashTo, page, redirect } from "../layout.ts";
 import { passkeyJs } from "../passkey-client.ts";
 import { passkeyNote } from "../passkey-state.ts";
-import { confirmAction, row, time } from "../ui.ts";
+import { btn, confirmAction, row, time } from "../ui.ts";
 import { accountShell } from "./account.ts";
 import { safeNext, sessionCookie, signinAllowed } from "./site.ts";
 import { PASSKEY_EXPIRED, PASSKEY_REJECTED, PASSKEY_TAKEN } from "../passkey-words.ts";
@@ -351,5 +353,58 @@ export async function recoverFinish(ctx: Ctx): Promise<Response> {
   const session = createSession(ctx.app.db, spent.value.id);
   return json({ ok: true, next: "/settings/passkeys" }, 200, {
     "set-cookie": sessionCookie(session.token, session.expiresAt, ctx.url, ctx.app.config.url),
+  });
+}
+
+const ACCESS_NOT_VALID = "This link has been used or has expired. Ask the admin who sent it for a new one.";
+
+function accessForm(ctx: Ctx, token: string, username: string, said?: string, status = 200): Response {
+  return page(
+    {
+      ctx,
+      title: "Set a new password",
+      body: html`<div class="page-head"><h1>Set a new password</h1></div>
+        <p class="muted small mb">An admin made this one-use link for ${username}; choose a new password and you are signed in.</p>
+        ${said === undefined ? null : html`<p role="alert">${said}</p>`}
+        <form method="post" action="/signin/access/${encodeURIComponent(token)}" class="stack">
+          <div class="field"><label for="access-password">New password</label>
+            <input class="input" id="access-password" name="password" type="password" minlength="${MIN_PASSWORD}"
+              autocomplete="new-password" required />
+            <span class="hint">At least ${MIN_PASSWORD} characters.</span></div>
+          <div class="form-actions">${btn("Set password and sign in", { type: "submit", variant: "primary" })}</div>
+        </form>`,
+    },
+    status,
+  );
+}
+
+// GET /signin/access/:token — the admin's one-time link: a form for a new password.
+export function accessPage(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const token = ctx.params.token ?? "";
+  const user = timePhase(ctx.request, "link", () => accessLinkPerson(ctx.app, token));
+  if (user === undefined)
+    return page({ ctx, title: "Link not valid", body: html`<div class="page-head"><h1>Link not valid</h1></div><p>${ACCESS_NOT_VALID}</p>` }, 404);
+  return timePhase(ctx.request, "render", () => accessForm(ctx, token, user.username));
+}
+
+// POST /signin/access/:token — spend the link: the new password is set and the person signed in.
+export async function accessSubmit(ctx: Ctx): Promise<Response> {
+  const form = await readForm(ctx, undefined, STRANGER_MAX);
+  if (form instanceof Response) return form;
+  const token = ctx.params.token ?? "";
+  const done = await redeemAccessLink(ctx.app, token, field(form, "password"));
+  if (!done.ok) {
+    if (done.error === "invalid")
+      return page({ ctx, title: "Link not valid", body: html`<div class="page-head"><h1>Link not valid</h1></div><p>${ACCESS_NOT_VALID}</p>` }, 404);
+    const user = accessLinkPerson(ctx.app, token);
+    return accessForm(ctx, token, user?.username ?? "", CHANGE_PASSWORD_WORDS[done.error], 422);
+  }
+  const session = createSession(ctx.app.db, done.value.id);
+  return redirect("/settings/passkeys", {
+    cookie: sessionCookie(session.token, session.expiresAt, ctx.url, ctx.app.config.url),
+    flash: { message: "Password set; you are signed in. You can add a passkey here too." },
+    url: ctx.url,
+    forgeUrl: ctx.app.config.url,
   });
 }

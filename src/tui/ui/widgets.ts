@@ -714,6 +714,9 @@ export function menu(
  * draws the parent first, then this paints over it, and the dialog screen's
  * `key()` returns true for everything.
  */
+/** Rows a dialog spends outside its body: border, padding and the button bar. */
+export const DIALOG_CHROME_ROWS = 6;
+
 export function dialog(
   s: Screen,
   area: Rect,
@@ -724,6 +727,8 @@ export function dialog(
     actions: readonly { label: string; variant?: ButtonVariant }[];
     selected?: number;
     width?: number;
+    /** Called with the body's own rect, to draw something among its lines. */
+    paint?: (body: Rect) => void;
   },
 ): Rect[] {
   // Dim rather than blank: the user keeps their place in the page behind.
@@ -736,7 +741,7 @@ export function dialog(
       );
     }
   const w = Math.min(o.width ?? 54, area.w - 4);
-  const h = Math.min(o.body.length + 6, area.h - 2);
+  const h = Math.min(o.body.length + DIALOG_CHROME_ROWS, area.h - 2);
   const r = center(area, w, h);
   const inner = card(s, r, c, { title: o.title, focused: true });
   o.body.forEach((line, i) => {
@@ -749,6 +754,7 @@ export function dialog(
       inner.x + inner.w,
     );
   });
+  o.paint?.(inner);
   const barY = inner.y + inner.h - 1;
   const widths = o.actions.map((a) => len(displayWidth(a.label) + 4));
   const slots = split({ x: inner.x, y: barY, w: inner.w, h: 1 }, "h", [

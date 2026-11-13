@@ -17,7 +17,7 @@ import { createLog } from "../kernel/log.ts";
 import { ownRepoPath } from "../kernel/own_repo.ts";
 import { KEEPER_CAUSES, pickCause, readKeeperFacts, type KeeperCause, type KeeperMove } from "./keeper_cause.ts";
 import { isLow, landedBetween, readRate, type Rate } from "./keeper_rate.ts";
-import { oldestWaiting } from "./pile.ts";
+import { oldestWaitingOn } from "./pile.ts";
 import { during } from "../perf/jobs.ts";
 
 const log = createLog("keeper");
@@ -117,8 +117,8 @@ export function fileOnce(app: App, found: { cause: KeeperCause; says: string }, 
   const [owner, name] = ownRepoPath().split("/");
   const repo = owner && name ? getRepo(app.db, owner, name) : undefined;
   if (!repo) return log.warn("keeper cannot file: the forge's own repository is missing", { path: ownRepoPath() });
-  const oldest = found.cause === "stale_pile" ? oldestWaiting(app.db, 10, repo.visibility !== "private") : [];
-  const list = oldest.length === 0 ? "" : `\n\nOldest waiting, start here:\n${oldest.map((s) => `- ${s}`).join("\n")}`;
+  const oldest = found.cause === "stale_pile" ? oldestWaitingOn(app.db, 10, repo.visibility !== "private") : [];
+  const list = oldest.length === 0 ? "" : `\n\nOldest waiting, start here:\n${oldest.map((s) => `- ${s.ref} (waits on ${s.on})`).join("\n")}`;
   const made = createIssue(app.db, {
     repoId: repo.id,
     authorId: repo.ownerId,

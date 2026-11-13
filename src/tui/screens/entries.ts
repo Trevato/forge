@@ -9,6 +9,7 @@ import type { Ctx } from "../app/app.ts";
 import type { Command } from "../app/palette.ts";
 import type { Session } from "../session.ts";
 import { entry as access } from "./access.ts";
+import { entry as accountAccess } from "./account_access.ts";
 import { entry as agents } from "./agents.ts";
 import { entry as askData } from "./ask_data.ts";
 import { entry as archived } from "./archived.ts";
@@ -35,6 +36,7 @@ import { entry as displays } from "./displays.ts";
 import { entry as disks } from "./disks.ts";
 import { entry as domains } from "./domains.ts";
 import { entry as edgeOnly } from "./edgeonly.ts";
+import { entry as wayBack } from "./wayback.ts";
 import { entry as traffic } from "./trafficview.ts";
 import { entry as funnelEntry } from "./funnel.ts";
 import { entry as featureReview } from "./features.ts";
@@ -52,11 +54,13 @@ import { entry as claimStart } from "./claim_start.ts";
 import { entry as invites } from "./invites.ts";
 import { entry as billingLinks } from "./billinglinks.ts";
 import { entry as planRow } from "./planrow.ts";
+import { entry as cores } from "./cores.ts";
 import { entry as limits } from "./limits.ts";
 import { entry as plans } from "./plans.ts";
 import { entry as economics } from "./economics.ts";
 import { entry as money } from "./money.ts";
 import { entry as loopStalls } from "./loopstalls.ts";
+import { entry as footing } from "./footing.ts";
 import { entry as waiting } from "./waiting.ts";
 import { entry as slowPagesEntry } from "./slowpages.ts";
 import { entry as maintenance } from "./maintenance.ts";
@@ -122,6 +126,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   homePins,
   system,
   loopStalls,
+  footing,
   waiting,
   slowPagesEntry,
   telemetry,
@@ -135,6 +140,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   valves,
   access,
   edgeOnly,
+  wayBack,
   traffic,
   funnelEntry,
   audit,
@@ -148,6 +154,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   modelGrantEntry,
   modelCeilingEntry,
   people,
+  accountAccess,
   quotas,
   limits,
   plans,
@@ -170,6 +177,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   invites,
   billingLinks,
   planRow,
+  cores,
   claimStart,
   requests,
   bulk,

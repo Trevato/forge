@@ -1,7 +1,6 @@
 [
-  "src/core/one_core.ts",
   "src/perf/page_budget.ts",
   "src/perf/page_budget_read.ts",
-  "src/spawn/pod.ts",
-  "src/tui/ui/qr.ts"
+  "src/release/journey.ts",
+  "src/spawn/pod.ts"
 ]

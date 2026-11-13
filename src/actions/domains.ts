@@ -6,6 +6,7 @@
  */
 
 import type { App } from "../app.ts";
+import { certificateSaid, probeCertificate } from "../apps/certificate.ts";
 import { checkDomain, recordsFor, type DnsRecord } from "../apps/domains.ts";
 import { appHostSuffix } from "../apps/host.ts";
 import { appsRuntime, type AppsRuntime } from "../apps/runtime.ts";
@@ -163,7 +164,19 @@ export async function checkAppDomain(
     runtime.value.hostFor(record.slug, domain.env),
     runtime.value.options.dns,
   );
-  const updated = recordCheck(app.db, domain.host, found) ?? domain;
+  // A verified name is served, so its certificate is worth reading: a failed
+  // renewal shows here instead of on the day it expires.
+  const said = found.verified
+    ? `${found.said} ${certificateSaid(
+        await (runtime.value.options.certificate ?? ((h) => probeCertificate(h)))(
+          domain.host,
+        ),
+        new Date(),
+      )}`
+    : found.said;
+  const updated =
+    recordCheck(app.db, domain.host, { verified: found.verified, said }) ??
+    domain;
   if (found.verified && domain.verifiedAt === null) {
     app.bus.append({
       kind: "app.domain.verified",

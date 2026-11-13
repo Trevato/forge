@@ -1,8 +1,10 @@
 // When the release keeper cuts (#7557): each rule refuses on its own, and a cut is a tag, never a commit to main.
 import { describe, expect, test } from "bun:test";
-import { decideCut, MIN_INTERVAL_MS, nextVersion, SNAPSHOT_WAIT_MS, type CadenceInput } from "../src/keeper/cadence.ts";
+import { decideCut, MIN_INTERVAL_MS, nextVersion, RELEASE_DISK_USED_MAX, SNAPSHOT_WAIT_MS, type CadenceInput } from "../src/keeper/cadence.ts";
 import { tick } from "../src/keeper/keeper.ts";
 import { listKeeperReleases, recordCut } from "../src/keeper/record.ts";
+import { keeperPorts } from "../src/keeper/wire.ts";
+import { provideDiskForTest } from "../src/kernel/disk_reading.ts";
 import { A, B, keeperForge } from "./helpers/keeper.ts";
 
 const NOW = Date.parse("2026-10-27T12:00:00.000Z");
@@ -54,6 +56,35 @@ describe("cadence", () => {
     expect(held).toBe("a snapshot is being taken (10 min in); a release would cut it short");
     expect(f.world.tags).toEqual([]);
     expect(await tick({ ...f.ports, snapshotting: () => undefined })).toContain("cut 0.7.284");
+  });
+
+  test("at 80% of the disk used no release is cut; under it, or unread, the cut goes (#11686)", async () => {
+    expect(RELEASE_DISK_USED_MAX).toBe(0.8);
+    expect(decideCut({ ...ready, diskUsed: 0.8 })).toEqual({ cut: false, why: "the disk is 80% full; releases pause at 80% until room is made" });
+    expect(decideCut({ ...ready, diskUsed: 0.93 }).cut).toBe(false);
+    expect(decideCut({ ...ready, diskUsed: 0.79 })).toEqual({ cut: true, version: "0.7.284" });
+    expect(decideCut({ ...ready, diskUsed: undefined })).toEqual({ cut: true, version: "0.7.284" });
+    const f = await keeperForge();
+    expect(await tick({ ...f.ports, diskUsed: () => 0.85 })).toBe("the disk is 85% full; releases pause at 80% until room is made");
+    expect(f.world.tags).toEqual([]);
+    expect(f.state.set).toEqual([]);
+    expect(await tick({ ...f.ports, diskUsed: () => 0.7 })).toContain("cut 0.7.284");
+  });
+
+  test("the forge's keeper reads the disk under its data directory for the rule", async () => {
+    const f = await keeperForge();
+    const ports = keeperPorts(f.app, { forgeUrl: "http://forge.test", deployment: "forge", container: "forge", swap: true });
+    if (typeof ports === "string") throw new Error(ports);
+    const seen: string[] = [];
+    provideDiskForTest((dir) => (seen.push(dir), { freeBytes: 150, totalBytes: 1000 }));
+    try {
+      expect(ports.diskUsed?.()).toBeCloseTo(0.85);
+      expect(seen).toEqual([f.app.config.dataDir]);
+      provideDiskForTest(() => ({ freeBytes: 0, totalBytes: 0 }));
+      expect(ports.diskUsed?.()).toBeUndefined();
+    } finally {
+      provideDiskForTest(() => ({ freeBytes: 900 * 1024 ** 3, totalBytes: 1000 * 1024 ** 3 }));
+    }
   });
 
   test("a tag the keeper rolled back is settled: the fix after it may be cut", () => {

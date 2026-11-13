@@ -15,6 +15,7 @@ import { getReturning } from "../../settings/returning.ts";
 import { kpiProbe } from "../../web/studio/kpi_probe.ts";
 import { MAX_SECONDS, sampleStacks } from "../../perf/sample.ts";
 import { listAccounts, removeAccount, retireAndRemoveAccount, retirementPlan, suspendAccount, unsuspendAccount, verifyAccount } from "../../actions/accounts.ts";
+import { ACCESS_WORDS, accessUrl, endAllSessions, resetAccess } from "../../actions/account_access.ts";
 import { ADMIN_WORDS } from "../../actions/admin_words.ts";
 import { DERIVED_WORDS, REASON_WORDS, changeCapacity, edgeOffDryRun, listCapacity } from "../../actions/capacity.ts";
 import { changeShield, lastShieldChange, shieldState } from "../../actions/shield.ts";
@@ -584,6 +585,35 @@ export function adminRoutes(router: Router<Handler>): void {
     if (denied) return denied;
     const done = unsuspendAccount(ctx.app, ctx.auth.user, ctx.params.username!);
     return done.ok ? json({ username: done.value.username, suspendedAt: null }) : accountError(done.error);
+  });
+
+  // A one-time link, good for an hour, for a person to set a new password and add a passkey;
+  // `endSessions` also signs them out. The admin never sees the password (#11688).
+  router.add("POST", "/api/v1/admin/accounts/:username/reset", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    if ((input.endSessions !== undefined && typeof input.endSessions !== "boolean") || (input.dryRun !== undefined && typeof input.dryRun !== "boolean"))
+      return apiError("invalid", 422, "endSessions and dryRun are true or false");
+    const done = await resetAccess(ctx.app, ctx.auth.user, ctx.params.username!, {
+      endAll: input.endSessions === true,
+      dryRun: input.dryRun === true,
+    });
+    if (!done.ok) return done.error === "not_found" ? notFound() : apiError("not_allowed", 422, ACCESS_WORDS.notAllowed);
+    const { token, ...rest } = done.value;
+    return json(token === undefined ? rest : { ...rest, url: accessUrl(ctx.app, token) });
+  });
+
+  // End every browser a person is signed in on.
+  router.add("POST", "/api/v1/admin/accounts/:username/end-sessions", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    if (input.dryRun !== undefined && typeof input.dryRun !== "boolean")
+      return apiError("invalid", 422, "dryRun is true or false");
+    const done = endAllSessions(ctx.app, ctx.auth.user, ctx.params.username!, { dryRun: input.dryRun === true });
+    if (!done.ok) return done.error === "not_found" ? notFound() : apiError("not_allowed", 422, ACCESS_WORDS.notAllowed);
+    return json(done.value);
   });
 
   router.add("POST", "/api/v1/admin/accounts/:username/verify", (ctx) => {

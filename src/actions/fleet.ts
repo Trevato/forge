@@ -601,12 +601,15 @@ export async function applyPreviewed(
 /** How long a bulk action on asks can be undone: a day. */
 export const UNDO_WINDOW_MS = 86_400_000;
 
-const ASK_VERBS: readonly string[] = ["dismiss", "mute", "ship", "close", "replan"];
+export const ASK_VERBS: readonly string[] = ["dismiss", "mute", "ship", "close", "replan"];
+
+/** The query a bulk action on asks is receipted under: "asks: n selected". */
+export const ASKS_QUERY_PREFIX = "asks: ";
 
 /** Whether a receipt is a bulk action on asks: named one by one, "asks: n selected". */
 export function isAsksOperation(op: Operation): boolean {
   return (
-    op.kind === "issue" && op.query.startsWith("asks: ") && ASK_VERBS.includes(op.verb)
+    op.kind === "issue" && op.query.startsWith(ASKS_QUERY_PREFIX) && ASK_VERBS.includes(op.verb)
   );
 }
 

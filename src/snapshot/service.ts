@@ -11,6 +11,7 @@
  */
 
 import type { App } from "../app.ts";
+import { activeCrewRuns, crewHoldsCore, forgeCpus, holdClock } from "../core/one_core.ts";
 import { createLog } from "../kernel/log.ts";
 import { firstSeen, reportVerdict, seedFirstSeen } from "./verdict.ts";
 import {
@@ -43,6 +44,8 @@ const log = createLog("snapshots");
 const NIGHTLY_HOUR_UTC = 8;
 /** After a failed snapshot, the next try is this soon (or the nightly, if sooner). */
 export const RETRY_MS = 3_600_000;
+/** A due snapshot waits for a crew run on a 1-CPU forge at most this long, then is taken anyway. */
+export const MAX_DEFER_MS = 3_600_000;
 /** A moving snapshot tells the page how far it is no oftener than this. */
 const PROGRESS_EVENT_MS = 2_000;
 
@@ -105,6 +108,8 @@ const CATCH_UP_MS = 5 * 60_000;
 const SNAPSHOT_CATCH_UP_MS = 2 * 60_000;
 /** A snapshot still owed is looked for again this often; one boot's look is not the last (#10167). */
 const SNAPSHOT_CHECK_MS = 30 * 60_000;
+/** A snapshot held for a crew run on one CPU looks again this often. */
+const HOLD_RETRY_MS = 30_000;
 
 export function untilDrill(now = Date.now()): number {
   const next = new Date(now);
@@ -149,6 +154,13 @@ export function startSnapshots(
     readonly bucketFirstMs?: number | undefined;
     /** Test seam: the clock `takeIfDue` judges by. */
     readonly now?: (() => number) | undefined;
+    /** Test seams: the forge's CPU count, crew runs working now, how soon a held snapshot looks again, and how long it waits at most. */
+    readonly cpus?: (() => number) | undefined;
+    readonly activeCrewRuns?: (() => number) | undefined;
+    readonly holdRetryMs?: number | undefined;
+    readonly holdMaxMs?: number | undefined;
+    /** Test seam: how soon the first nightly timer fires. */
+    readonly nightlyInMs?: number | undefined;
   } = {
     version: "0",
   },
@@ -169,6 +181,17 @@ export function startSnapshots(
     return resolvedMirror.store;
   };
   let stopped = false;
+  // On one CPU a due snapshot waits for the crew run to end, for at most
+  // `holdMaxMs`, then is taken anyway so back-to-back runs cannot starve it (#11599).
+  const wait = holdClock(options.holdMaxMs ?? MAX_DEFER_MS);
+  const crewHolds = (): boolean => {
+    if (!crewHoldsCore((options.cpus ?? forgeCpus)(), options.activeCrewRuns ?? (() => activeCrewRuns(app.db)))) {
+      wait.reset();
+      return false;
+    }
+    return wait.held("snapshot", (options.now ?? Date.now)());
+  };
+  const holdRetryMs = options.holdRetryMs ?? options.snapshotCheckMs ?? HOLD_RETRY_MS;
   let inFlight: Promise<Manifest> | undefined;
   let active = 0;
   let running: Progress | undefined;
@@ -180,6 +203,7 @@ export function startSnapshots(
     let offBox: boolean | undefined;
     // After the one before it, however that ended: chained on a failure as it
     // was, every later run failed at once with the old error until a restart.
+    wait.release("snapshot");
     const run = (inFlight ?? Promise.resolve()).catch(() => {}).then(async () => {
       // Resolved per run, so a destination saved on the Backups page is the
       // very next snapshot's.
@@ -276,7 +300,7 @@ export function startSnapshots(
       log.warn("snapshot catch-up: store unreadable, not taking one now", { error: String(error) });
       return false;
     }
-    if (stopped || active > 0 || !snapshotDue(newest?.finishedAt, (options.now ?? Date.now)())) return false;
+    if (stopped || active > 0 || !snapshotDue(newest?.finishedAt, (options.now ?? Date.now)()) || crewHolds()) return false;
     const cut = await cutShort(store, newest?.name);
     log.info("snapshot due or lost; taking one", { newest: newest?.name ?? "none", resuming: cut?.toISOString() ?? "no" });
     await take(cut).catch(() => {});
@@ -380,9 +404,14 @@ export function startSnapshots(
     if (timer !== undefined) clearTimeout(timer);
     timer = undefined;
     if (options.nightly === false || stopped) return;
-    timer = setTimeout(() => void during("snapshot", take).catch(() => {}), ms);
+    timer = setTimeout(() => {
+      void during("snapshot", async () => {
+        if (active === 0 && crewHolds()) return arm(holdRetryMs);
+        await take();
+      }).catch(() => {});
+    }, ms);
   }
-  arm(untilNightly());
+  arm(options.nightlyInMs ?? untilNightly());
 
   // The board only reads; the time the forge first owed a drill is kept here.
   try {
@@ -454,7 +483,7 @@ export function startSnapshots(
         .catch(() => {})
         .finally(() => {
           bootLookAt = undefined;
-          scheduleCatchUp(options.snapshotCheckMs ?? SNAPSHOT_CHECK_MS);
+          scheduleCatchUp(crewHolds() ? holdRetryMs : (options.snapshotCheckMs ?? SNAPSHOT_CHECK_MS));
         });
     }, ms);
   };

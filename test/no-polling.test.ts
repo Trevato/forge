@@ -311,6 +311,7 @@ const NOT_WALKED: Record<string, string> = {
   "/now/:stage": "the stage word is one the seed cannot guess",
   "/resilience/nightly/:job": "needs a nightly job name",
   "/runs/:id": "the seed creates no run",
+  "/signin/access/:token": "needs a one-time access link an admin minted",
   "/settings/features/:slug": "needs a feature slug",
   "/settings/origins/:id/archived": ORIGIN,
   "/settings/origins/:id/mirror/:job": ORIGIN,

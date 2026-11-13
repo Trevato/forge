@@ -9,6 +9,7 @@
  *       ∧ no snapshot is being taken, unless it has run `SNAPSHOT_WAIT_MS`
  *       ∧ now − the last cut ≥ the minimum interval
  *       ∧ no hold stands (a failed verify's, or an owner's)
+ *       ∧ the forge's disk is less than `RELEASE_DISK_USED_MAX` full
  *
  * The first rule that refuses names itself, so the record says why not.
  * The version is the newest tag's with its patch number plus one.
@@ -24,6 +25,14 @@ export const MIN_INTERVAL_MS = 30 * 60_000;
  * this is stuck, and holds releases no more.
  */
 export const SNAPSHOT_WAIT_MS = 2 * 3_600_000;
+
+/**
+ * A release writes a new tree and its install beside the live one, so at
+ * this share of the forge's disk used no release is cut (#11686, item 6:
+ * a full disk took the forge down once). The cut waits; nothing is held,
+ * and the next tick with room cuts.
+ */
+export const RELEASE_DISK_USED_MAX = 0.8;
 
 export interface CadenceInput {
   /** main's head commit. */
@@ -44,6 +53,8 @@ export interface CadenceInput {
   readonly lastCutAt: number | undefined;
   /** The reason of a standing hold, when one stands. */
   readonly hold: string | undefined;
+  /** The share of the forge's disk in use, 0..1; undefined when it could not be read. */
+  readonly diskUsed?: number | undefined;
   readonly now: number;
   readonly minIntervalMs?: number;
 }
@@ -69,6 +80,8 @@ export function decideCut(input: CadenceInput): Cadence {
   if (input.gating > 0) return no(`the merge queue is landing (${input.gating} gate${input.gating === 1 ? "" : "s"} running)`);
   if (input.snapshotMs !== undefined && input.snapshotMs < SNAPSHOT_WAIT_MS)
     return no(`a snapshot is being taken (${Math.floor(input.snapshotMs / 60_000)} min in); a release would cut it short`);
+  if (input.diskUsed !== undefined && input.diskUsed >= RELEASE_DISK_USED_MAX)
+    return no(`the disk is ${Math.round(input.diskUsed * 100)}% full; releases pause at ${RELEASE_DISK_USED_MAX * 100}% until room is made`);
   const wait = input.minIntervalMs ?? MIN_INTERVAL_MS;
   if (input.lastCutAt !== undefined && input.now - input.lastCutAt < wait)
     return no(`the last cut was ${Math.floor((input.now - input.lastCutAt) / 60_000)} min ago; the interval is ${wait / 60_000} min`);

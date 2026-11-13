@@ -18,6 +18,7 @@ import { plainText } from "../core/reports.ts";
 import { listActiveRuns, workingAgentRuns } from "../core/runs.ts";
 import { getUserById, isActive, type User } from "../core/users.ts";
 import { crewWithRole, isCrew } from "../core/agents.ts";
+import { envPull, type EnvName } from "../apps/data.ts";
 import { fence } from "../crew/fence.ts";
 import { unadoptedAmong } from "../crew/direct.ts";
 import { contextFold, type NoteContext } from "./note_context.ts";
@@ -245,6 +246,7 @@ export async function sendNote(
   const refused = spend(app, record, source, sender);
   if (refused !== undefined) return err(refused);
 
+  const pullOfEnv = envPull(env as EnvName);
   const body = [
     `Sent from the forge button in ${record.slug} (${env}) by ${sender.name}${sender.person ? "" : ", who has no account"}.`,
     "",
@@ -254,6 +256,7 @@ export async function sendNote(
     "",
     // A pathname leaves `[](){}` unencoded but encodes backticks: code, not a link.
     `- Page: ${input.page === "" ? "unknown" : `\`${input.page.replace(/`/g, "%60")}\``}`,
+    `- Context: app \`${record.slug}\`, environment \`${env}\`${pullOfEnv === undefined ? "" : `, previews pull [#${pullOfEnv}](/${owner.username}/${repo.name}/pulls/${pullOfEnv})`}`,
     `- Viewport: ${input.viewport}`,
     `- Time: ${new Date().toISOString()}`,
   ].join("\n") + (input.context === undefined ? "" : contextFold(input.context));

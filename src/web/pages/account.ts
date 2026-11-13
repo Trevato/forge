@@ -63,6 +63,8 @@ import { accountSections } from "./origins.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { planRow } from "../plan_row.ts";
+import { coresRow } from "../cores_row.ts";
+import { coresLine } from "../../spawn/cores.ts";
 import { flashTo, page } from "../layout.ts";
 import { readFlash } from "../flash.ts";
 import {
@@ -516,11 +518,13 @@ export function accountPage(ctx: Ctx): Response {
   const parent = timePhase(ctx.request, "parent", () => parentLinkView(ctx));
   const notify = timePhase(ctx.request, "notify", () => notifyView(ctx));
   const rendering = performance.now();
+  const admin = user.isAdmin === true;
+  const plan = planRow(ctx.app.config.dataDir, parentIssuerOf(ctx.app.config), admin, coresRow(admin, coresLine()));
   const response = accountShell(
     ctx,
     "profile",
     "Settings",
-    html`${planRow(ctx.app.config.dataDir, parentIssuerOf(ctx.app.config), user.isAdmin === true)}${pair}${profile}${edge}${parent}${notify}`,
+    html`${plan}${pair}${profile}${edge}${parent}${notify}`,
     200,
     // The everyday form makes its account with a passkey (#1890).
     pair ? passkeyJs : undefined,
@@ -700,7 +704,7 @@ export function sessionsCard(
           ${sessions.map((x) =>
             row({
               title: html`${time(x.createdAt)} ${x.current ? badge("This browser") : null}`,
-              meta: html`last seen ${x.lastSeenAt ? time(x.lastSeenAt) : "not since"}`,
+              meta: html`last seen ${x.lastSeenAt ? time(x.lastSeenAt) : "not since"}${x.address === null ? null : html` · from ${x.address}`}`,
               trail: html`${confirmAction({
                 action: `${base}/sessions/${x.id}/delete`,
                 verb: "Sign out",

@@ -51,6 +51,11 @@ Under the box, four starter sentences are plain links (no script):
   redeployed on each push and gone when the pull closes. Its data starts as
   a copy of production's — copy-on-write where the filesystem can — and
   never writes back. Merging moves code and touches no data.
+- **A webhook has a stable address.** `POST /__forge/hook/<pull>/<path>` on
+  production's host is relayed, untouched, to pull `<pull>`'s preview as
+  `POST /<path>` (`src/apps/hook_relay.ts`), so a payment provider keeps one
+  URL while previews change. The provider's signature reaches the app
+  unchanged; the app verifies it. See `docs/features/platform-app-move.md`.
 - **A preview is held to the website specification, report-only.** Once it is
   live, `webspec()` runs over the `app.looks` paths of its `forge.json`. The pull
   page shows the result under the Checks line as **Website spec: N findings
@@ -1278,6 +1283,12 @@ Declare schedules in `forge.json`:
 - **Runtime timers.** An app arms its own with `POST /api/v1/timers` under its own token: `{ "in": "10m" | seconds, or "at": "<ISO date>", "path": "/jobs/x", "key": "optional", "body": <up to 64 KB> }`; arming a key again replaces it; `DELETE /api/v1/timers/<key>` cancels. At most `FORGE_TIMERS_PER_APP` (default 100) pending, a year ahead at most.
 
 A fired job is an ordinary request to the app's port and counts toward its own limits. How to try it: `docs/features/timers.md`.
+
+### Jobs
+
+A **durable job** is code in the app that reads top to bottom, waits an hour or a week with no process running, survives a deploy, and never repeats a step that finished (`src/jobs.ts` in the app template; no dependency). The forge's part is only the timer above: `sleep` and `waitFor` save where the run is in the app's own database and arm a timer with key `job:<run>:<wake>` that `POST`s `/jobs/run` with `{ run, wake }`; the function then runs again from the top and finished steps answer from their saved results. A step must be safe to retry until it returns (it gets an `idempotencyKey`). A step that throws is retried with backoff (default 3 retries) and then the run is failed: the app answers `422` with `x-forge-no-retry: 1`, which the forge records as failed at once (no redelivery) and asks the owner once, by run. A step or job name that no longer matches what a run did fails that run plainly; `version` keeps an old path for old runs. A step result is JSON up to 256 KB; unfinished runs per app are `JOBS_ACTIVE_MAX` (default 1000) and pending timers `FORGE_TIMERS_PER_APP`.
+- **Seen and steered.** The runs live in the app, so the forge asks it (waking it), signed as a timer's delivery is: `GET /jobs/runs`, `POST /jobs/runs/:id/cancel|retry`. The app's page links to `/:owner/:name/app/jobs` while it holds a job timer: name, key, started, where it is now (running, sleeping until, waiting for, done, failed), **Cancel** and **Retry from the failed step**. `GET /api/v1/repos/:owner/:name/jobs`, `POST …/jobs/:id/(cancel|retry)` and the `app_deploy` MCP tool (`jobs`, `cancel_job`, `retry_job`) answer the same rows (`src/actions/jobs.ts`). A writer's: a run's error and result are the app's own text.
+- How to try it: `docs/features/jobs.md`.
 
 ## Where state lives
 

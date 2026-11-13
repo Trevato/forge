@@ -1237,7 +1237,7 @@ export function cpuBreach(
   cpus: number,
   top: { pid: number; ticks: number; name: string } | undefined,
 ): string {
-  const why = `used ${cores.toFixed(1)} cores for ${Math.round(seconds)}s, over its limit of ${cpus}`;
+  const why = `used ${cores.toFixed(1)} cores for ${Math.round(seconds)}s, over twice its limit of ${cpus}`;
   if (top === undefined) return why;
   const spent = Math.round(top.ticks / CLK_TCK);
   return `${why}; the busiest process is ${top.name} (pid ${top.pid}, ${spent}s of CPU)`;
@@ -1245,13 +1245,13 @@ export function cpuBreach(
 
 /**
  * Whether a step's error is the watch's CPU stop as `runStep` words it
- * (`<step> stopped: it used 16.3 cores for 31s, over its limit of 16…`,
+ * (`<step> stopped: it used 16.3 cores for 31s, over twice its limit of 16…`,
  * #11617). Anchored at the start: a failed step's own output only ever
  * follows `<step> exited with code N —`, so a check cannot print its way
  * into reading as stopped for CPU.
  */
 export function stoppedForCpu(error: string): boolean {
-  return /^[a-z-]+ stopped: it used \d+(?:\.\d+)? cores for \d+s, over its limit of \d/.test(error);
+  return /^[a-z-]+ stopped: it used \d+(?:\.\d+)? cores for \d+s, over (?:twice )?its limit of \d/.test(error);
 }
 
 /** A process's command name, printable and short, or "?" once it is gone. */
@@ -1313,7 +1313,7 @@ export interface CpuState {
  * One tick's CPU decision for a watched cell: record the tree's CPU `ticks`
  * at `now`, average the cores over `WATCH.cpuWindowMs`, keep the hold on
  * `state`, and say whether `cpuWatch` (`apps/cpu_rule.ts`) stops it — with the
- * cores and the window it measured — or null to let it run (#11657).
+ * cores and the seconds the overage has held — or null to let it run (#11657).
  */
 export function cpuSample(
   state: CpuState,
@@ -1325,11 +1325,12 @@ export function cpuSample(
   while (state.samples.length > 1 && now - (state.samples[1]?.at ?? now) >= WATCH.cpuWindowMs) state.samples.shift();
   const oldest = state.samples[0];
   if (oldest === undefined || now - oldest.at < WATCH.cpuWindowMs) return null;
-  const seconds = (now - oldest.at) / 1000;
-  const cores = (ticks - oldest.ticks) / CLK_TCK / seconds;
+  const window = (now - oldest.at) / 1000;
+  const cores = (ticks - oldest.ticks) / CLK_TCK / window;
   const verdict = cpuWatch(state.overSince, cores, cpus, now, state.startedAt);
   state.overSince = verdict.overSinceMs;
-  return verdict.stop ? { cores, seconds } : null;
+  // The seconds the overage has held, not the sample window it was averaged over.
+  return verdict.stop && verdict.overSinceMs !== null ? { cores, seconds: (now - verdict.overSinceMs) / 1000 } : null;
 }
 
 function tick(): void {

@@ -11,6 +11,9 @@
 7. Rows over boxes: a list is rows, a fact is a `dl` row, not a card.
 8. Plain words, as in `docs/WRITING.md`.
 
+**Overlays are drawn only when open (#11831).** One rule keyed on the open state (`.dialog[open]`, `.toast:not([hidden])`) gives every overlay its layout; a component adds only what is its own, never a bare `display` on its selector, which beats the browser's `dialog:not([open]) { display: none }`.
+Enforced: `overlay` in `scripts/design-lint.ts` names the selector, judging its last compound, for the known overlay names and every class a `<dialog>` or `[popover]` carries.
+
 **The first five minutes.** Later work is judged against this one journey, a stranger's from a link to a change live:
 1. They follow a link. 2. They name the forge. 3. They choose a username and password. 4. They say what to build. 5. They see the crew working.
 

@@ -7,7 +7,7 @@
  */
 
 import { CHAPTER_WORDS, close, draft, fill, open, patch } from "../../actions/chapters.ts";
-import { getChapter, itemsOf, listChapters, progressOf, type Chapter, type Item } from "../../core/chapters.ts";
+import { getChapter, itemsOf, listChapters, progressOf, progressSentence, type Chapter, type Item } from "../../core/chapters.ts";
 import { canAdmin, type Repo } from "../../core/repos.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -113,7 +113,7 @@ export function chapterPage(ctx: Ctx): Response {
     const left = items.filter((i) => i.status === "left");
     const done = items.filter((i) => i.status === "done");
     main = html`<p>${c.means}</p>
-      <p data-progress>${p.done} of ${p.total} done${p.finishesOn === null ? "" : `; at this pace it finishes ${p.finishesOn}`}.</p>
+      <p data-progress>${progressSentence(p)}</p>
       ${items.length === 0 ? html`<p>No issues in this chapter yet.</p>` : null}
       <ul class="list setting-list">${[...done, ...building, ...left].map((i) => itemRow(repo, i, may, c))}</ul>
       ${may

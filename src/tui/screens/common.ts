@@ -25,11 +25,13 @@ import { G, Screen as Surface, type Rect } from "../term/screen.ts";
 import { style } from "../term/style.ts";
 import { pad, truncate, wrap } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
+import { drawQr, qrSize, terminalQr } from "../ui/qr.ts";
 import type { Tokens } from "../ui/theme.ts";
 import { icon, type IconSet } from "../ui/icons.ts";
 import {
   card,
   dialog,
+  DIALOG_CHROME_ROWS,
   input,
   row,
   scrollbar,
@@ -851,8 +853,17 @@ export function openOnWeb(
  * terminal's own drag-to-select work inside a mouse-aware app. `c` copies
  * through OSC 52 as well; `enter` opens a browser when one is reachable.
  */
-export function linkScreen(ctx: Ctx, url: string, parent?: Screen): Screen {
+export function linkScreen(
+  ctx: Ctx,
+  url: string,
+  parent?: Screen,
+  opts: { qr?: boolean } = {},
+): Screen {
   ctx.mouse(false);
+  // Encoded once, here, from exactly the link shown; held in this closure
+  // only — never logged, never written anywhere. Render only draws it, so a
+  // resize redraws the same cells and prints nothing twice.
+  const code = opts.qr === true ? terminalQr(url) : undefined;
   return {
     title: "Link",
     keys: [
@@ -867,16 +878,34 @@ export function linkScreen(ctx: Ctx, url: string, parent?: Screen): Screen {
     },
     render(area, s) {
       parent?.render(area, s);
+      const text = [
+        url,
+        "",
+        "Select the address to copy it: the mouse is yours here.",
+        "c copies through the terminal too, when it allows it.",
+      ];
+      // The QR goes between the link and the help, only when the whole code
+      // fits inside the dialog; otherwise the link alone, as before.
+      const size = code === undefined ? undefined : qrSize(code);
+      const width = Math.max(54, size === undefined ? 0 : size.cols + 4, [...url].length + 4);
+      const room =
+        size !== undefined &&
+        width <= area.w - 4 &&
+        text.length + 1 + size.rows + DIALOG_CHROME_ROWS <= area.h - 2;
+      // Two lines (the link, a blank) come first; the QR takes the blank
+      // rows reserved for it, its origin given by the dialog's own body rect.
+      const body = room
+        ? [url, "", ...new Array<string>(size.rows).fill(""), "", ...text.slice(2)]
+        : text;
       dialog(s, area, ctx.theme.c, {
         title: "Link",
-        body: [
-          url,
-          "",
-          "Select the address to copy it: the mouse is yours here.",
-          "c copies through the terminal too, when it allows it.",
-        ],
+        body,
         actions: [{ label: "Copy" }, { label: "Close" }],
         selected: 0,
+        width,
+        ...(room && code !== undefined
+          ? { paint: (b: Rect) => void drawQr(s, { x: b.x, y: b.y + 2, w: b.w, h: size.rows }, code) }
+          : {}),
       });
     },
     key(e) {

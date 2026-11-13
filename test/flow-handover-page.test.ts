@@ -95,7 +95,7 @@ test("the three lists, on the page and on /flow", async () => {
   expect(page).toContain('id="handover"');
   expect(page).toContain(`href="/alice/r/pulls/${handed.n}"`);
   expect(rows(page, "One review round")).toBe(1);
-});
+}, 30_000); // the full suite shares one CPU: a password hash and /flow's git reads can pass bun's 5 s default
 
 async function signin(): Promise<string> {
   const res = await fetch(`${servers.url}/signin`, {

@@ -11,6 +11,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const SITES: Record<string, string> = {
+  "src/apps/backup_door.ts":
+    "runs bun on the forge's own scripts/app-backup.ts with paths the forge made; the passphrase goes in env, never argv, and nothing in argv is text from a request",
   "src/apps/contain.ts":
     "probes whether bwrap works: a fixed argv of namespace flags and /bin/true, nothing from a request",
   "src/apps/process.ts":

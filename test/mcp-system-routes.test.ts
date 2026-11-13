@@ -47,6 +47,8 @@ const call = async (token: string) => {
 };
 
 test("routes lists the over-budget route first, with its budget and slowest phase; a non-admin is refused", async () => {
+  // perfRecord is the process's own, and a shard-mate's requests leave samples (and patterns, up to the cap) in it.
+  perfRecord.clear();
   const at = Date.now();
   for (let i = 0; i < 25; i++) {
     perfRecord.add("/boards", { at, ms: 100, signedIn: true, phases: [{ name: "app", ms: 100, hit: false }] });
