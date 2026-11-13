@@ -45,6 +45,11 @@ export interface Card {
 const here = (origin: string, path: string): boolean => origin !== "" && /^\/(?!\/)/.test(path);
 
 export const CARD_MIME = "text/html;profile=mcp-app";
+/**
+ * What the page asks of the host (MCP Apps `_meta.ui`; ChatGPT reads the same key):
+ * no network at all (empty `csp`), and no border added around the card, which draws its own.
+ */
+export const CARD_RESOURCE_META = { ui: { prefersBorder: false, csp: { connectDomains: [], resourceDomains: [] } } } as const;
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
 export const CARD_KINDS: readonly CardKind[] = ["app", "run", "asks", "wave", "map", "feed", "pull", "pulls", "runs", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones", "release", "releases", "search", "issues", "held", "forges", "drill", "reports", "usage", "health", "capacity", "forge"];
 
@@ -1072,8 +1077,8 @@ const root = document.getElementById("card");
 const el = (tag, text, cls) => { const e = document.createElement(tag); e.textContent = text; if (cls) e.className = cls; return e; };
 let n = 0;
 let field = null;
-function button(a) {
-  const b = el("button", a.label);
+function button(a, cls) {
+  const b = el("button", a.label, cls);
   b.onclick = () => {
     let args = a.args;
     if (a.words) {
@@ -1108,7 +1113,7 @@ function draw(card, all) {
   // Show-more redraws the rows only: the field the reader typed in is kept.
   field = card.actions.some((a) => a.words) ? (all && field ? field : document.createElement("input")) : null;
   if (field) { field.type = "text"; field.maxLength = 2000; field.placeholder = "Your words"; field.setAttribute("aria-label", "Your words"); root.append(field); }
-  for (const a of card.actions) root.append(button(a));
+  card.actions.forEach((a, i) => root.append(button(a, i === 0 ? "primary" : "")));
 }
 // The MCP Apps handshake: ui/initialize is a request (with an id); the host's
 // reply carries hostContext (theme, style variables); only then does the card
@@ -1169,8 +1174,22 @@ function report() {
   queued = true;
   if (typeof requestAnimationFrame === "function") requestAnimationFrame(measure); else measure();
 }
+// A card is drawn only from a model with a title and rows; no actions is no buttons.
+function show(card) {
+  if (isObj(card) && typeof card.title === "string" && Array.isArray(card.rows)) { draw({ ...card, status: typeof card.status === "string" ? card.status : "", actions: Array.isArray(card.actions) ? card.actions : [] }); report(); }
+}
+// ChatGPT's Apps SDK also hands the page its globals: the tool's structured
+// content (toolOutput) and the theme. Read them at once and when they change,
+// so the card is drawn even when the host never speaks the MCP Apps bridge.
+function fromOpenAI() {
+  const o = globalThis.openai;
+  if (!isObj(o)) return;
+  applyContext({ theme: o.theme });
+  if (isObj(o.toolOutput)) show(o.toolOutput.card);
+}
+addEventListener("openai:set_globals", fromOpenAI);
 addEventListener("message", (e) => {
-  if (e.source !== parent) return;
+  if (e.source !== parent && e.source !== globalThis.top) return;
   const m = e.data;
   if (!isObj(m) || m.jsonrpc !== "2.0") return;
   if (m.id === INIT_ID && !("method" in m)) {
@@ -1184,17 +1203,17 @@ addEventListener("message", (e) => {
   const p = isObj(m.params) ? m.params : {};
   if (m.method === "ui/notifications/tool-result") {
     const sc = isObj(p.structuredContent) ? p.structuredContent : {};
-    const card = sc.card;
-    if (isObj(card) && typeof card.title === "string" && Array.isArray(card.rows) && Array.isArray(card.actions)) { draw(card); report(); }
+    show(sc.card);
   } else if (m.method === "ui/notifications/host-context-changed") applyContext(p);
 });
 if (typeof ResizeObserver === "function") new ResizeObserver(report).observe(document.body);
+fromOpenAI();
 parent.postMessage({ jsonrpc: "2.0", id: INIT_ID, method: "ui/initialize", params: { protocolVersion: "2026-01-26", appInfo: { name: "forge-card", version: "1" }, appCapabilities: {} } }, "*");
 report();
 `;
 
 const pal = (t: "light" | "dark"): string => `--c-bg:${CARD_PALETTE[t].bg};--c-fg:${CARD_PALETTE[t].fg};--c-link:${CARD_PALETTE[t].link};color-scheme:${t}`;
-export const CARD_CSS = `:root{${pal("light")}}@media(prefers-color-scheme:dark){:root{${pal("dark")}}}:root[data-theme=light]{${pal("light")}}:root[data-theme=dark]{${pal("dark")}}body{font:14px/1.4 var(--font-sans,system-ui,sans-serif);margin:0;padding:12px;background:var(--c-bg);color:var(--c-fg)}h2{margin:0 0 4px;font-size:16px}.status{margin:0 0 8px}dl{margin:0}h2,dt,dd{overflow-wrap:anywhere}.status{opacity:.85}dt{font-weight:600;margin-top:10px;padding-top:8px;border-top:1px solid color-mix(in srgb,var(--c-fg) 15%,var(--c-bg))}dt:first-child{border-top:0;padding-top:0}dd{margin:0;opacity:.85}a{color:var(--c-link);text-underline-offset:2px;display:inline-flex;align-items:center;min-height:44px}button,input{font:inherit;color:var(--c-fg);border:0;background:color-mix(in srgb,var(--c-fg) 12%,var(--c-bg));border-radius:var(--border-radius-sm,6px);min-height:44px;box-sizing:border-box}button{margin:8px 6px 0 0;padding:4px 12px}input{padding:4px 8px;width:100%;margin-top:8px}`;
+export const CARD_CSS = `:root{${pal("light")}}@media(prefers-color-scheme:dark){:root{${pal("dark")}}}:root[data-theme=light]{${pal("light")}}:root[data-theme=dark]{${pal("dark")}}:root{--c-line:color-mix(in srgb,var(--c-fg) 14%,var(--c-bg));--c-soft:color-mix(in srgb,var(--c-fg) 7%,var(--c-bg));--c-mute:color-mix(in srgb,var(--c-fg) 78%,var(--c-bg))}body{font:14px/1.45 var(--font-sans,system-ui,-apple-system,"Segoe UI",sans-serif);margin:0;padding:12px;background:var(--c-bg);color:var(--c-fg)}#card{border:1px solid var(--c-line);border-radius:var(--border-radius-lg,12px);padding:16px}h2{margin:0;font-size:17px;line-height:1.25}.status{margin:6px 0 0;color:var(--c-mute);font-size:13px}dl{margin:14px 0 0;border-top:1px solid var(--c-line)}h2,dt,dd{overflow-wrap:anywhere}dt{font-weight:600;padding-top:10px}dd{margin:2px 0 0;padding-bottom:10px;border-bottom:1px solid var(--c-line);color:var(--c-mute)}dd:last-child{border-bottom:0}a{color:var(--c-link);text-underline-offset:2px;display:inline-flex;align-items:center;min-height:44px}@media(pointer:fine){a{min-height:0}}button,input{font:inherit;color:var(--c-fg);border:1px solid var(--c-line);background:var(--c-soft);border-radius:var(--border-radius-sm,8px);min-height:44px;box-sizing:border-box}button{margin:8px 8px 0 0;padding:4px 14px;cursor:pointer}button.primary{background:var(--c-link);border-color:transparent;color:var(--c-bg);font-weight:600}input{padding:4px 10px;width:100%;margin-top:10px}:focus-visible{outline:2px solid var(--c-link);outline-offset:2px}`;
 
 export const CARD_SHELL = (kind: CardKind): string =>
-  html`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="color-scheme" content="light dark"><title>${CARD_TITLE[kind]}</title><style>${raw(CARD_CSS)}</style><div id="card"><h2>${CARD_TITLE[kind]}</h2></div><script>${raw(SHELL_JS)}</script>`.text;
+  html`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="color-scheme" content="light dark"><title>${CARD_TITLE[kind]}</title><style>${raw(CARD_CSS)}</style><div id="card"><h2>${CARD_TITLE[kind]}</h2><p class="status">The same answer is in the chat as text; this card fills in when the app sends it.</p></div><script>${raw(SHELL_JS)}</script>`.text;

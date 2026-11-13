@@ -18,7 +18,7 @@
  */
 
 import { readSource, SOURCE_PREFIX, SOURCE_TEMPLATE } from "./mcp/source_resource.ts";
-import { CARD_KINDS, CARD_MIME, CARD_OF_TOOL, CARD_SHELL, CARD_URI, cardFor } from "../web/studio/cards.ts";
+import { CARD_KINDS, CARD_MIME, CARD_OF_TOOL, CARD_RESOURCE_META, CARD_SHELL, CARD_URI, cardFor } from "../web/studio/cards.ts";
 import { getRepo } from "../core/repos.ts";
 import { scopeAllows } from "../core/tokens.ts";
 import type { User } from "../core/users.ts";
@@ -57,7 +57,7 @@ export function toolEntries(tools: readonly (typeof TOOLS)[number][]) {
       ...(t.writes ? {} : { annotations: { readOnlyHint: true } }),
       ...(CARD_OF_TOOL[t.name] === undefined
         ? {}
-        : { _meta: { ui: { resourceUri: CARD_URI(CARD_OF_TOOL[t.name]!) } } }),
+        : { _meta: { ui: { resourceUri: CARD_URI(CARD_OF_TOOL[t.name]!) }, "openai/outputTemplate": CARD_URI(CARD_OF_TOOL[t.name]!) } }),
     })),
     ...[REPORT_TOOL, START_TOOL].map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
   ];
@@ -201,7 +201,7 @@ function rpcOne(
       const kind = CARD_KINDS.find((k) => CARD_URI(k) === uri);
       if (kind === undefined) return refuse(-32002, `no resource ${uri}`);
       return reply({
-        contents: [{ uri, mimeType: CARD_MIME, text: CARD_SHELL(kind) }],
+        contents: [{ uri, mimeType: CARD_MIME, text: CARD_SHELL(kind), _meta: CARD_RESOURCE_META }],
       });
     }
     case "tools/call": {

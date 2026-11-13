@@ -16,6 +16,8 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { utilities as base } from "../src/web/style/base.ts";
 import { components } from "../src/web/style/components.ts";
 import { content } from "../src/web/style/content.ts";
+import { findChromium } from "../src/looks/capture.ts";
+import { chromiumRuns, evaluateLoaded } from "./helpers/chrome.ts";
 
 const WORD = "D".repeat(250);
 const RWORD = "R".repeat(250);
@@ -27,6 +29,7 @@ let app: App;
 let servers: Servers;
 let page: string;
 let emptyPage: string;
+let session: { name: string; value: string };
 
 const must = <T>(r: { ok: true; value: T } | { ok: false; error: unknown }): T => {
   if (!r.ok) throw new Error(JSON.stringify(r.error));
@@ -46,7 +49,9 @@ beforeAll(async () => {
   must(await commitToBranch(app, u, repo, { message: "init", files }));
   must(await commitToBranch(app, u, repo, { message: "branch", branch: BRANCH, files: [{ path: "b.txt", content: "b" }] }));
   must(await createRepo(app, u, { name: "empty", visibility: "public", description: WORD }));
-  const cookie = `forge_session=${createSession(app.db, u.id).token}; forge_mode=dev`;
+  const token = createSession(app.db, u.id).token;
+  session = { name: "forge_session", value: token };
+  const cookie = `forge_session=${token}; forge_mode=dev`;
   const get = async (p: string) => (await fetch(`${servers.url}${p}`, { headers: { cookie } })).text();
   page = await get(`/alice/fit?ref=${encodeURIComponent(BRANCH)}`);
   emptyPage = await get("/alice/empty");
@@ -103,4 +108,24 @@ describe("a repository's head page at 390 px", () => {
     expect(page).toContain('class="prose"');
     expect(content).toMatch(/\.prose pre, \.prose table\s*\{[^}]*overflow-x:\s*auto/);
   });
+});
+
+const found = findChromium();
+const chromium = found !== undefined && chromiumRuns(found) ? found : undefined;
+if (chromium === undefined) console.log("SKIPPING: no chromium that starts on this machine, so the repository head phone look is not measured");
+
+describe.skipIf(chromium === undefined)("a repository's head page, measured at 390x844", () => {
+  test("no sideways scroll, and what overflows is named", async () => {
+    const measure = `(() => {
+      const vw = document.documentElement.clientWidth;
+      const name = (el) => el.tagName.toLowerCase() + (el.id ? "#" + el.id : "") + [...el.classList].map((c) => "." + c).join("");
+      const wide = [...document.querySelectorAll("body *")].filter((el) => el.getBoundingClientRect().right > vw + 1 && el.getBoundingClientRect().width > 0)
+        .slice(0, 12).map((el) => name(el) + " " + Math.round(el.getBoundingClientRect().width) + "px");
+      return JSON.stringify({ scrollWidth: document.documentElement.scrollWidth, viewportWidth: vw, wide });
+    })()`;
+    const m = JSON.parse(await evaluateLoaded(chromium!, `${servers.url}/alice/fit`, { width: 390, height: 844 }, [session], measure)) as { scrollWidth: number; viewportWidth: number; wide: string[] };
+    console.log(`repo head 390x844: ${JSON.stringify(m)}`);
+    if (m.scrollWidth > m.viewportWidth) throw new Error(`the page scrolls sideways (${m.scrollWidth} > ${m.viewportWidth}); wider than the window: ${m.wide.join(", ")}`);
+    expect(m.scrollWidth).toBeLessThanOrEqual(m.viewportWidth);
+  }, 30_000);
 });

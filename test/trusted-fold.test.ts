@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
+import { readFeed } from "../src/feed/feed.ts";
 import { addTrust, setFoldInStopped } from "../src/actions/trusted_sources.ts";
 import { createApp, type App } from "../src/app.ts";
 import { provideChecksForTest, type ChecksHandle } from "../src/checks/service.ts";
@@ -155,6 +156,9 @@ describe("the tick's sweep admits a trusted source's pull", () => {
     const dir = repoDir(f.app.reposRoot, f.repo.ownerName, f.repo.name);
     const parents = (await runGitCapture(["log", "-1", "--format=%P", "refs/heads/main"], { cwd: dir })).stdout.trim().split(" ");
     expect(parents.length).toBe(2);
+    // The home stream credits the landing as it happens: its source and its author (#9015).
+    const post = readFeed(f.app.db, f.alice, { limit: 50 }).items.find((i) => i.link.endsWith(`/pulls/${pull.number}`));
+    expect(post?.what).toContain(`folded in from jmoran@${FROM}, by outsider`);
   });
 
   test("a pull with no check yet, or a red one, goes back", async () => {

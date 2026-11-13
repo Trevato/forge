@@ -185,6 +185,7 @@ describe("app tokens: live, end to end", () => {
   let bob: User;
   let repo: Repo;
   let record: AppRecord;
+  let skew = 0;
   const DOMAIN = "apps.test";
   const HOST = `live.${DOMAIN}`;
 
@@ -202,7 +203,7 @@ describe("app tokens: live, end to end", () => {
         (r) => where(r) && (r.state === "ok" || r.state === "failed"),
       );
       if (run) return run;
-      await Bun.sleep(100);
+      await Bun.sleep(10); // real-timer: polls a deploy worker running in the background
     }
     throw new Error("run did not settle in time");
   }
@@ -231,7 +232,8 @@ describe("app tokens: live, end to end", () => {
       scheme: "http",
       publicPort: servers.port,
       forgeUrl: servers.url,
-      sweepEveryMs: 200,
+      sweepEveryMs: 20,
+      clock: () => Date.now() + skew,
     });
     await runtime.start();
     alice = await user(app, "alice");
@@ -298,16 +300,15 @@ describe("app tokens: live, end to end", () => {
     const [hers, his] = await Promise.all([listen(aliceRo), listen(bobRo)]);
     expect(hers.status).toBe(200);
     expect(hers.headers.get("content-type")).toContain("text/event-stream");
-    const opened = openIssue(app, alice, secret.value, {
-      title: "the private plan",
-    });
-    expect(opened.ok).toBe(true);
+    // The private issue first, then a public one both may read: events
+    // arrive in order, so by the time bob hears the public one he would
+    // have heard the private one. No waiting for silence.
+    expect(openIssue(app, alice, secret.value, { title: "the private plan" }).ok).toBe(true);
+    expect(openIssue(app, alice, repo, { title: "the public plan" }).ok).toBe(true);
     const heard = await readUntil(hers, (t) => t.includes("alice/secret"));
     expect(heard).toContain("event: forge");
-    // Bob cannot read alice/secret: his stream stays quiet about it.
-    await expect(
-      readUntil(his, (t) => t.includes("alice/secret"), 1_000),
-    ).rejects.toThrow("did not say it");
+    const bobHeard = await readUntil(his, (t) => t.includes("alice/live"));
+    expect(bobHeard).not.toContain("alice/secret");
   });
 
   test("acceptance: the sample page lists `now`, offers `say`, and goes live on /events", async () => {
@@ -348,17 +349,29 @@ describe("app tokens: live, end to end", () => {
     });
     expect(stream.status).toBe(200);
     const said = readUntil(stream, (t) => t.includes("event: changed"));
-    await Bun.sleep(300); // let the relay open its upstream
-    openIssue(app, alice, repo, { title: "Another thing" });
-    expect(await said).toContain("data: {}");
+    // The relay opens its upstream a moment after it answers: say
+    // something until it hears.
+    const poke = setInterval(
+      () => openIssue(app, alice, repo, { title: "Another thing" }),
+      15,
+    );
+    try {
+      expect(await said).toContain("data: {}");
+    } finally {
+      clearInterval(poke);
+    }
     // And the fragment the page refetches lists the same runs.
     expect(await (await viaHost("/now")).text()).toContain("bob");
   }, 30_000);
 
   test("the sweep renews a running environment's token", async () => {
     const before = appTokens("production")[0]!;
-    await Bun.sleep(1_100);
-    const after = appTokens("production")[0]!;
+    skew += 60_000; // the sweep's clock moves a minute; no waiting for it
+    let after = appTokens("production")[0]!;
+    for (let i = 0; i < 500 && after.expiresAt === before.expiresAt; i++) {
+      await Bun.sleep(5); // real-timer: the sweep runs on its own 20 ms interval; its clock is already faked
+      after = appTokens("production")[0]!;
+    }
     expect(after.id).toBe(before.id);
     expect(Date.parse(after.expiresAt!)).toBeGreaterThan(
       Date.parse(before.expiresAt!),
