@@ -11,7 +11,7 @@ export const tool: Tool = {
   name: "read_file",
   doc: "`{ repo, path, ref? }`: a file (utf-8, or base64 for binary) or a directory listing at a ref, as GET …/contents; MP4/MOV/M4A files also carry about: {kind, seconds, width?, height?, says}",
   description:
-    "Read a file or list a directory at a ref (default branch); over 5 MB answers tooLarge.",
+    "No shell? Read a file or list a directory at a ref (default branch); over 5 MB answers tooLarge.",
   inputSchema: {
     type: "object",
     properties: {

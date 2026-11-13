@@ -206,7 +206,7 @@ describe("every admin-only action refuses the everyday account", () => {
       const names = new Set<string>();
       let cursor: string | undefined;
       do {
-        const page = (await mcp(u, "tools/list", cursor === undefined ? {} : { cursor })) as {
+        const page = (await mcp(u, "tools/list", cursor === undefined ? { all: true } : { all: true, cursor })) as {
           result?: { tools?: { name: string }[]; nextCursor?: string };
         };
         for (const t of page.result?.tools ?? []) names.add(t.name);

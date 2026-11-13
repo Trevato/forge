@@ -144,14 +144,14 @@ test("a private repository the caller cannot read is not found, as pull says", a
 
 test("tools/list lists pulls and every page stays under 40 KB", async () => {
   const names: string[] = [];
-  let params: { cursor?: string } = {};
+  let params: { all: true; cursor?: string } = { all: true };
   for (;;) {
     const { text } = await rpc(tok["ada"]!, "tools/list", params);
     expect(Buffer.byteLength(text)).toBeLessThanOrEqual(38_500); // headroom: a new tool must not tip the lane red
     const { result } = JSON.parse(text);
     names.push(...result.tools.map((t: any) => t.name));
     if (typeof result.nextCursor !== "string") break;
-    params = { cursor: result.nextCursor };
+    params = { all: true, cursor: result.nextCursor };
   }
   expect(names).toContain("pulls");
 });
