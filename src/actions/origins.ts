@@ -58,7 +58,7 @@ import type { User } from "../core/users.ts";
 import { repoDir } from "../git/repos.ts";
 import { bustOrigin } from "../view/cache.ts";
 import { readAhead } from "../origins/ahead.ts";
-import { discover } from "../origins/discover.ts";
+import { discover, type UnreachableBecause } from "../origins/discover.ts";
 import {
   lastGuardTry,
   noteGuardPassed,
@@ -125,18 +125,21 @@ export const ORIGIN_ALREADY_CONNECTED = "that account is already connected";
 // ---- abuse control ----
 
 /**
- * Connect attempts per person: five in a sliding quarter of an hour.
- * Connecting makes the forge fetch a host the caller named, so an unbounded
- * connect endpoint is an outbound request amplifier; this is the cap that
- * stops it being one. The same limiter as the API's (`core/ratelimit.ts`),
- * with its own window: in memory on purpose, a refused attempt not counted,
- * and belonging to the forge it limits, so a fresh `createApp` starts fresh.
+ * Connect attempts per person: ten in a sliding minute. Connecting makes
+ * the forge fetch a host the caller named, so an unbounded connect endpoint
+ * is an outbound request amplifier; this is the cap that stops it being one.
+ * A minute is enough to stop hammering, and short enough that a few honest
+ * failures (a mistyped host, a token that lacked a scope) never lock anyone
+ * out: the 429 says "wait a minute" and `retryAfter` says sixty. The same
+ * limiter as the API's (`core/ratelimit.ts`): in memory on purpose, a
+ * refused attempt not counted, and belonging to the forge it limits, so a
+ * fresh `createApp` starts fresh.
  */
 export const CONNECT_LIMITS: RateLimits = {
-  perMinute: 5,
-  adminPerMinute: 5,
+  perMinute: 10,
+  adminPerMinute: 10,
   enabled: true,
-  windowMs: 15 * 60_000,
+  windowMs: 60_000,
 };
 const connects = new WeakMap<App, RateLimiter>();
 
@@ -184,7 +187,7 @@ export async function connectOrigin(
   app: App,
   actor: User | undefined,
   input: ConnectInput,
-): Promise<Result<Connected, ConnectError | GuardRefusal | ScopeRefusal>> {
+): Promise<Result<Connected, ConnectError | GuardRefusal | ScopeRefusal | UnreachableBecause>> {
   const user = requireUser(actor);
   if (!user.ok) return user;
   // A credential held for an account, and a mirror it can make: not for a guest.
@@ -340,7 +343,7 @@ export interface ScopeRefusal {
 
 /** A refused connect as a stable code and the words to show for it. */
 export function connectRefusal(
-  error: ConnectError | GuardRefusal | ScopeRefusal,
+  error: ConnectError | GuardRefusal | ScopeRefusal | UnreachableBecause,
 ): { code: string; message: string | undefined } {
   return typeof error === "string"
     ? { code: error, message: undefined }
@@ -547,7 +550,7 @@ export async function startOAuthConnect(
   if (!requireAbility(app, user.value, "make_it_yours").ok)
     return err({ error: "not_member", message: NOT_A_MEMBER });
   if (tooManyAttempts(app, user.value.id))
-    return err({ error: "rate_limited", message: "too many connect attempts" });
+    return err({ error: "rate_limited", message: "too many connect attempts; wait a minute" });
 
   const found = await discover(
     input.kind === undefined
@@ -556,8 +559,8 @@ export async function startOAuthConnect(
   );
   if (!found.ok)
     return err({
-      error: found.error,
-      message: `cannot identify ${input.host}`,
+      error: typeof found.error === "string" ? found.error : found.error.error,
+      message: typeof found.error === "string" ? `cannot identify ${input.host}` : found.error.message,
     });
 
   const software = softwareOf(found.value.software);
@@ -912,7 +915,7 @@ export function registerOriginApp(
         ? { host: input.host }
         : { host: input.host, kind: input.kind },
     );
-    if (!found.ok) return err(found.error);
+    if (!found.ok) return err(typeof found.error === "string" ? found.error : found.error.error);
     const row = saveApp(app.db, app.config.dataDir, {
       userId: user.value.id,
       kind: found.value.kind,

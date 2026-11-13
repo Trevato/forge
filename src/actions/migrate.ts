@@ -445,7 +445,7 @@ export async function resolveSource(
       const vetted = await vetHost(hostname, resolve ? { resolve } : {});
       if (!vetted.ok && vetted.error === "refused") return err("private_host");
       if (!vetted.ok) return err("unreachable");
-      pin = pinFor(url, vetted.value[0]!);
+      pin = pinFor(url, vetted.value);
     }
     return ok({
       ...(pin ? { pin } : {}),

@@ -78,7 +78,7 @@ export async function vettedEnv(
     return err({
       message: vetted.error === "refused" ? MIRROR_REFUSED : MIRROR_UNRESOLVED,
     });
-  return ok(remoteGitEnv(authEnv, pinFor(url, vetted.value[0]!), protocols));
+  return ok(remoteGitEnv(authEnv, pinFor(url, vetted.value), protocols));
 }
 
 export interface RefSnapshot {

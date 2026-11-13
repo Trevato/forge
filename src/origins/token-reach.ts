@@ -62,7 +62,7 @@ export function replaceTokenMessage(error: string): string {
       "That token belongs to another account. Connect it as its own origin instead.",
     bad_token: "That token was refused by the origin.",
     unreachable: "That instance could not be reached.",
-    rate_limited: "Too many connect attempts. Wait a few minutes.",
+    rate_limited: "Too many connect attempts. Wait a minute.",
     unauthorized: "Sign in first.",
     admin_account:
       "That token is an administrator's. This forge does not accept one; use an everyday account's.",

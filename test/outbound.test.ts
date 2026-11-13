@@ -1,8 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { outboundFetch, vetHost, type Resolve } from "../src/kernel/outbound.ts";
+import { selfSigned } from "./helpers/gate-fixture.ts";
 
 const to = (...a: string[]): Resolve => () => Promise.resolve(a);
 
@@ -42,7 +40,7 @@ describe("vetHost", () => {
 
   test("allows a public address", async () => {
     const r = await vetHost("hooks.example.com", { resolve: to("93.184.216.34") });
-    expect(r).toEqual({ ok: true, value: ["93.184.216.34"] });
+    expect(r).toEqual({ ok: true, value: { via: "pin", addresses: ["93.184.216.34"] } });
   });
 
   test("a failed lookup is unresolved, not allowed", async () => {
@@ -93,18 +91,6 @@ describe("outboundFetch", () => {
     expect(seen.filter((s) => s.path === "/secret")).toHaveLength(0);
   });
 });
-
-/** A throwaway self-signed certificate for `name`, made with openssl so no key is committed. */
-function selfSigned(name: string): { cert: string; key: string } | undefined {
-  const dir = mkdtempSync(join(tmpdir(), "forge-cert-"));
-  const run = Bun.spawnSync([
-    "openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
-    "-nodes", "-keyout", join(dir, "k.pem"), "-out", join(dir, "c.pem"), "-days", "2",
-    "-subj", `/CN=${name}`, "-addext", `subjectAltName=DNS:${name}`,
-  ]);
-  if (run.exitCode !== 0) return undefined;
-  return { cert: readFileSync(join(dir, "c.pem"), "utf8"), key: readFileSync(join(dir, "k.pem"), "utf8") };
-}
 
 describe("outboundFetch over https", () => {
   const pair = selfSigned("hooks.example.com");

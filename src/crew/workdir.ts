@@ -9,7 +9,7 @@ import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Agent } from "../core/agents.ts";
 import type { Repo } from "../core/repos.ts";
-import { PROXY_VARS } from "../apps/process.ts";
+import { PROXY_VARS } from "../apps/egress.ts";
 
 export const crewRoot = (dataDir: string): string => join(dataDir, "crew");
 

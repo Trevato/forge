@@ -28,7 +28,7 @@ test("a host resolving to 10.x is refused by default and passes once trusted by 
   const host = "git.open-platform.sh";
   expect(await vetHost(host, { resolve: inCluster })).toEqual({ ok: false, error: "refused" });
   const trusted = await vetHost(host, { resolve: inCluster, trusted: [host] });
-  expect(trusted).toEqual({ ok: true, value: ["10.43.191.15"] });
+  expect(trusted).toEqual({ ok: true, value: { via: "pin", addresses: ["10.43.191.15"] } });
   // Exact name only: a sibling or a subdomain is not the host.
   for (const other of ["evil.open-platform.sh", `x.${host}`, "open-platform.sh"])
     expect(await vetHost(other, { resolve: inCluster, trusted: [host] })).toEqual({

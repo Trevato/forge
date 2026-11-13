@@ -472,29 +472,29 @@ describe("per-token rate limits", () => {
     expect(limiter.take("t", "rw").allowed).toBe(true);
   });
 
-  test("a limit counted over a longer window: the connect cap frees the sixth attempt after a quarter of an hour", () => {
+  test("the connect cap is a minute, and its 429 says so: the number agrees with the sentence", () => {
     // The connect limiter's own settings (`actions/origins.ts`), with the
-    // clock in hand: five pass, the sixth is refused, and once the first is
-    // fifteen minutes old the sixth passes.
+    // clock in hand: ten pass, the eleventh is refused for at most a minute
+    // (what "wait a minute" and `retryAfter` both say), and a minute on it passes.
     const first = 1_000_000;
     let now = first;
     const limiter = new RateLimiter(CONNECT_LIMITS, () => now);
-    // Five attempts, a second apart.
-    for (let i = 0; i < 5; i++) {
+    // Four honest failures cost nothing worth waiting for.
+    for (let i = 0; i < 4; i++) {
       expect(limiter.take("alice", "rw").allowed).toBe(true);
       now += 1_000;
     }
-    const sixth = limiter.take("alice", "rw");
-    expect(sixth.allowed).toBe(false);
-    expect(sixth.retryAfter).toBe(15 * 60 - 5);
-    // A minute is not enough: this window is not the API's.
-    now += 60_001;
-    expect(limiter.take("alice", "rw").allowed).toBe(false);
-    // The first attempt is a quarter of an hour old: one more passes, and
-    // only one, since the second is still inside the window.
-    now = first + 15 * 60_000 + 1;
+    for (let i = 0; i < 6; i++) {
+      expect(limiter.take("alice", "rw").allowed).toBe(true);
+      now += 1_000;
+    }
+    const eleventh = limiter.take("alice", "rw");
+    expect(eleventh.allowed).toBe(false);
+    expect(eleventh.retryAfter).toBe(50);
+    expect(eleventh.retryAfter).toBeLessThanOrEqual(CONNECT_LIMITS.windowMs! / 1000);
+    expect(CONNECT_LIMITS.windowMs).toBe(60_000);
+    now = first + 60_001;
     expect(limiter.take("alice", "rw").allowed).toBe(true);
-    expect(limiter.take("alice", "rw").allowed).toBe(false);
   });
 
   test("one runaway token cannot spend another token's budget", () => {
