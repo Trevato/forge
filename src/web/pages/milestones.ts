@@ -34,7 +34,7 @@ import {
   pillarsOf,
   pillarView,
 } from "../../core/pillars.ts";
-import { canAdmin, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
+import { canAdmin, canSeeOwnerFacts, getRepoById, type Repo } from "../../core/repos.ts";
 import { isWatching } from "../../core/watches.ts";
 import { watchMilestone } from "../../actions/watches.ts";
 import { replanResult } from "../../actions/limb_replan.ts";
@@ -221,6 +221,35 @@ export const planFor = (ctx: Pick<Ctx, "app"> & { request?: Request }, repo: Rep
           : {}),
       }),
   );
+
+/** The repositories whose plan is read at boot: the ones with the most open work. */
+const WARMED_PLANS = 3;
+
+/**
+ * The plans of the busiest repositories, read once at boot a slice at a time, so the first look at a
+ * repository page or its milestones finds them (700 ms on a cold thread, 70 warm). Both spends: the
+ * page for the owner and for everyone else.
+ */
+export async function warmPlans(app: Ctx["app"]): Promise<void> {
+  const busiest = app.db
+    .query<{ repo_id: string }, [number]>(
+      "SELECT repo_id FROM issue WHERE state = 'open' AND kind = 'issue' GROUP BY repo_id ORDER BY COUNT(*) DESC LIMIT ?1",
+    )
+    .all(WARMED_PLANS);
+  for (const { repo_id } of busiest) {
+    const repo = getRepoById(app.db, repo_id);
+    if (repo === undefined) continue;
+    for (const spend of [false, true]) {
+      await Bun.sleep(0);
+      try {
+        planFor({ app }, repo, spend, new Date(), false);
+      } catch (error) {
+        // A plan that cannot be read now is read when it is asked for; why is said.
+        app.log.warn("a plan could not be read at boot", { repo: repo.name, error: String(error) });
+      }
+    }
+  }
+}
 
 /** GET /:owner/:name/milestones — the plan, collapsed to its limbs. */
 export function milestonesPage(ctx: Ctx): Response {

@@ -47,6 +47,7 @@ import { runSync } from "./origins/sync.ts";
 import { runAheadReads } from "./origins/ahead.ts";
 import { runGuardSweep } from "./origins/credential.ts";
 import { warmHome } from "./web/pages/home_flow.ts";
+import { warmPlans } from "./web/pages/milestones.ts";
 import { warmBoards } from "./web/pages/boards-view.ts";
 import { startForgeSsh } from "./tui/ssh.ts";
 import { AppsRuntime, IDLE_PULL_DAYS } from "./apps/runtime.ts";
@@ -402,6 +403,12 @@ const appDomain = appsOn
     })
   : undefined;
 if (appDomain?.ok === true) holdAppHosts(app, appDomain.domain);
+// What the first visitors would pay for, read before the listener opens: while this boots the previous
+// release still answers, so the half second each of these costs on a cold thread is nobody's wait. Each
+// reads in slices on turns of its own; none of them is needed for the forge to be up.
+await warmFlow(app);
+await warmPlans(app);
+await warmDisplays(app).catch(() => undefined);
 const servers = await serve(app);
 // The home's picture is read by a worker from here, so the first page finds it (web/pages/home_flow.ts).
 warmHome(app);
@@ -608,10 +615,8 @@ if (crew !== undefined) {
 // Hosted children come back with their apps, awake before the first visit.
 // The listener is up; the children open behind it, not in front of /healthz.
 void bootHostedChildren(app);
-// The pipeline answer is filled in slices behind the listener, so no read computes it (#8978).
-void warmFlow(app);
-// Every repository's display read behind the listener, so /displays never pays the cold read (#11007).
-void warmDisplays(app).catch(() => undefined);
+// The pipeline answer and every repository's display read (#8978, #11007) were filled here, behind the
+// listener; they are read before it opens now (above).
 // The release probe's search, grepped once behind the listener so the first visit reads the cache (#11059).
 void warmSearch(app);
 // A spawned child's first boot: its direction, opened once for its planner
