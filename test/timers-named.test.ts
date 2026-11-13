@@ -115,6 +115,7 @@ const ALLOWED: readonly Allowed[] = [
   ...allow("setTimeout", DEADLINE, [
     ["src/apps/toolbar.ts", "resolve"],
     ["src/flow/lanes.ts", "() => reject("],
+    ["src/web/map_snapshot.ts", "() => reject("],
     ["src/looks/capture.ts", "() => reject("],
     ["src/actions/search.ts", "() => resolve(\"timeout\")"],
     ["src/checks/service.ts", "() => { overran = true; budget.abort(); }"],

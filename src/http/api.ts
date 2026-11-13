@@ -242,10 +242,6 @@ import { assignIssue, editIssue, TAKEN_UP } from "../actions/issues.ts";
 import { requireReader } from "../actions/access.ts";
 import { looksOfCheck, mayReadRuns, runsViewKey, steerRepoRun } from "../actions/runs.ts";
 import { openPlan, parsePlan, proposePlan } from "../actions/plan.ts";
-import { repoGraph } from "../core/dependencies.ts";
-import { mapHeldFor } from "../crew/held.ts";
-import { pillarView } from "../core/pillars.ts";
-import { askToLiveFor } from "../web/ask_to_live.ts";
 import {
   DECISIONS_LIMIT_MAX,
   decisionCursorValid,
@@ -255,9 +251,10 @@ import {
 } from "../core/decisions.ts";
 import { forReader } from "../crew/handover.ts";
 import { globalMapJson } from "../web/pages/global-map.ts";
-import { mapJson, marksFor, withoutDone } from "../web/pages/map.ts";
+import { withoutDone } from "../web/pages/map.ts";
 import { roadmapOf } from "../web/roadmap.ts";
-import { cachedMap } from "../web/map_snapshot.ts";
+import { snapshotMap } from "../web/map_snapshot.ts";
+const MAP_PHASES = ["graph", "marks", "pillars", "asktolive", "held", "render"] as const;
 import { scopeKey } from "../web/map_cache.ts";
 import {
   milestoneData,
@@ -282,7 +279,6 @@ import {
   getRun,
   isTerminal,
   latestRunsForIssues,
-  listActiveRuns,
   RUN_STATES,
   type ListRunsOptions,
   type Run,
@@ -2451,30 +2447,13 @@ export function apiRoutes(router: Router<Handler>): void {
     const { request } = ctx;
     notePhase(request, "session", takeSessionTime(request));
     const scope = sealedScope(ctx.app.db, repo, ctx.auth.user);
-    let built = false;
-    const { value, hit } = cachedMap(
-      ctx.app.db,
-      { repoId: repo.id, scope, now: new Date() },
-      () => {
-        built = true;
-        const graph = timePhase(request, "graph", () =>
-          repoGraph(ctx.app.db, repo.id, { ...scope }),
-        );
-        const marks = timePhase(request, "marks", () =>
-          marksFor(ctx.app.db, repo.id, graph, listActiveRuns(ctx.app.db, [repo.id])),
-        );
-        const pillars = timePhase(request, "pillars", () => pillarView(ctx.app.db, repo));
-        const ask = timePhase(request, "asktolive", () =>
-          askToLiveFor(ctx.app, repo, pillars, ctx.auth.user),
-        );
-        const held = timePhase(request, "held", () => mapHeldFor(ctx.app, repo, graph, scope));
-        return timePhase(request, "render", () => mapJson(repo, graph, marks, pillars, ask, held));
-      },
-    );
+    // Built by the map's worker, so the thread serves everything else meanwhile; a snapshot of this write clock answers at once.
+    const got = await snapshotMap(ctx.app, { repoId: repo.id, scope, now: new Date() });
+    if (got === undefined) return notFound();
+    const { value } = got;
     // A snapshot skips the phases; they are still named, as hits at no cost.
-    if (!built)
-      for (const name of ["graph", "marks", "pillars", "asktolive", "held", "render"])
-        notePhase(request, name, 0, hit);
+    if (got.hit) for (const name of MAP_PHASES) notePhase(request, name, 0, true);
+    else for (const [name, ms] of got.phases) notePhase(request, name, ms);
     // Tagged by the facts served (never an age that ticks) and the reader's sealed
     // scope, so two scopes never share a tag; access was checked by loadRepo.
     const text = JSON.stringify(ctx.url.searchParams.get("done") === "1" ? value : withoutDone(value));
