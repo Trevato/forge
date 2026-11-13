@@ -22,7 +22,7 @@ import { escapeHtml, raw, type Html } from "../html.ts";
 import { HOME_MAX_AGE_MS } from "./home_cache.ts";
 
 /** The regions home draws late, by name; each has a fragment at `/live/home/<name>`. */
-export const HOME_REGIONS = ["kpis", "waiting", "panels", "asked", "feed"] as const;
+export const HOME_REGIONS = ["waiting", "panels", "asked", "feed"] as const;
 export type HomeRegion = (typeof HOME_REGIONS)[number];
 
 /** A region is redrawn after a response at most this often; the page's own swap draws it fresh in between. */

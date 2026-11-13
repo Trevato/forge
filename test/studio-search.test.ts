@@ -618,7 +618,7 @@ describe("every studio page's headings form one outline", () => {
     const outline = headingOutline(html);
     expect(outline.levels.filter((l) => l === 1).length).toBe(1);
     expect(outline.ok).toBe(true);
-    expect(html).toMatch(/<h1 class="sr-only">Home<\/h1>/);
+    expect(html).toMatch(/<h1>Your forge, right now<\/h1>/);
   });
 
   test("the app page, the three lists, a tell, a change and a run each have one outline with no skipped level", async () => {

@@ -8,8 +8,6 @@
 
 import { UPSTREAM_REPO } from "../../core/upstream.ts";
 import { foundryHref } from "../../actions/foundry_door.ts";
-import { forgeCeiling } from "../../flow/ceiling.ts";
-import { liveLine } from "../pages/releases.ts";
 import {
   frontPage,
   frontPicksJson,
@@ -20,10 +18,7 @@ import {
 } from "../../actions/front.ts";
 import { catalog, refreshCatalogQuietly } from "../../packs/catalog.ts";
 import { appsRuntime, type EnvState } from "../../apps/runtime.ts";
-import { YOURE_IN_MESSAGE } from "../../actions/users.ts";
 import { accountsClosedIn } from "../../core/users.ts";
-import { markTold, untoldAnswer } from "../../core/requests.ts";
-import { requestsCard } from "../requests_card.ts";
 import { plansRow } from "../plans_row.ts";
 import { freePlanName, funnelJs, noteHomeVisit } from "../funnel_door.ts";
 import { publicPlans } from "../../settings/plans.ts";
@@ -53,7 +48,6 @@ import {
   btn,
   card,
   dot,
-  disclosure,
   empty,
   envStateBadge,
   icon,
@@ -69,27 +63,21 @@ import {
 import { writableAppsOf } from "./asks.ts";
 import { needsYouSection } from "./asks_page.ts";
 import { flowCards } from "./flow_card.ts";
-import { composer, feedJs, feedNote, feedRegion, registerWorkerJs } from "./feed.ts";
+import { composer, feedJs, feedNote, feedRegion } from "./feed.ts";
 import { heldLine } from "./held.ts";
-import { interruptedOutLine } from "./interrupted_out.ts";
-import { appChips, movingRegion, tellBox } from "./living.ts";
-import { alarmLines, cachedAlarms } from "./alarm_lines.ts";
-import { kpiRow, waitingLine } from "./kpi_row.ts";
-import { weekLine } from "./week_line.ts";
+import { waitingLine } from "./kpi_row.ts";
 import { feedCandidateCache } from "../../feed/feed.ts";
 import { notePhase, notePhaseRest, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
-import { idleReason } from "../../crew/idle_reason.ts";
-import { kpiCache, panelCache, waitingCache } from "./home_cache.ts";
+import { panelCache, waitingCache } from "./home_cache.ts";
 import { accessFingerprint } from "../../core/access_fingerprint.ts";
 import { homeFresh, homeRegion, homeVariant, refreshJs, type HomeRegion } from "./home_last.ts";
-import type { KpiTimer } from "../../flow/kpis.ts";
 import { archivedAppCount } from "../pages/apps.ts";
-import { pinnedPanels, pinnedSlot } from "./pinned.ts";
+import { pinnedPanels } from "./pinned.ts";
 import { isNavigation, lastVisit, noteVisit } from "../../core/home_visit.ts";
 import { sinceYouWere } from "./since.ts";
 import { homeTabs, unshippedAsks } from "./home_tabs.ts";
+import { homeFlowPage } from "../pages/home_flow.ts";
 import { crewKeyCard } from "./crew_key.ts";
-import { everydayCard } from "../pages/everyday.ts";
 import { firstAskJs, nextStepsCard, nextStepsOf } from "../pages/next-steps.ts";
 import { spawnedForge } from "../../spawn/claim.ts";
 import { clientApps } from "./client_home.ts";
@@ -254,18 +242,6 @@ export function homeDraws(ctx: Ctx, user: User): Record<HomeRegion, () => Html |
   const { db } = ctx.app;
   const request = ctx.request;
   return {
-    kpis: () => {
-      const ceilingUsd = forgeCeiling(ctx.app.config);
-      const kpiTime: KpiTimer = (name, fn) => timePhase(request, name, fn);
-      const kpiOpts = { idle: () => idleReason(ctx.app, new Date()), dataDir: ctx.app.config.dataDir, time: kpiTime, ...(ceilingUsd === null ? {} : { ceilingUsd }) };
-      // The figures and the week's pace open in place; alarms need the owner, so they sit under "Needs you".
-      return html`${disclosure(
-          "Figures",
-          html`${timePhase(request, "kpis", () => kpiRow(db, kpiOpts), () => kpiCache(db))}
-            ${weekLine(ctx.app)}`,
-          { small: true, id: "home-figures" },
-        )}`;
-    },
     waiting: () => timePhase(request, "waiting", () => waitingLine(db, user), () => waitingCache(db)),
     panels: async () => (await timePhaseAsync(request, "panels", () => pinnedPanels(ctx.app, user), () => panelCache(db))) ?? html``,
     asked: () => homeTabs("feed", timePhase(request, "asked", () => unshippedAsks(db, user))),
@@ -277,7 +253,7 @@ export function homeDraws(ctx: Ctx, user: User): Record<HomeRegion, () => Html |
 export async function liveHomeFragment(ctx: Ctx, name: HomeRegion): Promise<Response> {
   const user = ctx.auth.user;
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-  if (!user || ((name === "kpis" || name === "panels") && !user.isAdmin)) {
+  if (!user || (name === "panels" && !user.isAdmin)) {
     notePhase(ctx.request, "render", 0);
     return fragment(html``, { status: 404 });
   }
@@ -341,60 +317,8 @@ export async function studioHome(
       ...(firstSteps ? { scriptJs: firstTell ? firstAskJs : passkeyJs } : {}),
     });
   }
-  // The client's first screen names its own phases (`clientApps`).
-  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-  // Render is what is left of the page once the named reads are taken out.
-  const rendering = performance.now();
-  const access = timePhase(ctx.request, "access", () => accessFingerprint(ctx.app.db, user));
-  const ask = firstSteps ?? everydayCard(ctx, user);
-  const figures = user.isAdmin && steps === undefined;
-  const kpis = figures
-    ? await homeRegion(ctx.app.db, ctx.request, user.id, "kpis", homeVariant(ctx.url), access, homeDraws(ctx, user).kpis)
-    : liveLine(ctx);
-  // Three compartments (#10298): what needs the owner, what moved since the last look, what is live.
-  const draws = homeDraws(ctx, user);
-  const waiting = await homeRegion(ctx.app.db, ctx.request, user.id, "waiting", homeVariant(ctx.url), access, draws.waiting);
-  const held = timePhase(ctx.request, "held", () => heldLine(ctx, user));
-  const mine = writableAppsOf(ctx, user).repos;
-  const stopped = timePhase(ctx.request, "stopped", () => interruptedOutLine(ctx, mine));
-  const alarms = user.isAdmin
-    ? alarmLines(cachedAlarms(ctx.app.db, new Date(), forgeCeiling(ctx.app.config), ctx.app.config.dataDir))
-    : null;
-  const visitedAt = Date.now();
-  const before = timePhase(ctx.request, "visit", () =>
-    isNavigation(ctx.request) ? noteVisit(ctx.app.db, user.id, visitedAt) : lastVisit(ctx.app.db, user.id),
-  );
-  const since = timePhase(ctx.request, "since", () => sinceYouWere(ctx.app.db, user, before, visitedAt));
-  // A stranger's request for an account is the first thing that needs an admin (#10928).
-  const requests = requestsCard(ctx, "home");
-  // The first page after Allow says so, once.
-  const allowed = untoldAnswer(ctx.app.db, user.id) === "allowed";
-  if (allowed) markTold(ctx.app.db, user.id, new Date().toISOString());
-  const needsYou = html`${requests}${waiting}${held}${stopped}${alarms}`;
-  const body = html`<h1 class="sr-only">Home</h1>
-    ${allowed ? html`<div class="toast" data-tone="success" role="status" id="youre-in"><strong>${YOURE_IN_MESSAGE}</strong> Your account is open: tell the crew what you want to build.</div>` : null}
-    ${tellBox(ctx, user)}
-    ${ask} ${address}
-    ${when(String(needsYou).trim() !== "", () => html`<section class="stack stack-tight" id="needs-you" aria-label="Needs you"><h2 class="small muted">Needs you</h2>${needsYou}</section>`)}
-    ${when(String(since).trim() !== "", () => html`<section aria-label="Since you were here">${since}</section>`)}
-    <section aria-label="Live">${timePhase(ctx.request, "moving", () => movingRegion(ctx.app.db, user))}</section>
-    ${homeMilestones(ctx, mine)}
-    <section class="stack" aria-label="The forge">${kpis}</section>
-    ${pinnedSlot(ctx.app.db, user)}
-    ${appChips(ctx, user, mine)}
-    ${when(
-      steps,
-      () => html`<p class="small muted" id="lean-home"><a href="/">Just my apps</a></p>`,
-    )}
-    <p class="small muted"><a href="/feed">The feed</a> · <a href="/home">Try the new home</a></p>`;
-  const res = page({
-    ctx,
-    title: "Home",
-    body,
-    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${refreshJs}\n${registerWorkerJs}${ask ? `\n${passkeyJs}` : ""}`,
-  });
-  notePhaseRest(ctx.request, "render", rendering, ["kpis", "moving", "access", "waiting", "held", "visit", "since"]);
-  return res;
+  // Everyone else gets the home: the pipeline as lanes or a table (`pages/home_flow.ts`).
+  return homeFlowPage(ctx, { spawned });
 }
 
 /**

@@ -22,8 +22,7 @@ import { dirStore } from "../src/snapshot/store.ts";
 import { verdictLines } from "../src/tui/screens/resilience.ts";
 import { readHealth } from "../src/actions/health.ts";
 import type { User } from "../src/core/users.ts";
-import { NO_REACH } from "../src/flow/reach.ts";
-import { kpiRowFor } from "../src/web/studio/kpi_row.ts";
+
 import { vacuumInto } from "../src/snapshot/vacuum.ts";
 
 let dataDir: string;
@@ -287,10 +286,6 @@ test("the check records each run; stopped past its interval, the verdict, tile, 
     expect(v.state).toBe("red");
     expect(v.reasons.join(" ")).toContain(`last ran ${ranAt}`);
     expect(v.checkLine).toContain("2 runs on record");
-    const tile = kpiRowFor({ landedHours: Array(24).fill(0), landed: 0, live: null, builders: { running: 0, slots: 1, idle: null }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: null, backupAt: null, backup: v, reach: NO_REACH }, null, new Date(later)).toString();
-    expect(tile).toContain("attn");
-    expect(tile).toContain("check stopped");
-    expect(tile).toContain(`last ran ${ranAt}`);
     Date.now = () => later;
     const card = vitals({ db: own.db, signals: own.signals, dataDir: dir, now: later }).degraded.find((d) => d.cause === "backup");
     expect(card?.sentence).toContain(`last ran ${ranAt}`);

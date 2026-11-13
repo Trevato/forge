@@ -3,6 +3,7 @@
  * must not depend on each other. Plain data in, plain strings out.
  */
 
+import { ageWords } from "./figure_format.ts";
 import type { Kpis } from "./kpis.ts";
 import type { Reach } from "./reach.ts";
 import { ATTENTION_REQUESTS, TRAFFIC_CLASSES, type TrafficClass, type TrafficTotals } from "../perf/traffic.ts";
@@ -57,16 +58,10 @@ export function buildersValue(b: Pick<Kpis["builders"], "running" | "slots">): s
 
 /** Cents below ten dollars, so a small spend never reads `$0`; whole dollars above. */
 const whole = (n: number): string => (n < 10 ? `$${n.toFixed(2)}` : `$${Math.round(n)}`);
-const cents = (n: number): string => `$${n.toFixed(2)}`;
 
 /** Today's spend of the daily ceiling: `$12 of $40`, or the spend alone with no ceiling. */
 export function spendValue(s: Kpis["spend"]): string {
   return s.ceilingUsd === null ? whole(s.todayUsd) : `${whole(s.todayUsd)} of ${whole(s.ceilingUsd)}`;
-}
-
-/** The same figure to the cent, for the title. */
-export function spendFull(s: Kpis["spend"]): string {
-  return s.ceilingUsd === null ? cents(s.todayUsd) : `${cents(s.todayUsd)} of ${cents(s.ceilingUsd)}`;
 }
 
 /** The `HH:MMZ` of an ISO time. */
@@ -104,11 +99,6 @@ export function backupAge(at: string | null, now: Date): string {
   if (min < 60) return `${min} min ago`;
   if (min < 2880) return `${Math.floor(min / 60)} h ago`;
   return `${Math.floor(min / 1440)} d ago`;
-}
-
-/** The exact time, for the title. */
-export function backupFull(at: string | null): string {
-  return at === null || Number.isNaN(Date.parse(at)) ? "No off-box backup yet" : at;
 }
 
 /** A page speed the way a person reads it: `850 ms`, `1.2 s`, or an em dash for none. */
@@ -203,13 +193,12 @@ export function trafficWords(t: TrafficTotals): { note: string; title: string; a
   return { note: `of time: ${TRAFFIC_WORDS[top]}`, title: `Share of answering time over the last 15 minutes: ${facts}`, attn: false };
 }
 
-/** Home's one line over /review: `3 waiting on you, oldest 50 h`; null at zero, so the line is absent. */
+/** Home's one line over /review: `3 waiting on you, oldest 2 days` (the largest sensible unit); null at zero, so the line is absent. */
 export function waitingWords(count: number, oldestAt: string | null, now: Date): string | null {
   if (count <= 0) return null;
   const t = oldestAt === null ? NaN : Date.parse(oldestAt);
   if (Number.isNaN(t)) return `${count} waiting on you`;
-  const h = Math.max(0, Math.floor((now.getTime() - t) / 3_600_000));
-  return `${count} waiting on you, oldest ${h < 1 ? "under 1" : h} h`;
+  return `${count} waiting on you, oldest ${ageWords(now.getTime() - t)}`;
 }
 
 /** The fold for asks older than 30 days, on Home and on /review. */

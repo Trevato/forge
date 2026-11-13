@@ -61,6 +61,8 @@ export interface Proof {
   readonly gaveUp?: boolean;
   /** A stranger's journey walked on the public URL after the smoke checks (#11158); its timings, in ms, for the release card. */
   readonly journey?: { readonly readyMs: number | null; readonly firstActivityMs: number | null; readonly screens: readonly string[] };
+  /** A person asked for it to be proven again now: the next tick does, whatever the backoff says. */
+  readonly retryNow?: boolean;
 }
 
 /**
@@ -132,6 +134,85 @@ export function proofNeed(dataDir: string, running?: string): { sentence: string
   return { sentence: `Release ${p.version} is unproven: ${p.failure ?? "a smoke check failed"}.${again}`, since: p.since ?? p.at };
 }
 
+/** How far off a time is, for a sentence: "within a minute", "in 12 minutes", "in 3 hours". */
+function inWords(ms: number): string {
+  const minutes = Math.ceil(ms / 60_000);
+  if (minutes <= 1) return "within a minute";
+  return minutes < 120 ? `in ${minutes} minutes` : `in ${Math.round(minutes / 60)} hours`;
+}
+
+/** A failure as a person reads it: a raw address or query string in brackets is dropped. */
+const capital = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
+const plain = (text: string): string => text.replace(/\s*\((?:\/|https?:\/\/)[^)]*\)/g, "").trim();
+
+/**
+ * What a failed proof means, for a person: whether it is an alarm (the release is not serving as it should: the
+ * public address did not answer as this version) or only a notice (the stranger's journey could not finish, for
+ * its own reasons: the sign-up limit that turns a stranger away after a few tries a day, a slow answer). Never a
+ * raw query string.
+ */
+export interface ProofNotice {
+  readonly tone: "notice" | "alarm";
+  readonly version: string;
+  /** One sentence: what failed, whether the release is serving, and what happens next. */
+  readonly sentence: string;
+  /** What was checked, in words. */
+  readonly step: string;
+  /** Where it stopped (the failing step) and what happened there, in words. */
+  readonly stopped: string;
+  readonly happened: string;
+  /** The failure exactly as the proof saw it, for a person who wants it. */
+  readonly raw: string;
+  readonly since: string;
+  readonly failures: number;
+  /** When it is tried again, ms since the epoch; null when it cannot be told. */
+  readonly nextAt: number | null;
+}
+
+export function proofNotice(dataDir: string, running?: string, now = Date.now()): ProofNotice | undefined {
+  const p = lastProof(dataDir);
+  if (p === undefined || p.ok) return undefined;
+  if (running !== undefined && running !== UNSTAMPED && p.version !== running) return undefined;
+  const raw = p.failure ?? "a smoke check failed";
+  const next = p.retryNow === true ? now : Date.parse(p.at) + retryAfter(p.failures ?? 1, p.slow === true, p.gaveUp === true);
+  const nextAt = Number.isFinite(next) ? next : null;
+  const again = nextAt === null ? "It is tried again soon." : `It is tried again ${inWords(nextAt - now)} (${new Date(nextAt).toISOString().slice(11, 16)} UTC).`;
+  const journey = /^a stranger's journey failed: ([\s\S]*)$/.exec(raw);
+  const base = { version: p.version, raw, since: p.since ?? p.at, failures: p.failures ?? 1, nextAt };
+  if (journey !== null) {
+    const detail = journey[1] ?? "";
+    const [stopped, ...rest] = plain(detail).split(": ");
+    const rate = /start=rate/.test(detail);
+    const happened = rate ? "the forge's own sign-up limit turned the proof's stranger away (a few tries an address a day)" : rest.join(": ") || plain(detail);
+    return {
+      ...base,
+      tone: "notice",
+      step: "A stranger's journey on the public address: name a forge, make an account, say one thing to build",
+      stopped: capital(stopped ?? plain(detail)),
+      happened: capital(happened),
+      sentence: `Release ${p.version} is serving. Its last proof, a stranger signing up from the public address, did not finish: ${rate ? "the forge's own sign-up limit turned the stranger away" : plain(detail)}. ${again}`,
+    };
+  }
+  if (p.slow === true)
+    return { ...base, tone: "notice", step: "A smoke check of the public address", stopped: plain(raw), happened: "the public address answered slowly or not at all for a moment", sentence: `Release ${p.version} is serving. The public address answered slowly when the forge proved it. ${again}` };
+  return {
+    ...base,
+    tone: "alarm",
+    step: "A smoke check of the public address",
+    stopped: plain(raw),
+    happened: "the public address did not answer as this version should",
+    sentence: `Release ${p.version} is not serving as it should: ${plain(raw)}. ${again}`,
+  };
+}
+
+/** Asks for the last failed proof to be tried again at the next tick, whatever its backoff says; false when there is none to try. */
+export function proveAgain(dataDir: string): boolean {
+  const p = lastProof(dataDir);
+  if (p === undefined || p.ok) return false;
+  keep(dataDir, { ...p, retryNow: true });
+  return true;
+}
+
 /** A failing check as one line: where, as whom, and why. */
 export function checkLine(f: Failure): string {
   return `${f.url}${f.agent === "-" ? "" : ` as ${f.agent}`} ${f.why} (status ${f.status})`;
@@ -163,6 +244,7 @@ export function proofDue(last: Proof | undefined, version: string, now: number):
   if (version === UNSTAMPED) return false;
   if (last?.version !== version) return true;
   if (last.ok) return false;
+  if (last.retryNow === true) return true;
   const at = Date.parse(last.at);
   return !Number.isFinite(at) || now - at >= retryAfter(last.failures ?? 1, last.slow === true, last.gaveUp === true);
 }

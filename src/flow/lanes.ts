@@ -79,7 +79,7 @@ const LAND_STUCK_MS = 48 * 3_600_000;
  */
 const MIN_GAP_MS = process.env["NODE_ENV"] === "test" ? 0 : 1_000;
 /** A page opened within this of the last reading is drawn from it, however much was written since. */
-const PAGE_STALE_MS = 10_000;
+const PAGE_STALE_MS = process.env["NODE_ENV"] === "test" ? 0 : 10_000;
 /** The last reading is never older than this when it is served to a lane. */
 const MAX_AGE_MS = 30_000;
 /** How long a request waits for the worker before it serves what it has. */
@@ -91,6 +91,27 @@ const JOB_LIMIT_MS = 20_000;
 export interface PictureOptions {
   readonly dataDir: string;
   readonly ceilingUsd: number | null;
+  /** Whose home this is for: the worker counts the asks waiting on each person who has had it open lately. */
+  readonly viewer?: string;
+}
+
+/** People who had the home open in the last ten minutes, by when: the worker counts what waits on each. */
+const viewers = new Map<string, number>();
+const VIEWER_KEPT_MS = 10 * 60_000;
+const VIEWERS_MAX = 8;
+
+function noteViewer(id: string, now: number): void {
+  viewers.set(id, now);
+  if (viewers.size > VIEWERS_MAX * 4)
+    for (const [k, at] of viewers) if (now - at > VIEWER_KEPT_MS) viewers.delete(k);
+}
+
+function viewersAt(now: number): string[] {
+  return [...viewers]
+    .filter(([, at]) => now - at <= VIEWER_KEPT_MS)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, VIEWERS_MAX)
+    .map(([id]) => id);
 }
 
 interface State {
@@ -158,6 +179,7 @@ function viaWorker(
         stamp,
         dataDir: options.dataDir,
         ceilingUsd: options.ceilingUsd,
+        viewers: viewersAt(now),
       } satisfies LaneJob);
     } catch (error) {
       open.delete(id);
@@ -186,7 +208,7 @@ export function readLanesInline(
   const stamp = writeStamp(db);
   return compose(
     readFast(db, new Date(now)),
-    readSlow(db, new Date(now), options),
+    readSlow(db, new Date(now), options, viewersAt(now)),
     now,
     stamp,
   );
@@ -229,8 +251,9 @@ function refresh(
 }
 
 /** Start reading the picture now, so the first page finds it: the forge calls this once it is listening (never `bun test`, where reads are inline). */
-export function warmLanes(db: Database, options: PictureOptions, now: number): void {
+export function warmLanes(db: Database, options: PictureOptions, now: number, owners: readonly string[] = []): void {
   if (!offThread(db)) return;
+  for (const id of owners) noteViewer(id, now);
   let state = states.get(db);
   if (state === undefined) states.set(db, (state = {}));
   if (state.picture === undefined) void refresh(db, options, state, now);
@@ -254,10 +277,14 @@ export async function lanePicture(
 ): Promise<LanePicture | undefined> {
   let state = states.get(db);
   if (state === undefined) states.set(db, (state = {}));
+  if (options.viewer !== undefined) noteViewer(options.viewer, now);
   const have = state.picture;
   const stamp = writeStamp(db);
+  // A person the reading has not counted yet is read at once, whatever else is current.
+  const counted = options.viewer === undefined || (have !== undefined && options.viewer in have.asks);
   if (
     have !== undefined &&
+    counted &&
     stamp !== undefined &&
     have.stamp === stamp &&
     now - have.at < MAX_AGE_MS
@@ -273,7 +300,7 @@ export async function lanePicture(
   }
   const age = now - have.at;
   if (mode === "page" && age < PAGE_STALE_MS) {
-    if (age >= MIN_GAP_MS) void refresh(db, options, state, now);
+    if (age >= MIN_GAP_MS || !counted) void refresh(db, options, state, now);
     return have;
   }
   // A burst of writes is one reading: wait out the gap, then ask the worker.
@@ -392,6 +419,8 @@ export interface HealthInput {
   readonly builders: { readonly running: number; readonly slots: number };
   /** Items that entered or left each lane in the last half hour: whether the lane is moving. */
   readonly moved: Readonly<Record<LaneKey, number>>;
+  /** Why no builder is starting anything, when something names it. */
+  readonly idle?: { readonly word: string } | null;
 }
 
 const plural = (n: number, one: string, many: string): string =>
@@ -443,6 +472,8 @@ export function laneHealth(view: LaneView, input: HealthInput): Health {
           words: `${n} ready. Every builder is busy (${input.builders.running} of ${input.builders.slots}); ${plural(moved, "build", "builds")} started in the last half hour.`,
           oldest: null,
         };
+      if (moved === 0 && input.idle != null)
+        return { tone: "waiting", words: `${n} ready and a builder is free, but nothing starts: ${input.idle.word}.`, oldest: null };
       if (moved === 0)
         return {
           tone: "stuck",

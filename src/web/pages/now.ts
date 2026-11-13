@@ -5,16 +5,13 @@
  * admin's, as the line is: the counts cover every repository.
  */
 
-import { mayReadNow, NOW_HOLDS, NOW_LISTED, NOW_STAGES, NOW_WORDS, readNowRows, type NowStage } from "../../flow/now_rows.ts";
+import { mayReadNow, NOW_HOLDS, NOW_LISTED, NOW_STAGES, NOW_WORDS, readNowRows } from "../../flow/now_rows.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html } from "../html.ts";
 import { page } from "../layout.ts";
 import { row, timeAgo } from "../ui.ts";
-
-/** Where a word of the Now line goes. */
-export const nowHref = (stage: NowStage): string => `/now/${stage}`;
 
 // GET /now/:stage
 export function nowPage(ctx: Ctx): Response {

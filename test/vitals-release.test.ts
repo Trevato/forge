@@ -39,9 +39,16 @@ test("a failing proof is a release card naming the check, linking the board", ()
   keep({ version: "9.9.9", at: "2026-10-18T10:00:00.000Z", ok: false, failure: "https://f/a.css expected 200 (status 500)" });
   expect(card()).toMatchObject({
     sentence: "Release 9.9.9 is unproven: https://f/a.css expected 200 (status 500). It is proven again at 10:05 UTC.",
-    href: "/board",
+    href: "/releases#proof",
     since: "2026-10-18T10:00:00.000Z",
   });
+});
+
+test("a proof the stranger could not finish, or a slow answer, is a notice on /releases and no card", () => {
+  keep({ version: "9.9.9", at: "2026-10-18T10:00:00.000Z", ok: false, failure: "a stranger's journey failed: the forge could not be named: it sent the person somewhere else (/?start=rate&name=probe-1#start-f)" });
+  expect(card()).toBeUndefined();
+  keep({ version: "9.9.9", at: "2026-10-18T10:00:00.000Z", ok: false, slow: true, failure: "https://f/ answered slowly" });
+  expect(card()).toBeUndefined();
 });
 
 test("a passing proof clears it", () => {
@@ -70,7 +77,7 @@ test("a failed proof kept for another version is no card for the running one", (
 test("a failed proof for the running version is still a card", () => {
   keep({ version: "0.7.479", at: "2026-11-09T12:57:00.000Z", ok: false, failure: "the public URL never answered as 0.7.479" });
   runningAs("0.7.479", () =>
-    expect(card()).toMatchObject({ href: "/board", since: "2026-11-09T12:57:00.000Z" }),
+    expect(card()).toMatchObject({ href: "/releases#proof", since: "2026-11-09T12:57:00.000Z" }),
   );
   runningAs("v0.7.479", () => expect(card()?.sentence).toStartWith("Release 0.7.479 is unproven"));
 });

@@ -1,5 +1,5 @@
 /**
- * The new home's table (`/home?view=table`): every item of every lane, one
+ * The new home's table (`/?view=table`): every item of every lane, one
  * row each, from the same off-thread picture the lanes read
  * (`flow/lanes.ts`), so it costs the thread no query of its own. Search,
  * filters and sort are links and a plain GET form, held in the URL, so it
@@ -288,7 +288,7 @@ export function tableTools(q: TableQuery): Html {
     reason: a.reason,
     hint: a.hint,
   }));
-  return html`<form class="tb-search" method="get" action="/home" role="search">
+  return html`<form class="tb-search" method="get" action="/" role="search">
       <input type="hidden" name="view" value="table" />
       ${q.lane === null
         ? null

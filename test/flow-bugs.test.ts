@@ -94,12 +94,3 @@ describe("bug clock", () => {
   });
 });
 
-describe("home's bug figure", () => {
-  test("the tile shows the open count and how many are past their clock", async () => {
-    const { kpiRowFor } = await import("../src/web/studio/kpi_row.ts");
-    const { NO_REACH } = await import("../src/flow/reach.ts");
-    const k = { landedHours: new Array<number>(24).fill(0), landed: 0, live: null, builders: { running: 0, slots: 0, idle: null }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: null, backupAt: null, reach: NO_REACH };
-    expect(kpiRowFor({ ...k, bugs: { open: 4, overdue: 2 } }, null).toString()).toContain("2 past its clock");
-    expect(kpiRowFor(k, null).toString()).not.toContain("Open bugs");
-  });
-});

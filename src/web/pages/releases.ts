@@ -11,7 +11,7 @@ import { getReposByIds } from "../../core/repos.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { running } from "../../kernel/version.ts";
 import type { Ctx } from "../../http/context.ts";
-import { lastProof } from "../../release/prove.ts";
+import { lastProof, proofNotice, proveAgain } from "../../release/prove.ts";
 import { listReleases } from "../../release/record.ts";
 import { BOOTED, canRollBackTo, mayRead, mayRollBack, rollBackTo } from "../../release/gate.ts";
 import { journeyLine, liveSince, NO_RELEASES_YET } from "../../release/words.ts";
@@ -39,6 +39,48 @@ export function journeyCard(ctx: Ctx): Html | undefined {
   if (p === undefined || !p.ok || p.version !== running().version) return undefined;
   const line = journeyLine(html, p.journey, (n) => n);
   return line === undefined ? undefined : html`<p class="small muted" id="journey-proof">${line}</p>`;
+}
+
+/**
+ * The proof's own record, the top item when the last proof has not passed: what
+ * was checked, where it stopped, what happened, whether the release is serving,
+ * when it is tried again, and a way to try it now. Plain words; the proof's raw
+ * line is one fold away.
+ */
+export function proofCard(ctx: Ctx, writer: boolean): Html | undefined {
+  const n = proofNotice(ctx.app.config.dataDir, running().version);
+  if (n === undefined) return undefined;
+  const serving = n.tone === "notice";
+  const rows: [string, string | Html][] = [
+    ["Is the release serving?", serving ? `Yes. This forge is running ${n.version} and answering.` : `Not as it should: ${n.happened}.`],
+    ["What was checked", n.step],
+    ["Where it stopped", n.stopped],
+    ["What happened", n.happened],
+    ["First failed", html`${time(n.since)}, ${String(n.failures)} ${n.failures === 1 ? "try" : "tries"} so far`],
+    ["Next try", n.nextAt === null ? "Soon." : html`${time(new Date(n.nextAt).toISOString())} (${new Date(n.nextAt).toISOString().slice(11, 16)} UTC)`],
+  ];
+  return html`<section class="settings-block" id="proof" aria-label="The release's proof">
+    <h2>Release ${n.version}: ${serving ? "its proof could not finish" : "it is not serving as it should"}</h2>
+    <p>${n.sentence}</p>
+    <ul class="list setting-list">${rows.map(([title, meta]) => row({ title: html`${title}`, meta: html`${meta}` }))}</ul>
+    ${writer
+      ? html`<form method="post" action="/releases/prove" class="bar">${btn("Prove it again now", { variant: "primary" })}<span class="small muted">The next minute's tick tries it; nothing else changes.</span></form>`
+      : null}
+    <details class="disclosure"><summary class="small muted">Exactly what the proof saw</summary><pre class="mono">${n.raw}</pre></details>
+  </section>`;
+}
+
+/** POST /releases/prove: try the failed proof again at the next tick. */
+export async function proveAgainSubmit(ctx: Ctx): Promise<Response> {
+  const user = ctx.auth.user;
+  if (user === undefined) return forbiddenPage(ctx, SIGN_IN_TO_DO);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  // Anyone who may read the releases may ask for a proof again: it changes nothing but when the next one runs.
+  if (user.kind === "agent" || !mayRead(ctx.app, user)) return forbiddenPage(ctx, NOT_ADMIN_HERE);
+  return proveAgain(ctx.app.config.dataDir)
+    ? flashTo(ctx, "/releases", { message: "Asked: the forge proves this release again at its next tick, within a minute." })
+    : flashTo(ctx, "/releases", { tone: "danger", message: "There is no failed proof to try again." });
 }
 
 /**
@@ -91,7 +133,7 @@ export async function releasesPage(ctx: Ctx): Promise<Response> {
   const response = page({
     ctx,
     title: "Releases",
-    body: html`<div data-releases><div class="page-head"><h1>Releases</h1></div>${keeperPanel(ctx.app.db, writer)}${journeyCard(ctx)}${body}</div>`,
+    body: html`<div data-releases><div class="page-head"><h1>Releases</h1></div>${proofCard(ctx, user.kind !== "agent")}${keeperPanel(ctx.app.db, writer)}${journeyCard(ctx)}${body}</div>`,
     styleCss: RELEASES_CSS,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);

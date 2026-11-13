@@ -15,7 +15,6 @@ import type { Kpis } from "../src/flow/kpis.ts";
 import { kpiLines, vitalsNote } from "../src/flow/kpi_words.ts";
 import { expectWork } from "./helpers/work.ts";
 import { once } from "./helpers/statements.ts";
-import { kpiRowFor } from "../src/web/studio/kpi_row.ts";
 
 const NOW = new Date("2026-10-19T12:00:00.000Z");
 const kpis = (reach: Reach): Kpis => ({ landedHours: Array<number>(24).fill(0), landed: 0, live: null, builders: { running: 0, slots: 0, idle: null }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: null, backupAt: null, reach });
@@ -23,13 +22,11 @@ const kpis = (reach: Reach): Kpis => ({ landedHours: Array<number>(24).fill(0), 
 describe("home vitals note", () => {
   test("empty says no visitors yet, without a figure", () => {
     expect(vitalsNote(NO_REACH)).toBe("no visitors yet");
-    expect(kpiRowFor(kpis(NO_REACH), null, NOW).toString()).toContain("no visitors yet");
   });
 
   test("only the measured figure shows when one of LCP or INP is missing", () => {
     expect(vitalsNote({ ...NO_REACH, lcpP75: 2500, inpP75: null })).toBe("LCP 2.5 s");
     expect(vitalsNote({ ...NO_REACH, lcpP75: null, inpP75: 120 })).toBe("INP 120 ms");
-    expect(kpiRowFor(kpis({ ...NO_REACH, lcpP75: 2500, inpP75: null }), null, NOW).toString()).not.toContain("INP —");
   });
 
   test("p75 LCP and INP over 7 days, old days left out, one query", async () => {
@@ -50,7 +47,6 @@ describe("home vitals note", () => {
     expect(reach.lcpP75).toBe(3000);
     expect(reach.inpP75).toBe(300);
     expect(vitalsNote(reach)).toBe("LCP 3.0 s · INP 300 ms");
-    expect(kpiRowFor(kpis(reach), null, NOW).toString()).toContain("LCP 3.0 s · INP 300 ms");
   });
 
   test("the terminal line says LCP and INP too, not the old reacts-in words", () => {

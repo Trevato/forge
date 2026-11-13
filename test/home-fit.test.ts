@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { enableApp } from "../src/actions/apps.ts";
-import { openPull } from "../src/actions/pulls.ts";
+import { createIssue } from "../src/core/issues.ts";
 import { createApp, type App } from "../src/app.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser } from "../src/core/users.ts";
@@ -44,11 +44,11 @@ beforeAll(async () => {
   const long = must(await createRepo(app, u, { name: APP, visibility: "public" }));
   must(await commitToBranch(app, u, long, { message: "init", files: [{ path: "README.md", content: "x" }] }));
   must(enableApp(app, u, long));
+  // The crew's next asks are the home's first lane: a 250-character word, a long title and a few plain ones.
+  app.db.run("UPDATE repo SET autonomy = 'autonomous', autonomy_slots = 2 WHERE id = ?1", [repo.id]);
   for (let i = 0; i < 8; i++) {
-    must(await commitToBranch(app, u, repo, { branch: `t-${i}`, message: "c", files: [{ path: `f${i}.txt`, content: "x" }] }));
-    const title = i === 0 ? WORD : i === 1 ? "A very long title ".repeat(12).trim() : `Pull ${i} \`code span\``;
-    const pr = must(await openPull(app, u, repo, { title, body: "", baseBranch: "main", headBranch: `t-${i}` }));
-    app.db.run("UPDATE pull SET merged_at=?2 WHERE issue_id=?1", [pr.id, `2026-10-0${8 - i}T10:00:00.000Z`]);
+    const title = i === 0 ? WORD : i === 1 ? "A very long title ".repeat(12).trim() : `Ask ${i} \`code span\``;
+    must(createIssue(app.db, { repoId: repo.id, authorId: u.id, title, kind: "issue" }));
   }
   const token = createSession(app.db, u.id).token;
   session = { name: "forge_session", value: token };
@@ -62,7 +62,6 @@ afterAll(async () => {
 
 describe("the signed-in home at 390 px", () => {
   test("the seeded long content is on the page", () => {
-    expect(page).toContain("Just shipped");
     expect(page).toContain("A very long title");
     expect(page).toContain(WORD.slice(0, 40));
   });
@@ -79,14 +78,12 @@ describe("the signed-in home at 390 px", () => {
     expect(over).toEqual([]);
   });
 
-  test("the long-named app is a chip and a tell-box option in the served HTML (first paint)", () => {
-    expect(page).toMatch(new RegExp(`id="live-chips"[\\s\\S]*?<a[^>]*>[^<]*${APP}`));
+  test("the long-named app is a tell-box option in the served HTML (first paint)", () => {
     expect(page).toMatch(new RegExp(`<option value="alice/${APP}">`));
   });
 
   test("the chip wraps and the tell box shrinks: the rules exist, scoped to the home", () => {
-    expect(content).toMatch(/#live-chips a\s*\{[^}]*max-width:\s*100%[^}]*overflow-wrap:\s*anywhere/);
-    expect(content).toMatch(/#live-chips a, \.home-doors a\s*\{[^}]*underline[^}]*min-height:\s*44px/);
+    expect(content).toMatch(/\.home-doors a\s*\{[^}]*underline[^}]*min-height:\s*44px/);
     expect(content).toMatch(/\.tell-box \.input\s*\{[^}]*min-width:\s*0/);
   });
 });
@@ -102,22 +99,18 @@ describe.skipIf(chromium === undefined)("the home, measured at 390x844", () => {
       // Only a one-line ellipsis title inside main is excused: it clips by design.
       const clipped = (el) => { for (let p = el.parentElement; p && p.tagName !== "MAIN"; p = p.parentElement) { const c = getComputedStyle(p); if (c.textOverflow === "ellipsis" && c.overflowX === "hidden") return true; } return false; };
       const overflowing = [...document.querySelectorAll("main *")].filter((el) => el.getBoundingClientRect().right > vw + 1 && !clipped(el)).slice(0, 8).map((el) => el.tagName.toLowerCase() + "." + el.className);
-      const chip = document.querySelector("#live-chips a");
-      const chipRight = chip ? Math.round(chip.getBoundingClientRect().right) : -1;
-      const tall = [...document.querySelectorAll("#live-chips a, .home-doors a")].map((a) => Math.round(a.getBoundingClientRect().height));
-      const underlined = [...document.querySelectorAll("#live-chips a, .home-doors a")].every((a) => getComputedStyle(a).textDecorationLine.includes("underline"));
+      const tall = [...document.querySelectorAll(".home-doors a")].map((a) => Math.round(a.getBoundingClientRect().height));
+      const underlined = [...document.querySelectorAll(".home-doors a")].every((a) => getComputedStyle(a).textDecorationLine.includes("underline"));
       const sel = document.querySelector("#tell-box select");
       const selRight = sel ? Math.round(sel.getBoundingClientRect().right) : -1;
-      return JSON.stringify({ tall, underlined, scrollWidth: document.documentElement.scrollWidth, viewportWidth: vw, overflowing, chipRight, selRight });
+      return JSON.stringify({ tall, underlined, scrollWidth: document.documentElement.scrollWidth, viewportWidth: vw, overflowing, selRight });
     })()`;
-    const m = JSON.parse(await evaluateLoaded(chromium!, `${servers.url}/`, { width: 390, height: 844 }, [session], measure)) as { tall: number[]; underlined: boolean; scrollWidth: number; viewportWidth: number; overflowing: string[]; chipRight: number; selRight: number };
+    const m = JSON.parse(await evaluateLoaded(chromium!, `${servers.url}/`, { width: 390, height: 844 }, [session], measure)) as { tall: number[]; underlined: boolean; scrollWidth: number; viewportWidth: number; overflowing: string[]; selRight: number };
     console.log(`home 390x844: ${JSON.stringify(m)}`);
-    expect(m.tall.length).toBeGreaterThan(2);
+    expect(m.tall.length).toBeGreaterThan(1);
     for (const h of m.tall) expect(h).toBeGreaterThanOrEqual(44);
     expect(m.underlined).toBe(true);
-    expect(m.chipRight).toBeGreaterThan(0);
     expect(m.selRight).toBeGreaterThan(0);
-    expect(m.chipRight).toBeLessThanOrEqual(m.viewportWidth);
     expect(m.selRight).toBeLessThanOrEqual(m.viewportWidth);
     expect(m.overflowing).toEqual([]);
     expect(m.scrollWidth).toBeLessThanOrEqual(m.viewportWidth);

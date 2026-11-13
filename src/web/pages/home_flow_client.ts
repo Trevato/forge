@@ -11,6 +11,7 @@
  *            event arrives, a lane is swapped, or the tab comes back: time
  *            spent in a lane is always as old as the last thing that happened.
  *   stream   the dot beside the title says whether the stream is connected.
+ *   figures  the section's open or closed state is remembered in this browser.
  *   filter   the select lists the other apps only when it is first used.
  *   reading  a region drawn as "reading…" (the first page after a restart, before the worker
  *            has read the picture) fetches its own address once and takes the answer in place.
@@ -86,6 +87,7 @@ export const homeFlowJs = /* js */ `
     var lane = e.target && e.target.closest ? e.target.closest('.lane') : null;
     clocks(true);
     if (lane) glide(lane); else remember();
+    toggles();
     afterSwap();
   });
   doc.addEventListener('forge:event', function () { clocks(false); });
@@ -133,7 +135,6 @@ export const homeFlowJs = /* js */ `
   var bar = doc.getElementById('tb-bar');
   var afterSwap = function () {};
   if (bar) {
-    root.setAttribute('data-js', '');
     var catalogue = [];
     try { catalogue = JSON.parse(bar.getAttribute('data-actions') || '[]'); } catch (err) { catalogue = []; }
     var picked = {};
@@ -295,6 +296,35 @@ export const homeFlowJs = /* js */ `
       })
       .catch(function () {});
   });
+
+  // ---- the figures: open or closed, as this reader left it ----
+  var figures = doc.getElementById('hf-figures');
+  if (figures) {
+    try { if (window.localStorage.getItem('forge.home.figures') === 'closed') figures.open = false; } catch (err) { /* no storage: the page's default */ }
+    figures.addEventListener('toggle', function () {
+      try { window.localStorage.setItem('forge.home.figures', figures.open ? 'open' : 'closed'); } catch (err) { /* nothing to remember with */ }
+    });
+  }
+
+  // ---- a lane on a phone: Show all N opens it in place; the lane keeps data-open through every redraw ----
+  var toggles = function () {
+    Array.prototype.forEach.call(root.querySelectorAll('.lane'), function (lane) {
+      var button = lane.querySelector('.lane-toggle');
+      if (!button) return;
+      var open = lane.hasAttribute('data-open');
+      button.setAttribute('aria-expanded', open ? 'true' : 'false');
+      button.textContent = open ? 'Show fewer' : 'Show all ' + button.getAttribute('data-all');
+    });
+  };
+  root.setAttribute('data-js', '');
+  doc.addEventListener('click', function (e) {
+    var button = e.target && e.target.closest ? e.target.closest('.lane-toggle') : null;
+    if (!button) return;
+    var lane = button.closest('.lane');
+    if (lane.hasAttribute('data-open')) lane.removeAttribute('data-open'); else lane.setAttribute('data-open', '');
+    toggles();
+  });
+  toggles();
 
   remember();
   clocks(true);

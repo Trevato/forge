@@ -21,6 +21,8 @@ export interface LaneJob {
   readonly stamp: string | undefined;
   readonly dataDir: string;
   readonly ceilingUsd: number | null;
+  /** The people who have the home open, whose waiting asks the slow part counts. */
+  readonly viewers: readonly string[];
 }
 
 /** What it answers: the picture and what each part cost, or why it could not. */
@@ -39,7 +41,7 @@ const handles = new Map<string, Database>();
 const kept = new Map<string, { at: number; slow: Slow }>();
 
 self.onmessage = (e: MessageEvent<LaneJob>) => {
-  const { id, path, now, stamp, dataDir, ceilingUsd } = e.data;
+  const { id, path, now, stamp, dataDir, ceilingUsd, viewers } = e.data;
   try {
     let db = handles.get(path);
     if (db === undefined) {
@@ -51,11 +53,14 @@ self.onmessage = (e: MessageEvent<LaneJob>) => {
     const fast = readFast(db, new Date(now));
     const fastMs = performance.now() - t0;
     let slowMs: number | null = null;
-    let slow = kept.get(path);
-    if (slow === undefined || now - slow.at >= SLOW_MS) {
+    const had = kept.get(path);
+    let slow = had;
+    // Someone new with the home open is counted at once, not at the next half minute.
+    const unseen = had !== undefined && viewers.some((v) => !(v in had.slow.asks));
+    if (slow === undefined || unseen || now - slow.at >= SLOW_MS) {
       const t1 = performance.now();
       try {
-        slow = { at: now, slow: readSlow(db, new Date(now), { dataDir, ceilingUsd }) };
+        slow = { at: now, slow: readSlow(db, new Date(now), { dataDir, ceilingUsd }, viewers) };
         kept.set(path, slow);
       } catch (error) {
         // The last slow part keeps serving; a failing read is tried again with the next job.

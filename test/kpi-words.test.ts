@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { backupAge, backupOverdue, buildersValue, speedWords, spendFull, spendValue, trendText, usersValue, visitorsNote, visitorsValue } from "../src/flow/kpi_words.ts";
+import { backupAge, backupOverdue, buildersValue, speedWords, spendValue, trendText, usersValue, visitorsNote, visitorsValue } from "../src/flow/kpi_words.ts";
 import { NO_REACH, type Reach } from "../src/flow/reach.ts";
 
 const NOW = new Date("2026-10-27T12:00:00.000Z");
@@ -30,27 +30,11 @@ describe("trendText", () => {
 });
 
 describe("spend", () => {
-  test("zero is two decimals, with and without a ceiling", () => {
-    expect(spendValue({ todayUsd: 0, ceilingUsd: null })).toBe("$0.00");
-    expect(spendValue({ todayUsd: 0, ceilingUsd: 40 })).toBe("$0.00 of $40");
-    expect(spendFull({ todayUsd: 0, ceilingUsd: null })).toBe("$0.00");
-    expect(spendFull({ todayUsd: 0, ceilingUsd: 40 })).toBe("$0.00 of $40.00");
-  });
   test("the ten-dollar edge: cents below, whole dollars from ten", () => {
     expect(spendValue({ todayUsd: 9.99, ceilingUsd: null })).toBe("$9.99");
     expect(spendValue({ todayUsd: 10, ceilingUsd: null })).toBe("$10");
     expect(spendValue({ todayUsd: 12.4, ceilingUsd: 40 })).toBe("$12 of $40");
     expect(spendValue({ todayUsd: 1, ceilingUsd: 5 })).toBe("$1.00 of $5.00");
-  });
-  test("spendFull is always to the cent", () => {
-    expect(spendFull({ todayUsd: 12.4, ceilingUsd: 40 })).toBe("$12.40 of $40.00");
-    expect(spendFull({ todayUsd: 0.005, ceilingUsd: null })).toMatch(/^\$0\.0[01]$/);
-  });
-  test("no answer is NaN, undefined, Infinity or -0", () => {
-    for (const s of [{ todayUsd: 0, ceilingUsd: null }, { todayUsd: 0, ceilingUsd: 0 }, { todayUsd: 1, ceilingUsd: 1 }]) {
-      clean(spendValue(s));
-      clean(spendFull(s));
-    }
   });
 });
 

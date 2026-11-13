@@ -127,31 +127,28 @@ test("a prefetch, a preview or a non-document fetch leaves home_visit unchanged;
   expect(lastVisit(db, f.owner.id)).toBeGreaterThan(at);
 });
 
-test("home (not only the feed) leaves the visit mark alone on a prefetch and moves it on a navigation, and names its three compartments", async () => {
+test("home (not only the feed) leaves the visit mark alone on a prefetch and moves it on a navigation, and names its compartment", async () => {
   const db = f.app.db;
   const at = Date.now() - 3 * H;
   const set = () => db.query("INSERT INTO home_visit (user_id, at) VALUES (?1, ?2) ON CONFLICT(user_id) DO UPDATE SET at = excluded.at").run(f.owner.id, at);
   for (const headers of [{ "sec-purpose": "prefetch" }, { purpose: "prefetch" }, { "sec-fetch-dest": "empty" }]) {
     set();
-    const text = await (await fetch(`${f.base}/?all=1`, { headers: { cookie: f.ownerCookie, ...headers } })).text();
+    const text = await (await fetch(`${f.base}/feed`, { headers: { cookie: f.ownerCookie, ...headers } })).text();
     expect(text).toContain("Since you were here · 3 hours");
     expect(lastVisit(db, f.owner.id)).toBe(at);
   }
   set();
-  const text = await (await fetch(`${f.base}/?all=1`, { headers: { cookie: f.ownerCookie, "sec-fetch-dest": "document" } })).text();
+  const text = await (await fetch(`${f.base}/feed`, { headers: { cookie: f.ownerCookie, "sec-fetch-dest": "document" } })).text();
   expect(lastVisit(db, f.owner.id)).toBeGreaterThan(at);
-  expect(text).toContain('aria-label="Since you were here"');
-  expect(text).toContain('aria-label="Live"');
+  expect(text).toContain("Since you were here");
 });
 
 test("home leaves out the Since compartment when nothing moved", async () => {
   const db = f.app.db;
   db.query("INSERT INTO home_visit (user_id, at) VALUES (?1, ?2) ON CONFLICT(user_id) DO UPDATE SET at = excluded.at").run(f.peer.id, Date.now());
   db.query("DELETE FROM pull").run();
-  const text = await (await fetch(`${f.base}/?all=1`, { headers: { cookie: f.peerCookie, "sec-fetch-dest": "empty" } })).text();
-  expect(text).not.toContain('aria-label="Since you were here"');
-  expect(text).not.toContain('id="since-you-were-here"');
-  expect(text).toContain('aria-label="Live"');
+  const text = await (await fetch(`${f.base}/feed`, { headers: { cookie: f.peerCookie, "sec-fetch-dest": "empty" } })).text();
+  expect(text).not.toContain("Since you were here");
 });
 
 test("the digest query reads pull through the existing pull_merged index, and the home-visit migration adds no second one", () => {

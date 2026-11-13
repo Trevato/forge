@@ -70,10 +70,6 @@ test("after a write, signed-in home is answered from memory within the budget an
     expect(marked).toContain(`id="home-${name}"`);
   }
   expect(marked).toContain('data-refresh="/live/home/feed"');
-  // The figures are on home itself, the feed's page holds the rest.
-  await look(f.ownerCookie, "/");
-  write(99);
-  expect((await look(f.ownerCookie, "/")).text).toContain('data-refresh="/live/home/kpis"');
 });
 
 test("the first response stays under its byte limit", async () => {
@@ -82,12 +78,12 @@ test("the first response stays under its byte limit", async () => {
 });
 
 test("each late region answers alone, to its own viewer, and to no one else", async () => {
-  for (const name of ["kpis", "waiting", "panels", "asked", "feed"]) {
+  for (const name of ["waiting", "panels", "asked", "feed"]) {
     const res = await fetch(`${f.base}/live/home/${name}`, { headers: { cookie: f.ownerCookie } });
     expect(res.status).toBe(200);
     expect((await res.text()).length).toBeGreaterThan(0);
   }
-  for (const name of ["kpis", "panels"]) {
+  for (const name of ["panels"]) {
     const peer = await fetch(`${f.base}/live/home/${name}`, { headers: { cookie: f.peerCookie } });
     expect(peer.status).toBe(403);
   }

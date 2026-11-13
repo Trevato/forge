@@ -22,18 +22,11 @@ async function timing(cookie?: string, path = "/"): Promise<string[]> {
 const timings = async (cookie?: string): Promise<string[]> => [...(await timing(cookie)), ...(await timing(cookie, "/feed"))];
 const names = (parts: string[]): string[] => parts.map((p) => p.split(";")[0]!);
 
-test("a cold look at the owner's home names each part of the kpis read", async () => {
-  const cold = names(await timing(f.ownerCookie));
-  expect(KPI_PARTS).toEqual(["kpis.landed", "kpis.live", "kpis.checks", "kpis.builders", "kpis.spend", "kpis.reach", "kpis.backup", "kpis.bugs"]);
-  expect(cold).toEqual(expect.arrayContaining(["kpis", ...KPI_PARTS]));
-});
-
-test("the owner's home names feed, kpis and panels; a warm look is a hit", async () => {
+test("the owner's home names its picture, and the feed names feed and panels; a warm look is a hit", async () => {
   await timings(f.ownerCookie);
   const warm = await timings(f.ownerCookie);
-  expect(names(warm)).toEqual(expect.arrayContaining(["feed", "kpis", "panels"]));
+  expect(names(warm)).toEqual(expect.arrayContaining(["picture", "feed", "panels"]));
   expect(names(warm)).not.toContain("shelf");
-  expect(warm.find((p) => p.startsWith("kpis;"))).toMatch(/^kpis;dur=\d+\.\d;desc="hit"$/);
   expect(warm.find((p) => p.startsWith("feed;"))).toMatch(/^feed;dur=\d+\.\d;desc="hit"$/);
 });
 

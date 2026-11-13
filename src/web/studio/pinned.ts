@@ -8,8 +8,6 @@ import { listPinned, PINS_EVENT } from "../../actions/board-pins.ts";
 import type { Board, Panel } from "../../boards/store.ts";
 import type { Pin } from "../../boards/pins.ts";
 import type { User } from "../../core/users.ts";
-import type { Database } from "bun:sqlite";
-import { listPins } from "../../boards/pins.ts";
 import { html, type Html } from "../html.ts";
 import { btn } from "../ui.ts";
 import { cachedPanel } from "./home_cache.ts";
@@ -41,18 +39,3 @@ export async function pinnedPanels(app: App, user: User): Promise<Html | null> {
 /** The live region the pins sit in: a pin, unpin or move from any door (the terminal too) redraws it from `/live/home/panels`. */
 const pinsRegion = (inner: Html | null): Html =>
   html`<div id="home-pins" data-live="${PINS_EVENT}" data-live-src="/live/home/panels">${inner}</div>`;
-
-/**
- * Home's place for the pins, right after the KPIs. Without a pin it is an
- * empty live region and takes no space (a pin made elsewhere fills it); with
- * one, an empty slot that the page's script fills from
- * `/live/home/panels` after first paint, so the charts never cost the paint.
- * The slot holds one panel row's height until the fragment lands (or
- * fails, or comes back empty), so nothing below it shifts. Without script
- * the noscript link opens the same fragment.
- */
-export function pinnedSlot(db: Database, user: User): Html | null {
-  if (!user.isAdmin || user.kind === "agent") return null;
-  if (listPins(db, user.id).length === 0) return html`<div id="home-panels" class="home-panels-slot">${pinsRegion(null)}</div>`;
-  return html`<div id="home-panels" class="home-panels-slot" data-refresh="/live/home/panels">${pinsRegion(null)}<noscript><p class="small muted"><a href="/live/home/panels">Open your pinned panels</a>.</p></noscript></div>`;
-}

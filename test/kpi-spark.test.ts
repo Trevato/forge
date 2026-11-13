@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { daySpark, sparkline } from "../src/web/studio/kpi_row.ts";
+import { daySpark } from "../src/web/studio/kpi_row.ts";
 
 const LINE = 'fill="none" stroke="currentColor" stroke-width="1.5"';
 
@@ -45,13 +45,5 @@ describe("daySpark", () => {
 
   test("the label is escaped", () => {
     expect(daySpark([1], 'a"<b>')!.toString()).toContain('aria-label="a&quot;&lt;b&gt;"');
-  });
-});
-
-describe("the numbers-only sparklines are unchanged", () => {
-  test("sparkline, newest first in, oldest on the left", () => {
-    expect(sparkline([2, 0]).toString()).toBe(
-      `<svg viewBox="0 0 96 24" width="96" height="24" role="img" aria-label="Shipped each hour over the last 24 hours"><polyline points="0.0,22.0 96.0,2.0" ${LINE}/></svg>`,
-    );
   });
 });

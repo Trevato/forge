@@ -19,13 +19,6 @@ export const feedCss = /* css */ `
 @media (max-width: 899px) {
   #live-apps { display: none; }
 }
-/* Home's living pipeline (#8015): two lists side by side on a desk. Each list always holds three rows, so nothing below moves. */
-.moving { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
-.moving > * { min-width: 0; }
-@media (min-width: 700px) {
-  .moving { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-.moving .row { min-height: 44px; }
 .tell-box > input[name="text"] { flex: 1 1 14rem; min-width: 0; }
 @media (max-width: 600px) {
   .feed .bar .btn { padding: 8px 10px; }

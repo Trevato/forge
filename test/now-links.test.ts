@@ -1,6 +1,6 @@
 /**
- * Every link in the account menu and home's Now line lands on a page that is
- * its label, and each word of the Now line opens exactly the rows it counts (#8743).
+ * Every link in the account menu lands on a page that is its label, and each
+ * pipeline stage's page (`/now/:stage`) opens exactly the rows it counts (#8743).
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -76,20 +76,14 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-test("each word of the Now line opens a page titled for it, listing as many rows as the number on home", async () => {
-  const home = await (await get("/", rootCookie)).text();
+test("each stage's page is titled for it and lists as many rows as the pipeline counts", async () => {
   const now = pipelineNow(app.db, Date.now() + 10_000);
-  const line = home.slice(home.indexOf('id="now-line"'));
   for (const stage of NOW_STAGES) {
-    const link = line.match(new RegExp(`<a href="([^"]+)"><strong>(\\d+)</strong> ${stage}</a>`));
-    expect(link, stage).not.toBeNull();
-    expect(link![1]).toBe(`/now/${stage}`);
-    const res = await get(link![1]!, rootCookie);
+    const res = await get(`/now/${stage}`, rootCookie);
     expect(res.status).toBe(200);
     const page = await res.text();
     expect(page).toContain(`<h1>${NOW_WORDS[stage]}</h1>`);
-    const counted = Number(link![2]);
-    expect(counted).toBe(now[stage]);
+    const counted = now[stage];
     expect(counted).toBeGreaterThan(0);
     expect(readNowRows(app.db, stage).total).toBe(counted);
     expect(readNowRows(app.db, stage).rows.length).toBe(counted);
@@ -141,13 +135,6 @@ test("every link in the account menu lands on a page that is its label", async (
     const title = (await res.text()).match(/<title>(.*?) · forge<\/title>/s)?.[1] ?? "";
     expect(title, item.href).toBe(want!);
   }
-});
-
-test("no word of the Now line lands on the boards or the releases", async () => {
-  const home = await (await get("/", rootCookie)).text();
-  const line = home.slice(home.indexOf('id="now-line"'));
-  const links = [...line.slice(0, line.indexOf("</p>")).matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
-  expect(links).toEqual(NOW_STAGES.map((s) => `/now/${s}`));
 });
 
 test("/repos lists the repositories you may write, and asks a visitor to sign in", async () => {

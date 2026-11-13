@@ -14,56 +14,11 @@ import { id } from "../src/kernel/id.ts";
 import { checkTime, kpiLines, sparkText, waitingWords } from "../src/flow/kpi_words.ts";
 import { running } from "../src/kernel/version.ts";
 import { components } from "../src/web/style/components.ts";
-import { kpiRowFor, liveNow, sparkline } from "../src/web/studio/kpi_row.ts";
+import { liveNow } from "../src/web/studio/kpi_row.ts";
 
 const hours = (n: number) => Array.from({ length: 24 }, (_, i) => (i === 3 ? n : 0));
 
 describe("home kpi row", () => {
-  test("five tiles with their links and figures", () => {
-    const out = kpiRowFor(
-      { landedHours: hours(6), landed: 6, live: null, builders: { running: 2, slots: 4, idle: null }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: 185_000, backupAt: null, reach: NO_REACH },
-      { sha: "abcdef0123456", at: "2026-10-19T11:00:00.000Z" },
-    ).toString();
-    expect(out).toContain('<span class="sha">abcdef0</span>');
-    expect(out).toContain("Shipped per hour");
-    expect(out).toContain("0.3");
-    expect(out).toContain("6 changes in 24 h");
-    expect(out).toContain("abcdef0");
-    expect(out).not.toContain(">abcdef01"); // shortened on screen; the whole id is in the title
-    expect(out).toContain("3m 05s");
-    for (const href of ["/board", "/releases", "/boards"]) expect(out).toContain(`href="${href}"`);
-  });
-
-  test("the whole figure is in the title and the link's label, rounded and in studio words", () => {
-    const out = kpiRowFor(
-      { landedHours: hours(7), landed: 7, live: null, builders: { running: 2, slots: 4, idle: null }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: 185_000, backupAt: null, reach: NO_REACH },
-      { sha: "abcdef0123456", at: "2026-10-19T11:00:00.000Z" },
-    ).toString();
-    expect(out).toContain('title="0.29"');
-    expect(out).not.toContain("0.2916");
-    expect(out).toContain('title="3m 05s"');
-    expect(out).not.toContain(" ms");
-    expect(out).toContain('aria-label="Live version: abcdef0123456, Live since 2026-10-19T11:00:00.000Z. The version this forge process is running');
-    expect(out).toContain('aria-label="Shipped per hour: 0.29, 7 changes in 24 h. Changes shipped');
-  });
-
-  test("empty figures say so", () => {
-    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, builders: { running: 2, slots: 4, idle: null }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: null, backupAt: null, reach: NO_REACH }, null).toString();
-    expect(out).toContain("Nothing live yet");
-    expect(out).toContain("No check finished in 24 h");
-  });
-
-  test("no git words render, not even in a title or label", () => {
-    const out = kpiRowFor({ landedHours: hours(1), landed: 1, live: null, builders: { running: 2, slots: 4, idle: null }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: 1000, backupAt: null, reach: NO_REACH }, null).toString();
-    expect(out).not.toMatch(/commit|merge|branch|repositor|pull request|checks (passed|failed)/i);
-  });
-
-  test("the sparkline has one point per hour, oldest first", () => {
-    const svg = sparkline(hours(4)).toString();
-    const pts = /points="([^"]+)"/.exec(svg)![1]!.split(" ");
-    expect(pts).toHaveLength(24);
-    expect(pts[20]!.endsWith(",2.0")).toBe(true); // hour 3 ago is index 20, at the top
-  });
 
   test("the live tile is the running commit, the same as /releases", () => {
     const prev = process.env["FORGE_COMMIT"];
@@ -77,38 +32,12 @@ describe("home kpi row", () => {
     }
   });
 
-  test("a truncated note carries its whole text as a title", () => {
-    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, builders: { running: 2, slots: 4, idle: null }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: null, backupAt: null, reach: NO_REACH }, null).toString();
-    expect(out).toContain('title="No check finished in 24 h"');
-  });
-
   test("the note wraps into two reserved lines instead of cutting off on a phone", () => {
     const rule = (sel: string) => new RegExp(`\\${sel} \\{([^}]*)\\}`).exec(components)![1]!;
     expect(rule(".stat-note")).not.toContain("nowrap");
     expect(rule(".stat-note")).toContain("line-clamp: 2");
     expect(rule(".stat-note")).toContain("height: 36px");
     expect(rule(".stat")).toContain("height: 104px");
-  });
-
-  test("the builders tile says running of slots, titles it, and links to the crew", () => {
-    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: NO_REACH, medianCheckMs: null, builders: { running: 2, slots: 4, idle: null }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
-    expect(out).toContain('href="/settings/crew"');
-    expect(out).toContain('class="stat-value num" title="2 of 4">2 of 4<');
-    expect(out).toContain('title="Agent runs running now, of the slots set on projects whose autonomy is on. 4 slots set."');
-    expect(out).toContain('aria-label="Builders running: 2 of 4, Agent runs running now, of the slots set on projects whose autonomy is on. 4 slots set."');
-  });
-
-  test("with no slots set the builders tile shows a dash and says so", () => {
-    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: NO_REACH, medianCheckMs: null, builders: { running: 0, slots: 0, idle: null }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
-    expect(out).toContain('class="stat-value num" title="—">—<');
-    expect(out).toContain('title="No slots set">No slots set<');
-    expect(out).toContain(`aria-label="Builders running: —, No slots set"`);
-    expect(out).not.toContain("Builders running: 0 of 0");
-  });
-
-  test("the builders note does not repeat the value", () => {
-    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: NO_REACH, medianCheckMs: null, builders: { running: 2, slots: 4, idle: null }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
-    expect(out).toContain(">running now<");
   });
 
   test("check time reads as a person would", () => {
@@ -158,28 +87,6 @@ describe("the terminal's figures", () => {
   });
 });
 
-describe("the spend tile", () => {
-  const row = (spend: { todayUsd: number; ceilingUsd: number | null }) =>
-    kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: NO_REACH, medianCheckMs: null, builders: { running: 0, slots: 0, idle: null }, spend }, null).toString();
-
-  test("shows today's spend of the ceiling, the cents in the title, linking to the crew page", () => {
-    const out = row({ todayUsd: 12.34, ceilingUsd: 40 });
-    expect(out).toContain('class="stat-value num" title="$12.34 of $40.00">$12 of $40<');
-    expect(out).toContain('aria-label="Crew spend today: $12.34 of $40.00, Crew spend today (UTC) at token list price, of the forge ceiling"');
-    expect(out).toContain(">of the forge ceiling<");
-  });
-
-  test("a small spend shows cents, not $0", () => {
-    expect(row({ todayUsd: 0.4, ceilingUsd: 40 })).toContain('>$0.40 of $40<');
-  });
-
-  test("without a ceiling it shows the spend alone and says no ceiling", () => {
-    const out = row({ todayUsd: 12.34, ceilingUsd: null });
-    expect(out).toContain('title="$12.34">$12<');
-    expect(out).toContain(">no forge ceiling<");
-    expect(out).not.toContain(" of $");
-  });
-});
 
 describe("the spend figure from the database", () => {
   test("only today's agent runs count, not yesterday's", async () => {
@@ -203,66 +110,8 @@ describe("the spend figure from the database", () => {
   });
 });
 
-describe("home kpi row: the last off-box backup", () => {
-  const NOW = new Date("2026-10-20T12:00:00.000Z");
-  const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000).toISOString();
-  const row = (backupAt: string | null) =>
-    kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt, reach: NO_REACH, builders: { running: 0, slots: 0, idle: null }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: null }, null, NOW).toString();
-  const tile = (out: string) => /<a class="stat"[^>]*href="\/settings\/backups"[^>]*>/.exec(out)![0];
-
-  test("a backup 2 h old reads its age, with the exact time, and is not flagged", () => {
-    const out = row(hoursAgo(2));
-    expect(out).toContain("2 h ago");
-    expect(out).toContain(`title="${hoursAgo(2)}"`);
-    expect(tile(out)).not.toContain("data-tone");
-    expect(tile(out)).not.toContain("Overdue");
-  });
-
-  test("a backup 25 h old is flagged and its label says overdue", () => {
-    const t = tile(row(hoursAgo(25)));
-    expect(t).toContain('data-tone="attn"');
-    expect(t).toContain("Overdue");
-  });
-
-  test("no backup at all reads never and is flagged", () => {
-    const out = row(null);
-    expect(out).toContain(">never<");
-    expect(tile(out)).toContain('data-tone="attn"');
-    expect(tile(out)).toContain("Overdue");
-  });
-
-  test("readKpis reads the mirror's newest time from the data directory", async () => {
-    const { mkdtempSync } = await import("node:fs");
-    const { join } = await import("node:path");
-    const { tmpdir } = await import("node:os");
-    const { Database } = await import("bun:sqlite");
-    const { recordMirror } = await import("../src/snapshot/mirror.ts");
-    const { readKpis } = await import("../src/flow/kpis.ts");
-    const dir = mkdtempSync(join(tmpdir(), "kpi-backup-"));
-    const db = new Database(":memory:");
-    db.run("CREATE TABLE repo (autonomy TEXT, autonomy_slots INTEGER, default_branch TEXT, id TEXT)");
-    db.run("CREATE TABLE run (id TEXT, kind TEXT, state TEXT, started_at TEXT, finished_at TEXT, serving_at TEXT, env TEXT, commit_oid TEXT, cost_usd REAL, created_at TEXT)");
-    db.run("CREATE TABLE pull (carried INTEGER NOT NULL DEFAULT 0, merged_at TEXT, merged_oid TEXT, base_oid TEXT, base_branch TEXT, issue_id TEXT)");
-    db.run("CREATE TABLE issue (id TEXT, repo_id TEXT, kind TEXT, state TEXT, created_at TEXT)");
-    bugTables(db);
-    reachTables(db);
-    expect(readKpis(db, NOW, { ceilingUsd: null, dataDir: dir }).backupAt).toBeNull();
-    recordMirror(dir, { where: "b2", attemptAt: hoursAgo(1), reachable: true, newest: "s1", newestAt: hoursAgo(3) });
-    expect(readKpis(db, NOW, { ceilingUsd: null, dataDir: dir }).backupAt).toBe(hoursAgo(3));
-  });
-});
 
 describe("the reach tiles", () => {
-  test("say what they count in words, each linking to the reach board", () => {
-    const reach = { usersToday: 3, usersTotal: 12, visitorsToday: 5, visitors7d: 31, visitorDays: new Array<number>(30).fill(0), loadP75: 1250, inpP75: 180, lcpP75: 2400 };
-    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach, medianCheckMs: null, builders: { running: 0, slots: 0, idle: null }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
-    for (const v of ["1.3 s", "LCP 2.4 s · INP 180 ms"]) expect(out).toContain(`>${v}<`);
-    // Reporting browsers and Accounts feed no decision: only the page speed stays (#10440).
-    for (const gone of ["Reporting browsers", "Accounts", "Traffic"]) expect(out).not.toContain(gone);
-    expect((out.match(/class="stat" href="\/boards\/reach"/g) ?? []).length).toBe(1);
-    // #10738 asks for LCP and INP by name on the speed tile; the p75 jargon stays out of the row.
-    expect(out).not.toContain("p75");
-  });
 
   test("the terminal draws the 30 days as one block per day", () => {
     const days = Array.from({ length: 30 }, (_, i) => (i === 29 ? 8 : 0));
@@ -348,11 +197,11 @@ describe("home waiting line", () => {
   test("words: absent at zero, count and oldest hours otherwise", () => {
     const now = new Date("2026-10-21T12:00:00.000Z");
     expect(waitingWords(0, null, now)).toBeNull();
-    expect(waitingWords(3, "2026-10-19T10:00:00.000Z", now)).toBe("3 waiting on you, oldest 50 h");
-    expect(waitingWords(1, "2026-10-21T11:40:00.000Z", now)).toBe("1 waiting on you, oldest under 1 h");
+    expect(waitingWords(3, "2026-10-19T10:00:00.000Z", now)).toBe("3 waiting on you, oldest 2 days");
+    expect(waitingWords(1, "2026-10-21T11:40:00.000Z", now)).toBe("1 waiting on you, oldest 20 minutes");
   });
 
-  async function homeWith(stale: number[], title?: string): Promise<string> {
+  async function homeWith(stale: number[], title?: string, path = "/feed"): Promise<string> {
     const root = mkdtempSync(join(tmpdir(), "forge-home-wait-"));
     const app = createApp({ dataDir: root, port: 0 });
     const servers = await serve(app);
@@ -380,7 +229,7 @@ describe("home waiting line", () => {
       const cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0]!;
       const review = await (await fetch(`${servers.url}/review`, { headers: { cookie } })).text();
       expect(review.split("<li").filter((r) => r.includes('class="row"')).length).toBe(stale.length);
-      return await (await fetch(`${servers.url}/feed`, { headers: { cookie } })).text();
+      return await (await fetch(`${servers.url}${path}`, { headers: { cookie } })).text();
     } finally {
       await servers.stop();
       app.close();
@@ -390,7 +239,14 @@ describe("home waiting line", () => {
 
   test("three asks show one line linking to /review", async () => {
     const body = await homeWith([30, 40, 50]);
-    expect(body).toMatch(/<p class="small muted break stack stack-tight"><span>3 waiting on you, oldest 5\d h<\/span><a href="\/review">Review them<\/a><\/p>/);
+    expect(body).toMatch(/<p class="small muted break stack stack-tight"><span>3 waiting on you, oldest 2 days<\/span><a href="\/review">Review them<\/a><\/p>/);
+  }, 30_000);
+
+  test("the home says it once, as the one line that needs the owner: the real count, the oldest in days, linking to /review", async () => {
+    const body = await homeWith([30, 40, 50], undefined, "/");
+    expect(body).toMatch(/<p class="hf-need"[^>]*role="status">[\s\S]*?<a href="\/review">3 waiting on you, oldest 2 days<\/a>/);
+    expect(body).not.toContain(" h</a>");
+    expect(body).not.toContain("Review them");
   }, 30_000);
 
   test("a 120-character title with no spaces: the line breaks, the link below, the title stays off home", async () => {
@@ -411,18 +267,8 @@ describe("home waiting line", () => {
 
 describe("the forge ceiling hit (#5798)", () => {
   const base = { landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: NO_REACH, medianCheckMs: null, builders: { running: 0, slots: 0, idle: null } };
-  const over = { todayUsd: 601, ceilingUsd: 600, hitAt: "2026-10-25T14:03:20.000Z" };
-
-  test("past the cap the tile is attention-toned and names the time; the terminal says the same words", () => {
-    const out = kpiRowFor({ ...base, spend: over }, null).toString();
-    expect(out).toContain("ceiling hit 14:03Z, builders idle");
-    expect(out).toContain("attn");
-    expect(kpiLines({ ...base, spend: over }, null)[4]).toBe("Crew spend today $601 of $600, ceiling hit 14:03Z, builders idle");
-  });
 
   test("under the cap there is no hit; with no cap both doors say no forge ceiling", () => {
-    expect(kpiRowFor({ ...base, spend: { todayUsd: 5, ceilingUsd: 600, hitAt: null } }, null).toString()).not.toContain("ceiling hit");
-    expect(kpiRowFor({ ...base, spend: { todayUsd: 5, ceilingUsd: null } }, null).toString()).toContain("no forge ceiling");
     expect(kpiLines({ ...base, spend: { todayUsd: 5, ceilingUsd: null } }, null)[4]).toContain("no forge ceiling");
   });
 
