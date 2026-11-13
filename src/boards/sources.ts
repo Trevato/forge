@@ -202,15 +202,16 @@ export const SOURCES: Readonly<Record<string, Source>> = {
       value: "bytes received (or CPU-seconds, or share of installs that hit the cache) in the hour up to the reading",
     },
   },
-  // What the machine used (`boards/sampler.ts`, kept by `boards/ring.ts`):
-  // 15-s points for the last day, 5-min points before that, never both
-  // for one moment.
+  // What the machine used (`boards/sampler.ts`, kept by `system/retention_samples.ts`):
+  // 15-s points for the last 48 h, 5-min points before that, hourly points
+  // past 30 days, never two for one moment.
   machine: {
     table: "machine_sample",
     owner: "admin",
     where:
-      "(step = 15 OR at <= COALESCE((SELECT strftime('%Y-%m-%dT%H:%M:%fZ', MIN(at), '-300 seconds') " +
-      "FROM machine_sample WHERE step = 15), '9999'))",
+      "(step = 15 OR (step = 300 AND at <= COALESCE((SELECT strftime('%Y-%m-%dT%H:%M:%fZ', MIN(at), '-300 seconds') " +
+      "FROM machine_sample WHERE step = 15), '9999')) OR (step = 3600 AND at <= COALESCE((SELECT " +
+      "strftime('%Y-%m-%dT%H:%M:%fZ', MIN(at), '-3600 seconds') FROM machine_sample WHERE step = 300), '9999')))",
     time: "at",
     columns: {
       target: "text", at: "time", step: "number",
@@ -223,8 +224,8 @@ export const SOURCES: Readonly<Record<string, Source>> = {
       target:
         "forge (the pod), check:<run id>, app:<slug>/<env>, node, cpu:<nnn> (one logical CPU, zero-padded), " +
         "package:<id> or sensor:<chip>/<label> (a thermometer)",
-      at: "when the point was read (15 s) or its window began (5 min), UTC",
-      step: "seconds the point covers: 15, or 300 for a 5-min roll-up",
+      at: "when the point was read (15 s) or its window began (5 min, 1 h), UTC",
+      step: "seconds the point covers: 15, 300 for a 5-min roll-up, or 3600 for an hourly one",
       cpu_cores: "cores in use, mean over the step (CPU seconds per second); at most 1 for a cpu:<nnn>",
       cpu_cores_max: "cores, the highest 15-s point in the step",
       memory_bytes: "bytes resident, mean over the step",

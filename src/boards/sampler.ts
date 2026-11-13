@@ -31,6 +31,7 @@ import { readHwmon, readTopology, temperatures } from "./thermal.ts";
 import { during } from "../perf/jobs.ts";
 import { withoutWaiting } from "../kernel/db.ts";
 import { pruneEvents, TICK_ROWS } from "../system/retention_events.ts";
+import { drainSamples } from "../system/retention_samples.ts";
 
 export type Paths = { cgroup: string; proc: string; sys: string };
 export const SYSTEM: Paths = { cgroup: "/sys/fs/cgroup", proc: "/proc", sys: "/sys" };
@@ -161,6 +162,7 @@ export function startSampler(
   const cells = options.cells ?? cellCounters;
   const lag = options.lag ?? startLoopLag();
   let prev: Counters | undefined;
+  let pruning = false;
   const missing = gaps(paths);
   if (missing.length > 0) app.log.info("machine series unreadable here", { gaps: missing.join("; ") });
   const tick = (now = Date.now()) => {
@@ -178,6 +180,12 @@ export function startSampler(
     } catch (error) {
       app.log.warn("event prune failed", { error: String(error) });
     }
+    // What has left its window goes a bounded batch at a time (#12007); one drain at once.
+    if (pruning) return;
+    pruning = true;
+    void drainSamples(app.db, () => now)
+      .catch((error) => app.log.warn("machine sample prune failed", { error: String(error) }))
+      .finally(() => { pruning = false; });
   };
   during("sampler", tick);
   const timer = setInterval(() => during("sampler", tick), options.everyMs ?? FINE_MS);

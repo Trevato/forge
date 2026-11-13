@@ -163,6 +163,7 @@ const REBUILT: Record<string, string> = {
   "20261104100000-conversation-run-stopped-state": "conversation_run widens its state CHECK to admit stopped (#8972); same columns, same rows, the stopped column kept",
   "20261114000000-estimate-done": "issue_estimate widens its event CHECK to admit done (#11955); same columns, same rows, the indexes made again; the release before never writes or reads a done row",
   "20261110170000-fork-follow-dont-follow": "fork_follow widens its mode CHECK to admit dont-follow (#608); same columns, same rows; the release before reads dont-follow as not take-updates",
+  "20261114010000-machine-sample-hourly": "machine_sample widens its step CHECK to admit 3600 (#12007); same columns, same rows; the release before reads by step 15 or 300 and deletes past 30 days what an hourly row would hold",
 };
 
 const src = join(import.meta.dir, "../src");
