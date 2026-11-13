@@ -151,7 +151,7 @@ function reservedCount(parent: App, now = Date.now()): number {
   return n;
 }
 
-const isAwakeBody = (parent: App, bodyId: string): boolean =>
+export const isAwakeBody = (parent: App, bodyId: string): boolean =>
   caches.get(parent)?.has(bodyId) === true || cellChildren(parent).get(bodyId) !== undefined;
 
 /** Requests being answered now, by body id: a forge answering one does not sleep under it. */

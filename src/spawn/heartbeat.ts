@@ -370,10 +370,11 @@ export async function childStandings(
   now = Date.now(),
 ): Promise<{ items: ChildStanding[]; more: number }> {
   const all = await listChildren(app);
-  const items: ChildStanding[] = [];
-  for (const c of all.slice(0, MAX_CHILDREN)) {
-    const heard = await lastHeard(app, c.name);
-    items.push({
+  const listed = all.slice(0, MAX_CHILDREN);
+  const heards = await Promise.all(listed.map((c) => lastHeard(app, c.name)));
+  const items: ChildStanding[] = listed.map((c, i) => {
+    const heard = heards[i];
+    return {
       name: c.name,
       url: c.url,
       state: heard === undefined ? "unheard" : now - heard.receivedAt > QUIET_MS ? "quiet" : "reporting",
@@ -389,8 +390,8 @@ export async function childStandings(
       conflict: heard?.beat.conflict ?? false,
       spendTodayUsd: heard?.beat.spendTodayUsd ?? null,
       ceilingUsd: heard?.beat.ceilingUsd ?? null,
-    });
-  }
+    };
+  });
   return { items, more: Math.max(0, all.length - MAX_CHILDREN) };
 }
 

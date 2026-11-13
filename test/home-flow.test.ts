@@ -14,7 +14,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { laneHealth, lanePicture, LANES, readLanesInline, viewFor, type LaneItem, type LaneKey, type LaneView } from "../src/flow/lanes.ts";
+import { laneHealth, lanePicture, LANES, warmLanes, readLanesInline, viewFor, type LaneItem, type LaneKey, type LanePicture, type LaneView } from "../src/flow/lanes.ts";
 import type { LaneAnswer, LaneJob } from "../src/flow/lanes_worker.ts";
 import { promote } from "./helpers/members.ts";
 import { seedHomeFlow, startCheck, type HomeFlowSeed } from "./helpers/home-flow-seed.ts";
@@ -189,21 +189,26 @@ describe("a lane says its health in words", () => {
 
 describe("the picture is read off the thread, once per write", () => {
   const options = () => ({ dataDir, ceilingUsd: null });
+  const read = async (): Promise<LanePicture> => {
+    const got = await lanePicture(app.db, options());
+    if (got === undefined) throw new Error("no picture");
+    return got;
+  };
 
   test("two readers share it until something is written", async () => {
-    const a = await lanePicture(app.db, options());
-    expect(await lanePicture(app.db, options())).toBe(a);
+    const a = await read();
+    expect(await read()).toBe(a);
     app.db.run("UPDATE issue SET title = title WHERE id = ?1", [Object.values(seed.issues)[0]!]);
-    expect(await lanePicture(app.db, options())).not.toBe(a);
+    expect(await read()).not.toBe(a);
   });
 
   test("a lane's version moves with what the lane shows and with nothing else", async () => {
-    const a = await lanePicture(app.db, options());
+    const a = await read();
     app.db.run("UPDATE issue SET title = title WHERE id = ?1", [Object.values(seed.issues)[0]!]);
-    const b = await lanePicture(app.db, options());
+    const b = await read();
     expect(b.versions).toEqual(a.versions);
     startCheck(app, seed.pulls["r2"]!, seed.repos.notes.id);
-    const c = await lanePicture(app.db, options());
+    const c = await read();
     expect(c.versions.checks).not.toBe(b.versions.checks);
     expect(c.versions.live).toBe(b.versions.live);
   });
@@ -228,14 +233,14 @@ describe("the picture is read off the thread, once per write", () => {
   });
 
   test("the asked lane lists the next asks in the crew's own order and counts the rest", async () => {
-    const picture = await lanePicture(app.db, options());
+    const picture = await read();
     expect(picture.lanes.asked.total).toBeGreaterThanOrEqual(4);
     // an ask with a build in flight has left the lane
     expect(picture.lanes.asked.items.map((i) => i.title)).not.toContain("A cost ledger per delivery: tokens, compute and time");
   });
 
   test("a private repository's work is filtered by the viewer, never by the page", async () => {
-    const picture = await lanePicture(app.db, options());
+    const picture = await read();
     const asBob = viewFor(app.db, { ...seed.owner, id: "x", isAdmin: false } as typeof seed.owner, picture);
     expect(asBob.repos).not.toContain("trevato/glue");
   });
@@ -257,5 +262,61 @@ describe("nothing on the new home polls", () => {
     const style = readFileSync(join(import.meta.dir, "..", "src/web/pages/home_flow_style.ts"), "utf8");
     expect(client).toContain("prefers-reduced-motion");
     expect(style).toContain("prefers-reduced-motion");
+  });
+});
+
+describe("before the first reading, a page never reads on the thread", () => {
+  test("it draws reading… at once, the worker fills the lanes, and the next page has them", async () => {
+    const root = await mkdtemp(join(tmpdir(), "forge-home-first-"));
+    const fresh = createApp({ dataDir: root, port: 0 });
+    const was = process.env["NODE_ENV"];
+    try {
+      const s = await seedHomeFlow(fresh);
+      const srv = await serve(fresh);
+      const cookie = `forge_session=${createSession(fresh.db, s.owner.id).token}`;
+      // outside `bun test`: the worker reads, a page does not wait for it
+      process.env["NODE_ENV"] = "production";
+      const first = await fetch(`${srv.url}/home`, { headers: { cookie } });
+      const html = await first.text();
+      expect(html).toContain("data-reading");
+      expect(html).toContain("Reading what the forge is doing");
+      expect(html).toContain("Reading today's figures");
+      expect(html).toContain("Reading the hosted forges");
+      for (const lane of LANES) expect(html).toContain(`id="lane-${lane}"`);
+      expect(html).not.toContain("A cost ledger per delivery");
+      // its script fills each region from the region's own address: the lane waits for the worker, off the thread
+      const lane = await (await fetch(`${srv.url}/live/lane?s=building`, { headers: { cookie } })).text();
+      expect(lane).toContain("A cost ledger per delivery");
+      expect(lane).not.toContain("data-reading");
+      const forges = await (await fetch(`${srv.url}/live/forges`, { headers: { cookie } })).text();
+      expect(forges).toContain("hosted forge");
+      const next = await (await fetch(`${srv.url}/home`, { headers: { cookie } })).text();
+      expect(next).not.toContain("data-reading");
+      expect(next).toContain("A cost ledger per delivery");
+      srv.stop();
+    } finally {
+      process.env["NODE_ENV"] = was ?? "test";
+      fresh.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the forge starts the reading when it is listening, and a database with no file reads inline", async () => {
+    const root = await mkdtemp(join(tmpdir(), "forge-home-warm-"));
+    const fresh = createApp({ dataDir: root, port: 0 });
+    const was = process.env["NODE_ENV"];
+    try {
+      await seedHomeFlow(fresh);
+      process.env["NODE_ENV"] = "production";
+      expect(await lanePicture(fresh.db, { dataDir: root, ceilingUsd: null }, "page")).toBeUndefined();
+      warmLanes(fresh.db, { dataDir: root, ceilingUsd: null }, Date.now());
+      const read = await lanePicture(fresh.db, { dataDir: root, ceilingUsd: null }, "lane");
+      expect(read?.lanes.building.total).toBe(4);
+      expect(await lanePicture(fresh.db, { dataDir: root, ceilingUsd: null }, "page")).toBe(read);
+    } finally {
+      process.env["NODE_ENV"] = was ?? "test";
+      fresh.close();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

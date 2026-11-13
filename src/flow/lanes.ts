@@ -228,19 +228,30 @@ function refresh(
   return p;
 }
 
+/** Start reading the picture now, so the first page finds it: the forge calls this once it is listening (never `bun test`, where reads are inline). */
+export function warmLanes(db: Database, options: PictureOptions, now: number): void {
+  if (!offThread(db)) return;
+  let state = states.get(db);
+  if (state === undefined) states.set(db, (state = {}));
+  if (state.picture === undefined) void refresh(db, options, state, now);
+}
+
 /**
  * The lanes' picture, for a page (`"page"`: drawn from the last reading when
  * it is under ten seconds old) or for a lane that redraws after an event
  * (`"lane"`: the reading after the write, awaited from the worker, never read
  * by this thread). Nothing written since the last reading is a plain memory
- * read.
+ * read. Before the first reading exists a page gets nothing (`undefined`) and
+ * the worker is started; a lane waits for the worker. Outside `bun test` no
+ * request ever reads the picture on this thread: when the worker cannot
+ * answer the caller draws "reading…" and asks again.
  */
 export async function lanePicture(
   db: Database,
   options: PictureOptions,
   mode: "page" | "lane" = "lane",
   now = Date.now(),
-): Promise<LanePicture> {
+): Promise<LanePicture | undefined> {
   let state = states.get(db);
   if (state === undefined) states.set(db, (state = {}));
   const have = state.picture;
@@ -252,10 +263,14 @@ export async function lanePicture(
     now - have.at < MAX_AGE_MS
   )
     return have;
-  if (have === undefined)
-    return (
-      (await refresh(db, options, state, now)) ?? readLanesInline(db, options, now)
-    );
+  if (have === undefined) {
+    // A page never waits for the first reading: it draws "reading…", and the worker's answer fills it.
+    if (mode === "page" && offThread(db)) {
+      void refresh(db, options, state, now);
+      return undefined;
+    }
+    return refresh(db, options, state, now);
+  }
   const age = now - have.at;
   if (mode === "page" && age < PAGE_STALE_MS) {
     if (age >= MIN_GAP_MS) void refresh(db, options, state, now);
