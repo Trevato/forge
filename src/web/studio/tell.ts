@@ -1,3 +1,4 @@
+import type { Database } from "bun:sqlite";
 /**
  * One tell in the studio: a tell is one sentence someone said, and the page
  * answers three questions — who has it, what it is waiting on, and what the
@@ -50,6 +51,8 @@ import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, repoBase, repoHeader, repoPalette } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
+import { currentOf, estimatesOf } from "../../core/estimates.ts";
+import { estimateLine } from "../../flow/estimate_words.ts";
 import { noteLine } from "./note.ts";
 import { threadLine } from "../describe.ts";
 import { page } from "../layout.ts";
@@ -522,6 +525,7 @@ async function studioTell(
           badge("Sealed security report", { tone: "danger", icon: "lock" }),
       )}
       ${workSpent(ctx, repo, issue.id)}
+      ${promiseLine(db, issue)}
       ${!direction && issue.state === "open" && canWrite(db, repo, user)
         ? flowButton(
             `${thread}/flow`,
@@ -686,4 +690,14 @@ function sealCard(ctx: Ctx, repo: Repo, issue: Issue, action: string): Html | nu
       { variant: issue.sealed ? "danger" : "ghost", icon: "lock" },
     )}
   </form>`;
+}
+
+/**
+ * The promise on an issue, in one line: "live by Fri 07:15 (90%: Fri 11:00) · steward · history
+ * says Fri 09:40" (#11955).
+ */
+function promiseLine(db: Database, issue: Issue): Html | null {
+  if (!issue.estimated) return null;
+  const words = estimateLine(currentOf(estimatesOf(db, issue.id)), Date.now());
+  return words === undefined ? null : html`<span class="estimate" id="estimate-line">${words}</span>`;
 }

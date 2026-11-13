@@ -329,6 +329,7 @@ describe("the forge over MCP", () => {
       "feed_chips",
       "feed_dismiss",
       "feed_like",
+      "find_tool",
       "maintenance",
       "make_it_yours",
       "origin_apps",
@@ -381,6 +382,7 @@ describe("the forge over MCP", () => {
       "ssh_keys",
       "steer",
       "email_verify",
+      "estimate",
       "parent_unlink",
       "vision",
       "boards",
@@ -1299,6 +1301,7 @@ describe("the forge over MCP", () => {
       "ui://forge/explore",
       "ui://forge/feed",
       "ui://forge/flow",
+    "ui://forge/forge",
       "ui://forge/forges",
       "ui://forge/forks",
       "ui://forge/health",
@@ -1436,7 +1439,8 @@ describe("the forge over MCP", () => {
     const card = cardFor("issue", answer, "https://forge.test", { repo: "alice/game" })!;
     expect(card.kind).toBe("issue");
     expect(card.status).toBe("open");
-    expect(card.rows[0]).toEqual({ label: "#7", value: "<b>Fix</b>", link: "https://forge.test/alice/game/issues/7" });
+    expect(card.title).toBe("#7 <b>Fix</b>");
+    expect(card.rows[0]).toEqual({ label: "On the forge", value: "alice/game #7", link: "https://forge.test/alice/game/issues/7" });
     expect(card.rows.find((r) => r.label === "Assignee")!.value).toBe("scout");
     expect(card.rows.find((r) => r.label === "Labels")!.value).toBe("bug");
     expect(card.rows.find((r) => r.label === "Waits for")!.link).toBe("https://forge.test/alice/game/issues/3");

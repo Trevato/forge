@@ -23,6 +23,7 @@ import { reachOf, reachWords, type ChildReach } from "./reach.ts";
 import type { Size } from "./sizes.ts";
 import { firstScreenLine } from "../core/next-steps.ts";
 import { lapseFor } from "../billing/lapse.ts";
+import { lastStop, stopSentence } from "./stopped.ts";
 import { forgeUse, type ForgeUse } from "./usage.ts";
 
 /** What a spawned forge says about itself to anyone: nothing more. */
@@ -46,6 +47,8 @@ export interface ClientRow {
   readonly lastActivityAt: string | null;
   /** Whether its process is running now; a sleeping forge costs nothing and wakes on its next request. */
   readonly awake?: boolean;
+  /** Why the host stopped it, while that explains its state (spawn/stopped.ts); a sentence. */
+  readonly stopped?: string | null;
   /** The apps this parent runs for the child; null when it runs none here. */
   readonly running: ChildAppsSummary | null;
   /** What a visitor got from its public addresses when last asked (`spawn/reach.ts`); null before it was. */
@@ -243,6 +246,7 @@ export async function clientRows(app: App): Promise<ClientRow[]> {
       claimed: states[i]?.claimed ?? null,
       lastActivityAt: states[i]?.lastActivityAt ?? null,
       awake: childAwake(app, c.name),
+      stopped: stoppedWords(app, c),
       running: hostedChildApps(app, c.name) ?? null,
       reach: reachOf(app, c.name) ?? null,
       spendTodayUsd: beats[i]?.beat.spendTodayUsd ?? null,
@@ -412,4 +416,11 @@ function graceView(app: App, forge: string, now: number): { graceUntil?: number 
   } catch {
     return {};
   }
+}
+
+/** The stop sentence for a forge that is asleep because the host stopped it. */
+function stoppedWords(app: App, c: { bodyId: string; name: string }): string | null {
+  if (childAwake(app, c.name)) return null;
+  const stop = lastStop(app, c.bodyId);
+  return stop === undefined ? null : stopSentence(stop);
 }

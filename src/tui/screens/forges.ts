@@ -26,7 +26,7 @@ export function forgeLines(rows: readonly ClientRow[]): [string, string][] {
   if (rows.length === 0) return [["", "You have not sent a forge yet"]];
   return rows.flatMap((r): [string, string][] => [[
     r.name,
-    [r.made ? (r.awake === true ? "awake" : "asleep") : null, r.attention === null ? null : ATTENTION_WORDS[r.attention], r.for === null ? null : `for ${r.for}`, CLAIM_WORDS[claimState(r)], linkWords(r.link), runningWords(r), r.stage?.words ?? null, r.nextStep.words, spendWords(r)?.words ?? null, creditWords(r), graceWords(r), useLine(r.size, r.use), r.made ? diskWords(r.disk) : null, r.lastHeartbeatAt === null ? "no heartbeat yet" : `heartbeat ${timeAgo(r.lastHeartbeatAt)}`]
+    [r.made ? (r.awake === true ? "awake" : "asleep") : null, r.stopped ?? null, r.attention === null ? null : ATTENTION_WORDS[r.attention], r.for === null ? null : `for ${r.for}`, CLAIM_WORDS[claimState(r)], linkWords(r.link), runningWords(r), r.stage?.words ?? null, r.nextStep.words, spendWords(r)?.words ?? null, creditWords(r), graceWords(r), useLine(r.size, r.use), r.made ? diskWords(r.disk) : null, r.lastHeartbeatAt === null ? "no heartbeat yet" : `heartbeat ${timeAgo(r.lastHeartbeatAt)}`]
       .filter((m): m is string => m !== null)
       .join(" · "),
   ], ...firstScreenLines(r), ...addressLines(r)]);

@@ -7,6 +7,8 @@
  * beside each action (`j`/`k` choose the row), which post the same form.
  */
 import { placeOf, rankIssue, rankedWords, stepTo, type Place } from "../../actions/next.ts";
+import { currentByNumber } from "../../core/estimates.ts";
+import { estimateLine } from "../../flow/estimate_words.ts";
 import { nextUp, TOP, type NextRow } from "../../core/next_up.ts";
 import { openPullStages } from "../../flow/read.ts";
 import { stateWord, type StateFacts } from "./next_state.ts";
@@ -157,6 +159,7 @@ function line(
   position: number | null = null,
   state: string | null = null,
   mine = false,
+  promise: string | undefined = undefined,
 ): Html {
   const r = rows[at]!;
   const n = r.issue.number;
@@ -175,7 +178,7 @@ function line(
     title: r.issue.title,
     titleAttr: r.issue.title,
     lead: html`${position === null ? "·" : String(position)}`,
-    meta: html`${mine ? html`<span class="mine">Owner's pick</span> · ` : null}${r.role === "blocker" ? "Blocker" : "Enabler"} · #${n}${state === null ? "" : ` · ${state} · ${r.onIt ?? "next"}`} · ${r.roleWhy}${away ? null : html` · <span class="estimate">${rangeWords(priced.find((p) => p.number === n)?.estimate ?? { known: false, samples: 0, basis: "no estimate" })}</span>`}${state !== null || r.onIt === null ? "" : ` · on it: ${r.onIt}`}${r.why === null ? "" : ` · ${r.why}`}`,
+    meta: html`${mine ? html`<span class="mine">Owner's pick</span> · ` : null}${r.role === "blocker" ? "Blocker" : "Enabler"} · #${n}${state === null ? "" : ` · ${state} · ${r.onIt ?? "next"}`} · ${r.roleWhy}${away ? null : html` · <span class="estimate">${rangeWords(priced.find((p) => p.number === n)?.estimate ?? { known: false, samples: 0, basis: "no estimate" })}</span>`}${state !== null || r.onIt === null ? "" : ` · on it: ${r.onIt}`}${r.why === null ? "" : ` · ${r.why}`}${promise === undefined ? "" : ` · ${promise}`}`,
     nav: true,
     data: { number: String(n), ...(cost === undefined ? {} : { cost: String(cost) }) },
     ...(controls === null ? {} : { after: controls }),
@@ -209,6 +212,9 @@ export function nextPage(ctx: Ctx): Response {
   const { priced, cut, capacity, sentence } = weekView(ctx.app.db, repo.id, rows, new Date());
   const costs = rowCosts(priced);
   const stages = openPullStages(ctx.app.db, repo, scope, new Date(), new Set(rows.map((r) => r.issue.number)));
+  const promised = currentByNumber(ctx.app.db, repo.id, rows.filter((r) => r.issue.estimated).map((r) => r.issue.number));
+  const nowMs = Date.now();
+  const promise = (r: NextRow): string | undefined => estimateLine(promised.get(r.issue.number) ?? [], nowMs);
   const facts = (r: NextRow): StateFacts => ({ stage: stages.get(r.issue.number) ?? "issue", waits: r.waits, held: r.state === "held", onIt: r.onIt !== null });
   // One numbered order, folded: the first TOP rows open, what comes after, then Later.
   // A filter hides rows but keeps each one's place in the whole ranking.
@@ -220,7 +226,7 @@ export function nextPage(ctx: Ctx): Response {
       <ul class="list setting-list"${id === undefined ? null : html` id="${id}"`}${id !== undefined && !isFiltered && costs !== null && capacity !== null && cut.unsure === null ? html` data-capacity="${String(capacity.usd)}"` : null}>
         ${list.flatMap((at, i) => [
           ...(i === mark && cut.unsure === null && id !== undefined ? [cutMark(cut, false)] : []),
-          line(base, rows, at, writer, back, false, priced, costs?.[at], at + 1, stateWord(rows[at]!, facts(rows[at]!)), rows[at]!.byOwner),
+          line(base, rows, at, writer, back, false, priced, costs?.[at], at + 1, stateWord(rows[at]!, facts(rows[at]!)), rows[at]!.byOwner, promise(rows[at]!)),
         ])}
       </ul></details>`;
   };

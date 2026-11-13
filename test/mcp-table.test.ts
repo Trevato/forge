@@ -71,7 +71,7 @@ test("the bytes are those of an admin's real tools/list response", async () => {
       const res = await fetch(`${servers.url}/mcp`, {
         method: "POST",
         headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}` },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: cursor === undefined ? {} : { cursor } }),
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: cursor === undefined ? { all: true } : { all: true, cursor } }),
       });
       const body = (await res.json()) as any;
       served.push(...body.result.tools);

@@ -56,11 +56,11 @@ test("the hosting line says the crew starts on the included credit only when the
   const id = app.db.query<{ id: string }, []>("SELECT id FROM user LIMIT 1").get()!.id;
   setLimit(app.db, "spawn.included_credit_usd", 3, id);
   expect(await say()).toBe(
-    "Free within limits: it sleeps when idle, and its crew starts on the included $3 of credit, and you can add your AI account key later.",
+    "Free within limits: it sleeps when idle. The crew builds on the included $3 of credit; add your own AI account key to keep going.",
   );
   setLimit(app.db, "spawn.included_credit_usd", 0, id);
   expect(await say()).toBe(
-    "Free within limits: it sleeps when idle, and its crew starts once you add your AI account.",
+    "Free within limits: it sleeps when idle. The crew starts once you add your AI account key.",
   );
 });
 

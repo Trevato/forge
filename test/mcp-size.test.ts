@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
+import { FIND_MAX, matching, WORDS_MAX } from "../src/http/mcp/catalog.ts";
 import { costliestTools } from "./mcp-size-rank.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
@@ -45,6 +46,7 @@ let dataDir: string;
 let app: App;
 let servers: Servers;
 let token: string;
+let aliceId: string;
 
 beforeAll(async () => {
   dataDir = await mkdtemp(join(tmpdir(), "forge-mcp-size-"));
@@ -60,6 +62,7 @@ beforeAll(async () => {
     adminIfFirst: true,
   });
   if (!made.ok) throw new Error(made.error);
+  aliceId = made.value.id;
   token = createToken(app.db, made.value.id, "rw", "rw").token;
 }, 30_000);
 
@@ -69,7 +72,7 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-async function page(cursor?: unknown): Promise<{ text: string; json: any }> {
+async function page(cursor?: unknown, all = true): Promise<{ text: string; json: any }> {
   const res = await fetch(`${servers.url}/mcp`, {
     method: "POST",
     headers: {
@@ -81,7 +84,7 @@ async function page(cursor?: unknown): Promise<{ text: string; json: any }> {
       jsonrpc: "2.0",
       id: 1,
       method: "tools/list",
-      ...(cursor === undefined ? {} : { params: { cursor } }),
+      params: { ...(all ? { all: true } : {}), ...(cursor === undefined ? {} : { cursor }) },
     }),
   });
   const text = await res.text();
@@ -187,4 +190,113 @@ test("a cursor that names no tool is an invalid-params error", async () => {
     expect(json.error.code).toBe(-32602);
     expect(json.result).toBeUndefined();
   }
+});
+
+const DEFAULT_CEILING = 6_000;
+
+test(`a fresh connection's tools/list is under ${DEFAULT_CEILING} bytes and names find_tool`, async () => {
+  const { text, json } = await page(undefined, false);
+  const names = json.result.tools.map((t: any) => t.name);
+  expect(names).toContain("find_tool");
+  expect(names).toContain("tell");
+  // Repo work is git's: a session that manages a forge never loads a file tool.
+  expect(names).not.toContain("read_file");
+  expect(names).not.toContain("write_file");
+  expect(names).toContain("report");
+  expect(json.result.nextCursor).toBeUndefined();
+  expect(names.length).toBeLessThanOrEqual(14);
+  expect(Buffer.byteLength(text), `the five costliest tools: ${costliestTools(json.result.tools)}`).toBeLessThanOrEqual(
+    DEFAULT_CEILING,
+  );
+});
+
+test("find_tool finds an unlisted tool, whose schema comes back and which is callable", async () => {
+  const call = async (name: string, args: unknown) =>
+    (await (
+      await fetch(`${servers.url}/mcp`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
+      })
+    ).json()) as any;
+  const listed = (await page(undefined, false)).json.result.tools.map((t: any) => t.name);
+  const found = JSON.parse((await call("find_tool", { query: "backups" })).result.content[0].text);
+  expect(found.tools.length).toBeGreaterThan(0);
+  const files = JSON.parse((await call("find_tool", { query: "file" })).result.content[0].text);
+  expect(files.tools.map((t: any) => t.name)).toContain("read_file");
+  const hit = found.tools.find((t: any) => !listed.includes(t.name));
+  expect(hit).toBeDefined();
+  expect(hit.inputSchema.type).toBe("object");
+  expect(typeof hit.description).toBe("string");
+  // Not listed, yet called by name at once.
+  expect((await call(hit.name, {})).error?.message ?? "").not.toContain("no tool named");
+  expect((await call("find_tool", { query: "  " })).result.isError).toBe(true);
+});
+
+const entry = (name: string, description: string) => ({ name, description, inputSchema: {} });
+
+test("matching: every word must hit, a name outranks a description, FIND_MAX cuts", () => {
+  const es = [
+    entry("alpha_tool", "does beta things"),
+    entry("beta_tool", "does alpha things"),
+    entry("gamma", "alpha and beta both"),
+  ];
+  expect(matching(es, "alpha").map((e) => e.name)).toEqual(["alpha_tool", "beta_tool", "gamma"].sort((a, b) =>
+    a === "alpha_tool" ? -1 : b === "alpha_tool" ? 1 : a.localeCompare(b)));
+  expect(matching(es, "alpha beta").map((e) => e.name)[2]).toBe("gamma");
+  expect(matching(es, "alpha zzz")).toEqual([]);
+  expect(matching(es, "   ")).toEqual([]);
+  const many = Array.from({ length: FIND_MAX + 3 }, (_, i) => entry(`t${i}`, "same"));
+  expect(matching(many, "same").length).toBe(FIND_MAX + 3);
+});
+
+test("matching bounds the query: past 100 characters or 8 words is ignored", () => {
+  const es = [entry("tool", "needle")];
+  const words = Array.from({ length: WORDS_MAX }, () => "needle").join(" ");
+  expect(matching(es, `${words} absent`).length).toBe(1);
+  expect(matching(es, `${"x".repeat(100)} needle`)).toEqual([]);
+  expect(matching(es, `needle${" ".repeat(200)}x`).length).toBe(1);
+});
+
+test("find_tool never returns a tool its caller cannot see; find_tool's `more` counts the cut", async () => {
+  const made = await createUser(app.db, {
+    origin: "seed",
+    trusted: true,
+    username: "bob",
+    email: "bob@forge.local",
+    password: "a-good-passphrase",
+  });
+  if (!made.ok) throw new Error(made.error);
+  const bob = createToken(app.db, made.value.id, "rw", "rw").token;
+  const call = async (tok: string, query: string) =>
+    JSON.parse(
+      (
+        (await (
+          await fetch(`${servers.url}/mcp`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              accept: "application/json, text/event-stream",
+              authorization: `Bearer ${tok}`,
+            },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "tools/call",
+              params: { name: "find_tool", arguments: { query } },
+            }),
+          })
+        ).json()) as any
+      ).result.content[0].text,
+    );
+  const admin = createToken(app.db, aliceId, "admin", "admin").token;
+  expect((await call(admin, "backups_test")).tools.map((t: any) => t.name)).toContain("backups_test");
+  expect((await call(bob, "backups_test")).tools).toEqual([]);
+  const broad = await call(token, "a");
+  expect(broad.tools.length).toBe(FIND_MAX);
+  expect(broad.more).toBeGreaterThan(0);
 });

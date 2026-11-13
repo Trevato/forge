@@ -143,6 +143,9 @@ function describe_server() {
 
   test("a real request held open across a stall is in MCP `system` `stalls`; one begun after is not", async () => {
     loopWatch.clear();
+    // The suite shares one process: a request another file left open (or its own server's
+    // background traffic) is in the open set too. Count only what this test adds.
+    const base = inFlight.size();
     // A request whose body has not finished arriving: the server is answering it, and it is open.
     let push: ((chunk: Uint8Array) => void) | undefined;
     let close: (() => void) | undefined;
@@ -160,24 +163,26 @@ function describe_server() {
     } as RequestInit);
     push!(new TextEncoder().encode('{"jsonrpc":"2.0",'));
     const deadline = Date.now() + 5_000;
-    while (inFlight.size() === 0 && Date.now() < deadline) await Bun.sleep(5);
-    expect(inFlight.size()).toBe(1);
-    await Bun.sleep(LIMIT_MS + 60);
+    while (inFlight.size() <= base && Date.now() < deadline) {
+      await Bun.sleep(5); // real-timer: waits for the server to accept a real socket
+    }
+    expect(inFlight.size()).toBeGreaterThan(base);
+    await Bun.sleep(LIMIT_MS + 60); // real-timer: the request must be older than the stall limit on the real clock
     // The wake: the loop held for longer than the stall limit, beginning after the request did.
     const now = performance.now();
     const stall = loopWatch.stalled(LIMIT_MS + 10, now)!;
     const named = stall.inFlight ?? [];
-    expect(named).toEqual(["/mcp"]);
+    expect(named).toContain("/mcp");
     // A stall shorter than the request's age is charged; one reaching back before it began is not.
-    expect(loopWatch.stalled(60_000, now)!.inFlight).toBeUndefined();
+    expect(loopWatch.stalled(60_000, now)!.inFlight ?? []).toEqual(inFlight.since(now - 60_000));
     push!(new TextEncoder().encode('"id":9,"method":"tools/list"}'));
     close!();
     await (await held).text();
-    expect(inFlight.size()).toBe(0);
+    expect(inFlight.size()).toBeLessThanOrEqual(base);
 
     const out = await system();
     // A loaded machine may charge a real stall to the same cause as well: at least ours is there.
-    const row = out.stalls.find((r: { cause: string }) => r.cause === `${named[0]} (in flight)`);
+    const row = out.stalls.find((r: { cause: string }) => r.cause === "/mcp (in flight)");
     expect(row.count).toBeGreaterThanOrEqual(1);
     expect(row.ms).toBeGreaterThanOrEqual(LIMIT_MS + 10);
   });

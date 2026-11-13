@@ -125,7 +125,7 @@ export async function outsider(base: string, options: OutsiderOptions = {}): Pro
       method: "POST",
       signal: AbortSignal.timeout(10_000),
       headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}` },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: cursor === undefined ? {} : { cursor } }),
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: cursor === undefined ? { all: true } : { all: true, cursor } }),
     });
     const text = await toolList.text();
     toolsText += text;

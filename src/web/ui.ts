@@ -595,12 +595,7 @@ export function terminalLine(
   fingerprint?: string | undefined,
 ): Html {
   if (terminal.command === undefined)
-    return terminal.reason === "no_listener"
-      ? html`<p class="muted small">
-          The terminal is off — this forge has no SSH listener. Set
-          <span class="mono">FORGE_SSH_PORT</span> to turn it on.
-        </p>`
-      : html`<p class="muted small">The terminal is off.</p>`;
+    return html`<p class="muted small">The terminal is off.</p>`;
   return terminalCommand(terminal.command, fingerprint);
 }
 

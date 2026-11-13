@@ -913,8 +913,8 @@ bun run src/main.ts</code></pre>
         ${when(
           ssh,
           (command) => html`<div class="stack-tight">
-            ${terminalLine({ command })}
-            <p class="muted small">Or visit this forge from your terminal: your key is your identity.</p>
+            ${terminalLine({ command }, ctx.app.config.sshHostKey)}
+            <p class="muted small">Or visit this forge from your terminal: your key is your identity, and the host key above is yours to check.</p>
           </div>`,
         )}
         ${packPresses()}

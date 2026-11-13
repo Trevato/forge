@@ -98,6 +98,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `edit` | — | Retitle or rewrite an issue or pull: yours, or where you write; an agent only its own | 310 |
 | `egress_grants` | — | Private destinations and grants: list, grant or revoke (site admin) | 289 |
 | `email_verify` | — | Send yourself a new verification link | 126 |
+| `estimate` | — | Ask an issue's base rate, or record `event` with `p50`, `p90` (instants) and `basis` | 406 |
 | `events` | — | Repository events | 259 |
 | `explore` | — | The apps, people (and, for an admin, forges) you can see, ranked | 627 |
 | `family` | — | The forge that sent this one and, for a site admin, those it sent, with state, version | 205 |
@@ -106,6 +107,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `feed_chips` | `kind`, `person` | Feed chips you switched off | 262 |
 | `feed_dismiss` | `dismissed`, `muted` | Dismiss a feed item or mute its app; `feed` then leaves it out | 280 |
 | `feed_like` | — | Like or unlike a feed item as a ledger row, or read its ledger | 308 |
+| `find_tool` | — | Find a tool by what it does; returns name, description and schema | 263 |
 | `flag_set` | — | Set or clear a flag (admin) | 209 |
 | `flag_winner` | — | An A/B flag winner becomes default | 206 |
 | `flags` | — | Declared flags: why, default, owner issue, live value | 171 |
@@ -113,7 +115,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `follow_mode` | — | How a fork follows its parent: take updates, tell me, or don't follow | 281 |
 | `following` | — | Where a fork stands against what it follows: in step, behind, ahead, diverged | 243 |
 | `forge_proposals` | — | What this forge proposed to its parent; `reachable` false if it is silent | 245 |
-| `forge_view` | — | The forge as one picture: counts, apps, runs with stations, health | 189 |
+| `forge_view` | — | The forge as one picture: counts, apps, runs with stations, health | 239 |
 | `forges` | — | Forges sent from here (admin; a stage says when to resend), or one forge's plan to read or grant | 387 |
 | `fork` | — | Fork a repository into your account; for a guest, a copy to send changes back from | 232 |
 | `fork_tree` | — | The fork tree around a repo: ancestors, siblings and descendants you may read | 397 |
@@ -174,7 +176,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `pulls` | — | A repository's pulls, newest first; no `repo`: all open pulls you may read, oldest first | 411 |
 | `queue_gates` | — | Recent merge-queue gates: pulls, verdicts, failing tests | 277 |
 | `quotas` | — | Enforced per-account quotas (never an admin): repositories, apps, storage, previews, runs, checks | 342 |
-| `read_file` | — | Read a file or list a directory at a ref (default branch); over 5 MB answers tooLarge | 307 |
+| `read_file` | — | No shell? Read a file or list a directory at a ref (default branch); over 5 MB answers tooLarge | 317 |
 | `release_hold` | — | Hold or release the release keeper's cuts (admin) | 202 |
 | `release_keeper` | — | The release keeper's releases, holds and what blocks the next cut | 192 |
 | `release_now` | — | Cut a release now, with a reason (admin) | 176 |
@@ -234,7 +236,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `waves` | — | Waves; `version`: one | 260 |
 | `week` | — | The week's retrospective; `take` accepts one proposal | 226 |
 | `whoami_can` | `role`, `passkeys` | What you can do: your role and its roles-table row, yes or no each | 231 |
-| `write_file` | — | Commit one file to a branch | 302 |
+| `write_file` | — | No shell? Commit one file to a branch | 342 |
 | `report` | — | Report a problem in a public repository, no account needed | 468 |
 | `start` | — | Start building with no account: an account, a repo, a live app and a token in one call | 358 |
 <!-- mcp-tools:end -->
@@ -398,6 +400,32 @@ longer sentences:
 - `hold.why`: why, in one line; it shows on the pull. `runs.limit`: how many, 1 to 50; 20 when absent.
 - `boards.step`: with `panel`, seconds per bucket, or a count of `s`, `m`, `h` or `d`. `access.since`: ISO time; default a day, max 14 days.
 
+## Ask for less: the default list and `find_tool` (#11957)
+
+The MCP is the forge's control surface; repo work is git's (clone and push).
+`tools/list` opens with the tools that direct and watch a forge: `tell`,
+`say`, `next_up`, `now`, `runs`, `knobs`, `usage`, `apps`, `app_deploy`,
+`forges`, `find_tool`, plus `report` and `start` (`DEFAULT_TOOLS` in
+`src/http/mcp/catalog.ts`; `api` joins when it exists). `read_file` and
+`write_file` are not in it: they are the fallback for an agent with no shell
+("No shell? ..."), reached by `find_tool`, and no diff, blame, tree or
+multi-file tool is added on that side. The server instructions say so in two
+sentences. Every tool stays callable by name. `find_tool({ query })` returns
+up to eight tools whose name or description match every word, each with its
+description and schema, so a tool found is callable at once. A client that
+wants today's list sends `tools/list` with `{"all": true}` (paged as before).
+
+| What | Before | After |
+| --- | --- | --- |
+| `tools/list`, admin | ~62 KB, 196 tools (~15k tokens) | 5.6 KB, 13 tools (~1.4k tokens) |
+| A session that manages a forge (direct the crew, watch runs, deploy an app) and never loads a file tool | ~62 KB of tools | the same 5.6 KB list, no file tool in it |
+
+`test/mcp-size.test.ts` caps the default list at 6 KB and asserts the file
+tools are absent from it. Not done yet: the "full list" token setting, `api`,
+`run_wait`, `since`/`fields`, the card only for a client that renders cards,
+the `asks*`/`feed*` collapse; the cost of five common answers is measured
+when those land.
+
 ## Connecting
 
 Mint a token under **Settings → Access tokens** (`rw` to act, `ro` to watch),
@@ -533,6 +561,7 @@ answers
 | `ui://forge/scorecard` | `scorecard` | The crew's scorecard, one row per agent: landed and red rate all time, then the week (forge admin). |
 | `ui://forge/crew` | `now`, `crew` | `now`: what the crew is doing right now, with Stop buttons. `crew` (listing): one row per seat, who fills it and what runs and waits, or what it costs to leave it empty; linked to Settings › Crew. |
 | `ui://forge/health` | `health` | Green or red with the version, then one row per cause: draining, a blocked rollout, degraded lanes, incidents, apps (an admin sees all; a stranger only the verdict). |
+| `ui://forge/forge` | `forge_view` | The forge in one card: healthy or not and what is running, then the apps with work going, busiest first; quiet apps and what waits on you are counted. |
 | `ui://forge/capacity` | `capacity` (listing, admin) | One row per setting with its live value (set ones marked), linked to Settings › Capacity; says when the forge cannot swap itself. |
 | `ui://forge/board` | `boards` | One board's panels (person admins). |
 | `ui://forge/forks` | `fork_tree`, `forks` | The fork tree around a repository, each row with how it follows; `forks` a row per fork with its commits ahead and behind, `kind: chain` its chain (a severed chain says so); each linked to the repository, at most 30 and one More row. |
@@ -547,6 +576,8 @@ answers
 | `ui://forge/reports` | `reports` (listing) | Waiting reports from outsiders: one row each, its state and who filed it, linked to the repository's reports. |
 | `ui://forge/usage` | `usage` | The window's figures as rows: runs, cost and tokens, by agent for a repo, or today and last 24 hours with each account's headroom. |
 
+  **Who controls what (#11956).** The host (ChatGPT, Claude) controls the frame around a card: its size limits, border, theme variables, whether it opens a `ui://` page at all, and the tool's name and description in its picker (so a generic line such as "Find issues, pulls…" is the tool's `description`, which is for the model and is held to the size ceiling; the card cannot change it). Forge controls what is inside the frame: `structuredContent.card` (`title`, `status`, `rows` of `label`, `value`, `link`, `depth`, `actions`) and the one page that draws it (`CARD_SHELL`). A host that does not render `ui://` pages shows only the text answer, so the text always carries the full data; the card is a summary of it. Not promised: fonts, per-row colour, truncation by the host, or any widget beyond title, status, rows, links and buttons. Not tested in the live ChatGPT connector from the build sandbox; the wording was checked against the card model only.
+  **Card vocabulary.** *title*: what this is (`Pulls`, or `#7 the pull's title` for one thing, cut at 90 characters on a word with `…`; the whole title is in the text answer). *status*: the one line every row shares, counts first (`5 open · 2 red · 3 green`, `healthy · 3 running · 1 queued`). *row label*: the identity (`#7 title`, `owner/name`), linked when it has a page. *row value*: only what differs from the other rows, `·`-separated, state words in plain language (`check green`, `no check`, `approved`), never a state the status line already said. *actions*: buttons that call a tool.
   The Runs card (`runs`) is one row per run, newest first: glyph, kind, the issue or pull and its title, then the state as a word with how long it ran (or has been running), linked to the run page; failed runs lead the status line. The Plan card (`map`) shows one row per pillar with
   its ready, working and waiting counts, and the first five ready issues linked
   to their pages; it has no actions. The asks card (`ui://forge/asks`, drawn by `asks`) is one row per waiting decision:

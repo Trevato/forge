@@ -8,7 +8,7 @@ import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts"
 export const tool: Tool = {
   name: "write_file",
   doc: "`{ repo, branch, path, content, message }`: commit one file to an existing branch as `POST …/contents` does, for the same callers and with the same refusals (protected default, too large, a path with `..`), said in `edit_words`' sentences; answers `{ commit, says }`",
-  description: "Commit one file to a branch.",
+  description: "No shell? Commit one file to a branch. With a shell, clone and push.",
   inputSchema: {
     type: "object",
     properties: {

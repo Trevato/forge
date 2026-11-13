@@ -241,6 +241,7 @@ const UNTIMED: Record<string, string> = {
   probes: "probes each app over HTTP after a deploy and nightly; the fixture has no apps",
   prompts: "a closure in startPromptRoutine; the fixture has no prompt routines",
   timers: "fires due app timers over HTTP to the apps; the fixture has no apps",
+  "estimates-due": "settles due 'done' estimates every five minutes from one indexed query on open estimates; the fixture records none",
   snapshot: "copies the database file to disk (VACUUM INTO): I/O off the loop, nightly",
   "snapshot-mirror": "uploads a snapshot to the mirror: network, nightly",
   drill: "restores a snapshot into a scratch forge: nightly, I/O",

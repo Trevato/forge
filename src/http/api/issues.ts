@@ -7,6 +7,8 @@
 
 import { holds, weakEtag } from "../etag.ts";
 import { ISSUE_TEAMS_SAY, nameTeams } from "../../actions/issue_teams.ts";
+import { askEstimate, recordEstimate } from "../../actions/estimates.ts";
+import { estimatesOf } from "../../core/estimates.ts";
 import { confirmIssue, dependencyWords, linkIssue, unlinkIssue } from "../../actions/dependencies.ts";
 import {
   addCommentThrough,
@@ -327,6 +329,27 @@ export function issueRoutes(router: Router<Handler>): void {
     return json({ repo: there, clone: `${ctx.url.origin}/${there}.git` }, 201);
   });
 
+  // Estimates (#11955): GET asks the base rate; POST records one.
+  router.add("GET", "/api/v1/repos/:owner/:name/issues/:number/estimates", (ctx) => {
+    const found = loadIssue(ctx);
+    if ("error" in found) return found.error;
+    return json({
+      ...askEstimate(ctx.app, ctx.auth.user, found.repo, found.issue),
+      revisions: estimatesOf(ctx.app.db, found.issue.id),
+    });
+  });
+  router.add("POST", "/api/v1/repos/:owner/:name/issues/:number/estimates", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const found = loadIssue(ctx);
+    if ("error" in found) return found.error;
+    if (ctx.auth.user === undefined) return apiError("unauthorized", 401, "sign in to record an estimate");
+    const input = await body(ctx.request);
+    const made = recordEstimate(ctx.app, ctx.auth.user, found.repo, found.issue, input);
+    return made.ok
+      ? json(made.value, 201)
+      : apiError(made.error.kind, made.error.kind === "forbidden" ? 403 : 422, made.error.message);
+  });
   router.add(
     "GET",
     "/api/v1/repos/:owner/:name/issues/:number/dependencies",

@@ -161,6 +161,7 @@ const RETIRED: Record<string, { readonly drops: readonly string[]; readonly sinc
 const REBUILT: Record<string, string> = {
   "20261103120000-conversations-many": "conversation loses UNIQUE(user_id) (#8814); same columns, plus title and archived_at",
   "20261104100000-conversation-run-stopped-state": "conversation_run widens its state CHECK to admit stopped (#8972); same columns, same rows, the stopped column kept",
+  "20261114000000-estimate-done": "issue_estimate widens its event CHECK to admit done (#11955); same columns, same rows, the indexes made again; the release before never writes or reads a done row",
   "20261110170000-fork-follow-dont-follow": "fork_follow widens its mode CHECK to admit dont-follow (#608); same columns, same rows; the release before reads dont-follow as not take-updates",
 };
 

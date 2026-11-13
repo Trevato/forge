@@ -159,6 +159,7 @@ export { route as getApiV1ReposOwnerNameIssues } from "./getApiV1ReposOwnerNameI
 export { route as getApiV1ReposOwnerNameIssuesNumber } from "./getApiV1ReposOwnerNameIssuesNumber.ts";
 export { route as getApiV1ReposOwnerNameIssuesNumberComments } from "./getApiV1ReposOwnerNameIssuesNumberComments.ts";
 export { route as getApiV1ReposOwnerNameIssuesNumberDependencies } from "./getApiV1ReposOwnerNameIssuesNumberDependencies.ts";
+export { route as getApiV1ReposOwnerNameIssuesNumberEstimates } from "./getApiV1ReposOwnerNameIssuesNumberEstimates.ts";
 export { route as getApiV1ReposOwnerNameIssuesNumberPlan } from "./getApiV1ReposOwnerNameIssuesNumberPlan.ts";
 export { route as getApiV1ReposOwnerNameIssuesNumberTeams } from "./getApiV1ReposOwnerNameIssuesNumberTeams.ts";
 export { route as getApiV1ReposOwnerNameIterations } from "./getApiV1ReposOwnerNameIterations.ts";
@@ -346,6 +347,7 @@ export { route as postApiV1ReposOwnerNameIssues } from "./postApiV1ReposOwnerNam
 export { route as postApiV1ReposOwnerNameIssuesNumberComments } from "./postApiV1ReposOwnerNameIssuesNumberComments.ts";
 export { route as postApiV1ReposOwnerNameIssuesNumberDependencies } from "./postApiV1ReposOwnerNameIssuesNumberDependencies.ts";
 export { route as postApiV1ReposOwnerNameIssuesNumberDependenciesBlockerConfirm } from "./postApiV1ReposOwnerNameIssuesNumberDependenciesBlockerConfirm.ts";
+export { route as postApiV1ReposOwnerNameIssuesNumberEstimates } from "./postApiV1ReposOwnerNameIssuesNumberEstimates.ts";
 export { route as postApiV1ReposOwnerNameIssuesNumberPrivate } from "./postApiV1ReposOwnerNameIssuesNumberPrivate.ts";
 export { route as postApiV1ReposOwnerNameJobsIdAction } from "./postApiV1ReposOwnerNameJobsIdAction.ts";
 export { route as postApiV1ReposOwnerNameLabels } from "./postApiV1ReposOwnerNameLabels.ts";

@@ -18,6 +18,7 @@ import { appForLogin } from "../src/apps/tty.ts";
 import { createUser } from "../src/core/users.ts";
 import { forgeSshSession } from "../src/tui/ssh.ts";
 import { DIRECTION_NOTE } from "../src/crew/direct.ts";
+import { GUEST_RATE_WORDS } from "../src/tui/ssh-guest-rate.ts";
 import { ACCOUNT_NEEDED_WORDS, CONTROL_WORDS, NO_CREW_WORDS } from "../src/tui/ssh-tell.ts";
 import { promote } from "./helpers/members.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -222,5 +223,14 @@ describe("ssh forge tell", () => {
     } finally {
       app.db.query("UPDATE repo SET visibility = 'public', crew_outsiders = 1 WHERE id = ?1").run(alice.id);
     }
+  });
+
+  test("a guest's tell and talk share a rate; a signed-in key is not held to it", async () => {
+    const seen: string[] = [];
+    for (let i = 0; i < 8; i++) seen.push((await exec(KEY_STRANGER, i % 2 === 0 ? "tell hi" : "talk hi")).err);
+    expect(seen.some((e) => e.includes(GUEST_RATE_WORDS))).toBe(true);
+    expect(seen.slice(0, 2).every((e) => !e.includes(GUEST_RATE_WORDS))).toBe(true);
+    const known = await exec(KEY_A, "tell still allowed");
+    expect(known.err).not.toContain(GUEST_RATE_WORDS);
   });
 });

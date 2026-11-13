@@ -30,6 +30,7 @@ import {
 } from "../core/orgs.ts";
 import type { Credential } from "../auth/webauthn.ts";
 import { addPasskey } from "../core/passkeys.ts";
+import { markVerified } from "../core/verify.ts";
 import { activeEdgeToken } from "../http/edge.ts";
 import { getUserById, type User } from "../core/users.ts";
 import { sha256 } from "../kernel/hash.ts";
@@ -346,6 +347,48 @@ export function takeFounder(
 class PasskeyRefused extends Error {}
 
 /**
+ * Whether a username is the forge's own name, which the forge's organisation
+ * holds: a person who starts "probe" and wants to be "probe" is not refused
+ * (#11948), they become the namespace (`becomeOrg`).
+ */
+export const isForgeName = (spawned: Spawned, username: string): boolean =>
+  username.toLowerCase() === spawned.org.username.toLowerCase();
+
+/**
+ * The claimant takes the forge's own name: the organisation row becomes their
+ * account (a person, admin, with the credential given), so the apps already
+ * under that name stay where they are. One transaction; "gone" when the row is
+ * no longer an organisation, "email_taken" when another account has the address.
+ */
+export function becomeOrg(
+  db: Database,
+  orgId: string,
+  input: { readonly hash: string; readonly email: string; readonly credential?: Credential },
+): "ok" | "gone" | "email_taken" {
+  const take = db.transaction((): boolean => {
+    const changed = db
+      .query("UPDATE user SET kind = 'user', password_hash = ?2, email = ?3, is_admin = 1 WHERE id = ?1 AND kind = 'org'")
+      .run(orgId, input.hash, input.email).changes;
+    if (changed !== 1) return false;
+    // Nothing the organisation held as a namespace signs in as the person.
+    db.query("DELETE FROM session WHERE user_id = ?1").run(orgId);
+    if (input.credential !== undefined && !addPasskey(db, orgId, "Passkey", input.credential).ok) throw new PasskeyRefused();
+    // The one-time claim link is the proof, as it is for an account made beside the organisation
+    // (`createUser` with `trusted`). An organisation needed no proof; the person it becomes does, or
+    // the crew answers their first ask with "Verify your email first."
+    markVerified(db, orgId, new Date().toISOString());
+    return true;
+  });
+  try {
+    return take() ? "ok" : "gone";
+  } catch (error) {
+    if (error instanceof PasskeyRefused) return "gone";
+    if (error instanceof Error && /UNIQUE constraint failed/.test(error.message)) return "email_taken";
+    throw error;
+  }
+}
+
+/**
  * Give a spawned child's organisation to its first admin: they join its
  * Owners and, unless the spawner asked to keep access, the spawner leaves.
  * The claim page and the first-admin code (`core/first_admin.ts`) both end here.
@@ -354,7 +397,8 @@ export function handOver(db: Database, spawned: Spawned, userId: string): void {
   const team = listTeams(db, spawned.org.id).find((t) => t.name === OWNERS_TEAM);
   if (team === undefined) return;
   const spawner = listTeamMembers(db, team.id)[0];
-  addTeamMember(db, team, userId);
+  // The person who took the forge's own name is the organisation row itself: no team to join.
+  if (userId !== spawned.org.id) addTeamMember(db, team, userId);
   if (!spawned.keepAccess && spawner && spawner.id !== userId)
     removeTeamMember(db, team, spawner.id);
 }

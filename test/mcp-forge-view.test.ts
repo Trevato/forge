@@ -80,7 +80,7 @@ test("a ro token lists the tool and is answered; polling builds once", async () 
     const res = await fetch(`${servers.url}/mcp`, {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${adaRo}` },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: cursor === undefined ? {} : { cursor } }),
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: cursor === undefined ? { all: true } : { all: true, cursor } }),
     });
     const page = ((await res.json()) as any).result;
     listed = page.tools.find((t: any) => t.name === "forge_view");

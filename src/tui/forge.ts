@@ -101,6 +101,7 @@ import { stalledScreen } from "./screens/stalled.ts";
 import { issuesScreen, newIssueScreen } from "./screens/issues.ts";
 import { limbsScreen } from "./screens/limbs.ts";
 import { nextScreen } from "./screens/next.ts";
+import { estimatesScreen } from "./screens/estimates.ts";
 import { findingsScreen } from "./screens/findings.ts";
 import { flowsScreen } from "./screens/flows.ts";
 import { weekScreen } from "./screens/week.ts";
@@ -176,6 +177,12 @@ const REPO_VERBS: readonly {
     id: "next-up",
     title: "Next up in a repository",
     open: (f, ctx, repo) => nextScreen(f, ctx, repo),
+  },
+  {
+    // What is promised for each issue, the base rate to ask, and recording one (#11955).
+    id: "estimates",
+    title: "Estimates in a repository",
+    open: (f, ctx, repo) => estimatesScreen(f, ctx, repo),
   },
   {
     // The retrospective the forge wrote at the last weekly reset, and its proposals (#8704).

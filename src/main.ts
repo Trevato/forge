@@ -98,6 +98,8 @@ import { walkJourney } from "./release/journey.ts";
 import { CHECK_EVERY_MS, setBehind, watchBehind } from "./release/behind.ts";
 import { readLandings } from "./release/landings.ts";
 import { ownTagsReader } from "./release/own_tags.ts";
+import { recordByHand } from "./keeper/by_hand.ts";
+import { settleDue, settleLiveNow } from "./actions/estimates_settle.ts";
 import { rollProbe, tickStep as keeperTick } from "./keeper/keeper.ts";
 import { stepWithBeat } from "./keeper/beat.ts";
 import { keeperEnv, keeperPorts } from "./keeper/wire.ts";
@@ -364,6 +366,14 @@ const bootSignup = signupFromEnv(process.env.FORGE_SIGNUP);
 if (bootSignup.ok && bootSignup.value !== null)
   setSignup(app.db, bootSignup.value, BOOT_ACTOR);
 startPerfWatcher(app, perfRecord, Date.now, TICK_MS, gitRecord);
+// A release shipped by hand is recorded as live at boot, so live estimates and the base rate
+// resolve whichever way a release ships; estimates of "done" come due as time passes (#11955).
+const byHand = recordByHand(app.db);
+if (byHand !== undefined) {
+  app.log.info("recorded the release this forge runs: shipped by hand", { version: byHand });
+  settleLiveNow(app.db);
+}
+const dueTimer = setInterval(() => during("estimates-due", () => void settleDue(app.db)), 300_000);
 const flagTimer = setInterval(
   () => during("flag-uses", () => flushFlagUses(app.db)),
   10_000,
@@ -1002,6 +1012,7 @@ async function close(): Promise<void> {
   ssh?.stop();
   servers.stop();
   clearInterval(flagTimer);
+  clearInterval(dueTimer);
   flushFlagUses(app.db);
   recordCleanExit(app.config.dataDir);
   app.close();

@@ -20,6 +20,9 @@ import type { User } from "../core/users.ts";
 import type { EnvName } from "../apps/data.ts";
 import type { SshSession } from "../ssh/server.ts";
 import { tellAnswer } from "./screens/tell.ts";
+import { AUTONOMY_FAILED_WORDS, firstAsk } from "../actions/first_ask.ts";
+import { nextStepsFor } from "../core/next-steps.ts";
+import { crewCanRun } from "../web/studio/crew_key.ts";
 
 const CRLF = "\r\n";
 
@@ -78,6 +81,9 @@ async function told(
   if (/[\x00-\x1f\x7f-\x9f\u2028\u2029]/.test(words)) return refuse(session, CONTROL_WORDS);
   const said = words.trim();
   if (said === "") return refuse(session, SAY_SOMETHING_WORDS);
+  // A claimed forge's first ask makes a new app, as the page's does:
+  // never an issue on the forge's own source.
+  if (appRepo === undefined && (await isFirstAsk(app, user))) return firstTold(app, session, user, said);
   const [owner = "", name = ""] = (app.config.forgeRepo ?? "").split("/");
   const repo = appRepo ?? getRepo(app.db, owner, name);
   if (repo === undefined) return refuse(session, NO_CREW_WORDS);
@@ -87,6 +93,24 @@ async function told(
   const base = app.config.url ?? `http://localhost:${app.config.port ?? 3000}`;
   session.write(
     `${answer.text}${CRLF}${base}/${repo.ownerName}/${repo.name}/issues/${result.value.issue.number}${CRLF}`,
+  );
+  session.exit(0);
+}
+
+/** Whether this is the person's first ask on a forge spawned for them: it makes an app. */
+async function isFirstAsk(app: App, user: User): Promise<boolean> {
+  const steps = await nextStepsFor(app, user);
+  return steps?.some((s) => s.key === "tell" && !s.done) === true;
+}
+
+async function firstTold(app: App, session: SshSession, user: User, said: string): Promise<void> {
+  const first = await firstAsk(app, user, said, crewCanRun(app));
+  if (!first.ok) return refuse(session, first.error.words);
+  const { repo, told, autonomyFailed } = first.value;
+  if (!told.ok) return refuse(session, tellAnswer(told).text);
+  const base = app.config.url ?? `http://localhost:${app.config.port ?? 3000}`;
+  session.write(
+    `${tellAnswer(told).text}${CRLF}${autonomyFailed ? `${AUTONOMY_FAILED_WORDS}${CRLF}` : ""}${base}/${repo.ownerName}/${repo.name}/issues/${told.value.issue.number}${CRLF}`,
   );
   session.exit(0);
 }

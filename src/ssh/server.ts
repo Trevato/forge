@@ -11,6 +11,7 @@ import type { Log } from "../kernel/log.ts";
 import { Auth } from "./auth.ts";
 import { Channels, type SshSession } from "./channels.ts";
 import { loadOrCreateHostKey, type SshPublicKey } from "./keys.ts";
+import { ConnectionLimits, DEFAULT_LIMITS, type SshLimitValues } from "./limits.ts";
 import { Transport } from "./transport.ts";
 import { DISCONNECT, WireError } from "./wire.ts";
 
@@ -42,6 +43,10 @@ export interface SshServerOptions {
   loginGraceMs?: number;
   /** Signature-bearing auth attempts allowed per connection. @default 6 */
   maxAuthAttempts?: number;
+  /** Caps on connections and handshakes, refused before any key work. @default DEFAULT_LIMITS */
+  limits?: Partial<SshLimitValues>;
+  /** When the server starts a rekey itself. @default 1 GiB or an hour */
+  rekey?: { rekeyBytes?: number; rekeyMs?: number; now?: () => number };
 }
 
 export interface SshServer {
@@ -93,6 +98,7 @@ class Connection {
       {
         hostKey,
         serverVersion: options.serverVersion ?? "SSH-2.0-forge",
+        ...(options.rekey ?? {}),
       },
     );
     this.auth = new Auth({
@@ -255,6 +261,7 @@ class Connection {
 export function serveSsh(options: SshServerOptions): Promise<SshServer> {
   const hostKey = loadOrCreateHostKey(options.hostKeyDir);
   const connections = new Set<Connection>();
+  const limits = new ConnectionLimits({ ...DEFAULT_LIMITS, ...options.limits });
   // Whoever is waiting for the last connection to leave, once draining.
   const drained: (() => void)[] = [];
   const drop = (connection: Connection) => {
@@ -267,7 +274,18 @@ export function serveSsh(options: SshServerOptions): Promise<SshServer> {
     port: options.port,
     socket: {
       open(socket) {
-        const connection = new Connection(socket, options, hostKey, drop);
+        // Before a Connection exists, so a refused peer costs no key work.
+        // `remoteAddress` is the TCP peer: a proxy's, if one fronts this port.
+        const verdict = limits.admit(socket.remoteAddress, Date.now());
+        if ("refused" in verdict) {
+          options.log.debug("ssh refused", { peer: socket.remoteAddress, why: verdict.refused });
+          socket.end(`${verdict.refused}\r\n`);
+          return;
+        }
+        const connection = new Connection(socket, options, hostKey, (gone) => {
+          limits.release(verdict.key);
+          drop(gone);
+        });
         socket.data = connection;
         connections.add(connection);
         connection.start();

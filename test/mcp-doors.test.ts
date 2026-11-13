@@ -58,7 +58,7 @@ describe("the doors onto the MCP tools", () => {
       const res = await fetch(`${servers.url}/mcp`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: cursor ? { cursor } : {} }),
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: cursor ? { all: true, cursor } : { all: true } }),
       });
       const r = ((await res.json()) as any).result;
       names.push(...r.tools.map((t: any) => t.name));

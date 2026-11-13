@@ -45,7 +45,7 @@ import { getUserById } from "../core/users.ts";
 import type { Stuck } from "./brief.ts";
 import { proposedWork, speaksForCrew } from "./direct.ts";
 import { freshPulls, pullFor } from "./fresh_pull.ts";
-import { capReached, runCapOf } from "./guard.ts";
+import { capReached, capReachedFor, runCapOf } from "./guard.ts";
 import { interruptionOf } from "./interrupted.ts";
 import { landedUnanswered } from "./landed.ts";
 import { PARK_STRIKES, parkedCount } from "./parks.ts";
@@ -84,6 +84,32 @@ export interface Held {
   readonly relieving: ReadonlyMap<number, { path: string; by: number }>;
 }
 
+export interface LastRun {
+  readonly state: string;
+  readonly summary: string;
+  readonly created_at: string;
+}
+
+/** The newest agent run of each of `ids` in a few reads, not one per issue; an issue never run is absent. */
+export function lastAgentRuns(app: App, ids: readonly string[]): Map<string, LastRun> {
+  const out = new Map<string, LastRun>();
+  const CHUNK = 400;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const batch = ids.slice(i, i + CHUNK);
+    for (const r of app.db
+      .query<LastRun & { issue_id: string }, string[]>(
+        `SELECT issue_id, state, summary, created_at FROM (
+           SELECT issue_id, state, summary, created_at,
+                  ROW_NUMBER() OVER (PARTITION BY issue_id ORDER BY created_at DESC, id DESC) AS rn
+             FROM run WHERE kind = 'agent' AND issue_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")}))
+          WHERE rn = 1`,
+      )
+      .all(...batch))
+      out.set(r.issue_id, r);
+  }
+  return out;
+}
+
 /**
  * An issue a builder already ran on and left without a pull — declined, or
  * cut short — is not picked again blind: running it again unchanged is the
@@ -91,13 +117,21 @@ export interface Held {
  * next tick writes with who stalled it and why (`stalls.ts`); two such
  * parks hand it to the planner.
  */
-export function stalled(app: App, repo: Repo, issue: Issue): boolean {
-  const last = app.db
-    .query<{ state: string; summary: string; created_at: string }, [string]>(
-      `SELECT state, summary, created_at FROM run WHERE issue_id = ?1 AND kind = 'agent'
-       ORDER BY created_at DESC LIMIT 1`,
-    )
-    .get(issue.id);
+export function stalled(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  lastRuns?: ReadonlyMap<string, LastRun>,
+): boolean {
+  const last =
+    lastRuns !== undefined
+      ? lastRuns.get(issue.id)
+      : app.db
+          .query<LastRun, [string]>(
+            `SELECT state, summary, created_at FROM run WHERE issue_id = ?1 AND kind = 'agent'
+             ORDER BY created_at DESC LIMIT 1`,
+          )
+          .get(issue.id);
   if (last === null || last === undefined) return false;
   if (last.state === "queued" || last.state === "running") return true;
   if (/opened pull #|updated pull #/.test(last.summary)) return false;
@@ -182,6 +216,17 @@ export function heldBy(
     for (const path of mine) relievers.set(path, issue.number);
     return false;
   };
+  // The newest run of every ready issue, read once for the whole pass.
+  // The run cap of every ready issue, worked out once for the pass on first need.
+  let cappedAll: Map<string, boolean> | undefined;
+  const capped = (): Map<string, boolean> =>
+    (cappedAll ??= capReachedFor(
+      app.db,
+      repo,
+      ready.map((r) => r.issue),
+      (i) => runCapOf(repo, i, app.config),
+    ));
+  const lastRuns = lastAgentRuns(app, ready.map((r) => r.issue.id));
   const holdOf = (issue: Issue): HoldName | null => {
     if (busyIssues.has(issue.id)) return "running";
     if (proposed.has(issue.number)) return "open_pull";
@@ -189,8 +234,8 @@ export function heldBy(
     if (handed.has(issue.id)) return "with_planner";
     if (alreadyDone(app.db, [issue.id]).has(issue.id)) return "done_on_main";
     if (landedUnanswered(app.db, repo, issue) !== undefined) return "landed";
-    if (stalled(app, repo, issue)) return "stalled";
-    if (atRunCap(app, repo, issue)) return "run_cap";
+    if (stalled(app, repo, issue, lastRuns)) return "stalled";
+    if (capped().get(issue.id) ?? atRunCap(app, repo, issue)) return "run_cap";
     if (parkedCount(app.db, repo, issue.id) >= PARK_STRIKES) return "parked_twice";
     if (coveredByRedFix(app.db, repo.id, issue)) return "red_fix";
     const pin = pinOf(issue);
@@ -330,7 +375,18 @@ export function admits(app: App, repo: Repo, scope: { sealed?: true; sealedBy?: 
   };
 }
 
-/** The map's holds for one viewer: shared by the route and the MCP `map` tool. */
+/** How long a viewer's map holds are reused by the next reader of the same repository. Off under `bun test`. */
+export const mapHeldReuse = { ms: process.env["NODE_ENV"] === "test" ? 0 : 5_000 };
+const mapHeldKept = new WeakMap<App, Map<string, { at: number; holds: ReturnType<typeof mapHolds> }>>();
+
+/**
+ * The map's holds for one viewer: shared by the route and the MCP `map` tool.
+ * The map, the forge view, the terminal's plan and the asks each sorted the
+ * ready list for themselves on every look; a look within five seconds of
+ * another of the same viewer's reads that one. The crew's own tick never comes
+ * through here (it calls `heldBy`) and a question about named issues
+ * (`only`) is worked out fresh.
+ */
 export function mapHeldFor(
   app: App,
   repo: Repo,
@@ -339,12 +395,25 @@ export function mapHeldFor(
   /** Only these issue numbers are worked out: the cost grows with them, not with the ready list. */
   only?: ReadonlySet<number>,
 ): ReturnType<typeof mapHolds> {
+  const reuse = mapHeldReuse.ms > 0 && only === undefined;
+  const key = `${repo.id} ${scope.sealed === true ? "s" : "-"} ${scope.sealedBy ?? ""}`;
+  let kept = mapHeldKept.get(app);
+  if (reuse) {
+    if (kept === undefined) mapHeldKept.set(app, (kept = new Map()));
+    const hit = kept.get(key);
+    if (hit !== undefined && Date.now() - hit.at < mapHeldReuse.ms) return hit.holds;
+  }
   const admit = admits(app, repo, scope);
   const active = listActive(app.db, "agent").filter((r) => r.repoId === repo.id);
   const ready = readyNow(graph).filter((r) => only === undefined || only.has(r.issue.number));
-  return mapHolds(
+  const holds = mapHolds(
     repo,
     heldBy(app, repo, ready, listCrewRoles(app.db, repo.id), active, admit),
     admit,
   );
+  if (reuse && kept !== undefined) {
+    if (kept.size >= 512) kept.clear();
+    kept.set(key, { at: Date.now(), holds });
+  }
+  return holds;
 }

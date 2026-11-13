@@ -29,6 +29,7 @@ import { childNeedsOwnFilesystem } from "../core/capacity.ts";
 import { liveChildDisk, startRefusal } from "./disk_mount.ts";
 import { floorRefusal } from "./disk_floor.ts";
 import { limitValue } from "../settings/limits.ts";
+import { cancelRestarts, clearStop, lastStop, stopSentence, useRestart } from "./stopped.ts";
 import { awakeRefusal, idleAfterMs, WakeRate } from "./sleep.ts";
 import { wakingResponse } from "../web/pages/waking.ts";
 import { lapsedResponse, payAgainRoute, PAY_AGAIN_PATH } from "../web/pages/lapsed.ts";
@@ -266,6 +267,16 @@ async function wakeDue(parent: App, name: string): Promise<void> {
 }
 
 /**
+ * A forge the host stopped for a limit starts again through the due-wake path, which keeps
+ * the awake ceiling and the disk floor. False when nothing will start it (refused, lapsed).
+ */
+async function restartStopped(parent: App, name: string): Promise<boolean> {
+  await wakeDue(parent, name);
+  const ledger = readLedgerSync(parent, name);
+  return ledger !== undefined && (isAwakeBody(parent, ledger.bodyId) || dueWakes.get(parent)?.has(ledger.bodyId) === true);
+}
+
+/**
  * Below the disk floor (`spawn/disk_floor.ts`) no child forge stays awake:
  * every hosted child closes and every cell stops, busy or not, so nothing
  * they write takes the parent's last room. Their data stays on disk; the
@@ -432,6 +443,7 @@ export function wakeGate(parent: App, request: Request): Response | undefined {
   }
   const known = carriesCredentials(parent, ledger.bodyId, request);
   if (isAwakeBody(parent, ledger.bodyId)) {
+    clearStop(parent, ledger.bodyId);
     if (known) {
       bootOpened.get(parent)?.delete(ledger.bodyId);
       touch(parent, ledger);
@@ -456,9 +468,13 @@ export function wakeGate(parent: App, request: Request): Response | undefined {
   const wait = ledger.ownerId === undefined ? 0 : people.waitS(ledger.ownerId, limitValue(parent.db, "forges.wakes_per_person_hour"), at);
   if (wait > 0) return wakingResponse(parent, request, name, `waking too often, try in ${wait} s`, wait);
   const why = awakeRefusal(awakeCount(parent)) ?? (known ? undefined : rates.refusal(ledger.bodyId, at));
-  if (why !== undefined) return wakingResponse(parent, request, name, why);
+  if (why !== undefined) {
+    const stop = lastStop(parent, ledger.bodyId);
+    return wakingResponse(parent, request, name, stop === undefined ? why : stopSentence(stop));
+  }
   if (!known) rates.note(ledger.bodyId, at);
   if (ledger.ownerId !== undefined) people.note(ledger.ownerId, at);
+  clearStop(parent, ledger.bodyId); // the wake is granted: the stop no longer explains anything
   reserved.set(ledger.bodyId, Date.now());
   touch(parent, ledger);
   return undefined;
@@ -482,6 +498,7 @@ export function closeHostedChildren(parent: App): void {
   const watcher = floorWatchers.get(parent);
   if (watcher !== undefined) clearInterval(watcher);
   floorWatchers.delete(parent);
+  cancelRestarts(parent);
   touched.delete(parent);
   bootOpened.delete(parent);
   waking.delete(parent);
@@ -567,6 +584,7 @@ const settling = new WeakMap<App, Map<string, Promise<CellChild | undefined>>>()
  * `/forges` lists), and the next request opens it in this process.
  */
 function settleCell(parent: App, ledger: ChildLedger): Promise<CellChild | undefined> {
+  useRestart(parent, restartStopped);
   let flights = settling.get(parent);
   if (!flights) settling.set(parent, (flights = new Map()));
   let flight = flights.get(ledger.bodyId);

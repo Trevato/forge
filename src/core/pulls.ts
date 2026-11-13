@@ -1304,10 +1304,63 @@ export function closesFromBody(body: string): number[] {
 }
 
 /**
+ * The newest merged pull whose description closes issue `number`, by the
+ * pull's number. The old way asked the pull table for it with a `LIKE` on
+ * every merged pull's body of the repository, once per open issue with a
+ * box unticked: 25 ms each on production's copy, 3.6 s for the 143 of its
+ * busiest repository, every tick. Now the repository's merged pulls are read
+ * once, newest first, and each `Closes #n` claims its number the first time.
+ */
+export function mergedClosers(db: Database, repoId: string): Map<number, number> {
+  const out = new Map<number, number>();
+  const rows = db
+    .query<{ number: number; body: string }, [string]>(
+      `SELECT issue.number AS number, issue.body AS body FROM pull JOIN issue ON issue.id = pull.issue_id
+       WHERE issue.repo_id = ?1 AND pull.merged_at IS NOT NULL
+       ORDER BY pull.merged_at DESC`,
+    )
+    .iterate(repoId);
+  for (const row of rows) for (const n of closesFromBody(row.body ?? "")) if (!out.has(n)) out.set(n, row.number);
+  return out;
+}
+
+/**
+ * How long a repository's closers are reused while no pull anywhere has
+ * merged since (the key is the count and newest merge time): a merged pull's
+ * description edited later is seen after this. Off under `bun test`.
+ */
+export const CLOSERS_REUSE_MS = process.env["NODE_ENV"] === "test" ? 0 : 300_000;
+
+const closersKept = new WeakMap<Database, Map<string, { at: number; sig: string; closers: Map<number, number> }>>();
+
+function closersOf(db: Database, repoId: string): Map<number, number> {
+  if (CLOSERS_REUSE_MS === 0) return mergedClosers(db, repoId);
+  const m = db
+    .query<{ c: number; m: string | null }, []>("SELECT COUNT(merged_at) AS c, MAX(merged_at) AS m FROM pull")
+    .get();
+  const sig = `${m?.c ?? 0}|${m?.m ?? ""}`;
+  let kept = closersKept.get(db);
+  if (kept === undefined) closersKept.set(db, (kept = new Map()));
+  const now = Date.now();
+  const hit = kept.get(repoId);
+  if (hit !== undefined && hit.sig === sig && now - hit.at < CLOSERS_REUSE_MS) return hit.closers;
+  const closers = mergedClosers(db, repoId);
+  if (kept.size >= 256) kept.clear();
+  kept.set(repoId, { at: now, sig, closers });
+  return closers;
+}
+
+/**
  * The newest merged pull whose description closes issue `number`: the pull
  * that shipped it. Undefined when it was closed by hand.
  */
 export function mergedPullClosing(db: Database, repoId: string, number: number): Pull | undefined {
+  const pullNumber = closersOf(db, repoId).get(number);
+  return pullNumber === undefined ? undefined : getPull(db, repoId, pullNumber);
+}
+
+/** What `mergedPullClosing` was: the pull table asked per issue. Kept for the test that says the two agree. */
+export function mergedPullClosingScan(db: Database, repoId: string, number: number): Pull | undefined {
   const rows = db
     .query<{ number: number }, [string, string]>(
       `SELECT issue.number AS number FROM pull JOIN issue ON issue.id = pull.issue_id

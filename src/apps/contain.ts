@@ -25,7 +25,6 @@
 
 import {
   existsSync,
-  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -49,6 +48,7 @@ import {
   type IoMax,
 } from "./cgroup.ts";
 import { during } from "../perf/jobs.ts";
+import { diskBytes } from "./disk_walk.ts";
 import { isSize, SIZES, type Size } from "../spawn/sizes.ts";
 import { cpuWatch } from "./cpu_rule.ts";
 import { dutyTick, newDuty, resumeNow, type Duty, type DutyLater, type Signaller } from "./cpu_duty.ts";
@@ -976,7 +976,6 @@ export const WATCH = { tickMs: 1_000, cpuWindowMs: 30_000, diskEveryTicks: 15 };
 /** A cell's process limit: the watch's every tick, and the kernel's `pids.max` where pids is delegated. */
 export const PROCESSES_MAX = 512;
 const CLK_TCK = 100;
-const DISK_WALK_MAX = 200_000;
 
 interface Watched {
   readonly root: number;
@@ -985,6 +984,8 @@ interface Watched {
   readonly breach: (why: string) => void;
   readonly samples: { at: number; ticks: number }[];
   ticks: number;
+  /** A disk walk is out for this cell. */
+  measuring?: boolean;
   /** When the cell began to be watched, and since when its cores have held over the stop line without a break (#11657). */
   readonly startedAt: number;
   overSince: number | null;
@@ -1317,30 +1318,47 @@ function residentKiB(pid: number): number {
   }
 }
 
-/** Bytes allocated under `dirs`, without following links, bounded. */
-export function diskBytes(dirs: readonly string[]): number {
-  let total = 0;
-  let seen = 0;
-  const walk = (path: string): void => {
-    if (++seen > DISK_WALK_MAX) return;
-    let st;
+export { diskBytes };
+
+let diskWorker: Worker | undefined;
+let diskId = 0;
+const diskOpen = new Map<number, { resolve: (n: number) => void; reject: (e: Error) => void }>();
+
+/**
+ * `diskBytes` taken by a worker: a cell's checkout and its `node_modules` run
+ * to a couple of hundred thousand `lstat`s, which held the forge's one thread
+ * for 200 to 650 ms every fifteen seconds per cell (45 stalls in ten minutes
+ * on production, 2026-11-13).
+ */
+export function diskBytesOff(dirs: readonly string[]): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const id = ++diskId;
+    diskOpen.set(id, { resolve, reject });
     try {
-      st = lstatSync(path);
-    } catch {
-      return;
+      if (diskWorker === undefined) {
+        const w = new Worker(new URL("./disk_worker.ts", import.meta.url).href);
+        w.onmessage = (e: MessageEvent<{ id: number; bytes?: number; error?: string }>) => {
+          const open = diskOpen.get(e.data.id);
+          diskOpen.delete(e.data.id);
+          if (e.data.error !== undefined) open?.reject(new Error(e.data.error));
+          else open?.resolve(e.data.bytes ?? 0);
+        };
+        w.onerror = () => {
+          if (diskWorker === w) diskWorker = undefined;
+          for (const [k, open] of diskOpen) {
+            diskOpen.delete(k);
+            open.reject(new Error("the disk worker failed"));
+          }
+        };
+        w.unref();
+        diskWorker = w;
+      }
+      diskWorker.postMessage({ id, dirs: [...dirs] });
+    } catch (error) {
+      diskOpen.delete(id);
+      reject(error instanceof Error ? error : new Error(String(error)));
     }
-    total += st.blocks * 512;
-    if (!st.isDirectory()) return;
-    let names: string[];
-    try {
-      names = readdirSync(path);
-    } catch {
-      return;
-    }
-    for (const name of names) walk(join(path, name));
-  };
-  for (const dir of dirs) if (existsSync(dir)) walk(dir);
-  return total;
+  });
 }
 
 const mib = (bytes: number): string => `${Math.round(bytes / 1024 / 1024)} MiB`;
@@ -1432,11 +1450,23 @@ export function watchTick(
     }
     entry.ticks++;
     if (entry.ticks % WATCH.diskEveryTicks === 0) {
-      const bytes = diskBytes(entry.writable);
-      if (bytes > limits.diskMiB * 1024 * 1024)
-        entry.breach(
-          `wrote ${mib(bytes)} to disk, over its ${limits.diskMiB} MiB limit`,
+      const over = (bytes: number): void => {
+        if (bytes > limits.diskMiB * 1024 * 1024)
+          entry.breach(`wrote ${mib(bytes)} to disk, over its ${limits.diskMiB} MiB limit`);
+      };
+      if (process.env["NODE_ENV"] === "test") over(diskBytes(entry.writable));
+      else if (entry.measuring !== true) {
+        entry.measuring = true;
+        diskBytesOff(entry.writable).then(
+          (bytes) => {
+            entry.measuring = false;
+            if (watched.has(entry)) over(bytes);
+          },
+          () => {
+            entry.measuring = false;
+          },
         );
+      }
     }
   }
 }

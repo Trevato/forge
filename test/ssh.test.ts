@@ -783,6 +783,27 @@ describe.skipIf(NO_OPENSSH)("ssh rekey", () => {
   }, 60_000);
 });
 
+describe.skipIf(NO_OPENSSH)("ssh server-initiated rekey", () => {
+  test("the server starts a rekey itself after rekeyBytes, and the session survives it", async () => {
+    const down = payload(1024 * 1024);
+    const server = await start({
+      rekey: { rekeyBytes: 64 * 1024 },
+      onSession(session) {
+        session.onEof(() => session.exit(0));
+        session.write(down);
+      },
+    });
+    const client = ssh(server.port, keys.ed25519!, ["-v"], ["x"]);
+    await client.proc.stdin.end();
+    const out = await client.stdout;
+    const err = await client.stderr;
+    expect(await client.proc.exited).toBe(0);
+    expect(sha256(out)).toBe(sha256(down));
+    // The client logs each key exchange it takes part in: more than the first.
+    expect(err.match(/SSH2_MSG_KEX_ECDH_REPLY received/g)?.length ?? 0).toBeGreaterThan(1);
+  }, 60_000);
+});
+
 describe.skipIf(NO_OPENSSH)("ssh resilience", () => {
   test("garbage after the version line is disconnected, server keeps serving", async () => {
     const server = await start({

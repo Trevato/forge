@@ -5,8 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createOrg } from "../src/actions/orgs.ts";
 import { createApp, type App } from "../src/app.ts";
+import { createRepo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
+import { repoDir } from "../src/git/repos.ts";
+import { commitFiles } from "../src/git/write.ts";
 import { serve } from "../src/http/server.ts";
 import { deployPack } from "../src/packs/deploy.ts";
 import { parsePack } from "../src/packs/pack.ts";
@@ -16,9 +19,12 @@ import { deployCommands } from "../src/packs/words.ts";
 import { createForgeApp, forgeCommands } from "../src/tui/forge.ts";
 import { packLines, packsScreen } from "../src/tui/screens/packs.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
-import { cloneEnv, deployOrg, pushEnv, realHands } from "../scripts/pack.ts";
+import { cloneEnv, cloneUrl, deployOrg, pushEnv, realHands } from "../scripts/pack.ts";
+import { guardSource } from "../src/packs/source_guard.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
+
+const LOOP = { allow: ["127.0.0.1"], anyPort: true, plain: true };
 
 quietLogs();
 
@@ -43,7 +49,7 @@ describe("git credentials", () => {
       },
     });
     try {
-      const r = await realHands("http://127.0.0.1:1", "secret-token").carryHistory(`http://127.0.0.1:${stranger.port}/x.git`, "o", "n", undefined);
+      const r = await realHands("http://127.0.0.1:1", "secret-token", { guard: LOOP }).carryHistory(`http://127.0.0.1:${stranger.port}/x.git`, "o", "n", undefined);
       expect(r.ok).toBe(false);
       expect(seen.length).toBeGreaterThan(0);
       expect(seen.every((h) => h === null)).toBe(true);
@@ -52,7 +58,6 @@ describe("git credentials", () => {
     }
   });
 });
-
 
 describe("deploy org", () => {
   test("the flag wins over FORGE_ORG, and an empty value is no target", () => {
@@ -90,6 +95,75 @@ describe("deploy org", () => {
         expect(again.exists).toBe(true);
         expect(again.owner).toBe("leagues");
       }
+    } finally {
+      await servers.stop();
+      app.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("clone URL", () => {
+  test("a GitHub source and a forge source both clone at the .git address", () => {
+    expect(cloneUrl("https://github.com/a/b")).toBe("https://github.com/a/b.git");
+    expect(cloneUrl("https://github.com/a/b.git")).toBe("https://github.com/a/b.git");
+    expect(cloneUrl("https://forge.example/owner/name")).toBe("https://forge.example/owner/name.git");
+  });
+
+  test("cloning a source without .git asks the host at the .git path this forge serves", async () => {
+    const seen: string[] = [];
+    const stranger = Bun.serve({
+      port: 0,
+      fetch(req) {
+        seen.push(new URL(req.url).pathname);
+        return new Response("no", { status: 404 });
+      },
+    });
+    try {
+      const r = await realHands("http://127.0.0.1:1", "t", { guard: LOOP }).carryHistory(`http://127.0.0.1:${stranger.port}/owner/name`, "o", "n", undefined);
+      expect(r.ok).toBe(false);
+      expect(seen.some((p) => p.startsWith("/owner/name.git/"))).toBe(true);
+      expect(seen.some((p) => p.startsWith("/owner/name/") && !p.startsWith("/owner/name.git/"))).toBe(false);
+    } finally {
+      await stranger.stop(true);
+    }
+  });
+
+  test("a forge-hosted source written without .git still has its history carried", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pack-clone-git-"));
+    const app = createApp({ dataDir: dir, port: 0 });
+    const servers = await serve(app);
+    try {
+      const made = await createUser(app.db, {
+        origin: "seed",
+        trusted: true,
+        username: "ada",
+        email: "ada@forge.local",
+        password: "a-good-passphrase",
+        adminIfFirst: true,
+      });
+      if (!made.ok) throw new Error(made.error);
+      const src = await createRepo(app.db, app.reposRoot, { ownerId: made.value.id, name: "src", visibility: "public", description: "Source.", defaultBranch: "main" });
+      if (!src.ok) throw new Error(src.error);
+      const dst = await createRepo(app.db, app.reposRoot, { ownerId: made.value.id, name: "dst", visibility: "public", description: "Dest.", defaultBranch: "main" });
+      if (!dst.ok) throw new Error(dst.error);
+      const committed = await commitFiles(repoDir(app.reposRoot, "ada", "src"), {
+        branch: "main",
+        message: "hello",
+        files: [{ path: "hello.txt", content: "from the source\n" }],
+        author: { name: "ada", email: "ada@forge.local" },
+      });
+      if (!committed.ok) throw new Error(JSON.stringify(committed.error));
+      const missing = await fetch(`${servers.url}/ada/src/info/refs?service=git-upload-pack`);
+      expect(missing.status).not.toBe(200);
+      const advertised = await fetch(`${servers.url}/ada/src.git/info/refs?service=git-upload-pack`);
+      expect(advertised.ok).toBe(true);
+      const token = createToken(app.db, made.value.id, "pack", "admin").token;
+      const r = await realHands(servers.url, token).carryHistory(`${servers.url}/ada/src`, "ada", "dst", undefined);
+      expect(r).toEqual({ ok: true, branch: "main" });
+      const log = Bun.spawnSync(["git", "log", "--format=%s", "main"], { cwd: repoDir(app.reposRoot, "ada", "dst"), stdout: "pipe" });
+      expect(log.exitCode).toBe(0);
+      expect(log.stdout.toString()).toContain("hello");
     } finally {
       await servers.stop();
       app.close();
@@ -342,5 +416,71 @@ describe("forge-repo sources", () => {
   test("the https form still parses", () => {
     const r = parsePack(JSON.stringify({ pack: 1, name: "mine", title: "Mine", version: "1.0.0", description: "d", apps: [{ name: "x", description: "d", source: "https://github.com/a/b.git" }] }));
     expect(r.ok && r.value.apps[0]!.source).toBe("https://github.com/a/b");
+  });
+});
+
+describe("a pack source may not point at an internal address (#11971)", () => {
+  const via = (map: Record<string, string[]>) => ({ resolve: async (h: string) => map[h] ?? ["93.184.216.34"] });
+  const refused = async (source: string, guard?: object) => {
+    const r = await realHands("https://forge.example", "t", guard === undefined ? {} : { guard }).carryHistory(source, "o", "n", undefined);
+    expect(r.ok).toBe(false);
+    return r.ok ? "" : r.why;
+  };
+
+  test("literal internal addresses are refused before any connection, naming the host", async () => {
+    for (const host of ["127.0.0.1", "10.1.2.3", "192.168.1.5", "100.84.0.9", "[::1]", "169.254.169.254"]) {
+      const why = await refused(`https://${host}/a/b`);
+      expect(why).toContain(host.replace(/[[\]]/g, ""));
+      expect(why).toContain("internal address");
+    }
+  });
+
+  test("a public name that resolves to a private address is refused", async () => {
+    const why = await refused("https://sneaky.example/a/b", via({ "sneaky.example": ["93.184.216.34", "10.0.0.7"] }));
+    expect(why).toContain("sneaky.example");
+  });
+
+  test("a port other than 443 is refused", async () => {
+    expect(await refused("https://example.com:8443/a/b", via({}))).toContain("443");
+  });
+
+  test("a public host that redirects to an internal one is not followed", async () => {
+    let target = 0;
+    const inner = Bun.serve({ port: 0, fetch: () => (target++, new Response("no", { status: 404 })) });
+    const outer = Bun.serve({ port: 0, fetch: () => new Response(null, { status: 302, headers: { location: `http://127.0.0.1:${inner.port}/x.git/info/refs` } }) });
+    try {
+      const why = await refused(`http://127.0.0.1:${outer.port}/a/b`, LOOP);
+      expect(why).toMatch(/redirect|unable|fatal|error/i);
+      expect(target).toBe(0);
+    } finally {
+      await outer.stop(true);
+      await inner.stop(true);
+    }
+  });
+
+  test("the pack format refuses an internal literal and a port at parse time", () => {
+    for (const source of ["https://127.0.0.1/a/b", "https://10.0.0.1/a/b", "https://[::1]/a/b"]) {
+      const pack = { pack: 1, name: "p", title: "P", version: "1.0.0", description: "d", apps: [{ name: "a", description: "d", source }] };
+      expect(parsePack(JSON.stringify(pack)).ok).toBe(false);
+    }
+  });
+
+  test("a source on a port is left to the guard, which lets the forge's own port through", async () => {
+    const pack = { pack: 1, name: "p", title: "P", version: "1.0.0", description: "d", apps: [{ name: "a", description: "d", source: "https://forge.example:8443/a/b" }] };
+    expect(parsePack(JSON.stringify(pack)).ok).toBe(true);
+    expect((await guardSource("https://forge.example:8443/a/b.git", {}, { forge: "https://forge.example:8443", ...via({}) })).ok).toBe(true);
+    expect((await guardSource("https://other.example:8443/a/b.git", {}, { forge: "https://forge.example:8443", ...via({}) })).ok).toBe(false);
+  });
+
+  test("a clone seam does not skip the guard", async () => {
+    const r = await realHands("https://forge.example", "t", { cloneFrom: () => "/nonexistent" }).carryHistory("https://127.0.0.1/a/b", "o", "n", undefined);
+    expect(r.ok).toBe(false);
+    expect(r.ok ? "" : r.why).toContain("internal address");
+  });
+
+  test("a public https source passes the guard and is pinned to the address that was judged", async () => {
+    const r = await guardSource("https://example.com/a/b.git", {}, via({}));
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(Object.values(r.value)).toContain("example.com:443:93.184.216.34");
   });
 });

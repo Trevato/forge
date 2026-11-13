@@ -8,7 +8,7 @@ import { createApp, type App } from "../src/app.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
-import { familyOf } from "../src/http/crawl.ts";
+import { familyOf, pinCrawlLag } from "../src/http/crawl.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import {
   trafficAttention,
@@ -62,6 +62,10 @@ beforeAll(async () => {
   dataDir = await mkdtemp(join(tmpdir(), "forge-traffic-"));
   app = createApp({ dataDir, port: 0 });
   servers = await serve(app);
+  // These tests are about what is cached and counted, not load shedding:
+  // a stranger's budget is not divided because an earlier file in the
+  // shard left the loop late.
+  pinCrawlLag(app, false);
   const made = await createUser(app.db, { origin: "seed", trusted: true, username: "alice", email: "alice@forge.local", password: PASSWORD, isAdmin: true });
   if (!made.ok) throw new Error(made.error);
   alice = made.value;
