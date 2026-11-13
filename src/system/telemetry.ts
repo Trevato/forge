@@ -21,7 +21,7 @@ import { parkedSays, readParked } from "../flow/parked.ts";
 import { readDeclines } from "../flow/declines.ts";
 import { readKeeper } from "../flow/keeper.ts";
 import { heartbeatOf } from "../keeper/landed.ts";
-import { readPipeline, readStepStats, statWords, verdict } from "../flow/pipeline.ts";
+import { cachedStepStats, readPipeline, readStepStats, statWords, verdict } from "../flow/pipeline.ts";
 import { type QueueReading, readQueues } from "../flow/queue.ts";
 import { reviewersBusy, reviewingSays } from "../flow/reviewing.ts";
 import { requestedSays, requestedWaits } from "../flow/requested.ts";
@@ -72,7 +72,7 @@ export function* flowSlices(app: App, reader: Reader, now = new Date()): Generat
   const talkTurns = readTalkTurns(app.db);
   const parked = readParked(app.db, now, reader.kind === "agent");
   yield;
-  const steps = readStepStats(app.db, now, reader.kind === "agent");
+  const steps = cachedStepStats(app.db, now, reader.kind === "agent");
   yield;
   const verified = readVerified(app, reader.kind === "owner");
   yield;

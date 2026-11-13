@@ -55,7 +55,7 @@ function conflictRuns(db: Database, publicOnly: boolean): ConflictedPull[] {
     .query<ConflictedPull, [number]>(
       `SELECT o.username || '/' || r.name AS repo, i.number AS number,
               MIN(u.created_at) AS since
-         FROM run u JOIN issue i ON i.id = u.issue_id
+         FROM run u INDEXED BY run_conflict CROSS JOIN issue i ON i.id = u.issue_id
          JOIN pull p ON p.issue_id = i.id JOIN repo r ON r.id = i.repo_id JOIN user o ON o.id = r.owner_id
         WHERE u.kind = 'agent' AND u.reason = 'conflict' AND i.state = 'open'
           AND p.merged_at IS NULL AND (?1 = 0 OR r.visibility = 'public')
