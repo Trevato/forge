@@ -15,6 +15,7 @@ import {
   type Board, type Stored, type StoreError,
 } from "../boards/store.ts";
 import { OFFERED_FILE, readOffered, STARTING_BOARDS } from "../boards/starting.ts";
+import { boardsChanged } from "../flow/pages.ts";
 import { commitFiles } from "../git/write.ts";
 import { repoDir } from "../git/repos.ts";
 import { commitIdentity, forgeHost } from "../core/commit_identity.ts";
@@ -88,6 +89,7 @@ async function save(
   }
   const done = await saveBoard(app.reposRoot, slug, board, commitIdentity(app.config, who), message, mode);
   if (!done.ok) return done;
+  boardsChanged(app);
   app.bus.append({ kind: "board.saved", actorId: who.id, payload: { slug } });
   return done;
 }
@@ -155,6 +157,7 @@ export async function deleteBoard(app: App, actor: User | undefined, slug: strin
   const who = admin(actor);
   if (!who.ok) return who;
   const done = await removeBoard(app.reposRoot, slug, commitIdentity(app.config, who.value), `Delete board ${slug}`);
+  if (done.ok) boardsChanged(app);
   if (done.ok) app.bus.append({ kind: "board.deleted", actorId: who.value.id, payload: { slug } });
   return done;
 }
@@ -189,5 +192,6 @@ export async function offerStartingBoards(app: App): Promise<string[]> {
     author: { name: "forge", email: `forge@${forgeHost(app.config)}` },
   });
   if (!done.ok) return [];
+  boardsChanged(app);
   return free;
 }

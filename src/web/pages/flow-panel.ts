@@ -1,7 +1,7 @@
 /**
  * The flow panel, drawn for /boards: the pipeline with what each
  * stage let out, the bottleneck sentence, conflicted and requested pulls,
- * throughput, duplicate test work, why ready issues wait, and the merge
+ * throughput, why ready issues wait, and the merge
  * queue (the numbers come from `src/flow`). `/boards` shows it
  * to the owner; the old `/flow` redirects here. Every
  * count links back to the page that drew it with `?out=<what>[&hour=<0–23>]`.
@@ -11,7 +11,7 @@ import { MERGE_QUEUE_HELP } from "../../flow/help.ts";
 import { helpAsked, pageHelp } from "../page_help.ts";
 import { HELD_EXPLAINED } from "./boards-held.ts";
 import type { Reader } from "../../actions/telemetry.ts";
-import { queuesFor, systemFor } from "../../system/telemetry.ts";
+import { queuesFor } from "../../system/telemetry.ts";
 import { conflictedSays, rebaseLaneSays } from "../../flow/conflicted.ts";
 import { pileSays } from "../../flow/pile.ts";
 import { reviewingSays } from "../../flow/reviewing.ts";
@@ -56,7 +56,11 @@ import { gatesSection } from "./boards-gates.ts";
 import { heldCard } from "./boards-held.ts";
 import { badge, card, meter } from "../ui.ts";
 import { count, figure, figures, fold } from "../figure.ts";
+import type { BoardsPicture } from "../../flow/pages_read.ts";
 import { sparkline as homeSpark } from "../studio/kpi_row.ts";
+
+/** What the panel draws that is read off the thread: the figures, what each stage let out, what reviewers repeated and why ready issues wait. */
+export type PanelPicture = Pick<BoardsPicture, "fig" | "flow" | "repeats" | "held">;
 
 /** The events that move work between stages. The region has no address of its own, so the page's script refetches the page for it at most once in 30 s (`liveRegionsJs`). */
 const FLOW_LIVE = "run.queued,run.started,run.finished,pull.opened,pull.reviewed,pull.merged,pull.closed,queue.*,app.serving";
@@ -106,18 +110,24 @@ function outCells(base: string, t: StageThroughput): Html {
 }
 
 /** The panel for `reader`; `base` is the page it sits on, where its counts link. `between` is drawn under the pipeline, above the detail. */
-export function flowPanel(app: App, reader: Reader, url: URL, base: string, slots: { now?: Html | null; between?: Html | null; first?: Html | null; last?: Html | null } = {}): Html {
+export function flowPanel(app: App, reader: Reader, url: URL, base: string, slots: { picture?: PanelPicture; now?: Html | null; between?: Html | null; first?: Html | null; last?: Html | null } = {}): Html {
   const now = Date.now();
   const stages = readPipeline(app.db, new Date(now));
   const worst = bottleneck(stages);
-  const flow = readThroughput(app.db, stages.map((s) => s.key), new Date(now));
+  const owner = reader.kind === "owner";
+  // A page hands in the picture a worker read (`flow/pages.ts`); only a direct caller (a test) reads it here.
+  const pic: PanelPicture = slots.picture ?? {
+    fig: panelFigures(app.db, reader.kind, new Date(now)),
+    flow: readThroughput(app.db, stages.map((s) => s.key), new Date(now)),
+    repeats: readRepeats(app.db, "", new Date(now), !owner),
+    held: readHeld(app, owner, now),
+  };
+  const { flow, fig } = pic;
   const out = new Map(flow.stages.map((t) => [t.key, t]));
   const landed = out.get("approved");
   const checked = out.get("checking")?.items ?? [];
   const passed = checked.filter((i) => i.outcome === "passed").length;
   const ready = stages.find((s) => s.key === "ready");
-  const dups = systemFor(app, reader).duplicates;
-  const fig = panelFigures(app.db, reader.kind, new Date(now));
   const conflicted = conflictedSays(fig.conflicted, now);
   const lane = rebaseLaneSays(fig.lane);
   const onBuilder = requestedSays(fig.requested.builder, "builder", now);
@@ -128,7 +138,6 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string, slot
   const newest = parked.newest[0];
   const listed = asked(url);
   const shown = listed === null ? undefined : out.get(listed.key);
-  const owner = reader.kind === "owner";
   const help = pageHelp([
     ["Stages", html`${(Object.keys(STAGE_HOLDS) as PipelineKey[]).map((k, i) => html`${i === 0 ? "" : "; "}<strong>${STAGE_LABEL[k]}</strong>: ${STAGE_HOLDS[k]}`)}.`],
     ["Ready, and why it waits", HELD_EXPLAINED],
@@ -233,21 +242,15 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string, slot
             ? "no pulls"
             : openers.map((o, i) => html`${i === 0 ? "" : " · "}<a href="/${o.author}">${o.author}</a> ${openerCounts(o)}`)}
         </p>
-        <p id="duplicate-work" data-count="${String(dups.length)}">
-          ${dups.length === 0
-            ? html`No test file is running in more than one check.`
-            : html`<strong>${String(dups.length)} test file${dups.length === 1 ? " is" : "s are"} running in more than one check:</strong>
-              ${dups.slice(0, 5).map((d) => html`<span class="mono small">${d.file} (${d.checks.join(", ")})</span> `)}`}
-          <a href="/system">System</a>
-        </p>
+        <p id="system-link">Which test files are running in more than one check right now, and what each check is using, is on <a href="/system">System</a>.</p>
         ${owner ? html`<p id="keeper-heartbeat-row">Release tick: <span id="keeper-heartbeat">${beatFact(lastBeat(app.db), new Date(now))}</span></p>` : ""}`, { id: "day" })}
-      ${heldCard(readHeld(app, owner, now))}
+      ${heldCard(pic.held)}
       ${queueCard(queuesFor(app, reader, new Date(now), { batches: true }))}
       ${gatesSection(app.db, owner, now)}
       ${doctorCard(app.db, owner, now)}
       ${hotFilesCard(app, reader)}
       ${verifiedCard(readVerified(app, owner), now)}
-      ${repeatsCard(readRepeats(app.db, "", new Date(now), !owner))}
+      ${repeatsCard(pic.repeats)}
       ${slots.last ?? null}
       </div>
       ${help}

@@ -8,12 +8,11 @@
  * No client framework. Every form posts to `boards-edit.ts`. Anyone but a
  * person who is an admin gets the not-found page.
  */
-import { listAllBoards, showBoard } from "../../actions/boards.ts";
+import { showBoard } from "../../actions/boards.ts";
 import { CHART_NAMES } from "../../boards/chart.ts";
 import { MAX_H, MAX_PANELS, MAX_TITLE, MAX_W, RANGES, type Board, type Panel } from "../../boards/store.ts";
 import type { App } from "../../app.ts";
 import type { Ctx } from "../../http/context.ts";
-import { driftingPulls, readDrifts } from "../../flow/alarm_drift.ts";
 import { driftSection } from "./boards-drift.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { liveRegionsJs } from "../client.ts";
@@ -21,12 +20,12 @@ import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { fragment, page } from "../layout.ts";
 import { btn, chartBox, confirmAction, field, selectField } from "../ui.ts";
-import { fold } from "../figure.ts";
+import { fold, reading, readingJs } from "../figure.ts";
 import { formatValue } from "../../boards/chart.ts";
 import { flowPanel } from "./flow-panel.ts";
 import { boardsHoldsCard } from "./boards-holds.ts";
-import { forgeCeiling } from "../../flow/ceiling.ts";
-import { alarmLines, cachedAlarms } from "../studio/alarm_lines.ts";
+import { alarmLines } from "../studio/alarm_lines.ts";
+import { boardsPicture, LONG_WAIT_MS } from "../../flow/pages.ts";
 import { isPinned, listPins } from "../../boards/pins.ts";
 import { panelData, runFor } from "../../boards/panel_data.ts";
 import { readParams } from "../../boards/params.ts";
@@ -90,17 +89,50 @@ const denied = (ctx: Ctx) => {
   return u?.isAdmin !== true || u.kind === "agent";
 };
 
+/**
+ * Start reading `/boards`' picture now and draw the panel once from it, so the
+ * first person to open the page after a restart finds both the picture and a
+ * warm renderer: the forge calls this once it is listening (never `bun test`,
+ * where the picture is read inline).
+ */
+export function warmBoards(app: App): void {
+  if (process.env["NODE_ENV"] === "test") return;
+  void boardsPicture(app, "owner", LONG_WAIT_MS)
+    .then((picture) => {
+      if (picture !== undefined) flowPanel(app, { kind: "owner" }, new URL("http://forge/boards"), "/boards", { picture });
+    })
+    .catch(() => {});
+}
+
 // GET /boards
 export async function boardsList(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-  if (ctx.auth.user === undefined) return signInFirst(ctx);
-  const listed = await timePhaseAsync(ctx.request, "boards", () => listAllBoards(ctx.app, ctx.auth.user));
-  if (!listed.ok) {
+  const user = ctx.auth.user;
+  if (user === undefined) return signInFirst(ctx);
+  if (denied(ctx)) {
     // Not a forge admin: the page is the holds of the repositories they administer, or not found.
-    const holds = boardsHoldsCard(ctx.app.db, ctx.auth.user);
+    const holds = boardsHoldsCard(ctx.app.db, user);
     if (holds === null) return notFoundPage(ctx);
     return page({ ctx, title: "Boards", body: html`<div class="page-head"><h1>Boards</h1></div>${holds}` });
   }
+  // What a "Reading…" page asks: it answers when the worker has the picture, and draws nothing.
+  if (ctx.url.searchParams.has("wait")) {
+    const read = await boardsPicture(ctx.app, "owner", LONG_WAIT_MS);
+    return new Response(null, { status: read === undefined ? 503 : 204, headers: { "cache-control": "no-store" } });
+  }
+  // The page's picture is read by a worker and kept: nothing here walks the pulls, the runs or git.
+  const picture = await timePhaseAsync(ctx.request, "picture", () => boardsPicture(ctx.app, "owner"));
+  if (picture === undefined) {
+    return page({
+      ctx,
+      title: "Boards",
+      wide: true,
+      body: html`<div class="hf bd"><header class="hf-head"><div class="hf-title"><h1>Boards</h1></div></header>
+        <section class="bd-now">${reading("Reading how work is moving through the forge…", "/boards?wait=1", "/boards")}</section></div>`,
+      scriptJs: readingJs,
+    });
+  }
+  const listed = { value: picture.boards };
   const boards = html`<section class="bd-block" id="boards-all" aria-labelledby="boards-all-h">
     <header class="bd-head"><h2 id="boards-all-h">Your boards</h2><p class="bd-sub">A board is a page of charts over the forge's own numbers, saved as a file in forge/boards.</p></header>
     ${listed.value.length === 0
@@ -119,9 +151,9 @@ export async function boardsList(ctx: Ctx): Promise<Response> {
         ${btn("Make board", { variant: "primary" })}
       </form></details>
   </section>`;
-  const drift = driftSection(await timePhaseAsync(ctx.request, "drift", async () => driftingPulls(await readDrifts(ctx.app), Date.now())));
+  const drift = driftSection(picture.drifting ?? []);
   const flow = timePhase(ctx.request, "flow", () =>
-    flowPanel(ctx.app, { kind: "owner" }, ctx.url, "/boards", { now: alarmLines(cachedAlarms(ctx.app.db, new Date(), forgeCeiling(ctx.app.config), ctx.app.config.dataDir)), between: boards, first: drift, last: boardsHoldsCard(ctx.app.db, ctx.auth.user, true) }));
+    flowPanel(ctx.app, { kind: "owner" }, ctx.url, "/boards", { picture, now: alarmLines(picture.alarms), between: boards, first: drift, last: boardsHoldsCard(ctx.app.db, user, true) }));
   const rendering = performance.now();
   const response = page({
     ctx,

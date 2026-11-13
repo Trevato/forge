@@ -80,7 +80,7 @@ describe("on production's size", () => {
     const unit = baseline();
     const res = await get("/boards");
     expect(res.status).toBe(200);
-    for (const n of ["session", "boards", "flow", "render"]) expect(names(res.timing)).toContain(n);
+    for (const n of ["session", "picture", "flow", "render"]) expect(names(res.timing)).toContain(n);
     expect(res.ms).toBeLessThan(30 * unit);
   });
 
