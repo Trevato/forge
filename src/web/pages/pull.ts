@@ -1456,9 +1456,11 @@ export async function pullReviewStateSubmit(ctx: Ctx): Promise<Response> {
             ? `${reviewWords.forbidden} You can still leave a comment.`
             : error === "body_too_long"
               ? reviewWords.tooLong
-              : error === "invalid_state"
-                ? "That is not a verdict this forge knows."
-                : "That review could not be recorded."),
+              : error === "looks_required"
+                ? reviewWords.looksRequired
+                : error === "invalid_state"
+                  ? "That is not a verdict this forge knows."
+                  : "That review could not be recorded."),
     });
   }
   return flashTo(ctx, `${dest}#conversation`, {

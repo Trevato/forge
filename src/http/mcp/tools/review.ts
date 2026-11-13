@@ -53,7 +53,9 @@ export const tool: Tool = {
               ? reviewWords.forbidden
               : error === "body_too_long"
                 ? reviewWords.tooLong
-                : "That review could not be recorded."),
+                : error === "looks_required"
+                  ? reviewWords.looksRequired
+                  : "That review could not be recorded."),
       );
     }
     return good({
