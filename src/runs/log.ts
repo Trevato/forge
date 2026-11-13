@@ -76,6 +76,81 @@ export function frameOf(lines: readonly string[]): {
 /** A line without its newline; a trailing newline is added on write. */
 const MAX_LINE = 16 * 1024;
 
+/**
+ * Lines wait in memory this long, then one append per run writes them all:
+ * a build's output is hundreds of lines a second, each of which was a
+ * `mkdir` and an `open`, `write` and `close` on the forge's one thread
+ * (about 150 `mkdir` and 1500 `statx` a second on production). The taps and
+ * watchers still hear every line the moment it is written; a reader of the
+ * file (`readRunLog`) writes what waits first, and exit does too.
+ */
+const FLUSH_MS = 50;
+/** More than this waiting writes at once. */
+const FLUSH_BYTES = 256 * 1024;
+
+let buffering = process.env["NODE_ENV"] !== "test";
+/** A test opts in to the buffered path; `bun test` otherwise writes each line as it comes. */
+export function bufferRunLogs(on: boolean): void {
+  flushRunLogs();
+  buffering = on;
+}
+
+const pending = new Map<string, string[]>();
+let pendingBytes = 0;
+let flushTimer: ReturnType<typeof setTimeout> | undefined;
+const made = new Set<string>();
+let exitHooked = false;
+
+function appendTo(dataDir: string, path: string, text: string): void {
+  if (!made.has(dataDir)) {
+    mkdirSync(runsRoot(dataDir), { recursive: true });
+    made.add(dataDir);
+  }
+  try {
+    appendFileSync(path, text);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    // The directory was removed under us: make it again, once.
+    mkdirSync(runsRoot(dataDir), { recursive: true });
+    appendFileSync(path, text);
+  }
+}
+
+/** Write every waiting line now. */
+export function flushRunLogs(): void {
+  if (flushTimer !== undefined) clearTimeout(flushTimer);
+  flushTimer = undefined;
+  if (pending.size === 0) return;
+  const batch = [...pending];
+  pending.clear();
+  pendingBytes = 0;
+  for (const [key, lines] of batch) {
+    const at = key.indexOf("\0");
+    try {
+      appendTo(key.slice(0, at), key.slice(at + 1), lines.join(""));
+    } catch {
+      // A full disk loses the lines it could not take; the run goes on.
+    }
+  }
+}
+
+function enqueue(dataDir: string, runId: string, clean: string): void {
+  if (!exitHooked) {
+    exitHooked = true;
+    process.on("exit", flushRunLogs);
+  }
+  const key = `${dataDir}\0${runLogPath(dataDir, runId)}`;
+  const lines = pending.get(key);
+  if (lines === undefined) pending.set(key, [`${clean}\n`]);
+  else lines.push(`${clean}\n`);
+  pendingBytes += clean.length + 1;
+  if (pendingBytes >= FLUSH_BYTES) flushRunLogs();
+  else if (flushTimer === undefined) {
+    flushTimer = setTimeout(flushRunLogs, FLUSH_MS);
+    flushTimer.unref?.();
+  }
+}
+
 /** Append one line. Long lines are cut, never wrapped: a log is not a pager. */
 export function appendRunLog(
   dataDir: string,
@@ -83,8 +158,8 @@ export function appendRunLog(
   line: string,
 ): void {
   const clean = redactHeld(line.replace(/\r?\n/g, " ")).slice(0, MAX_LINE);
-  mkdirSync(runsRoot(dataDir), { recursive: true });
-  appendFileSync(runLogPath(dataDir, runId), `${clean}\n`);
+  if (buffering) enqueue(dataDir, runId, clean);
+  else appendTo(dataDir, runLogPath(dataDir, runId), `${clean}\n`);
   noteActivity(runId);
   for (const tap of taps) {
     try {
@@ -110,6 +185,7 @@ export function readRunLog(
   runId: string,
   maxBytes = 512 * 1024,
 ): { lines: string[]; truncated: boolean } {
+  flushRunLogs();
   const path = runLogPath(dataDir, runId);
   if (!existsSync(path)) return { lines: [], truncated: false };
   const size = statSync(path).size;
