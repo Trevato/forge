@@ -564,10 +564,10 @@ const snapshots = startSnapshots(
 // What the machine uses (boards/sampler.ts): the pod, each cell and the
 // node, every 15 s into a ring the `machine` board source reads.
 const sampler = startSampler(app, {});
-// What has left its window goes a bounded slice at a time on a pace (`system/retention.ts`). The machine
-// samples are this thread's always (telemetry kept out of the write clock); the rest, the events and the
-// deploy ledger, are the engine's when it has a thread of its own.
-const stopRetention = startRetention(app, { samples: true, rest: !engineOn });
+// What has left its window goes a bounded slice at a time on a pace (`system/retention.ts`). The drains no
+// page reads (machine samples, wake-up events, the old deploy ledger) are this thread's always, kept out of
+// the write clock; the age rule and the deploy backfill are the engine's when it has a thread of its own.
+const stopRetention = startRetention(app, { local: true, engine: !engineOn });
 const memorySampler = startMemorySampler(app);
 // The starting boards, once each (actions/boards.ts).
 void offerStartingBoards(app)

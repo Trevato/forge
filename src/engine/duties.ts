@@ -34,8 +34,8 @@ const HOUR_MS = 3_600_000;
 /**
  * Start every duty; the returned function stops them all. `onWorker` is on
  * for the engine's own thread: there the engine retires what has left its
- * window but the machine samples (`system/retention.ts`; those stay on the serving thread's
- * connection) and owns the write-ahead log's checkpoints.
+ * window but the drains no page reads (`system/retention.ts`; those stay on the serving thread's
+ * connection, out of the write clock) and owns the write-ahead log's checkpoints.
  */
 export function startDuties(app: App, options: { onWorker: boolean }): () => void {
   const timers: ReturnType<typeof setInterval>[] = [];
@@ -131,8 +131,8 @@ export function startDuties(app: App, options: { onWorker: boolean }): () => voi
     // The one checkpointer: the serving thread's commits never pay for it (`main.ts`). A passive one
     // takes what no reader still needs and waits for none; a log nobody reads is reset by the next write.
     timers.push(setInterval(() => during("checkpoint", () => app.db.exec("PRAGMA wal_checkpoint(PASSIVE)")), 2_000));
-    // What has left its window goes a bounded slice at a time on a pace (`system/retention.ts`); the machine samples are the serving thread's.
-    stops.push(startRetention(app, { samples: false, rest: true }));
+    // What has left its window goes a bounded slice at a time on a pace (`system/retention.ts`); the drains no page reads are the serving thread's (`main.ts`).
+    stops.push(startRetention(app, { local: false, engine: true }));
   }
   return () => {
     for (const timer of timers) clearInterval(timer);

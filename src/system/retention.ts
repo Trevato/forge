@@ -20,16 +20,21 @@
  * the stall. With nothing behind, a job looks again after its own idle gap. A slice that
  * throws is logged and tried again at the idle gap. Every job reads and writes only the
  * database, so the same jobs run on the serving thread (`inline`) or on the engine's Worker
- * (`engine/duties.ts` starts them on whichever thread runs the engine, never both). The machine
- * samples are the exception: they are telemetry that the serving thread's connection leaves out of
- * the write clock (`quietly`, `core/write_clock.ts`), which a commit of the engine's connection could
- * not be, so `retention-samples` always runs on the serving thread (`main.ts`) and the other four
- * (`rest`) on whichever thread has the engine.
+ * (`engine/duties.ts` starts them on whichever thread runs the engine, never both).
+ *
+ * The write clock (`core/write_clock.ts`) is what tells a page cache that anything was written: a
+ * slice a few times a second for hours would keep every cache cold. A write nothing shows is left out
+ * of it (`quietly`) on the serving thread's connection, and a commit of the engine's connection cannot
+ * be left out. So the three jobs that only drain rows no page reads (`retention-samples`,
+ * `retention-live`, `retention-deploys`) are the serving thread's always (`local`), and the two whose
+ * writes are meaningful (`retention-events`: a feed shows what it leaves; `landed-backfill`: ask-to-live
+ * shows what it writes) are the engine's thread's when it has one (`engine`).
  */
 
 import type { App } from "../app.ts";
 import { backfillLanded, LANDED_SLICE } from "../core/carried.ts";
 import { pillarWindowStart } from "../core/pillars.ts";
+import { quietly } from "../core/write_clock.ts";
 import { withoutWaiting } from "../kernel/db.ts";
 import { during } from "../perf/jobs.ts";
 import { limitValue } from "../settings/limits.ts";
@@ -152,7 +157,7 @@ export function retentionJobs(app: App): Retention {
     deploys: {
       idleMs: IDLE_MS,
       slice(now) {
-        const r = withoutWaiting(db, () => trimDeploys(new Date(now)));
+        const r = quietly(db, () => withoutWaiting(db, () => trimDeploys(new Date(now))));
         return r === undefined
           ? { did: 0, more: false }
           : { did: r.deleted, more: r.more };
@@ -162,11 +167,11 @@ export function retentionJobs(app: App): Retention {
 }
 
 /**
- * Start the retention jobs `which` names (the machine samples, the rest); the returned function stops them all. The backfill's
+ * Start the retention jobs `which` names (`local`: the quiet drains; `engine`: the two with meaningful writes); the returned function stops them all. The backfill's
  * first slice runs at once, the way a boot sweep does; the others are staggered
  * so no two first slices meet.
  */
-export function startRetention(app: App, which: { samples: boolean; rest: boolean }): () => void {
+export function startRetention(app: App, which: { local: boolean; engine: boolean }): () => void {
   const jobs = retentionJobs(app);
   let stopped = false;
   /** When the last slice of any job ended, plus the quiet it asks (`performance.now` ms). */
@@ -227,13 +232,15 @@ export function startRetention(app: App, which: { samples: boolean; rest: boolea
       during("retention-deploys", () => deploys(work(jobs.deploys, "deploy ledger trim")));
     }, delay);
   };
-  if (which.rest) {
+  if (which.engine) {
     backfill(0);
-    live(1_000);
     events(3_000);
+  }
+  if (which.local) {
+    live(1_000);
+    samples(5_000);
     deploys(7_000);
   }
-  if (which.samples) samples(5_000);
   return () => {
     stopped = true;
     for (const timer of pending) if (timer !== undefined) clearTimeout(timer);

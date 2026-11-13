@@ -95,7 +95,7 @@ describe("the jobs", () => {
   test("starting the jobs runs the backfill at once; stopping them leaves no timer to fire", async () => {
     const { db, app } = seeded();
     ledger(db, 5, Date.now() - DAY);
-    const stop = startRetention(app, { samples: true, rest: true });
+    const stop = startRetention(app, { local: true, engine: true });
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(db.query("SELECT COUNT(*) AS n FROM deploy_landed").get()).toEqual({ n: 5 });
     stop();
