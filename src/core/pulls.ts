@@ -797,6 +797,11 @@ export interface ReviewGate {
    */
   readonly requireChecks?: boolean;
   /**
+   * An app's first change lands on green whatever the reviewer asked
+   * (`crew/first_change.ts`): the verdict is not read. @default false
+   */
+  readonly pastReviews?: boolean;
+  /**
    * The names of the crew teams that still hold this head (#9930,
    * `teamsHolding`), asked with the live head inside the merge. Absent
    * means no team gate: the owner's break-glass passes it.
@@ -831,8 +836,9 @@ export function reviewGate(
     changesRequested: summary.changesRequested,
     required: gate.requireReview,
     mergeable:
-      summary.changesRequested === 0 &&
-      (!gate.requireReview || summary.approvals > 0),
+      gate.pastReviews === true ||
+      (summary.changesRequested === 0 &&
+        (!gate.requireReview || summary.approvals > 0)),
   };
 }
 

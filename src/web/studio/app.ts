@@ -9,6 +9,7 @@
  * for a viewer who can write here; a stranger sees the app.
  */
 
+import { pausedSentence } from "../../crew/paused_now.ts";
 import { appCardPath } from "../og/path.ts";
 import { fleetGraphHref } from "../fleet-graph.ts";
 import { sealedScope } from "../../core/sealed.ts";
@@ -512,6 +513,7 @@ export async function studioApp(
     <div id="app-head">${head}</div>
     ${ownerFacts ? crewKeyCard(ctx, true) : null}
     ${ownerFacts ? landOnApp(ctx, repo) : null}
+    ${pausedLine(ctx, repo)}
     <div class="stack">
       ${adapter}
       ${schedules}
@@ -534,6 +536,7 @@ export async function studioApp(
     ${policy}
     ${ownerFacts ? crewKeyCard(ctx, true) : null}
     ${ownerFacts ? landOnApp(ctx, repo) : null}
+    ${pausedLine(ctx, repo)}
     ${ownerFacts
       ? egressNote(
           ctx.app.config.dataDir,
@@ -578,4 +581,10 @@ export async function studioApp(
   });
   notePhase(req, "render", performance.now() - rendering);
   return response;
+}
+
+/** The one sentence a paused crew says on the app's page: until when, and why. */
+function pausedLine(ctx: Ctx, repo: Repo): Html | null {
+  const says = pausedSentence(ctx.app.db, { repoId: repo.id });
+  return says === undefined ? null : html`<p class="muted small" data-paused role="status">${says}.</p>`;
 }

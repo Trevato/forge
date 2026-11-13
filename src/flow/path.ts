@@ -20,6 +20,7 @@ import type { Repo } from "../core/repos.ts";
 import { reviewSummariesFor, reviewSummary } from "../core/reviews.ts";
 import { checksForHeads, checkSummary, type RunState } from "../core/runs.ts";
 import { reviewsOff } from "../crew/review.ts";
+import { isFirstChange } from "../crew/first_change.ts";
 import { nextAsking, nextOfPull, type Next } from "./next_actor.ts";
 import { wallWordsOf } from "./wall_wait.ts";
 
@@ -188,6 +189,7 @@ export function stepsOfStored(db: Database, repo: Repo, pulls: readonly Pull[]):
         approvals: r.approvals,
         pushedSince: r.stale,
         wall: wallWordsOf(walls.get(pull.id), pull.headOid),
+        firstChange: r.changesRequested > 0 && isFirstChange(db, repo, pull),
       },
       reviewOff,
     );

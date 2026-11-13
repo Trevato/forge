@@ -35,7 +35,9 @@ import { sliced } from "../kernel/breathe.ts";
 import { createLog } from "../kernel/log.ts";
 import { authorsInRepoPull, BACK_WITH_AUTHOR } from "./authors_pull.ts";
 import { queueAgentRun } from "./dispatch.ts";
+import { interruptionOf } from "./interrupted.ts";
 import { HANDOVER_NOTE, handoverOf } from "./guard.ts";
+import { isFirstChange } from "./first_change.ts";
 import { greenHead, sendToReview } from "./review.ts";
 import { pickBuilder } from "./route.ts";
 import { NO_BUILDER_ON_CREW, WAITS_FOR_BUILDER_SLOT } from "./words.ts";
@@ -173,6 +175,8 @@ function followUp(
   const issue = getIssueById(app.db, requested.pullId);
   if (!pull || !issue) return notMoved(requested, "no pull row");
   if (getHold(app.db, pull.id) !== undefined) return notMoved(requested, "a person holds it");
+  // An app's first change lands on green; what was asked becomes a follow-up (`first_change.ts`).
+  if (isFirstChange(app.db, repo, pull)) return notMoved(requested, "lands on green as the app's first change");
   if (handoverOf(app.db, repo, pull.id) !== undefined)
     return notMoved(requested, "handed to a person after the review rounds");
   // Past the rounds the verdict is advice, and the pull lands as it is.
@@ -236,15 +240,24 @@ function handBack(app: App, repo: Repo, requested: RequestedPull, issue: Issue):
   return notMoved(requested, BACK_WITH_AUTHOR);
 }
 
-/** How many runs other than a review started on the pull after the verdict. */
+/**
+ * How many follow-up runs ended on the pull after the verdict having really
+ * run: reached the agent and pushed nothing. A run that was paused (the
+ * model's limit, an outage), cut short by a restart or the host, never
+ * started, or was skipped is no attempt: a pause is not a failed follow-up.
+ */
 function startedSince(app: App, pullId: string, at: string): number {
   return app.db
-    .query<{ n: number }, [string, string]>(
-      `SELECT COUNT(*) AS n FROM run WHERE issue_id = ?1 AND kind = 'agent'
+    .query<{ summary: string | null }, [string, string]>(
+      `SELECT summary FROM run WHERE issue_id = ?1 AND kind = 'agent'
          AND reason != 'review' AND created_at > ?2
-         AND summary NOT LIKE 'skipped: %'`,
+         AND state IN ('ok','failed')`,
     )
-    .get(pullId, at)!.n;
+    .all(pullId, at)
+    .filter(({ summary }) => {
+      const said = summary ?? "";
+      return !said.startsWith("skipped: ") && !/^paused\b/i.test(said) && interruptionOf(said) === undefined;
+    }).length;
 }
 
 /** The builder has had its follow-ups and pushed nothing: one note, from the reviewer, and no more runs. */

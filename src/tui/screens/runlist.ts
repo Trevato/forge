@@ -90,7 +90,7 @@ export function runRows(
       // the same words the web card uses (`crew/pacing.ts`).
       secondary:
         run.state === "queued" && run.notBefore !== null
-          ? pausedNote(run.notBefore)
+          ? pausedNote(run.notBefore, new Date(), run.summary)
           : run.summary === ""
             ? run.reason
             : run.summary,

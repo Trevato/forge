@@ -101,7 +101,7 @@ describe("a paused run does not hold the crew's only slot", () => {
         headers: { cookie },
       })
     ).text();
-    expect(page).toContain(pausedNote(waiting.notBefore!));
+    expect(page).toContain(pausedNote(waiting.notBefore!, new Date(), waiting.summary));
   }, 60_000);
 
   test("the cause is named, by whole words", () => {

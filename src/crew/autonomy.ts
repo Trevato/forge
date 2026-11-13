@@ -140,6 +140,7 @@ import { guardedList } from "./stranger.ts";
 import { warnExpiring } from "./fold_in.ts";
 import { crewOffInPreview } from "./preview.ts";
 import { approvedOnHead, finishApproved, finishFields } from "./finishing.ts";
+import { isFirstChange, reviewComing, sayFirstLanded } from "./first_change.ts";
 import { recheckRedApproved } from "./red_approved.ts";
 import { sweepStaleReds } from "./stale_reds.ts";
 import { sweepStranded } from "./stranded.ts";
@@ -1192,7 +1193,7 @@ export function pruneLine(app: App, repo: Repo): number {
       row.headOid === joined.headOid &&
       getHold(app.db, row.id) === undefined &&
       verdictForHead(app.db, row.id, row.headOid).every((c) => c.state === "ok") &&
-      reviewSummary(app.db, row.id, row.headOid).changesRequested === 0;
+      (reviewSummary(app.db, row.id, row.headOid).changesRequested === 0 || isFirstChange(app.db, repo, row));
     if (!stays) out.add(joined.id);
   }
   return out.size === 0 ? 0 : dropFromLine(repo.id, out);
@@ -1939,8 +1940,15 @@ export async function reviewed(
   repo: Repo,
   pull: Pull,
   now: Date = new Date(),
-): Promise<"pass" | "hold" | "lapsed"> {
+): Promise<"pass" | "hold" | "lapsed" | "first"> {
   const seen = reviewSummary(app.db, pull.id, pull.headOid);
+  // An app's first change lands on green, whatever the reviewer says: what
+  // it asked for is filed as one follow-up when it lands (`first_change.ts`).
+  // A review already on its way is read first, for a few minutes at most.
+  if (isFirstChange(app.db, repo, pull)) {
+    if (seen.changesRequested === 0 && seen.approvals === 0 && reviewComing(app.db, pull, now)) return "hold";
+    return seen.approvals > 0 && seen.changesRequested === 0 ? "pass" : "first";
+  }
   if (seen.changesRequested > 0) return "hold";
   if (seen.approvals > 0) return "pass";
   // A trusted source's pull needs no person's review (#8937); its check, the
@@ -2319,7 +2327,7 @@ async function landGated(
   repo: Repo,
   by: User,
   pull: Pull,
-  review: "pass" | "lapsed",
+  review: "pass" | "lapsed" | "first",
   expect: { baseOid: string; treeOid: string },
 ): Promise<string | undefined> {
   // The gate took minutes: the pull it was run on must still be the one
@@ -2359,7 +2367,7 @@ async function landGated(
       ms: 0,
     });
   const strategy = await landingStrategy(app, repo, pull, expect.baseOid);
-  const merged = await mergePull(app, by, repo, pull, strategy, expect);
+  const merged = await mergePull(app, by, repo, pull, strategy, expect, review === "first" ? { pastReviews: true } : {});
   if (!merged.ok) {
     const why = mergeWhy(merged.error);
     log.info("green but not landed", {
@@ -2380,6 +2388,8 @@ async function landGated(
   // there is no release to cut and nothing new was landed.
   if (merged.value.carried) return undefined;
   resolveOpen(app.db, pull.id, "land", "shipped");
+  // The app's first change: one sentence on the pull, and the reviewer's requests as one follow-up.
+  if (review === "first") sayFirstLanded(app, repo, pull, by);
   // Said once it has landed, so the note wakes no builder: the review was
   // asked for and never came.
   if (review === "lapsed") {
