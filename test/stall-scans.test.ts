@@ -102,7 +102,10 @@ test("build yield reads event through its index, never a scan of event or a run 
   const plan = planOf(big, BUILD_YIELD_SQL, [ago(1440), ago(0), 0]);
   expect(plan.filter((d) => /SCAN /.test(d))).toEqual([]);
   expect(plan.some((d) => d.includes("event_repo_kind_number_at"))).toBe(true);
-  expect(plan.some((d) => /SEARCH x USING INDEX run_kind_finished/.test(d))).toBe(true);
+  // The run side is a range search on (kind, finished_at). Which index answers it
+  // (run_kind_finished, or a covering one that leads with the same columns) is the
+  // planner's choice and changes as indexes are added; the shape is what matters.
+  expect(plan.some((d) => /^SEARCH x USING (COVERING )?INDEX \w+ \(kind=\? AND finished_at>\? AND finished_at<\?\)/.test(d))).toBe(true);
 });
 
 test("build yield on thousands of runs answers within the bound and counts them all", () => {
