@@ -70,8 +70,11 @@ export interface SwapperInput {
   readonly drain: () => void;
   readonly probe?: Readonly<Record<string, string>>;
   readonly budgetMs?: number;
-  /** Told how long each stage of a forward swap took, just before this process drains (#11839). */
-  readonly timed?: (t: { buildMs: number; proofMs: number; switchMs: number }) => void;
+  /**
+   * Told how long each stage of a forward swap took, or how long a rollback took end to end,
+   * just before this process drains (#11839, #11919).
+   */
+  readonly timed?: (t: Timing) => void;
   readonly now?: () => number;
 }
 
@@ -90,6 +93,12 @@ export function dependencyChange(dir: string): string | undefined {
   }
   return undefined;
 }
+
+/**
+ * A forward swap's stages, or a rollback's whole time: from the swap asked to the
+ * known-good tree serving.
+ */
+export type Timing = { buildMs: number; proofMs: number; switchMs: number } | { rollbackMs: number };
 
 export function swapper(i: SwapperInput): Deployer {
   const now = i.now ?? Date.now;
@@ -201,6 +210,7 @@ export function swapper(i: SwapperInput): Deployer {
       if (m === null) throw new Error("not a tree reference");
       const [, sha, version] = m as unknown as [string, string, string];
       if (handedTo === ref) return;
+      const began = now();
       // A tree that has served (pinned when it was swapped away from) is a rollback and is not checked again; any other is admitted, as at the cut.
       const backward = existsSync(join(releaseDir(i.dataDir, sha), LIVE_MARK));
       const dir = await prepare(sha, !backward);
@@ -227,7 +237,7 @@ export function swapper(i: SwapperInput): Deployer {
         });
         if (!started.ok) throw new Error(started.line);
         swapped = true;
-        if (!backward) i.timed?.({ ...stages, switchMs: now() - switching });
+        i.timed?.(backward ? { rollbackMs: now() - began } : { ...stages, switchMs: now() - switching });
       } finally {
         endSwap(swapped);
       }

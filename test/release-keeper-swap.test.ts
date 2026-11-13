@@ -17,7 +17,9 @@ import { standingHolds } from "../src/keeper/hold.ts";
 import { landedToLive, newestLive, secondsWords } from "../src/keeper/landed.ts";
 import { tick } from "../src/keeper/keeper.ts";
 import { listKeeperReleases } from "../src/keeper/record.ts";
-import { keeperEnv, SWAP_INTERVAL_MS } from "../src/keeper/wire.ts";
+import { keeperEnv, SWAP_INTERVAL_MS, switched } from "../src/keeper/wire.ts";
+import { keeperAnswer } from "../src/keeper/landed.ts";
+import { keeperPanel } from "../src/web/pages/keeper-panel.ts";
 import { swapper, dependencyChange } from "../src/keeper/swapper.ts";
 import { keepGood, lastGood } from "../src/release/launch.ts";
 import { releaseDir } from "../src/release/checkout.ts";
@@ -93,6 +95,11 @@ async function hosted(landed: Record<string, { main?: string; pkg?: string; pref
   const now = { commit: A as string, version: "0.7.283" };
   let before: number | undefined = undefined;
   const drained: string[] = [];
+  /**
+   * The swapper's clock: still, except that checking out a tree that has served (a rollback)
+   * takes 40 s.
+   */
+  const clock = { t: 1_700_000_000_000 };
   const build = () => swapper({
     dataDir,
     port,
@@ -104,6 +111,7 @@ async function hosted(landed: Record<string, { main?: string; pkg?: string; pref
       const spec = landed[sha];
       if (spec === undefined) return err("no such commit");
       const dir = releaseDir(dataDir, sha);
+      if (existsSync(join(dir, ".was-live"))) clock.t += 40_000;
       if (!existsSync(dir)) tree(dir, spec.main, spec.pkg);
       return ok(dir);
     },
@@ -111,6 +119,8 @@ async function hosted(landed: Record<string, { main?: string; pkg?: string; pref
       const sha = dir.split("/").pop()!;
       return landed[sha]?.preflight === false ? { ok: false, line: "boot failed: (fixture)" } : { ok: true, line: "preflight ok" };
     },
+    now: () => clock.t,
+    timed: switched(f.app.db, () => 0),
     drain: () => {
       drained.push(now.commit);
       // The process that handed over lets go of the port; the one before it, started by a swap, is stopped.
@@ -201,6 +211,13 @@ describe("the keeper swaps main's tree in; a pod restart comes back on it", () =
     const back = await (async () => { for (let i = 0; i < 60; i++) { const g = await health(h.port); if (g?.commit === B && g.version === "0.7.284") return g; await Bun.sleep(50); } })();
     expect(back).toMatchObject({ commit: B, version: "0.7.284" });
     expect(standingHolds(f.app.db)[0]).toMatchObject({ kind: "failed", version: "0.7.285" });
+    // The rollback is timed (#11919): the clock moved 40 s between the swap asked and the
+    // known-good tree serving.
+    const rolled = listKeeperReleases(f.app.db)[0]!;
+    expect(rolled).toMatchObject({ version: "0.7.285", stage: "rolled_back", rollbackMs: 40_000 });
+    expect(listKeeperReleases(f.app.db)[1]!.rollbackMs).toBeNull();
+    expect(keeperAnswer(f.app.db).releases[0]!.stages.rollbackMs).toBe(40_000);
+    expect(String(keeperPanel(f.app.db))).toContain("rolled back in 40 s");
     // What a restart would run is still the verified B, not the bad C and not the image.
     expect(lastGood(h.dataDir)).toMatchObject({ version: "0.7.284", commit: B, base: "0.7.283" });
 

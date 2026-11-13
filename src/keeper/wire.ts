@@ -34,9 +34,9 @@ import { handover } from "../release/swap.ts";
 import { runningChildren } from "../boards/sampler.ts";
 import { snapshotsOf } from "../snapshot/service.ts";
 import { kubeDeployer } from "./deploy.ts";
-import { inFlight, keepInterrupted, keepTimings } from "./record.ts";
+import { inFlight, keepInterrupted, keepRollback, keepTimings } from "./record.ts";
 import { runningAgentRuns } from "../crew/running.ts";
-import { swapper } from "./swapper.ts";
+import { swapper, type Timing } from "./swapper.ts";
 import type { KeeperPorts } from "./keeper.ts";
 import { timedGet, verifyUnderLoad } from "./verify.ts";
 import { phoneGate, probeCentre } from "./covered.ts";
@@ -86,10 +86,11 @@ export function loadPages(repo: Pick<Repo, "ownerName" | "name">): string[] {
  * What the swap reports just before this process drains (#11839, #11917): the stage timings, and the crew
  * runs still running here, the ones the switch interrupts, kept on the release still rolling.
  */
-export function switched(db: Database, runs: () => number): (t: { buildMs: number; proofMs: number; switchMs: number }) => void {
+export function switched(db: Database, runs: () => number): (t: Timing) => void {
   return (t) => {
     const flying = inFlight(db);
     if (flying === undefined) return;
+    if ("rollbackMs" in t) return keepRollback(db, flying.id, t.rollbackMs);
     keepTimings(db, flying.id, t);
     keepInterrupted(db, flying.id, runs());
   };

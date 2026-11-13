@@ -38,6 +38,11 @@ export interface KeeperRelease {
   readonly buildMs: number | null;
   readonly proofMs: number | null;
   readonly switchMs: number | null;
+  /**
+   * How long the rollback took, from the swap asked to the known-good tree serving (#11919);
+   * null when none was timed.
+   */
+  readonly rollbackMs: number | null;
   /** Crew runs running in the drained process at the switch (#11917); null when not counted. */
   readonly interruptedRuns: number | null;
   /** Why a person cut this release now, outside the spacing; empty for a cut on cadence. */
@@ -66,6 +71,7 @@ interface Row {
   build_ms: number | null;
   proof_ms: number | null;
   switch_ms: number | null;
+  rollback_ms: number | null;
   interrupted_runs: number | null;
   hotfix: string;
 }
@@ -91,6 +97,7 @@ const toRelease = (r: Row): KeeperRelease => ({
   buildMs: r.build_ms,
   proofMs: r.proof_ms,
   switchMs: r.switch_ms,
+  rollbackMs: r.rollback_ms ?? null,
   interruptedRuns: r.interrupted_runs,
   hotfix: r.hotfix,
 });
@@ -125,6 +132,15 @@ export function keepTimings(db: Database, id: number, t: { buildMs: number; proo
     Math.max(0, Math.round(t.proofMs)),
     Math.max(0, Math.round(t.switchMs)),
   );
+}
+
+/**
+ * How long the rollback of the release in flight took: its own column, so the forward
+ * timings stay as they were.
+ */
+export function keepRollback(db: Database, id: number, ms: number): void {
+  const n = Number.isFinite(ms) ? Math.max(0, Math.round(ms)) : 0;
+  db.query(`UPDATE keeper_release SET rollback_ms = ?2 WHERE id = ?1 AND stage IN ('rolling', 'verifying')`).run(id, n);
 }
 
 /** How many crew runs the old process still had running when the switch drained it: kept on the release still rolling. */
