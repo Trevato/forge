@@ -42,7 +42,11 @@ export const MINTS_PER_DAY = 20;
  */
 export const OPEN_PULLS_PER_TOKEN = 5;
 export const PULLS_PER_TOKEN_DAY = 20;
+/** Pulls all the tokens that claim one agent name may open on a repository in a day. */
+export const PULLS_PER_AGENT_DAY = 25;
 export const PULLS_PER_REPO_DAY = 30;
+/** The most one push of an outside agent's may carry (git's `receive.maxInputSize`): 5 MiB. */
+export const CONTRIBUTE_PUSH_MAX_BYTES = 5 * 1024 * 1024;
 export const AGENT_MAX = 64;
 export const ORIGIN_MAX = 200;
 
@@ -68,31 +72,75 @@ export function inContribNamespace(ref: string, agent: string): boolean {
 export const headInContribNamespace = (head: string, agent: string): boolean =>
   inContribNamespace(`refs/heads/${head}`, agent);
 
+export type PullCap = "token_open" | "token_day" | "agent_day" | "repo_day";
+
 /**
- * Why this token's user may not open another pull on `repoId` now, or undefined.
- * Counted from the pull rows themselves: open ones by this author, and the day's
- * by this author and by every outside token's author on the repository.
+ * How many more pulls this token's user may open on `repoId` now, and the cap that
+ * binds (undefined while room is left). Counted from the pull rows themselves: open
+ * ones by this author, and the day's by this author, by every token of the same
+ * claimed agent name, and by every outside token's author on the repository.
  */
-export function pullCapReached(
-  db: Database,
-  repoId: string,
-  userId: string,
-  now: Date,
-): "token_open" | "token_day" | "repo_day" | undefined {
+export function pullRoom(db: Database, repoId: string, userId: string, now: Date): { room: number; capped?: PullCap } {
   const count = (sql: string, ...args: string[]): number =>
     db.query<{ n: number }, string[]>(sql).get(...args)?.n ?? 0;
   const since = new Date(now.getTime() - 86_400_000).toISOString();
   const mine = "SELECT COUNT(*) AS n FROM issue WHERE repo_id = ?1 AND kind = 'pull' AND author_id = ?2";
-  if (count(`${mine} AND state = 'open'`, repoId, userId) >= OPEN_PULLS_PER_TOKEN) return "token_open";
-  if (count(`${mine} AND created_at >= ?3`, repoId, userId, since) >= PULLS_PER_TOKEN_DAY) return "token_day";
-  const all = count(
-    `SELECT COUNT(*) AS n FROM issue
-      WHERE repo_id = ?1 AND kind = 'pull' AND created_at >= ?2
-        AND author_id IN (SELECT t.user_id FROM token t JOIN contribute_token c ON c.token_id = t.id WHERE c.repo_id = ?1)`,
-    repoId,
-    since,
-  );
-  return all >= PULLS_PER_REPO_DAY ? "repo_day" : undefined;
+  const outsiders = "SELECT t.user_id FROM token t JOIN contribute_token c ON c.token_id = t.id WHERE c.repo_id = ?1";
+  const left: [number, PullCap][] = [
+    [OPEN_PULLS_PER_TOKEN - count(`${mine} AND state = 'open'`, repoId, userId), "token_open"],
+    [PULLS_PER_TOKEN_DAY - count(`${mine} AND created_at >= ?3`, repoId, userId, since), "token_day"],
+    [
+      PULLS_PER_AGENT_DAY -
+        count(
+          `SELECT COUNT(*) AS n FROM issue
+            WHERE repo_id = ?1 AND kind = 'pull' AND created_at >= ?3
+              AND author_id IN (${outsiders} AND c.agent = (SELECT c2.agent FROM token t2 JOIN contribute_token c2 ON c2.token_id = t2.id WHERE t2.user_id = ?2 AND c2.repo_id = ?1 LIMIT 1))`,
+          repoId,
+          userId,
+          since,
+        ),
+      "agent_day",
+    ],
+    [
+      PULLS_PER_REPO_DAY -
+        count(
+          `SELECT COUNT(*) AS n FROM issue
+            WHERE repo_id = ?1 AND kind = 'pull' AND created_at >= ?2 AND author_id IN (${outsiders})`,
+          repoId,
+          since,
+        ),
+      "repo_day",
+    ],
+  ];
+  let binding = left[0]!;
+  for (const l of left) if (l[0] < binding[0]) binding = l;
+  return binding[0] > 0 ? { room: binding[0] } : { room: 0, capped: binding[1] };
+}
+
+/** Why this token's user may not open another pull on `repoId` now, or undefined. */
+export const pullCapReached = (db: Database, repoId: string, userId: string, now: Date): PullCap | undefined =>
+  pullRoom(db, repoId, userId, now).capped;
+
+/** The plain refusal for a pull cap, with the number it holds to. */
+export function capWords(capped: PullCap): string {
+  if (capped === "repo_day")
+    return `this repository takes at most ${PULLS_PER_REPO_DAY} pulls a day from outside agents and has taken them; try tomorrow`;
+  if (capped === "agent_day")
+    return `this agent name has opened ${PULLS_PER_AGENT_DAY} pulls in a day here (the most it may); try again tomorrow`;
+  if (capped === "token_open") return `this token has ${OPEN_PULLS_PER_TOKEN} pulls open (the most it may); wait for one to close`;
+  return `this token has opened ${PULLS_PER_TOKEN_DAY} pulls in a day (the most it may); try again tomorrow`;
+}
+
+const turns = new Map<string, Promise<unknown>>();
+/** Run `fn` after every earlier call with the same key has finished: one at a time per token. */
+export function inTurn<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const run = (turns.get(key) ?? Promise.resolve()).then(fn, fn);
+  const tail = run.catch(() => undefined);
+  turns.set(key, tail);
+  void tail.then(() => {
+    if (turns.get(key) === tail) turns.delete(key);
+  });
+  return run;
 }
 
 /** What a request is, as the scope check reads it. */

@@ -97,6 +97,8 @@ import { readOnlyRefusal } from "./read_only.ts";
 import { running } from "../kernel/version.ts";
 import { runGit } from "../git/env.ts";
 import { noteRefusedInternal } from "../kernel/internal_refused.ts";
+import { CONTRIBUTE_PUSH_MAX_BYTES } from "../core/contribute_token.ts";
+import { contribPushPulls, contribPushRefusal } from "../actions/contribute_push.ts";
 import { pushCap, storageChanged, storageRefusal, storageRefusedText, storageSentence } from "../core/storage.ts";
 import { hookEnv, ZERO_OID, type HookRequest } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
@@ -1218,7 +1220,9 @@ export function buildRouter(): Router<Handler> {
             repoId,
             actorId: ctx.auth.user?.id ?? "",
             ...(ctx.auth.proposal ? { proposalChild: ctx.auth.proposal.child } : {}),
-            ...(ctx.auth.contribute ? { contribAgent: ctx.auth.contribute.namespace } : {}),
+            ...(ctx.auth.contribute
+              ? { contribAgent: ctx.auth.contribute.namespace, pushOrigin: publicUrl(ctx.request, ctx.app.config.url).origin }
+              : {}),
           }),
           ...cap,
         },
@@ -1816,6 +1820,22 @@ async function withGitAccess(
   const refused = await storageRefusal(ctx.app, user, repo.ownerId, repo);
   if (refused !== undefined) return gitRefused(ctx, storageRefusedText(refused));
   const cap = await pushCap(ctx.app, user, repo.ownerId, repo);
+  // An outside agent's push is small: git stops reading past the cap and says the number.
+  if (ctx.auth.contribute !== undefined) {
+    // Merged into whatever pushCap set: its own cap is read by key, ours appended at COUNT
+    // (a later value of a key wins in git).
+    const n = Number(cap.GIT_CONFIG_COUNT ?? "0");
+    let room = CONTRIBUTE_PUSH_MAX_BYTES;
+    for (let i = 0; i < n; i++)
+      if (cap[`GIT_CONFIG_KEY_${i}`] === "receive.maxInputSize")
+        room = Math.min(room, Number(cap[`GIT_CONFIG_VALUE_${i}`] ?? Infinity));
+    // index-pack (unpackLimit 1), not unpack-objects, is the one whose refusal names the size.
+    cap[`GIT_CONFIG_KEY_${n}`] = "receive.maxInputSize";
+    cap[`GIT_CONFIG_VALUE_${n}`] = String(room);
+    cap[`GIT_CONFIG_KEY_${n + 1}`] = "receive.unpackLimit";
+    cap[`GIT_CONFIG_VALUE_${n + 1}`] = "1";
+    cap.GIT_CONFIG_COUNT = String(n + 2);
+  }
   const served = await serve(dir, repo.id, cap);
   return ctx.request.method === "POST" && served.body !== null
     ? new Response(afterBody(served.body, () => storageChanged(ctx.app, repo.ownerId)), served)
@@ -2129,6 +2149,12 @@ async function handleHook(app: App, request: Request): Promise<Response> {
           { status: 403 },
         );
       }
+      // New branches of an outside agent's open pulls: the push is refused, with the
+      // number, when its caps are spent or it makes more branches than there is room for.
+      if (input.contribAgent !== undefined && actor !== undefined) {
+        const spent = contribPushRefusal(app, repo, actor.id, input.updates);
+        if (spent !== undefined) return new Response(spent, { status: 403 });
+      }
       // The pull namespace belongs to the forge, never to pushers.
       if (update.ref.startsWith("refs/pull/")) {
         return new Response(`${update.ref}: refs/pull/* is reserved`, {
@@ -2226,6 +2252,24 @@ async function handleHook(app: App, request: Request): Promise<Response> {
     );
   }
 
+  // An outside agent's push opens its pull (or finds it) and prints where it is.
+  let printed = "";
+  if (input.contribAgent !== undefined) {
+    const origin = (() => {
+      try {
+        return new URL(input.pushOrigin ?? "").origin;
+      } catch {
+        return app.config.url !== undefined ? new URL(app.config.url).origin : `http://localhost:${app.config.port}`;
+      }
+    })();
+    const actor = input.actorId ? getUserById(app.db, input.actorId) : undefined;
+    printed = (await contribPushPulls(app, repo, actor, input.updates, origin)
+      .catch((error) => {
+        app.log.warn("could not open the outside agent's pull", { repo: `${repo.ownerName}/${repo.name}`, error: String(error) });
+        return [];
+      })).join("\n");
+  }
+
   // post-receive: the push is durable — record it and wake listeners.
   app.bus.append({
     kind: "push",
@@ -2268,7 +2312,7 @@ async function handleHook(app: App, request: Request): Promise<Response> {
       error: String(error),
     }),
   );
-  return new Response("");
+  return new Response(printed);
 }
 
 // ---- wiring ----

@@ -193,10 +193,8 @@ import {
   pullProposalOf,
   recordPullProposal,
 } from "../core/proposal_token.ts";
-import { OPEN_PULLS_PER_TOKEN, headInContribNamespace, pullCapReached } from "../core/contribute_token.ts";
+import { capWords, headInContribNamespace, inTurn, pullCapReached } from "../core/contribute_token.ts";
 
-/** Tokens with a pull being opened now: one at a time, so the count cannot be raced. */
-const contributePulling = new Set<string>();
 import { takesOutside } from "../actions/contribute_token.ts";
 import { contributeMint } from "./api/contribute_token.ts";
 import {
@@ -2719,36 +2717,28 @@ export function apiRoutes(router: Router<Handler>): void {
     }
     // An outside agent opens a few pulls: each starts checks and a preview on the
     // owner's repository. Counted from the pull rows, one open at a time per token.
-    if (outside !== undefined) {
-      const capped = pullCapReached(ctx.app.db, repo.id, ctx.auth.user!.id, new Date());
-      if (capped !== undefined || contributePulling.has(outside.tokenId))
-        return tryAgain(
-          "rate_limited",
-          429,
-          capped === "repo_day"
-            ? "this repository has taken as many pulls from outside agents as it takes in a day; try tomorrow"
-            : capped === "token_open"
-              ? `this token has ${OPEN_PULLS_PER_TOKEN} pulls open; wait for one to close`
-              : "too many pulls opened by this token; try again later",
-          capped === undefined ? 1 : 3600,
-        );
-      contributePulling.add(outside.tokenId);
-    }
-    let created: Awaited<ReturnType<typeof openPull>>;
-    try {
-      created = await openPull(ctx.app, ctx.auth.user, repo, {
+    const open = () =>
+      openPull(ctx.app, ctx.auth.user!, repo, {
         title: str(input.title),
-      body: str(input.body),
-      baseBranch: str(input.base),
-      headBranch: str(input.head),
-      ...(headRepo ? { headRepo } : {}),
-      // A person's deliberate yes to fixing a sealed report from a public branch.
-      ...(input.confirmPublic === true ? { confirmPublic: true } : {}),
-      ...(outside === undefined ? {} : { outsideAgent: true }),
-    });
-    } finally {
-      if (outside !== undefined) contributePulling.delete(outside.tokenId);
-    }
+        body: str(input.body),
+        baseBranch: str(input.base),
+        headBranch: str(input.head),
+        ...(headRepo ? { headRepo } : {}),
+        // A person's deliberate yes to fixing a sealed report from a public branch.
+        ...(input.confirmPublic === true ? { confirmPublic: true } : {}),
+        ...(outside === undefined ? {} : { outsideAgent: true }),
+      });
+    // An outside token opens one pull at a time (the same turn a push's opens take),
+    // its caps read inside the turn so the count cannot be raced.
+    const opening =
+      outside === undefined
+        ? await open()
+        : await inTurn(ctx.auth.user!.id, async () => {
+            const capped = pullCapReached(ctx.app.db, repo.id, ctx.auth.user!.id, new Date());
+            return capped ?? (await open());
+          });
+    if (typeof opening === "string") return tryAgain("rate_limited", 429, capWords(opening), 3600);
+    const created = opening;
     if (!created.ok && created.error === "sealed_in_public")
       return apiError(
         "sealed_in_public",
@@ -4302,6 +4292,11 @@ export function apiRoutes(router: Router<Handler>): void {
         return { head: oid, runs: checksForHead(ctx.app.db, found.pull.id, oid) };
       });
       const latest = runs[0];
+      // `?format=text`: three plain lines, the URL a contribute push prints.
+      if (ctx.url.searchParams.get("format") === "text")
+        return new Response(`state: ${latest?.state ?? "none"}\nhead: ${head}\nrequired: ${found.repo.requireChecks ? "yes" : "no"}\n`, {
+          headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+        });
       return timePhase(ctx.request, "render", () =>
         json({
           head,

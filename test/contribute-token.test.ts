@@ -328,15 +328,22 @@ describe("minting, renewing, revoking", () => {
     const verified = verifyToken(app.db, made.value.token) as { ok: true; value: { user: User } };
     const url = `${servers.url.replace("://", `://${verified.value.user.username}:${made.value.token}@`)}/alice/lib.git`;
     const refs = Array.from({ length: OPEN_PULLS_PER_TOKEN + 1 }, (_, i) => `HEAD:refs/heads/contrib/${ns}/p${i}`);
-    expect((await git(["push", url, ...refs])).code).toBe(0);
+    // One push of six branches is refused whole, with the number it has room for.
+    const wide = await git(["push", url, ...refs]);
+    expect(wide.code).not.toBe(0);
+    expect(wide.err).toContain(`creates ${OPEN_PULLS_PER_TOKEN + 1} new branches`);
+    const pushed = await git(["push", url, ...refs.slice(0, OPEN_PULLS_PER_TOKEN)]);
+    expect(pushed.code).toBe(0);
+    expect(pushed.err.match(/remote: opened pull/g)?.length).toBe(OPEN_PULLS_PER_TOKEN);
     const open = (i: number) => post("/api/v1/repos/alice/lib/pulls", { title: `P${i}`, base: "main", head: `contrib/${ns}/p${i}` }, made.value.token);
-    for (let i = 0; i < OPEN_PULLS_PER_TOKEN; i++) expect((await open(i)).status).toBe(201);
     const over = await open(OPEN_PULLS_PER_TOKEN);
     expect(over.status).toBe(429);
     expect(over.headers.get("retry-after")).not.toBeNull();
     // Counted from the rows: closing one frees a place.
     app.db.query("UPDATE issue SET state = 'closed' WHERE repo_id = ?1 AND author_id = ?2 AND number = (SELECT MIN(number) FROM issue WHERE repo_id = ?1 AND author_id = ?2)").run(pub.id, verified.value.user.id);
-    expect((await open(OPEN_PULLS_PER_TOKEN)).status).toBe(201);
+    const freed = await git(["push", url, refs[OPEN_PULLS_PER_TOKEN]!]);
+    expect(freed.code).toBe(0);
+    expect(freed.err).toContain("remote: opened pull");
 
     // The repository's own day: pulls by many outside tokens together.
     const others: User[] = [];

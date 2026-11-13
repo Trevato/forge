@@ -19,6 +19,8 @@ export interface HookRequest {
   readonly proposalChild?: string;
   /** An outside agent's name: every ref must be inside `contrib/<agent>/`. */
   readonly contribAgent?: string;
+  /** The forge's address as the pusher reached it, for the URLs a push prints. */
+  readonly pushOrigin?: string;
   readonly updates: readonly RefUpdate[];
   /**
    * Quarantine environment forwarded from the hook process. Any git command
