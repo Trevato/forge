@@ -11,7 +11,9 @@ import { retryBackup } from "../../actions/backup_retry.ts";
 import { alarmBackup, type BackupAlarm } from "../../flow/alarm_backup.ts";
 import { acceptSuggestion, turnValveFor, type ValveError } from "../../actions/valves.ts";
 import type { Ctx } from "../../http/context.ts";
-import { readPipes, type ValveRow } from "../../flow/pipes.ts";
+import { readPipes, type Pipes, type ValveRow } from "../../flow/pipes.ts";
+import { usd } from "../../core/money.ts";
+import { count, figure, figures } from "../figure.ts";
 import { levelWords } from "../../flow/valve.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
@@ -30,7 +32,6 @@ import { cpuStopsSection } from "./flow-cpu.ts";
 import { cpuClosedPulls } from "../../flow/cpu_closed.ts";
 import { cpuStops } from "../../flow/cpu_stops.ts";
 
-const money = (usd: number): string => `$${usd.toFixed(2)}`;
 const plural = (n: number, one: string, many = `${one}s`): string => `${String(n)} ${n === 1 ? one : many}`;
 
 /** The script: a drag submits its form, and the words follow the handle. */
@@ -57,12 +58,12 @@ function nextWords(v: ValveRow): string {
   return `Next tick, of ${String(v.next.queued)} queued: ${parts.join(", ")}.`;
 }
 
-function valveRow(v: ValveRow) {
+function valveRow(v: ValveRow, week: number) {
   const turned = v.turned;
+  const share = week > 0 ? Math.max(1, Math.round((v.usd / week) * 100)) : 0;
   return row({
-    lead: icon("activity"),
     title: html`<span class="valve-name"><a href="/${v.slug}">${v.slug}</a>
-      <span class="muted small">${money(v.usd)} this week · ${plural(v.runs, "run")} · ${plural(v.shipped, "pull")} shipped${v.notes > 0 ? html` · ${plural(v.notes, "note")}` : ""}</span></span>`,
+      <span class="muted small">${v.usd <= 0 ? "nothing spent this week" : `${usd(v.usd)} this week, ${String(share)}% of the spend`} · ${plural(v.runs, "run")} · ${plural(v.shipped, "pull")} shipped${v.notes > 0 ? html` · ${plural(v.notes, "note")}` : ""}</span></span>`,
     meta: html`<span class="valve-body"><form class="valve-form" method="post" action="/flow/valve">
         <input type="hidden" name="repo" value="${v.slug}" />
         <input class="valve-range" type="range" name="level" min="0" max="100" step="5" value="${String(v.level)}" aria-label="Valve for ${v.slug}: 0 shut, 100 open" />
@@ -85,6 +86,21 @@ function valveRow(v: ValveRow) {
   });
 }
 
+/** What stands out this week, in one sentence: who spent the money, and how the valves stand. The figures under it carry the totals. */
+export function weekSays(p: Pipes): string {
+  if (p.valves.length === 0) return "Nothing was spent, queued or shipped in the last 7 days, so there is no valve to turn yet.";
+  const shut = p.valves.filter((v) => v.mode === "shut").length;
+  const share = p.valves.filter((v) => v.mode === "share").length;
+  const valves =
+    shut + share === 0
+      ? p.valves.length === 1 ? "Its valve is open." : `All ${String(p.valves.length)} valves are open.`
+      : `${[...(shut === 0 ? [] : [`${String(shut)} ${shut === 1 ? "valve is" : "valves are"} shut`]), ...(share === 0 ? [] : [`${String(share)} ${share === 1 ? "is" : "are"} held to a share`])].join(" and ")}.`;
+  const top = [...p.valves].sort((a, b) => b.usd - a.usd)[0]!;
+  if (p.usd <= 0) return `No money was spent in the last 7 days. ${valves}`;
+  const pct = Math.round((top.usd / p.usd) * 100);
+  return `${top.slug} spent ${p.valves.length === 1 || pct >= 100 ? "all" : `${String(pct)}%`} of the week's money. ${valves}`;
+}
+
 /** The overdue off-box backup as one row: the sentence (with the last failure's cause) and the one action that retries. Nothing when none is overdue. */
 export function backupRow(alarm: BackupAlarm) {
   if (!alarm.fired) return html``;
@@ -103,20 +119,36 @@ export async function flowPage(ctx: Ctx): Promise<Response> {
   if (user === undefined) return signInFirst(ctx);
   if (!user.isAdmin || user.kind === "agent") return notFoundPage(ctx);
   const p = readPipes(ctx.app.db, user.id);
-  const body = html`<div class="page-head"><h1>Flow</h1>${btn("Boards", { href: "/boards", variant: "ghost" })}</div>
-    <p class="mb">Money flows from the left to shipped on the right, as wide as this week's real spend. Every repository has a valve: drag it to give the repository a share of the week, all the way down to shut. The crew does exactly what the valves say, from the next tick, and nothing but you turns one.</p>
-    ${backupRow(alarmBackup(ctx.app.config.dataDir, new Date()))}
-    ${clogSection(readClogView(ctx.app.db))}
-    ${cpuStopsSection(cpuStops(ctx.app.db).stopped, cpuClosedPulls(ctx.app.db, new Date()))}
+  const open = p.valves.filter((v) => v.mode === "open").length;
+  const strip = figures([
+    figure("Spent in 7 days", usd(p.usd), "by the crew, at list price", "/settings/crew"),
+    figure("Pulls shipped", count(p.shipped), "in 7 days", "/boards?out=landed#out"),
+    figure("A pull costs", p.shipped === 0 ? "—" : usd(p.usd / p.shipped), p.shipped === 0 ? "none shipped yet" : "the spend over the pulls", "/settings/crew"),
+    figure("Valves open", `${String(open)} of ${String(p.valves.length)}`, "drag one below to give a repository a smaller share of the week; nothing but you turns one", "#valves", null, open === p.valves.length ? null : "attn"),
+  ], "This week");
+  const body = html`<div class="hf bd">
+    <header class="hf-head">
+      <div class="hf-title"><h1>Flow</h1></div>
+      <nav class="bd-nav" aria-label="Elsewhere">${btn("Boards", { href: "/boards", variant: "ghost" })}${btn("Explore the data", { href: "/boards/data", variant: "ghost" })}</nav>
+    </header>
+    <section class="bd-now" aria-label="How the week stands">
+      <p class="bd-lead" id="flow-week"><strong>${weekSays(p)}</strong></p>
+      ${backupRow(alarmBackup(ctx.app.config.dataDir, new Date()))}
+      ${clogSection(readClogView(ctx.app.db))}
+      ${cpuStopsSection(cpuStops(ctx.app.db).stopped, cpuClosedPulls(ctx.app.db, new Date()))}
+    </section>
+    ${p.valves.length === 0 ? null : strip}
     ${waitingSection(await readWaiting(ctx.app.db, ctx.app.reposRoot, new Date()))}
-    ${estimatesSection(ctx.app.db, ctx.auth.user)}
-    ${pipesSvg(p)}
-    <p class="muted small">${money(p.usd)} spent in the last 7 days; ${plural(p.shipped, "pull")} shipped.</p>
-    ${handoverSection(readHandoverLists(ctx.app.db, await readDrifts(ctx.app), Date.now()))}
     ${p.valves.length === 0
-      ? html`<p class="muted">No repository has spent, queued or shipped anything this week, so there is no pipe to turn yet.</p>`
-      : html`<h2>Valves</h2>
-    <ul class="list">${p.valves.map(valveRow)}</ul>`}`;
+      ? null
+      : html`<section class="pipes-block" aria-label="Where the week's money went">${pipesSvg(p)}</section>
+    <section class="bd-block" id="valves" aria-labelledby="valves-h">
+      <header class="bd-head"><h2 id="valves-h">Valves</h2></header>
+      <ul class="list">${p.valves.map((v) => valveRow(v, p.usd))}</ul>
+    </section>`}
+    ${handoverSection(readHandoverLists(ctx.app.db, await readDrifts(ctx.app), Date.now()))}
+    ${estimatesSection(ctx.app.db, ctx.auth.user)}
+  </div>`;
   const rendering = performance.now();
   const response = page({ ctx, title: "Flow", body, scriptJs: valveJs });
   notePhase(ctx.request, "render", performance.now() - rendering);

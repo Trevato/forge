@@ -111,7 +111,7 @@ test("approved pulls waiting are counted per repository with the oldest", async 
   expect(html).toContain('id="flow-approved"');
   expect(html).toContain("2 approved pulls waiting");
   expect(html).toContain("alice/app");
-  expect(html).toContain("for 30 h");
+  expect(html).toContain("for 30h");
 });
 
 test("a stale crew pull shows the note that folds it back, and a fresh one does not", async () => {

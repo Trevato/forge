@@ -18,8 +18,8 @@ const link = (n: Named): Html => html`<a href="${href(n)}">${n.repo} #${String(n
 export function handoverSection(lists: HandoverLists): Html | null {
   const { handed, near, rebase } = lists;
   if (handed.length + near.length + rebase.length === 0) return null;
-  return html`<section id="handover">
-    <h2>Where the crew gives up</h2>
+  return html`<section class="bd-block" id="handover">
+    <header class="bd-head"><h2>Where the crew gives up</h2><p class="bd-sub">Pulls the crew handed to a person, or is one round from handing over.</p></header>
     ${handed.length === 0
       ? ""
       : html`<h3>Handed to a person in the last 24 h</h3>

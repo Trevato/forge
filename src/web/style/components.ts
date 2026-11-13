@@ -1021,8 +1021,8 @@ html[data-overlay] { overflow: hidden; }
 .bd-nav { display: flex; flex-wrap: wrap; gap: 8px; }
 .bd-nav .btn { min-height: 44px; }
 .bd-now { display: flex; flex-direction: column; gap: 4px; }
-.bd-now p { margin: 0; font-size: 14px; color: var(--muted-fg); }
-.bd-now .bd-lead { font-size: 16px; line-height: 24px; color: var(--fg); text-wrap: balance; }
+.bd-now p { margin: 0; font-size: 14px; color: var(--muted-fg); overflow-wrap: anywhere; }
+.bd-now .bd-lead { font-size: 16px; line-height: 24px; color: var(--fg); overflow-wrap: anywhere; text-wrap: balance; }
 .bd-live { display: flex; flex-direction: column; gap: 16px; }
 .bd-block { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .bd-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 16px; }

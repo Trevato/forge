@@ -45,19 +45,22 @@ afterAll(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-test("with no valves: pipes, then one muted line, no card", async () => {
+test("with no valves: one sentence says so, no picture of nothing, no card", async () => {
   const text = await (await get(await login("alice"))).text();
   expect(text).not.toContain('class="card');
-  expect(text).toContain('class="pipes');
-  expect(text).toContain('<p class="muted">No repository has spent');
-  expect(text).not.toContain("<h2>Valves</h2>");
+  expect(text).toContain('<p class="bd-lead" id="flow-week"><strong>Nothing was spent, queued or shipped in the last 7 days, so there is no valve to turn yet.</strong></p>');
+  expect(text).not.toContain('class="pipes"');
+  expect(text).not.toContain(">Valves</h2>");
 });
 
-test("with valves: an h2 over a plain list whose forms valveJs finds, no card", async () => {
+test("with valves: the week in a sentence and four figures, then an h2 over a plain list whose forms valveJs finds, no card", async () => {
   createRun(app.db, { repoId, kind: "agent", reason: "assigned" });
   const text = await (await get(await login("alice"))).text();
   expect(text).not.toContain('class="card');
-  expect(text).toMatch(/<h2>Valves<\/h2>\s*<ul class="list">/);
+  expect(text).toMatch(/<h2 id="valves-h">Valves<\/h2><\/header>\s*<ul class="list">/);
+  expect(text).toContain("No money was spent in the last 7 days. Its valve is open.");
+  expect(text.match(/class="hf-fig"/g)?.length).toBe(4);
+  expect(text).toContain('class="pipes"');
   expect(text).toContain('class="valve-form"');
   expect(text).toContain('type="range"');
 });
