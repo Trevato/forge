@@ -13,6 +13,8 @@
 
 **Terminal:** the palette's "Next up in a repository" opens the same list; `t`, `u`, `d` and `n` are Top, Up, Down and Not now on the row under the cursor, through the same action as the page and MCP. A reader sees the order and the keys do nothing; a move made anywhere reorders an open screen live. At most 200 issues are ranked; a move past that is refused and says so.
 
+**Filter (#11867):** a plain GET form above the list narrows `/next` to one pillar (`?pillar=P7` or `Later`, typed in a box) and/or a word (`?q=cache`, matched without regard to case, shown as typed, at most 80 characters). A filter only hides rows: each keeps its real place in the whole ranking, the cut line stays where the whole list puts it (drawn only between shown rows), and a move made under a filter moves in the whole order and returns to the same filter. A line says "N of M shown", and that the week's capacity bar is left out while filtered. An unknown or malformed pillar shows an empty list that says so. **Terminal:** `/` asks for a pillar and/or a word (`P7 cache`); an empty answer clears it; ranks, `t` `u` `d` `n` and the header count behave as on the page.
+
 ## The week is the sprint (#8704)
 
 The subscription's weekly reset is the sprint boundary; what the crew may still spend before it is the capacity (`flow/week.ts`, from `core/standing.ts`). No ceremony and no locked scope: rerank any time and the line moves on the next paint.

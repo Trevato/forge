@@ -368,7 +368,7 @@ describe("Next up page shape (#9764)", () => {
       for (const label of ["Top", "Up", "Down", "Not now"]) {
         expect(body).toMatch(new RegExp(`<form method="post" action="[^"]*/next"[^>]*>(?:(?!</form>).)*${label} <kbd>`));
       }
-      expect(body).not.toMatch(/<form(?![^>]*method="post")[^>]*action="[^"]*\/next"/);
+      expect(body).not.toMatch(/<form(?![^>]*method="(?:post|get)")[^>]*action="[^"]*\/next"/); // the filter is the one GET form
 
       // Not now (?all=1) is rows under its own heading too, and Top is the one move it offers.
       const gate = open("Later gate: not now");

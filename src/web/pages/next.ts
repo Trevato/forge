@@ -12,6 +12,7 @@ import { openPullStages } from "../../flow/read.ts";
 import { stateWord, type StateFacts } from "./next_state.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
+import { pillarsOf, servedBy } from "../../core/pillars.ts";
 import { sealedScope } from "../../core/sealed.ts";
 import { notStartable } from "../../crew/not_startable.ts";
 import { CUT_TOP_WORDS, cutWords, FIT_COUNT_JS, rangeWords, rowCosts, weekView, type Cut, type Priced } from "../../flow/week.ts";
@@ -21,6 +22,7 @@ import { backTo, field, readForm } from "../form.ts";
 import { html, raw, type Html } from "../html.ts";
 import { flashOrJson, page } from "../layout.ts";
 import { btn, kbd, row } from "../ui.ts";
+import { countWords, filterPath, markBefore, filtered, matches, readFilter } from "./next_filter.ts";
 
 /**
  * The owner's issue titles are their own words, so inside `[data-next]` a long
@@ -38,7 +40,9 @@ export const NEXT_CSS = `[data-next] { overflow-wrap: anywhere; }
 [data-next] .row-after { display: flex; flex-wrap: wrap; gap: 6px; max-width: 100%; padding: 0 14px 8px; }
 [data-next] summary h2 { display: inline; margin: 0; }
 [data-next] .mine { font-weight: 600; }
-[data-next] .cut-line { overflow-wrap: anywhere; }`;
+[data-next] .cut-line { overflow-wrap: anywhere; }
+[data-next] .form-actions > .input { flex: 1 1 10rem; min-width: 0; min-height: 44px; }
+[data-next] .form-actions > .btn, [data-next] .form-actions > a { min-height: 44px; display: inline-flex; align-items: center; }`;
 
 export const KEYS_JS = `
 (() => {
@@ -194,37 +198,60 @@ export function nextPage(ctx: Ctx): Response {
   const scope = sealedScope(ctx.app.db, repo, ctx.auth.user);
   const next = nextUp(ctx.app.db, repo, scope, (ready) => notStartable(ctx.app, repo, ready, scope));
   const rows = next.rows;
-  const back = `${base}/next`;
+  const filter = readFilter(ctx.url.searchParams);
+  const isFiltered = filtered(filter);
+  const back = filterPath(`${base}/next`, filter, ctx.url.searchParams.get("pillar") ?? "");
+  // Pillars are read only when a pillar is asked for: the unfiltered page stays at its budget.
+  const pillars = filter.pillar !== null ? pillarsOf(ctx.app.db, repo) : undefined;
+  const served = pillars !== undefined ? servedBy(ctx.app.db, pillars) : new Map<string, string>();
+  const shows = (r: NextRow): boolean => !isFiltered || matches(filter, r.issue.title, served.get(r.issue.id));
   const rendering = performance.now();
   const { priced, cut, capacity, sentence } = weekView(ctx.app.db, repo.id, rows, new Date());
   const costs = rowCosts(priced);
   const stages = openPullStages(ctx.app.db, repo, scope, new Date(), new Set(rows.map((r) => r.issue.number)));
   const facts = (r: NextRow): StateFacts => ({ stage: stages.get(r.issue.number) ?? "issue", waits: r.waits, held: r.state === "held", onIt: r.onIt !== null });
   // One numbered order, folded: the first TOP rows open, what comes after, then Later.
-  const first = rows.slice(0, TOP);
-  const after = rows.slice(TOP);
-  const section = (title: string, list: readonly NextRow[], start: number, open: boolean, id?: string): Html =>
-    html`<details class="mt"${open ? raw(" open") : null}><summary><h2>${title} · ${String(list.length)}</h2></summary>
-      <ul class="list setting-list"${id === undefined ? null : html` id="${id}"`}${id !== undefined && costs !== null && capacity !== null && cut.unsure === null ? html` data-capacity="${String(capacity.usd)}"` : null}>
-        ${list.flatMap((_, i) => {
-          const at = start + i;
-          const mark = at === cut.fits.length && cut.unsure === null && id !== undefined && i > 0 ? [cutMark(cut, false)] : [];
-          return [...mark, line(base, rows, at, writer, back, false, priced, costs?.[at], at + 1, stateWord(rows[at]!, facts(rows[at]!)), rows[at]!.byOwner)];
-        })}
+  // A filter hides rows but keeps each one's place in the whole ranking.
+  const ats = rows.map((_, at) => at).filter((at) => shows(rows[at]!));
+  const cutAt = cut.fits.length;
+  const section = (title: string, list: readonly number[], open: boolean, id?: string): Html => {
+    const mark = markBefore(list, cutAt);
+    return html`<details class="mt"${open ? raw(" open") : null}><summary><h2>${title} · ${String(list.length)}</h2></summary>
+      <ul class="list setting-list"${id === undefined ? null : html` id="${id}"`}${id !== undefined && !isFiltered && costs !== null && capacity !== null && cut.unsure === null ? html` data-capacity="${String(capacity.usd)}"` : null}>
+        ${list.flatMap((at, i) => [
+          ...(i === mark && cut.unsure === null && id !== undefined ? [cutMark(cut, false)] : []),
+          line(base, rows, at, writer, back, false, priced, costs?.[at], at + 1, stateWord(rows[at]!, facts(rows[at]!)), rows[at]!.byOwner),
+        ])}
       </ul></details>`;
+  };
+  const first = isFiltered ? ats : ats.filter((at) => at < TOP);
+  const rest = isFiltered ? [] : ats.filter((at) => at >= TOP);
+  const parked = next.notNow.map((_, at) => at).filter((at) => shows(next.notNow[at]!));
+  const nothingWords = filter.badPillar
+    ? "That is not a pillar: a pillar is P and digits, or Later."
+    : filter.pillar !== null && filter.pillar !== "Later" && !pillars!.pillars.some((p) => p.short === filter.pillar)
+      ? `This repository has no pillar ${filter.pillar}.`
+      : "Nothing here matches.";
+  const bar = html`<form method="get" action="${base}/next" class="form-actions" role="search">
+      <input class="input" name="pillar" type="text" maxlength="8" value="${filter.pillar ?? ""}" placeholder="Pillar: P7 or Later" aria-label="Pillar" autocomplete="off" />
+      <input class="input" name="q" type="search" maxlength="80" value="${filter.q}" placeholder="A word in the title" aria-label="Filter by word" autocomplete="off" />
+      ${btn("Filter", { type: "submit", size: "sm" })}
+      ${isFiltered ? html`<a href="${base}/next">Clear</a>` : null}
+    </form>`;
   const body = html`${repoHeader(ctx, repo, "issues")}
     <div data-next>
     ${pageHead("Next up", { sub: "The crew builds strictly from the top." })}
     <p class="error" id="next-flash" role="alert" hidden></p>
     ${rows.length === 0
       ? html`<p class="muted">Nothing is ready: everything open waits for something. <a href="${base}/map">See the map</a>.</p>`
-      : html`${section("Up next", first, 0, true, "next-list")}${after.length > 0 ? section("After", after, TOP, false) : null}`}
+      : html`${bar}${isFiltered ? html`<p class="muted" id="next-count">${countWords(ats.length, rows.length)} shown${ats.length + parked.length === 0 ? html`. ${nothingWords}` : null}. Numbers and the cut line are the whole list's; the week's capacity bar is left out while filtered.</p>` : null}
+        ${first.length > 0 ? section(isFiltered ? "Matching" : "Up next", first, true, "next-list") : null}${rest.length > 0 ? section("After", rest, false) : null}`}
     <p class="muted small mt" id="next-week">${sentence} <a href="${base}/week">The week</a>${writer
       ? " · Drag a row, or press the key on its button; j and k move between rows."
       : null}</p>
-    ${next.notNow.length > 0
-      ? html`<details class="mt"><summary><h2>Later · ${String(next.notNowTotal)}</h2></summary><ul class="list setting-list">
-            ${next.notNow.map((_, at) => line(base, next.notNow, at, writer, back, true))}
+    ${parked.length > 0
+      ? html`<details class="mt"><summary><h2>Later · ${String(isFiltered ? parked.length : next.notNowTotal)}</h2></summary><ul class="list setting-list">
+            ${parked.map((at) => line(base, next.notNow, at, writer, back, true))}
           </ul></details>`
       : null}
     ${next.unlisted > 0
