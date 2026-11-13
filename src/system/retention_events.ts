@@ -3,19 +3,20 @@
  *
  * Every reader of `event`, and the oldest row it can reach:
  *
- * Windowed by age — the longest decides KEEP_MS:
- * - `flow/estimate_base.ts`: reopened issues, 90 days (the base rate's widest level).
- * - `core/team-metrics.ts`: reopens for the team ledger, 7 days.
- * - `web/pages/security.ts`: deleted repositories, 30 days.
+ * Windowed by age — the longest over a kind not KEPT decides KEEP_DAYS:
+ * - `boards/sources.ts`: spawn timings by day over a board's range; the longest fixed one is 30d
+ *   (`boards/store.ts` RANGES), and "all" reaches as far as the rule keeps.
+ * - `flow/estimate_base.ts`: reopened issues, 90 days, and `core/team-metrics.ts`: reopens, 7 days —
+ *   `issue.*`, KEPT at any age, so no window binds them.
+ * - `web/pages/security.ts`: deleted repositories, 30 days (`repo.*`, KEPT).
  * - `web/studio/since.ts`: "since you were here", the digest window (days).
  * - `feed/items.ts`, `feed/quiet.ts`: the home feed, its newest 300 and a 24 h quiet window.
  * - `feed/affinity.ts`: a viewer's newest 200, weighed by a 7-day half-life.
  * - `actions/mail.ts`: mail ceiling notices, 24 h. `crew/stale_pulls.ts`: closes, 72 h.
  * - `crew/landed.ts`: comments since a pull merged (read when it merges).
- * - `boards/sources.ts`: spawn timings by day, a board's range.
  *
  * Feeds, audit views and replay cursors — they page back through every row, so the rule sets
- * their reach: they answer the last KEEP_MS, and nothing they list newer than that changes:
+ * their reach: they answer the window the rule keeps, and nothing they list newer than that changes:
  * - `core/events.ts` `listEvents`/`listEventsVisibleTo`, under the events page and
  *   `/api/v1/repos/…/events` (`core/events_page.ts`), the MCP `events` tool
  *   (`http/mcp/tools/events.ts`), the TUI events screen, the Atom feed (`web/feeds.ts`, newest
@@ -41,13 +42,20 @@
  * - `pinned.check`, `clog.cleared`, `webhook.failing`: the newest of each, or a streak's mark.
  * Newest-row readers (`web/map_cache.ts`, `spawn/clients.ts`) read MAX and never reach the old end.
  *
- * A new reader that reaches past KEEP_MS names its kind in KEPT, or it is windowed.
+ * A new reader that reaches past the window names its kind in KEPT, or it is windowed.
  */
 import type { Database } from "bun:sqlite";
 
 const DAY_MS = 86_400_000;
-/** Twice the longest windowed reader (estimate_base's 90 days). */
-export const KEEP_MS = 180 * DAY_MS;
+/**
+ * The default window, in days; an admin moves it with the `retention.event_days` limit
+ * (`settings/limits.ts`). 30: the longest fixed window a reader asks of an unkept kind (a
+ * board's 30d range). It was 180 (#12008), which on a forge younger than 180 days trims
+ * nothing, while `event` was 578 MB of a 4.6 GiB file (#12052).
+ */
+export const KEEP_DAYS = 30;
+/** The default window, in milliseconds. */
+export const KEEP_MS = KEEP_DAYS * DAY_MS;
 /** One batch: small enough to hold the write lock for milliseconds. */
 export const BATCH_ROWS = 5_000;
 /** Rows deleted per transaction: about 7 µs a row across the table's indexes. */
@@ -70,17 +78,22 @@ const passes = new WeakMap<Database, Pass>();
 
 /**
  * One batch: walks at most `rowCap` rows from where the last batch stopped, in `seq` order (the
- * order they were written, so oldest first), and deletes those older than KEEP_MS that no reader
+ * order they were written, so oldest first), and deletes those older than `keepMs` (KEEP_MS unless the setting says otherwise) that no reader
  * reaches at any age. `more` is whether rows past the rule are still to walk; when a pass meets
  * a row inside the rule it ends and rests REST_MS before starting from the oldest again. `lockMs`
  * is the longest the delete held the write lock (one CHUNK_ROWS transaction).
  */
-export function pruneEvents(db: Database, now: number, rowCap: number = BATCH_ROWS): { deleted: number; more: boolean; lockMs: number } {
+export function pruneEvents(
+  db: Database,
+  now: number,
+  rowCap: number = BATCH_ROWS,
+  keepMs: number = KEEP_MS,
+): { deleted: number; more: boolean; lockMs: number } {
   const cap = Math.max(1, Math.min(BATCH_ROWS, Math.floor(rowCap)));
   const pass = passes.get(db) ?? { after: 0, restUntil: 0 };
   passes.set(db, pass);
   if (now < pass.restUntil) return { deleted: 0, more: false, lockMs: 0 };
-  const cutoff = new Date(now - KEEP_MS).toISOString();
+  const cutoff = new Date(now - keepMs).toISOString();
   const rows = db
     .query<{ seq: number; rowid: number; kind: string; created_at: string }, [number, number]>(
       "SELECT seq, rowid, kind, created_at FROM event WHERE seq > ?1 ORDER BY seq LIMIT ?2",

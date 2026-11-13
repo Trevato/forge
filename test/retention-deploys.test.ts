@@ -30,6 +30,7 @@ import {
   deployRetention,
   pruneDeploys,
 } from "../src/system/retention_deploys.ts";
+import { LIMITS, limitValue, setLimit } from "../src/settings/limits.ts";
 
 quietLogs();
 
@@ -261,5 +262,29 @@ describe("deploy_pull retention", () => {
     // The pass is over: the next one waits for the hour.
     expect(tick(at(60))).toBeUndefined();
     expect(tick(new Date(now.getTime() + 62 * 60_000))).toMatchObject({ deleted: 0, more: false });
+  });
+
+  test("the keep window is the setting's: deploys past it go, deploys inside it stay, each slice bounded", async () => {
+    app.db.query("DELETE FROM deploy_pull").run();
+    app.db.query("DELETE FROM run").run();
+    app.db.query("DELETE FROM app").run();
+    // Inside the default window, past a 7-day setting.
+    deploy("past", merged[0]!.oid, ago(9));
+    deploy("inside", merged[1]!.oid, ago(3));
+    for (const id of ["past", "inside"]) await record(id, merged[1]!.oid);
+    expect(pruneDeploys(app.db, now, 100)).toMatchObject({ deleted: 0 });
+    const alice = getUserByName(app.db, "alice")!;
+    expect(setLimit(app.db, "retention.deploy_pull_days", 7, alice.id).ok).toBe(true);
+    const tick = deployRetention(app.db, undefined, () => limitValue(app.db, "retention.deploy_pull_days"));
+    const r = tick(now)!;
+    expect(r).toMatchObject({ deleted: 2, more: false });
+    expect(rows("past")).toBe(0);
+    expect(rows("inside")).toBe(2);
+    // One row a slice: a slice never reads more than its cap.
+    deploy("past2", merged[0]!.oid, ago(10));
+    await record("past2", merged[1]!.oid);
+    expect(pruneDeploys(app.db, now, 1, 0, 7)).toMatchObject({ more: true });
+    expect(LIMITS["retention.deploy_pull_days"].default).toBe(DEPLOY_PULL_KEEP_DAYS);
+    setLimit(app.db, "retention.deploy_pull_days", null, alice.id);
   });
 });

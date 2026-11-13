@@ -12,7 +12,9 @@ import { clientBucket } from "../http/peer.ts";
 /** Anonymous spawns allowed per client in any 24 hours. */
 export const ANON_SPAWNS_PER_DAY = 3;
 /** Anonymous spawns allowed from everyone together in any 24 hours. */
-export const ANON_SPAWNS_GLOBAL_PER_DAY = 30;
+// 30 turned strangers away on any day the link was shared; what bounds a surge is the machine
+// (forges awake at once, and the sleep that follows), not a daily count.
+export const ANON_SPAWNS_GLOBAL_PER_DAY = 2_000;
 const DAY_MS = 86_400_000;
 
 export interface RateLimit {

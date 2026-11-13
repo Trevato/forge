@@ -30,6 +30,7 @@ import { FINE_MS, record, type Point } from "./ring.ts";
 import { readHwmon, readTopology, temperatures } from "./thermal.ts";
 import { during } from "../perf/jobs.ts";
 import { withoutWaiting } from "../kernel/db.ts";
+import { limitValue } from "../settings/limits.ts";
 import { pruneEvents, TICK_ROWS } from "../system/retention_events.ts";
 import { drainSamples } from "../system/retention_samples.ts";
 
@@ -176,7 +177,7 @@ export function startSampler(
     // The same tick prunes one batch of old events (`system/retention_events.ts`); a busy
     // database skips it, and the next tick tries again.
     try {
-      withoutWaiting(app.db, () => pruneEvents(app.db, now, TICK_ROWS));
+      withoutWaiting(app.db, () => pruneEvents(app.db, now, TICK_ROWS, limitValue(app.db, "retention.event_days") * 86_400_000));
     } catch (error) {
       app.log.warn("event prune failed", { error: String(error) });
     }

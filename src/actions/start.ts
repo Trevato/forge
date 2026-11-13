@@ -36,7 +36,7 @@ import { newApp } from "./apps.ts";
 
 export const PER_SOURCE_PER_HOUR = 3;
 export const PER_SOURCE_PER_DAY = 10;
-export const PER_DAY = 200;
+export const PER_DAY = 2_000;
 export const NAME_MAX = 40;
 export const DESCRIPTION_MAX = 2000;
 export const AGENT_MAX = 64;
