@@ -206,20 +206,30 @@ describe("deploy_pull retention", () => {
     app.db
       .query("INSERT INTO app (id, repo_id, slug, access) VALUES ('app-1', ?1, 'engine', 'public')")
       .run(repo.id);
-    expect(pruneDeploys(app.db, now, 100)).toEqual({ deleted: 2, more: false });
+    expect(pruneDeploys(app.db, now, 100)).toEqual({ deleted: 2, more: false, next: 0 });
     expect(rows("old")).toBe(0);
     expect(rows("running")).toBe(2);
     expect(rows("recent-preview")).toBe(2);
     // Without the app, its last deploy is just an old one.
     app.db.query("DELETE FROM app").run();
-    expect(pruneDeploys(app.db, now, 1)).toEqual({ deleted: 1, more: true });
-    expect(pruneDeploys(app.db, now, 1)).toEqual({ deleted: 1, more: true });
-    expect(pruneDeploys(app.db, now, 1)).toEqual({ deleted: 0, more: false });
+    // One row at a time, each batch starting where the last one stopped: kept rows are passed, not reread.
+    let after = 0;
+    let deleted = 0;
+    let batches = 0;
+    for (;;) {
+      const r = pruneDeploys(app.db, now, 1, after);
+      deleted += r.deleted;
+      after = r.next;
+      batches++;
+      if (!r.more) break;
+    }
+    expect(deleted).toBe(2);
+    expect(batches).toBe(5);
     expect(rows("running")).toBe(0);
     expect(rows("recent-preview")).toBe(2);
   });
 
-  test("a 5,000-row batch costs a fixed handful of statements, and the tick keeps going while batches are full", async () => {
+  test("a slice costs a fixed handful of statements whatever the table holds, and a pass goes on a slice at a time at its pace", async () => {
     deploy("big", merged[0]!.oid, ago(DEPLOY_PULL_KEEP_DAYS + 10));
     const insert = app.db.query(
       "INSERT INTO deploy_pull (run_id, issue_id, pull_number, merged_oid) VALUES ('big', ?1, ?2, 'x')",
@@ -232,11 +242,24 @@ describe("deploy_pull retention", () => {
     const cost = await once(app.db, () => {
       first = tick(now);
     });
-    expect(first!).toEqual({ deleted: 5_000, more: true });
-    expectWork(cost, { max: 4 });
-    expect(tick(now)).toEqual({ deleted: 2_000, more: false });
-    // Nothing full last time: the next batch waits for the hour.
+    expect(first!.more).toBe(true);
+    expect(first!.deleted).toBeGreaterThan(1_900);
+    expectWork(cost, { max: 6 });
+    // Mid-pass a slice waits its pace: the same instant runs nothing.
     expect(tick(now)).toBeUndefined();
-    expect(tick(new Date(now.getTime() + 61 * 60_000))).toEqual({ deleted: 0, more: false });
+    const at = (s: number) => new Date(now.getTime() + s * 1000);
+    let total = first!.deleted;
+    let slices = 1;
+    for (let s = 11; ; s += 11) {
+      const r = tick(at(s))!;
+      total += r.deleted;
+      slices++;
+      if (!r.more) break;
+    }
+    expect(total).toBe(7_000);
+    expect(slices).toBe(4);
+    // The pass is over: the next one waits for the hour.
+    expect(tick(at(60))).toBeUndefined();
+    expect(tick(new Date(now.getTime() + 62 * 60_000))).toMatchObject({ deleted: 0, more: false });
   });
 });
