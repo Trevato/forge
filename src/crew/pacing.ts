@@ -109,16 +109,39 @@ export function pauseReason(
 }
 
 /**
- * What a paused run's summary says caused the pause, in a word for the log:
- * the provider's balance ("credit"), a full window or limit ("rate limit"),
- * the network, or an account resting. Read from the summary the run wrote.
+ * What a paused run's summary says caused the pause, in a word: the
+ * provider's balance ("credit"), a full window or limit ("rate limit"), the
+ * network, a provider error, the host's own limit, or "other" when the words
+ * name nothing. Read from the summary the run wrote.
  */
 export function pauseCause(summary: string): string {
   const said = summary.replace(/^paused: /, "").toLowerCase();
   if (/\b(credit|balance|billing|budget|quota)\b/.test(said)) return "credit";
   if (/\bnetwork\b/.test(said)) return "network";
   if (/\b(window|limit|rate|overloaded|resting)\b/.test(said)) return "rate limit";
+  if (/\b(api[ _-]?error|server error|internal|unavailable|bad gateway|5\d\d)\b/.test(said)) return "provider error";
+  if (/\b(host|memory|restart)\b/.test(said)) return "host";
   return "other";
+}
+
+const CAUSE_WORDS: Readonly<Record<string, string>> = {
+  "rate limit": "the model account is at its limit",
+  credit: "the forge's included credit is spent",
+  network: "the model could not be reached",
+  "provider error": "the model provider returned an error",
+  host: "the host's limit stopped the run",
+};
+
+/**
+ * The one sentence a pause says, on the run, the pull, the app and in the
+ * terminal: `Paused until 11:12 UTC: the model account is at its limit`; when
+ * the cause cannot be told, `the model did not answer; trying again at 11:12 UTC`.
+ */
+export function pauseSentence(summary: string, at: Date, now: Date = new Date()): string {
+  const words = CAUSE_WORDS[pauseCause(summary)];
+  return words === undefined
+    ? `the model did not answer; trying again at ${whenText(at)}`
+    : `Paused until ${resumeText(at, now)}: ${words}`;
 }
 
 /**
@@ -135,9 +158,10 @@ export function resumeText(at: Date, now: Date = new Date()): string {
  * A paused run's note, the same words on the web card and the terminal's
  * run row: when its limit lifts, or "soon" when the stored time is unreadable.
  */
-export function pausedNote(notBefore: string, now: Date = new Date()): string {
+export function pausedNote(notBefore: string, now: Date = new Date(), summary?: string): string {
   const at = new Date(notBefore);
-  return Number.isNaN(at.getTime())
-    ? "paused, resumes soon"
+  if (Number.isNaN(at.getTime())) return "paused, resumes soon";
+  return summary !== undefined && /^paused\b/i.test(summary)
+    ? pauseSentence(summary, at, now)
     : `paused, resumes ${resumeText(at, now)}`;
 }

@@ -1,8 +1,9 @@
 /**
  * The build half of a child's first hour (#11999), in this process: a first
  * ask builds an app from the template, the app's own tests pass in the
- * check, a person lands the pull, production serves the change, and a
- * second change lands the same way. The model is `build-standin.ts`, which
+ * check, the crew lands the pull by itself as the app's first change
+ * (#12010: no one approves it), production serves the change, and a second
+ * change waits for an approval, then lands and is served. The model is `build-standin.ts`, which
  * is deterministic and runs the app's real `bun test` before it pushes; the
  * template, the crew, the check, the merge and the runtime are the forge's
  * own. It runs in this process; the same walk in a Small cell is its own issue.
@@ -14,14 +15,15 @@ import { join } from "node:path";
 import { newApp } from "../src/actions/apps.ts";
 import { createAgent } from "../src/actions/crew.ts";
 import { assignIssue, openIssue } from "../src/actions/issues.ts";
-import { mergePull } from "../src/actions/pulls.ts";
 import { createApp, type App } from "../src/app.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
-import { listOpenPulls, type Pull } from "../src/core/pulls.ts";
+import { getPull, listOpenPulls, type Pull } from "../src/core/pulls.ts";
+import { submitReview } from "../src/core/reviews.ts";
 import { listRuns } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
+import { landIfGreen } from "../src/crew/autonomy.ts";
 import { startCrew, type CrewHandle } from "../src/crew/dispatch.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { READING_V1, READING_V2, writeBuildStandIn } from "./helpers/build-standin.ts";
@@ -96,19 +98,16 @@ const fresh = () => getRepoById(app.db, repo.id)!;
 const newPull = (known: ReadonlySet<number>) =>
   until<Pull>("the crew's pull", () => listOpenPulls(app.db, repo.id).find((p) => !known.has(p.number)));
 
-/**
- * Land `pull` as the person, once its preview has been built and its tests
- * have passed: the pull's own deploy run says "its tests passed".
- */
-async function land(pull: Pull): Promise<void> {
+/** The pull's preview is built and its tests have passed: its own deploy run says so. */
+async function tested(pull: Pull): Promise<void> {
   const built = await until("the pull's preview and its tests", () =>
     listRuns(app.db, repo.id, { kind: "deploy", env: `pull-${pull.number}` }).find((r) => r.state === "ok" || r.state === "failed"),
   );
   expect(built.state, built.summary ?? "").toBe("ok");
   expect(built.summary ?? "").toContain("its tests passed");
-  const merged = await mergePull(app, alice, fresh(), pull, "squash");
-  if (!merged.ok) throw new Error(JSON.stringify(merged.error));
 }
+
+const mergedAt = (pull: Pull) => getPull(app.db, repo.id, pull.number)?.mergedAt ?? null;
 
 test("a first ask builds an app from the template; its tests pass; production serves it", async () => {
   const made = await newApp(app, alice, { name: "reading", description: "A page that lists my reading. READING-V1", agent: "bot", visibility: "public" });
@@ -117,8 +116,11 @@ test("a first ask builds an app from the template; its tests pass; production se
   slug = made.value.app.slug;
   // The template's files are the app's, whole: its own tests came with it.
   expect(made.value.issue).toBeDefined();
+  // The starter crew's autonomy: on, as the founder's. No reviewer approves; the first change lands on green.
+  app.db.query("UPDATE repo SET autonomy = 'autonomous', autonomy_by = ?2 WHERE id = ?1").run(repo.id, alice.id);
   const pull = await newPull(new Set());
-  await land(pull);
+  await tested(pull);
+  await until("the crew to land the first change by itself", () => mergedAt(pull) ?? undefined);
   const served = await until("production to serve the change", async () => {
     const res = await viaHost("/reading").catch(() => undefined);
     const body = res === undefined ? "" : await res.text();
@@ -127,14 +129,22 @@ test("a first ask builds an app from the template; its tests pass; production se
   expect(served).toBe(READING_V1);
 });
 
-test("a second change lands the same way and production serves that", async () => {
+test("a second change waits for an approval, then lands and production serves that", async () => {
+  // The owner asks for reviews: the first change's rule is spent, every later change follows the normal one.
+  app.db.query("UPDATE repo SET require_review = 1 WHERE id = ?1").run(repo.id);
   const known = new Set(listOpenPulls(app.db, repo.id).map((p) => p.number));
   const asked = openIssue(app, alice, fresh(), { title: "Two books", body: "Say two books. READING-V2" });
   if (!asked.ok) throw new Error(String(asked.error));
   const assigned = assignIssue(app, alice, fresh(), asked.value, bot);
   if (!assigned.ok) throw new Error(String(assigned.error));
   const pull = await newPull(known);
-  await land(pull);
+  await tested(pull);
+  await Bun.sleep(1_500); // real-timer: the crew's ticks get their chance to land it, and must not
+  expect(await landIfGreen(app, fresh(), pull)).toBe(false);
+  expect(mergedAt(pull)).toBeNull();
+  submitReview(app.db, { issueId: pull.id, authorId: alice.id, state: "approved", commitOid: getPull(app.db, repo.id, pull.number)!.headOid });
+  // The approval wakes the landing, as a person's review does.
+  await until("the approved second change to land", async () => ((await landIfGreen(app, fresh(), pull)) || mergedAt(pull) !== null ? true : undefined));
   const served = await until("production to serve the second change", async () => {
     const res = await viaHost("/reading").catch(() => undefined);
     const body = res === undefined ? "" : await res.text();

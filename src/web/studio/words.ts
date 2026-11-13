@@ -418,7 +418,7 @@ export async function runWord(
   if (run.state === "queued")
     return run.notBefore === null
       ? { word: "waiting", note: "queued" }
-      : { word: "waiting", note: pausedNote(run.notBefore) };
+      : { word: "waiting", note: pausedNote(run.notBefore, new Date(), run.summary) };
   if (run.state === "running") {
     // Worked out from what the run did, never what it says (`runs/state.ts`).
     const shown = shownState(ctx.db, run);

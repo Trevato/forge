@@ -9,6 +9,7 @@
  * bigger.
  */
 
+import { pausedSentence } from "../../crew/paused_now.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { cardPath } from "../og/path.ts";
 import { pullProposalOf } from "../../core/proposal_token.ts";
@@ -270,6 +271,9 @@ export function changeHead(
       )}
     </div>
     ${when(step, (st) => pathLine(st, next === null ? undefined : `${next.who}, ${next.why}`))}${when(
+      pull.mergedAt === null ? pausedSentence(ctx.app.db, { issueId: pull.id }) : undefined,
+      (says) => html`<p class="muted small" data-paused role="status">${says}.</p>`,
+    )}${when(
       live === null ? null : landingLine(ctx.app.db, pull, repo.id),
       (eta) => html`<p class="muted small" data-landing-eta>${eta.says}</p>`,
     )}

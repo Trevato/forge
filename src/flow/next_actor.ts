@@ -11,6 +11,7 @@ import { checkSummary, type RunState } from "../core/runs.ts";
 import { reviewSummary } from "../core/reviews.ts";
 import type { Repo } from "../core/repos.ts";
 import { reviewsOff } from "../crew/review.ts";
+import { isFirstChange } from "../crew/first_change.ts";
 import { wallAsk, wallWords } from "./wall_wait.ts";
 
 export type Actor = "builder" | "reviewer" | "queue" | "person";
@@ -34,6 +35,8 @@ export interface NextInput {
   readonly wall?: readonly string[] | null;
   /** Reviews are off for the app (`reviewsOff`): a green pull lands without one. */
   readonly reviewOff?: boolean;
+  /** The app's first change (`crew/first_change.ts`): it lands on green whatever the reviewer asked. */
+  readonly firstChange?: boolean;
 }
 
 const WAITING = {
@@ -47,6 +50,11 @@ export function nextActor(i: NextInput): Next {
   if (i.held !== null)
     return { who: "person", why: `${i.held.by} holds it: ${i.held.why}` };
   if (i.conflicted) return { who: "builder", why: "it conflicts with its base" };
+  if (i.changesRequested > 0 && i.firstChange === true && i.check !== "failed") {
+    if (i.wall != null && i.wall.length > 0) return { who: "person", why: wallAsk(i.wall) };
+    if (i.check === "ok") return { who: "queue", why: "green, the app's first change: it lands" };
+    return { who: "queue", why: WAITING[i.check] };
+  }
   if (i.changesRequested > 0)
     return { who: "builder", why: "changes were asked on this head" };
   if (i.check === "failed") return { who: "builder", why: "its check is red" };
@@ -95,6 +103,7 @@ export function nextOfPull(
       approvals: reviews.approvals,
       pushedSince: reviews.stale,
       wall: wallWords(db, pull.id, live.headOid),
+      firstChange: reviews.changesRequested > 0 && repo !== undefined && isFirstChange(db, repo, pull),
     },
     () => repo !== undefined && reviewsOff(db, repo),
   );
