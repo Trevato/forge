@@ -12,7 +12,7 @@ const cells = [{ label: "a", value: 1 }, { label: "b", value: 2 }];
 describe("chartBox", () => {
   test("wraps drawChart's svg in the frame", () => {
     expect(String(chartBox("line", cells, "Runs"))).toBe(`<div class="chart-box">${drawChart("line", cells, "Runs")}</div>`);
-    expect(String(chartBox("number", cells, "Runs"))).toMatch(/^<div class="chart-box"><svg[^>]*class="chart"[\s\S]*<text class="big"/);
+    expect(String(chartBox("number", cells, "Runs"))).toMatch(/^<div class="chart-box"><div class="chart" data-chart="number"[\s\S]*<span class="big num">2<\/span>/);
   });
 
   test("a table panel carries is-table", () => {

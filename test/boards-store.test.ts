@@ -33,7 +33,7 @@ const PANELS = [
   panel("Runs by kind", { source: "runs", aggregate: "count", groupBy: "kind" }),
   panel("Turns by state", { source: "runs", aggregate: "sum", column: "turns", groupBy: "state" }),
 ];
-const LINE = /<path d="M[^"]*" fill="none" stroke="currentColor" stroke-width="2"/g;
+const LINE = /<path class="chart-line" d="M[^"]*"/g;
 const asAdmin = (path: string, init: RequestInit = {}) =>
   fetch(servers.url + path, { redirect: "manual", ...init, headers: { authorization: `Bearer ${tok.admin}`, ...init.headers } });
 const post = (path: string, fields: Record<string, string>, who = "admin", headers: Record<string, string> = {}) =>

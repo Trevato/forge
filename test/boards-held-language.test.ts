@@ -43,17 +43,17 @@ const held = async (path: string, cookie: string): Promise<string> => {
   const page = await (await fetch(`${servers.url}${path}`, { headers: { cookie } })).text();
   const m = page.slice(page.indexOf("<main"), page.indexOf("</main>"));
   const i = m.indexOf('id="held"');
-  return i < 0 ? "" : m.slice(m.lastIndexOf("<", i), m.indexOf("</section>", i) + 10);
+  return i < 0 ? "" : m.slice(m.lastIndexOf("<", i), m.indexOf("</details>", i) + 10);
 };
 
-test("/boards: held-ready is a section with an h2, no card, one row per repository", async () => {
+test("/boards: held-ready is a fold with an h2, no card, one row per repository", async () => {
   const h = await held("/boards", owner);
-  expect(h).toMatch(/^<section class="settings-block" id="held">\s*<h2>Ready, and why it waits<\/h2>/);
+  expect(h).toMatch(/^<details class="disclosure fold" id="held"\s*>\s*<summary><h2 class="fold-title">Ready, and why it waits<\/h2><span class="fold-state">\d+ can start now, \d+ (is|are) held<\/span>/);
   expect(h).not.toContain('class="card');
   expect((h.match(/data-held-repo=/g) ?? []).length).toBe(2);
   expect(h).toContain('data-held-repo="alice/open-one"');
-  expect(h).toContain("startable=1");
-  expect(h).toContain("running=1");
+  expect(h).toContain('data-held="startable"><span class="num">1</span> startable');
+  expect(h).toContain('data-held="running"><span class="num">1</span> running');
 });
 
 test("/flow draws no held table, so there is no card#held there either", async () => {

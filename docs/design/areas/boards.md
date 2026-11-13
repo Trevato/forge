@@ -19,6 +19,21 @@ target with 8px of padding. Defined in `src/web/style/components.ts`.
 
 The card under the Pipeline table (`id="verified"`) adds no class: it is a `card()` with an `<h2>`, one `<p>` per repository in the default text colour, the repository and its run as plain `<a>` links, `small` for the run link. It is server-rendered, needs no JavaScript, and has no accent of its own.
 
+## The boards page and a board (one system with the home)
+
+`/boards` and `/boards/:slug` are the home's column (`.hf`, `.hf-head`, `.hf-title`), its figures (`.hf-figs`, drawn by `figure()` in `src/web/figure.ts`, which the home draws through too) and its tiles (`.tile`). `/boards` answers "is work moving, and where is it stuck" in its first screen: one sentence naming the bottleneck, only the lines that are true right now under it, five figures, then the pipeline; the boards are tiles under that, and everything else is a fold, closed, that says in one sentence how it stands. A board is its charts and nothing else until "Change this board" is opened. Styled in `src/web/style/components.ts`.
+
+- `.bd-nav` — the two ways deeper in the head (Flow, Explore the data), 44px targets.
+- `.bd-live` — the region that redraws as work moves (`data-live`, no address of its own, so the page is refetched for it at most once in 30 s): the sentence, the figures, the pipeline.
+- `.bd-now`, `.bd-lead` — the bottleneck sentence at 16px and, under it in the muted colour, only the lines that hold right now (conflicted pulls, a held rebase lane, idle pulls).
+- `.bd-block`, `.bd-head`, `.bd-sub` — a block of the page: its `<h2>`, one sentence of what it shows, and its quiet links.
+- `.pl`, `.pl-cap`, `.pl-trend`, `.pl-spark` — the pipeline: §5's `.table` with every number right-aligned and tabular, a zero in the faint colour, the day's 24 hours as bars. On a phone each stage is a card: its name, then its five numbers in one row with their names over them.
+- `.bd-boards` — the boards as tiles: two across on a phone, four from 720px. Each tile is a `data-nav` row for `j`/`k`.
+- `.folds`, `.fold`, `.fold-title`, `.fold-state`, `.fold-body` — `fold()`: a `disclosure` whose summary is the section's name and one sentence of how it stands now ("nothing queued; 26 landed in the last hour"); the detail is inside. Hairlines between, no card.
+- `.held-n` — one count of the held table ("2 running"), never broken inside.
+- `.bgrid`, `.bp`, `.bp-w2`, `.bp-w3`, `.bp-h2`, `.bp-h3` — a board's panels: a panel is a third, two thirds or all of a row at least and grows into what is left, so a row is never part empty; one under the other on a phone.
+- `.bp-head`, `.bp-now`, `.bp-body`, `.bp-foot` — a panel: its title, the latest value of a single series beside it, the chart, and under it Explore, JSON and CSV as 44px links.
+
 ## The list and a board's management (#9815)
 
-`/boards` and the management under a board's grid speak the home page's language: no card boxes. `boardsList` is a `settings-block` section "Your boards" with one `row()` per board (title, then panels · range · refresh), or one plain sentence saying what a board is when there are none; the make-a-board form sits in its own "Make a board" section. Under a board, Panels, Add a panel and Board are `settings-block` sections with `<h2>` headings. The panels in the grid and the held-files card keep their `card` shape. No new class.
+`boardsList` is a `bd-block` "Your boards" with one tile per board (title, charts, range), or one plain sentence when there are none; the make-a-board form is a closed `disclosure` under it. Under a board, Panels, Add a panel and Board are folds. The panels in the grid keep their `card` shape.

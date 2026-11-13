@@ -219,9 +219,9 @@ describe("GET /api/v1/boards/:slug/panels/:id", () => {
       expect(page).toContain(`href="/api/v1/boards/usage-test/panels/${i}"`);
       expect(page).toContain(`href="/api/v1/boards/usage-test/panels/${i}?format=csv" download="usage-test-${i}.csv"`);
     }
-    // One class holds a card head's links, and on a thumb each is a 44px target (docs/DESIGN.md).
-    expect(page.match(/<span class="card-links muted small"><a href="\/boards\/data\?[^"]*">explore<\/a>\s*<a href="\/api\/v1\/boards\/usage-test\/panels\/\d"/g)?.length).toBe(2);
-    expect(components).toMatch(/@media \(pointer: coarse\) \{[^}]*\}\s*\.card-links > a \{[^}]*min-height: 44px[^}]*\}/);
+    // A panel's links sit under its chart, each a 44px target (docs/DESIGN.md).
+    expect(page.match(/<p class="bp-foot card-links"><a href="\/boards\/data\?[^"]*" aria-label="[^"]*: explore">Explore<\/a>\s*<a href="\/api\/v1\/boards\/usage-test\/panels\/\d"/g)?.length).toBe(2);
+    expect(components).toMatch(/\.bp-foot > a \{[^}]*min-height: 44px[^}]*\}/);
     // The link answers what it names, to the same admin.
     expect((await api("/api/v1/boards/usage-test/panels/1?format=csv")).headers.get("content-type")).toBe("text/csv; charset=utf-8");
   });

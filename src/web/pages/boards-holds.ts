@@ -18,6 +18,7 @@ import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { btn, field as formField, row, time } from "../ui.ts";
 import { fileHoldForm } from "./file_holds.ts";
+import { fold } from "../figure.ts";
 
 /** `owner/name`: two names and a slash. */
 const MAX_REPO_REF = 80;
@@ -33,9 +34,7 @@ export function boardsHoldsCard(db: Database, viewer: User | undefined, withBoar
       <input type="hidden" name="verb" value="release" />
       ${btn("Release", { variant: "ghost" })}
     </form>`;
-  return html`<section class="settings-block" id="board-holds">
-      <h2>Held files</h2>
-      <p class="muted small">
+  const body = html`<p class="muted small">
         No build starts on an issue that names a held path. Nothing already
         running is cut. Only repositories you administer are listed.
       </p>
@@ -68,9 +67,12 @@ export function boardsHoldsCard(db: Database, viewer: User | undefined, withBoar
           hint: `A path in the repository, relative, at most ${MAX_HOLD_PATH} characters.`,
         })}
         <div class="form-actions">${btn("Hold file", { variant: withBoards ? "secondary" : "primary" })}</div>
-      </form>
-    </section>`;
+      </form>`;
+  // Beside the boards it is one of the folds; alone (a repository's admin who is not the forge's) it is the page.
+  if (withBoards) return fold("Held files", total === 0 ? "no file is held" : `${String(total)} held`, body, { id: "board-holds" });
+  return html`<section class="settings-block" id="board-holds"><h2>Held files</h2>${body}</section>`;
 }
+
 
 // POST /boards/holds
 export async function boardsHoldPost(ctx: Ctx): Promise<Response> {

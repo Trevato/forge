@@ -27,7 +27,6 @@ import {
   type PipelineKey,
 } from "../../flow/pipeline.ts";
 import {
-  hoursSpan,
   HOURS,
   itemsIn,
   OUTFLOW,
@@ -41,7 +40,6 @@ import { warmingLine } from "../../crew/hot_history.ts";
 import { getRepoById } from "../../core/repos.ts";
 import { IDLE_LIMIT, type IdlePull } from "../../flow/idle_pulls.ts";
 import { panelFigures } from "../../flow/panel_cache.ts";
-import { hoursWords } from "../../flow/lead_time.ts";
 import { buildYieldSays } from "../../flow/build_yield.ts";
 import { DECLINE_LABELS, DECLINE_REASONS } from "../../flow/declines.ts";
 import { reviewLatencySays } from "../../flow/review_latency.ts";
@@ -57,6 +55,11 @@ import { beatFact, lastBeat } from "../../keeper/beat.ts";
 import { gatesSection } from "./boards-gates.ts";
 import { heldCard } from "./boards-held.ts";
 import { badge, card, meter } from "../ui.ts";
+import { count, figure, figures, fold } from "../figure.ts";
+import { sparkline as homeSpark } from "../studio/kpi_row.ts";
+
+/** The events that move work between stages. The region has no address of its own, so the page's script refetches the page for it at most once in 30 s (`liveRegionsJs`). */
+const FLOW_LIVE = "run.queued,run.started,run.finished,pull.opened,pull.reviewed,pull.merged,pull.closed,queue.*,app.serving";
 
 /** What `?out=` and `?hour=` ask to list, checked: an unknown stage or hour lists nothing. */
 function asked(url: URL): { key: PipelineKey; hour: number | null } | null {
@@ -85,30 +88,34 @@ function sparkline(t: StageThroughput): Html {
     const h = n === 0 ? 1 : Math.max(2, Math.round((n / max) * 16));
     return html`<rect ${n === 0 ? html`fill-opacity="0.3"` : null} x="${String(x)}" y="${String(16 - h)}" width="2" height="${String(h)}" />`;
   });
-  return html`<svg class="muted" viewBox="0 0 72 16" width="72" height="16" fill="currentColor" aria-hidden="true" focusable="false">${bars}</svg>`;
+  return html`<svg class="pl-spark" viewBox="0 0 72 16" width="72" height="16" fill="currentColor" aria-hidden="true" focusable="false">${bars}</svg>`;
 }
 
-function outCell(base: string, t: StageThroughput): Html {
+/** What a stage let out: the last hour, the day, and the day's 24 hours as bars. Both counts list what they counted. */
+function outCells(base: string, t: StageThroughput): Html {
   const day = t.items.length;
   const passed = t.items.filter((i) => i.outcome === "passed").length;
-  return html`<span class="bar num" data-out="${OUTFLOW[t.key].out}">
-      <a class="mono" href="${outHref(base, t.key, 0)}" data-hour="0">${String(t.hours[0] ?? 0)}</a>
-      ${sparkline(t)}
-      <a class="muted small" href="${outHref(base, t.key, null)}" data-day="${String(day)}">${String(day)} in 24 h</a>
-    </span>
-    <div class="muted small">
-      ${OUTFLOW[t.key].label}${t.key === "checking" && day > 0 ? ` · ${passed} passed · ${day - passed} failed` : ""}
-    </div>`;
+  const what = `${OUTFLOW[t.key].label}${t.key === "checking" && day > 0 ? `: ${passed} passed, ${day - passed} failed` : ""}`;
+  return html`<td class="num" data-label="Out, 1 h" data-out="${OUTFLOW[t.key].out}">
+      <a href="${outHref(base, t.key, 0)}" data-hour="0" title="${what}, in the last hour">${count(t.hours[0] ?? 0)}</a>
+    </td>
+    <td class="num" data-label="Out, 24 h">
+      <a href="${outHref(base, t.key, null)}" data-day="${String(day)}" title="${what}, in the last 24 hours">${count(day)}</a>
+    </td>
+    <td class="pl-trend" title="${what}, each hour of the last 24">${sparkline(t)}</td>`;
 }
 
-/** The panel for `reader`; `base` is the page it sits on, where its counts link. */
-export function flowPanel(app: App, reader: Reader, url: URL, base: string): Html {
+/** The panel for `reader`; `base` is the page it sits on, where its counts link. `between` is drawn under the pipeline, above the detail. */
+export function flowPanel(app: App, reader: Reader, url: URL, base: string, slots: { now?: Html | null; between?: Html | null; first?: Html | null; last?: Html | null } = {}): Html {
   const now = Date.now();
   const stages = readPipeline(app.db, new Date(now));
   const worst = bottleneck(stages);
   const flow = readThroughput(app.db, stages.map((s) => s.key), new Date(now));
   const out = new Map(flow.stages.map((t) => [t.key, t]));
   const landed = out.get("approved");
+  const checked = out.get("checking")?.items ?? [];
+  const passed = checked.filter((i) => i.outcome === "passed").length;
+  const ready = stages.find((s) => s.key === "ready");
   const dups = systemFor(app, reader).duplicates;
   const fig = panelFigures(app.db, reader.kind, new Date(now));
   const conflicted = conflictedSays(fig.conflicted, now);
@@ -121,6 +128,7 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
   const newest = parked.newest[0];
   const listed = asked(url);
   const shown = listed === null ? undefined : out.get(listed.key);
+  const owner = reader.kind === "owner";
   const help = pageHelp([
     ["Stages", html`${(Object.keys(STAGE_HOLDS) as PipelineKey[]).map((k, i) => html`${i === 0 ? "" : "; "}<strong>${STAGE_LABEL[k]}</strong>: ${STAGE_HOLDS[k]}`)}.`],
     ["Ready, and why it waits", HELD_EXPLAINED],
@@ -128,84 +136,57 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
     ["Verified after landing", html`A repository that declares <span class="mono">check.verify</span> in forge.json has its main verified after landing.`],
     ["Elsewhere", html`Limits are set on <a href="/settings/capacity">Capacity</a>. How the forge stands against its threats is on <a href="/resilience">Resilience</a>; where an outside agent can help is on <a href="/contribute">Contribute</a>.`],
   ], helpAsked(url));
-  return html`${keeperRow(app.db, reader.kind === "owner")}${reader.kind === "owner"
-    ? html`<dl class="status-rows" id="keeper-heartbeat-row"><div class="status-row"><dt>Release tick</dt><dd id="keeper-heartbeat">${beatFact(lastBeat(app.db), new Date(now))}</dd></div></dl>`
-    : ""}${help}${card(
-      html`<p id="bottleneck" data-stage="${worst?.key ?? ""}">
-          <strong>${verdict(stages, now)}</strong>
-        </p>
-    <p id="pile">${pile}</p>
-    ${lane === null ? "" : html`<p id="rebase-lane">Rebases: ${lane}.</p>`}
-    ${conflicted === null ? "" : html`<p id="conflicted">${conflicted}</p>`}
-    ${onBuilder === null ? "" : html`<p id="requested-builder">${onBuilder}</p>`}
-    ${onReviewer === null ? "" : html`<p id="requested-reviewer">${onReviewer}</p>`}
-    ${reviewing === null ? "" : html`<p id="review-load">${reviewing}</p>`}
-    ${idle.length === 0
-      ? ""
-      : html`<div id="idle-pulls" data-count="${String(idle.length)}">
-          <p>${idleCount(idle)} idle pull${idle.length === 1 ? "" : "s"}:</p>
-          <ul class="list">${idle.slice(0, 3).map(idleRow)}
-            ${idle.length > 3
-              ? html`<li><a class="row flow-row small" href="${base}?idle=all#idle-list" data-more><span class="row-main">and ${String(idle.length - 3)}${idle.length >= IDLE_LIMIT ? "+" : ""} more</span></a></li>`
-              : null}
-          </ul>
-        </div>`}
-    ${parked.week === 0 || newest === undefined
-      ? ""
-      : html`<p id="parked" data-day="${String(parked.day)}" data-week="${String(parked.week)}">
-          ${String(parked.day)} parked today, ${String(parked.week)} this week; newest
-          <a href="/${newest.repo}/issues/${String(newest.issue)}">${newest.repo} #${String(newest.issue)}</a>
-        </p>`}
-    <p id="throughput">
-      landed
-      <a href="${outHref(base, "approved", 0)}" data-landed-hour>${String(landed?.hours[0] ?? 0)}</a>
-      in the last hour ·
-      <a href="${outHref(base, "approved", null)}" data-landed-day>${String(landed?.items.length ?? 0)}</a>
-      in 24 h · median ask→live
-      <span data-median>${flow.medianAskToLiveMs === null ? "—" : hoursSpan(flow.medianAskToLiveMs)}</span>
-      (24 h)
-    </p>
-    <p id="lead-time" class="muted">
-      time to land:
-      ${lead.medianHours === null
-        ? "nothing landed in 24 h"
-        : html`median <span data-median-hours>${hoursWords(lead.medianHours)}</span>, slowest <span data-max-hours>${hoursWords(lead.maxHours ?? 0)}</span>`}
-    </p>
-    <p id="build-yield" class="muted">${buildYieldSays(yielded)}</p>
-    ${fig.declined.says === ""
-      ? ""
-      : html`<p id="declines" class="muted">Declined in 24 h: ${DECLINE_REASONS.filter((r) => fig.declined.groups[r].count > 0).map(
-          (r, i) => html`${i === 0 ? "" : ", "}<span data-reason="${r}">${String(fig.declined.groups[r].count)} ${DECLINE_LABELS[r]}</span> (${fig.declined.runs[r].map(
-            (x, j) => html`${j === 0 ? "" : ", "}<a href="/${x.repo}/runs/${x.runId}">#${String(x.issue)}</a>`,
-          )}${fig.declined.groups[r].distinct > fig.declined.runs[r].length ? ", …" : ""})`,
-        )}</p>`}
-    <p id="review-latency" class="muted">${reviewLatencySays(latency)}</p>
-    <p id="openers" class="muted small">
-      opened in the last hour:
-      ${openers.length === 0
-        ? "no pulls"
-        : openers.map((o, i) => html`${i === 0 ? "" : " · "}<a href="/${o.author}">${o.author}</a> ${openerCounts(o)}`)}
-    </p>
-    <p id="duplicate-work" data-count="${String(dups.length)}" class="${dups.length === 0 ? "muted" : ""}">
-      ${dups.length === 0
-        ? html`No test file is running in more than one check.`
-        : html`<strong>${String(dups.length)} test file${dups.length === 1 ? " is" : "s are"} running in more than one check:</strong>
-          ${dups.slice(0, 5).map((d) => html`<span class="mono small">${d.file} (${d.checks.join(", ")})</span> `)}`}
-      <a href="/system">System</a>
-    </p>`,
-      { id: "flow-summary" },
-    )}
-    ${card(
-      html`<div class="table-scroll">
-        <table class="table" aria-label="Pipeline stages">
+  const landedDay = landed?.items.length ?? 0;
+  const strip = figures([
+    figure("Landed, last hour", html`<span data-landed-hour>${count(landed?.hours[0] ?? 0)}</span>`, html`<span data-landed-day>${count(landedDay)}</span> ${landedDay === 1 ? "change" : "changes"} landed on main in 24 hours`, outHref(base, "approved", null), landed === undefined ? null : homeSpark(landed.hours)),
+    figure("Asked to live", html`<span data-median>${flow.medianAskToLiveMs === null ? "—" : span(flow.medianAskToLiveMs)}</span>`, flow.medianAskToLiveMs === null ? "nothing asked for went live in 24 hours" : "median from an ask to it serving, last 24 hours", outHref(base, "live", null)),
+    figure("Opened to landed", lead.medianHours === null ? "—" : html`<span data-median-hours>${span(lead.medianHours * 3_600_000)}</span>`, lead.medianHours === null ? "nothing landed in 24 hours" : html`median for a pull; the slowest took <span data-max-hours>${span((lead.maxHours ?? 0) * 3_600_000)}</span>`, outHref(base, "approved", null)),
+    figure("Waiting to start", count(ready?.waiting ?? 0), ready === undefined || ready.waiting === 0 ? "no ready issue waits for a builder" : `ready ${ready.waiting === 1 ? "issue" : "issues"}; the oldest has waited ${waited(ready, now) ?? "no time"}`, "#held", null, worst?.key === "ready" ? "attn" : null),
+    figure("Checks passing", checked.length === 0 ? "—" : `${Math.round((passed / checked.length) * 100)}%`, checked.length === 0 ? "no check finished in 24 hours" : `${count(passed)} of ${count(checked.length)} checks passed in 24 hours`, outHref(base, "checking", null), null, checked.length > 0 && passed / checked.length < 0.5 ? "attn" : null),
+  ], "The last 24 hours");
+  return html`<div class="bd-live" id="flow-live" data-live="${FLOW_LIVE}">
+    <section class="bd-now" id="flow-summary" aria-label="How the pipeline stands">
+      <p class="bd-lead" id="bottleneck" data-stage="${worst?.key ?? ""}"><strong>${verdict(stages, now)}</strong></p>
+      ${slots.now ?? null}
+      ${keeperRow(app.db, owner)}
+      <p id="pile">${pile}</p>
+      ${lane === null ? "" : html`<p id="rebase-lane">Rebases: ${lane}.</p>`}
+      ${conflicted === null ? "" : html`<p id="conflicted">${conflicted}</p>`}
+      ${onBuilder === null ? "" : html`<p id="requested-builder">${onBuilder}</p>`}
+      ${onReviewer === null ? "" : html`<p id="requested-reviewer">${onReviewer}</p>`}
+      ${reviewing === null ? "" : html`<p id="review-load">${reviewing}</p>`}
+      ${idle.length === 0
+        ? ""
+        : html`<div id="idle-pulls" data-count="${String(idle.length)}">
+            <p>${idleCount(idle)} idle pull${idle.length === 1 ? "" : "s"}:</p>
+            <ul class="list">${idle.slice(0, 3).map(idleRow)}
+              ${idle.length > 3
+                ? html`<li><a class="row flow-row small" href="${base}?idle=all#idle-list" data-more><span class="row-main">and ${String(idle.length - 3)}${idle.length >= IDLE_LIMIT ? "+" : ""} more</span></a></li>`
+                : null}
+            </ul>
+          </div>`}
+      ${parked.week === 0 || newest === undefined
+        ? ""
+        : html`<p id="parked" data-day="${String(parked.day)}" data-week="${String(parked.week)}">
+            ${String(parked.day)} parked today, ${String(parked.week)} this week; newest
+            <a href="/${newest.repo}/issues/${String(newest.issue)}">${newest.repo} #${String(newest.issue)}</a>
+          </p>`}
+    </section>
+    ${strip}
+    <section class="bd-block" id="pipeline" aria-labelledby="pipeline-h">
+      <header class="bd-head"><h2 id="pipeline-h">Pipeline</h2><p class="bd-sub">Each row is a step a change takes: what waits there, what is being worked on, and what the step let out.</p><a href="/pipeline">The four steps</a><a href="/settings/capacity">Capacity</a></header>
+      <div class="card">
+        <table class="table pl" aria-label="Pipeline stages">
           <thead>
             <tr>
               <th scope="col">Stage</th>
-              <th scope="col">Waiting</th>
-              <th scope="col">Active</th>
-              <th scope="col">Oldest wait</th>
               <th scope="col">Capacity</th>
-              <th scope="col">Out, last hour · 24 h</th>
+              <th scope="col" class="num">Waiting</th>
+              <th scope="col" class="num">Active</th>
+              <th scope="col" class="num">Oldest wait</th>
+              <th scope="col" class="num">Out, last hour</th>
+              <th scope="col" class="num">24 hours</th>
+              <th scope="col"><span class="sr-only">Each hour</span></th>
             </tr>
           </thead>
           <tbody>
@@ -219,34 +200,68 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
                     ${STAGE_LABEL[s.key]}
                     ${s === worst ? badge("bottleneck", { tone: "danger" }) : null}
                   </th>
-                  <td class="mono">${String(s.waiting)}</td>
-                  <td class="mono">${s.key === "live" ? "—" : String(s.active)}</td>
-                  <td class="mono">${waited(s, now) ?? "—"}</td>
-                  <td class="small">${s.capacity ?? "—"}</td>
-                  <td>${outCell(base, out.get(s.key)!)}</td>
+                  <td class="pl-cap" data-label="Capacity" ${s.capacity === null ? html`data-zero` : null}>${s.capacity ?? "—"}</td>
+                  <td class="num" data-label="Waiting" ${s.waiting === 0 ? html`data-zero` : null}>${count(s.waiting)}</td>
+                  <td class="num" data-label="Active" ${s.key === "live" || s.active === 0 ? html`data-zero` : null}>${s.key === "live" ? "—" : count(s.active)}</td>
+                  <td class="num" data-label="Oldest" ${s.oldestWaiting === null ? html`data-zero` : null}>${waited(s, now) ?? "—"}</td>
+                  ${outCells(base, out.get(s.key)!)}
                 </tr>`,
             )}
           </tbody>
         </table>
-      </div>`,
-      { head: html`<h2>Pipeline</h2><a class="muted small" href="/pipeline">The four steps</a><a class="muted small" href="/settings/capacity">Capacity</a>`, id: "pipeline", pad: false },
-    )}
-    ${repeatsCard(readRepeats(app.db, "", new Date(now), reader.kind !== "owner"))}
-    ${verifiedCard(readVerified(app, reader.kind === "owner"), now)}
-    ${hotFilesCard(app, reader)}
-    ${heldCard(readHeld(app, reader.kind === "owner", now))}
-    ${queueCard(queuesFor(app, reader, new Date(now), { batches: true }))}
-    ${gatesSection(app.db, reader.kind === "owner", now)}
-    ${doctorCard(app.db, reader.kind === "owner", now)}
+      </div>
+    </section>
+    </div>
+    ${slots.between ?? null}
+    <section class="bd-block" id="detail" aria-labelledby="detail-h">
+      <header class="bd-head"><h2 id="detail-h">Go deeper</h2><p class="bd-sub">Each line says how it stands now; open one for what is behind it.</p></header>
+      <div class="folds">
+      ${slots.first ?? null}
+      ${fold("The last 24 hours", `${count(yielded.finished)} ${yielded.finished === 1 ? "build" : "builds"} finished, ${openers.length === 0 ? "no pull" : `${count(openers.reduce((n, o) => n + o.opened, 0))} pulls`} opened in the last hour`, html`
+        <p id="build-yield">${buildYieldSays(yielded)}</p>
+        ${fig.declined.says === ""
+          ? ""
+          : html`<p id="declines">Declined in 24 h: ${DECLINE_REASONS.filter((r) => fig.declined.groups[r].count > 0).map(
+              (r, i) => html`${i === 0 ? "" : ", "}<span data-reason="${r}">${String(fig.declined.groups[r].count)} ${DECLINE_LABELS[r]}</span> (${fig.declined.runs[r].map(
+                (x, j) => html`${j === 0 ? "" : ", "}<a href="/${x.repo}/runs/${x.runId}">#${String(x.issue)}</a>`,
+              )}${fig.declined.groups[r].distinct > fig.declined.runs[r].length ? ", …" : ""})`,
+            )}</p>`}
+        <p id="review-latency">${reviewLatencySays(latency)}</p>
+        <p id="openers">
+          Opened in the last hour:
+          ${openers.length === 0
+            ? "no pulls"
+            : openers.map((o, i) => html`${i === 0 ? "" : " · "}<a href="/${o.author}">${o.author}</a> ${openerCounts(o)}`)}
+        </p>
+        <p id="duplicate-work" data-count="${String(dups.length)}">
+          ${dups.length === 0
+            ? html`No test file is running in more than one check.`
+            : html`<strong>${String(dups.length)} test file${dups.length === 1 ? " is" : "s are"} running in more than one check:</strong>
+              ${dups.slice(0, 5).map((d) => html`<span class="mono small">${d.file} (${d.checks.join(", ")})</span> `)}`}
+          <a href="/system">System</a>
+        </p>
+        ${owner ? html`<p id="keeper-heartbeat-row">Release tick: <span id="keeper-heartbeat">${beatFact(lastBeat(app.db), new Date(now))}</span></p>` : ""}`, { id: "day" })}
+      ${heldCard(readHeld(app, owner, now))}
+      ${queueCard(queuesFor(app, reader, new Date(now), { batches: true }))}
+      ${gatesSection(app.db, owner, now)}
+      ${doctorCard(app.db, owner, now)}
+      ${hotFilesCard(app, reader)}
+      ${verifiedCard(readVerified(app, owner), now)}
+      ${repeatsCard(readRepeats(app.db, "", new Date(now), !owner))}
+      ${slots.last ?? null}
+      </div>
+      ${help}
+    </section>
     ${url.searchParams.get("idle") === "all" && idle.length > 0 ? idleList(idle) : null}
     ${listed === null || shown === undefined ? null : outList(shown, listed.hour, now)}`;
 }
 
 /** What reviewers repeated (#8716): the proposals and retirements, beside comments per pull. */
 function repeatsCard(r: Repeats): Html {
-  return card(
-    html`<h2>Review repeats</h2>
-      <p data-repeats data-scope="${r.scope}">${r.says}.</p>
+  return fold(
+    "Review repeats",
+    r.findings.length === 0 ? "no finding repeated" : `${count(r.findings.length)} repeated ${r.findings.length === 1 ? "finding" : "findings"}`,
+    html`<p data-repeats data-scope="${r.scope}">${r.says}.</p>
       ${r.findings.length === 0
         ? null
         : html`<ul>${r.findings.map((f) => html`<li data-finding>${f.sample} <span class="muted small">seen ${String(f.seen)}× · #${String(f.issue)}${f.retired ? " · retired" : ""}</span></li>`)}</ul>`}`,
@@ -260,9 +275,10 @@ function repeatsCard(r: Repeats): Html {
  * landings that were judged on lint and types.
  */
 function verifiedCard(rows: readonly VerifiedRow[], now: number): Html {
-  return card(
-    html`<h2>Verified after landing</h2>
-      ${rows.length === 0
+  return fold(
+    "Verified after landing",
+    rows.length === 0 ? "no repository asks for it" : `${count(rows.length)} ${rows.length === 1 ? "repository" : "repositories"}`,
+    html`${rows.length === 0
         ? html`<p class="muted">None declare <span class="mono">check.verify</span></p>`
         : rows.map(
             (r) =>
@@ -293,21 +309,24 @@ function idleList(idle: readonly IdlePull[]): Html {
 
 /** The merge queue, one row per repository with something in it or landed. */
 function queueCard(rows: readonly QueueRow[]): Html {
-  return card(
-    html`<h2>Merge queue</h2>
-      ${rows.length === 0
+  const queued = rows.reduce((n, r) => n + r.queued + r.gating, 0);
+  const landedHour = rows.reduce((n, r) => n + r.landedHour, 0);
+  return fold(
+    "Merge queue",
+    `${queued === 0 ? "nothing queued" : `${count(queued)} queued`}; ${count(landedHour)} landed in the last hour`,
+    html`${rows.length === 0
         ? html`<p class="muted">Nothing queued, gating or landed in the last hour.</p>`
         : html`<div class="table-scroll">
-            <table class="table" aria-label="Merge queue">
+            <table class="table" data-dense aria-label="Merge queue">
               <thead>
                 <tr>
                   <th scope="col">Repository</th>
-                  <th scope="col">Queued</th>
-                  <th scope="col">Gating</th>
-                  <th scope="col">Gates</th>
-                  <th scope="col">Landed, last hour</th>
-                  <th scope="col">Approved to landed</th>
-                  <th scope="col">Red batches, last hour</th>
+                  <th scope="col" class="num">Queued</th>
+                  <th scope="col" class="num">Gating</th>
+                  <th scope="col" class="num">Gates</th>
+                  <th scope="col" class="num">Landed, last hour</th>
+                  <th scope="col" class="num">Approved to landed</th>
+                  <th scope="col" class="num">Red batches, last hour</th>
                 </tr>
               </thead>
               <tbody>
@@ -315,12 +334,12 @@ function queueCard(rows: readonly QueueRow[]): Html {
                   (r) =>
                     html`<tr data-queue="${r.repo}">
                       <th scope="row"><a href="/${r.repo}/pulls">${r.repo}</a></th>
-                      <td class="mono" data-queued>${String(r.queued)}</td>
-                      <td class="mono" data-gating>${String(r.gating)}</td>
-                      <td class="mono" data-gates>${String(r.gates)}</td>
-                      <td class="mono" data-landed>${String(r.landedHour)}</td>
-                      <td class="mono" data-approved-to-landed>${r.approvedToLanded === null ? "—" : `${r.approvedToLanded} min`}</td>
-                      <td class="mono" data-red-batches>${redBatchWords(r)}</td>
+                      <td class="num" data-queued>${String(r.queued)}</td>
+                      <td class="num" data-gating>${String(r.gating)}</td>
+                      <td class="num" data-gates>${String(r.gates)}</td>
+                      <td class="num" data-landed>${String(r.landedHour)}</td>
+                      <td class="num" data-approved-to-landed>${r.approvedToLanded === null ? "—" : `${r.approvedToLanded} min`}</td>
+                      <td class="num" data-red-batches>${redBatchWords(r)}</td>
                     </tr>`,
                 )}
               </tbody>
@@ -370,9 +389,10 @@ function hotFilesCard(app: App, reader: Reader): Html {
   const top = rows.slice(0, HOT_LISTED);
   const warming = warmingLine(app.db, Date.now(), pullCounts, reader.kind !== "owner").split("\n").filter((l) => l !== "");
   const max = Math.max(1, ...top.map((r) => r.pulls));
-  return card(
-    html`<h2>Hot files</h2>
-      ${top.length === 0
+  return fold(
+    "Hot files",
+    top.length === 0 ? "no file is touched by 3 or more open pulls" : `${count(top.length)} ${top.length === 1 ? "file" : "files"} touched by 3 or more open pulls`,
+    html`${top.length === 0
         ? html`<p class="muted">No file is touched by 3 or more open pulls.</p>`
         : html`<ul>
             ${top.map(

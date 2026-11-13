@@ -470,12 +470,12 @@ describe("the tick says why each ready issue cannot start", () => {
     expect(row).toContain('<meter');
     expect(row).toContain('aria-label="0 of 3 ready can start"');
     expect(row).toContain('data-tone="attn"');
-    expect(row).toContain('<span class="mono">startable=0</span>');
-    expect(row).toContain('<span class="mono">stalled=1</span>');
-    expect(row).toContain('<span class="mono">done_on_main=1</span>');
+    expect(row).toContain('<span class="num">0</span> startable</span>');
+    expect(row).toContain('<span class="num">1</span> stalled</span>');
+    expect(row).toContain('<span class="num">1</span> done on main</span>');
     expect(row).toContain('data-held="done_on_main"');
     expect(page).not.toContain("held-done_on_main");
-    expect(row).toContain('<span class="mono">run_cap=1</span>');
+    expect(row).toContain('<span class="num">1</span> run cap</span>');
     expect(page).toContain('data-held-repo="alice/shut-door"');
 
     // /boards is the owner's: the same counts, private ones included, and a
@@ -485,7 +485,7 @@ describe("the tick says why each ready issue cannot start", () => {
     expect(boards).toContain('id="pipeline"');
     expect(boards).toContain('data-held-repo="alice/open-door"');
     expect(boards).toContain('data-held-repo="alice/shut-door"');
-    expect(boards).toContain('<span class="mono">run_cap=1</span>');
+    expect(boards).toContain('<span class="num">1</span> run cap</span>');
     // Signed out, a signed-in non-admin and an agent token all get the
     // not-found page: none sees the rows or the pipeline.
     const bob = await createUser(app.db, {

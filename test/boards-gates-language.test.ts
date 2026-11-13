@@ -47,14 +47,14 @@ const section = async (as: string | null = token): Promise<string> => {
   const html = await (await fetch(`${servers.url}/boards`, { headers: as === null ? {} : { authorization: `Bearer ${as}` } })).text();
   const at = html.indexOf('id="gates"');
   expect(at).toBeGreaterThan(-1);
-  return html.slice(html.lastIndexOf("<section", at), html.indexOf("</section>", at));
+  return html.slice(html.lastIndexOf("<details", at), html.indexOf("</details>", at));
 };
 
-test("the last gates are a section under an h2, rows in a .list, no card", async () => {
+test("the last gates are a fold under an h2 that says how they stand, rows in a .list, no card", async () => {
   const s = await section();
-  expect(s).toMatch(/^<section[^>]*id="gates"/);
+  expect(s).toMatch(/^<details class="disclosure fold" id="gates"/);
   expect(s).not.toContain('class="card');
-  expect(s).toContain("<h2>Last gates</h2>");
+  expect(s).toMatch(/<h2 class="fold-title">Last gates<\/h2><span class="fold-state">the last \d+: \d+ green or cut off, \d+ red<\/span>/);
   expect(s).toContain('<ul class="list">');
   expect(s).toContain('href="/alice/svc/pulls/12"');
 });

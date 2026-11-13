@@ -56,8 +56,8 @@ describe("held card", () => {
     expect([priv.startable, priv.counts.running]).toEqual([1, 2]);
     const page = String(heldCard(rows));
     const privRow = row(page, `alice/${SECRET}`);
-    expect(privRow).toContain('data-held="startable"><span class="mono">startable=1<');
-    expect(privRow).toContain('data-held="running"><span class="mono">running=2<');
+    expect(privRow).toContain('data-held="startable"><span class="num">1</span> startable<');
+    expect(privRow).toContain('data-held="running"><span class="num">2</span> running<');
     expect(privRow).toContain("1 of 3 ready can start");
     expect(privRow).not.toContain('data-held="stalled"');
   });

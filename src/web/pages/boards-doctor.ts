@@ -10,7 +10,8 @@ import type { Database } from "bun:sqlite";
 import { recentDoctorRuns, type DoctorRun } from "../../checks/doctor.ts";
 import { span } from "../../flow/pipeline.ts";
 import { html, type Html } from "../html.ts";
-import { badge, card, row } from "../ui.ts";
+import { badge, row } from "../ui.ts";
+import { fold } from "../figure.ts";
 
 /** The most runs the card lists. */
 export const DOCTOR_LISTED = 10;
@@ -29,5 +30,6 @@ function runRow(repo: string, run: DoctorRun, now: number): Html {
 export function doctorCard(db: Database, owner: boolean, now: number): Html {
   const top = recentDoctorRuns(db, owner, DOCTOR_LISTED);
   if (top.length === 0) return html``;
-  return card(html`<h2>Batch doctor</h2><p class="muted">When a merge gate finds a pull red on its own, the doctor names the failing test and holds the pull until it passes.</p><ul class="list">${top.map((l) => runRow(l.repo, l.run, now))}</ul>`, { id: "doctor" });
+  const held = top.filter((l) => l.run.action === "held").length;
+  return fold("Batch doctor", `${String(top.length)} recent ${top.length === 1 ? "run" : "runs"}, ${String(held)} held a pull`, html`<p class="muted">When a merge gate finds a pull red on its own, the doctor names the failing test and holds the pull until it passes.</p><ul class="list">${top.map((l) => runRow(l.repo, l.run, now))}</ul>`, { id: "doctor" });
 }

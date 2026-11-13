@@ -10,6 +10,7 @@ import type { Database } from "bun:sqlite";
 import { recentGates, type KeptResult } from "../../checks/gate_result.ts";
 import { span } from "../../flow/pipeline.ts";
 import { html, type Html } from "../html.ts";
+import { fold } from "../figure.ts";
 import { badge, row } from "../ui.ts";
 
 /** The most gates the card lists. */
@@ -78,9 +79,11 @@ export function gatesSection(db: Database, owner: boolean, now: number): Html {
   }
   all.sort((a, b) => (a.gate.finishedAt < b.gate.finishedAt ? 1 : a.gate.finishedAt > b.gate.finishedAt ? -1 : 0));
   const top = all.slice(0, GATES_LISTED);
-  return html`<section class="settings-block" id="gates"><h2>Last gates</h2>${
-    top.length === 0
-      ? html`<p class="muted">No gate has run yet.</p>`
-      : html`<ul class="list">${top.map((l) => gateRow(l, now))}</ul>`
-  }</section>`;
+  const red = top.filter((l) => l.gate.state === "red").length;
+  return fold(
+    "Last gates",
+    top.length === 0 ? "no gate has run yet" : `the last ${String(top.length)}: ${String(top.length - red)} green or cut off, ${String(red)} red`,
+    top.length === 0 ? html`<p class="muted">No gate has run yet.</p>` : html`<ul class="list">${top.map((l) => gateRow(l, now))}</ul>`,
+    { id: "gates" },
+  );
 }

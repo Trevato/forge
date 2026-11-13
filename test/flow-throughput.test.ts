@@ -179,17 +179,17 @@ describe("/flow: actual throughput per stage", () => {
     const res = await get("/boards");
     expect(res.status).toBe(200);
     const page = await res.text();
-    const headline = page.match(/<p id="throughput">([\s\S]*?)<\/p>/)?.[1] ?? "";
-    expect(headline.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim()).toBe(
-      "landed 2 in the last hour · 6 in 24 h · median ask→live 3.5 h (24 h)",
-    );
+    // The figures say it: landed in the last hour, in 24 hours, and the median from an ask to live.
+    expect(page).toContain("<span data-landed-hour>2</span>");
+    expect(page).toContain("<span data-landed-day>6</span> changes landed on main in 24 hours");
+    expect(page).toContain("<span data-median>3h 30m</span>");
     expect(throughputSays(readThroughput(app.db, PIPELINE, new Date(NOW)))).toBe(
       "landed 2 in the last hour · 6 in 24 h · median ask→live 3.5 h (24 h)",
     );
-    expect(headline).toContain('href="/boards?out=landed&amp;hour=0#out"');
-    expect(page).toMatch(/data-out="landed">\s*<a class="mono" href="\/boards\?out=landed&amp;hour=0#out" data-hour="0">2<\/a>/);
-    expect(page).toContain('data-day="6">6 in 24 h');
-    expect(page).toContain("2 passed · 1 failed");
+    expect(page).toMatch(/data-out="landed">\s*<a href="\/boards\?out=landed&amp;hour=0#out" data-hour="0"[^>]*>2<\/a>/);
+    expect(page).toMatch(/data-day="6"[^>]*>6<\/a>/);
+    expect(page).toContain("2 of 3 checks passed in 24 hours");
+    expect(page).toContain("checks finished: 2 passed, 1 failed");
     expect(page).not.toContain("flow-bar");
     expect(page).not.toContain("flow-out");
     expect((page.match(/<rect /g) ?? []).length).toBeGreaterThanOrEqual(PIPELINE.length * 24);

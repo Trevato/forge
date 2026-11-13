@@ -83,7 +83,7 @@ describe("GET /system", () => {
     expect(body).toContain("JS heap (MiB, hourly mean)");
     expect(body.match(/<svg/g)?.length).toBeGreaterThanOrEqual(2);
     // Both series are drawn in chartBox()'s frame (#4282).
-    expect(body.match(/<div class="chart-box"><svg [^>]*class="chart"/g)?.length).toBe(2);
+    expect(body.match(/<div class="chart-box"><div class="chart" data-chart="line"/g)?.length).toBe(2);
     expect(body).toContain("120.0 MiB");
     expect(body).toContain("40.0 MiB");
   });
