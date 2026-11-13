@@ -5,7 +5,7 @@ import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { claimedForge, type ClaimedForge } from "./helpers/claimed-forge.ts";
 import { quietLogs } from "./helpers/globals.ts";
-import { settleApp } from "./helpers/tui.ts";
+import { settleApp, settleUntil } from "./helpers/tui.ts";
 
 quietLogs();
 
@@ -38,10 +38,17 @@ test("before the first tell the home says what to do and offers no everyday acco
   expect(h.text()).toContain("included credit.");
   expect(h.text()).not.toContain("K keeps using admin");
 
+  const count = (table: string) => forge.child.db.query<{ n: number }, []>(`SELECT COUNT(*) AS n FROM ${table}`).get()!.n;
+  const appsBefore = count("repo");
+  const issuesBefore = count("issue");
   await h.key("t");
   for (const ch of "A weekly menu page") await h.key(ch);
   await h.key("enter");
-  expect(forge.child.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM thought").get()!.n).toBe(1);
+  await settleUntil(h.app, "and filed your ask there as issue #");
+  await settleApp(h.app);
+  expect(count("thought")).toBe(0);
+  expect(count("repo")).toBe(appsBefore + 1);
+  expect(count("issue")).toBe(issuesBefore + 1);
   h.app.stop();
 
   // Once the crew has made an issue of it, the home is the everyday one and offers the account.

@@ -27,7 +27,7 @@ import { clientAppRows, clientDoings, clientFinished, doingLine, finishedLine } 
 import { appCrew } from "../../core/app-crew.ts";
 import { nextStepsFor } from "../../core/next-steps.ts";
 import { askRepos, askStatus, askStatusLine } from "../../core/ask-status.ts";
-import { keepThought } from "../../actions/thought.ts";
+import { AUTONOMY_FAILED_WORDS, firstAsk } from "../../actions/first_ask.ts";
 import { SAY_SOMETHING_WORDS } from "../../actions/tell_words.ts";
 import { crewCanRun, crewFirstText } from "../../web/studio/crew_key.ts";
 import { agentsLine } from "../../web/studio/client_home.ts";
@@ -1387,10 +1387,19 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
             hint: "enter sends",
             onSubmit: (said) => {
               if (said.trim() === "") return SAY_SOMETHING_WORDS;
-              const kept = keepThought(f.app, f.user, said, "composer");
-              ctx.toast(kept.ok ? "Received." : "That could not be kept.", kept.ok ? "success" : "danger");
-              if (kept.ok) void loadClientLines().then(reload);
-              return undefined;
+              // The page's own first ask: one new app made from the sentence, the ask filed on it.
+              return (async () => {
+                const first = await firstAsk(f.app, f.user, said, crewCanRun(f.app));
+                if (!first.ok) return ctx.toast(first.error.words, "danger");
+                const { repo, told, autonomyFailed } = first.value;
+                if (!told.ok) return ctx.toast(`Made ${repo.ownerName}/${repo.name}, but the ask could not be filed there.`, "danger");
+                ctx.toast(
+                  `Made ${repo.ownerName}/${repo.name} and filed your ask there as issue #${told.value.issue.number}.${autonomyFailed ? ` ${AUTONOMY_FAILED_WORDS}` : ""}`,
+                  autonomyFailed ? "danger" : "success",
+                );
+                openRepo(repo);
+                void loadClientLines().then(reload);
+              })();
             },
           }),
         );
