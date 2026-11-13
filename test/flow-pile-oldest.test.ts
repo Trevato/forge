@@ -115,3 +115,17 @@ test("a changes_requested after an approval reads as a builder", () => {
   app.db.query(`INSERT INTO review (id, issue_id, author_id, state, body, created_at) VALUES ('rv4', ?1, ?2, 'changes_requested', '', '2026-11-05T00:00:00.000Z')`).run(issue, agent);
   expect(oldestWaitingOn(app.db, 10, false).find((w) => w.ref === "trevato/open#4")?.on).toBe("a builder");
 });
+
+test("the filed empty_pillar issue says what holds the ready issues", () => {
+  const was = process.env.FORGE_SENTINEL_REPO;
+  process.env.FORGE_SENTINEL_REPO = "trevato/open";
+  try {
+    const rate = { lastHour: 0, recent: 0.5, best: 3, ranShare: 1 };
+    fileOnce(app, { cause: "empty_pillar", says: "Nothing is ready." }, rate, Date.now());
+    const b = app.db.query<{ body: string }, []>("SELECT body FROM issue WHERE title LIKE 'Throughput:%' ORDER BY created_at DESC, rowid DESC LIMIT 1").get()!.body;
+    expect(b).toContain("Ready issues and what holds them (");
+  } finally {
+    if (was === undefined) delete process.env.FORGE_SENTINEL_REPO;
+    else process.env.FORGE_SENTINEL_REPO = was;
+  }
+});

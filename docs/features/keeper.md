@@ -9,6 +9,8 @@ The forge watches its own landing rate, names the one thing binding it, and acts
 
 Where it shows: one line on home and on the boards panel, `keeper` in the MCP `flow` report, the terminal's Flow dialog (the line, the question, and `l` for its one button after a confirm) and its crew scorecard ("Forge per day" rows), and "Forge per day" (hours running, landed) on the crew scorecard and in `scorecard` (`keeperDays`). Every attempt is a row in `keeper_attempt`.
 
+An `empty_pillar` issue lists the ready issues and the hold on each (`landed`, `open_pull`, `stalled`...), so a person sees why nothing can start.
+
 Not done: DORA change-fail rate, revert rate, queue-wait p95 and rework per agent from the issue discussion are not measured yet.
 
 Who reads what: a site admin reads the sentence with repository names and the question with its button. Everyone else, guests and agents included, reads the cause with no repository in it (`readKeeper(db, full)`). The Flow only switch is retired (#7771), so no act asks a question today; one already on the books is answered with its button, and the answer is a `keeper.answered` event carrying the owner's id.
