@@ -94,6 +94,7 @@ import { running } from "./kernel/version.ts";
 import { record as recordDegraded } from "./kernel/degraded_history.ts";
 import { vitals } from "./kernel/vitals.ts";
 import { proveRunning } from "./release/prove.ts";
+import { walkJourney } from "./release/journey.ts";
 import { CHECK_EVERY_MS, setBehind, watchBehind } from "./release/behind.ts";
 import { readLandings } from "./release/landings.ts";
 import { ownTagsReader } from "./release/own_tags.ts";
@@ -791,6 +792,7 @@ proveRunning({
   version: running().version,
   url: forgeUrl,
   token: process.env["FORGE_TOKEN"],
+  journey: walkJourney,
   // The first app's production host: it must never answer as the forge (#6726).
   appHost: (() => {
     const first = listApps(app.db)[0];

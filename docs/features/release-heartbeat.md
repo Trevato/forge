@@ -25,3 +25,9 @@ curl -X POST "$FORGE_URL/api/v1/release/heartbeat" \
 ```
 
 It needs a token with the `admin` scope belonging to a site administrator (401 without a token, 403 otherwise). `outcome` is `cut`, `skipped` or `failed`; `reason` is 1 to 300 characters with no control characters (422 otherwise). The answer is the recorded beat, `201`.
+
+## A release is proven by a stranger's journey
+
+After the usual smoke of the public URL, the proof walks a stranger's journey against it (`walkJourney`, `src/release/journey.ts`): a new forge, claimed, and the crew's first activity, cleaning up after itself. The walk runs last. If it fails, the release stays unproven: the proof is red with "a stranger's journey failed: …" as its sentence, and it is retried on the same `retryAfter` backoff as any failed proof. A walk failure does not set `slow` or `gaveUp`, so a walk that hangs gets the plain doubling, not the shorter polls of a late swap.
+
+When the proof passes it keeps the two timings (`journey.readyMs`, `journey.firstActivityMs`). `/releases` (`#journey-proof`) and the terminal's releases screen then say "a stranger's forge was ready in N s and the crew working in M s". The line shows only for a passing proof of the version being served, with both timings, and only to those who may read /releases; an older proof without timings shows nothing.

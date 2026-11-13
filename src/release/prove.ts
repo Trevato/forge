@@ -22,6 +22,7 @@
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { walkJourney, JourneyResult } from "./journey.ts";
 import { smoke, type Failure, type Heavy } from "./smoke.ts";
 import { UNSTAMPED } from "../kernel/version.ts";
 import { ownProbeHeaders } from "../kernel/probe.ts";
@@ -58,6 +59,8 @@ export interface Proof {
   readonly slow?: boolean;
   /** The failure was the give-up: ten minutes already spent polling; only its first retry skips the backoff (#10168). */
   readonly gaveUp?: boolean;
+  /** A stranger's journey walked on the public URL after the smoke checks (#11158); its timings, in ms, for the release card. */
+  readonly journey?: { readonly readyMs: number | null; readonly firstActivityMs: number | null; readonly screens: readonly string[] };
 }
 
 /**
@@ -151,6 +154,8 @@ export interface ProveOptions {
   readonly heavy?: Heavy;
   /** Aborted when the proof is hung: its asks stop and it keeps no verdict (#10313). */
   readonly signal?: AbortSignal;
+  /** Walks the stranger's journey after the smoke checks; the forge passes `walkJourney`, and a test its own. Without it no walk runs. */
+  readonly journey?: typeof walkJourney;
 }
 
 /** Is a proof of `version` due: never tried, or failed `retryAfter` its failures or more ago? */
@@ -174,13 +179,14 @@ export async function proveRelease(o: ProveOptions): Promise<Proof | undefined> 
   const baseFetch = o.fetch ?? fetch;
   const doFetch = ((url, init) => baseFetch(url, o.signal ? { ...init, signal: init?.signal ? AbortSignal.any([init.signal, o.signal]) : o.signal } : init)) as typeof fetch;
   const failedBefore = last?.version === o.version && !last.ok ? last : undefined;
-  const finish = (failure?: string, slow = false, gaveUp = false): Proof => {
+  const finish = (failure?: string, slow = false, gaveUp = false, walked?: JourneyResult): Proof => {
     if (o.signal?.aborted) throw new Error("the proof was aborted as hung");
     const at = new Date(now()).toISOString();
     return keep(o.dataDir, {
       version: o.version,
       at,
       ok: failure === undefined,
+      ...(walked === undefined ? {} : { journey: { readyMs: walked.readyMs, firstActivityMs: walked.firstActivityMs, screens: walked.screens } }),
       ...(failure === undefined
         ? {}
         : { failure, since: failedBefore ? (failedBefore.since ?? failedBefore.at) : at, failures: (failedBefore?.failures ?? (failedBefore ? 1 : 0)) + 1, ...(slow ? { slow } : {}), ...(gaveUp ? { gaveUp } : {}) }),
@@ -216,7 +222,11 @@ export async function proveRelease(o: ProveOptions): Promise<Proof | undefined> 
       anonymousBoard: true,
       heavy: { version: o.version, probe: ownProbeHeaders(o.dataDir), ...o.heavy }, ...(o.appHost ? { appHost: o.appHost } : {}),
     });
-    return finish(failures[0] === undefined ? undefined : checkLine(failures[0]), failures[0]?.slow === true || failures[0]?.empty === true || failures[0]?.hung === true);
+    if (failures[0] !== undefined || o.journey === undefined)
+      return finish(failures[0] === undefined ? undefined : checkLine(failures[0]), failures[0]?.slow === true || failures[0]?.empty === true || failures[0]?.hung === true);
+    // The stranger's journey, the last check: a failed walk is a failed proof, retried on `retryAfter` like any other (one card, paged once).
+    const walked = await o.journey({ base: o.url, fetch: doFetch, ...(o.token ? { adminToken: o.token } : {}) });
+    return finish(walked.ok ? undefined : `a stranger's journey failed: ${walked.failure ?? "it did not finish"}`, false, false, walked);
   } catch (error) {
     return finish(`the smoke checks could not run: ${String(error)}`);
   }
