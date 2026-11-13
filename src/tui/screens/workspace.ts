@@ -176,6 +176,7 @@ import { landCommands } from "./landasis.ts";
 import { shiftCommands } from "./subtitle_shift.ts";
 import { dataImportCommands } from "./dataimport.ts";
 import { jobsCommands } from "./jobs.ts";
+import { agentsMdCommands } from "./agents_md.ts";
 import { queueCommands } from "./queuegrowth.ts";
 import { blockedCommands } from "./blocked.ts";
 import { statementCommands } from "./statement.ts";
@@ -2006,6 +2007,7 @@ export function workspaceScreen(
       ...shiftCommands(f, ctx, repo, () => screen),
       ...dataImportCommands(f, ctx, repo),
       ...jobsCommands(f, ctx, repo),
+      ...agentsMdCommands(f, ctx, repo),
       ...chaptersCommands(f, ctx, repo),
       ...queueCommands(f, ctx, repo),
       ...blockedCommands(f, ctx, repo),

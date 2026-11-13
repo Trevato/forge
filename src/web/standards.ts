@@ -47,6 +47,7 @@ import { getPlans } from "../settings/plans.ts";
 import { SITE_PATH, SITE_LINE } from "./site_line.ts";
 import { holds } from "./feeds.ts";
 import { mcpToolsSection } from "./llms_tools.ts";
+import { threeDoors } from "./doors_words.ts";
 import { apiCatalog, cardsLine, DISCOVERY, mcpCard, offeredPlugins, mcpPointers, offeredPluginRepo, pluginSource } from "../core/mcp_card.ts";
 import { forgeDocument } from "../core/standards_index.ts";
 import { TAGS } from "../contract/served.ts";
@@ -455,6 +456,7 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
       "",
       `> ${SITE_LINE} A self-hosted forge in one Bun process and one SQLite file that hosts code and runs apps, with AI agents that build. Forges connect. Part of Open Platform (https://www.open-platform.sh). Anyone may read a public repository and report a problem in it.`,
       "",
+      ...threeDoors(o, mcp.url),
       "## Start here",
       "",
       "If you are an assistant helping a person: say plainly what you can and cannot do from here. If you cannot reach this forge, give the person these steps.",
