@@ -12,9 +12,7 @@
 
 import { during } from "../perf/jobs.ts";
 import {
-  appendFileSync,
   existsSync,
-  mkdirSync,
   statSync,
   openSync,
   readSync,
@@ -23,6 +21,7 @@ import {
 import { join } from "node:path";
 import { redactHeld } from "../kernel/log.ts";
 import { noteActivity } from "./activity.ts";
+import { appendTo } from "./log_append.ts";
 
 export const runsRoot = (dataDir: string): string => join(dataDir, "runs");
 
@@ -99,40 +98,62 @@ export function bufferRunLogs(on: boolean): void {
 const pending = new Map<string, string[]>();
 let pendingBytes = 0;
 let flushTimer: ReturnType<typeof setTimeout> | undefined;
-const made = new Set<string>();
 let exitHooked = false;
 
-function appendTo(dataDir: string, path: string, text: string): void {
-  if (!made.has(dataDir)) {
-    mkdirSync(runsRoot(dataDir), { recursive: true });
-    made.add(dataDir);
-  }
+// The files are written by a worker: an `open` and `write` on a busy disk held
+// the forge's one thread 300 to 650 ms at a time (18 stalls in 20 minutes on
+// production, 2026-11-13). The thread posts the batch and goes on; a reader of
+// a log and exit wait for the worker's count to reach the last batch posted.
+let writer: Worker | undefined;
+const done = new Int32Array(new SharedArrayBuffer(4));
+let posted = 0;
+
+function post(items: [string, string, string][]): void {
   try {
-    appendFileSync(path, text);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    // The directory was removed under us: make it again, once.
-    mkdirSync(runsRoot(dataDir), { recursive: true });
-    appendFileSync(path, text);
+    if (writer === undefined) {
+      writer = new Worker(new URL("./log_writer.ts", import.meta.url).href);
+      writer.unref();
+      writer.onerror = () => {
+        writer = undefined;
+      };
+    }
+    writer.postMessage({ n: ++posted, done: done.buffer as SharedArrayBuffer, items });
+  } catch {
+    posted = Atomics.load(done, 0);
+    for (const [root, path, text] of items) {
+      try {
+        appendTo(root, path, text);
+      } catch {
+        // A full disk loses the lines it could not take; the run goes on.
+      }
+    }
   }
 }
 
-/** Write every waiting line now. */
-export function flushRunLogs(): void {
-  if (flushTimer !== undefined) clearTimeout(flushTimer);
-  flushTimer = undefined;
-  if (pending.size === 0) return;
-  const batch = [...pending];
+function take(): [string, string, string][] {
+  const items: [string, string, string][] = [];
+  for (const [key, lines] of pending) {
+    const at = key.indexOf("\0");
+    items.push([runsRoot(key.slice(0, at)), key.slice(at + 1), lines.join("")]);
+  }
   pending.clear();
   pendingBytes = 0;
-  for (const [key, lines] of batch) {
-    const at = key.indexOf("\0");
-    try {
-      appendTo(key.slice(0, at), key.slice(at + 1), lines.join(""));
-    } catch {
-      // A full disk loses the lines it could not take; the run goes on.
-    }
-  }
+  return items;
+}
+
+/** Send what waits to the writer, and go on. */
+function flushLater(): void {
+  if (flushTimer !== undefined) clearTimeout(flushTimer);
+  flushTimer = undefined;
+  if (pending.size > 0) post(take());
+}
+
+/** Write every waiting line now, and wait until they are on disk. */
+export function flushRunLogs(): void {
+  flushLater();
+  const deadline = Date.now() + 5_000;
+  for (let at = Atomics.load(done, 0); at < posted && Date.now() < deadline; at = Atomics.load(done, 0))
+    Atomics.wait(done, 0, at, 250);
 }
 
 function enqueue(dataDir: string, runId: string, clean: string): void {
@@ -145,9 +166,9 @@ function enqueue(dataDir: string, runId: string, clean: string): void {
   if (lines === undefined) pending.set(key, [`${clean}\n`]);
   else lines.push(`${clean}\n`);
   pendingBytes += clean.length + 1;
-  if (pendingBytes >= FLUSH_BYTES) flushRunLogs();
+  if (pendingBytes >= FLUSH_BYTES) flushLater();
   else if (flushTimer === undefined) {
-    flushTimer = setTimeout(() => void during("run-log-flush", flushRunLogs), FLUSH_MS);
+    flushTimer = setTimeout(() => void during("run-log-flush", flushLater), FLUSH_MS);
     flushTimer.unref?.();
   }
 }
@@ -160,7 +181,7 @@ export function appendRunLog(
 ): void {
   const clean = redactHeld(line.replace(/\r?\n/g, " ")).slice(0, MAX_LINE);
   if (buffering) enqueue(dataDir, runId, clean);
-  else appendTo(dataDir, runLogPath(dataDir, runId), `${clean}\n`);
+  else appendTo(runsRoot(dataDir), runLogPath(dataDir, runId), `${clean}\n`);
   noteActivity(runId);
   for (const tap of taps) {
     try {
