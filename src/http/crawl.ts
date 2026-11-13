@@ -134,7 +134,7 @@ interface State {
   readonly strangersInFlight: Map<Request, number>;
   readonly refused: Map<string, number>;
   readonly refusedBy: Record<Scope, number>;
-  readonly clock: { now: () => number; behind: boolean };
+  readonly clock: { now: () => number; behind: boolean; pinned: boolean | undefined };
 }
 
 const states = new WeakMap<App, State>();
@@ -158,7 +158,7 @@ const limits = (perMinute: number) => ({ perMinute, adminPerMinute: perMinute, e
 function stateOf(app: App): State {
   let state = states.get(app);
   if (state === undefined) {
-    const clock = { now: Date.now, behind: false };
+    const clock = { now: Date.now, behind: false, pinned: undefined as boolean | undefined };
     const pair = (b: { page: number; deep: number }): Pair => ({
       page: new RateLimiter(limits(b.page), () => clock.now()),
       deep: new RateLimiter(limits(b.deep), () => clock.now()),
@@ -186,6 +186,16 @@ export function setCrawlClock(app: App, now: () => number, behind = false): void
   clock.behind = behind;
 }
 
+/**
+ * Test seam: say whether this app's budgets are divided for lag, whatever the
+ * process measures. The lag reading is process-wide, so a file that tests
+ * something else (not load shedding) pins it off and is not at the mercy of
+ * whichever file ran before it in the shard; `undefined` measures again.
+ */
+export function pinCrawlLag(app: App, behind: boolean | undefined): void {
+  stateOf(app).clock.pinned = behind;
+}
+
 export interface CrawlVerdict {
   readonly retryAfter: number;
   readonly agent: string;
@@ -202,7 +212,7 @@ export function takeCrawl(app: App, request: Request, pathname: string): CrawlVe
   if (FREE.test(pathname)) return undefined;
   watchLag();
   const state = stateOf(app);
-  const behind = state.clock.behind || mainThreadBehind();
+  const behind = state.clock.pinned ?? (state.clock.behind || mainThreadBehind());
   const named = agentOf(request.headers.get("user-agent") ?? "");
   const scale = behind ? BEHIND_DIVISOR : 1;
   const deep = DEEP.test(pathname);
@@ -248,7 +258,7 @@ function takeStrangerDeep(app: App, request: Request, pathname: string): CrawlVe
   if (new URL(request.url).searchParams.get("fragment") === "explorer") return undefined;
   watchLag();
   const state = stateOf(app);
-  const behind = state.clock.behind || mainThreadBehind() || strangersQueued(state);
+  const behind = state.clock.pinned ?? (state.clock.behind || mainThreadBehind() || strangersQueued(state));
   const scale = behind ? BEHIND_DIVISOR : 1;
   state.strangerAddress.setLimits(limits(Math.max(1, Math.floor(STRANGER_BUDGET.address / scale))));
   const key = bucketOf(clientAddress(request));

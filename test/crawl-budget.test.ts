@@ -8,7 +8,7 @@ import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
-import { AGENT_BUDGET, CRAWL_BUDGET, DEEP_SEGMENTS, SHARED_BUDGET, agentOf, crawlAgentCount, isCrawler, setCrawlClock, takeCrawl } from "../src/http/crawl.ts";
+import { AGENT_BUDGET, BEHIND_DIVISOR, STRANGER_BUDGET, CRAWL_BUDGET, DEEP_SEGMENTS, SHARED_BUDGET, agentOf, crawlAgentCount, isCrawler, pinCrawlLag, setCrawlClock, takeCrawl } from "../src/http/crawl.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { crawlerShare, createPerfRecord } from "../src/perf/record.ts";
 
@@ -175,4 +175,20 @@ test("the crawler board door is an admin's: a non-admin and an anonymous caller 
   expect(body.refused_by_budget.address).toBeGreaterThan(0);
   expect(body.refused_by_budget.agent).toBeGreaterThan(0);
   expect(body.refused_by_budget.shared).toBeGreaterThan(0);
+});
+
+test("a pinned lag reading, not the process's, decides whether a stranger's budget is divided", () => {
+  const request = () => new Request("http://x.test/alice/open/blob/main/a.txt", { headers: { "user-agent": "Mozilla/5.0 Chrome/130.0 Safari/537.36" } });
+  const allowed = (): number => {
+    let n = 0;
+    while (takeCrawl(app, request(), "/alice/open/blob/main/a.txt") === undefined) n++;
+    return n;
+  };
+  setCrawlClock(app, () => 9_000_000);
+  pinCrawlLag(app, true);
+  expect(allowed()).toBe(Math.floor(STRANGER_BUDGET.address / BEHIND_DIVISOR));
+  setCrawlClock(app, () => 9_100_000);
+  pinCrawlLag(app, false);
+  expect(allowed()).toBe(STRANGER_BUDGET.address);
+  pinCrawlLag(app, undefined);
 });
