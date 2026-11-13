@@ -1625,6 +1625,7 @@ export function mapJson(
         (free === undefined || free.has(r.issue.number)),
     )
     .map((r) => r.issue.number);
+  const numberOf = new Map(graph.issues.map((i) => [i.id, i.number]));
   const brief = (i: Issue) => ({
     number: i.number,
     title: i.title,
@@ -1672,11 +1673,10 @@ export function mapJson(
       ...countWords(graph.issues.map((i) => wordFor(i, readySet, marks))),
       ready: startable.length,
     },
-    edges: graph.edges.map((e) => {
-      const a = graph.issues.find((i) => i.id === e.issueId);
-      const b = graph.issues.find((i) => i.id === e.blockedById);
-      return { issue: a?.number, blockedBy: b?.number };
-    }),
+    edges: graph.edges.map((e) => ({
+      issue: numberOf.get(e.issueId),
+      blockedBy: numberOf.get(e.blockedById),
+    })),
     // For a repository with pillars: its open work by pillar (`pillar` null
     // is the work that names none), and what merged this week by pillar.
     ...(pillars === undefined
