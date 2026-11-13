@@ -165,7 +165,7 @@ describe("cloud accounts", () => {
     expect(page).toContain("verify");
     expect(page).toContain("read-only");
     expect(page).not.toContain(TOKEN);
-    expect((await get(await login("bob"))).status).toBe(404);
+    expect((await get(await login("bob"))).status).toBe(403);
     const cross = await fetch(`${servers.url}/settings/cloud/write`, {
       method: "POST",
       redirect: "manual",

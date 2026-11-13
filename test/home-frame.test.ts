@@ -89,7 +89,7 @@ test("each late region answers alone, to its own viewer, and to no one else", as
   }
   for (const name of ["kpis", "panels"]) {
     const peer = await fetch(`${f.base}/live/home/${name}`, { headers: { cookie: f.peerCookie } });
-    expect(peer.status).toBe(404);
+    expect(peer.status).toBe(403);
   }
   const peerFeed = await fetch(`${f.base}/live/home/feed`, { headers: { cookie: f.peerCookie } });
   expect(peerFeed.status).toBe(200);

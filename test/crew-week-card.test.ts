@@ -223,12 +223,12 @@ test("a change request by the pull's own author is not a return", () => {
   expect(weekCard(app.db).find((l) => l.username === "smith")!.returned).toBe(before);
 });
 
-test("a non-admin: the page is not found and has no week block, the API and MCP refuse", async () => {
+test("a non-admin: the page is refused and has no week block, the API and MCP refuse", async () => {
   const u = await createUser(app.db, { origin: "seed", trusted: true, username: "pat", email: "pat@forge.local", password: "a-good-passphrase" });
   if (!u.ok) throw new Error(String(u.error));
   const pc = `forge_session=${createSession(app.db, u.value.id).token}`;
   const page = await fetch(`${servers.url}/settings/crew`, { headers: { cookie: pc } });
-  expect(page.status).toBe(404);
+  expect(page.status).toBe(403);
   expect(await page.text()).not.toContain("crew-week");
   const pt = createToken(app.db, u.value.id, "t", "ro").token;
   const api = await fetch(`${servers.url}/api/v1/crew/week`, { headers: { authorization: `Bearer ${pt}` } });

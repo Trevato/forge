@@ -68,6 +68,6 @@ test("a waiting ask is a row in a .list with its same-origin Yes form", async ()
   expect(main(await (await get("/settings/confirms", plain)).text())).not.toContain(asked.needs_confirm);
 });
 
-test("a non-admin gets the one 404 on the admin pages", async () => {
-  expect((await get("/settings/accounts", plain)).status).toBe(404);
+test("a non-admin gets the one 403 on the admin pages", async () => {
+  expect((await get("/settings/accounts", plain)).status).toBe(403);
 });

@@ -159,7 +159,7 @@ test("a failed snapshot ends in backup.finished {ok:false}, and the live part sh
 test("the live part and the stream are an admin's alone", async () => {
   const bob = await login("bob", "another-good-passphrase");
   const part = await fetch(`${servers.url}/settings/backups/live`, { headers: { cookie: bob } });
-  expect(part.status).toBe(404);
+  expect(part.status).toBe(403);
   expect((await fetch(`${servers.url}/settings/backups/live`)).status).toBeGreaterThanOrEqual(300);
 
   const frames = async (cookie: string, mustArrive: boolean): Promise<string> => {

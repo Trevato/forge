@@ -332,7 +332,7 @@ test("only an admin sets the cap, and setting it appends device.cap_set", async 
     body: new URLSearchParams({ id: String(deviceId), app: "racer", cap: "7" }),
     redirect: "manual",
   });
-  expect(res.status).toBe(404);
+  expect(res.status).toBe(403);
   expect(cap()).toBe(1);
   const before = app.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM event WHERE kind = 'device.cap_set'").get()!.n;
   expect(setCap(app, owner, deviceId, "racer", 7).ok).toBe(true);

@@ -101,7 +101,7 @@ describe("/system over server-sent events", () => {
     const bob = (res.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
     expect(bob).not.toBe("");
     const stream = await fetch(`${servers.url}/system/stream`, { headers: { cookie: bob } });
-    expect(stream.status).toBe(404);
+    expect(stream.status).toBe(403);
     expect(stream.headers.get("content-type") ?? "").not.toContain("text/event-stream");
     await stream.body?.cancel();
   });

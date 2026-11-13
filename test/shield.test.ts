@@ -67,8 +67,8 @@ afterAll(async () => {
 
 test("the page is an admin's: a stranger signs in, anyone else finds nothing, and the API refuses them at the admin gate", async () => {
   expect((await get("/settings/security")).status).toBe(303);
-  expect((await get("/settings/security", { cookie: bobCookie })).status).toBe(404);
-  expect((await post("signin", { cookie: bobCookie })).status).toBe(404);
+  expect((await get("/settings/security", { cookie: bobCookie })).status).toBe(403);
+  expect((await post("signin", { cookie: bobCookie })).status).toBe(403);
   // The same answer the capacity door gives this token: never a change, never a hint of one.
   const capacity = await fetch(`${servers.url}/api/v1/admin/capacity/crew.concurrency`, {
     method: "PUT",

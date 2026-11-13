@@ -53,7 +53,7 @@ test("GET /settings/usage names its phases", async () => {
     expect(parts.find((p) => p.startsWith(`${name};`))).toMatch(/^[a-z]+;dur=\d+\.\d$/);
 });
 
-test("a non-admin's 403 names session but not usage or render", async () => {
+test("a non-admin is refused by the admin gate before the page runs: no usage or render phase", async () => {
   const bob = await createUser(app.db, {
     origin: "seed",
     trusted: true,
@@ -74,7 +74,6 @@ test("a non-admin's 403 names session but not usage or render", async () => {
   await res.text();
   expect(res.status).toBe(403);
   const timing = res.headers.get("server-timing") ?? "";
-  expect(timing).toContain("session;");
   for (const name of ["patterns", "usage", "render"]) expect(timing).not.toContain(`${name};`);
 });
 

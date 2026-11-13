@@ -1,5 +1,6 @@
 /** MCP `restore_drill`: the Backups page's drill button, from a harness. */
 
+import { notAdminTool } from "../src/http/mcp/shared.ts";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -83,7 +84,7 @@ describe("MCP restore_drill", () => {
     });
     test("a non-admin is refused", async () => {
       const r = await call(token("bob"));
-      expect(r.rpc).toBe("no tool named restore_drill");
+      expect(r.rpc).toBe(notAdminTool("restore_drill"));
       expect(r.text).toBe("");
     });
   });

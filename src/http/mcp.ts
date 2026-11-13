@@ -38,7 +38,7 @@ import { REPORT_RECEIVED } from "../actions/report_words.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 import { everydayOf } from "../core/everyday.ts";
 import { claimDone, completeWrite, dropWrite, recordWrite } from "../core/conversation_writes.ts";
-import { type Args, alreadyDone, visible, plansOnly, str, REPO_ARG, lean, fenceAnswer, heldWrite, askedFirst, readThrough } from "./mcp/shared.ts";
+import { type Args, alreadyDone, notAdminTool, visible, plansOnly, str, REPO_ARG, lean, fenceAnswer, heldWrite, askedFirst, readThrough } from "./mcp/shared.ts";
 import { CONVERSATION_BRIEF } from "../crew/conversation_brief.ts";
 import { TOOLS } from "./mcp/tools.ts";
 
@@ -200,6 +200,9 @@ function rpcOne(
         typeof params["arguments"] === "object" && params["arguments"] !== null
           ? (params["arguments"] as Args)
           : {};
+      // An admin's tool stays out of an everyday account's list, and a call to
+      // it by name is told how to reach it before anything is held or asked (#11818).
+      if (tool?.adminOnly === true && !user.isAdmin) return refuse(-32602, notAdminTool(tool.name));
       // Before the scope floor, so an admin tool the forge's agent was
       // steered to is held as a confirm too, not merely refused (#7649), and
       // one the person asked for waits for their yes (#7650).

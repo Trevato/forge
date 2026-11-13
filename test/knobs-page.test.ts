@@ -89,7 +89,7 @@ test("a member who is not an admin is refused and changes nothing", async () => 
     headers: { authorization: `Bearer ${token}`, "content-type": "application/x-www-form-urlencoded", origin: servers.url },
     body: new URLSearchParams({ knob: "speed", value: "6", repo: "" }),
   });
-  expect(res.status).toBe(404);
+  expect(res.status).toBe(403);
   expect(capacityValue(app.db, "crew.concurrency")).toBe("3");
 });
 

@@ -88,11 +88,11 @@ test("one POST saves; Recent changes is then a plain h2 and ul, and the total is
   expect(main).toMatch(/id="teams-total">\d+%</);
 });
 
-test("a non-admin still gets 404, on page and post", async () => {
+test("a non-admin is refused with 403, on page and post", async () => {
   const res = await fetch(`${servers.url}/settings/teams`, { headers: { cookie: other }, redirect: "manual" });
-  expect(res.status).toBe(404);
+  expect(res.status).toBe(403);
   const own = await fetch(`${servers.url}/settings/teams/design`, { headers: { cookie: other }, redirect: "manual" });
-  expect(own.status).toBe(404);
+  expect(own.status).toBe(403);
   const post = await fetch(`${servers.url}/settings/teams/x`, { method: "POST", headers: { cookie: other }, redirect: "manual" });
-  expect(post.status).toBe(404);
+  expect(post.status).toBe(403);
 });

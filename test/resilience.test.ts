@@ -120,7 +120,7 @@ describe("resilience", () => {
     return (res.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
   };
 
-  test("a guest is sent to sign in, a non-admin gets 404, an admin sees the rows", async () => {
+  test("a guest is sent to sign in, a non-admin gets 403, an admin sees the rows", async () => {
     for (const [name, admin] of [["alice", true], ["bob", false]] as const) {
       const made = await createUser(app.db, {
         origin: "seed",
@@ -139,7 +139,7 @@ describe("resilience", () => {
     expect(guest.status).not.toBe(200);
     expect(guest.status).not.toBe(404);
     const bob = await fetch(`${servers.url}/resilience`, { headers: { cookie: await login("bob") } });
-    expect(bob.status).toBe(404);
+    expect(bob.status).toBe(403);
     expect(await bob.text()).not.toContain("data-standing");
 
     const res = await fetch(`${servers.url}/resilience`, { headers: { cookie: await login("alice") } });

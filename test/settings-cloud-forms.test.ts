@@ -104,7 +104,7 @@ describe("cloud account forms in Settings", () => {
   test("a non-admin and a cross-origin post are refused for each, and the account stays", async () => {
     const before = JSON.stringify(listCloudAccounts(app.db));
     for (const path of ["rotate", "rename", "remove"]) {
-      expect((await post(path, member, form(path))).status).toBe(404);
+      expect((await post(path, member, form(path))).status).toBe(403);
       expect((await post(path, admin, form(path), "https://evil.example")).status).toBe(403);
     }
     expect(JSON.stringify(listCloudAccounts(app.db))).toBe(before);

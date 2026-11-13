@@ -81,7 +81,7 @@ test("with an agent: its link is on the page, still no card", async () => {
   expect(main).toContain('href="/settings/crew/bot"');
 });
 
-test("a non-admin still gets 404", async () => {
+test("a non-admin is refused with 403", async () => {
   const res = await fetch(`${servers.url}/settings/crew`, { headers: { cookie: other }, redirect: "manual" });
-  expect(res.status).toBe(404);
+  expect(res.status).toBe(403);
 });

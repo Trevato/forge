@@ -666,14 +666,14 @@ describe("the pages", () => {
     const page = await fetch(`${base}/settings/subscriptions`, {
       headers: { cookie: guest },
     });
-    expect(page.status).toBe(404);
+    expect(page.status).toBe(403);
     const posted = await fetch(`${base}/settings/subscriptions`, {
       method: "POST",
       headers: { cookie: guest, origin: base },
       body: new URLSearchParams({ name: "mine", token: OAT }),
       redirect: "manual",
     });
-    expect(posted.status).toBe(404);
+    expect(posted.status).toBe(403);
     const work = account();
     expect(listSubscriptions(app.db)).toHaveLength(1);
     setHeadroom(app.db, work.id, 25);
@@ -683,7 +683,7 @@ describe("the pages", () => {
       body: new URLSearchParams({ headroom: "0" }),
       redirect: "manual",
     });
-    expect(headroom.status).toBe(404);
+    expect(headroom.status).toBe(403);
     expect(getHeadroom(app.db, work.id)).toBe(25);
   });
 });

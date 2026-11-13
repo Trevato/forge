@@ -107,7 +107,7 @@ describe("+ New forge", () => {
       'href="/forges/new"',
     );
     expect((await get(reader, "/forges/new")).status).toBe(200);
-    expect((await get(reader, "/forges")).status).toBe(404);
+    expect((await get(reader, "/forges")).status).toBe(403);
     expect(
       (
         await fetch(url("/forges/kai/claim-link"), {
@@ -116,7 +116,7 @@ describe("+ New forge", () => {
           redirect: "manual",
         })
       ).status,
-    ).toBe(404);
+    ).toBe(403);
     expect(await children()).toBe(0);
   });
 

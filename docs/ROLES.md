@@ -86,6 +86,19 @@ can change the forge's settings or its releases" (`not_admin` in the API).
 `src/http/admin_gate.ts` is the one gate, ahead of every handler;
 `/releases.json` stays public. Token scopes are a later part.
 
+Since #11818 the gate guards every route `src/http/route_marks.ts` marks
+`admin` — the admin's pages under `/settings`, `/forges`, `/system`,
+`/maintenance` and the rest, not only `/admin` — and answers with one
+sentence that says what to do next: "This is for the forge's admin account,
+so sign in as admin to do it." An admin-only MCP tool called by name from an
+everyday account gets the same sentence. Every route either router registers
+is marked `admin` or `open` there; `test/route-marks.test.ts` fails on one
+marked neither, and calls each admin route and tool as an everyday account
+and as the admin. A head holding both kinds of route is `mixed`, so each of
+its routes is listed, and a path under it that no listed route matches is
+treated as `admin`: a forgotten mark fails closed. The 403 does tell an
+everyday account that an admin route or tool by that name exists.
+
 Nothing switches the refusal off: the test suite runs with it everywhere, and
 a suite whose people make things promotes them first (`promote` in
 `test/helpers/members.ts`). The crew's wake-up sweep, which starts a run on an

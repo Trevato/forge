@@ -137,7 +137,7 @@ test("the page, capture, import and export are an admin's and need a same-origin
   const cookie = `forge_session=${createSession(app.db, admin.id).token}`;
   const other = `forge_session=${createSession(app.db, bob.id).token}`;
   const url = `${servers.url}/settings/traffic/scrapes`;
-  expect((await fetch(url, { headers: { cookie: other } })).status).toBe(404);
+  expect((await fetch(url, { headers: { cookie: other } })).status).toBe(403);
   const page = await fetch(url, { headers: { cookie } });
   expect(page.status).toBe(200);
   const text = await page.text();
@@ -167,7 +167,7 @@ test("the page, capture, import and export are an admin's and need a same-origin
   const reportText = await report.text();
   expect(reportText).toContain("abuse@op.example");
   expect(reportText).toContain("Limits:");
-  expect((await fetch(`${url}/export?group=${id}`, { headers: { cookie: other } })).status).toBe(404);
+  expect((await fetch(`${url}/export?group=${id}`, { headers: { cookie: other } })).status).toBe(403);
 
   expect((await post("stop", "")).status).toBe(303);
   expect(captureStore.current(Date.now())).toBeNull();

@@ -3023,7 +3023,7 @@ async function answerGet(
   if (viaRefusal !== undefined) return viaRefusal;
 
   // Admin settings and releases are an admin's; a member is told so.
-  const adminRefusal = adminGate(app, request, url, auth);
+  const adminRefusal = adminGate(app, request, url, auth, matched.pattern);
   if (adminRefusal !== undefined) return adminRefusal;
 
   // A transferred repository's old path answers 308 to its new one (#569).

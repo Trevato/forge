@@ -114,7 +114,7 @@ test("the portal setting refuses a member, an agent and a cross-origin post; not
     fetch(`${servers.url}/settings/billing/portal`, { method: "POST", headers: { cookie, origin, accept: "text/html" }, body: new URLSearchParams({ portal_url: PORTAL }), redirect: "manual" });
   const mine = `forge_session=${createSession(app.db, member.id).token}`;
   const theirs = `forge_session=${createSession(app.db, admin.id).token}`;
-  expect((await post(mine, servers.url)).status).toBe(404);
+  expect((await post(mine, servers.url)).status).toBe(403);
   expect((await post(theirs, "https://evil.test")).status).toBe(403);
   expect(getPortalUrl(app.db)).toBe(before);
   expect((await post(theirs, servers.url)).status).toBe(303);

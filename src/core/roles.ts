@@ -55,6 +55,9 @@ export const NOT_A_MEMBER =
 /** The words a member (or guest) is refused admin settings and releases with. */
 export const NOT_AN_ADMIN = "only an admin can change the forge's settings or its releases";
 
+/** The one sentence an everyday account is refused an admin-only route or tool with: why, and what to do next (#11818). */
+export const SIGN_IN_AS_ADMIN = "This is for the forge's admin account, so sign in as admin to do it.";
+
 const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 

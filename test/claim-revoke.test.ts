@@ -179,7 +179,8 @@ describe("revoking a forge link", () => {
 
   test("the routes: a member and a guest get nothing, and another origin is refused", async () => {
     for (const cookie of [bobCookie, ""]) {
-      for (const act of ["revoke", "undo"] as const) expect((await post("one", act, cookie)).status).toBe(404);
+      // A member is refused at the admin gate; a stranger finds nothing.
+      for (const act of ["revoke", "undo"] as const) expect((await post("one", act, cookie)).status).toBe(cookie === "" ? 404 : 403);
     }
     const crossed = await post("one", "revoke", aliceCookie, "https://evil.test");
     expect(crossed.headers.get("location") ?? "").not.toContain("link=revoked");

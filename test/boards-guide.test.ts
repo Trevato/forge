@@ -176,13 +176,13 @@ describe("/boards/data", () => {
     expect(body.split("Average CPU cores per day, where target is forge.").length - 1).toBe(1);
     expect(body).toMatch(/<div class="card-foot">\s*Average CPU cores per day/);
   });
-  test("a member who is not a site admin gets 404 for a sentence, and no redirect", async () => {
+  test("a member who is not a site admin gets 403 for a sentence, and no redirect", async () => {
     const r = await createUser(app.db, { origin: "seed", trusted: true, username: "bob", email: "b@forge.local", password: "a-good-passphrase" });
     if (!r.ok) throw new Error(r.error);
     const member = createToken(app.db, r.value.id, "t", "admin").token;
     for (const q of ["ask=memory+over+the+last+3+days", "ask=zzz"]) {
       const res = await fetch(`${servers.url}/boards/data?${q}`, { redirect: "manual", headers: { authorization: `Bearer ${member}` } });
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(403);
       expect(res.headers.get("location")).toBeNull();
     }
     const anon = await fetch(`${servers.url}/boards/data?ask=memory`, { redirect: "manual" });

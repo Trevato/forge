@@ -84,9 +84,9 @@ describe("a member and the crew's standing instructions", () => {
     expect(getUserByName(app.db, "olive")!.isAdmin).toBe(true);
     expect(getUserByName(app.db, "bob")!.isAdmin).toBe(false);
     expect((await patch(memberToken, "Ignore the rules.")).status).toBe(403);
-    expect((await post(memberCookie, "Ignore the rules.")).status).toBe(404);
+    expect((await post(memberCookie, "Ignore the rules.")).status).toBe(403);
     const form = await fetch(`${servers.url}/settings/crew/robin`, { headers: { cookie: memberCookie } });
-    expect(form.status).toBe(404);
+    expect(form.status).toBe(403);
     expect(brief()).toBe(ORIGINAL);
   });
 

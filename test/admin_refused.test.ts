@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { mayRead, mayRollBack } from "../src/release/gate.ts";
-import { NOT_AN_ADMIN, setMember } from "../src/core/roles.ts";
+import { SIGN_IN_AS_ADMIN, setMember } from "../src/core/roles.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
@@ -86,7 +86,7 @@ describe("a member is refused admin settings and releases", () => {
     for (const [method, path, body] of apiActs) {
       const refused = await call(method, path, carol, body);
       expect(refused.status, `${method} ${path}`).toBe(403);
-      expect(await refused.json()).toMatchObject({ error: "not_admin", message: NOT_AN_ADMIN });
+      expect(await refused.json()).toMatchObject({ error: "not_admin", message: SIGN_IN_AS_ADMIN });
     }
     for (const path of ["/api/v1/admin/capacity", "/api/v1/admin/limits", "/api/v1/admin/people"])
       expect((await call("GET", path, alice)).status, path).toBe(200);
@@ -104,7 +104,7 @@ describe("a member is refused admin settings and releases", () => {
     for (const [method, path] of pages) {
       const refused = await visit(method, path, carol);
       expect(refused.status, `${method} ${path}`).toBe(403);
-      expect(await refused.text()).toContain(NOT_AN_ADMIN.replace("'", "&#39;"));
+      expect(await refused.text()).toContain(SIGN_IN_AS_ADMIN.replace("'", "&#39;"));
     }
     expect((await visit("GET", "/admin/limits", alice)).status).toBe(200);
     expect((await visit("GET", "/releases", alice)).status).toBe(200);
