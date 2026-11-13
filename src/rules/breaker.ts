@@ -30,11 +30,16 @@ interface Failed {
 }
 
 /** The read the breaker rests on (`?1` = the earliest a failed check may be): each open pull's latest check, when failed. */
+//
+// It starts from the open pulls (tens) and looks up each one's latest check, not from every failed check
+// there has ever been: on production the first form took 7.2 s on the forge's one thread (2026-11-13).
+// CROSS JOIN keeps SQLite to that order.
 export const FAILED_CHECKS_SQL = `SELECT c.issue_id, c.repo_id, c.check_detail, c.id
-         FROM run c
-         JOIN issue i ON i.id = c.issue_id AND i.kind = 'pull' AND i.state = 'open'
-        WHERE c.kind = 'check' AND c.state = 'failed' AND c.created_at >= ?1 AND c.check_detail <> ''
-          AND c.id = (SELECT l.id FROM run l WHERE l.issue_id = c.issue_id AND l.kind = 'check' ORDER BY l.created_at DESC, l.id DESC LIMIT 1)
+         FROM issue i
+         CROSS JOIN run c
+           ON c.id = (SELECT l.id FROM run l WHERE l.issue_id = i.id AND l.kind = 'check' ORDER BY l.created_at DESC, l.id DESC LIMIT 1)
+        WHERE i.kind = 'pull' AND i.state = 'open'
+          AND c.kind = 'check' AND c.state = 'failed' AND c.created_at >= ?1 AND c.check_detail <> ''
         ORDER BY c.id`;
 
 function failedChecks(db: Database, since: string): Failed[] {
