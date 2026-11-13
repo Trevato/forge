@@ -24,7 +24,8 @@ import { SIZE_IO, SIZES, type Size } from "./sizes.ts";
 import { floorRefusal } from "./disk_floor.ts";
 import { markStopped, noteStop } from "./stopped.ts";
 import { CGROUP_DIR_ENV, SIZE_ENV } from "./usage.ts";
-import { childModelHosts, childPaymentHosts, childRegistryHosts } from "../core/capacity.ts";
+import { childModelHosts, childPaymentHosts,
+  childOriginHosts, childRegistryHosts } from "../core/capacity.ts";
 import { liveChildDisk, type ChildDisk } from "./disk_mount.ts";
 import { oneAtATime, sourcesFor, startFirstThatWorks, useTree, type CodeSource } from "./own_code.ts";
 
@@ -175,6 +176,8 @@ export function cellSpecFor(input: {
   registryHosts?: readonly string[];
   /** The payment hosts children may reach (`children.paymentEgress`): a ceiling only an app declaring the host passes. */
   paymentHosts?: readonly string[];
+  /** The git hosts and neighbouring forges children may reach (`children.originEgress`), so an origin connects. */
+  originHosts?: readonly string[];
   /**
    * The child's writable space as found (`spawn/disk_mount.ts`). A filesystem
    * of its own is named among the binds by its real path (bwrap binds
@@ -197,7 +200,7 @@ export function cellSpecFor(input: {
     hide: [input.parentDataDir, input.parentHome ?? process.env["HOME"] ?? "", tmpdir()].filter((path) => path !== ""),
     // The forge's own code may live under the parent's data (a release checkout).
     reveal: input.ownRoot === undefined ? [CODE] : [CODE, input.ownRoot],
-    egress: [...(input.modelHosts ?? []), ...(input.registryHosts ?? []), ...(input.paymentHosts ?? [])],
+    egress: [...(input.modelHosts ?? []), ...(input.registryHosts ?? []), ...(input.paymentHosts ?? []), ...(input.originHosts ?? [])],
     // A child's cell is held to this list whatever cells.egress says: report
     // mode is for apps still declaring hosts, not for a whole forge.
     egressMode: "enforce",
@@ -362,6 +365,7 @@ export function launchSpecFor(
     modelHosts: childModelHosts(parent.db),
     registryHosts: childRegistryHosts(parent.db),
     paymentHosts: childPaymentHosts(parent.db),
+    originHosts: childOriginHosts(parent.db, parentOrigin(parent.config)),
     disk: liveChildDisk(parent.config.dataDir, input.bodyId, mountinfo),
     ...(ownRoot === undefined ? {} : { ownRoot }),
   });

@@ -20,7 +20,8 @@ import { portInsteadOfSocket } from "../src/git/hook-address.ts";
 import { missing } from "./helpers/tools.ts";
 import { resultLine } from "./helpers/result-line.ts";
 import { hostAllowed } from "../src/apps/egress.ts";
-import { childModelHosts, childPaymentHosts, childRegistryHosts, setCapacity } from "../src/core/capacity.ts";
+import { childModelHosts, childPaymentHosts, childRegistryHosts,
+  childOriginHosts, setCapacity } from "../src/core/capacity.ts";
 import { openBeatDoor, parentLocal } from "../src/spawn/beat-door.ts";
 import { lastHeard, sendBeat } from "../src/spawn/heartbeat.ts";
 import { failedWith } from "./helpers/machine-note.ts";
@@ -124,6 +125,24 @@ describe("a child forge's cell", () => {
 });
 
 describe("a child forge's checks reaching the package registry", () => {
+  test("a hosted forge reaches the public git hosts and the forges beside it, and nothing else, unless an admin closes it", () => {
+    const app = createApp({ dataDir: join(tmp, "origin-egress"), url: "https://forge.example.com" });
+    try {
+      const hosts = childOriginHosts(app.db, "https://forge.example.com");
+      const spec = cellSpecFor({ dir: "/d/c", parentDataDir: "/d", parentUrl: "https://forge.example.com", size: "small", port: 4100, label: "forge:kid", originHosts: hosts });
+      for (const host of ["github.com", "api.github.com", "gitlab.com", "codeberg.org", "forge.example.com", "commons--forge.example.com"]) {
+        expect(hostAllowed(spec.egress, host, 443)).toBe(true);
+        expect(hostAllowed(spec.egress, host, 22)).toBe(false);
+      }
+      for (const host of ["example.com", "evil.com", "raw.githubusercontent.com", "169.254.169.254"]) expect(hostAllowed(spec.egress, host, 443)).toBe(false);
+      expect(childOriginHosts(app.db, "https://f.test").some((h) => h.includes("*"))).toBe(false);
+      setCapacity(app.db, "children.originEgress", "off", "system");
+      expect(childOriginHosts(app.db, "https://forge.example.com")).toEqual([]);
+    } finally {
+      app.close();
+    }
+  });
+
   test("off until an admin opens it, then registry.npmjs.org on 443 alone, enforced even in report mode", () => {
     const app = createApp({ dataDir: join(tmp, "registry-egress"), url: "https://f.test" });
     try {
