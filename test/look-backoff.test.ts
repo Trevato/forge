@@ -4,7 +4,6 @@
  */
 import { describe, expect, test } from "bun:test";
 import { backoff, type BackoffClock } from "../src/looks/backoff.ts";
-import { lowPriority } from "../src/looks/capture.ts";
 
 /** A clock that only moves when told, and runs what is due when it does. */
 function fakeClock() {
@@ -135,12 +134,5 @@ describe("a failed look's backoff", () => {
     b.stop();
     advance(30_000);
     expect(again).toBe(0);
-  });
-});
-
-describe("the browser's priority", () => {
-  test("it runs under nice at 19 where nice is found, and as it is where it is not", () => {
-    expect(lowPriority("/usr/bin/nice")).toEqual(["/usr/bin/nice", "-n", "19"]);
-    expect(lowPriority(null)).toEqual([]);
   });
 });

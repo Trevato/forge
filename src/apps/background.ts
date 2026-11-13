@@ -20,6 +20,17 @@
  *   weighs 10 against an app's 100 among them. Each crew run gets a cell
  *   cgroup of its own at the same weight (it ran in the forge's leaf,
  *   where nice was the only difference).
+ * - **The pod's own CFS quota is not a priority, and was the stall.** A
+ *   container run with `--cpus N` is held by `cpu.max`: once the work in
+ *   it has spent N cores' worth of a 100 ms period, the kernel freezes
+ *   every thread of the container, the serving thread included, until the
+ *   next period. Measured with 24 background burners on 8 cores (2026-11-13):
+ *   the page's p50 went 5 ms → 35 ms and all 420 periods were throttled
+ *   (nice and SCHED_BATCH cannot help: the freeze is above the scheduler's
+ *   class); the same cores as a cpuset with no quota gave p50 4 ms, p99
+ *   17 ms (idle 10), and unlowered children 64 burners p99 230 ms. So the
+ *   forge's container is bounded by `--cpuset-cpus`, which never throttles,
+ *   and the work by this class and its own concurrency.
  * - **CPU, by quota.** Each step's cell is held to its declared cores
  *   (`check.limits.cpus`, `cpu.max`) and each crew run to
  *   `FORGE_CREW_CPUS` (default 4): one busy check slows itself, and cannot

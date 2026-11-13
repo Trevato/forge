@@ -19,6 +19,7 @@
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { backgroundArgv } from "../apps/background.ts";
 import { meterEgress } from "../apps/egress.ts";
 import { formatBytes } from "../core/storage.ts";
 import { noteInstall } from "../efficiency/installs.ts";
@@ -204,7 +205,7 @@ export async function prefillInstallCache(options: {
           recursive: true,
           filter: (path) => !/(^|\/)(node_modules|\.git|bunfig\.toml|\.npmrc)$/.test(path),
         });
-        const proc = Bun.spawn(["bun", "install", "--frozen-lockfile", "--ignore-scripts"], {
+        const proc = Bun.spawn(backgroundArgv(["bun", "install", "--frozen-lockfile", "--ignore-scripts"]), {
           cwd: scratch,
           env: { ...options.env, BUN_CONFIG_REGISTRY: registry, BUN_INSTALL_CACHE_DIR: cache },
           stdin: "ignore",

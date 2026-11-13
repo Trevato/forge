@@ -1,9 +1,9 @@
 /**
  * The forge's own web process always answers (#3319): its event loop's
  * lateness is measured as a p99 a board can chart, and the work it starts
- * — check steps and crew runs — runs in the background class (nice 10,
- * SCHED_BATCH, best-effort IO level 7), so a full lane slows checks, not
- * pages. The load test burns 12 cells' worth of CPU beside a server and
+ * — check steps, crew runs, installs and the browser — runs in the
+ * background class (nice 10, SCHED_BATCH, best-effort IO level 7), so a full
+ * lane slows checks, not pages. The load test burns 12 cells' worth of CPU beside a server and
  * holds its /healthz p99 under 200 ms.
  */
 
@@ -12,6 +12,10 @@ import { backgroundArgv, BACKGROUND_NICE, CREW_CPUS, crewCpus } from "../src/app
 import { nearestRank, startLoopLag } from "../src/kernel/loop_lag.ts";
 import { runClaude } from "../src/crew/claude.ts";
 import { sandboxPolicy } from "../src/crew/sandbox.ts";
+import { childEnv, runStep } from "../src/apps/process.ts";
+import { tmpdir } from "node:os";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 /** Fields of `/proc/<pid>/stat` after the command name: index 0 is field 3 (state), so field n is n − 3. */
 const statFields = (text: string): string[] => text.slice(text.lastIndexOf(")") + 2).trim().split(" ");
@@ -80,6 +84,47 @@ describe.skipIf(!hasProc)("the background class", () => {
     if (Bun.which("chrt") !== null) expect(Number(f[POLICY])).toBe(SCHED_BATCH);
     // Arguments pass as arguments: a space and a `$(…)` are never script.
     expect(args).toBe("a b|$(c)");
+  });
+
+  test("a check step started by runStep, and what its shell starts, run in the background class", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "prio-step-"));
+    const out = join(dir, "stat");
+    // The step's shell starts a grandchild: the class is inherited, nothing sets it again.
+    const done = await runStep("check", `sh -c 'cat /proc/self/stat > ${out}'`, {
+      cwd: dir,
+      env: childEnv({}),
+      log: () => {},
+      signal: new AbortController().signal,
+    });
+    expect(done.ok).toBe(true);
+    const f = statFields(readFileSync(out, "utf8"));
+    const mine = Number(statFields(await Bun.file("/proc/self/stat").text())[NICE]);
+    expect(Number(f[NICE])).toBe(Math.min(19, mine + BACKGROUND_NICE));
+    if (Bun.which("chrt") !== null) expect(Number(f[POLICY])).toBe(SCHED_BATCH);
+  });
+
+  test("a crew run started by runClaude, and what it starts, run in the background class", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "prio-crew-"));
+    const out = join(dir, "stat");
+    const fake = join(dir, "claude");
+    writeFileSync(fake, `#!/bin/sh\ncat /proc/self/stat > "${out}"\n`);
+    chmodSync(fake, 0o755);
+    await runClaude({
+      binary: fake,
+      cwd: dir,
+      prompt: "",
+      appendSystemPrompt: "",
+      budgetUsd: 0,
+      env: {},
+      sandbox: sandboxPolicy({ dataDir: dir, agentName: "bot", urls: [] }),
+      timeoutMs: 10_000,
+      log: () => {},
+      signal: new AbortController().signal,
+    });
+    const f = statFields(readFileSync(out, "utf8"));
+    const mine = Number(statFields(await Bun.file("/proc/self/stat").text())[NICE]);
+    expect(Number(f[NICE])).toBe(Math.min(19, mine + BACKGROUND_NICE));
+    if (Bun.which("chrt") !== null) expect(Number(f[POLICY])).toBe(SCHED_BATCH);
   });
 
   test.skipIf(Bun.which("ionice") === null)("its IO is best-effort at level 7", async () => {

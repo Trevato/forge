@@ -9,6 +9,7 @@ import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Agent } from "../core/agents.ts";
 import type { Repo } from "../core/repos.ts";
+import { backgroundArgv } from "../apps/background.ts";
 import { PROXY_VARS } from "../apps/egress.ts";
 
 export const crewRoot = (dataDir: string): string => join(dataDir, "crew");
@@ -147,7 +148,8 @@ export async function runBounded(
   env: Record<string, string>,
   timeoutMs: number,
 ): Promise<{ code: number; stderr: string }> {
-  const proc = Bun.spawn(argv, {
+  // An install is crew work: in the background class, so it never waits for the forge (#3319).
+  const proc = Bun.spawn(backgroundArgv(argv), {
     cwd: dir,
     env,
     stdout: "ignore",

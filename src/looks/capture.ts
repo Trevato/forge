@@ -37,6 +37,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { backgroundArgv } from "../apps/background.ts";
 import { childEnv } from "../apps/process.ts";
 import { Gate } from "../git/env.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -358,16 +359,6 @@ function within<T>(work: Promise<T>, deadline: number, what: string): Promise<T>
   return Promise.race([work, late]).finally(() => clearTimeout(timer));
 }
 
-/**
- * What runs the browser at the lowest CPU priority, given where `nice` is
- * (or null where there is none): a picture is housekeeping, and must never
- * take the cores an app or the forge's requests need (#11509). Without
- * `nice` the browser runs as it is.
- */
-export function lowPriority(nice: string | null): string[] {
-  return nice === null ? [] : [nice, "-n", "19"];
-}
-
 async function shoot(
   binary: string,
   input: LookInput,
@@ -377,9 +368,11 @@ async function shoot(
   // and two forges in one process never share a browser's state.
   const profile = mkdtempSync(join(tmpdir(), "forge-look-"));
   rmSync(input.out, { force: true });
+  // A picture is housekeeping: it must never take the cores an app or the
+  // forge's requests need (#11509), so the browser starts in the background
+  // class (`apps/background.ts`) like every other child that is not serving.
   const proc = Bun.spawn(
-    [
-      ...lowPriority(Bun.which("nice")),
+    backgroundArgv([
       binary,
       "--headless=new",
       // The forge runs as one unprivileged user with no user namespaces
@@ -407,7 +400,7 @@ async function shoot(
       "--remote-debugging-port=0",
       "--remote-allow-origins=http://127.0.0.1",
       "about:blank",
-    ],
+    ]),
     {
       env: childEnv({}),
       stdin: "ignore",
