@@ -33,6 +33,13 @@ function svg(label: string, body: string): Html {
   return raw(`<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${label}">${body}</svg>`);
 }
 
+/** A series oldest first as a fixed-size SVG polyline; the numbers are the only input. */
+function spark(series: readonly number[], label: string): Html {
+  const top = Math.max(1, ...series);
+  const points = series.map((v, i) => at(i, series.length, v, top).join(",")).join(" ");
+  return svg(label, `<polyline points="${points}" fill="none" stroke="currentColor" stroke-width="1.5"/>`);
+}
+
 /**
  * Days oldest first where `null` is a day with no data: the line breaks there
  * rather than dropping to zero. Each run of numbers is its own polyline on
@@ -61,6 +68,11 @@ export function daySpark(days: readonly (number | null)[], label: string): Html 
     )
     .join("");
   return svg(escapeHtml(label), body);
+}
+
+/** The last 24 hours, newest first in, oldest on the left out. */
+export function sparkline(hours: readonly number[]): Html {
+  return spark([...hours].reverse(), "Shipped each hour over the last 24 hours");
 }
 
 /** Lightest first, stacked from the bottom: the strangers sit on top and read darkest. */
