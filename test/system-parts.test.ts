@@ -52,6 +52,7 @@ test("one <h2> per part, each in a settings-block, and no card", async () => {
     "Machine",
     "Disks and network",
     "Largest under the forge's data",
+    "Database size",
     "Processes",
     "What the forge stands on",
     "Off-site backup",

@@ -28,6 +28,7 @@ import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { ownRepoPath } from "./own_repo.ts";
 import { BUDGETS } from "./budgets.ts";
 import { openDbFiles } from "./file_modes.ts";
+import { dbFile, dbGrowth, dbSizeNeed, fileBytes } from "../system/db_size.ts";
 import { backupVerdict, isWatched } from "../snapshot/bucket.ts";
 import { lastDrill } from "../snapshot/drills.ts";
 import { lastMirror, mirrorNeed } from "../snapshot/mirror.ts";
@@ -73,7 +74,8 @@ export interface EnvCount {
 
 /**
  * One cause of the forge being off: the `needs` sentence, a `cause` key that
- * holds for as long as its condition does (`disk`, `disk-floor`, `disk-80`, `disk-70`, `errors`, `internal`,
+ * holds for as long as its condition does (`disk`, `disk-floor`, `disk-80`, `disk-70`,
+ * `db-size`, `db-growth`, `errors`, `internal`,
  * `queue:<kind>`, `release`, `stuck:<runId>`, `red:<repoId>`, `shared:<repoId>:<test>`), when it began by the forge's own evidence
  * (the oldest evidence the forge holds, else the first time this process saw
  * it, held until the cause clears; `at` is never the answer to a repeat
@@ -367,6 +369,11 @@ export function vitals(input: VitalsInput): Vitals {
 
   for (const file of openDbFiles(input.dataDir))
     need(`file:${file.name}`, file.sentence, undefined, "/settings/capacity");
+
+  // A database past the 2 GiB Bun maps, or growing faster than 64 MiB a day, is said (#12010).
+  const dbBytes = fileBytes(dbFile(input.dataDir));
+  const dbBig = dbSizeNeed(dbBytes, dbGrowth(input.db, dbBytes, now));
+  if (dbBig !== undefined) need(dbBig.cause, dbBig.sentence, undefined, "/system");
 
   // Snapshots on the volume they copy, and no mirror, share its one point of failure.
   const snaps = input.snapshots;

@@ -51,6 +51,7 @@ import { BREAK_STEPS, MACHINES, declaredFooting, footing, offMachine, whereWords
 import { laneWords, readOffsiteLane, type OffsiteLane } from "../../snapshot/offsite_lane.ts";
 import { badge, chartBox, disclosure, meter, pill, row, time } from "../ui.ts";
 import { LARGEST_DIRS, largestDirs, type LargestDirs } from "../../system/largest_dirs.ts";
+import { DB_FILE_CAP, DB_GROWTH_MAX, TOP, dbSize, dbSizeNeed, type DbSize } from "../../system/db_size.ts";
 import { childDirOf, listChildren } from "../../actions/spawn.ts";
 import { childrenUse, realSelf, selfUse, shareOf, sizeWords, useWords, type ChildUseRow, type SelfUse } from "../../spawn/usage.ts";
 
@@ -89,6 +90,44 @@ export function largestDirsSection(found: LargestDirs | null): Html {
         ? html`<p class="muted small">No directories under the forge's data.</p>`
         : html`<ul class="list" aria-label="The ${String(LARGEST_DIRS)} largest directories under the forge's data">${found.dirs.map((d) => figureRow(d.name, bytes(d.bytes), { dir: d.name, bytes: String(d.bytes) }))}</ul>
           <p class="muted small">Measured ${time(found.at)}</p>`}</section>`;
+}
+
+/**
+ * The database's size (#12010). On first view, the heading and one sentence:
+ * the file's size and its growth a day, with a badge when either is worth a
+ * look (as the off-site section keeps its state on first view, #11805).
+ * Behind the disclosure, the facts as `dl` rows (file, WAL, room inside,
+ * growth), then one table of the ten largest tables (rows, bytes) and the ten
+ * largest indexes (the table each serves, bytes). The walk is at most an hour
+ * old and never waited on.
+ */
+export function dbSizeSection(size: DbSize): Html {
+  const w = size.walk;
+  const g = size.growth;
+  const grows =
+    g.perDay === null
+      ? "growth needs a day of readings"
+      : `${g.perDay < 0 ? "shrinks" : "grows"} ${bytes(Math.abs(g.perDay))} a day over ${String(g.days)} days`;
+  const said = dbSizeNeed(size.fileBytes, g);
+  const fact = (name: string, value: string): Html => html`<div class="status-row"><dt>${name}</dt><dd>${value}</dd></div>`;
+  const state = html`forge.db is ${bytes(size.fileBytes)}; ${grows}
+    ${said === undefined ? null : badge(said.cause === "db-size" ? `past ${bytes(DB_FILE_CAP)}` : `over ${bytes(DB_GROWTH_MAX)} a day`, { tone: "attn" })}`;
+  return html`<section class="settings-block" id="sys-db"><h2>Database size</h2>
+    ${disclosure(state, html`<dl class="status-rows" id="sys-db-summary" data-bytes="${String(size.fileBytes)}" data-per-day="${g.perDay === null ? "" : String(g.perDay)}">
+      ${fact("File", bytes(size.fileBytes))}
+      ${fact("WAL", bytes(size.walBytes))}
+      ${w === null ? null : fact("Free inside", bytes(w.freeBytes))}
+      ${fact("Growth", grows)}</dl>
+    ${w === null
+      ? html`<p class="muted small">Its tables are being measured; reload in a moment.</p>`
+      : html`<div class="table-scroll"><table class="table" data-dense aria-label="The ${String(TOP)} largest tables and indexes in the database">
+          <thead><tr><th scope="col">Name</th><th scope="col" class="num">Rows</th><th scope="col" class="num">Bytes</th></tr></thead>
+          <tbody><tr><th scope="colgroup" colspan="3">Tables</th></tr>
+            ${w.tables.map((t) => html`<tr data-table="${t.name}" data-bytes="${String(t.bytes)}"><td class="mono">${t.name}</td><td class="num mono">${t.rows.toLocaleString("en-US")}</td><td class="num mono">${bytes(t.bytes)}</td></tr>`)}</tbody>
+          <tbody><tr><th scope="colgroup" colspan="3">Indexes</th></tr>
+            ${w.indexes.map((i) => html`<tr data-index="${i.name}" data-bytes="${String(i.bytes)}"><td class="mono" colspan="2">${i.name} <span class="muted">on ${i.table}</span></td><td class="num mono">${bytes(i.bytes)}</td></tr>`)}</tbody>
+        </table></div>
+        <p class="muted small">Measured ${time(w.at)}, at most once an hour.</p>`}`, { id: "sys-db-detail" })}</section>`;
 }
 
 /** This forge's own size and use when it is a child in a cell (#10853); nothing on any other forge. */
@@ -457,6 +496,8 @@ export async function systemPage(ctx: Ctx): Promise<Response> {
   const standsOn = footing.peek() ?? declaredFooting("the cluster is being read; reload in a moment");
   // Never waits on the walk: the last measurement, a new one started behind it when stale.
   const largestUnder = largestDirs.peek(ctx.app.config.dataDir);
+  // The file's size now and the last walk of its pages; a stale walk starts a new one (#12010).
+  const dbNow = timePhase(ctx.request, "dbsize", () => dbSize.peek(ctx.app.db, ctx.app.config.dataDir, ctx.app.log));
   const rendering = performance.now();
   const r = regions(v);
   const at = (id: string): Html => raw(r[id]!);
@@ -487,6 +528,7 @@ export async function systemPage(ctx: Ctx): Promise<Response> {
     <section class="settings-block"><h2>Disks and network</h2>
       <ul class="list" id="sys-disks">${at("sys-disks")}</ul></section>
     ${largestDirsSection(largestUnder)}
+    ${dbSizeSection(dbNow)}
     <section class="settings-block"><h2>Processes</h2>
       <div class="js-only small muted">Sort by <button class="btn" data-size="sm" type="button" data-sort="cpu" aria-pressed="true"><kbd>c</kbd> CPU</button>
         <button class="btn" data-size="sm" type="button" data-sort="mem" aria-pressed="false"><kbd>m</kbd> memory</button></div>
