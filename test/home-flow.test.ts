@@ -14,7 +14,8 @@ import { createApp, type App } from "../src/app.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { laneHealth, lanePicture, LANES, viewFor, type LaneKey, type LaneView } from "../src/flow/lanes.ts";
+import { laneHealth, lanePicture, LANES, readLanesInline, viewFor, type LaneItem, type LaneKey, type LaneView } from "../src/flow/lanes.ts";
+import type { LaneAnswer, LaneJob } from "../src/flow/lanes_worker.ts";
 import { promote } from "./helpers/members.ts";
 import { seedHomeFlow, startCheck, type HomeFlowSeed } from "./helpers/home-flow-seed.ts";
 
@@ -136,64 +137,118 @@ describe("the new home draws every lane", () => {
 });
 
 describe("a lane says its health in words", () => {
-  const view = (key: LaneKey, items: Partial<LaneView["items"][number]>[], total = items.length): LaneView => ({
-    key,
-    total,
-    more: 0,
-    items: items.map((i, n) => ({ key: `k${n}`, repoId: "r", kind: "issue", number: n + 1, title: "t", sealed: false, who: "", since: new Date(now - 60_000).toISOString(), state: "active", hint: "", position: null, beat: null, more: 0, repo: "o/r", href: "/", ...i })),
-  });
   const now = Date.now();
-  const input = { now, builders: { running: 1, slots: 4 } };
+  const view = (key: LaneKey, items: Partial<LaneItem>[], total = items.length): LaneView => {
+    const all = items.map((i, n): LaneItem => ({ key: `k${n}`, repoId: "r", kind: "issue", number: n + 1, title: "t", sealed: false, who: "", since: new Date(now - 60_000).toISOString(), state: "active", hint: "", position: null, beat: null, ...i }));
+    return { key, total, more: 0, all, items: all.map((i) => ({ ...i, repo: "o/r", href: "/" })) };
+  };
+  const moved = { asked: 0, building: 0, checks: 0, review: 0, landing: 0, live: 0 };
+  const input = { now, builders: { running: 1, slots: 4 }, moved };
 
   test("a builder that has gone quiet is stuck, with its reason", () => {
     const quiet = new Date(now - 20 * 60_000).toISOString();
-    const h = laneHealth(view("building", [{ beat: quiet }]), undefined, input);
+    const h = laneHealth(view("building", [{ beat: quiet }]), input);
     expect(h.tone).toBe("stuck");
     expect(h.words).toContain("gone quiet");
   });
 
   test("builders working with nothing waiting are flowing; a queue is waiting; an empty lane is quiet", () => {
-    expect(laneHealth(view("building", [{}, {}]), undefined, input).tone).toBe("flowing");
-    expect(laneHealth(view("building", [{}, { state: "waiting" }]), undefined, input).tone).toBe("waiting");
-    expect(laneHealth(view("building", []), undefined, input).tone).toBe("quiet");
+    expect(laneHealth(view("building", [{}, {}]), input).tone).toBe("flowing");
+    expect(laneHealth(view("building", [{}, { state: "waiting" }]), input).tone).toBe("waiting");
+    expect(laneHealth(view("building", []), input).tone).toBe("quiet");
   });
 
-  test("an item that waits past half an hour for a worker is stuck, and the oldest's age is named", () => {
+  test("an item that waits past half an hour while nothing starts is stuck; while something starts it is only waiting", () => {
     const long = new Date(now - 50 * 60_000).toISOString();
-    const h = laneHealth(view("checks", [{ state: "waiting", since: long }]), undefined, input);
+    const h = laneHealth(view("checks", [{ state: "waiting", since: long }]), input);
     expect(h.tone).toBe("stuck");
     expect(h.oldest).toBe("50m");
+    expect(laneHealth(view("checks", [{ state: "waiting", since: long }]), { ...input, moved: { ...moved, checks: 3 } }).tone).toBe("waiting");
   });
 
-  test("approved changes wait on the owner, and say so", () => {
-    const h = laneHealth(view("landing", [{ state: "waiting", since: new Date(now - 3_600_000).toISOString() }]), undefined, input);
-    expect(h.tone).toBe("waiting");
-    expect(h.words).toContain("for you");
+  test("a backlog of old asks is not stuck while the crew is taking them, and is when a builder is free and none starts", () => {
+    const old = new Date(now - 39 * 86_400_000).toISOString();
+    const asks = view("asked", [{ state: "waiting", since: old }], 40);
+    expect(laneHealth(asks, { ...input, moved: { ...moved, asked: 4 } }).tone).toBe("flowing");
+    expect(laneHealth(asks, { ...input, builders: { running: 4, slots: 4 } }).tone).toBe("waiting");
+    const none = laneHealth(asks, input);
+    expect(none.tone).toBe("stuck");
+    // the age of the backlog is never the reason, and never in the words
+    expect(laneHealth(asks, { ...input, moved: { ...moved, asked: 4 } }).words).not.toContain("39d");
+  });
+
+  test("approved changes wait on the owner, and say so; they are stuck only when nothing has landed for days", () => {
+    const hour = laneHealth(view("landing", [{ state: "waiting", since: new Date(now - 3_600_000).toISOString() }]), input);
+    expect(hour.tone).toBe("waiting");
+    expect(hour.words).toContain("for you");
+    const week = new Date(now - 7 * 86_400_000).toISOString();
+    expect(laneHealth(view("landing", [{ state: "waiting", since: week }]), input).tone).toBe("stuck");
+    expect(laneHealth(view("landing", [{ state: "waiting", since: week }]), { ...input, moved: { ...moved, landing: 2 } }).tone).toBe("waiting");
   });
 });
 
-describe("the picture is read once per write", () => {
-  test("two readers share it until something is written", () => {
-    const a = lanePicture(app.db);
-    expect(lanePicture(app.db)).toBe(a);
+describe("the picture is read off the thread, once per write", () => {
+  const options = () => ({ dataDir, ceilingUsd: null });
+
+  test("two readers share it until something is written", async () => {
+    const a = await lanePicture(app.db, options());
+    expect(await lanePicture(app.db, options())).toBe(a);
     app.db.run("UPDATE issue SET title = title WHERE id = ?1", [Object.values(seed.issues)[0]!]);
-    expect(lanePicture(app.db)).not.toBe(a);
+    expect(await lanePicture(app.db, options())).not.toBe(a);
   });
 
-  test("a private repository's work is filtered by the viewer, never by the page", () => {
-    const picture = lanePicture(app.db);
+  test("a lane's version moves with what the lane shows and with nothing else", async () => {
+    const a = await lanePicture(app.db, options());
+    app.db.run("UPDATE issue SET title = title WHERE id = ?1", [Object.values(seed.issues)[0]!]);
+    const b = await lanePicture(app.db, options());
+    expect(b.versions).toEqual(a.versions);
+    startCheck(app, seed.pulls["r2"]!, seed.repos.notes.id);
+    const c = await lanePicture(app.db, options());
+    expect(c.versions.checks).not.toBe(b.versions.checks);
+    expect(c.versions.live).toBe(b.versions.live);
+  });
+
+  test("the worker reads the same picture on a handle of its own", async () => {
+    const worker = new Worker(new URL("../src/flow/lanes_worker.ts", import.meta.url).href);
+    try {
+      const answer = await new Promise<LaneAnswer>((resolve, reject) => {
+        worker.onmessage = (e: MessageEvent<LaneAnswer>) => resolve(e.data);
+        worker.onerror = (e) => reject(new Error(String(e.message)));
+        worker.postMessage({ id: 1, path: app.db.filename, now: Date.now(), stamp: undefined, dataDir, ceilingUsd: null } satisfies LaneJob);
+      });
+      expect(answer.error).toBeUndefined();
+      const inline = readLanesInline(app.db, options());
+      expect(answer.picture?.lanes.building.items.map((i) => i.title)).toEqual(inline.lanes.building.items.map((i) => i.title));
+      expect(answer.picture?.lanes.asked.total).toBe(inline.lanes.asked.total);
+      // the fast part is a few indexed reads
+      expect(answer.fastMs ?? 1e9).toBeLessThan(500);
+    } finally {
+      worker.terminate();
+    }
+  });
+
+  test("the asked lane lists the next asks in the crew's own order and counts the rest", async () => {
+    const picture = await lanePicture(app.db, options());
+    expect(picture.lanes.asked.total).toBeGreaterThanOrEqual(4);
+    // an ask with a build in flight has left the lane
+    expect(picture.lanes.asked.items.map((i) => i.title)).not.toContain("A cost ledger per delivery: tokens, compute and time");
+  });
+
+  test("a private repository's work is filtered by the viewer, never by the page", async () => {
+    const picture = await lanePicture(app.db, options());
     const asBob = viewFor(app.db, { ...seed.owner, id: "x", isAdmin: false } as typeof seed.owner, picture);
     expect(asBob.repos).not.toContain("trevato/glue");
   });
 });
 
 describe("nothing on the new home polls", () => {
-  test("neither the page nor its script sets an interval or a timer", () => {
-    for (const file of ["src/web/pages/home_flow.ts", "src/web/pages/home_flow_client.ts", "src/flow/lanes.ts"]) {
+  test("neither the page nor its script sets an interval, a timer or an animation loop", () => {
+    for (const file of ["src/web/pages/home_flow.ts", "src/web/pages/home_flow_client.ts", "src/flow/lanes.ts", "src/flow/lanes_read.ts", "src/flow/lanes_worker.ts"]) {
       const text = readFileSync(join(import.meta.dir, "..", file), "utf8");
       expect(text).not.toMatch(/setInterval\s*\(/);
-      expect(text).not.toMatch(/setTimeout\s*\(/);
       expect(text).not.toMatch(/requestAnimationFrame/);
+      // the picture's two one-shots (a pause, a deadline on one worker job) are the only timers, and they hold nothing
+      expect((text.match(/setTimeout\s*\(/g) ?? []).length).toBe(file === "src/flow/lanes.ts" ? 2 : 0);
     }
   });
 

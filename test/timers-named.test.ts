@@ -110,9 +110,11 @@ const ALLOWED: readonly Allowed[] = [
     ["src/crew/workdir.ts", "resolve"],
     ["src/cli/commands/sync.ts", "resolve"],
     ["src/cli/commands/talk.ts", "resolve"],
+    ["src/flow/lanes.ts", "resolve"],
   ]),
   ...allow("setTimeout", DEADLINE, [
     ["src/apps/toolbar.ts", "resolve"],
+    ["src/flow/lanes.ts", "() => reject("],
     ["src/looks/capture.ts", "() => reject("],
     ["src/actions/search.ts", "() => resolve(\"timeout\")"],
     ["src/checks/service.ts", "() => { overran = true; budget.abort(); }"],

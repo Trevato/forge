@@ -302,6 +302,7 @@ export async function seedHomeFlow(app: App): Promise<HomeFlowSeed> {
     "UPDATE pull SET merged_at = ?2, merged_by = ?3, merged_oid = 'm1oid' WHERE issue_id = ?1",
     [m1, ago(3), owner.id],
   );
+  db.run("UPDATE issue SET state = 'closed' WHERE id = ?1", [m1]);
 
   // Live: two releases in the last day, each carrying a change.
   const l1 = pull(
@@ -324,6 +325,7 @@ export async function seedHomeFlow(app: App): Promise<HomeFlowSeed> {
       "UPDATE pull SET merged_at = ?2, merged_by = ?3, merged_oid = 'l-oid' WHERE issue_id = ?1",
       [issue, ago(minutes + 2), owner.id],
     );
+    db.run("UPDATE issue SET state = 'closed' WHERE id = ?1", [issue]);
     const deploy = addRun({
       repo,
       kind: "deploy",

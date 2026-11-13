@@ -4,30 +4,38 @@
  * that are in it now and the lane's own health in words. `pipeline.ts` counts
  * the stages; this names what is in them.
  *
- * One picture per write: the six reads run once after anything is written
- * (`writeStamp`, at most 30 s old otherwise), and every lane, every viewer
- * and every open tab is answered from it. A viewer's own reading is that
- * picture filtered to the repositories they may read, so a private
- * repository's work is never named to anyone else. Plain data out, no HTML.
+ * The picture is never read on a request. `lanes_worker.ts` reads it on a
+ * handle of its own (`lanes_read.ts` is the reads) and the thread keeps the
+ * last one: a page or a lane that finds nothing written since is a plain
+ * in-memory read. After a write the picture is read again, at most every
+ * `MIN_GAP_MS` (a second), by the worker, never the thread; a request that needs the new
+ * one awaits the worker, and the thread serves everything else meanwhile.
+ * Only the first reading, a database with no file and `bun test` read inline.
+ * A viewer's own reading is the picture filtered to the repositories they may
+ * read, so a private repository's work is never named to anyone else.
  */
 
 import type { Database } from "bun:sqlite";
+import { queueStatus } from "../checks/queue.ts";
 import { canRead, getReposByIds, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { writeStamp } from "../core/write_clock.ts";
-import { queueStatus } from "../checks/queue.ts";
-import { shortTitle } from "./moving.ts";
-import { readPipeline, span, type PipelineStage } from "./pipeline.ts";
+import {
+  compose,
+  LANE_ITEMS,
+  LANES,
+  readFast,
+  readSlow,
+  type LaneItem,
+  type LaneKey,
+  type LanePicture,
+} from "./lanes_read.ts";
+import type { LaneAnswer, LaneJob } from "./lanes_worker.ts";
+import { span } from "./pipeline.ts";
 
-export const LANES = [
-  "asked",
-  "building",
-  "checks",
-  "review",
-  "landing",
-  "live",
-] as const;
-export type LaneKey = (typeof LANES)[number];
+export { LANE_ITEMS, LANES };
+export type { LaneItem, LaneKey, LanePicture };
+export type { LaneRead, StripPart } from "./lanes_read.ts";
 
 /** The name a lane wears on the page. */
 export const LANE_NAME: Record<LaneKey, string> = {
@@ -41,7 +49,8 @@ export const LANE_NAME: Record<LaneKey, string> = {
 
 /** What a lane holds, in one plain line: no word of the forge's own without its meaning. */
 export const LANE_HOLDS: Record<LaneKey, string> = {
-  asked: "Things you asked for that are ready and waiting for a builder.",
+  asked:
+    "What you asked for that is ready and waits for a builder, in the order the crew will take it.",
   building: "Crew members writing the change right now.",
   checks: "Tests running on a change before anyone reviews it.",
   review: "A second crew member reading the change before it may land.",
@@ -50,382 +59,234 @@ export const LANE_HOLDS: Record<LaneKey, string> = {
   live: "What went live in the last 24 hours.",
 };
 
-/** Items a lane lists; the rest are counted. */
-export const LANE_ITEMS = 6;
-/** Rows read per lane before a viewer's access filters them. */
-const SCAN = 40;
-/** A picture is never older than this, writes or not. */
-const MAX_AGE_MS = 30_000;
 /** A builder that has not been heard from for this long has gone quiet. */
 export const QUIET_MS = 10 * 60_000;
-/** An item that waits this long for a free worker is stuck, not queued. */
+/** An item that waits this long for a free worker while nothing starts is stuck, not queued. */
 export const STUCK_WAIT_MS = 30 * 60_000;
 /** A check that has run this long is not running tests any more. */
 const CHECK_LONG_MS = 45 * 60_000;
-/** Approved changes waiting on a person past this are named as stuck. */
+/** Approved changes waiting on a person past this, with nothing landing, are named as stuck. */
 const LAND_STUCK_MS = 48 * 3_600_000;
 
-export interface LaneItem {
-  /** Stable across lanes: the same change keeps its key as it moves, so the page can move its tile. */
-  readonly key: string;
-  readonly repoId: string;
-  readonly kind: "issue" | "pull" | "main" | "deploy";
-  readonly number: number | null;
-  readonly title: string;
-  readonly sealed: boolean;
-  /** Who has it: the crew member, the reviewer, the person who asked or merged. Empty when no one does. */
-  readonly who: string;
-  /** When it entered this lane. */
-  readonly since: string;
-  /** Waiting for a worker or a person, being worked, or (live) done and serving. */
-  readonly state: "waiting" | "active" | "done";
-  /** One plain sentence of where it is, without a clock: the page draws the clock beside it. */
-  readonly hint: string;
-  /** Its place in the line, from 1, for items that queue. */
-  readonly position: number | null;
-  /** When its worker last said it was alive; null when it does not say. */
-  readonly beat: string | null;
-  /** Pulls this deploy carried beyond the first, for a live item. */
-  readonly more: number;
-}
-
-export interface LaneRead {
-  readonly items: readonly LaneItem[];
-  /** Everything in the lane, not only what was read. */
-  readonly total: number;
-}
-
-export interface LanePicture {
-  readonly at: number;
-  readonly lanes: Readonly<Record<LaneKey, LaneRead>>;
-  readonly stages: readonly PipelineStage[];
-}
-
-interface Raw {
-  id: string;
-  repo_id: string;
-  number: number | null;
-  kind: string | null;
-  title: string | null;
-  sealed: number | null;
-  who: string | null;
-  since: string;
-  state: string;
-  reason: string | null;
-  attempt: number | null;
-  env: string | null;
-  branch: string | null;
-  beat: string | null;
-  carried: number | null;
-  total: number;
-}
-
-const BUILD_WORDS: Record<string, string> = {
-  conflict: "Resolving a merge conflict.",
-  check_failed: "Fixing a failed check.",
-  feedback: "Answering review notes.",
-};
-
-/** The queue position of each waiting row, from 1, oldest first: the order the next worker takes them. */
-function positioned(rows: readonly Raw[]): Map<string, number> {
-  const out = new Map<string, number>();
-  let n = 0;
-  for (const r of [...rows]
-    .filter((x) => x.state === "queued")
-    .sort((a, b) => (a.since < b.since ? -1 : a.since > b.since ? 1 : 0)))
-    out.set(r.id, ++n);
-  return out;
-}
-
-const ordinal = (n: number): string =>
-  n === 1
-    ? "next in line"
-    : `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : (["th", "st", "nd", "rd"][n % 10] ?? "th")} in line`;
-
-function item(
-  r: Raw,
-  over: Partial<LaneItem> & Pick<LaneItem, "state" | "hint">,
-): LaneItem {
-  const title = (r.title ?? "").replace(/\s+/g, " ").trim();
-  return {
-    key: `i-${r.id}`,
-    repoId: r.repo_id,
-    kind:
-      r.kind === "pull"
-        ? "pull"
-        : r.kind === "main"
-          ? "main"
-          : r.kind === "deploy"
-            ? "deploy"
-            : "issue",
-    number: r.number,
-    title: shortTitle(title, 72),
-    sealed: (r.sealed ?? 0) !== 0,
-    who: r.who ?? "",
-    since: r.since,
-    position: null,
-    beat: r.beat,
-    more: 0,
-    ...over,
-  };
-}
-
-/** Issues the crew could start now, newest first: the readiness rules of `pipeline.ts` over the 200 newest open issues, never the whole table (the count is `pipeline.ts`'s own, kept off the thread). */
-function askedRows(db: Database): Raw[] {
-  return db
-    .query<Raw, [number]>(
-      `SELECT i.id, i.repo_id, i.number, 'issue' AS kind, i.title, i.sealed, u.username AS who, i.created_at AS since,
-              'ready' AS state, NULL AS reason, NULL AS attempt, NULL AS env, NULL AS branch, NULL AS beat, NULL AS carried, 0 AS total
-         FROM (SELECT * FROM issue WHERE kind = 'issue' AND state = 'open' ORDER BY created_at DESC LIMIT 200) i
-         JOIN repo r ON r.id = i.repo_id LEFT JOIN user u ON u.id = i.author_id
-        WHERE r.autonomy != 'off'
-          AND (r.direction_issue_id IS NULL OR r.direction_issue_id != i.id)
-          AND NOT EXISTS (SELECT 1 FROM issue_dependency d JOIN issue b ON b.id = d.blocked_by_id
-                           WHERE d.issue_id = i.id AND b.state = 'open')
-          AND NOT EXISTS (SELECT 1 FROM run x WHERE x.issue_id = i.id AND x.kind = 'agent'
-                           AND x.state IN ('queued','running'))
-        ORDER BY i.created_at DESC LIMIT ?1`,
-    )
-    .all(SCAN);
-}
-
-/** Runs of one kind in flight, running first and then by age; a queued run paused on a limit is not waiting for a worker. */
-function runRows(
-  db: Database,
-  kind: "agent" | "check",
-  where: string,
-  now: string,
-): Raw[] {
-  return db
-    .query<Raw, [string, string, number]>(
-      `SELECT COALESCE(i.id, x.id) AS id, x.repo_id, i.number, CASE WHEN i.id IS NULL THEN 'main' ELSE i.kind END AS kind, i.title, i.sealed,
-              u.username AS who, CASE WHEN x.state = 'running' THEN COALESCE(x.started_at, x.created_at) ELSE x.created_at END AS since,
-              x.state, x.reason, x.attempt, x.env, x.branch, x.heartbeat_at AS beat, NULL AS carried,
-              COUNT(*) OVER () AS total
-         FROM run x LEFT JOIN issue i ON i.id = x.issue_id LEFT JOIN user u ON u.id = x.actor_id
-        WHERE x.kind = ?1 AND x.state IN ('queued','running') AND ${where}
-          AND (x.state = 'running' OR x.not_before IS NULL OR x.not_before <= ?2)
-        ORDER BY x.state DESC, x.created_at ASC LIMIT ?3`,
-    )
-    .all(kind, now, SCAN);
-}
-
-/** Approved pulls waiting for a person, oldest approval first. */
-function approvedRows(db: Database): Raw[] {
-  return db
-    .query<Raw, [number]>(
-      `SELECT i.id, i.repo_id, i.number, 'pull' AS kind, i.title, i.sealed, u.username AS who, v.created_at AS since,
-              'approved' AS state, NULL AS reason, NULL AS attempt, NULL AS env, NULL AS branch, NULL AS beat, NULL AS carried,
-              COUNT(*) OVER () AS total
-         FROM issue i JOIN pull p ON p.issue_id = i.id
-         JOIN review v ON v.id = (SELECT id FROM review WHERE issue_id = i.id AND state != 'commented'
-                                   ORDER BY created_at DESC, id DESC LIMIT 1)
-         LEFT JOIN user u ON u.id = v.author_id
-        WHERE i.kind = 'pull' AND i.state = 'open' AND v.state = 'approved'
-        ORDER BY v.created_at ASC LIMIT ?1`,
-    )
-    .all(SCAN);
-}
-
-/** Pulls merged in the last week with no production deploy since: landed, not yet live. */
-function mergedRows(db: Database, weekAgo: string): Raw[] {
-  return db
-    .query<Raw, [string, number]>(
-      `SELECT i.id, i.repo_id, i.number, 'pull' AS kind, i.title, i.sealed, u.username AS who, p.merged_at AS since,
-              'merged' AS state, NULL AS reason, NULL AS attempt, NULL AS env, NULL AS branch, NULL AS beat, NULL AS carried,
-              COUNT(*) OVER () AS total
-         FROM pull p JOIN issue i ON i.id = p.issue_id JOIN repo r ON r.id = i.repo_id
-         JOIN app a ON a.repo_id = r.id LEFT JOIN user u ON u.id = p.merged_by
-        WHERE p.merged_at >= ?1 AND p.base_branch = r.default_branch
-          AND NOT EXISTS (SELECT 1 FROM run d WHERE d.repo_id = r.id AND d.kind = 'deploy'
-                           AND d.env = 'production' AND d.created_at >= p.merged_at)
-        ORDER BY p.merged_at DESC LIMIT ?2`,
-    )
-    .all(weekAgo, SCAN);
-}
+// ---- the picture, kept by the thread, read by the worker ----
 
 /**
- * Production deploys: the ones going live now and the ones that went live in
- * the last 24 hours, newest first. A deploy is keyed by the first change it
- * carried, so the tile that sat in Landing is the tile that arrives here.
+ * The most often the picture is read again after a write: a burst of writes
+ * is one reading. A second, because a lane's own redraw is already held back
+ * a second and a half by the page (`liveRegionsJs`), so a lane that asks after
+ * an event nearly always finds the gap over and waits for the worker alone
+ * (the fast part reads in 14 to 23 ms on production's copy).
  */
-function deployRows(db: Database, dayAgo: string): Raw[] {
-  return db
-    .query<Raw, [string, number]>(
-      `SELECT COALESCE((SELECT dp.issue_id FROM deploy_pull dp WHERE dp.run_id = x.id ORDER BY dp.pull_number LIMIT 1), x.id) AS id,
-              x.repo_id,
-              (SELECT dp.pull_number FROM deploy_pull dp WHERE dp.run_id = x.id ORDER BY dp.pull_number LIMIT 1) AS number,
-              'deploy' AS kind,
-              (SELECT i.title FROM deploy_pull dp JOIN issue i ON i.id = dp.issue_id WHERE dp.run_id = x.id ORDER BY dp.pull_number LIMIT 1) AS title,
-              0 AS sealed, u.username AS who,
-              COALESCE(x.serving_at, x.started_at, x.created_at) AS since,
-              x.state, NULL AS reason, NULL AS attempt, x.env, NULL AS branch, NULL AS beat,
-              (SELECT COUNT(*) FROM deploy_pull dp WHERE dp.run_id = x.id) AS carried,
-              COUNT(*) OVER () AS total
-         FROM run x LEFT JOIN user u ON u.id = x.actor_id
-        WHERE x.kind = 'deploy' AND x.env = 'production'
-          AND (x.serving_at >= ?1 OR x.state IN ('queued','running'))
-        ORDER BY COALESCE(x.serving_at, x.started_at, x.created_at) DESC LIMIT ?2`,
-    )
-    .all(dayAgo, SCAN);
+const MIN_GAP_MS = process.env["NODE_ENV"] === "test" ? 0 : 1_000;
+/** A page opened within this of the last reading is drawn from it, however much was written since. */
+const PAGE_STALE_MS = 10_000;
+/** The last reading is never older than this when it is served to a lane. */
+const MAX_AGE_MS = 30_000;
+/** How long a request waits for the worker before it serves what it has. */
+const WAIT_MS = 3_000;
+/** The worker is given this long; one that does not answer is dropped. */
+const JOB_LIMIT_MS = 20_000;
+
+/** What `lanePicture` needs of the forge: where its data is and the daily ceiling the figures read. */
+export interface PictureOptions {
+  readonly dataDir: string;
+  readonly ceilingUsd: number | null;
 }
 
-function building(rows: readonly Raw[]): LaneRead {
-  const line = positioned(rows);
-  const items = rows.map((r) =>
-    r.state === "running"
-      ? item(r, {
-          state: "active",
-          hint:
-            (r.attempt ?? 0) > 1
-              ? `Writing the change, try ${r.attempt}.`
-              : (BUILD_WORDS[r.reason ?? ""] ?? "Writing the change."),
-        })
-      : item(r, {
-          state: "waiting",
-          position: line.get(r.id) ?? null,
-          hint: `Waiting for a builder, ${ordinal(line.get(r.id) ?? 1)}.`,
-        }),
-  );
-  return { items, total: rows[0]?.total ?? 0 };
+interface State {
+  picture?: LanePicture | undefined;
+  inflight?: Promise<LanePicture | undefined> | undefined;
 }
+const states = new WeakMap<Database, State>();
 
-function checks(rows: readonly Raw[]): LaneRead {
-  const line = positioned(rows);
-  const items = rows.map((r) => {
-    const what =
-      r.kind === "main"
-        ? r.env === "verify" || r.env === "verify-bisect"
-          ? "Checking the live version"
-          : "Checking main after a landing"
-        : "Running the tests";
-    return r.state === "running"
-      ? item(r, { state: "active", hint: `${what}.` })
-      : item(r, {
-          state: "waiting",
-          position: line.get(r.id) ?? null,
-          hint: `Waiting for a test runner, ${ordinal(line.get(r.id) ?? 1)}.`,
-        });
-  });
-  return { items, total: rows[0]?.total ?? 0 };
-}
-
-function review(rows: readonly Raw[]): LaneRead {
-  const line = positioned(rows);
-  const items = rows.map((r) =>
-    r.state === "running"
-      ? item(r, { state: "active", hint: "Being read by a reviewer." })
-      : item(r, {
-          state: "waiting",
-          position: line.get(r.id) ?? null,
-          hint: `Waiting for a reviewer, ${ordinal(line.get(r.id) ?? 1)}.`,
-        }),
-  );
-  return { items, total: rows[0]?.total ?? 0 };
-}
-
-function landing(approved: readonly Raw[], merged: readonly Raw[]): LaneRead {
-  const items = [
-    ...approved.map((r, i) =>
-      item(r, {
-        state: "waiting",
-        position: i + 1,
-        hint: "Approved: waits for you to land it.",
-      }),
-    ),
-    ...merged.map((r) =>
-      item(r, {
-        state: "active",
-        hint: "Landed: going live next.",
-      }),
-    ),
-  ];
-  return { items, total: (approved[0]?.total ?? 0) + (merged[0]?.total ?? 0) };
-}
-
-function live(rows: readonly Raw[]): LaneRead {
-  const items = rows.map((r) => {
-    const going = r.state === "queued" || r.state === "running";
-    const n = r.carried ?? 0;
-    return item(r, {
-      state: going ? "active" : "done",
-      hint: going ? "Going live now." : "Serving now.",
-      more: Math.max(0, n - 1),
-      ...(r.title === null || r.title === ""
-        ? { title: "A new version of the app" }
-        : {}),
-    });
-  });
-  // One tile per change: a deploy that carried none is keyed by itself.
-  return { items, total: rows[0]?.total ?? 0 };
-}
-
-/** Drop the sibling rows whose key repeats (two deploys can carry the same first pull, a pull can have two checks): the first stays. */
-function unique(read: LaneRead): LaneRead {
-  const seen = new Set<string>();
-  return {
-    total: read.total,
-    items: read.items.filter((i) =>
-      seen.has(i.key) ? false : (seen.add(i.key), true),
-    ),
-  };
-}
-
-/** Read the six lanes now: `LANES.length + 2` statements and the pipeline's own cached counts. */
-export function readLanes(db: Database, now = new Date()): LanePicture {
-  const iso = now.toISOString();
-  const week = new Date(now.getTime() - 7 * 86_400_000).toISOString();
-  const day = new Date(now.getTime() - 86_400_000).toISOString();
-  const asked = askedRows(db);
-  const lanes: Record<LaneKey, LaneRead> = {
-    asked: {
-      items: asked.map((r) =>
-        item(r, {
-          state: "waiting",
-          hint: "Ready.",
-        }),
-      ),
-      total: asked.length,
-    },
-    building: unique(building(runRows(db, "agent", "x.reason != 'review'", iso))),
-    checks: unique(checks(runRows(db, "check", "1 = 1", iso))),
-    review: unique(review(runRows(db, "agent", "x.reason = 'review'", iso))),
-    landing: landing(approvedRows(db), mergedRows(db, week)),
-    live: unique(live(deployRows(db, day))),
-  };
-  return { at: now.getTime(), lanes, stages: readPipeline(db, now) };
-}
-
-const kept = new WeakMap<
-  Database,
-  { stamp: string; at: number; picture: LanePicture }
+let worker: Worker | undefined;
+let jobId = 0;
+const open = new Map<
+  number,
+  { resolve: (p: LanePicture) => void; reject: (e: Error) => void }
 >();
 
-/**
- * The picture, from memory while nothing has been written: the same rows
- * serve every lane, every viewer and every tab until the write clock moves.
- */
-export function lanePicture(db: Database, now = Date.now()): LanePicture {
-  const stamp = writeStamp(db);
-  if (stamp === undefined) return readLanes(db, new Date(now));
-  const had = kept.get(db);
-  if (had !== undefined && had.stamp === stamp && now - had.at < MAX_AGE_MS)
-    return had.picture;
-  const picture = readLanes(db, new Date(now));
-  kept.set(db, { stamp, at: now, picture });
-  return picture;
+function workerOf(): Worker {
+  if (worker !== undefined) return worker;
+  const w = new Worker(new URL("./lanes_worker.ts", import.meta.url).href);
+  w.onmessage = (e: MessageEvent<LaneAnswer>) => {
+    const job = open.get(e.data.id);
+    open.delete(e.data.id);
+    if (job === undefined) return;
+    if (e.data.picture !== undefined) job.resolve(e.data.picture);
+    else
+      job.reject(new Error(e.data.error ?? "the lane worker answered nothing"));
+  };
+  w.onerror = (e) => {
+    if (worker === w) worker = undefined;
+    for (const [id, job] of open) {
+      open.delete(id);
+      job.reject(new Error(String(e.message ?? "the lane worker failed")));
+    }
+  };
+  w.unref();
+  return (worker = w);
 }
+
+/** The picture read by the worker: the thread only posts the job and receives the answer. */
+function viaWorker(
+  db: Database,
+  options: PictureOptions,
+  now: number,
+  stamp: string | undefined,
+): Promise<LanePicture> {
+  return new Promise((resolve, reject) => {
+    const id = ++jobId;
+    // A worker that never answers is dropped (`refresh` ends it), so the next reading starts a fresh one.
+    const deadline = setTimeout(() => reject(new Error("the lane worker did not answer")), JOB_LIMIT_MS);
+    deadline.unref?.();
+    open.set(id, {
+      resolve: (picture) => {
+        clearTimeout(deadline);
+        resolve(picture);
+      },
+      reject: (error) => {
+        clearTimeout(deadline);
+        reject(error);
+      },
+    });
+    try {
+      workerOf().postMessage({
+        id,
+        path: db.filename,
+        now,
+        stamp,
+        dataDir: options.dataDir,
+        ceilingUsd: options.ceilingUsd,
+      } satisfies LaneJob);
+    } catch (error) {
+      open.delete(id);
+      clearTimeout(deadline);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
+}
+
+/** A pause that does not hold the process, and that its caller can let go of. */
+function pause(ms: number): { readonly done: Promise<void>; readonly cancel: () => void } {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const done = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
+  return { done, cancel: () => clearTimeout(timer) };
+}
+
+/** Read on the calling thread: `bun test`, a database with no file, and the very first reading when the worker could not give one. */
+export function readLanesInline(
+  db: Database,
+  options: PictureOptions,
+  now = Date.now(),
+): LanePicture {
+  const stamp = writeStamp(db);
+  return compose(
+    readFast(db, new Date(now)),
+    readSlow(db, new Date(now), options),
+    now,
+    stamp,
+  );
+}
+
+const offThread = (db: Database): boolean =>
+  process.env["NODE_ENV"] !== "test" &&
+  db.filename !== "" &&
+  db.filename !== ":memory:";
+
+/** One reading at a time: whoever asks while one is under way waits for it. Never rejects. */
+function refresh(
+  db: Database,
+  options: PictureOptions,
+  state: State,
+  now: number,
+): Promise<LanePicture | undefined> {
+  if (state.inflight !== undefined) return state.inflight;
+  const stamp = writeStamp(db);
+  const reading = offThread(db)
+    ? viaWorker(db, options, now, stamp)
+    : Promise.resolve().then(() => readLanesInline(db, options, now));
+  const p = reading.then(
+    (picture) => {
+      state.picture = picture;
+      state.inflight = undefined;
+      return picture;
+    },
+    () => {
+      state.inflight = undefined;
+      // A failed or silent worker is ended; the next reading starts a new one.
+      worker?.terminate();
+      worker = undefined;
+      open.clear();
+      return undefined;
+    },
+  );
+  state.inflight = p;
+  return p;
+}
+
+/**
+ * The lanes' picture, for a page (`"page"`: drawn from the last reading when
+ * it is under ten seconds old) or for a lane that redraws after an event
+ * (`"lane"`: the reading after the write, awaited from the worker, never read
+ * by this thread). Nothing written since the last reading is a plain memory
+ * read.
+ */
+export async function lanePicture(
+  db: Database,
+  options: PictureOptions,
+  mode: "page" | "lane" = "lane",
+  now = Date.now(),
+): Promise<LanePicture> {
+  let state = states.get(db);
+  if (state === undefined) states.set(db, (state = {}));
+  const have = state.picture;
+  const stamp = writeStamp(db);
+  if (
+    have !== undefined &&
+    stamp !== undefined &&
+    have.stamp === stamp &&
+    now - have.at < MAX_AGE_MS
+  )
+    return have;
+  if (have === undefined)
+    return (
+      (await refresh(db, options, state, now)) ?? readLanesInline(db, options, now)
+    );
+  const age = now - have.at;
+  if (mode === "page" && age < PAGE_STALE_MS) {
+    if (age >= MIN_GAP_MS) void refresh(db, options, state, now);
+    return have;
+  }
+  // A burst of writes is one reading: wait out the gap, then ask the worker.
+  if (age < MIN_GAP_MS && state.inflight === undefined) {
+    const gap = pause(MIN_GAP_MS - age);
+    await gap.done;
+  }
+  const limit = pause(WAIT_MS);
+  const read = await Promise.race([refresh(db, options, state, now), limit.done.then(() => undefined)]);
+  limit.cancel();
+  return read ?? have;
+}
+
+// ---- a viewer's reading ----
 
 /** One lane as one viewer may read it: the picture's items in repositories they can read, never a sealed one. */
 export interface LaneView {
   readonly key: LaneKey;
+  /** The tiles the lane draws. */
   readonly items: readonly (LaneItem & {
     readonly repo: string;
     readonly href: string;
   })[];
-  /** Items in the lane, before the page's own list limit. */
+  /** Every item the picture holds for this viewer, for the lane's health. */
+  readonly all: readonly LaneItem[];
+  /** Items in the lane. */
   readonly total: number;
-  /** Items hidden by the viewer's access or the app filter are not counted here. */
+  /** Items past the tiles drawn. */
   readonly more: number;
 }
 
@@ -433,7 +294,6 @@ export interface Viewing {
   readonly lanes: Readonly<Record<LaneKey, LaneView>>;
   /** `owner/name` of every repository with something in the pipeline, for the filter. */
   readonly repos: readonly string[];
-  readonly stages: readonly PipelineStage[];
 }
 
 /** The picture filtered for `viewer`, and to `only` (an `owner/name`) when the filter is set. */
@@ -463,37 +323,43 @@ export function viewFor(
   for (const k of LANES) {
     const read = picture.lanes[k];
     const shown: (LaneItem & { repo: string; href: string })[] = [];
-    let visible = 0;
+    const all: LaneItem[] = [];
     for (const i of read.items) {
       const repo = repoOf(i.repoId);
       if (repo === undefined || i.sealed) continue;
       const full = `${repo.ownerName}/${repo.name}`;
       seen.add(full);
       if (only !== null && full !== only) continue;
-      visible++;
+      all.push(i);
       const base = `/${repo.ownerName}/${repo.name}`;
       const href =
         i.number === null
           ? base
           : `${base}/${i.kind === "pull" || i.kind === "deploy" ? "pulls" : "issues"}/${i.number}`;
-      shown.push({
-        ...i,
-        repo: full,
-        href: i.kind === "main" ? `${base}/runs` : href,
-      });
+      if (shown.length < LANE_ITEMS)
+        shown.push({
+          ...i,
+          repo: full,
+          href: i.kind === "main" ? `${base}/runs` : href,
+        });
     }
     // An admin reads every repository, so the lane's true total is theirs; anyone else counts what they could see.
     const total =
-      viewer.isAdmin && only === null ? Math.max(read.total, visible) : visible;
+      viewer.isAdmin && only === null
+        ? Math.max(read.total, all.length)
+        : all.length;
     lanes[k] = {
       key: k,
-      items: shown.slice(0, LANE_ITEMS),
+      items: shown,
+      all,
       total,
-      more: Math.max(0, total - Math.min(shown.length, LANE_ITEMS)),
+      more: Math.max(0, total - shown.length),
     };
   }
-  return { lanes, repos: [...seen].sort(), stages: picture.stages };
+  return { lanes, repos: [...seen].sort() };
 }
+
+// ---- a lane's health ----
 
 export type Tone = "quiet" | "flowing" | "waiting" | "stuck";
 
@@ -509,6 +375,8 @@ export interface HealthInput {
   readonly now: number;
   /** Builders running of their slots: names what an asked item waits on. */
   readonly builders: { readonly running: number; readonly slots: number };
+  /** Items that entered or left each lane in the last half hour: whether the lane is moving. */
+  readonly moved: Readonly<Record<LaneKey, number>>;
 }
 
 const plural = (n: number, one: string, many: string): string =>
@@ -516,49 +384,60 @@ const plural = (n: number, one: string, many: string): string =>
 const age = (since: string, now: number): number =>
   Math.max(0, now - Date.parse(since));
 
-/** The lane's own health: flowing, waiting on something named, or stuck, with the oldest item's age. */
-export function laneHealth(
-  view: LaneView,
-  stage: PipelineStage | undefined,
-  input: HealthInput,
-): Health {
+/**
+ * The lane's own health: flowing, waiting on something named, or stuck. A
+ * lane is judged by whether it is moving (something entered or left it in
+ * the last half hour), never by how old its oldest item is: a real forge's
+ * backlog is old and fine, and a lane that reads stuck forever says nothing.
+ */
+export function laneHealth(view: LaneView, input: HealthInput): Health {
   const { now } = input;
-  const items = view.items;
-  const waiting = items.filter((i) => i.state === "waiting");
-  const active = items.filter((i) => i.state === "active");
-  const oldestItem = waiting.reduce<(typeof items)[number] | undefined>(
+  const all = view.all;
+  const waiting = all.filter((i) => i.state === "waiting");
+  const active = all.filter((i) => i.state === "active");
+  const oldestItem = waiting.reduce<LaneItem | undefined>(
     (o, i) => (o === undefined || i.since < o.since ? i : o),
     undefined,
   );
   const oldestMs = oldestItem === undefined ? 0 : age(oldestItem.since, now);
   const oldest = oldestItem === undefined ? null : span(oldestMs);
+  const moved = input.moved[view.key];
+  const nWaiting = Math.max(waiting.length, view.total - active.length);
+  const nActive = active.length;
   const quiet: Health = {
     tone: "quiet",
     words: "Nothing here right now.",
     oldest: null,
   };
+  const free =
+    input.builders.slots > 0 && input.builders.running < input.builders.slots;
   switch (view.key) {
     case "asked": {
       if (view.total === 0)
         return { ...quiet, words: "Nothing is waiting to be built." };
-      const busy =
-        input.builders.slots > 0 &&
-        input.builders.running >= input.builders.slots;
-      const sinceReady =
-        stage?.oldestWaiting != null
-          ? span(now - Date.parse(stage.oldestWaiting))
-          : oldest;
-      const on = busy
-        ? `every builder is busy (${input.builders.running} of ${input.builders.slots})`
-        : "the crew has not picked it up yet";
-      const stuck =
-        stage?.oldestWaiting != null &&
-        now - Date.parse(stage.oldestWaiting) > 24 * 3_600_000 &&
-        !busy;
+      const n = plural(view.total, "ask is", "asks are");
+      if (input.builders.slots === 0)
+        return {
+          tone: "waiting",
+          words: `${n} ready and no builder slot is set, so nothing starts.`,
+          oldest: null,
+        };
+      if (!free)
+        return {
+          tone: "waiting",
+          words: `${n} ready. Every builder is busy (${input.builders.running} of ${input.builders.slots}); ${plural(moved, "build", "builds")} started in the last half hour.`,
+          oldest: null,
+        };
+      if (moved === 0)
+        return {
+          tone: "stuck",
+          words: `${n} ready and a builder is free, but no build has started in the last half hour: the crew is not taking them.`,
+          oldest: null,
+        };
       return {
-        tone: stuck ? "stuck" : "waiting",
-        words: `${plural(view.total, "ask is", "asks are")} ready and ${on}. The oldest has been ready for ${sinceReady ?? "a while"}.`,
-        oldest: sinceReady,
+        tone: "flowing",
+        words: `${n} ready and the crew is taking them: ${plural(moved, "build", "builds")} started in the last half hour.`,
+        oldest: null,
       };
     }
     case "building": {
@@ -573,21 +452,21 @@ export function laneHealth(
           words: `${plural(gone.length, "builder has", "builders have")} gone quiet for over ${span(QUIET_MS)}: they may be stuck.`,
           oldest,
         };
-      if (waiting.length > 0 && oldestMs > STUCK_WAIT_MS)
+      if (waiting.length > 0 && oldestMs > STUCK_WAIT_MS && free && moved === 0)
         return {
           tone: "stuck",
-          words: `A build has waited ${oldest} for a builder: the crew is not starting it.`,
+          words: `A build has waited ${oldest} for a builder, one is free and none has started: the crew is not starting it.`,
           oldest,
         };
-      if (waiting.length > 0)
+      if (nWaiting > 0)
         return {
           tone: "waiting",
-          words: `${plural(active.length, "builder is", "builders are")} working and ${waiting.length} more ${waiting.length === 1 ? "waits" : "wait"} for a free one.`,
+          words: `${plural(nActive, "builder is", "builders are")} working and ${nWaiting} more ${nWaiting === 1 ? "waits" : "wait"} for a free one.`,
           oldest,
         };
       return {
         tone: "flowing",
-        words: `${plural(active.length, "builder is", "builders are")} working, nothing is waiting.`,
+        words: `${plural(nActive, "builder is", "builders are")} working, nothing is waiting.`,
         oldest: null,
       };
     }
@@ -603,42 +482,42 @@ export function laneHealth(
           words: `A check has been running for over ${span(CHECK_LONG_MS)}, far longer than a check takes.`,
           oldest,
         };
-      if (waiting.length > 0 && oldestMs > STUCK_WAIT_MS)
+      if (waiting.length > 0 && oldestMs > STUCK_WAIT_MS && moved === 0)
         return {
           tone: "stuck",
-          words: `A check has waited ${oldest} for a free test runner.`,
+          words: `A check has waited ${oldest} for a free test runner and none has started in the last half hour.`,
           oldest,
         };
-      if (waiting.length > 0)
+      if (nWaiting > 0)
         return {
           tone: "waiting",
-          words: `${plural(active.length, "check is", "checks are")} running and ${waiting.length} ${waiting.length === 1 ? "waits" : "wait"} for a free test runner.`,
+          words: `${plural(nActive, "check is", "checks are")} running and ${nWaiting} ${nWaiting === 1 ? "waits" : "wait"} for a free test runner.`,
           oldest,
         };
       return {
         tone: "flowing",
-        words: `${plural(active.length, "check is", "checks are")} running, none waiting.`,
+        words: `${plural(nActive, "check is", "checks are")} running, none waiting.`,
         oldest: null,
       };
     }
     case "review": {
       if (view.total === 0)
         return { ...quiet, words: "No change is being reviewed." };
-      if (waiting.length > 0 && oldestMs > STUCK_WAIT_MS)
+      if (waiting.length > 0 && oldestMs > STUCK_WAIT_MS && moved === 0)
         return {
           tone: "stuck",
-          words: `A change has waited ${oldest} for a reviewer.`,
+          words: `A change has waited ${oldest} for a reviewer and none has started reading in the last half hour.`,
           oldest,
         };
-      if (waiting.length > 0)
+      if (nWaiting > 0)
         return {
           tone: "waiting",
-          words: `${plural(active.length, "reviewer is", "reviewers are")} reading and ${waiting.length} ${waiting.length === 1 ? "change waits" : "changes wait"} for one.`,
+          words: `${plural(nActive, "reviewer is", "reviewers are")} reading and ${nWaiting} ${nWaiting === 1 ? "change waits" : "changes wait"} for one.`,
           oldest,
         };
       return {
         tone: "flowing",
-        words: `${plural(active.length, "change is", "changes are")} being read by a reviewer.`,
+        words: `${plural(nActive, "change is", "changes are")} being read by a reviewer.`,
         oldest: null,
       };
     }
@@ -650,21 +529,25 @@ export function laneHealth(
         queued > 0
           ? ` The merge queue is testing ${plural(queued, "change", "changes")} together before they land.`
           : "";
-      if (waiting.length > 0 && oldestMs > LAND_STUCK_MS)
+      const lately =
+        moved > 0
+          ? ` ${plural(moved, "change", "changes")} landed in the last half hour.`
+          : "";
+      if (waiting.length > 0 && oldestMs > LAND_STUCK_MS && moved === 0)
         return {
           tone: "stuck",
-          words: `${plural(waiting.length, "approved change has", "approved changes have")} waited for you for ${oldest}.${via}`,
+          words: `${plural(nWaiting, "approved change has", "approved changes have")} waited for you, the oldest for ${oldest}, and nothing has landed in the last half hour.${via}`,
           oldest,
         };
-      if (waiting.length > 0)
+      if (nWaiting > 0)
         return {
           tone: "waiting",
-          words: `${plural(waiting.length, "approved change waits", "approved changes wait")} for you to land ${waiting.length === 1 ? "it" : "them"}; the oldest has waited ${oldest}.${via}`,
+          words: `${plural(nWaiting, "approved change waits", "approved changes wait")} for you to land ${nWaiting === 1 ? "it" : "them"}; the oldest has waited ${oldest}.${lately}${via}`,
           oldest,
         };
       return {
         tone: "flowing",
-        words: `${plural(active.length, "change is", "changes are")} merged and on the way to the live app.${via}`,
+        words: `${plural(nActive, "change is", "changes are")} merged and on the way to the live app.${via}`,
         oldest: null,
       };
     }
@@ -675,7 +558,7 @@ export function laneHealth(
           words: "Nothing has gone live in the last 24 hours.",
         };
       const going = active.length;
-      const newest = items.find((i) => i.state === "done");
+      const newest = all.find((i) => i.state === "done");
       const last =
         newest === undefined
           ? ""

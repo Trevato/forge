@@ -13,7 +13,7 @@
 - `.lane-health`, `.lane-state` — the lane's own health, a dot and a word, then a full sentence saying what it waits on and how old its oldest item is.
 - `.lane-list` — the lane's tiles, in the order the next worker takes them.
 - `.lane-more`, `.lane-more-lg`, `.lane-more-md`, `.lane-more-sm` — "N more" under the tiles; one of the three shows, by how many tiles the screen draws.
-- `.tile`, `.tile-link`, `.tile-top`, `.tile-app`, `.tile-no`, `.tile-clock`, `.tile-title`, `.tile-hint`, `.tile-who`, `.tile-more` — one change: the app and number, how long it has been in this lane, its title in plain words, who has it and one sentence of where it is. `data-key` is stable across lanes, so the page glides a tile from the lane it left to the lane it reached (`home_flow_client.ts`); `data-state` is `waiting`, `active` (a pulse on the clock) or `done` (live).
+- `.tile`, `.tile-link`, `.tile-top`, `.tile-app`, `.tile-no`, `.tile-clock`, `.tile-title`, `.tile-hint`, `.tile-who` — one change: the app and number, how long it has been in this lane, its title in plain words, who has it and one sentence of where it is. `data-key` is stable across lanes, so the page glides a tile from the lane it left to the lane it reached (`home_flow_client.ts`); `data-state` is `waiting`, `active` (a pulse on the clock) or `done` (live).
 - `.hf-forges` — the hosted forges in one line: how many, how many awake, any that is awake but silent.
 - `.hf-foot` — the way back to the classic home, and the feed.
 

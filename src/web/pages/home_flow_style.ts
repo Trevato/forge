@@ -65,7 +65,7 @@ export const homeFlowCss = /* css */ `
 .tile-clock { flex: none; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
 .tile[data-state="active"] .tile-clock::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 6px; vertical-align: 1px; border-radius: 999px; background: var(--accent); animation: hf-pulse 1.8s ease-in-out infinite; }
 .tile-title { display: -webkit-box; overflow: hidden; font-size: 13px; line-height: 18px; overflow-wrap: anywhere; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.tile-hint, .tile-more { font-size: var(--fs-min); line-height: 16px; color: var(--muted-fg); }
+.tile-hint { font-size: var(--fs-min); line-height: 16px; color: var(--muted-fg); }
 .tile-who { font-weight: 600; color: var(--fg); }
 .tile[data-new] { animation: hf-arrive 900ms var(--ease); }
 .lane-more { margin: 0; padding-inline: 4px; font-size: 13px; }
