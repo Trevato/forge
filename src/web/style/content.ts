@@ -401,8 +401,7 @@ form.inline { display: inline; margin-left: auto; }
 .bar > .menu > summary { max-width: 100%; min-width: 0; }
 .bar > .menu > summary .truncate { min-width: 0; }
 .prose img { max-width: 100%; height: auto; }
-.prose pre, .prose table { max-width: 100%; overflow-x: auto; }
-.prose table { display: block; }
+.prose pre { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
 
 /* The generic two-column page: content, then a sidebar that sticks. */
 .split { display: grid; gap: 16px; margin-top: 16px; align-items: start; }
@@ -627,11 +626,28 @@ form.inline { display: inline; margin-left: auto; }
 }
 .prose a:hover { text-decoration-color: currentColor; }
 .prose img { border-radius: var(--radius-sm); }
-.prose table { width: 100%; font-size: 14px; margin: 14px 0; }
-.prose th, .prose td { padding: 6px 10px; border: 1px solid var(--border); text-align: left; }
-.prose th { background: var(--muted); font-weight: 600; }
+/* A markdown table is wide by nature: it keeps its own width (headers on one line, body cells wrap only past 32ch)
+   and scrolls sideways inside its one frame, with momentum, never the page. The edge shadows are the old
+   local/scroll trick: a shadow fixed to each edge, covered by a page-colour patch that scrolls with the content,
+   so a shadow shows only on the side that has more. */
+.prose .table-scroll {
+  margin: 14px 0; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain;
+  scrollbar-width: thin; border-radius: var(--radius-sm);
+  --edge: color-mix(in srgb, var(--fg) 16%, transparent); --cover: var(--card);
+  background:
+    linear-gradient(to right, var(--cover) 30%, transparent) left center / 28px 100% no-repeat local,
+    linear-gradient(to left, var(--cover) 30%, transparent) right center / 28px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, var(--edge), transparent) left center / 10px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, var(--edge), transparent) right center / 10px 100% no-repeat scroll;
+}
+.prose.prose-page .table-scroll { --cover: var(--bg); }
+.prose .table-scroll:focus-visible { outline: 1px solid var(--fg); outline-offset: 2px; }
+.prose table { width: max-content; min-width: 100%; max-width: none; font-size: 14px; }
+.prose th, .prose td { padding: 6px 10px; border: 1px solid var(--border); text-align: left; overflow-wrap: normal; }
+.prose th { background: color-mix(in srgb, var(--muted) 72%, transparent); font-weight: 600; white-space: nowrap; }
+.prose td { max-width: 32ch; min-width: 4ch; }
 .prose .ta-c { text-align: center; }
-.prose .ta-r { text-align: right; }
+.prose .ta-r { text-align: right; font-variant-numeric: tabular-nums; }
 .prose hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
 
 /* ---- diff viewer ---- */
