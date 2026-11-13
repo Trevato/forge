@@ -321,12 +321,6 @@ const app = createApp({
   Number(process.env.FORGE_CREW_ISSUE_RUNS) > 0
     ? { issueRunCap: Number(process.env.FORGE_CREW_ISSUE_RUNS) }
     : {}),
-  // FORGE_CREW_DIRECTION_RUNS: planning passes the direction issue may start
-  // in a day; the planner is otherwise paced, never capped (#2143).
-  ...(Number.isInteger(Number(process.env.FORGE_CREW_DIRECTION_RUNS)) &&
-  Number(process.env.FORGE_CREW_DIRECTION_RUNS) > 0
-    ? { directionRunCap: Number(process.env.FORGE_CREW_DIRECTION_RUNS) }
-    : {}),
   ...((process.env.FORGE_EDGE_NAME ?? "").trim() === ""
     ? {}
     : { edgeName: (process.env.FORGE_EDGE_NAME ?? "").trim() }),

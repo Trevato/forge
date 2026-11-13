@@ -10,8 +10,7 @@
  *   unless a person has said what to try since (`shunnedBy`): another
  *   builder tries it fresh.
  * - A second stall strikes it out like any second park (`parks.ts`) and it
- *   goes to the planner with every reason — past the direction's day's
- *   planning cap, since unsticking is not planning (`unstickOwed`).
+ *   goes to the planner with every reason.
  */
 
 import type { Database } from "bun:sqlite";
@@ -21,7 +20,6 @@ import { PULL_STOPPED } from "../core/runs.ts";
 import { getUserById } from "../core/users.ts";
 import { speaksForCrew } from "./direct.ts";
 import { interruptionOf } from "./interrupted.ts";
-import { parkedTwice } from "./parks.ts";
 
 /** What every stall's park reason says, whoever writes it. */
 export const NO_PULL = "run ended without a pull";
@@ -80,16 +78,5 @@ export function shunnedBy(db: Database, repo: Repo, issueId: string, now: Date):
     .filter((w) => speaksForCrew(db, repo, getUserById(db, w.id)));
   return new Set(
     stalls.filter((r) => !words.some((w) => w.at > r.at)).map((r) => r.actor),
-  );
-}
-
-/**
- * Whether the crew handed the planner an issue struck out by a stall since
- * `since` (its last pass on the direction): that pass is owed whatever the
- * direction's day's cap.
- */
-export function unstickOwed(db: Database, repo: Repo, since: string): boolean {
-  return parkedTwice(db, [repo]).some(
-    (issue) => issue.at > since && (issue.reasons.at(-1) ?? "").includes(NO_PULL),
   );
 }

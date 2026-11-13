@@ -114,9 +114,9 @@ import { BREAKER_NOTE, breakerTripped } from "./breaker.ts";
 import { REPEAT_NOTE } from "./repeat_note.ts";
 import { given, pendingReplans } from "../core/limb_replan.ts";
 import { handedOverPulls, SKIP_SUMMARY, skipsReplan } from "./guard.ts";
-import { atRunCap, type Held, heldBy, heldWords, replannable } from "./held.ts";
+import { type Held, heldBy, heldWords, replannable } from "./held.ts";
 import { holdHot, hotFiles, hotWords, learnPullFiles } from "./hot_files.ts";
-import { landedUnder, NO_PULL, stallReason, unstickOwed } from "./stalls.ts";
+import { landedUnder, NO_PULL, stallReason } from "./stalls.ts";
 import { alreadyDone, BY_CREW, DONE_LIKE } from "../core/done_on_main.ts";
 import { repoDir } from "../git/repos.ts";
 import { ALREADY_NOTE, alreadyDoneOids } from "./already.ts";
@@ -812,10 +812,8 @@ async function planIfThin(
   const unstuck = stuck === null ? [] : replannable(stuck).filter((issue) => heldSince(app, issue, seen));
   const news = owed.length + unstuck.length + limbsOwed.length;
   // The direction is the planner's standing issue, not one issue retried:
-  // it is held to its own day's share, never the builders' cap (#2143).
-  // Except for an issue struck out by a stall: unsticking is not planning (#4073).
-  if (atRunCap(app, repo, direction) && !unstickOwed(app.db, repo, seen))
-    return notPlanned(repo, "parked: the direction is at its day's planning cap");
+  // no run count bounds it. The budget does, the breaker, and a pass that
+  // would plan the same input twice is skipped (`plannerNothingNew`).
   // An issue the crew handed over is owed its pass whatever the hold: the
   // planner splitting it is how work starts landing again.
   const hold = news === 0 ? plannerHold(app, repo, now) : null;

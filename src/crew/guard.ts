@@ -10,8 +10,8 @@
  *   person who may direct the crew last spoke is capped: parked with one
  *   note, raised as one ask, and given nothing more until that person
  *   speaks. A loop is a question, not a retry. The direction issue is not
- *   one issue retried but the planner's standing one: it is paced
- *   (`autonomy.ts`) and bounded by its own, generous `directionRunCap`.
+ *   one issue retried but the planner's standing one: it has no cap, only
+ *   the budget, the breaker and the nothing-new skip above.
  *
  * Each skip and each cap is a row in the decision ledger (kind `guard`,
  * by `rule`), so what the guard saved can be counted (`guardCounts`).
@@ -29,21 +29,14 @@ import { nothingNew, plannerNothingNew } from "./news.ts";
 /** Runs one issue may start in `CAP_WINDOW_MS` unless the setting says otherwise. */
 export const ISSUE_RUN_CAP = 6;
 export const CAP_WINDOW_MS = 24 * 60 * 60_000;
-/**
- * Planning passes the direction issue may start in `CAP_WINDOW_MS` unless
- * the setting says otherwise. Generous: the planner is already paced by the
- * replan floor, the breaker, its hold and the dollar ceiling (#2143).
- */
-export const DIRECTION_RUN_CAP = 48;
-
-/** The run cap that applies to `issue`: the direction's own, or the issue cap. */
+/** The run cap that applies to `issue`: the issue cap; the direction has none, the budget bounds the planner. */
 export function runCapOf(
   repo: Repo,
   issue: Issue,
-  caps: { readonly issueRunCap?: number; readonly directionRunCap?: number },
+  caps: { readonly issueRunCap?: number },
 ): number {
   return issue.id === repo.directionIssueId
-    ? (caps.directionRunCap ?? DIRECTION_RUN_CAP)
+    ? Number.POSITIVE_INFINITY
     : (caps.issueRunCap ?? ISSUE_RUN_CAP);
 }
 

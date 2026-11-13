@@ -109,11 +109,6 @@ export interface ForgeConfig {
    */
   issueRunCap?: number;
   /**
-   * How many planning passes the direction issue may start in a day
-   * (`crew/guard.ts`). Undefined is `DIRECTION_RUN_CAP`.
-   */
-  directionRunCap?: number;
-  /**
    * Where mail goes out: SMTP submission (`FORGE_SMTP_URL`, `FORGE_MAIL_FROM`).
    * Undefined is a forge that sends no mail; a newcomer's email then waits
    * for the owner's word.
