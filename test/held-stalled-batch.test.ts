@@ -62,3 +62,29 @@ test("stalled agrees with its own read for issues never run, queued, left withou
   expect(issues.map((i) => stalled(app, repo, i, last))).toEqual(answers);
   expect(answers).toEqual([false, true, true, false, false]);
 });
+
+test("the batched run cap agrees with capReached, with and without a director's word", async () => {
+  const { capReached, capReachedFor, runCapOf } = await import("../src/crew/guard.ts");
+  const { addComment } = await import("../src/actions/issues.ts");
+  const { getUserByName } = await import("../src/core/users.ts");
+  const { listIssues } = await import("../src/core/issues.ts");
+  const { getRepo: getRepoByName } = await import("../src/core/repos.ts");
+  const alice = getUserByName(app.db, "alice")!;
+  const repo = getRepoByName(app.db, "alice", "shop")!;
+  const issues = listIssues(app.db, repo.id, { state: "open", kind: "issue" });
+  expect(issues.length).toBeGreaterThan(2);
+  const now = new Date();
+  const mk = (issue: Issue, n: number) => {
+    for (let k = 0; k < n; k++) {
+      const r = createRun(app.db, { repoId: repo.id, kind: "agent", reason: "assigned", issueId: issue.id });
+      app.db.query("UPDATE run SET created_at = ?1 WHERE id = ?2").run(new Date(now.getTime() - 60_000 * (k + 1)).toISOString(), r.id);
+    }
+  };
+  mk(issues[0]!, 12);
+  mk(issues[1]!, 12);
+  expect(addComment(app, alice, repo, issues[1]!, "go again").ok).toBe(true);
+  const caps = (i: Issue) => runCapOf(repo, i, app.config);
+  const batch = capReachedFor(app.db, repo, issues, caps, now);
+  for (const i of issues) expect(batch.get(i.id)).toBe(capReached(app.db, repo, i, caps(i), now));
+  expect(batch.get(issues[0]!.id)).toBe(true);
+});
