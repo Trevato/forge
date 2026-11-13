@@ -13,7 +13,7 @@ import { timeAgo } from "../ui.ts";
 import { VERB_WORDS } from "../../actions/asks_words.ts";
 import { span, STAGE_LABEL, verdict, type PipelineKey, type PipelineStage } from "../../flow/pipeline.ts";
 
-export type CardKind = "app" | "run" | "asks" | "wave" | "map" | "feed" | "pull" | "pulls" | "runs" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones" | "release" | "releases" | "search" | "issues" | "forges" | "held" | "drill" | "reports" | "usage" | "health" | "capacity";
+export type CardKind = "app" | "run" | "asks" | "wave" | "map" | "feed" | "pull" | "pulls" | "runs" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones" | "release" | "releases" | "search" | "issues" | "forges" | "held" | "drill" | "reports" | "usage" | "health" | "capacity" | "forge";
 
 export interface CardRow {
   readonly label: string;
@@ -46,7 +46,7 @@ const here = (origin: string, path: string): boolean => origin !== "" && /^\/(?!
 
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "asks", "wave", "map", "feed", "pull", "pulls", "runs", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones", "release", "releases", "search", "issues", "held", "forges", "drill", "reports", "usage", "health", "capacity"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "asks", "wave", "map", "feed", "pull", "pulls", "runs", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones", "release", "releases", "search", "issues", "held", "forges", "drill", "reports", "usage", "health", "capacity", "forge"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
@@ -80,6 +80,7 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   reports: "reports",
   usage: "usage",
   health: "health",
+  forge_view: "forge",
   capacity: "capacity",
   crew: "crew",
 };
@@ -114,6 +115,7 @@ const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   usage: "Spend",
   health: "Forge health",
   capacity: "Capacity",
+  forge: "The forge",
 };
 
 type Obj = Record<string, unknown>;
@@ -123,6 +125,19 @@ const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const text = (v: unknown): string =>
   typeof v === "string" ? v : typeof v === "number" ? String(v) : "";
 const LIMIT = 12;
+/** Longest title a row carries; the whole title stays in the tool's text. */
+export const TITLE_CHARS = 90;
+/** One line: whitespace folded, cut at `max` on a word where it can, with an ellipsis. */
+export function clip(v: unknown, max = TITLE_CHARS): string {
+  const s = text(v).replace(/\s+/g, " ").trim();
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max - 1);
+  const at = cut.lastIndexOf(" ");
+  return `${(at > max / 2 ? cut.slice(0, at) : cut).trimEnd()}…`;
+}
+/** "3 red · 2 green": the counts of `words` that occur, in the order given, zero left out. */
+const tally = (words: readonly string[], order: readonly string[]): string =>
+  order.map((w) => [w, words.filter((x) => x === w).length] as const).filter(([, n]) => n > 0).map(([w, n]) => `${n} ${w}`).join(" · ");
 const FEED_LIMIT = 20;
 
 /** A pull's review word: the pile's `verdict`, or the counts a repository's list carries. */
@@ -486,6 +501,33 @@ export function cardFor(
     const ver = text(v["version"]);
     return { kind, title: CARD_TITLE[kind], status: `${v["ok"] ? "green" : "red"}${ver === "" ? "" : ` · ${ver}`}`, rows, actions };
   }
+  if (kind === "forge") {
+    // `forge_view` answers `{ counts, apps: [{ app, running, queued }], runs, health }`:
+    // the verdict first,
+    // then the apps with work going, busiest first; the quiet ones are counted, not listed.
+    const v = obj(value);
+    const c = obj(v["counts"]);
+    if (!("counts" in v)) return undefined;
+    const link = web(origin) ? { link: `${origin}/` } : {};
+    const ok = obj(v["health"])["ok"];
+    const busy = list(v["apps"]).map(obj)
+      .map((a) => ({ app: text(a["app"]), running: Number(a["running"]) || 0, queued: Number(a["queued"]) || 0 }))
+      .filter((a) => a.running + a.queued > 0)
+      .sort((a, b) => b.running + b.queued - (a.running + a.queued));
+    for (const a of busy.slice(0, LIMIT))
+      rows.push({
+        label: a.app,
+        value: [a.running > 0 ? `${a.running} running` : "", a.queued > 0 ? `${a.queued} queued` : ""].filter((w) => w !== "").join(" · "),
+        ...(web(origin) && slugOf(a.app) ? { link: `${origin}/${a.app}` } : {}),
+      });
+    if (busy.length > LIMIT) rows.push({ label: "More", value: `${busy.length - LIMIT} more busy apps not shown`, ...link });
+    const apps = Number(c["apps"]) || 0;
+    rows.push({ label: "Apps", value: `${apps} in all${busy.length === 0 ? " · none busy" : ""}`, ...link });
+    const waiting = Number(c["waiting"]) || 0;
+    if (waiting > 0) rows.push({ label: "Waiting", value: `${waiting} waiting on you`, ...link });
+    const going = [Number(c["running"]) > 0 ? `${Number(c["running"])} running` : "", Number(c["queued"]) > 0 ? `${Number(c["queued"])} queued` : ""].filter((w) => w !== "").join(" · ");
+    return { kind, title: CARD_TITLE[kind], status: `${ok === true ? "healthy" : ok === false ? "needs attention" : "health unknown"} · ${going === "" ? "crew idle" : going}`, rows, actions };
+  }
   if (kind === "capacity") {
     // `listCapacity`: `{ settings: [{ label, value, source }], egress, selfSwap }`; a plan or a change has no `settings`.
     const v = obj(value);
@@ -630,7 +672,7 @@ export function cardFor(
       rows.push({ label: "Conflicts", value: conflicts.slice(0, LIMIT).join(", ") });
     const preview = text(extra["preview"]);
     if (web(preview)) rows.push({ label: "Preview", value: preview, link: preview });
-    return { kind, title: `#${number} ${text(p["title"])}`.trim(), status, rows, actions };
+    return { kind, title: `#${number} ${clip(p["title"])}`.trim(), status, rows, actions };
   }
   if (kind === "search") {
     // `search` answers `{ repos, issues, code, … }`; the query comes in `extra`. One row per hit:
@@ -649,7 +691,7 @@ export function cardFor(
       const ext = text(r["htmlUrl"]);
       hits.push({
         label,
-        value: text(r["description"]) || `${text(r["openIssues"])} open issues`,
+        value: clip(r["description"], SAYS_WORDS) || `${text(r["openIssues"])} open issues`,
         ...(local ? page(text(r["owner"]), text(r["name"])) : web(ext) ? { link: ext } : {}),
       });
     }
@@ -660,7 +702,7 @@ export function cardFor(
       const at = obj(i["repo"]);
       const ext = text(i["htmlUrl"]);
       hits.push({
-        label: `${pull ? "pull" : "issue"} #${n} ${text(i["title"])}`.trim(),
+        label: `${pull ? "pull" : "issue"} #${n} ${clip(i["title"])}`.trim(),
         value: [text(i["state"]), ...(local && untrusted.has(`${text(at["owner"])}/${text(at["name"])}#${n}`) ? ["untrusted"] : [])].join(" · "),
         ...(local && /^[1-9]\d*$/.test(n)
           ? page(text(at["owner"]), text(at["name"]), `/${pull ? "pulls" : "issues"}/${n}`)
@@ -689,10 +731,12 @@ export function cardFor(
     const slug = text(extra["repo"]);
     const pillars = obj(extra["pillars"]);
     const waits = obj(extra["waits"]);
+    // A state every row shares is the status line's; a row keeps it only as the odd one out.
+    const mixed = new Set(items.map((i) => text(i["state"]))).size > 1;
     for (const i of items.slice(0, ISSUES_ROWS)) {
       const n = text(i["number"]);
       const path = `/${slug}/issues/${n}`;
-      const parts = [text(i["state"])];
+      const parts = mixed ? [text(i["state"])] : [];
       const pillar = text(pillars[n]);
       if (pillar !== "") parts.push(pillar);
       // A blocker here is its number; one in another repository is `owner/name#number`.
@@ -700,13 +744,16 @@ export function cardFor(
       if (on.length > 0) parts.push(`waits on ${on.map((x) => (x.includes("#") ? x : `#${x}`)).join(" ")}`);
       if (i["untrusted"] === true) parts.push("untrusted");
       rows.push({
-        label: `#${n} ${text(i["title"])}`.trim(),
+        label: `#${n} ${clip(i["title"])}`.trim(),
         value: parts.join(" · "),
         ...(web(origin) && slugOf(slug) && /^[1-9]\d*$/.test(n) && here(origin, path) ? { link: origin + path } : {}),
       });
     }
     const more = text(obj(value)["next_cursor"]) !== "" ? "+" : "";
-    status = `${items.length}${more} issue${items.length === 1 && more === "" ? "" : "s"}`;
+    const one = text(items[0]?.["state"]);
+    status = mixed
+      ? `${items.length}${more} issues · ${tally(items.map((i) => text(i["state"])), ["open", "closed"])}`
+      : `${items.length}${more} ${one === "" ? "" : `${one} `}issue${items.length === 1 && more === "" ? "" : "s"}`;
     return { kind, title: CARD_TITLE[kind], status, rows, actions };
   }
   if (kind === "pulls") {
@@ -715,8 +762,10 @@ export function cardFor(
     const pulls = list(obj(value)["pulls"]).map(obj);
     // The tool stops at `limit`: a full answer may be the first of more.
     const cut = typeof extra["limit"] === "number" && pulls.length >= extra["limit"];
-    status = `${pulls.length}${cut ? "+" : ""} ${extra["state"] === "closed" ? "closed" : "open"}`;
     const state = extra["state"] === "closed" ? "closed" : "open";
+    // The state is the status line's, said once; a row says only what differs between rows.
+    const checks = pulls.map((p) => checkWord(text(p["check"])));
+    status = [`${pulls.length}${cut ? "+" : ""} ${state}`, state === "open" ? tally(checks, ["red", "running", "green"]) : ""].filter((w) => w !== "").join(" · ");
     for (const p of pulls.slice(0, PULLS_LIMIT)) {
       const number = text(p["number"]);
       const check = text(p["check"]);
@@ -725,8 +774,8 @@ export function cardFor(
       const verdict = text(p["verdict"]);
       const review = reviewWord(verdict, Number(p["approvals"]), Number(p["changesRequested"]));
       rows.push({
-        label: `#${number} ${text(p["title"])}`.trim(),
-        value: `${state} · ${checkWord(check)} · ${review}`,
+        label: `#${number} ${clip(p["title"])}`.trim(),
+        value: `${checkWord(check) === "none" ? "no check" : `check ${checkWord(check)}`} · ${review}`,
         ...(web(origin) && slugOf(slug) && /^[1-9]\d*$/.test(number) && here(origin, path)
           ? { link: origin + path }
           : {}),
@@ -758,7 +807,7 @@ export function cardFor(
         : ` · ${span(ended - started)}`;
       const path = `/${slug}/runs/${text(r["id"])}`;
       rows.push({
-        label: `${RUN_GLYPH[state] ?? "·"} ${text(r["kind"])}${number === "" ? "" : ` #${number}`}${title === "" ? "" : ` ${title}`}`,
+        label: `${RUN_GLYPH[state] ?? "·"} ${text(r["kind"])}${number === "" ? "" : ` #${number}`}${title === "" ? "" : ` ${clip(title)}`}`,
         value: `${state}${length}`,
         ...(web(origin) && slugOf(slug) && RUN_ID.test(text(r["id"])) && here(origin, path)
           ? { link: origin + path }
@@ -848,7 +897,7 @@ export function cardFor(
     const base = web(origin) && /^[^/\s]+\/[^/\s]+$/.test(slug) ? `${origin}/${slug}/issues/` : "";
     const at = (n: string): { link?: string } => (base !== "" && /^\d+$/.test(n) ? { link: base + n } : {});
     status = text(v["state"]) + (v["closeReason"] ? ` · ${text(v["closeReason"])}` : "");
-    rows.push({ label: `#${number}`, value: text(v["title"]), ...at(number) });
+    rows.push({ label: "On the forge", value: `${slug} #${number}`.trim(), ...at(number) });
     // The title is an outsider's when the answer says so; the card says so too.
     if (v["untrusted"] === true) rows.push({ label: "Author", value: "untrusted: not a writer on this repository" });
     rows.push({ label: "Assignee", value: text(v["assignee"]) || "nobody" });
@@ -856,7 +905,7 @@ export function cardFor(
     if (labels.length > 0) rows.push({ label: "Labels", value: labels.join(", ") });
     for (const b of list(v["blockedBy"]).map(obj).slice(0, LIMIT))
       rows.push({ label: "Waits for", value: `#${text(b["number"])} · ${text(b["state"])}`, ...at(text(b["number"])) });
-    return { kind, title: `Issue #${number}`, status, rows, actions };
+    return { kind, title: `#${number} ${clip(v["title"])}`.trim(), status, rows, actions };
   }
   if (kind === "app") {
     const apps = list(value).map(obj);
@@ -1145,7 +1194,7 @@ report();
 `;
 
 const pal = (t: "light" | "dark"): string => `--c-bg:${CARD_PALETTE[t].bg};--c-fg:${CARD_PALETTE[t].fg};--c-link:${CARD_PALETTE[t].link};color-scheme:${t}`;
-export const CARD_CSS = `:root{${pal("light")}}@media(prefers-color-scheme:dark){:root{${pal("dark")}}}:root[data-theme=light]{${pal("light")}}:root[data-theme=dark]{${pal("dark")}}body{font:14px/1.4 var(--font-sans,system-ui,sans-serif);margin:0;padding:12px;background:var(--c-bg);color:var(--c-fg)}h2{margin:0 0 4px;font-size:16px}.status{margin:0 0 8px}dl{margin:0}dt{font-weight:600;margin-top:6px}dd{margin:0}a{color:var(--c-link);text-underline-offset:2px;display:inline-flex;align-items:center;min-height:44px}button,input{font:inherit;color:var(--c-fg);border:0;background:color-mix(in srgb,var(--c-fg) 12%,var(--c-bg));border-radius:var(--border-radius-sm,6px);min-height:44px;box-sizing:border-box}button{margin:8px 6px 0 0;padding:4px 12px}input{padding:4px 8px;width:100%;margin-top:8px}`;
+export const CARD_CSS = `:root{${pal("light")}}@media(prefers-color-scheme:dark){:root{${pal("dark")}}}:root[data-theme=light]{${pal("light")}}:root[data-theme=dark]{${pal("dark")}}body{font:14px/1.4 var(--font-sans,system-ui,sans-serif);margin:0;padding:12px;background:var(--c-bg);color:var(--c-fg)}h2{margin:0 0 4px;font-size:16px}.status{margin:0 0 8px}dl{margin:0}h2,dt,dd{overflow-wrap:anywhere}.status{opacity:.85}dt{font-weight:600;margin-top:10px;padding-top:8px;border-top:1px solid color-mix(in srgb,var(--c-fg) 15%,var(--c-bg))}dt:first-child{border-top:0;padding-top:0}dd{margin:0;opacity:.85}a{color:var(--c-link);text-underline-offset:2px;display:inline-flex;align-items:center;min-height:44px}button,input{font:inherit;color:var(--c-fg);border:0;background:color-mix(in srgb,var(--c-fg) 12%,var(--c-bg));border-radius:var(--border-radius-sm,6px);min-height:44px;box-sizing:border-box}button{margin:8px 6px 0 0;padding:4px 12px}input{padding:4px 8px;width:100%;margin-top:8px}`;
 
 export const CARD_SHELL = (kind: CardKind): string =>
   html`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="color-scheme" content="light dark"><title>${CARD_TITLE[kind]}</title><style>${raw(CARD_CSS)}</style><div id="card"><h2>${CARD_TITLE[kind]}</h2></div><script>${raw(SHELL_JS)}</script>`.text;

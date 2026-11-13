@@ -113,7 +113,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `follow_mode` | — | How a fork follows its parent: take updates, tell me, or don't follow | 281 |
 | `following` | — | Where a fork stands against what it follows: in step, behind, ahead, diverged | 243 |
 | `forge_proposals` | — | What this forge proposed to its parent; `reachable` false if it is silent | 245 |
-| `forge_view` | — | The forge as one picture: counts, apps, runs with stations, health | 189 |
+| `forge_view` | — | The forge as one picture: counts, apps, runs with stations, health | 239 |
 | `forges` | — | Forges sent from here (admin; a stage says when to resend), or one forge's plan to read or grant | 387 |
 | `fork` | — | Fork a repository into your account; for a guest, a copy to send changes back from | 232 |
 | `fork_tree` | — | The fork tree around a repo: ancestors, siblings and descendants you may read | 397 |
@@ -533,6 +533,7 @@ answers
 | `ui://forge/scorecard` | `scorecard` | The crew's scorecard, one row per agent: landed and red rate all time, then the week (forge admin). |
 | `ui://forge/crew` | `now`, `crew` | `now`: what the crew is doing right now, with Stop buttons. `crew` (listing): one row per seat, who fills it and what runs and waits, or what it costs to leave it empty; linked to Settings › Crew. |
 | `ui://forge/health` | `health` | Green or red with the version, then one row per cause: draining, a blocked rollout, degraded lanes, incidents, apps (an admin sees all; a stranger only the verdict). |
+| `ui://forge/forge` | `forge_view` | The forge in one card: healthy or not and what is running, then the apps with work going, busiest first; quiet apps and what waits on you are counted. |
 | `ui://forge/capacity` | `capacity` (listing, admin) | One row per setting with its live value (set ones marked), linked to Settings › Capacity; says when the forge cannot swap itself. |
 | `ui://forge/board` | `boards` | One board's panels (person admins). |
 | `ui://forge/forks` | `fork_tree`, `forks` | The fork tree around a repository, each row with how it follows; `forks` a row per fork with its commits ahead and behind, `kind: chain` its chain (a severed chain says so); each linked to the repository, at most 30 and one More row. |
@@ -547,6 +548,8 @@ answers
 | `ui://forge/reports` | `reports` (listing) | Waiting reports from outsiders: one row each, its state and who filed it, linked to the repository's reports. |
 | `ui://forge/usage` | `usage` | The window's figures as rows: runs, cost and tokens, by agent for a repo, or today and last 24 hours with each account's headroom. |
 
+  **Who controls what (#11956).** The host (ChatGPT, Claude) controls the frame around a card: its size limits, border, theme variables, whether it opens a `ui://` page at all, and the tool's name and description in its picker (so a generic line such as "Find issues, pulls…" is the tool's `description`, which is for the model and is held to the size ceiling; the card cannot change it). Forge controls what is inside the frame: `structuredContent.card` (`title`, `status`, `rows` of `label`, `value`, `link`, `depth`, `actions`) and the one page that draws it (`CARD_SHELL`). A host that does not render `ui://` pages shows only the text answer, so the text always carries the full data; the card is a summary of it. Not promised: fonts, per-row colour, truncation by the host, or any widget beyond title, status, rows, links and buttons. Not tested in the live ChatGPT connector from the build sandbox; the wording was checked against the card model only.
+  **Card vocabulary.** *title*: what this is (`Pulls`, or `#7 the pull's title` for one thing, cut at 90 characters on a word with `…`; the whole title is in the text answer). *status*: the one line every row shares, counts first (`5 open · 2 red · 3 green`, `healthy · 3 running · 1 queued`). *row label*: the identity (`#7 title`, `owner/name`), linked when it has a page. *row value*: only what differs from the other rows, `·`-separated, state words in plain language (`check green`, `no check`, `approved`), never a state the status line already said. *actions*: buttons that call a tool.
   The Runs card (`runs`) is one row per run, newest first: glyph, kind, the issue or pull and its title, then the state as a word with how long it ran (or has been running), linked to the run page; failed runs lead the status line. The Plan card (`map`) shows one row per pillar with
   its ready, working and waiting counts, and the first five ready issues linked
   to their pages; it has no actions. The asks card (`ui://forge/asks`, drawn by `asks`) is one row per waiting decision:

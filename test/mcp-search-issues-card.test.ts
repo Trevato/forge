@@ -44,6 +44,6 @@ describe("issues card", () => {
     }, origin, { repo: "a/b", pillars: { "5": "P1" }, waits: { "5": [2, 3] } })!;
     expect(card.rows[0]).toEqual({ label: "#5 t", value: "open · P1 · waits on #2 #3 · untrusted", link: "https://forge.test/a/b/issues/5" });
     expect(card.rows[1]!.value).toBe("closed");
-    expect(card.status).toBe("2+ issues");
+    expect(card.status).toBe("2+ issues · 1 open · 1 closed");
   });
 });

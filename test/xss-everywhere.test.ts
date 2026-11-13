@@ -208,7 +208,7 @@ describe("one hostile string, every surface", () => {
     expect(card.rows.map((r: { label: string }) => r.label).join("\n")).toContain(EVIL);
     expect(JSON.stringify(card)).not.toContain("&lt;");
     const issue = JSON.parse(await mcp("issue", { repo: "alice/game", number: issueNo })).result;
-    expect(issue.structuredContent.card.rows[0].value).toBe(EVIL);
+    expect(issue.structuredContent.card.title).toContain(EVIL);
     expect(JSON.stringify(issue.structuredContent.card)).not.toContain("&lt;");
     expect(JSON.parse(issue.content[0].text).title).toBe(EVIL);
     const shell = CARD_SHELL("feed");

@@ -85,8 +85,8 @@ describe("MCP pulls card", () => {
     expect(card.status).toBe("2 open");
     const [two, one] = [numbers[1]!, numbers[0]!];
     expect(card.rows).toEqual([
-      { label: `#${two} ${EVIL}`, value: "open · none · no review", link: `${servers.url}/alice/game/pulls/${two}` },
-      { label: `#${one} First`, value: "open · none · no review", link: `${servers.url}/alice/game/pulls/${one}` },
+      { label: `#${two} ${EVIL}`, value: "no check · no review", link: `${servers.url}/alice/game/pulls/${two}` },
+      { label: `#${one} First`, value: "no check · no review", link: `${servers.url}/alice/game/pulls/${one}` },
     ]);
     const text = JSON.parse(body.result.content[0].text);
     expect(text.pulls.map((p: any) => p.number)).toEqual([two, one]);
@@ -107,14 +107,14 @@ describe("MCP pulls card", () => {
       number: i + 1, title: `P${i + 1}`, check,
     }));
     const card = cardFor("pulls", { pulls }, "https://forge.test", { repo: "alice/game", state: "open" })!;
-    expect(card.rows.map((r) => r.value)).toEqual(["green", "red", "running", "running", "none", "cancelled"].map((w) => `open · ${w} · no review`));
+    expect(card.rows.map((r) => r.value)).toEqual(["green", "red", "running", "running", "none", "cancelled"].map((w) => w === "none" ? "no check · no review" : `check ${w} · no review`));
     expect(card.rows[0]!.link).toBe("https://forge.test/alice/game/pulls/1");
 
     const many = Array.from({ length: 30 }, (_, i) => ({ number: i + 1, title: "t", check: "ok" }));
     const big = cardFor("pulls", { pulls: many }, "https://forge.test", { repo: "alice/game" })!;
-    expect(big.status).toBe("30 open");
+    expect(big.status).toBe("30 open · 30 green");
     const capped = cardFor("pulls", { pulls: many.slice(0, 20) }, "https://forge.test", { repo: "alice/game", limit: 20 })!;
-    expect(capped.status).toBe("20+ open");
+    expect(capped.status).toBe("20+ open · 20 green");
     expect(big.rows.length).toBe(20);
 
     // No origin, a repo that is not `owner/name`, or a number that is not one: no link.
