@@ -634,7 +634,7 @@ function cutOffBefore(db: Database, run: Run, prefix: string): boolean {
 export function budgetFailures(db: Database, since: string): Run[] {
   return db
     .query<RunRow, [string, string]>(
-      `SELECT * FROM run WHERE state = 'failed' AND summary LIKE ?2 || '%'
+      `SELECT * FROM run INDEXED BY run_failed_finished WHERE state = 'failed' AND summary LIKE ?2 || '%'
           AND finished_at >= ?1 ORDER BY finished_at DESC LIMIT 20`,
     )
     .all(since, BUDGET_PREFIX)

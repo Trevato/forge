@@ -244,7 +244,7 @@ export function reviewAttemptsFor(
     const reviews = new Map<string, { createdAt: string; active: boolean; reviewerId: string | null }[]>();
     for (const r of db
       .query<{ issue_id: string; created_at: string; state: string; actor_id: string | null }, string[]>(
-        `SELECT issue_id, created_at, state, actor_id FROM run
+        `SELECT issue_id, created_at, state, actor_id FROM run INDEXED BY run_review_attempts
           WHERE kind = 'agent' AND reason = 'review'
             AND issue_id IN (${ids.map((_, n) => `?${n + 1}`).join(",")})
           ORDER BY created_at, id`,

@@ -24,6 +24,7 @@
  * else is told `not_found`.
  */
 
+import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { costOf, monthSoFar, type Range } from "../core/cost.ts";
 import { usageBins, type AppUsage } from "../core/meter.ts";
@@ -132,18 +133,39 @@ function forgeAdmin(actor: User | undefined): boolean {
   return actor?.isAdmin === true && actor.kind !== "agent";
 }
 
-/** The forge's money line and its thirty days. `now` is the clock unless a test pins it. */
+/**
+ * How long the forge's month and thirty days are kept. They add up the meter and storage ledgers
+ * (170,000 rows on production: 141 ms of the one thread, on every repository page an admin opens) and
+ * move by the minute at most; a change to the prices or the slider is read fresh every time and
+ * drops them. Off under `bun test`.
+ */
+export const MONEY_REUSE_MS = process.env["NODE_ENV"] === "test" ? 0 : 60_000;
+
+const kept = new WeakMap<
+  Database,
+  { at: number; settings: string; month: { month: string; line: MoneyLine }; days: MoneyDay[] }
+>();
+
+/** The forge's money line and its thirty days. `at` is the clock unless a test pins it. */
 export function readForgeMoney(
   app: App,
   actor: User | undefined,
-  now: string = new Date().toISOString(),
+  at?: string,
 ): Result<ForgeMoney, "not_found"> {
   if (!forgeAdmin(actor)) return err("not_found");
   // The settings in one read (`getEconomicsAll`): the board's statement budget counts every point read.
   const { prices, economics } = getEconomicsAll(app.db);
   const rates = ratesFrom(prices, economics);
-  const month = forgeMonth(app, now, prices, rates);
-  const days = forgeDays(app, now, prices, rates);
+  const settings = JSON.stringify([prices, economics]);
+  const held = at === undefined ? kept.get(app.db) : undefined;
+  let counted = held !== undefined && held.settings === settings && Date.now() - held.at < MONEY_REUSE_MS ? held : undefined;
+  if (counted === undefined) {
+    const now = at ?? new Date().toISOString();
+    const month = forgeMonth(app, now, prices, rates);
+    counted = { at: Date.now(), settings, month, days: forgeDays(app, now, prices, rates) };
+    if (at === undefined && MONEY_REUSE_MS > 0) kept.set(app.db, counted);
+  }
+  const { month, days } = counted;
   return ok({
     month: month.month,
     thisMonth: month.line,

@@ -24,7 +24,7 @@ export function rebasedPulls(db: Database, issueIds: readonly string[]): Set<str
   const marks = ids.map((_, i) => `?${i + 1}`).join(",");
   const rows = db
     .query<{ issue_id: string }, string[]>(
-      `SELECT a.issue_id FROM run a
+      `SELECT a.issue_id FROM run a INDEXED BY run_conflict
         WHERE a.kind = 'agent' AND a.reason = 'conflict' AND a.issue_id IN (${marks})
           AND NOT EXISTS (
             SELECT 1 FROM run b

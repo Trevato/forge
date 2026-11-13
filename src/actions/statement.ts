@@ -8,6 +8,7 @@
  * over counts up to now; a month not begun is all zeros.
  */
 
+import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { canAdmin, type Repo } from "../core/repos.ts";
 import { usageBetween, type AppUsage } from "../core/meter.ts";
@@ -69,6 +70,27 @@ export interface MonthUse {
  * so the board cannot count a second way.
  */
 export function monthUse(app: App, month: string, now: string): MonthUse {
+  const minute = now.slice(0, 16);
+  const held = monthsKept.get(app.db)?.get(month);
+  if (held !== undefined && held.minute === minute && Date.now() - held.at < MONTH_REUSE_MS) return held.use;
+  const use = readMonthUse(app, month, now);
+  let months = monthsKept.get(app.db);
+  if (months === undefined) monthsKept.set(app.db, (months = new Map()));
+  if (months.size >= 8) months.clear();
+  months.set(month, { at: Date.now(), minute, use });
+  return use;
+}
+
+/**
+ * How long a month's use is kept, for the minute it was read in. Adding it up reads the meter and the
+ * crew's ledger (77,000 meter rows on production: 120 ms of the one thread) and an app's page, its
+ * statement and the board all ask; the ledgers move by the minute at most. Off under `bun test`.
+ */
+export const MONTH_REUSE_MS = process.env["NODE_ENV"] === "test" ? 0 : 60_000;
+
+const monthsKept = new WeakMap<Database, Map<string, { at: number; minute: string; use: MonthUse }>>();
+
+function readMonthUse(app: App, month: string, now: string): MonthUse {
   const range = monthRange(month);
   const meter = usageBetween(app.db, range.from, range.to, now);
   // The ledger's `until` is inclusive; the month is half-open, so stop a millisecond short.
