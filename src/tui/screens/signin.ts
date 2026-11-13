@@ -55,6 +55,12 @@ const edgeSignupMessage = (f: Session): string =>
     ? "Sign up on the web page only."
     : `Sign up on the web page only: ${f.app.config.url}/signup`;
 
+/** Where a stranger who cannot sign up here goes: the guest menu's own command. */
+const GET_FORGE_HINT = "To get a forge of your own, press Esc and choose Start my forge.";
+
+/** What a closed sign-up says outside an edge: the refusal, then where to go instead. */
+export const closedSignupText = (): string => `${SIGNUP_CLOSED_MESSAGE} ${GET_FORGE_HINT}`;
+
 export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
   // "Is this forge empty?" is a existence question, not a count: `COUNT(*)`
   // walks the whole user table on the one screen every session paints.
@@ -67,7 +73,7 @@ export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
   // sign a platform user of the same name into. Sign-in is unchanged.
   const edge = activeEdgeToken(f.app) !== undefined;
   const closed = (): boolean => edge || (!invited() && signupClosed(f.app));
-  const closedText = (): string => (edge ? edgeSignupMessage(f) : SIGNUP_CLOSED_MESSAGE);
+  const closedText = (): string => (edge ? edgeSignupMessage(f) : closedSignupText());
   let mode: "signin" | "create" = first && !closed() ? "create" : "signin";
   let values = ["", "", "", ""];
   let focus = 0;

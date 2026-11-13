@@ -90,3 +90,27 @@ export function fundingWords(f: Funding): string {
     ? "funded by its parent"
     : `funded by its parent: ${usdWords(leftUsd({ capUsd: f.capUsd, spentUsd: f.spentUsd }))} of ${usdWords(f.capUsd)} left`;
 }
+
+/**
+ * What is left of the credit the host lent this forge, when the run draws on
+ * it (`draws`: no account of its own was picked); undefined otherwise.
+ */
+export function lentCreditLeft(draws: boolean, dataDir: string): number | undefined {
+  if (!draws) return undefined;
+  const f = fundingOf(dataDir);
+  if (f === undefined || f.capUsd === null) return undefined;
+  return Math.max(0, f.capUsd - (f.spentUsd ?? 0));
+}
+
+/** A run's budget in USD: what it asked for, never more than the lent credit left (#11948). */
+export const cappedByLent = (wanted: number, lentLeft: number | undefined): number =>
+  lentLeft === undefined ? wanted : Math.min(wanted, lentLeft);
+
+/**
+ * A run ended: when this forge is funded, ask the host what it counted, so the
+ * credit line moves. The answer's promise when asked, undefined when not funded.
+ */
+export function runEnded(app: App, fetcher?: FetchLike): Promise<Funding | undefined> | undefined {
+  if (fundingOf(app.config.dataDir) === undefined) return undefined;
+  return refreshFunding(app, fetcher);
+}

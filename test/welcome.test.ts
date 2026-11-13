@@ -94,3 +94,28 @@ test("the home's scripts join without calling the one before", () => {
   expect(() => new Function(joined)).not.toThrow();
   for (const part of [funnelJs, startNameJs]) expect(part.trimEnd().endsWith(";")).toBe(true);
 });
+
+test("the link code field is visible and required in the server render, and the forge's own name is a name a person may take (#11948)", async () => {
+  const started = await startedForge("forge-welcome-name-");
+  try {
+    const html = await (await fetch(`${started.base}/welcome`)).text();
+    expect(html).not.toMatch(/<div id="claim-token-field"[^>]*hidden/);
+    expect(html).toMatch(/<input[^>]*name="token"[^>]*required|<input[^>]*required[^>]*name="token"/);
+    const org = started.child.db.query<{ username: string }, []>("SELECT username FROM user WHERE kind = 'org' LIMIT 1").get()!.username;
+    const res = await fetch(`${started.base}/welcome`, {
+      method: "POST",
+      headers: { origin: started.base },
+      body: new URLSearchParams({ token: started.token, username: org, password: "a-long-enough-password" }),
+      redirect: "manual",
+    });
+    expect(res.status).toBe(303);
+    expect(res.headers.get("set-cookie")).toContain("HttpOnly");
+    const row = started.child.db.query<{ kind: string; is_admin: number }, [string]>("SELECT kind, is_admin FROM user WHERE username = ?").get(org)!;
+    expect(row.kind).toBe("user");
+    expect(row.is_admin).toBe(1);
+    const home = await fetch(`${started.base}/`, { headers: { cookie: (res.headers.get("set-cookie") ?? "").split(";")[0]! } });
+    expect(home.status).toBe(200);
+  } finally {
+    await started.stop();
+  }
+}, 60_000);

@@ -175,9 +175,9 @@ function freshError(errors: Errors, repoCount: number): string | undefined {
 function hostingTerms(includedUsd: number): string {
   const crew =
     includedUsd > 0
-      ? `its crew starts on the included $${includedUsd} of credit, and you can add your AI account key later`
-      : "its crew starts once you add your AI account";
-  return `Free within limits: it sleeps when idle, and ${crew}.`;
+      ? `The crew builds on the included $${includedUsd} of credit; add your own AI account key to keep going.`
+      : "The crew starts once you add your AI account key.";
+  return `Free within limits: it sleeps when idle. ${crew}`;
 }
 
 function formView(
