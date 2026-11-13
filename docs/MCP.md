@@ -518,7 +518,7 @@ answers
 | --- | --- | --- |
 | `ui://forge/app` | `apps`, `new_app` | Your apps, or the app just made: live or not, what is working, a Tell box. |
 | `ui://forge/run` | — | Legacy running-now list; `now` draws `crew` instead. |
-| `ui://forge/asks` | `asks`, `asks_act` | One row per waiting decision with its button; after a press, the receipt. |
+| `ui://forge/asks` | `asks`, `asks_act` | One row per waiting decision with its button; a press plans, the Confirm card (the page's own, e.g. "Close 1") does it, then the receipt. |
 | `ui://forge/wave` | `waves` | One wave: headline, highlights with their why, pull numbers. |
 | `ui://forge/map` | `map` | The plan: per pillar ready, working and waiting counts, the first ready issues. |
 | `ui://forge/feed` | `feed` | The newest timeline items, at most 20, each linked; how many are new. |
