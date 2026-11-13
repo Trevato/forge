@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { shellJs } from '../src/web/client.ts';
+import { overlayHostJs } from '../src/web/overlay_host.ts';
 
 const src = readFileSync(new URL('../src/web/client.ts', import.meta.url), 'utf8');
 const layout = readFileSync(new URL('../src/web/layout.ts', import.meta.url), 'utf8');
@@ -34,9 +35,9 @@ test('j/k, enter, esc and ? are rows of the one table the sheet renders', () => 
 
 test('the sheet opens as the shared modal, which closes on Esc and returns focus', () => {
   expect(help).toContain('openModal(dlg);');
-  expect(src).toContain('var was = document.activeElement;');
-  expect(src).toContain("if (e.key !== 'Escape') return;");
-  expect(src).toContain('was.focus()');
+  expect(overlayHostJs).toContain('var was = opts.opener || doc.activeElement;');
+  expect(overlayHostJs).toContain("if (e.key === 'Escape')");
+  expect(overlayHostJs).toContain('was.focus()');
 });
 
 test('the dialog is out of the flow and in the page chrome, built without innerHTML', () => {

@@ -213,13 +213,14 @@ export const INFO_CSS = /* css */ `
  */
 export const INFO_JS = `
   function panel(player, info, saved) {
+    function shut(d) { forgeOverlay.close(d); }
     document.addEventListener('click', function (ev) {
       var t = ev.target; if (!t || !t.closest) return;
       var a = t.closest('[data-ask]');
-      if (a) { var d = document.getElementById(a.getAttribute('data-ask')); if (d && d.showModal && !d.open) d.showModal(); return; }
+      if (a) { var d = document.getElementById(a.getAttribute('data-ask')); if (d && d.showModal && !d.open) forgeOverlay.open(d, { opener: a }); return; }
       var dlg = t.closest('dialog.it-dlg'); if (!dlg) return;
-      if (t.closest('[data-cancel]')) { dlg.close(); return; }
-      if (t.closest('[data-done]')) setTimeout(function () { if (dlg.open) dlg.close(); }, 900);
+      if (t.closest('[data-cancel]')) { shut(dlg); return; }
+      if (t.closest('[data-done]')) setTimeout(function () { shut(dlg); }, 900);
     });
     function shown(sec, editing) {
       var empty = sec.getAttribute('data-empty') === '1';
