@@ -4,7 +4,8 @@
  * A production deploy is a `kind=deploy` run with no issue, so no run list
  * a pull or an issue shows holds one. This is the list that does, read
  * through `listRepoRuns` (so it is gated like every other run read) and
- * joined to `deploy_pull` in one grouped read for `carries #3 #5`.
+ * joined to `deploy_pull` in one grouped read for `carries #3 #5`; a deploy
+ * retention trimmed is rebuilt from git after the first paint (`carriedForRuns`).
  *
  * Under production's deploys, anyone who may read the repository sees a
  * "Previews" group: one row per open pull with a preview environment,
@@ -104,7 +105,8 @@ import { trendLine, visitorsLine } from "../../apps/vitals.ts";
 import { egressModeSentence, undeclaredHosts } from "../../apps/egress_report.ts";
 import { egressSetting } from "../../core/capacity.ts";
 import { listRepoRuns } from "../../actions/runs.ts";
-import { carriedByRuns, carriesText } from "../../core/carried.ts";
+import { carriedByRuns, carriedForRuns, carriesText } from "../../core/carried.ts";
+import { repoDir } from "../../git/repos.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { canAdmin, canWrite, type Repo } from "../../core/repos.ts";
@@ -219,6 +221,8 @@ function egressLines(f: Session, repo: Repo): string[] {
 export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   const list = new RunList(f);
   let carries = new Map<string, number[]>();
+  /** The rebuild of trimmed deploys' carries the last read started, if any. */
+  let rebuilding: Promise<void> = Promise.resolve();
   let loaded = false;
   let visitors = "";
   let trend = "";
@@ -248,6 +252,19 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       f.db,
       runs.map((r) => r.id),
     );
+    // A deploy retention trimmed is rebuilt from git as the run page does (#12009);
+    // the rows above paint now, the rebuilt ones when the walk is back.
+    if (runs.some((r) => !carries.has(r.id))) {
+      const asked = runs;
+      rebuilding = carriedForRuns(f.db, asked, repoDir(f.app.reposRoot, repo.ownerName, repo.name)).then(
+        (found) => {
+          if (list.runs !== asked) return;
+          carries = found;
+          ctx.invalidate();
+        },
+        () => undefined,
+      );
+    }
     const seen = appVisitors(f.app, f.user, repo);
     visitors = seen === undefined ? "" : visitorsLine(seen);
     trend = seen === undefined ? "" : trendLine(seen.loadDays);
@@ -405,7 +422,10 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         ...(mayBuild ? [binding(["b"], "preview a commit")] : []),
       ];
     },
-    load: async () => read(),
+    load: async () => {
+      read();
+      await rebuilding;
+    },
     render(area, s) {
       const c = ctx.theme.c;
       const named = domainsLine(domains);

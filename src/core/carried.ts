@@ -6,7 +6,8 @@
  * merge commit is among them is recorded against the run. A pull merged
  * after the deployed commit is not in the walk, so it is not recorded. The
  * table is an index over git (`deploy_pull`): rebuilding it is running this
- * again for the deploy.
+ * again for the deploy. Retention (`system/retention_deploys.ts`) keeps
+ * recent deploys' rows; `carriedFor` rebuilds an older one's when asked.
  */
 
 import type { Database } from "bun:sqlite";
@@ -44,20 +45,30 @@ function mergedAmong(
  */
 export async function recordCarried(
   db: Database,
-  input: {
-    runId: string;
-    repoId: string;
-    commitOid: string;
-    /** The repository's directory. */
-    dir: string;
-  },
+  input: CarriedInput,
 ): Promise<number[]> {
+  return (await walkCarried(db, input)) ?? [];
+}
+
+interface CarriedInput {
+  runId: string;
+  repoId: string;
+  commitOid: string;
+  /** The repository's directory. */
+  dir: string;
+}
+
+/**
+ * `recordCarried`, but undefined when git could not walk the commit, so a
+ * caller can tell a failed walk from "carries none".
+ */
+async function walkCarried(db: Database, input: CarriedInput): Promise<number[] | undefined> {
   if (!FULL_OID.test(input.commitOid)) return [];
   const walked = await runLocal(
     ["rev-list", `--max-count=${WALK_MAX}`, input.commitOid],
     { cwd: input.dir },
   );
-  if (!walked.ok) return [];
+  if (!walked.ok) return undefined;
   const contained = new Set(walked.value.split("\n").filter((l) => l !== ""));
   const carried = mergedAmong(db, input.repoId, contained);
   const insert = db.query(
@@ -117,6 +128,95 @@ export function carriedBy(db: Database, runId: string): number[] {
     )
     .all(runId)
     .map((row) => row.pull_number);
+}
+
+/** A deploy run as `carriedFor` reads it. */
+export interface CarriedRun {
+  readonly id: string;
+  readonly repoId: string;
+  readonly kind: string;
+  readonly env: string;
+  readonly state: string;
+  readonly commitOid: string;
+}
+
+/** How long a walk git could not finish is not retried (a broken repo is not walked per view). */
+export const WALK_FAILED_MS = 60_000;
+/** Most runs remembered as carrying none, per database; the oldest goes first. */
+const EMPTY_MAX = 10_000;
+
+/**
+ * Per database: the walks under way, by run (two views of one run share
+ * one walk), and the runs a walk found carrying none (until when, in ms;
+ * Infinity for a finished walk — a finished deploy's commit and the pulls
+ * merged before it do not change, so an empty answer stays empty).
+ */
+const walking = new WeakMap<Database, Map<string, Promise<number[]>>>();
+const carriesNone = new WeakMap<Database, Map<string, number>>();
+
+const rebuildable = (run: CarriedRun): boolean =>
+  run.kind === "deploy" && run.env === "production" && run.state === "ok";
+
+/**
+ * The rebuild of one trimmed deploy: walked at most once at a time, and not
+ * again once it found none.
+ */
+function rebuild(db: Database, run: CarriedRun, dir: string): Promise<number[]> {
+  const none = carriesNone.get(db) ?? new Map<string, number>();
+  carriesNone.set(db, none);
+  const until = none.get(run.id);
+  if (until !== undefined) {
+    if (until > performance.now()) return Promise.resolve([]);
+    none.delete(run.id);
+  }
+  const flights = walking.get(db) ?? new Map<string, Promise<number[]>>();
+  walking.set(db, flights);
+  const inFlight = flights.get(run.id);
+  if (inFlight !== undefined) return inFlight;
+  const walk = walkCarried(db, { runId: run.id, repoId: run.repoId, commitOid: run.commitOid, dir })
+    .then((found) => {
+      if (found === undefined || found.length === 0) {
+        none.set(run.id, found === undefined ? performance.now() + WALK_FAILED_MS : Infinity);
+        if (none.size > EMPTY_MAX) none.delete(none.keys().next().value!);
+      }
+      return found ?? [];
+    })
+    .finally(() => flights.delete(run.id));
+  flights.set(run.id, walk);
+  return walk;
+}
+
+/**
+ * The pull numbers a deploy run carries, as pages read them: the recorded
+ * rows, or — for a finished production deploy with none, as retention
+ * leaves an older one (`system/retention_deploys.ts`) — the record rebuilt
+ * from git now and kept. A deploy that carries none is walked once per
+ * process, and concurrent views of one run share a walk. `dir` is the
+ * repository's directory.
+ */
+export async function carriedFor(db: Database, run: CarriedRun, dir: string): Promise<number[]> {
+  const recorded = carriedBy(db, run.id);
+  if (recorded.length > 0 || !rebuildable(run)) return recorded;
+  return rebuild(db, run, dir);
+}
+
+/**
+ * `carriedByRuns` for a list of deploys, with each trimmed one rebuilt as
+ * `carriedFor` does (one at a time, the same single walk per run). Runs that
+ * carry none are absent.
+ */
+export async function carriedForRuns(
+  db: Database,
+  runs: readonly CarriedRun[],
+  dir: string,
+): Promise<Map<string, number[]>> {
+  const found = carriedByRuns(db, runs.map((r) => r.id));
+  for (const run of runs) {
+    if (found.has(run.id) || !rebuildable(run)) continue;
+    const rebuilt = await rebuild(db, run, dir);
+    if (rebuilt.length > 0) found.set(run.id, rebuilt);
+  }
+  return found;
 }
 
 /** The pull numbers each of these runs carries, in one read; runs that carry none are absent. */

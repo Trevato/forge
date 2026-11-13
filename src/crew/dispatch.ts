@@ -41,6 +41,7 @@ import {
 import { closesFromBody, getPull, pullDir, type Pull } from "../core/pulls.ts";
 import { claimedClones, sweepOrphanClones } from "./orphans.ts";
 import { pruneRunFiles } from "../runs/prune.ts";
+import { deployRetention } from "../system/retention_deploys.ts";
 import { crewRoot, isClaimed } from "./workdir.ts";
 import { resolveOpen } from "../core/decisions.ts";
 import { accountActive } from "../core/accounts.ts";
@@ -272,6 +273,8 @@ export async function startCrew(
   // Repositories that run on their own take a turn once a minute, on the
   // same clock as the pump, so a pick becomes a run on the next tick.
   let lastAutonomy = 0;
+  // deploy_pull keeps recent deploys only (#12009): a capped batch a tick while rows remain.
+  const trimDeploys = deployRetention(app.db);
   // The sweeps a tick started and has not seen settle: `stop()` waits for
   // them, so none reads `app.db` after its caller closed it (#9977).
   const sweeps = new Set<Promise<unknown>>();
@@ -297,6 +300,9 @@ export async function startCrew(
           ));
         }
         pump(app, ready, inFlight);
+        const trimmed = trimDeploys();
+        if (trimmed !== undefined && trimmed.deleted > 0)
+          log.info("trimmed deploy_pull", { count: trimmed.deleted, more: trimmed.more });
       });
     } catch (error) {
       log.error("crew tick failed", { error: String(error) });
