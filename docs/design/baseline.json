@@ -1,3 +1,43 @@
 {
-  "files": {}
+  "files": {},
+  "layout": {
+    "src/web/pages/board_style.ts": {
+      "viewport": 2
+    },
+    "src/web/pages/build_info.ts": {
+      "space": 8
+    },
+    "src/web/pages/iterations.ts": {
+      "zindex": 3,
+      "space": 7
+    },
+    "src/web/pages/talk_client.ts": {
+      "zindex": 2,
+      "space": 1
+    },
+    "src/web/pick.ts": {
+      "space": 1
+    },
+    "src/web/space_client.ts": {
+      "fixed": 1
+    },
+    "src/web/studio/feed_style.ts": {
+      "zindex": 1,
+      "space": 1
+    },
+    "src/web/style/base.ts": {
+      "zindex": 2,
+      "viewport": 1,
+      "space": 7
+    },
+    "src/web/style/components.ts": {
+      "zindex": 7,
+      "fixed": 3,
+      "space": 68
+    },
+    "src/web/style/content.ts": {
+      "zindex": 3,
+      "space": 80
+    }
+  }
 }

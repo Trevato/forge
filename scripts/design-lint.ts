@@ -30,6 +30,10 @@
  *   target   a button, link, input or select under 24px wide or high, WCAG 2.5.8
  *            (specification.website, target size)
  *
+ * The layout rules (`src/design/layout.ts`, #12017) are held the same way, under `layout` in the baseline:
+ * z-index outside the `--z-` tokens, `position: fixed` or a full-viewport box outside src/web/overlay_host.ts,
+ * spacing off the scale.
+ *
  * The quiet-page rules (#8775, #8719) are held per file in `docs/design/quiet-debt.json`,
  * the same ratchet, and may only go down: `label` ("Status: Open"), `caps`
  * (`text-transform: uppercase`), `echo` (an icon's aria-label equal to its visible
@@ -62,9 +66,11 @@
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { STRANGER_NEVER_SEES } from "../src/design/first_five_minutes.ts";
+import { compareLayout, layoutCounts, scanLayout } from "../src/design/layout.ts";
 import { cssBlocksAt, scanOverlay, sourceFiles } from "../src/design/overlay.ts";
 
 // The covered-page rule lives in src/design/ so the release preflight runs it too (#11916).
+export { compareLayout, layoutCounts, layoutIn, scanLayout } from "../src/design/layout.ts";
 export { matchesClosedOverlay, overlay, overlayClassesIn, type OverlayFinding, scanOverlay, sourceFiles } from "../src/design/overlay.ts";
 
 /** The type scale in docs/DESIGN.md §3, in px. */
@@ -90,7 +96,7 @@ const WEB_MESSAGE: Record<(typeof WEB_KEYS)[number], string> = {
   input: "form input under 16px, which zooms iOS (specification.website, input size)",
   target: "interactive target under 24x24 CSS px, WCAG 2.5.8 (specification.website, target size)",
 };
-export type Baseline = { files: Record<string, Counts> };
+export type Baseline = { files: Record<string, Counts>; layout?: Record<string, Partial<Record<"zindex" | "fixed" | "viewport" | "space", number>>> };
 /** One offence, where it is and what the system offers instead. */
 export type Finding = { line: number; kind: "colour" | "size"; text: string; use: string };
 export type Scan = Baseline & { classes: string[]; found?: Record<string, Finding[]> };
@@ -564,14 +570,14 @@ if (import.meta.main) {
   const root = process.cwd();
   const now = scan(root);
   if (process.argv.includes("--update")) {
-    const baseline = { ...JSON.parse(readFileSync(join(root, BASELINE), "utf8")), files: now.files }; // keeps `coldRead` (#5882)
+    const baseline = { ...JSON.parse(readFileSync(join(root, BASELINE), "utf8")), files: now.files, layout: layoutCounts(scanLayout(root)) }; // keeps `coldRead` (#5882)
     writeFileSync(join(root, BASELINE), JSON.stringify(baseline, null, 2) + "\n");
     writeFileSync(join(root, QUIET_DEBT), JSON.stringify(quietCounts(scanQuiet(root)), null, 2) + "\n");
     console.log(`wrote ${BASELINE}`);
   } else {
     const base: Baseline = JSON.parse(readFileSync(join(root, BASELINE), "utf8"));
     const debt: QuietDebt = JSON.parse(readFileSync(join(root, QUIET_DEBT), "utf8"));
-    const problems = [...compare(base, now, designText(root), areaFiles(root)), ...compareQuiet(debt, scanQuiet(root)), ...scanBanner(root), ...scanOverlay(root), ...scanCards(root), ...scanStranger(root)];
+    const problems = [...compare(base, now, designText(root), areaFiles(root)), ...compareQuiet(debt, scanQuiet(root)), ...scanBanner(root), ...compareLayout(base.layout ?? {}, scanLayout(root)), ...scanOverlay(root), ...scanCards(root), ...scanStranger(root)];
     for (const p of problems) console.error(p);
     if (problems.length) process.exit(1);
     console.log("design: no colour, size or component added outside the system");

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { areaFiles, classesIn, compare, compareQuiet, quiet, scanQuiet, scanCards, scanStranger, strangerWords, STRANGER_FILES, countFile, designText, documentedClasses, locate, loneSentenceCards, registeredClasses, overlay, overlayClassesIn, scanOverlay, scan, sectionLinks, webCss } from "../scripts/design-lint.ts";
+import { areaFiles, compareLayout, layoutCounts, layoutIn, scanLayout, classesIn, compare, compareQuiet, quiet, scanQuiet, scanCards, scanStranger, strangerWords, STRANGER_FILES, countFile, designText, documentedClasses, locate, loneSentenceCards, registeredClasses, overlay, overlayClassesIn, scanOverlay, scan, sectionLinks, webCss } from "../scripts/design-lint.ts";
 
 /** A DESIGN.md in miniature: the §5 table, a §5d register, and a §6 that names a class too. */
 const DESIGN = [
@@ -347,4 +347,41 @@ describe("overlay: nothing closed is drawn (#11831)", () => {
   test("today's stylesheets pass", () => {
     expect(scanOverlay(process.cwd())).toEqual([]);
   });
+});
+
+describe("design check: the layout rules (#12017)", () => {
+  const css = (body: string) => "export const s = /* css */ `\n" + body + "\n`;";
+  const rules = (body: string, path = "src/web/x.ts") => layoutIn(css(body), path).map((f) => f.rule);
+
+  test("a raw z-index is refused, a token or 0 is not", () => {
+    expect(rules(".a { z-index: 40; }")).toEqual(["zindex"]);
+    expect(rules(".a { z-index: var(--z-menu); }")).toEqual([]);
+    expect(rules(".a { z-index: 0; }")).toEqual([]);
+  });
+  test("position: fixed is refused outside the overlay host", () => {
+    expect(rules(".a { position: fixed; inset: 0; }")).toEqual(["fixed"]);
+    expect(rules(".a { position: fixed; }", "src/web/overlay_host.ts")).toEqual([]);
+    expect(rules(".a { position: sticky; }")).toEqual([]);
+  });
+  test("a full-viewport box is refused, a viewport bound is not", () => {
+    expect(rules(".a { height: 100dvh; }")).toEqual(["viewport"]);
+    expect(rules(".a { width: 100vw; }")).toEqual(["viewport"]);
+    expect(rules(".a { max-width: min(560px, calc(100vw - 32px)); }")).toEqual([]);
+  });
+  test("spacing off the scale is refused, on it is not", () => {
+    expect(rules(".a { padding: 5px 8px; }")).toEqual(["space"]);
+    expect(rules(".a { margin-top: -10px; }")).toEqual(["space"]);
+    expect(rules(".a { gap: 12px; padding: 0 var(--pad, 7px); }")).toEqual([]);
+  });
+  test("each refusal is one line naming the rule and the fix", () => {
+    const files = { "src/web/x.ts": layoutIn(css(".a { z-index: 9; position: fixed; width: 100vw; gap: 5px; }"), "src/web/x.ts") };
+    const lines = compareLayout({}, files);
+    expect(lines).toHaveLength(4);
+    for (const l of lines) expect(l).toMatch(/^src\/web\/x\.ts:2 {2}(zindex|fixed|viewport|space): .* → /);
+    expect(compareLayout(layoutCounts(files), files)).toEqual([]);
+  });
+  test("the tree is no worse than its named debt", () => {
+    const base = JSON.parse(readFileSync("docs/design/baseline.json", "utf8"));
+    expect(compareLayout(base.layout ?? {}, scanLayout("."))).toEqual([]);
+  }, SLOW);
 });
