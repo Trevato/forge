@@ -36,7 +36,7 @@ import { runGit } from "../git/env.ts";
 import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
 import { countRows, type DrillCounts } from "./counts.ts";
-import { pack, partPath, PART_BYTES, type PackedFile } from "./parts.ts";
+import { packFile, partPath, PART_BYTES, type PackedFile } from "./parts.ts";
 import type { Store } from "./store.ts";
 import { unwrapKey, wrapKey, WRAPPED_KEY } from "./wrap.ts";
 import { during } from "../perf/jobs.ts";
@@ -393,11 +393,15 @@ export async function takeSnapshot(
     }
     // Compressed and in parts: each part one put, with its own deadline and
     // retries, so a slow uplink carries it and a dropped one costs a part.
-    const database = await pack(
-      "forge.db",
-      new Uint8Array(await Bun.file(dbCopy).arrayBuffer()),
-      forge.partBytes ?? PART_BYTES,
-    );
+    // Read as a stream, never whole: a database past 4 GiB cannot be one buffer.
+    const database = {
+      packed: await packFile(
+        "forge.db",
+        dbCopy,
+        (n, part) => put(partPath("forge.db", n), part),
+        forge.partBytes ?? PART_BYTES,
+      ),
+    };
     packed.push(database.packed);
     log.info("database packed", {
       mb: (database.packed.bytes / 1_048_576).toFixed(1),
@@ -405,8 +409,6 @@ export async function takeSnapshot(
       ratio: (database.packed.bytes / Math.max(1, database.packed.packedBytes)).toFixed(2),
       parts: database.packed.parts,
     });
-    for (const [n, part] of database.parts.entries())
-      await put(partPath("forge.db", n), part);
     rmSync(dbCopy, { force: true });
     // The key travels only wrapped. Without a passphrase it stays home.
     let key: Manifest["key"] = "none";
