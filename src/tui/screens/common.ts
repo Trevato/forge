@@ -748,6 +748,23 @@ export function pickerScreen(
 /** How long events are gathered before one refresh runs. */
 const LIVE_COALESCE_MS = 40;
 
+/**
+ * The least time between two refreshes of one screen. A busy crew appends
+ * events many times a second; refreshing on each (measured 25 to 58 a minute)
+ * made an open terminal the largest single load on the forge's one thread.
+ * The first event after a quiet spell still refreshes at once.
+ */
+export const LIVE_MIN_GAP_MS = 2_000;
+
+/** A slow screen waits this many times its own last refresh before the next, so it cannot take the thread. */
+export const LIVE_COST_FACTOR = 10;
+
+/** When the next refresh may run: at once after a quiet spell, else after the gap the last one earned. */
+export function liveDelay(now: number, lastEnd: number, lastCostMs: number): number {
+  const gap = Math.max(LIVE_MIN_GAP_MS, lastCostMs * LIVE_COST_FACTOR);
+  return Math.max(LIVE_COALESCE_MS, lastEnd + gap - now);
+}
+
 export interface LiveOptions {
   /** Only events touching this repository. Omit for everything. */
   readonly repoId?: string;
@@ -778,18 +795,31 @@ export function live(
   refresh: () => void | Promise<void>,
 ): void {
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let lastEnd = Number.NEGATIVE_INFINITY;
+  let lastCostMs = 0;
   const off = f.app.bus.subscribe((event) => {
     if (o.repoId !== undefined && event.repoId !== o.repoId) return;
     if (o.kinds !== undefined && !o.kinds.includes(event.kind)) return;
     if (o.where !== undefined && !o.where(event)) return;
     if (timer !== null) return;
     timer = setTimeout(() => {
-      timer = null;
-      if (signal.aborted) return;
-      // A refresh that throws at once (the forge closed under it) fails as
-      // quietly as one that rejects, never as an uncaught error on the timer.
-      void Promise.resolve().then(refresh).catch(() => undefined);
-    }, LIVE_COALESCE_MS);
+      if (signal.aborted) {
+        timer = null;
+        return;
+      }
+      const began = Date.now();
+      // The timer stays held until the refresh ends, so events during a slow
+      // refresh do not queue a second one behind it. A refresh that throws at
+      // once (the forge closed under it) fails as quietly as one that rejects.
+      void Promise.resolve()
+        .then(refresh)
+        .catch(() => undefined)
+        .finally(() => {
+          lastEnd = Date.now();
+          lastCostMs = lastEnd - began;
+          timer = null;
+        });
+    }, liveDelay(Date.now(), lastEnd, lastCostMs));
   });
   signal.addEventListener("abort", () => {
     off();
