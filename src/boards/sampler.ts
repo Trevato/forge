@@ -29,6 +29,8 @@ import { cpuTarget, readCpus, readPoint, unreadable } from "./machine.ts";
 import { FINE_MS, record, type Point } from "./ring.ts";
 import { readHwmon, readTopology, temperatures } from "./thermal.ts";
 import { during } from "../perf/jobs.ts";
+import { withoutWaiting } from "../kernel/db.ts";
+import { pruneEvents, TICK_ROWS } from "../system/retention_events.ts";
 
 export type Paths = { cgroup: string; proc: string; sys: string };
 export const SYSTEM: Paths = { cgroup: "/sys/fs/cgroup", proc: "/proc", sys: "/sys" };
@@ -168,6 +170,13 @@ export function startSampler(
       prev = next;
     } catch (error) {
       app.log.warn("machine sample failed", { error: String(error) });
+    }
+    // The same tick prunes one batch of old events (`system/retention_events.ts`); a busy
+    // database skips it, and the next tick tries again.
+    try {
+      withoutWaiting(app.db, () => pruneEvents(app.db, now, TICK_ROWS));
+    } catch (error) {
+      app.log.warn("event prune failed", { error: String(error) });
     }
   };
   during("sampler", tick);
