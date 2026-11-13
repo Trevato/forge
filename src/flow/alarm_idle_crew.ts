@@ -33,7 +33,7 @@ export function alarmIdleCrew(
   }
   const last = db
     .query<{ at: string | null }, []>(
-      `SELECT MAX(COALESCE(started_at, created_at)) AS at FROM run WHERE kind = 'agent'`,
+      `SELECT MAX(COALESCE(started_at, created_at)) AS at FROM run INDEXED BY run_agent_last_start WHERE kind = 'agent'`,
     )
     .get()?.at ?? null;
   const since = last ?? ready?.oldestWaiting ?? null;

@@ -38,7 +38,7 @@ interface RunRow {
 export function readVerified(app: App, owner: boolean): VerifiedRow[] {
   const ids = app.db
     .query<{ repo_id: string }, []>(
-      `SELECT DISTINCT repo_id FROM run WHERE kind = 'check' AND env = 'verify'`,
+      `SELECT DISTINCT repo_id FROM run INDEXED BY run_check_verify_repo WHERE kind = 'check' AND env = 'verify'`,
     )
     .all();
   const rows: VerifiedRow[] = [];
