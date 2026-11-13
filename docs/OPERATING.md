@@ -193,6 +193,16 @@ rollback. #11803 (tunnel straight to the forge), #11802 (its own sign-in) and
    The proof is a restore of the newest backup into a scratch directory,
    served on another port. *Rollback:* `systemctl disable --now forge
    cloudflared-forge`; nothing pointed at it.
+   *Keeping the tunnel's domains current.* The tunnel needs one rule per app
+   domain, and `infra/forge-box/cloudflared-forge.yml` is generated, not
+   edited. On the box, whenever a domain is added or verified:
+   `bun scripts/tunnel-config.ts --db /var/lib/forge/forge.db --write`
+   (without `--write` it prints; without `--db` it reads
+   `$FORGE_DATA/forge.db`), copy the file to `/etc/forge/cloudflared.yml`, set
+   the tunnel id, then `systemctl restart cloudflared-forge`. Only verified
+   domains (`verified_at` set) get a rule, so a typo'd or unproven host is
+   never forwarded; re-run it once the domain verifies. Until re-run, a new
+   domain does not reach the tunnel.
 2. **The cutover, same data, same version** (#11824, a quiet hour). First
    the reconcile must stop owning the forge Deployment's replicas (#8948).
    Otherwise it brings the pod back, and two processes write one SQLite file.

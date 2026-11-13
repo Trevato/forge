@@ -74,7 +74,7 @@ test("the tunnel unit is installed, never enabled, and routes every host to :300
   expect(sh).not.toMatch(/systemctl (enable|start)[^"\n]*cloudflared/);
   const yml = readFileSync(join(root, "infra/forge-box/cloudflared-forge.yml"), "utf8");
   for (const h of ["forge.open-platform.sh", "*--forge.open-platform.sh", "*--forge-trevato-apps.open-platform.sh"]) {
-    expect(yml).toContain(`hostname: ${h.startsWith("*") ? `"${h}"` : h}`);
+    expect(yml).toContain(`hostname: "${h}"`);
   }
   expect(yml).not.toMatch(/service: http:\/\/(?!127\.0\.0\.1:3000)/);
 });
@@ -154,6 +154,63 @@ test("github-mirror.sh pushes branches and tags, is a no-op twice, skips repos w
     const bad = mirror(dir);
     expect(bad.code).toBe(1);
     expect(bad.err).toContain("mirror failed");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function domainsDb(path: string) {
+  const { Database } = require("bun:sqlite");
+  const db = new Database(path);
+  db.run("CREATE TABLE app_domain (host TEXT PRIMARY KEY, verified_at TEXT)");
+  db.run("INSERT INTO app_domain VALUES ('www.cheffryjames.com', '2026-01-01'), ('game.cheffryjames.com', '2026-01-02'), ('pending.example.org', NULL)");
+  db.close();
+}
+
+test("the tunnel config has a rule for every verified app domain and none for an unverified one", async () => {
+  const { Database } = await import("bun:sqlite");
+  const { appDomainHosts, renderTunnelConfig, FORGE_HOSTNAMES } = await import("../src/system/tunnel_config.ts");
+  const db = new Database(":memory:");
+  db.run("CREATE TABLE app_domain (host TEXT PRIMARY KEY, verified_at TEXT)");
+  db.run("INSERT INTO app_domain VALUES ('www.cheffryjames.com', 'x'), ('game.cheffryjames.com', 'x'), ('pending.example.org', NULL)");
+  expect(appDomainHosts(db)).toEqual(["game.cheffryjames.com", "www.cheffryjames.com"]);
+  const text = renderTunnelConfig(appDomainHosts(db));
+  for (const h of [...FORGE_HOSTNAMES, ...appDomainHosts(db)]) expect(text).toContain(`- hostname: "${h}"\n    service: http://127.0.0.1:3000`);
+  expect(text).not.toContain("pending.example.org");
+  expect(text.trimEnd().endsWith("- service: http_status:404")).toBe(true);
+  expect(() => renderTunnelConfig(["bad host\nservice: x"])).toThrow();
+});
+
+test("the committed tunnel config has the right shape: every forge hostname, the 404 last", async () => {
+  const { FORGE_HOSTNAMES } = await import("../src/system/tunnel_config.ts");
+  const committed = readFileSync(join(root, "infra/forge-box/cloudflared-forge.yml"), "utf8");
+  for (const h of FORGE_HOSTNAMES) expect(committed).toContain(`- hostname: "${h}"`);
+  expect(committed.trimEnd().endsWith("- service: http_status:404")).toBe(true);
+});
+
+test("scripts/tunnel-config.ts prints, writes with --write, and exits 2 without a database", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tunnel-"));
+  try {
+    const db = join(dir, "forge.db");
+    domainsDb(db);
+    const run = (args: string[], env: Record<string, string | undefined>) =>
+      Bun.spawnSync(["bun", join(root, "scripts/tunnel-config.ts"), ...args], {
+        env: { ...process.env, FORGE_DATA: undefined, ...env }, stdout: "pipe", stderr: "pipe",
+      });
+    const printed = run(["--db", db], {});
+    expect(printed.exitCode).toBe(0);
+    expect(printed.stdout.toString()).toContain('hostname: "game.cheffryjames.com"');
+    expect(printed.stdout.toString()).not.toContain("pending.example.org");
+    const viaEnv = run([], { FORGE_DATA: dir });
+    expect(viaEnv.stdout.toString()).toBe(printed.stdout.toString());
+    const out = join(dir, "out.yml");
+    const wrote = run(["--db", db, "--write"], { FORGE_TUNNEL_CONFIG_OUT: out });
+    expect(wrote.exitCode).toBe(0);
+    expect(wrote.stdout.toString()).toBe("");
+    expect(readFileSync(out, "utf8")).toBe(printed.stdout.toString());
+    expect(run([], {}).exitCode).toBe(2);
+    expect(run(["--db"], {}).exitCode).toBe(2);
+    expect(run(["--db", "--write"], {}).exitCode).toBe(2);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
