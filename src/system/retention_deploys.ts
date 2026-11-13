@@ -20,7 +20,7 @@ import { transact } from "../kernel/db.ts";
 /** Deploys this recent keep their rows. Above `PILLAR_DAYS` (7), the window ask-to-live reads. */
 export const DEPLOY_PULL_KEEP_DAYS = 14;
 /** The least time between two slices of one pass. */
-const DEPLOY_PULL_PACE_MS = 10_000;
+const DEPLOY_PULL_PACE_MS = 5_000;
 
 export interface Pruned {
   readonly deleted: number;
@@ -29,7 +29,7 @@ export interface Pruned {
 }
 
 /** Rows one batch reads at most; what it deletes is those of them past the rule. */
-const DEPLOY_PULL_SCAN = 2_000;
+const DEPLOY_PULL_SCAN = 500;
 
 /**
  * Delete the rows past the rule among the next `rowCap` rows after `after`

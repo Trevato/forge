@@ -381,7 +381,7 @@ export function pullsForBranches(
     const rows = db
       .query<{ id: string; branch: string }, string[]>(
         `SELECT issue.id AS id, pull.head_branch AS branch
-           FROM pull JOIN issue ON issue.id = pull.issue_id
+           FROM pull CROSS JOIN issue ON issue.id = pull.issue_id
           WHERE issue.repo_id = ?1
             AND pull.head_branch IN (${batch.map((_, n) => `?${n + 2}`).join(",")})
           ORDER BY issue.created_at DESC`,
