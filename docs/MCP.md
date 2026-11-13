@@ -56,11 +56,11 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `app_env` | `list`, `set`, `unset` | An app's environment variables: list names, set or unset by scope; write-only | 393 |
 | `app_members` | — | People a private app names, who may enter it and its previews | 297 |
 | `app_notes` | `hide`, `ban`, `unban` | Notes from an app's forge button and banned senders; hide a note, ban or unban its sender | 306 |
-| `apps` | — | Apps you can see: live or not, where served, how each runs, what works | 343 |
-| `archive` | — | Archive or wake a repository (`archived`) | 380 |
-| `asked` | — | What people asked the crew for: unmerged by default, oldest first | 372 |
-| `asks` | `stopped`, `look`, `review`, `paused`, `parked`, `declined`, `handover`, `waiting`, `assigned`, `proposal` | What waits on you, most important first; saved filter applies; `filter` sets or clears one | 707 |
-| `asks_act` | `dismiss`, `decline`, `mute`, `listen`, `undo`, `ship`, `close`, `replan` | Decide asks (`items`): dismiss, ship, close (`reason`), mute, replan; `listen` (`repo`) unmutes; `undo` (`operation`) | 535 |
+| `apps` | — | Apps you can see: live or not, where served, how each runs, what works | 384 |
+| `archive` | — | Archive or wake a repository (`archived`) | 421 |
+| `asked` | — | What people asked the crew for: unmerged by default, oldest first | 415 |
+| `asks` | `stopped`, `look`, `review`, `paused`, `parked`, `declined`, `handover`, `waiting`, `assigned`, `proposal` | What waits on you, most important first; saved filter applies; `filter` sets or clears one | 749 |
+| `asks_act` | `dismiss`, `decline`, `mute`, `listen`, `undo`, `ship`, `close`, `replan` | Decide asks (`items`): dismiss, ship, close (`reason`), mute, replan; `listen` (`repo`) unmutes; `undo` (`operation`) | 577 |
 | `asks_decide` | — | Answer a hand-over: the decider (`parked:<id>`), or `give_back` to its builder (`handover:`/`assigned:<id>`) | 270 |
 | `asks_proposal` | — | Act on a wave proposal: `approve`, `redirect` (`words`), `later` (`again`) | 315 |
 | `asks_undecide` | — | Put a set-aside card back on your board, within a day | 208 |
@@ -77,10 +77,10 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `board_delete` | — | Delete a board by slug (history keeps it) | 194 |
 | `board_pins` | — | The panels pinned to the caller's home (person admins) | 302 |
 | `board_write` | — | Write a whole board under a slug: {title, range, refresh, panels} | 231 |
-| `boards` | — | The forge's boards for person admins: slug, title, range, refresh and panels | 475 |
+| `boards` | — | The forge's boards for person admins: slug, title, range, refresh and panels | 518 |
 | `branches` | `create`, `delete`, `branches`, `tags` | A repo's branches; `name`, `action` create (from `from`) or delete one, not the default | 407 |
 | `builds` | — | A repo's build pins (`refs/builds/`): label, commit, pinned by, note | 231 |
-| `capacity` | — | Forge capacity and guards, live | 468 |
+| `capacity` | — | Forge capacity and guards, live | 514 |
 | `claim_link` | `revoke`, `undo` | A child's claim link: `reveal` a new one, or `action` revoke/undo | 304 |
 | `close` | — | Close or reopen (`state` open) an issue or pull | 463 |
 | `cloud_account` | — | Change a cloud account by `verb` (admin) | 549 |
@@ -89,7 +89,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `confirm_wait` | — | Let an issue go ahead though its blocker closed dropped or split | 269 |
 | `contribute` | — | For a new agent: what this forge is, its bottleneck, help-wanted issues, how to propose | 210 |
 | `converge` | — | Have a fork's crew merge the parent's updates where both changed a file | 200 |
-| `crew` | — | List a repository's crew, or add or remove an agent | 387 |
+| `crew` | — | List a repository's crew, or add or remove an agent | 429 |
 | `data` | — | Read SQLite files you may see: tables, rows, read-only SQL; secrets masked | 367 |
 | `decisions_by` | — | Who decides parked hand-over cards: `me`, `decider`, `decider_tell` | 305 |
 | `detach` | — | Detach a fork from its parent | 210 |
@@ -100,10 +100,10 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `email_verify` | — | Send yourself a new verification link | 126 |
 | `estimate` | — | Ask an issue's base rate, or record `event` with `p50`, `p90` (instants) and `basis` | 406 |
 | `events` | — | Repository events | 259 |
-| `explore` | — | The apps, people (and, for an admin, forges) you can see, ranked | 627 |
+| `explore` | — | The apps, people (and, for an admin, forges) you can see, ranked | 672 |
 | `family` | — | The forge that sent this one and, for a site admin, those it sent, with state, version | 205 |
 | `features` | — | Apps absorbed as forge features: list, read, absorb or un-absorb, change typed settings | 357 |
-| `feed` | — | Your ranked home timeline; `cursor` pages; saved filter applies | 562 |
+| `feed` | — | Your ranked home timeline; `cursor` pages; saved filter applies | 604 |
 | `feed_chips` | `kind`, `person` | Feed chips you switched off | 262 |
 | `feed_dismiss` | `dismissed`, `muted` | Dismiss a feed item or mute its app; `feed` then leaves it out | 280 |
 | `feed_like` | — | Like or unlike a feed item as a ledger row, or read its ledger | 308 |
@@ -111,25 +111,25 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `flag_set` | — | Set or clear a flag (admin) | 209 |
 | `flag_winner` | — | An A/B flag winner becomes default | 206 |
 | `flags` | — | Declared flags: why, default, owner issue, live value | 171 |
-| `flow` | `bugs`, `cpu`, `drift`, `growth` | Pipeline (admin); `q`: `/fleet` rows, `action` plans an op, `apply` does it; `kind:bugs`; `repo`: why stuck | 488 |
+| `flow` | `bugs`, `cpu`, `drift`, `growth` | Pipeline (admin); `q`: `/fleet` rows, `action` plans an op, `apply` does it; `kind:bugs`; `repo`: why stuck | 530 |
 | `follow_mode` | — | How a fork follows its parent: take updates, tell me, or don't follow | 281 |
 | `following` | — | Where a fork stands against what it follows: in step, behind, ahead, diverged | 243 |
 | `forge_proposals` | — | What this forge proposed to its parent; `reachable` false if it is silent | 245 |
-| `forge_view` | — | The forge as one picture: counts, apps, runs with stations, health | 239 |
-| `forges` | — | Forges sent from here (admin; a stage says when to resend), or one forge's plan to read or grant | 387 |
+| `forge_view` | — | The forge as one picture: counts, apps, runs with stations, health | 282 |
+| `forges` | — | Forges sent from here (admin; a stage says when to resend), or one forge's plan to read or grant | 431 |
 | `fork` | — | Fork a repository into your account; for a guest, a copy to send changes back from | 232 |
-| `fork_tree` | — | The fork tree around a repo: ancestors, siblings and descendants you may read | 397 |
-| `forks` | `chain` | A repo's forks you may see, paged by limit and cursor (next_cursor), each with commits ahead and behind | 437 |
+| `fork_tree` | — | The fork tree around a repo: ancestors, siblings and descendants you may read | 440 |
+| `forks` | `chain` | A repo's forks you may see, paged by limit and cursor (next_cursor), each with commits ahead and behind | 480 |
 | `front_page` | — | The stranger's front page; admin sets `pinned`/`hidden`/`weights` | 457 |
-| `health` | — | How this forge is: version, commit, draining or not, rollout, incidents | 241 |
-| `held` | — | What the Later gate holds, and one proposed pass over it | 319 |
+| `health` | — | How this forge is: version, commit, draining or not, rollout, incidents | 285 |
+| `held` | — | What the Later gate holds, and one proposed pass over it | 361 |
 | `here` | — | What you may do on a forge page; given an app's link, what its /__forge/ door shows | 237 |
 | `hold` | — | Hold a pull (`why`) or `release` it; or `path`: hold new work on a file | 522 |
 | `hooks` | `list`, `add`, `remove`, `deliveries`, `ping`, `pause`, `resume`, `redeliver` | List, add (`url`, `secret`, `kinds`) or remove (`id`) webhooks; admins | 494 |
 | `invites` | `list`, `revoke` | Open invites; `id` revokes | 206 |
-| `issue` | — | One issue with comments, `blockedBy`, `blocks`; non-writers' text is `untrusted` | 341 |
+| `issue` | — | One issue with comments, `blockedBy`, `blocks`; non-writers' text is `untrusted` | 384 |
 | `issue_teams` | — | Name up to two crew teams to review | 267 |
-| `issues` | — | A repository's issues by state, label and author, newest first, paged | 473 |
+| `issues` | — | A repository's issues by state, label and author, newest first, paged | 517 |
 | `iterations` | — | A repo's fork family of build pins and runs, as the Iterations page draws them | 279 |
 | `keep_plan` | — | Keep a short plan checklist on your issue, replaced whole each time | 415 |
 | `knobs` | — | The crew's five knobs and what each does now | 307 |
@@ -140,20 +140,20 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `limits` | — | Every limit the owner can hit | 1077 |
 | `maintenance` | `status`, `prepare`, `resume`, `pause-duty`, `resume-duty` | Prepare the forge for a power-off, check the drain, or end maintenance (admin) | 308 |
 | `make_it_yours` | — | Fork an app you can see: code and history, following the original | 337 |
-| `map` | — | An app's plan: ready or waiting, critical path, crew, parkedTwice; `done` adds closed; `first: N` ranks N first | 375 |
+| `map` | — | An app's plan: ready or waiting, critical path, crew, parkedTwice; `done` adds closed; `first: N` ranks N first | 416 |
 | `merge` | `land` | Land a pull, as its page's Merge button does; a person's only | 362 |
 | `migrate` | — | Bring a repo in by public `url` (`name`, `crew`), history and all | 269 |
-| `milestones` | — | How far each ask is | 391 |
+| `milestones` | — | How far each ask is | 439 |
 | `mint_invite` | — | Mint a one-use invite link, shown once, valid `days` (1–30, default 7) | 225 |
 | `mirror_now` | — | Admin: bring the snapshot mirror level now | 129 |
 | `mirror_set` | — | Admin: set or forget the snapshot mirror | 296 |
 | `model_ceiling` | — | Set an account's daily and per-run model spend ceilings in dollars | 422 |
 | `model_grant` | — | Give a person a monthly model grant (`usdPerMonth`, 0 takes it back) | 338 |
-| `new_app` | — | Make an app from a sentence: a repo, production, and with `description` a first issue | 553 |
+| `new_app` | — | Make an app from a sentence: a repo, production, and with `description` a first issue | 594 |
 | `next_steps` | — | On a spawned forge, its owner's first three steps, each done or not | 207 |
 | `next_up` | — | The ranked list the crew builds from; `issue` + `to` (top, not-now, after:N) moves one | 349 |
 | `notify` | — | Read, set or clear your phone notify URL | 146 |
-| `now` | — | What the crew does across your apps: who, on what, since when, cost; what awaits review | 252 |
+| `now` | — | What the crew does across your apps: who, on what, since when, cost; what awaits review | 294 |
 | `open_pull` | — | Open a pull request, from a branch or from your fork | 449 |
 | `org_create` | — | Make an organization | 151 |
 | `org_teams` | `create`, `add_member`, `members`, `metrics`, `remove_member`, `remove` | An org's teams: create, add member with a role, list members, remove | 682 |
@@ -172,29 +172,29 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `prompts` | `list`, `add`, `run`, `remove`, `instagram` | Prompt sources: list, add (`kind`, `token`, `at`), run or remove (`id`) | 470 |
 | `proposal_tokens` | — | A child's propose-only token: `mint` (`child`, `origin`), `list`, `revoke` (`id`) | 396 |
 | `propose_to_parent_forge` | — | Offer this forge's landed change to its parent as a pull on `child/<name>/…` | 221 |
-| `pull` | — | A pull: title, state, head, base; open: `mergeable`, `conflicts`, `checkStale`, `check` | 346 |
-| `pulls` | — | A repository's pulls, newest first; no `repo`: all open pulls you may read, oldest first | 411 |
+| `pull` | — | A pull: title, state, head, base; open: `mergeable`, `conflicts`, `checkStale`, `check` | 388 |
+| `pulls` | — | A repository's pulls, newest first; no `repo`: all open pulls you may read, oldest first | 454 |
 | `queue_gates` | — | Recent merge-queue gates: pulls, verdicts, failing tests | 277 |
 | `quotas` | — | Enforced per-account quotas (never an admin): repositories, apps, storage, previews, runs, checks | 342 |
 | `read_file` | — | No shell? Read a file or list a directory at a ref (default branch); over 5 MB answers tooLarge | 317 |
 | `release_hold` | — | Hold or release the release keeper's cuts (admin) | 202 |
 | `release_keeper` | — | The release keeper's releases, holds and what blocks the next cut | 192 |
 | `release_now` | — | Cut a release now, with a reason (admin) | 176 |
-| `releases` | — | Kept releases, newest first | 253 |
+| `releases` | — | Kept releases, newest first | 298 |
 | `repo` | `open`, `add`, `remove`, `close` | One repository you can read, as GET /api/v1/repos/:owner/:name | 383 |
 | `repo_labels` | — | Repo labels: list (default), create, update, remove (admin token) | 351 |
 | `repo_settings` | — | Read, change or move (newOwner) a repo: PATCH /api/v1/repos/:owner/:name (admin); mirrorPacks mirrors the packs' upstreams | 444 |
-| `reports` | `accept`, `dismiss` | Outsiders' reports; `id`+`action`: accept or dismiss | 310 |
-| `restore_drill` | — | Drill-restore the newest snapshot | 173 |
+| `reports` | `accept`, `dismiss` | Outsiders' reports; `id`+`action`: accept or dismiss | 355 |
+| `restore_drill` | — | Drill-restore the newest snapshot | 216 |
 | `returns` | — | What crew tokens bought in `days` (1–90, default 7): dollars, runs, landed, cost/change | 284 |
 | `review` | — | Approve a pull, or request changes (`reason` required); your own pull is refused | 350 |
 | `rollback` | — | Plan, then apply, a rollback to a kept release (admin) | 209 |
 | `run_log` | — | A run's log, or its last `tail` lines, as GET /api/v1/repos/:owner/:name/runs/:id/log | 332 |
-| `runs` | `agent`, `deploy`, `check` | A repository's runs, newest first: id, kind, state, number, start, end | 483 |
+| `runs` | `agent`, `deploy`, `check` | A repository's runs, newest first: id, kind, state, number, start, end | 525 |
 | `say` | `list`, `new`, `rename`, `archive`, `restore`, `build`, `build_state`, `build_diff`, `build_restore`, `build_publish` | Say something on an issue or pull; with no repo, to the forge's own agent, and manage its conversations (action) | 585 |
-| `scorecard` | — | Crew scorecard (forge admin): per agent, all time and 30 days | 237 |
+| `scorecard` | — | Crew scorecard (forge admin): per agent, all time and 30 days | 284 |
 | `seal` | `private` | Seal or unseal an issue or pull: a sealed one is seen only by writers and crew | 297 |
-| `search` | `all`, `issues`, `repos`, `code` | Find issues, pulls, repositories and code you can read; `kind` and `repo` narrow | 429 |
+| `search` | `all`, `issues`, `repos`, `code` | Find issues, pulls, repositories and code you can read; `kind` and `repo` narrow | 473 |
 | `secrets` | — | Admin: list\|set\|remove sealed secrets | 248 |
 | `sessions` | `list`, `end`, `end_idle`, `signins`, `shells` | Where you are signed in: your tokens and browsers, never a secret; `username` for a person as owner; action end + id signs a browser out | 385 |
 | `sever` | — | Unlink a spawned forge from its parent (owner of its `forge` repo only) | 214 |
@@ -227,13 +227,13 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `tokens` | — | Your API tokens, no secrets | 146 |
 | `trail` | — | A migrated repository's source and forks; `shown` shows or hides them (admin) | 258 |
 | `upstream` | — | Read, set (`enabled`) or `check` the upstream a repository follows | 302 |
-| `usage` | — | Crew spend: with `repo`, `days` (1–90) by agent, issue; without, today, last24h, headroom % | 345 |
+| `usage` | — | Crew spend: with `repo`, `days` (1–90) by agent, issue; without, today, last24h, headroom % | 388 |
 | `valves` | — | The week's pipes and valves; with `repo` and `level`, turns a valve (plans first) | 269 |
 | `variant` | — | Like or dislike a pull among its variants; a later vote replaces; dislike closes it | 349 |
 | `vision` | — | VISION.md: purpose, order, rules | 235 |
 | `wait_for` | — | An issue waits for another; `stop` ends it | 297 |
 | `watch` | — | Watch a milestone, or stop (`watch: false`); your phone is told once when it lands | 341 |
-| `waves` | — | Waves; `version`: one | 260 |
+| `waves` | — | Waves; `version`: one | 302 |
 | `week` | — | The week's retrospective; `take` accepts one proposal | 226 |
 | `whoami_can` | `role`, `passkeys` | What you can do: your role and its roles-table row, yes or no each | 231 |
 | `write_file` | — | No shell? Commit one file to a branch | 342 |
