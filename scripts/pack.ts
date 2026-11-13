@@ -55,6 +55,15 @@ const baseEnv = (): Record<string, string> => ({
 export const cloneEnv = (): Record<string, string> => baseEnv();
 
 /**
+ * The address `git clone` uses for a pack source. The pack format stores the
+ * repository without a `.git` suffix, which GitHub still serves, but this
+ * forge only answers `git clone` at `https://host/owner/name.git`.
+ */
+export function cloneUrl(source: string): string {
+  return source.endsWith(".git") ? source : `${source}.git`;
+}
+
+/**
  * The environment for the push: the credential is scoped to the forge's own address
  * (`http.<url>/.extraHeader`), so git sends it nowhere else. It rides in the
  * environment, never in an argument another process could list.
@@ -119,7 +128,7 @@ export function realHands(url: string, token: string, options: HandsOptions = {}
       try {
         const bare = join(dir, "src.git");
         // Source history is fetched without hooks or templates and pushed as plain branches and tags.
-        const cloned = await git(["clone", "--bare", "--quiet", ...(branch === undefined ? [] : ["--branch", branch]), options.cloneFrom?.(source) ?? source, bare], cloneEnv());
+        const cloned = await git(["clone", "--bare", "--quiet", ...(branch === undefined ? [] : ["--branch", branch]), options.cloneFrom?.(source) ?? cloneUrl(source), bare], cloneEnv());
         if (cloned !== null) return { ok: false, why: cloned };
         const pushed = await git(
           ["push", "--quiet", "--force", `${url}/${owner}/${name}.git`, "refs/heads/*:refs/heads/*", "refs/tags/*:refs/tags/*"],
