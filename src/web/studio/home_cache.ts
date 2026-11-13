@@ -20,7 +20,6 @@ import type { Answer } from "../../boards/query.ts";
 import { writeStamp } from "../../core/write_clock.ts";
 import type { IdleReason } from "../../crew/idle_reason.ts";
 import { readBuilders, readKpis, slotsBusy, type KpiTimer, type Kpis } from "../../flow/kpis.ts";
-import { readVitals, type Vitals } from "../../flow/vitals.ts";
 import { createLog } from "../../kernel/log.ts";
 import { Stamped } from "../../kernel/stamped.ts";
 
@@ -46,7 +45,6 @@ export function setHomeClock(now: (() => number) | undefined): void {
 
 const kpiCaches = new WeakMap<Database, Stamped<Kpis>>();
 const panelCaches = new WeakMap<Database, Stamped<Answer>>();
-const vitalsCaches = new WeakMap<Database, Stamped<Vitals>>();
 const waitingCaches = new WeakMap<Database, Stamped<Waiting>>();
 
 /** What the waiting line keeps of the viewer's asks: how many are live, the oldest's time, and the stale ones' ids. */
@@ -74,9 +72,6 @@ function cacheOf<V>(
 export const kpiCache = (db: Database): Stamped<Kpis> => cacheOf(kpiCaches, db, 8);
 /** The pinned-panel cache of `db`: for tests, which count its hits. */
 export const panelCache = (db: Database): Stamped<Answer> => cacheOf(panelCaches, db, 64);
-
-/** The vitals cache of `db`: for tests, which count its hits. */
-export const vitalsCache = (db: Database): Stamped<Vitals> => cacheOf(vitalsCaches, db, 2);
 
 /** The waiting-line cache of `db`: for tests, which count its hits. */
 export const waitingCache = (db: Database): Stamped<Waiting> => cacheOf(waitingCaches, db, 64, HOME_MAX_AGE_MS);
@@ -186,9 +181,3 @@ export function cachedPanel(db: Database, identity: unknown, compute: () => Answ
   return servedStale(db, panelCache(db), `panel:${JSON.stringify(identity)}`, compute, compute);
 }
 
-/** Admin only: the caller has checked. The forge-wide flow vitals, kept 60 s like the KPIs. */
-export function cachedVitals(db: Database, now: Date): Vitals {
-  if (db.inTransaction) return readVitals(db, now);
-  const compute = (): Vitals => readVitals(db, now);
-  return servedStale(db, vitalsCache(db), "vitals", compute, compute);
-}

@@ -132,7 +132,7 @@ describe("the studio", () => {
   test("there is one forge (#603): no mode toggle, no POST /mode, and a ?mode= address is the same page without it, the old cookie let go", async () => {
     const plainResponse = await fetch(`${base}/`, { headers: { cookie } });
     const plain = await plainResponse.text();
-    expect(plain).toContain("Your apps");
+    expect(plain).toContain("Your forge, right now");
     expect(plain).not.toContain("mode-toggle");
     expect(plain).not.toContain('action="/mode"');
     expect(plainResponse.headers.get("set-cookie")).toBeNull();

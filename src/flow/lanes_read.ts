@@ -18,12 +18,16 @@
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { nextUp, type NextRow } from "../core/next_up.ts";
+import { idleReason, type IdleReason } from "../crew/idle_reason.ts";
 import { listAutonomousRepos } from "../core/repos.ts";
 import { weekShare } from "../crew/week_read.ts";
 import { firedAlarms } from "./alarms.ts";
 import { readBuilders, readKpis } from "./kpis.ts";
+import { readFigures, type Figures } from "./figures.ts";
 import { readLeadTime, type LeadTime } from "./lead_time.ts";
 import { shortTitle } from "./moving.ts";
+import { getUserById } from "../core/users.ts";
+import { reviewSetOf } from "../web/studio/review_set.ts";
 
 export const LANES = [
   "asked",
@@ -36,7 +40,7 @@ export const LANES = [
 export type LaneKey = (typeof LANES)[number];
 
 /** Items a lane lists; the rest are counted. */
-export const LANE_ITEMS = 5;
+export const LANE_ITEMS = 12;
 /** Rows read per lane before a viewer's access filters them. */
 const SCAN = 40;
 /** What "recently" means for whether a lane is moving. */
@@ -104,6 +108,18 @@ export interface LanePicture {
   readonly moved: Readonly<Record<LaneKey, number>>;
   readonly builders: { readonly running: number; readonly slots: number };
   readonly strip: StripPart | null;
+  /** What waits on each viewer the worker was told of: how many asks and since when the oldest. */
+  readonly asks: Readonly<Record<string, AsksWaiting>>;
+  /** The home's figures; null until the slow part has been read. */
+  readonly figures: Figures | null;
+  /** Why no builder is starting anything, when something names it (the day's ceiling, no subscription with room, nothing ready); null otherwise. */
+  readonly idle: IdleReason | null;
+}
+
+/** The asks waiting on one person (`web/studio/review_set.ts`): the live ones, not the stale. */
+export interface AsksWaiting {
+  readonly count: number;
+  readonly oldest: string | null;
 }
 
 interface Raw {
@@ -472,6 +488,9 @@ export interface Slow {
   readonly asked: readonly LaneItem[];
   readonly askedTotal: number;
   readonly strip: StripPart;
+  readonly figures: Figures;
+  readonly asks: Readonly<Record<string, AsksWaiting>>;
+  readonly idle: IdleReason | null;
 }
 
 /** How many of the crew's next asks the slow part keeps. */
@@ -529,6 +548,7 @@ export function readSlow(
   db: Database,
   now: Date,
   forge: { readonly dataDir: string; readonly ceilingUsd: number | null },
+  viewers: readonly string[] = [],
 ): Slow {
   const asked = askedNext(db);
   const kpis = readKpis(db, now, {
@@ -573,7 +593,34 @@ export function readSlow(
       ceilingUsd: forge.ceilingUsd,
       needs,
     },
+    figures: readFigures(db, now, kpis),
+    asks: asksOf(db, viewers, now),
+    idle: idleOf(db, forge.dataDir, now),
   };
+}
+
+/** Why the builders sit idle, from the same module the dispatcher is asked in; `app` is the database and the data directory, the two things it reads. */
+function idleOf(db: Database, dataDir: string, now: Date): IdleReason | null {
+  try {
+    return idleReason({ db, config: { dataDir } } as unknown as App, now);
+  } catch {
+    return null;
+  }
+}
+
+/** What waits on each viewer: the same set `/review` draws (`reviewSetOf`), counted per person the worker was told of. */
+function asksOf(db: Database, viewers: readonly string[], now: Date): Record<string, AsksWaiting> {
+  const out: Record<string, AsksWaiting> = {};
+  for (const id of viewers) {
+    const user = getUserById(db, id);
+    if (user === undefined) {
+      out[id] = { count: 0, oldest: null };
+      continue;
+    }
+    const set = reviewSetOf(db, user, now);
+    out[id] = { count: set.count, oldest: set.live.reduce<string | null>((o, a) => (o === null || Date.parse(a.since) < Date.parse(o) ? a.since : o), null) };
+  }
+  return out;
 }
 
 /** A short hash of what a lane shows: its items without the heartbeat, which moves every few seconds and is no change. */
@@ -612,5 +659,8 @@ export function compose(
     moved: fast.moved,
     builders: fast.builders,
     strip: slow?.strip ?? null,
+    asks: slow?.asks ?? {},
+    figures: slow?.figures ?? null,
+    idle: slow?.idle ?? null,
   };
 }

@@ -34,21 +34,21 @@ test("a viewer whose access was revoked is never shown what they remembered", as
 
 test("an admin who loses admin is not shown the figures they remembered", async () => {
   forgetAll(f.app.db);
-  expect(await get("/", f.ownerCookie)).toContain('id="home-kpis"');
+  expect(await get("/feed", f.ownerCookie)).toContain('id="home-panels"');
   f.app.db.query("UPDATE user SET is_admin = 0 WHERE id = ?1").run(f.owner.id);
-  expect(await get("/", f.ownerCookie)).not.toContain('id="home-kpis"');
+  expect(await get("/feed", f.ownerCookie)).not.toContain('id="home-panels"');
   f.app.db.query("UPDATE user SET is_admin = 1 WHERE id = ?1").run(f.owner.id);
 });
 
 test("a stale region is marked with an escaped address and a link for a page with no script", async () => {
   forgetAll(f.app.db);
-  const path = "/?all=1&a=%22%3E%3Cscript%3E&day=%22onfocus%3D";
+  const path = "/feed?all=1&a=%22%3E%3Cscript%3E&day=%22onfocus%3D";
   await get(path, f.ownerCookie);
   f.app.db.query("UPDATE repo SET description = 'moved' WHERE id = ?1").run(f.repos[0]!.id);
   const text = await get(path, f.ownerCookie);
   const marked = [...text.matchAll(/data-refresh="([^"]*)"/g)].map((m) => m[1]!);
   expect(marked.length).toBeGreaterThan(0);
-  for (const src of marked) expect(src).toMatch(/^\/live\/home\/(kpis|waiting|panels|asked|feed)(\?all=1)?$/);
+  for (const src of marked) expect(src).toMatch(/^\/live\/home\/(waiting|panels|asked|feed)(\?all=1)?$/);
   expect(text).toContain('<noscript><p class="small muted">Shown as of a moment ago. <a href="/live/home/');
   // The address the script and the link follow answers one region, in one element.
   const res = await fetch(`${f.base}${marked[0]!}`, { headers: { cookie: f.ownerCookie } });

@@ -25,14 +25,3 @@ describe("the studio at 360px", () => {
     expect(phone.startsWith("@media")).toBe(true);
   });
 });
-
-describe("home's moving lists stay inside the screen (#8681)", () => {
-  const css = studioCss;
-
-  test("the columns may shrink below their content, so a long title ellipsizes", () => {
-    expect(css).toContain(".moving { display: grid; grid-template-columns: minmax(0, 1fr);");
-    expect(css).toContain("grid-template-columns: repeat(2, minmax(0, 1fr))");
-    expect(css).toContain(".moving > * { min-width: 0; }");
-    expect(css).not.toMatch(/\.moving \{[^}]*grid-template-columns: 1fr/);
-  });
-});

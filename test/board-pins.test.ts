@@ -1,6 +1,4 @@
 /** Pinned panels (#2741): pin shows on home under the KPIs in the owner's order, unpin removes, nobody else's pins show. */
-import { stylesheetAsset } from "../src/web/asset.ts";
-import { refreshJs } from "../src/web/studio/home_last.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -29,47 +27,9 @@ const post = (path: string, fields: Record<string, string>, who = "alice", heade
   });
 const get = async (path: string, who: string) =>
   (await fetch(servers.url + path, { headers: { authorization: `Bearer ${tok[who]}` } })).text();
-/** Home as the page's script leaves it: the slot after first paint, then the fragment it fetches. */
-const home = async (who: string) => {
-  const first = await get("/?all=1", who);
-  expect(titles(first)).toEqual([]); // nothing of the charts in the first paint
-  return first.includes('data-refresh="/live/home/panels"') ? get("/live/home/panels", who) : "";
-};
+/** The pins as the feed's region draws them: the fragment the page fetches. */
+const home = (who: string) => get("/live/home/panels", who);
 const titles = (h: string) => [...h.matchAll(/<h2>(Pin [ABC])<\/h2>/g)].map((m) => m[1]);
-
-type Answer = () => Promise<{ ok: boolean; text: () => Promise<string> }>;
-/**
- * `refreshJs` run against one slot in a stand-in document: whether the slot still
- * waits (holds its reserve) afterwards, and what its live region holds. The
- * stand-in parses only what the fragment is: a <div> around #home-pins.
- */
-async function refreshSlot(answer: Answer): Promise<{ waiting: boolean; pins: string }> {
-  const attrs = new Map([["data-refresh", "/live/home/panels"]]);
-  const pins = { id: "home-pins", innerHTML: "" };
-  const slot = {
-    getAttribute: (n: string) => attrs.get(n) ?? null,
-    removeAttribute: (n: string) => void attrs.delete(n),
-    querySelector: (q: string) => (q === "#home-pins" ? pins : null),
-    dispatchEvent: () => true,
-    innerHTML: "",
-  };
-  const template = () => {
-    const content: { firstElementChild: unknown } = { firstElementChild: null };
-    return {
-      content,
-      set innerHTML(text: string) {
-        const inner = { id: "home-pins", innerHTML: "PANELS" };
-        content.firstElementChild = text === "" ? null : { children: [inner], firstElementChild: inner, innerHTML: text };
-      },
-    };
-  };
-  const document = { querySelectorAll: () => [slot], createElement: template };
-  const window = { fetch: answer, HTMLTemplateElement: function () {} };
-  class CustomEvent { constructor(readonly type: string) {} }
-  new Function("window", "document", "fetch", "CustomEvent", refreshJs)(window, document, answer, CustomEvent);
-  for (let i = 0; i < 10; i++) await Promise.resolve();
-  return { waiting: attrs.has("data-refresh"), pins: pins.innerHTML };
-}
 
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "forge-board-pins-"));
@@ -103,7 +63,7 @@ afterAll(async () => {
 const pinIt = (t: string, who = "alice") => post("/boards/pin-panel", { slug: "mine", title: t, back: "/" }, who);
 
 describe("pinned panels", () => {
-  test("pinning shows on home in the owner's order; moving reorders; unpinning removes", async () => {
+  test("pinning shows on the feed in the owner's order; moving reorders; unpinning removes", async () => {
     expect(titles(await home("alice"))).toEqual([]);
     for (const t of ["Pin A", "Pin B", "Pin C"]) expect((await pinIt(t)).status).toBe(303);
     await pinIt("Pin A"); // twice changes nothing
@@ -113,37 +73,6 @@ describe("pinned panels", () => {
     expect(titles(await home("alice"))).toEqual(["Pin A", "Pin C", "Pin B"]);
     await post("/boards/unpin-panel", { slug: "mine", title: "Pin C" });
     expect(titles(await home("alice"))).toEqual(["Pin A", "Pin B"]);
-  });
-
-  test("home's first paint holds a slot after the KPIs only when something is pinned", async () => {
-    const first = await get("/?all=1", "alice");
-    expect(first.indexOf('aria-label="The forge"')).toBeLessThan(first.indexOf('id="home-panels"'));
-    expect(first).not.toContain("Pinned panels");
-    expect(first).toContain('class="home-panels-slot"');
-    expect(first).toContain("Open your pinned panels"); // no-script door
-    expect(first).toMatch(/id="home-pins"[^>]*data-live="board\.pins"/); // a pin from any door redraws it live
-    // The reserve is held only while the slot waits: once the script drops data-refresh, nothing holds it.
-    const css = await (await fetch(servers.url + stylesheetAsset().path)).text();
-    const rules = [...css.matchAll(/([^{}]*\.home-panels-slot[^{}]*)\{([^}]*)\}/g)].map((m) => [m[1]!.trim(), m[2]!] as const);
-    expect(rules.some(([sel, body]) => sel.includes("[data-refresh]") && /min-height/.test(body))).toBe(true);
-    expect(rules.some(([sel, body]) => !sel.includes("[data-refresh]") && /min-height/.test(body))).toBe(false);
-    const slot = first.match(/<div id="home-panels"[\s\S]*?<\/noscript><\/div>/)?.[0] ?? "";
-    expect(slot.length).toBeLessThan(400); // the pins cost home's first paint almost no bytes
-    expect(await get("/?all=1", "bob")).not.toContain("home-panels");
-    // An admin with no pins: an empty live region to fill, no reserve, no fetch, no link.
-    const none = await get("/?all=1", "carol");
-    expect(none).toContain('id="home-pins"');
-    expect(none).not.toContain('data-refresh="/live/home/panels"');
-    expect(none).not.toContain("Open your pinned panels");
-  });
-
-  test("the slot is filled when the fragment lands, and collapses when it is empty or fails", async () => {
-    const filled = await refreshSlot(async () => ({ ok: true, text: async () => "<div>pins</div>" }));
-    expect(filled.pins).toBe("PANELS");
-    expect(filled.waiting).toBe(false);
-    expect((await refreshSlot(async () => ({ ok: true, text: async () => "" }))).waiting).toBe(false);
-    expect((await refreshSlot(async () => ({ ok: false, text: async () => "" }))).waiting).toBe(false);
-    expect((await refreshSlot(async () => { throw new Error("offline"); })).waiting).toBe(false);
   });
 
   test("the pin button is on the board page and flips to Unpin", async () => {

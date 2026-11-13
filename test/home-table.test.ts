@@ -1,5 +1,5 @@
 /**
- * The new home's table (`/home?view=table`, web/pages/home_table.ts): every
+ * The new home's table (`/?view=table`, web/pages/home_table.ts): every
  * item of every lane as one row, from the same picture as the lanes. It
  * remembers the view, filters and sorts through links, swaps its rows when
  * work moves, and offers only the bulk actions the fleet has, previewed row
@@ -57,7 +57,7 @@ afterAll(async () => {
 
 describe("the table is the lanes' items, one row each", () => {
   test("it lists every lane's items once, with the lane, the sentence, who has it and both clocks", async () => {
-    const res = await get("/home?view=table", owner);
+    const res = await get("/?view=table", owner);
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain('data-view="table"');
@@ -78,34 +78,34 @@ describe("the table is the lanes' items, one row each", () => {
   });
 
   test("the view is remembered per browser, and the address can say it", async () => {
-    const first = await get("/home?view=table", owner);
+    const first = await get("/?view=table", owner);
     const cookie = first.headers.get("set-cookie") ?? "";
     expect(cookie).toContain("forge_home_view=table");
     // no view asked: the remembered one
-    const back = await (await get("/home", `${owner}; forge_home_view=table`)).text();
+    const back = await (await get("/", `${owner}; forge_home_view=table`)).text();
     expect(back).toContain('data-view="table"');
     // asking for the lanes wins and is remembered in turn
-    const lanes = await get("/home?view=lanes", `${owner}; forge_home_view=table`);
+    const lanes = await get("/?view=lanes", `${owner}; forge_home_view=table`);
     expect(await lanes.text()).toContain('data-view="lanes"');
     expect(lanes.headers.get("set-cookie")).toContain("forge_home_view=lanes");
     // an ordinary visit sets nothing
-    expect((await get("/home", owner)).headers.get("set-cookie")).toBeNull();
+    expect((await get("/", owner)).headers.get("set-cookie")).toBeNull();
   });
 
   test("lane, state, who, app and search are links and a form: they work without script", async () => {
-    const byLane = await (await get("/home?view=table&lane=checks", owner)).text();
+    const byLane = await (await get("/?view=table&lane=checks", owner)).text();
     expect(rowsOf(byLane).every((r) => r.includes(">Checks<"))).toBe(true);
     expect(rowsOf(byLane).length).toBe(4);
-    const byWho = await (await get("/home?view=table&who=scout", owner)).text();
+    const byWho = await (await get("/?view=table&who=scout", owner)).text();
     expect(titles(byWho).length).toBeGreaterThan(0);
     expect(rowsOf(byWho).every((r) => r.includes("scout"))).toBe(true);
-    const byApp = await (await get("/home?view=table&app=trevato/notes", owner)).text();
+    const byApp = await (await get("/?view=table&app=trevato/notes", owner)).text();
     expect(rowsOf(byApp).every((r) => r.includes(">notes<"))).toBe(true);
-    const found = await (await get("/home?view=table&q=retry", owner)).text();
+    const found = await (await get("/?view=table&q=retry", owner)).text();
     expect(titles(found).every((t) => /retry/i.test(t))).toBe(true);
     expect(titles(found).length).toBeGreaterThanOrEqual(2);
     // every word of the search must match
-    const narrow = await (await get("/home?view=table&q=retry+webhook", owner)).text();
+    const narrow = await (await get("/?view=table&q=retry+webhook", owner)).text();
     expect(titles(narrow)).toEqual(["Retry a failed webhook with a longer pause each time"]);
     // chips are anchors that carry the other filters, and a chosen one clears itself
     const chipOf = (html: string, on: boolean, label: string): string =>
@@ -114,25 +114,25 @@ describe("the table is the lanes' items, one row each", () => {
     expect(chip).toContain("q=retry+webhook");
     expect(chip).toContain("lane=checks");
     const chosen = chipOf(byLane, true, "Checks");
-    expect(chosen).toContain("/home?view=table");
+    expect(chosen).toContain("/?view=table");
     expect(chosen).not.toContain("lane=");
     // a value that is not one is no filter
-    const odd = await (await get("/home?view=table&lane=nonsense&state=x&sort=zzz&who=a/b", owner)).text();
+    const odd = await (await get("/?view=table&lane=nonsense&state=x&sort=zzz&who=a/b", owner)).text();
     expect(rowsOf(odd).length).toBeGreaterThan(10);
   });
 
   test("sorting by a column is a link, and the header says which way", async () => {
-    const html = await (await get("/home?view=table&sort=title", owner)).text();
+    const html = await (await get("/?view=table&sort=title", owner)).text();
     const t = titles(html);
     expect(t).toEqual([...t].sort((a, b) => a.localeCompare(b)));
     expect(html).toContain('aria-sort="ascending"');
-    const desc = await (await get("/home?view=table&sort=title&dir=desc", owner)).text();
+    const desc = await (await get("/?view=table&sort=title&dir=desc", owner)).text();
     expect(titles(desc)).toEqual([...t].reverse());
     expect(desc).toContain('aria-sort="descending"');
   });
 
   test("a viewer sees only the rows they may read, and no way to act on others'", async () => {
-    const html = await (await get("/home?view=table", bob)).text();
+    const html = await (await get("/?view=table", bob)).text();
     expect(html).not.toContain("Retry a failed webhook");
     expect(titles(html)).toContain("A cost ledger per delivery: tokens, compute and time");
   });
@@ -169,7 +169,7 @@ describe("the rows are live", () => {
 
 describe("the action bar offers what exists, previews it, and acts through the platform", () => {
   test("it offers close, move to Later, land and hand to the planner, each for the kinds it fits", async () => {
-    const html = await (await get("/home?view=table", owner)).text();
+    const html = await (await get("/?view=table", owner)).text();
     const actions = JSON.parse((html.match(/data-actions="([^"]*)"/)?.[1] ?? "[]").replaceAll("&quot;", '"')) as { op: string; kinds: string[] }[];
     expect(actions.map((a) => a.op).sort()).toEqual(["close", "later", "replan", "ship"]);
     expect(actions.find((a) => a.op === "ship")?.kinds).toEqual(["pull"]);
@@ -232,9 +232,9 @@ describe("the table's own rules are plain data", () => {
   test("a view is an address, and anything that is not a view parameter is dropped", () => {
     const q = parseTable(new URLSearchParams("q=  retry   webhook &lane=checks&state=stuck&sort=age&dir=desc&app=a/b&who=scout&x=1"));
     expect(q).toEqual({ q: "retry webhook", lane: "checks", tone: "stuck", sort: "age", dir: "desc", app: "a/b", who: "scout" });
-    expect(tableHref(q)).toBe("/home?view=table&q=retry+webhook&lane=checks&app=a%2Fb&who=scout&state=stuck&sort=age&dir=desc");
+    expect(tableHref(q)).toBe("/?view=table&q=retry+webhook&lane=checks&app=a%2Fb&who=scout&state=stuck&sort=age&dir=desc");
     expect(parseTable(new URLSearchParams(new URL(`http://x${tableHref(q)}`).search))).toEqual(q);
-    expect(tableHref(parseTable(new URLSearchParams("")))).toBe("/home?view=table");
+    expect(tableHref(parseTable(new URLSearchParams("")))).toBe("/?view=table");
     expect(parseTable(new URLSearchParams("lane=../x&app=../../etc&who=a b&sort=drop table")).lane).toBeNull();
   });
 

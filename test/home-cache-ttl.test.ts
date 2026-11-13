@@ -17,18 +17,7 @@ import { claimRun, createRun } from "../src/core/runs.ts";
 import { takePhases, timePhase } from "../src/core/route_timing.ts";
 import type { KpiPart } from "../src/flow/kpis.ts";
 import { logLevel, setLogLevel } from "../src/kernel/log.ts";
-import {
-  cachedKpis,
-  cachedPanel,
-  cachedVitals,
-  cachedWaiting,
-  HOME_STALE_CEILING_MS,
-  kpiCache,
-  panelCache,
-  setHomeClock,
-  vitalsCache,
-  waitingCache,
-} from "../src/web/studio/home_cache.ts";
+import { cachedKpis, cachedPanel, cachedWaiting, HOME_STALE_CEILING_MS, kpiCache, panelCache, setHomeClock, waitingCache } from "../src/web/studio/home_cache.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import type { Repo } from "../src/core/repos.ts";
@@ -61,7 +50,7 @@ afterAll(async () => {
 beforeEach(() => {
   t = 1_000_000;
   setHomeClock(() => t);
-  for (const c of [kpiCache(app.db), panelCache(app.db), vitalsCache(app.db), waitingCache(app.db)]) c.clear();
+  for (const c of [kpiCache(app.db), panelCache(app.db), waitingCache(app.db)]) c.clear();
 });
 afterEach(async () => {
   // A refresh one test scheduled runs here, not in the next test.
@@ -105,30 +94,23 @@ test("the builders figure is read fresh on a hit, so it agrees with the idle rea
   expect(cache.misses).toBe(m + 1);
 });
 
-test("a panel and the vitals are kept 60 s through writes, each by its own identity", async () => {
+test("a panel is kept 60 s through writes, by its own identity", async () => {
   let a = 0;
   let b = 0;
   const answer = (n: number) => ({ n }) as unknown as Answer;
-  const vitals = vitalsCache(app.db);
-  const v = vitals.misses;
   cachedPanel(app.db, { board: "ops", title: "A" }, () => answer(++a));
   cachedPanel(app.db, { board: "ops", title: "B" }, () => answer(++b));
-  cachedVitals(app.db, now);
   write(50);
   cachedPanel(app.db, { board: "ops", title: "A" }, () => answer(++a));
   cachedPanel(app.db, { board: "ops", title: "B" }, () => answer(++b));
-  cachedVitals(app.db, now);
-  expect([a, b, vitals.misses - v]).toEqual([1, 1, 1]);
+  expect([a, b]).toEqual([1, 1]);
 
   t += 61_000;
-  const vitalsBefore = cachedVitals(app.db, now);
   expect(cachedPanel(app.db, { board: "ops", title: "A" }, () => answer(++a))).toEqual(answer(1));
   expect(a).toBe(1);
   await tick();
   expect([a, b]).toEqual([2, 1]);
   expect(cachedPanel(app.db, { board: "ops", title: "A" }, () => answer(++a))).toEqual(answer(2));
-  expect(cachedVitals(app.db, now)).not.toBe(vitalsBefore);
-  expect(vitals.misses - v).toBe(1);
 });
 
 test("past 60 s the old answer comes back without calling compute", () => {

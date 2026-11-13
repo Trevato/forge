@@ -11,7 +11,6 @@ import { getUserByName } from "../src/core/users.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { idleReason } from "../src/crew/idle_reason.ts";
 import { writeStamp } from "../src/core/write_clock.ts";
-import { kpiRow, kpiRowFor } from "../src/web/studio/kpi_row.ts";
 import { cachedKpis, kpiCache } from "../src/web/studio/home_cache.ts";
 import { readKpis } from "../src/flow/kpis.ts";
 import { kpiLines } from "../src/flow/kpi_words.ts";
@@ -90,7 +89,7 @@ async function terminal(): Promise<string> {
 }
 
 /** The builders tile's anchor on home. */
-const tile = (page: string): string => /<a class="stat" href="[^"]*"[^>]*><span class="stat-label">Builders running.*?<\/a>/s.exec(page)?.[0] ?? "";
+const tile = (page: string): string => /<a class="hf-fig"[^>]*>\s*<span class="hf-fig-label">Crew running<\/span>[\s\S]*?<\/a>/.exec(page)?.[0] ?? "";
 
 /** The repository's map as the API answers it: what home's "nothing ready" must agree with. */
 async function mapReady(): Promise<number> {
@@ -113,7 +112,7 @@ test("a ready issue and a builder with room: no reason is named", async () => {
   expect(await mapReady()).toBeGreaterThan(0);
   const page = await home();
   expect(tile(page)).not.toContain("nothing ready");
-  expect(tile(page)).toContain("running now");
+  expect(tile(page)).toContain("at work now");
   expect(await terminal()).not.toMatch(/Builders running 0 of 1 · (nothing|no sub|ceiling)/);
 });
 
@@ -129,8 +128,6 @@ test("no subscription with headroom: the granted account's window is full", asyn
   const later = new Date(now + 2 * 3_600_000);
   expect(idleReason(app, new Date(now))?.word).toBe("no subscription with headroom");
   expect(idleReason(app, later)?.word).not.toBe("no subscription with headroom");
-  expect(String(kpiRow(app.db, { now: new Date(now), idle: () => idleReason(app, new Date(now)) }))).toContain("no subscription with headroom");
-  expect(String(kpiRow(app.db, { now: later, idle: () => idleReason(app, later) }))).not.toContain("no subscription with headroom");
   expect(writeStamp(app.db)).toBe(stampBefore);
   expect(tile(page)).toContain("no subscription with headroom");
   expect(tile(page)).toContain('href="/subscriptions"');
@@ -176,7 +173,6 @@ test("the reason rides in the cached KPI answer: readKpis carries it, the tile a
   const k = readKpis(app.db, now, { ceilingUsd: null, idle: () => idleReason(app, now) });
   expect(k.builders.idle).toEqual({ word: "ceiling reached", href: "/meter" });
   expect(kpiLines(k, null)[3]).toBe("Builders running 0 of 1 · ceiling reached");
-  expect(tile(String(kpiRowFor(k, null, now)))).toContain('href="/meter"');
   // Every slot busy: nothing is added, and the reason is not asked.
   claimRun(app.db, createRun(app.db, { repoId: repo.id, kind: "agent", actorId: builder.id, reason: "assigned" }).id);
   const busy = readKpis(app.db, now, { ceilingUsd: null, idle: () => { throw new Error("asked"); } });
@@ -209,7 +205,7 @@ test("slots shown are the crew's concurrency, not the sum of the repositories' c
   try {
     set("4");
     const page = await home();
-    expect(tile(page)).toMatch(/>\d of 4</);
+    expect(tile(page)).toMatch(/\d of 4/);
     expect(tile(page)).not.toContain("of 16");
     expect(kpiLines(readKpis(app.db, new Date()), null).find((l) => l.startsWith("Builders running"))).toMatch(/Builders running \d of 4/);
     // Never more than the repositories offer.

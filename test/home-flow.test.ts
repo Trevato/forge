@@ -1,5 +1,5 @@
 /**
- * The new home (`/home`, web/pages/home_flow.ts): the pipeline as six live
+ * The home (`/`, web/pages/home_flow.ts): the pipeline as six live
  * lanes. It draws for an owner with work in every lane, a change shows up in
  * the lane its event puts it in, a viewer is never shown what they may not
  * read, the lane's health says stuck when it is, and nothing on the page or
@@ -26,6 +26,7 @@ let seed: HomeFlowSeed;
 let owner = "";
 let bob = "";
 
+const post = (path: string, cookie: string, body: URLSearchParams) => fetch(`${servers.url}${path}`, { method: "POST", body, headers: { cookie, origin: servers.url, accept: "application/json" }, redirect: "manual" });
 const get = (path: string, cookie: string) => fetch(`${servers.url}${path}`, { headers: { cookie }, redirect: "manual" });
 const titles = (html: string, lane: LaneKey): string[] => {
   const region = html.split(`id="lane-${lane}"`)[1]?.split("</section>")[0] ?? "";
@@ -52,7 +53,7 @@ afterAll(async () => {
 
 describe("the new home draws every lane", () => {
   test("an owner with work in every stage sees each item in its own lane", async () => {
-    const res = await get("/home", owner);
+    const res = await get("/", owner);
     expect(res.status).toBe(200);
     const html = await res.text();
     for (const lane of LANES) expect(html).toContain(`id="lane-${lane}"`);
@@ -67,11 +68,12 @@ describe("the new home draws every lane", () => {
     // the strip, the hosted forges line, and the way back
     expect(html).toContain('id="hf-strip"');
     expect(html).toContain('id="hf-forges"');
-    expect(html).toContain("/?home=classic");
+    expect(html).not.toContain("classic");
+    expect(html).not.toContain("Try the new home");
   });
 
   test("each lane is its own live region with its own address, so one event redraws one lane", async () => {
-    const html = await (await get("/home", owner)).text();
+    const html = await (await get("/", owner)).text();
     for (const lane of LANES) {
       const tag = html.match(new RegExp(`<section[^>]*id="lane-${lane}"[^>]*>`))?.[0] ?? "";
       expect(tag).toContain("data-live=");
@@ -111,27 +113,30 @@ describe("the new home draws every lane", () => {
   });
 
   test("a viewer sees only what they may read, and the lane's count is theirs", async () => {
-    const html = await (await get("/home", bob)).text();
+    const html = await (await get("/", bob)).text();
     // glue is private: nothing of it is named
     expect(html).not.toContain("Retry a failed webhook");
     expect(html).not.toContain("Pasted links");
     expect(titles(html, "building")).toContain("A cost ledger per delivery: tokens, compute and time");
     // the owner-only strip and fragments are not his
-    expect(html).not.toContain('id="hf-strip"');
-    expect((await get("/live/strip", bob)).status).toBe(403);
-    // signed out: sign in first
-    const out = await fetch(`${servers.url}/home`, { redirect: "manual" });
-    expect(out.status).toBe(303);
-    expect(out.headers.get("location")).toContain("/signin");
+    // the line that needs him, never the owner's figures
+    expect(html).not.toContain("hf-figs");
+    expect(html).not.toContain('id="hf-figures"');
+    expect((await get("/live/figures", bob)).status).toBe(403);
+    expect(await (await get("/live/strip", bob)).text()).not.toContain("hf-figs");
+    // signed out, `/` is the public door and nothing of the pipeline
+    const door = await fetch(`${servers.url}/`, { redirect: "manual" });
+    expect(door.status).toBe(200);
+    expect(await door.text()).not.toContain('id="lane-building"');
   });
 
   test("the filter shows one app, and its lanes listen only for that app's events", async () => {
-    const html = await (await get("/home?app=trevato/notes", owner)).text();
+    const html = await (await get("/?app=trevato/notes", owner)).text();
     expect(titles(html, "building")).toEqual(["Keep a draft when the page is closed by accident"]);
     expect(html).toContain('data-live-repo="trevato/notes"');
     expect(html).toContain("/live/lane?s=building&amp;app=trevato%2Fnotes");
     // a filter that is no app is no filter
-    const odd = await (await get("/home?app=../../etc", owner)).text();
+    const odd = await (await get("/?app=../../etc", owner)).text();
     expect(titles(odd, "building").length).toBeGreaterThan(1);
   });
 });
@@ -219,7 +224,7 @@ describe("the picture is read off the thread, once per write", () => {
       const answer = await new Promise<LaneAnswer>((resolve, reject) => {
         worker.onmessage = (e: MessageEvent<LaneAnswer>) => resolve(e.data);
         worker.onerror = (e) => reject(new Error(String(e.message)));
-        worker.postMessage({ id: 1, path: app.db.filename, now: Date.now(), stamp: undefined, dataDir, ceilingUsd: null } satisfies LaneJob);
+        worker.postMessage({ id: 1, path: app.db.filename, now: Date.now(), stamp: undefined, dataDir, ceilingUsd: null, viewers: [] } satisfies LaneJob);
       });
       expect(answer.error).toBeUndefined();
       const inline = readLanesInline(app.db, options());
@@ -276,7 +281,7 @@ describe("before the first reading, a page never reads on the thread", () => {
       const cookie = `forge_session=${createSession(fresh.db, s.owner.id).token}`;
       // outside `bun test`: the worker reads, a page does not wait for it
       process.env["NODE_ENV"] = "production";
-      const first = await fetch(`${srv.url}/home`, { headers: { cookie } });
+      const first = await fetch(`${srv.url}/`, { headers: { cookie } });
       const html = await first.text();
       expect(html).toContain("data-reading");
       expect(html).toContain("Reading what the forge is doing");
@@ -290,7 +295,7 @@ describe("before the first reading, a page never reads on the thread", () => {
       expect(lane).not.toContain("data-reading");
       const forges = await (await fetch(`${srv.url}/live/forges`, { headers: { cookie } })).text();
       expect(forges).toContain("hosted forge");
-      const next = await (await fetch(`${srv.url}/home`, { headers: { cookie } })).text();
+      const next = await (await fetch(`${srv.url}/`, { headers: { cookie } })).text();
       expect(next).not.toContain("data-reading");
       expect(next).toContain("A cost ledger per delivery");
       srv.stop();
@@ -318,5 +323,87 @@ describe("before the first reading, a page never reads on the thread", () => {
       fresh.close();
       await rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("the home is the root", () => {
+  test("/home and /?home=new go to /, keeping the view and the filters", async () => {
+    const a = await get("/home?view=table&lane=checks&state=stuck", owner);
+    expect(a.status).toBe(303);
+    expect(a.headers.get("location")).toBe("/?view=table&lane=checks&state=stuck");
+    const b = await get("/?home=new&view=table", owner);
+    expect(b.status).toBe(303);
+    expect(b.headers.get("location")).toBe("/?view=table");
+    expect((await get("/?home=classic", owner)).headers.get("location")).toBe("/");
+    // a stranger still gets the door, and /home sends them to it
+    const c = await fetch(`${servers.url}/home`, { redirect: "manual" });
+    expect(c.headers.get("location")).toBe("/");
+  });
+
+  test("it carries the box that tells the crew with Notes and Talk, one line that needs the owner with the real count, and no second pipeline", async () => {
+    const html = await (await get("/", owner)).text();
+    expect(html).toContain('id="tell-box"');
+    expect(html).toContain('href="/notes"');
+    expect(html).toContain('href="/talk"');
+    for (const old of ["Being built", "Just shipped", "Later gate", "Since you were here", 'id="live-moving"', 'id="now-line"', 'id="needs-you"'])
+      expect(html).not.toContain(old);
+    expect(html.match(/hf-need|hf-calm/g)?.length).toBeLessThanOrEqual(2);
+  });
+});
+
+describe("a proof that did not pass is told in words, with its own record, and red only when the release is not serving", () => {
+  const proofFile = () => join(dataDir, "release", "proof.json");
+  const write = async (p: Record<string, unknown>) => {
+    await Bun.write(proofFile(), JSON.stringify({ version: "0.7.576", at: new Date(Date.now() - 60_000).toISOString(), ok: false, ...p }));
+  };
+  const RATE = "a stranger's journey failed: the forge could not be named: it sent the person somewhere else (/?start=rate&name=probe-0a9a10a2#start-f)";
+
+  test("a stranger turned away by the sign-up limit is a notice: the release is serving, no query string, one line", async () => {
+    await write({ failure: RATE, failures: 2 });
+    const html = await (await get("/", owner)).text();
+    const need = html.match(/<p class="hf-need"[\s\S]*?<\/p>/)?.[0] ?? "";
+    expect(need).toContain('data-tone="notice"');
+    expect(need).toContain("is serving");
+    expect(need).toContain("sign-up limit");
+    expect(need).toContain('href="/releases#proof"');
+    expect(need).not.toContain("start=rate");
+    expect(need).not.toContain("probe-");
+    expect(need).not.toContain('data-tone="danger"');
+    expect(html.match(/class="hf-need"/g)?.length).toBe(1);
+    // a person who cannot administer the forge is not told of it
+    expect(await (await get("/", bob)).text()).not.toContain("sign-up limit");
+  });
+
+  test("a public address that did not answer as the release is red, and says it is not serving", async () => {
+    await write({ failure: "https://f/a.css expected 200 (status 500)" });
+    const need = (await (await get("/", owner)).text()).match(/<p class="hf-need"[\s\S]*?<\/p>/)?.[0] ?? "";
+    expect(need).toContain('data-tone="alarm"');
+    expect(need).toContain("is not serving as it should");
+    expect(need).toContain('data-dot="danger"'.replace("data-dot", "data-tone"));
+  });
+
+  test("the releases page opens on the proof's record: where it stopped, what happened, when it tries again, and a way to try now", async () => {
+    await write({ failure: RATE, failures: 3 });
+    const html = await (await get("/releases", owner)).text();
+    const i = html.indexOf('id="proof"');
+    expect(i).toBeGreaterThan(0);
+    // it is the first thing after the page head
+    expect(html.slice(html.indexOf("<h1>Releases</h1>"), i)).not.toContain("<li");
+    const card = html.slice(i, i + 6000);
+    expect(card).toContain("The forge could not be named");
+    expect(card).toContain("sign-up limit");
+    expect(card).toContain("Next try");
+    expect(card).toContain("Exactly what the proof saw");
+    expect(card).toContain('action="/releases/prove"');
+    // trying it now asks the next tick to prove it, whatever the backoff
+    const res = await post("/releases/prove", owner, new URLSearchParams());
+    expect(res.status).toBeLessThan(400);
+    const kept = JSON.parse(await Bun.file(proofFile()).text()) as { retryNow?: boolean };
+    expect(kept.retryNow).toBe(true);
+    const { proofDue } = await import("../src/release/prove.ts");
+    expect(proofDue({ version: "0.7.576", at: new Date().toISOString(), ok: false, failures: 9, retryNow: true } as never, "0.7.576", Date.now())).toBe(true);
+    // a person who cannot administer the forge cannot
+    expect((await post("/releases/prove", bob, new URLSearchParams())).status).toBeGreaterThanOrEqual(400);
+    await Bun.write(proofFile(), "");
   });
 });

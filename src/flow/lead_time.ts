@@ -33,6 +33,3 @@ export function readLeadTime(db: Database, now = new Date(), publicOnly = false)
   const median = n % 2 ? hours[mid]! : (hours[mid - 1]! + hours[mid]!) / 2;
   return { landed: n, medianHours: median, maxHours: hours[n - 1]! };
 }
-
-/** Hours as the panel and the terminal say them: one decimal, "2.8h". */
-export const hoursWords = (h: number): string => `${Math.round(h * 10) / 10}h`;

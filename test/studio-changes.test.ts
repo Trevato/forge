@@ -1156,11 +1156,6 @@ describe("the studio, continued", () => {
     expect(erinHome).not.toContain("/?mode=dev");
     expect(erinHome).not.toContain('href="/alice/lighthouse"');
     expect(erinHome).not.toContain("tell the crew something");
-
-    // Alice's own front door still leads with it.
-    const aliceHome = await (await get("/")).text();
-    expect(aliceHome).toContain('href="/alice/lighthouse"');
-
     // /apps hides nothing: both see it, and it names its owner since neither
     // request is alice's own view of her own row — erin's outright, and
     // even alice's own listing spells it the same way for every row beside

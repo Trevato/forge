@@ -69,12 +69,14 @@ export const homeFlowCss = /* css */ `
 .tile-who { font-weight: 600; color: var(--fg); }
 .tile[data-new] { animation: hf-arrive 900ms var(--ease); }
 .lane-more { margin: 0; padding-inline: 4px; font-size: 13px; }
-.lane-more a { display: block; color: var(--muted-fg); }
-.lane-more a:hover { color: var(--accent); }
+.lane-more a, .lane-toggle { display: block; color: var(--muted-fg); }
+.lane-more a:hover, .lane-toggle:hover { color: var(--accent); }
 .lane-more span { align-items: center; min-height: 44px; }
 .lane-more-sm { display: inline-flex; }
 .lane-more-md, .lane-more-lg { display: none; }
 .lane-more span:empty { display: none; }
+.lane-more .lane-toggle, .lane-more .lane-all { display: none; min-height: 44px; padding: 0; border: 0; background: none; font: inherit; cursor: pointer; text-align: left; }
+
 .hf-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 0 16px; margin: 0; }
 .hf-foot a, .hf-forges a, .hf-need a { display: inline-flex; align-items: center; min-height: 44px; }
 @keyframes hf-arrive { from { background: color-mix(in srgb, var(--accent) 18%, var(--card)); } to { background: var(--card); } }
@@ -86,14 +88,24 @@ export const homeFlowCss = /* css */ `
 /* A phone: a lane is a glance, its first tile and the count of the rest; the figures keep their numbers and drop their notes. */
 @media (max-width: 719px) {
   .hf { gap: 12px; padding-top: 8px; }
-  .lane-list .tile:nth-child(n+2) { display: none; }
+  /* With script, "Show all N" opens the lane in place and stays open (the lane's own data-open) through every redraw. */
+  .hf[data-js] .lane-more-link { display: none; }
+  .hf[data-js] .lane-more .lane-toggle { display: block; color: var(--accent); font-weight: 500; }
+  .hf[data-js] .lane[data-open] .lane-more .lane-all { display: block; color: var(--muted-fg); }
+  .lane:not([data-open]) .lane-list .tile:nth-child(n+5) { display: none; }
+  .lane-list { gap: 4px; }
+  .tile-link { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "title title clock" "app hint hint"; align-items: baseline; gap: 0 8px; min-height: 44px; padding: 6px 12px; }
+  .tile-top { display: contents; }
+  .tile-title { grid-area: title; }
+  .tile-app { grid-area: app; }
+  .tile-clock { grid-area: clock; }
+  .tile-hint { grid-area: hint; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .lane-health { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-  .tile-title { -webkit-line-clamp: 1; }
+  .tile-title { -webkit-line-clamp: 1; line-clamp: 1; }
   .hf-fig { padding: 8px 12px; }
   .hf-fig-note { display: none; }
   .hf-fig:last-child .hf-fig-note { display: block; }
   .hf-fig-spark { right: 12px; top: 8px; }
-  .lane-more { display: none; }
   .hf-head { align-items: center; }
   .hf-title { flex: 1 1 100%; }
   .hf-filter-label { display: none; }
@@ -106,6 +118,7 @@ export const homeFlowCss = /* css */ `
   .hf-lanes { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .lane-more-sm { display: none; }
   .lane-more-lg { display: inline-flex; }
+  .lane-list .tile:nth-child(n+6) { display: none; }
 }
 @media (min-width: 1100px) {
   .hf-lanes { grid-template-columns: repeat(6, minmax(0, 1fr)); }
@@ -186,6 +199,47 @@ export const homeFlowCss = /* css */ `
   .tb-row .tb-time { grid-area: time; font-size: var(--fs-min); text-align: right; }
   .tb-row .tb-age { display: none; }
   .tb-row[hidden] { display: none; }
+}
+
+/* ---- the figures ---- */
+.hf-need { flex-wrap: wrap; }
+.hf-need-sep { color: var(--muted-fg); }
+.hf-need[data-tone="notice"] { border-color: var(--border); background: var(--card); }
+.fg { display: flex; flex-direction: column; gap: 8px; }
+.fg-sum { display: flex; align-items: center; gap: 12px; min-height: 44px; cursor: pointer; list-style: none; }
+.fg-sum::-webkit-details-marker { display: none; }
+.fg-sum::before { content: ""; flex: none; width: 8px; height: 8px; margin-left: 4px; border-right: 1.5px solid var(--muted-fg); border-bottom: 1.5px solid var(--muted-fg); transform: rotate(-45deg); transition: transform var(--dur-2) var(--ease); }
+.fg[open] > .fg-sum::before { transform: rotate(45deg); }
+.fg-title { margin: 0; font-size: 16px; }
+.fg-hint { font-size: var(--fs-min); color: var(--muted-fg); }
+.fg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.fg-card { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 12px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); box-shadow: var(--shadow-1); color: var(--fg); }
+a.fg-card:hover { border-color: var(--border-strong); color: var(--fg); }
+.fg-card[data-tone="attn"] { border-color: color-mix(in srgb, var(--attn) 40%, var(--border)); }
+.fg-card[data-tone="attn"] .fg-n { color: var(--attn); }
+.fg-label { margin: 0; font-size: var(--fs-min); font-weight: 400; color: var(--muted-fg); }
+.fg-value { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; margin: 0; min-width: 0; }
+.fg-n { font-size: 20px; font-weight: 600; line-height: 28px; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.fg-unit { font-size: var(--fs-min); line-height: 16px; color: var(--muted-fg); }
+.fg-note { min-height: 32px; margin: 0; font-size: var(--fs-min); line-height: 16px; color: var(--muted-fg); }
+.fg-chart { height: 32px; margin-top: 4px; }
+.fg-svg { display: block; width: 100%; height: 32px; }
+.fg-line { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.fg-area { fill: color-mix(in srgb, var(--accent) 12%, transparent); stroke: none; }
+.fg-base { stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.fg-dot { fill: var(--accent); }
+.fg-axis { display: flex; justify-content: space-between; gap: 8px; min-height: 16px; margin: 0; font-size: var(--fs-min); line-height: 16px; color: var(--muted-fg); }
+.fg-reading { margin: 0; color: var(--muted-fg); }
+
+/* ---- the box that tells the crew, kept to one row on a desk ---- */
+.hf-tell { display: flex; flex-wrap: wrap; align-items: center; gap: 0 16px; }
+.hf-tell .tell-box { flex: 1 1 480px; min-width: 0; flex-wrap: nowrap; }
+.hf-tell .tell-box > select { flex: 0 1 220px; min-width: 0; }
+.hf-tell .tell-box .btn { flex: none; }
+.hf-tell .home-doors { margin: 0; }
+@media (max-width: 719px) {
+  .hf-tell .tell-box { flex-wrap: wrap; }
+  .hf-tell .tell-box > select { flex: 1 1 140px; }
 }
 }
 `;

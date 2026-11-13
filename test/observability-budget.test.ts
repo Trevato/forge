@@ -15,7 +15,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { clearMapCache } from "../src/web/map_cache.ts";
-import { kpiCache, panelCache, vitalsCache } from "../src/web/studio/home_cache.ts";
+import { kpiCache, panelCache } from "../src/web/studio/home_cache.ts";
 import { p75 } from "../src/flow/reach.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { seedFlowFixture } from "./helpers/flow-fixture.ts";
@@ -94,18 +94,18 @@ describe("on production's size", () => {
     expect(res.ms).toBeLessThan(60 * unit);
   });
 
-  test("a cold home answers within a few passes over the runs, kpis read afresh", async () => {
+  test("a cold home answers from the picture, within a few passes over the runs", async () => {
     await get("/");
     // what this budget measures is the cold path, a miss on every one of them and on the regions home remembers (#7660).
     // what this budget measures is the cold path, a miss on every one of them, not a warm hit.
     app.db.run("UPDATE repo SET description = description || ''");
-    for (const cache of [kpiCache(app.db), panelCache(app.db), vitalsCache(app.db)]) cache.clear();
+    for (const cache of [kpiCache(app.db), panelCache(app.db)]) cache.clear();
     forgetHome(app.db);
     const unit = baseline();
     const res = await get("/");
     expect(res.status).toBe(200);
-    expect(names(res.timing)).toContain("kpis");
-    expect(res.timing).not.toMatch(/kpis;dur=[\d.]+;desc="hit"/);
+    // the home reads no table itself: the lanes' worker does, and the page is drawn from its picture
+    expect(names(res.timing)).toContain("picture");
     expect(res.ms).toBeLessThan(30 * unit);
   });
 });

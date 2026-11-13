@@ -180,7 +180,7 @@ import { chapterAct, chapterPage, chaptersPage } from "../web/pages/chapters.ts"
 import { betAct, betPage, betPropose, betsPage } from "../web/pages/bets.ts";
 import { changelogJson, changelogPage } from "../web/pages/changelog.ts";
 import { docsFile, docsFolder } from "../web/pages/docs_link.ts";
-import { releaseHoldSubmit, releaseNowSubmit, liftSubmit, releasesPage, rollbackSubmit } from "../web/pages/releases.ts";
+import { proveAgainSubmit, releaseHoldSubmit, releaseNowSubmit, liftSubmit, releasesPage, rollbackSubmit } from "../web/pages/releases.ts";
 import {
   changePassword,
   iconPng,
@@ -315,7 +315,6 @@ import { keeperAnswer } from "../web/studio/keeper_row.ts";
 import { homeArchive, homeArchived, homeArchiveUndo } from "../web/studio/home_archive.ts";
 import { liveFeedFragment } from "../web/studio/feed.ts";
 import { likeSubmit } from "../web/studio/like.ts";
-import { liveChipsFragment, liveMovingFragment } from "../web/studio/living.ts";
 import { HOME_REGIONS } from "../web/studio/home_last.ts";
 import { serviceWorker } from "../web/sw.ts";
 import { explorePage } from "../web/studio/explore.ts";
@@ -377,7 +376,7 @@ import {
 import { lookImage } from "../web/pages/looks.ts";
 import { ogCard } from "../web/pages/og.ts";
 import { bigRedirect, boardPage } from "../web/pages/board.ts";
-import { homeFlowPage, liveForgesFragment, liveLaneFragment, liveStripFragment, liveTableFragment } from "../web/pages/home_flow.ts";
+import { homeRedirect, liveFiguresFragment, liveForgesFragment, liveLaneFragment, liveStripFragment, liveTableFragment } from "../web/pages/home_flow.ts";
 import { homeActPost } from "../web/pages/home_table.ts";
 import { returnsPage } from "../web/pages/returns.ts";
 import {
@@ -866,8 +865,8 @@ export function buildRouter(): Router<Handler> {
   // Stripe's signed events (http/stripe_hook.ts): public, no cookie read, each event id once.
   router.add("POST", "/hooks/stripe", stripeHook);
   router.add("GET", "/", home);
-  // The new home: the pipeline as six live lanes (web/pages/home_flow.ts). Literal, above /:owner.
-  router.add("GET", "/home", homeFlowPage);
+  // The home is `/`; its old address goes there (web/pages/home_flow.ts). Literal, above /:owner.
+  router.add("GET", "/home", homeRedirect);
   // The new home's action bar: preview or apply one bulk action over the rows picked (web/pages/home_table.ts).
   router.add("POST", "/home/act", homeActPost);
   // A spawned child's claim link: GET shows, POST takes it (spawn/claim.ts).
@@ -1001,6 +1000,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/releases/:sha/rollback", rollbackSubmit);
   router.add("POST", "/releases/hold", releaseHoldSubmit);
   router.add("POST", "/releases/now", releaseNowSubmit);
+  router.add("POST", "/releases/prove", proveAgainSubmit);
   router.add("POST", "/releases/hold/:id/lift", liftSubmit);
   router.add("GET", "/audit.csv", auditCsv);
   router.add("POST", "/audit/:owner/:name/probe", auditProbeSubmit);
@@ -1062,12 +1062,11 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/live/client-apps", liveClientAppsFragment);
   router.add("GET", "/live/feed", liveFeedFragment);
   router.add("GET", "/live/milestones", liveMilestonesFragment);
-  router.add("GET", "/live/moving", liveMovingFragment);
-  router.add("GET", "/live/chips", liveChipsFragment);
   router.add("GET", "/live/lane", liveLaneFragment);
   router.add("GET", "/live/strip", liveStripFragment);
   router.add("GET", "/live/forges", liveForgesFragment);
   router.add("GET", "/live/table", liveTableFragment);
+  router.add("GET", "/live/figures", liveFiguresFragment);
   router.add("GET", "/feed", feedPage);
   // The home's late regions, each drawn alone (#7660).
   for (const name of HOME_REGIONS) router.add("GET", `/live/home/${name}`, (ctx) => liveHomeFragment(ctx, name));

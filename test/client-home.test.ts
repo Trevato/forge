@@ -360,7 +360,8 @@ describe("a client's first screen", () => {
 
   test("asked for, the whole home is still there", async () => {
     const home = await page(owner, "/?all=1");
-    expect(home).toContain('id="live-chips"');
+    expect(home).toContain('id="lane-building"');
+    expect(home).toContain('id="tell-box"');
     expect(home).not.toContain('id="client-apps"');
   });
 
@@ -406,8 +407,8 @@ describe("a client's first screen", () => {
   });
 
   test("a client sees no forge-wide figures, lean or whole", async () => {
-    expect(await page(owner)).not.toContain('class="stats kpi-row mb"');
-    expect(await page(owner, "/?all=1")).not.toContain('class="stats kpi-row mb"');
+    expect(await page(owner)).not.toContain("hf-figs");
+    expect(await page(owner, "/?all=1")).not.toContain("hf-figs");
   });
 
   test("queued agents and no running ones read as about to start", async () => {

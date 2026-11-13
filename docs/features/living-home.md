@@ -1,32 +1,19 @@
-# The living home (#8015)
+# The home
 
-Signed in, `/` is five things and nothing else:
+Signed in, `/` is one page (`src/web/pages/home_flow.ts`): the pipeline as six live lanes (Asked, Building, Checks, Review, Landing, Live) or, beside it, a table of the same items; the old home's two lists, four-number line and tiles are gone. `/home` and `/?home=new` go to `/`, keeping `?view=table` and the filters; a visitor who is not signed in still gets the public door.
 
-1. **The box** — one line that tells the crew (`POST /tell`, the same action the feed's composer posts to). A phone's share sheet fills it.
-2. **The figures** (admins) — the KPI tiles and any alarm, one calm line each. Everyone else gets the live version line.
-3. **Now** (site admins) — `check › review › land › live`, each the sum of the `/boards` stages it names (`nowOf` in `src/flow/moving.ts`), each a link. The counts take in every repository, private ones too, so no one else is shown them.
-4. **Being built / Just shipped** — three rows each, every row a link to its issue or pull, read for the viewer (a repository they cannot read, and a sealed report, are never named). One live region, `#live-moving`, redrawn from `/live/moving` when a run or a merge moves; it always holds six rows, so nothing below it shifts.
-5. **Your apps** — a chip per app and a plus; `#live-chips`, redrawn from `/live/chips`.
+1. **The box** — one line that tells the crew (`POST /tell`, the same action the feed's composer posts to), with Notes and Talk beside it.
+2. **The one line that needs you** — a failed proof, a red main, a stopped landing line, then what waits on you (`3 waiting on you, oldest 2 days`, over `/review`, in the largest sensible unit); or "Nothing needs you right now". Everyone sees it; the five figures beside it are an admin's.
+3. **The lanes or the table** — each lane a live region of its own that redraws on its own events; the table is the same items one row each, with search, sort, filter chips and bulk actions that go through the fleet's verbs (previewed, receipted, undoable where they can be). `?view=` is remembered per browser.
+4. **Figures** (admins) — one section under them: shipped over 14 days, visitors, crew spend, check time, page speed, open bugs, the last off-box backup. One card, one chart, one number formatter (`src/flow/figure_format.ts`); open or closed is remembered in the browser.
+5. **The hosted forges** in one line.
 
-The terminal's home carries the same lines (`movingLines` in `src/tui/screens/moving.ts`): Now for a site admin, then being built and just shipped, read for the viewer; its tell is the box.
+None of it is read on a request. A worker reads the picture (`src/flow/lanes_worker.ts`; the fast part in a few milliseconds, the slow part — the crew's order for what is asked next, the figures, the alarms, what waits on each person who has the home open — every 30 s) and the thread keeps the last one: a page is drawn from it, a lane redraws from it and answers 304 when its version has not moved. The first page after a restart draws "reading…" and fills in place.
 
-6. **Pinned panels** — an admin's own pins, in their order, right after the KPIs. With no pin nothing is drawn. With one, home holds an empty `#home-panels` slot (one panel row tall, so nothing shifts) that the refresh script fills from `/live/home/panels` after first paint, keeping Up, Down and Unpin; with no script a link opens the same fragment. The panels sit in a live region (`#home-pins`) that redraws on `board.pins`, the event every pin, unpin and move makes for its owner alone, so a change from a board, the terminal, the API or the MCP shows at once. In the terminal the same list is the palette's Pinned panels (`src/tui/screens/home_pins.ts`): `<`/`>` move, `u` unpins, `enter` opens the board. `/feed` still draws them too.
-
-The feed — the composer, the timeline, what is on you, since you were here — is `/feed`, linked from home.
-
-Left out on purpose: the waiting-on-you line, the clog, vitals and keeper lines (the boards and the Flow dialog still show them), and "slowest right now" (it needs a timing read the home does not have). The box posts to `/tell` today; it becomes the `/talk` entry (#7652) when that lands.
-
-The two scans behind the lists are read once per write (`writeStamp`), so a warm home reads no tables for them.
+The feed — the composer, the timeline, what is on you, since you were here — is `/feed`, linked from the home. The terminal's home still carries the pipeline's four words and the being-built and just-shipped lists (`src/tui/screens/moving.ts`).
 
 ## The figures tell the truth (#10440)
 
-- **Slots** in "Builders running" are `crew.concurrency` (`crewConcurrency` in `src/flow/slot_cap.ts`), or the repositories' slots when those are fewer: the sum of the repositories' slots is a ceiling, not a limit. Home and the terminal read the same figure.
-- **"Nothing ready"** is said only when the repository's map has nothing ready (`/api/v1/repos/:owner/:name/map`); `test/home-builders-idle.test.ts` checks home against that answer.
-- **Pace line:** "Behind pace" only when the used percent is below the elapsed percent; otherwise "Under the allowed burn".
-- **Just shipped** titles are cut at a word (`shortTitle`); the row's hover and screen-reader title carry the whole one.
-- **Dropped on purpose** (the issue named them: no decision uses them): the Traffic, Reporting browsers and Accounts tiles. The same numbers stay on `/settings/traffic`, `/boards/reach` and the KPI probe.
-- A stuck approved pull is one line ("… waits for a person to merge it."); the wall it hit is on the pull.
-
-## The speed tile's note (#10738)
-
-"Reported page speed" shows the 75th-percentile page load as its figure and, under it, `LCP … · INP …` over seven days from the first-party beacon (`vitalsNote`): LCP is how long the main content takes to show, INP how long a tap takes to answer. With no report yet it says "no visitors yet". The terminal's "Reported page speed" line (`kpiLines`) uses the same note.
+- **Slots** in "Crew running" are `crew.concurrency` (`crewConcurrency` in `src/flow/slot_cap.ts`), or the repositories' slots when those are fewer. Home and the terminal read the same figure.
+- **Dropped on purpose** from the old tiles: the ones the strip or a lane already says (shipped per hour, the live version, builders running, the week), and the Traffic, Reporting browsers and Accounts tiles; the same numbers stay on `/settings/traffic`, `/boards/reach` and the KPI probe.
+- **Page speed** shows the 75th-percentile page load and, under it, `LCP … · INP …` over seven days from the first-party beacon: LCP is how long the main content takes to show, INP how long a tap takes to answer.

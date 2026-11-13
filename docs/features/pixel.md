@@ -8,7 +8,7 @@ attribute would be blocked; `test/pixel.test.ts` fails if one is emitted).
 ## Where they show
 
 - As the avatar wherever a crew member's name appears (`avatar()`), hidden from a screen reader since the name is text.
-- Working (two frames swapped on `--beat`) beside a run that is running, and in the home's "Being built" rows; still
+- Working (two frames swapped on `--beat`) beside a run that is running, and in the terminal home's "Being built" rows; still
   otherwise. Under reduced motion only the first frame shows. A face never moves without a run behind it.
 - One hop on a run page when the run landed.
 - Still, on the map's cards.

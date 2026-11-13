@@ -1,26 +1,21 @@
 /**
- * Home's row of figures (#2871, #2713), from `flow/kpis.ts`: shipped per
- * hour with a day's sparkline, the live version and since when, the median
- * check time, the crew builders running of their slots, the crew's spend
- * today of the daily ceiling, the age of the last off-box backup, who used the
- * answering time, browsers that reported back with 30 days as a sparkline,
- * accounts seen today, and reported page speed. What each one counts is in
- * `KPI_COUNTS`; `/api/v1/admin/kpis/probe` recomputes them.
- * Server-rendered, one fixed-height §5 stat tile each, so nothing moves when
- * it paints. Only the studio's words: shipped, change, check time.
+ * What the old home's row of tiles left that other pages still use: the day
+ * sparkline and the traffic columns (`daySpark`, `trafficColumns`), the live
+ * version (`liveNow`), and the line that counts what waits on a person
+ * (`waitingLine`, the feed's). The home itself is `pages/home_flow.ts`, with
+ * its figures in `pages/home_figures.ts`.
  */
 
 import type { Database } from "bun:sqlite";
-import { KPI_COUNTS, backupFull, backupOverdue, backupValue, buildersValue, checkTime, shippedValue, vitalsNote, speedWords, spendCeilingWords, spendFull, spendValue, waitingWords } from "../../flow/kpi_words.ts";
-import { perfRecord } from "../../perf/live.ts";
-import type { TrafficClass, TrafficMinute, TrafficTotals } from "../../perf/traffic.ts";
-import type { IdleReason } from "../../crew/idle_reason.ts";
-import type { KpiTimer, Kpis } from "../../flow/kpis.ts";
-import { cachedKpis, cachedWaiting } from "./home_cache.ts";
+import { waitingWords } from "../../flow/kpi_words.ts";
+
+import type { TrafficClass, TrafficMinute } from "../../perf/traffic.ts";
+
+import { cachedWaiting } from "./home_cache.ts";
 import { escapeHtml, html, raw, type Html } from "../html.ts";
 import { BOOTED } from "../../release/gate.ts";
 import { running } from "../../kernel/version.ts";
-import { sha, stat, time } from "../ui.ts";
+
 import type { User } from "../../core/users.ts";
 import { reviewSetOf } from "./review_set.ts";
 import { staleArchive } from "./review_stale.ts";
@@ -104,102 +99,10 @@ export function trafficColumns(minutes: readonly TrafficMinute[], width: number,
   return raw(`<svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="${escapeHtml(label)}">${rects.join("")}</svg>`);
 }
 
-function tile(label: string, href: string, value: Html | string, full: string, note: string | Html, title: string, extra: Html | null = null, tone: "attn" | null = null): Html {
-  return stat({ label, href, value, title: full, note, noteTitle: title, aria: `${label}: ${full}, ${title}`, spark: extra, ...(tone === null ? {} : { tone }) });
-}
-
 /** The version this forge is running, and since when: the same source as `/releases`. */
 export function liveNow(): { sha: string; at: string } | null {
   const commit = running().commit;
   return commit === null ? null : { sha: commit, at: BOOTED };
-}
-
-export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now: Date = new Date(), traffic: TrafficTotals | null = null): Html {
-  const idle = k.builders.idle;
-  const overdue = k.backup ? k.backup.state === "red" : backupOverdue(k.backupAt, now);
-  const spendWords = spendCeilingWords(k.spend);
-  const rate = shippedValue(k.landed, k.landedHours.length);
-  return html`<section class="stats kpi-row mb" aria-label="The forge's figures, each over its own window; hover one for what it counts">
-    ${tile(
-      "Shipped per hour",
-      "/board",
-      rate,
-      Number((k.landed / k.landedHours.length).toFixed(2)).toString(),
-      `${k.landed} ${k.landed === 1 ? "change" : "changes"} in 24 h`,
-      `${k.landed} ${k.landed === 1 ? "change" : "changes"} in 24 h. ${KPI_COUNTS.shipped}`,
-      sparkline(k.landedHours),
-    )}
-    ${tile(
-      "Live version",
-      "/releases",
-      live === null ? "—" : sha(live.sha),
-      live === null ? "Nothing live yet" : live.sha,
-      live === null ? "Nothing live yet" : html`live ${time(live.at)}`,
-      live === null ? "Nothing live yet" : `Live since ${live.at}. ${KPI_COUNTS.live}`,
-    )}
-    ${tile(
-      "Median check time",
-      "/boards",
-      checkTime(k.medianCheckMs),
-      k.medianCheckMs === null ? "No check finished in 24 h" : checkTime(k.medianCheckMs),
-      k.medianCheckMs === null ? "No check finished in 24 h" : "over the last 24 h",
-      k.medianCheckMs === null ? "No check finished in 24 h" : KPI_COUNTS.checks,
-    )}
-    ${tile(
-      "Builders running",
-      idle?.href ?? "/settings/crew",
-      buildersValue(k.builders),
-      buildersValue(k.builders),
-      k.builders.slots === 0 ? "No slots set" : idle?.word ?? "running now",
-      k.builders.slots === 0 ? "No slots set" : `${KPI_COUNTS.builders} ${k.builders.slots} ${k.builders.slots === 1 ? "slot" : "slots"} set.`,
-    )}
-    ${tile(
-      "Crew spend today",
-      "/settings/crew",
-      spendValue(k.spend),
-      spendFull(k.spend),
-      spendWords.note,
-      spendWords.title,
-      null,
-      spendWords.attn ? "attn" : null,
-    )}
-    ${tile(
-      "Last off-box backup",
-      "/settings/backups",
-      backupValue(k, now),
-      backupFull(k.backupAt),
-      k.backup ? k.backup.note : k.backupAt === null ? "no backup off the machine yet" : overdue ? "overdue, more than 24 h" : "off the machine",
-      k.backup ? `${k.backup.reasons[0] ?? k.backup.unknowns[0] ?? k.backup.line} ${k.backup.checkLine}` : overdue ? "Overdue: the last off-box backup is more than 24 h old" : "Age of the last off-box backup",
-      null,
-      overdue ? "attn" : null,
-    )}
-    ${k.bugs === undefined ? null : tile(
-      "Open bugs",
-      "/boards",
-      String(k.bugs.open),
-      `${k.bugs.open} open ${k.bugs.open === 1 ? "bug" : "bugs"}`,
-      k.bugs.overdue > 0 ? `${k.bugs.overdue} past its clock` : "none past its clock",
-      "Open bugs, and those past their clock: 4 h high, 48 h otherwise",
-      null,
-      k.bugs.overdue > 0 ? "attn" : null,
-    )}
-    ${tile(
-      "Reported page speed",
-      "/boards/reach",
-      speedWords(k.reach.loadP75),
-      speedWords(k.reach.loadP75),
-      vitalsNote(k.reach),
-      KPI_COUNTS.speed,
-    )}
-  </section>`;
-}
-
-/** The figures count every repository, so the caller shows this to an admin only. */
-export function kpiRow(db: Database, opts: { ceilingUsd?: number; dataDir?: string; idle?: () => IdleReason | null; now?: Date; time?: KpiTimer } = {}): Html {
-  const now = opts.now ?? new Date();
-  const forge = { ceilingUsd: opts.ceilingUsd ?? null, ...(opts.dataDir === undefined ? {} : { dataDir: opts.dataDir }), ...(opts.idle === undefined ? {} : { idle: opts.idle }) };
-  // Read fresh from memory: no query, so it costs home nothing during a flood.
-  return kpiRowFor(cachedKpis(db, now, forge, opts.time), liveNow(), now, perfRecord.ledger.totals(now.getTime()));
 }
 
 /**

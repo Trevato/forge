@@ -34,7 +34,7 @@ import { lastDrill } from "../snapshot/drills.ts";
 import { lastMirror, mirrorNeed } from "../snapshot/mirror.ts";
 import { lastSnapshotOutcome, snapshotNeed } from "../snapshot/outcome.ts";
 import { drillNeed, firstSeen as drillFirstSeen, lastVerdict } from "../snapshot/verdict.ts";
-import { proofNeed } from "../release/prove.ts";
+import { proofNeed, proofNotice } from "../release/prove.ts";
 import { running as runningVersion } from "./version.ts";
 import { rollbackNeed } from "../release/launch.ts";
 import { behindStanding } from "../release/behind.ts";
@@ -545,8 +545,9 @@ export function vitals(input: VitalsInput): Vitals {
   if (behind !== undefined) need("mirror", behind.sentence, behind.since, "/settings/backups");
 
   // A release the forge could not prove against its own public URL is a card until a release does.
+  // Only a release that is not serving as it should is a card; a proof that could not finish for its own reasons (the sign-up limit, a slow answer) is a notice on /releases and on the home.
   const unproven = proofNeed(input.dataDir, runningVersion().version);
-  if (unproven !== undefined) need("release", unproven.sentence, unproven.since, "/board");
+  if (unproven !== undefined && proofNotice(input.dataDir, runningVersion().version, now)?.tone === "alarm") need("release", unproven.sentence, unproven.since, "/releases#proof");
 
   // A roll the image's launcher undid is a card until a later version reads ready. Its sentence
   // carries the release's own last words (stderr), so anything credential-shaped is masked.

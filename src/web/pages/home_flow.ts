@@ -16,13 +16,12 @@
  */
 
 import type { App } from "../../app.ts";
-import { usd } from "../../core/money.ts";
 import { listChildren } from "../../actions/spawn.ts";
 import { lastHeard, MAX_CHILDREN, QUIET_MS } from "../../spawn/heartbeat.ts";
 import { isAwakeBody } from "../../spawn/host.ts";
-import { sparkline } from "../studio/kpi_row.ts";
 import { forgeCeiling } from "../../flow/ceiling.ts";
-import { hoursWords } from "../../flow/lead_time.ts";
+import { count, duration, money } from "../../flow/figure_format.ts";
+import { waitingWords } from "../../flow/kpi_words.ts";
 import {
   LANES,
   LANE_HOLDS,
@@ -39,7 +38,7 @@ import {
   type StripPart,
 } from "../../flow/lanes.ts";
 import { span } from "../../flow/pipeline.ts";
-import { lastProof, proofNeed, type Proof } from "../../release/prove.ts";
+import { lastProof, proofNotice, type Proof } from "../../release/prove.ts";
 import { running, UNSTAMPED } from "../../kernel/version.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -48,16 +47,22 @@ import { figure as fig } from "../figure.ts";
 import { homeFlowJs } from "./home_flow_client.ts";
 import { liveRegionsJs } from "../client.ts";
 import { html, type Html } from "../html.ts";
-import { fragment, page } from "../layout.ts";
+import { fragment, page, redirect } from "../layout.ts";
 import { BOOTED } from "../../release/gate.ts";
-import { nowHref } from "./now.ts";
 import { secureFor } from "../../http/cookie_secure.ts";
 import { cookieValue } from "../../http/context.ts";
 import { parseTable, tableParams, tableRows, type TableQuery } from "../../flow/lanes_table.ts";
 import { TABLE_LIVE, tableRegion, tableTag, tableTools } from "./home_table.ts";
+import { interruptedOutLine } from "../studio/interrupted_out.ts";
+import { listReposWritableTo } from "../../core/repos.ts";
+import { chart, figuresGrid, figuresSection } from "./home_figures.ts";
+import { tellBox } from "../studio/living.ts";
+import { requestsCard } from "../requests_card.ts";
+import { everydayCard } from "./everyday.ts";
+import { untoldAnswer, markTold } from "../../core/requests.ts";
+import { YOURE_IN_MESSAGE } from "../../actions/users.ts";
+import { spawnedForge } from "../../spawn/claim.ts";
 
-/** The median as a person says it: minutes under an hour, else hours. */
-const leadWords = (h: number): string => (h < 1 ? `${Math.max(1, Math.round(h * 60))}m` : hoursWords(h));
 
 /** The events that can move work between lanes, per lane. A burst of them is one fetch of the lane. */
 const LANE_LIVE: Record<LaneKey, string> = {
@@ -125,14 +130,9 @@ function tile(i: LaneView["items"][number], now: number): Html {
   </li>`;
 }
 
-/** Where a lane's overflow opens: the admin's list of what the lane counts, else the board. */
-function moreHref(key: LaneKey, admin: boolean): string {
-  if (!admin) return "/board";
-  if (key === "checks") return nowHref("check");
-  if (key === "review") return nowHref("review");
-  if (key === "landing") return nowHref("land");
-  if (key === "live") return nowHref("live");
-  return key === "asked" ? "/asked" : "/board";
+/** Where a lane's whole list is: the table, filtered to the lane (and the app, when one is chosen). */
+function laneHref(key: LaneKey, only: string | null): string {
+  return `/?view=table&lane=${key}${query(only)}`;
 }
 
 /** One lane: a live region that answers for itself (`/live/lane`), so an event redraws this lane and no other. */
@@ -140,14 +140,15 @@ export function laneRegion(
   view: LaneView,
   health: Health,
   only: string | null,
-  admin: boolean,
+  _admin: boolean,
   now: number,
 ): Html {
   const key = view.key;
   const shown = view.items.length;
-  const rest = Math.max(0, view.total - shown);
-  const md = Math.max(0, view.total - Math.min(shown, 4));
-  const sm = Math.max(0, view.total - Math.min(shown, 1));
+  const total = view.total;
+  const href = laneHref(key, only);
+  const ready = key === "asked" ? " ready" : "";
+  const more = (n: number): string => (n <= 0 ? "" : `${n} more${ready}`);
   const label = `${LANE_NAME[key]}: ${view.total}. ${health.words}`;
   const scope = only === null ? null : html` data-live-repo="${only}"`;
   return html`<section
@@ -162,7 +163,7 @@ export function laneRegion(
     ${scope}
   >
     <header class="lane-head">
-      <h2 class="lane-name"><a class="lane-name-link" href="${moreHref(key, admin)}" title="${LANE_HOLDS[key]}">${LANE_NAME[key]}</a></h2>
+      <h2 class="lane-name"><a class="lane-name-link" href="${href}" title="${LANE_HOLDS[key]}">${LANE_NAME[key]}</a></h2>
       <span class="lane-count num" aria-hidden="true"
         >${String(view.total)}</span
       >
@@ -184,14 +185,16 @@ export function laneRegion(
       : html`<ol class="lane-list">
           ${view.items.map((i) => tile(i, now))}
         </ol>`}
-    ${sm === 0
+    ${total <= 4
       ? null
       : html`<p class="lane-more">
-          <a href="${moreHref(key, admin)}"
-            ><span class="lane-more-lg">${rest === 0 ? "" : `${rest} more${key === "asked" ? " ready" : ""}`}</span
-            ><span class="lane-more-md">${md === 0 ? "" : `${md} more${key === "asked" ? " ready" : ""}`}</span
-            ><span class="lane-more-sm">${sm === 0 ? "" : `${sm} more${key === "asked" ? " ready" : ""}`}</span></a
+          <a class="lane-more-link" href="${href}"
+            ><span class="lane-more-lg">${more(total - 5)}</span
+            ><span class="lane-more-md">${more(total - 4)}</span
+            ><span class="lane-more-sm">${more(total - 4)}</span></a
           >
+          <button type="button" class="lane-toggle" aria-expanded="false" data-all="${String(total)}">Show all ${String(total)}</button>
+          ${total > shown ? html`<a class="lane-all" href="${href}">All ${String(total)} in the table</a>` : null}
         </p>`}
   </section>`;
 }
@@ -199,9 +202,9 @@ export function laneRegion(
 
 /** What the lanes' reading needs of the forge. */
 const pictureOptions = (app: App): PictureOptions => ({ dataDir: app.config.dataDir, ceilingUsd: forgeCeiling(app.config) });
-const optionsOf = (ctx: Ctx): PictureOptions => pictureOptions(ctx.app);
+const optionsOf = (ctx: Ctx, user: { readonly id: string } | undefined = ctx.auth.user): PictureOptions => ({ ...pictureOptions(ctx.app), ...(user === undefined ? {} : { viewer: user.id }) });
 
-const healthOf = (view: LaneView, picture: LanePicture, now: number): Health => laneHealth(view, { now, builders: picture.builders, moved: picture.moved });
+const healthOf = (view: LaneView, picture: LanePicture, now: number): Health => laneHealth(view, { now, builders: picture.builders, moved: picture.moved, idle: picture.idle });
 
 // ---- the strip: today's figures, and the one line that needs the owner ----
 
@@ -224,28 +227,63 @@ function weekFigure(strip: StripPart): { value: string; note: string; attn: bool
     const pct = Math.round((strip.weekSpendUsd / (strip.ceilingUsd * 7)) * 100);
     return { value: `about ${pct}%`, note: "the provider has not reported its week; this is the crew's seven days at list price against seven days of the daily ceiling", attn: pct >= 100 };
   }
-  return { value: strip.weekSpendUsd < 1 ? "about $0" : `about ${usd(strip.weekSpendUsd)}`, note: "spent by the crew in seven days, at list price; the provider has not reported its week", attn: false };
+  return { value: `about ${money(strip.weekSpendUsd)}`, note: "spent by the crew in seven days, at list price; the provider has not reported its week", attn: false };
 }
 
-/** The strip: five figures, each with its unit and, where the data has one, a trend; and the one line that needs the owner. */
-export function stripRegion(picture: LanePicture, dataDir: string, now: number): Html {
+/** One thing that needs this person: an alarm (red: something is not working) or a notice (it can wait, and is not on fire). */
+interface Need {
+  readonly says: string;
+  readonly href: string;
+  readonly tone: "alarm" | "notice";
+}
+
+/** What needs this person, most pressing first: alarms, then notices, then what waits on them. One line says the first two; the proof's own record is on /releases. */
+function needsOf(picture: LanePicture, viewer: { readonly id: string; readonly isAdmin: boolean }, dataDir: string, now: number): Need[] {
+  const proof = viewer.isAdmin ? proofNotice(dataDir, running().version, now) : undefined;
+  const asks = picture.asks[viewer.id];
+  const waiting = asks === undefined ? null : waitingWords(asks.count, asks.oldest, new Date(now));
+  const alarms: Need[] = [
+    ...(proof?.tone === "alarm" ? [{ says: proof.sentence, href: "/releases#proof", tone: "alarm" as const }] : []),
+    ...(viewer.isAdmin ? (picture.strip?.needs ?? []).map((n) => ({ says: n.says, href: n.href, tone: "alarm" as const })) : []),
+  ];
+  return [
+    ...alarms,
+    ...(proof?.tone === "notice" ? [{ says: proof.sentence, href: "/releases#proof", tone: "notice" as const }] : []),
+    ...(waiting === null ? [] : [{ says: waiting, href: "/review", tone: "notice" as const }]),
+  ];
+}
+
+/** The one line: what needs this person, at most two things, never a list; or that nothing does. Red only when something is not working. */
+function needLine(needs: readonly Need[]): Html {
+  if (needs.length === 0) return html`<p class="hf-calm"><span class="dot" data-tone="success"></span>Nothing needs you right now.</p>`;
+  const [first, second] = needs;
+  const more = needs.length - 2;
+  const tone = first!.tone;
+  return html`<p class="hf-need" data-tone="${tone}" role="status"><span class="dot" data-tone="${tone === "alarm" ? "danger" : "attn"}"></span><a href="${first!.href}">${first!.says}</a>${second === undefined ? null : html`<span class="hf-need-sep" aria-hidden="true">·</span><a href="${second.href}">${second.says}</a>`}${more > 0 ? html` <a class="hf-need-more" href="/boards">and ${String(more)} more</a>` : null}</p>`;
+}
+
+/**
+ * The strip: the one line that needs this person and, for an admin, five
+ * figures, each with its unit and, where the data has one, a trend. Everyone
+ * else gets the line alone: the figures are the forge's.
+ */
+export function stripRegion(picture: LanePicture, viewer: { readonly id: string; readonly isAdmin: boolean }, dataDir: string, now: number): Html {
   const strip = picture.strip;
   const version = running().version;
   const proof = proofWords(lastProof(dataDir), version);
-  const unproven = proofNeed(dataDir, version);
-  const needs = [...(unproven === undefined ? [] : [{ says: unproven.sentence, href: "/releases" }]), ...(strip?.needs ?? [])];
-  const need = needs[0];
-  const others = needs.length - 1;
+  const needs = needLine(needsOf(picture, viewer, dataDir, now));
+  if (!viewer.isAdmin) return html`<section class="hf-strip" id="hf-strip" aria-label="What needs you" data-live="${STRIP_LIVE}" data-live-src="/live/strip">${needs}</section>`;
   const b = picture.builders;
+  // The reason is only said while a slot is free: a busy crew has none.
+  const idle = b.slots > 0 && b.running < b.slots ? picture.idle : null;
   const week = strip === null ? null : weekFigure(strip);
+  const lead = strip?.lead.medianHours ?? null;
   return html`<section class="hf-strip" id="hf-strip" aria-label="Today's figures" data-live="${STRIP_LIVE}" data-live-src="/live/strip">
-    ${need === undefined
-      ? html`<p class="hf-calm"><span class="dot" data-tone="success"></span>Nothing needs you right now.</p>`
-      : html`<p class="hf-need" role="status"><span class="dot" data-tone="danger"></span><a href="${need.href}">${need.says}</a>${others > 0 ? html` <a class="hf-need-more" href="/boards">and ${String(others)} more</a>` : null}</p>`}
+    ${needs}
     <div class="hf-figs">
-      ${fig("Shipped in 24 hours", strip === null ? "—" : String(strip.landed), strip?.landed === 1 ? "change landed on main" : "changes landed on main", "/board", strip === null ? null : sparkline(strip.landedHours))}
-      ${fig("Median open to landed", strip === null || strip.lead.medianHours === null ? "—" : leadWords(strip.lead.medianHours), strip === null || strip.lead.medianHours === null ? "nothing landed in 24 h" : `median of ${strip.lead.landed} ${strip.lead.landed === 1 ? "change" : "changes"}, 24 h`, "/boards")}
-      ${fig("Crew running", b.slots === 0 ? String(b.running) : `${b.running} of ${b.slots}`, b.slots === 0 ? "no builder slots set" : "builders at work now", "/settings/crew")}
+      ${fig("Shipped in 24 hours", strip === null ? "—" : count(strip.landed), strip?.landed === 1 ? "change landed on main" : "changes landed on main", "/board", strip === null ? null : chart([...strip.landedHours].reverse(), "Changes landed per hour over the last 24 hours"))}
+      ${fig("Median open to landed", lead === null ? "—" : duration(lead * 3_600_000), lead === null ? "nothing landed in 24 hours" : `median of ${count(strip!.lead.landed)} ${strip!.lead.landed === 1 ? "change" : "changes"}, 24 hours`, "/boards")}
+      ${fig("Crew running", b.slots === 0 ? count(b.running) : `${count(b.running)} of ${count(b.slots)}`, b.slots === 0 ? "no builder slots set" : idle === null ? "builders at work now" : `idle: ${idle.word}`, idle === null ? "/settings/crew" : idle.href)}
       ${fig("Week used", week === null ? "—" : week.value, week === null ? "the week is not read yet" : week.note, "/settings/crew", null, week?.attn === true ? "attn" : null)}
       ${fig("Live version", version === UNSTAMPED ? "—" : version, html`live <time class="hf-age-ago" datetime="${BOOTED}">${span(now - Date.parse(BOOTED))}</time> · ${proof.text}`, "/releases", null, proof.tone)}
     </div>
@@ -255,12 +293,12 @@ export function stripRegion(picture: LanePicture, dataDir: string, now: number):
 // ---- before the first reading: the same regions, saying so ----
 
 /** A lane before the picture exists: its name, "reading…", and the address that fills it. The page's script fetches that address at once. */
-function readingLane(key: LaneKey, only: string | null, admin: boolean): Html {
+function readingLane(key: LaneKey, only: string | null): Html {
   const scope = only === null ? null : html` data-live-repo="${only}"`;
   return html`<section class="lane" id="lane-${key}" data-lane="${key}" data-tone="quiet" data-count="" data-reading aria-busy="true"
     data-live="${LANE_LIVE[key]}" data-live-src="/live/lane?s=${key}${query(only)}"${scope}>
     <header class="lane-head">
-      <h2 class="lane-name"><a class="lane-name-link" href="${moreHref(key, admin)}" title="${LANE_HOLDS[key]}">${LANE_NAME[key]}</a></h2>
+      <h2 class="lane-name"><a class="lane-name-link" href="${laneHref(key, only)}" title="${LANE_HOLDS[key]}">${LANE_NAME[key]}</a></h2>
       <span class="lane-count num" aria-hidden="true">…</span>
     </header>
     <p class="lane-health">Reading what the forge is doing…</p>
@@ -315,7 +353,9 @@ function readForges(app: App, now: number): Promise<Forges | undefined> {
 /** Start reading the hosted forges now: the forge calls this once it is listening. */
 export function warmHome(app: App): void {
   if (process.env["NODE_ENV"] === "test") return;
-  warmLanes(app.db, pictureOptions(app), Date.now());
+  // The people who run the forge are counted first: the line that says what waits on them is ready for their first page.
+  const owners = app.db.query<{ id: string }, []>("SELECT id FROM user WHERE is_admin = 1 AND is_agent = 0 LIMIT 4").all().map((u) => u.id);
+  warmLanes(app.db, pictureOptions(app), Date.now(), owners);
   void readForges(app, Date.now());
 }
 
@@ -356,10 +396,10 @@ export async function forgesRegion(app: App, wait: boolean): Promise<Html> {
 
 /** The filter: a select whose other apps are read from `data-apps` by the page's script when it is opened, so no list of them is written out as text. Without scripts, an app's `owner/name` is typed. */
 function filterForm(repos: readonly string[], only: string | null): Html {
-  return html`<form class="hf-filter" method="get" action="/home" id="hf-filter">
+  return html`<form class="hf-filter" method="get" action="/" id="hf-filter">
     <label class="hf-filter-label" for="hf-app">Show</label>
     <select class="input" id="hf-app" aria-label="Show one app, or everything" data-apps="${repos.join(",")}">
-      <option value="" ${only === null ? html`selected` : null}>Every app (${String(repos.length)})</option>
+      <option value="" ${only === null ? html`selected` : null}>Every app</option>
       ${only === null ? null : html`<option value="${only}" selected>${only}</option>`}
     </select>
     <noscript><input class="input" name="app" placeholder="owner/name" aria-label="An app, as owner/name" /><button class="btn" type="submit">Show</button></noscript>
@@ -378,13 +418,13 @@ const VIEW_COOKIE = "forge_home_view";
 function viewSwitch(view: "lanes" | "table", only: string | null): Html {
   const keep = only === null ? "" : `&app=${encodeURIComponent(only)}`;
   return html`<nav class="hf-views" aria-label="View">
-    <a href="/home?view=lanes${keep}" ${view === "lanes" ? html`aria-current="page"` : null}>Lanes</a>
-    <a href="/home?view=table${keep}" ${view === "table" ? html`aria-current="page"` : null}>Table</a>
+    <a href="/?view=lanes${keep}" ${view === "lanes" ? html`aria-current="page"` : null}>Lanes</a>
+    <a href="/?view=table${keep}" ${view === "table" ? html`aria-current="page"` : null}>Table</a>
   </nav>`;
 }
 
-// GET /home — the new home: the lanes, or the table of the same items.
-export async function homeFlowPage(ctx: Ctx): Promise<Response> {
+// GET / (signed in) — the home: the lanes, or the table of the same items. Called by the root route, and `/home` redirects here.
+export async function homeFlowPage(ctx: Ctx, known?: { readonly spawned: Awaited<ReturnType<typeof spawnedForge>> }): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const user = ctx.auth.user;
   if (user === undefined) return signInFirst(ctx);
@@ -394,12 +434,25 @@ export async function homeFlowPage(ctx: Ctx): Promise<Response> {
   const picture = await timePhaseAsync(ctx.request, "picture", () => lanePicture(ctx.app.db, optionsOf(ctx), "page", now));
   const rendering = performance.now();
   const viewing = picture === undefined ? undefined : timePhase(ctx.request, "viewing", () => viewFor(ctx.app.db, user, picture, view === "table" ? null : only));
-  const strip = !user.isAdmin ? null : picture === undefined ? readingStrip() : stripRegion(picture, ctx.app.config.dataDir, now);
-  const forges = user.isAdmin ? await timePhaseAsync(ctx.request, "forges", () => forgesRegion(ctx.app, false)) : null;
+  // A spawned forge's owner is a client: the forge-wide figures are not theirs to see, whole home or lean.
+  const spawned = known !== undefined ? known.spawned : await timePhaseAsync(ctx.request, "spawned", () => spawnedForge(ctx.app));
+  const wide = user.isAdmin && spawned === undefined;
+  const strip = picture === undefined ? readingStrip() : stripRegion(picture, { id: user.id, isAdmin: wide }, ctx.app.config.dataDir, now);
+  // What the old home also carried and is not a lane: the box that tells the crew (with Notes and Talk), the welcome after an account is allowed, a spawned forge's address, the everyday-account ask, and a stranger's request for an account.
+  const allowed = untoldAnswer(ctx.app.db, user.id) === "allowed";
+  if (allowed) markTold(ctx.app.db, user.id, new Date().toISOString());
+  const before = html`${allowed ? html`<div class="toast" data-tone="success" role="status" id="youre-in"><strong>${YOURE_IN_MESSAGE}</strong> Your account is open: tell the crew what you want to build.</div>` : null}
+    <div class="hf-tell">${tellBox(ctx, user)}</div>`;
+  // A client who asked for the whole home (`?all=1`) has a way back to their apps.
+  const after = html`${ctx.url.searchParams.has("all") ? html`<p class="small muted" id="lean-home"><a href="/">Just my apps</a></p>` : null}${requestsCard(ctx, "home")}${everydayCard(ctx, user)}
+    ${spawned?.url === undefined ? null : html`<p class="small muted" id="forge-address">Your forge: <a href="${spawned.url}">${new URL(spawned.url).host}</a></p>`}`;
+  // A run the host stopped is named, with its way to try again, while it is within the day: the one place the web offers that.
+  const stopped = user.kind === "agent" ? null : timePhase(ctx.request, "stopped", () => interruptedOutLine(ctx, listReposWritableTo(ctx.app.db, user, { withoutArchived: true, limit: 200 })));
+  const forges = wide ? await timePhaseAsync(ctx.request, "forges", () => forgesRegion(ctx.app, false)) : null;
   let main: Html;
   const q = parseTable(ctx.url.searchParams);
   if (picture === undefined || viewing === undefined) {
-    main = view === "table" ? html`${tableTools(q)}${readingTable(q)}` : html`<div class="hf-lanes">${LANES.map((k) => readingLane(k, only, user.isAdmin))}</div>`;
+    main = view === "table" ? html`${tableTools(q)}${readingTable(q)}` : html`<div class="hf-lanes">${LANES.map((k) => readingLane(k, only))}</div>`;
   } else if (view === "table") {
     main = html`${tableTools(q)}${tableRegion(tableRows(viewing, tableInput(picture, now)), q, now)}`;
   } else {
@@ -414,12 +467,15 @@ export async function homeFlowPage(ctx: Ctx): Promise<Response> {
       ${viewSwitch(view, only)}
       ${view === "lanes" ? filterForm(viewing?.repos ?? [], only) : null}
     </header>
+    ${before}
     ${strip}
+    ${stopped}
+    ${after}
     ${main}
+    ${wide ? figuresSection(picture, now) : null}
     ${forges}
     <p class="hf-foot small muted">
       <span>${view === "table" ? "Every item of every lane, one row each; sort, filter and search are in the address, so a link is a view." : "Each lane is a step a change takes; a tile moves on by itself when its work does."}</span>
-      <a href="/?home=classic">The classic home</a>
       <a href="/feed">The feed</a>
     </p>
   </div>`;
@@ -479,7 +535,7 @@ export async function liveLaneFragment(ctx: Ctx): Promise<Response> {
   const now = Date.now();
   const picture = await timePhaseAsync(ctx.request, "picture", () => lanePicture(ctx.app.db, optionsOf(ctx), "lane", now));
   const rendering = performance.now();
-  if (picture === undefined) return fragment(readingLane(key, only, user.isAdmin), { request: ctx.request });
+  if (picture === undefined) return fragment(readingLane(key, only), { request: ctx.request });
   const tag = laneTag(picture, key, user.isAdmin ? "admin" : user.id, only, now);
   if (ctx.request.headers.get("if-none-match") === `"${tag}"`) {
     notePhase(ctx.request, "render", performance.now() - rendering);
@@ -496,14 +552,15 @@ export async function liveLaneFragment(ctx: Ctx): Promise<Response> {
 export async function liveStripFragment(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const user = ctx.auth.user;
-  if (user === undefined || !user.isAdmin) {
+  if (user === undefined) {
     notePhase(ctx.request, "render", 0);
     return fragment(html``, { status: 404 });
   }
   const now = Date.now();
-  const picture = await timePhaseAsync(ctx.request, "picture", () => lanePicture(ctx.app.db, optionsOf(ctx), "lane", now));
+  const picture = await timePhaseAsync(ctx.request, "picture", () => lanePicture(ctx.app.db, optionsOf(ctx, user), "lane", now));
   const rendering = performance.now();
-  const res = fragment(picture === undefined ? readingStrip() : stripRegion(picture, ctx.app.config.dataDir, now), { request: ctx.request });
+  const wide = user.isAdmin && (await spawnedForge(ctx.app)) === undefined;
+  const res = fragment(picture === undefined ? readingStrip() : stripRegion(picture, { id: user.id, isAdmin: wide }, ctx.app.config.dataDir, now), { request: ctx.request });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return res;
 }
@@ -520,4 +577,25 @@ export async function liveForgesFragment(ctx: Ctx): Promise<Response> {
   const res = fragment(await timePhaseAsync(ctx.request, "forges", () => forgesRegion(ctx.app, true)), { request: ctx.request });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return res;
+}
+
+// GET /live/figures — the figures' grid alone, for the region that shows it. An admin's: the numbers are the forge's.
+export async function liveFiguresFragment(ctx: Ctx): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const user = ctx.auth.user;
+  if (user === undefined || !user.isAdmin) {
+    notePhase(ctx.request, "render", 0);
+    return fragment(html``, { status: 404 });
+  }
+  const now = Date.now();
+  const picture = await timePhaseAsync(ctx.request, "picture", () => lanePicture(ctx.app.db, optionsOf(ctx), "lane", now));
+  const rendering = performance.now();
+  const res = fragment(picture === undefined ? figuresSection(undefined, now) : figuresGrid(picture, now), { request: ctx.request });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return res;
+}
+
+// GET /home — the home is `/` now: its old address goes there, keeping the view and the filters.
+export function homeRedirect(ctx: Ctx): Response {
+  return redirect(`/${ctx.url.search}`);
 }

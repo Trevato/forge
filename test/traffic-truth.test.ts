@@ -10,12 +10,8 @@ import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { familyOf, pinCrawlLag } from "../src/http/crawl.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import {
-  trafficAttention,
-  trafficValue,
-  trafficWords,
-} from "../src/flow/kpi_words.ts";
-import { readKpis } from "../src/flow/kpis.ts";
+
+
 import { createPerfRecord, scanTraffic } from "../src/perf/record.ts";
 import {
   MAX_KEYS,
@@ -25,8 +21,8 @@ import {
   repoOf,
 } from "../src/perf/traffic.ts";
 import { addressBytes } from "../src/kernel/cidr.ts";
-import { kpiRowFor } from "../src/web/studio/kpi_row.ts";
-import { probeKpis } from "../src/web/studio/kpi_probe.ts";
+
+
 
 const NOW = new Date("2026-11-03T12:00:30Z");
 const END = NOW.getTime();
@@ -201,133 +197,8 @@ test("it keeps prefixes and a sketch, never an address, and its tables are bound
   expect(familyOf("")).toBe("none");
 });
 
-test("the tile says plainly when strangers hold most of the time, and not for a handful", () => {
-  const flood = createPerfRecord();
-  for (let i = 0; i < 40; i++)
-    flood.add("/a", sample(100, { deepStranger: true }));
-  flood.add("/a", sample(100, { signedIn: true }));
-  const t = flood.ledger.totals(END);
-  expect(trafficAttention(t)).toBe("deep");
-  expect(trafficValue(t)).toBe("98%");
-  expect(trafficWords(t).note).toContain("too much");
-  expect(trafficWords(t).title).toStartWith("Something is wrong");
-  const row = String(kpiRowFor(emptyKpis(), null, NOW, t));
-  // The home row no longer carries a Traffic tile; the board at /settings/traffic does.
-  expect(row).not.toContain("/settings/traffic");
-
-  const handful = createPerfRecord();
-  handful.add("/a", sample(5000, { deepStranger: true }));
-  expect(trafficAttention(handful.ledger.totals(END))).toBeNull();
-  expect(
-    String(kpiRowFor(emptyKpis(), null, NOW, handful.ledger.totals(END))),
-  ).not.toContain("/settings/traffic");
-
-  expect(trafficValue(createPerfRecord().ledger.totals(END))).toBe("—");
-});
-
-function emptyKpis() {
-  return readKpis(app.db, NOW, { ceilingUsd: 40 });
-}
 
 /** What each tile in the row shows, by its label, with the markup taken off. */
-function tileValues(row: string): Map<string, string> {
-  const out = new Map<string, string>();
-  for (const m of row.matchAll(
-    /stat-label">([^<]+)<\/span><span class="stat-value num"[^>]*>(.*?)<\/span>(?=<span class="stat-note|<\/a>)/gs,
-  ))
-    out.set(
-      m[1]!.trim().replace(/&#39;/g, "'"),
-      m[2]!.replace(/<[^>]+>/g, "").trim(),
-    );
-  return out;
-}
-
-test("every tile's value equals the probe's, from known requests and page_vital rows", () => {
-  const today = NOW.toISOString().slice(0, 10);
-  const yesterday = new Date(END - 86_400_000).toISOString().slice(0, 10);
-  const insert = app.db.query("INSERT INTO page_vital (day, at, route, visitor, load, inp, cls) VALUES (?1, 0, '/', ?2, ?3, ?4, 0)");
-  for (const [day, visitor, load, inp] of [
-    [today, "v1", 100, 10],
-    [today, "v1", 200, 20],
-    [today, "v2", 300, null],
-    [yesterday, "v1", 900, 40],
-    [today, "v3", null, null],
-  ] as const)
-    insert.run(day, visitor, load, inp);
-  const record = createPerfRecord();
-  record.add("/a", sample(300, { signedIn: true }));
-  for (let i = 0; i < 3; i++)
-    record.add("/a", sample(900, { deepStranger: true }));
-
-  const kpis = readKpis(app.db, NOW, { ceilingUsd: 40 });
-  const live = { sha: "a".repeat(40), at: "2026-11-03T11:00:00Z" };
-  const traffic = record.ledger.totals(END);
-  const tiles = tileValues(String(kpiRowFor(kpis, live, NOW, traffic)));
-  const probe = probeKpis(
-    app.db,
-    NOW,
-    { kpis, live },
-    { ceilingUsd: 40 },
-    record,
-  );
-
-  // Four distinct browsers would be a lie: three reported today, one of them twice.
-  const byId = new Map(probe.numbers.map((n) => [n.id, n]));
-  expect(byId.get("visitors")!.value).toBe("3 today");
-  expect(byId.get("visitors")!.inputs).toMatchObject({
-    browsers_today: 3,
-    browsers_summed_7d: 4,
-  });
-  // Loads 100, 200, 300, 900: rank ⌈0.75·4⌉ = 3 is 300.
-  expect(byId.get("speed")!.value).toBe("300 ms");
-  expect(byId.get("speed")!.inputs).toMatchObject({
-    views_with_load_7d: 4,
-    load_p75_ms: 300,
-    views_with_inp_7d: 3,
-  });
-  expect(byId.get("traffic")!.value).toBe("90%");
-  expect(byId.get("traffic")!.inputs).toMatchObject({
-    samples: { deep: { requests: 3, ms: 2700 } },
-    ledger: { deep: { requests: 3, ms: 2700 } },
-  });
-
-  expect(probe.numbers.length).toBe(11);
-  for (const n of probe.numbers) {
-    expect(n.counts.length).toBeGreaterThan(10);
-    expect([n.id, n.agrees, n.recomputed]).toEqual([n.id, true, n.value]);
-    // These figures are the probe's and the boards', no longer tiles on the home row.
-    if (["traffic", "visitors", "users", "accounts"].includes(n.id)) {
-      expect([n.id, tiles.has(n.label)]).toEqual([n.id, false]);
-      continue;
-    }
-    const shown = tiles.get(n.label);
-    expect([n.label, n.id === "live" ? shown !== undefined : shown]).toEqual([
-      n.label,
-      n.id === "live" ? true : n.value,
-    ]);
-  }
-  expect(tiles.size).toBe(probe.numbers.length - 3);
-  // The live tile's short form is the start of the probe's full id.
-  expect(byId.get("live")!.value.startsWith(tiles.get("Live version")!)).toBe(
-    true,
-  );
-
-  // The probe reads past what the tile holds: a report after the tile was computed disagrees.
-  insert.run(today, "v9", 100, null);
-  const later = probeKpis(
-    app.db,
-    NOW,
-    { kpis, live },
-    { ceilingUsd: 40 },
-    record,
-  );
-  const visitors = later.numbers.find((n) => n.id === "visitors")!;
-  expect([visitors.value, visitors.recomputed, visitors.agrees]).toEqual([
-    "3 today",
-    "4 today",
-    false,
-  ]);
-});
 
 test("a stranger's deep read reaches the record with its class, and the board and probe are an admin's alone", async () => {
   await get(`/alice/open/blob/${sha}/a.txt`, { "x-forwarded-for": "203.0.113.200" });

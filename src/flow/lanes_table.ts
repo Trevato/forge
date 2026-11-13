@@ -75,7 +75,7 @@ export function tableParams(q: TableQuery, change: Partial<{ [K in keyof TableQu
 /** The address of a view of the table. */
 export function tableHref(q: TableQuery, change: Partial<{ [K in keyof TableQuery]: TableQuery[K] | null }> = {}): string {
   const rest = tableParams(q, change);
-  return `/home?view=table${rest === "" ? "" : `&${rest}`}`;
+  return `/?view=table${rest === "" ? "" : `&${rest}`}`;
 }
 
 export interface TableRow {
