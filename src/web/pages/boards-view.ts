@@ -145,7 +145,7 @@ const RANGE_WORDS: Readonly<Record<Board["range"], string>> = { "1h": "The last 
 
 function panelForm(slug: string, op: string, p: Panel | undefined, index: number, fields: Html): Html {
   const id = op === "edit" ? `panel-${String(index)}` : "panel-new";
-  return html`<form method="post" action="/boards/${slug}/${op}" class="bar">
+  return html`<form method="post" action="/boards/${slug}/${op}" class="bd-query">
     ${op === "edit" ? html`<input type="hidden" name="index" value="${String(index)}" />` : null}
     ${field({ label: "Panel title", name: "title", id: `${id}-title`, required: true, maxlength: MAX_TITLE, value: p?.title ?? "", placeholder: "Panel title" })}
     ${selectField({ label: "Width", name: "w", id: `${id}-w`, options: sizes(MAX_W, "wide", p?.w ?? 1) })}

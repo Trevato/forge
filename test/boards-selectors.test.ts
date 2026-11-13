@@ -56,7 +56,7 @@ test("every query selector has a visible label and sits outside .row-actions", a
   const form = [...html.matchAll(/<form method="get" action="\/boards\/data"[^>]*>([\s\S]*?)<\/form>/g)].find((m) => m[0].includes('name="chart"'));
   expect(form).not.toBeNull();
   expect(form![0]).not.toContain("row-actions");
-  expect(form![0]).toContain('class="bar"');
+  expect(form![0]).toContain('class="bd-query"');
   expect(html).not.toContain("bform");
   for (const name of ["chart", "source", "aggregate", "column", "by", "series", "from", "to", "fcolumn", "fop", "fvalue"]) {
     const m = form![1]!.match(new RegExp(`<label for="f-${name}-\\d+">([^<]+)</label>\\s*<(?:select|input)[^>]* name="${name}"`));

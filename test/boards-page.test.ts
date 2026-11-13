@@ -100,13 +100,28 @@ describe("/boards forms", () => {
 });
 
 describe("/boards/data", () => {
-  test("the result is drawn with §5's card and table, not .boards-result", async () => {
+  test("the answer is a heading that says the question, four figures, the chart in §5's card, and the points in a fold", async () => {
     const body = await (await get("/boards/data?source=runs&by=day", "admin")).text();
     expect(body).not.toContain("boards-result");
-    expect(body).toMatch(/<table\s+class="table mt"/);
-    expect(body).toContain("<h2>Crew and build runs</h2>");
-    expect(body).toContain('<th scope="col" class="num">');
-    expect(body).toContain("2026-10-02");
+    expect(body).toContain('<h2 id="says-h">Count of runs per day.</h2><p class="bd-sub">Crew and build runs</p>');
+    // What stands out: the latest, the highest, the lowest and the total, each said with where it is.
+    const figs = [...body.matchAll(/<span class="hf-fig-label">([^<]*)<\/span>\s*<span class="hf-fig-value num">([^<]*)<\/span>\s*<span class="hf-fig-note">([^<]*)<\/span>/g)].map((m) => m.slice(1, 4));
+    expect(figs).toEqual([["Latest", "5", "Oct 4"], ["Highest", "5", "Oct 4"], ["Lowest", "1", "Oct 1"], ["In all", "8", "over 3 points"]]);
+    expect(body).toMatch(/<div class="card-body"><div class="chart-box">/);
+    // The points are one click deeper, closed: days as words, values right-aligned.
+    const fold = body.match(/<details class="disclosure fold" id="points-fold"\s*>[\s\S]*?<\/details>/)![0];
+    expect(fold).toContain('<h2 class="fold-title">The 3 points</h2>');
+    expect(fold).toMatch(/<table class="table" data-dense id="points">/);
+    expect(fold).toContain('<th scope="col" class="num">Count</th>');
+    expect(fold).toMatch(/>Oct 2<\/a><\/td>\s*<td class="num">2<\/td>/);
+  });
+  test("an answer with nothing in it opens the question, so it can be changed", async () => {
+    const none = await (await get("/boards/data?source=runs&by=day&from=2031-01-01", "admin")).text();
+    expect(none).toContain("Nothing matches this query.");
+    expect(none).toMatch(/<details class="disclosure fold" id="query" open>/);
+    expect(none).not.toContain('class="hf-fig"');
+    const some = await (await get("/boards/data?source=runs&by=day", "admin")).text();
+    expect(some).toMatch(/<details class="disclosure fold" id="query"\s*>/);
   });
 
   test("seeded runs per day draw one path with one point per day", async () => {

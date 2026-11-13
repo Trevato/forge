@@ -7,21 +7,22 @@
  * narrowed to that point's window and listed by the source's first column.
  * Anyone else gets the not-found page.
  */
-import { CHART_NAMES, CHARTS, type Cell, type Chart } from "../../boards/chart.ts";
+import { CHART_NAMES, CHARTS, formatValue, sayLabels, type Cell, type Chart } from "../../boards/chart.ts";
 import { runFor } from "../../boards/panel_data.ts";
 import { runQuery, type Row } from "../../boards/query.ts";
 import { gaps, SYSTEM } from "../../boards/sampler.ts";
 import { SOURCES } from "../../boards/sources.ts";
 import { BUCKET_MS, isBucket, MAX_PARAM, readParams, toQuery, type Bucket, type Params } from "../../boards/params.ts";
 import { fillFromSentence, MODEL_FILLED, unreadWords } from "../../boards/model_fill.ts";
-import { aggregateOption, ask, columnNote, columnOption, unitOf, GUIDE, QUESTIONS, sentence } from "../../boards/guide.ts";
+import { aggregateOption, ask as askOf, columnNote, columnOption, columnWords, unitOf, GUIDE, QUESTIONS, sentence } from "../../boards/guide.ts";
 import { listAllBoards } from "../../actions/boards.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { notFoundPage } from "../chrome.ts";
-import { html, when } from "../html.ts";
+import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { btn, card, chartBox, empty, field, selectField } from "../ui.ts";
+import { count, figure, figures, fold } from "../figure.ts";
 import { readForm } from "../form.ts";
 
 const AGGREGATES = ["count", "sum", "avg", "max"] as const;
@@ -174,8 +175,126 @@ async function explorer(ctx: Ctx, user: NonNullable<Ctx["auth"]["user"]>, asked:
   const rendering = performance.now();
   let boardsMs = 0;
   const cols = src ? Object.keys(src.columns) : [];
+  const named = GUIDE[p.source]?.name ?? p.source;
 
-  const sources = card(
+  const now = Date.now();
+  const askLink = (fill: Record<string, string>) => link({ ...readParams(new URLSearchParams(fill)), ...fill } as Params);
+  // A blank box (Show pressed with nothing typed) is no sentence, not an unreadable one.
+  const unread = asked !== null && asked.trim() !== "";
+  const ask = html`<section class="bd-block" id="ask" aria-label="Ask a question">
+    <form method="post" action="/boards/data" class="bar bd-ask">
+      ${field({ label: "Ask in a sentence", name: "ask", id: "f-ask", placeholder: "memory over the last 3 days", maxlength: 200, ...(unread ? { error: unreadWords(filled?.ok === false ? filled.why : "unread") } : {}) })}
+      ${btn("Show", { variant: "primary" })}
+    </form>
+    <div class="tb-chipset" role="group" aria-label="Or start from one of these">
+      <span class="tb-chiplabel">Or start from</span>
+      ${QUESTIONS.filter((q) => q.featured === true || q.source === p.source).map((q) => html`<a class="tb-chip" href="${askLink(askOf(q, now))}">${q.label}</a>`)}
+    </div>
+  </section>`;
+
+  let result: Html;
+  let facts: Html | null = null;
+  let pointsFold: Html | null = null;
+  const cap = (w: string): string => w.charAt(0).toUpperCase() + w.slice(1);
+  if (!answer.ok) {
+    result = empty({ icon: "activity", title: "That query was refused", note: answer.error });
+  } else if (answer.rows.length === 0) {
+    result = empty({ icon: "activity", title: "No rows", note: "Nothing matches this query. Change the question below, or start from one of the questions above." });
+  } else {
+    const hrefs = answer.rows.map((r) => (p.rows === "" ? behind(p, r) : null));
+    const points = cellsOf(answer.rows, hrefs);
+    const split = answer.rows[0]?.series !== undefined;
+    const say = sayLabels(points.map((c) => c.label));
+    const where = (i: number): string => `${say(points[i]!.label)}${split ? `, ${points[i]!.series ?? ""}` : ""}`;
+    const table = html`<div class="table-scroll"><table class="table" data-dense id="points">
+        <thead><tr><th scope="col">${cap(columnWords(p.by))}</th>${split ? html`<th scope="col">${cap(columnWords(p.series))}</th>` : null}<th scope="col" class="num">${cap(p.aggregate)}</th></tr></thead>
+        <tbody>
+          ${answer.rows.map(
+            (r, i) => html`<tr>
+              <td ${p.rows === "" ? null : html`class="mono"`}>${hrefs[i] ? html`<a href="${hrefs[i]!}">${say(points[i]!.label)}</a>` : say(points[i]!.label)}</td>
+              ${split ? html`<td>${points[i]!.series ?? ""}</td>` : null}
+              <td class="num">${r.value === null ? "" : count(r.value)}</td>
+            </tr>`,
+          )}
+        </tbody>
+      </table></div>`;
+    if (p.rows !== "") {
+      result = html`<p class="bd-sub">The rows behind one point, as the values of ${columnWords(cols[0] ?? "")} with how many rows have each. <a href="${link({ ...p, rows: "" })}">Back to the chart</a>.</p>${table}`;
+    } else {
+      // The figures name what stands out in the answer: where it is now, its highest and its lowest.
+      let hi = 0;
+      let lo = 0;
+      points.forEach((c, i) => {
+        if (c.value > points[hi]!.value) hi = i;
+        if (c.value < points[lo]!.value) lo = i;
+      });
+      const last = points.length - 1;
+      const timed = isBucket(p.by);
+      const at = (i: number): string => hrefs[i] ?? "#points";
+      facts = figures([
+        // "Latest" is true of a series over time alone; groups of anything else are counted.
+        split || !timed
+          ? figure(split ? "Points" : "Groups", count(points.length), split ? `across ${count(new Set(points.map((c) => c.series)).size)} series` : `one for each ${columnWords(p.by)}`, "#points")
+          : figure("Latest", formatValue(points[last]!.value), where(last), at(last)),
+        figure("Highest", formatValue(points[hi]!.value), where(hi), at(hi)),
+        figure("Lowest", formatValue(points[lo]!.value), where(lo), at(lo)),
+        figure(p.aggregate === "count" || p.aggregate === "sum" ? "In all" : "Points", p.aggregate === "count" || p.aggregate === "sum" ? formatValue(points.reduce((n, c) => n + c.value, 0)) : count(points.length), p.aggregate === "count" || p.aggregate === "sum" ? `over ${count(points.length)} ${points.length === 1 ? "point" : "points"}` : `from ${say(points[0]!.label)} to ${say(points[last]!.label)}`, "#points"),
+      ], "What stands out");
+      result = card(chartBox(p.chart, points, named));
+      if (p.chart !== "table") pointsFold = fold(`The ${count(points.length)} ${points.length === 1 ? "point" : "points"}`, hrefs.some((h) => h !== null) ? "every value, each a link to the rows behind it" : "every value, exactly", table, { id: "points-fold" });
+    }
+  }
+
+  const listing = performance.now();
+  const listed = await timePhaseAsync(ctx.request, "boards", () => listAllBoards(ctx.app, user));
+  boardsMs = performance.now() - listing;
+  const boards = listed.ok ? listed.value : [];
+  const form = fold(
+    "Change the question",
+    `drawn as a ${CHART_NAMES[p.chart]}; pick the chart, the source, what to count and how to group it`,
+    html`<form method="get" action="/boards/data" class="bd-query">
+      ${queryFields(p)}
+      ${btn("Draw")}
+    </form>`,
+    { id: "query", open: !answer.ok || answer.rows.length === 0 },
+  );
+  const pin =
+    boards.length === 0 || !answer.ok
+      ? null
+      : fold(
+          "Pin this to a board",
+          `keep this chart on one of your ${count(boards.length)} ${boards.length === 1 ? "board" : "boards"}`,
+          html`<form method="post" action="/boards/pin" class="bar">
+            ${PANEL_FIELDS.map(
+              (k) => html`<input type="hidden" name="${k}" value="${p[k as keyof Params]}" />`,
+            )}
+            <input type="hidden" name="w" value="1" /><input type="hidden" name="h" value="1" />
+            ${selectField({ label: "Board", name: "slug", id: "f-pin-slug", options: boards.map((b) => ({ value: b.slug, label: b.board.title })) })}
+            ${field({ label: "Panel title", name: "title", id: "f-pin-title", required: true, maxlength: 80, value: sentence(p).slice(0, 80) })}
+            ${btn("Pin to board")}
+          </form>`,
+          { id: "pin" },
+        );
+
+  // The machine source says what it cannot measure here, rather than draw nothing as zero.
+  const missing = p.source === "machine" ? gaps(SYSTEM) : [];
+  const absent =
+    p.source !== "machine"
+      ? null
+      : fold(
+          "What this machine measures",
+          missing.length === 0 ? "every series is readable here" : `${count(missing.length)} series cannot be read here`,
+          html`<p class="muted small">Sampled every 15 s: the forge's pod from its cgroup, each check and app cell from its process tree, the node and each of its CPUs (<code>cpu:&lt;nnn&gt;</code>) from /proc, and temperatures in °C from /sys/class/hwmon.</p>
+          <ul class="small">${machineLinks(Date.now()).map((l) => html`<li><a href="${l.href}">${l.label}</a></li>`)}</ul>
+          ${missing.length === 0
+            ? html`<p class="small">Every series is readable on this machine.</p>`
+            : html`<ul class="small">${missing.map((g) => html`<li>Absent — ${g}</li>`)}</ul>`}`,
+          { id: "machine-gaps" },
+        );
+
+  const sources = fold(
+    "What you can ask about",
+    `${count(Object.keys(SOURCES).length)} sources; ${named.toLowerCase()} has ${count(cols.length)} columns`,
     html`<ul class="list">
       ${Object.entries(SOURCES).map(
         ([name, s]) => html`<li class="row">
@@ -187,101 +306,25 @@ async function explorer(ctx: Ctx, user: NonNullable<Ctx["auth"]["user"]>, asked:
         </li>`,
       )}
     </ul>`,
-    { head: html`<h2>Sources</h2>`, pad: false },
+    { id: "sources" },
   );
-
-  const now = Date.now();
-  const askLink = (fill: Record<string, string>) => link({ ...readParams(new URLSearchParams(fill)), ...fill } as Params);
-  // A blank box (Show pressed with nothing typed) is no sentence, not an unreadable one.
-  const unread = asked !== null && asked.trim() !== "";
-  const questions = card(
-    html`<form method="post" action="/boards/data" class="bar">
-      ${field({ label: "Ask in a sentence", name: "ask", id: "f-ask", placeholder: "memory over the last 3 days", maxlength: 200, ...(unread ? { error: unreadWords(filled?.ok === false ? filled.why : "unread") } : {}) })}
-      ${btn("Show", { variant: "ghost" })}
-    </form>
-    <ul class="list">
-      ${QUESTIONS.filter((q) => q.featured === true || q.source === p.source).map(
-        (q) => html`<li class="row"><a href="${askLink(ask(q, now))}"><strong>${q.label}</strong></a> <span class="muted small">${GUIDE[q.source]?.name ?? q.source}</span></li>`,
-      )}
-    </ul>`,
-    { head: html`<h2>Start from a question</h2>` },
-  );
-
-  const form = card(
-    html`<form method="get" action="/boards/data" class="bar">
-      ${queryFields(p)}
-      ${btn("Draw", { variant: "primary" })}
-    </form>`,
-    { head: html`<h2>Query</h2>` },
-  );
-
-  let result;
-  if (!answer.ok) {
-    result = empty({ icon: "activity", title: "That query was refused", note: answer.error });
-  } else if (answer.rows.length === 0) {
-    result = empty({ icon: "activity", title: "No rows", note: "Nothing matches this query." });
-  } else {
-    const hrefs = answer.rows.map((r) => (p.rows === "" ? behind(p, r) : null));
-    const points = cellsOf(answer.rows, hrefs);
-    const split = answer.rows[0]?.series !== undefined;
-    const chart =
-      p.rows === ""
-        ? chartBox(p.chart, points, GUIDE[p.source]?.name ?? p.source)
-        : html`<p class="muted small">The rows behind a point, as the values of ${cols[0] ?? ""} with how many rows have each. <a href="${link({ ...p, rows: "" })}">Back to the chart</a>.</p>`;
-    result = html`${chart}
-      ${when(p.rows !== "" || p.chart !== "table", () => html`<table class="table mt">
-        <thead><tr><th scope="col">${p.by}</th>${split ? html`<th scope="col">${p.series}</th>` : null}<th scope="col" class="num">${p.aggregate}</th></tr></thead>
-        <tbody>
-          ${answer.rows.map(
-            (r, i) => html`<tr>
-              <td class="mono">${hrefs[i] ? html`<a href="${hrefs[i]!}">${points[i]!.label}</a>` : points[i]!.label}</td>
-              ${split ? html`<td class="mono">${points[i]!.series ?? ""}</td>` : null}
-              <td class="num mono">${String(r.value ?? "")}</td>
-            </tr>`,
-          )}
-        </tbody>
-      </table>`)}`;
-  }
-
-  const listing = performance.now();
-  const listed = await timePhaseAsync(ctx.request, "boards", () => listAllBoards(ctx.app, user));
-  boardsMs = performance.now() - listing;
-  const boards = listed.ok ? listed.value : [];
-  const pin =
-    boards.length === 0 || !answer.ok
-      ? null
-      : card(
-          html`<form method="post" action="/boards/pin" class="bar">
-            ${PANEL_FIELDS.map(
-              (k) => html`<input type="hidden" name="${k}" value="${p[k as keyof Params]}" />`,
-            )}
-            <input type="hidden" name="w" value="1" /><input type="hidden" name="h" value="1" />
-            ${selectField({ label: "Board", name: "slug", id: "f-pin-slug", options: boards.map((b) => ({ value: b.slug, label: b.board.title })) })}
-            ${field({ label: "Panel title", name: "title", id: "f-pin-title", required: true, maxlength: 80, value: sentence(p).slice(0, 80) })}
-            ${btn("Pin to board")}
-          </form>`,
-          { head: html`<h2>Pin this query</h2>` },
-        );
-
-  // The machine source says what it cannot measure here, rather than draw nothing as zero.
-  const missing = p.source === "machine" ? gaps(SYSTEM) : [];
-  const absent =
-    p.source !== "machine"
-      ? null
-      : card(
-          html`<p class="muted small">Sampled every 15 s: the forge's pod from its cgroup, each check and app cell from its process tree, the node and each of its CPUs (<code>cpu:&lt;nnn&gt;</code>) from /proc, and temperatures in °C from /sys/class/hwmon.</p>
-          <ul class="small">${machineLinks(Date.now()).map((l) => html`<li><a href="${l.href}">${l.label}</a></li>`)}</ul>
-          ${missing.length === 0
-            ? html`<p class="small">Every series is readable on this machine.</p>`
-            : html`<ul class="small">${missing.map((g) => html`<li>Absent — ${g}</li>`)}</ul>`}`,
-          { head: html`<h2>What this machine measures</h2>`, extra: "machine-gaps" },
-        );
 
   const response = page({
     ctx,
-    title: "Boards",
-    body: html`<div class="page-head"><h1>Data</h1>${btn("All boards", { href: "/boards", variant: "ghost" })}</div>
-      ${questions} ${card(result, { head: html`<h2>${GUIDE[p.source]?.name ?? p.source}</h2>`, foot: html`${sentence(p)}${modelFilled ? html` <span class="muted small">${MODEL_FILLED}</span>` : null}`, id: "says" })} ${form} ${absent} ${pin} ${sources}`,
+    title: "Explore the data",
+    body: html`<div class="hf bd">
+      <header class="hf-head">
+        <div class="hf-title"><h1>Explore the data</h1><p class="hf-live muted">Ask one question of the forge's own numbers. Times are UTC.</p></div>
+        <nav class="bd-nav" aria-label="Elsewhere">${btn("All boards", { href: "/boards", variant: "ghost" })}${btn("Flow", { href: "/flow", variant: "ghost" })}</nav>
+      </header>
+      ${ask}
+      <section class="bd-block" id="says" aria-labelledby="says-h">
+        <header class="bd-head"><h2 id="says-h">${sentence(p)}</h2><p class="bd-sub">${named}${modelFilled ? html` · ${MODEL_FILLED}` : null}</p></header>
+        ${facts}
+        ${result}
+      </section>
+      <div class="folds">${pointsFold} ${form} ${pin} ${absent} ${sources}</div>
+    </div>`,
   });
   notePhase(ctx.request, "render", Math.max(0, performance.now() - rendering - boardsMs));
   return response;
