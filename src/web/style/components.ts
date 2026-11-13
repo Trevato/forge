@@ -770,6 +770,12 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
   font-size: 16px; color: var(--fg);
 }
 .topbar-search kbd { flex: none; }
+/* A phone's bar gives the search what is left: the sign-in buttons are never clipped (#11948). */
+@media (max-width: 479px) {
+  .topbar-search { --topbar-search-basis: 6rem; width: auto; flex: 0 1 var(--topbar-search-basis); }
+  .topbar-search kbd { display: none; }
+  .topbar-tools .btn { flex: none; white-space: nowrap; }
+}
 
 /* ---- theme swatch: the colour chip beside each theme in the menu's picker ---- */
 .swatch {

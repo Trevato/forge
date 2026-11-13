@@ -200,7 +200,7 @@ import {
   skipsFeedback,
 } from "./guard.ts";
 import { passportEnv } from "./passport_env.ts";
-import { fundedEnv } from "../spawn/funding.ts";
+import { cappedByLent, fundedEnv, lentCreditLeft, runEnded } from "../spawn/funding.ts";
 
 const log = createLog("crew");
 
@@ -1394,12 +1394,16 @@ async function work(
     }
     // What this run would spend before the account's ceilings: its own
     // budget, under the subscription's reservation or the grant's rest.
-    const wanted =
+    const lentLeft = lentCreditLeft(picked.kind === "env" || picked.kind === "none", app.config.dataDir);
+    const wantedBy =
       picked.kind === "ready" && picked.capUsd !== undefined
         ? Math.min(ownBudget, picked.capUsd)
         : grantCap !== undefined
           ? Math.min(ownBudget, grantCap)
           : ownBudget;
+    // On the host's included credit a run is budgeted at most what is left of it
+    // (#11948), so the budget line and the credit line say one number.
+    const wanted = cappedByLent(wantedBy, lentLeft);
     // The account's own ceilings, daily and per run, apart from the forge's:
     // a run past either does not start and spends nothing. What it may
     // spend is reserved against the day now, so a run started beside it is
@@ -1913,6 +1917,9 @@ async function work(
     await workdir.release();
     deleteToken(app.db, agent.user.id, token.id);
     if (runTmp !== undefined) rmSync(runTmp, { recursive: true, force: true });
+    // The host counted what the run cost: ask it now, so the credit line moves
+    // when a run spends (#11948).
+    void runEnded(app);
   }
 }
 

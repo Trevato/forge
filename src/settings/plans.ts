@@ -38,7 +38,7 @@ export const MAX_USD = 100_000;
 export const MAX_FORGES = 1000;
 
 export const DEFAULT_PLANS: readonly Plan[] = [
-  { key: "free", name: "Free", says: "A small forge that sleeps when idle. Bring your own model key.", size: "small", priceUsd: 0, creditUsd: 0, forges: 3 },
+  { key: "free", name: "Free", says: "A small forge that sleeps when idle, with the crew on included credit.", size: "small", priceUsd: 0, creditUsd: 0, forges: 3 },
   { key: "small", name: "Small", says: "A small forge, awake, with a crew credit each month.", size: "small", priceUsd: 19, creditUsd: 5, forges: 3 },
   { key: "medium", name: "Medium", says: "A medium forge for a busy app, with more crew credit.", size: "medium", priceUsd: 49, creditUsd: 15, forges: 3 },
   { key: "large", name: "Large", says: "A large forge for a working crew, with the most credit.", size: "large", priceUsd: 149, creditUsd: 50, forges: 3 },

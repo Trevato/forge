@@ -971,14 +971,14 @@ describe("the studio app page's terminal", () => {
   // asserts the line names FORGE_SSH_PORT instead, composed from the same
   // sshPort field the other tests here already pin (#77's ground) rather
   // than by shutting a real listener down.
-  test("a hosted forge with no SSH listener says why, and names FORGE_SSH_PORT", async () => {
+  test("a hosted forge with no SSH listener says the terminal is off, with nothing an operator would act on (#11948)", async () => {
     putLive("bun run src/tty.ts");
     app.config.sshPort = 0;
     try {
       const mine = await appPage(writer);
-      expect(mine).toContain("FORGE_SSH_PORT");
+      expect(mine).not.toContain("FORGE_SSH_PORT");
+      expect(mine).toContain("The terminal is off.");
       expect(mine).not.toContain("ssh -p 2222 beacon@forge.example");
-      expect(mine).not.toContain("The terminal is off.</p>");
     } finally {
       app.config.sshPort = 2222;
     }

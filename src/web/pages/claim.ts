@@ -43,7 +43,9 @@ import { createSession } from "../../core/sessions.ts";
 import { createUser, discardFreshUser, getUserByName, type User } from "../../core/users.ts";
 import {
   burnClaim,
+  becomeOrg,
   founderToTake,
+  isForgeName,
   linkOf,
   handOver,
   isPlaceholderFounder,
@@ -390,7 +392,11 @@ function problems(
     errors.username = "Usernames are letters, digits, dots, dashes.";
   // The spawn-made founder holds the spawner's own name; the claim may take
   // it over (`founderToTake`), so it is not "taken" to the claimant.
-  else if (getUserByName(ctx.app.db, username) && founderToTake(ctx.app, spawned, username) === undefined)
+  else if (
+    getUserByName(ctx.app.db, username) &&
+    founderToTake(ctx.app, spawned, username) === undefined &&
+    !isForgeName(spawned, username)
+  )
     errors.username = USERNAME_TAKEN;
   if (email !== "" ? !givenEmail(email) : needEmail)
     errors.email = "That does not look like an email address.";
@@ -481,8 +487,9 @@ async function submit(ctx: Ctx, own: boolean): Promise<Response> {
   // Hashed before the link is spent: nothing is awaited between the burn
   // and the takeover.
   const founder = founderToTake(ctx.app, spawned, values.username);
+  const takesName = founder === undefined && isForgeName(spawned, values.username);
   const founderHash =
-    founder === undefined || credential !== undefined ? "" : await Bun.password.hash(password, "argon2id");
+    (founder === undefined && !takesName) || credential !== undefined ? "" : await Bun.password.hash(password, "argon2id");
   // Spent first, in one statement: of two people on one link, one wins.
   const spent = burnClaim(ctx.app.db, orgId, token);
   if (spent.state !== "ok") return dead(ctx, spent.state, undefined, undefined, own);
@@ -501,6 +508,18 @@ async function submit(ctx: Ctx, own: boolean): Promise<Response> {
       );
     }
     return claimed(ctx, spawned, founder);
+  }
+  if (takesName) {
+    // The forge's own name: its organisation row becomes the account, so the
+    // apps under it stay put (#11948).
+    const taken = becomeOrg(ctx.app.db, spawned.org.id, { hash: founderHash, email, ...(credential === undefined ? {} : { credential }) });
+    if (taken !== "ok") {
+      unburnClaim(ctx.app.db, orgId, token);
+      return again(taken === "email_taken" ? { email: EMAIL_TAKEN_MESSAGE } : { username: USERNAME_TAKEN });
+    }
+    const person = getUserByName(ctx.app.db, values.username);
+    if (person === undefined) return again({ username: USERNAME_TAKEN });
+    return claimed(ctx, spawned, person);
   }
   const made = await createUser(ctx.app.db, {
     username: values.username,
