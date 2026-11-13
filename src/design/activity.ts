@@ -11,6 +11,7 @@
 
 import { VIA_WORDS } from "../core/acting_via.ts";
 import { DETACH_RECEIPT } from "../actions/detach_words.ts";
+import { rankedWords, type Place } from "../actions/next.ts";
 import type { ForgeEvent } from "../core/events.ts";
 
 /** The pull number an environment name carries, for `pull-12`. */
@@ -35,6 +36,19 @@ export function eventVerb(event: ForgeEvent): string {
     if (state === "ok") return "finished a crew run";
     if (state === "failed") return "ended a crew run without landing";
     return "had a crew run cancelled";
+  }
+  if (kind === "issue.ranked") {
+    const n = payload["number"];
+    const to = payload["to"];
+    const place: Place | undefined =
+      to === "top" || to === "not_now"
+        ? { to }
+        : to === "after" && typeof payload["after"] === "number"
+          ? { to, number: payload["after"] }
+          : undefined;
+    // The forge's own words for a move, `rankedWords`, as a verb phrase.
+    if (typeof n === "number" && place !== undefined)
+      return `ranked an issue: ${rankedWords(n, place)}`;
   }
   if (kind === "issue.assigned" || kind === "pull.assigned") {
     const thing = kind === "issue.assigned" ? "an issue" : "a pull request";
