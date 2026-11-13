@@ -139,8 +139,8 @@ describe("the new home draws every lane", () => {
 describe("a lane says its health in words", () => {
   const now = Date.now();
   const view = (key: LaneKey, items: Partial<LaneItem>[], total = items.length): LaneView => {
-    const all = items.map((i, n): LaneItem => ({ key: `k${n}`, repoId: "r", kind: "issue", number: n + 1, title: "t", sealed: false, who: "", since: new Date(now - 60_000).toISOString(), state: "active", hint: "", position: null, beat: null, ...i }));
-    return { key, total, more: 0, all, items: all.map((i) => ({ ...i, repo: "o/r", href: "/" })) };
+    const all = items.map((i, n) => ({ repo: "o/r", href: "/", key: `k${n}`, repoId: "r", kind: "issue", number: n + 1, title: "t", sealed: false, who: "", since: new Date(now - 60_000).toISOString(), state: "active", hint: "", position: null, beat: null, issueId: null, born: null, ...i }) satisfies LaneItem & { repo: string; href: string });
+    return { key, total, more: 0, all, items: all };
   };
   const moved = { asked: 0, building: 0, checks: 0, review: 0, landing: 0, live: 0 };
   const input = { now, builders: { running: 1, slots: 4 }, moved };

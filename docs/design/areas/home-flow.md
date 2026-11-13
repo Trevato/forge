@@ -18,3 +18,16 @@
 - `.hf-foot` — the way back to the classic home, and the feed.
 
 Motion is two things only, an arrival wash on a new tile and the pulse on work in progress; both stop under `prefers-reduced-motion`, and the glide is not drawn at all. A phone shows each lane as a glance: its first tile and the count of the rest.
+
+## The table
+
+`/home?view=table` (`web/pages/home_table.ts`, `flow/lanes_table.ts`) is the same items as one row each, from the same picture, so it costs no query of its own. It is §5's `.table` (`data-sortable`, `data-dense`) inside a `.table-scroll`; the rest is what sits around it. Search, lane, state, who, app and sort are links and a GET form, so a view is an address and works without script; the page's script adds instant search, picking rows and the action bar.
+
+- `.hf-views` — the Lanes | Table switch: two links, the current one `aria-current="page"`; the choice is remembered in a cookie when the address asks for it.
+- `.tb-search` — the search form: a search input and a Search button.
+- `.tb-region` — the one live region of the table (`data-live-src="/live/table?…"`): chips, count, sort and rows swap together when work moves; an unchanged table answers 304.
+- `.tb-chips`, `.tb-chipset`, `.tb-chiplabel`, `.tb-chip`, `.tb-chipn` — the filters as links, each saying how many rows it would leave and `aria-pressed` when chosen (choosing it again clears it); the same `.tb-chip` carries the sort links on a phone.
+- `.tb-counts`, `.tb-sorts`, `.tb-empty` — how many rows are shown and the way to clear the filters; the sort by column as chips (the header links do the same on a desk); the empty sentence.
+- `.tb`, `.tb-row`, `.tb-sel`, `.tb-app`, `.tb-no`, `.tb-what`, `.tb-lane`, `.tb-state`, `.tb-hint`, `.tb-who`, `.tb-time`, `.tb-age` — the table and its cells: the app and number, the title as a link, the lane, a dot and one sentence of where it is, who has it, time in the lane, and the age of the issue or pull itself. On a phone the header goes and each row is a small card: app and lane, title, sentence, who and time.
+- `.tb-pick` — a row's check box, a 44px button with `role="checkbox"` and `aria-checked`, drawn only when script is on (it does nothing without it).
+- `.tb-bar`, `.tb-barrow`, `.tb-picked`, `.tb-actions`, `.tb-note`, `.tb-confirm` — the action bar, shown while rows are picked, sticky under the top bar (not fixed over content): how many are picked, the actions that fit the kinds picked (close, move to Later, land, hand to the planner), then the preview in words with what would be refused and why, and Confirm or Cancel; after it, the receipt, which is where an undo lives.

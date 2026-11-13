@@ -64,6 +64,10 @@ export interface LaneItem {
   readonly position: number | null;
   /** When its worker last said it was alive; null when it does not say. */
   readonly beat: string | null;
+  /** The issue or pull this is, for an action over it (`fleet/verbs.ts`); null for a check of main and a deploy. */
+  readonly issueId: string | null;
+  /** When the issue or pull was opened; null where there is none. */
+  readonly born: string | null;
 }
 
 export interface LaneRead {
@@ -116,6 +120,8 @@ interface Raw {
   attempt: number | null;
   env: string | null;
   beat: string | null;
+  issue_id: string | null;
+  born: string | null;
   total: number;
 }
 
@@ -164,6 +170,8 @@ function item(
     since: r.since,
     position: null,
     beat: r.beat,
+    issueId: r.issue_id,
+    born: r.born,
     ...over,
   };
 }
@@ -179,7 +187,7 @@ function runRows(
     .query<Raw, [string, string, number]>(
       `SELECT COALESCE(i.id, x.id) AS id, x.repo_id, i.number, CASE WHEN i.id IS NULL THEN 'main' ELSE i.kind END AS kind, i.title, i.sealed,
               u.username AS who, CASE WHEN x.state = 'running' THEN COALESCE(x.started_at, x.created_at) ELSE x.created_at END AS since,
-              x.state, x.reason, x.attempt, x.env, x.heartbeat_at AS beat, COUNT(*) OVER () AS total
+              x.state, x.reason, x.attempt, x.env, x.heartbeat_at AS beat, i.id AS issue_id, i.created_at AS born, COUNT(*) OVER () AS total
          FROM run x LEFT JOIN issue i ON i.id = x.issue_id LEFT JOIN user u ON u.id = x.actor_id
         WHERE x.kind = ?1 AND x.state IN ('queued','running') AND ${where}
           AND (x.state = 'running' OR x.not_before IS NULL OR x.not_before <= ?2)
@@ -193,7 +201,7 @@ function approvedRows(db: Database): Raw[] {
   return db
     .query<Raw, [number]>(
       `SELECT i.id, i.repo_id, i.number, 'pull' AS kind, i.title, i.sealed, u.username AS who, v.created_at AS since,
-              'approved' AS state, NULL AS reason, NULL AS attempt, NULL AS env, NULL AS beat, COUNT(*) OVER () AS total
+              'approved' AS state, NULL AS reason, NULL AS attempt, NULL AS env, NULL AS beat, i.id AS issue_id, i.created_at AS born, COUNT(*) OVER () AS total
          FROM issue i JOIN pull p ON p.issue_id = i.id
          JOIN review v ON v.id = (SELECT id FROM review WHERE issue_id = i.id AND state != 'commented'
                                    ORDER BY created_at DESC, id DESC LIMIT 1)
@@ -209,7 +217,7 @@ function mergedRows(db: Database, weekAgo: string): Raw[] {
   return db
     .query<Raw, [string, number]>(
       `SELECT i.id, i.repo_id, i.number, 'pull' AS kind, i.title, i.sealed, u.username AS who, p.merged_at AS since,
-              'merged' AS state, NULL AS reason, NULL AS attempt, NULL AS env, NULL AS beat, COUNT(*) OVER () AS total
+              'merged' AS state, NULL AS reason, NULL AS attempt, NULL AS env, NULL AS beat, i.id AS issue_id, i.created_at AS born, COUNT(*) OVER () AS total
          FROM pull p JOIN issue i ON i.id = p.issue_id JOIN repo r ON r.id = i.repo_id
          JOIN app a ON a.repo_id = r.id LEFT JOIN user u ON u.id = p.merged_by
         WHERE p.merged_at >= ?1 AND p.base_branch = r.default_branch
@@ -382,6 +390,8 @@ function live(db: Database, dayAgo: string): LaneRead {
       hint: going ? "Going live now." : "Serving now.",
       position: null,
       beat: null,
+      issueId: null,
+      born: null,
     });
   }
   return { items, total };
@@ -507,6 +517,8 @@ function askedNext(db: Database): { items: LaneItem[]; total: number } {
         r.place !== null && r.byOwner ? "You put this one first." : "Ready.",
       position: null,
       beat: null,
+      issueId: r.issue.id,
+      born: r.issue.createdAt,
     }),
   );
   return { items, total };
