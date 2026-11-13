@@ -57,7 +57,7 @@ export function labelWords(label: string): string {
 }
 
 /** How a chart says its own labels: buckets that are all whole days are said as days alone, anything else in full. */
-function sayer(labels: readonly string[]): (label: string) => string {
+export function sayLabels(labels: readonly string[]): (label: string) => string {
   const daily = labels.every((l) => {
     const m = STAMP.exec(l);
     return m !== null && (m[4] === undefined || (m[4] === "00" && (m[5] ?? "00") === "00"));
@@ -138,7 +138,7 @@ const legend = (names: readonly string[]) =>
 /** What the picture says, for a reader who cannot see it. */
 function says(title: string, labels: readonly string[], values: readonly number[]): string {
   if (values.length === 0) return `${clean(title)}: no points.`;
-  const say = sayer(labels);
+  const say = sayLabels(labels);
   const first = say(labels[0] ?? "");
   const last = say(labels[labels.length - 1] ?? "");
   const range = labels.length === 1 ? `1 point, ${first}` : `${labels.length} points from ${first} to ${last}`;
@@ -153,7 +153,7 @@ const nothing = (kind: Chart, title: string) =>
 /** One column per point (or per few, past MAX_HITS) that says the point's value on hover and links to its rows. */
 function hits(points: readonly Point[], x: (i: number) => number): string {
   const n = points.length;
-  const say = sayer(points.map((p) => p.label));
+  const say = sayLabels(points.map((p) => p.label));
   const every = Math.ceil(n / MAX_HITS);
   const out: string[] = [];
   for (let i = 0; i < n; i += every) {
@@ -189,7 +189,7 @@ export function barChart(points: readonly Point[], title: string): string {
   const values = points.map((p) => p.value);
   const s = scale(Math.min(...values), Math.max(...values));
   const slot = 100 / points.length;
-  const say = sayer(points.map((p) => p.label));
+  const say = sayLabels(points.map((p) => p.label));
   const bars = points.map((p, i) => {
     const top = Math.min(s.y(p.value), s.y(0));
     const h = Math.abs(s.y(p.value) - s.y(0));
@@ -271,7 +271,7 @@ export function numberChart(points: readonly Point[], title: string): string {
   const span = Math.max(...values) - lo || 1;
   const d = path(values, across(points.length), (v) => 92 - ((v - lo) / span) * 84);
   return frame("number", title, says(title, points.map((p) => p.label), values),
-    `<p class="chart-big">${linked(last.href, `<span class="big num">${escapeXml(formatValue(last.value))}</span>`)}<span class="chart-note">${escapeXml(sayer(points.map((p) => p.label))(last.label))}, the latest of ${points.length}</span></p>` +
+    `<p class="chart-big">${linked(last.href, `<span class="big num">${escapeXml(formatValue(last.value))}</span>`)}<span class="chart-note">${escapeXml(sayLabels(points.map((p) => p.label))(last.label))}, the latest of ${points.length}</span></p>` +
     `<svg class="chart-plot" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path class="chart-line spark" d="${d}"/></svg>`);
 }
 
@@ -284,7 +284,7 @@ export function heatStrip(cells: readonly Cell[], title: string): string {
   const { xs, names, values, hrefs } = gridOf(cells, MAX_ROWS);
   if (xs.length === 0) return nothing("heat", title);
   const max = Math.max(0, ...values.flat()) || 1;
-  const say = sayer(xs);
+  const say = sayLabels(xs);
   const cw = 100 / xs.length;
   const ch = 100 / names.length;
   const rects = names.flatMap((n, r) =>
@@ -302,7 +302,7 @@ export function heatStrip(cells: readonly Cell[], title: string): string {
 /** The points as an HTML table: one row each, a series column when there is one. */
 export function tableChart(cells: readonly Cell[], title: string): string {
   const split = cells.some((c) => c.series !== undefined);
-  const say = sayer(cells.map((c) => c.label));
+  const say = sayLabels(cells.map((c) => c.label));
   return [
     `<table class="table chart-table" data-dense><caption class="sr-only">${t(title)}</caption>`,
     `<thead><tr><th scope="col">Group</th>${split ? `<th scope="col">Series</th>` : ""}<th scope="col" class="num">Value</th></tr></thead><tbody>`,

@@ -120,7 +120,7 @@ describe("/boards/data", () => {
   test("the page names sources plainly, lists ready questions and says what the chart shows", async () => {
     const body = await (await get("/boards/data?source=machine")).text();
     expect(body).toContain("Machine readings");
-    expect(body).toContain("Start from a question");
+    expect(body).toContain("Or start from");
     expect(body).toContain("CPU over the last week");
     expect(body).toContain("Apps shipped per day");
     expect(body).toContain("Average CPU cores per day, where target is forge.");
@@ -146,7 +146,7 @@ describe("/boards/data", () => {
   });
   test("a ready question opens a working chart from its link", async () => {
     const page = await (await get("/boards/data?source=reach")).text();
-    const href = page.match(/href="(\/boards\/data\?[^"]*)"><strong>Slowest pages today/)![1]!.replaceAll("&amp;", "&");
+    const href = page.match(/class="tb-chip" href="(\/boards\/data\?[^"]*)">Slowest pages today/)![1]!.replaceAll("&amp;", "&");
     const res = await get(href);
     expect(res.status).toBe(200);
     expect(await res.text()).not.toContain("refused");
@@ -171,10 +171,10 @@ describe("/boards/data", () => {
       expect(await res.text()).not.toContain("I could not read that");
     }
   });
-  test("the one-line sentence is said once, in the result card's foot", async () => {
+  test("the one-line sentence is said once, as the answer's heading", async () => {
     const body = await (await get("/boards/data?source=machine")).text();
     expect(body.split("Average CPU cores per day, where target is forge.").length - 1).toBe(1);
-    expect(body).toMatch(/<div class="card-foot">\s*Average CPU cores per day/);
+    expect(body).toMatch(/<h2 id="says-h">Average CPU cores per day, where target is forge\.<\/h2><p class="bd-sub">Machine readings/);
   });
   test("a member who is not a site admin gets 403 for a sentence, and no redirect", async () => {
     const r = await createUser(app.db, { origin: "seed", trusted: true, username: "bob", email: "b@forge.local", password: "a-good-passphrase" });

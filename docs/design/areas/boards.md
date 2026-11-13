@@ -34,6 +34,13 @@ The card under the Pipeline table (`id="verified"`) adds no class: it is a `card
 - `.bgrid`, `.bp`, `.bp-w2`, `.bp-w3`, `.bp-h2`, `.bp-h3` — a board's panels: a panel is a third, two thirds or all of a row at least and grows into what is left, so a row is never part empty; one under the other on a phone.
 - `.bp-head`, `.bp-now`, `.bp-body`, `.bp-foot` — a panel: its title, the latest value of a single series beside it, the chart, and under it Explore, JSON and CSV as 44px links.
 
+## Explore the data (`/boards/data`)
+
+One question, one answer. The page is the home's column and head, then the question (`.bd-ask`: the sentence box and Show, with the ready questions under it as the home table's chips, `.tb-chip`), then the answer as a `.bd-block` whose `<h2>` is the question said back in words ("Count of runs per day."): four of the home's figures naming what stands out (the latest, the highest, the lowest, the total; each links to the rows behind it), and the one chart in a card. Everything else is a fold: the points as a table (times as words, exact values, right-aligned), "Change the question" (the query form, open when the answer is empty or refused), "Pin this to a board", and "What you can ask about" (the sources and the columns of the one in use).
+
+- `.bd-query` — the query's fields (and a panel's, under a board) on a grid: four across, two on a phone, every label on one line and every box on the next, the button at the foot of its cell.
+- `.bd-ask` — the question's form: the box grows to 480px, the box and the button are 44px high and share a baseline.
+
 ## The list and a board's management (#9815)
 
 `boardsList` is a `bd-block` "Your boards" with one tile per board (title, charts, range), or one plain sentence when there are none; the make-a-board form is a closed `disclosure` under it. Under a board, Panels, Add a panel and Board are folds. The panels in the grid keep their `card` shape.

@@ -11,11 +11,12 @@ import { retryBackup } from "../../actions/backup_retry.ts";
 import { alarmBackup, type BackupAlarm } from "../../flow/alarm_backup.ts";
 import { acceptSuggestion, turnValveFor, type ValveError } from "../../actions/valves.ts";
 import type { Ctx } from "../../http/context.ts";
-import { readPipes, type Pipes, type ValveRow } from "../../flow/pipes.ts";
+import type { Pipes, ValveRow } from "../../flow/pipes.ts";
+import { flowPicture, LONG_WAIT_MS } from "../../flow/pages.ts";
 import { usd } from "../../core/money.ts";
-import { count, figure, figures } from "../figure.ts";
+import { count, figure, figures, reading, readingJs } from "../figure.ts";
 import { levelWords } from "../../flow/valve.ts";
-import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
+import { notePhase, takeSessionTime, timePhaseAsync } from "../../core/route_timing.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { pipesSvg } from "../flow_pipes.ts";
 import { field, readForm } from "../form.ts";
@@ -23,13 +24,10 @@ import { html, when } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { btn, icon, row, time } from "../ui.ts";
 import { handoverSection } from "./flow-handover.ts";
-import { readDrifts } from "../../flow/alarm_drift.ts";
-import { readHandoverLists } from "../../flow/handover_read.ts";
-import { readWaiting, waitingSection } from "./flow-waiting.ts";
+import { waitingSection } from "./flow-waiting.ts";
 import { estimatesSection } from "./flow-estimates.ts";
-import { clogSection, readClogView } from "./flow-clog.ts";
+import { clogSection } from "./flow-clog.ts";
 import { cpuStopsSection } from "./flow-cpu.ts";
-import { cpuClosedPulls } from "../../flow/cpu_closed.ts";
 import { cpuStops } from "../../flow/cpu_stops.ts";
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${String(n)} ${n === 1 ? one : many}`;
@@ -113,12 +111,29 @@ export function backupRow(alarm: BackupAlarm) {
 
 // GET /flow
 export async function flowPage(ctx: Ctx): Promise<Response> {
-  if (ctx.url.search !== "") return new Response(null, { status: 301, headers: { location: `/boards${ctx.url.search}` } });
+  const waiting = ctx.url.search === "?wait=1";
+  if (ctx.url.search !== "" && !waiting) return new Response(null, { status: 301, headers: { location: `/boards${ctx.url.search}` } });
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const user = ctx.auth.user;
   if (user === undefined) return signInFirst(ctx);
   if (!user.isAdmin || user.kind === "agent") return notFoundPage(ctx);
-  const p = readPipes(ctx.app.db, user.id);
+  // What a "Reading…" page asks: it answers when the worker has the picture, and draws nothing.
+  if (waiting) {
+    const read = await flowPicture(ctx.app, user.id, LONG_WAIT_MS);
+    return new Response(null, { status: read === undefined ? 503 : 204, headers: { "cache-control": "no-store" } });
+  }
+  // The page's picture is read by a worker and kept: nothing here walks the runs, the pulls or git.
+  const picture = await timePhaseAsync(ctx.request, "picture", () => flowPicture(ctx.app, user.id));
+  if (picture === undefined) {
+    return page({
+      ctx,
+      title: "Flow",
+      body: html`<div class="hf bd"><header class="hf-head"><div class="hf-title"><h1>Flow</h1></div></header>
+        <section class="bd-now">${reading("Reading what the week's money bought…", "/flow?wait=1", "/flow")}</section></div>`,
+      scriptJs: readingJs,
+    });
+  }
+  const p = picture.pipes;
   const open = p.valves.filter((v) => v.mode === "open").length;
   const strip = figures([
     figure("Spent in 7 days", usd(p.usd), "by the crew, at list price", "/settings/crew"),
@@ -134,11 +149,11 @@ export async function flowPage(ctx: Ctx): Promise<Response> {
     <section class="bd-now" aria-label="How the week stands">
       <p class="bd-lead" id="flow-week"><strong>${weekSays(p)}</strong></p>
       ${backupRow(alarmBackup(ctx.app.config.dataDir, new Date()))}
-      ${clogSection(readClogView(ctx.app.db))}
-      ${cpuStopsSection(cpuStops(ctx.app.db).stopped, cpuClosedPulls(ctx.app.db, new Date()))}
+      ${clogSection(picture.clog)}
+      ${cpuStopsSection(cpuStops(ctx.app.db).stopped, picture.cpuClosed)}
     </section>
     ${p.valves.length === 0 ? null : strip}
-    ${waitingSection(await readWaiting(ctx.app.db, ctx.app.reposRoot, new Date()))}
+    ${waitingSection({ approved: picture.approved, stale: picture.stale, unproposed: picture.unproposed ?? { fires: false, says: "", branches: [] } })}
     ${p.valves.length === 0
       ? null
       : html`<section class="pipes-block" aria-label="Where the week's money went">${pipesSvg(p)}</section>
@@ -146,7 +161,7 @@ export async function flowPage(ctx: Ctx): Promise<Response> {
       <header class="bd-head"><h2 id="valves-h">Valves</h2></header>
       <ul class="list">${p.valves.map((v) => valveRow(v, p.usd))}</ul>
     </section>`}
-    ${handoverSection(readHandoverLists(ctx.app.db, await readDrifts(ctx.app), Date.now()))}
+    ${handoverSection(picture.handover)}
     ${estimatesSection(ctx.app.db, ctx.auth.user)}
   </div>`;
   const rendering = performance.now();

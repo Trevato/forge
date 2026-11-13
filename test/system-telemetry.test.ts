@@ -313,7 +313,10 @@ describe("telemetry:read: the owner grants it, an agent reads with it, nobody el
     expect(html).toContain('<tbody data-kind="check"');
     expect(html).not.toMatch(/<[a-z]+ [^>]*\bstyle="/);
     const flowPage = await fetch(`${servers.url}/boards`, { headers: { cookie: await login("alice") } });
-    expect(await flowPage.text()).toContain('id="duplicate-work" data-count="1"');
+    // /boards does not read the process tree to draw (it is the one thread's time): it sends the reader to /system for this.
+    const boards = await flowPage.text();
+    expect(boards).not.toContain("test/shared.test.ts");
+    expect(boards).toMatch(/<p id="system-link">[^<]*<a href="\/system">System<\/a>/);
 
     const reads = recentReads(app.db).filter((r) => r.username === "muse");
     expect(reads.map((r) => r.what)).toContain("system");

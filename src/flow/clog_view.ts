@@ -14,7 +14,7 @@ import { cpuStopReason, cpuStops } from "./cpu_stops.ts";
 import { conflictedPulls } from "./conflicted.ts";
 import { sharedRed } from "./shared_red.ts";
 import { readStranded } from "./stranded.ts";
-import { approvedRows } from "../web/pages/flow-waiting.ts";
+import { approvedRows } from "./waiting_rows.ts";
 
 export interface ClogView {
   readonly says: string;

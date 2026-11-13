@@ -24,6 +24,25 @@ export function figures(figs: readonly Html[], label: string): Html {
   return html`<div class="hf-figs" role="group" aria-label="${label}" ${figs.length === 5 ? null : html`data-figs="${String(figs.length)}"`}>${[...figs]}</div>`;
 }
 
+/**
+ * A page whose picture is not read yet says so, and its script asks for the
+ * picture once (`src` answers when the worker has it) and then draws the page:
+ * no timer, one request. Without scripts the sentence is a link to try again.
+ */
+export function reading(words: string, src: string, again: string): Html {
+  return html`<p class="bd-lead" data-reading-src="${src}" aria-busy="true">${words}</p>
+    <noscript><p><a href="${again}">Show it now</a></p></noscript>`;
+}
+export const readingJs = /* js */ `
+(function () {
+  var r = document.querySelector('[data-reading-src]');
+  if (!r || !window.fetch) return;
+  fetch(r.getAttribute('data-reading-src'), { credentials: 'same-origin' })
+    .then(function (x) { if (x.ok) location.replace(location.pathname); })
+    .catch(function () {});
+})();
+`;
+
 /** A section closed until asked for: its name, one sentence of how it stands now, and the detail inside. */
 export function fold(title: string, state: Html | string, body: Html, o: { id?: string; open?: boolean } = {}): Html {
   return html`<details class="disclosure fold" ${o.id === undefined ? null : html`id="${o.id}"`} ${o.open === true ? html`open` : null}>
