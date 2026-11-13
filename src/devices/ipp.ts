@@ -32,6 +32,8 @@ const WANTED = [
   "marker-colors",
 ];
 
+const RASTER_WANTED = ["pwg-raster-document-resolution-supported", "pwg-raster-document-type-supported"];
+
 const RESPONSE_MAX = 256 * 1024;
 
 export type IppValue = string | number | boolean | Uint8Array;
@@ -46,7 +48,7 @@ function attr(tag: number, name: string, value: string): number[] {
 }
 
 /** The request body for Get-Printer-Attributes on `printerUri`. */
-export function encodeGetPrinterAttributes(printerUri: string, requestId = 1): Uint8Array {
+export function encodeGetPrinterAttributes(printerUri: string, requestId = 1, wanted: readonly string[] = WANTED): Uint8Array {
   const out: number[] = [
     1, 1, // version 1.1
     OP_GET_PRINTER_ATTRIBUTES >> 8, OP_GET_PRINTER_ATTRIBUTES & 255,
@@ -56,7 +58,7 @@ export function encodeGetPrinterAttributes(printerUri: string, requestId = 1): U
     ...attr(TAG.language, "attributes-natural-language", "en"),
     ...attr(TAG.uri, "printer-uri", printerUri),
   ];
-  WANTED.forEach((k, i) => out.push(...attr(TAG.keyword, i === 0 ? "requested-attributes" : "", k)));
+  wanted.forEach((k, i) => out.push(...attr(TAG.keyword, i === 0 ? "requested-attributes" : "", k)));
   out.push(TAG.end);
   return Uint8Array.from(out);
 }
@@ -166,6 +168,32 @@ export async function probePrinter(url: string, timeoutMs = 2500): Promise<Probe
   return { ok: true, report: reportOf(answer.response.attributes) };
 }
 
+export interface RasterSupport {
+  /** [x, y] dpi pairs the printer lists, or undefined when it lists none. */
+  readonly resolutions: [number, number][] | undefined;
+  readonly types: string[] | undefined;
+}
+
+/**
+ * What the printer says about PWG raster: `pwg-raster-document-resolution-supported`
+ * and `-type-supported`.
+ */
+export async function probeRasterSupport(url: string, timeoutMs = 2500): Promise<{ ok: true; support: RasterSupport } | { ok: false; error: "unreachable" | "refused" | "bad_answer" }> {
+  const answer = await exchange(url, encodeGetPrinterAttributes(url, 1, RASTER_WANTED), timeoutMs);
+  if (!answer.ok) return answer;
+  const a = answer.response.attributes;
+  const resolutions: [number, number][] = [];
+  for (const v of a.get("pwg-raster-document-resolution-supported") ?? []) {
+    // resolution value: x (int32), y (int32), units (1 byte; 3 = dots per inch)
+    if (v instanceof Uint8Array && v.length === 9 && v[8] === 3) {
+      const d = new DataView(v.buffer, v.byteOffset, 9);
+      resolutions.push([d.getInt32(0), d.getInt32(4)]);
+    }
+  }
+  const types = str(a, "pwg-raster-document-type-supported");
+  return { ok: true, support: { resolutions: resolutions.length > 0 ? resolutions : undefined, types: types.length > 0 ? types : undefined } };
+}
+
 type Exchange =
   | { readonly ok: true; readonly response: IppResponse }
   | { readonly ok: false; readonly error: "unreachable" | "refused" | "bad_answer" };
@@ -200,7 +228,7 @@ async function exchange(url: string, body: Uint8Array, timeoutMs: number): Promi
 }
 
 /** The request body for Print-Job: the document follows the attributes. */
-export function encodePrintJob(printerUri: string, pdf: Uint8Array, jobName: string, requestId = 1): Uint8Array {
+export function encodePrintJob(printerUri: string, pdf: Uint8Array, jobName: string, requestId = 1, format = "application/pdf"): Uint8Array {
   const head: number[] = [
     1, 1,
     OP_PRINT_JOB >> 8, OP_PRINT_JOB & 255,
@@ -211,7 +239,7 @@ export function encodePrintJob(printerUri: string, pdf: Uint8Array, jobName: str
     ...attr(TAG.uri, "printer-uri", printerUri),
     ...attr(TAG.nameWithoutLanguage, "requesting-user-name", "forge"),
     ...attr(TAG.nameWithoutLanguage, "job-name", jobName),
-    ...attr(TAG.mimeType, "document-format", "application/pdf"),
+    ...attr(TAG.mimeType, "document-format", format),
     TAG.end,
   ];
   const out = new Uint8Array(head.length + pdf.length);
@@ -243,7 +271,12 @@ export type PrintResult =
  * takes a long document needs longer than a probe does.
  */
 export async function printPdf(url: string, pdf: Uint8Array, jobName: string, timeoutMs = 30_000): Promise<PrintResult> {
-  const answer = await exchange(url, encodePrintJob(url, pdf, jobName), timeoutMs);
+  return printDocument(url, pdf, jobName, "application/pdf", timeoutMs);
+}
+
+/** The same Print-Job with another document-format (PWG raster is `image/pwg-raster`). */
+export async function printDocument(url: string, doc: Uint8Array, jobName: string, format: string, timeoutMs = 30_000): Promise<PrintResult> {
+  const answer = await exchange(url, encodePrintJob(url, doc, jobName, 1, format), timeoutMs);
   if (!answer.ok) return answer;
   const a = answer.response.attributes;
   const id = a.get("job-id")?.[0];

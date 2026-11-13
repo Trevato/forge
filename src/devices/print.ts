@@ -11,7 +11,8 @@ import { getDevice, type Device } from "../core/devices.ts";
 import { dailyCap, logJob, printedToday, type Outcome } from "../core/print_log.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { printPdf, type PrintJob } from "./ipp.ts";
+import { printDocument, printPdf, probeRasterSupport, type PrintJob } from "./ipp.ts";
+import { PWG_MAX_BYTES, readPwg, unsupportedBy, type PwgError } from "./pwg.ts";
 
 export const PDF_MAX_BYTES = 10 * 1024 * 1024;
 export const PDF_MAX_PAGES = 20;
@@ -20,16 +21,21 @@ export const PDF_MAX_PAGES = 20;
 export const PRINTS_PER_MINUTE = 10;
 export const PRINTS_AT_ONCE = 2;
 
-export type PrintError = "forbidden" | "rate_limited" | "daily_cap" | "not_pdf" | "too_large" | "too_many_pages" | "pages_unknown" | "printer_unreachable" | "printer_refused";
+export type PrintError = "forbidden" | "rate_limited" | "daily_cap" | "not_pdf" | "too_large" | "too_many_pages" | "pages_unknown" | "printer_unreachable" | "printer_refused" | PwgError | "raster_resolution_refused" | "raster_type_refused";
 
 export const PRINT_WORDS: Record<PrintError, string> = {
   forbidden: "This app is not granted that printer.",
   rate_limited: "This app is printing too fast; wait a little.",
   daily_cap: "This app has used its prints for today on this printer; it can print again tomorrow.",
   not_pdf: "The body must be a PDF (application/pdf).",
-  too_large: "The PDF is over 10 MB.",
-  too_many_pages: "The PDF is over 20 pages.",
+  too_large: "The document is over its size limit (10 MB for a PDF, 80 MB for PWG raster).",
+  too_many_pages: "The document is over 20 pages.",
   pages_unknown: "The page count could not be read; save the PDF without compressed object streams.",
+  not_raster: "The body must be PWG raster (image/pwg-raster): it does not begin with the RaS2 sync word.",
+  raster_truncated: "The PWG raster is cut short: a page header or its lines end before they should.",
+  raster_unsupported: "The PWG raster has a page this forge cannot read: it takes 8 or 16 bits of sgray, srgb or adobe-rgb, with consistent header sizes.",
+  raster_resolution_refused: "The printer says it does not take PWG raster at this resolution.",
+  raster_type_refused: "The printer says it does not take PWG raster in this colour space and depth.",
   printer_unreachable: "The printer did not answer.",
   printer_refused: "The printer did not accept the job.",
 };
@@ -66,6 +72,13 @@ export function checkPdf(pdf: Uint8Array): Result<number, PrintError> {
   if (pages === 0) return err("pages_unknown");
   if (pages > PDF_MAX_PAGES) return err("too_many_pages");
   return ok(pages);
+}
+
+/** The body is PWG raster within the limits: its page count, or why not. */
+export function checkRaster(raster: Uint8Array): Result<number, PrintError> {
+  if (raster.length > PWG_MAX_BYTES) return err("too_large");
+  const pages = readPwg(raster);
+  return pages.ok ? ok(pages.value.length) : pages;
 }
 
 const perMinute = new RateLimiter({ perMinute: PRINTS_PER_MINUTE, adminPerMinute: PRINTS_PER_MINUTE, enabled: true });
@@ -114,16 +127,33 @@ export function permitPrint(app: App, secret: string, deviceId: number): Result<
 }
 
 /** Print `pdf` for a permitted app; the document is checked before any byte leaves for the LAN. */
-export async function printFor(app: App, permit: Permit, pdf: Uint8Array): Promise<Result<PrintJob, PrintError>> {
+export async function printFor(app: App, permit: Permit, pdf: Uint8Array, kind: "pdf" | "raster" = "pdf"): Promise<Result<PrintJob, PrintError>> {
   try {
     const { caller, device } = permit;
-    const checked = checkPdf(pdf);
+    const checked = kind === "raster" ? checkRaster(pdf) : checkPdf(pdf);
     const log = (pages: number, outcome: Outcome): void => logJob(app.db, { deviceId: device.id, appId: caller.id, pages, outcome });
     if (!checked.ok) {
       log(0, "refused_document");
       return checked;
     }
-    const sent = await printPdf(device.url, pdf, `${caller.slug} (forge)`);
+    if (kind === "raster") {
+      // Only now does anything touch the LAN: ask what the printer takes of what the pages need.
+      const asked = await probeRasterSupport(device.url);
+      if (!asked.ok) {
+        log(0, "failed");
+        return err(asked.error === "unreachable" ? "printer_unreachable" : "printer_refused");
+      }
+      const pages = readPwg(pdf);
+      for (const page of pages.ok ? pages.value : []) {
+        const why = unsupportedBy(page, asked.support.resolutions, asked.support.types);
+        if (why !== undefined) {
+          log(0, "refused_document");
+          return err(why);
+        }
+      }
+    }
+    const jobName = `${caller.slug} (forge)`;
+    const sent = kind === "raster" ? await printDocument(device.url, pdf, jobName, "image/pwg-raster") : await printPdf(device.url, pdf, jobName);
     log(checked.value, sent.ok ? "printed" : "failed");
     releasePermit(permit);
     if (sent.ok) {
