@@ -50,7 +50,7 @@ const MAX_UNFIXTURED = 147;
 const NOT_PAGES = new Set([
   "/events", "/system/stream", "/settings/teams/stream", "/fleet/graph/live",
   "/settings/traffic/scrapes/export", "/settings/backups/live", "/:owner/:name/stream",
-  "/settings/origins/flows/:id/stream",
+  "/settings/origins/flows/:id/stream", "/:owner/:name/archive/:file", // a tarball download, not a page
 ]);
 
 /** Patterns with an id in them, and the path the fixture fills them with. */

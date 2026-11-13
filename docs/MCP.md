@@ -152,7 +152,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `next_up` | — | The ranked list the crew builds from; `issue` + `to` (top, not-now, after:N) moves one | 349 |
 | `notify` | — | Read, set or clear your phone notify URL | 146 |
 | `now` | — | What the crew does across your apps: who, on what, since when, cost; what awaits review | 252 |
-| `open_pull` | — | Open a pull request, from a branch or from your fork | 327 |
+| `open_pull` | — | Open a pull request, from a branch or from your fork | 449 |
 | `org_create` | — | Make an organization | 151 |
 | `org_teams` | `create`, `add_member`, `members`, `metrics`, `remove_member`, `remove` | An org's teams: create, add member with a role, list members, remove | 682 |
 | `orgs` | — | Your orgs; with org, its teams | 170 |
@@ -200,7 +200,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `signup` | — | Sign-ups: open (default); invite lets in only a person with an open invite link; closed refuses every new account | 324 |
 | `sizes` | — | A child forge's sizes: small, medium and large, each with CPU, memory and disk | 196 |
 | `snapshot_now` | — | Take a snapshot now, as Backups does (admin) | 133 |
-| `spawn` | — | Spawn a child forge | 871 |
+| `spawn` | — | Spawn a child forge | 946 |
 | `spend` | — | Report what your session spent outside forge runs: who, model, tokens or dollars, issue | 470 |
 | `ssh_keys` | `list`, `add`, `remove` | Your SSH keys; add: key, remove: id | 250 |
 | `steer` | — | Say a word to one crew run by its id | 224 |

@@ -18,6 +18,7 @@ import { sourceFor } from "../view/source.ts";
 import { fleetCommand } from "./screens/fleet.ts";
 import { dataCommand } from "./screens/data.ts";
 import { packsCommand } from "./screens/packs.ts";
+import { sendChangeCommand } from "./screens/send_change.ts";
 import { interruptedOutCommand } from "./screens/interrupted_out.ts";
 import { getForgeCommand } from "./screens/getforge.ts";
 import { startForgeCommand } from "./screens/startforge.ts";
@@ -250,6 +251,7 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         run: () => openOnWeb(session, ctx, "/explore.atom", "The explore feed"),
       },
       packsCommand(session, ctx),
+      sendChangeCommand(ctx),
       interruptedOutCommand(session, ctx),
       getForgeCommand(session, ctx),
       ...startForgeCommand(session, ctx),

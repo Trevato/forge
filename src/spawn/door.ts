@@ -6,6 +6,7 @@
  * the caller says `false` — returns the plan and changes nothing.
  */
 
+import { contributeAnswer, wantsToContribute } from "./contribute_words.ts";
 import { nameShapeVerdict } from "./name_verdict.ts";
 import { linkRequestVisitor } from "../perf/visitor_link.ts";
 import { startWatch, probeOf, type Probe } from "./live.ts";
@@ -188,6 +189,8 @@ export async function spawnDoor(
   const paid = opts.paid === true;
   const anon = user === undefined;
   if (!anon && user.kind !== "user") return spawnWords({ kind: "forbidden" });
+  // A forge asked for in order to contribute is never made: the fork path costs the host no cell.
+  if (wantsToContribute(raw)) return { status: 200, body: contributeAnswer() };
   // A plan is free of children but not of work — it reads every catalog
   // app it names — so a stranger's are counted per address and per forge.
   if (anon && !paid) {

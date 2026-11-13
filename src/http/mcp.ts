@@ -17,6 +17,7 @@
  * no page. `ro` tokens read; `rw` tokens act.
  */
 
+import { readSource, SOURCE_PREFIX, SOURCE_TEMPLATE } from "./mcp/source_resource.ts";
 import { CARD_KINDS, CARD_MIME, CARD_OF_TOOL, CARD_SHELL, CARD_URI, cardFor } from "../web/studio/cards.ts";
 import { getRepo } from "../core/repos.ts";
 import { scopeAllows } from "../core/tokens.ts";
@@ -177,8 +178,16 @@ function rpcOne(
           mimeType: CARD_MIME,
         })),
       });
+    case "resources/templates/list":
+      return reply({
+        resourceTemplates: [{ uriTemplate: SOURCE_TEMPLATE, name: "forge-source", mimeType: "application/gzip" }],
+      });
     case "resources/read": {
       const uri = str(params["uri"]);
+      if (uri.startsWith(SOURCE_PREFIX))
+        return readSource(ctx, user, uri).then((r) =>
+          r.ok ? reply({ contents: [{ uri: r.uri, mimeType: r.mimeType, blob: r.blob }] }) : refuse(-32002, r.message),
+        );
       const kind = CARD_KINDS.find((k) => CARD_URI(k) === uri);
       if (kind === undefined) return refuse(-32002, `no resource ${uri}`);
       return reply({
