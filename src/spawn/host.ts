@@ -29,7 +29,7 @@ import { childNeedsOwnFilesystem } from "../core/capacity.ts";
 import { liveChildDisk, startRefusal } from "./disk_mount.ts";
 import { floorRefusal } from "./disk_floor.ts";
 import { limitValue } from "../settings/limits.ts";
-import { cancelRestarts, clearStop, lastStop, stopSentence, useRestart } from "./stopped.ts";
+import { cancelRestarts, clearStop, lastStop, stopSentence, tryAgainAt, useRestart } from "./stopped.ts";
 import { awakeRefusal, idleAfterMs, WakeRate } from "./sleep.ts";
 import { wakingResponse } from "../web/pages/waking.ts";
 import { lapsedResponse, payAgainRoute, PAY_AGAIN_PATH } from "../web/pages/lapsed.ts";
@@ -216,6 +216,8 @@ export async function sleepIdleChildren(parent: App, idleMs = idleAfterMs(), now
 const dueWakes = new WeakMap<App, Map<string, ReturnType<typeof setTimeout>>>();
 /** A due wake the awake ceiling or the disk floor turned away is tried again this much later, ms. */
 const DUE_RETRY_MS = 60_000;
+/** A forge the host stopped may take the room of one quiet this long, ms. */
+const STOPPED_EVICT_IDLE_MS = 60_000;
 /** The longest a timer waits in one step (setTimeout's own limit); a longer wait is armed again. */
 const TIMER_MAX_MS = 2 ** 31 - 1;
 
@@ -254,8 +256,13 @@ async function wakeDue(parent: App, name: string): Promise<void> {
   const ledger = readLedgerSync(parent, name);
   if (ledger === undefined || !ledger.done || ledger.placement !== "cell") return;
   if (isAwakeBody(parent, ledger.bodyId) || lapsedNone(parent, name) !== undefined) return;
+  // A forge the host stopped for a limit does not wait for an idle one's ten minutes: forges quiet for
+  // a minute and with no crew at work are put to sleep to make its room.
+  if (lastStop(parent, ledger.bodyId) !== undefined && awakeRefusal(awakeCount(parent)) !== undefined)
+    await sleepIdleChildren(parent, STOPPED_EVICT_IDLE_MS);
   if (floorRefusal(parent.config.dataDir) !== undefined || awakeRefusal(awakeCount(parent)) !== undefined) {
     wakeWhenDue(parent, ledger, Date.now() + DUE_RETRY_MS);
+    tryAgainAt(parent, ledger.bodyId, Date.now() + DUE_RETRY_MS);
     return;
   }
   if (startRefused(parent, ledger) !== undefined) return;
@@ -273,7 +280,14 @@ async function wakeDue(parent: App, name: string): Promise<void> {
 async function restartStopped(parent: App, name: string): Promise<boolean> {
   await wakeDue(parent, name);
   const ledger = readLedgerSync(parent, name);
-  return ledger !== undefined && (isAwakeBody(parent, ledger.bodyId) || dueWakes.get(parent)?.has(ledger.bodyId) === true);
+  if (ledger === undefined) return false;
+  if (isAwakeBody(parent, ledger.bodyId) || dueWakes.get(parent)?.has(ledger.bodyId) === true) return true;
+  // The cell did not come up (or a start was refused): the host tries again a minute on, for the hour the stop is shown.
+  const stop = lastStop(parent, ledger.bodyId);
+  if (stop === undefined || ledger.placement !== "cell" || lapsedNone(parent, name) !== undefined || startRefused(parent, ledger) !== undefined) return false;
+  wakeWhenDue(parent, ledger, Date.now() + DUE_RETRY_MS);
+  tryAgainAt(parent, ledger.bodyId, Date.now() + DUE_RETRY_MS);
+  return true;
 }
 
 /**

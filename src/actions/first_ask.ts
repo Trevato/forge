@@ -5,7 +5,14 @@
  * this.
  */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { App } from "../app.ts";
+import { appsForRepos } from "../core/apps.ts";
+import { isForgeSource } from "../core/forge_repo.ts";
+import { nextStepsFor } from "../core/next-steps.ts";
+import { listReposWritableTo } from "../core/repos.ts";
+import { FORGE_CODE_NAME } from "../spawn/forge_code.ts";
 import type { Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -77,4 +84,43 @@ export async function firstAsk(
   }
   const told = await tell(app, actor, repo, text, 1, from);
   return ok({ repo, autonomyFailed, told });
+}
+
+/** The organisation a spawned forge was made as, read synchronously from its `parent.json`. */
+function spawnedName(app: App): string | undefined {
+  try {
+    const parsed = JSON.parse(readFileSync(join(app.config.dataDir, "parent.json"), "utf8")) as { org?: unknown };
+    return typeof parsed.org === "string" ? parsed.org.toLowerCase() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Whether this repository is the forge's own copy of its source (a child forge's
+ * `<org>/forge`, or the repository the forge runs from): it is no one's app, so an ask
+ * that names no repository never lands on it. An ask that names it still does.
+ */
+export function isForgeCopy(app: App, repo: Pick<Repo, "ownerName" | "name">): boolean {
+  return (
+    isForgeSource(app, repo) ||
+    (repo.name === FORGE_CODE_NAME && repo.ownerName.toLowerCase() === spawnedName(app))
+  );
+}
+
+/**
+ * The one decision of where an ask that names no repository goes: true when it makes a new
+ * app, as it does for a person with none. That is a person with no app but the forge's own
+ * copy, on a forge where they own that copy or the first ask is still to come. Web home,
+ * the terminal home and `tell` without a repo all ask this.
+ */
+export async function asksMakeANewApp(app: App, user: User | undefined): Promise<boolean> {
+  if (user === undefined || user.kind !== "user") return false;
+  const writable = listReposWritableTo(app.db, user, { limit: 200, withoutArchived: true });
+  const records = appsForRepos(app.db, writable.map((r) => r.id));
+  const mine = writable.filter((r) => records.has(r.id));
+  if (mine.some((r) => !isForgeCopy(app, r))) return false;
+  if (mine.length > 0) return true;
+  const steps = await nextStepsFor(app, user);
+  return steps?.some((s) => s.key === "tell" && !s.done) === true;
 }

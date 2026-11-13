@@ -10,7 +10,7 @@
  */
 
 import type { App } from "../app.ts";
-import { spawnedOrg } from "../spawn/claim.ts";
+import { spawnedForge } from "../spawn/claim.ts";
 import { adminOf, everydayOf, keptAdmin } from "./everyday.ts";
 import { listReposByOwner, type Repo } from "./repos.ts";
 import { PREVIEW_SEEDED, getUserSetting, setUserSetting } from "./settings.ts";
@@ -63,7 +63,7 @@ export async function nextStepsFor(
   // The preview admin is a site admin of a seeded world, not a newcomer: its
   // home stays the full one though the preview has a parent.json (#11285).
   if (getUserSetting(app.db, owner.id, PREVIEW_SEEDED) !== undefined) return undefined;
-  if ((await spawnedOrg(app)) === undefined) return undefined;
+  if ((await spawnedForge(app)) === undefined) return undefined;
   const daily = everydayOf(app.db, owner);
   const people = [owner.id, ...(daily ? [daily.id] : [])];
   const told = app.db
@@ -122,7 +122,7 @@ export async function noteAppOpened(app: App, user: User | undefined): Promise<v
   if (!user) return;
   const owner = ownerFor(app, user);
   if (!owner || getUserSetting(app.db, owner.id, OPENED_APP) !== undefined) return;
-  if ((await spawnedOrg(app)) === undefined) return;
+  if ((await spawnedForge(app)) === undefined) return;
   setUserSetting(app.db, owner.id, OPENED_APP, new Date().toISOString());
 }
 
@@ -131,7 +131,7 @@ export async function spawnedRepos(
   app: App,
   user: User,
 ): Promise<readonly Repo[]> {
-  const spawned = await spawnedOrg(app);
+  const spawned = await spawnedForge(app);
   if (!spawned) return [];
   return listReposByOwner(app.db, spawned.org.username, user, { limit: 50 });
 }

@@ -20,7 +20,8 @@ import type { NowStage } from "../../flow/now_rows.ts";
 import { nowHref } from "../pages/now.ts";
 import type { Repo } from "../../core/repos.ts";
 import { writableAppsOf } from "./asks.ts";
-import { FORGE_TARGET } from "./feed.ts";
+import { FORGE_TARGET, NEW_APP_TARGET } from "./feed.ts";
+import { isForgeCopy } from "../../actions/first_ask.ts";
 import { COMPOSER_FIELDS, TELL_MAX, sharedDraft, shareToken } from "../share_target.ts";
 import { repoBase } from "../chrome.ts";
 import { crewFace, type FaceState } from "../pixel.ts";
@@ -115,8 +116,10 @@ export function tellBox(ctx: Ctx, user: User): Html {
     <input class="input" name="${COMPOSER_FIELDS.text}" maxlength="${String(TELL_MAX)}" required placeholder="Tell the crew…" aria-label="Tell the crew" data-draft="${user.id}" value="${shared.replace(/\s+/g, " ")}" />
     ${repos.length === 0
       ? html`<input type="hidden" name="${COMPOSER_FIELDS.app}" value="${FORGE_TARGET}" />`
-      : html`<select name="${COMPOSER_FIELDS.app}" class="input" aria-label="Send to">
-          ${repos.map((r) => html`<option value="${slug(r)}">${slug(r)}</option>`)}
+      : repos.every((r) => isForgeCopy(ctx.app, r))
+        ? html`<input type="hidden" name="${COMPOSER_FIELDS.app}" value="${NEW_APP_TARGET}" />`
+        : html`<select name="${COMPOSER_FIELDS.app}" class="input" aria-label="Send to">
+          ${[...repos.filter((r) => !isForgeCopy(ctx.app, r)), ...repos.filter((r) => isForgeCopy(ctx.app, r))].map((r) => html`<option value="${slug(r)}">${slug(r)}</option>`)}
           <option value="${FORGE_TARGET}">the forge</option>
         </select>`}
     ${btn("Tell", { variant: "primary" })}

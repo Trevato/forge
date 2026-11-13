@@ -22,7 +22,6 @@ import { join } from "node:path";
 import type { App } from "../app.ts";
 import {
   addTeamMember,
-  getOrg,
   listTeamMembers,
   listTeams,
   OWNERS_TEAM,
@@ -32,7 +31,7 @@ import type { Credential } from "../auth/webauthn.ts";
 import { addPasskey } from "../core/passkeys.ts";
 import { markVerified } from "../core/verify.ts";
 import { activeEdgeToken } from "../http/edge.ts";
-import { getUserById, type User } from "../core/users.ts";
+import { getUserById, getUserByName, type User } from "../core/users.ts";
 import { sha256 } from "../kernel/hash.ts";
 
 const KEY = "spawn_claim";
@@ -95,6 +94,19 @@ export function isPlaceholderFounder(spawned: Spawned, founder: User | undefined
 
 /** The organisation this forge was spawned as, or undefined if it was not spawned. */
 export async function spawnedOrg(app: App): Promise<Spawned | undefined> {
+  return readSpawned(app, false);
+}
+
+/**
+ * The forge's namespace whether or not a person has taken its name (`becomeOrg` turns the
+ * organisation row into their account): what makes the forge a spawned one for its owner's
+ * first steps. `spawnedOrg` stays the claim page's question, and is undefined once taken.
+ */
+export async function spawnedForge(app: App): Promise<Spawned | undefined> {
+  return readSpawned(app, true);
+}
+
+async function readSpawned(app: App, taken: boolean): Promise<Spawned | undefined> {
   const file = Bun.file(join(app.config.dataDir, "parent.json"));
   if (!(await file.exists())) return undefined;
   try {
@@ -105,8 +117,8 @@ export async function spawnedOrg(app: App): Promise<Spawned | undefined> {
       url?: unknown;
       statusHash?: unknown;
     };
-    const org =
-      typeof parsed.org === "string" ? getOrg(app.db, parsed.org) : undefined;
+    const named = typeof parsed.org === "string" ? getUserByName(app.db, parsed.org) : undefined;
+    const org = named?.kind === "org" || (taken && named?.kind === "user" && named.isAdmin) ? named : undefined;
     return org === undefined
       ? undefined
       : {

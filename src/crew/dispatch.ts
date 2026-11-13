@@ -138,6 +138,7 @@ import {
   steerRun,
 } from "./runner.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
+import { stoppedMark } from "../spawn/stopped.ts";
 import { abortAgentRun } from "./running.ts";
 import { during } from "../perf/jobs.ts";
 
@@ -1415,8 +1416,30 @@ export function interruptionBackoffMs(n: number): number {
 export function requeueInterrupted(app: App): void {
   for (const run of listActive(app.db, "agent")) {
     if (run.state !== "running" || !leaseLapsed(run, STALE_AFTER_MS)) continue;
+    if (stoppedForMemory(app, run)) {
+      // The host stopped this forge for memory: the run is queued again once; a run stopped that way twice
+      // would only stop it again, so it fails with the reason.
+      if (run.summary.startsWith(MEMORY_REQUEUED)) {
+        finishRun(app.db, run.id, { state: "failed", summary: MEMORY_OUT });
+        log.info("run given up after two memory stops", { run: run.id });
+      } else requeue(app, run, MEMORY_REQUEUED, true);
+      continue;
+    }
     requeue(app, run, REQUEUED_SUMMARY, true);
   }
+}
+
+/** What a run says when the host stopped its forge for memory and the task goes back on the queue. */
+export const MEMORY_REQUEUED = "the host stopped this forge for running out of memory; queued again once";
+/** What a run says when its forge ran out of memory a second time while it ran. */
+export const MEMORY_OUT = "the host stopped this forge for running out of memory twice while this ran; not tried again — a larger plan would fit it";
+
+/** Whether the host's last stop of this forge was for memory and came while this run held its lease. */
+function stoppedForMemory(app: App, run: Run): boolean {
+  const mark = stoppedMark(app.config.dataDir);
+  if (mark === undefined || !/memory/.test(mark.why)) return false;
+  const lease = Date.parse(run.heartbeatAt ?? run.startedAt ?? run.createdAt);
+  return Number.isNaN(lease) || mark.at >= lease - 1_000;
 }
 
 /**
