@@ -12,7 +12,7 @@
 import type { App } from "../app.ts";
 import { capacityValue, paceFloor, queueDepth, weekUse } from "../core/capacity.ts";
 import { labelsForIssues } from "../core/issues.ts";
-import { getRepoById, type Repo } from "../core/repos.ts";
+import { getRepoById, isGo, type Repo } from "../core/repos.ts";
 import { listActive } from "../core/runs.ts";
 import { waitingOnPeople } from "./people_first.ts";
 import { POLISH_SHARE_DEFAULT, isPolish, polishSpend } from "./polish_share.ts";
@@ -64,7 +64,7 @@ export function derivedLine(knob: string): string {
 /** A repository's autonomy in the knob's three words. */
 export function autonomyWord(repo: Repo): AutonomyWord {
   if (repo.autonomy === "off") return "off";
-  return !repo.plansNeedNod && repo.decisionsBy !== "me" ? "go" : "ask";
+  return isGo(repo) ? "go" : "ask";
 }
 
 function runsLine(app: App): string {
@@ -133,7 +133,7 @@ export function readKnobs(app: App, now: Date = new Date()): KnobRow[] {
     {
       id: "budget",
       name: "Weekly budget",
-      does: "How much of the week's subscription to use, evenly to the reset.",
+      does: "The most of the week's subscription the crew may use; at 100% only the provider's own limit stops it.",
       value: capacityValue(app.db, "week.use"),
       control: "percent",
       unit: "%",
