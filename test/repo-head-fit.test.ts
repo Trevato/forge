@@ -123,9 +123,12 @@ describe.skipIf(chromium === undefined)("a repository's head page, measured at 3
         .slice(0, 12).map((el) => name(el) + " " + Math.round(el.getBoundingClientRect().width) + "px");
       return JSON.stringify({ scrollWidth: document.documentElement.scrollWidth, viewportWidth: vw, wide });
     })()`;
-    const m = JSON.parse(await evaluateLoaded(chromium!, `${servers.url}/alice/fit`, { width: 390, height: 844 }, [session], measure)) as { scrollWidth: number; viewportWidth: number; wide: string[] };
-    console.log(`repo head 390x844: ${JSON.stringify(m)}`);
-    if (m.scrollWidth > m.viewportWidth) throw new Error(`the page scrolls sideways (${m.scrollWidth} > ${m.viewportWidth}); wider than the window: ${m.wide.join(", ")}`);
-    expect(m.scrollWidth).toBeLessThanOrEqual(m.viewportWidth);
+    // The seeded page with the long branch picked, and the empty repository, are measured too.
+    for (const path of ["/alice/fit", `/alice/fit?ref=${encodeURIComponent(BRANCH)}`, "/alice/empty"]) {
+      const m = JSON.parse(await evaluateLoaded(chromium!, `${servers.url}${path}`, { width: 390, height: 844 }, [session], measure)) as { scrollWidth: number; viewportWidth: number; wide: string[] };
+      console.log(`repo head 390x844 ${path}: ${JSON.stringify(m)}`);
+      if (m.scrollWidth > m.viewportWidth) throw new Error(`${path} scrolls sideways (${m.scrollWidth} > ${m.viewportWidth}); wider than the window: ${m.wide.join(", ")}`);
+      expect(m.scrollWidth).toBeLessThanOrEqual(m.viewportWidth);
+    }
   }, 30_000);
 });
