@@ -5,12 +5,9 @@
  */
 
 import { sweepEntitlements } from "./billing/sync.ts";
-import { sweepStarts } from "./actions/start_sweep.ts";
 import { scanNightly } from "./checks/scan.ts";
 import { nightlyDue } from "./checks/scan_store.ts";
-import { runModelReview } from "./actions/model_review.ts";
 import { getRepoById } from "./core/repos.ts";
-import { plannedRepoIds, tickWeeks } from "./flow/retro.ts";
 import { BOOT_ACTOR, setSignup, signupFromEnv } from "./settings/signup.ts";
 import { startMemorySampler } from "./boards/memory.ts";
 import { startSampler } from "./boards/sampler.ts";
@@ -40,8 +37,6 @@ import { PREVIEW_ADMIN, seedPreview } from "./spawn/preview-seed.ts";
 import { startHeartbeat } from "./spawn/heartbeat.ts";
 import { startUpstreamWatch } from "./spawn/upstream.ts";
 import { startReachWatch } from "./spawn/reach.ts";
-import { pruneSessions } from "./core/sessions.ts";
-import { runDelivery } from "./core/webhooks.ts";
 import { isHookName, runHookClient } from "./git/hooks.ts";
 import { drainBudgets } from "./drain.ts";
 import { drainStreams } from "./http/sse.ts";
@@ -83,14 +78,16 @@ import { typeSafeDecider } from "./crew/decide.ts";
 import { graphInstagram } from "./crew/instagram.ts";
 import { peopleOnCrews } from "./core/agents.ts";
 import { startNotifier } from "./crew/notify.ts";
-import { expireCrewHolds } from "./actions/holds.ts";
+import { tailEvents } from "./core/event_tail.ts";
+import { engineMode } from "./engine/mode.ts";
+import { startEngine } from "./engine/host.ts";
+import { startDuties } from "./engine/duties.ts";
 import { startClogTick } from "./flow/clog_tick.ts";
 import { resumeAtBoot } from "./maintenance/service.ts";
 import { startKeeper } from "./flow/keeper.ts";
 import { sweepStaleAsks } from "./crew/stale_asks.ts";
 import { recordAskLedger } from "./web/studio/asks.ts";
 import { startPromptRoutine } from "./crew/prompts.ts";
-import { pruneTokens } from "./core/tokens.ts";
 import { configProblem, dataDirOf, preflight } from "./kernel/preflight.ts";
 import { running } from "./kernel/version.ts";
 import { record as recordDegraded } from "./kernel/degraded_history.ts";
@@ -101,7 +98,7 @@ import { CHECK_EVERY_MS, setBehind, watchBehind } from "./release/behind.ts";
 import { readLandings } from "./release/landings.ts";
 import { ownTagsReader } from "./release/own_tags.ts";
 import { recordByHand } from "./keeper/by_hand.ts";
-import { settleDue, settleLiveNow } from "./actions/estimates_settle.ts";
+import { settleLiveNow } from "./actions/estimates_settle.ts";
 import { rollProbe, tickStep as keeperTick } from "./keeper/keeper.ts";
 import { stepWithBeat } from "./keeper/beat.ts";
 import { keeperEnv, keeperPorts } from "./keeper/wire.ts";
@@ -343,6 +340,13 @@ const app = createApp({
 timeStatements(app.db, createLog("sql"));
 loadFlags(app.db);
 loadTrustedHosts(app.db);
+// With FORGE_ENGINE=worker the duties run on a Worker of their own (`engine/`), and what
+// either thread appends the other hears from the outbox. Everywhere else: one thread, as ever.
+const engineOn = engineMode(process.env, { hosted, readOnly }) === "worker";
+const tail = engineOn ? tailEvents(app.db, app.bus) : undefined;
+// A write of the engine's is a few milliseconds. This thread waits for one with every request behind it, so
+// it waits seconds, not the fifteen of a forge whose only other writer is itself: a stuck engine is ended (`engine/host.ts`).
+if (engineOn) app.db.exec("PRAGMA busy_timeout = 2000");
 await refreshCatalogQuietly(app);
 if (readOnly) {
   const servers = await serve(app);
@@ -369,7 +373,6 @@ if (byHand !== undefined) {
   app.log.info("recorded the release this forge runs: shipped by hand", { version: byHand });
   settleLiveNow(app.db);
 }
-const dueTimer = setInterval(() => during("estimates-due", () => void settleDue(app.db)), 300_000);
 const flagTimer = setInterval(
   () => during("flag-uses", () => flushFlagUses(app.db)),
   10_000,
@@ -550,7 +553,7 @@ const snapshots = startSnapshots(
 );
 // What the machine uses (boards/sampler.ts): the pod, each cell and the
 // node, every 15 s into a ring the `machine` board source reads.
-const sampler = startSampler(app);
+const sampler = startSampler(app, { retention: !engineOn });
 const memorySampler = startMemorySampler(app);
 // The starting boards, once each (actions/boards.ts).
 void offerStartingBoards(app)
@@ -628,22 +631,11 @@ const prompts = startPromptRoutine(app, { client: graphInstagram() });
 // What newly asks a person reaches the phone they chose (docs/APPS.md).
 const notifier = startNotifier(app, { forgeUrl });
 
-// The webhook delivery worker: poll the outbox for due deliveries. The event
-// row is the source of truth, so a missed tick only delays delivery, never
-// loses it. runDelivery never throws into the timer.
-// Expired sessions and run tokens ride the same tick: cheap DELETEs, never
-// worth a worker.
-const deliveryTimer = setInterval(() => during("delivery", () => {
-  runDelivery(app.db, app.log, app.bus);
-  pruneSessions(app.db);
-  pruneTokens(app.db);
-}), 5_000);
-// Sweep anything queued while we were down.
-during("delivery", () => {
-  runDelivery(app.db, app.log, app.bus);
-  pruneSessions(app.db);
-  pruneTokens(app.db);
-});
+// The engine's duties (`engine/duties.ts`): webhook delivery, the estimates, the
+// starts sweep, holds, the model review, the week, retention. On this thread
+// unless the engine has one of its own.
+const engine = engineOn && tail !== undefined ? startEngine(app.config, tail) : undefined;
+const stopDuties = engine === undefined ? startDuties(app, { retention: false }) : () => {};
 
 function positive(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
@@ -718,10 +710,6 @@ const followTimer = setInterval(
   60_000,
 );
 const staleTimer = setInterval(() => void during("asks", tickAsks), 120_000);
-// Accounts an agent started and nobody claimed sleep after a week and are
-// archived after a month (`actions/start_sweep.ts`, #10912): hourly, and on boot.
-const startsTimer = setInterval(() => during("starts", () => void sweepStarts(app)), 3_600_000);
-during("starts", () => void sweepStarts(app));
 // Every paid entitlement is re-read from Stripe once a day, so a missed webhook heals (#11247).
 const entitlementTimer = setInterval(() => void during("entitlements", () => sweepEntitlements(app)), 86_400_000);
 void during("entitlements", () => sweepEntitlements(app));
@@ -765,32 +753,6 @@ const stopKeeper = startKeeper(app, () => sweepAssigned(app));
 void resumeAtBoot(app, undefined, { forgeUrl, runner: checks?.lane }).catch((error) =>
   app.log.warn("resume at boot failed", { error: String(error) }),
 );
-// An agent's hold that has stood 24 h is released each minute (#6918).
-const holdTimer = setInterval(() => during("holds", () => {
-  try {
-    expireCrewHolds(app);
-  } catch (error) {
-    app.log.warn("hold expiry failed", { error: String(error) });
-  }
-}), 60_000);
-// The weekly model review (#7815): settles last week's changes, then proposes this week's; it runs once a week whatever the tick.
-const modelReviewTimer = setInterval(() => during("model-review", () => {
-  try {
-    runModelReview(app);
-  } catch (error) {
-    app.log.warn("model review failed", { error: String(error) });
-  }
-}), 3_600_000);
-// The week is the sprint (#8704): at each weekly reset the forge writes its retrospective, unasked.
-const weekTimer = setInterval(() => during("week", () => {
-  try {
-    const repos = plannedRepoIds(app.db).flatMap((id) => getRepoById(app.db, id) ?? []);
-    for (const repo of tickWeeks(app.db, repos, new Date()))
-      app.bus.append({ kind: "week.retro", repoId: repo.id, payload: {} });
-  } catch (error) {
-    app.log.warn("week retrospective failed", { error: String(error) });
-  }
-}), 3_600_000);
 // Code scanning's nightly pass (#9593): each hour, the repositories whose last pass is a day old get secrets, advisories and static analysis over their default branch.
 const nightlyScanTimer = setInterval(() => {
   void during("nightly-scan", async () => {
@@ -950,22 +912,19 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
   // Streams end now, with a resume hint: their browsers reconnect to the
   // process that replaced this one, not to this one while it finishes.
   drainStreams();
-  clearInterval(deliveryTimer);
+  stopDuties();
+  const engineStopped = engine?.stop();
   clearInterval(nightlyScanTimer);
   clearInterval(heartbeatTimer);
   clearInterval(upstreamTimer);
   clearInterval(reachTimer);
   clearInterval(syncTimer);
   clearInterval(staleTimer);
-  clearInterval(startsTimer);
   clearInterval(entitlementTimer);
   clearInterval(followTimer);
   stopClogTick();
   stopKeeper();
   clearInterval(processTimer);
-  clearInterval(holdTimer);
-  clearInterval(modelReviewTimer);
-  clearInterval(weekTimer);
   clearInterval(leaseTimer);
   // The platform's SIGTERM: the listener stays open while routers learn
   // this process is going. A person's Ctrl-C does not wait for routers.
@@ -997,6 +956,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
     snapshots.stop(),
     sampler.stop(),
     memorySampler.stop(),
+    engineStopped,
   ])
     .catch(() => {})
     .then(() => {
@@ -1017,7 +977,7 @@ async function close(): Promise<void> {
   ssh?.stop();
   servers.stop();
   clearInterval(flagTimer);
-  clearInterval(dueTimer);
+  tail?.stop();
   flushFlagUses(app.db);
   recordCleanExit(app.config.dataDir);
   app.close();

@@ -278,6 +278,11 @@ const UNTIMED: Record<string, string> = {
   "system-live": "reads /proc and the cgroup roots for the system page while someone watches it",
   entitlements: "reads each paid subscription from Stripe: network, daily, and the fixture has no entitlements",
   traffic: "a closure in createTrafficWriter over its in-memory minute ledger; follow-up",
+  retention: "the sampler's own batch (old events and samples), run by the engine thread when there is one; timed as part of `sampler`",
+  "engine-beat": "a one-byte message from the engine thread to the serving thread, every second",
+  "engine-watch": "compares the engine's last word with the clock, every second; ends a thread silent for 15 s",
+  "engine-restart": "starts the engine thread again after it died: a thread start; no fixture's engine dies",
+  "event-tail": "a PRAGMA data_version read and, when the other thread wrote, an indexed read of the new events; no fixture has a second thread",
   "spawn-due-wake": "a timer in the spawn host that wakes a due run: needs a spawned run; the fixture has none",
 };
 

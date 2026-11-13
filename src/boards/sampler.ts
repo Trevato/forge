@@ -151,19 +151,37 @@ export function gaps(paths: Paths): string[] {
   return out;
 }
 
+/**
+ * What has left its window goes, a bounded batch at a time: one batch of old events (`system/retention_events.ts`;
+ * a busy database skips it and the next call tries again) and the machine samples' (#12007; one drain at once).
+ * The sampler's tick calls it; with the engine on its own thread (`engine/`) the engine does, on the same clock.
+ */
+export function retain(app: App, now: number, flight: { draining: boolean }): void {
+  try {
+    withoutWaiting(app.db, () => pruneEvents(app.db, now, TICK_ROWS, limitValue(app.db, "retention.event_days") * 86_400_000));
+  } catch (error) {
+    app.log.warn("event prune failed", { error: String(error) });
+  }
+  if (flight.draining) return;
+  flight.draining = true;
+  void drainSamples(app.db, () => now)
+    .catch((error) => app.log.warn("machine sample prune failed", { error: String(error) }))
+    .finally(() => { flight.draining = false; });
+}
+
 /** `gaps` is what this sampler cannot read, said once at start and kept here for whoever asks. */
 export type Sampler = { tick(now?: number): void; stop(): void; gaps: readonly string[] };
 
 /** Sample every 15 s into `app.db` until stopped. A failed tick is logged and the next one tries again. */
 export function startSampler(
   app: App,
-  options: { paths?: Paths; cells?: () => readonly CellCounter[]; everyMs?: number; lag?: LoopLag } = {},
+  options: { paths?: Paths; cells?: () => readonly CellCounter[]; everyMs?: number; lag?: LoopLag; retention?: boolean } = {},
 ): Sampler {
   const paths = options.paths ?? SYSTEM;
   const cells = options.cells ?? cellCounters;
   const lag = options.lag ?? startLoopLag();
   let prev: Counters | undefined;
-  let pruning = false;
+  const flight = { draining: false };
   const missing = gaps(paths);
   if (missing.length > 0) app.log.info("machine series unreadable here", { gaps: missing.join("; ") });
   const tick = (now = Date.now()) => {
@@ -174,19 +192,8 @@ export function startSampler(
     } catch (error) {
       app.log.warn("machine sample failed", { error: String(error) });
     }
-    // The same tick prunes one batch of old events (`system/retention_events.ts`); a busy
-    // database skips it, and the next tick tries again.
-    try {
-      withoutWaiting(app.db, () => pruneEvents(app.db, now, TICK_ROWS, limitValue(app.db, "retention.event_days") * 86_400_000));
-    } catch (error) {
-      app.log.warn("event prune failed", { error: String(error) });
-    }
-    // What has left its window goes a bounded batch at a time (#12007); one drain at once.
-    if (pruning) return;
-    pruning = true;
-    void drainSamples(app.db, () => now)
-      .catch((error) => app.log.warn("machine sample prune failed", { error: String(error) }))
-      .finally(() => { pruning = false; });
+    // The same tick retires what has left its window, unless the engine does it elsewhere.
+    if (options.retention !== false) retain(app, now, flight);
   };
   during("sampler", tick);
   const timer = setInterval(() => during("sampler", tick), options.everyMs ?? FINE_MS);

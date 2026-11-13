@@ -143,7 +143,7 @@ export function follow(forge: Following): () => void {
             }),
           );
       }
-  });
+  }, "local");
 }
 
 /**
