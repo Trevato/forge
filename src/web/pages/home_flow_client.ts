@@ -12,6 +12,8 @@
  *            spent in a lane is always as old as the last thing that happened.
  *   stream   the dot beside the title says whether the stream is connected.
  *   filter   the select lists the other apps only when it is first used.
+ *   table    on the table view: instant search, picking rows, and the action bar
+ *            that previews, applies and receipts a bulk action (`home_table.ts`).
  *
  * With scripts off the page is the picture the server drew.
  */
@@ -82,6 +84,7 @@ export const homeFlowJs = /* js */ `
     var lane = e.target && e.target.closest ? e.target.closest('.lane') : null;
     clocks(true);
     if (lane) glide(lane); else remember();
+    afterSwap();
   });
   doc.addEventListener('forge:event', function () { clocks(false); });
   doc.addEventListener('visibilitychange', function () { if (!doc.hidden) clocks(true); });
@@ -122,6 +125,153 @@ export const homeFlowJs = /* js */ `
     };
     ['pointerdown', 'focus', 'keydown'].forEach(function (type) { select.addEventListener(type, fill); });
     select.addEventListener('change', function () { form.submit(); });
+  }
+
+  // ---- the table: instant search, picking rows, the action bar ----
+  var bar = doc.getElementById('tb-bar');
+  var afterSwap = function () {};
+  if (bar) {
+    root.setAttribute('data-js', '');
+    var catalogue = [];
+    try { catalogue = JSON.parse(bar.getAttribute('data-actions') || '[]'); } catch (err) { catalogue = []; }
+    var picked = {};
+    var note = doc.getElementById('tb-note');
+    var search = doc.getElementById('tb-q');
+    var list = function (selector) { return Array.prototype.slice.call(doc.querySelectorAll(selector)); };
+    var button = function (variant, text) {
+      var b = doc.createElement('button');
+      b.type = 'button';
+      b.className = 'btn';
+      if (variant) b.setAttribute('data-variant', variant);
+      b.textContent = text;
+      return b;
+    };
+    // What shows is what the search leaves; a swap or a keystroke draws it again.
+    var filter = function () {
+      var words = (search ? search.value : '').toLowerCase().split(/\s+/).filter(Boolean);
+      var shown = 0, total = 0;
+      list('#hf-table .tb-row').forEach(function (tr) {
+        total++;
+        var hay = tr.getAttribute('data-q') || '';
+        var ok = words.every(function (w) { return hay.indexOf(w) !== -1; });
+        tr.hidden = !ok;
+        if (ok) shown++;
+      });
+      var typed = doc.getElementById('tb-typed');
+      if (typed) typed.textContent = words.length ? ' Showing ' + shown + ' of ' + total + ' for what you typed.' : '';
+    };
+    var sync = function () {
+      var here = {};
+      list('#hf-table .tb-pick[data-id]').forEach(function (b) { here[b.getAttribute('data-id')] = 1; });
+      Object.keys(picked).forEach(function (id) { if (!here[id]) delete picked[id]; });
+      list('#hf-table .tb-pick[data-id]').forEach(function (b) { b.setAttribute('aria-checked', picked[b.getAttribute('data-id')] ? 'true' : 'false'); });
+      var all = doc.querySelector('#hf-table .tb-all');
+      var visible = list('#hf-table .tb-pick[data-id]').filter(function (b) { return !b.closest('tr').hidden; });
+      if (all) all.setAttribute('aria-checked', visible.length > 0 && visible.every(function (b) { return picked[b.getAttribute('data-id')]; }) ? 'true' : 'false');
+      var ids = Object.keys(picked);
+      bar.hidden = ids.length === 0 && !note.firstChild;
+      doc.getElementById('tb-picked').textContent = ids.length + ' picked';
+      var kinds = {};
+      ids.forEach(function (id) { kinds[picked[id]] = 1; });
+      var box = doc.getElementById('tb-actions');
+      box.textContent = '';
+      if (ids.length === 0) return;
+      catalogue.forEach(function (a) {
+        if (!Object.keys(kinds).every(function (k) { return a.kinds.indexOf(k) !== -1; })) return;
+        var b = button('', a.label);
+        b.setAttribute('data-op', a.op);
+        b.title = a.hint;
+        box.appendChild(b);
+      });
+    };
+    var say = function (text, more) {
+      note.textContent = '';
+      var p = doc.createElement('p');
+      p.textContent = text;
+      note.appendChild(p);
+      if (more) more(note);
+      sync();
+    };
+    var send = function (op, phase, reason) {
+      var body = new URLSearchParams();
+      body.append('op', op);
+      body.append('phase', phase);
+      if (reason) body.append('reason', reason);
+      Object.keys(picked).forEach(function (id) { body.append('ids', id); });
+      return fetch('/home/act', { method: 'POST', body: body, credentials: 'same-origin', headers: { accept: 'application/json' } })
+        .then(function (r) { return r.json(); })
+        .catch(function () { return { ok: false, error: 'The forge did not answer.' }; });
+    };
+    var ask = function (op) {
+      var action = catalogue.filter(function (x) { return x.op === op; })[0];
+      if (!action) return;
+      say('Checking each row first…');
+      send(op, 'preview').then(function (r) {
+        if (!r.ok) { say(r.error || 'That did not work.'); return; }
+        say(r.summary, function (box) {
+          if (r.refused && r.refused.length) {
+            var ul = doc.createElement('ul');
+            r.refused.forEach(function (x) { var li = doc.createElement('li'); li.textContent = x.label + ': ' + x.why; ul.appendChild(li); });
+            box.appendChild(ul);
+          }
+          var why = null;
+          if (action.reason) {
+            why = doc.createElement('input');
+            why.className = 'input';
+            why.maxLength = 300;
+            why.placeholder = 'Why (optional, one sentence)';
+            why.setAttribute('aria-label', 'Why');
+          }
+          var row = doc.createElement('div');
+          row.className = 'tb-confirm';
+          if (why) row.appendChild(why);
+          if (r.willChange > 0) {
+            var go = button('primary', action.label + ' ' + r.willChange);
+            go.addEventListener('click', function () {
+              go.disabled = true;
+              send(op, 'apply', why ? why.value : '').then(function (d) {
+                picked = {};
+                say(d.ok ? d.summary : (d.error || 'That did not work.'), function (b) {
+                  if (d.ok && d.receipt) { var a = doc.createElement('a'); a.href = d.receipt; a.textContent = 'Receipt'; b.appendChild(a); }
+                });
+              });
+            });
+            row.appendChild(go);
+          }
+          var cancel = button('', 'Cancel');
+          cancel.addEventListener('click', function () { note.textContent = ''; sync(); });
+          row.appendChild(cancel);
+          box.appendChild(row);
+        });
+      });
+    };
+    doc.addEventListener('click', function (e) {
+      var t = e.target && e.target.closest ? e.target : null;
+      if (!t) return;
+      var pick = t.closest('.tb-pick');
+      if (pick) {
+        if (pick.classList.contains('tb-all')) {
+          var on = pick.getAttribute('aria-checked') !== 'true';
+          list('#hf-table .tb-pick[data-id]').forEach(function (b) {
+            if (b.closest('tr').hidden) return;
+            if (on) picked[b.getAttribute('data-id')] = b.getAttribute('data-kind'); else delete picked[b.getAttribute('data-id')];
+          });
+        } else {
+          var id = pick.getAttribute('data-id');
+          if (picked[id]) delete picked[id]; else picked[id] = pick.getAttribute('data-kind');
+        }
+        note.textContent = '';
+        sync();
+        return;
+      }
+      var op = t.closest('[data-op]');
+      if (op && bar.contains(op)) { ask(op.getAttribute('data-op')); return; }
+      if (t.closest('#tb-clear')) { picked = {}; note.textContent = ''; sync(); }
+    });
+    if (search) search.addEventListener('input', function () { filter(); sync(); });
+    afterSwap = function () { filter(); sync(); };
+    filter();
+    sync();
   }
 
   remember();

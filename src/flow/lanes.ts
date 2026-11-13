@@ -283,7 +283,7 @@ export interface LaneView {
     readonly href: string;
   })[];
   /** Every item the picture holds for this viewer, for the lane's health. */
-  readonly all: readonly LaneItem[];
+  readonly all: readonly (LaneItem & { readonly repo: string; readonly href: string })[];
   /** Items in the lane. */
   readonly total: number;
   /** Items past the tiles drawn. */
@@ -323,25 +323,25 @@ export function viewFor(
   for (const k of LANES) {
     const read = picture.lanes[k];
     const shown: (LaneItem & { repo: string; href: string })[] = [];
-    const all: LaneItem[] = [];
+    const all: (LaneItem & { repo: string; href: string })[] = [];
     for (const i of read.items) {
       const repo = repoOf(i.repoId);
       if (repo === undefined || i.sealed) continue;
       const full = `${repo.ownerName}/${repo.name}`;
       seen.add(full);
       if (only !== null && full !== only) continue;
-      all.push(i);
       const base = `/${repo.ownerName}/${repo.name}`;
       const href =
         i.number === null
           ? base
           : `${base}/${i.kind === "pull" || i.kind === "deploy" ? "pulls" : "issues"}/${i.number}`;
-      if (shown.length < LANE_ITEMS)
-        shown.push({
-          ...i,
-          repo: full,
-          href: i.kind === "main" ? `${base}/runs` : href,
-        });
+      const entry = {
+        ...i,
+        repo: full,
+        href: i.kind === "main" ? `${base}/runs` : href,
+      };
+      all.push(entry);
+      if (shown.length < LANE_ITEMS) shown.push(entry);
     }
     // An admin reads every repository, so the lane's true total is theirs; anyone else counts what they could see.
     const total =
@@ -570,4 +570,22 @@ export function laneHealth(view: LaneView, input: HealthInput): Health {
       };
     }
   }
+}
+
+/** Whether one item is flowing, waiting or stuck: the lane's own rules, asked of the item (a builder gone quiet, a check running far too long, a wait past half an hour while nothing starts). */
+export function itemTone(item: LaneItem, lane: LaneKey, input: HealthInput): "flowing" | "waiting" | "stuck" {
+  const { now } = input;
+  const moved = input.moved[lane];
+  const free = input.builders.slots > 0 && input.builders.running < input.builders.slots;
+  if (item.state === "done") return "flowing";
+  if (item.state === "active") {
+    if (lane === "building" && item.beat !== null && now - Date.parse(item.beat) > QUIET_MS) return "stuck";
+    if (lane === "checks" && now - Date.parse(item.since) > CHECK_LONG_MS) return "stuck";
+    return "flowing";
+  }
+  const waited = age(item.since, now);
+  if (lane === "asked") return free && moved === 0 ? "stuck" : "waiting";
+  if (lane === "building") return waited > STUCK_WAIT_MS && free && moved === 0 ? "stuck" : "waiting";
+  if (lane === "landing") return waited > LAND_STUCK_MS && moved === 0 ? "stuck" : "waiting";
+  return waited > STUCK_WAIT_MS && moved === 0 ? "stuck" : "waiting";
 }

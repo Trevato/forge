@@ -48,6 +48,10 @@ import { html, type Html } from "../html.ts";
 import { fragment, page } from "../layout.ts";
 import { BOOTED } from "../../release/gate.ts";
 import { nowHref } from "./now.ts";
+import { secureFor } from "../../http/cookie_secure.ts";
+import { cookieValue } from "../../http/context.ts";
+import { parseTable, tableRows } from "../../flow/lanes_table.ts";
+import { tableRegion, tableTag, tableTools } from "./home_table.ts";
 
 /** The median as a person says it: minutes under an hour, else hours. */
 const leadWords = (h: number): string => (h < 1 ? `${Math.max(1, Math.round(h * 60))}m` : hoursWords(h));
@@ -299,37 +303,93 @@ function filterForm(repos: readonly string[], only: string | null): Html {
   </form>`;
 }
 
-// GET /home — the new home.
+/** Which view: the one the address asks for (and then remembers), else the one remembered, else the lanes. */
+function viewOf(ctx: Ctx): { view: "lanes" | "table"; asked: boolean } {
+  const asked = ctx.url.searchParams.get("view");
+  if (asked === "lanes" || asked === "table") return { view: asked, asked: true };
+  return { view: cookieValue(ctx.request, VIEW_COOKIE) === "table" ? "table" : "lanes", asked: false };
+}
+const VIEW_COOKIE = "forge_home_view";
+
+/** The Lanes | Table switch: two links, each an address of its own, the app filter carried across. */
+function viewSwitch(view: "lanes" | "table", only: string | null): Html {
+  const keep = only === null ? "" : `&app=${encodeURIComponent(only)}`;
+  return html`<nav class="hf-views" aria-label="View">
+    <a href="/home?view=lanes${keep}" ${view === "lanes" ? html`aria-current="page"` : null}>Lanes</a>
+    <a href="/home?view=table${keep}" ${view === "table" ? html`aria-current="page"` : null}>Table</a>
+  </nav>`;
+}
+
+// GET /home — the new home: the lanes, or the table of the same items.
 export async function homeFlowPage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const user = ctx.auth.user;
   if (user === undefined) return signInFirst(ctx);
+  const { view, asked } = viewOf(ctx);
   const only = filterOf(ctx.url);
   const now = Date.now();
   const picture = await timePhaseAsync(ctx.request, "picture", () => lanePicture(ctx.app.db, optionsOf(ctx), "page", now));
   const rendering = performance.now();
-  const viewing = timePhase(ctx.request, "viewing", () => viewFor(ctx.app.db, user, picture, only));
-  const regions = LANES.map((k) => laneRegion(viewing.lanes[k], healthOf(viewing.lanes[k], picture, now), only, user.isAdmin, now));
+  const viewing = timePhase(ctx.request, "viewing", () => viewFor(ctx.app.db, user, picture, view === "table" ? null : only));
   const strip = user.isAdmin ? stripRegion(picture, ctx.app.config.dataDir, now) : null;
   const forges = user.isAdmin ? await timePhaseAsync(ctx.request, "forges", () => forgesRegion(ctx.app)) : null;
-  const body = html`<div class="hf" id="hf">
+  let main: Html;
+  if (view === "table") {
+    const q = parseTable(ctx.url.searchParams);
+    main = html`${tableTools(q)}${tableRegion(tableRows(viewing, tableInput(picture, now)), q, now)}`;
+  } else {
+    main = html`<div class="hf-lanes">${LANES.map((k) => laneRegion(viewing.lanes[k], healthOf(viewing.lanes[k], picture, now), only, user.isAdmin, now))}</div>`;
+  }
+  const body = html`<div class="hf" id="hf" data-view="${view}">
     <header class="hf-head">
       <div class="hf-title">
         <h1>Your forge, right now</h1>
         <p class="hf-live muted" id="hf-live" data-state="connecting"><span class="dot"></span><span class="hf-live-text">Updates as it happens</span></p>
       </div>
-      ${filterForm(viewing.repos, only)}
+      ${viewSwitch(view, only)}
+      ${view === "lanes" ? filterForm(viewing.repos, only) : null}
     </header>
     ${strip}
-    <div class="hf-lanes">${regions}</div>
+    ${main}
     ${forges}
     <p class="hf-foot small muted">
-      <span>Each lane is a step a change takes; a tile moves on by itself when its work does.</span>
+      <span>${view === "table" ? "Every item of every lane, one row each; sort, filter and search are in the address, so a link is a view." : "Each lane is a step a change takes; a tile moves on by itself when its work does."}</span>
       <a href="/?home=classic">The classic home</a>
       <a href="/feed">The feed</a>
     </p>
   </div>`;
   const res = page({ ctx, title: "Home", body, wide: true, scriptJs: `${liveRegionsJs}\n${homeFlowJs}` });
+  // The view asked for in the address is remembered for the next visit.
+  if (asked) {
+    const secure = secureFor(ctx.url, ctx.app.config.url) ? "; Secure" : "";
+    res.headers.append("set-cookie", `${VIEW_COOKIE}=${view}; Path=/; Max-Age=31536000; SameSite=Lax; HttpOnly${secure}`);
+  }
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return res;
+}
+
+/** What the rows' states read besides the rows. */
+const tableInput = (picture: LanePicture, now: number) => ({ now, builders: picture.builders, moved: picture.moved });
+
+// GET /live/table?<view> — the table's rows alone, for the region that shows them; an unchanged table answers 304 without being drawn.
+export async function liveTableFragment(ctx: Ctx): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const user = ctx.auth.user;
+  if (user === undefined) {
+    notePhase(ctx.request, "render", 0);
+    return fragment(html``, { status: 404 });
+  }
+  const q = parseTable(ctx.url.searchParams);
+  const now = Date.now();
+  const picture = await timePhaseAsync(ctx.request, "picture", () => lanePicture(ctx.app.db, optionsOf(ctx), "lane", now));
+  const rendering = performance.now();
+  const tag = tableTag(picture, user.isAdmin ? "admin" : user.id, q, now);
+  if (ctx.request.headers.get("if-none-match") === `"${tag}"`) {
+    notePhase(ctx.request, "render", performance.now() - rendering);
+    return new Response(null, { status: 304, headers: { etag: `"${tag}"`, "cache-control": "no-store" } });
+  }
+  const viewing = timePhase(ctx.request, "viewing", () => viewFor(ctx.app.db, user, picture, null));
+  const res = fragment(tableRegion(tableRows(viewing, tableInput(picture, now)), q, now), { request: ctx.request, etag: tag });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return res;
 }

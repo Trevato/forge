@@ -226,6 +226,7 @@ export const ROUTES: Readonly<Record<string, Mark>> = {
   "/live/lane": "open",
   "/live/strip": "admin",
   "/live/forges": "admin",
+  "/live/table": "open",
   "/home": "open",
   "/live/home/kpis": "admin",
   "/live/home/waiting": "open",
