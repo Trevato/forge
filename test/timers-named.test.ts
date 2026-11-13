@@ -91,6 +91,7 @@ const ALLOWED: readonly Allowed[] = [
     ["src/perf/sample.ts", "r"],
     ["src/cluster/jobs.ts", "r"],
     ["src/release/serving.ts", "r"],
+    ["src/snapshot/service.ts", "r"],
     ["src/apps/holding.ts", "resolve"],
     ["src/checks/service.ts", "resolve"],
     ["src/checks/install.ts", "() => { signal.removeEventListener("],

@@ -26,7 +26,7 @@ import {
   type Manifest,
   type Progress,
 } from "./snapshot.ts";
-import { describeTimes, runDrill, type DrillDeps, type DrillResult } from "./drill.ts";
+import { describeTimes, DRILL_TIMEOUT_MS, runDrill, type DrillDeps, type DrillResult } from "./drill.ts";
 import { BOOT_RED_FLOOR_MS, drillDue, RED_RETRY_MS, snapshotDue } from "./due.ts";
 import { sealedTarget } from "./destination.ts";
 import { watchBucket } from "./bucket.ts";
@@ -141,6 +141,8 @@ export function startSnapshots(
     /** Test seam: how soon a failed snapshot is tried again. */
     readonly retryMs?: number | undefined;
     readonly passphrase?: string | undefined;
+    /** Test seam: how long a drill waits for a mirror pass in flight before it reads the lane as it stands. */
+    readonly drillWaitMs?: number | undefined;
     /** Test seam: the drill itself. */
     readonly drill?: ((deps: DrillDeps) => Promise<DrillResult>) | undefined;
     /** Test seams: how soon after boot an owed drill runs, and when a red one is owed again. */
@@ -346,13 +348,32 @@ export function startSnapshots(
     return mirrorNow();
   };
 
+  /** Wait for the passes in flight, `ms` at most. */
+  const mirrorSettled = async (ms: number): Promise<void> => {
+    const end = Date.now() + ms;
+    while (mirroring !== undefined) {
+      const left = end - Date.now();
+      if (left <= 0) {
+        log.warn("restore drill: the mirror pass is still running; drilling the lane as it stands");
+        return;
+      }
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([mirroring.catch(() => {}), new Promise((r) => (timer = setTimeout(r, left)))]);
+      clearTimeout(timer);
+    }
+  };
+
   // Single-flight: a restore of every repository is heavy, so a second call
   // while one runs joins it instead of filling the disk with another.
   let drilling: Promise<DrillResult> | undefined;
   const drill = (): Promise<DrillResult> => {
     drilling ??= (async (): Promise<DrillResult> => {
       await (inFlight ?? Promise.resolve()).catch(() => {});
-      const store = current();
+      // The off-site copy is the one a lost machine leaves (#11805): drill it,
+      // once the pass that follows every snapshot has brought it level, or
+      // the drill's floor budget has gone by, so a stuck pass cannot hang it.
+      await mirrorSettled(options.drillWaitMs ?? DRILL_TIMEOUT_MS);
+      const store = currentMirror() ?? current();
       if (store === undefined)
         throw new Error("this forge has nowhere to drill from");
       // A drill that could not run is not a drill that passed: it is kept red,

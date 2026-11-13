@@ -45,3 +45,4 @@ export function lastOffBox(dataDir: string): string | null {
   if (times.length === 0) return null;
   return times.reduce((a, b) => (Date.parse(b) > Date.parse(a) ? b : a));
 }
+

@@ -1,7 +1,9 @@
 /**
  * The off-box mirror: a second S3-compatible bucket (Backblaze B2, say) that
  * every snapshot is copied to, so losing the machine does not lose the
- * snapshots with it. Its keys are sealed in the forge like the Backups
+ * snapshots with it. It is the forge's off-site backup lane (#11805): the
+ * pass runs in the forge's own process, and with the operator's passphrase
+ * every object it writes is sealed (`sealed_store.ts`). Its keys are sealed in the forge like the Backups
  * destination (`SNAPSHOT_MIRROR_S3_*`), or given as `FORGE_MIRROR_S3_*`.
  *
  * A pass copies each of the newest snapshots the mirror lacks, the manifest
@@ -18,6 +20,7 @@ import { join } from "node:path";
 import type { EventBus } from "../core/events.ts";
 import { deleteSecret, resolveSecrets } from "../core/secret_store.ts";
 import { KEEP, listSnapshots, pruneSnapshots, SNAPSHOT_PREFIX } from "./snapshot.ts";
+import { refusingStore, sealedStore } from "./sealed_store.ts";
 import { s3Store, type S3Target, type Store } from "./store.ts";
 
 /** The sealed names, one per field of the form. */
@@ -42,11 +45,15 @@ export interface MirrorSources {
   readonly dataDir?: string | undefined;
   readonly bus?: EventBus | undefined;
   readonly env?: Record<string, string | undefined>;
+  /** The operator's passphrase: given, every object the mirror holds is sealed under it (#11805). */
+  readonly passphrase?: string | undefined;
 }
 
 export interface Mirror {
   readonly source: "sealed" | "env";
   readonly store: Store;
+  /** Whether what lands there is encrypted; without a passphrase nothing lands, and `/system` says why. */
+  readonly encrypted: boolean;
 }
 
 /** The mirror's target: sealed in this forge, else `FORGE_MIRROR_S3_*`; undefined when neither is whole. */
@@ -75,9 +82,21 @@ export function mirrorTarget(s: MirrorSources = {}): { source: Mirror["source"];
   };
 }
 
-export function resolveMirror(s: MirrorSources = {}): Mirror | undefined {
+/** Said by every call of a lane with no passphrase: the board shows it, and nothing is written. */
+export const NO_PASSPHRASE = "FORGE_SNAPSHOT_PASSPHRASE is not set, so the off-site lane writes nothing";
+
+/**
+ * The lane as the forge writes it: sealed under the passphrase. Without one
+ * it fails closed (#11805): a store that refuses every call, so not one
+ * unsealed byte leaves and each pass fails saying why.
+ */
+export function resolveMirror(s: MirrorSources = {}, options: { create?: boolean } = {}): Mirror | undefined {
   const t = mirrorTarget(s);
-  return t === undefined ? undefined : { source: t.source, store: s3Store(t.target) };
+  if (t === undefined) return undefined;
+  const plain = s3Store(t.target);
+  return s.passphrase
+    ? { source: t.source, store: sealedStore(plain, s.passphrase, options), encrypted: true }
+    : { source: t.source, store: refusingStore(plain.where, NO_PASSPHRASE), encrypted: false };
 }
 
 /** Which of the sealed mirror names are set, without opening any. */
@@ -110,6 +129,8 @@ export interface MirrorState {
   readonly failingSince?: string;
   readonly failed?: string;
   readonly error?: string;
+  /** Whether the mirror's objects are encrypted (`Store.sealed`); absent in states kept before #11805. */
+  readonly sealed?: boolean;
   /** Set (and nothing recorded) when the primary, not the mirror, could not be read. */
   readonly sourceError?: string;
 }
@@ -158,7 +179,9 @@ async function copyOne(src: Store, dst: Store, name: string): Promise<void> {
   const prefix = `${SNAPSHOT_PREFIX}${name}/`;
   const manifest = `${prefix}manifest.json`;
   const have = new Set(await dst.list(prefix));
-  const todo = (await src.list(prefix)).filter((k) => k !== manifest && !have.has(k));
+  const listed = (await src.list(prefix)).filter((k) => k !== manifest);
+  const stored = await Promise.all(listed.map((k) => dst.storedKey?.(k) ?? k));
+  const todo = listed.filter((_, i) => !have.has(stored[i]!));
   for (let i = 0; i < todo.length; i += COPY_AT_ONCE)
     await Promise.all(
       todo.slice(i, i + COPY_AT_ONCE).map(async (key) => {
@@ -207,6 +230,7 @@ export async function mirrorPass(
       where: dst.where,
       attemptAt: at,
       reachable: true,
+      sealed: dst.sealed === true,
       syncedAt: at,
       ...(newest === undefined ? {} : { newest: newest.name, newestAt: newest.finishedAt }),
     };
@@ -221,6 +245,7 @@ export async function mirrorPass(
       where: dst.where,
       attemptAt: at,
       reachable,
+      sealed: dst.sealed === true,
       ...(prev?.syncedAt === undefined ? {} : { syncedAt: prev.syncedAt }),
       ...(prev?.newest === undefined ? {} : { newest: prev.newest }),
       ...(prev?.newestAt === undefined ? {} : { newestAt: prev.newestAt }),
@@ -254,7 +279,9 @@ export function mirrorNeed(s: MirrorState | undefined, now: number): MirrorNeed 
   if (s.failingSince !== undefined)
     return {
       key: `fail:${s.failingSince}`,
-      sentence: s.reachable
+      sentence: s.error === NO_PASSPHRASE
+        ? `The off-box mirror ${s.where} writes nothing: set FORGE_SNAPSHOT_PASSPHRASE.`
+        : s.reachable
         ? `Snapshot ${s.failed ?? "(unknown)"} did not land on the off-box mirror ${s.where}: ${s.error ?? "unknown reason"}.`
         : `The off-box mirror ${s.where} is unreachable: ${s.error ?? "unknown reason"}.`,
       since: s.failingSince,
@@ -266,4 +293,19 @@ export function mirrorNeed(s: MirrorState | undefined, now: number): MirrorNeed 
     sentence: `The off-box mirror ${s.where} has not been confirmed in sync for over a day${s.syncedAt ? `; last on ${s.syncedAt.slice(0, 10)}` : ""}.`,
     since: s.syncedAt ? new Date(at + MIRROR_STALE_MS).toISOString() : s.attemptAt,
   };
+}
+
+/**
+ * The off-site lane as a restore on a fresh machine reads it (#11805): from
+ * the environment alone (`FORGE_MIRROR_S3_*`), and sealed, so the
+ * passphrase is required. A sentence when either is missing.
+ */
+export function offsiteFromEnv(env: Record<string, string | undefined> = process.env): Store | string {
+  const passphrase = env["FORGE_SNAPSHOT_PASSPHRASE"] || undefined;
+  // A restore reads: an empty bucket is said, never started as a new lane.
+  const m = resolveMirror({ env, passphrase }, { create: false });
+  if (m === undefined)
+    return "no off-site lane: export FORGE_MIRROR_S3_ENDPOINT, FORGE_MIRROR_S3_BUCKET, FORGE_MIRROR_S3_ACCESS_KEY and FORGE_MIRROR_S3_SECRET_KEY";
+  if (passphrase === undefined) return "the off-site lane is sealed: export FORGE_SNAPSHOT_PASSPHRASE";
+  return m.store;
 }

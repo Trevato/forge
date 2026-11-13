@@ -119,6 +119,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["telemetry", "Telemetry", "which agents may read flow and system; enter flips the grant"],
     ["stalls", "Main-thread stalls", "the last hour's stall ms by route"],
     ["footing", "What the forge stands on", "each piece on another machine, in the order it would break the forge"],
+    ["offsite", "Off-site backup", "where the sealed lane writes, when it last succeeded, and the last restore drill"],
     ["capacity", "Capacity", "concurrency and guards, live; e changes a settable one"],
     ["resilience", "Resilience", "where snapshots go and the mirror; each protection green, red or untested"],
     ["maintenance", "Maintenance", "prepare the forge for a power-off, check the drain, or end maintenance"],

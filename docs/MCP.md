@@ -212,7 +212,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `subscription_wake` | — | Admin: wake a resting subscription | 168 |
 | `subscriptions` | — | Claude accounts: scopes, budgets | 158 |
 | `sync` | — | Sync a mirror now; `originId` reconnects it | 197 |
-| `system` | `csp`, `routes`, `footing` | The forge machine now: CPU, memory, disk, network | 296 |
+| `system` | `csp`, `routes`, `footing`, `offsite` | The forge machine now: CPU, memory, disk, network | 306 |
 | `take_back` | — | Open the pull that undoes a shipped pull | 219 |
 | `take_updates` | — | Take the parent forge's updates into a fork | 176 |
 | `teams` | — | Crew teams for person admins: charter, dial (0–100) and member agents | 338 |

@@ -527,8 +527,14 @@ const snapshots = startSnapshots(
     })?.store,
   {
     version: running().version,
+    // The off-site lane (#11805): sealed under the passphrase before it leaves.
     mirror: () =>
-      resolveMirror({ db: app.db, dataDir: app.config.dataDir, bus: app.bus })?.store,
+      resolveMirror({
+        db: app.db,
+        dataDir: app.config.dataDir,
+        bus: app.bus,
+        passphrase: process.env["FORGE_SNAPSHOT_PASSPHRASE"] || undefined,
+      })?.store,
     passphrase: process.env["FORGE_SNAPSHOT_PASSPHRASE"] || undefined,
   },
 );

@@ -30,8 +30,8 @@ import { serviceAccount, type Credentials } from "../cluster/jobs.ts";
 
 export type Need = "answer" | "sign-in" | "build" | "release" | "backup";
 
-/** The machines in the forge's path, by the name the steward's inventory gives them. */
-export type Machine = "pg-grand" | "vxrail";
+/** The machines in the forge's path, by the name the steward's inventory gives them; `off-site` is neither (#11805). */
+export type Machine = "pg-grand" | "vxrail" | "off-site";
 
 /** The machine the forge itself runs on, as declared. */
 export const FORGE_MACHINE: Machine = "vxrail";
@@ -40,7 +40,11 @@ export const FORGE_MACHINE: Machine = "vxrail";
 export const MACHINES: Record<Machine, string> = {
   "pg-grand": "DigitalOcean. The k3s server, a single control plane with no HA. The owner decided on 2026-11-12 to drop it.",
   vxrail: "A k3s agent joined to pg-grand. The forge runs here.",
+  "off-site": "Object storage on neither machine, at a provider of its own: the off-site backup lane's bucket.",
 };
+
+/** A piece on the forge's own machine or on neither machine: losing pg-grand does not touch it. */
+const besideTheForge = (m: Machine): boolean => m === FORGE_MACHINE || m === "off-site";
 
 export type Find =
   /** Pods of one workload (Deployment, StatefulSet, DaemonSet) in a namespace, or every pod (`*`); namespace `""` is the forge's own. */
@@ -49,6 +53,8 @@ export type Find =
   | { readonly kind: "self" }
   /** The Kubernetes API server: the nodes labelled control-plane. */
   | { readonly kind: "control-plane" }
+  /** Object storage outside the cluster and off both machines; nothing to look for. */
+  | { readonly kind: "offsite" }
   /** Not in the cluster: a systemd unit on a host; the cluster cannot show it, so the declared machine stands. */
   | { readonly kind: "host"; readonly unit: string }
   /** A pod whose namespace is not recorded: not looked for, since that would list every pod in the cluster. */
@@ -78,7 +84,6 @@ export const BREAK_STEPS: readonly string[] = [
   "the signup gate: no one signs up",
   "image pulls and releases",
   "the control plane: nothing reschedules, Services stop updating",
-  "local backups",
   "the host timers",
 ];
 
@@ -140,7 +145,7 @@ export const FOOTING: readonly Piece[] = [
     machine: "pg-grand",
     ifDies: "git over ssh and the terminal stop answering.",
     issues: [11686],
-    breaks: 7,
+    breaks: 6,
   },
   {
     id: "control-plane",
@@ -229,7 +234,7 @@ export const FOOTING: readonly Piece[] = [
     machine: "pg-grand",
     ifDies: "Nothing is released; production keeps the release it has.",
     issues: [11686, 8942],
-    breaks: 7,
+    breaks: 6,
   },
   {
     id: "standby-reconcile",
@@ -239,7 +244,7 @@ export const FOOTING: readonly Piece[] = [
     machine: "pg-grand",
     ifDies: "A changed manifest is not applied; the running pod is untouched.",
     issues: [8948, 11686],
-    breaks: 7,
+    breaks: 6,
   },
   {
     id: "host-timers",
@@ -249,7 +254,7 @@ export const FOOTING: readonly Piece[] = [
     machine: "pg-grand",
     ifDies: "The watchdog, the GitHub mirror and image pruning under the Deployment-patch deployer stop.",
     issues: [11686, 11914],
-    breaks: 7,
+    breaks: 6,
   },
   {
     id: "release-prune",
@@ -261,30 +266,28 @@ export const FOOTING: readonly Piece[] = [
     issues: [11801, 11914],
   },
   {
-    id: "backup-lanes",
+    id: "backup-lane",
     need: "backup",
-    what: "The backup namespace's CronJobs (FORGE_BACKUP_LANES)",
-    find: { kind: "pods", namespace: "backup", workload: "*" },
-    machine: "pg-grand",
-    ifDies: "No new backup is taken.",
-    issues: [11686],
-    breaks: 6,
+    what: "The forge's own backup lane (src/snapshot): the nightly snapshot and the hourly off-site pass, run in the forge's process, every object sealed under FORGE_SNAPSHOT_PASSPHRASE before it leaves; the nightly lands on the forge's own disk (FORGE_SNAPSHOT_DIR on its volume), not the platform's MinIO",
+    find: { kind: "self" },
+    machine: "vxrail",
+    ifDies: "No new backup is taken; the sealed copies wait off both machines.",
+    issues: [],
   },
   {
-    id: "minio",
+    id: "offsite-bucket",
     need: "backup",
-    what: "MinIO, where the backup lanes store the forge's backups",
-    find: { kind: "pods", namespace: "minio", workload: "*" },
-    machine: "pg-grand",
-    ifDies: "No new backup is stored, and those it holds go with the machine.",
-    issues: [11686],
-    breaks: 6,
+    what: "The off-site lane's bucket (FORGE_MIRROR_S3_*, or the mirror sealed on the Backups page), on neither machine",
+    find: { kind: "offsite" },
+    machine: "off-site",
+    ifDies: "Neither machine holds it: losing either leaves every sealed copy in place.",
+    issues: [],
   },
 ];
 
 /** On pg-grand, not in the forge's path: what dropping the machine takes besides. */
 export const ALSO_ON_PG_GRAND =
-  "Forgejo and its database, the platform's mcp/plat-auth and www, the CloudNativePG operator with the tenant apps' databases, their local-path volumes pinned to that node, and MinIO.";
+  "Forgejo and its database, the platform's mcp/plat-auth and www, the CloudNativePG operator with the tenant apps' databases, their local-path volumes pinned to that node, and the platform's backup CronJobs (the backup namespace, FORGE_BACKUP_LANES) with the MinIO they write to; the forge's own backup no longer needs them.";
 
 /** How each piece was placed: seen on nodes, or the declared machine kept and why. */
 export type Seen =
@@ -320,7 +323,7 @@ export function declaredFooting(why: string, at = new Date()): Footing {
     forgeNode: null,
     unread: why,
     at: at.toISOString(),
-    rows: FOOTING.map((p) => ({ ...p, seen: { by: "declared", why }, risk: p.machine !== FORGE_MACHINE })),
+    rows: FOOTING.map((p) => ({ ...p, seen: { by: "declared", why }, risk: !besideTheForge(p.machine) })),
   };
 }
 
@@ -396,6 +399,7 @@ export async function probeFooting(opts: ProbeOptions = {}): Promise<Footing> {
     }
     // Nothing in the cluster sees a systemd unit: the declared machine stands, said as such.
     if (f.kind === "host") return { by: "declared", why: `${f.unit} is a systemd unit on a host; the cluster cannot show it` };
+    if (f.kind === "offsite") return { by: "declared", why: "object storage outside the cluster, on neither machine" };
     if (f.kind === "unlocated") return { by: "declared", why: "its namespace is not recorded, and the forge does not list every pod in the cluster" };
     const where = nsOf(f.namespace);
     const list = pods.get(where)!;
@@ -412,7 +416,7 @@ export async function probeFooting(opts: ProbeOptions = {}): Promise<Footing> {
     const risk =
       seen.by === "cluster" && forgeNode !== null
         ? seen.nodes.some((n) => n !== forgeNode)
-        : p.machine !== FORGE_MACHINE;
+        : !besideTheForge(p.machine);
     return { ...p, seen, risk };
   });
   const unread =

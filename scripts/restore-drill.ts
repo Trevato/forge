@@ -6,7 +6,10 @@
  * writes only into the empty data directory it is given, and reads
  * production through its public API, nothing else of the platform.
  *
- *   bun scripts/restore-drill.ts <data-dir> [--production https://forge.open-platform.sh]
+ *   bun scripts/restore-drill.ts <data-dir> [--production https://forge.open-platform.sh] [--offsite]
+ *
+ * `--offsite` reads the sealed off-site lane (`FORGE_MIRROR_S3_*` and the
+ * passphrase, #11805) in place of the destination.
  *
  * It restores, boots the restored forge on a free side port, checks `/`
  * answers, counts the repositories and apps anyone can see there and on
@@ -17,6 +20,7 @@
 import { resolve } from "node:path";
 import { bootRestored } from "../src/snapshot/boot.ts";
 import { resolveDestination } from "../src/snapshot/destination.ts";
+import { offsiteFromEnv } from "../src/snapshot/mirror.ts";
 import { publicCounts, type PublicCounts } from "../src/snapshot/public_counts.ts";
 import { restoreSnapshot } from "../src/snapshot/restore.ts";
 import { listSnapshots } from "../src/snapshot/snapshot.ts";
@@ -28,8 +32,10 @@ const PRODUCTION_DATA = "/data";
 const BOOT_MS = 60_000;
 
 /** The arguments as plain data, or the reason they are not usable. */
-export function parseArgs(args: readonly string[]): { dataDir: string; production: string } | string {
+export function parseArgs(args: readonly string[]): { dataDir: string; production: string; offsite?: true } | string {
   const rest = [...args];
+  const off = rest.indexOf("--offsite");
+  if (off >= 0) rest.splice(off, 1);
   let production = PRODUCTION;
   const at = rest.indexOf("--production");
   if (at >= 0) {
@@ -46,10 +52,10 @@ export function parseArgs(args: readonly string[]): { dataDir: string; productio
   if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback))
     return "--production takes an https URL";
   if (rest.length !== 1 || !rest[0] || rest[0].startsWith("-"))
-    return "usage: bun scripts/restore-drill.ts <data-dir> [--production URL]";
+    return "usage: bun scripts/restore-drill.ts <data-dir> [--production URL] [--offsite]";
   const dataDir = resolve(rest[0]);
   if (dataDir === PRODUCTION_DATA) return `${dataDir} is production's data directory; restore into the box's own`;
-  return { dataDir, production: url.origin };
+  return { dataDir, production: url.origin, ...(off >= 0 ? { offsite: true as const } : {}) };
 }
 
 /** The two sides' counts as lines a person reads, and which differ. */
@@ -69,7 +75,12 @@ async function main(): Promise<number> {
     console.error(args);
     return 2;
   }
-  const store = resolveDestination()?.store;
+  const lane = args.offsite ? offsiteFromEnv() : undefined;
+  if (typeof lane === "string") {
+    console.error(lane);
+    return 2;
+  }
+  const store = lane ?? resolveDestination()?.store;
   if (store === undefined) {
     console.error("no store: export the S3_* lines of the restore card, or FORGE_SNAPSHOT_DIR");
     return 2;

@@ -103,6 +103,7 @@ down.
 <!-- footing:start — written by footingTable() in src/system/footing.ts; test/footing.test.ts holds it equal -->
 - **pg-grand**: DigitalOcean. The k3s server, a single control plane with no HA. The owner decided on 2026-11-12 to drop it.
 - **vxrail**: A k3s agent joined to pg-grand. The forge runs here.
+- **off-site**: Object storage on neither machine, at a provider of its own: the off-site backup lane's bucket.
 
 | Needed to | Piece | Runs on | If that machine dies | Breaks | Removed by |
 |---|---|---|---|---|---|
@@ -111,7 +112,7 @@ down.
 | (a) answer a request | The vxrail's own tunnel (standby/cloudflared-forge-home, 2 replicas): it too sends *.open-platform.sh to Traefik; only forge-home-test.open-platform.sh and arm--forge-trevato-apps.open-platform.sh go straight to the forge | vxrail | It goes with the forge, which runs beside it. | — | — |
 | (a) answer a request | Traefik (kube-system/traefik): every public request goes tunnel → Traefik → the forge's Service | pg-grand | The forge is off the internet; it keeps running inside. | 1 | #11686, #8946 |
 | (a) answer a request | Child and app hosts, Traefik IngressRoutes forge-children (&lt;name&gt;--forge.open-platform.sh), forge-apps (*--forge-trevato-apps.open-platform.sh) and forge-old-host, and game.cheffryjames.com and www.cheffryjames.com in the forge's namespace | pg-grand | No child forge, app or custom domain answers. | 1 | #11686, #8946 |
-| (a) answer a request | forge-ssh, a host socket proxy (:2222 → the forge's ssh service) | pg-grand | git over ssh and the terminal stop answering. | 7 | #11686 |
+| (a) answer a request | forge-ssh, a host socket proxy (:2222 → the forge's ssh service) | pg-grand | git over ssh and the terminal stop answering. | 6 | #11686 |
 | (a) answer a request | The k3s API server (the vxrail is an agent joined to it) | pg-grand | Running pods keep running, but nothing reschedules, Services stop updating, and no release rolls or Job runs. | 5 | #11686 |
 | (b) sign a person in | Sign-in edge: a forwardAuth middleware on the forge's Ingress, answered by mcp/plat-auth | pg-grand | Every request through the edge answers 500, /healthz too. | 2 | #11686 |
 | (b) sign a person in | forge-signup-gate, the pod /signup is routed to | pg-grand | No one can sign up. | 3 | #11686 |
@@ -120,12 +121,12 @@ down.
 | (c) build | forgejo-runner-vxrail, a Forgejo Actions runner | vxrail | It goes with the forge, which runs beside it. | — | — |
 | (d) release | Forgejo's registry (git.open-platform.sh), which the forge's image is pulled from | pg-grand | A pod that restarts on a node without the image cached cannot start; nothing new is released. | 4 | #11686, #8941, #8942 |
 | (d) release | registry-node, a registry on the vxrail | vxrail | It goes with the forge, which runs beside it. | — | — |
-| (d) release | forge-release-tick, a host timer every 5 min | pg-grand | Nothing is released; production keeps the release it has. | 7 | #11686, #8942 |
-| (d) release | standby-reconcile, a host timer every 2 min that applies the forge's manifests from Forgejo; Flux's Kustomization for the forge is suspended | pg-grand | A changed manifest is not applied; the running pod is untouched. | 7 | #8948, #11686 |
-| (d) release | Host timers forge-watchdog, forge-github-mirror and forge-prune-images | pg-grand | The watchdog, the GitHub mirror and image pruning under the Deployment-patch deployer stop. | 7 | #11686, #11914 |
+| (d) release | forge-release-tick, a host timer every 5 min | pg-grand | Nothing is released; production keeps the release it has. | 6 | #11686, #8942 |
+| (d) release | standby-reconcile, a host timer every 2 min that applies the forge's manifests from Forgejo; Flux's Kustomization for the forge is suspended | pg-grand | A changed manifest is not applied; the running pod is untouched. | 6 | #8948, #11686 |
+| (d) release | Host timers forge-watchdog, forge-github-mirror and forge-prune-images | pg-grand | The watchdog, the GitHub mirror and image pruning under the Deployment-patch deployer stop. | 6 | #11686, #11914 |
 | (d) release | The self-swap keeper's own pruning of release trees | vxrail | It goes with the forge, which runs beside it. | — | #11801, #11914 |
-| (e) back up | The backup namespace's CronJobs (FORGE_BACKUP_LANES) | pg-grand | No new backup is taken. | 6 | #11686 |
-| (e) back up | MinIO, where the backup lanes store the forge's backups | pg-grand | No new backup is stored, and those it holds go with the machine. | 6 | #11686 |
+| (e) back up | The forge's own backup lane (src/snapshot): the nightly snapshot and the hourly off-site pass, run in the forge's process, every object sealed under FORGE_SNAPSHOT_PASSPHRASE before it leaves; the nightly lands on the forge's own disk (FORGE_SNAPSHOT_DIR on its volume), not the platform's MinIO | vxrail | No new backup is taken; the sealed copies wait off both machines. | — | — |
+| (e) back up | The off-site lane's bucket (FORGE_MIRROR_S3_*, or the mirror sealed on the Backups page), on neither machine | off-site | Neither machine holds it: losing either leaves every sealed copy in place. | — | — |
 
 If pg-grand were switched off now, the forge breaks in this order (the Breaks column):
 
@@ -134,10 +135,9 @@ If pg-grand were switched off now, the forge breaks in this order (the Breaks co
 3. the signup gate: no one signs up
 4. image pulls and releases
 5. the control plane: nothing reschedules, Services stop updating
-6. local backups
-7. the host timers
+6. the host timers
 
-Also on pg-grand, not in the forge's path: Forgejo and its database, the platform's mcp/plat-auth and www, the CloudNativePG operator with the tenant apps' databases, their local-path volumes pinned to that node, and MinIO.
+Also on pg-grand, not in the forge's path: Forgejo and its database, the platform's mcp/plat-auth and www, the CloudNativePG operator with the tenant apps' databases, their local-path volumes pinned to that node, and the platform's backup CronJobs (the backup namespace, FORGE_BACKUP_LANES) with the MinIO they write to; the forge's own backup no longer needs them.
 <!-- footing:end -->
 
 The same list is read from the live cluster on `/system`, under "What the

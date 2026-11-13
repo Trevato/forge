@@ -48,6 +48,7 @@ import { COLUMN_BYTES, PARTS_BYTES, keptPartsStats, treeCacheStats } from "./tre
 import { featureHealth, type FeatureHealth } from "../../system/feature_health.ts";
 import { egressReportedLine } from "../../system/egress_line.ts";
 import { BREAK_STEPS, MACHINES, declaredFooting, footing, offMachine, whereWords, type Footing, type Machine } from "../../system/footing.ts";
+import { laneWords, readOffsiteLane, type OffsiteLane } from "../../snapshot/offsite_lane.ts";
 import { badge, chartBox, disclosure, meter, pill, row, time } from "../ui.ts";
 import { LARGEST_DIRS, largestDirs, type LargestDirs } from "../../system/largest_dirs.ts";
 import { childDirOf, listChildren } from "../../actions/spawn.ts";
@@ -247,6 +248,43 @@ export function footingSection(f: Footing): Html {
     )}</ul>`}
     ${home.length === 0 ? null : html`<p class="small muted">On the forge's own machine: ${home.map((r, i) => html`${i ? ", " : ""}<span data-piece="${r.id}" data-off="false">${r.what}</span>`)}.</p>`}
     ${(Object.keys(MACHINES) as Machine[]).map((m) => html`<p class="small muted" data-machine="${m}"><span class="mono">${m}</span>: ${MACHINES[m]}</p>`)}`, { id: "sys-footing-more" })}</section>`;
+}
+
+/**
+ * The off-site backup lane (#11805): where the forge's own mirror pass
+ * writes, whether it seals what it writes, when it last succeeded, and the
+ * last restore drill with where it restored from. `snapshot/offsite_lane.ts`'s reading.
+ */
+export function offsiteSection(l: OffsiteLane): Html {
+  // A lane that exists and is not level and sealed is red; no lane at all is a setting, said in words (first sight, #11111).
+  const tone = l.health === "ok" || l.health === "none" ? null : badge(l.health, { tone: "danger" });
+  const d = l.drill;
+  // First sight (#11111): the heading and one sentence stay; the rows open behind one disclosure.
+  return html`<section class="settings-block" id="sys-offsite" data-health="${l.health}"><h2>Off-site backup</h2>
+    ${disclosure(html`${tone} ${laneWords(l)}`, html`<ul class="list" aria-label="Off-site backup">
+      ${l.where === null ? null : row({
+        title: "Backup lane",
+        facts: [
+          { label: "Writes to", value: html`<span class="mono">${l.where}</span>` },
+          { label: "Encrypted", value: l.sealed ? "yes, under the snapshot passphrase" : "no" },
+          { label: "Last success", value: l.lastSuccess === null ? "never" : time(l.lastSuccess) },
+          ...(l.newest === null ? [] : [{ label: "Newest", value: html`<span class="mono">${l.newest}</span>` }]),
+        ],
+        data: { lane: "offsite", sealed: String(l.sealed), ...(l.lastSuccess === null ? {} : { success: l.lastSuccess }) },
+      })}
+      ${row({
+        title: "Restore drill",
+        facts: d === null
+          ? [{ label: "Last", value: "never run" }]
+          : [
+              { label: "Last", value: time(d.at) },
+              { label: "Verdict", value: d.verdict === "green" ? "green" : html`${badge("red", { tone: "danger" })} ${d.reason ?? ""}` },
+              { label: "From", value: d.from === null ? "not recorded" : html`<span class="mono">${d.from}</span>${d.offSite ? " (off-site)" : " (on this machine)"}` },
+            ],
+        data: { drill: d?.verdict ?? "none", ...(d === null ? {} : { "off-site": String(d.offSite) }) },
+      })}
+    </ul>
+    <p class="small"><a href="/settings/backups">Backups</a> runs a drill; so does the MCP <code>restore_drill</code>.</p>`, { id: "sys-offsite-more" })}</section>`;
 }
 
 /** The last hour's stalls by route, most milliseconds first; the rows are `stallHour`'s. */
@@ -454,6 +492,7 @@ export async function systemPage(ctx: Ctx): Promise<Response> {
         <button class="btn" data-size="sm" type="button" data-sort="mem" aria-pressed="false"><kbd>m</kbd> memory</button></div>
       <div id="sys-procs" data-live-hold>${at("sys-procs")}</div></section>
     ${footingSection(standsOn)}
+    ${offsiteSection(timePhase(ctx.request, "offsite", () => readOffsiteLane(ctx.app.config.dataDir, ctx.app.db)))}
     ${featuresSection(timePhase(ctx.request, "features", () => featureHealth(ctx.app, reader)))}
     ${lagSection(lagMinutes.readings())}
     <div id="sys-stalls">${stallSection(stalls, worstStallsTable(worst, nowMono, Date.now()))}</div>
