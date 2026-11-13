@@ -129,7 +129,7 @@ export function knowMergeClosings(
     .query<{ number: unknown; pull: unknown }, [string, string]>(
       `SELECT json_extract(payload, '$.number') AS number,
               json_extract(payload, '$.pull') AS pull
-         FROM event INDEXED BY event_kind
+         FROM event INDEXED BY event_repo_kind_number_at
         WHERE repo_id = ?1 AND kind = 'issue.closed'
           AND json_extract(payload, '$.by') = 'merge'
           AND json_extract(payload, '$.number') IN (SELECT value FROM json_each(?2))

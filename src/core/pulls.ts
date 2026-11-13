@@ -358,7 +358,7 @@ export function pullForBranch(
     .query<
       { number: number },
       [string, string]
-    >(`SELECT issue.number AS number FROM pull JOIN issue ON issue.id = pull.issue_id
+    >(`SELECT issue.number AS number FROM pull INDEXED BY pull_head_branch JOIN issue ON issue.id = pull.issue_id
        WHERE issue.repo_id = ?1 AND pull.head_branch = ?2
        ORDER BY issue.created_at DESC LIMIT 1`)
     .get(repoId, branch);
@@ -461,7 +461,7 @@ export function revertOf(
     .query<
       { number: number },
       [string, string]
-    >(`SELECT issue.number AS number FROM pull JOIN issue ON issue.id = pull.issue_id
+    >(`SELECT issue.number AS number FROM pull INDEXED BY pull_reverts JOIN issue ON issue.id = pull.issue_id
        WHERE issue.repo_id = ?1 AND pull.reverts_issue_id = ?2
          AND (issue.state = 'open' OR pull.merged_at IS NOT NULL)
        ORDER BY issue.created_at DESC LIMIT 1`)
