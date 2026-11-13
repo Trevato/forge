@@ -23,3 +23,19 @@ process.env.FORGE_DEV = "1";
 
 // A suite has no public network to prove a child through (`spawn/reach.ts`); a test of reach injects its own fetch.
 useReachByDefault({ off: true });
+
+// `FORGE_SQL_LOG=<file>`: each distinct statement the run prepares, for
+// `scripts/index-use.ts --log` (#12011). Off unless asked for.
+if (process.env.FORGE_SQL_LOG) {
+  const { Database } = await import("bun:sqlite");
+  const { collectInto } = await import("../../scripts/index-use.ts");
+  const note = collectInto(process.env.FORGE_SQL_LOG);
+  const proto = Database.prototype as unknown as Record<"query" | "prepare", (sql: string, ...rest: unknown[]) => unknown>;
+  for (const method of ["query", "prepare"] as const) {
+    const original = proto[method];
+    proto[method] = function (this: unknown, sql: string, ...rest: unknown[]) {
+      if (typeof sql === "string") note(sql);
+      return original.call(this, sql, ...rest);
+    };
+  }
+}
