@@ -12,6 +12,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createOrg } from "../src/core/orgs.ts";
 import { createUser } from "../src/core/users.ts";
 import { becomeOrg } from "../src/spawn/claim.ts";
+import { emailVerified } from "../src/core/verify.ts";
 import { cappedByLent, keepFunding, lentCreditLeft, runEnded } from "../src/spawn/funding.ts";
 import { closedSignupText } from "../src/tui/screens/signin.ts";
 import { terminalLine } from "../src/web/ui.ts";
@@ -52,6 +53,12 @@ test("becomeOrg turns the organisation into an admin account and drops any sessi
   expect(becomeOrg(app.db, id, { hash: "x", email: "m@x.test" })).toBe("ok");
   expect(row(id)).toEqual({ kind: "user", is_admin: 1, email: "m@x.test" });
   expect(app.db.query("SELECT 1 FROM session WHERE user_id = ?").get(id)).toBeNull();
+});
+
+test("the person who took the forge's own name is verified by the claim link, so the crew takes their first ask", () => {
+  const id = org("ninas");
+  expect(becomeOrg(app.db, id, { hash: "x", email: "" })).toBe("ok");
+  expect(emailVerified(app.db, id)).toBe(true);
 });
 
 test("becomeOrg is gone once the row is no longer an organisation", () => {

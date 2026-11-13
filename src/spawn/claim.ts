@@ -30,6 +30,7 @@ import {
 } from "../core/orgs.ts";
 import type { Credential } from "../auth/webauthn.ts";
 import { addPasskey } from "../core/passkeys.ts";
+import { markVerified } from "../core/verify.ts";
 import { activeEdgeToken } from "../http/edge.ts";
 import { getUserById, type User } from "../core/users.ts";
 import { sha256 } from "../kernel/hash.ts";
@@ -372,6 +373,10 @@ export function becomeOrg(
     // Nothing the organisation held as a namespace signs in as the person.
     db.query("DELETE FROM session WHERE user_id = ?1").run(orgId);
     if (input.credential !== undefined && !addPasskey(db, orgId, "Passkey", input.credential).ok) throw new PasskeyRefused();
+    // The one-time claim link is the proof, as it is for an account made beside the organisation
+    // (`createUser` with `trusted`). An organisation needed no proof; the person it becomes does, or
+    // the crew answers their first ask with "Verify your email first."
+    markVerified(db, orgId, new Date().toISOString());
     return true;
   });
   try {
