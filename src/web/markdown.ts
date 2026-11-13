@@ -270,7 +270,7 @@ function renderUncached(source: string, repo?: MarkdownRepo): Html {
   };
   const closeTable = () => {
     if (align) {
-      out.push("</tbody></table>");
+      out.push("</tbody></table></div>");
       align = null;
     }
   };
@@ -334,7 +334,7 @@ function renderUncached(source: string, repo?: MarkdownRepo): Html {
     } else if (isTableRow(line) && isDelimiterRow(lines[index + 1] ?? "")) {
       closeBlocks();
       align = alignments(lines[index + 1]!);
-      out.push(`<table><thead><tr>${cells(line, align, "th", repo)}</tr></thead>`);
+      out.push(`<div class="table-scroll" role="region" aria-label="Table" tabindex="0"><table><thead><tr>${cells(line, align, "th", repo)}</tr></thead>`);
       out.push("<tbody>");
       skip = index + 1;
       continue;

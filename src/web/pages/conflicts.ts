@@ -109,7 +109,7 @@ async function proposalCard(
     parts.push(html`<p><strong>The crew proposed a resolution</strong>, committed as
       <a class="mono" href="${repoBase(repo)}/commit/${seen.oid}">${seen.oid.slice(0, 7)}</a>
       on <span class="mono">${seen.branch}</span>.</p>
-      ${seen.note === undefined ? "" : html`<div class="md">${renderMarkdown(seen.note)}</div>`}
+      ${seen.note === undefined ? "" : html`<div class="prose">${renderMarkdown(seen.note)}</div>`}
       ${seen.files.length === 0
         ? ""
         : html`<p class="small">Edit by hand: ${seen.files.map(

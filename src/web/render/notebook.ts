@@ -101,7 +101,7 @@ function outputHtml(o: NbOutput): Html {
 }
 
 function cellHtml(c: NbCell): Html {
-  if (c.kind === "markdown") return html`<div class="nb-cell">${renderMarkdown(c.source)}</div>`;
+  if (c.kind === "markdown") return html`<div class="nb-cell prose">${renderMarkdown(c.source)}</div>`;
   if (c.kind === "code")
     return html`<div class="nb-cell"><pre class="nb-in"><span class="muted">In [${c.count}]:</span> ${c.source}</pre>${c.outputs.map(outputHtml)}</div>`;
   return html`<div class="nb-cell"><pre>${c.source}</pre></div>`;
