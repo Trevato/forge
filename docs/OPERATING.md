@@ -122,7 +122,8 @@ down.
 | (d) release | registry-node, a registry on the vxrail | vxrail | It goes with the forge, which runs beside it. | — | — |
 | (d) release | forge-release-tick, a host timer every 5 min | pg-grand | Nothing is released; production keeps the release it has. | 7 | #11686, #8942 |
 | (d) release | standby-reconcile, a host timer every 2 min that applies the forge's manifests from Forgejo; Flux's Kustomization for the forge is suspended | pg-grand | A changed manifest is not applied; the running pod is untouched. | 7 | #8948, #11686 |
-| (d) release | Host timers forge-watchdog, forge-github-mirror and forge-prune-images | pg-grand | The watchdog, the GitHub mirror and image pruning stop. | 7 | #11686 |
+| (d) release | Host timers forge-watchdog, forge-github-mirror and forge-prune-images | pg-grand | The watchdog, the GitHub mirror and image pruning under the Deployment-patch deployer stop. | 7 | #11686, #11914 |
+| (d) release | The self-swap keeper's own pruning of release trees | vxrail | It goes with the forge, which runs beside it. | — | #11801, #11914 |
 | (e) back up | The backup namespace's CronJobs (FORGE_BACKUP_LANES) | pg-grand | No new backup is taken. | 6 | #11686 |
 | (e) back up | MinIO, where the backup lanes store the forge's backups | pg-grand | No new backup is stored, and those it holds go with the machine. | 6 | #11686 |
 
@@ -230,7 +231,9 @@ rollback. #11803 (tunnel straight to the forge), #11802 (its own sign-in) and
      operator this move takes out.
    - **MinIO** is copied once into the off-site bucket.
    - **What else pg-grand runs for the forge:** the backup CronJobs go to
-     #11805 and `forge-prune-images` to #11801. `forge-release-tick` and
+     #11805. `forge-prune-images` stays until the Deployment-patch deployer
+     prunes its own images (#11914); the swap keeper already does (#11801).
+     `forge-release-tick` and
      `standby-reconcile` go to the swap (#8941, #8942). `forge-watchdog` is
      replaced by `Restart=always` and the launcher. `plat-auth`, the signup
      gate and Traefik leave the forge's path with #11802 and #11803.

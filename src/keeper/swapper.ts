@@ -22,25 +22,38 @@
  * - **Refusals**: a commit refused (dependency, red preflight) is remembered
  *   per sha and logged once, so the next minute does not check it out and boot
  *   a preflight again.
+ * - **Pruning** (#11801): `store` lists the trees under `releases/<sha>/`
+ *   by the directory's mtime, which `checkoutRelease` sets when it writes the
+ *   tree and touches each time the same commit is checked out again (a swap,
+ *   a rollback, a landing); a tree only pinned as good is not touched. It
+ *   removes one by commit, synchronously, inside the keeper's tick (a few
+ *   trees once a release, so the tick is not held long);
+ *   the keeper decides which (`prune.ts`). The tree this process runs and the
+ *   one it handed over to are never removed, whatever it is asked.
  * - **Restart**: once verified, `verified` keeps the tree as the last good
  *   release over this image's version (`release/launch.ts`), so a pod
  *   restart comes back on it, not on the older image's version.
  */
 
-import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { err, type Result } from "../kernel/result.ts";
-import { releaseDir, type Verdict } from "../release/checkout.ts";
+import { releaseDir, releasesRoot, type Verdict } from "../release/checkout.ts";
 import { keepGood } from "../release/launch.ts";
 import { liveSchema, releaseSchema } from "../release/rollback.ts";
 import { beginSwap, endSwap, startRelease, swapBlocked } from "../release/swap.ts";
-import type { Deployer } from "./deploy.ts";
+import type { Deployer, ReleaseStore } from "./deploy.ts";
+import type { Stored } from "./prune.ts";
 
 const REF = /^tree\/([0-9a-f]{40}):([0-9A-Za-z][0-9A-Za-z.+_-]{0,63})$/;
 const TREE_PARTS = ["src", "package.json", "tsconfig.json"];
 /** A tree that has served: a rollback target, not a candidate, so it is not preflighted again. */
 const LIVE_MARK = ".was-live";
 const DEP_FIELDS = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"];
+const SHA = /^[0-9a-f]{40}$/;
+
+/** The commit a swapper ref (`tree/<sha>:<version>`) names; undefined for any other ref. */
+export const treeOf = (ref: string): string | undefined => REF.exec(ref)?.[1];
 
 export interface SwapperInput {
   readonly dataDir: string;
@@ -147,7 +160,31 @@ export function swapper(i: SwapperInput): Deployer {
     return known < live ? `${sha} predates schema ${live}; rolling back would need a down-migration` : undefined;
   }
 
+  const store: ReleaseStore = {
+    async list() {
+      const root = releasesRoot(i.dataDir);
+      if (!existsSync(root)) return [];
+      const found: Stored[] = [];
+      for (const name of readdirSync(root)) {
+        if (!SHA.test(name)) continue;
+        try {
+          found.push({ id: name, at: statSync(join(root, name)).mtimeMs });
+        } catch {
+          // Removed between the listing and the look.
+        }
+      }
+      return found;
+    },
+    idOf: treeOf,
+    async remove(sha) {
+      if (!SHA.test(sha)) throw new Error("not a commit id");
+      if (sha === i.commit() || (handedTo !== undefined && REF.exec(handedTo)?.[1] === sha)) throw new Error(`${sha.slice(0, 12)} is running`);
+      rmSync(releaseDir(i.dataDir, sha), { recursive: true, force: true });
+    },
+  };
+
   return {
+    store,
     async image() {
       return handedTo ?? here();
     },

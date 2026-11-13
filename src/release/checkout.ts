@@ -53,8 +53,12 @@ export async function checkoutRelease(
   }
 }
 
-/** Remove all but the `keep` newest releases, and `keep` is at least one. Returns what went. */
-export function pruneReleases(dataDir: string, keep: number, current: string): string[] {
+/**
+ * Remove all but the `keep` newest releases, and `keep` is at least one; the
+ * commits in `protect` (the landed one, the running one, the keeper's
+ * rollback target) stay however old. Returns what went.
+ */
+export function pruneReleases(dataDir: string, keep: number, protect: readonly string[]): string[] {
   const root = releasesRoot(dataDir);
   if (!existsSync(root)) return [];
   const limit = Math.max(1, Math.floor(keep));
@@ -63,7 +67,7 @@ export function pruneReleases(dataDir: string, keep: number, current: string): s
     .map((name) => ({ name, at: statSync(join(root, name)).mtimeMs }))
     .sort((a, b) => b.at - a.at || (a.name < b.name ? -1 : 1));
   const kept = new Set(found.slice(0, limit).map((r) => r.name));
-  kept.add(current);
+  for (const sha of protect) kept.add(sha);
   const gone: string[] = [];
   for (const { name } of found) {
     if (kept.has(name)) continue;

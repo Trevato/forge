@@ -53,6 +53,20 @@ keyboard. It does what the steward's `release.sh`, `verify-after.sh` and
    by name (`keeper/rollback.ts`). There is no "undo to previous": on
    2026-10-27 a `rollout undo` put the broken version back for two minutes.
    A release that is not live 3 h after its cut is rolled back the same way.
+5. **Prune** (`keeper/prune.ts`, #11801). Once a release is verified live,
+   the keeper removes the deployer's stored releases beyond the newest 15,
+   never the live one or the release's named known-good, however old. Under
+   the self-swap keeper these are the trees under `releases/<sha>/`; the
+   commits removed are `pruned` on `release.verified_live` (with
+   `pruneError` when the store refused, and the release stays verified).
+   The Deployment-patch deployer keeps no store the forge can reach, so it
+   prunes nothing: there the pg-grand host timer `forge-prune-images` is
+   still the only pruner, until that deployer gets a store behind the same
+   `ReleaseStore` port (#11914). If the live, running or known-good release names no
+   stored one, it prunes nothing and says so in `pruneError`. Landing's own
+   prune of `releases/` (keep `FORGE_RELEASES_KEEP`) never removes the
+   keeper's newest release or its known-good tree. Removal runs inside the
+   tick. Under the swap keeper only, this replaces `forge-prune-images`.
 
 Every step is an event on the outbox: `release.cut`, `release.released`,
 `release.verified_live`, `release.rolled_back` and `release.held`.

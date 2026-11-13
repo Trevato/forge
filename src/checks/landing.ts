@@ -36,6 +36,8 @@ import { gateRecorded, gateRunning, recordedVerdict } from "./queue_store.ts";
 import { checksFor, type GateDone } from "./service.ts";
 import { landVerdict, type LandVerdict } from "./tiers.ts";
 import { ownProbeHeaders } from "../kernel/probe.ts";
+import { listKeeperReleases } from "../keeper/record.ts";
+import { treeOf } from "../keeper/swapper.ts";
 
 /**
  * The full gate, once, on a commit that is what main would become — one
@@ -144,6 +146,18 @@ async function preflightTrusted(dir: string, dataDir: string): Promise<Verdict> 
   return first.ok ? first : preflightRelease(dir, dataDir);
 }
 
+/**
+ * The trees the release keeper may still need (#11801): the one running, the
+ * keeper's newest release and that release's named known-good, the rollback
+ * target. Landing's prune never removes them, so the keeper's own rule is
+ * what decides when they go.
+ */
+function keeperTrees(app: App): string[] {
+  const newest = listKeeperReleases(app.db, 1)[0];
+  const trees = [running().commit, newest?.sha, newest === undefined ? undefined : treeOf(newest.knownGood.image)];
+  return trees.filter((sha): sha is string => typeof sha === "string");
+}
+
 /** Landings queue behind one another: two checkouts never share releases/. */
 let turn: Promise<void> = Promise.resolve();
 
@@ -171,7 +185,7 @@ async function cut(
     ok: verdict.ok,
     line: verdict.line,
   });
-  pruneReleases(dataDir, app.config.releasesKeep ?? DEFAULT_KEEP, sha);
+  pruneReleases(dataDir, app.config.releasesKeep ?? DEFAULT_KEEP, [sha, ...keeperTrees(app)]);
   if (!verdict.ok) {
     app.log.warn("release preflight failed", {
       sha: sha.slice(0, 12),
