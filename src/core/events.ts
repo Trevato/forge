@@ -20,11 +20,26 @@ export interface ForgeEvent {
   readonly actorId: string | null;
   readonly payload: Record<string, unknown>;
   readonly createdAt: string;
+  /** Its place in the outbox; set on an event the tail read (`core/event_tail.ts`), no other. */
+  readonly seq?: number;
   /** Set when the actor acted through the forge's agent: `conversation:<id>`. */
   readonly via?: string;
 }
 
 export type EventListener = (event: ForgeEvent) => void;
+
+/**
+ * When a listener hears an event. With one thread (the default) every
+ * listener hears every event inside `append`, as it always did, and the mode
+ * means nothing. With the engine on its own thread (`engine/`), the bus is
+ * split: an `inline` listener (the default: a cache, a reactor, a screen) hears
+ * its own thread's appends at once, as ever, and the other thread's from the
+ * tail; a `local` one (it writes, so it must act once, where the event was
+ * made) hears only its own appends; an `ordered` one (an event stream, whose
+ * ids are its readers' cursors) hears everything from the tail alone, so
+ * committed and in `seq` order.
+ */
+export type ListenerMode = "ordered" | "inline" | "local";
 
 /** A payload with every granted secret value taken out of its strings. */
 function scrubPayload(payload: Record<string, unknown>): Record<string, unknown> {
@@ -43,9 +58,27 @@ function scrubPayload(payload: Record<string, unknown>): Record<string, unknown>
 }
 
 export class EventBus {
-  private listeners = new Set<EventListener>();
+  private listeners = new Map<EventListener, ListenerMode>();
+  /** Ids this bus appended that the tail has not yet handed back: it hears them as its own. */
+  private readonly own = new Set<string>();
+  /** True once the outbox is tailed (`core/event_tail.ts`): ordered listeners then wait for it. */
+  split = false;
+  /** Called after each append: wakes the tail, or the other thread. */
+  afterAppend: (() => void) | undefined;
+  /** Set by the tail: hands over what is committed, so a new listener starts exactly at the head. */
+  catchUp: (() => void) | undefined;
 
   constructor(private readonly db: Database) {}
+
+  /** Appended here and not yet seen by the tail. */
+  get pendingOwn(): number {
+    return this.own.size;
+  }
+
+  /** The tail has read everything committed: what is still pending was rolled back and will not come. */
+  forgetPendingOwn(): void {
+    this.own.clear();
+  }
 
   /** Durable append, then best-effort wake. Returns the stored event. */
   append(input: {
@@ -78,25 +111,48 @@ export class EventBus {
         via ?? null,
       );
 
-    for (const listener of this.listeners) {
-      // A listener throw must never travel up into the appender's transaction.
-      try {
-        listener(event);
-      } catch (error) {
-        log.error("event listener threw", {
-          kind: event.kind,
-          error: String(error),
-        });
-      }
+    if (this.split) {
+      // A tail that never runs must not grow this without end.
+      if (this.own.size >= OWN_KEPT) this.own.delete(this.own.values().next().value as string);
+      this.own.add(event.id);
     }
+    for (const [listener, mode] of this.listeners)
+      if (!this.split || mode !== "ordered") this.hear(listener, event);
+    this.afterAppend?.();
     return event;
   }
 
-  subscribe(listener: EventListener): () => void {
-    this.listeners.add(listener);
+  /**
+   * An event the tail read from the outbox, in `seq` order. Ordered listeners
+   * hear all of them; inline ones those the other thread made; local ones none.
+   */
+  deliver(event: ForgeEvent): void {
+    const mine = this.own.delete(event.id);
+    for (const [listener, mode] of this.listeners)
+      if (mode === "ordered" || (mode === "inline" && !mine)) this.hear(listener, event);
+  }
+
+  private hear(listener: EventListener, event: ForgeEvent): void {
+    // A listener throw must never travel up into the appender's transaction.
+    try {
+      listener(event);
+    } catch (error) {
+      log.error("event listener threw", {
+        kind: event.kind,
+        error: String(error),
+      });
+    }
+  }
+
+  subscribe(listener: EventListener, mode: ListenerMode = "inline"): () => void {
+    if (this.split && mode === "ordered") this.catchUp?.();
+    this.listeners.set(listener, mode);
     return () => this.listeners.delete(listener);
   }
 }
+
+/** Own ids remembered while the tail catches up: far more than it is ever behind. */
+const OWN_KEPT = 4096;
 
 /**
  * Events after the one named `?n`, in the order they were written.
@@ -205,6 +261,7 @@ export function listTeamEventsFor(
 
 interface EventRow {
   id: string;
+  seq?: number | null;
   kind: string;
   repo_id: string | null;
   actor_id: string | null;
@@ -222,6 +279,19 @@ const toEvent = (r: EventRow): ForgeEvent => ({
   createdAt: r.created_at,
   ...(r.via ? { via: r.via } : {}),
 });
+
+/** Events with a `seq` past `after`, oldest first: what the tail reads (`core/event_tail.ts`). */
+export function listEventsAfterSeq(db: Database, after: number, limit = 500): ForgeEvent[] {
+  return db
+    .query<EventRow, [number, number]>("SELECT * FROM event WHERE seq > ?1 ORDER BY seq LIMIT ?2")
+    .all(after, limit)
+    .map((r) => ({ ...toEvent(r), seq: r.seq as number }));
+}
+
+/** The newest event's `seq`, or 0 for an empty outbox. */
+export function headSeq(db: Database): number {
+  return db.query<{ s: number | null }, []>("SELECT MAX(seq) AS s FROM event").get()?.s ?? 0;
+}
 
 /** One event by id, or undefined. No access check: the caller owes one. */
 export function getEvent(db: Database, eventId: string): ForgeEvent | undefined {

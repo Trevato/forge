@@ -466,6 +466,32 @@ copied data directory, requests the whole way, zero refused.
 **A migration only adds** (see "Data & state model"), so the old process can
 keep serving on the database the new one migrated.
 
+## Two threads
+
+One thread serves and works, by default. `FORGE_ENGINE=worker` puts the
+engine's duties (`engine/duties.ts`) on a Worker of the same process with a
+database handle of its own, and keeps one thread for a hosted child, a
+read-only standby and a test boot whatever the variable says. The two threads
+share nothing in memory; the contract is the one above, between handles:
+
+- **The outbox is the one bus.** `core/event_tail.ts` hands each thread the
+  rows the other appended, committed and in `seq` order, starting at its own
+  head; a one-byte message wakes it at once and a 50 ms timer backs the wake up.
+  A listener says when it hears: `inline` (the default: its own thread's appends
+  at once, as ever, and the other thread's from the tail), `local` (it writes, so
+  it acts once, where the event was made: webhook enqueue, estimates, following)
+  or `ordered` (an event stream, whose ids are its readers' cursors: the tail
+  alone, so the outbox's order and never an event that rolled back).
+- **A write lock is waited for synchronously.** The serving thread waits two
+  seconds, not fifteen; the engine says it is alive every second and a thread
+  silent for fifteen is ended and started again (its open transaction goes with
+  its handle). A duty holds the lock for milliseconds, never across an `await`.
+- **What cannot move yet** is what pages read from the engine's memory: the apps
+  runtime's ports, the merge queue, the crew's running runs, the run-log taps,
+  the observations the finishing pass and the pump keep. Each becomes a row
+  (written by the engine, read by the page) before its owner moves; until then
+  its owner stays on the serving thread and is not a duty.
+
 ## The diff viewer
 
 The centerpiece of code review, built from the distilled state of the art:

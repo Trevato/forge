@@ -232,14 +232,13 @@ export function viewerStream(
   };
   const after = resumeFrom(request);
   return eventStream(app, request, (emit, _close, ready) => {
-    if (after !== undefined) {
-      const missed = listEventsVisibleTo(app.db, viewer, {
-        afterId: after,
-        limit: 200,
-      }).reverse();
-      for (const event of missed)
-        if (meant(event)) emit("forge", named(event), event.id);
-    }
+    // Subscribed before the replay is read, so no event falls between them; an
+    // event both hold is sent once, in the replay.
+    const replayed = new Set<string>();
+    const send = (event: ForgeEvent, live = true): void => {
+      if (live ? replayed.delete(event.id) : (replayed.add(event.id), false)) return;
+      emit("forge", named(event), event.id);
+    };
     // New log lines of a run whose log the viewer may read (`mayReadRunLog`). Not
     // history: no id, never replayed — a late tab reads the log file.
     const gone = new AbortController();
@@ -265,8 +264,16 @@ export function viewerStream(
     const unsubscribe = app.bus.subscribe((event: ForgeEvent) => {
       if (event.repoId === null ? !event.kind.startsWith("backup.") : !visible(event.repoId)) return;
       if (!meant(event)) return;
-      emit("forge", named(event), event.id);
-    });
+      send(event);
+    }, "ordered");
+    if (after !== undefined) {
+      const missed = listEventsVisibleTo(app.db, viewer, {
+        afterId: after,
+        limit: 200,
+      }).reverse();
+      for (const event of missed)
+        if (meant(event)) send(event, false);
+    }
     return () => {
       gone.abort();
       unsubscribe();
@@ -286,17 +293,23 @@ export function sseStream(
   return eventStream(app, request, (emit) => {
     // The event id doubles as the SSE id, so a reconnecting client resumes
     // from where it stopped: what it missed first, oldest first, then live.
+    // Subscribed first, and an event both hold is sent once (see `viewerStream`).
+    const replayed = new Set<string>();
+    const send = (event: ForgeEvent, live = true): void => {
+      if (live ? replayed.delete(event.id) : (replayed.add(event.id), false)) return;
+      emit(event.kind, redact(event), event.id);
+    };
+    const unsubscribe = app.bus.subscribe((event: ForgeEvent) => {
+      if (event.repoId === repoId && meant(event)) send(event);
+    }, "ordered");
     if (after !== undefined)
       for (const event of listEvents(app.db, {
         repoId,
         afterId: after,
         limit: 200,
       }).reverse())
-        if (meant(event)) emit(event.kind, redact(event), event.id);
-    return app.bus.subscribe((event: ForgeEvent) => {
-      if (event.repoId === repoId && meant(event))
-        emit(event.kind, redact(event), event.id);
-    });
+        if (meant(event)) send(event, false);
+    return unsubscribe;
   });
 }
 
