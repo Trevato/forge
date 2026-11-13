@@ -170,12 +170,15 @@ describe("anonymous spawn", () => {
     }
   });
 
-  test("the rate limit holds a stranger to three spawns a day", async () => {
-    // One spawn already made above; two more are allowed, the fourth is not.
+  test("the rate limit holds one address to its day's spawns", async () => {
+    // One spawn already made above; two more are made, then the rest of the day's
+    // allowance is counted for the same client, and the next is refused.
     for (const name of ["kid2", "kid3"]) {
       const res = await post({ name, dryRun: false });
       expect(res.status).toBe(201);
     }
+    const mine = app.db.query("SELECT bucket, at FROM anon_spawn LIMIT 1").get() as { bucket: string; at: number };
+    for (let i = 3; i < ANON_SPAWNS_PER_DAY; i++) app.db.query("INSERT INTO anon_spawn (bucket, at) VALUES (?, ?)").run(mine.bucket, mine.at);
     const res = await post({ name: "kid4", dryRun: false });
     expect(res.status).toBe(429);
     expect((await res.json()) as any).toEqual(
