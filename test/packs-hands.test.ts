@@ -4,7 +4,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { createRepo } from "../src/core/repos.ts";
+import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
+import { repoDir } from "../src/git/repos.ts";
+import { commitFiles } from "../src/git/write.ts";
 import { serve } from "../src/http/server.ts";
 import { deployPack } from "../src/packs/deploy.ts";
 import { parsePack } from "../src/packs/pack.ts";
@@ -14,7 +18,7 @@ import { deployCommands } from "../src/packs/words.ts";
 import { createForgeApp, forgeCommands } from "../src/tui/forge.ts";
 import { packLines, packsScreen } from "../src/tui/screens/packs.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
-import { cloneEnv, pushEnv, realHands } from "../scripts/pack.ts";
+import { cloneEnv, cloneUrl, pushEnv, realHands } from "../scripts/pack.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
 
@@ -47,6 +51,75 @@ describe("git credentials", () => {
       expect(seen.every((h) => h === null)).toBe(true);
     } finally {
       await stranger.stop(true);
+    }
+  });
+});
+
+describe("clone URL", () => {
+  test("a GitHub source and a forge source both clone at the .git address", () => {
+    expect(cloneUrl("https://github.com/a/b")).toBe("https://github.com/a/b.git");
+    expect(cloneUrl("https://github.com/a/b.git")).toBe("https://github.com/a/b.git");
+    expect(cloneUrl("https://forge.example/owner/name")).toBe("https://forge.example/owner/name.git");
+  });
+
+  test("cloning a source without .git asks the host at the .git path this forge serves", async () => {
+    const seen: string[] = [];
+    const stranger = Bun.serve({
+      port: 0,
+      fetch(req) {
+        seen.push(new URL(req.url).pathname);
+        return new Response("no", { status: 404 });
+      },
+    });
+    try {
+      const r = await realHands("http://127.0.0.1:1", "t").carryHistory(`http://127.0.0.1:${stranger.port}/owner/name`, "o", "n", undefined);
+      expect(r.ok).toBe(false);
+      expect(seen.some((p) => p.startsWith("/owner/name.git/"))).toBe(true);
+      expect(seen.some((p) => p.startsWith("/owner/name/") && !p.startsWith("/owner/name.git/"))).toBe(false);
+    } finally {
+      await stranger.stop(true);
+    }
+  });
+
+  test("a forge-hosted source written without .git still has its history carried", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pack-clone-git-"));
+    const app = createApp({ dataDir: dir, port: 0 });
+    const servers = await serve(app);
+    try {
+      const made = await createUser(app.db, {
+        origin: "seed",
+        trusted: true,
+        username: "ada",
+        email: "ada@forge.local",
+        password: "a-good-passphrase",
+        adminIfFirst: true,
+      });
+      if (!made.ok) throw new Error(made.error);
+      const src = await createRepo(app.db, app.reposRoot, { ownerId: made.value.id, name: "src", visibility: "public", description: "Source.", defaultBranch: "main" });
+      if (!src.ok) throw new Error(src.error);
+      const dst = await createRepo(app.db, app.reposRoot, { ownerId: made.value.id, name: "dst", visibility: "public", description: "Dest.", defaultBranch: "main" });
+      if (!dst.ok) throw new Error(dst.error);
+      const committed = await commitFiles(repoDir(app.reposRoot, "ada", "src"), {
+        branch: "main",
+        message: "hello",
+        files: [{ path: "hello.txt", content: "from the source\n" }],
+        author: { name: "ada", email: "ada@forge.local" },
+      });
+      if (!committed.ok) throw new Error(JSON.stringify(committed.error));
+      const missing = await fetch(`${servers.url}/ada/src/info/refs?service=git-upload-pack`);
+      expect(missing.status).not.toBe(200);
+      const advertised = await fetch(`${servers.url}/ada/src.git/info/refs?service=git-upload-pack`);
+      expect(advertised.ok).toBe(true);
+      const token = createToken(app.db, made.value.id, "pack", "admin").token;
+      const r = await realHands(servers.url, token).carryHistory(`${servers.url}/ada/src`, "ada", "dst", undefined);
+      expect(r).toEqual({ ok: true, branch: "main" });
+      const log = Bun.spawnSync(["git", "log", "--format=%s", "main"], { cwd: repoDir(app.reposRoot, "ada", "dst"), stdout: "pipe" });
+      expect(log.exitCode).toBe(0);
+      expect(log.stdout.toString()).toContain("hello");
+    } finally {
+      await servers.stop();
+      app.close();
+      await rm(dir, { recursive: true, force: true });
     }
   });
 });
