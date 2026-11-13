@@ -93,6 +93,7 @@ export type AccountSection =
   | "adminflows"
   | "security"
   | "profile"
+  | "appearance"
   | "confirms"
   | "password"
   | "tokens"
@@ -146,6 +147,7 @@ const SECTION_ROWS: readonly (readonly [
   admin: boolean,
 ])[] = [
   ["Account", "Profile", "/settings", "user", (c) => c === "profile", false],
+  ["Account", "Appearance", "/settings/appearance", "eye", (c) => c === "appearance", false],
   ["Account", "Password", "/settings/password", "lock", (c) => c === "password", false],
   ["Account", "Passkeys", "/settings/passkeys", "key", (c) => c === "passkeys", false],
   ["Account", "Computer keys", "/settings/keys", "lock", (c) => c === "keys", false],

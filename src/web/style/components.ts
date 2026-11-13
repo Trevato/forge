@@ -669,27 +669,28 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 }
 @media (min-width: 720px) { .tabs { mask-image: none; } }
 
-/* ---- segmented control (radios in a GET form, or links) ---- */
+/* ---- segmented control (radios in a GET form, links, or a form's submit buttons) ---- */
 .seg {
   display: inline-flex; align-items: center; gap: 2px; flex: none;
   padding: 2px; background: var(--muted); border-radius: var(--radius);
   max-width: 100%; overflow-x: auto; scrollbar-width: none;
 }
 @media (max-width: 420px) { .seg > a, .seg > label { padding: 0 8px; } }
-.seg > a, .seg > label {
+.seg > a, .seg > label, .seg > button {
   display: inline-flex; align-items: center; gap: 6px;
   min-height: 28px; padding: 0 10px; border-radius: var(--radius-sm);
   font-size: 13px; font-weight: 500; color: var(--muted-fg);
   white-space: nowrap; cursor: pointer; margin: 0;
   transition: background-color 120ms var(--ease), color 120ms var(--ease);
 }
-.seg > a:hover, .seg > label:hover { color: var(--fg); }
+.seg > button { border: 0; background: none; }
+.seg > a:hover, .seg > label:hover, .seg > button:hover { color: var(--fg); }
 .seg > label input { position: absolute; opacity: 0; pointer-events: none; }
-.seg > a[aria-current="page"], .seg > label:has(input:checked) {
+.seg > a[aria-current="page"], .seg > label:has(input:checked), .seg > button[aria-pressed="true"] {
   background: var(--card); color: var(--fg); box-shadow: var(--shadow-1);
 }
 .seg > label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
-@media (pointer: coarse) { .seg > a, .seg > label { min-height: 36px; } }
+@media (pointer: coarse) { .seg > a, .seg > label, .seg > button { min-height: 36px; } }
 
 /* ---- menu (details; correct with zero JavaScript) ---- */
 .menu { position: relative; flex: none; }
@@ -717,7 +718,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
   font-size: var(--fs-min); font-weight: 600; letter-spacing: .08em;
   text-transform: uppercase; color: var(--faint);
 }
-.menu-item {
+.menu-item, .menu-row {
   display: flex; width: 100%; align-items: center; gap: 8px;
   padding: 7px 10px; border: 0; border-radius: var(--radius-sm);
   background: none; color: var(--fg); font-size: 14px;
@@ -730,9 +731,29 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .menu-item[aria-disabled="true"]:hover { background: none; }
 .menu-item small { display: block; }
 .menu-item[aria-disabled="true"] .grow { white-space: normal; }
-.menu-item .ico { color: var(--faint); }
+:is(.menu-item, .menu-row) .ico { color: var(--faint); }
 .menu-item .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu-sep { border: 0; border-top: 1px solid var(--border); margin: 5px 4px; }
+.menu-note { flex: 0 1 auto; max-width: 50%; color: var(--faint); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu-item:focus-visible { outline-offset: -2px; }
+.menu > summary .truncate { max-width: 18ch; }
+.menu-row { cursor: default; padding-block: 4px; padding-right: 4px; }
+/* A phone: the bar's menus are a bottom sheet, measured from the bar down to 100dvh. */
+@media (max-width: 719px) {
+  .topbar .menu[open] { position: static; }
+  .topbar .menu[open] > summary::before {
+    content: ""; position: absolute; inset: 0 0 calc(100% - 100dvh); cursor: default;
+    background: color-mix(in srgb, var(--bg) 62%, #0008);
+  }
+  .topbar .menu[open] > .menu-panel {
+    inset: auto 0 calc(100% - 100dvh); max-width: none; max-height: 80dvh;
+    padding: 8px 8px max(8px, env(safe-area-inset-bottom));
+    border-width: 1px 0 0; border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    animation: rise 200ms var(--ease) both;
+  }
+  .topbar :is(.menu-item, .menu-row) { min-height: 44px; font-size: 16px; }
+}
+@keyframes rise { from { transform: translateY(100%); } }
 /* No anchor positioning: browsers that accept anchor-name but not
    position-area would keep position: fixed and park the panel at the
    viewport's corner. Absolute-inside-the-details works everywhere. */
@@ -775,14 +796,6 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
   .topbar-search kbd { display: none; }
   .topbar-tools .btn { flex: none; white-space: nowrap; }
 }
-
-/* ---- theme swatch: the colour chip beside each theme in the menu's picker ---- */
-.swatch {
-  display: inline-block; flex: none; position: relative;
-  width: 20px; height: 20px; border-radius: 999px;
-  border: 1px solid var(--border-strong);
-}
-.swatch::after { content: ""; position: absolute; inset: 6px; border-radius: 999px; }
 
 /* ---- dialog (progressive: every dialog has a real page behind it) ---- */
 .dialog {

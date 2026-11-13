@@ -810,7 +810,7 @@ describe("the header's Talk link carries the subject the page rendered", () => {
     expect(links.length).toBeGreaterThanOrEqual(1);
     expect(new Set(links).size).toBe(1);
     expect(talkLinks(await (await get("/alice/hdr-pub", bob)).text())).toContain("/talk?about=alice/hdr-pub");
-    expect(talkLinks(await (await get("/explore", bob)).text())).toEqual(["/talk", "/talk"]);
+    expect(talkLinks(await (await get("/explore", bob)).text())).toEqual(["/talk"]);
   });
 
   test("a pull page links /talk?about=owner/repo%23N", async () => {
@@ -841,7 +841,7 @@ describe("the header's Talk link carries the subject the page rendered", () => {
     // The rest of the chrome echoes the asked path (the "new issue" link), so compare the Talk entries.
     const [ta, tb] = [talkLinks(await a.text()), talkLinks(await b.text())];
     expect(ta).toEqual(tb);
-    expect(ta).toEqual(["/talk", "/talk"]);
+    expect(ta).toEqual(["/talk"]);
   });
 });
 

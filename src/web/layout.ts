@@ -13,7 +13,6 @@ import { NEW_ISSUE_KEY } from "./script_keys.ts";
 import { newIssueHref } from "./issue_from.ts";
 import { OPENSEARCH_PATH, OPENSEARCH_TITLE, OPENSEARCH_TYPE } from "./opensearch.ts";
 import { protectionNotice } from "../kernel/protection.ts";
-import { administersAny } from "../core/admin_repos.ts";
 import { appsForRepos } from "../core/apps.ts";
 import { foundryHref } from "../actions/foundry_door.ts";
 import { appsRuntime } from "../apps/runtime.ts";
@@ -42,7 +41,6 @@ import { runningLine } from "../kernel/version.ts";
 import {
   bootCss,
   metaThemeColor,
-  THEME_NAMES,
   THEMES,
   type ThemeName,
 } from "../design/themes.ts";
@@ -215,29 +213,24 @@ export interface PageOptions {
 
 // ---- topbar pieces ----
 
-/** The theme choice as a panel section: lives in a menu, never in the bar. */
-function themeForm(active: ThemeName | undefined): Html {
-  const option = (value: string, label: string, checked: boolean) =>
-    html`<label class="check">
-      <input
-        type="radio"
-        name="theme"
-        value="${value}"
-        ${checked ? raw("checked") : null}
-      />
-      <span class="swatch" data-t="${value}"></span>
-      ${label}
-    </label>`;
-  return html`<form class="theme-form" method="post" action="/theme">
-      <fieldset class="field">
-        <legend>Theme</legend>
-        ${option("system", "System", active === undefined)}
-        ${THEME_NAMES.map((name) =>
-          option(name, THEMES[name].label, active === name),
-        )}
-      </fieldset>
-      ${btn("Apply", { size: "sm" })}
-    </form>`;
+/** The theme a mode button sends: the viewer's own named theme while it is of that mode, else the default of the pair. */
+const modeTheme = (mode: "light" | "dark", active: ThemeName | undefined): ThemeName =>
+  active !== undefined && THEMES[active].appearance === mode ? active : mode;
+
+/**
+ * Appearance, as one row of a menu: Auto, Light, Dark. Each is a submit button,
+ * so the row works with no script; the named themes are at /settings/appearance.
+ */
+function themeRow(active: ThemeName | undefined): Html {
+  const mode = active === undefined ? "" : THEMES[active].appearance;
+  const choice = (label: string, value: string, of: string) =>
+    html`<button name="theme" value="${value}" data-a="${of}" aria-pressed="${mode === of ? "true" : "false"}">${label}</button>`;
+  return html`<form class="theme-form menu-row" method="post" action="/theme">
+    ${themeGlyph}<span class="grow" id="menu-theme">Theme</span>
+    <span class="seg" role="group" aria-labelledby="menu-theme"
+      >${choice("Auto", "system", "")}${choice("Light", modeTheme("light", active), "light")}${choice("Dark", modeTheme("dark", active), "dark")}</span
+    >
+  </form>`;
 }
 
 /** Keyboard help: js-only, since the shortcuts it lists only exist then. */
@@ -253,12 +246,19 @@ const helpItem = html`<button class="menu-item js-only hide-sm" type="button" da
 const newIssueItem = (ctx: Ctx): MenuItem[] =>
   ctx.url.pathname.startsWith("/origins/")
     ? []
-    : [{ label: "New issue", href: newIssueHref(ctx.url.pathname), hint: NEW_ISSUE_KEY }];
+    : [{ label: "New issue", href: newIssueHref(ctx.url.pathname), icon: "issue", hint: NEW_ISSUE_KEY }];
 
 function guestMenu(ctx: Ctx, theme: ThemeName | undefined): Html {
   return menu({
     trigger: themeGlyph,
-    items: [...newIssueItem(ctx), { label: "Packs", href: "/packs", icon: "rocket" }, helpItem, themeForm(theme)],
+    items: [
+      ...newIssueItem(ctx),
+      { label: "Packs", href: "/packs", icon: "rocket" },
+      { separator: true, label: "" },
+      themeRow(theme),
+      { label: "All themes", href: "/settings/appearance", icon: "eye" },
+      helpItem,
+    ],
     label: "Appearance and help",
     triggerOptions: { extra: "btn-icon" },
   });
@@ -336,55 +336,31 @@ function userMenu(
   user: User,
   theme: ThemeName | undefined,
   signOut: MenuItem,
-  about?: string,
 ): Html {
+  // Three groups: you, this forge, this browser. What makes things is the "+" beside it;
+  // every other page is in the palette (go_pages.ts) or one step into Settings.
   const items: (MenuItem | Html)[] = [
-    { label: "Your profile", href: `/${user.username}`, icon: "user" },
+    { label: "Your profile", href: `/${user.username}`, icon: "user", note: user.username },
     { label: "Repositories", href: "/repos", icon: "repo" },
     { label: "Apps", href: "/apps", icon: "rocket" },
-    { label: "Notes", href: "/notes", icon: "comment" },
-    { label: "Talk", href: talkHref(about), icon: "comment" },
-    { label: "Explore", href: "/explore", icon: "search" },
-    { label: "Packs", href: "/packs", icon: "rocket" },
-    { label: "Displays", href: "/displays", icon: "monitor" },
-    { label: "Map", href: "/map", icon: "map" },
     ...featureItems(ctx, user),
     { separator: true, label: "" },
-    // The "+" menu shows on every width; these repeat it for the user menu.
-    ...newIssueItem(ctx),
-    { label: "New app", href: "/apps/new", icon: "rocket" },
-    { label: "New repository", href: "/new", icon: "repo" },
-    { label: "Migrate", href: "/migrate", icon: "download" },
-    ...forgeDoor(ctx),
-    { separator: true, label: "" },
     { label: "Settings", href: "/settings", icon: "settings" },
-    { label: "Access codes", href: "/settings/tokens", icon: "key" },
-    { label: "Computer keys", href: "/settings/keys", icon: "lock" },
-    { label: "Connected accounts", href: "/settings/origins", icon: "globe" },
-    ...(!user.isAdmin && administersAny(ctx.app.db, user)
-      ? [{ label: "Boards", href: "/boards", icon: "activity" as const }]
-      : []),
-    ...(user.isAdmin
+    ...(user.isAdmin && user.kind !== "agent"
       ? [
-          { label: "Crew", href: "/settings/crew", icon: "bot" as const },
-          ...(user.kind === "agent"
-            ? []
-            : [
-                { label: "Boards", href: "/boards", icon: "activity" as const },
-                { label: "System memory", href: "/system", icon: "activity" as const },
-              ]),
+          { label: "People", href: "/settings/people", icon: "users" as const },
+          { label: "Forges", href: "/forges", icon: "fork" as const },
         ]
       : []),
     { separator: true, label: "" },
+    themeRow(theme),
     helpItem,
-    themeForm(theme),
-    { separator: true, label: "" },
     signOut,
   ];
   return menu({
-    trigger: html`${icon("user")}<span class="hide-sm">${user.username}</span>`,
+    trigger: html`${icon("user")}<span class="hide-sm"><span class="truncate">${user.username}</span></span>`,
     items,
-    title: `Signed in as ${user.username}`,
+    label: `Account: ${user.username}`,
   });
 }
 
@@ -707,7 +683,6 @@ function topbar(
                       icon: "signOut",
                     }
                   : { label: "Sign out", post: "/logout", icon: "signOut" },
-                about,
               )}`
           : html`${guestMenu(ctx, theme)}${when(signUpHref(ctx), (href) => btn("Sign up", { href }))}${btn("Sign in", {
               href: signInHref(ctx),

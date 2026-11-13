@@ -146,8 +146,9 @@ export const overlayHostJs = /* js */ `
     function adopt(m) {
       if (find(m)) return;
       open(m, { opener: m.querySelector('summary') });
-      var first = m.querySelector('.menu-panel .menu-item, .menu-panel input');
-      if (first && !first.closest('.theme-form')) first.focus();
+      var first = m.querySelector('.menu-panel a.menu-item, .menu-panel button.menu-item, .menu-panel input');
+      // The panel opens in view, under its button or as a phone's sheet: taking focus must not move the page.
+      if (first) first.focus({ preventScroll: true });
     }
     doc.addEventListener('toggle', function (e) {
       var m = e.target;

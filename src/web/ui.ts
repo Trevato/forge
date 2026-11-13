@@ -1135,6 +1135,8 @@ export interface MenuItem {
   hint?: string;
   /** The link's tooltip; escaped. Absent, no title renders. */
   title?: string;
+  /** A quiet word at the row's end: whose profile, which forge. */
+  note?: string;
 }
 
 /** A dropdown built on `<details>` — the only construct correct with JS off. */
@@ -1191,7 +1193,7 @@ export function menu(o: {
           href="${i.href ?? "#"}"
           ${i.current ? raw('aria-current="true"') : i.title ? html`title="${i.title}"` : null}
           >${i.icon ? icon(i.icon) : null}<span class="grow">${i.label}</span
-          >${i.hint ? keyHint(i.hint) : null}${i.current ? icon("check") : null}</a
+          >${i.note ? html`<span class="menu-note">${i.note}</span>` : null}${i.hint ? keyHint(i.hint) : null}${i.current ? icon("check") : null}</a
         >`;
       })}
     </div>

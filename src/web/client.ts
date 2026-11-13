@@ -1265,36 +1265,34 @@ const shellCore = /* js */ `
   ${MEDIA_PLAY_JS}
 
   // ---- menus (details): opened, dismissed and focused by the overlay host ----
+  // Arrows, Home and End walk the rows; Tab stays inside, so Escape is the way out.
   doc.addEventListener('keydown', function (e) {
-    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
-    var panel = e.target && e.target.closest ? e.target.closest('.menu-panel') : null;
-    if (!panel) return;
-    var items = Array.prototype.slice.call(panel.querySelectorAll('.menu-item, .theme-form input'));
+    var step = { ArrowDown: 1, ArrowUp: -1, Home: 0, End: 0, Tab: e.shiftKey ? -1 : 1 }[e.key];
+    var menu = e.target && e.target.closest ? e.target.closest('details.menu[open]') : null;
+    if (step === undefined || !menu || (step === 0 && e.target.tagName === 'INPUT')) return;
+    var items = Array.prototype.filter.call(menu.querySelectorAll(e.key === 'Tab' ? '.menu-panel a[href], .menu-panel button, .menu-panel input' : 'a.menu-item, button.menu-item'), function (n) { return n.offsetParent; });
     var at = items.indexOf(doc.activeElement);
-    var next = items[(at + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length];
+    var next = items[e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : (at + step + items.length) % items.length];
     if (next) { next.focus(); e.preventDefault(); }
   });
 
-  // ---- theme: apply instantly, persist once the choice settles ----
-  var themeForm = doc.querySelector('.theme-form');
-  if (themeForm) {
-    var apply = themeForm.querySelector('button[type=submit]');
-    if (apply) apply.hidden = true;
-    var pending = 0;
-    themeForm.addEventListener('change', function () {
-      var choice = new FormData(themeForm).get('theme');
-      var root = doc.documentElement;
-      root.classList.add('theme-anim');
-      if (!choice || choice === 'system') root.removeAttribute('data-theme');
-      else root.setAttribute('data-theme', String(choice));
-      window.setTimeout(function () { root.classList.remove('theme-anim'); }, 260);
-      // Arrowing through six radios must not fire six writes.
-      window.clearTimeout(pending);
-      pending = window.setTimeout(function () {
-        fetch(themeForm.action, { method: 'POST', body: new FormData(themeForm) }).catch(function () {});
-      }, 350);
+  // ---- theme: a press applies at once and is kept by the same POST the form makes ----
+  doc.addEventListener('click', function (e) {
+    var b = e.target && e.target.closest ? e.target.closest('.theme-form button[name=theme]') : null;
+    if (!b) return;
+    e.preventDefault();
+    var root = doc.documentElement, mode = b.getAttribute('data-a');
+    root.classList.add('theme-anim');
+    if (b.value === 'system') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', b.value);
+    window.setTimeout(function () { root.classList.remove('theme-anim'); }, 260);
+    // The menu's row and the settings gallery agree: a mode button stands for the theme now worn.
+    doc.querySelectorAll('.theme-form button[name=theme]').forEach(function (o) {
+      var seg = o.closest('.seg'), on = seg ? o.getAttribute('data-a') === mode : o.value === b.value;
+      if (seg && on) o.value = b.value;
+      o.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
-  }
+    fetch(b.form.action, { method: 'POST', body: new URLSearchParams({ theme: b.value }) }).catch(function () {});
+  });
 
   // ---- copy buttons ----
   // navigator.clipboard is unavailable on a plain-http origin, which is

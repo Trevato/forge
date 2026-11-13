@@ -660,7 +660,8 @@ describe("themes", () => {
     ).text();
     for (const name of THEME_NAMES) {
       expect(css).toContain(`:root[data-theme="${name}"]`);
-      expect(css).toContain(`.swatch[data-t="${name}"]`);
+      // The settings gallery's previews wear a theme through data-look.
+      expect(css).toContain(`[data-look="${name}"]`);
     }
     // System pair: light in :root, dark behind the media query.
     expect(css).toContain("prefers-color-scheme: dark");
@@ -677,16 +678,15 @@ describe("themes", () => {
     const text = await (await fetch(`${base}/explore`)).text();
     expect(text).not.toMatch(/<html[^>]*\sdata-theme=/);
     expect(text).toContain('action="/theme"');
-    for (const name of THEME_NAMES) {
-      expect(text).toContain(`value="${name}"`);
-    }
-    // §5: each choice is a labelled radio, the button a plain btn; no bespoke classes.
+    // The menu holds one row: Auto, Light, Dark, each a submit button of a §5 seg. No radios, no Apply.
     const form = text.slice(text.indexOf('action="/theme"'));
-    const end = form.indexOf("</form>");
-    const panel = form.slice(0, end);
-    expect(panel.match(/<label class="check">/g)?.length).toBe(THEME_NAMES.length + 1);
-    expect(panel.match(/type="radio"/g)?.length).toBe(THEME_NAMES.length + 1);
-    expect(panel).toMatch(/<button\s+type="submit"[\s\S]*class="btn"[\s\S]*Apply/);
+    const panel = form.slice(0, form.indexOf("</form>"));
+    expect([...panel.matchAll(/<button name="theme" value="([^"]+)"[^>]*aria-pressed="([^"]+)"/g)].map((m) => `${m[1]}:${m[2]}`)).toEqual(["system:true", "light:false", "dark:false"]);
+    expect(panel).toContain('class="seg"');
+    expect(panel).not.toContain('type="radio"');
+    // Every theme is a card on the appearance page, a visitor's too.
+    const gallery = await (await fetch(`${base}/settings/appearance`)).text();
+    for (const name of THEME_NAMES) expect(gallery).toContain(`class="theme-card" name="theme" value="${name}"`);
     expect(text).not.toContain("theme-option");
     expect(text).not.toContain("theme-apply");
     // Critical paint before the stylesheet: system pair (light default + dark
@@ -722,7 +722,7 @@ describe("themes", () => {
     const text = await (await fetch(`${base}/explore`, { headers: { cookie } })).text();
     expect(text).toContain('data-theme="midnight"');
     // The switcher shows the active choice.
-    expect(text).toMatch(/value="midnight"\s+checked/);
+    expect(text).toContain('<button name="theme" value="midnight" data-a="dark" aria-pressed="true">Dark</button>');
     // Boot paint follows the attribute: midnight's ground for this page, and
     // the same rules as a system page, so switching away repaints at once.
     const boot = text.match(/<style>([^<]*)<\/style>/)?.[1];

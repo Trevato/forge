@@ -83,6 +83,7 @@ import { STOPPED_ONE, myShells, stopIdleShells, stopShell, stoppedIdleSays } fro
 import { DOTFILES_ERRORS, dotfilesRepoOf, setDotfilesRepo } from "../../machines/dotfiles.ts";
 import { everydayLine } from "./everyday.ts";
 import { passkeyJs } from "../passkey-client.ts";
+import { THEME_NAMES, THEMES, type ThemeName } from "../../design/themes.ts";
 
 /** A titled block of a settings page: a heading over its content, no box. */
 const block = (title: string, body: Html, intro?: string): Html =>
@@ -104,7 +105,7 @@ const help = (notes: readonly (readonly [string, string | Html])[]): Html =>
     </dl>
   </details>`;
 
-type Section = "profile" | "password" | "tokens" | "keys" | "passkeys" | "shells";
+type Section = "profile" | "appearance" | "password" | "tokens" | "keys" | "passkeys" | "shells";
 
 // The section list lives beside the newest page that joins it, so adding one
 // cannot leave the others pointing at a nav that has forgotten it.
@@ -478,6 +479,56 @@ export function shellsView(ctx: Ctx, user: User): Html {
           }),
     )}
   </ul>`;
+}
+
+/** The gallery's own rules, sent with its page only: every other page's stylesheet stays without them. */
+const galleryCss = /* css */ `
+.theme-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+@media (min-width: 720px) { .theme-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.theme-card {
+  display: grid; gap: 8px; padding: 8px 8px 12px; text-align: left; cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--card);
+  font-size: 14px; font-weight: 550;
+}
+.theme-card:hover { border-color: var(--border-strong); }
+.theme-card[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.theme-card small { display: block; font-weight: 400; }
+.theme-look { display: flex; height: 76px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.theme-look > span { flex: 1; padding: 12px 12px 0; background: var(--bg); }
+.theme-look > span > span {
+  display: grid; align-content: start; gap: 6px; height: 100%; padding: 8px;
+  border: 1px solid var(--border); border-bottom: 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0; background: var(--card);
+}
+.theme-look i { height: 5px; width: 46%; border-radius: 3px; background: var(--fg); }
+.theme-look i + i { width: 78%; background: var(--faint); }
+.theme-look i + i + i { width: 30%; height: 10px; margin-top: 2px; background: var(--accent); }
+`;
+
+/** One theme as a card that wears its own colours; Auto wears the default pair, side by side. */
+function themeCard(value: string, label: string, kind: string, looks: readonly ThemeName[], on: boolean): Html {
+  return html`<button class="theme-card" name="theme" value="${value}" data-a="${value === "system" ? "" : kind.toLowerCase()}" aria-pressed="${on ? "true" : "false"}">
+    <span class="theme-look" aria-hidden="true">${looks.map((look) => html`<span data-look="${look}"><span><i></i><i></i><i></i></span></span>`)}</span>
+    <span>${label}<small class="muted">${kind}</small></span>
+  </button>`;
+}
+
+// GET /settings/appearance — every theme, to pick by looking. A visitor's too: the choice is a cookie.
+export function appearancePage(ctx: Ctx): Response {
+  const body = block(
+    "Theme",
+    html`<form class="theme-form theme-grid" method="post" action="/theme">
+      ${themeCard("system", "Auto", "Follows your device", ["light", "dark"], ctx.theme === undefined)}
+      ${THEME_NAMES.map((name) =>
+        themeCard(name, THEMES[name].label, THEMES[name].appearance === "dark" ? "Dark" : "Light", [name], ctx.theme === name),
+      )}
+    </form>`,
+    "Kept in this browser.",
+  );
+  const framed = ctx.auth.user
+    ? settingsLayout(sections(ctx, "appearance"), body, "Account settings")
+    : html`<div class="narrow-wide">${body}</div>`;
+  return page({ ctx, title: "Appearance", styleCss: galleryCss, body: html`<div class="page-head"><h1>Appearance</h1></div>${framed}` });
 }
 
 // GET /settings/shells

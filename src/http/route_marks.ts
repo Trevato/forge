@@ -252,6 +252,7 @@ export const ROUTES: Readonly<Record<string, Mark>> = {
   "/settings/parent/link": "open",
   "/settings/parent/unlink": "open",
   "/settings/email/verify": "open",
+  "/settings/appearance": "open",
   "/settings/password": "open",
   "/settings/everyday": "open",
   "/settings/everyday/options": "admin",

@@ -102,31 +102,17 @@ const MENU_TITLES: Record<string, string> = {
   "Your profile": "root",
   Repositories: "Your repositories",
   Apps: "Apps",
-  Notes: "Notes",
-  Talk: "Talk",
-  Explore: "Explore",
-  Packs: "Packs",
-  Displays: "Displays",
-  Map: "Map",
-  "New app": "New app",
-  "New repository": "New repository",
-  Migrate: "Migrate",
-  "New forge": "New forge",
   Settings: "Settings",
-  "Access codes": "Access codes",
-  "Computer keys": "Computer keys",
-  "Connected accounts": "Connected accounts",
-  Crew: "Crew",
-  Boards: "Boards",
-  "System memory": "System",
+  People: "People",
+  Forges: "Forges you sent",
 };
 
 test("every link in the account menu lands on a page that is its label", async () => {
   const home = await (await get("/", rootCookie)).text();
-  const menu = home.slice(home.indexOf("Signed in as root"), home.indexOf('class="menu-sep"', home.indexOf("Boards")));
+  const menu = home.slice(home.indexOf('aria-label="Account: root"'), home.indexOf('action="/theme"'));
   const items = [...menu.matchAll(/href="([^"]+)"[^>]*>\s*<svg.*?<\/svg><span class="grow">([^<]+)<\/span/gs)].map((m) => ({ href: m[1]!, label: m[2]! }));
   expect(items.find((i) => i.label === "Repositories")?.href).toBe("/repos");
-  expect(items.length).toBeGreaterThan(10);
+  expect(items.map((i) => i.label)).toEqual(Object.keys(MENU_TITLES));
   for (const item of items) {
     const want = MENU_TITLES[item.label];
     expect(want, `no expected title for the menu label "${item.label}"`).toBeDefined();

@@ -22,7 +22,7 @@
  * this file reads those two, so neither may ever read `css` back.
  */
 
-import { swatchCss, themeCss } from "../design/themes.ts";
+import { themeCss } from "../design/themes.ts";
 import { boardCss } from "./pages/board_style.ts";
 import { homeFlowCss } from "./pages/home_flow_style.ts";
 import { base, layers, reset, utilities } from "./style/base.ts";
@@ -46,6 +46,5 @@ export const css = [
   model3dCss,
   gcodeCss,
   utilities,
-  swatchCss,
   pickCss,
 ].join("\n");

@@ -12,4 +12,12 @@ to move between items with the arrow keys.
   hover, and lets its label wrap over the `<small>` reason.
 - `.menu-title` — a small uppercase heading over a group of items (`menu({ title })`, "Branches" and "Tags" in the refs
   picker); text only, never focused.
+- `.menu-note` — a quiet word at the end of an item (`{ note }`): the signed-in name beside "Your profile";
+  ellipsized at half the row.
+- `.menu-row` — a row that holds a control and goes nowhere: icon, label, then the control (the Theme row's `.seg`).
+  Laid out as an item, with no hover.
 - `.menu-sep` — an `<hr>` between groups (`{ separator: true }` among `menu()`'s items): one border line.
+
+Under 720px a menu in the topbar is a sheet: the panel spans the bottom edge of the window (measured from the bar to
+`100dvh`, so it clears the browser's own bars and the home indicator), items are 44px, and a shade covers the page.
+Tab stays inside an open menu; Escape closes it and returns to its button.

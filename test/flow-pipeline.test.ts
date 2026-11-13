@@ -290,10 +290,9 @@ describe("/flow: the forge shows its own bottleneck", () => {
     expect(panel).toContain('action="/theme"');
   });
 
-  test("the shell script wires the theme form by its new class and guards focus on the theme form", () => {
-    expect(shellJs).toContain("doc.querySelector('.theme-form')");
+  test("the shell script wires the theme buttons by the form's class", () => {
+    expect(shellJs).toContain("closest('.theme-form button[name=theme]')");
     expect(shellJs).not.toContain(".theme-menu form");
-    expect(shellJs).toContain("first.closest('.theme-form')");
   });
 
   const flowCommand = (user?: User) => {

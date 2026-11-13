@@ -206,6 +206,7 @@ export const utilities = /* css */ `
    on the page when there is none to run. */
 .js-only { display: none; }
 :root.js .js-only { display: inline-flex; }
+@media (max-width: 719px) { :root.js .js-only.hide-sm { display: none; } }
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;

@@ -37,6 +37,7 @@ const BUILT_IN_MENU_LABELS = [
   "origins", "boards", "crew", "system memory", "help", "sign out", "log out", "sign in", "admin", "administration",
   "access codes", "computer keys", "connected accounts", "jump to anywhere",
   "theme", "create", "new forge", "create new", "appearance and help", "features from apps", "keyboard shortcuts",
+  "people", "forges", "all themes", "appearance", "account",
 ];
 
 const menuForm = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();

@@ -99,6 +99,7 @@ import {
 } from "../web/pages/crew.ts";
 import {
   accountPage,
+  appearancePage,
   shellsPage,
   shellStop,
   shellsStopIdle,
@@ -166,6 +167,7 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("POST", "/settings/everyday/options", everydayOptions);
   router.add("POST", "/settings/everyday/switch", everydaySwitch);
   router.add("POST", "/settings/everyday/keep", everydayKeep);
+  router.add("GET", "/settings/appearance", appearancePage);
   router.add("GET", "/settings/shells", shellsPage);
   router.add("POST", "/settings/shells/stop-idle", shellsStopIdle);
   router.add("POST", "/settings/shells/:id/stop", shellStop);

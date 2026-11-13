@@ -410,32 +410,17 @@ function vars(theme: Theme): string {
 
 /**
  * The variable blocks the stylesheet is built on. Explicit themes win via
- * `data-theme`; with no attribute the default pair follows the OS.
+ * `data-theme`; with no attribute the default pair follows the OS. A box that
+ * names a theme in `data-look` wears it whatever the page wears: the previews
+ * of the settings gallery.
  */
 export const themeCss = [
   `:root {\n${Object.entries(FIXED_TOKENS).map(([key, value]) => `  --${key}: ${value};`).join("\n")}\n}`,
   `:root {\n${vars(THEMES.light)}\n}`,
   `@media (prefers-color-scheme: dark) {\n:root:not([data-theme]) {\n${vars(THEMES.dark)}\n}\n}`,
   ...THEME_NAMES.map(
-    (name) => `:root[data-theme="${name}"] {\n${vars(THEMES[name])}\n}`,
+    (name) => `:root[data-theme="${name}"], [data-look="${name}"] {\n${vars(THEMES[name])}\n}`,
   ),
-].join("\n");
-
-/**
- * Swatches for the theme menu: each theme paints its own preview (page
- * background, card, accent dot) regardless of the theme currently active.
- * "System" is a half-light/half-dark split of the default pair.
- */
-export const swatchCss = [
-  ...THEME_NAMES.map((name) => {
-    const t = THEMES[name].tokens;
-    return [
-      `.swatch[data-t="${name}"] { background: linear-gradient(160deg, ${t.bg} 50%, ${t.card} 50%); border-color: ${t["border-strong"]}; }`,
-      `.swatch[data-t="${name}"]::after { background: ${t.accent}; }`,
-    ].join("\n");
-  }),
-  `.swatch[data-t="system"] { background: linear-gradient(105deg, ${porcelain.bg} 50%, ${ink.bg} 50%); border-color: ${porcelain["border-strong"]}; }`,
-  `.swatch[data-t="system"]::after { background: linear-gradient(105deg, ${porcelain.accent} 50%, ${ink.accent} 50%); }`,
 ].join("\n");
 
 /** The browser-chrome color for a page: the theme's page background. */

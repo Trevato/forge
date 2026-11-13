@@ -26,7 +26,7 @@ export const GO_PAGES: readonly GoPage[] = [
   { name: "Search", href: "/search", who: "all", palette: "Search" },
   { name: "Feed", href: "/feed", who: "user" },
   { name: "Board", href: "/board", who: "user" },
-  { name: "Boards", href: "/boards", who: "user" },
+  { name: "Boards", href: "/boards", who: "user", palette: "Boards" },
   { name: "Flow", href: "/flow", who: "user", key: "f" },
   { name: "Asks", href: "/asks", who: "user", key: "q" },
   { name: "Asked", href: "/asked", who: "user", palette: "What you asked for" },

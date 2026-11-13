@@ -596,7 +596,7 @@ describe("the map, per app and across the forge", () => {
     expect(anonymous.headers.get("location")).toContain("/signin");
   });
 
-  test("the map is reached from the user menu and the palette on both homes", async () => {
+  test("the map is reached from the palette on both homes (the account menu no longer repeats it)", async () => {
     const cookie = await signIn("alice");
     for (const mode of ["studio", "dev"]) {
       const home = await (
@@ -604,7 +604,6 @@ describe("the map, per app and across the forge", () => {
           headers: { cookie: `${cookie}; forge_mode=${mode}` },
         })
       ).text();
-      expect(home).toContain('href="/map"');
       expect(home).toContain('"t":"Map","h":"/map"');
     }
   });

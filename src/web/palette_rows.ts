@@ -45,6 +45,7 @@ export function peopleRows(db: Database, user: User | undefined): PaletteRow[] {
 export function settingsRows(user: User | undefined): PaletteRow[] {
   if (user === undefined) return [];
   return [
+    { t: "Appearance", h: "/settings/appearance", c: "Settings" },
     { t: "Password", h: "/settings/password", c: "Settings" },
     { t: "Passkeys", h: "/settings/passkeys", c: "Settings" },
     { t: "Subscriptions", h: "/settings/subscriptions", c: "Settings" },
