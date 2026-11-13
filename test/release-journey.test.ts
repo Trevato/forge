@@ -13,11 +13,12 @@ import { childDirOf, childNamed } from "../src/actions/spawn.ts";
 import { createApp, type App } from "../src/app.ts";
 import { startCrew, type CrewHandle } from "../src/crew/dispatch.ts";
 import { createToken } from "../src/core/tokens.ts";
+import { useChildFetch } from "../src/spawn/clients.ts";
 import { addSubscription } from "../src/core/subscriptions.ts";
 import { createUser } from "../src/core/users.ts";
 import { FIRST_FIVE_MINUTES } from "../src/design/first_five_minutes.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { walkJourney } from "../src/release/journey.ts";
+import { REMOVE_BACKOFF_MS, sweepProbes, walkJourney } from "../src/release/journey.ts";
 import { useProbe } from "../src/spawn/door.ts";
 import { firstBoot } from "../src/spawn/first-boot.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -28,7 +29,7 @@ let dir = "";
 let parent: App;
 let parentServers: Servers;
 let adminToken = "";
-const kids = new Map<string, { app: App; servers: Servers; crew: CrewHandle }>();
+const kids = new Map<string, { app: App; servers: Servers; crew: CrewHandle; dataDir: string }>();
 /** A step that answers 503, as `METHOD path` on the child. */
 let broken: string | undefined;
 
@@ -36,6 +37,8 @@ beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "forge-journey-"));
   parent = createApp({ dataDir: dir, url: "https://forge.test", port: 0 });
   useProbe(parent, () => async () => true);
+  // The forge list asks each child about itself; none of those asks leaves this machine.
+  useChildFetch(parent, async () => new Response("{}", { status: 503 }));
   const alice = await createUser(parent.db, { origin: "seed", trusted: true, username: "alice", email: "a@f.test", password: "a-good-passphrase", adminIfFirst: true });
   if (!alice.ok) throw new Error(alice.error);
   adminToken = createToken(parent.db, alice.value.id, "journey", "admin").token;
@@ -76,7 +79,7 @@ sleep 20
   );
   chmodSync(fake, 0o755);
   const crew = await startCrew(app, { forgeUrl: servers.url, localUrl: servers.url, binary: fake, concurrency: 1, budgetUsd: 1, runTimeoutMs: 30_000, networkRetryScale: 0, tickMs: 100 });
-  const k = { app, servers, crew };
+  const k = { app, servers, crew, dataDir };
   kids.set(name, k);
   return k;
 }
@@ -158,4 +161,102 @@ test("without an admin token the forge cannot be removed from here, and the resu
 test("an address that is not http(s) is refused before anything is sent", async () => {
   const result = await walkJourney({ base: "ftp://forge.test", fetch: (() => { throw new Error("no request"); }) as unknown as typeof fetch });
   expect(result).toMatchObject({ ok: false, forge: null, removed: true, failure: "the forge's address is not http or https" });
+});
+
+test("a walk that blows up half-way (outside any step) still removes its forge", async () => {
+  let calls = 0;
+  const log: string[] = [];
+  const inner = routed(log);
+  // `now` throws once the account exists: nothing in the walk catches it as a step.
+  const now = () => {
+    if (log.includes("POST /claim")) throw new Error("clock exploded");
+    return (calls += 1);
+  };
+  const result = await walkJourney({ base: parentServers.url, fetch: inner, adminToken, now, sleep: () => Bun.sleep(100), pollMs: 100 }); // real-timer: the stand-in crew child runs in real time
+  // The walk does not reject: it says what stopped it, and cleans up all the same.
+  expect(result.ok).toBe(false);
+  expect(result.failure).toBe("the walk stopped unexpectedly");
+  expect(result.removed).toBe(true);
+  expect(log).toContain("POST /claim");
+  const name = [...kids.keys()].at(-1)!;
+  expect(await forgeGone(name)).toBe(true);
+  // The account lived in the forge's own data: that directory is gone, and the account with it.
+  expect(existsSync(kids.get(name)!.dataDir)).toBe(false);
+}, 60_000);
+
+test("a run sweeps the probe forges an interrupted run left over an hour ago, and only those", async () => {
+  const start = async (name: string) => {
+    const res = await fetch(`${parentServers.url}/forges/start`, { method: "POST", redirect: "manual", headers: { origin: "https://forge.test" }, body: new URLSearchParams({ name, js: "1" }) });
+    await res.body?.cancel();
+    expect(res.status).toBe(303);
+  };
+  const age = async (name: string, ms: number) => {
+    const file = join(dir, "spawn", `${name}.json`);
+    const ledger = JSON.parse(await Bun.file(file).text());
+    ledger.createdAt = new Date(Date.now() - ms).toISOString();
+    await Bun.write(file, JSON.stringify(ledger));
+  };
+  await start("probe-aaaaaaaa");
+  await start("probe-bbbbbbbb");
+  await start("keepme-forge");
+  await age("probe-aaaaaaaa", 2 * 60 * 60 * 1000);
+  await age("keepme-forge", 5 * 60 * 60 * 1000);
+  const result = await walkJourney({ base: parentServers.url, fetch: routed([]), adminToken, pollMs: 0, now: (() => { let t = 0; return () => (t += 5_000); })(), sleep: async () => {} });
+  expect(result.swept).toEqual(["probe-aaaaaaaa"]);
+  expect(await forgeGone("probe-aaaaaaaa")).toBe(true);
+  expect(await childNamed(parent, "probe-bbbbbbbb")).toBeDefined(); // under an hour: may be a run in progress
+  expect(await childNamed(parent, "keepme-forge")).toBeDefined(); // not a probe's name
+  for (const n of ["probe-bbbbbbbb", "keepme-forge"])
+    await fetch(`${parentServers.url}/forges/${n}/remove`, { method: "POST", headers: { origin: parentServers.url, authorization: `Bearer ${adminToken}` } });
+}, 60_000);
+
+test("a removal that fails once is tried again after a pause, and the result says it is gone", async () => {
+  const log: string[] = [];
+  const inner = routed(log);
+  const pauses: number[] = [];
+  let failed = 0;
+  const flaky = (async (input: string | URL | Request, init?: RequestInit) => {
+    if (new URL(String(input)).pathname === "/api/v1/forges") throw new Error("the list is down");
+    if (/\/forges\/probe-[0-9a-f]{8}\/remove$/.test(new URL(String(input)).pathname) && failed < 1) {
+      failed += 1;
+      return new Response("busy", { status: 503 });
+    }
+    return inner(input, init);
+  }) as typeof fetch;
+  let t = 0;
+  const sleep = async (ms: number) => {
+    pauses.push(ms);
+    await Bun.sleep(100); // real-timer: the stand-in crew child runs in real time
+  };
+  const result = await walkJourney({ base: parentServers.url, fetch: flaky, adminToken, pollMs: 100, now: () => (t += 10), sleep });
+  // The sweep's list was down: that is reported, and the passing walk is still passing.
+  expect(result.failure).toBeUndefined();
+  expect(result.ok).toBe(true);
+  expect(result.sweepError).toBe("the list is down");
+  expect(failed).toBe(1);
+  expect(result.removed).toBe(true);
+  expect(pauses).toContain(REMOVE_BACKOFF_MS[0]!);
+  expect(await forgeGone(result.forge!)).toBe(true);
+}, 60_000);
+
+test("a removal that never succeeds waits between its attempts and says it is not gone", async () => {
+  const inner = routed([]);
+  const pauses: number[] = [];
+  const stuck = (async (input: string | URL | Request, init?: RequestInit) =>
+    /\/remove$/.test(new URL(String(input)).pathname) && init?.method === "POST" ? new Response("no", { status: 503 }) : inner(input, init)) as typeof fetch;
+  let t = 0;
+  const result = await walkJourney({ base: parentServers.url, fetch: stuck, adminToken, pollMs: 0, now: () => (t += 5_000), sleep: async (ms) => void pauses.push(ms) });
+  expect(result.removed).toBe(false);
+  expect(pauses).toEqual([...REMOVE_BACKOFF_MS]);
+  await fetch(`${parentServers.url}/forges/${result.forge}/remove`, { method: "POST", headers: { origin: parentServers.url, authorization: `Bearer ${adminToken}` } });
+}, 60_000);
+
+test("a sweep with no admin token does nothing and says nothing is wrong", async () => {
+  const never = (() => { throw new Error("no request"); }) as unknown as typeof fetch;
+  expect(await sweepProbes(never, new URL(parentServers.url), undefined, Date.now())).toEqual({ gone: [] });
+});
+
+test("a sweep that throws comes back as its reason and never throws", async () => {
+  const broke = (async () => { throw new Error("the list is down"); }) as unknown as typeof fetch;
+  expect(await sweepProbes(broke, new URL(parentServers.url), adminToken, Date.now())).toEqual({ gone: [], error: "the list is down" });
 });

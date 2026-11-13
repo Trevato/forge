@@ -26,6 +26,7 @@ import { drawnPanel, panelData, runFor, type PanelDrawn } from "../boards/panel_
 import { runQuery } from "../boards/query.ts";
 import { BOARDS_OWNER, BOARDS_REPO, listBoards, readBoard, type Board, type Stored } from "../boards/store.ts";
 import { getRepo } from "../core/repos.ts";
+import { createLog } from "../kernel/log.ts";
 import { rememberPullFiles } from "../crew/hot_files.ts";
 import { driftingPulls, readDrifts, type DriftingPull, type RepoDrift } from "./alarm_drift.ts";
 import { alarmUnproposed, type UnproposedAlarm } from "./alarm_unproposed.ts";
@@ -186,6 +187,9 @@ interface Kept<T> {
   reading?: Promise<void>;
 }
 const keptBy = new WeakMap<Database, Map<string, Kept<unknown>>>();
+const log = createLog("pages");
+/** Each distinct failure of a kept part is logged once per process. */
+const said = new Set<string>();
 
 /**
  * `read`'s last answer when it is under `keepMs` old; else it is read again.
@@ -208,8 +212,13 @@ async function later<T>(env: PagesEnv, key: string, keepMs: number, now: number,
       if (!first || wait === "never") await Bun.sleep(0);
       k.value = await read();
       k.at = now;
-    } catch {
-      // The last answer keeps serving; the next job asks again.
+    } catch (error) {
+      // The last answer keeps serving and the next job asks again; why it failed is said once, never swallowed.
+      const why = `${key}: ${error instanceof Error ? error.message : String(error)}`;
+      if (!said.has(why) && said.size < 64) {
+        said.add(why);
+        log.warn("a kept part of a page's picture could not be read", { part: key, error: error instanceof Error ? error.message : String(error) });
+      }
     } finally {
       delete k.reading;
     }
