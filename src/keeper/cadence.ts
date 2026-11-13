@@ -57,6 +57,11 @@ export interface CadenceInput {
   readonly diskUsed?: number | undefined;
   readonly now: number;
   readonly minIntervalMs?: number;
+  /**
+   * A person asked for a release now (#11839): the merge queue, a snapshot and the
+   * spacing no longer hold the cut. A release in flight, a hold and a full disk still do.
+   */
+  readonly hotfix?: boolean;
 }
 
 export type Cadence = { readonly cut: true; readonly version: string } | { readonly cut: false; readonly why: string };
@@ -77,13 +82,14 @@ export function decideCut(input: CadenceInput): Cadence {
   if (input.main === input.newest.sha) return no(`main is still ${input.newest.version}`);
   if (input.inFlight) return no("a release is still rolling or being verified");
   if (input.live !== input.newest.version && input.settled !== true) return no(`${input.newest.version} is not live yet (live: ${input.live})`);
-  if (input.gating > 0) return no(`the merge queue is landing (${input.gating} gate${input.gating === 1 ? "" : "s"} running)`);
-  if (input.snapshotMs !== undefined && input.snapshotMs < SNAPSHOT_WAIT_MS)
+  const hotfix = input.hotfix === true;
+  if (!hotfix && input.gating > 0) return no(`the merge queue is landing (${input.gating} gate${input.gating === 1 ? "" : "s"} running)`);
+  if (!hotfix && input.snapshotMs !== undefined && input.snapshotMs < SNAPSHOT_WAIT_MS)
     return no(`a snapshot is being taken (${Math.floor(input.snapshotMs / 60_000)} min in); a release would cut it short`);
   if (input.diskUsed !== undefined && input.diskUsed >= RELEASE_DISK_USED_MAX)
     return no(`the disk is ${Math.round(input.diskUsed * 100)}% full; releases pause at ${RELEASE_DISK_USED_MAX * 100}% until room is made`);
   const wait = input.minIntervalMs ?? MIN_INTERVAL_MS;
-  if (input.lastCutAt !== undefined && input.now - input.lastCutAt < wait)
+  if (!hotfix && input.lastCutAt !== undefined && input.now - input.lastCutAt < wait)
     return no(`the last cut was ${Math.floor((input.now - input.lastCutAt) / 60_000)} min ago; the interval is ${wait / 60_000} min`);
   const version = nextVersion(input.newest.version);
   if (version === undefined) return no(`${input.newest.version} is not major.minor.patch`);

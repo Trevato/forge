@@ -177,6 +177,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `read_file` | — | Read a file or list a directory at a ref (default branch); over 5 MB answers tooLarge | 307 |
 | `release_hold` | — | Hold or release the release keeper's cuts (admin) | 202 |
 | `release_keeper` | — | The release keeper's releases, holds and what blocks the next cut | 192 |
+| `release_now` | — | Cut a release now, with a reason (admin) | 176 |
 | `releases` | — | Kept releases, newest first | 253 |
 | `repo` | — | One repository you can read, as GET /api/v1/repos/:owner/:name | 296 |
 | `repo_labels` | — | Repo labels: list (default), create, update, remove (admin token) | 351 |

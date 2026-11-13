@@ -34,6 +34,12 @@ export interface KeeperRelease {
   /** The worst event-loop stall in the release's first five minutes, ms (#8848). */
   readonly worstStallMs: number;
   readonly reason: string;
+  /** Stage timings, ms; null when this release did not measure the stage (#11839). */
+  readonly buildMs: number | null;
+  readonly proofMs: number | null;
+  readonly switchMs: number | null;
+  /** Why a person cut this release now, outside the spacing; empty for a cut on cadence. */
+  readonly hotfix: string;
 }
 
 interface Row {
@@ -55,6 +61,10 @@ interface Row {
   seconds_dark: number;
   worst_stall_ms: number;
   reason: string;
+  build_ms: number | null;
+  proof_ms: number | null;
+  switch_ms: number | null;
+  hotfix: string;
 }
 
 const toRelease = (r: Row): KeeperRelease => ({
@@ -75,6 +85,10 @@ const toRelease = (r: Row): KeeperRelease => ({
   secondsDark: r.seconds_dark,
   worstStallMs: r.worst_stall_ms,
   reason: r.reason,
+  buildMs: r.build_ms,
+  proofMs: r.proof_ms,
+  switchMs: r.switch_ms,
+  hotfix: r.hotfix,
 });
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -82,21 +96,31 @@ const iso = (ms: number) => new Date(ms).toISOString();
 /** The cut, written before the tag is pushed: the known-good image is on record before anything can need it. */
 export function recordCut(
   db: Database,
-  input: { version: string; sha: string; knownGood: { version: string; image: string }; at: number },
+  input: { version: string; sha: string; knownGood: { version: string; image: string }; at: number; hotfix?: string },
 ): KeeperRelease {
   return toRelease(
     db
-      .query<Row, [string, string, string, string, string]>(
-        `INSERT INTO keeper_release (version, sha, known_good_version, known_good_image, stage, cut_at)
-         VALUES (?1, ?2, ?3, ?4, 'rolling', ?5) RETURNING *`,
+      .query<Row, [string, string, string, string, string, string]>(
+        `INSERT INTO keeper_release (version, sha, known_good_version, known_good_image, stage, cut_at, hotfix)
+         VALUES (?1, ?2, ?3, ?4, 'rolling', ?5, ?6) RETURNING *`,
       )
-      .get(input.version, input.sha, input.knownGood.version, input.knownGood.image, iso(input.at))!,
+      .get(input.version, input.sha, input.knownGood.version, input.knownGood.image, iso(input.at), input.hotfix ?? "")!,
   );
 }
 
 /** A cut whose tag was refused never happened: its row goes, so the cadence is not left waiting on it. */
 export function dropCut(db: Database, id: number): void {
   db.query(`DELETE FROM keeper_release WHERE id = ?1 AND stage = 'rolling' AND live_at IS NULL`).run(id);
+}
+
+/** What the deployer timed while promoting: kept on the release still rolling, so a rollback's swap never overwrites them. */
+export function keepTimings(db: Database, id: number, t: { buildMs: number; proofMs: number; switchMs: number }): void {
+  db.query(`UPDATE keeper_release SET build_ms = ?2, proof_ms = ?3, switch_ms = ?4 WHERE id = ?1 AND stage = 'rolling'`).run(
+    id,
+    Math.max(0, Math.round(t.buildMs)),
+    Math.max(0, Math.round(t.proofMs)),
+    Math.max(0, Math.round(t.switchMs)),
+  );
 }
 
 /** One more `/healthz` probe while the roll runs. */

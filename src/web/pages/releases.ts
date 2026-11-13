@@ -20,6 +20,7 @@ import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { badge, btn, row, sha, time } from "../ui.ts";
 import { holdAs, liftAs } from "../../keeper/hold.ts";
+import { releaseNowAs } from "../../keeper/now.ts";
 import { keeperPanel } from "./keeper-panel.ts";
 
 /** The live line (`liveSince`) for the home, or nothing when no release is known to be live. */
@@ -111,6 +112,16 @@ export async function releaseHoldSubmit(ctx: Ctx): Promise<Response> {
   return held.ok
     ? flashTo(ctx, "/releases", { message: `Releases held: ${held.value.reason}` })
     : flashTo(ctx, "/releases", { tone: "danger", message: held.message });
+}
+
+/** POST /releases/now: cut at the keeper's next tick, with a reason, through the function MCP calls (#11839). */
+export async function releaseNowSubmit(ctx: Ctx): Promise<Response> {
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const asked = releaseNowAs(ctx.app, ctx.auth.user, String(form.get("reason") ?? ""));
+  return asked.ok
+    ? flashTo(ctx, "/releases", { message: `Release asked for now: ${asked.value.reason}` })
+    : flashTo(ctx, "/releases", { tone: "danger", message: asked.message });
 }
 
 /** POST /releases/hold/:id/lift: lift an owner's hold. */

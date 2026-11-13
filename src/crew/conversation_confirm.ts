@@ -42,6 +42,7 @@ export const ASKING: Readonly<Record<string, Asking>> = {
     does: "hold or lift the release keeper",
     undo: (a) => (a["reason"] !== undefined ? "`release_hold` with `lift` and the hold's id lifts it" : undefined),
   },
+  release_now: { does: "cut a release now, outside the spacing" },
   // Archive and delete.
   archive: {
     does: "archive or wake a repository",

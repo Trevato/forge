@@ -32,6 +32,7 @@ import { checkoutRelease, preflightRelease } from "../release/checkout.ts";
 import { handover } from "../release/swap.ts";
 import { snapshotsOf } from "../snapshot/service.ts";
 import { kubeDeployer } from "./deploy.ts";
+import { inFlight, keepTimings } from "./record.ts";
 import { swapper } from "./swapper.ts";
 import type { KeeperPorts } from "./keeper.ts";
 import { timedGet, verifyUnderLoad } from "./verify.ts";
@@ -96,6 +97,10 @@ export function keeperPorts(app: App, input: { forgeUrl: string; deployment: str
           checkout: (sha) => checkoutRelease(app.config.dataDir, dir, sha),
           preflight: (tree) => preflightRelease(tree, app.config.dataDir),
           drain: () => handover.drain?.(),
+          timed: (t) => {
+            const flying = inFlight(app.db);
+            if (flying !== undefined) keepTimings(app.db, flying.id, t);
+          },
           probe: ownProbeHeaders(app.config.dataDir),
           ...(app.config.swapBudgetMs === undefined ? {} : { budgetMs: app.config.swapBudgetMs }),
         })

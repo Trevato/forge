@@ -178,7 +178,7 @@ import { chapterAct, chapterPage, chaptersPage } from "../web/pages/chapters.ts"
 import { betAct, betPage, betPropose, betsPage } from "../web/pages/bets.ts";
 import { changelogJson, changelogPage } from "../web/pages/changelog.ts";
 import { docsFile, docsFolder } from "../web/pages/docs_link.ts";
-import { releaseHoldSubmit, liftSubmit, releasesPage, rollbackSubmit } from "../web/pages/releases.ts";
+import { releaseHoldSubmit, releaseNowSubmit, liftSubmit, releasesPage, rollbackSubmit } from "../web/pages/releases.ts";
 import {
   changePassword,
   iconPng,
@@ -983,6 +983,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/api", appApiPage);
   router.add("POST", "/releases/:sha/rollback", rollbackSubmit);
   router.add("POST", "/releases/hold", releaseHoldSubmit);
+  router.add("POST", "/releases/now", releaseNowSubmit);
   router.add("POST", "/releases/hold/:id/lift", liftSubmit);
   router.add("GET", "/audit.csv", auditCsv);
   router.add("POST", "/audit/:owner/:name/probe", auditProbeSubmit);

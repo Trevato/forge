@@ -33,6 +33,7 @@ import { createIssue } from "../core/issues.ts";
 import { decideCut } from "./cadence.ts";
 import { imageAt, type Deployer } from "./deploy.ts";
 import { blocking, liftFixed, names, setCause, setHold, standingHolds, type Hold } from "./hold.ts";
+import { clearNow, pendingNow } from "./now.ts";
 import { stallReason, STALL_HOLD_MS } from "../perf/boot_stall.ts";
 import { countRollProbe, dropCut, finish, getKeeperRelease, inFlight, keepStall, keepTally, listKeeperReleases, markLive, releaseBefore, recordCut, type KeeperRelease } from "./record.ts";
 import { rollBackToNamed } from "./rollback.ts";
@@ -207,6 +208,7 @@ export async function tickStep(p: KeeperPorts): Promise<Step> {
   const main = await p.main();
   const newest = await p.newest();
   const last = listKeeperReleases(p.db, 1)[0];
+  const asked = pendingNow(p.db, p.now());
   const decision = decideCut({
     main: main ?? "",
     newest,
@@ -219,6 +221,7 @@ export async function tickStep(p: KeeperPorts): Promise<Step> {
     lastCutAt: last === undefined ? undefined : Date.parse(last.cutAt),
     hold: blocking(standingHolds(p.db)),
     now: p.now(),
+    ...(asked === undefined ? {} : { hotfix: true }),
     ...(p.minIntervalMs === undefined ? {} : { minIntervalMs: p.minIntervalMs }),
   });
   if (!decision.cut) return { line: decision.why, outcome: "skipped" };
@@ -230,7 +233,8 @@ export async function tickStep(p: KeeperPorts): Promise<Step> {
   const knownGood = { version: p.live(), image };
   // The row first, the tag second: a crash between them leaves a `rolling` row
   // whose tag the next tick sends (`tagged`), never a tag the keeper has no row for.
-  const r = recordCut(p.db, { version: decision.version, sha: main, knownGood, at: p.now() });
+  const r = recordCut(p.db, { version: decision.version, sha: main, knownGood, at: p.now(), ...(asked === undefined ? {} : { hotfix: `${asked.reason} (${asked.by})` }) });
+  if (asked !== undefined) clearNow(p.db);
   const tagRefused = await tagged(p, r);
   if (tagRefused !== undefined) return { line: tagRefused, outcome: "failed" };
   const sent = await promote(p, r.version, refFor(p, image, r.version, main));

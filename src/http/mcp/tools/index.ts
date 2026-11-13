@@ -136,6 +136,7 @@ export { tool as quotas } from "./quotas.ts";
 export { tool as read_file } from "./read_file.ts";
 export { tool as release_hold } from "./release_hold.ts";
 export { tool as release_keeper } from "./release_keeper.ts";
+export { tool as release_now } from "./release_now.ts";
 export { tool as releases } from "./releases.ts";
 export { tool as repo } from "./repo.ts";
 export { tool as repo_labels } from "./repo_labels.ts";

@@ -57,6 +57,8 @@ export interface SwapperInput {
   readonly drain: () => void;
   readonly probe?: Readonly<Record<string, string>>;
   readonly budgetMs?: number;
+  /** Told how long each stage of a forward swap took, just before this process drains (#11839). */
+  readonly timed?: (t: { buildMs: number; proofMs: number; switchMs: number }) => void;
   readonly now?: () => number;
 }
 
@@ -114,16 +116,24 @@ export function swapper(i: SwapperInput): Deployer {
     return err(why);
   };
 
+  /** Milliseconds of the stages the last `prepare` ran; a stage it skipped (already admitted) counts 0. */
+  let stages = { buildMs: 0, proofMs: 0 };
+
   async function prepare(sha: string, forward: boolean): Promise<Result<string, string>> {
+    stages = { buildMs: 0, proofMs: 0 };
     const before = forward ? refused.get(sha) : undefined;
     if (before !== undefined) return err(before);
+    const built = now();
     const out = await i.checkout(sha);
+    stages.buildMs = now() - built;
     if (!out.ok) return err(`checkout failed: ${out.error}`);
     if (!forward) return out;
     if (admitted.has(sha)) return out;
     const deps = dependencyChange(out.value);
     if (deps !== undefined) return refuse(sha, deps);
+    const proving = now();
     const verdict = await i.preflight(out.value);
+    stages.proofMs = now() - proving;
     if (!verdict.ok) return refuse(sha, `preflight failed: ${verdict.line}`);
     admitted.add(sha);
     return out;
@@ -168,6 +178,7 @@ export function swapper(i: SwapperInput): Deployer {
       try {
         pin();
         const env = { ...i.env, FORGE_DATA: i.dataDir };
+        const switching = now();
         const started = await startRelease({
           dir: dir.value,
           sha,
@@ -179,6 +190,7 @@ export function swapper(i: SwapperInput): Deployer {
         });
         if (!started.ok) throw new Error(started.line);
         swapped = true;
+        if (!backward) i.timed?.({ ...stages, switchMs: now() - switching });
       } finally {
         endSwap(swapped);
       }

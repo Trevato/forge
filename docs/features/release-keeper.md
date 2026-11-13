@@ -72,6 +72,24 @@ files one issue, `Release <version> was dark for <n> s`.
   (`release_hold {lift: <id>}`, the card's Lift button, `h` then `lift N`) — one function, `holdAs`/`liftAs`, behind all three.
   It needs a person who may roll back (MCP: on an admin-scope token); an agent never can.
 
+## A hotfix does not wait (#11839)
+
+`release_now {reason}` (MCP, admin scope), the **Release now** form on the
+`/releases` card: a person who may roll back (never an agent) asks for a cut at
+the next tick. It skips the 30-minute spacing, a running merge queue and a
+snapshot; it still waits for a release in flight to be proven, for a hold and
+for room on the disk. The request lapses after an hour if main had nothing to
+cut; the reason is kept on the release (`hotfix`) and shown on the card.
+
+## Where the time went (#11839)
+
+Each release row keeps its stage timings: cut to live, build (checkout of the
+tree), proof (the preflight boot), switch (the new process taking the port) and
+verify. The swap deployer measures build, proof and switch; a stage not
+measured is left out. They show under the release on `/releases` and in
+`release_keeper` (`stages`), which also answers `holding` (what the tick last
+said stopped it: the disk guard, the spacing, a snapshot) and `releaseNow`.
+
 ## Where to see it
 
 - The terminal: **Release keeper** in the command palette shows the same

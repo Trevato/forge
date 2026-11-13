@@ -8,7 +8,7 @@ import { tick } from "../src/keeper/keeper.ts";
 import type { User } from "../src/core/users.ts";
 import { createForgeApp, forgeCommands, Session } from "../src/tui/forge.ts";
 import type { Ctx } from "../src/tui/app/app.ts";
-import { keeperScreen, readKeeper } from "../src/tui/screens/keeper.ts";
+import { holdLine, keeperScreen, readKeeper } from "../src/tui/screens/keeper.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { keeperForge } from "./helpers/keeper.ts";
@@ -57,5 +57,13 @@ describe("the release keeper screen", () => {
     const f = await keeperForge();
     const read = readKeeper(new Session(f.app, identity(f.user)));
     expect(read).toEqual({ blocked: "Nothing holds the next cut.", heartbeat: "The release tick has never reported a heartbeat.", releases: [] });
+  });
+
+  test("`now: reason` asks for a cut at the next tick through the hold prompt, and the card says so", async () => {
+    const f = await keeperForge();
+    const session = new Session(f.app, identity(f.user));
+    expect(holdLine(session, "now: hotfix for the login page")).toEqual({ ok: true, says: "Release asked for now: hotfix for the login page" });
+    expect(readKeeper(session)?.asked).toContain("hotfix for the login page");
+    expect(holdLine(session, "now: ").ok).toBe(false);
   });
 });
