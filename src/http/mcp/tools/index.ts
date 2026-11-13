@@ -57,6 +57,7 @@ export { tool as economics } from "./economics.ts";
 export { tool as edit } from "./edit.ts";
 export { tool as egress_grants } from "./egress_grants.ts";
 export { tool as email_verify } from "./email_verify.ts";
+export { tool as estimate } from "./estimate.ts";
 export { tool as events } from "./events.ts";
 export { tool as explore } from "./explore.ts";
 export { tool as family } from "./family.ts";

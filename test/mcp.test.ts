@@ -382,6 +382,7 @@ describe("the forge over MCP", () => {
       "ssh_keys",
       "steer",
       "email_verify",
+      "estimate",
       "parent_unlink",
       "vision",
       "boards",

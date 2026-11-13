@@ -66,6 +66,8 @@ export interface Issue {
    * (`core/sealed.ts`).
    */
   readonly sealed: boolean;
+  /** Whether any estimate was ever recorded against it (#11955); none, no read. */
+  readonly estimated: boolean;
 }
 
 interface IssueRow {
@@ -90,11 +92,13 @@ interface IssueRow {
   assignee_is_agent: number | null;
   author_is_agent: number;
   sealed: number;
+  estimated: number;
 }
 
 const SELECT = `
   SELECT issue.*, user.username AS author_name, user.is_agent AS author_is_agent,
-         assignee.username AS assignee_name, assignee.is_agent AS assignee_is_agent
+         assignee.username AS assignee_name, assignee.is_agent AS assignee_is_agent,
+         EXISTS (SELECT 1 FROM issue_estimate WHERE issue_estimate.issue_id = issue.id) AS estimated
   FROM issue JOIN user ON user.id = issue.author_id
   LEFT JOIN user AS assignee ON assignee.id = issue.assignee_id`;
 
@@ -128,6 +132,7 @@ function toIssue(row: IssueRow): Issue {
     assigneeIsAgent: row.assignee_is_agent === 1,
     authorIsAgent: row.author_is_agent === 1,
     sealed: row.sealed === 1,
+    estimated: row.estimated === 1,
   };
 }
 

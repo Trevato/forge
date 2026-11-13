@@ -24,6 +24,7 @@ import { handoverSection } from "./flow-handover.ts";
 import { readDrifts } from "../../flow/alarm_drift.ts";
 import { readHandoverLists } from "../../flow/handover_read.ts";
 import { readWaiting, waitingSection } from "./flow-waiting.ts";
+import { estimatesSection } from "./flow-estimates.ts";
 import { clogSection, readClogView } from "./flow-clog.ts";
 import { cpuStopsSection } from "./flow-cpu.ts";
 import { cpuClosedPulls } from "../../flow/cpu_closed.ts";
@@ -108,6 +109,7 @@ export async function flowPage(ctx: Ctx): Promise<Response> {
     ${clogSection(readClogView(ctx.app.db))}
     ${cpuStopsSection(cpuStops(ctx.app.db).stopped, cpuClosedPulls(ctx.app.db, new Date()))}
     ${waitingSection(await readWaiting(ctx.app.db, ctx.app.reposRoot, new Date()))}
+    ${estimatesSection(ctx.app.db, ctx.auth.user)}
     ${pipesSvg(p)}
     <p class="muted small">${money(p.usd)} spent in the last 7 days; ${plural(p.shipped, "pull")} shipped.</p>
     ${handoverSection(readHandoverLists(ctx.app.db, await readDrifts(ctx.app), Date.now()))}

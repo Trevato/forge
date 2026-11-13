@@ -56,6 +56,7 @@ const NOT_PAGES = new Set([
 /** Patterns with an id in them, and the path the fixture fills them with. */
 const FIXTURE: Record<string, string> = {
   "/:owner/:name/issues/:number": "/alice/forge/issues/1",
+  "/api/v1/repos/:owner/:name/issues/:number/estimates": "/api/v1/repos/alice/forge/issues/1/estimates",
   "/:owner/:name/pulls/:number": "/alice/forge/pulls/2",
   "/:owner/:name/display": "/alice/forge/display",
   "/api/v1/admin/machines/:machine/disks": "/api/v1/admin/machines/rack1/disks",

@@ -4,6 +4,7 @@
  * side-effect-contained, so tests boot real forges by the dozen.
  */
 
+import { settleEstimates } from "./actions/estimates_settle.ts";
 import { ownHost, setOwnHost } from "./core/trusted_sources.ts";
 import { commitIdentity } from "./core/commit_identity.ts";
 import { getUserById } from "./core/users.ts";
@@ -258,6 +259,9 @@ export function createApp(config: ForgeConfig): App {
   // sends them. Listener throws are swallowed by the bus, so this can never
   // break the action that produced the event.
   bus.subscribe((event) => enqueueForEvent(db, event));
+  // A pull opened or merged, a release served, an issue dropped or split:
+  // estimates settle (#11955).
+  bus.subscribe((event) => settleEstimates(db, event));
   // A push, a merge, a repository change or a build event may move pins: the kept listings go (`git/pins_kept.ts`).
   bus.subscribe((event) => {
     const k = event.kind;

@@ -60,6 +60,7 @@ function paperIssue(n: number, state: "open" | "closed" = "open"): Issue {
     assigneeIsAgent: false,
     authorIsAgent: false,
     sealed: false,
+    estimated: false,
   };
 }
 

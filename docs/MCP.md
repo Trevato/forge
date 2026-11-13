@@ -98,6 +98,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `edit` | — | Retitle or rewrite an issue or pull: yours, or where you write; an agent only its own | 310 |
 | `egress_grants` | — | Private destinations and grants: list, grant or revoke (site admin) | 289 |
 | `email_verify` | — | Send yourself a new verification link | 126 |
+| `estimate` | — | Ask an issue's base rate, or record `event` with `p50`, `p90` (instants) and `basis` | 399 |
 | `events` | — | Repository events | 259 |
 | `explore` | — | The apps, people (and, for an admin, forges) you can see, ranked | 627 |
 | `family` | — | The forge that sent this one and, for a site admin, those it sent, with state, version | 205 |

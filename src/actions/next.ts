@@ -6,6 +6,7 @@
  */
 import type { App } from "../app.ts";
 import { addDependency, repoGraph } from "../core/dependencies.ts";
+import { voidOpen } from "../core/estimates.ts";
 import { getIssue, type Issue } from "../core/issues.ts";
 import { isStructural, pillarsOf } from "../core/pillars.ts";
 import { clearRank, lift, MAX_RANKED, ranksInRepo, writeOrder } from "../core/rank.ts";
@@ -79,6 +80,8 @@ export function rankIssue(
       const linked = addDependency(app.db, issue, set.gate!, actor.id);
       if (!linked.ok) return invalid(NEXT_INVALID);
       clearRank(app.db, issue.id);
+      // Not now: what it promised is void, not scored (#11955).
+      voidOpen(app.db, issue.id);
       return ok(undefined);
     }
     lift(app.db, repo, issue.id);

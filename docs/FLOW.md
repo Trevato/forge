@@ -161,3 +161,7 @@ toward no file's heat and is named on the feed (`too wide to count: #4840
 `src/crew/stale_reds.ts` `sweepStaleReds(app, repo, now, room)` runs each autonomy tick and reads only the database, so a restart or roll loses nothing. An open crew pull whose latest check on its head failed, with no run in 30 minutes and no person holding or assigned to it, is re-checked (reason `sweep`); still red, its builder is queued with the failing test named, within the free slots and 3 a tick. Past its tries it is parked and its issue is ready again. Red for over 24 h and conflicting with main, or with its issue closed, it is closed with one line. The flow report's `stale_reds` line (`src/flow/stale_reds.ts`) counts the ones not yet handled, and the keeper names `stale_reds` as a cause from 3.
 
 How a person sees stale reds: `bun scripts/flow-report.ts` prints the `stale_reds:` line (count and oldest hours), and the keeper names `stale_reds` as the cause when they are what holds the flow; the terminal Flow dialog draws the keeper's line (`keeperLine`), so it shows there when the keeper picks that cause. It has no line of its own on the dialog.
+
+## Estimates (#11955)
+
+Estimates are recorded against an issue, asked for from the forge's own history and scored: see `docs/features/estimates.md`.
