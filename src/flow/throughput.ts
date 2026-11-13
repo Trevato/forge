@@ -141,7 +141,7 @@ const QUERIES: Record<PipelineKey, string> = {
   live: `
     SELECT x.serving_at AS at, ${ITEM}, NULL AS number, NULL AS title, NULL AS sealed,
            x.id AS run_id, x.commit_oid AS sha, NULL AS state
-      FROM run x JOIN repo r ON r.id = x.repo_id JOIN user u ON u.id = r.owner_id
+      FROM run x INDEXED BY run_live JOIN repo r ON r.id = x.repo_id JOIN user u ON u.id = r.owner_id
      WHERE x.kind = 'deploy' AND x.env = 'production'
        AND x.serving_at >= ?1 AND x.serving_at <= ?2`,
 };

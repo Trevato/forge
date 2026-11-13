@@ -215,7 +215,7 @@ export function spentTodayEverywhere(db: Database, now = new Date()): number {
   return (
     db
       .query<{ spent: number | null }, [string]>(
-        `SELECT SUM(cost_usd) AS spent FROM run
+        `SELECT SUM(cost_usd) AS spent FROM run INDEXED BY run_agent_cost
          WHERE kind = 'agent' AND created_at >= ?1`,
       )
       .get(since)?.spent ?? 0
