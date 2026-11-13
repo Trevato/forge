@@ -125,7 +125,7 @@ test("the assigned sweep drives from the agent's issues and reads event through 
   expect(plan.filter((d) => /SCAN (e|event|issue|run)\b/.test(d))).toEqual([]);
   expect(plan.some((d) => d.includes("issue_assignee"))).toBe(true);
   expect(plan.some((d) => d.includes("event_repo_kind_number_at"))).toBe(true);
-  expect(plan.some((d) => /SEARCH run USING INDEX run_issue/.test(d))).toBe(true);
+  expect(plan.some((d) => /SEARCH run USING (COVERING )?INDEX run_(issue|agent_issue_latest)/.test(d))).toBe(true);
 });
 
 test("the assigned sweep skips guests, own pulls and served issues, and returns what the old query did", async () => {
