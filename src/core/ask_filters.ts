@@ -34,8 +34,6 @@ export interface AskFilters {
   readonly kinds: ReadonlySet<AskKind>;
 }
 
-export const noAskFilters: AskFilters = { apps: new Set(), kinds: new Set() };
-
 /** The words every surface uses for the line and the one tap that clears it. */
 export const hiddenLine = (n: number): string => `${n} hidden by your filters`;
 export const SHOW_ALL_WORDS = "Show all";

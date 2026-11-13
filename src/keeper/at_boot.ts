@@ -16,10 +16,6 @@ export function noteKeeperAtBoot(k: KeeperAtBoot | undefined): void {
   atBoot = k === undefined ? undefined : k.on ? { on: true } : { on: false, why: k.why };
 }
 
-export function keeperAtBoot(): KeeperAtBoot | undefined {
-  return atBoot;
-}
-
 /**
  * One line for a tick never heard from: the keeper off and why, or on but not ticked;
  * undefined before boot noted it.
