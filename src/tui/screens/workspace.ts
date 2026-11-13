@@ -172,6 +172,7 @@ import { autonomyCommands } from "./autonomy.ts";
 import { trafficCommands } from "./trafficview.ts";
 import { chaptersCommands } from "./chapters.ts";
 import { schedulesCommands } from "./schedules.ts";
+import { shiftCommands } from "./subtitle_shift.ts";
 import { dataImportCommands } from "./dataimport.ts";
 import { jobsCommands } from "./jobs.ts";
 import { queueCommands } from "./queuegrowth.ts";
@@ -2000,6 +2001,7 @@ export function workspaceScreen(
       ...autonomyCommands(f, ctx, repo),
       ...trafficCommands(f, ctx, repo),
       ...schedulesCommands(f, ctx, repo),
+      ...shiftCommands(f, ctx, repo, () => screen),
       ...dataImportCommands(f, ctx, repo),
       ...jobsCommands(f, ctx, repo),
       ...chaptersCommands(f, ctx, repo),

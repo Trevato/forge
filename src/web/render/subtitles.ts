@@ -9,8 +9,9 @@
  * the separator is a dot. Both are accepted in either file.
  */
 
-import { escapeHtml, html, raw } from "../html.ts";
-import { fileSize } from "../ui.ts";
+import { escapeHtml, html, raw, type Html } from "../html.ts";
+import { TIME } from "../../core/subtitle_shift.ts";
+import { btn, field, fileSize } from "../ui.ts";
 import type { Rendered, RenderInput } from "./renderers.ts";
 
 /** Cues drawn, whatever the file holds. */
@@ -31,7 +32,7 @@ export interface Transcript {
   readonly failures: Failure[];
 }
 
-const TIME = String.raw`(?:\d{1,}:)?\d{1,2}:\d{2}[.,]\d{1,3}`;
+
 const TIMING = new RegExp(String.raw`^\s*(${TIME})\s*-->\s*(${TIME})(?:\s.*)?$`);
 
 /** Tags and SubRip/ASS style overrides removed from cue text. */
@@ -77,6 +78,16 @@ export function parseSubtitles(source: string): Transcript {
   return { cues, failures };
 }
 
+/** The one form on a writer's subtitle page; it posts to the file edit route. */
+function shiftForm(shift: NonNullable<RenderInput["shift"]>): Html {
+  return html`<form method="post" action="${shift.action}" class="mt">
+    <input type="hidden" name="ref" value="${shift.ref}">
+    <input type="hidden" name="path" value="${shift.path}">
+    ${field({ name: "shift", label: "Shift every cue by (seconds)", value: "0", placeholder: "2.5 or -1", required: true, autocomplete: "off" })}
+    <div class="form-actions">${btn("Shift and save", { variant: "primary" })}</div>
+  </form>`;
+}
+
 export function subtitles(input: RenderInput): Rendered {
   const { cues, failures } = parseSubtitles(new TextDecoder().decode(input.body));
   if (cues.length === 0 && failures.length === 0)
@@ -100,7 +111,7 @@ export function subtitles(input: RenderInput): Rendered {
   const content = html`<table class="table subs-view" data-dense aria-label="${name} transcript">
     <thead><tr><th scope="col">Start</th><th scope="col">Text</th></tr></thead>
     <tbody>${raw(rows)}</tbody>
-  </table>${raw(notes.map((n) => `<p class="muted small">${n}</p>`).join(""))}`;
+  </table>${raw(notes.map((n) => `<p class="muted small">${n}</p>`).join(""))}${input.shift === undefined ? null : shiftForm(input.shift)}`;
   return {
     content,
     lines: 0,
