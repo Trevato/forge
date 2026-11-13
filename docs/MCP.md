@@ -179,7 +179,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `release_keeper` | — | The release keeper's releases, holds and what blocks the next cut | 192 |
 | `release_now` | — | Cut a release now, with a reason (admin) | 176 |
 | `releases` | — | Kept releases, newest first | 253 |
-| `repo` | — | One repository you can read, as GET /api/v1/repos/:owner/:name | 296 |
+| `repo` | `open`, `add`, `remove`, `close` | One repository you can read, as GET /api/v1/repos/:owner/:name | 383 |
 | `repo_labels` | — | Repo labels: list (default), create, update, remove (admin token) | 351 |
 | `repo_settings` | — | Read, change or move (newOwner) a repo: PATCH /api/v1/repos/:owner/:name (admin); mirrorPacks mirrors the packs' upstreams | 444 |
 | `reports` | `accept`, `dismiss` | Outsiders' reports; `id`+`action`: accept or dismiss | 310 |

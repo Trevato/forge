@@ -43,7 +43,7 @@ const TRAFFIC = new Set(["route_timing", "usage_count"]);
 /** Arguments that take a writing tool past every `plansOnly` door it has. */
 function writeArgs(name: string): Record<string, unknown> {
   const tool = TOOLS.find((t) => t.name === name);
-  const args: Record<string, unknown> = { repo: REPO, dryRun: false, apply: true, action: "write" };
+  const args: Record<string, unknown> = { repo: REPO, dryRun: false, apply: true, action: "write", confirm: true };
   for (const k of tool?.readsWithout === undefined ? [] : [tool.readsWithout].flat()) args[k] ??= "x";
   return args;
 }
