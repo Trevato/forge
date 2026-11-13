@@ -192,7 +192,7 @@ describe("one filter, three surfaces", () => {
     }
   });
 
-  test("an unknown filter is a 400 naming the allowed words, on all three", async () => {
+  test("an unknown filter is a 400 naming the allowed words on the API and the MCP; the page answers 200 with the note", async () => {
     const q = encodeURIComponent("sort:bogus");
     const api = await fetch(`${servers.url}/api/v1/explore?q=${q}`);
     expect(api.status).toBe(400);
@@ -203,7 +203,7 @@ describe("one filter, three surfaces", () => {
     expect(tool.ok).toBe(false);
     expect(tool.text).toContain("use score, forks, ships, likes, use, fresh, name");
     const page = await fetch(`${servers.url}/explore?q=${q}`);
-    expect(page.status).toBe(400);
+    expect(page.status).toBe(200);
     expect(await page.text()).toContain("use score, forks, ships, likes, use, fresh, name");
     for (const bad of ["kind:x", "updated:2y", "archived:maybe"]) {
       expect((await fetch(`${servers.url}/api/v1/explore?q=${encodeURIComponent(bad)}`)).status).toBe(400);

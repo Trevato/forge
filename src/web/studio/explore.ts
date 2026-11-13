@@ -146,6 +146,15 @@ function emptyState(ctx: Ctx, query: ExploreQuery): Html {
   });
 }
 
+/** The active filters as chips, each a link to the same view without it. */
+function chipRow(query: ExploreQuery): Html {
+  const chips = [...removable(query), ...terms(query).filter((t) => t.term.startsWith("sort:"))];
+  if (chips.length === 0) return html``;
+  return html`<div class="bar mb small" data-filter-chips role="group" aria-label="Active filters">
+    ${chips.map((t) => btn(html`${shorten(t.term)} <span aria-hidden="true">×</span>`, { href: href(t.without), size: "sm", title: `Remove ${t.term}`, label: `Remove filter ${t.term}` }))}
+  </div>`;
+}
+
 /** What the filter's terms are, for a link that takes one away: the owner too, which `terms` leaves to the line. */
 function removable(query: ExploreQuery): { term: string; without: ExploreQuery }[] {
   const out = terms(query).filter((t) => !t.term.startsWith("sort:"));
@@ -232,6 +241,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
       />
       ${btn("Go", { size: "sm" })}
     </form>
+    ${chipRow(query)}
     ${returned ? html`<p class="muted mb" role="status">That page link is not one for this list, so this is the first page.</p>` : html``}
     ${note === "" ? html`` : html`<p class="muted mb" role="status">${note}${
           suggestion === undefined
@@ -280,8 +290,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
         ? html``
         : html`<div class="explore-more">${btn("More results", { href: `${here}${here.includes("?") ? "&" : "?"}cursor=${encodeURIComponent(more)}`, variant: "outline", extra: "explore-more-link" })}</div>`}</div>`;
   const drawn = page({ ctx, title: "Explore", body, feed: { href: "/explore.atom", title: "Explore" } });
-  // An unknown filter is a 400 here as on the API and the MCP; the page still draws the note and the results.
-  const response = unknown.length === 0 ? drawn : new Response(drawn.body, { status: 400, headers: drawn.headers });
+  // An unknown filter is ignored with a plain note on the page (200); the API and the MCP stay strict.
   notePhase(ctx.request, "render", performance.now() - rendering);
-  return response;
+  return drawn;
 }
