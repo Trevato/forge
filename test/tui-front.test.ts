@@ -85,7 +85,7 @@ describe("the front page in the terminal", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-tui-front-"));
     forge = createApp({ dataDir, port: 0 });
-    for (const [username, adminIfFirst] of [["alice", true], ["bob", false], ["carol", false]] as const) {
+    for (const [username, adminIfFirst] of [["alice", true], ["bob", false], ["carol", false], ["dave", false]] as const) {
       const made = await createUser(forge.db, {
         origin: "seed",
         trusted: true,
@@ -98,6 +98,8 @@ describe("the front page in the terminal", () => {
       promote(forge.db, made.value);
     }
     forge.db.query("UPDATE user SET is_admin = 1, is_agent = 1 WHERE username = 'carol'").run();
+    // The door shows unpinned apps of admins only (#11902); bob is one here.
+    forge.db.query("UPDATE user SET is_admin = 1 WHERE username = 'bob'").run();
     status = spyOn(AppsRuntime.prototype, "status").mockImplementation(
       (_r: AppRecord): EnvStatus[] => [{ env: "production", state: "running", commitOid: HEAD } as EnvStatus],
     );
@@ -139,7 +141,7 @@ describe("the front page in the terminal", () => {
 
   test("a non-admin has neither key", async () => {
     const stranger = frontJson(forge, undefined);
-    const t = boot("bob");
+    const t = boot("dave");
     await t.open();
     const before = t.text();
     await t.press("p");

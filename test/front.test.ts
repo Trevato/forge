@@ -393,6 +393,8 @@ describe("the front page", () => {
   });
 
   test("ranked, not one owner's: forks lift a stranger's app; stopped, failed and unpictured apps are not shown", async () => {
+    // The door shows apps of the forge's admins unless pinned (#11902); zed is one here.
+    app.db.query(`UPDATE user SET is_admin = 1 WHERE id = ?1`).run(other.id);
     const forked = await make(other, "loved");
     for (let n = 0; n < 3; n++) {
       const f = await createRepo(app, member, {
@@ -783,6 +785,7 @@ describe("the front page", () => {
   test("a site admin's weights change the order, within bounds; a value out of bounds is refused (#767)", async () => {
     // One app with forks by people, one with ships: which leads depends on
     // what counts.
+    app.db.query(`UPDATE user SET is_admin = 1 WHERE id = ?1`).run(other.id);
     const forked = await make(other, "weighed-forks");
     const forkerA = await createUser(app.db, { origin: "seed", trusted: true, username: "forker-a", email: "fa@forge.local", password: "a-good-passphrase" });
     if (!forkerA.ok) throw new Error(forkerA.error);
@@ -835,5 +838,47 @@ describe("the front page", () => {
     });
     expect(reset.status).toBe(303);
     expect(frontWeights(app.db)).toEqual(DEFAULT_WEIGHTS);
+  });
+
+  test("the door shows the owner's apps and pinned ones, never an unpinned stranger's (#11902)", async () => {
+    await make(admin, "door-mine");
+    await make(member, "door-pinned");
+    await make(member, "door-loose");
+    expect((await put(adminToken, { pinned: ["mia/door-pinned"], hidden: [] })).status).toBe(200);
+    forgetFrontScores(app);
+    const json = (await (await fetch(`${base}/api/v1/front`)).json()) as any;
+    const names: string[] = [json.featured?.repo, ...json.apps.map((a: any) => a.repo)];
+    expect(names).toContain("owner/door-mine");
+    expect(names).toContain("mia/door-pinned");
+    expect(names).not.toContain("mia/door-loose");
+    // The signed-out jump palette offers the same set.
+    const body = await door();
+    const index = JSON.parse(body.match(/id="palette-index">([^<]*)</)![1]!);
+    const offered = index.items.filter((i: any) => i.c === "Repositories").map((i: any) => i.t);
+    expect(offered).toContain("mia/door-pinned");
+    expect(offered).not.toContain("mia/door-loose");
+    expect(offered.sort()).toEqual(names.filter(Boolean).sort());
+    // Still reachable at its own address.
+    expect((await fetch(`${base}/mia/door-loose`)).status).toBe(200);
+    expect((await put(adminToken, { pinned: [], hidden: [] })).status).toBe(200);
+  });
+
+  test("with nothing owned by an admin or pinned the door says nothing is up yet, and shows no stranger's app (#11902)", async () => {
+    await make(member, "door-lonely");
+    forgetFrontScores(app);
+    // Hide what the owner has made (the shelf is capped, so until none is left).
+    const hidden: string[] = [];
+    for (let round = 0; round < 10; round++) {
+      const json = (await (await fetch(`${base}/api/v1/front`)).json()) as any;
+      const shown: string[] = [json.featured?.repo, ...json.apps.map((a: any) => a.repo)].filter(Boolean);
+      if (shown.length === 0) break;
+      hidden.push(...shown);
+      expect((await put(adminToken, { pinned: [], hidden })).status).toBe(200);
+      forgetFrontScores(app);
+    }
+    const body = await door();
+    expect(body).toContain("Nothing public is up yet");
+    expect(body).not.toContain("mia/door-lonely");
+    expect((await put(adminToken, { pinned: [], hidden: [] })).status).toBe(200);
   });
 });

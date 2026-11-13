@@ -17,6 +17,7 @@ import { administersAny } from "../core/admin_repos.ts";
 import { appsForRepos } from "../core/apps.ts";
 import { foundryHref } from "../actions/foundry_door.ts";
 import { appsRuntime } from "../apps/runtime.ts";
+import { doorRepos } from "../actions/front.ts";
 import { actionRows, peopleRows, settingsRows } from "./palette_rows.ts";
 import { wordClip } from "../text/word_clip.ts";
 import { absorbedForNav } from "../actions/features.ts";
@@ -479,12 +480,15 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
     ? listReposByOwner(ctx.app.db, ctx.auth.user.username, ctx.auth.user, wanted)
     : [];
   const taken = new Set(mine.map((r) => r.id));
-  const repos = [
-    ...mine,
-    ...listReposVisibleTo(ctx.app.db, ctx.auth.user, wanted).filter(
-      (r) => !taken.has(r.id),
-    ),
-  ].slice(0, 30);
+  // A signed-out visitor is offered what the front door shows, no more.
+  const repos = ctx.auth.user
+    ? [
+        ...mine,
+        ...listReposVisibleTo(ctx.app.db, ctx.auth.user, wanted).filter(
+          (r) => !taken.has(r.id),
+        ),
+      ].slice(0, 30)
+    : doorRepos(ctx.app).slice(0, 30);
   const apps = appsForRepos(
     ctx.app.db,
     repos.map((r) => r.id),
