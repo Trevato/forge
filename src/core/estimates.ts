@@ -10,7 +10,7 @@ import type { Database } from "bun:sqlite";
 import type { User } from "./users.ts";
 import { repoVisible } from "./visibility.ts";
 
-export const EVENTS = ["pull_opened", "merged", "live"] as const;
+export const EVENTS = ["pull_opened", "merged", "live", "done"] as const;
 export type EstimateEvent = (typeof EVENTS)[number];
 export const isEvent = (v: unknown): v is EstimateEvent => typeof v === "string" && (EVENTS as readonly string[]).includes(v);
 
@@ -223,4 +223,38 @@ export function voidOpen(db: Database, issueId: string, at: string = new Date().
   return db
     .query(`UPDATE issue_estimate SET voided_at = ?2 WHERE issue_id = ?1 AND actual_at IS NULL AND voided_at IS NULL`)
     .run(issueId, at).changes;
+}
+
+/** How long a closed issue stays closed before it counts as finished. */
+export const DONE_AFTER_MS = 24 * 3_600_000;
+
+/**
+ * Open `done` estimates on issues that closed as done (#11955): the issue stayed closed 24 h, or a
+ * release went live after the last pull that closed it merged, whichever the issue reached first.
+ * `liveAfter` says when the first release cut after an instant went live; this module reads no
+ * releases. Returns how many it settled.
+ */
+export function settleDone(
+  db: Database,
+  now: string,
+  liveAfter: (mergedAt: string) => string | undefined,
+  lastMerged: (repoId: string, number: number) => string | undefined,
+): number {
+  const open = db
+    .query<{ id: number; repo_id: string; number: number; closed_at: string }, []>(
+      `SELECT e.id, e.repo_id, i.number, i.closed_at FROM issue_estimate e JOIN issue i ON i.id = e.issue_id
+        WHERE e.event = 'done' AND e.actual_at IS NULL AND e.voided_at IS NULL
+          AND i.state = 'closed' AND i.close_reason = 'done' AND i.closed_at IS NOT NULL`,
+    )
+    .all();
+  let n = 0;
+  for (const r of open) {
+    const stayed = new Date(Date.parse(r.closed_at) + DONE_AFTER_MS).toISOString();
+    const merged = lastMerged(r.repo_id, r.number);
+    const live = merged === undefined ? undefined : liveAfter(merged);
+    const at = live !== undefined && live < stayed ? (live < r.closed_at ? r.closed_at : live) : stayed;
+    if (at > now) continue;
+    n += db.query(`UPDATE issue_estimate SET actual_at = ?2 WHERE id = ?1 AND actual_at IS NULL AND voided_at IS NULL`).run(r.id, at).changes;
+  }
+  return n;
 }

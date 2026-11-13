@@ -8,11 +8,13 @@
  *  - `pull.merged`: the same issues merged (the pull's merge time).
  *  - `release.verified_live`: each open `live` estimate resolves at the first release, cut after
  *    its merge, that served.
+ *  - `done`: an issue closed as done that stayed closed 24 h, or whose last pull is live, is
+ *    finished. Time passing is no event, so `settleDue` also runs on a timer (`main.ts`).
  *  - `issue.closed` as dropped or split: what it left open is void. (Moving to Not now voids in
  *    `actions/next.ts`, the act that does it.)
  */
 import type { Database } from "bun:sqlite";
-import { settleEvent, settleLive, voidOpen, type ServedRelease } from "../core/estimates.ts";
+import { settleDone, settleEvent, settleLive, voidOpen, type ServedRelease } from "../core/estimates.ts";
 import type { ForgeEvent } from "../core/events.ts";
 import { getIssue } from "../core/issues.ts";
 import { closesFromBody, mergedPullClosing } from "../core/pulls.ts";
@@ -46,10 +48,33 @@ function servedReleases(db: Database): ServedRelease[] {
     .map((r) => ({ cutAt: r.cut_at, liveAt: r.live_at }));
 }
 
+/** Every open `live` estimate whose merge a served release contains resolves. */
+export function settleLiveNow(db: Database): number {
+  return settleLive(db, servedReleases(db), (repoId, n) => mergedPullClosing(db, repoId, n)?.mergedAt ?? undefined);
+}
+
+/**
+ * Done estimates that have come due at `now`: closed 24 h, or the last pull's release is
+ * serving.
+ */
+export function settleDue(db: Database, now: Date = new Date()): number {
+  const releases = servedReleases(db);
+  return settleDone(
+    db,
+    now.toISOString(),
+    (mergedAt) => releases.find((r) => r.cutAt >= mergedAt)?.liveAt,
+    (repoId, n) => mergedPullClosing(db, repoId, n)?.mergedAt ?? undefined,
+  );
+}
+
 /** Settle what this event settles. Subscribed once, in `app.ts`. */
 export function settleEstimates(db: Database, e: ForgeEvent): void {
   if (e.repoId === null) return;
-  const number = numberOf(e);
+  settleKind(db, { ...e, repoId: e.repoId }, numberOf(e));
+  if (e.kind === "pull.merged" || e.kind === "issue.closed" || e.kind === "release.verified_live") settleDue(db);
+}
+
+function settleKind(db: Database, e: ForgeEvent & { repoId: string }, number: number | undefined): void {
   switch (e.kind) {
     case "pull.opened": {
       const pull = number === undefined ? undefined : pullFacts(db, e.repoId, number);
@@ -68,7 +93,7 @@ export function settleEstimates(db: Database, e: ForgeEvent): void {
       return;
     }
     case "release.verified_live":
-      settleLive(db, servedReleases(db), (repoId, n) => mergedPullClosing(db, repoId, n)?.mergedAt ?? undefined);
+      settleLiveNow(db);
       return;
   }
 }

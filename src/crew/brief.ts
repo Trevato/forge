@@ -374,7 +374,7 @@ const MCP_SIZE_RULE =
  * not the system brief, to keep that short.
  */
 export const ESTIMATE_RULE =
-  'A "by <time>" you say to the owner is recorded first with the `estimate` tool (ask it for the issue\'s base rate, then record `event` pull_opened, merged or live with `p50` and `p90` instants and a one-line `basis`), or it is not said. The forge resolves it when the event happens and scores it.';
+  'A "by <time>" you say to the owner is recorded first with the `estimate` tool (ask it for the issue\'s base rate, then record `event` pull_opened, merged, live or done (an issue that takes several pulls) with `p50` and `p90` instants and a one-line `basis`), or it is not said. The forge resolves it when the event happens and scores it.';
 
 /** A plan on the issue is how a person sees where a run is without reading its log; only the forge serves the tool. */
 const PLAN_RULE =

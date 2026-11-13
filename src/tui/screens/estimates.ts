@@ -75,7 +75,7 @@ export function estimatesScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     ctx.push(
       promptScreen(ctx, screen, {
         title: `Estimate #${issue.number}`,
-        label: "event p50 p90 basis: event is pull_opened, merged or live; times like 2026-11-14T07:15:00Z",
+        label: "event p50 p90 basis: event is pull_opened, merged, live or done; times like 2026-11-14T07:15:00Z",
         onSubmit: (raw) => {
           const input = parseEstimate(raw);
           if (input === undefined) return "event, p50 and p90 first, then the basis";

@@ -5,7 +5,7 @@
  * boundary; rows and maths are `core/estimates.ts` and `flow/estimate_*`.
  */
 import type { App } from "../app.ts";
-import { addEstimate, currentOf, estimatesOf, estimatesVisibleTo, isEvent, type EstimateEvent, type EstimateRow } from "../core/estimates.ts";
+import { addEstimate, currentOf, EVENTS, estimatesOf, estimatesVisibleTo, isEvent, type EstimateEvent, type EstimateRow } from "../core/estimates.ts";
 import { forgeSource } from "../settings/forge_source.ts";
 import { getIssue, type Issue } from "../core/issues.ts";
 import { mergedPullClosing, openPullsClosing } from "../core/pulls.ts";
@@ -24,8 +24,10 @@ import { err, ok, type Result } from "../kernel/result.ts";
 export const ESTIMATE_FORBIDDEN = "Only someone with write access, or a crew member on this repository, records an estimate.";
 export const ESTIMATE_NOT_OPEN = "Only an open issue is estimated.";
 export const ESTIMATE_SHAPE =
-  "`event` is pull_opened, merged or live; `p50` and `p90` are instants like 2026-11-14T07:15:00Z, both in the future with p50 no later than p90; `basis` is one line, at most 300 characters.";
-export const ESTIMATE_PASSED = "That event has already happened, so it is not estimated.";
+  "`event` is pull_opened, merged, live or done; `p50` and `p90` are instants like 2026-11-14T07:15:00Z, both in the future with p50 no later than p90; `basis` is one line, at most 300 characters.";
+/** Said when the event has happened: which events can still be estimated on this issue. */
+export const estimatePassed = (event: EstimateEvent, open: readonly EstimateEvent[]): string =>
+  `${event} has already happened on this issue, so it is not estimated. Events that can still be estimated: ${open.length === 0 ? "none" : open.join(", ")}.`;
 const BASIS_MAX = 300;
 const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/;
 
@@ -164,13 +166,13 @@ export function recordEstimate(
   const basis = input.basis === undefined ? "" : input.basis;
   // eslint-disable-next-line no-control-regex
   if (typeof basis !== "string" || basis.length > BASIS_MAX || /[\u0000-\u001f\u007f]/.test(basis)) return invalid(ESTIMATE_SHAPE);
-  const happened =
-    event === "pull_opened"
+  const happenedOf = (ev: EstimateEvent): boolean =>
+    ev === "pull_opened"
       ? openPullsClosing(app.db, repo.id).has(issue.number) || mergedPullClosing(app.db, repo.id, issue.number) !== undefined
-      : event === "merged"
+      : ev === "merged"
         ? mergedPullClosing(app.db, repo.id, issue.number) !== undefined
         : false;
-  if (happened) return invalid(ESTIMATE_PASSED);
+  if (happenedOf(event)) return invalid(estimatePassed(event, EVENTS.filter((ev) => !happenedOf(ev))));
   const base = baseFor(app, repo, issue, now);
   const labels = labelsOf(app.db, [issue.id]).get(issue.id) ?? [];
   const id = addEstimate(app.db, {

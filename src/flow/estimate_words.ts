@@ -31,8 +31,9 @@ export const EVENT_WORDS: Record<EstimateEvent, string> = {
   pull_opened: "pull opened",
   merged: "merged",
   live: "live",
+  done: "done",
 };
-const WENT: Record<EstimateEvent, string> = { pull_opened: "pull opened", merged: "merged", live: "went live" };
+const WENT: Record<EstimateEvent, string> = { pull_opened: "pull opened", merged: "merged", live: "went live", done: "finished" };
 
 /**
  * What an estimate was: actual over the p50 duration, both from the moment it was made; undefined
