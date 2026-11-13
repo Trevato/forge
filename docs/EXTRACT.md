@@ -145,5 +145,6 @@ things differ from the recipe above:
   moved, so the cutover copies nothing.
 - The unit starts `src/release/launch.ts` with `Delegate=yes`, because swaps
   and cells need their supervisor and their cgroup.
+- `infra/forge-box/` also holds `cloudflared-forge.service` (+ its config) and the `forge-github-mirror` timer; the install script installs them and starts none. `scripts/box-install.sh <dir> <uid>` takes the pod's uid.
 - The unit sets `FORGE_CELL_MOUNTS=allow-list`, because a host's mounts are
   not a pod's (#11823).

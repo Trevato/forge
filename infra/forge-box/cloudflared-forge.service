@@ -1,0 +1,18 @@
+[Unit]
+Description=The forge's tunnel connector on the host (installed, not started until the cutover)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=forge
+Group=forge
+ExecStart=/usr/local/bin/cloudflared --no-autoupdate --config /etc/forge/cloudflared.yml tunnel run
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

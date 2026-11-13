@@ -188,7 +188,7 @@ rollback. #11803 (tunnel straight to the forge), #11802 (its own sign-in) and
    `FORGE_CELL_MOUNTS=allow-list`. The install script checks for bubblewrap,
    chromium and socat, writes the sysctl, and makes the `forge` user with the
    pod's uid. A `cloudflared-forge` unit carries the tunnel to
-   `http://127.0.0.1:3000`, and `forge-github-mirror` becomes a timer here.
+   `http://127.0.0.1:3000`, and `forge-github-mirror` becomes a timer here (installed by the script, turned on with `systemctl enable --now forge-github-mirror.timer`; it pushes branches and tags only, never deletes).
    The proof is a restore of the newest backup into a scratch directory,
    served on another port. *Rollback:* `systemctl disable --now forge
    cloudflared-forge`; nothing pointed at it.

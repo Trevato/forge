@@ -1,0 +1,16 @@
+# The tunnel's ingress on the host: everything goes to the forge on :3000.
+# `tunnel` and `credentials-file` are the tunnel's own (a secret, kept in
+# /etc/forge, never in the repository). Each app's own domain is one more
+# rule above the last (the list #11803 writes).
+tunnel: REPLACE-WITH-TUNNEL-ID
+credentials-file: /etc/forge/cloudflared.json
+ingress:
+  - hostname: forge.open-platform.sh
+    service: http://127.0.0.1:3000
+  - hostname: "*--forge.open-platform.sh"
+    service: http://127.0.0.1:3000
+  - hostname: "*--forge-trevato-apps.open-platform.sh"
+    service: http://127.0.0.1:3000
+  # - hostname: app.example.com   # one per app domain (#11871)
+  #   service: http://127.0.0.1:3000
+  - service: http_status:404
