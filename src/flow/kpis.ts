@@ -151,7 +151,7 @@ export function readKpis(
 
   const live = time("kpis.live", () => db
     .query<{ sha: string; at: string }, [string]>(
-      `SELECT commit_oid AS sha, serving_at AS at FROM run
+      `SELECT commit_oid AS sha, serving_at AS at FROM run INDEXED BY run_live
         WHERE kind = 'deploy' AND env = 'production' AND serving_at IS NOT NULL AND serving_at <= ?1
         ORDER BY serving_at DESC LIMIT 1`,
     )
