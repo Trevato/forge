@@ -234,6 +234,14 @@ serve stdio, an SSH channel and a headless test with no branch anywhere. And a
 session acts as the account its **key** maps to and nothing else; the `--user`
 flag exists only in the stdio dev runner and is never reachable over SSH.
 
+## UI work: the three checks (#11932)
+
+Read this before touching `src/web/`. Principles live in `docs/DESIGN.md`; these are the mechanical rules builders and reviewers apply alike.
+
+1. **A spec per component.** Each design-system component has one spec asserting the same list at 390x844 and 1280x800: operable by keyboard alone, a name and role on every control, visible focus, tap targets of 44 px or more, no horizontal page scroll, nothing closed covering the page, right in `dir="rtl"`, contrast in light and dark. A component without its spec fails the check (#12016 owns the helper).
+2. **A lint over `src/web/`.** `bun scripts/design-lint.ts` before you push: off-token colours, spacing and z-index, and a full-viewport `position: fixed` box outside the overlay host are refused, each with the rule and the fix in one line. Build a control from its component, never by hand.
+3. **A byte ceiling per page.** `docs/design/size-budget.json` holds each first page's client JS and CSS in gzip bytes (linked assets plus inline script and style, counted by `src/measure/client_size.ts`). `test/client-size.test.ts` names the page and the bytes over. Lower a ceiling with `FORGE_SIZE_WRITE=1 bun test test/client-size.test.ts`; never raise one without saying why in the pull.
+
 ## Recipes
 
 - **Add a mutation:** write it once as an action in `actions/<concept>.ts` —
