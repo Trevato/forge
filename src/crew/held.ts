@@ -84,6 +84,32 @@ export interface Held {
   readonly relieving: ReadonlyMap<number, { path: string; by: number }>;
 }
 
+export interface LastRun {
+  readonly state: string;
+  readonly summary: string;
+  readonly created_at: string;
+}
+
+/** The newest agent run of each of `ids` in a few reads, not one per issue; an issue never run is absent. */
+export function lastAgentRuns(app: App, ids: readonly string[]): Map<string, LastRun> {
+  const out = new Map<string, LastRun>();
+  const CHUNK = 400;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const batch = ids.slice(i, i + CHUNK);
+    for (const r of app.db
+      .query<LastRun & { issue_id: string }, string[]>(
+        `SELECT issue_id, state, summary, created_at FROM (
+           SELECT issue_id, state, summary, created_at,
+                  ROW_NUMBER() OVER (PARTITION BY issue_id ORDER BY created_at DESC, id DESC) AS rn
+             FROM run WHERE kind = 'agent' AND issue_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")}))
+          WHERE rn = 1`,
+      )
+      .all(...batch))
+      out.set(r.issue_id, r);
+  }
+  return out;
+}
+
 /**
  * An issue a builder already ran on and left without a pull — declined, or
  * cut short — is not picked again blind: running it again unchanged is the
@@ -91,13 +117,21 @@ export interface Held {
  * next tick writes with who stalled it and why (`stalls.ts`); two such
  * parks hand it to the planner.
  */
-export function stalled(app: App, repo: Repo, issue: Issue): boolean {
-  const last = app.db
-    .query<{ state: string; summary: string; created_at: string }, [string]>(
-      `SELECT state, summary, created_at FROM run WHERE issue_id = ?1 AND kind = 'agent'
-       ORDER BY created_at DESC LIMIT 1`,
-    )
-    .get(issue.id);
+export function stalled(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  lastRuns?: ReadonlyMap<string, LastRun>,
+): boolean {
+  const last =
+    lastRuns !== undefined
+      ? lastRuns.get(issue.id)
+      : app.db
+          .query<LastRun, [string]>(
+            `SELECT state, summary, created_at FROM run WHERE issue_id = ?1 AND kind = 'agent'
+             ORDER BY created_at DESC LIMIT 1`,
+          )
+          .get(issue.id);
   if (last === null || last === undefined) return false;
   if (last.state === "queued" || last.state === "running") return true;
   if (/opened pull #|updated pull #/.test(last.summary)) return false;
@@ -182,6 +216,8 @@ export function heldBy(
     for (const path of mine) relievers.set(path, issue.number);
     return false;
   };
+  // The newest run of every ready issue, read once for the whole pass.
+  const lastRuns = lastAgentRuns(app, ready.map((r) => r.issue.id));
   const holdOf = (issue: Issue): HoldName | null => {
     if (busyIssues.has(issue.id)) return "running";
     if (proposed.has(issue.number)) return "open_pull";
@@ -189,7 +225,7 @@ export function heldBy(
     if (handed.has(issue.id)) return "with_planner";
     if (alreadyDone(app.db, [issue.id]).has(issue.id)) return "done_on_main";
     if (landedUnanswered(app.db, repo, issue) !== undefined) return "landed";
-    if (stalled(app, repo, issue)) return "stalled";
+    if (stalled(app, repo, issue, lastRuns)) return "stalled";
     if (atRunCap(app, repo, issue)) return "run_cap";
     if (parkedCount(app.db, repo, issue.id) >= PARK_STRIKES) return "parked_twice";
     if (coveredByRedFix(app.db, repo.id, issue)) return "red_fix";
