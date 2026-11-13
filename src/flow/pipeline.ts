@@ -234,7 +234,7 @@ const LANDED = `
 function liveTally(db: Database, since: string): Tally {
   const r = db
     .query<{ n: number }, [string]>(
-      `SELECT COUNT(*) AS n FROM run
+      `SELECT COUNT(*) AS n FROM run INDEXED BY run_live
         WHERE kind = 'deploy' AND env = 'production' AND serving_at >= ?1`,
     )
     .get(since);

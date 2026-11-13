@@ -839,7 +839,7 @@ export function workingAgentRuns(
     .query<
       RunRow,
       [string, string | null]
-    >("SELECT * FROM run WHERE state = 'running' AND kind = 'agent' AND repo_id = ?1 AND (?2 IS NULL OR issue_id = ?2) ORDER BY id DESC")
+    >("SELECT * FROM run INDEXED BY run_running WHERE state = 'running' AND kind = 'agent' AND repo_id = ?1 AND (?2 IS NULL OR issue_id = ?2) ORDER BY id DESC")
     .all(repoId, issueId ?? null)
     .map(toRun);
 }

@@ -61,8 +61,9 @@ export function crewAtWork(dir: string, now = Date.now()): boolean {
       return (
         db
           .query<{ one: number }, [string]>(
-            `SELECT 1 AS one FROM run WHERE state = 'running'
-                OR (state = 'queued' AND (not_before IS NULL OR not_before <= ?1)) LIMIT 1`,
+            // Named by the states `run_queue` holds, so the child's few live runs are read, not every run it ever made.
+            `SELECT 1 AS one FROM run WHERE state IN ('queued','running')
+                AND (state = 'running' OR not_before IS NULL OR not_before <= ?1) LIMIT 1`,
           )
           .get(new Date(now).toISOString()) !== null
       );
