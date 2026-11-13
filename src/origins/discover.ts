@@ -17,9 +17,11 @@
  */
 
 import {
+  GateRefusedError,
   outboundFetch,
   type OutboundOptions,
   RefusedError,
+  UNRESOLVED_SENTENCE,
   vetHost,
 } from "../kernel/outbound.ts";
 import { trustedHosts } from "./trusted-hosts.ts";
@@ -31,7 +33,13 @@ const TIMEOUT_MS = 5_000;
 const MAX_BYTES = 64 * 1024;
 const MAX_HOPS = 3;
 
-export type DiscoverError = "unknown_host" | "unreachable" | "private_host";
+/** An unreachable host with the reason found: which of three things stopped it. */
+export interface UnreachableBecause {
+  readonly error: "unreachable";
+  readonly message: string;
+}
+
+export type DiscoverError = "unknown_host" | "unreachable" | "private_host" | UnreachableBecause;
 
 export interface DiscoverInput {
   /** What the user typed: `github`, `github.com`, `https://codeberg.org`. */
@@ -231,7 +239,17 @@ export async function discover(
   const older = await viaOlderForge(web, probe);
   if (older) return ok(older);
 
-  return err(probe.refused ? "private_host" : "unreachable");
+  return err(probe.refused ? "private_host" : unreachable(new URL(web).host, probe));
+}
+
+/** Why no probe got an answer, when a probe knows: the gate's refusal first, then a name that did not resolve, then the last status. */
+function unreachable(host: string, probe: Probe): DiscoverError {
+  const because = (why: string): UnreachableBecause => ({ error: "unreachable", message: `that host could not be reached: ${why}` });
+  if (probe.gated)
+    return because(`this forge's host does not let it reach ${host}; an admin allows it with the setting children.originEgress`);
+  if (probe.unresolved) return because(`${host} did not resolve`);
+  if (probe.status !== undefined) return because(`${host} answered ${probe.status}`);
+  return "unreachable";
 }
 
 // ---- probes ----
@@ -359,6 +377,12 @@ interface Probe {
   options: OutboundOptions;
   /** Set when any hop was refused for its address. */
   refused: boolean;
+  /** Set when the cell's gate would not carry a hop. */
+  gated?: boolean;
+  /** Set when a name did not resolve. */
+  unresolved?: boolean;
+  /** The last status a probe was answered with that was not a success. */
+  status?: number;
 }
 
 /** An operator-named host, or loopback in dev: dialled as typed, unvetted. */
@@ -413,6 +437,8 @@ async function getJson(
         : await outboundFetch(target, init, probe.options);
     } catch (e) {
       if (e instanceof RefusedError) probe.refused = true;
+      else if (e instanceof GateRefusedError) probe.gated = true;
+      else if (e instanceof Error && e.message === UNRESOLVED_SENTENCE) probe.unresolved = true;
       return err("failed");
     }
     if (response.status >= 300 && response.status < 400) {
@@ -425,7 +451,10 @@ async function getJson(
       }
       continue;
     }
-    if (!response.ok) return err("failed");
+    if (!response.ok) {
+      probe.status = response.status;
+      return err("failed");
+    }
     let text: string | undefined;
     try {
       // Streamed and cut at the cap, so an oversized answer is dropped at

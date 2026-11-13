@@ -3,8 +3,12 @@
  * redirects, only the transports a remote may use, and — when the host has
  * been vetted — the vetted address pinned, so git's own lookup cannot answer
  * differently from the one that was judged. One function, shared by the
- * migration clone and the mirror fetch.
+ * migration clone and the mirror fetch. A forge in a cell reaches the host by
+ * name through its gate (`kernel/outbound.ts`): there is no address to pin,
+ * and the proxy variables `gitEnv` carries do the rest.
  */
+
+import type { Route } from "../kernel/outbound.ts";
 
 /** The transports a mirror will speak. */
 export const REMOTE_PROTOCOLS = "https:http";
@@ -15,11 +19,12 @@ export interface Pin {
   readonly ip: string;
 }
 
-/** `host:port` and the vetted address for a clone URL, ready to pin. */
-export function pinFor(url: string, ip: string): Pin {
+/** `host:port` and the vetted address for a clone URL, ready to pin; nothing to pin when the route is by name through the gate. */
+export function pinFor(url: string, route: Route): Pin | undefined {
+  if (route.via === "gate") return undefined;
   const parsed = new URL(url);
   const port = parsed.port !== "" ? Number(parsed.port) : parsed.protocol === "https:" ? 443 : 80;
-  return { host: parsed.hostname.replace(/^\[|\]$/g, ""), port, ip };
+  return { host: parsed.hostname.replace(/^\[|\]$/g, ""), port, ip: route.addresses[0]! };
 }
 
 /**

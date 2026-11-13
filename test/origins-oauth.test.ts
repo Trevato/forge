@@ -232,7 +232,7 @@ describe("GitHub's device grant: connecting with no browser on the server", () =
     expect(response.status).toBe(403);
   });
 
-  test("connect attempts are capped per user: five pass, the sixth is refused", async () => {
+  test("connect attempts are capped per user: ten pass, the eleventh is refused and told to wait a minute", async () => {
     // An account that has not connected yet, so the count is exact. The
     // window is the forge's own: a fresh forge starts with a fresh one.
     f.oauth.approved = false;
@@ -244,8 +244,16 @@ describe("GitHub's device grant: connecting with no browser on the server", () =
           body: JSON.stringify({ host: f.fake.url, kind: "github" }),
         })
       ).status;
-    for (let i = 0; i < 5; i++) expect(await attempt()).toBe(201);
-    expect(await attempt()).toBe(429);
+    for (let i = 0; i < 10; i++) expect(await attempt()).toBe(201);
+    const refused = await api("/api/v1/user/origins/oauth", {
+      method: "POST",
+      as: "carol",
+      body: JSON.stringify({ host: f.fake.url, kind: "github" }),
+    });
+    expect(refused.status).toBe(429);
+    const said = (await refused.json()) as { message: string; retryAfter: number };
+    expect(said.message).toBe("too many connect attempts; wait a minute");
+    expect(said.retryAfter).toBe(60);
     // Someone else's attempts are their own.
     expect(
       (

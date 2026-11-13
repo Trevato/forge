@@ -35,7 +35,7 @@ test("a remote that resolves to 127.0.0.1 is refused before git starts", async (
 test("git's environment carries the pin, no redirects and the protocol list", () => {
   const env = remoteGitEnv(
     { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "a.b", GIT_CONFIG_VALUE_0: "c" },
-    pinFor("https://git.example.test/a/b.git", "93.184.216.34"),
+    pinFor("https://git.example.test/a/b.git", { via: "pin", addresses: ["93.184.216.34"] }),
   );
   expect(env["GIT_ALLOW_PROTOCOL"]).toBe("https:http");
   const pairs = Array.from({ length: Number(env["GIT_CONFIG_COUNT"]) }, (_, i) => [
@@ -66,7 +66,7 @@ test("fetchRefFrom refuses a private host and reports an unresolvable one before
 
 test("pinFor brackets an IPv6 address and honours an explicit port", () => {
   const pin = (url: string, ip: string) =>
-    remoteGitEnv({}, pinFor(url, ip))["GIT_CONFIG_VALUE_1"];
+    remoteGitEnv({}, pinFor(url, { via: "pin", addresses: [ip] }))["GIT_CONFIG_VALUE_1"];
   expect(pin("https://git.example.test/a.git", "2001:db8::1")).toBe(
     "git.example.test:443:[2001:db8::1]",
   );

@@ -1052,7 +1052,7 @@ const MESSAGES: Record<string, string> = {
   private_host: PRIVATE_ADDRESS_REFUSED,
   unreachable: "that instance could not be reached",
   bad_token: "the origin refused that token",
-  rate_limited: "too many connect attempts; wait a few minutes",
+  rate_limited: "too many connect attempts; wait a minute",
   no_app: "register an OAuth application on that instance first",
   provider_refused: "the origin refused to start that connect",
   // Apps, runs and the crew (docs/APPS.md). `checks_required` is the merge

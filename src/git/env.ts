@@ -15,14 +15,31 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { cellProxy, PROXY_VARS } from "../apps/egress.ts";
 import { memoryLimitBytes } from "../core/capacity.ts";
 import { noteGit } from "../perf/git.ts";
 import { gitRecord } from "../perf/live.ts";
+
+/**
+ * Where a hosted forge's git goes out: its cell's proxy, and nothing else —
+ * the cell has no DNS and no route, so a remote is reached by name through
+ * the parent's gate (`kernel/outbound.ts`). Empty outside a cell.
+ */
+function gateEnv(): Record<string, string> {
+  if (cellProxy() === undefined) return {};
+  const env: Record<string, string> = {};
+  for (const name of PROXY_VARS) {
+    const value = process.env[name];
+    if (value !== undefined) env[name] = value;
+  }
+  return env;
+}
 
 /** Base env for all server-side git. Nothing from the host leaks in. */
 export function gitEnv(extra?: Record<string, string>): Record<string, string> {
   const trust = trustedCaBundle();
   return {
+    ...gateEnv(),
     PATH: process.env.PATH ?? "/usr/bin:/bin",
     HOME: "/dev/null",
     GIT_CONFIG_GLOBAL: "/dev/null",

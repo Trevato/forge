@@ -45,5 +45,5 @@ export async function guardSource(
   const vetted = await vetHost(bare, options);
   if (!vetted.ok)
     return err(refusal(bare, vetted.error === "refused" ? "is, or resolves to, an internal address" : "could not be resolved"));
-  return ok(remoteGitEnv(base, pinFor(address, vetted.value[0]!)));
+  return ok(remoteGitEnv(base, pinFor(address, vetted.value)));
 }

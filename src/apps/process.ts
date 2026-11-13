@@ -14,6 +14,7 @@ import type { AppManifest } from "./manifest.ts";
 import type { EnvName } from "./data.ts";
 import { envPull } from "./data.ts";
 import { forgeApiUrl } from "./token.ts";
+import { PROXY_VARS } from "./egress.ts";
 import { backgroundArgv } from "./background.ts";
 import { isReservedAppEnvName } from "../core/app_env.ts";
 import { isFeatureVarName } from "./feature_env.ts";
@@ -138,14 +139,6 @@ export interface StartedProcess {
 const STEP_TIMEOUT_MS = 10 * 60_000;
 const STOP_GRACE_MS = 5_000;
 const HEALTH_INTERVAL_MS = 250;
-
-/**
- * The way out of the cell this forge runs in (`apps/contain.ts` sets them).
- * A child forge's cell has no route but its proxy, so a process the child
- * starts without them (its crew's Claude Code) reaches nothing: every model
- * call ended ENETUNREACH. Where the forge runs in no cell they are unset.
- */
-export const PROXY_VARS = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"] as const;
 
 /**
  * The environment every child starts from. Explicit, and short: the path,

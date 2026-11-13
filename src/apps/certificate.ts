@@ -40,7 +40,9 @@ export async function probeCertificate(
           ? "it resolves to a private address"
           : "it does not resolve",
     };
-  const address = vetted.value[0]!;
+  // A hosted forge's cell has no route to dial: its gate carries requests, not a bare TLS handshake.
+  if (vetted.value.via === "gate") return { error: "a hosted forge cannot dial it directly" };
+  const address = vetted.value.addresses[0]!;
   return new Promise((resolve) => {
     let done = false;
     const finish = (r: { expires: Date } | { error: string }) => {

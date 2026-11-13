@@ -21,6 +21,7 @@ import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import type { Socket } from "bun";
 import { neverGrantable, PAYMENT_HOSTS } from "../core/egress_grants.ts";
+import { addressBytes } from "../kernel/cidr.ts";
 import { during } from "../perf/jobs.ts";
 
 export interface EgressPolicy {
@@ -75,6 +76,24 @@ export function upstreamProxy(env: Record<string, string | undefined> = process.
   } catch {
     return undefined;
   }
+}
+
+/**
+ * The way out of the cell this forge runs in (`apps/contain.ts` sets them).
+ * A child forge's cell has no route but its proxy, so a process the child
+ * starts without them (its crew's Claude Code) reaches nothing: every model
+ * call ended ENETUNREACH. Where the forge runs in no cell they are unset.
+ */
+export const PROXY_VARS = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"] as const;
+
+/**
+ * The proxy this process is behind when it is a hosted forge: its cell's way
+ * out, told its parent's door (`FORGE_PARENT_LOCAL`). A forge that merely has
+ * a proxy variable set (a developer's machine) is in no cell, and nothing it
+ * dials is vetted by a parent.
+ */
+export function cellProxy(env: Record<string, string | undefined> = process.env): EgressPolicy["upstream"] {
+  return env["FORGE_PARENT_LOCAL"] === undefined ? undefined : upstreamProxy(env);
 }
 
 export interface Egress {
@@ -366,8 +385,10 @@ export function hostAllowed(
  * name is only ever checked here after it has been resolved.
  */
 export function isPublicAddress(address: string): boolean {
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address);
-  const ip = mapped?.[1] ?? address;
+  // An IPv4 address in IPv6 clothes, in either spelling (`::ffff:10.0.0.1`,
+  // `::ffff:a00:1`), is judged as the IPv4 address it is.
+  const bytes = addressBytes(address);
+  const ip = bytes?.length === 4 ? bytes.join(".") : address;
   if (isIP(ip) === 4) {
     const [a = 0, b = 0] = ip.split(".").map(Number);
     if (a === 0 || a === 10 || a === 127 || a >= 224) return false;

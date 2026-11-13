@@ -25,7 +25,7 @@ export function connectWords(error: string): string {
     unreachable: "That address could not be reached, or no forge answered there.",
     bad_token: "That token was refused by the origin.",
     already_connected: "That account is already connected.",
-    rate_limited: "Too many connect attempts. Wait a few minutes.",
+    rate_limited: "Too many connect attempts. Wait a minute.",
     unauthorized: "Sign in first.",
   };
   return words[error] ?? "That connection could not be made.";
