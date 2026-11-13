@@ -16,6 +16,7 @@ import { graphql } from "./graphql.ts";
 import { eml } from "./eml.ts";
 import { csv } from "./csv.ts";
 import { geojson } from "./geojson.ts";
+import { dxf } from "./dxf.ts";
 import { gcode } from "./gcode.ts";
 import { gpx } from "./gpx.ts";
 import { har } from "./har.ts";
@@ -102,6 +103,7 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
   gpx,
   har,
   gcode,
+  dxf,
   geojson,
   calendar: ics,
   contacts: vcf,

@@ -32,6 +32,10 @@ A .zip, .tar or .tar.gz is drawn by `src/web/render/archive-view.ts` as the exis
 
 `src/web/render/geojson.ts` draws a GeoJSON file as one inline SVG in `.gj-view` (same rules as `.gpx-view`: no fixed size, `max-width: 100%`, `currentColor`), and the first 100 features' properties as a plain table in `.gj-table`, which scrolls sideways inside its own box on a phone.
 
+## Drawing (.dxf)
+
+`src/web/render/dxf.ts` draws an ASCII DXF as one inline SVG in `.dxf-view` (same rules as `.gpx-view`: no fixed size, `max-width: 100%`, `currentColor`, no accent), with its entity counts and layer names as the existing `.status-rows`.
+
 ## Request waterfall (.har)
 
 `src/web/render/har.ts` draws a HAR as the existing `.table` (`data-dense`) inside `.har-view`, which scrolls sideways on a phone. Each row's timing bar is one inline SVG, `.har-url` (the URL cell, wraps anywhere) and `.har-bar` (the full width of the URL cell, under the URL, 10px tall, `--muted-fg` (it is data, not a control, so not the accent), `aria-hidden` since the Time column says the same in words, no inline style). `.har-url` has `min-width: 200px` so a row never squeezes to a sliver; that cannot make the page scroll, because `.har-view` is `overflow-x: auto`, so any excess width scrolls inside the table's own box, not the page. Headers sit in a native `<details>` under the URL. How it works: `docs/features/file-har.md`.
