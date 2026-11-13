@@ -14,8 +14,8 @@
  * Plain data in, plain data out: `pack` and `unpack` touch no store and no files; `unpacker` writes the one file it is given.
  */
 
-import { createWriteStream, renameSync, rmSync } from "node:fs";
-import { createZstdDecompress } from "node:zlib";
+import { createReadStream, createWriteStream, renameSync, rmSync, statSync } from "node:fs";
+import { createZstdCompress, createZstdDecompress } from "node:zlib";
 
 /** A part's size: one put carries it within its own deadline at the floor rate (27 s at 5 Mbit/s). */
 export const PART_BYTES = 16 * 1_048_576;
@@ -71,6 +71,52 @@ export async function pack(
     },
     parts,
   };
+}
+
+/**
+ * A file on disk compressed and handed over part by part, never held whole:
+ * the file is read as a stream through zstd and each full part goes to
+ * `onPart` before the next is gathered, so memory is one part however big
+ * the file. `pack` takes the whole body in one buffer, and a buffer cannot
+ * pass 4 GiB: the forge's own database crossed that on 2026-11-13 and every
+ * snapshot aborted the process. An empty file is one empty part, as in `pack`.
+ */
+export async function packFile(
+  path: string,
+  file: string,
+  onPart: (n: number, part: Uint8Array) => Promise<void>,
+  partBytes = PART_BYTES,
+): Promise<PackedFile> {
+  if (!safePath(path)) throw new Error(`refusing to pack ${path}`);
+  if (!(partBytes > 0)) throw new Error(`a part of ${partBytes} bytes`);
+  const bytes = statSync(file).size;
+  const zst = createReadStream(file, { highWaterMark: 4 * 1_048_576 }).pipe(createZstdCompress());
+  let held: Uint8Array[] = [];
+  let heldBytes = 0;
+  let parts = 0;
+  let packedBytes = 0;
+  const emit = async (size: number): Promise<void> => {
+    const part = new Uint8Array(size);
+    let at = 0;
+    const rest: Uint8Array[] = [];
+    for (const chunk of held) {
+      const take = Math.min(chunk.byteLength, size - at);
+      if (take > 0) part.set(chunk.subarray(0, take), at);
+      at += take;
+      if (take < chunk.byteLength) rest.push(chunk.subarray(take));
+    }
+    held = rest;
+    heldBytes -= size;
+    packedBytes += size;
+    await onPart(parts++, part);
+  };
+  for await (const chunk of zst as AsyncIterable<Uint8Array>) {
+    held.push(chunk);
+    heldBytes += chunk.byteLength;
+    while (heldBytes >= partBytes) await emit(partBytes);
+  }
+  if (heldBytes > 0 || parts === 0) await emit(heldBytes);
+  return { path, bytes, packedBytes, parts };
 }
 
 /** The file the parts make, checked against what the manifest says it was. */
