@@ -498,11 +498,14 @@ import { targetForShortCode } from "../origins/oauth.ts";
 import { apiRoutes } from "./api.ts";
 import { pageParamRefused } from "./cursor_lists.ts";
 import { inNamespace } from "../core/proposal_token.ts";
-import { proposalTokenMint, proposalTokenRevoke } from "../web/pages/proposal-tokens.ts";
+import { inContribNamespace } from "../core/contribute_token.ts";
+import { takesOutside } from "../actions/contribute_token.ts";
+import { contributeOpenSet, contributeTokenRevoke, proposalTokenMint, proposalTokenRevoke } from "../web/pages/proposal-tokens.ts";
 import { adminGate } from "./admin_gate.ts";
 import { movedResponse } from "./moved.ts";
 import { originGate } from "./origin_gate.ts";
 import { proposalGate } from "./proposal_gate.ts";
+import { contributeGate } from "./contribute_gate.ts";
 import { runGate } from "./run_gate.ts";
 import { viaGate } from "./via_gate.ts";
 import { checksRecheckRoutes } from "./checks_recheck.ts";
@@ -693,6 +696,7 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
         tokenName: verified.value.name,
         ...(verified.value.proposal ? { proposal: verified.value.proposal } : {}),
         ...(verified.value.run ? { run: verified.value.run } : {}),
+        ...(verified.value.contribute ? { contribute: verified.value.contribute } : {}),
         ...(verified.value.via ? { through: verified.value.via } : {}),
       };
     }
@@ -721,6 +725,7 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
             ? { proposal: verified.value.proposal }
             : {}),
           ...(verified.value.run ? { run: verified.value.run } : {}),
+          ...(verified.value.contribute ? { contribute: verified.value.contribute } : {}),
           ...(verified.value.via ? { through: verified.value.via } : {}),
         };
       }
@@ -1213,6 +1218,7 @@ export function buildRouter(): Router<Handler> {
             repoId,
             actorId: ctx.auth.user?.id ?? "",
             ...(ctx.auth.proposal ? { proposalChild: ctx.auth.proposal.child } : {}),
+            ...(ctx.auth.contribute ? { contribAgent: ctx.auth.contribute.namespace } : {}),
           }),
           ...cap,
         },
@@ -1582,6 +1588,8 @@ export function buildRouter(): Router<Handler> {
     "/:owner/:name/settings/proposal-tokens/:id/delete",
     proposalTokenRevoke,
   );
+  router.add("POST", "/:owner/:name/settings/contribute-tokens/open", contributeOpenSet);
+  router.add("POST", "/:owner/:name/settings/contribute-tokens/:id/delete", contributeTokenRevoke);
   router.add("GET", "/:owner/:name/settings/app", appSettingsPage);
   router.add("GET", "/:owner/:name/settings/app/traffic", appSourcesPage);
   router.add("GET", "/:owner/:name/settings/app/statement", statementPage);
@@ -1787,8 +1795,11 @@ async function withGitAccess(
   if (write) {
     if (!ctx.auth.user) return gitChallenge();
     if (isPacksMirror(repo) && canRead(ctx.app.db, repo, ctx.auth.user)) return gitRefused(ctx, MIRROR_PUSH_REFUSED);
+    // An outside agent's token may push its one repository;
+    // which refs is the hook's (`contribAgent`).
+    const outside = ctx.auth.contribute?.repoId === repo.id && takesOutside(ctx.app, repo);
     if (
-      !canWrite(ctx.app.db, repo, ctx.auth.user) ||
+      !(outside || canWrite(ctx.app.db, repo, ctx.auth.user)) ||
       !scopeAllows(ctx.auth.scope ?? "ro", "rw")
     ) {
       return notFound();
@@ -2105,6 +2116,16 @@ async function handleHook(app: App, request: Request): Promise<Response> {
       ) {
         return new Response(
           `${update.ref}: a proposal token pushes only child/${input.proposalChild}/… branches`,
+          { status: 403 },
+        );
+      }
+      // An outside agent's token pushes inside `contrib/<agent>/` and nowhere else.
+      if (
+        input.contribAgent !== undefined &&
+        !inContribNamespace(update.ref, input.contribAgent)
+      ) {
+        return new Response(
+          `${update.ref}: this token pushes only contrib/${input.contribAgent}/… branches`,
           { status: 403 },
         );
       }
@@ -3019,6 +3040,9 @@ async function answerGet(
   // request it makes ends here, before the limiter or any handler.
   const proposalRefusal = proposalGate(app, request, url, auth);
   if (proposalRefusal !== undefined) return proposalRefusal;
+  // An outside agent's token reaches public reads and its one repository.
+  const contributeRefusal = contributeGate(app, request, url, auth);
+  if (contributeRefusal !== undefined) return contributeRefusal;
   // A crew run's token reaches its own repository and nothing else.
   const runRefusal = runGate(app, request, url, auth);
   if (runRefusal !== undefined) return runRefusal;

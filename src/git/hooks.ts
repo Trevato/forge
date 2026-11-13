@@ -62,6 +62,8 @@ export function hookEnv(input: {
   actorId: string;
   /** Set for a proposal token: the one namespace its push may touch. */
   proposalChild?: string;
+  /** Set for an outside agent's contribute token: the one namespace its push may touch. */
+  contribAgent?: string;
 }): Record<string, string> {
   const self = selfInvocation();
   const env: Record<string, string> = {
@@ -73,6 +75,7 @@ export function hookEnv(input: {
   };
   if (input.proposalChild !== undefined)
     env.FORGE_PROPOSAL_CHILD = input.proposalChild;
+  if (input.contribAgent !== undefined) env.FORGE_CONTRIB_AGENT = input.contribAgent;
   if (self.entry !== undefined) env.FORGE_ENTRY = self.entry;
   return env;
 }
@@ -126,6 +129,9 @@ export async function runHookClient(hook: HookName): Promise<never> {
         actorId: process.env.FORGE_ACTOR_ID ?? "",
         ...(process.env.FORGE_PROPOSAL_CHILD !== undefined
           ? { proposalChild: process.env.FORGE_PROPOSAL_CHILD }
+          : {}),
+        ...(process.env.FORGE_CONTRIB_AGENT !== undefined
+          ? { contribAgent: process.env.FORGE_CONTRIB_AGENT }
           : {}),
         updates: parseHookStdin(stdin),
         gitEnv,

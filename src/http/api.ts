@@ -193,6 +193,12 @@ import {
   pullProposalOf,
   recordPullProposal,
 } from "../core/proposal_token.ts";
+import { OPEN_PULLS_PER_TOKEN, headInContribNamespace, pullCapReached } from "../core/contribute_token.ts";
+
+/** Tokens with a pull being opened now: one at a time, so the count cannot be raced. */
+const contributePulling = new Set<string>();
+import { takesOutside } from "../actions/contribute_token.ts";
+import { contributeMint } from "./api/contribute_token.ts";
 import {
   getUserByName,
   hiddenFrom,
@@ -1325,6 +1331,9 @@ export function apiRoutes(router: Router<Handler>): void {
     const body = timePhase(ctx.request, "welcome", () => welcome(ctx.app));
     return timePhase(ctx.request, "render", () => json(body));
   });
+
+  // An outside agent's short-lived token (#12012): mint, or renew the one presented.
+  router.add("POST", "/api/v1/contribute", contributeMint);
 
   boardRoutes(router);
   displayRoutes(router);
@@ -2657,6 +2666,10 @@ export function apiRoutes(router: Router<Handler>): void {
     if (denied) return denied;
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
+    // An outside agent's token opens a pull from its own contrib/<agent>/… branch of this
+    // repository, never from another repository, and never past what it was minted for.
+    const outside = ctx.auth.contribute;
+    if (outside !== undefined && (outside.repoId !== repo.id || !takesOutside(ctx.app, repo))) return forbidden();
     // A proposal token's body is small, and its pull comes from a branch of
     // its own child's namespace in this repository, never from another one.
     const proposal = ctx.auth.proposal;
@@ -2669,6 +2682,15 @@ export function apiRoutes(router: Router<Handler>): void {
         : await boundedBody(ctx.request, PROPOSAL_BODY_MAX);
     if (input === "too_large")
       return apiError("too_large", 413, `at most ${PROPOSAL_BODY_MAX} bytes`);
+    if (
+      outside !== undefined &&
+      (str(input.headRepo) !== "" || !headInContribNamespace(str(input.head), outside.namespace))
+    )
+      return apiError(
+        "invalid_head",
+        422,
+        `a contribute pull comes from a contrib/${outside.namespace}/… branch of this repository`,
+      );
     if (
       proposal !== undefined &&
       (str(input.headRepo) !== "" ||
@@ -2695,15 +2717,38 @@ export function apiRoutes(router: Router<Handler>): void {
       if (run !== undefined && headRepo.id !== run.forkId && headRepo.id !== run.repoId)
         return notFound();
     }
-    const created = await openPull(ctx.app, ctx.auth.user, repo, {
-      title: str(input.title),
+    // An outside agent opens a few pulls: each starts checks and a preview on the
+    // owner's repository. Counted from the pull rows, one open at a time per token.
+    if (outside !== undefined) {
+      const capped = pullCapReached(ctx.app.db, repo.id, ctx.auth.user!.id, new Date());
+      if (capped !== undefined || contributePulling.has(outside.tokenId))
+        return tryAgain(
+          "rate_limited",
+          429,
+          capped === "repo_day"
+            ? "this repository has taken as many pulls from outside agents as it takes in a day; try tomorrow"
+            : capped === "token_open"
+              ? `this token has ${OPEN_PULLS_PER_TOKEN} pulls open; wait for one to close`
+              : "too many pulls opened by this token; try again later",
+          capped === undefined ? 1 : 3600,
+        );
+      contributePulling.add(outside.tokenId);
+    }
+    let created: Awaited<ReturnType<typeof openPull>>;
+    try {
+      created = await openPull(ctx.app, ctx.auth.user, repo, {
+        title: str(input.title),
       body: str(input.body),
       baseBranch: str(input.base),
       headBranch: str(input.head),
       ...(headRepo ? { headRepo } : {}),
       // A person's deliberate yes to fixing a sealed report from a public branch.
       ...(input.confirmPublic === true ? { confirmPublic: true } : {}),
+      ...(outside === undefined ? {} : { outsideAgent: true }),
     });
+    } finally {
+      if (outside !== undefined) contributePulling.delete(outside.tokenId);
+    }
     if (!created.ok && created.error === "sealed_in_public")
       return apiError(
         "sealed_in_public",

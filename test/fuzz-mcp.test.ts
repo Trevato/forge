@@ -45,7 +45,7 @@ const RANDOM_CASES = 4;
 
 type Schema = { type?: string | string[]; properties?: Record<string, Schema>; required?: string[]; items?: Schema; enum?: unknown[] };
 
-const BIG = "x".repeat(10 * 1024);
+const BIG = "x".repeat(8 * 1024);
 const nested = (depth: number): unknown => (depth === 0 ? { a: "../" } : { a: nested(depth - 1), b: [nested(0)] });
 
 /** Hostile values in no particular type, for any field. */
@@ -101,7 +101,8 @@ function wrongFor(schema: Schema): unknown[] {
 function cases(name: string, schema: Schema, r: Rand): unknown[] {
   const props = Object.entries(schema.properties ?? {});
   const all: unknown[] = [undefined, {}, "not-an-object", [1, 2], null];
-  // Every field at once: each wrong type, a 10 kB string, a `../` path.
+  // Every field at once: each wrong type, an 8 kB string, a `../` path.
+  // All fields at once must stay under the 64 KiB anonymous body cap.
   for (const pickAt of [0, 3, 4]) {
     const args: Record<string, unknown> = {};
     for (const [k, s] of props) args[k] = wrongFor(s)[pickAt % wrongFor(s).length];

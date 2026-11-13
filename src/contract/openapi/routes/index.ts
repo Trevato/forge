@@ -279,6 +279,7 @@ export { route as postApiV1BoardsPins } from "./postApiV1BoardsPins.ts";
 export { route as postApiV1BoardsQuery } from "./postApiV1BoardsQuery.ts";
 export { route as postApiV1Builds } from "./postApiV1Builds.ts";
 export { route as postApiV1Codes } from "./postApiV1Codes.ts";
+export { route as postApiV1Contribute } from "./postApiV1Contribute.ts";
 export { route as postApiV1ConversationConfirmsId } from "./postApiV1ConversationConfirmsId.ts";
 export { route as postApiV1ConversationFiles } from "./postApiV1ConversationFiles.ts";
 export { route as postApiV1ConversationMessages } from "./postApiV1ConversationMessages.ts";

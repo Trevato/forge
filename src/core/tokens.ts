@@ -9,6 +9,7 @@ import { sha256 } from "../kernel/hash.ts";
 import { id, secret } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { Proposal } from "./proposal_token.ts";
+import { contribNamespace, type ContributeScope } from "./contribute_token.ts";
 import type { RunScope } from "./run_token.ts";
 import { getUserById, isActive, type User } from "./users.ts";
 
@@ -71,7 +72,7 @@ export function verifyToken(
   db: Database,
   presented: string,
 ): Result<
-  { user: User; scope: TokenScope; name: string; proposal?: Proposal; run?: RunScope; via?: string },
+  { user: User; scope: TokenScope; name: string; proposal?: Proposal; run?: RunScope; via?: string; contribute?: ContributeScope },
   "invalid_token"
 > {
   const row = db
@@ -89,15 +90,19 @@ export function verifyToken(
         r_repo: string | null;
         r_fork: string | null;
         v_via: string | null;
+        c_repo: string | null;
+        c_agent: string | null;
       },
       [string]
     >(
       `SELECT t.id, t.user_id, t.name, t.scope, t.last_used_at, t.expires_at,
               p.repo_id AS p_repo, p.child AS p_child, p.origin AS p_origin,
-              r.repo_id AS r_repo, r.fork_id AS r_fork, v.via AS v_via
+              r.repo_id AS r_repo, r.fork_id AS r_fork, v.via AS v_via,
+              c.repo_id AS c_repo, c.agent AS c_agent
          FROM token t LEFT JOIN proposal_token p ON p.token_id = t.id
                       LEFT JOIN run_token r ON r.token_id = t.id
                       LEFT JOIN via_token v ON v.token_id = t.id
+                      LEFT JOIN contribute_token c ON c.token_id = t.id
         WHERE t.token_hash = ?1`,
     )
     .get(sha256(presented));
@@ -138,6 +143,19 @@ export function verifyToken(
       name: row.name,
       scope: row.scope,
       run: { repoId: row.r_repo, forkId: row.r_fork! },
+    });
+  // An outside agent's token is bound to one repository (`http/contribute_gate.ts`).
+  if (row.c_repo !== null)
+    return ok({
+      user,
+      name: row.name,
+      scope: row.scope,
+      contribute: {
+        tokenId: row.id,
+        repoId: row.c_repo,
+        agent: row.c_agent!,
+        namespace: contribNamespace(row.c_agent!, row.id),
+      },
     });
   // The forge's own agent, speaking for this person (`core/via_token.ts`).
   if (row.v_via !== null) return ok({ user, name: row.name, scope: row.scope, via: row.v_via });
