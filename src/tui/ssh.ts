@@ -32,6 +32,7 @@ import { appForLogin, attachAppTty } from "../apps/tty.ts";
 import { servePulls } from "../apps/tty_pulls.ts";
 import type { Terminal } from "./term/terminal.ts";
 import type { TuiIdentity } from "./session.ts";
+import { GUEST_RATE_WORDS, GuestRate } from "./ssh-guest-rate.ts";
 import { parseTalkAgain, parseTalkCommand, serveTalk, serveTalkAgain } from "./ssh-talk.ts";
 import { parseTellCommand, serveTell } from "./ssh-tell.ts";
 
@@ -202,12 +203,25 @@ const appExecs: Record<string, typeof servePulls> = Object.assign(
   { pulls: servePulls },
 );
 
+/** One rate per forge, however many times the session handler is made. */
+const guestRates = new WeakMap<Forge, GuestRate>();
+
 /**
  * What a forge does with an inbound SSH session: a shell is the TUI, an exec
  * is git, `tell`, or nothing. Never throws — a fault here would take the listener with
  * it, and one bad client must not.
  */
 export function forgeSshSession(forge: Forge): (session: SshSession) => void {
+  let guests = guestRates.get(forge);
+  if (guests === undefined) guestRates.set(forge, (guests = new GuestRate()));
+  // A guest's tell and talk start work; they share one rate (see ssh-guest-rate.ts).
+  const guestLimited = (session: SshSession, user: unknown): boolean => {
+    if (user !== undefined) return false;
+    if (guests.allow([`key:${session.key.fingerprint}`, `addr:${session.remoteAddress}`], Date.now())) return false;
+    session.writeStderr(`forge: ${GUEST_RATE_WORDS}${CRLF}`);
+    session.exit(1);
+    return true;
+  };
   return (session) => {
     try {
       const identity = identityFor(forge, session);
@@ -233,6 +247,7 @@ export function forgeSshSession(forge: Forge): (session: SshSession) => void {
       // app's crew, said from the app (through the terminal's own gate).
       const said = parseTellCommand(session.command);
       if (said !== undefined) {
+        if (guestLimited(session, identity.user)) return;
         void serveTell(forge, session, identity.user, said, door).catch(
           (error: unknown) => {
             forge.log.error("tell over ssh failed", { error: String(error) });
@@ -245,11 +260,13 @@ export function forgeSshSession(forge: Forge): (session: SshSession) => void {
       // `talk <words>`: the forge's own agent, as the person.
       const talked = parseTalkCommand(session.command);
       if (talked !== undefined && door === undefined) {
+        if (guestLimited(session, identity.user)) return;
         serveTalk(forge, session, identity.user, talked);
         return;
       }
       const again = parseTalkAgain(session.command);
       if (again !== undefined && door === undefined) {
+        if (guestLimited(session, identity.user)) return;
         serveTalkAgain(forge, session, identity.user, again.how, again.words);
         return;
       }

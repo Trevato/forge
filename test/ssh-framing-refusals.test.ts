@@ -35,6 +35,8 @@ beforeAll(async () => {
     log: createLog("ssh-framing-test"),
     authorize: () => true,
     onSession: () => {},
+    // Many short connections from loopback: this file is not about the limits.
+    limits: { handshakesPerAddress: 10_000, handshakes: 10_000 },
   });
 });
 

@@ -11,7 +11,6 @@
 import {
   createCipheriv,
   createDecipheriv,
-  createHash,
   createPublicKey,
   diffieHellman,
   generateKeyPairSync,
@@ -19,6 +18,7 @@ import {
   randomFillSync,
 } from "node:crypto";
 import type { Log } from "../kernel/log.ts";
+import { deriveKey, exchangeHashOf } from "./kex.ts";
 import { type HostKey, SERVER_SIG_ALGS, signWithHostKey } from "./keys.ts";
 import {
   ByteQueue,
@@ -27,7 +27,6 @@ import {
   fromUtf8,
   MSG,
   Reader,
-  sshString,
   utf8,
   WireError,
   Writer,
@@ -94,9 +93,20 @@ export interface TransportHost {
   log: Log;
 }
 
+/** RFC 4253 §9: rekey after this much traffic (both ways) under one set of keys. */
+export const REKEY_BYTES = 1024 * 1024 * 1024;
+/** And after this long under one set of keys. */
+export const REKEY_MS = 60 * 60 * 1000;
+
 export interface TransportOptions {
   readonly hostKey: HostKey;
   readonly serverVersion: string;
+  /** @default REKEY_BYTES */
+  readonly rekeyBytes?: number;
+  /** @default REKEY_MS */
+  readonly rekeyMs?: number;
+  /** @default Date.now */
+  readonly now?: () => number;
 }
 
 function incrementInvocationCounter(iv: Uint8Array): void {
@@ -156,6 +166,10 @@ export class Transport {
    *  forbids non-KEX traffic between our KEXINIT and our NEWKEYS). */
   private readonly parked: Uint8Array[] = [];
 
+  /** Bytes moved, either way, since the keys now in use took effect. */
+  private volume = 0;
+  private keyedAt = 0;
+
   constructor(
     private readonly host: TransportHost,
     private readonly options: TransportOptions,
@@ -195,11 +209,27 @@ export class Transport {
   /** Send an upper-layer payload, parking it if a key exchange is running. */
   send(payload: Uint8Array): void {
     if (this.dead) return;
+    this.rekeyIfDue();
     if (this.kexActive) {
       this.parked.push(payload);
       return;
     }
     this.sendNow(payload);
+  }
+
+  /**
+   * The server starts a rekey itself once the keys have carried 1 GiB or an
+   * hour (checked as traffic passes: an idle line has nothing to protect).
+   * The peer's own KEXINIT meets ours in the same exchange.
+   */
+  private rekeyIfDue(): void {
+    if (this.dead || this.kexActive || !this.initialKexDone) return;
+    const now = (this.options.now ?? Date.now)();
+    if (
+      this.volume >= (this.options.rekeyBytes ?? REKEY_BYTES) ||
+      now - this.keyedAt >= (this.options.rekeyMs ?? REKEY_MS)
+    )
+      this.beginKex();
   }
 
   /** Tell the peer we did not understand the packet at `seq` (RFC 4253 §11.4). */
@@ -310,6 +340,7 @@ export class Transport {
       }
       payload = new Uint8Array(plain.subarray(1, length - padding));
       this.q.skip(total);
+      this.volume += total;
       incrementInvocationCounter(keys.iv);
     } else {
       // Cipher `none`: 4 + packet_length must be a multiple of 8.
@@ -337,6 +368,7 @@ export class Transport {
     this.seqIn = (this.seqIn + 1) >>> 0;
     this.packetsIn++;
     this.handle(payload, seq);
+    this.rekeyIfDue();
     return !this.dead;
   }
 
@@ -368,6 +400,7 @@ export class Transport {
       frame.set(payload, 5);
       randomFillSync(frame, 5 + payload.length, padding);
     }
+    this.volume += frame.length;
     this.host.write(frame);
     this.seqOut = (this.seqOut + 1) >>> 0;
   }
@@ -622,23 +655,16 @@ export class Transport {
 
     const hostBlob = this.options.hostKey.publicKey.blob;
     const kMpint = new Writer(48).mpint(shared).build();
-    const clientVersion = this.clientVersion ?? new Uint8Array(0);
-    const myKexInit = this.myKexInit ?? new Uint8Array(0);
-    const peerKexInit = this.peerKexInit ?? new Uint8Array(0);
-    // H hashes I_C and I_S as the *complete KEXINIT payloads* (message byte
-    // 20 included) — the exact bytes exchanged, never re-serialised.
-    const exchangeHash = new Uint8Array(
-      createHash("sha256")
-        .update(sshString(clientVersion))
-        .update(sshString(this.serverVersion))
-        .update(sshString(peerKexInit))
-        .update(sshString(myKexInit))
-        .update(sshString(hostBlob))
-        .update(sshString(clientPublic))
-        .update(sshString(serverPublic))
-        .update(kMpint)
-        .digest(),
-    );
+    const exchangeHash = exchangeHashOf({
+      clientVersion: this.clientVersion ?? new Uint8Array(0),
+      serverVersion: this.serverVersion,
+      peerKexInit: this.peerKexInit ?? new Uint8Array(0),
+      myKexInit: this.myKexInit ?? new Uint8Array(0),
+      hostBlob,
+      clientPublic,
+      serverPublic,
+      kMpint,
+    });
     // The first exchange hash becomes the session id and never changes, even
     // across rekeys (RFC 4253 §7.2).
     this.sessionIdBytes ??= exchangeHash;
@@ -654,27 +680,8 @@ export class Transport {
         .build(),
     );
 
-    const derive = (letter: string, length: number): Uint8Array => {
-      // HASH(K || H || letter || session_id) where K is the *mpint* encoding
-      // but H and session_id are raw. The asymmetry is real (RFC 4253 §7.2).
-      let out: Buffer = createHash("sha256")
-        .update(kMpint)
-        .update(exchangeHash)
-        .update(letter)
-        .update(sessionId)
-        .digest();
-      while (out.length < length) {
-        out = Buffer.concat([
-          out,
-          createHash("sha256")
-            .update(kMpint)
-            .update(exchangeHash)
-            .update(out)
-            .digest(),
-        ]);
-      }
-      return new Uint8Array(out.subarray(0, length));
-    };
+    const derive = (letter: string, length: number): Uint8Array =>
+      deriveKey(kMpint, exchangeHash, letter, sessionId, length);
 
     const inSpec = CIPHER_SPECS[this.negotiated.cipherIn]!;
     const outSpec = CIPHER_SPECS[this.negotiated.cipherOut]!;
@@ -729,6 +736,8 @@ export class Transport {
     if (!this.newKeysSent || !this.newKeysReceived) return;
     this.kexActive = false;
     this.initialKexDone = true;
+    this.volume = 0;
+    this.keyedAt = (this.options.now ?? Date.now)();
     while (this.parked.length > 0 && !this.dead && !this.kexActive) {
       // SAFETY: length > 0 was just checked.
       this.sendNow(this.parked.shift()!);
