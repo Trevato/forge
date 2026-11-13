@@ -23,6 +23,7 @@
  */
 
 import { err, ok, type Result } from "../kernel/result.ts";
+import { isTimezone } from "./cron.ts";
 import { parseTools, type ToolSpec } from "./feature_tools.ts";
 
 export type SettingType = "bool" | "int" | "string" | "choice" | "days" | "list" | "secret";
@@ -73,10 +74,18 @@ export interface FeatureSpec {
   readonly schedule: readonly ScheduleEntry[];
 }
 
+/**
+ * One scheduled tool: an interval (`everyMs`) or a daily clock time (`at` "07:15" in the IANA zone
+ * `tz`), never both.
+ */
 export interface ScheduleEntry {
   readonly tool: string;
-  readonly everyMs: number;
+  readonly everyMs?: number | undefined;
+  readonly at?: string | undefined;
+  readonly tz?: string | undefined;
 }
+
+const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 const MINUTE = 60_000;
 /** The intervals a schedule entry may name. */
@@ -86,20 +95,30 @@ export const SCHEDULE_MAX = 4;
 /** The `schedule` of a feature block, checked against the tools the feature declares; an error names the entry. */
 function parseSchedule(raw: unknown, tools: readonly ToolSpec[]): Result<readonly ScheduleEntry[], string> {
   if (raw === undefined) return ok([]);
-  if (!Array.isArray(raw)) return bad("schedule must be a list of { tool, every }");
+  if (!Array.isArray(raw)) return bad("schedule must be a list of { tool, every } or { tool, at, tz }");
   if (raw.length > SCHEDULE_MAX) return bad(`schedule has at most ${SCHEDULE_MAX} entries`);
   const out: ScheduleEntry[] = [];
   for (const [i, e] of raw.entries()) {
     const at = `schedule entry ${i + 1}`;
-    if (!isObject(e)) return bad(`${at} must be an object with tool and every`);
-    for (const extra of Object.keys(e)) if (extra !== "tool" && extra !== "every") return bad(`${at}: unknown field ${extra}`);
+    if (!isObject(e)) return bad(`${at} must be an object with tool and every, or tool, at and tz`);
+    for (const extra of Object.keys(e)) if (!["tool", "every", "at", "tz"].includes(extra)) return bad(`${at}: unknown field ${extra}`);
     const tool = e["tool"];
     if (typeof tool !== "string" || !tools.some((t) => t.name === tool))
       return bad(`${at}: tool ${JSON.stringify(tool)} is not one of this feature's tools${tools.length ? ` (${tools.map((t) => t.name).join(", ")})` : ""}`);
     const every = e["every"];
-    if (typeof every !== "string" || !Object.hasOwn(SCHEDULE_EVERY, every))
-      return bad(`${at} (${tool}): every is one of ${Object.keys(SCHEDULE_EVERY).join(", ")}`);
-    out.push({ tool, everyMs: SCHEDULE_EVERY[every]! });
+    const clock = e["at"];
+    const tz = e["tz"];
+    if ((every === undefined) === (clock === undefined)) return bad(`${at} (${tool}): give exactly one of every and at`);
+    if (every !== undefined) {
+      if (tz !== undefined) return bad(`${at} (${tool}): tz goes with at, not every`);
+      if (typeof every !== "string" || !Object.hasOwn(SCHEDULE_EVERY, every))
+        return bad(`${at} (${tool}): every is one of ${Object.keys(SCHEDULE_EVERY).join(", ")}`);
+      out.push({ tool, everyMs: SCHEDULE_EVERY[every]! });
+      continue;
+    }
+    if (typeof clock !== "string" || !CLOCK.test(clock)) return bad(`${at} (${tool}): at is a 24-hour clock time like "07:15"`);
+    if (typeof tz !== "string" || !isTimezone(tz)) return bad(`${at} (${tool}): tz is an IANA zone name like "America/Chicago"`);
+    out.push({ tool, at: clock, tz });
   }
   return ok(out);
 }

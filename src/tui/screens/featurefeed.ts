@@ -7,10 +7,10 @@
  */
 
 import { runNow } from "../../apps/feature_run.ts";
-import { runtimeReach } from "../../apps/feature_schedule.ts";
+import { runLine, runtimeReach } from "../../apps/feature_schedule.ts";
 import { getAppBySlug } from "../../core/apps.ts";
 import { absorbedForNav, feedOf, getFeature, type NavFeature } from "../../actions/features.ts";
-import type { Fired } from "../../core/feature_fires.ts";
+import type { Fired, Run } from "../../core/feature_fires.ts";
 import type { FeedItem } from "../../feed/rank.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -30,10 +30,13 @@ export function featureFeedScreen(f: Session, ctx: Ctx, feature: NavFeature): Sc
   let items: readonly FeedItem[] = [];
   let fires: readonly Fired[] = [];
   let lines: readonly string[] = [];
+  let history: readonly Run[] = [];
+  let showHistory = false;
   void getFeature(f.app, f.user, feature.slug).then((found) => {
     items = found.ok ? feedOf(f.app, f.user, found.value) : [];
     fires = found.ok ? found.value.fires : [];
     lines = found.ok ? found.value.schedule.map((x) => x.line) : [];
+    history = found.ok ? found.value.history : [];
     ctx.invalidate();
   });
   const mayRun = (): boolean => f.user?.isAdmin === true && f.user.kind !== "agent" && fires.length > 0;
@@ -45,12 +48,13 @@ export function featureFeedScreen(f: Session, ctx: Ctx, feature: NavFeature): Sc
     running = true;
     try {
       for (const tool of fires.map((x) => x.tool)) {
-        const said = await runNow(f.app.db, record.id, tool, runtimeReach(f.app, record));
+        const said = await runNow(f.app.db, record.id, tool, runtimeReach(f.app, record), "terminal");
         ctx.toast(said.message, said.ok ? "success" : "danger");
       }
       const found = await getFeature(f.app, f.user, feature.slug);
       fires = found.ok ? found.value.fires : fires;
       lines = found.ok ? found.value.schedule.map((x) => x.line) : lines;
+      history = found.ok ? found.value.history : history;
     } finally {
       running = false;
       ctx.invalidate();
@@ -58,13 +62,16 @@ export function featureFeedScreen(f: Session, ctx: Ctx, feature: NavFeature): Sc
   }
   return {
     title: `In the feed: ${feature.name}`,
-    keys: [binding(["j", "k"], "move"), ...(mayRun() ? [binding(["r"], "run scheduled now")] : []), binding(["esc", "q"], "back")],
+    keys: [binding(["j", "k"], "move"), ...(history.length > 0 ? [binding(["h"], showHistory ? "show the feed" : "show run history")] : []), ...(mayRun() ? [binding(["r"], "run scheduled now")] : []), binding(["esc", "q"], "back")],
     render(area, s) {
       const c = ctx.theme.c;
-      const [head, body] = lines.length === 0 ? [undefined, area] : split(area, "v", [len(1), fill(1)]);
-      if (head !== undefined) {
-        const line = `Scheduled: ${lines.map(oneLine).join("; ")}`;
-        s.text(head.x, head.y, truncate(line, head.w), style(c.mutedFg, c.bg), head.x + head.w);
+      // One line per scheduled tool (`print_today at 07:15 America/Chicago · last …`).
+      const [head, body] = lines.length === 0 ? [undefined, area] : split(area, "v", [len(lines.length), fill(1)]);
+      if (head !== undefined)
+        lines.forEach((l, i) => s.text(head.x, head.y + i, truncate(oneLine(i === 0 ? `Scheduled: ${l}` : `           ${l}`), head.w), style(c.mutedFg, c.bg), head.x + head.w));
+      if (showHistory) {
+        drawList(s, body!, c, state, history.map((r): ListRow => ({ title: oneLine(runLine(r)), secondary: "", meta: ago(new Date(r.at).toISOString()) })));
+        return;
       }
       if (items.length === 0) {
         emptyState(s, body!, c, { title: "Nothing yet." });
@@ -75,8 +82,9 @@ export function featureFeedScreen(f: Session, ctx: Ctx, feature: NavFeature): Sc
     },
     key(e) {
       if (e.key === "esc" || e.key === "q") ctx.pop();
+      else if (e.key === "h" && history.length > 0) showHistory = !showHistory;
       else if (e.key === "r" && mayRun()) void runAll();
-      else state.key(e, items.length);
+      else state.key(e, showHistory ? history.length : items.length);
       return true;
     },
   };

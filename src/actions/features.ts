@@ -18,7 +18,7 @@
  */
 
 import { scheduleStatus, type ScheduleStatus } from "../apps/feature_schedule.ts";
-import { lastFires, type Fired } from "../core/feature_fires.ts";
+import { lastFires, runHistory, scheduleSeen, type Fired, type Run } from "../core/feature_fires.ts";
 import type { App } from "../app.ts";
 import { readFileAt } from "../apps/checkout.ts";
 import { checkSetting, featureEnv, parseFeature, settingEnvName, type FeatureSpec } from "../apps/feature.ts";
@@ -92,6 +92,8 @@ export interface FeatureView {
   readonly tools: readonly ToolSpec[];
   /** How the forge's last call of each scheduled tool went; empty when none has fired. */
   readonly fires: readonly Fired[];
+  /** The last 30 runs of each tool, newest first, with how each was started. */
+  readonly history: readonly Run[];
   /** Each scheduled tool with its last fire and next run; empty when not absorbed. */
   readonly schedule: readonly ScheduleStatus[];
   /** Where the app comes from: the upstream only when the reader may read it. */
@@ -246,7 +248,8 @@ function viewOf(
     provenance,
     tools: spec?.tools ?? [],
     fires,
-    schedule: absorbed === undefined ? [] : scheduleStatus(spec?.schedule ?? [], fires),
+    history: absorbed === undefined ? [] : runHistory(app.db, record.id),
+    schedule: absorbed === undefined ? [] : scheduleStatus(spec?.schedule ?? [], fires, Date.now(), scheduleSeen(app.db, record.id)),
     settings: (spec?.settings ?? []).map((s) => {
       const name = settingEnvName(s.key);
       return {

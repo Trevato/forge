@@ -38,27 +38,33 @@ beforeEach(() => {
 afterEach(() => db.close());
 
 describe("due", () => {
-  test("never fired is due; inside the interval is not; at it is", () => {
-    expect(due(schedule, new Map(), 5)).toEqual(schedule);
-    expect(due(schedule, new Map([["scan", 1000]]), 1000 + HOUR - 1)).toEqual([]);
-    expect(due(schedule, new Map([["scan", 1000]]), 1000 + HOUR)).toEqual(schedule);
+  const every = schedule[0]!;
+  test("an interval counts from the later of its last fire and when the schedule began; at it, it is due", () => {
+    expect(due(every, { since: 5 }, 5 + HOUR - 1)).toBeUndefined();
+    expect(due(every, { since: 5 }, 5 + HOUR)).toEqual({ do: "fire", how: "schedule" });
+    expect(due(every, { since: 5, lastFired: 1000 }, 1000 + HOUR - 1)).toBeUndefined();
+    expect(due(every, { since: 5, lastFired: 1000 }, 1000 + HOUR)).toEqual({ do: "fire", how: "schedule" });
   });
 });
 
 describe("fireApp", () => {
   test("calls a due tool through /forge/tools and keeps how it went; two ticks in a window fire once", async () => {
-    expect(await fireApp(db, "a1", reach(), () => 10_000)).toEqual(["scan"]);
-    expect(seen).toEqual(["/forge/tools/scan"]);
+    expect(await fireApp(db, "a1", reach(), () => 10_000)).toEqual([]); // the first look only begins to count
+    expect(seen).toEqual([]);
     expect(await fireApp(db, "a1", reach(), () => 10_000 + HOUR - 1)).toEqual([]);
-    expect(seen.length).toBe(1);
-    expect(lastFires(db, "a1")).toEqual([{ tool: "scan", at: 10_000, ok: true, error: null, durationMs: 0 }]);
     expect(await fireApp(db, "a1", reach(), () => 10_000 + HOUR)).toEqual(["scan"]);
+    expect(seen).toEqual(["/forge/tools/scan"]);
+    expect(await fireApp(db, "a1", reach(), () => 10_000 + 2 * HOUR - 1)).toEqual([]);
+    expect(seen.length).toBe(1);
+    expect(lastFires(db, "a1")).toEqual([{ tool: "scan", at: 10_000 + HOUR, ok: true, error: null, durationMs: 0 }]);
+    expect(await fireApp(db, "a1", reach(), () => 10_000 + 2 * HOUR)).toEqual(["scan"]);
     expect(seen.length).toBe(2);
   });
 
   test("a failing tool is recorded with its sentence", async () => {
     answer = () => new Response("no", { status: 500 });
     await fireApp(db, "a1", reach(), () => 5);
+    await fireApp(db, "a1", reach(), () => 5 + HOUR);
     const [fire] = lastFires(db, "a1");
     expect(fire?.ok).toBe(false);
     expect(fire?.error).toBe("the app answered 500");
@@ -117,13 +123,14 @@ describe("fireDue", () => {
     const reachOf = (r: { id: string }): Reach =>
       r.id === "a2" ? reach({ declared: async () => Promise.reject(new Error("boom")) }) : reach();
     await fireDue(forge, () => 10_000, reachOf);
-    expect(seen).toEqual(["/forge/tools/scan"]);
     expect(warned).toEqual(["could not fire a scheduled tool"]);
-    await fireDue(forge, () => 10_000 + HOUR - 1, reachOf);
-    expect(seen.length).toBe(1);
     await fireDue(forge, () => 10_000 + HOUR, reachOf);
+    expect(seen).toEqual(["/forge/tools/scan"]);
+    await fireDue(forge, () => 10_000 + 2 * HOUR - 1, reachOf);
+    expect(seen.length).toBe(1);
+    await fireDue(forge, () => 10_000 + 2 * HOUR, reachOf);
     expect(seen.length).toBe(2);
-    expect(lastFires(db, "a1")[0]?.at).toBe(10_000 + HOUR);
+    expect(lastFires(db, "a1")[0]?.at).toBe(10_000 + 2 * HOUR);
   });
 });
 

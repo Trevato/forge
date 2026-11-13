@@ -102,9 +102,9 @@ function zone(tz: string): Intl.DateTimeFormat {
   return f;
 }
 
-interface Wall { readonly y: number; readonly mo: number; readonly d: number; readonly h: number; readonly mi: number; readonly s: number }
+export interface Wall { readonly y: number; readonly mo: number; readonly d: number; readonly h: number; readonly mi: number; readonly s: number }
 
-function wallAt(ms: number, tz: string): Wall {
+export function wallAt(ms: number, tz: string): Wall {
   const p: Record<string, number> = {};
   for (const part of zone(tz).formatToParts(ms)) if (part.type !== "literal") p[part.type] = Number(part.value);
   return { y: p["year"]!, mo: p["month"]!, d: p["day"]!, h: p["hour"]!, mi: p["minute"]!, s: p["second"]! };

@@ -15,6 +15,7 @@ In the app's `forge.json`, next to the `tools` the schedule names:
 ```
 
 - At most 4 entries. `every` is `15m`, `1h`, `6h` or `1d`. A wrong entry is refused with the field named (`src/apps/feature.ts`).
+- **Clock time:** `{ "tool": "print_today", "at": "07:15", "tz": "America/Chicago" }` instead of `every` (exactly one of the two; `tz` is an IANA name, daylight saving is followed). It fires once per local day; a forge that was away fires it on its next look within a 3 h grace window and records `late`, and past the window skips the day and records `skipped`. A manual run does not move an `at` schedule (it does move an `every` one). A new or changed schedule first fires at its next due time, never on absorb; Run now is for the impatient. Every way of running a scheduled tool (schedule, page, terminal, the `features` tool) is the one recorded run; a tool the schedule does not name is not recorded.
 - Each entry names a tool the feature declares. A tool that is no longer declared is skipped, never called.
 - The tool is called with no arguments, so it should be one that needs none.
 
@@ -42,3 +43,11 @@ Every door shows one line per schedule entry, worded once by `scheduleMeta` in `
 ## Not done
 
 No arguments per entry, no history beyond the last fire, and no wake-on-schedule for a stopped app.
+
+## Run history
+
+Each scheduled tool keeps its last 30 runs, with how each started (`schedule`, `late`, `skipped`, `page`, `terminal`, `mcp`), when, whether it went well and how long it took.
+
+- **Features page:** "Run history", one list per tool, the newest 5 shown and the older ones behind "N older".
+- **Terminal:** open the feature under Feature feeds and press `h` to switch between the feed and the history; the Scheduled lines above (one per tool, with `at`/zone) stay.
+- **API:** `history` in `GET /api/v1/features/:slug`.

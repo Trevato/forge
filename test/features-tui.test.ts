@@ -15,6 +15,7 @@ import { createApp, type App as Forge } from "../src/app.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
 import { clearFires, recordFire } from "../src/core/feature_fires.ts";
 import { featureSettings, getAbsorbed } from "../src/core/features.ts";
+import { getRepoById } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import type { TuiIdentity } from "../src/tui/session.ts";
@@ -164,6 +165,25 @@ describe("features in the terminal", () => {
     expect(t.text()).toMatch(/Scheduled: scan every 1h · last \d\d:\d\d, the app answered 500 · 3 ms · next \d\d:\d\d/);
     clearFires(forge.db, appId);
     t.stop();
+  });
+
+  test("the feed screen words a clock-time schedule in its zone, and h shows the run history", async () => {
+    const clock = JSON.stringify({ ...JSON.parse(FORGE_JSON), feature: { ...JSON.parse(FORGE_JSON).feature, schedule: [{ tool: "scan", at: "07:15", tz: "America/Chicago" }] } });
+    await commitToBranch(forge, ada, getRepoById(forge.db, repoId)!, { message: "clock", files: [{ path: "forge.json", content: clock }] });
+    recordFire(forge.db, appId, { tool: "scan", at: Date.now() - 120_000, ok: true, error: null, durationMs: 3 }, "terminal");
+    const t = boot(ada);
+    await t.palette("Feature feeds");
+    await t.press("enter");
+    await t.press("enter");
+    expect(t.text()).toMatch(/Scheduled: scan at 07:15 America\/Chicago · last /);
+    expect(t.text()).not.toContain("every 1h");
+    await t.press("h");
+    expect(t.text()).toMatch(/scan · terminal · \d{4}-\d\d-\d\d \d\d:\d\d · ok · 3 ms/);
+    await t.press("h");
+    expect(t.text()).not.toContain("scan · terminal");
+    t.stop();
+    clearFires(forge.db, appId);
+    await commitToBranch(forge, ada, getRepoById(forge.db, repoId)!, { message: "back", files: [{ path: "forge.json", content: FORGE_JSON }] });
   });
 
   test("an admin presses r on the feed screen to run the scheduled tool; the refusal is the page's sentence", async () => {
