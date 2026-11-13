@@ -12,6 +12,8 @@ const REFUSALS: Readonly<Record<string, string>> = {
     "A domain is a hostname: letters, digits and hyphens in at least two labels, like app.example.com.",
   reserved_host: "That name is the forge's own to hand out.",
   taken: "Another app already answers to that domain.",
+  invalid_records:
+    "Old records are a list of up to 50, each with a type (A, AAAA, CNAME, ALIAS, TXT, MX, NS, CAA or SRV), a name, a value and, if known, a ttl in seconds.",
   no_runtime: "Nothing is serving apps on this forge.",
 };
 

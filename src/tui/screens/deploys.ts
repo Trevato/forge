@@ -46,7 +46,9 @@
  * The app's admin sees its own domains under the head, each with its state
  * in the settings page's words (`domain_words.ts`), and gets `n`: a domains
  * screen where `+` adds one, `c` checks the selected one's DNS proof now and
- * says the record still needed, and `-` removes it after `remove <host>? y/n`
+ * says the record still needed, `o` writes down the old DNS records before a
+ * cut-over (`keepOldRecords`) and shows them under the list, and `-` removes
+ * it after `remove <host>? y/n`
  * — `addAppDomain`, `checkAppDomain` and `removeAppDomain`, the page's and
  * MCP `app_domains`' actions. `listAppDomains` is the admin gate: anyone it
  * refuses sees neither the domains nor the key.
@@ -75,9 +77,11 @@ import {
 import { previewBuild, previewBuildRefusalText } from "../../actions/build_preview.ts";
 import { STOP_APP } from "../../web/danger_words.ts";
 import { envPhrase } from "../../apps/env_phrase.ts";
+import { recordsFromLine, type OldRecord } from "../../core/domains.ts";
 import {
   addAppDomain,
   checkAppDomain,
+  keepOldRecords,
   listAppDomains,
   removeAppDomain,
   type AppDomainView,
@@ -713,6 +717,12 @@ function stillNeeded(d: AppDomainView): string {
   return d.verified ? "" : `Still needed: ${recordsInWords(d.records)}.`;
 }
 
+const recordLine = (r: OldRecord): string => `${r.type} ${r.name} ${r.value}${r.ttl === undefined ? "" : ` ${r.ttl}`}`;
+
+/** `Old records: A app.example.com 203.0.113.7 300`, or "" with none kept. */
+const oldLine = (d: AppDomainView): string =>
+  d.oldRecords.length === 0 ? "" : `Old records: ${d.oldRecords.map(recordLine).join("; ")}`;
+
 /**
  * The app's domains, for its admin. Every key goes through the action, which
  * gates again; a refusal is said in the page's words. `changed` re-reads the
@@ -767,6 +777,26 @@ export function domainsScreen(f: Session, ctx: Ctx, repo: Repo, changed: () => v
       after();
     });
 
+  /** Write down what the name carries today, before the cut: `keepOldRecords`, as the API's PUT and MCP `keep`. */
+  const keep = (d: AppDomainView): void => {
+    ctx.push(
+      promptScreen(ctx, self, {
+        title: `Old records of ${d.host}`,
+        label: "Records",
+        placeholder: "A app.example.com 203.0.113.7 300; CNAME www.example.com host.example.net",
+        value: d.oldRecords.map(recordLine).join("; "),
+        hint: "type name value [ttl], separated by ;. Replaces what was kept.",
+        onSubmit: (line) => {
+          const kept = keepOldRecords(f.app, f.user, repo, d.host, recordsFromLine(line));
+          if (!kept.ok) return refusal(kept.error, NO_SUCH_DOMAIN);
+          ctx.toast(`Kept ${kept.value.oldRecords.length} old record${kept.value.oldRecords.length === 1 ? "" : "s"} of ${d.host}.`);
+          after();
+          return undefined;
+        },
+      }),
+    );
+  };
+
   const remove = (d: AppDomainView): void => {
     const choose = (choice: number): void => {
       if (choice !== 0) return;
@@ -797,7 +827,7 @@ export function domainsScreen(f: Session, ctx: Ctx, repo: Repo, changed: () => v
         : [
             binding(["j", "k"], "move"),
             binding(["+"], "add a domain"),
-            ...(domains.length > 0 ? [binding(["c"], "check its DNS now"), binding(["-"], "remove it")] : []),
+            ...(domains.length > 0 ? [binding(["c"], "check its DNS now"), binding(["o"], "old records"), binding(["-"], "remove it")] : []),
             binding(["r"], "refresh"),
             binding(["esc"], "back"),
           ];
@@ -805,7 +835,7 @@ export function domainsScreen(f: Session, ctx: Ctx, repo: Repo, changed: () => v
     load: async () => read(),
     render(area, s) {
       const c = ctx.theme.c;
-      const [head, body, foot] = split(area, "v", [len(1), fill(1), len(1)]);
+      const [head, body, foot] = split(area, "v", [len(1), fill(1), len(2)]);
       s.text(
         head!.x,
         head!.y,
@@ -825,7 +855,9 @@ export function domainsScreen(f: Session, ctx: Ctx, repo: Repo, changed: () => v
       hitList(ctx, body!, state, rows.length, {});
       const selected = domains[state.index];
       if (selected !== undefined)
-        s.text(foot!.x, foot!.y, truncate(stillNeeded(selected), foot!.w), style(c.mutedFg, c.bg), foot!.x + foot!.w);
+        [stillNeeded(selected), oldLine(selected)].forEach((text, row) =>
+          s.text(foot!.x, foot!.y + row, truncate(text, foot!.w), style(c.mutedFg, c.bg), foot!.x + foot!.w),
+        );
     },
     key(e) {
       if (refused !== undefined) return false;
@@ -837,6 +869,10 @@ export function domainsScreen(f: Session, ctx: Ctx, repo: Repo, changed: () => v
       }
       if (e.key === "c" && selected !== undefined) {
         check(selected);
+        return true;
+      }
+      if (e.key === "o" && selected !== undefined) {
+        keep(selected);
         return true;
       }
       if (e.key === "-" && selected !== undefined) {

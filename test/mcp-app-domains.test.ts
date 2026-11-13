@@ -120,6 +120,30 @@ describe("MCP app_domains", () => {
     expect((await tool(admin, { repo, action: "check", host: "app.example.com" })).error).toContain("no_such_domain");
   });
 
+  test("keep writes the old records down, add takes them too, and bad ones create nothing", async () => {
+    const records = [{ type: "a", name: "old.example.com", value: "203.0.113.7", ttl: 300 }];
+    const added = await tool(admin, { repo, action: "add", host: "old.example.com", records });
+    expect(added.value.oldRecords).toEqual([{ type: "A", name: "old.example.com", value: "203.0.113.7", ttl: 300 }]);
+    const kept = await tool(admin, { repo, action: "keep", host: "old.example.com", records: [] });
+    expect(kept.value.oldRecords).toEqual([]);
+    const again = await tool(admin, { repo, action: "keep", host: "old.example.com", records });
+    expect(again.value.oldRecords).toHaveLength(1);
+    const listed = await tool(admin, { repo, action: "list" });
+    expect(listed.value.items[0].oldRecords).toHaveLength(1);
+    expect((await tool(admin, { repo, action: "keep", host: "old.example.com", records: [{ type: "X" }] })).error).toContain(
+      "invalid_records",
+    );
+    expect((await tool(admin, { repo, action: "keep", host: "nobody.example.com", records })).error).toContain("no_such_domain");
+    expect((await tool(bob, { repo, action: "keep", host: "old.example.com", records })).error).toContain("not_found");
+    expect((await tool(rw, { repo, action: "keep", host: "old.example.com", records })).error).toBeDefined();
+    expect(
+      (await tool(admin, { repo, action: "add", host: "never.example.com", records: [{ type: "X" }] })).error,
+    ).toContain("invalid_records");
+    const after = await tool(admin, { repo, action: "list" });
+    expect(after.value.items.map((d: any) => d.host)).toEqual(["old.example.com"]);
+    await tool(admin, { repo, action: "remove", host: "old.example.com" });
+  });
+
   test("a non-admin is refused", async () => {
     expect((await tool(bob, { repo, action: "list" })).error).toContain("not_found");
     expect((await tool(bob, { repo, action: "add", host: "bob.example.com" })).error).toContain("not_found");

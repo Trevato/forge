@@ -87,6 +87,7 @@ export function eventVerb(event: ForgeEvent): string {
     const which = typeof host === "string" ? host : "a domain";
     if (kind === "app.domain.added") return `gave the app the domain ${which}`;
     if (kind === "app.domain.verified") return `verified the domain ${which}`;
+    if (kind === "app.domain.old_records") return `wrote down the old DNS records of ${which}`;
     return `removed the domain ${which}`;
   }
   if (kind === "build.shots") {

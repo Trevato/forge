@@ -52,7 +52,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `agents` | — | Agents you may see, as GET /api/v1/agents | 160 |
 | `app_data_import` | — | Load a SQL dump into an app's database and report per-table counts and checksums; admins only | 339 |
 | `app_deploy` | `redeploy`, `stop`, `pull`, `schedules`, `run_schedule`, `pause_schedule`, `resume_schedule`, `jobs`, `cancel_job`, `retry_job` | Redeploy or stop an env, pull, list and steer schedules and jobs | 408 |
-| `app_domains` | — | App domains: list, add, check, remove | 201 |
+| `app_domains` | — | App domains: list, add, check, keep, remove | 234 |
 | `app_env` | `list`, `set`, `unset` | An app's environment variables: list names, set or unset by scope; write-only | 393 |
 | `app_members` | — | People a private app names, who may enter it and its previews | 297 |
 | `app_notes` | `hide`, `ban`, `unban` | Notes from an app's forge button and banned senders; hide a note, ban or unban its sender | 306 |

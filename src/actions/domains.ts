@@ -15,10 +15,13 @@ import {
   addDomain,
   getDomain,
   listDomains,
+  parseRecordsInput,
+  setOldRecords,
   recordCheck,
   removeDomain,
   type AddDomainError,
   type AppDomain,
+  type OldRecord,
 } from "../core/domains.ts";
 import type { Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
@@ -34,6 +37,8 @@ export interface AppDomainView {
   readonly said: string;
   /** The proof, and where the traffic goes. */
   readonly records: DnsRecord[];
+  /** What the name carried before the cut-over: put these back to revert. */
+  readonly oldRecords: readonly OldRecord[];
 }
 
 export type DomainError = "not_found" | "no_runtime";
@@ -85,6 +90,7 @@ function view(
     verifiedAt: domain.verifiedAt,
     checkedAt: domain.checkedAt,
     said: domain.said,
+    oldRecords: domain.oldRecords,
     records: recordsFor(
       domain.host,
       domain.token,
@@ -115,12 +121,15 @@ export function addAppDomain(
   actor: User | undefined,
   repo: Repo,
   host: string,
-): Result<AppDomainView, DomainError | AddDomainError> {
+  oldRecords?: unknown,
+): Result<AppDomainView, DomainError | AddDomainError | "invalid_records"> {
   const gate = admitted(app, actor, repo);
   if (!gate.ok) return gate;
   const runtime = serving(app);
   if (!runtime.ok) return runtime;
   const { admin, record } = gate.value;
+  const kept = oldRecords === undefined ? ok<OldRecord[]>([]) : parseRecordsInput(oldRecords);
+  if (!kept.ok) return kept;
   const added = addDomain(
     app.db,
     { host, appId: record.id, createdBy: admin.id },
@@ -132,13 +141,44 @@ export function addAppDomain(
     },
   );
   if (!added.ok) return added;
+  if (kept.value.length > 0) setOldRecords(app.db, added.value.host, kept.value);
   app.bus.append({
     kind: "app.domain.added",
     repoId: repo.id,
     actorId: admin.id,
     payload: { host: added.value.host, slug: record.slug },
   });
-  return ok(view(runtime.value, record, added.value));
+  return ok(view(runtime.value, record, getDomain(app.db, added.value.host) ?? added.value));
+}
+
+/**
+ * Write down what the name carries today, before the cut, replacing what
+ * was kept. Reading the domain back (`listAppDomains`) is the way back.
+ */
+export function keepOldRecords(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  host: string,
+  records: unknown,
+): Result<AppDomainView, DomainError | "no_such_domain" | "invalid_records"> {
+  const gate = admitted(app, actor, repo);
+  if (!gate.ok) return gate;
+  const runtime = serving(app);
+  if (!runtime.ok) return runtime;
+  const { admin, record } = gate.value;
+  const domain = ownedDomain(app, record, host);
+  if (domain === undefined) return err("no_such_domain");
+  const parsed = parseRecordsInput(records);
+  if (!parsed.ok) return parsed;
+  setOldRecords(app.db, domain.host, parsed.value);
+  app.bus.append({
+    kind: "app.domain.old_records",
+    repoId: repo.id,
+    actorId: admin.id,
+    payload: { host: domain.host, slug: record.slug, count: parsed.value.length },
+  });
+  return ok(view(runtime.value, record, { ...domain, oldRecords: parsed.value }));
 }
 
 /**

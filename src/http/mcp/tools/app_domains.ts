@@ -1,6 +1,7 @@
 import {
   addAppDomain,
   checkAppDomain,
+  keepOldRecords,
   listAppDomains,
   removeAppDomain,
 } from "../../../actions/domains.ts";
@@ -15,14 +16,15 @@ import { type Answer, good, bad, type Tool, REPO_ARG, repoArg, isAnswer, str } f
 
 export const tool: Tool = {
   name: "app_domains",
-  doc: "`{ repo, action, host? }`: `list`, `add`, `check` (looks the DNS proof up now) or `remove` an app's own domains, with the records to publish, as `…/app/domains` answers; an admin of the repository with an admin-scope token",
-  description: "App domains: list, add, check, remove.",
+  doc: "`{ repo, action, host?, records? }`: `list`, `add`, `check` (looks the DNS proof up now), `keep` (`records`: the old DNS records `[{type,name,value,ttl?}]` written down before a cut-over, shown back as `oldRecords` on `list`; `add` takes them too) or `remove` an app's own domains, with the records to publish, as `…/app/domains` answers; an admin of the repository with an admin-scope token",
+  description: "App domains: list, add, check, keep, remove.",
   inputSchema: {
     type: "object",
     properties: {
       repo: REPO_ARG,
       action: { type: "string" },
       host: { type: "string" },
+      records: { type: "array" },
     },
   },
   writes: true,
@@ -31,8 +33,8 @@ export const tool: Tool = {
     const repo = repoArg(ctx, user, args);
     if (isAnswer(repo)) return repo;
     const action = args["action"];
-    if (action !== "list" && action !== "add" && action !== "check" && action !== "remove")
-      return bad("invalid", "action is list, add, check or remove");
+    if (action !== "list" && action !== "add" && action !== "check" && action !== "keep" && action !== "remove")
+      return bad("invalid", "action is list, add, check, keep or remove");
     const host = str(args["host"]);
     if (action !== "list" && host === "") return bad("invalid", "host is the domain name");
     const refused = (error: string, fallback: string): Answer =>
@@ -46,10 +48,14 @@ export const tool: Tool = {
         : refused(listed.error, NO_SUCH_DOMAIN);
     }
     if (action === "add") {
-      const added = addAppDomain(ctx.app, user, repo, host);
+      const added = addAppDomain(ctx.app, user, repo, host, args["records"]);
       return added.ok
         ? good({ ...added.value, says: domainAddedText(added.value) })
         : refused(added.error, "That domain could not be added.");
+    }
+    if (action === "keep") {
+      const kept = keepOldRecords(ctx.app, user, repo, host, args["records"]);
+      return kept.ok ? good(kept.value) : refused(kept.error, NO_SUCH_DOMAIN);
     }
     if (action === "check") {
       const checked = await checkAppDomain(ctx.app, user, repo, host);

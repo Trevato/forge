@@ -266,6 +266,18 @@ test("the app's admin lists, adds, checks and removes a domain; a reader is offe
     expect(checked).toContain("No TXT record at _forge-verify.parlour.example.com yet.");
     expect(checked).toContain("Still needed: a TXT record at _forge-verify.parlour.example.com");
 
+    // `o` writes the old records down, replacing what was kept; a bad line is refused and keeps what was.
+    const line = "A parlour.example.com 203.0.113.7 300; CNAME www.parlour.example.com parlour.example.net";
+    const kept = await drive(alice, ["n", "o", ...line, "enter"]);
+    expect(kept).toContain("Old records: A parlour.example.com 203.0.113.7 300; CNAME www.parlour.example.com");
+    const oldOf = () => {
+      const l = listAppDomains(forge, alice, r.value);
+      return l.ok ? l.value[0]!.oldRecords.length : -1;
+    };
+    expect(oldOf()).toBe(2);
+    expect(await drive(alice, ["n", "o", ..."; BOGUS x y", "enter"])).toContain("Old records are a list of up to 50");
+    expect(oldOf()).toBe(2);
+
     // A reader sees neither the domains nor the key, and the screen refuses them in words.
     const d = await signUp(forge, {
       username: "dana",
@@ -303,4 +315,4 @@ test("the app's admin lists, adds, checks and removes a domain; a reader is offe
   } finally {
     await runtime.stop();
   }
-});
+}, 20_000);

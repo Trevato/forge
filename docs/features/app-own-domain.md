@@ -7,8 +7,11 @@ the owner's records, put back by hand in one edit. In order:
 
 1. **Write the old records down first.** Every record at the name (A, AAAA,
    CNAME, ALIAS, and the TTL of each) as the old host serves them today,
-   in the migration issue. This list is the way back; the forge cannot read
-   it for you after the cut.
+   in the migration issue **and with the domain**: pass them as `old_records`
+   (`[{type, name, value, ttl?}]`) when adding, or later `PUT
+   …/app/domains/<host>/old-records` with `{records}` (MCP `app_domains`
+   `keep`, with `records`; in the terminal, `o` on the domain's screen, `type name value [ttl]; …`), up to 50, replaced whole. Types: A, AAAA, CNAME, ALIAS, TXT, MX, NS, CAA, SRV. `list` then shows them
+   as `oldRecords`. The forge cannot read them for you after the cut.
 2. **Add the name** (Settings → App → Domains, `app_domains` `add`, or
    `POST …/app/domains`). The answer lists the TXT proof and the CNAME or
    ALIAS to publish. Publish the **TXT only**; the old A/CNAME stays.
@@ -23,7 +26,7 @@ the owner's records, put back by hand in one edit. In order:
 4. **Cut:** replace the old A/CNAME with the CNAME/ALIAS the forge gave. The
    first request to the new name pays for issuing the certificate (a second
    or two); request it once yourself, over https, before telling anyone.
-5. **Revert, one step:** put the step-1 records back. Traffic returns to the old
+5. **Revert, one step:** read `oldRecords` from the domain (`list`) and put those records back. Traffic returns to the old
    host as each resolver's cache of the new record expires, so keep the TTL
    low (`platform-app-move.md`, §6) until the shop is settled.
    The forge keeps answering at the name until the domain is removed
@@ -31,8 +34,8 @@ the owner's records, put back by hand in one edit. In order:
    and the old host's certificate was never touched.
 
 Left out, on purpose: the forge does not edit DNS at a registrar (#11717),
-or store the old records for you
-(#11719). This closes #11700 as a runbook over a feature that already ships,
+or read the old records itself: it keeps only
+what you wrote down (#11719). This closes #11700 as a runbook over a feature that already ships,
 not as new code.
 
 ## What keeps these claims true
@@ -43,5 +46,8 @@ All in `test/app-domains.test.ts`:
   app at the host and every URL follows";
 - before verification the forge answers for itself and the ask says 404:
   "before verification the forge answers for itself at the host";
+- the old records are checked, kept with the row, listed back, replaced whole
+  and admin-only (also `test/core-domains.test.ts`): "the old records are kept
+  with the domain";
 - removal makes the host unknown again and the ask 404: "removal makes the
   host unknown again".
