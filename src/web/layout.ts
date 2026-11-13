@@ -811,7 +811,7 @@ export function page(options: PageOptions, status = 200): Response {
         <meta charset="utf-8" />
         <meta
           name="viewport"
-          content="width=device-width, initial-scale=1, viewport-fit=cover"
+          content="width=device-width, initial-scale=1"
         />
         <title>${tabTitle(options.title)}</title>
         <meta name="description" content="${pageDescription(options)}" />
