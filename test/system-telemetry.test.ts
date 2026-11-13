@@ -227,7 +227,7 @@ describe("telemetry:read: the owner grants it, an agent reads with it, nobody el
     expect((await tool(tokens["grok"]!, "system")).error).toBe(true);
     expect((await tool(tokens["grok"]!, "flow")).error).toBe(true);
     const bobCookie = await login("bob");
-    expect((await fetch(`${servers.url}/system`, { headers: { cookie: bobCookie } })).status).toBe(404);
+    expect((await fetch(`${servers.url}/system`, { headers: { cookie: bobCookie } })).status).toBe(403);
     const bobPage = await fetch(`${servers.url}/system`, { headers: { cookie: bobCookie } });
     expect(await bobPage.text()).not.toContain("Telemetry readers");
   });

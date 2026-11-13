@@ -39,7 +39,7 @@ test("the spend view is one settings-block under an h2, no card", async () => {
   expect(m).toContain('id="spend" data-live="run.queued,run.started,run.finished,usage.*"');
 });
 
-test("a non-admin gets the one 404", async () => {
+test("a non-admin gets the one 403", async () => {
   const r = await fetch(`${servers.url}/settings/spend`, { headers: { cookie: plain } });
-  expect(r.status).toBe(404);
+  expect(r.status).toBe(403);
 });

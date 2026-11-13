@@ -25,6 +25,9 @@ import { readDrifts } from "../../flow/alarm_drift.ts";
 import { readHandoverLists } from "../../flow/handover_read.ts";
 import { readWaiting, waitingSection } from "./flow-waiting.ts";
 import { clogSection, readClogView } from "./flow-clog.ts";
+import { cpuStopsSection } from "./flow-cpu.ts";
+import { cpuClosedPulls } from "../../flow/cpu_closed.ts";
+import { cpuStops } from "../../flow/cpu_stops.ts";
 
 const money = (usd: number): string => `$${usd.toFixed(2)}`;
 const plural = (n: number, one: string, many = `${one}s`): string => `${String(n)} ${n === 1 ? one : many}`;
@@ -103,6 +106,7 @@ export async function flowPage(ctx: Ctx): Promise<Response> {
     <p class="mb">Money flows from the left to shipped on the right, as wide as this week's real spend. Every repository has a valve: drag it to give the repository a share of the week, all the way down to shut. The crew does exactly what the valves say, from the next tick, and nothing but you turns one.</p>
     ${backupRow(alarmBackup(ctx.app.config.dataDir, new Date()))}
     ${clogSection(readClogView(ctx.app.db))}
+    ${cpuStopsSection(cpuStops(ctx.app.db).stopped, cpuClosedPulls(ctx.app.db, new Date()))}
     ${waitingSection(await readWaiting(ctx.app.db, ctx.app.reposRoot, new Date()))}
     ${pipesSvg(p)}
     <p class="muted small">${money(p.usd)} spent in the last 7 days; ${plural(p.shipped, "pull")} shipped.</p>

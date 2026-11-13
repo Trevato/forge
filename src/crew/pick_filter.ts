@@ -80,8 +80,8 @@ export function pickFilter(
   const small = smallIssues(app.db, issues);
   const first = firstAt(app.db, issues.map((i) => i.id));
   // Read only when polish is over its share: the one place a rank is asked (#11619 trims a statement from /next).
-  let rankedIds: Map<string, number> | undefined;
-  const ranked = { has: (id: string): boolean => (rankedIds ??= ranksInRepo(app.db, repo.id)).has(id) };
+  let rankedIds: ReadonlyMap<string, number> | undefined;
+  const ranked = { has: (id: string): boolean => (rankedIds ??= ranksInRepo(app.db, repo.id).places).has(id) };
   const raised = raisedAt(app.db, issues.map((i) => i.id));
   const bets = betsInUse(app.db, repo.id) ? backedBetOf(app.db, repo.id, issues.map((i) => i.id)) : undefined;
   const polishLabels = labelsForIssues(app.db, issues.map((i) => i.id));

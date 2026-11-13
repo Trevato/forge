@@ -1,10 +1,11 @@
+import { WHERE_A_FORGE_LIVES } from "../../../spawn/contribute_words.ts";
 import { spawnDoor } from "../../../spawn/door.ts";
 import { FOLLOW_SHORT } from "../../../spawn/follow_words.ts";
 import { good, bad, type Tool, APP_ARG, REVEAL_ARG, LINK_KEPT, LINK_REVEALED } from "../shared.ts";
 
 export const tool: Tool = {
   name: "spawn",
-  doc: "`{ name, apps?, crew?, direction?, fresh?, followMode?, size?, plan?, template?, keepAccess?, dryRun?, reveal? }`: a child forge, planned first (`dryRun` is true unless `false`); an admin's, and an `ro` token may plan but not make; `reveal: true` shows the claim link",
+  doc: "`{ name, apps?, crew?, direction?, fresh?, purpose?, followMode?, size?, plan?, template?, keepAccess?, dryRun?, reveal? }`: a child forge to keep (`purpose: \"contribute\"` makes none: it answers the fork path), planned first (`dryRun` is true unless `false`); an admin's, and an `ro` token may plan but not make; `reveal: true` shows the claim link",
   description:
     "Spawn a child forge. Plans first.",
   inputSchema: {
@@ -50,6 +51,7 @@ export const tool: Tool = {
         type: "boolean",
         description: "Stay an owner.",
       },
+      purpose: { type: "string", description: "\"contribute\" makes no forge." },
       dryRun: { type: "boolean" },
       reveal: REVEAL_ARG,
     },
@@ -67,6 +69,7 @@ export const tool: Tool = {
     const door = await spawnDoor(ctx, user, args);
     if (door.status >= 400)
       return bad(String(door.body["error"]), String(door.body["message"]));
+    if (door.body["created"] === false) return good(door.body);
     const made = door.body["dryRun"] === false;
     const { claimUrl, ...rest } = door.body;
     const reveal = args["reveal"] === true && typeof claimUrl === "string";
@@ -77,6 +80,7 @@ export const tool: Tool = {
         ? "This is the plan; nothing was made. Send dryRun: false to spawn."
         : `Spawned ${String(door.body["name"])} at ${String(door.body["url"])}. ${reveal ? LINK_REVEALED : LINK_KEPT}${reached}`,
       ...rest,
+      ...(made ? {} : { where: WHERE_A_FORGE_LIVES }),
       ...(reveal ? { claimUrl } : {}),
     });
   },

@@ -29,9 +29,9 @@ const DOC = `# Threats
 ## A stolen token
 
 - Tokens carry a scope.
-  Test: \`test/tokens.test.ts\`
+  Enforced by: \`test/tokens.test.ts\`
 - Revoking every token at once.
-  Test: none yet
+  Enforced by: none yet
 
 | call | note | test |
 | --- | --- | --- |
@@ -63,17 +63,17 @@ describe("resilience", () => {
     ]);
   });
 
-  test("the real docs/THREATS.md yields one protection per Test: line and per → row", async () => {
+  test("the real docs/THREATS.md yields one protection per Enforced by: line and per → row", async () => {
     const md = await Bun.file(join(import.meta.dir, "..", "docs", "THREATS.md")).text();
-    const tests = md.split("\n").filter((l) => /^\s*Test: /.test(l)).length;
+    const tests = md.split("\n").filter((l) => /^\s*Enforced by: /.test(l)).length;
     const rows = md.split("\n").filter((l) => l.startsWith("| ") && l.includes("→")).length;
     const got = parseThreats(md);
     expect(got.length).toBe(tests + rows);
     expect(got.some((p) => p.test === "test/release-swap.test.ts" && p.text.includes("SO_REUSEPORT"))).toBe(true);
   });
 
-  test("an unindented Test: line closes the paragraph above it", () => {
-    const got = parseThreats("## X\n\nA prose protection.\nTest: `test/a.test.ts`\n");
+  test("an unindented Enforced by: line closes the paragraph above it", () => {
+    const got = parseThreats("## X\n\nA prose protection.\nEnforced by: `test/a.test.ts`\n");
     expect(got.map((p) => [p.text, p.test])).toEqual([["A prose protection.", "test/a.test.ts"]]);
   });
 
@@ -120,7 +120,7 @@ describe("resilience", () => {
     return (res.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
   };
 
-  test("a guest is sent to sign in, a non-admin gets 404, an admin sees the rows", async () => {
+  test("a guest is sent to sign in, a non-admin gets 403, an admin sees the rows", async () => {
     for (const [name, admin] of [["alice", true], ["bob", false]] as const) {
       const made = await createUser(app.db, {
         origin: "seed",
@@ -139,7 +139,7 @@ describe("resilience", () => {
     expect(guest.status).not.toBe(200);
     expect(guest.status).not.toBe(404);
     const bob = await fetch(`${servers.url}/resilience`, { headers: { cookie: await login("bob") } });
-    expect(bob.status).toBe(404);
+    expect(bob.status).toBe(403);
     expect(await bob.text()).not.toContain("data-standing");
 
     const res = await fetch(`${servers.url}/resilience`, { headers: { cookie: await login("alice") } });

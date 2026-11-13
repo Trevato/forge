@@ -80,8 +80,8 @@ describe("deploy-to page", () => {
   });
 
   test("someone who is not an admin finds nothing", async () => {
-    expect((await get("/deploy-to", bobTok)).status).toBe(404);
-    expect((await post(good, bobTok)).status).toBe(404);
+    expect((await get("/deploy-to", bobTok)).status).toBe(403);
+    expect((await post(good, bobTok)).status).toBe(403);
     expect(getPinned(app.db, "acme")).toBeUndefined();
   });
 
@@ -109,7 +109,7 @@ describe("deploy-to page", () => {
 });
 
 describe("pinned list page", () => {
-  test("renders none, then one forge; a non-admin gets 404", async () => {
+  test("renders none, then one forge; a non-admin gets 403", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-pinned-list-"));
     const app = createApp({ dataDir, port: 0 });
     const servers = await serve(app);
@@ -122,7 +122,7 @@ describe("pinned list page", () => {
       const bobTok = createToken(app.db, getUserByName(app.db, "bob")!.id, "admin", "admin").token;
       const get = (tok?: string) => fetch(servers.url + "/pinned", { redirect: "manual", headers: tok ? { authorization: `Bearer ${tok}` } : {} });
       expect((await get()).status).toBe(303);
-      expect((await get(bobTok)).status).toBe(404);
+      expect((await get(bobTok)).status).toBe(403);
       const empty = await (await get(adminTok)).text();
       expect(empty).toContain("No pinned forge yet");
       expect(empty).toContain('href="/deploy-to"');
@@ -204,7 +204,7 @@ describe("pinned list page actions", () => {
       expect((await get("/-/confirm?to=/pinned/Bad_Name/update", adminTok)).status).toBe(404);
 
       // Not an admin: 404 and nothing moves. Cross-origin: 403.
-      for (const a of ["update", "rollback", "check"]) expect((await act(`/pinned/acme/${a}`, bobTok, { version: V2 })).status).toBe(404);
+      for (const a of ["update", "rollback", "check"]) expect((await act(`/pinned/acme/${a}`, bobTok, { version: V2 })).status).toBe(403);
       expect((await act("/pinned/acme/update", adminTok, { version: V2 }, "https://evil.example")).status).toBe(403);
       expect(getPinned(app.db, "acme")!.version).toBe(V);
 

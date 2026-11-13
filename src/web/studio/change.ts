@@ -66,6 +66,7 @@ import {
 import { previewBlock } from "../pages/apps.ts";
 import { lookCard } from "../pages/looks.ts";
 import { approveHereCard, keptChange, pullChecksLineFor, teamsCard, verdictFacts } from "../pages/pull.ts";
+import { landAsIs } from "./land_as_is.ts";
 import { changeSummary, verdictLine, verdictOf } from "../pages/pull-verdict.ts";
 import { guestWalls, strangerCard } from "../pages/pull-guest.ts";
 import { combinedCard } from "../pages/pull-combined.ts";
@@ -757,6 +758,9 @@ async function changeConversation(
     )}
     <div id="pull-check">${checkLine}</div>
     ${when(runLine, (l) => l)} ${gate} ${decisionSection}
+    ${verdict.tone === "success" && writer && word === "look"
+      ? landAsIs(ctx, repo, pull)
+      : null}
     ${when(visionPreview, (v) => visionPreviewCard(v))}
     ${look}
     <div class="split">

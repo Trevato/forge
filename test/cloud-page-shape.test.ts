@@ -57,7 +57,7 @@ test("today's vendor calls are a headed block, no card; with none one sentence s
   expect(main).toContain("No vendor call today. Rows are kept 90 days.");
 });
 
-test("a signed-in non-admin gets the forge's one 404 for the vendor calls", async () => {
+test("a signed-in non-admin gets the gate's 403 for the vendor calls", async () => {
   const made = await createUser(app.db, { origin: "seed", trusted: true, username: "bob", email: "bob@forge.local", password: "a-good-passphrase" });
   if (!made.ok) throw new Error(made.error);
   const r = await fetch(`${servers.url}/signin`, {
@@ -68,6 +68,6 @@ test("a signed-in non-admin gets the forge's one 404 for the vendor calls", asyn
   });
   const bob = (r.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
   const res = await fetch(`${servers.url}/settings/cloud/audit`, { headers: { cookie: bob } });
-  expect(res.status).toBe(404);
+  expect(res.status).toBe(403);
   expect(await res.text()).not.toContain("vendor call");
 });

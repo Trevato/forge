@@ -169,7 +169,7 @@ describe("the forge with its forwardAuth edge gone", () => {
     expect(mintWayBack(app, owner, "olga")).toEqual({ ok: false, error: "not_found" });
     const beaCookie = `forge_session=${createSession(app.db, bea.id).token}`;
     const refused = await fetch(`${base}/settings/accounts/ada/way-back`, { method: "POST", headers: { cookie: beaCookie, origin: base } });
-    expect(refused.status).toBe(404);
+    expect(refused.status).toBe(403);
     // From another site: refused before anything is made.
     const crossed = await fetch(`${base}/settings/accounts/ada/way-back`, { method: "POST", headers: { cookie: ownerCookie, origin: "https://elsewhere.example" } });
     expect(crossed.status).toBe(403);

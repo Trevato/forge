@@ -112,9 +112,9 @@ test("focus lands in the palette input; Escape closes it and focus returns to wh
   const r = runShell({ marked: true, width: 390 });
   expect(r.log.focused).toBeGreaterThan(0);
   // openModal remembers document.activeElement (the page's autofocused search
-  // input) and refocuses it on close, Escape included (client.ts modalJs).
-  expect(shellJs).toMatch(/var was = document\.activeElement;[\s\S]*?was\.focus\(\)/);
-  expect(shellJs).toMatch(/if \(e\.key !== 'Escape'\) return;[\s\S]*?close\(\);/);
+  // input) and refocuses it on close, Escape included (src/web/overlay_host.ts).
+  expect(shellJs).toMatch(/var was = opts\.opener \|\| doc\.activeElement;[\s\S]*?was\.focus\(\)/);
+  expect(shellJs).toMatch(/if \(e\.key === 'Escape'\) \{[\s\S]*?l\.close\(\);/);
 });
 
 test("/search?q=… on a phone is the results page: no auto-open marker, its form and its rows", async () => {

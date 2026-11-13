@@ -100,7 +100,7 @@ describe("/flow backup card", () => {
     const res = await retry(await login("alice"));
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toBe("/flow");
-    expect((await retry(await login("bob"))).status).toBe(404);
+    expect((await retry(await login("bob"))).status).toBe(403);
     expect((await retry(await login("alice"), "https://evil.example")).status).toBeGreaterThanOrEqual(400);
   });
 });

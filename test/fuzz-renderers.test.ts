@@ -15,6 +15,7 @@ import { ics } from "../src/web/render/ics.ts";
 import { eml } from "../src/web/render/eml.ts";
 import { vcf } from "../src/web/render/vcf.ts";
 import { gpx } from "../src/web/render/gpx.ts";
+import { dxf } from "../src/web/render/dxf.ts";
 import { geojson } from "../src/web/render/geojson.ts";
 import { subtitles } from "../src/web/render/subtitles.ts";
 import { patch } from "../src/web/render/patch.ts";
@@ -104,6 +105,11 @@ const SAMPLES: Record<string, { path: string; render: Renderer; files: readonly 
     files: [
       '<?xml version="1.0"?><gpx version="1.1" creator="x"><metadata><name>Walk</name><link href="https://a.test"/></metadata><trk><name>T</name><trkseg><trkpt lat="51.5" lon="-0.1"><ele>10</ele><time>2026-01-01T10:00:00Z</time></trkpt><trkpt lat="51.6" lon="-0.2"><ele>12</ele></trkpt></trkseg></trk><wpt lat="51.5" lon="-0.1"><name>W</name><desc>d</desc></wpt></gpx>',
     ],
+  },
+  dxf: {
+    path: "part.dxf",
+    render: dxf,
+    files: ["0\nSECTION\n2\nENTITIES\n0\nLINE\n8\n<script>alert(1)</script>\n10\n0\n20\n0\n11\n5\n21\n5\n0\nCIRCLE\n10\n1\n20\n1\n40\n2\n0\nENDSEC\n0\nEOF\n"],
   },
   geojson: {
     path: "map.geojson",

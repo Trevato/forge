@@ -48,8 +48,15 @@ export const HOLD_MS = 5 * 60_000;
 
 /** The vitals causes this pager owns; the rest are paged elsewhere or are settings. */
 export function owned(cause: string): boolean {
-  return cause === "errors" || cause === "internal" || cause === "disk" || cause === "disk-floor" || cause === "release" || cause.startsWith("queue:");
+  return cause === "errors" || cause === "internal" || DISK_LADDER.includes(cause) || cause === "release" || cause.startsWith("queue:");
 }
+
+/**
+ * The disk's rungs, lowest first. `kernel/vitals.ts` names only the highest
+ * rung the disk is on, so a rung present holds every lower rung already
+ * watched: unpaged anew and not recovered while the disk stays above it.
+ */
+export const DISK_LADDER: readonly string[] = ["disk-70", "disk-80", "disk-floor", "disk"];
 
 /** One owned cause being watched. */
 export interface Watched {
@@ -78,11 +85,14 @@ export function observe(
   for (const p of present) {
     if (!owned(p.cause)) continue;
     here.add(p.cause);
-    // A disk nearly full is still under the floor (`kernel/vitals.ts` names only the
-    // worse): a floor already watched holds, unpaged anew and not recovered (#10873).
-    if (p.cause === "disk" && watch.has("disk-floor")) {
-      here.add("disk-floor");
-      delete watch.get("disk-floor")!.absentSince;
+    // A disk nearly full is still under the floor, and past 80% still past 70%
+    // (`kernel/vitals.ts` names only the worse): a lower rung already watched
+    // holds, unpaged anew and not recovered (#10873, #11800).
+    for (const lower of DISK_LADDER.slice(0, Math.max(0, DISK_LADDER.indexOf(p.cause)))) {
+      const held = watch.get(lower);
+      if (held === undefined) continue;
+      here.add(lower);
+      delete held.absentSince;
     }
     const w = watch.get(p.cause);
     if (w === undefined) watch.set(p.cause, { since: now, sentence: p.sentence, paged: seed });

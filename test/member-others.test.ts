@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { signUp } from "../src/actions/users.ts";
-import { NOT_AN_ADMIN } from "../src/core/roles.ts";
+import { SIGN_IN_AS_ADMIN } from "../src/core/roles.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createSession, listSessions } from "../src/core/sessions.ts";
 import { getUserByName } from "../src/core/users.ts";
@@ -87,7 +87,7 @@ describe("a member and another account", () => {
       const res = await call(path, bobToken, method, body);
       const gated = path.startsWith("/api/v1/admin/");
       expect([method, path, res.status]).toEqual([method, path, gated ? 403 : 404]);
-      if (gated) expect(await res.json()).toMatchObject({ error: "not_admin", message: NOT_AN_ADMIN });
+      if (gated) expect(await res.json()).toMatchObject({ error: "not_admin", message: SIGN_IN_AS_ADMIN });
     }
     expect(listSessions(app.db, carol.id).some((s) => s.id === sid)).toBe(true);
     // Carol's token: not listed, not revoked through bob's own token routes.
@@ -122,9 +122,9 @@ describe("a member and another account", () => {
       [`/settings/accounts/carol/sessions/${sid}/delete`, {}],
     ];
     for (const [path, form] of forms)
-      expect([path, (await post(path, form)).status]).toEqual([path, 404]);
+      expect([path, (await post(path, form)).status]).toEqual([path, 403]);
     const page = await fetch(`${servers.url}/settings/accounts/carol`, { headers: { cookie } });
-    expect(page.status).toBe(404);
+    expect(page.status).toBe(403);
     expect((await call("/api/v1/user", laptop.token)).status).toBe(200);
     expect(listSessions(app.db, carol.id).some((s) => s.id === sid)).toBe(true);
     expect(JSON.stringify(getUserByName(app.db, "carol"))).toBe(carolBefore);

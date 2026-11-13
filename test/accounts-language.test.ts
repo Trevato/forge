@@ -61,7 +61,7 @@ test("the accounts list keeps its confirm links", async () => {
   expect(m).toContain("/-/confirm?to=%2Fsettings%2Faccounts%2Fbobby%2Fsuspend");
 });
 
-test("a non-admin gets the one 404", async () => {
+test("a non-admin gets the one 403", async () => {
   const r = await fetch(`${servers.url}/settings/accounts`, { headers: { cookie: plain } });
-  expect(r.status).toBe(404);
+  expect(r.status).toBe(403);
 });

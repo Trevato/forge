@@ -148,14 +148,14 @@ describe("probeFooting", () => {
     expect(byId(f, "standby-reconcile")).toMatchObject({ seen: { by: "declared" }, risk: true });
     for (const id of ["forge-ssh", "release-tick", "standby-reconcile", "host-timers"]) expect(byId(f, id).seen.by).toBe("declared");
     expect(byId(f, "plat-auth").risk).toBe(true);
-    // Forbidden: the declared machine is kept and the reason named.
-    expect(byId(f, "minio").seen).toEqual({ by: "declared", why: "the forge's service account may not read pods in minio" });
-    expect(byId(f, "minio").risk).toBe(true);
-    // A CronJob between runs: only a finished pod, so declared.
-    expect(byId(f, "backup-lanes").seen).toEqual({ by: "declared", why: "no pod running in backup now" });
+    // The backup lane is the forge's own process, and its bucket is on neither machine (#11805).
+    expect(byId(f, "backup-lane")).toMatchObject({ seen: { by: "cluster", nodes: ["vxrail-1"] }, risk: false });
+    expect(byId(f, "offsite-bucket")).toMatchObject({ machine: "off-site", seen: { by: "declared" }, risk: false });
+    // Neither the platform's backup namespace nor MinIO is asked for any more.
+    expect(kube.seen.some((p) => p.includes("/namespaces/backup/") || p.includes("/namespaces/minio/"))).toBe(false);
     // Each namespace is listed once although two pieces live in forgejo.
     expect(kube.seen.filter((p) => p === "/api/v1/namespaces/forgejo/pods").length).toBe(1);
-    const off = ["forge-ssh", "control-plane", "plat-auth", "signup-gate", "forgejo", "cnpg", "registry", "release-tick", "standby-reconcile", "host-timers", "backup-lanes", "minio"];
+    const off = ["forge-ssh", "control-plane", "plat-auth", "signup-gate", "forgejo", "cnpg", "registry", "release-tick", "standby-reconcile", "host-timers"];
     expect(f.rows.filter((r) => r.risk).map((r) => r.id).sort()).toEqual([...off].sort());
     // In the order pg-grand switched off would break the forge: sign-in first, host timers last.
     const lines = riskLines(f);
@@ -203,7 +203,7 @@ describe("probeFooting", () => {
     expect(fetched).toBe(0);
     expect(f.forgeNode).toBeNull();
     expect(f.unread).toBe("not read: not running in a cluster");
-    expect(f.rows.every((r) => r.seen.by === "declared" && r.risk === (r.machine !== "vxrail"))).toBe(true);
+    expect(f.rows.every((r) => r.seen.by === "declared" && r.risk === (r.machine === "pg-grand"))).toBe(true);
   });
 
   test("the forge's own pod unreadable: its node is unknown and the declared machines decide risk", async () => {

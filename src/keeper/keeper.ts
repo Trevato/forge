@@ -18,12 +18,15 @@
  * 4. **Verified live**, or **roll back** to the named known-good image
  *    (`rollback.ts`; there is no undo) and **hold** with the numbers
  *    (`hold.ts`). A release with seconds dark files one issue.
+ * 5. **Prune**: once verified live, the deployer's stored releases beyond
+ *    the newest 15 are removed, never the live one or the release's named
+ *    known-good (`prune.ts`, #11801); the list is on `release.verified_live`.
  *
  * Each step is an event on the outbox: `release.cut`, `release.released`,
  * `release.verified_live`, `release.rolled_back`, `release.held`.
  *
  * Guardrail: the keeper's only writes are a tag, the Deployment's image,
- * its own rows, and issues. It holds no account that may land a pull or
+ * its own rows, issues, and the removal of its own old releases. It holds no account that may land a pull or
  * push main, and it has no code path to either.
  */
 
@@ -33,8 +36,10 @@ import { createIssue } from "../core/issues.ts";
 import { decideCut } from "./cadence.ts";
 import { imageAt, type Deployer } from "./deploy.ts";
 import { blocking, liftFixed, names, setCause, setHold, standingHolds, type Hold } from "./hold.ts";
+import { clearNow, pendingNow } from "./now.ts";
 import { stallReason, STALL_HOLD_MS } from "../perf/boot_stall.ts";
 import { countRollProbe, dropCut, finish, getKeeperRelease, inFlight, keepStall, keepTally, listKeeperReleases, markLive, releaseBefore, recordCut, type KeeperRelease } from "./record.ts";
+import { toPrune } from "./prune.ts";
 import { rollBackToNamed } from "./rollback.ts";
 import type { Probe, Tally, Verdict } from "./verify.ts";
 import type { Step } from "./beat.ts";
@@ -56,6 +61,8 @@ export interface KeeperPorts {
   readonly gating: () => number;
   /** How long the snapshot being taken has run, ms; undefined when none is (#9653). */
   readonly snapshotting?: () => number | undefined;
+  /** Crew runs running now, which a release would cut short (#11918); none when unset. */
+  readonly crewRuns?: () => number;
   /** The share of the forge's disk in use, 0..1; undefined when unread (#11686). */
   readonly diskUsed?: () => number | undefined;
   readonly deployer: Deployer;
@@ -68,6 +75,23 @@ export interface KeeperPorts {
   readonly minIntervalMs?: number;
   /** The worst event-loop stall in this process's first five minutes, ms; none when unset (#8848). */
   readonly bootStallMs?: () => number;
+}
+
+/**
+ * When the keeper first found crew runs running, per forge database (#11918):
+ * the wait counts from there, and starts over once none run.
+ */
+const crewSeen = new WeakMap<Database, number>();
+
+/** The first tick of this stretch that found `runs` running; undefined when none run. */
+function crewSince(db: Database, runs: number, now: number): number | undefined {
+  if (runs <= 0) {
+    crewSeen.delete(db);
+    return undefined;
+  }
+  const since = crewSeen.get(db) ?? now;
+  crewSeen.set(db, since);
+  return since;
 }
 
 /** Pulls of the forge's repository merged since `since`: number, title and body. */
@@ -132,13 +156,44 @@ async function verifyAndDecide(p: KeeperPorts, r: KeeperRelease): Promise<Step> 
       finish(p.db, r.id, "verified", stalled ?? "", p.now());
       p.deployer.verified?.(r.version);
       const lifted = liftFixed(p.db, r.version, p.now());
-      p.bus.append({ kind: "release.verified_live", repoId: p.repo.id, payload: { ...numbers, holdsLifted: lifted } });
+      const pruned = await prune(p, r);
+      p.bus.append({ kind: "release.verified_live", repoId: p.repo.id, payload: { ...numbers, holdsLifted: lifted, ...pruned } });
       fileDark(p, getKeeperRelease(p.db, r.id)!);
       return { line: `${r.version} verified live: ${kept.probes} probes, worst ${kept.worstMs} ms, ${kept.secondsDark} s dark${stalled === undefined ? "" : `; ${stalled}`}`, outcome: "cut" };
     }
     return { line: await rollBack(p, kept, verdict.reason), outcome: "failed" };
   } finally {
     verifying.delete(p);
+  }
+}
+
+/**
+ * Remove the deployer's stored releases the rule names (#11801): the live one
+ * (the release just verified, and whatever the deployer runs now) and the
+ * release's named known-good always stay. When any of those three names no
+ * stored release, or the store cannot be read, it prunes nothing and says why;
+ * the release stays verified either way.
+ */
+async function prune(p: KeeperPorts, r: KeeperRelease): Promise<{ pruned: string[]; pruneError?: string }> {
+  const store = p.deployer.store;
+  if (store === undefined) return { pruned: [] };
+  const pruned: string[] = [];
+  try {
+    const refs = [refFor(p, r.knownGood.image, r.version, r.sha), r.knownGood.image, await p.deployer.image()];
+    const keep: string[] = [];
+    for (const ref of refs) {
+      const id = store.idOf(ref);
+      // Fail closed: a live, running or known-good release the store cannot name could be the one pruned.
+      if (id === undefined) return { pruned: [], pruneError: `${ref} names no stored release` };
+      keep.push(id);
+    }
+    for (const id of toPrune(await store.list(), keep)) {
+      await store.remove(id);
+      pruned.push(id);
+    }
+    return { pruned };
+  } catch (error) {
+    return { pruned, pruneError: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -207,6 +262,8 @@ export async function tickStep(p: KeeperPorts): Promise<Step> {
   const main = await p.main();
   const newest = await p.newest();
   const last = listKeeperReleases(p.db, 1)[0];
+  const asked = pendingNow(p.db, p.now());
+  const crewRuns = p.crewRuns?.() ?? 0;
   const decision = decideCut({
     main: main ?? "",
     newest,
@@ -215,10 +272,13 @@ export async function tickStep(p: KeeperPorts): Promise<Step> {
     inFlight: false,
     gating: p.gating(),
     snapshotMs: p.snapshotting?.(),
+    crewRuns,
+    crewSince: crewSince(p.db, crewRuns, p.now()),
     diskUsed: p.diskUsed?.(),
     lastCutAt: last === undefined ? undefined : Date.parse(last.cutAt),
     hold: blocking(standingHolds(p.db)),
     now: p.now(),
+    ...(asked === undefined ? {} : { hotfix: true }),
     ...(p.minIntervalMs === undefined ? {} : { minIntervalMs: p.minIntervalMs }),
   });
   if (!decision.cut) return { line: decision.why, outcome: "skipped" };
@@ -230,7 +290,9 @@ export async function tickStep(p: KeeperPorts): Promise<Step> {
   const knownGood = { version: p.live(), image };
   // The row first, the tag second: a crash between them leaves a `rolling` row
   // whose tag the next tick sends (`tagged`), never a tag the keeper has no row for.
-  const r = recordCut(p.db, { version: decision.version, sha: main, knownGood, at: p.now() });
+  const r = recordCut(p.db, { version: decision.version, sha: main, knownGood, at: p.now(), ...(asked === undefined ? {} : { hotfix: `${asked.reason} (${asked.by})` }) });
+  if (asked !== undefined) clearNow(p.db);
+  crewSeen.delete(p.db);
   const tagRefused = await tagged(p, r);
   if (tagRefused !== undefined) return { line: tagRefused, outcome: "failed" };
   const sent = await promote(p, r.version, refFor(p, image, r.version, main));

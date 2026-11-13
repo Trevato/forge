@@ -18,6 +18,7 @@ import { listComments } from "../src/core/issues.ts";
 import type { Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
+import { recordCut } from "../src/keeper/record.ts";
 import { releaseDir } from "../src/release/checkout.ts";
 import { releaseEnv } from "../src/release/env.ts";
 import { listReleases } from "../src/release/record.ts";
@@ -108,6 +109,19 @@ describe("release checkout on landing", () => {
     const kept = readdirSync(join(dataDir, "releases")).sort();
     expect(kept).toEqual([second, third].sort());
     expect(existsSync(releaseDir(dataDir, first))).toBe(false);
+  }, 60_000);
+
+  test("never prunes the release keeper's known-good tree, however old (#11801)", async () => {
+    const good = listReleases(app.db)[0]!.sha;
+    const old = new Date(Date.now() - 3_600_000);
+    utimesSync(releaseDir(dataDir, good), old, old);
+    recordCut(app.db, { version: "0.7.9", sha: "f".repeat(40), knownGood: { version: "0.7.8", image: `tree/${good}:0.7.8` }, at: Date.now() });
+    for (const n of ["four", "five"]) {
+      const sha = await land(GOOD, n);
+      await releaseOnLand(app, alice, forge, pull, sha);
+    }
+    expect(existsSync(releaseDir(dataDir, good))).toBe(true);
+    expect(readdirSync(join(dataDir, "releases")).filter((d) => /^[0-9a-f]{40}$/.test(d))).toHaveLength(3);
   }, 60_000);
 
   test("a failing preflight is recorded red, logged, and told to the pull", async () => {

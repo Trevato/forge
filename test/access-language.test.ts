@@ -70,7 +70,7 @@ test("one logged request: the filter and a table row, escaped, no card", async (
   expect(page).toContain("&lt;b&gt;probe");
 });
 
-test("a non-admin still gets 404", async () => {
+test("a non-admin is refused with 403", async () => {
   const res = await fetch(servers.url + "/settings/access", { headers: { cookie: cookies.bob! } });
-  expect(res.status).toBe(404);
+  expect(res.status).toBe(403);
 });

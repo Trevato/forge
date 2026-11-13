@@ -14,11 +14,13 @@
 import { rankedWords, rankIssue, stepTo, type Place, placeOf } from "../../actions/next.ts";
 import { nextUp, type NextRow } from "../../core/next_up.ts";
 import { canRead, canWrite, type Repo } from "../../core/repos.ts";
+import { pillarsOf, servedBy } from "../../core/pillars.ts";
 import { sealedScope } from "../../core/sealed.ts";
 import { notStartable } from "../../crew/not_startable.ts";
 import { rangeWords, weekView, type WeekView } from "../../flow/week.ts";
 import { openPullStages } from "../../flow/read.ts";
 import type { Stage } from "../../flow/stage.ts";
+import { countWords, filtered, matches, readFilter, MAX_Q } from "../../web/pages/next_filter.ts";
 import { stateWord } from "../../web/pages/next_state.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -28,7 +30,7 @@ import { truncate } from "../term/width.ts";
 import type { Session } from "../session.ts";
 import { issueScreen } from "./issue.ts";
 import { local } from "./where.ts";
-import { ListState, drawList, hitList, live, type ListRow } from "./common.ts";
+import { ListState, drawList, hitList, live, promptScreen, type ListRow } from "./common.ts";
 
 /** What reorders or reshapes the list: a rank, or an issue opening, closing or changing what it waits for. */
 const LIVE_KINDS = ["issue.ranked", "issue.opened", "issue.closed", "issue.reopened", "issue.blocked", "issue.unblocked"];
@@ -40,6 +42,10 @@ export function nextScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let week: WeekView | undefined;
   let stages = new Map<number, Stage>();
   let loaded = false;
+  // The filter (#11867): a pillar (`P7`, `Later`) and/or words, as on the page. It hides rows
+  // only; ranks and moves stay the whole list's.
+  let asked = "";
+  let shown: number[] = [];
   // Read at use, not at open: access can change under a session.
   const may = (): boolean =>
     f.user !== undefined && f.user.kind === "user" && canWrite(f.db, repo, f.user);
@@ -58,15 +64,49 @@ export function nextScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       stages = openPullStages(f.db, repo, scope, new Date(), new Set(rows.map((r) => r.issue.number)));
     }
     loaded = true;
+    narrow();
     if (follow !== undefined) {
-      const at = rows.findIndex((r) => r.issue.number === follow);
+      const at = shown.findIndex((i) => rows[i]!.issue.number === follow);
       if (at >= 0) state.index = at;
     }
-    state.clamp(rows.length);
+    state.clamp(shown.length);
     ctx.invalidate();
   };
 
-  const current = (): NextRow | undefined => rows[state.index];
+  const filterOf = () => {
+    const params = new URLSearchParams();
+    const words = asked.split(/\s+/).filter((w) => w !== "");
+    const pillar = words.find((w) => /^(P[0-9]{1,6}|Later)$/.test(w));
+    if (pillar !== undefined) params.set("pillar", pillar);
+    params.set("q", words.filter((w) => w !== pillar).join(" "));
+    return readFilter(params);
+  };
+  const narrow = (): void => {
+    const filter = filterOf();
+    const on = filtered(filter);
+    const served = filter.pillar !== null ? servedBy(f.db, pillarsOf(f.db, repo)) : new Map<string, string>();
+    shown = rows.map((_, at) => at).filter((at) => !on || matches(filter, rows[at]!.issue.title, served.get(rows[at]!.issue.id)));
+  };
+  const ask = (): void => {
+    ctx.push(
+      promptScreen(ctx, screen, {
+        title: "Filter",
+        label: "A pillar (P7, Later) and/or a word in the title; empty clears",
+        value: asked,
+        onSubmit: (raw) => {
+          if (raw.trim().length > MAX_Q) return "too long";
+          asked = raw.trim();
+          narrow();
+          state.index = 0;
+          state.clamp(shown.length);
+          ctx.invalidate();
+          return undefined;
+        },
+      }),
+    );
+  };
+
+  const current = (): NextRow | undefined => rows[shown[state.index] ?? -1];
 
   const rank = (to: Place | undefined): void => {
     const row = current();
@@ -80,7 +120,9 @@ export function nextScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     ctx.toast(rankedWords(row.issue.number, to), "success");
   };
   const step = (by: -1 | 1): void => {
-    const to = stepTo(rows.map((r) => r.issue.number), state.index, by);
+    const row = current();
+    if (row === undefined) return;
+    const to = stepTo(rows.map((r) => r.issue.number), rows.indexOf(row), by);
     rank(to === undefined ? undefined : placeOf(to));
   };
 
@@ -91,13 +133,14 @@ export function nextScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
 
   // The cut line is a muted line under the last row that fits, as on the page.
   const listRows = (): ListRow[] =>
-    rows.map((r, at) => {
+    shown.map((at, i) => {
+      const r = rows[at]!;
       const estimate = week?.priced.find((p) => p.number === r.issue.number)?.estimate;
       const cut = week?.cut;
-      const ends = cut !== undefined && cut.unsure === null && cut.fits.length > 0 && at === cut.fits.length - 1;
+      const ends = cut !== undefined && cut.unsure === null && cut.fits.length > 0 && at < cut.fits.length && (shown[i + 1] ?? cut.fits.length) >= cut.fits.length;
       return {
         title: `${at + 1}. #${r.issue.number} ${r.issue.title}`,
-        secondary: r.role === "blocker" ? "Blocker" : "Enabler",
+        secondary: `${r.byOwner ? "Owner's pick · " : ""}${r.role === "blocker" ? "Blocker" : "Enabler"}`,
         meta: [stateWord(r, { stage: stages.get(r.issue.number) ?? "issue", waits: r.waits, held: r.state === "held", onIt: r.onIt !== null }), r.onIt ?? "next", estimate === undefined ? "" : rangeWords(estimate), r.why ?? ""]
           .filter((x) => x !== "")
           .join(" · "),
@@ -112,10 +155,11 @@ export function nextScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       return [
         binding(["j", "k"], "move cursor"),
         binding(["enter"], "open"),
-        binding(["t"], "top", { disabled: !on || state.index === 0 }),
-        binding(["u"], "up", { disabled: !on || state.index === 0 }),
-        binding(["d"], "down", { disabled: !on || state.index >= rows.length - 1 }),
+        binding(["t"], "top", { disabled: !on || rows.indexOf(current()!) === 0 }),
+        binding(["u"], "up", { disabled: !on || rows.indexOf(current()!) === 0 }),
+        binding(["d"], "down", { disabled: !on || rows.indexOf(current()!) >= rows.length - 1 }),
         binding(["n"], "not now", { disabled: !on }),
+        binding(["/"], "filter"),
       ];
     },
     load(signal) {
@@ -130,18 +174,19 @@ export function nextScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         ? "Loading…"
         : rows.length === 0
           ? "Nothing is ready: everything open waits for something."
-          : `${week?.sentence ?? ""}${may() ? "" : " · you can read this order, not change it"}${away > 0 ? ` · ${away} not now` : ""}`;
+          : `${asked !== "" ? `${countWords(shown.length, rows.length)} shown for "${asked}" · ` : ""}${week?.sentence ?? ""}${may() ? "" : " · you can read this order, not change it"}${away > 0 ? ` · ${away} not now` : ""}`;
       s.text(head!.x, head!.y, truncate(note, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       drawList(s, list!, c, state, listRows());
-      hitList(ctx, list!, state, rows.length, { open });
+      hitList(ctx, list!, state, shown.length, { open });
     },
     key(e) {
-      if (state.key(e, rows.length)) return true;
+      if (state.key(e, shown.length)) return true;
       if (e.ctrl || e.alt) return false;
       if (e.key === "enter") open();
       else if (e.key === "t") rank({ to: "top" });
       else if (e.key === "u") step(-1);
       else if (e.key === "d") step(1);
+      else if (e.key === "/") ask();
       else if (e.key === "n") rank({ to: "not_now" });
       else return false;
       return true;

@@ -252,7 +252,7 @@ describe("the doors", () => {
       ] as const) {
         const res = await post(path, bob.value, body);
         await res.arrayBuffer();
-        expect(res.status).toBe(404);
+        expect(res.status).toBe(403);
       }
       const { listTrusted, foldInStopped } = await import("../src/core/trusted_sources.ts");
       expect(listTrusted(f.app.db).map((s) => s.account)).toEqual(["jmoran"]);

@@ -44,7 +44,7 @@ test("an admin sees every control; with no report each says no check recorded", 
 
 test("the page is an admin's", async () => {
   expect((await get()).status).toBe(303);
-  expect((await get(other)).status).toBe(404);
+  expect((await get(other)).status).toBe(403);
 });
 
 test("a recorded check shows its time; a failed one says failed; junk is ignored", async () => {

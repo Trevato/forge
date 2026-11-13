@@ -16,7 +16,7 @@ import { createForgeApp, forgeCommands, Session } from "../src/tui/forge.ts";
 import { setTelemetryGrant } from "../src/actions/telemetry.ts";
 import { hasGrant } from "../src/core/telemetry.ts";
 import { countRead, resetTelemetryReads } from "../src/system/telemetry_reads.ts";
-import { forgeLines, historyLines, readerLines, memoryLines, memoryScreen, systemScreen } from "../src/tui/screens/system.ts";
+import { forgeLines, historyLines, largestLines, readerLines, memoryLines, memoryScreen, systemScreen } from "../src/tui/screens/system.ts";
 import { changeCapacity } from "../src/actions/capacity.ts";
 import { EGRESS_REPORTED } from "../src/system/egress_line.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -103,6 +103,40 @@ describe("tui system memory", () => {
       expect(doors(who)).not.toContain("system-memory");
       expect(await screenText(who)).not.toContain("123.0");
     }
+  });
+});
+
+describe("tui system largest directories (#11800)", () => {
+  const found = { at: new Date(Date.now() - 3 * 60_000).toISOString(), dirs: [{ name: "repos", bytes: 2 * 1024 ** 3 }, { name: "apps", bytes: 5 * MiB }] };
+
+  test("an admin and a granted agent read the five largest with when they were measured", () => {
+    const lines = largestLines(new Session(app, identity(carol)), found);
+    expect(lines[0]).toBe("Largest under the forge's data");
+    expect(lines[1]).toContain("repos");
+    expect(lines[1]).toContain("2.0 GiB");
+    expect(lines[2]).toContain("apps");
+    expect(lines[3]).toBe("measured 3m ago");
+    expect(largestLines(new Session(app, identity(carol)), null)[1]).toContain("being measured");
+    setTelemetryGrant(app, carol, "sysbot", true);
+    try {
+      expect(largestLines(new Session(app, identity(bot)), found)[1]).toContain("repos");
+    } finally {
+      setTelemetryGrant(app, carol, "sysbot", false);
+    }
+  });
+
+  test("a member, an ungranted agent and a guest read nothing", () => {
+    for (const who of [bob, bot, undefined]) expect(largestLines(new Session(app, identity(who)), found)).toEqual([]);
+  });
+
+  test("the System screen shows the section from the shared cache", async () => {
+    const terminal = headlessTerminal(120, 60);
+    const { app: tui, session } = createForgeApp(app, identity(carol), { terminal, exitHooks: false });
+    tui.start();
+    tui.ctx.push(systemScreen(tui.ctx, ["CPU"], session));
+    await settleApp(tui);
+    expect(tui.screen.toText()).toContain("Largest under the forge's data");
+    tui.stop?.();
   });
 });
 

@@ -191,7 +191,8 @@ test("a tool that changes an issue or pull says changed, not opened", () => {
 });
 
 test("the tools said to change an issue or pull are the ones that write by repo and number", () => {
-  const numbered = TOOLS.filter((t) => ["repo", "number"].every((k) => Object.keys(t.inputSchema.properties ?? {}).includes(k)));
+  // `repo` writes by repo and number too, but a chapter's items, not an issue or pull.
+  const numbered = TOOLS.filter((t) => t.name !== "repo" && ["repo", "number"].every((k) => Object.keys(t.inputSchema.properties ?? {}).includes(k)));
   expect(new Set(numbered.filter((t) => t.writes).map((t) => t.name))).toEqual(CHANGES);
 });
 

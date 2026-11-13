@@ -49,7 +49,10 @@ export const tool: Tool = {
     }
     if (args["dryRun"] !== false) {
       const plan = previewAsksBulk(ctx.app, user, args["action"], args["items"], args["reason"]);
-      return plan.ok ? good(plan.value) : bad(plan.error.code, plan.error.message);
+      // The card's Confirm button re-sends these with `dryRun: false`: the page's own two steps.
+      return plan.ok
+        ? { ...good(plan.value), card: { action: args["action"], items: args["items"], reason: args["reason"] } }
+        : bad(plan.error.code, plan.error.message);
     }
     const done = await applyAsksBulk(ctx.app, user, args["action"], args["items"], args["reason"]);
     return done.ok ? good({ ...done.value, receipt: receiptOf(done.value) }) : bad(done.error.code, done.error.message);

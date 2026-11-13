@@ -301,8 +301,8 @@ describe("a hosted forge scales to zero", () => {
         headers: { authorization: `Bearer ${bearer}`, "content-type": "application/x-www-form-urlencoded", ...(origin === undefined ? {} : { origin }) },
         body: "",
       });
-    expect((await post("/forges/homie/stop", carolToken, "https://forge.test")).status).toBe(404);
-    expect((await post("/forges/homie/remove", carolToken, "https://forge.test")).status).toBe(404);
+    expect((await post("/forges/homie/stop", carolToken, "https://forge.test")).status).toBe(403);
+    expect((await post("/forges/homie/remove", carolToken, "https://forge.test")).status).toBe(403);
     expect(existsSync(join(dir, "spawn", "homie.json"))).toBe(true);
     const cross = await post("/forges/homie/remove", aliceToken, "https://evil.example");
     expect(cross.status).toBe(403);
@@ -311,7 +311,7 @@ describe("a hosted forge scales to zero", () => {
     expect(confirm.status).toBe(200);
     expect(await confirm.text()).toContain("cannot be undone");
     const asCarol = await fetch(`${servers.url}/forges/homie/remove`, { headers: { authorization: `Bearer ${carolToken}` } });
-    expect(asCarol.status).toBe(404);
+    expect(asCarol.status).toBe(403);
     const stopped = await post("/forges/homie/stop", aliceToken, "https://forge.test");
     expect(stopped.status).toBe(200);
   });

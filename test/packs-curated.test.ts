@@ -86,7 +86,7 @@ test("an unknown op is refused and says so, and changes nothing", async () => {
 test("only an admin sees Edit; a non-admin's and a cross-origin edit are refused", async () => {
   expect(await text("/packs/gamer", plain)).not.toContain("Edit this pack");
   expect(await text("/packs/gamer", admin)).toContain("Edit this pack");
-  expect((await post("/packs/gamer/repos", plain, { op: "remove", repo: "trevato/chess" })).status).toBe(404);
+  expect((await post("/packs/gamer/repos", plain, { op: "remove", repo: "trevato/chess" })).status).toBe(403);
   expect((await post("/packs/gamer/repos", admin, { op: "remove", repo: "trevato/chess" }, "https://evil.example")).status).toBeGreaterThanOrEqual(400);
   expect(getPack(app.db, "gamer")!.repos).toContain("trevato/chess");
 });

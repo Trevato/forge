@@ -56,4 +56,9 @@ refuses `/data`, and leaves the restored copy in place.
 `test/restore-drill-script.test.ts` runs it against a tiny snapshot and a
 stub bucket.
 
+## From the off-site lane
+
+The forge's own sealed backup lane (#11805), how to restore from it and how
+it is drilled: [features/offsite-lane.md](features/offsite-lane.md).
+
 With the platform unreachable (the B2 mirror only): [backup-truth.md](features/backup-truth.md), _Leaving the platform_.

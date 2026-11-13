@@ -133,18 +133,15 @@ function panel(body: Html, o: PanelOptions): Html {
  */
 export function crewReadiness(ctx: Ctx): Html {
   const crew = crewFor(ctx.app);
+  // One line each, beside the crew it is about: no banner, no alert role.
+  const line = (word: string, body: Html, id?: string): Html =>
+    html`<div class="small mb" ${id ? html`id="${id}"` : null}>${icon("alert")} <span class="pill" data-tone="danger">${word}</span> ${body}</div>`;
   if (crew === undefined && isHostedChild(ctx.app))
-    return html`<div class="toast" data-tone="danger" role="alert">${icon("alert")}<div class="toast-body">This forge is hosted inside another forge's process,
-        which has no crew runner for it: assigned issues will wait. The crew
-        runs once this forge has a process of its own.</div></div>`;
+    return line("No runner", html`This forge is hosted inside another forge's process, which has no crew runner for it: assigned issues will wait.`);
   if (crew === undefined)
-    return html`<div class="toast" data-tone="danger" role="alert">${icon("alert")}<div class="toast-body">No crew runner is up on this forge, so assigned issues
-        will wait. Start the forge with apps on (the default) and Claude Code
-        on <span class="mono">PATH</span> or at
-        <span class="mono">FORGE_CLAUDE</span>.</div></div>`;
+    return line("No runner", html`No crew runner is up on this forge, so assigned issues will wait: start it with apps on and Claude Code on <span class="mono">PATH</span> or at <span class="mono">FORGE_CLAUDE</span>.`);
   if (!crew.ready)
-    return html`<div class="toast" data-tone="danger" role="alert">${icon("alert")}<div class="toast-body">The crew cannot run: ${crew.detail}. Agents can be
-        created, but nothing picks up their work until this is fixed.</div></div>`;
+    return line("Cannot run", html`The crew cannot run: ${crew.detail}. Nothing picks up agents' work until this is fixed.`);
   const funded = fundingOf(ctx.app.config.dataDir);
   // A word and a glyph; a forge its parent funds says so on the same line (#10484).
   return html`<p class="mb">
@@ -153,9 +150,7 @@ export function crewReadiness(ctx: Ctx): Html {
   ${when(
     !crew.sandbox.enforced,
     () =>
-      html`<div class="toast" data-tone="danger" role="alert" id="crew-unsandboxed">${icon("alert")}<div class="toast-body">Unsandboxed: agents' shells run unrestricted here
-          (${crew.sandbox.reason}). They can read this forge's data and reach
-          any host.</div></div>`,
+      line("Unsandboxed", html`Agents' shells run unrestricted here (${crew.sandbox.reason}): they can read this forge's data and reach any host.`, "crew-unsandboxed"),
   )}`;
 }
 

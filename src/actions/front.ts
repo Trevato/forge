@@ -247,6 +247,18 @@ export function frontKey(app: App): string {
   return String(row?.n);
 }
 
+/**
+ * The repositories a signed-out visitor is offered by name: the shelf's own
+ * set, featured first, so the jump palette never lists more than the door.
+ */
+export function doorRepos(app: App): Repo[] {
+  const page = frontPage(app);
+  const seen = new Set<string>();
+  return [...(page.featured === undefined ? [] : [page.featured]), ...page.shelf]
+    .map((e) => e.repo)
+    .filter((r) => !seen.has(r.id) && seen.add(r.id));
+}
+
 /** The front page as a stranger is shown it; `request` is told what the key cost. */
 export function frontPage(app: App, now = Date.now(), request?: Request): FrontPage {
   const key =
@@ -357,6 +369,9 @@ function buildFrontPage(app: App, now: number): FrontPage {
   const ranked = rankFront(
     publicApps
       .filter((r) => !pinnedIds.has(r.repoId) && !picks.hidden.has(r.repoId))
+      // The door shows the forge's own makers; a stranger's app is found on
+      // /explore or pinned by an admin. Filtered here, before any ranking is kept.
+      .filter((r) => owners.get(repos.get(r.repoId)!.ownerId)?.isAdmin === true)
       .map((r) => entry(repos.get(r.repoId)!, false))
       .filter(tileable)
       .map((e) => ({ ...e, id: e.repo.id, owner: e.repo.ownerName })),

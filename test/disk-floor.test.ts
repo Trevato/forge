@@ -96,7 +96,8 @@ describe("below the floor", () => {
       expect(v.degraded.map((d) => d.cause)).toEqual(["disk-floor"]);
       expect(v.needs).toEqual(["Disk is under the 15% the forge keeps for itself: 12% free. Child forges sleep, and no child forge, app or check starts, until room is made."]);
       const at15 = vitals({ db: app.db, signals: app.signals, dataDir: app.config.dataDir, disk: () => ({ freeBytes: 15, totalBytes: 100 }) });
-      expect(at15.degraded.map((d) => d.cause)).toEqual([]);
+      // At the floor is not under it; 85% used is past the 80% mark (#11800), which says only that.
+      expect(at15.degraded.map((d) => d.cause)).toEqual(["disk-80"]);
     } finally {
       app.close();
     }

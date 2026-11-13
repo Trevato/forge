@@ -69,6 +69,6 @@ test("an agent's page: one h1, plain sections, both forms, no card", async () =>
   expect(page).toContain("to=%2Fsettings%2Fcrew%2Fscoutly%2Fdelete");
 });
 
-test("a non-admin still gets 404", async () => {
-  expect((await fetchPage(member)).status).toBe(404);
+test("a non-admin is refused with 403", async () => {
+  expect((await fetchPage(member)).status).toBe(403);
 });

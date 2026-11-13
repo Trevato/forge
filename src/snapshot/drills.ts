@@ -24,6 +24,17 @@ interface Row {
 
 const PHASES = new Set(["manifest", "files", "unpack", "bundles", "key", "open", "boot"]);
 
+/** Where a kept drill restored from; empty when it was kept before that was recorded, or the JSON is not ours. */
+export function parseFrom(raw: string | null): { from?: string; offSite?: boolean } {
+  try {
+    const v = JSON.parse(raw ?? "null") as { from?: unknown; offSite?: unknown } | null;
+    if (typeof v?.from !== "string" || v.from.length > 300) return {};
+    return { from: v.from, offSite: v.offSite === true };
+  } catch {
+    return {};
+  }
+}
+
 /** The stored JSON as phases; anything that is not a list of known phases with whole ms reads as none. */
 export function parsePhases(raw: string | null): { phases: PhaseTime[]; budgetMs: number } {
   const none = { phases: [], budgetMs: 0 };
@@ -61,7 +72,12 @@ export function recordDrill(db: Database, result: DrillResult): void {
     result.verdict,
     result.failedStep,
     result.reason,
-    JSON.stringify({ phases: result.phases, budgetMs: result.budgetMs }),
+    // Where it restored from rides the same column: no migration for two plain fields (#11805).
+    JSON.stringify({
+      phases: result.phases,
+      budgetMs: result.budgetMs,
+      ...(result.from === undefined ? {} : { from: result.from, offSite: result.offSite === true }),
+    }),
   );
 }
 
@@ -91,5 +107,6 @@ export function lastDrill(db: Database): DrillResult | undefined {
     reason: row.reason,
     phases: kept.phases,
     budgetMs: kept.budgetMs,
+    ...parseFrom(row.phases),
   };
 }

@@ -109,7 +109,7 @@ test("Test with nothing typed and nothing sealed says there is nothing to test",
 for (const path of ["/settings/backups/test", "/settings/backups/mirror/now"]) {
   test(`${path}: a non-admin, an anonymous visitor and a cross-origin post are refused`, async () => {
     const asBob = await post(path, bob);
-    expect(asBob.status).toBe(404);
+    expect(asBob.status).toBe(403);
     expect(asBob.headers.getSetCookie().join(";")).not.toMatch(/flash/);
 
     const anon = await post(path, "");

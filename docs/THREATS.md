@@ -1,10 +1,14 @@
 # Threats
 
 Who would attack this forge, what each wants, and what stands in the way.
-Every protection is one bullet ending in a `Test:` line that names the test
-file proving it, or says `none yet` plainly. `test/threats-doc.test.ts` checks
-that every cited file exists and prints how many gaps remain. A protection
-with no test is a gap, not a secret: the count is the to-do list.
+Every protection is one bullet ending in one `Enforced by:` line that names
+the test file (`test/….test.ts`) or the gate (`scripts/….ts`) that enforces
+it, or says `none yet` plainly, with `(#N)` when an open issue owns the gap.
+Each row of the internal-calls table names its enforcer in its last cell the
+same way. `test/threats-enforced.test.ts` fails on a row with no such line or
+a named path that does not exist, and prints how many rows say `none yet`. A
+protection nothing enforces is a gap, not a secret: the count is the to-do
+list, and only editing a row lowers it.
 
 ## A snooper on the network
 
@@ -13,16 +17,16 @@ talks to whom.
 
 - Sessions are HttpOnly cookies, `Secure` when the request came over https, so
   script cannot read one and a plain-http hop does not carry it.
-  Test: `test/own-session.test.ts`
+  Enforced by: `test/own-session.test.ts`
 - Tokens are shown once; the database keeps only their sha256, so a copy of the
   index does not replay as a login.
-  Test: `test/tokens.test.ts`
+  Enforced by: `test/tokens.test.ts`
 - TLS is terminated by the edge in front of the forge, and certificates are
   issued only for names the forge vouches for (`on_demand_tls` ask).
-  Test: none yet
+  Enforced by: none yet
 - Between the edge and the forge process, and between forge and cell, traffic is
   plain HTTP on one machine or a pod network. Nothing encrypts it.
-  Test: none yet
+  Enforced by: none yet
 
 ## A stolen token
 
@@ -30,25 +34,25 @@ Wants: to act as the person or agent it was issued to, for as long as it works.
 
 - Tokens carry a scope and an optional expiry; a narrower token cannot do what a
   wider one can.
-  Test: `test/tokens.test.ts`
+  Enforced by: `test/tokens.test.ts`
 - A crew run's secrets are named in the brief, opened per run, redacted from the
   log, and released when the run ends.
-  Test: `test/run-secrets.test.ts`
+  Enforced by: `test/run-secrets.test.ts`
 - A passport (`fp1.…`) is bound to one audience and scope set and dies in
   minutes, so a copy lifted from a run is useful to one door briefly.
-  Test: `test/passport.test.ts`
+  Enforced by: `test/passport.test.ts`
 - Sign-in attempts are throttled per client, with a whole-forge cap beside it.
-  Test: `test/signin-throttle.test.ts`
+  Enforced by: `test/signin-throttle.test.ts`
 - Stored provider tokens (origins) are sealed under a key in `secret.key`, never
   returned by any route.
-  Test: `test/origins-security-auth.test.ts`
+  Enforced by: `test/origins-security-auth.test.ts`
 - The SSH host key and the database files are created 0600; a host key group-
   or world-readable is refused, and a database file found too open is a
   degraded finding naming the chmod, never a silent change and never a stop.
-  Test: `test/file-modes.test.ts`
+  Enforced by: `test/file-modes.test.ts`
 - Revoking every token of one account at once, and telling its owner a token was
   used from somewhere new.
-  Test: none yet
+  Enforced by: none yet
 
 ## A compromised vendor
 
@@ -57,24 +61,24 @@ trusts: a package, a model provider, a hosting provider, an origin it syncs from
 
 - The forge has no runtime dependencies, so there is no package to poison in the
   forge itself.
-  Test: `test/deps.test.ts`
+  Enforced by: `test/deps.test.ts`
 - An app's code runs in a cell: read-only machine, empty data directory and
   home, own pid and network namespaces, memory, CPU and disk watched. A
   dependency an app pulls in gets no more than the app does.
-  Test: `test/contain.test.ts`
+  Enforced by: `test/contain.test.ts`
 - The only way out of a cell is the egress proxy, which reaches the hosts the
   repository declared and refuses names that resolve to private, loopback or
   metadata addresses.
-  Test: `test/apps-adversarial.test.ts`
+  Enforced by: `test/apps-adversarial.test.ts`
 - A connected origin's replies are validated at the boundary and not trusted for
   identity.
-  Test: `test/origins-security-provider.test.ts`
+  Enforced by: `test/origins-security-provider.test.ts`
 - Pushes from an origin cannot rewrite what the forge protects.
-  Test: `test/origins-security-push.test.ts`
+  Enforced by: `test/origins-security-push.test.ts`
 - Backups are encrypted before they leave the machine.
-  Test: `test/snapshot-store.test.ts`
+  Enforced by: `test/snapshot-store.test.ts`
 - A review of lockfile changes (`bun.lock`) before they reach an app's cell.
-  Test: none yet
+  Enforced by: none yet
 
 ## A hostile agent inside a run
 
@@ -86,81 +90,81 @@ person approved.
   host, and never another repository's app. The
   forge's repositories, index, key and every other agent's clone are denied by
   name and by allow-list, and a listing that fails refuses the run.
-  Test: `test/crew-sandbox.test.ts`
+  Enforced by: `test/crew-sandbox.test.ts`
 - The one place a run writes beside its clone and temp directory is its
   repository's bun install cache (`crew/.cache/<repo id>/bun`), which every
   run on that repository can write: a run can poison what the next run on the
   same repository installs. It is per repository: the cache root is denied whole
   and only this repository's directory re-allowed, so a cache made later is
   denied too, and deleting the repository removes it.
-  Test: `test/crew-install-cache.test.ts`
+  Enforced by: `test/crew-install-cache.test.ts`
 - A check's cell reads its repository's shared bun cache
   (`check-install/<repo id>/bun`) through a read-only bind and cannot write
   it, so one pull cannot plant a package the gate on main installs. The
   forge fills it on the host with `--ignore-scripts`, and reads no
   `bunfig.toml` or `.npmrc` of the pull's.
-  Test: `test/check-install.test.ts`
+  Enforced by: `test/check-install.test.ts`
 - An app environment's cell reads that same cache read-only and
   copies from it, so a preview cannot plant a package production installs;
   the forge fills it through the same lockfile rule as a check's.
-  Test: `test/app-install-cache.test.ts`
+  Enforced by: `test/app-install-cache.test.ts`
 - The forge fills that cache only from a lockfile whose every package is a
   registry `name@version` with a sha512 integrity (`checks/fillable.ts`):
   the host never fetches a URL a pull chose and reads no file, link or
   workspace a pull points at, an override's or resolution's included.
-  Test: `test/check-fillable.test.ts`
+  Enforced by: `test/check-fillable.test.ts`
 - The same policy holds against a real bubblewrap, not only as a string.
-  Test: `test/crew-sandbox-real.test.ts`
+  Enforced by: `test/crew-sandbox-real.test.ts`
 - An agent cannot push to the default branch or merge; a person merges.
-  Test: `test/protection.test.ts`
+  Enforced by: `test/protection.test.ts`
 - An outside agent that drives a person's account cannot push past the pulls
   either: a protected default takes a push from its admins only, so every
   other writer lands through a pull, its gate and its review.
-  Test: `test/protected-default-push.test.ts`
+  Enforced by: `test/protected-default-push.test.ts`
 - Merge gates (checks, review) are enforced in the merge path, not by convention.
-  Test: `test/security-merge.test.ts`
+  Enforced by: `test/security-merge.test.ts`
 - Spend, time and turns per run are limited.
-  Test: `test/crew-limits.test.ts`
+  Enforced by: `test/crew-limits.test.ts`
 - Rendered output escapes everything an agent wrote.
-  Test: `test/security-xss.test.ts`
+  Enforced by: `test/security-xss.test.ts`
 
 ## An automated attacker at scale
 
 Wants: accounts, spam, resources, or a way to exhaust the forge.
 
 - Request bodies are capped at the boundary.
-  Test: `test/body-limits.test.ts`
+  Enforced by: `test/body-limits.test.ts`
 - Parsers survive generated hostile input.
-  Test: `test/fuzz-parsers.test.ts`
+  Enforced by: `test/fuzz-parsers.test.ts`
 - Anonymous spawn is rate limited per client address.
-  Test: `test/spawn-anon.test.ts`
+  Enforced by: `test/spawn-anon.test.ts`
 - Every door a stranger can reach that costs (API reads, clones, code
   search on the page, the API and the terminal's guest palette, event
   streams, spawn plans) is limited per address and for every stranger
   together (`src/http/strangers.ts`, docs/ARCHITECTURE.md, concurrency
   invariant 7); a signed-in push keeps its share of the pool.
-  Test: `test/strangers.test.ts`
+  Enforced by: `test/strangers.test.ts`
 - The client address is the socket's peer unless that peer is a configured
   trusted proxy; `X-Forwarded-For` is read from the right, past trusted hops.
-  Test: `test/client-address.test.ts`
+  Enforced by: `test/client-address.test.ts`
 - A new-account guard can refuse repository creation and forks for young
   accounts.
-  Test: `test/guard-new-accounts.test.ts`
+  Enforced by: `test/guard-new-accounts.test.ts`
 - Sign-up has a ceiling per address and for the whole forge, per minute and per
   hour, and an admin can close it at once.
-  Test: `test/guest-contribute.test.ts`
+  Enforced by: `test/guest-contribute.test.ts`
 - A guest owns only a contribution fork of a public repository. It holds no
   settings, secrets or app, nothing runs for it, and its storage, forks and
   pulls are limited (`docs/ROLES.md`).
-  Test: `test/guest-contribute.test.ts`
+  Enforced by: `test/guest-contribute.test.ts`
 - A guest's pull runs nothing until a person who can write the repository
   approves that exact head, and the crew never lands it.
-  Test: `test/guest-contribute.test.ts`
+  Enforced by: `test/guest-contribute.test.ts`
 - Every limit is a setting with its reason, changed by an admin only.
-  Test: `test/limits.test.ts`
+  Enforced by: `test/limits.test.ts`
 - Distributed attacks across many addresses: only the whole-forge caps stand
   here.
-  Test: none yet
+  Enforced by: none yet
 
 ## Internal calls
 
@@ -171,11 +175,11 @@ else runs as that user on the host network (agents and apps are sandboxed or in
 cells). Only one swap is made per process, so two landings never leave two
 releases serving. The swap is refused unless `net.ipv4.tcp_migrate_req=1`, for
 without it the old listener closing resets queued connections.
-Test: `test/release-swap.test.ts`
+Enforced by: `test/release-swap.test.ts`
 
 How each part proves itself to the next, today.
 
-| Call | Authenticated by | Test |
+| Call | Authenticated by | Enforced by |
 | --- | --- | --- |
 | runner → forge | the run's scoped token (`FORGE_TOKEN`) and a few-minute passport (`FORGE_PASSPORT`) | `test/passport-edge.test.ts` |
 | git hook → forge | per-boot secret in `x-forge-hook-secret` on the internal listener; a call without it is refused and counted | `test/crew-sandbox.test.ts` |
@@ -197,7 +201,7 @@ What it can reach: everything a child forge can reach, no more: its own data dir
 - The cell limits, sandbox, egress list and hidden parent paths are built by the
   parent from outside, never read from the child's repository, so a child's own
   code is held exactly like any app.
-  Test: `test/own-code.test.ts`
+  Enforced by: `test/own-code.test.ts`
 
 ## Honeypots (later)
 

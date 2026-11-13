@@ -46,10 +46,15 @@
  * The app's admin sees its own domains under the head, each with its state
  * in the settings page's words (`domain_words.ts`), and gets `n`: a domains
  * screen where `+` adds one, `c` checks the selected one's DNS proof now and
- * says the record still needed, and `-` removes it after `remove <host>? y/n`
+ * says the record still needed, `o` writes down the old DNS records before a
+ * cut-over (`keepOldRecords`) and shows them under the list, and `-` removes
+ * it after `remove <host>? y/n`
  * — `addAppDomain`, `checkAppDomain` and `removeAppDomain`, the page's and
- * MCP `app_domains`' actions. `listAppDomains` is the admin gate: anyone it
- * refuses sees neither the domains nor the key.
+ * MCP `app_domains`' actions. With the repository's `DNS_API_TOKEN` it also
+ * edits the registrar (`domain_dns.ts`): `p` publishes the TXT proof, `x`
+ * cuts the name over after `cut <host> over? y/n` and keeps the records it
+ * removed on screen, `v` puts typed records back. `listAppDomains` is the
+ * admin gate: anyone it refuses sees neither the domains nor the key.
  *
  * The admin who is a person also gets `i`: the app's prompt source, the
  * Instagram account whose comments become the crew's tell (`prompts.ts`).
@@ -75,9 +80,11 @@ import {
 import { previewBuild, previewBuildRefusalText } from "../../actions/build_preview.ts";
 import { STOP_APP } from "../../web/danger_words.ts";
 import { envPhrase } from "../../apps/env_phrase.ts";
+import { recordsFromLine, type OldRecord } from "../../core/domains.ts";
 import {
   addAppDomain,
   checkAppDomain,
+  keepOldRecords,
   listAppDomains,
   removeAppDomain,
   type AppDomainView,
@@ -129,6 +136,8 @@ import { pullScreen } from "./pull.ts";
 import { local } from "./where.ts";
 import { appMembersScreen } from "./appmembers.ts";
 import { mayManagePrompts, promptsScreen } from "./prompts.ts";
+import { editDnsFromTerminal } from "./domain_dns.ts";
+import type { DnsStep } from "../../actions/domain_dns.ts";
 
 const LIMIT = 50;
 
@@ -713,6 +722,12 @@ function stillNeeded(d: AppDomainView): string {
   return d.verified ? "" : `Still needed: ${recordsInWords(d.records)}.`;
 }
 
+const recordLine = (r: OldRecord): string => `${r.type} ${r.name} ${r.value}${r.ttl === undefined ? "" : ` ${r.ttl}`}`;
+
+/** `Old records: A app.example.com 203.0.113.7 300`, or "" with none kept. */
+const oldLine = (d: AppDomainView): string =>
+  d.oldRecords.length === 0 ? "" : `Old records: ${d.oldRecords.map(recordLine).join("; ")}`;
+
 /**
  * The app's domains, for its admin. Every key goes through the action, which
  * gates again; a refusal is said in the page's words. `changed` re-reads the
@@ -723,6 +738,8 @@ export function domainsScreen(f: Session, ctx: Ctx, repo: Repo, changed: () => v
   let domains: AppDomainView[] = [];
   let refused: string | undefined;
   let loaded = false;
+  /** The last registrar edit's words, kept on the foot: a cut's removed records are the way back. */
+  let told = "";
 
   const refusal = (code: string, fallback: string): string =>
     code === "not_found" ? NOT_ADMIN : domainRefusalText(code, fallback);
@@ -767,6 +784,69 @@ export function domainsScreen(f: Session, ctx: Ctx, repo: Repo, changed: () => v
       after();
     });
 
+  const registrar = (d: AppDomainView, step: DnsStep, recordsText?: string): void =>
+    runAsync(ctx, async () => {
+      const said = await editDnsFromTerminal(f, repo, d.host, step, recordsText);
+      told = said.text;
+      ctx.toast(said.text, said.ok ? "success" : "danger");
+      after();
+    });
+
+  const cut = (d: AppDomainView): void => {
+    const choose = (choice: number): void => {
+      if (choice === 0) registrar(d, "cut");
+    };
+    ctx.push(
+      yesNo(
+        ctx,
+        confirmScreen(ctx, self, {
+          title: "Cut over at the registrar",
+          body: [`cut ${d.host} over to the app? y/n`, "Its A, AAAA and CNAME are replaced; the removed ones are shown."],
+          actions: [{ label: "Cut over" }, { label: "Cancel", variant: "ghost" }],
+          selected: 1,
+          onChoose: choose,
+        }),
+        choose,
+      ),
+    );
+  };
+
+  const revert = (d: AppDomainView): void => {
+    ctx.push(
+      promptScreen(ctx, self, {
+        title: `Put ${d.host}'s old records back`,
+        label: "Records",
+        placeholder: "A 203.0.113.5 ttl 60; AAAA 2001:db8::1",
+        hint: "The records the cut removed, as it listed them.",
+        onSubmit: (text) => {
+          if (text.trim() === "") return "Type the old records, as the cut listed them.";
+          registrar(d, "revert", text);
+          return undefined;
+        },
+      }),
+    );
+  };
+
+  /** Write down what the name carries today, before the cut: `keepOldRecords`, as the API's PUT and MCP `keep`. */
+  const keep = (d: AppDomainView): void => {
+    ctx.push(
+      promptScreen(ctx, self, {
+        title: `Old records of ${d.host}`,
+        label: "Records",
+        placeholder: "A app.example.com 203.0.113.7 300; CNAME www.example.com host.example.net",
+        value: d.oldRecords.map(recordLine).join("; "),
+        hint: "type name value [ttl], separated by ;. Replaces what was kept.",
+        onSubmit: (line) => {
+          const kept = keepOldRecords(f.app, f.user, repo, d.host, recordsFromLine(line));
+          if (!kept.ok) return refusal(kept.error, NO_SUCH_DOMAIN);
+          ctx.toast(`Kept ${kept.value.oldRecords.length} old record${kept.value.oldRecords.length === 1 ? "" : "s"} of ${d.host}.`);
+          after();
+          return undefined;
+        },
+      }),
+    );
+  };
+
   const remove = (d: AppDomainView): void => {
     const choose = (choice: number): void => {
       if (choice !== 0) return;
@@ -797,7 +877,16 @@ export function domainsScreen(f: Session, ctx: Ctx, repo: Repo, changed: () => v
         : [
             binding(["j", "k"], "move"),
             binding(["+"], "add a domain"),
-            ...(domains.length > 0 ? [binding(["c"], "check its DNS now"), binding(["-"], "remove it")] : []),
+            ...(domains.length > 0
+              ? [
+                  binding(["c"], "check its DNS now"),
+                  binding(["o"], "old records"),
+                  binding(["-"], "remove it"),
+                  binding(["p"], "publish its proof at the registrar"),
+                  binding(["x"], "cut it over at the registrar"),
+                  binding(["v"], "put old records back"),
+                ]
+              : []),
             binding(["r"], "refresh"),
             binding(["esc"], "back"),
           ];
@@ -805,7 +894,7 @@ export function domainsScreen(f: Session, ctx: Ctx, repo: Repo, changed: () => v
     load: async () => read(),
     render(area, s) {
       const c = ctx.theme.c;
-      const [head, body, foot] = split(area, "v", [len(1), fill(1), len(1)]);
+      const [head, body, foot] = split(area, "v", [len(1), fill(1), len(2)]);
       s.text(
         head!.x,
         head!.y,
@@ -825,7 +914,9 @@ export function domainsScreen(f: Session, ctx: Ctx, repo: Repo, changed: () => v
       hitList(ctx, body!, state, rows.length, {});
       const selected = domains[state.index];
       if (selected !== undefined)
-        s.text(foot!.x, foot!.y, truncate(stillNeeded(selected), foot!.w), style(c.mutedFg, c.bg), foot!.x + foot!.w);
+        [told !== "" ? told : stillNeeded(selected), oldLine(selected)].forEach((text, row) =>
+          s.text(foot!.x, foot!.y + row, truncate(text, foot!.w), style(c.mutedFg, c.bg), foot!.x + foot!.w),
+        );
     },
     key(e) {
       if (refused !== undefined) return false;
@@ -839,8 +930,24 @@ export function domainsScreen(f: Session, ctx: Ctx, repo: Repo, changed: () => v
         check(selected);
         return true;
       }
+      if (e.key === "o" && selected !== undefined) {
+        keep(selected);
+        return true;
+      }
       if (e.key === "-" && selected !== undefined) {
         remove(selected);
+        return true;
+      }
+      if (e.key === "p" && selected !== undefined) {
+        registrar(selected, "proof");
+        return true;
+      }
+      if (e.key === "x" && selected !== undefined) {
+        cut(selected);
+        return true;
+      }
+      if (e.key === "v" && selected !== undefined) {
+        revert(selected);
         return true;
       }
       if (e.key === "r") {

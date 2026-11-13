@@ -187,7 +187,7 @@ test("the page offers the three windows, for an admin alone, and a loopback requ
   expect(text).not.toContain("<table class=\"table\" data-dense>\n            <caption class=\"sr-only\">\n              User agent");
   expect(windowOf("nonsense")).toBe("15m");
   const notAdmin = `forge_session=${createSession(app.db, bob.id).token}`;
-  expect((await fetch(`${servers.url}/settings/traffic?window=7d`, { headers: { cookie: notAdmin } })).status).toBe(404);
+  expect((await fetch(`${servers.url}/settings/traffic?window=7d`, { headers: { cookie: notAdmin } })).status).toBe(403);
 });
 
 test("an empty window is one sentence, not a card", async () => {

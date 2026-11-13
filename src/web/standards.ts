@@ -478,7 +478,7 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
       "",
       "## Offer a change",
       "",
-      `- Needs an account. Fork: POST ${o}/api/v1/repos/{owner}/{name}/forks; push a branch to your fork over git; then POST ${o}/api/v1/repos/{owner}/{name}/pulls with {"title", "body", "base", "head", "headRepo": "you/name"}.`,
+      `- Account only. Fork (MCP fork); source: ${o}/{owner}/{name}/archive/{ref}.tar.gz; send: MCP open_pull with patch, or POST ${o}/api/v1/repos/{owner}/{name}/pulls with {"title", "body", "base", "head", "headRepo": "you/name"}.`,
       "",
       "## Use it from your harness",
       "",

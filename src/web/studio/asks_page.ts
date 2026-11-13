@@ -26,6 +26,8 @@ import { giveBack } from "../../actions/give_back.ts";
 import { decideAsk, undoDecideAsk } from "../../actions/asks_decide.ts";
 import type { FleetValue } from "../../core/fleet_ops.ts";
 import { muteRepo, removeMutes } from "../../core/interactions.ts";
+import { applyAskFilter, isAskFilterDo, type AskFilterChange } from "../../actions/ask_filter.ts";
+import { askFiltersOf, hasAskFilters, hiddenLine, HIDE_APP_DAY_WORDS, HIDE_KIND_WORDS, isAskKind, SHOW_ALL_WORDS } from "../../core/ask_filters.ts";
 import { needLine } from "../../actions/health.ts";
 import type { Degraded } from "../../kernel/vitals.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -48,7 +50,7 @@ import {
 import { html, type Html } from "../html.ts";
 import { noteLine } from "./note.ts";
 import { page, redirect } from "../layout.ts";
-import { btn, card, icon, row } from "../ui.ts";
+import { btn, card, disclosure, icon, row } from "../ui.ts";
 import {
   askAnchor,
   askRows,
@@ -295,6 +297,56 @@ function muteFlash(ctx: Ctx, user: NonNullable<Ctx["auth"]["user"]>): Html | nul
   return null;
 }
 
+/** A one-field form: a pick from `options`, saved as the viewer's filter by `asksFilter`. */
+function filterPick(
+  ctx: Ctx,
+  change: string,
+  field: "repo" | "kind",
+  options: readonly { value: string; label: string }[],
+  label: string,
+  tap: string,
+): Html {
+  return html`<form class="bar" method="post" action="/asks/filter">
+    <input type="hidden" name="do" value="${change}" />
+    <input type="hidden" name="back" value="${here(ctx)}" />
+    <select name="${field}" class="input" aria-label="${label}">
+      ${options.map((o) => html`<option value="${o.value}">${o.label}</option>`)}
+    </select>
+    ${btn(tap, { size: "sm", variant: "ghost" })}
+  </form>`;
+}
+
+/**
+ * The ask filters, once for the whole list: what they hide with the one tap
+ * that clears them, and, closed, the two picks that set them (an app for a
+ * day, a kind). The apps and kinds offered are those in the rows below.
+ */
+function filterNote(ctx: Ctx, rows: readonly AskRow<Decision>[], hidden: number): Html | null {
+  const on = hasAskFilters(askFiltersOf(ctx.app.db, ctx.auth.user!.id));
+  if (!on && rows.length < 2) return null;
+  const apps = [...new Map(rows.map((r) => [r.repo.id, `${r.repo.ownerName}/${r.repo.name}`])).entries()].map(
+    ([value, label]) => ({ value, label }),
+  );
+  const kinds = [...new Set(rows.map((r) => r.kind))].map((k) => ({ value: k, label: ASK_KIND_WORDS[k] ?? k }));
+  const clear = !on
+    ? null
+    : html`<form class="bar" method="post" action="/asks/filter">
+        <input type="hidden" name="do" value="clear" />
+        <input type="hidden" name="back" value="${here(ctx)}" />
+        <span class="muted small">${hiddenLine(hidden)}</span>
+        ${btn(SHOW_ALL_WORDS, { size: "sm", variant: "ghost" })}
+      </form>`;
+  const picks = rows.length === 0
+    ? null
+    : disclosure(
+        "Filter",
+        html`${filterPick(ctx, "hide_app_day", "repo", apps, "App to hide", HIDE_APP_DAY_WORDS)}
+        ${filterPick(ctx, "hide_kind", "kind", kinds, "Kind to hide", HIDE_KIND_WORDS)}`,
+        { small: true },
+      );
+  return html`<div id="asks-filters" class="stack">${clear}${picks}</div>`;
+}
+
 /** A row and, under it, the chip that mutes its repository (`asksMute`). */
 function mutableRow(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Html {
   return html`${rowCard(ctx, r, picked)}
@@ -458,15 +510,14 @@ export function needsYouSection(
   top?: AsksTop,
 ): { body: Html; scriptJs: string } {
   const picked = top?.picked ?? new Set<string>();
-  const read = () =>
-    decisionsFor(
-      ctx,
-      listReposVisibleTo(ctx.app.db, user, { limit: 200, withoutArchived: true }),
-    );
+  const visible = listReposVisibleTo(ctx.app.db, user, { limit: 200, withoutArchived: true });
+  let hidden = 0;
+  const read = () => decisionsFor(ctx, visible, { onHidden: (n) => (hidden = n) });
   // Callers that build the section outside a request have none to time against.
   const decisions = ctx.request instanceof Request ? timePhase(ctx.request, "asks", read) : read();
   const needs = forgeNeedsFor(ctx, user);
   const rows = askRows(decisions);
+  const filtered = filterNote(ctx, rows, hidden);
   const silenced = silencedRepos(ctx.app.db, user);
   const silencedNote =
     silenced.length === 0
@@ -498,7 +549,7 @@ export function needsYouSection(
   const count = rows.length + needs.length;
   if (count === 0 && top === undefined)
     return {
-      body: html`<h2 id="asks-sentence" class="sr-only">${askSentence(0)}</h2>${silencedNote}${asideNote}${undo}`,
+      body: html`<h2 id="asks-sentence" class="sr-only">${askSentence(0)}</h2>${filtered}${silencedNote}${asideNote}${undo}`,
       scriptJs: "",
     };
   // The forge's own health first, then the few asks that matter most;
@@ -549,7 +600,7 @@ export function needsYouSection(
           ${reasonInput(top?.reason)} ${btn("Preview", { size: "sm" })}
           <span class="muted small">on the selected asks</span>
         </form>`}
-    ${silencedNote} ${asideNote} ${undo}
+    ${filtered} ${silencedNote} ${asideNote} ${undo}
     ${decisions.map((d) => decisionForm(d, ctx.url.pathname))}
   </section>`;
   return { body, scriptJs: SELECT_JS };
@@ -812,4 +863,26 @@ export async function asksMute(ctx: Ctx): Promise<Response> {
   if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFoundPage(ctx);
   muteRepo(ctx.app.db, ctx.auth.user.id, repo.id);
   return redirect(withFlash(asksBack(form), "muted", repo.id));
+}
+
+/** POST /asks/filter — `do` (hide_app_day, hide_app, show_app, hide_kind, show_kind, clear) with `repo` or `kind`: one tap, saved for the viewer. */
+export async function asksFilter(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const what = form.get("do");
+  let change: AskFilterChange | undefined;
+  if (what === "clear") change = { do: "clear" };
+  else if (what === "hide_kind" || what === "show_kind") {
+    const kind = form.get("kind");
+    if (isAskKind(kind)) change = { do: what, kind };
+  } else if (isAskFilterDo(what)) {
+    const id = form.get("repo");
+    const repo = typeof id === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(id) ? getRepoById(ctx.app.db, id) : undefined;
+    if (repo !== undefined && canRead(ctx.app.db, repo, ctx.auth.user) && (what === "hide_app_day" || what === "hide_app" || what === "show_app"))
+      change = { do: what, repo };
+  }
+  if (change === undefined) return notFoundPage(ctx);
+  applyAskFilter(ctx.app.db, ctx.auth.user, change);
+  return redirect(asksBack(form));
 }

@@ -11,15 +11,17 @@ import { getReposByIds } from "../../core/repos.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { running } from "../../kernel/version.ts";
 import type { Ctx } from "../../http/context.ts";
+import { lastProof } from "../../release/prove.ts";
 import { listReleases } from "../../release/record.ts";
 import { BOOTED, canRollBackTo, mayRead, mayRollBack, rollBackTo } from "../../release/gate.ts";
-import { liveSince, NO_RELEASES_YET } from "../../release/words.ts";
+import { journeyLine, liveSince, NO_RELEASES_YET } from "../../release/words.ts";
 import { notFoundPage, signInFirst, NOT_ADMIN_HERE, SIGN_IN_TO_DO, forbiddenPage } from "../chrome.ts";
 import { readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { badge, btn, row, sha, time } from "../ui.ts";
 import { holdAs, liftAs } from "../../keeper/hold.ts";
+import { releaseNowAs } from "../../keeper/now.ts";
 import { keeperPanel } from "./keeper-panel.ts";
 
 /** The live line (`liveSince`) for the home, or nothing when no release is known to be live. */
@@ -29,6 +31,14 @@ export function liveLine(ctx: Ctx): Html | undefined {
   return html`<p class="small muted" id="live-release">
     <a href="/releases">${liveSince(html, html`<span class="sha">${live.slice(0, 7)}</span>`, time(BOOTED))}</a>
   </p>`;
+}
+
+/** The proven stranger's journey line for the version serving, or nothing when the last proof kept no timings. */
+export function journeyCard(ctx: Ctx): Html | undefined {
+  const p = lastProof(ctx.app.config.dataDir);
+  if (p === undefined || !p.ok || p.version !== running().version) return undefined;
+  const line = journeyLine(html, p.journey, (n) => n);
+  return line === undefined ? undefined : html`<p class="small muted" id="journey-proof">${line}</p>`;
 }
 
 /**
@@ -81,7 +91,7 @@ export async function releasesPage(ctx: Ctx): Promise<Response> {
   const response = page({
     ctx,
     title: "Releases",
-    body: html`<div data-releases><div class="page-head"><h1>Releases</h1></div>${keeperPanel(ctx.app.db, writer)}${body}</div>`,
+    body: html`<div data-releases><div class="page-head"><h1>Releases</h1></div>${keeperPanel(ctx.app.db, writer)}${journeyCard(ctx)}${body}</div>`,
     styleCss: RELEASES_CSS,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
@@ -111,6 +121,16 @@ export async function releaseHoldSubmit(ctx: Ctx): Promise<Response> {
   return held.ok
     ? flashTo(ctx, "/releases", { message: `Releases held: ${held.value.reason}` })
     : flashTo(ctx, "/releases", { tone: "danger", message: held.message });
+}
+
+/** POST /releases/now: cut at the keeper's next tick, with a reason, through the function MCP calls (#11839). */
+export async function releaseNowSubmit(ctx: Ctx): Promise<Response> {
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const asked = releaseNowAs(ctx.app, ctx.auth.user, String(form.get("reason") ?? ""));
+  return asked.ok
+    ? flashTo(ctx, "/releases", { message: `Release asked for now: ${asked.value.reason}` })
+    : flashTo(ctx, "/releases", { tone: "danger", message: asked.message });
 }
 
 /** POST /releases/hold/:id/lift: lift an owner's hold. */

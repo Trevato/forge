@@ -32,6 +32,7 @@ import { tierLine, type TierState } from "../../checks/tiers.ts";
 import { fromKeptFork } from "../../core/landing_kind.ts";
 import { combinedCard } from "./pull-combined.ts";
 import { verdictLine, verdictOf, type VerdictInput } from "./pull-verdict.ts";
+import { landAsIs } from "../studio/land_as_is.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { labelsFor, listLabels } from "../../core/issues.ts";
 import { marksByName } from "../../core/marks.ts";
@@ -1110,6 +1111,9 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     ${changeHead(ctx, repo, pull, { headOid: status.headOid, conflicts: status.conflicts.length })}
     ${changeTabs(repo, pull, "files")}
     ${verdictLine(verdict)}
+    ${verdict.tone === "success" && mayMerge && check.state === "ok" && !stale
+      ? landAsIs(ctx, repo, pull)
+      : null}
     <p class="files-where muted small" id="files">
       <span class="mono">${headLabel} → ${pull.baseBranch}</span>
       <span class="sep" aria-hidden="true">·</span>
@@ -1456,9 +1460,11 @@ export async function pullReviewStateSubmit(ctx: Ctx): Promise<Response> {
             ? `${reviewWords.forbidden} You can still leave a comment.`
             : error === "body_too_long"
               ? reviewWords.tooLong
-              : error === "invalid_state"
-                ? "That is not a verdict this forge knows."
-                : "That review could not be recorded."),
+              : error === "looks_required"
+                ? reviewWords.looksRequired
+                : error === "invalid_state"
+                  ? "That is not a verdict this forge knows."
+                  : "That review could not be recorded."),
     });
   }
   return flashTo(ctx, `${dest}#conversation`, {

@@ -257,12 +257,13 @@ describe("review: caps, cache, gates and the terminal door", () => {
     expect(readVisits(app.db, scope, since)).toHaveLength(2);
   });
 
-  test("a non-admin gets 404 on both pages and the probe; the pages carry the security floor", async () => {
+  test("a non-admin is refused both pages and the probe; the pages carry the security floor", async () => {
     const made = await createUser(app.db, { origin: "seed", trusted: true, username: "guest1", email: "g1@forge.local", password: "correct-horse-battery", isAdmin: false });
     if (!made.ok) throw new Error(made.error);
     const plain = `forge_session=${createSession(app.db, made.value.id).token}`;
-    for (const path of ["/settings/traffic/sources", "/ada/none/settings/app/traffic"])
-      expect((await fetch(`${servers.url}${path}`, { headers: { cookie: plain } })).status).toBe(404);
+    // The forge's page is an admin route, refused at the gate; an app's is not found.
+    for (const [path, status] of [["/settings/traffic/sources", 403], ["/ada/none/settings/app/traffic", 404]] as const)
+      expect((await fetch(`${servers.url}${path}`, { headers: { cookie: plain } })).status).toBe(status);
     expect((await fetch(`${servers.url}/api/v1/admin/traffic/probe?scope=forge`, { headers: { cookie: plain } })).status).not.toBe(200);
     const ok = await fetch(`${servers.url}/settings/traffic/sources`, { headers: { cookie } });
     expect(ok.status).toBe(200);

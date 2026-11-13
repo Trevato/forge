@@ -1,0 +1,9 @@
+[Unit]
+Description=Push the forge's repositories to their GitHub mirrors (harmless twice)
+
+[Service]
+Type=oneshot
+User=forge
+Group=forge
+EnvironmentFile=/etc/forge/forge.env
+ExecStart=/opt/forge/infra/forge-box/github-mirror.sh

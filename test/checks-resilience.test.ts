@@ -15,9 +15,9 @@ import { readResilience, type Row } from "../src/checks/resilience.ts";
 const DOC = readFileSync(join(import.meta.dir, "..", "docs", "THREATS.md"), "utf8");
 const UNKNOWN = new Set(["untested", "no test yet"]);
 
-// Counted from the document without its parser: one protection per `Test:`
+// Counted from the document without its parser: one protection per `Enforced by:`
 // line, one per table row naming a call.
-const TESTS = DOC.split("\n").filter((l) => /^\s*Test: /.test(l)).length;
+const TESTS = DOC.split("\n").filter((l) => /^\s*Enforced by: /.test(l)).length;
 const CALLS = DOC.split("\n").filter((l) => l.startsWith("| ") && l.includes("→")).length;
 
 let dataDir: string;

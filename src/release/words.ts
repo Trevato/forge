@@ -26,3 +26,18 @@ export const ALREADY_LIVE = "This release is the one serving; there is nothing t
 
 /** Why a kept release offers no rollback: its preflight failed or its schema is behind the live database's. */
 export const NOT_ROLLABLE = "This release cannot be rolled back to: its preflight failed or its schema is behind the live database's.";
+
+/** Whole seconds, rounded up from ms, for a sentence. */
+const secs = (ms: number): string => `${Math.max(1, Math.round(ms / 1000))} s`;
+
+/**
+ * The release card's one line on a proven stranger's journey (#11158):
+ * "a stranger's forge was ready in 12 s and the crew working in 41 s". Said
+ * in the surface's own tag, so the page escapes the numbers; undefined when
+ * the proof kept no timings (an older proof, or a walk that never got there).
+ */
+export function journeyLine<T, V>(tag: Tag<T, V>, journey: { readyMs?: number | null; firstActivityMs?: number | null } | undefined, num: (s: string) => V): T | undefined {
+  const ready = journey?.readyMs, work = journey?.firstActivityMs;
+  if (typeof ready !== "number" || typeof work !== "number" || !Number.isFinite(ready) || !Number.isFinite(work)) return undefined;
+  return tag`a stranger's forge was ready in ${num(secs(ready))} and the crew working in ${num(secs(work))}`;
+}

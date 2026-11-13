@@ -151,7 +151,7 @@ describe("the client list", () => {
   });
 
   test("someone who is not an admin of the parent gets no list: page, API or MCP", async () => {
-    expect((await list(reader)).status).toBe(404);
+    expect((await list(reader)).status).toBe(403);
     const tool = (await (await mcp(bobRw)).json()) as any;
     expect(tool.result?.isError ?? tool.error !== undefined).toBe(true);
     expect(JSON.stringify(tool)).not.toContain("maria");
@@ -251,7 +251,7 @@ describe("the client list", () => {
         headers: { cookie, origin: "https://forge.test" },
         redirect: "manual",
       });
-    expect((await fresh(reader)).status).toBe(404);
+    expect((await fresh(reader)).status).toBe(403);
     const res = await fresh(admin);
     expect(res.status).toBe(201);
     expect(res.headers.get("cache-control")).toContain("no-store");

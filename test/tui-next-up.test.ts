@@ -138,6 +138,17 @@ describe("next up in the terminal", () => {
     h.stop();
   });
 
+  test("a row a person ranked wears the owner's pick, as on the page", async () => {
+    const h = boot(alice);
+    await h.toNext("alice/plan");
+    const last = order().at(-1)!;
+    expect(rankIssue(forge, alice, repo, last, { to: "top" }).ok).toBe(true);
+    await new Promise((r) => setTimeout(r, 120));
+    await h.press("j", "k");
+    expect(h.text()).toContain("Owner's pick");
+    h.stop();
+  });
+
   test("an unranked row that waits is on the screen, last, and the rank keys still move rows around it", async () => {
     const waiting = open(repo, "Waits on a");
     addDependency(forge.db, getIssue(forge.db, repo.id, waiting)!, getIssue(forge.db, repo.id, n.a!)!, alice.id);
@@ -177,6 +188,31 @@ describe("next up in the terminal", () => {
     const h = boot(undefined);
     await h.toNext("alice/vault");
     expect(h.text()).not.toContain("Secret work");
+    h.stop();
+  });
+
+  test("/ narrows to a word, ranks stay the whole list's, a move still moves in the whole order, and an empty filter clears it (#11867)", async () => {
+    const h = boot(alice);
+    await h.toNext("alice/plan");
+    const before = order();
+    expect(h.text()).toContain("Work a");
+    await h.press("/");
+    for (const ch of "WORK B") await h.press(ch);
+    await h.press("enter");
+    const text = h.text();
+    expect(text).toMatch(/1 of \d+ shown/);
+    expect(text).toContain("Work b");
+    expect(text).not.toContain("Work a");
+    expect(text).toContain(`${before.indexOf(n.b!) + 1}. #` + n.b); // its place in the whole ranking
+    // Top moves the row under the cursor in the whole order, not in the shown one.
+    await h.press("t");
+    expect(order()[0]).toBe(n.b!);
+    expect(order()).toHaveLength(before.length);
+    // Clear: empty submit.
+    await h.press("/");
+    for (let i = 0; i < 6; i++) await h.press("backspace");
+    await h.press("enter");
+    expect(h.text()).toContain("Work a");
     h.stop();
   });
 });

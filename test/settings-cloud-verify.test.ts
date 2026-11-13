@@ -101,7 +101,7 @@ describe("POST /settings/cloud/verify", () => {
     const bob = await login("bob");
     const alice = await login("alice");
     const before = calls;
-    expect((await verify(bob)).status).toBe(404);
+    expect((await verify(bob)).status).toBe(403);
     expect((await verify(alice, "https://evil.example")).status).toBe(403);
     const anon = await verify("");
     expect(anon.headers.get("location") ?? "").not.toBe("/settings/cloud");

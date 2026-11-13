@@ -72,7 +72,7 @@ describe("a model grant, from the account's page and the API", () => {
       body: new URLSearchParams({ usd: "20" }),
       redirect: "manual",
     });
-    expect(refused.status).toBe(404);
+    expect(refused.status).toBe(403);
     expect(getModelGrant(app.db, getUserByName(app.db, "bob")!.id)).toBeUndefined();
 
     const admin = await signIn("alice");
@@ -118,7 +118,7 @@ describe("a model grant, from the account's page and the API", () => {
     expect(getModelGrant(app.db, carol.id)).toBeUndefined();
   });
 
-  test("the ceiling route: signed out, a person's 404, a bad amount's flash, saved; the card shows it", async () => {
+  test("the ceiling route: signed out, a person's 403, a bad amount's flash, saved; the card shows it", async () => {
     const url = `${servers.url}/settings/accounts/carol/ceiling`;
     const send = (cookie: string | undefined, daily: string, perRun: string) =>
       fetch(url, {
@@ -132,7 +132,7 @@ describe("a model grant, from the account's page and the API", () => {
     const bob = await signIn("bob");
     expect((await send(undefined, "5", "1")).status).not.toBe(200);
     expect(getAccountCeiling(app.db, carol.id)).toBeUndefined();
-    expect((await send(bob, "5", "1")).status).toBe(404);
+    expect((await send(bob, "5", "1")).status).toBe(403);
     expect(getAccountCeiling(app.db, carol.id)).toBeUndefined();
     const bad = await send(alice, "abc", "1");
     expect(bad.status).toBe(303);

@@ -317,7 +317,7 @@ describe("forge-level secrets", () => {
       "Signup has no human check. Set FORGE_TURNSTILE_SECRET and FORGE_TURNSTILE_SITEKEY",
     );
     const bob = await login("bob");
-    expect((await get("/settings/secrets", bob)).status).toBe(404);
+    expect((await get("/settings/secrets", bob)).status).toBe(403);
     expect(await (await get("/acme", bob)).text()).not.toContain("Seal");
 
     const set = await fetch(`${servers.url}/settings/secrets`, {

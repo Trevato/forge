@@ -89,12 +89,12 @@ test("a guest is sent to sign in", async () => {
   expect(await res.text()).not.toContain("12.34");
 });
 
-test("a signed-in non-admin, even an app's owner, is told not found and sees no figure", async () => {
+test("a signed-in non-admin, even an app's owner, is refused with 403 and sees no figure", async () => {
   const res = await fetch(`${servers.url}/settings/spend`, {
     headers: { cookie: await cookieOf("bob") },
   });
   const body = await res.text();
-  expect(res.status).toBe(404);
+  expect(res.status).toBe(403);
   expect(body).not.toContain("12.34");
   expect(body).not.toContain("work-plan");
   expect(body).not.toContain("<h2>Spend</h2>");

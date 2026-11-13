@@ -16,6 +16,7 @@ import { graphql } from "./graphql.ts";
 import { eml } from "./eml.ts";
 import { csv } from "./csv.ts";
 import { geojson } from "./geojson.ts";
+import { dxf } from "./dxf.ts";
 import { gcode } from "./gcode.ts";
 import { gpx } from "./gpx.ts";
 import { har } from "./har.ts";
@@ -67,6 +68,8 @@ export interface RenderInput {
   readonly all?: boolean;
   /** `?table=<name>`: unchecked text; a renderer matches it against its own list. */
   readonly table?: string;
+  /** Set for a writer only: where a shift of this file posts (the file edit route), and what it names. */
+  readonly shift?: { readonly action: string; readonly ref: string; readonly path: string };
   /** `?layer=N` (1-based) on a G-code file; the renderer clamps it to the layers it has. */
   readonly layer?: number;
 }
@@ -102,6 +105,7 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
   gpx,
   har,
   gcode,
+  dxf,
   geojson,
   calendar: ics,
   contacts: vcf,

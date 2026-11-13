@@ -111,5 +111,5 @@ test("Usage is one page: the four tabs on every tab, Spend admin-only, one sideb
     expect(text.match(/data-nav/g) ?? []).not.toHaveLength(0);
     expect(text).not.toMatch(/data-nav[^>]*>[^<]*(<svg[\s\S]*?<\/svg>)?\s*(Capacity|Telemetry)\s*</);
   }
-  expect((await get("/settings/spend", "bob")).status).toBe(404);
+  expect((await get("/settings/spend", "bob")).status).toBe(403);
 });

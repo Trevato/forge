@@ -276,8 +276,8 @@ describe("absorbing an app", () => {
     expect((await api("GET", cyToken, "")).status).toBe(404);
     // A read-scope token of the admin may look, not absorb.
     expect((await api("PUT", adaReadToken, "/radar")).status).toBe(403);
-    expect((await web(cyCookie, "/settings/features")).status).toBe(404);
-    expect((await web(cyCookie, "/settings/features/radar/absorb", new URLSearchParams())).status).toBe(404);
+    expect((await web(cyCookie, "/settings/features")).status).toBe(403);
+    expect((await web(cyCookie, "/settings/features/radar/absorb", new URLSearchParams())).status).toBe(403);
     expect(getAbsorbed(app.db, appId)).toBeUndefined();
   });
 

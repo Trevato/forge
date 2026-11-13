@@ -17,6 +17,7 @@
  * then one line for the full-suite report's open issues (`checks/report.ts`, #7780);
  * the red batches the queue named (`flow/culprits.ts`, #7639, as MCP `flow` carries them as `redBatches`);
  * the clog sentence, the test failing on many pulls and the pulls on the same files (`flow/clog_view.ts`, #11454, an admin's);
+ * the hour's CPU stops and the pulls closed unmerged after one (`./flow_cpu.ts`, #11904, an admin's);
  * last, the duplicate lines (`duplicateLines`).
  * Read-only; Enter, Esc or q closes it.
  */
@@ -47,6 +48,9 @@ import { reviewLatencySays } from "../../flow/review_latency.ts";
 import type { Opener } from "../../flow/openers.ts";
 import { clogViewLines, readClogView } from "../../flow/clog_view.ts";
 import { clogLines, readClog } from "../../flow/clog_read.ts";
+import { cpuClosedPulls } from "../../flow/cpu_closed.ts";
+import { cpuStops } from "../../flow/cpu_stops.ts";
+import { cpuStopLines } from "./flow_cpu.ts";
 import { readRepeats } from "../../flow/repeats.ts";
 import { readVerdicts } from "../../flow/culprits.ts";
 import { readQueues, redBatchWords } from "../../flow/queue.ts";
@@ -123,6 +127,7 @@ export function flowLines(
     ...wrap(vitalsLine(vitalsFor(readVitals(db, now, agent !== undefined), agent === undefined)), inner),
     ...(agent === undefined ? clogLines(readClog(db, now), now.getTime()).flatMap((l) => wrap(l, inner)) : []),
     ...(agent === undefined ? clogViewLines(readClogView(db, now), inner, wrap) : []),
+    ...(agent === undefined ? cpuStopLines(cpuStops(db, now).stopped, cpuClosedPulls(db, now), inner) : []),
     ...firedAlarms(db, now, { publicOnly: agent !== undefined, ceilingUsd, dataDir }).flatMap((a) => wrap(a.says, inner)),
     "",
     ...wrap(parkedSays(fig.parked), inner),

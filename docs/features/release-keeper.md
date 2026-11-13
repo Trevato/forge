@@ -45,6 +45,14 @@ keyboard. It does what the steward's `release.sh`, `verify-after.sh` and
      the verify and deleted after it);
    - it probes `/healthz` once a second.
 
+   When the ten minutes pass clean, it looks at a phone (`keeper/covered.ts`,
+   #11855): `/`, the forge's repository page and `/apps` are opened at
+   390×844 in headless Chromium as the same admin, and the element at the
+   centre of the screen must not be a dialog, a popover, a hidden element or
+   a `position: fixed` layer over a quarter of the viewport. One that is fails
+   the verify and rolls the release back, naming the page. A forge with no
+   Chromium cannot look and says nothing failed.
+
    A probe is bad when it is not a 200 or takes over 10 s. Three bad probes
    in a row fail the release.
 4. **Verified live**, or **roll back and hold**. On a failure, the keeper
@@ -53,6 +61,20 @@ keyboard. It does what the steward's `release.sh`, `verify-after.sh` and
    by name (`keeper/rollback.ts`). There is no "undo to previous": on
    2026-10-27 a `rollout undo` put the broken version back for two minutes.
    A release that is not live 3 h after its cut is rolled back the same way.
+5. **Prune** (`keeper/prune.ts`, #11801). Once a release is verified live,
+   the keeper removes the deployer's stored releases beyond the newest 15,
+   never the live one or the release's named known-good, however old. Under
+   the self-swap keeper these are the trees under `releases/<sha>/`; the
+   commits removed are `pruned` on `release.verified_live` (with
+   `pruneError` when the store refused, and the release stays verified).
+   The Deployment-patch deployer keeps no store the forge can reach, so it
+   prunes nothing: there the pg-grand host timer `forge-prune-images` is
+   still the only pruner, until that deployer gets a store behind the same
+   `ReleaseStore` port (#11914). If the live, running or known-good release names no
+   stored one, it prunes nothing and says so in `pruneError`. Landing's own
+   prune of `releases/` (keep `FORGE_RELEASES_KEEP`) never removes the
+   keeper's newest release or its known-good tree. Removal runs inside the
+   tick. Under the swap keeper only, this replaces `forge-prune-images`.
 
 Every step is an event on the outbox: `release.cut`, `release.released`,
 `release.verified_live`, `release.rolled_back` and `release.held`.
@@ -71,6 +93,24 @@ files one issue, `Release <version> was dark for <n> s`.
 - **An owner's hold** is set with MCP `release_hold {reason}`, with the Hold form on the `/releases` card, or with `h` on the terminal screen, and lifted
   (`release_hold {lift: <id>}`, the card's Lift button, `h` then `lift N`) — one function, `holdAs`/`liftAs`, behind all three.
   It needs a person who may roll back (MCP: on an admin-scope token); an agent never can.
+
+## A hotfix does not wait (#11839)
+
+`release_now {reason}` (MCP, admin scope), the **Release now** form on the
+`/releases` card: a person who may roll back (never an agent) asks for a cut at
+the next tick. It skips the 30-minute spacing, a running merge queue and a
+snapshot; it still waits for a release in flight to be proven, for a hold and
+for room on the disk. The request lapses after an hour if main had nothing to
+cut; the reason is kept on the release (`hotfix`) and shown on the card.
+
+## Where the time went (#11839)
+
+Each release row keeps its stage timings: cut to live, build (checkout of the
+tree), proof (the preflight boot), switch (the new process taking the port) and
+verify. The swap deployer measures build, proof and switch; a stage not
+measured is left out. They show under the release on `/releases` and in
+`release_keeper` (`stages`), which also answers `holding` (what the tick last
+said stopped it: the disk guard, the spacing, a snapshot) and `releaseNow`.
 
 ## Where to see it
 
@@ -96,6 +136,16 @@ The keeper is off unless all of these are true:
 and its container (both default `forge`). The pod's service account needs
 `get` and `patch` on that Deployment; the chart does not grant them. The
 boot log says why it is off.
+
+While the release tick has never reported, /releases (the "Release tick"
+row) and the terminal's keeper screen say whether the keeper is off and
+why (for example "the in-process release keeper is off:
+FORGE_RELEASE_KEEPER is not on"), or on but not yet ticked. The why names
+only a variable's state, never its value. If main is then ahead of
+production past the limit, the owner gets the `main_ahead` flow alarm with
+the same line, and the sentinel files no crew issue: no code change fixes
+a keeper that is off (#11924). An issue filed before stays open until
+production catches up.
 
 Guardrail: the keeper writes only a tag, the Deployment's image, its own
 rows and issues. It has no account that may land a pull or push main.

@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, utime
 import { join } from "node:path";
 import { exportTree } from "../apps/checkout.ts";
 import { childEnv } from "../apps/process.ts";
+import { scanOverlay } from "../design/overlay.ts";
 import { isSafeOid } from "../git/guard.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
@@ -53,8 +54,12 @@ export async function checkoutRelease(
   }
 }
 
-/** Remove all but the `keep` newest releases, and `keep` is at least one. Returns what went. */
-export function pruneReleases(dataDir: string, keep: number, current: string): string[] {
+/**
+ * Remove all but the `keep` newest releases, and `keep` is at least one; the
+ * commits in `protect` (the landed one, the running one, the keeper's
+ * rollback target) stay however old. Returns what went.
+ */
+export function pruneReleases(dataDir: string, keep: number, protect: readonly string[]): string[] {
   const root = releasesRoot(dataDir);
   if (!existsSync(root)) return [];
   const limit = Math.max(1, Math.floor(keep));
@@ -63,7 +68,7 @@ export function pruneReleases(dataDir: string, keep: number, current: string): s
     .map((name) => ({ name, at: statSync(join(root, name)).mtimeMs }))
     .sort((a, b) => b.at - a.at || (a.name < b.name ? -1 : 1));
   const kept = new Set(found.slice(0, limit).map((r) => r.name));
-  kept.add(current);
+  for (const sha of protect) kept.add(sha);
   const gone: string[] = [];
   for (const { name } of found) {
     if (kept.has(name)) continue;
@@ -87,10 +92,25 @@ export function pruneReleases(dataDir: string, keep: number, current: string): s
 
 export type Verdict = { ok: boolean; line: string };
 
-/** Run the release's own `--preflight` against this forge's data directory. */
+/**
+ * The covered-page rule (#11831) over the candidate's own `src/web`, in this
+ * process (#11916): a tree whose stylesheet draws a closed overlay over every
+ * page passes every status probe, so it is refused here, before the swap.
+ */
+export function coveredPage(dir: string): Verdict {
+  if (!existsSync(join(dir, "src", "web"))) return { ok: true, line: "no src/web" };
+  const found = scanOverlay(dir);
+  if (found.length === 0) return { ok: true, line: "no page covered" };
+  const more = found.length > 1 ? ` (and ${found.length - 1} more)` : "";
+  return { ok: false, line: `preflight refused: covered-page rule (#11831): ${found[0]!.split("  →")[0]}${more}`.slice(0, 300) };
+}
+
+/** Refuse a tree that covers the page, then run the release's own `--preflight` against this forge's data directory. */
 export async function preflightRelease(dir: string, dataDir: string): Promise<Verdict> {
   const entry = join(dir, "src", "main.ts");
   if (!existsSync(entry)) return { ok: false, line: "preflight failed: the tree has no src/main.ts" };
+  const covered = coveredPage(dir);
+  if (!covered.ok) return covered;
   const proc = Bun.spawn([process.execPath, entry, "--preflight"], {
     cwd: dir,
     env: childEnv({ FORGE_DATA: dataDir, FORGE_APP_URL: "" }),

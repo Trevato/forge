@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { reviewWords } from "../actions/review_words.ts";
 import { growth, MAX_DAYS as MAX_GROWTH_DAYS } from "../core/growth.ts";
 import { PAUSE_REFUSAL, pausedUntil } from "../core/planner_pause.ts";
 import { teamHoldRefusal } from "../core/teams_words.ts";
@@ -3172,6 +3173,8 @@ export function apiRoutes(router: Router<Handler>): void {
             422,
             "you cannot approve your own pull request",
           );
+        if (submitted.error === "looks_required")
+          return apiError("looks_required", 422, reviewWords.looksRequired);
         if (submitted.error === "bad_anchor")
           return apiError(
             "bad_anchor",

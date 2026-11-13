@@ -182,7 +182,7 @@ test("a signed-in non-admin sees nothing and can neither declare nor remove", as
   if (!keep.ok) throw new Error(keep.error);
   const before = listDevices(app.db).length;
   const page = await fetch(`${servers.url}/settings/devices`, { headers: { cookie: plain } });
-  expect(page.status).toBe(404);
+  expect(page.status).toBe(403);
   expect(await page.text()).not.toContain("Keep");
   await post("/settings/devices", { name: "Mine", kind: "printer", url: printerUrl }, plain);
   await post("/settings/devices/delete", { id: String(keep.value.id) }, plain);

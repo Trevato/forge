@@ -277,7 +277,7 @@ describe("gift codes", () => {
     expect(text).toContain("Stop this code working");
     expect(await (await send("GET", "/settings/billing", admin)).text()).not.toContain(code);
     expect((await form("/settings/billing/codes", admin, { plan: "free", uses: "1" })).status).toBe(422);
-    expect((await form("/settings/billing/codes", bob, { plan: "small" })).status).toBe(404);
+    expect((await form("/settings/billing/codes", bob, { plan: "small" })).status).toBe(403);
 
     const home = await send("GET", `/?code=${code}`, undefined);
     expect(home.status).toBe(303);

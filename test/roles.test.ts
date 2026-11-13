@@ -85,7 +85,7 @@ describe("roles on /settings/people", () => {
     expect(html).toContain("bob");
     expect(html).toContain("Make member");
     const bob = await signIn("bob");
-    expect((await fetch(`${servers.url}/settings/people`, { headers: { cookie: bob } })).status).toBe(404);
+    expect((await fetch(`${servers.url}/settings/people`, { headers: { cookie: bob } })).status).toBe(403);
   });
 
   test("the account page shows the caller's own row of the table", async () => {
@@ -124,7 +124,7 @@ describe("roles on /settings/people", () => {
 
   test("a non-admin, a foreign origin, an admin target and an unknown role are refused", async () => {
     const bob = await signIn("bob");
-    expect((await post(bob, "bob", { role: "member" })).status).toBe(404);
+    expect((await post(bob, "bob", { role: "member" })).status).toBe(403);
     expect(roleNow("bob")).toBe("guest");
     const alice = await signIn("alice");
     expect((await post(alice, "bob", { role: "member" }, "https://evil.example")).status).toBeGreaterThanOrEqual(400);

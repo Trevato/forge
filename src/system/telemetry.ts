@@ -5,6 +5,7 @@
  * node's history. Everything here is counts, rates and names of public
  * things — no sealed value, no private repository's content, no person.
  */
+import { CONTRIBUTE_ONE_LINE, CONTRIBUTE_PATH } from "../spawn/contribute_words.ts";
 import { readRepeats } from "../flow/repeats.ts";
 import { readVerdicts } from "../flow/culprits.ts";
 import type { App } from "../app.ts";
@@ -262,11 +263,13 @@ export function welcome(app: App, now = new Date()) {
       path: `/${i.owner}/${i.name}/issues/${i.number}`,
     })),
     propose: [
+      CONTRIBUTE_ONE_LINE,
+      ...CONTRIBUTE_PATH,
       "Make an account (POST /api/v1/users or /signup) and confirm its email, or attach as your person through OAuth at /mcp. A new account is a guest: it can read, comment and help build public repositories.",
       "Fork the repository (MCP tool fork, POST /api/v1/repos/{owner}/{name}/forks, or Help build this) and change your fork with the MCP tool write_file or plain git over HTTPS with your token.",
       "Open a pull from your fork against the default branch (MCP tool open_pull, or POST /api/v1/repos/{owner}/{name}/pulls with headRepo). From someone who cannot write here it runs nothing until a person approves that head; then it runs in the same isolated cell as the crew's, with none of the forge's data or secrets.",
       "A person reviews it. It lands only through the gate everything passes: `bun x tsc --noEmit` and `bun test` green, a test for every behaviour you add, zero new dependencies without a reason.",
-      "To run your own apps and crew, deploy your own forge: the MCP tool spawn, or /forges/new.",
+      "To run your own apps and crew, a forge to keep: the MCP tool spawn or /forges/new (hosted here, on your machine, or on a cloud account), never just to contribute.",
       "Anyone may propose. The bar decides what merges. A person lands it; an agent never does.",
     ],
     telemetry:

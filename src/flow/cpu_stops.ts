@@ -14,11 +14,25 @@ const HOUR_MS = 3_600_000;
 /** How the watch's stop reads in a red check's summary: `check failed: stopped: used 16.3 cores for 31s, over its limit of 16…`. */
 const CPU_RED = /stopped: (?:it )?used \d+(?:\.\d+)? cores for \d+s, over (?:twice )?its limit of \d/;
 
+/**
+ * `CPU_RED` as a SQL `LIKE` pattern, for a query that must cap its rows in SQL
+ * (`flow/cpu_closed.ts`).
+ */
+export const CPU_RED_LIKE = "%stopped: %used % cores for %s, over %its limit of %";
+
 export interface CpuStops {
   /** Checks stopped for CPU in the hour. */
   readonly stopped: number;
   /** Every check that failed in the hour, the stops among them. */
   readonly failed: number;
+}
+
+/**
+ * Whether a finished check was stopped for CPU: queued again (cancelled, `CPU_STOP_SUMMARY`) or
+ * reported red.
+ */
+export function isCpuStop(state: string, summary: string): boolean {
+  return state === "cancelled" ? summary === CPU_STOP_SUMMARY : state === "failed" && CPU_RED.test(summary);
 }
 
 export function cpuStops(db: Database, now = new Date()): CpuStops {
@@ -33,7 +47,7 @@ export function cpuStops(db: Database, now = new Date()): CpuStops {
   let stopped = 0;
   let failed = 0;
   for (const r of rows) {
-    const cpu = r.state === "cancelled" ? r.summary === CPU_STOP_SUMMARY : CPU_RED.test(r.summary);
+    const cpu = isCpuStop(r.state, r.summary);
     if (r.state === "failed" || cpu) failed++;
     if (cpu) stopped++;
   }

@@ -9,7 +9,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createUser } from "../src/core/users.ts";
 import { createForgeApp, forgeCommands, Session } from "../src/tui/forge.ts";
 import type { Ctx } from "../src/tui/app/app.ts";
-import { changelogScreen, creditWords, pullLines } from "../src/tui/screens/changelog.ts";
+import { changelogLines, changelogScreen, creditWords, pullLines } from "../src/tui/screens/changelog.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
@@ -114,4 +114,22 @@ test("a release's pulls read plain, and pulls of one shape gather into one line"
   expect(lines.map((l) => l.row.title)).toEqual(["j/k, enter, esc and ? on …", "#9 Fix the clock"]);
   expect(lines[0]!.pulls).toHaveLength(3);
   expect(lines[0]!.row.meta).toContain("3 pulls");
+});
+
+test("the terminal groups releases under the chapter that closed them, as the page does", () => {
+  const ch = (name: string, opened: string, closedAt: string | null) => ({
+    id: name, repoId: "r", name, means: "m", state: closedAt === null ? "open" : "closed", position: 1, patchOf: null,
+    createdAt: opened, openedAt: opened, closedAt, tagOid: closedAt === null ? null : "abc", notes: "# v1\n\n**Shipped** it. More.", costUsd: null,
+  }) as const;
+  const rel = (version: string, date: string) => ({ version, date, pulls: [] });
+  const lines = changelogLines(
+    [rel("0.4.0", "2026-10-30T00:00:00Z"), rel("0.3.0", "2026-10-20T00:00:00Z"), rel("0.2.0", "2026-10-10T00:00:00Z"), rel("0.1.0", "2026-10-01T00:00:00Z")],
+    [ch("v1", "2026-10-05T00:00:00Z", "2026-10-25T00:00:00Z"), ch("v2", "2026-10-26T00:00:00Z", null)],
+    new Date("2026-11-12T00:00:00Z"),
+  );
+  expect(lines.map((l) => l.row.title)).toEqual(["0.4.0", "Chapter v1", "  0.3.0", "  0.2.0", "0.1.0"]);
+  expect(lines[1]!.row.meta).toContain("2 releases");
+  expect(lines[1]!.row.meta).toContain("Shipped it.");
+  expect(lines[1]!.entry).toBeUndefined();
+  expect(changelogLines([rel("0.4.0", "2026-10-30T00:00:00Z")], [], new Date()).map((l) => l.row.title)).toEqual(["0.4.0"]);
 });

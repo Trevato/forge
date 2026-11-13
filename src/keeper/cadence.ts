@@ -7,6 +7,7 @@
  *         tag back (nothing still promoting)
  *       ∧ no merge-queue gate is running (the queue is not mid-landing)
  *       ∧ no snapshot is being taken, unless it has run `SNAPSHOT_WAIT_MS`
+ *       ∧ no crew run is running, unless the keeper has waited on them `CREW_WAIT_MS`
  *       ∧ now − the last cut ≥ the minimum interval
  *       ∧ no hold stands (a failed verify's, or an owner's)
  *       ∧ the forge's disk is less than `RELEASE_DISK_USED_MAX` full
@@ -25,6 +26,13 @@ export const MIN_INTERVAL_MS = 30 * 60_000;
  * this is stuck, and holds releases no more.
  */
 export const SNAPSHOT_WAIT_MS = 2 * 3_600_000;
+
+/**
+ * A release drains the process crew runs run in, and a run cut short is lost
+ * (#11918). A cut waits for them, but only this long from the first tick that
+ * found them: a stuck run does not stop releases.
+ */
+export const CREW_WAIT_MS = 5 * 60_000;
 
 /**
  * A release writes a new tree and its install beside the live one, so at
@@ -49,6 +57,10 @@ export interface CadenceInput {
   readonly gating: number;
   /** How long the snapshot being taken has run, ms; undefined when none is. */
   readonly snapshotMs?: number | undefined;
+  /** Crew runs running now; none when undefined. */
+  readonly crewRuns?: number | undefined;
+  /** When the keeper first found crew runs running, epoch ms, in the stretch it is still in. */
+  readonly crewSince?: number | undefined;
   /** When the keeper last cut, epoch ms. */
   readonly lastCutAt: number | undefined;
   /** The reason of a standing hold, when one stands. */
@@ -57,6 +69,11 @@ export interface CadenceInput {
   readonly diskUsed?: number | undefined;
   readonly now: number;
   readonly minIntervalMs?: number;
+  /**
+   * A person asked for a release now (#11839): the merge queue, a snapshot and the
+   * spacing no longer hold the cut, nor do running crew runs. A release in flight, a hold and a full disk still do.
+   */
+  readonly hotfix?: boolean;
 }
 
 export type Cadence = { readonly cut: true; readonly version: string } | { readonly cut: false; readonly why: string };
@@ -77,13 +94,20 @@ export function decideCut(input: CadenceInput): Cadence {
   if (input.main === input.newest.sha) return no(`main is still ${input.newest.version}`);
   if (input.inFlight) return no("a release is still rolling or being verified");
   if (input.live !== input.newest.version && input.settled !== true) return no(`${input.newest.version} is not live yet (live: ${input.live})`);
-  if (input.gating > 0) return no(`the merge queue is landing (${input.gating} gate${input.gating === 1 ? "" : "s"} running)`);
-  if (input.snapshotMs !== undefined && input.snapshotMs < SNAPSHOT_WAIT_MS)
+  const hotfix = input.hotfix === true;
+  if (!hotfix && input.gating > 0) return no(`the merge queue is landing (${input.gating} gate${input.gating === 1 ? "" : "s"} running)`);
+  if (!hotfix && input.snapshotMs !== undefined && input.snapshotMs < SNAPSHOT_WAIT_MS)
     return no(`a snapshot is being taken (${Math.floor(input.snapshotMs / 60_000)} min in); a release would cut it short`);
+  const runs = input.crewRuns ?? 0;
+  if (!hotfix && runs > 0) {
+    const waited = Math.max(0, input.now - (input.crewSince ?? input.now));
+    if (waited < CREW_WAIT_MS)
+      return no(`waiting on ${runs} crew run${runs === 1 ? "" : "s"} (${Math.floor(waited / 60_000)}m of ${CREW_WAIT_MS / 60_000}m)`);
+  }
   if (input.diskUsed !== undefined && input.diskUsed >= RELEASE_DISK_USED_MAX)
     return no(`the disk is ${Math.round(input.diskUsed * 100)}% full; releases pause at ${RELEASE_DISK_USED_MAX * 100}% until room is made`);
   const wait = input.minIntervalMs ?? MIN_INTERVAL_MS;
-  if (input.lastCutAt !== undefined && input.now - input.lastCutAt < wait)
+  if (!hotfix && input.lastCutAt !== undefined && input.now - input.lastCutAt < wait)
     return no(`the last cut was ${Math.floor((input.now - input.lastCutAt) / 60_000)} min ago; the interval is ${wait / 60_000} min`);
   const version = nextVersion(input.newest.version);
   if (version === undefined) return no(`${input.newest.version} is not major.minor.patch`);

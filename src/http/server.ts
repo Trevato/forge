@@ -178,7 +178,7 @@ import { chapterAct, chapterPage, chaptersPage } from "../web/pages/chapters.ts"
 import { betAct, betPage, betPropose, betsPage } from "../web/pages/bets.ts";
 import { changelogJson, changelogPage } from "../web/pages/changelog.ts";
 import { docsFile, docsFolder } from "../web/pages/docs_link.ts";
-import { releaseHoldSubmit, liftSubmit, releasesPage, rollbackSubmit } from "../web/pages/releases.ts";
+import { releaseHoldSubmit, releaseNowSubmit, liftSubmit, releasesPage, rollbackSubmit } from "../web/pages/releases.ts";
 import {
   changePassword,
   iconPng,
@@ -306,6 +306,7 @@ import {
   asksDecideUndo,
   asksListen,
   asksMute,
+  asksFilter,
   asksPage,
 } from "../web/studio/asks_page.ts";
 import { keeperAnswer } from "../web/studio/keeper_row.ts";
@@ -547,6 +548,7 @@ import { flushAccess, recordAccess } from "./access_log.ts";
 import { carryPeer, clientAddress, notePeer, wasInternal, wasViaEdge, type ProxyTrust } from "./peer.ts";
 import { isProbe } from "../kernel/probe.ts";
 import { strangerCode } from "./stranger_code.ts";
+import { sourceArchive } from "./archive.ts";
 import { takeStrangerRead } from "./stranger_reads.ts";
 import { parseCidrs } from "../kernel/cidr.ts";
 import {
@@ -938,6 +940,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/asks/bulk/:id/undo", asksBulkUndo);
   router.add("POST", "/asks/listen", asksListen);
   router.add("POST", "/asks/mute", asksMute);
+  router.add("POST", "/asks/filter", asksFilter);
   router.add("POST", "/asks/proposal/:id/approve", asksProposal("approve"));
   router.add("POST", "/asks/proposal/:id/redirect", asksProposal("redirect"));
   router.add("POST", "/asks/proposal/:id/later", asksProposal("later"));
@@ -983,6 +986,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/api", appApiPage);
   router.add("POST", "/releases/:sha/rollback", rollbackSubmit);
   router.add("POST", "/releases/hold", releaseHoldSubmit);
+  router.add("POST", "/releases/now", releaseNowSubmit);
   router.add("POST", "/releases/hold/:id/lift", liftSubmit);
   router.add("GET", "/audit.csv", auditCsv);
   router.add("POST", "/audit/:owner/:name/probe", auditProbeSubmit);
@@ -1480,6 +1484,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/tree/:ref/*path", strangerCode(treePage));
   router.add("GET", "/:owner/:name/blob/:ref/*path", strangerCode(blobPage));
   router.add("GET", "/:owner/:name/raw/:ref/*path", strangerCode(rawBlob));
+  router.add("GET", "/:owner/:name/archive/:file", strangerCode(sourceArchive));
   router.add("GET", "/:owner/:name/media/:ref/*path", strangerCode(mediaBlob));
   // Every file path at a ref, for the fuzzy finder. JSON, `canRead`-gated.
   router.add("GET", "/:owner/:name/paths/:ref", pathsJson);
@@ -3020,7 +3025,7 @@ async function answerGet(
   if (viaRefusal !== undefined) return viaRefusal;
 
   // Admin settings and releases are an admin's; a member is told so.
-  const adminRefusal = adminGate(app, request, url, auth);
+  const adminRefusal = adminGate(app, request, url, auth, matched.pattern);
   if (adminRefusal !== undefined) return adminRefusal;
 
   // A transferred repository's old path answers 308 to its new one (#569).

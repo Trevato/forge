@@ -45,3 +45,19 @@ round of about fifty ends: a round cut short by a newer head or a restart
 used to file nothing, and the next round filed only what it still lacked, so
 the check's list stayed `[]` or partial. The list now fills as the round goes,
 and is complete when `…/looks` lists every page.
+
+## A stylesheet change is approved beside its looks
+
+A pull that changes a stylesheet source (`src/web/style/`) cannot be approved
+until its preview has a home-page look at phone and desktop width taken at its
+head (`missingHomeLooks` in `src/looks/style_looks.ts`; `submitReview` answers
+`looks_required`, in the same words on the page, API, MCP and terminal). Main's
+picture of the page sits beside them on the pull page, so the reviewer sees
+before and after. A comment or a request for changes is never held. A
+repository with no app has no looks to wait for.
+
+If the preview never takes a home look (a failed boot, say), the approval
+stays held. Only looks the forge took count, so one attached by hand does not
+clear it. Fix the boot and push: the new head gets its looks. There is no
+override: a change that cannot be previewed is sent back to be fixed. A repository with no app is never
+held.

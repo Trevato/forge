@@ -139,11 +139,11 @@ describe("prepare and come back", () => {
     expect(inMaintenance(dataDir)).toBe(false);
   });
 
-  test("page: guest is sent to sign in, a non-admin gets not-found", async () => {
+  test("page: guest is sent to sign in, a non-admin gets 403", async () => {
     const guest = await fetch(`${servers.url}/maintenance`, { redirect: "manual" });
     expect([302, 303, 401]).toContain(guest.status);
     const b = await fetch(`${servers.url}/maintenance`, { headers: { cookie: await login("bob") } });
-    expect(b.status).toBe(404);
+    expect(b.status).toBe(403);
     expect((await form("/maintenance/prepare", await login("bob"), { confirm: "yes" })).status).not.toBe(200);
     expect(inMaintenance(dataDir)).toBe(false);
   });

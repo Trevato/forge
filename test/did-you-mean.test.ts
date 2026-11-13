@@ -14,7 +14,7 @@ let app: ReturnType<typeof createApp>;
 let servers: Awaited<ReturnType<typeof serve>>;
 /** Statements the page of a found repository makes; a change to it is a change to this number. */
 const FOUND_QUERIES = 41;
-const BARE_404_QUERIES = 5; // a 404 with no owner/name to suggest from
+const BARE_404_QUERIES = 3; // a 404 with no owner/name to suggest from
 const NEAR_404_QUERIES = 18; // the same 404 for a mistyped repository
 const cookies: Record<string, string> = {};
 

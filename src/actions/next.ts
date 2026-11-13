@@ -62,13 +62,16 @@ export function rankIssue(
   }
   // Checked before anything is written: a place that is not there, or a list
   // too long, changes nothing.
-  const rest = nextUp(app.db, repo).rows.map((r) => r.issue).filter((i) => i.id !== issue.id);
+  const listed = nextUp(app.db, repo).rows.map((r) => r.issue);
+  const rest = listed.filter((i) => i.id !== issue.id);
+  // Where it stood in the list as read, 1 at the top.
+  const from = listed.findIndex((i) => i.id === issue.id) + 1;
   const at = place.to === "after" ? rest.findIndex((i) => i.number === place.number) + 1 : 0;
   if (place.to === "after" && at === 0) return invalid(NEXT_NO_PLACE);
   // The list is ranked down to where it was dropped, and whatever was ranked stays.
   const ranked = ranksInRepo(app.db, repo.id);
   const order = [...rest.slice(0, at), issue, ...rest.slice(at)]
-    .filter((i, n) => n <= at || ranked.has(i.id))
+    .filter((i, n) => n <= at || ranked.places.has(i.id))
     .map((i) => i.id);
   if (place.to !== "not_now" && order.length > MAX_RANKED) return invalid(NEXT_FULL);
   const moved = app.db.transaction((): Result<void, NextError> => {
@@ -79,7 +82,7 @@ export function rankIssue(
       return ok(undefined);
     }
     lift(app.db, repo, issue.id);
-    writeOrder(app.db, repo, order, actor.id);
+    writeOrder(app.db, repo, order, actor.id, undefined, { owner: actor.kind === "user", moved: issue.id });
     return ok(undefined);
   }).immediate();
   if (!moved.ok) return moved;
@@ -87,7 +90,12 @@ export function rankIssue(
     kind: "issue.ranked",
     repoId: repo.id,
     actorId: actor.id,
-    payload: { number: issue.number, to: place.to },
+    // The audit entry carries these fields and nothing else: the issue, the
+    // place (`after` only for `after #N`) and the position it left (0: not listed).
+    payload:
+      place.to === "after"
+        ? { number: issue.number, to: place.to, after: place.number, from }
+        : { number: issue.number, to: place.to, from },
   });
   return ok(issue);
 }

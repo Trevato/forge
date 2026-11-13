@@ -119,7 +119,7 @@ describe("cloud gate", () => {
     expect(main).toContain("Used for nothing now");
     const bobCookie = await login("bob");
     for (const path of ["/settings/cloud", "/settings/cloud/audit"])
-      expect((await fetch(`${servers.url}${path}`, { headers: { cookie: bobCookie } })).status).toBe(404);
+      expect((await fetch(`${servers.url}${path}`, { headers: { cookie: bobCookie } })).status).toBe(403);
   });
 
   test("a gated verify audits each request; bytes out counts the body", async () => {

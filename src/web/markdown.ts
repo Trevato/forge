@@ -202,6 +202,13 @@ export function markdownMemoStats(): { hits: number; misses: number } {
   return { ...counts };
 }
 
+const taskCounts = new WeakMap<Html, { done: number; total: number }>();
+
+/** The `- [ ]` / `- [x]` items a rendering drew; `undefined` when it drew none. */
+export function markdownTasks(rendered: Html): { done: number; total: number } | undefined {
+  return taskCounts.get(rendered);
+}
+
 export function renderMarkdown(source: string, repo?: MarkdownRepo): Html {
   if (source.length > MEMO_MAX_SOURCE) return renderUncached(source, repo);
   const key = repo === undefined ? source : `${repo.base}\0${repo.ref}\0${repo.dir}\0\0${source}`;
@@ -241,6 +248,7 @@ function renderUncached(source: string, repo?: MarkdownRepo): Html {
   let align: string[] | null = null;
   let skip = -1;
   let folded = false;
+  const tasks = { done: 0, total: 0 };
 
   const closeParagraph = () => {
     if (paragraph.length > 0) {
@@ -351,7 +359,18 @@ function renderUncached(source: string, repo?: MarkdownRepo): Html {
         out.push(`<${kind}>`);
         list = kind;
       }
-      out.push(`<li>${inline((bullet ?? numbered)![1]!, repo)}</li>`);
+      const item = (bullet ?? numbered)![1]!;
+      const task = bullet ? /^\[([ xX])\] +(\S.*)$/.exec(item) : null;
+      if (task !== null) {
+        const ticked = task[1] !== " ";
+        tasks.total++;
+        if (ticked) tasks.done++;
+        out.push(
+          `<li class="task"><label><input type="checkbox" disabled${ticked ? " checked" : ""}> ${inline(task[2]!, repo)}</label></li>`,
+        );
+      } else {
+        out.push(`<li>${inline(item, repo)}</li>`);
+      }
       continue;
     }
 
@@ -379,5 +398,7 @@ function renderUncached(source: string, repo?: MarkdownRepo): Html {
   if (fence) out.push(closeFence(body, fenceLang));
   closeBlocks();
   if (folded) out.push("</details>");
-  return raw(out.join("\n"));
+  const made = raw(out.join("\n"));
+  if (tasks.total > 0) taskCounts.set(made, tasks);
+  return made;
 }

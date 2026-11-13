@@ -163,10 +163,10 @@ describe("/boards/data?ask=", () => {
     expect((await post("zzz qqq", { origin: "https://evil.example" })).status).toBe(403);
     expect(calls).toEqual([]);
   });
-  test("a member who is not an admin gets 404 and the model is not asked", async () => {
+  test("a member who is not an admin gets 403 and the model is not asked", async () => {
     useModel(stub(JSON.stringify(GOOD)));
-    expect((await get("/boards/data?ask=zzz+qqq", {}, member)).status).toBe(404);
-    expect((await fetch(servers.url + "/boards/data", { method: "POST", body: new URLSearchParams({ ask: "zzz" }), headers: { authorization: `Bearer ${member}`, origin: servers.url } })).status).toBe(404);
+    expect((await get("/boards/data?ask=zzz+qqq", {}, member)).status).toBe(403);
+    expect((await fetch(servers.url + "/boards/data", { method: "POST", body: new URLSearchParams({ ask: "zzz" }), headers: { authorization: `Bearer ${member}`, origin: servers.url } })).status).toBe(403);
     expect(calls).toEqual([]);
   });
 });

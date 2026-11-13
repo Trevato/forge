@@ -168,8 +168,8 @@ describe("the route", () => {
     expect(page).toContain("Run now");
   });
 
-  test("a non-admin gets the 404", async () => {
-    expect((await web(cyCookie, "/settings/features/radar/run/scan", true)).status).toBe(404);
+  test("a non-admin gets the 403", async () => {
+    expect((await web(cyCookie, "/settings/features/radar/run/scan", true)).status).toBe(403);
   });
 
   test("an admin on an asleep app is sent back with a sentence, and nothing is recorded", async () => {

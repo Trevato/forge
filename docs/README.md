@@ -22,6 +22,7 @@ platform for organizations.
 
 - [Run it](REFERENCE.md#run-it): start a forge and create the first admin.
 - [On your machine](ON-YOUR-MACHINE.md): the local copy, offline work and the binary.
+- [Send a change without a forge](features/send-a-change.md): fork, source archive, patch, pull.
 
 ## Connect forges
 
