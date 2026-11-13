@@ -52,7 +52,7 @@ async function boot(init: EngineInit): Promise<void> {
       postMessage("a");
     });
   };
-  const stops = [startDuties(app, { retention: true })];
+  const stops = [startDuties(app, { onWorker: true })];
   for (const path of init.extra ?? []) {
     const made = (await import(path)) as { default: (app: unknown) => () => void };
     stops.push(made.default(app));

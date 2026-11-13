@@ -16,6 +16,8 @@ import { claimRun, createRun } from "../src/core/runs.ts";
 import { createUser } from "../src/core/users.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { engineMode } from "../src/engine/mode.ts";
+import { live } from "../src/tui/screens/common.ts";
+import { endOnSuspension } from "../src/tui/ssh.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { startEngine, type Engine } from "../src/engine/host.ts";
 import { transact } from "../src/kernel/db.ts";
@@ -318,8 +320,10 @@ describe("a run is started once", () => {
     process.env["ENGINE_TEST"] = "claimer";
     const engine = startEngine(serve.config, tail, { extra: [WRITER] });
     engines.push(engine);
-    await engine.ready();
+    // This thread takes its first few before the engine is up (it may be quicker than this thread once it is), then they compete.
     let mine = 0;
+    for (const id of ids.slice(0, 300)) if (claimRun(serve.db, id) !== undefined) mine++;
+    await engine.ready();
     for (const id of ids) {
       if (claimRun(serve.db, id) !== undefined) mine++;
       if (mine % 10 === 0) await Bun.sleep(0);
@@ -398,4 +402,43 @@ describe("a stream that resumes while the engine writes", () => {
       servers.stop();
     }
   }, 60_000);
+});
+
+describe("the terminal's listeners are ordered too", () => {
+  test("a live screen sees both threads' events once each in seq order, and none that rolled back", async () => {
+    const a = await forge();
+    const b = await forge(a.config.dataDir);
+    const tail = tailEvents(b.db, b.bus);
+    tails.push(tail);
+    const seen: number[] = [];
+    const stop = new AbortController();
+    live({ app: b } as never, stop.signal, { where: (e) => (seen.push(e.seq!), false) }, () => {});
+    for (let i = 0; i < 30; i++) (i % 2 === 0 ? a : b).bus.append({ kind: "x.tick" });
+    expect(() =>
+      transact(b.db, () => {
+        b.bus.append({ kind: "phantom" });
+        throw new Error("rolled back");
+      }),
+    ).toThrow();
+    tail.catchUp();
+    stop.abort();
+    expect(seen.length).toBe(30);
+    for (let i = 1; i < seen.length; i++) expect(seen[i]).toBe(seen[i - 1]! + 1);
+  });
+
+  test("an ssh session ends when the other thread suspends its account, once, after the commit", async () => {
+    const a = await forge();
+    const b = await forge(a.config.dataDir);
+    const tail = tailEvents(b.db, b.bus);
+    tails.push(tail);
+    const made = await createUser(b.db, { origin: "seed", trusted: true, username: "carol", email: "c@forge.local", password: "a-good-passphrase", adminIfFirst: true });
+    if (!made.ok) throw new Error(String(made.error));
+    let exits = 0;
+    const session = { ended: false, writeStderr: () => {}, exit: () => void exits++, onClose: () => {} };
+    endOnSuspension(b as never, session as never, made.value);
+    transact(a.db, () => a.bus.append({ kind: "account.suspended", payload: { username: "carol" } }));
+    expect(exits).toBe(0);
+    tail.catchUp();
+    expect(exits).toBe(1);
+  });
 });

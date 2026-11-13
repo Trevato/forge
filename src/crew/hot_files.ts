@@ -311,3 +311,20 @@ export function learnedPulls(): { repoId: string; number: number; files: readonl
   for (const [repoId, pulls] of touched) for (const p of pulls.values()) out.push({ repoId, number: p.number, files: p.files });
   return out;
 }
+
+/** What a thread that does not learn the pulls' files holds of them: each repository's, as plain data (`engine/observed.ts`). */
+export const observedTouched = (): Map<string, unknown> => new Map([...touched].map(([repoId, pulls]) => [repoId, [...pulls]]));
+export function adoptTouched(repoId: string, value: unknown): void {
+  if (value === undefined) touched.delete(repoId);
+  else touched.set(repoId, new Map(value as [string, { at: string; number: number; files: readonly string[] }][]));
+}
+export const observedStandingWide = (): Map<string, unknown> => new Map(standingWideBy);
+export function adoptStandingWide(repoId: string, value: unknown): void {
+  if (value === undefined) standingWideBy.delete(repoId);
+  else standingWideBy.set(repoId, value as { at: string; wide: readonly WidePull[] });
+}
+export const observedStanding = (): Map<string, unknown> => new Map(standing);
+export function adoptStanding(repoId: string, value: unknown): void {
+  if (value === undefined) standing.delete(repoId);
+  else standing.set(repoId, value as { at: string; holds: readonly HotHold[]; wide: readonly WidePull[] });
+}

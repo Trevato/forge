@@ -15,7 +15,7 @@ import { runModelReview } from "../actions/model_review.ts";
 import { expireCrewHolds } from "../actions/holds.ts";
 import { settleDue } from "../actions/estimates_settle.ts";
 import { sweepStarts } from "../actions/start_sweep.ts";
-import { retain } from "../boards/sampler.ts";
+import { retire } from "../boards/sampler.ts";
 import { FINE_MS } from "../boards/ring.ts";
 import { runDelivery } from "../core/webhooks.ts";
 import { pruneSessions } from "../core/sessions.ts";
@@ -23,14 +23,21 @@ import { pruneTokens } from "../core/tokens.ts";
 import { getRepoById } from "../core/repos.ts";
 import { plannedRepoIds, tickWeeks } from "../flow/retro.ts";
 import { during } from "../perf/jobs.ts";
+import { sweepAssigned } from "../crew/dispatch.ts";
+import { startClogTick } from "../flow/clog_tick.ts";
+import { startKeeper } from "../flow/keeper.ts";
+import { recordAskLedger } from "../web/studio/asks.ts";
+import { noteDbSize } from "../system/db_size.ts";
+import { adoptObserved } from "./observed.ts";
 
 const HOUR_MS = 3_600_000;
 
 /**
- * Start every duty; the returned function stops them all. `retention` is on
- * where the sampler's tick does not retire what has left its window itself.
+ * Start every duty; the returned function stops them all. `onWorker` is on
+ * for the engine's own thread: there the engine retires what has left its
+ * window (the sampler's tick does not) and owns the write-ahead log's checkpoints.
  */
-export function startDuties(app: App, options: { retention: boolean }): () => void {
+export function startDuties(app: App, options: { onWorker: boolean }): () => void {
   const timers: ReturnType<typeof setInterval>[] = [];
   // The webhook delivery worker: poll the outbox for due deliveries. The event
   // row is the source of truth, so a missed tick only delays delivery, never
@@ -95,11 +102,39 @@ export function startDuties(app: App, options: { retention: boolean }): () => vo
     ),
   );
   // What has left its window goes, on the sampler's clock (`boards/sampler.ts`).
-  if (options.retention) {
-    const flight = { draining: false };
-    timers.push(setInterval(() => during("retention", () => retain(app, Date.now(), flight)), FINE_MS));
+  const stops: (() => void)[] = [];
+  if (options.onWorker) {
+    // What reads what the serving thread observes (`engine/observed.ts`): the throughput keeper (#7645)
+    // each minute, the clog watch (#6524) each minute, and the asks ledger with the database's size.
+    const adopt = (): void => void adoptObserved(app.db);
+    stops.push(startKeeper(app, () => sweepAssigned(app), 60_000, Date.now, adopt));
+    stops.push(startClogTick(app.db, app.bus, (error) => app.log.warn("clog tick failed", { error: String(error) }), 60_000, adopt));
+    timers.push(
+      setInterval(
+        () =>
+          during("asks-ledger", () => {
+            adopt();
+            try {
+              recordAskLedger(app.db);
+            } catch (error) {
+              app.log.error("asks ledger failed", { error: String(error) });
+            }
+            try {
+              noteDbSize(app.db, app.config.dataDir);
+            } catch (error) {
+              app.log.warn("database size reading failed", { error: String(error) });
+            }
+          }),
+        120_000,
+      ),
+    );
+    // The one checkpointer: the serving thread's commits never pay for it (`main.ts`). A passive one
+    // takes what no reader still needs and waits for none; a log nobody reads is reset by the next write.
+    timers.push(setInterval(() => during("checkpoint", () => app.db.exec("PRAGMA wal_checkpoint(PASSIVE)")), 2_000));
+    timers.push(setInterval(() => during("retention", () => retire(app, Date.now(), { events: true })), FINE_MS));
   }
   return () => {
     for (const timer of timers) clearInterval(timer);
+    for (const stop of stops) stop();
   };
 }

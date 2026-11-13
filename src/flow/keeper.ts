@@ -180,10 +180,13 @@ export function tickKeeper(app: App, now = new Date(), onLift: () => void = () =
 }
 
 /** Ticks once a minute; a tick that throws is logged and the next one runs. Returns the stop. */
-export function startKeeper(app: App, onLift: () => void, everyMs = 60_000, now: () => number = Date.now): () => void {
+export function startKeeper(app: App, onLift: () => void, everyMs = 60_000, now: () => number = Date.now, prepare: () => void = () => {}): () => void {
   const timer = setInterval(() => {
     try {
-      during("keeper", () => tickKeeper(app, new Date(now()), onLift));
+      during("keeper", () => {
+        prepare();
+        tickKeeper(app, new Date(now()), onLift);
+      });
     } catch (error) {
       log.warn("keeper tick failed", { error: String(error) });
     }

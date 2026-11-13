@@ -164,3 +164,13 @@ export async function sweepStaleAsks(app: App): Promise<void> {
     }
   }
 }
+
+/** What the last sweeps found of each pull, as plain data (one scope), and its adoption by a thread that does not sweep (`engine/observed.ts`). */
+export const observedKnown = (db: Database): Map<string, unknown> => {
+  const known = knownByDb.get(db);
+  return known === undefined || known.size === 0 ? new Map() : new Map([["", [...known]]]);
+};
+export function adoptKnown(db: Database, value: unknown): void {
+  if (value === undefined) knownByDb.delete(db);
+  else knownByDb.set(db, new Map(value as [string, Known][]));
+}

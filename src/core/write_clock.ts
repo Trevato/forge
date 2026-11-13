@@ -27,6 +27,24 @@
  * run inside `quietly`, and the stamp does not count their rows. A page
  * that shows telemetry is bounded by its cache's age (30 s), not by the clock.
  *
+ * With the engine on a thread of its own (`engine/`) there are two connections
+ * on the file, and what `data_version` says is exact and no more: a number per
+ * connection that changes when ANOTHER connection commits, and never for this
+ * connection's own commits (those are `total_changes`). It is a changed-since-
+ * you-last-looked mark, not a count: many commits between two reads move it
+ * once. So the stamp stays correct as it is, and every commit of the other
+ * thread is a meaningful one. Two rules keep it so (test/write-clock-split.test.ts):
+ *
+ *   - a cache reads the stamp BEFORE it computes, never after: the other thread
+ *     commits while this one computes, and a stamp read afterwards would label a
+ *     value built from the older rows with the newer clock;
+ *   - telemetry the stamp must leave out is written on THIS connection, in
+ *     `quietly`: it is this connection's ledger, and a commit of the other
+ *     connection's cannot be told from a meaningful one (counting them does not
+ *     work, since `data_version` does not count). The engine's telemetry is
+ *     therefore posted to the serving thread to write, not written; today it
+ *     writes none (the machine samples' retention stays with the sampler).
+ *
  * Inside an open transaction there is no stamp: a rolled-back write leaves
  * `total_changes` where it went, so a value read mid-transaction could
  * outlive the rows it saw.

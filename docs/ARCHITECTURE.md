@@ -469,7 +469,7 @@ keep serving on the database the new one migrated.
 ## Two threads
 
 One thread serves and works, by default. `FORGE_ENGINE=worker` puts the
-engine's duties (`engine/duties.ts`) on a Worker of the same process with a
+engine's duties (`engine/duties.ts`: delivery, retention, the keeper, the clog watch, the asks ledger) on a Worker of the same process with a
 database handle of its own, and keeps one thread for a hosted child, a
 read-only standby and a test boot whatever the variable says. The two threads
 share nothing in memory; the contract is the one above, between handles:
@@ -486,11 +486,32 @@ share nothing in memory; the contract is the one above, between handles:
   seconds, not fifteen; the engine says it is alive every second and a thread
   silent for fifteen is ended and started again (its open transaction goes with
   its handle). A duty holds the lock for milliseconds, never across an `await`.
-- **What cannot move yet** is what pages read from the engine's memory: the apps
-  runtime's ports, the merge queue, the crew's running runs, the run-log taps,
-  the observations the finishing pass and the pump keep. Each becomes a row
-  (written by the engine, read by the page) before its owner moves; until then
-  its owner stays on the serving thread and is not a duty.
+  The engine owns the write-ahead log's checkpoints (`wal_autocheckpoint = 0` on
+  the serving handle, a passive checkpoint every two seconds on the engine's):
+  a commit of the serving thread that crossed the threshold used to pay for the
+  checkpoint, fsync and all, with every request behind it.
+- **The write clock reads two connections exactly.** `PRAGMA data_version` is a
+  changed-since-you-last-looked mark per connection: it moves when another
+  connection commits and never for its own commits, and many commits between two
+  reads move it once. So every commit of the other thread moves the stamp, and a
+  cache must read the stamp before it computes, never after (the other thread
+  commits while this one computes). Telemetry the stamp must leave out is written
+  on the serving connection in `quietly`; the engine's connection cannot say so
+  across the file, so it posts such writes instead of making them.
+- **What one thread has seen, another reads as rows.** The pump and the
+  autonomy tick keep observations in memory (the files the pulls touch, the
+  files warming, the pulls waiting to finish, the last pass's holds, the stale-ask
+  sweep's answers). The thread that makes them publishes them to
+  `engine_observation`, a changed one at a time (`engine/observed.ts`); a thread
+  that reads without making them adopts the rows before it reads. That is what
+  lets the keeper, the clog watch and the asks ledger run on the engine's thread
+  while autonomy stays where it is.
+- **What cannot move yet** is the cluster autonomy belongs to: the merge queue
+  (its lines are memory, its gates are the checks service running processes in
+  cells it holds), the pump's running runs (cancel and steer reach them through
+  local maps), the run-log taps and the apps runtime's ports. Each becomes a row
+  (written by its owner, read by the page) before the owner moves; until then
+  the owner stays on the serving thread and is not a duty.
 
 ## The diff viewer
 

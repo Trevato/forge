@@ -154,15 +154,19 @@ export function gaps(paths: Paths): string[] {
 /**
  * What has left its window goes, a bounded batch at a time: one batch of old events (`system/retention_events.ts`;
  * a busy database skips it and the next call tries again) and the machine samples' (#12007; one drain at once).
- * The sampler's tick calls it; with the engine on its own thread (`engine/`) the engine does, on the same clock.
+ * The sampler's tick does both; with the engine on its own thread (`engine/`) the engine retires the events, and
+ * the samples stay here: they are telemetry this connection leaves out of its write clock (`quietly`), which a
+ * commit of the engine's connection could not be (`core/write_clock.ts`).
  */
-export function retain(app: App, now: number, flight: { draining: boolean }): void {
-  try {
-    withoutWaiting(app.db, () => pruneEvents(app.db, now, TICK_ROWS, limitValue(app.db, "retention.event_days") * 86_400_000));
-  } catch (error) {
-    app.log.warn("event prune failed", { error: String(error) });
-  }
-  if (flight.draining) return;
+export function retire(app: App, now: number, what: { events: boolean; flight?: { draining: boolean } }): void {
+  if (what.events)
+    try {
+      withoutWaiting(app.db, () => pruneEvents(app.db, now, TICK_ROWS, limitValue(app.db, "retention.event_days") * 86_400_000));
+    } catch (error) {
+      app.log.warn("event prune failed", { error: String(error) });
+    }
+  const flight = what.flight;
+  if (flight === undefined || flight.draining) return;
   flight.draining = true;
   void drainSamples(app.db, () => now)
     .catch((error) => app.log.warn("machine sample prune failed", { error: String(error) }))
@@ -175,7 +179,7 @@ export type Sampler = { tick(now?: number): void; stop(): void; gaps: readonly s
 /** Sample every 15 s into `app.db` until stopped. A failed tick is logged and the next one tries again. */
 export function startSampler(
   app: App,
-  options: { paths?: Paths; cells?: () => readonly CellCounter[]; everyMs?: number; lag?: LoopLag; retention?: boolean } = {},
+  options: { paths?: Paths; cells?: () => readonly CellCounter[]; everyMs?: number; lag?: LoopLag; engineRetiresEvents?: boolean } = {},
 ): Sampler {
   const paths = options.paths ?? SYSTEM;
   const cells = options.cells ?? cellCounters;
@@ -192,8 +196,8 @@ export function startSampler(
     } catch (error) {
       app.log.warn("machine sample failed", { error: String(error) });
     }
-    // The same tick retires what has left its window, unless the engine does it elsewhere.
-    if (options.retention !== false) retain(app, now, flight);
+    // The same tick retires what has left its window; the events are the engine's when it has a thread.
+    retire(app, now, { events: options.engineRetiresEvents !== true, flight });
   };
   during("sampler", tick);
   const timer = setInterval(() => during("sampler", tick), options.everyMs ?? FINE_MS);
