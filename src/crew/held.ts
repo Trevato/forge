@@ -45,7 +45,7 @@ import { getUserById } from "../core/users.ts";
 import type { Stuck } from "./brief.ts";
 import { proposedWork, speaksForCrew } from "./direct.ts";
 import { freshPulls, pullFor } from "./fresh_pull.ts";
-import { capReached, runCapOf } from "./guard.ts";
+import { capReached, capReachedFor, runCapOf } from "./guard.ts";
 import { interruptionOf } from "./interrupted.ts";
 import { landedUnanswered } from "./landed.ts";
 import { PARK_STRIKES, parkedCount } from "./parks.ts";
@@ -217,6 +217,15 @@ export function heldBy(
     return false;
   };
   // The newest run of every ready issue, read once for the whole pass.
+  // The run cap of every ready issue, worked out once for the pass on first need.
+  let cappedAll: Map<string, boolean> | undefined;
+  const capped = (): Map<string, boolean> =>
+    (cappedAll ??= capReachedFor(
+      app.db,
+      repo,
+      ready.map((r) => r.issue),
+      (i) => runCapOf(repo, i, app.config),
+    ));
   const lastRuns = lastAgentRuns(app, ready.map((r) => r.issue.id));
   const holdOf = (issue: Issue): HoldName | null => {
     if (busyIssues.has(issue.id)) return "running";
@@ -226,7 +235,7 @@ export function heldBy(
     if (alreadyDone(app.db, [issue.id]).has(issue.id)) return "done_on_main";
     if (landedUnanswered(app.db, repo, issue) !== undefined) return "landed";
     if (stalled(app, repo, issue, lastRuns)) return "stalled";
-    if (atRunCap(app, repo, issue)) return "run_cap";
+    if (capped().get(issue.id) ?? atRunCap(app, repo, issue)) return "run_cap";
     if (parkedCount(app.db, repo, issue.id) >= PARK_STRIKES) return "parked_twice";
     if (coveredByRedFix(app.db, repo.id, issue)) return "red_fix";
     const pin = pinOf(issue);

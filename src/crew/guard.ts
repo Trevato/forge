@@ -579,3 +579,55 @@ export function handoverNote(h: Handover, toPlanner = false): string {
     ...handoverQuotes(h),
   ].join("\n").trimEnd();
 }
+
+/**
+ * `capReached` for many issues of one repository in three reads, not three
+ * per issue: the comments in the window, then the runs in it, then each
+ * issue's count against its own start. `capOf` is the cap of an issue.
+ */
+export function capReachedFor(
+  db: Database,
+  repo: Repo,
+  issues: readonly Issue[],
+  capOf: (issue: Issue) => number,
+  now = new Date(),
+): Map<string, boolean> {
+  const out = new Map<string, boolean>();
+  const windowStart = new Date(now.getTime() - CAP_WINDOW_MS).toISOString();
+  const CHUNK = 400;
+  for (let i = 0; i < issues.length; i += CHUNK) {
+    const batch = issues.slice(i, i + CHUNK);
+    const marks = batch.map((_, n) => `?${n + 2}`).join(",");
+    const ids = batch.map((b) => b.id);
+    const spoke = db
+      .query<{ issue_id: string; id: string; at: string }, string[]>(
+        `SELECT issue_id, author_id AS id, MAX(created_at) AS at FROM comment
+          WHERE issue_id IN (${marks}) AND created_at > ?1 AND origin_author IS NULL
+            AND body NOT LIKE 'Parked by the crew%'
+          GROUP BY issue_id, author_id`,
+      )
+      .all(windowStart, ...ids);
+    const directors = new Set(directorsAmong(db, repo, spoke.map((s) => s.id)));
+    const from = new Map<string, string>();
+    for (const s of spoke) {
+      if (!directors.has(s.id)) continue;
+      const was = from.get(s.issue_id) ?? windowStart;
+      if (s.at > was) from.set(s.issue_id, s.at);
+    }
+    const counts = new Map<string, number>();
+    for (const r of db
+      .query<{ issue_id: string; created_at: string }, string[]>(
+        `SELECT issue_id, created_at FROM run
+          WHERE issue_id IN (${marks}) AND kind = 'agent' AND created_at > ?1
+            AND attempt = 0
+            AND reason NOT IN ('review', 'conflict', 'check_failed')
+            AND summary NOT LIKE 'interrupted: %'
+            AND summary NOT LIKE 'skipped: %'`,
+      )
+      .all(windowStart, ...ids))
+      if (r.created_at > (from.get(r.issue_id) ?? windowStart))
+        counts.set(r.issue_id, (counts.get(r.issue_id) ?? 0) + 1);
+    for (const b of batch) out.set(b.id, (counts.get(b.id) ?? 0) >= capOf(b));
+  }
+  return out;
+}
