@@ -23,6 +23,7 @@
  *   crew's name, which frees it (`stalls.ts`).
  * - `run_cap`: it has used its runs for the day (`guard.ts`).
  * - `parked_twice`: the crew parked it twice; it is the planner's (`parks.ts`).
+ *   Only under ask: a repository on go's builders retry it, bounded by `run_cap`.
  * - `red_fix`: a fix for a red main already covers it (`red_fix.ts`).
  * - `hot_file`: a file it names is touched by `HOT_PULLS` or more open
  *   pulls, or an admin holds it (`file_holds.ts`); it starts when that pile
@@ -38,7 +39,7 @@ import { readyNow, repoGraph, type Graph, type Ranked } from "../core/dependenci
 import { alreadyDone, BY_CREW, DONE_LIKE } from "../core/done_on_main.ts";
 import { getIssuesByIds, getIssuesByNumbers, type Issue } from "../core/issues.ts";
 import { withPlanner } from "../core/limb_replan.ts";
-import type { Repo } from "../core/repos.ts";
+import { isGo, type Repo } from "../core/repos.ts";
 import { sealedRowByNumber } from "../core/sealed.ts";
 import { listActive, type Run } from "../core/runs.ts";
 import { getUserById } from "../core/users.ts";
@@ -236,7 +237,7 @@ export function heldBy(
     if (landedUnanswered(app.db, repo, issue) !== undefined) return "landed";
     if (stalled(app, repo, issue, lastRuns)) return "stalled";
     if (capped().get(issue.id) ?? atRunCap(app, repo, issue)) return "run_cap";
-    if (parkedCount(app.db, repo, issue.id) >= PARK_STRIKES) return "parked_twice";
+    if (!isGo(repo) && parkedCount(app.db, repo, issue.id) >= PARK_STRIKES) return "parked_twice";
     if (coveredByRedFix(app.db, repo.id, issue)) return "red_fix";
     const pin = pinOf(issue);
     if (pin !== undefined) {

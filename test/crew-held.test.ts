@@ -182,21 +182,24 @@ describe("the tick says why each ready issue cannot start", () => {
       .query("INSERT INTO sentinel_finding (key, issue_id, evidence, first_seen, last_seen) VALUES (?1, ?2, '', 'x', 'x')")
       .run(`degraded:${keyPart(`red:${repo.id}`)}`, fix.id);
 
+    app.db.run("UPDATE repo SET plans_need_nod = 0, decisions_by = 'decider' WHERE id = ?1", [repo.id]);
     const held = heldNow(app, getRepoById(app.db, repo.id)!);
     const named = (h: keyof typeof held.by) => held.by[h].map((i) => i.number);
-    expect(held.startable.map((r) => r.issue.number).sort()).toEqual([free.number, fix.number].sort());
+    expect(held.startable.map((r) => r.issue.number).sort()).toEqual([free.number, fix.number, parked.number].sort());
     expect(named("running")).toEqual([running.number]);
     expect(named("open_pull")).toEqual([proposed.number]);
     expect(named("planner")).toEqual([planned.number]);
     expect(named("done_on_main")).toEqual([done.number]);
     expect(named("stalled")).toEqual([stuck.number]);
     expect(named("run_cap")).toEqual([capped.number]);
-    expect(named("parked_twice")).toEqual([parked.number]);
+    expect(named("parked_twice")).toEqual([]); // on go the builders retry it
     expect(named("red_fix")).toEqual([quoting.number]);
     expect(heldCounts(held).open_pull).toBe(1);
     expect(heldWords(held)).toBe(
-      "running=1 open_pull=1 planner=1 done_on_main=1 stalled=1 run_cap=1 parked_twice=1 red_fix=1",
+      "running=1 open_pull=1 planner=1 done_on_main=1 stalled=1 run_cap=1 red_fix=1",
     );
+    app.db.run("UPDATE repo SET plans_need_nod = 1, decisions_by = 'me' WHERE id = ?1", [repo.id]);
+    expect(heldNow(app, getRepoById(app.db, repo.id)!).by.parked_twice.map((i) => i.number)).toEqual([parked.number]);
     // Something can start: the planner is not told the crew is stuck.
     expect(stuckOf(held)).toBeUndefined();
   });
