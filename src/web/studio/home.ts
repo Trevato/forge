@@ -38,7 +38,6 @@ import { canRead, getRepo } from "../../core/repos.ts";
 import { type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { activeEdgeToken, edgeLoginUrl } from "../../http/edge.ts";
-import { sshCommand } from "../../ssh/command.ts";
 import { repoBase, offersSignup, signInFirst, NOT_ADMIN_HERE, forbiddenPage } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { liveRegionsJs } from "../client.ts";
@@ -60,7 +59,6 @@ import {
   icon,
   row,
   timeAgo,
-  terminalLine,
   copyField,
 } from "../ui.ts";
 import {
@@ -789,7 +787,6 @@ export function studioDoor(ctx: Ctx): Response {
   // comes back to them rather than to a bare home, so they are not lost.
   const back = ctx.url.pathname === "/" ? "/" + ctx.url.search : "/";
   const nextQuery = back === "/" ? "" : `?next=${encodeURIComponent(back)}`;
-  const ssh = sshCommand(ctx.app);
   const signup = offersSignup(ctx) && accounts;
   // Closed is a door with nothing behind it; invite still lands an invite link's holder.
   const origin = (ctx.app.config.url ?? ctx.url.origin).replace(/\/$/, "");
@@ -910,13 +907,6 @@ export function studioDoor(ctx: Ctx): Response {
 cd forge
 bun install
 bun run src/main.ts</code></pre>
-        ${when(
-          ssh,
-          (command) => html`<div class="stack-tight">
-            ${terminalLine({ command }, ctx.app.config.sshHostKey)}
-            <p class="muted small">Or visit this forge from your terminal: your key is your identity, and the host key above is yours to check.</p>
-          </div>`,
-        )}
         ${packPresses()}
       </div>
     </section>

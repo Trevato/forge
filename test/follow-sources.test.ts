@@ -16,7 +16,11 @@ import { openPull } from "../src/actions/pulls.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { addTrust } from "../src/actions/trusted_sources.ts";
 import { checkDue, checkSource } from "../src/actions/upstream_follow.ts";
-import { reviewed } from "../src/crew/autonomy.ts";
+import { landingStrategy, reviewed, sweepGreen } from "../src/crew/autonomy.ts";
+import { provideChecksForTest, type ChecksHandle } from "../src/checks/service.ts";
+import { lastWaits } from "../src/crew/waits.ts";
+import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
+import { id as newId } from "../src/kernel/id.ts";
 import { createApp, type App } from "../src/app.ts";
 import { sourcesScreen } from "../src/tui/screens/sources.ts";
 import type { Ctx, Screen } from "../src/tui/app/app.ts";
@@ -145,11 +149,12 @@ describe("following several sources", () => {
   const ident = { GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@x", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@x" };
 
   /** A fake Forgejo: answers `info/refs` for each path with the tip it is given. */
-  function forgejo(tips: Map<string, string>) {
+  function forgejo(tips: Map<string, string>, hold?: Promise<void>) {
     const server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
-      fetch(req) {
+      async fetch(req) {
+        await hold;
         const url = new URL(req.url);
         const path = url.pathname.replace(/\/info\/refs$/, "");
         const tip = tips.get(path);
@@ -161,7 +166,7 @@ describe("following several sources", () => {
     return { server, host: `127.0.0.1:${server.port}`, url: (path: string) => `http://127.0.0.1:${server.port}${path}` };
   }
 
-  /** A repository whose main holds f.txt = `mainText`, and a commit tree builder. */
+  /** A repository whose main holds src/f.txt = `mainText`, and a commit tree builder. */
   async function repoWith(name: string, mainText: string) {
     const r = ok(await createRepo(app, alice, { name, visibility: "public" }));
     askForReviews(app.db, r.id);
@@ -170,7 +175,8 @@ describe("following several sources", () => {
       ok(await runGit(args, { cwd: d, env: ident, ...(input === undefined ? {} : { stdin: input }) })).trim();
     const commit = async (text: string, parent?: string) => {
       const blob = await git(["hash-object", "-w", "--stdin"], text);
-      const tree = await git(["mktree"], `100644 blob ${blob}\tf.txt\n`);
+      const inner = await git(["mktree"], `100644 blob ${blob}\tf.txt\n`);
+      const tree = await git(["mktree"], `040000 tree ${inner}\tsrc\n`);
       return git(["commit-tree", tree, ...(parent ? ["-p", parent] : []), "-m", text]);
     };
     const base = await commit("base\n");
@@ -307,6 +313,124 @@ describe("following several sources", () => {
       expect(pullCount(t.r.id)).toBe(1);
       ok(await checkSource(app, getRepoById(app.db, t.r.id)!, listSources(app.db, t.r.id)[0]!));
       expect(pullCount(t.r.id)).toBe(1);
+    } finally {
+      f.server.stop(true);
+    }
+  });
+
+  /** `n` commits on `parent`, all of one tree (`text`): a long history built in `n` spawns. */
+  async function chain(t: Awaited<ReturnType<typeof repoWith>>, parent: string, n: number, text: string) {
+    const ref = `refs/tmp/chain-${chains++}`;
+    let stream = "";
+    for (let i = 0; i < n; i++)
+      stream +=
+        `commit ${ref}\ncommitter t <t@x> ${1_700_000_000 + i} +0000\ndata 2\nc${i % 10}\n` +
+        (i === 0 ? `from ${parent}\n` : "") +
+        `M 100644 inline src/f.txt\ndata ${text.length}\n${text}\n`;
+    ok(await runGit(["fast-import", "--quiet"], { cwd: t.d, env: ident, stdin: stream }));
+    const tip = await t.git(["rev-parse", ref]);
+    await t.git(["update-ref", "-d", ref]);
+    return tip;
+  }
+  let chains = 0;
+
+  test("a first fold 120 commits ahead is one pull however many polls race for it, and later commits move that pull", async () => {
+    const t = await repoWith("flood", "base\n");
+    const tip = await chain(t, t.base, 120, "new\n");
+    const served = new Map([["/jmoran/flood.git", tip]]);
+    let release!: () => void;
+    const f = forgejo(served, new Promise<void>((go) => (release = go)));
+    try {
+      ok(addTrust(app, alice, { host: f.host, account: "jmoran", until: "2099-01-01" }));
+      const s = await follow(t, f, "/jmoran/flood.git", tip);
+      const repo = getRepoById(app.db, t.r.id)!;
+      // A person's check, the clock and a second click all arrive together.
+      // The fake forge holds every answer until all three checks have started.
+      const started = [checkSource(app, repo, s), checkSource(app, repo, s), checkDue(app)] as const;
+      release();
+      const [one, two] = await Promise.all(started);
+      expect([one.ok, two.ok].sort()).toEqual([false, true]);
+      expect(one.ok ? two : one).toEqual({ ok: false, error: "busy" });
+      expect(pullCount(t.r.id)).toBe(1);
+      const again = ok(await checkSource(app, repo, listSources(app.db, t.r.id)[0]!));
+      expect(again.behind).toBe(120);
+      expect(pullCount(t.r.id)).toBe(1);
+      const pull = getPull(app.db, t.r.id, again.pull!)!;
+      expect(pullSourceOf(app.db, pull.id)).toMatchObject({ host: f.host, account: "jmoran" });
+      expect(needsCrewReview(app.db, pull.id)).toBe(true);
+
+      // Later commits on the source update that pull while it is open.
+      const more = await chain(t, tip, 3, "newer\n");
+      served.set("/jmoran/flood.git", more);
+      await t.git(["update-ref", sourceRef(s.id), more]);
+      const moved = ok(await checkSource(app, repo, listSources(app.db, t.r.id)[0]!));
+      expect(moved.pull).toBe(again.pull);
+      expect(getPull(app.db, t.r.id, moved.pull!)!.headOid).toBe(more);
+      expect(pullCount(t.r.id)).toBe(1);
+      expect(needsCrewReview(app.db, pull.id)).toBe(true);
+    } finally {
+      f.server.stop(true);
+    }
+  });
+
+  test("a trusted source's big first fold that conflicts opens no pull: the crew resolves it, reviews it, and it lands by true merge", async () => {
+    const t = await repoWith("bigclash", "ours\n");
+    const tip = await chain(t, t.base, 120, "theirs\n");
+    const f = forgejo(new Map([["/jmoran/bigclash.git", tip]]));
+    try {
+      ok(addTrust(app, alice, { host: f.host, account: "jmoran", until: "2099-01-01" }));
+      const bot = ok(await createAgent(app, alice, { username: "bot-bigclash", brief: "Be brief." }));
+      expect(addToCrew(app, alice, getRepoById(app.db, t.r.id)!, "bot-bigclash").ok).toBe(true);
+      updateRepoSettings(app.db, t.r, { autonomy: "assisted", autonomyBy: alice.id });
+      askForReviews(app.db, t.r.id);
+      const s = await follow(t, f, "/jmoran/bigclash.git", tip);
+      const r = getRepoById(app.db, t.r.id)!;
+      const found = ok(await checkSource(app, r, s));
+      expect(found.outcome).toBe("conflict");
+      expect(found.behind).toBe(120);
+      // No pull, so no no-review path; one issue for the crew.
+      expect(pullCount(t.r.id)).toBe(0);
+      const issues = listIssues(app.db, t.r.id, { state: "all" }).filter((i) => i.title.startsWith("Upstream: conflict at "));
+      expect(issues.length).toBe(1);
+      // A second poll of the same head asks nobody again.
+      ok(await checkSource(app, r, listSources(app.db, t.r.id)[0]!));
+      expect(pullCount(t.r.id)).toBe(0);
+      expect(listIssues(app.db, t.r.id, { state: "all" }).filter((i) => i.title.startsWith("Upstream: conflict at ")).length).toBe(1);
+
+      // The crew's resolution merges the source's head, so its commits are ancestors of the pull.
+      const mainOid = await t.git(["rev-parse", `refs/heads/${r.defaultBranch}`]);
+      const resolved = await t.git(["commit-tree", `${tip}^{tree}`, "-p", mainOid, "-p", tip, "-m", "resolve"]);
+      await t.git(["update-ref", "refs/heads/bot/resolve", resolved]);
+      const mine = ok(await openPull(app, bot.user, r, { title: "Resolve", body: `Closes #${issues[0]!.number}`, baseBranch: r.defaultBranch, headBranch: "bot/resolve" }));
+      expect(needsCrewReview(app.db, mine.id)).toBe(true);
+      // Trusted, yet held for the crew's review rather than passed on its check.
+      expect(foldsIn(app.db, mine.id)).toBe(true);
+      expect(await reviewed(app, getRepoById(app.db, t.r.id)!, mine)).toBe("hold");
+      expect(await landingStrategy(app, getRepoById(app.db, t.r.id)!, mine, mainOid)).toBe("merge");
+
+      // The crew's reviewer approves and its check is green: it lands.
+      provideChecksForTest(app, {
+        gate: async () => ({ ok: true, error: "", lines: [] }),
+        spareSlots: () => 0,
+      } as unknown as ChecksHandle);
+      const run = createRun(app.db, { repoId: t.r.id, kind: "check", issueId: mine.id, env: `pull-${mine.number}`, commitOid: mine.headOid, reason: "pull" });
+      claimRun(app.db, run.id);
+      finishRun(app.db, run.id, { state: "ok", summary: "ok" });
+      app.db
+        .query("INSERT INTO review (id, issue_id, author_id, state, commit_oid, created_at) VALUES (?1, ?2, ?3, 'approved', ?4, ?5)")
+        .run(newId(), mine.id, alice.id, mine.headOid, new Date().toISOString());
+      app.db.query("UPDATE repo SET autonomy = 'autonomous', autonomy_by = ?2 WHERE id = ?1").run(t.r.id, alice.id);
+      const landed = await sweepGreen(app, getRepoById(app.db, t.r.id)!);
+      expect([landed, lastWaits(t.r.id)]).toEqual([1, { queued: 1 }]);
+      expect(getPull(app.db, t.r.id, mine.number)!.mergedAt).not.toBeNull();
+
+      // A true merge: the source's commits are ancestors of main, so merging main into
+      // the source's tip is a fast-forward (the tip is the merge base), never a conflict.
+      const after = await t.git(["rev-parse", `refs/heads/${r.defaultBranch}`]);
+      expect((await t.git(["rev-list", "--parents", "-n", "1", after])).split(" ").length).toBe(3);
+      await t.git(["merge-base", "--is-ancestor", tip, after]);
+      expect(await t.git(["merge-base", tip, after])).toBe(tip);
+      expect(await t.git(["merge-base", "--is-ancestor", mainOid, after]).then(() => true)).toBe(true);
     } finally {
       f.server.stop(true);
     }
