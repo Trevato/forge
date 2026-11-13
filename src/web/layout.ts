@@ -1034,7 +1034,7 @@ export function redirect(
  */
 export function fragment(
   body: Html,
-  o: { status?: number; request?: Request } = {},
+  o: { status?: number; request?: Request; etag?: string } = {},
 ): Response {
   const text = inlineIcons(body.text);
   const status = o.status ?? 200;
@@ -1046,7 +1046,7 @@ export function fragment(
     "cache-control": "no-store",
   };
   if (status !== 200) return new Response(text, { status, headers });
-  const hash = sha256(text).slice(0, 16);
+  const hash = o.etag ?? sha256(text).slice(0, 16);
   headers.etag = `"${hash}"`;
   if (o.request?.headers.get("if-none-match") === headers.etag)
     return new Response(null, { status: 304, headers });

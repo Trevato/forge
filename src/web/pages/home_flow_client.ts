@@ -11,6 +11,7 @@
  *            event arrives, a lane is swapped, or the tab comes back: time
  *            spent in a lane is always as old as the last thing that happened.
  *   stream   the dot beside the title says whether the stream is connected.
+ *   filter   the select lists the other apps only when it is first used.
  *
  * With scripts off the page is the picture the server drew.
  */
@@ -100,10 +101,28 @@ export const homeFlowJs = /* js */ `
     if (text && WORDS[e.detail.state]) text.textContent = WORDS[e.detail.state];
   });
 
-  // ---- the filter: choosing an app opens the page for it ----
+  // ---- the filter: the other apps come from data-apps when it is first used, then choosing one opens the page for it ----
   var form = doc.getElementById('hf-filter');
   var select = doc.getElementById('hf-app');
-  if (form && select) select.addEventListener('change', function () { form.submit(); });
+  if (form && select) {
+    // Without scripts the select has no name and the typed field is the one that is sent.
+    select.name = 'app';
+    var filled = false;
+    var fill = function () {
+      if (filled) return;
+      filled = true;
+      var current = select.value;
+      (select.getAttribute('data-apps') || '').split(',').filter(Boolean).forEach(function (app) {
+        if (app === current) return;
+        var option = doc.createElement('option');
+        option.value = app;
+        option.textContent = app;
+        select.appendChild(option);
+      });
+    };
+    ['pointerdown', 'focus', 'keydown'].forEach(function (type) { select.addEventListener(type, fill); });
+    select.addEventListener('change', function () { form.submit(); });
+  }
 
   remember();
   clocks(true);
