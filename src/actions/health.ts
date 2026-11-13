@@ -45,6 +45,25 @@ export function snapshotPlace(app: App): VitalsInput["snapshots"] {
  * board's forge strip and the asks. One place gathers what they measure.
  */
 export function forgeVitals(app: App): Vitals {
+  if (vitalsReuse.ms === 0) return gatherVitals(app);
+  const hit = vitalsKept.get(app);
+  const now = Date.now();
+  if (hit !== undefined && now - hit.at < vitalsReuse.ms) return hit.vitals;
+  const fresh = gatherVitals(app);
+  vitalsKept.set(app, { at: now, vitals: fresh });
+  return fresh;
+}
+
+/**
+ * How long the vitals are reused: they read the disk, the database's size,
+ * every app's state and the sampler, and a terminal refresh, a health read
+ * and the board's strip each asked for them in the same second. Off under
+ * `bun test` (NODE_ENV=test), where a test changes something and reads again.
+ */
+export const vitalsReuse = { ms: process.env["NODE_ENV"] === "test" ? 0 : 5_000 };
+const vitalsKept = new WeakMap<App, { at: number; vitals: Vitals }>();
+
+function gatherVitals(app: App): Vitals {
   const runtime = appsRuntime(app);
   const envs = runtime
     ? listApps(app.db).flatMap((record) => runtime.status(record))
