@@ -12,7 +12,7 @@
  */
 
 import { isStrangerPull } from "./stranger.ts";
-import { noteMeasure } from "../core/measure.ts";
+import { forgetMeasure, noteMeasure } from "../core/measure.ts";
 import { capacityEnv } from "../core/capacity.ts";
 import {
   existsSync,
@@ -1561,6 +1561,8 @@ async function work(
           },
           onMeasure: (m) =>
             noteMeasure(app.db, meter.subscriptionId ?? PLATFORM, m),
+          onCleared: (window) =>
+            forgetMeasure(app.db, meter.subscriptionId ?? PLATFORM, window),
           onUsage: (so) =>
             meterLive(
               app,
