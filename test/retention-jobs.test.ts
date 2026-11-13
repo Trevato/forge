@@ -8,7 +8,7 @@ import type { Database } from "bun:sqlite";
 import type { App } from "../src/app.ts";
 import { migrations } from "../src/core/schema.ts";
 import { openDb } from "../src/kernel/db.ts";
-import { DUTY, gapAfter, IDLE_MS, MIN_GAP_MS, retentionJobs, startRetention } from "../src/system/retention.ts";
+import { DUTY, FAILED_MS, gapAfter, IDLE_MS, MIN_GAP_MS, retentionJobs, startRetention } from "../src/system/retention.ts";
 
 const DAY = 86_400_000;
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -90,6 +90,20 @@ describe("the jobs", () => {
       expect(job.slice(now).more).toBe(false);
       expect(job.slice(now).more).toBe(false);
     }
+  });
+
+  test("a job whose slice throws is logged once and rests an hour; the others and the process go on", async () => {
+    const warned: string[] = [];
+    const db = openDb(":memory:", migrations);
+    db.exec("PRAGMA foreign_keys = OFF");
+    const app = { db, log: { warn: (m: string) => warned.push(m), info: () => {} } } as unknown as App;
+    // The backfill's table is gone: every slice of it throws, as SQLite refusing a statement would.
+    db.exec("DROP TABLE deploy_landed");
+    const stop = startRetention(app, { local: true, engine: true });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    stop();
+    expect(warned.filter((m) => m.startsWith("deploy landing backfill failed"))).toHaveLength(1);
+    expect(FAILED_MS).toBe(3_600_000);
   });
 
   test("starting the jobs runs the backfill at once; stopping them leaves no timer to fire", async () => {

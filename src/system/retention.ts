@@ -18,7 +18,7 @@
  * waits `t * (1 / DUTY - 1)` (at least `MIN_GAP_MS`), so a job takes at most `DUTY` of the thread
  * whatever a slice costs there, and a slower disk or a bigger table lengthens the wait, never
  * the stall. With nothing behind, a job looks again after its own idle gap. A slice that
- * throws is logged and tried again at the idle gap. Every job reads and writes only the
+ * throws is logged and that job rests an hour (`FAILED_MS`). Every job reads and writes only the
  * database, so the same jobs run on the serving thread (`inline`) or on the engine's Worker
  * (`engine/duties.ts` starts them on whichever thread runs the engine, never both).
  *
@@ -53,6 +53,11 @@ export const DUTY = 0.05;
 export const MIN_GAP_MS = 100;
 /** How long a job with nothing behind it waits to look again. */
 export const IDLE_MS = 15_000;
+/**
+ * How long a job that failed leaves itself alone. A slice that throws (a locked or full database, anything
+ * SQLite refuses) is logged once and that job stays quiet for the hour; the other jobs and the process go on.
+ */
+export const FAILED_MS = 60 * 60_000;
 /** How long the backfill waits between passes, once a pass has found nothing more. */
 export const BACKFILL_EVERY_MS = 60 * 60_000;
 
@@ -193,8 +198,9 @@ export function startRetention(app: App, which: { local: boolean; engine: boolea
       quietUntil = performance.now() + Math.max(MIN_GAP_MS, took * QUIET_X);
       return gapAfter(took, r.more, job.idleMs);
     } catch (error) {
-      app.log.warn(`${what} failed`, { error: String(error) });
-      return job.idleMs;
+      app.log.warn(`${what} failed; that job rests an hour`, { error: String(error) });
+      quietUntil = performance.now() + MIN_GAP_MS;
+      return FAILED_MS;
     }
   };
   const backfill = (delay: number): void => {

@@ -1,29 +1,32 @@
 /**
- * Runs one query off the main thread so that a slow one can be stopped by
- * ending the thread. Secret columns are shadowed by temporary views that
+ * Runs one query in a process of its own (`query_child.ts`), so that a slow one can be stopped by
+ * ending the process and a greedy one by the heap limit that process sets for itself: SQLite's heap
+ * limit is the whole process's, so it must never be set in the forge's (2026-11-13, 0.7.585: a data query
+ * set it on a thread and every connection of the forge failed with "out of memory"). Secret columns are shadowed by temporary views that
  * show the mask, so an alias or a subquery cannot read them.
  */
 
 import { Database } from "bun:sqlite";
 import { CELL_CAP, cell, maskPlan, MASK } from "./mask.ts";
 
-declare const self: Worker;
-
-interface Job {
+export interface Job {
   readonly path: string;
   readonly sourceId: string;
   readonly sql: string;
   readonly limit: number;
   /** Bytes of result text kept before the rest is dropped. */
   readonly bytes: number;
-  /** Memory SQLite may hold for this query. */
+  /** Memory SQLite may hold for this query: the child's own, the process-wide limit is its alone. */
   readonly heap: number;
 }
 
 const quote = (name: string): string => `"${name.replaceAll('"', '""')}"`;
 
-self.onmessage = (event: MessageEvent<Job>) => {
-  const job = event.data;
+export type Message =
+  | { ok: true; columns: string[]; rows: (string | number | null)[][]; truncated: boolean }
+  | { ok: false; message: string };
+
+export function runJob(job: Job): Message {
   let db: Database | undefined;
   try {
     db = new Database(job.path, { readonly: true });
@@ -43,6 +46,7 @@ self.onmessage = (event: MessageEvent<Job>) => {
       db.exec(`CREATE TEMP VIEW ${quote(name)} AS SELECT ${select} FROM main.${quote(name)}`);
     }
     db.exec("PRAGMA query_only = 1");
+    // The limit is the whole process's, which is this child's alone.
     db.exec(`PRAGMA hard_heap_limit = ${Math.floor(job.heap)}`);
     const columns = db.query(job.sql).columnNames;
     // Cut every cell inside SQLite, so a giant blob or string never reaches
@@ -71,13 +75,10 @@ self.onmessage = (event: MessageEvent<Job>) => {
       }
       out.push(cells);
     }
-    self.postMessage({ ok: true, columns, rows: out, truncated });
+    return { ok: true, columns: [...columns], rows: out, truncated };
   } catch (error) {
-    self.postMessage({
-      ok: false,
-      message: error instanceof Error ? error.message : String(error),
-    });
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
   } finally {
     db?.close();
   }
-};
+}
