@@ -335,6 +335,9 @@ export function vitals(input: VitalsInput): Vitals {
   };
 
   const disk = (input.disk ?? readDisk)(input.dataDir);
+  // Room to spare (#11940): at 100 GiB free no share-of-the-disk guard speaks,
+  // the floor and the marks alike.
+  const room = roomy(disk);
   if (disk.totalBytes > 0 && disk.freeBytes / disk.totalBytes < (input.diskFreeMin ?? DISK_FREE_MIN))
     need(
       "disk",
@@ -342,14 +345,14 @@ export function vitals(input: VitalsInput): Vitals {
       undefined,
       "/settings/capacity",
     );
-  else if (disk.totalBytes > 0 && !roomy(disk) && disk.freeBytes / disk.totalBytes < DISK_FLOOR)
+  else if (disk.totalBytes > 0 && !room && disk.freeBytes / disk.totalBytes < DISK_FLOOR)
     need(
       "disk-floor",
       `Disk is under the ${DISK_FLOOR * 100}% the forge keeps for itself: ${Math.round((disk.freeBytes / disk.totalBytes) * 100)}% free. Child forges sleep, and no child forge, app or check starts, until room is made.`,
       undefined,
       "/settings/capacity",
     );
-  else if (disk.totalBytes > 0) {
+  else if (disk.totalBytes > 0 && !room) {
     // The owner hears well before the floor (#11800): one need for the highest mark passed.
     const used = 1 - disk.freeBytes / disk.totalBytes;
     const mark = DISK_USED_MARKS.find((m) => used >= m);

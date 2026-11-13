@@ -22,6 +22,19 @@ describe("vitals names the highest mark passed", () => {
   const at = (usedPct: number) =>
     vitals({ db: app.db, signals: app.signals, dataDir: app.config.dataDir, disk: () => ({ freeBytes: 100 - usedPct, totalBytes: 100 }) });
 
+  const GiB = 1024 ** 3;
+  const causes = (freeBytes: number, totalBytes: number) =>
+    vitals({ db: app.db, signals: app.signals, dataDir: app.config.dataDir, disk: () => ({ freeBytes, totalBytes }) }).degraded.map((d) => d.cause);
+
+  test("a roomy disk is not a mark: 83% used with 362 GiB free says nothing (#11940)", () => {
+    expect(causes(362 * GiB, 2200 * GiB)).toEqual([]);
+  });
+
+  test("at exactly 100 GiB free the marks are quiet, one byte under they speak", () => {
+    expect(causes(100 * GiB, 500 * GiB)).toEqual([]);
+    expect(causes(100 * GiB - 1, 500 * GiB)).toEqual(["disk-80"]);
+  });
+
   test("69% says nothing, 70% and 80% say their mark, the floor says only the floor", () => {
     expect(at(69).degraded.map((d) => d.cause)).toEqual([]);
     expect(at(70).degraded.map((d) => d.cause)).toEqual(["disk-70"]);
