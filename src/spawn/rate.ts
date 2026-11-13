@@ -10,7 +10,10 @@ import type { Database } from "bun:sqlite";
 import { clientBucket } from "../http/peer.ts";
 
 /** Anonymous spawns allowed per client in any 24 hours. */
-export const ANON_SPAWNS_PER_DAY = 3;
+// 3 turned away the third person behind one office address, and the release proof's own
+// stranger after three releases in a day (0.7.576 read "unproven" for it): an address is
+// not a person. Enough to stop one client looping, no more.
+export const ANON_SPAWNS_PER_DAY = 100;
 /** Anonymous spawns allowed from everyone together in any 24 hours. */
 // 30 turned strangers away on any day the link was shared; what bounds a surge is the machine
 // (forges awake at once, and the sleep that follows), not a daily count.
