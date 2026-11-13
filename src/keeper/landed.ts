@@ -65,6 +65,8 @@ export interface Stages {
   readonly buildMs: number | null;
   readonly proofMs: number | null;
   readonly switchMs: number | null;
+  /** Crew runs running in the drained process at the switch (#11917); null when not counted. */
+  readonly interruptedRuns: number | null;
   /** The new version answering to its verdict. */
   readonly verifyMs: number | null;
 }
@@ -75,12 +77,13 @@ const between = (from: string | null, to: string | null): number | null => {
   return Number.isFinite(ms) ? Math.max(0, ms) : null;
 };
 
-export function stagesOf(r: Pick<KeeperRelease, "cutAt" | "liveAt" | "finishedAt" | "buildMs" | "proofMs" | "switchMs">): Stages {
+export function stagesOf(r: Pick<KeeperRelease, "cutAt" | "liveAt" | "finishedAt" | "buildMs" | "proofMs" | "switchMs"> & Partial<Pick<KeeperRelease, "interruptedRuns">>): Stages {
   return {
     cutToLiveMs: between(r.cutAt, r.liveAt),
     buildMs: r.buildMs,
     proofMs: r.proofMs,
     switchMs: r.switchMs,
+    interruptedRuns: r.interruptedRuns ?? null,
     verifyMs: between(r.liveAt, r.finishedAt),
   };
 }
@@ -88,7 +91,7 @@ export function stagesOf(r: Pick<KeeperRelease, "cutAt" | "liveAt" | "finishedAt
 /** "cut→live 1 min 2 s · build 4 s · proof 3 s · switch 1 s · verify 10 min 0 s"; a stage not measured is left out. */
 export function stagesLine(s: Stages): string {
   const w = (name: string, ms: number | null) => (ms === null ? [] : [`${name} ${secondsWords(Math.round(ms / 1000))}`]);
-  return [...w("cut→live", s.cutToLiveMs), ...w("build", s.buildMs), ...w("proof", s.proofMs), ...w("switch", s.switchMs), ...w("verify", s.verifyMs)].join(" · ");
+  return [...w("cut→live", s.cutToLiveMs), ...w("build", s.buildMs), ...w("proof", s.proofMs), ...w("switch", s.switchMs), ...(s.interruptedRuns === null ? [] : [`interrupted ${s.interruptedRuns} ${s.interruptedRuns === 1 ? "run" : "runs"}`]), ...w("verify", s.verifyMs)].join(" · ");
 }
 
 export function withLandedToLive(db: Database, releases: readonly KeeperRelease[]): LandedRelease[] {

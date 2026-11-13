@@ -13,6 +13,7 @@
  * `FORGE_SELF_SWAP=1`: the keeper swaps main's tree in place (`swapper.ts`).
  */
 
+import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { originPush } from "../actions/branches.ts";
@@ -33,7 +34,8 @@ import { handover } from "../release/swap.ts";
 import { runningChildren } from "../boards/sampler.ts";
 import { snapshotsOf } from "../snapshot/service.ts";
 import { kubeDeployer } from "./deploy.ts";
-import { inFlight, keepTimings } from "./record.ts";
+import { inFlight, keepInterrupted, keepTimings } from "./record.ts";
+import { runningAgentRuns } from "../crew/running.ts";
 import { swapper } from "./swapper.ts";
 import type { KeeperPorts } from "./keeper.ts";
 import { timedGet, verifyUnderLoad } from "./verify.ts";
@@ -80,6 +82,19 @@ export function loadPages(repo: Pick<Repo, "ownerName" | "name">): string[] {
   return ["/boards", `/${encodeURIComponent(repo.ownerName)}/${encodeURIComponent(repo.name)}`, "/explore", "/"];
 }
 
+/**
+ * What the swap reports just before this process drains (#11839, #11917): the stage timings, and the crew
+ * runs still running here, the ones the switch interrupts, kept on the release still rolling.
+ */
+export function switched(db: Database, runs: () => number): (t: { buildMs: number; proofMs: number; switchMs: number }) => void {
+  return (t) => {
+    const flying = inFlight(db);
+    if (flying === undefined) return;
+    keepTimings(db, flying.id, t);
+    keepInterrupted(db, flying.id, runs());
+  };
+}
+
 /** The pages looked at on a phone: home, the forge's repository, the apps page. */
 export function phonePages(repo: Pick<Repo, "ownerName" | "name">): string[] {
   return ["/", `/${encodeURIComponent(repo.ownerName)}/${encodeURIComponent(repo.name)}`, "/apps"];
@@ -104,10 +119,7 @@ export function keeperPorts(app: App, input: { forgeUrl: string; deployment: str
           checkout: (sha) => checkoutRelease(app.config.dataDir, dir, sha),
           preflight: (tree) => preflightRelease(tree, app.config.dataDir),
           drain: () => handover.drain?.(),
-          timed: (t) => {
-            const flying = inFlight(app.db);
-            if (flying !== undefined) keepTimings(app.db, flying.id, t);
-          },
+          timed: switched(app.db, runningAgentRuns),
           probe: ownProbeHeaders(app.config.dataDir),
           ...(app.config.swapBudgetMs === undefined ? {} : { budgetMs: app.config.swapBudgetMs }),
         })
