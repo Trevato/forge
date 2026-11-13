@@ -3,7 +3,9 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createOrg } from "../src/actions/orgs.ts";
 import { createApp, type App } from "../src/app.ts";
+import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve } from "../src/http/server.ts";
 import { deployPack } from "../src/packs/deploy.ts";
@@ -14,7 +16,7 @@ import { deployCommands } from "../src/packs/words.ts";
 import { createForgeApp, forgeCommands } from "../src/tui/forge.ts";
 import { packLines, packsScreen } from "../src/tui/screens/packs.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
-import { cloneEnv, pushEnv, realHands } from "../scripts/pack.ts";
+import { cloneEnv, deployOrg, pushEnv, realHands } from "../scripts/pack.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
 
@@ -47,6 +49,51 @@ describe("git credentials", () => {
       expect(seen.every((h) => h === null)).toBe(true);
     } finally {
       await stranger.stop(true);
+    }
+  });
+});
+
+
+describe("deploy org", () => {
+  test("the flag wins over FORGE_ORG, and an empty value is no target", () => {
+    expect(deployOrg("leagues", { FORGE_ORG: "other" })).toBe("leagues");
+    expect(deployOrg(undefined, { FORGE_ORG: "leagues" })).toBe("leagues");
+    expect(deployOrg(undefined, {})).toBeUndefined();
+    expect(deployOrg("  ", { FORGE_ORG: "" })).toBeUndefined();
+  });
+
+  test("makeApp with org creates the app under that org, not the token's account, and a second run keeps it there", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pack-deploy-org-"));
+    const app = createApp({ dataDir: dir, port: 0 });
+    const servers = await serve(app);
+    try {
+      const made = await createUser(app.db, {
+        origin: "seed",
+        trusted: true,
+        username: "ada",
+        email: "ada@forge.local",
+        password: "a-good-passphrase",
+        adminIfFirst: true,
+      });
+      if (!made.ok) throw new Error(made.error);
+      const org = createOrg(app, made.value, "leagues");
+      if (!org.ok) throw new Error(String(org.error));
+      const token = createToken(app.db, made.value.id, "pack", "rw").token;
+      const hands = realHands(servers.url, token, { org: "leagues" });
+      const first = await hands.makeApp("directory", "A directory.");
+      expect(first).toEqual({ ok: true, owner: "leagues" });
+      expect((await fetch(`${servers.url}/leagues/directory`)).status).toBe(200);
+      expect((await fetch(`${servers.url}/ada/directory`)).status).toBe(404);
+      const again = await hands.makeApp("directory", "A directory.");
+      expect(again.ok).toBe(false);
+      if (!again.ok) {
+        expect(again.exists).toBe(true);
+        expect(again.owner).toBe("leagues");
+      }
+    } finally {
+      await servers.stop();
+      app.close();
+      await rm(dir, { recursive: true, force: true });
     }
   });
 });
