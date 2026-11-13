@@ -599,6 +599,20 @@ function reviewedPost(
   };
 }
 
+/** A landing's stamped source (`account@host`, `child:` prefix allowed). */
+const SOURCE = /^(child:)?[a-z0-9][a-z0-9._-]{0,63}@[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?(:\d{1,5})?$/;
+
+/**
+ * "folded in from jmoran@forge.example, by jay": the source a trusted
+ * landing came from and the one who wrote it there. Empty for an ordinary
+ * landing, or a payload that is not a source's shape.
+ */
+function sourceWords(source: unknown, pull: Pull | undefined): string {
+  if (typeof source !== "string" || !SOURCE.test(source)) return "";
+  const author = pull?.originAuthor ?? (pull?.authorIsAgent ? null : pull?.authorName) ?? null;
+  return `folded in from ${source}${author === null ? "" : `, by ${clip(author)}`}`;
+}
+
 /** Up to the first sentence's end, at most 100 characters. */
 function firstSentence(body: string): string {
   const text = body.trim().replace(/\s+/g, " ");
@@ -679,8 +693,13 @@ function fromEvent(
     }
     case "pull.opened":
       return { ...common, kind: "pull", link: change, what: `opened a pull request${title ? `: ${clip(title)}` : ""}${toldWords}` };
-    case "pull.merged":
-      return { ...common, kind: "pull", link: change, what: `merged a pull request${title ? `: ${clip(title)}` : ""}${toldWords}` };
+    case "pull.merged": {
+      // A trusted source's landing is credited as it happens (#9015):
+      // where it came from, and whose work it is.
+      const from = sourceWords(p["source"], pull);
+      const words = from === "" ? toldWords : ` (${[toldParts, from].filter((s) => s !== "").join(", ")})`;
+      return { ...common, kind: "pull", link: change, what: `merged a pull request${title ? `: ${clip(title)}` : ""}${words}` };
+    }
     case "pull.reviewed":
       return reviewedPost(db, p, { ...common, kind: "pull", link: change }, title);
     case "look.taken": {
