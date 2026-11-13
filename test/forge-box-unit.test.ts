@@ -38,6 +38,9 @@ test("the unit runs the forge from /opt/forge and always restarts", () => {
 
 test("the unit starts at boot and never gives up restarting", () => {
   expect(unit.get("Install")!.get("WantedBy")).toEqual(["multi-user.target"]);
+  const restartSec = Number(svc.get("RestartSec")?.[0]);
+  expect(restartSec).toBeGreaterThanOrEqual(1);
+  expect(restartSec).toBeLessThanOrEqual(10);
   expect(unit.get("Unit")!.get("StartLimitIntervalSec")).toEqual(["0"]);
 });
 
