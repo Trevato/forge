@@ -147,6 +147,7 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string, slot
     ["Elsewhere", html`Limits are set on <a href="/settings/capacity">Capacity</a>. How the forge stands against its threats is on <a href="/resilience">Resilience</a>; where an outside agent can help is on <a href="/contribute">Contribute</a>.`],
   ], helpAsked(url));
   const landedDay = landed?.day ?? 0;
+  const opened = openers.reduce((n, o) => n + o.opened, 0);
   const strip = figures([
     figure("Landed, last hour", html`<span data-landed-hour>${count(landed?.hours[0] ?? 0)}</span>`, html`<span data-landed-day>${count(landedDay)}</span> ${landedDay === 1 ? "change" : "changes"} landed on main in 24 hours`, outHref(base, "approved", null), landed === undefined ? null : homeSpark(landed.hours)),
     figure("Asked to live", html`<span data-median>${flow.medianAskToLiveMs === null ? "—" : span(flow.medianAskToLiveMs)}</span>`, flow.medianAskToLiveMs === null ? "nothing asked for went live in 24 hours" : "median from an ask to it serving, last 24 hours", outHref(base, "live", null)),
@@ -227,7 +228,7 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string, slot
       <header class="bd-head"><h2 id="detail-h">Go deeper</h2><p class="bd-sub">Each line says how it stands now; open one for what is behind it.</p></header>
       <div class="folds">
       ${slots.first ?? null}
-      ${fold("The last 24 hours", `${count(yielded.finished)} ${yielded.finished === 1 ? "build" : "builds"} finished, ${openers.length === 0 ? "no pull" : `${count(openers.reduce((n, o) => n + o.opened, 0))} pulls`} opened in the last hour`, html`
+      ${fold("The last 24 hours", `${count(yielded.finished)} ${yielded.finished === 1 ? "build" : "builds"} finished, ${opened === 0 ? "no pull" : `${count(opened)} ${opened === 1 ? "pull" : "pulls"}`} opened in the last hour`, html`
         <p id="build-yield">${buildYieldSays(yielded)}</p>
         ${fig.declined.says === ""
           ? ""
