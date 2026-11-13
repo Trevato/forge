@@ -18,7 +18,7 @@ import { readRunLog } from "../src/runs/log.ts";
 
 process.env["FORGE_CELLS"] = "off";
 
-const TOTAL = 1000 * 1024 ** 3;
+const TOTAL = 200 * 1024 ** 3;
 /** The share of the disk used, as every default reading sees it. */
 let used = 0.81;
 
@@ -38,7 +38,7 @@ afterAll(async () => {
   app.close();
   await rm(dataDir, { recursive: true, force: true });
   // Back to the suite's roomy disk (`helpers/roomy-disk.ts`).
-  provideDiskForTest(() => ({ freeBytes: 900 * 1024 ** 3, totalBytes: TOTAL }));
+  provideDiskForTest(() => ({ freeBytes: 190 * 1024 ** 3, totalBytes: TOTAL }));
 });
 
 const until = async <T>(find: () => T | undefined, timeoutMs = 15_000): Promise<T> => {

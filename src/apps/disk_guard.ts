@@ -8,7 +8,7 @@
  */
 
 import { type DiskReading } from "../kernel/disk_reading.ts";
-import { diskUnder } from "../spawn/disk_floor.ts";
+import { diskUnder, roomy } from "../spawn/disk_floor.ts";
 import { RELEASE_DISK_USED_MAX } from "../keeper/cadence.ts";
 
 /** The words every refusal starts with, so a caller can tell it from a step's own failure. */
@@ -20,7 +20,7 @@ export const DISK_USED_REFUSAL = "not started: this host's disk is";
  * refused.
  */
 export function usedRefusal(dir: string, disk: DiskReading | undefined = diskUnder(dir)): string | undefined {
-  if (disk === undefined || !(disk.totalBytes > 0)) return undefined;
+  if (disk === undefined || !(disk.totalBytes > 0) || roomy(disk)) return undefined;
   const used = 1 - disk.freeBytes / disk.totalBytes;
   if (used < RELEASE_DISK_USED_MAX) return undefined;
   return `${DISK_USED_REFUSAL} ${(used * 100).toFixed(1)}% used, at or over the ${RELEASE_DISK_USED_MAX * 100}% builds wait for: queued again when there is room`;
