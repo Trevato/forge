@@ -268,3 +268,15 @@ describe("no step's cell starts at 80% used (#11799)", () => {
     expect((await step()).ok).toBe(true);
   });
 });
+
+describe("a big disk with plenty of room (the vxrail: 348 GiB free of 2198, 84% used)", () => {
+  const vxrail = { freeBytes: 348 * GiB, totalBytes: 2198 * GiB };
+  test("neither the floor nor the build guard refuses at 100 GiB free or more, whatever the share", () => {
+    expect(floorRefusal("/", { freeBytes: 100 * GiB, totalBytes: 2198 * GiB })).toBeUndefined();
+    expect(usedRefusal("/", vxrail)).toBeUndefined();
+  });
+  test("under 100 GiB free the shares decide again", () => {
+    expect(floorRefusal("/", { freeBytes: 99 * GiB, totalBytes: 2198 * GiB })).toContain("under the 15%");
+    expect(usedRefusal("/", { freeBytes: 99 * GiB, totalBytes: 2198 * GiB })).toContain("builds wait for");
+  });
+});

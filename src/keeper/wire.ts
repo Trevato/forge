@@ -35,7 +35,7 @@ import { kubeDeployer } from "./deploy.ts";
 import { swapper } from "./swapper.ts";
 import type { KeeperPorts } from "./keeper.ts";
 import { timedGet, verifyUnderLoad } from "./verify.ts";
-import { diskUnder } from "../spawn/disk_floor.ts";
+import { diskUnder, roomy } from "../spawn/disk_floor.ts";
 
 const LABEL = /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/;
 const OID = /^[0-9a-f]{40}$/;
@@ -126,7 +126,7 @@ export function keeperPorts(app: App, input: { forgeUrl: string; deployment: str
     snapshotting: () => snapshotsOf(app)?.takingMs(),
     diskUsed: () => {
       const disk = diskUnder(app.config.dataDir);
-      return disk === undefined || !(disk.totalBytes > 0) ? undefined : 1 - disk.freeBytes / disk.totalBytes;
+      return disk === undefined || !(disk.totalBytes > 0) || roomy(disk) ? undefined : 1 - disk.freeBytes / disk.totalBytes;
     },
     deployer,
     async tag(version, sha) {
