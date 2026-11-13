@@ -18,7 +18,7 @@ import {} from "../src/core/agents.ts";
 import { landedNote } from "../src/core/done_on_main.ts";
 import type { ForgeEvent } from "../src/core/events.ts";
 import { getIssueById, listComments, setAssignee, type Issue } from "../src/core/issues.ts";
-import { getPull } from "../src/core/pulls.ts";
+import { getPull, mergedPullClosing, mergedPullClosingScan } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { driveRepo } from "../src/crew/autonomy.ts";
@@ -120,6 +120,24 @@ describe("a landing with boxes unticked waits for a person", () => {
     expect(heldWords(sorted)).toContain("landed=1");
     await driveRepo(app, fresh());
     expect(now(partial).assigneeId).toBeNull();
+  });
+
+  test("the one read of a repository's merged pulls names the pull that shipped each issue, as asking per issue did", async () => {
+    const a = issue("First of two", "- [ ] a");
+    const b = issue("Second of two", "- [ ] b");
+    const never = issue("Closed by hand", "- [ ] c");
+    const first = await land("closes-first", a);
+    const second = await land("closes-second", b);
+    // A later pull that mentions the first issue without closing it does not take its place.
+    const mentions = await land("mentions-first", never);
+    app.db.query("UPDATE issue SET body = ?1 WHERE repo_id = ?2 AND number = ?3").run(`See #${a.number}`, repo.id, mentions.number);
+    for (const [on, pull] of [[a, first], [b, second]] as const) {
+      expect(mergedPullClosing(app.db, repo.id, on.number)?.number).toBe(pull.number);
+      expect(mergedPullClosing(app.db, repo.id, on.number)?.number).toBe(mergedPullClosingScan(app.db, repo.id, on.number)?.number);
+    }
+    expect(mergedPullClosing(app.db, repo.id, never.number)).toBeUndefined();
+    expect(mergedPullClosingScan(app.db, repo.id, never.number)).toBeUndefined();
+    expect(mergedPullClosing(app.db, repo.id, 99_999)).toBeUndefined();
   });
 
   test("the landing's note wakes no builder; a person's word still does", async () => {
