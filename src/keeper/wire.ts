@@ -30,6 +30,7 @@ import { running } from "../kernel/version.ts";
 import { compareVersions, readTags, recordFor } from "../release/shipped.ts";
 import { checkoutRelease, preflightRelease } from "../release/checkout.ts";
 import { handover } from "../release/swap.ts";
+import { runningChildren } from "../boards/sampler.ts";
 import { snapshotsOf } from "../snapshot/service.ts";
 import { kubeDeployer } from "./deploy.ts";
 import { inFlight, keepTimings } from "./record.ts";
@@ -129,6 +130,7 @@ export function keeperPorts(app: App, input: { forgeUrl: string; deployment: str
     },
     gating: gatesInFlight,
     snapshotting: () => snapshotsOf(app)?.takingMs(),
+    crewRuns: () => runningChildren(app.db).agents,
     diskUsed: () => {
       const disk = diskUnder(app.config.dataDir);
       return disk === undefined || !(disk.totalBytes > 0) || roomy(disk) ? undefined : 1 - disk.freeBytes / disk.totalBytes;

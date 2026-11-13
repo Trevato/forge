@@ -61,6 +61,8 @@ export interface KeeperPorts {
   readonly gating: () => number;
   /** How long the snapshot being taken has run, ms; undefined when none is (#9653). */
   readonly snapshotting?: () => number | undefined;
+  /** Crew runs running now, which a release would cut short (#11918); none when unset. */
+  readonly crewRuns?: () => number;
   /** The share of the forge's disk in use, 0..1; undefined when unread (#11686). */
   readonly diskUsed?: () => number | undefined;
   readonly deployer: Deployer;
@@ -73,6 +75,23 @@ export interface KeeperPorts {
   readonly minIntervalMs?: number;
   /** The worst event-loop stall in this process's first five minutes, ms; none when unset (#8848). */
   readonly bootStallMs?: () => number;
+}
+
+/**
+ * When the keeper first found crew runs running, per forge database (#11918):
+ * the wait counts from there, and starts over once none run.
+ */
+const crewSeen = new WeakMap<Database, number>();
+
+/** The first tick of this stretch that found `runs` running; undefined when none run. */
+function crewSince(db: Database, runs: number, now: number): number | undefined {
+  if (runs <= 0) {
+    crewSeen.delete(db);
+    return undefined;
+  }
+  const since = crewSeen.get(db) ?? now;
+  crewSeen.set(db, since);
+  return since;
 }
 
 /** Pulls of the forge's repository merged since `since`: number, title and body. */
@@ -244,6 +263,7 @@ export async function tickStep(p: KeeperPorts): Promise<Step> {
   const newest = await p.newest();
   const last = listKeeperReleases(p.db, 1)[0];
   const asked = pendingNow(p.db, p.now());
+  const crewRuns = p.crewRuns?.() ?? 0;
   const decision = decideCut({
     main: main ?? "",
     newest,
@@ -252,6 +272,8 @@ export async function tickStep(p: KeeperPorts): Promise<Step> {
     inFlight: false,
     gating: p.gating(),
     snapshotMs: p.snapshotting?.(),
+    crewRuns,
+    crewSince: crewSince(p.db, crewRuns, p.now()),
     diskUsed: p.diskUsed?.(),
     lastCutAt: last === undefined ? undefined : Date.parse(last.cutAt),
     hold: blocking(standingHolds(p.db)),
@@ -270,6 +292,7 @@ export async function tickStep(p: KeeperPorts): Promise<Step> {
   // whose tag the next tick sends (`tagged`), never a tag the keeper has no row for.
   const r = recordCut(p.db, { version: decision.version, sha: main, knownGood, at: p.now(), ...(asked === undefined ? {} : { hotfix: `${asked.reason} (${asked.by})` }) });
   if (asked !== undefined) clearNow(p.db);
+  crewSeen.delete(p.db);
   const tagRefused = await tagged(p, r);
   if (tagRefused !== undefined) return { line: tagRefused, outcome: "failed" };
   const sent = await promote(p, r.version, refFor(p, image, r.version, main));

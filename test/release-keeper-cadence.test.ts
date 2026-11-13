@@ -1,7 +1,8 @@
 // When the release keeper cuts (#7557): each rule refuses on its own, and a cut is a tag, never a commit to main.
 import { describe, expect, test } from "bun:test";
-import { decideCut, MIN_INTERVAL_MS, nextVersion, RELEASE_DISK_USED_MAX, SNAPSHOT_WAIT_MS, type CadenceInput } from "../src/keeper/cadence.ts";
+import { CREW_WAIT_MS, decideCut, MIN_INTERVAL_MS, nextVersion, RELEASE_DISK_USED_MAX, SNAPSHOT_WAIT_MS, type CadenceInput } from "../src/keeper/cadence.ts";
 import { tick } from "../src/keeper/keeper.ts";
+import { askNow } from "../src/keeper/now.ts";
 import { listKeeperReleases, recordCut } from "../src/keeper/record.ts";
 import { keeperPorts } from "../src/keeper/wire.ts";
 import { provideDiskForTest } from "../src/kernel/disk_reading.ts";
@@ -56,6 +57,26 @@ describe("cadence", () => {
     expect(held).toBe("a snapshot is being taken (10 min in); a release would cut it short");
     expect(f.world.tags).toEqual([]);
     expect(await tick({ ...f.ports, snapshotting: () => undefined })).toContain("cut 0.7.284");
+  });
+
+  test("crew runs in flight hold the cut five minutes from the first tick that found them; a hotfix is not held (#11918)", async () => {
+    expect(CREW_WAIT_MS).toBe(5 * 60_000);
+    expect(decideCut({ ...ready, crewRuns: 2, crewSince: NOW - 4 * 60_000 })).toEqual({ cut: false, why: "waiting on 2 crew runs (4m of 5m)" });
+    expect(decideCut({ ...ready, crewRuns: 2, crewSince: NOW - 5 * 60_000 })).toEqual({ cut: true, version: "0.7.284" });
+    expect(decideCut({ ...ready, crewRuns: 1, crewSince: NOW, hotfix: true })).toEqual({ cut: true, version: "0.7.284" });
+
+    const f = await keeperForge();
+    const ports = { ...f.ports, crewRuns: () => 2 };
+    expect(await tick(ports)).toBe("waiting on 2 crew runs (0m of 5m)");
+    f.world.now += 4 * 60_000;
+    expect(await tick(ports)).toBe("waiting on 2 crew runs (4m of 5m)");
+    expect(f.world.tags).toEqual([]);
+    f.world.now += 60_000;
+    expect(await tick(ports)).toContain("cut 0.7.284");
+
+    const h = await keeperForge();
+    askNow(h.ports.db, "a hotfix", "alice", h.world.now);
+    expect(await tick({ ...h.ports, crewRuns: () => 3 })).toContain("cut 0.7.284");
   });
 
   test("at 80% of the disk used no release is cut; under it, or unread, the cut goes (#11686)", async () => {
